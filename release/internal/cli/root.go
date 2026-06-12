@@ -42,6 +42,7 @@ func newRootCmd() *cobra.Command {
 		commands.NewPreCmd(),
 		newPublishCmd(),
 		newTagCmd(),
+		newReleaseCmd(),
 	)
 	return root
 }
