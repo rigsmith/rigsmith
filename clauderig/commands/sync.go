@@ -82,6 +82,20 @@ func NewSyncCmd() *cobra.Command {
 				return fmt.Errorf("push: %w", err)
 			}
 			fmt.Fprintln(out, OkStyle.Render("\n  ✓ synced & pushed"))
+
+			// Size-based squash: bound .git when transcript history has bloated it.
+			gitBytes, _ := repo.GitDirBytes(ctx)
+			wtBytes, _ := repo.WorkTreeBytes(ctx)
+			if gitrepo.ShouldSquash(gitBytes, wtBytes, cfg.Retention.FloorBytes, cfg.Retention.SquashFactor) {
+				fmt.Fprintf(out, "  %s history squash (.git %dMB > %.0f× worktree)\n",
+					DimStyle.Render("⟳"), gitBytes>>20, cfg.Retention.SquashFactor)
+				if err := repo.Squash(ctx, "clauderig: squashed history"); err != nil {
+					return fmt.Errorf("squash: %w", err)
+				}
+				if err := repo.ForcePush(ctx, "origin", "main"); err != nil {
+					return fmt.Errorf("force-push after squash: %w", err)
+				}
+			}
 			return nil
 		},
 	}
