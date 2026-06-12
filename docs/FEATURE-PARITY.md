@@ -1,10 +1,14 @@
 # Feature parity audit — rigsmith vs the source tools
 
-Point-in-time audit (2026-06-11) of the Go rigsmith implementation against its
-two source projects:
+Audit of the Go rigsmith implementation against its two source projects
+(updated 2026-06-12 after parity phases 1–5; originally 2026-06-11):
 
 - **net-changesets** (.NET) → `changerig` / `relrig` + `core`
 - **rig** (.NET + Node, kept at parity) → `rig` (the `cli/` module) + `core`
+
+> Companion docs: [test-parity.md](../test-parity.md) tracks *test* coverage
+> per C# suite; this file tracks the *feature* surface. Behavior is pinned by
+> the parity corpus (`core/testdata/parity/`, 22 scenarios, Node + C# oracles).
 
 **Legend:** ✅ done · 🟢 done + exceeds the source · 🟡 partial · ⬜ not yet · ➖ n/a (intentionally out of scope).
 
@@ -15,11 +19,14 @@ two source projects:
 ## Headline
 
 - **Release engine (changerig/relrig): at or above parity.** The full
-  `init → add → status → version → publish → tag` loop works across **four**
-  ecosystems (net-changesets had one), with a **range-aware cascade** and an
-  **implemented pluggable-changelog system** that net-changesets only designed.
-- **Biggest changerig gaps:** the **`release` orchestrator** (designed, on hold),
-  **changelog git/github enrichment**, and the **markdown formatter** (`format:`).
+  `init → add → status → version → publish → tag → release` loop works across
+  **four** ecosystems (net-changesets had one), with a **range-aware cascade**,
+  an **implemented pluggable-changelog system** that net-changesets only
+  designed, the **`release` orchestrator** (steps/hooks/vars/gates/forge),
+  **changelog git/github enrichment**, and the **markdown formatter**
+  (`format:` incl. the native prettier-equivalent and a 🟢 custom-command
+  escape hatch). Remaining changerig tail: `--independent`, `commit` config
+  key, `shell-init`.
 - **`rig` (dev launcher): mid-to-high.** Dev loop + full package management (with
   pnpm/yarn/bun detection) + `coverage`/`kill`/`doctor`/`cd`/`init`/`rebuild`/
   `global`/`dlx` + node scripts→verbs + **`--all` topo graph run + `--filter` +
@@ -40,16 +47,16 @@ two source projects:
 | Feature | net-changesets | rigsmith | Notes |
 |---|---|---|---|
 | `init` | ✅ | 🟡 | Creates `.changeset/` + `config.json` + README. Interactive sourcePath/packageSource/interop prompts ⬜; exit-code taxonomy (1/2) ⬜ (simple "already initialized"). |
-| `add` (default) | ✅ | 🟡 | `-m/--message` ✅, `-p/--package` ✅, `--empty` ✅. **🟢 `--type`/`-t`** (conventional) + **`--bump`** + **omittable bump**. `--since` ⬜, `--open` (editor) ⬜. human-id filename ✅. |
-| `version` | ✅ | 🟡 | normal/snapshot/pre/exit modes ✅. `--snapshot[=tag]` ✅, snapshot template ✅ (flag named `--snapshot-template` vs net's `--snapshot-prerelease-template`). `--independent` ⬜. |
-| `status` | ✅ | 🟡 | `--verbose` ✅. `--since` ⬜, `--output` JSON ⬜. Per-package bump+version (net groups under bump headers — cosmetic diff). |
+| `add` (default) | ✅ | 🟡 | `-m/--message` ✅, `-p/--package` ✅, `--empty` ✅, `--since` (picker preselect) ✅. **🟢 `--type`/`-t`** (conventional) + **`--bump`** + **omittable bump**. `--open` (editor) ⬜. human-id filename ✅. |
+| `version` | ✅ | 🟡 | normal/snapshot/pre/exit modes ✅. `--snapshot[=tag]` ✅, snapshot template ✅ (flag named `--snapshot-template` vs net's `--snapshot-prerelease-template`). changelog enrichment + `format:` pass wired ✅. `--independent` ⬜. |
+| `status` | ✅ | ✅ | `--verbose` ✅, `--since` (changed-without-changeset guard + narrowing) ✅, `--output` JSON plan ✅, reflects pre-mode like `version` ✅, no-changesets → non-zero exit ✅. (net groups under bump headers — cosmetic diff.) |
 | `pre enter`/`exit` | ✅ | ✅ | `.changeset/pre.json` shape, counter, graduation — full parity. |
 | `tag` | ✅ | ✅ | `name@version`, skip existing. **🟢 Go module-path tags** (`dir/vX.Y.Z`); **🟢 `--dry-run`**. |
-| `publish` | ✅ | ✅ | `--no-git-tag` ✅. **🟢 `--dry-run`/`--no-push`/`--access`**. Registry-aware idempotent ✅. |
+| `publish` | ✅ | ✅ | `--no-git-tag` ✅. **🟢 `--dry-run`/`--no-push`/`--access`**, **🟢 TTY confirm gate + `--yes`** (CI unchanged). Registry-aware idempotent ✅; honors `ignore` ✅. |
 | `info` | ✅ | ✅ | Config + ecosystems + packages + changeset count. |
 | `ui` | ✅ (Spectre) | ✅ (bubbletea) | Interactive menu dispatching the verbs. |
 | `shell-init` | ✅ | ⬜ | net emits a `changeset-net` shell fn. rigsmith has cobra `completion` but not the resolve-the-binary shell function. |
-| `release` (orchestrator) | ✅ | ⬜ | Designed in [RELEASE-ORCHESTRATOR.md](RELEASE-ORCHESTRATOR.md); **on hold**. |
+| `release` (orchestrator) | ✅ | ✅ | **Built** (`release/internal/pipeline` + `forge`): see the orchestrator section below. |
 
 ## Changeset format & engine
 
@@ -76,10 +83,10 @@ two source projects:
 | Bump-grouped sections + bullets + "Updated dependencies" | ✅ | ✅ | `## version` → `### Major/Minor/Patch Changes`; multi-line indent; insert at line 2. |
 | Type-grouped sections (changelogen-style) | ➖ | 🟢 | Driven by `changelogGroups`; built-in + plugins. |
 | Default generator | ✅ | ✅ | |
-| `changelog-git` (commit hash prefix) | ✅ | ⬜ | Commit-hash enrichment not wired. |
-| `changelog-github` (PR/author via `gh`) | ✅ | ⬜ | No git-log/`gh` enrichment yet. |
+| `changelog-git` (commit hash prefix) | ✅ | ✅ | `core/changelog`: commit-that-added-the-changeset resolved via git log, first line prefixed. |
+| `changelog-github` (PR/author via `gh`) | ✅ | ✅ | PR/commit/Thanks links via `gh api`; failures degrade to undecorated lines. The three stock @changesets ids map to the builtin layout (fixed a latent subprocess-resolution bug). |
 | Pluggable subprocess generators | ✅ (design only) | 🟢 (implemented) | `ChangelogRequest` contract, `$PATH`/path resolution, built-in dogfoods it, **+ a Node `changelogen` reference plugin**. |
-| Formatter `format:` (native/prettier/dprint/…/auto) | ✅ (incl. NativeMarkdownFormatter) | ⬜ | `format` config field exists but no formatter dispatch / native formatter port. |
+| Formatter `format:` (native/prettier/dprint/…/auto) | ✅ (incl. NativeMarkdownFormatter) | 🟢 | `core/mdfmt`: native formatter port (18 golden tests, idempotent) + dispatch (auto-detect, lockfile-aware pm exec, deno direct, warn-only degradation) **+ 🟢 custom argv escape hatch** (`"format": ["myfmt", "--write"]`). |
 
 ## Config (`.changeset/config.json`)
 
@@ -91,7 +98,7 @@ two source projects:
 | `updateInternalDependencies` | ✅ | ✅ | |
 | `snapshot.{useCalculatedVersion,prereleaseTemplate}` | ✅ | ✅ | |
 | `changelog` | ✅ | ✅ | resolves the generator (default/path/name). |
-| `format` | ✅ | 🟡 | parsed, not acted on (no formatter). |
+| `format` | ✅ | 🟢 | full dispatch (false/native/auto/named tool) + the argv custom-command form. |
 | `commit` | ✅ (written) | ⬜ | |
 | `dotnet.sourcePath` | ✅ | 🟡 | rigsmith uses top-level **`paths`** (🟢) instead of per-ecosystem sourcePath; the `dotnet` block isn't read. |
 | `dotnet.packageSource` | ✅ | 🟡 | publish defaults per-ecosystem (`nuget`/npm/crates); not read from a config block yet. |
@@ -103,8 +110,18 @@ two source projects:
 
 ## Release orchestrator (`.changeset/release.jsonc`)
 
-Entire surface ⬜ in rigsmith — **designed, on hold** ([RELEASE-ORCHESTRATOR.md](RELEASE-ORCHESTRATOR.md)).
-Covers: `tool`/`order`/`steps`(enabled/before/after/run/args/message/confirm/forge)/`hooks`(before/after/onError)/`vars`(lazy), `packages.versionRegex`, CommandSpec (shell/argv), `${...}` interpolation, secret masking, default pipeline (version→commit→publish→push→githubRelease), forge auto/github/none, TUI reporter + interactive step chooser, confirm gates, `--dry-run/--only/--skip/--from/--to/--config/--yes/--git-only/--ui/--no-ui`.
+**Built (2026-06-12)** — `release/internal/pipeline` + `release/internal/forge`,
+wired as `relrig release`. ✅: `tool` (defaults to relrig itself; set
+`"npx changeset"` to drive the Node CLI)/`order`/`steps`(enabled/before/after/
+run/args/message/confirm/forge)/`hooks`(before/after/onError)/`vars`(lazy +
+eager, cached), CommandSpec (shell string / argv array, mixed lists), `${tool}`/
+`${vars.*}`/`${env.*}` interpolation, longest-first secret masking, default
+pipeline (version→commit→publish→push→githubRelease), forge auto/github/none
+with `gh` probing + CHANGELOG-section release notes, plain + rich (lipgloss)
+reporters with resume hints, confirm gates (huh on a TTY; `--yes` otherwise),
+`--dry-run/--only/--skip/--from/--to/--config/--yes/--git-only/--ui/--no-ui`,
+JSONC config via `core/jsonc`. ⬜ remaining: the interactive step-chooser TUI
+(passthrough today) and `packages.versionRegex`.
 
 ## Ecosystem / publishing
 
@@ -207,6 +224,18 @@ tools; **rigsmith** is the Go `cli/` module.
 
 ## Suggested next steps (by leverage)
 
-1. **changerig**: changelog git/github enrichment → markdown `format:` (native formatter) → `--since` / `status --output` → `--independent`.
-2. **relrig**: the `release` orchestrator (when greenlit).
-3. **rig**: remaining dev-launcher tail — `[suggest]` completion, menu project-pickers/focus-scoping, `setup`/`self-update`/`default`, test-class fuzzy match. (dev loop, package management, coverage, kill, doctor, cd, init, rebuild, global/dlx, scripts→verbs, **`--all` topo graph + `--filter` + project scoping + verb-prefix + watch**, capability-probed menu, `.rig.json` env/exclude — now done.)
+1. **rig (Phase 6 of the parity roadmap)**: JSONC config + comment-preserving
+   editor, dotenv/env stack, prefix/root resolvers, capabilities, verb-logic
+   coverage — then the dev-launcher tail (`[suggest]` completion, menu
+   project-pickers/focus-scoping, `setup`/`self-update`/`default`, test-class
+   fuzzy match, `watch` modifier, `cd` shell wrapper).
+2. **changerig tail**: `--independent` (+ `dotnet.versionStrategy`), `commit`
+   config key, `add --open`, `shell-init`.
+3. **relrig tail**: interactive plan-chooser TUI, `packages.versionRegex`,
+   NuGet feed-protocol unit tests if a native feed client lands.
+
+*(Done since the original audit: status `--since`/`--output`/pre-mode
+reflection, add `--since`, changelog git/github enrichment, the `format:`
+formatter incl. the native port, the entire release orchestrator + forge
+releases, publish confirm gate + ignore filtering, and the cross-ecosystem
+parity corpus with dotnet + polyglot oracles.)*
