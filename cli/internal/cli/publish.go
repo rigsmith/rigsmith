@@ -33,7 +33,7 @@ func newPublishCmd() *cobra.Command {
 		ValidArgsFunction: runnableProjectCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			root := detect.Root(cwd)
+			root := resolveRoot(cwd)
 			cfg, _ := config.LoadMerged(root)
 
 			// A solution or project at the root is .NET regardless of what the

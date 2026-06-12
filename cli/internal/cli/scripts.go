@@ -56,7 +56,7 @@ func customCmds(cfg config.Config) []*cobra.Command {
 			FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
 			RunE: func(cmd *cobra.Command, args []string) error {
 				cwd, _ := os.Getwd()
-				root := detect.Root(cwd)
+				root := resolveRoot(cwd)
 				return runCustom(cmd, cfg, root, name, def, args)
 			},
 		})

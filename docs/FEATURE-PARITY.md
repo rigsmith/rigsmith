@@ -181,7 +181,7 @@ source tools; **rigsmith** is the Go `cli/` module.
 | `add` / `uninstall` / `outdated` | ✅ | ✅ | ✅ | | | Per-ecosystem native; aliases `remove`/`rm`/`od`. | |
 | `global` / `dlx` | ✅ | ✅ | ✅ | | | Per-ecosystem (`dotnet tool install -g`/`dnx`, `go install`, `cargo install`); node pm-aware (`pnpm dlx`, `yarn global add`, `bun x`…). aliases `g`/`x`. | |
 | `install`/`restore` / `ci` / `upgrade` | ✅ | ✅ | ✅ | | | Node uses package-manager detection (pnpm/yarn/bun → ni-style commands). | |
-| `clean` | ✅ | ✅ | ⬜ | | | Native per ecosystem. | Node dist-dir clean. |
+| `clean` | ✅ | ✅ | ✅ | | | Native per ecosystem (`dotnet`/`go`/`cargo clean`); Node has no canonical clean, so it maps to the project's `clean` script (same convention as build/test/format) — `rebuild` skips it when the project defines none. | |
 | `rebuild` | ✅ | ✅ | ✅ | | | Sequences clean → build; alias `rb`. | |
 | `doctor` | ✅ | ✅ | ✅ | | | Per-ecosystem env checklist; non-zero exit on errors. | |
 | `cd` | ✅ | ✅ | ✅ | | | Tiered fuzzy match (exact/prefix/substring/subsequence, name>path, short-name); prints dir to stdout (needs shell wrapper); picker on TTY; name completion. | |
@@ -243,19 +243,20 @@ source tools; **rigsmith** is the Go `cli/` module.
 | Interactive menu (groups, pickers, back-nav) | ✅ | ✅ | ✅ | 🟢 | Adds focus scoping beyond both sources. | groups, project picker, back-nav. | |
 | `--dry-run` / `--quiet` / `→` echo | ✅ | ✅ | ✅ | | | | |
 | `.env` / `.env.local` loading + precedence | ✅ | ✅ | ✅ | | | `cli/internal/envstack`: exact C# quoting; file < ambient < config < command; wired into every spawn path. | |
-| env presets as flags | ✅ | ✅ | ⬜ | | | Not built. | Expose env presets as flags. |
+| env presets as flags | ✅ | ✅ | ✅ | | | Each `.rig.json` env preset becomes a `--<name>` flag on the dev verbs (`rig test --log`); selected presets merge as the top env layer. Names colliding with a reserved flag are skipped. | |
 | custom commands (shell/argv/OS/env/cwd) | ✅ | ⬜ | ✅ | 🟢 | Adds the argv form over the Node rig's gap. | Full support — shell/argv specs, per-OS (`macos`/`windows`/`linux`) overrides via `Resolve()`, plus per-command `env` and `cwd` (`cli/internal/config/command.go`, executed in `scripts.go`). | |
-| `--no-env` / `--root` | ✅ | ✅ | ⬜ | | | Not built. | Add `--no-env` / `--root` flags. |
+| `--no-env` / `--root` | ✅ | ✅ | ✅ | | | Persistent root flags: `--no-env` drops the `.env`/`.env.local` layer for the run; `--root <dir>` overrides walk-up discovery (every verb resolves through `resolveRoot`). | |
 | self-update | ✅ | ✅ | ✅ | | | `rig self-update` (+ menu entry): releases/latest vs stamped version, install.sh handoff; goreleaser now stamps the version ldflag. | |
 
 ---
 
 ## Suggested next steps (by leverage)
 
-1. **rig leftovers** (the ergonomics tail landed 2026-06-12): the C#-style
-   interactive config walkthrough if wanted (Go's `setup` became the shell
-   installer instead), `env` presets as flags, `--no-env`/`--root`, node
-   dist-dir `clean`, relrig version seam for its own self-update.
+1. **rig leftovers**: the C#-style interactive config walkthrough if wanted
+   (Go's `setup` became the shell installer instead) and a relrig version seam
+   for its own self-update. The ergonomics tail otherwise landed — env presets
+   as flags, `--no-env`/`--root`, and node `clean` (project `clean` script) are
+   now done.
 2. **relrig tail**: interactive plan-chooser TUI, `packages.versionRegex`,
    NuGet feed-protocol unit tests if a native feed client lands.
 
