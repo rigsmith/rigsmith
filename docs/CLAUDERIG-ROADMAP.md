@@ -25,7 +25,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started
 10. ✅ **Multi-machine project union.** Sync unions the freshly-built manifest with the existing one in staging, so every machine's projects are preserved (files already union via incremental sync); on restore each is re-slugged for the local machine.
 
 ## Remaining
-11. ⬜ **Orphan history branch split.** Squash runs on `main` directly (bounded repo achieved); preserving config history separately is the refinement.
+11. ✅ **Config history preserved across squash.** Sync mirrors config-only commits (everything except `cli/projects`) to a `config-history` branch via a temp-index `CommitSubtree`. main stays bounded (squashed); config history survives on the side branch. (Lower-risk than restructuring restore around a main=config/history=projects split; meets the stated goal.)
 12. ✅ **Hooks auto-restore.** `clauderig pull` (the SessionStart hook) auto-restores when `autoRestore` is set AND the machine is fresh (no projects) — wires up a new computer on first session, never clobbers an established one. `config set-autorestore`.
 13. ⬜ **Empirical Desktop-app resume check (Q4).** Rewrite is built + unit-proven; "does Cowork actually resume" needs driving the Electron app.
 14. ✅ **Non-GitHub private remotes.** GitLab supported via `glab` (verified private), dispatched by host alongside GitHub/`gh`. Hosts with no verifiable privacy stay refused — the no-exceptions rule holds.

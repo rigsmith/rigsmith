@@ -137,6 +137,12 @@ func NewSyncCmd() *cobra.Command {
 				fmt.Fprintln(out, OkStyle.Render("\n  ✓ in sync"))
 			}
 
+			// Preserve config history on a separate branch that survives main's
+			// squash (everything except the disposable transcript tree). Best-effort.
+			if changed, cerr := repo.CommitSubtree(ctx, "config-history", []string{".", ":!cli/projects"}, "clauderig config: "+me.Name); cerr == nil && changed && cfg.Remote != "" {
+				_ = repo.PushBranch(ctx, "origin", "config-history")
+			}
+
 			// Size-based squash: bound .git when transcript history has bloated it.
 			gitBytes, _ := repo.GitDirBytes(ctx)
 			wtBytes, _ := repo.WorkTreeBytes(ctx)
