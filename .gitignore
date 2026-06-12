@@ -1,0 +1,21 @@
+# Go
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# go.work is checked in for the monorepo; sums are not always needed locally
+go.work.sum
+
+# Build artifacts
+**/__debug_bin*
+
+# .NET build output (e.g. the examples/demo dotnet fixture)
+[Bb]in/
+[Oo]bj/

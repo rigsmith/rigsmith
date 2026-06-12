@@ -1,0 +1,112 @@
+#!/usr/bin/env node
+// Reference changelog generator plugin — changelogen style (unjs/changelogen).
+//
+// This is BOTH a conformance test of the rigsmith changelog plugin contract
+// (PLUGIN-PROTOCOL.md) and the implementation of the changelogen-style output
+// requested for the project. It is intentionally written in Node, not Go, to
+// prove the contract is language-agnostic: a plugin is "just another CLI we
+// call" — JSON ChangelogRequest on stdin, rendered entry text on stdout.
+//
+// Install: put this file on your $PATH named `changeset-changelog-changelogen`
+// (chmod +x), then set in .changeset/config.json:  "changelog": "changelogen"
+// The engine resolves a bare name to `changeset-changelog-<name>` on PATH.
+//
+// Invocation: `changeset-changelog-changelogen render` with the request on stdin.
+//
+// changelogen groups by conventional-commit TYPE with emoji headings. rigsmith
+// changesets currently carry a bump (major/minor/patch), not a commit type, so
+// this maps bump → the nearest changelogen section. Once optional `type:`
+// changeset frontmatter lands (see PORTING-PLAN.md / changelog-grouping design),
+// this plugin can group by real types with no contract change.
+
+// Group by conventional TYPE (the request now carries change.type). A breaking
+// change (change.breaking, i.e. a `!` on the type) always wins. Untyped changes
+// fall back to a bump→type mapping so the plugin still works on bump-only changesets.
+const TYPE_SECTIONS = {
+  breaking: "### 💥 Breaking Changes",
+  feat: "### 🚀 Enhancements",
+  fix: "### 🩹 Fixes",
+  perf: "### 🔥 Performance",
+  refactor: "### 💅 Refactors",
+  docs: "### 📖 Documentation",
+  build: "### 📦 Build",
+  test: "### ✅ Tests",
+  chore: "### 🏡 Chore",
+};
+const ORDER = ["breaking", "feat", "fix", "perf", "refactor", "docs", "build", "test", "chore"];
+const BUMP_TO_TYPE = { major: "breaking", minor: "feat", patch: "fix" };
+
+function sectionKey(c) {
+  if (c.breaking) return "breaking";
+  if (c.type && TYPE_SECTIONS[c.type]) return c.type;
+  if (c.type) return c.type; // unknown type → its own section
+  return BUMP_TO_TYPE[c.bump] || "fix";
+}
+
+function read(stream) {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    stream.setEncoding("utf8");
+    stream.on("data", (c) => (data += c));
+    stream.on("end", () => resolve(data));
+    stream.on("error", reject);
+  });
+}
+
+(async () => {
+  let req;
+  try {
+    req = JSON.parse(await read(process.stdin));
+  } catch (e) {
+    process.stderr.write("changelogen plugin: invalid JSON on stdin: " + e.message + "\n");
+    process.exit(1);
+  }
+
+  if (req.apiVersion !== 1) {
+    process.stderr.write(`changelogen plugin: unsupported apiVersion ${req.apiVersion} (speak 1)\n`);
+    process.exit(1);
+  }
+
+  const lines = [];
+  // changelogen leads with the version as a heading (the engine still owns the
+  // file's "# Title"); we render the "## <version>" entry block.
+  lines.push(`## ${req.package.newVersion}`);
+
+  const byType = {};
+  for (const c of req.changes || []) {
+    (byType[sectionKey(c)] ||= []).push(c);
+  }
+
+  // Known sections in changelogen order, then any unknown types alphabetically.
+  const seen = new Set(ORDER);
+  const extra = Object.keys(byType).filter((k) => !seen.has(k)).sort();
+  for (const key of [...ORDER, ...extra]) {
+    const changes = byType[key];
+    if (!changes || changes.length === 0) continue;
+    lines.push("", TYPE_SECTIONS[key] || `### ${key}`);
+    for (const c of changes) {
+      const first = (c.summary || "").split("\n")[0].trim();
+      const refs = [];
+      if (c.pr) refs.push(`#${c.pr}`);
+      else if (c.commit) refs.push(c.commit.slice(0, 7));
+      const suffix = refs.length ? ` (${refs.join(", ")})` : "";
+      lines.push(`- ${first}${suffix}`);
+    }
+  }
+
+  // Dependency updates (pre-resolved by the engine).
+  if (req.dependencyUpdates && req.dependencyUpdates.length) {
+    lines.push("", "### 🌊 Dependencies");
+    for (const d of req.dependencyUpdates) {
+      lines.push(`- ${d.name}@${d.newVersion}`);
+    }
+  }
+
+  // changelogen-style contributors line, when authors are present.
+  const authors = [...new Set((req.changes || []).map((c) => c.author).filter(Boolean))];
+  if (authors.length) {
+    lines.push("", "### ❤️ Contributors", ...authors.map((a) => `- ${a}`));
+  }
+
+  process.stdout.write(lines.join("\n") + "\n");
+})();

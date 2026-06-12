@@ -1,0 +1,7 @@
+{
+  "name": "@demo/app",
+  "version": "2.0.0",
+  "dependencies": {
+    "@demo/core": "^1.0.0"
+  }
+}
