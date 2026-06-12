@@ -43,7 +43,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			}
 			// A first arg that names a package scopes the verb to that package.
 			if len(args) > 0 {
-				ts := discoverWorkspace(cdContext(cmd), root)
+				ts := discoverWorkspace(cdContext(cmd), root, excludeFor(root))
 				if t, ok := matchTarget(ts, args[0]); ok {
 					argv, has := devCommandFor(t, verb, root)
 					if !has {
@@ -92,7 +92,8 @@ func workspaceNameCompletion(cmd *cobra.Command, args []string, _ string) ([]str
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	cwd, _ := os.Getwd()
-	ts := discoverWorkspace(cdContext(cmd), detect.Root(cwd))
+	root := detect.Root(cwd)
+	ts := discoverWorkspace(cdContext(cmd), root, excludeFor(root))
 	names := make([]string, 0, len(ts))
 	for _, t := range ts {
 		names = append(names, t.Name)
@@ -125,7 +126,7 @@ func runnableProjectCompletion(_ *cobra.Command, args []string, _ string) ([]str
 // runAcross runs the verb in every workspace package (topo order), optionally
 // filtered, skipping packages whose ecosystem doesn't map the verb.
 func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) error {
-	targets := topoSort(filterTargets(discoverWorkspace(cdContext(cmd), root), filter))
+	targets := topoSort(filterTargets(discoverWorkspace(cdContext(cmd), root, excludeFor(root)), filter))
 	if len(targets) == 0 {
 		return fmt.Errorf("no workspace packages found%s", filterNote(filter))
 	}

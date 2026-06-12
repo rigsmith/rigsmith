@@ -36,7 +36,7 @@ func runWatchVerb(cmd *cobra.Command, verb string, rest []string) error {
 	// watch to that package's directory.
 	dir, eco, forwarded, matched := root, "", rest, false
 	if len(rest) > 0 {
-		ts := discoverWorkspace(cdContext(cmd), root)
+		ts := discoverWorkspace(cdContext(cmd), root, excludeFor(root))
 		if t, ok := matchTarget(ts, rest[0]); ok {
 			dir, eco, forwarded, matched = t.Dir, t.Eco, rest[1:], true
 		}

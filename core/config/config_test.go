@@ -236,3 +236,70 @@ func TestLoad(t *testing.T) {
 		t.Error("missing config.json should error")
 	}
 }
+
+func TestCommitEnabled(t *testing.T) {
+	cases := map[string]bool{
+		`{}`:                false, // absent
+		`{"commit": false}`: false,
+		`{"commit": null}`:  false,
+		`{"commit": true}`:  true,
+		`{"commit": ["@changesets/cli/commit", {"skipCI": true}]}`: true,
+		`{"commit": []}`:      false, // empty tuple is not a resolver
+		`{"commit": "weird"}`: false, // unsupported scalar
+	}
+	for body, want := range cases {
+		c, err := Parse([]byte(body))
+		if err != nil {
+			t.Fatalf("Parse(%s): %v", body, err)
+		}
+		if got := c.CommitEnabled(); got != want {
+			t.Errorf("CommitEnabled(%s) = %v, want %v", body, got, want)
+		}
+	}
+}
+
+func TestEcoConfigAndStrategy(t *testing.T) {
+	c, err := Parse([]byte(`{
+		"versionStrategy": "lockstep",
+		"dotnet": { "sourcePath": "src", "packageSource": "github", "versionStrategy": "independent" },
+		"node": { "sourcePath": "packages" }
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dn := c.EcoConfig("dotnet")
+	if dn.SourcePath != "src" || dn.PackageSource != "github" || dn.VersionStrategy != Independent {
+		t.Errorf("dotnet block = %+v", dn)
+	}
+	if c.EcoStrategy("dotnet") != Independent {
+		t.Errorf("EcoStrategy(dotnet) = %q, want independent", c.EcoStrategy("dotnet"))
+	}
+	// node sets no versionStrategy → "" (caller falls back to the top-level).
+	if c.EcoStrategy("node") != "" {
+		t.Errorf("EcoStrategy(node) = %q, want empty", c.EcoStrategy("node"))
+	}
+	// Absent block → zero value, empty strategy.
+	if c.EcoStrategy("go") != "" || c.EcoConfig("go").SourcePath != "" {
+		t.Errorf("absent block should be zero value")
+	}
+}
+
+func TestStrategyByPackage(t *testing.T) {
+	c, err := Parse([]byte(`{
+		"versionStrategy": "lockstep",
+		"dotnet": { "versionStrategy": "independent" }
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ecoOf := map[string]string{"Acme.Core": "dotnet", "acme-web": "node", "acme/go": "go"}
+	got := c.StrategyByPackage(ecoOf)
+	if len(got) != 1 || got["Acme.Core"] != Independent {
+		t.Errorf("StrategyByPackage = %+v, want only Acme.Core=independent", got)
+	}
+	// No per-ecosystem overrides → nil (planner falls back to top-level for all).
+	none, _ := Parse([]byte(`{"versionStrategy":"independent"}`))
+	if m := none.StrategyByPackage(ecoOf); m != nil {
+		t.Errorf("StrategyByPackage with no eco overrides = %+v, want nil", m)
+	}
+}

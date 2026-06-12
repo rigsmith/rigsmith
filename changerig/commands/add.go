@@ -115,6 +115,18 @@ func NewAddCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "could not open editor: %v\n", err)
 				}
 			}
+
+			// Auto-commit the new changeset when the `commit` config key is enabled
+			// (mirrors @changesets). Only the changeset file is staged.
+			if ws.Config.CommitEnabled() {
+				msg := strings.TrimSpace(strings.SplitN(summary, "\n", 2)[0])
+				if msg == "" {
+					msg = "Add changeset"
+				}
+				if _, err := gitutil.CommitPaths(cmd.Context(), ws.Root, msg, path); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "could not commit changeset: %v\n", err)
+				}
+			}
 			return nil
 		},
 	}
