@@ -49,7 +49,8 @@ rigsmith is done.
   the `commit` key (auto-commit on version/add), and the **generalized
   per-ecosystem config block** (`sourcePath`/`packageSource`/`versionStrategy`,
   consumed by discovery/publish/planner) all land here. The only remaining gap
-  is the relrig tail (interactive step-chooser TUI, `packages.versionRegex`).
+  is the relrig interactive step-chooser TUI (`packages.versionRegex` landed as
+  a generic `regex` ecosystem adapter).
 - **`rig` (dev launcher): high (Phase 6, 2026-06-12).** Dev loop + full package
   management + `coverage` (incl. .NET `--min` gate + in-process cobertura HTML)
   + `kill` (C#-aligned semantics) + `doctor`/`cd`/`init`/`rebuild`/`publish`/
@@ -84,7 +85,7 @@ rigsmith is done.
 | `info` | ✅ | ✅ | | | Config + ecosystems + packages + changeset count. | |
 | `ui` | ✅ (Spectre) | ✅ (bubbletea) | | | Interactive menu dispatching the verbs — different toolkit, same surface. | |
 | `shell-init` | ✅ | ✅ | 🟢 | Obviated — net's shell fn resolved the .NET/Node tool split; rigsmith is one binary on PATH (and aliases `changeset`), so no resolve-the-binary wrapper is needed. | cobra `completion` covers tab-completion. | |
-| `release` (orchestrator) | ✅ | ⬜ | | | Built (`release/internal/pipeline` + `forge`) — see the orchestrator section; adds forge releases + 4-ecosystem reach. | Interactive step-chooser TUI; `packages.versionRegex`. |
+| `release` (orchestrator) | ✅ | ⬜ | | | Built (`release/internal/pipeline` + `forge`) — see the orchestrator section; adds forge releases + 4-ecosystem reach. `packages.versionRegex` shipped as the generic `regex` ecosystem adapter. | Interactive step-chooser TUI. |
 
 ## Changeset format & engine
 
@@ -148,8 +149,11 @@ pipeline (version→commit→publish→push→githubRelease), forge auto/github/
 with `gh` probing + CHANGELOG-section release notes, plain + rich (lipgloss)
 reporters with resume hints, confirm gates (huh on a TTY; `--yes` otherwise),
 `--dry-run/--only/--skip/--from/--to/--config/--yes/--git-only/--ui/--no-ui`,
-JSONC config via `core/jsonc`. ⬜ remaining: the interactive step-chooser TUI
-(passthrough today) and `packages.versionRegex`.
+JSONC config via `core/jsonc`. `packages.versionRegex` is implemented as the
+generic `regex` ecosystem adapter (`core/ecosystem/regex`): declare files +
+named-capture patterns in a `.changeset/config.json` `regex` block and they
+version like any other package (tag-only release). ⬜ remaining: the interactive
+step-chooser TUI (passthrough today).
 
 ## Ecosystem / publishing
 
@@ -157,6 +161,7 @@ JSONC config via `core/jsonc`. ⬜ remaining: the interactive step-chooser TUI
 |---|---|---|---|---|---|---|
 | .NET (.csproj) discover / version-resolve / write | ✅ | ✅ | | | inline vs Directory.Build.props; format-preserving regex write. | |
 | Node / Cargo / Go ecosystems | ➖ (Node via interop only) | ✅ | 🟢 | rigsmith-only — net handled only .NET (Node via interop); rigsmith adds native node, cargo, go (git-tag versioning) adapters. | | |
+| `regex` adapter (arbitrary files, `versionRegex`) | ✅ (`packages.versionRegex`) | ✅ | 🟢 | net's per-package `versionRegex` lives here as a first-class `regex` ecosystem adapter (`core/ecosystem/regex`): a `.changeset/config.json` `regex` block names files + named-capture patterns (`(?<version>…)`, also accepts Go's `(?P<version>…)`); discover/SetVersion go through the normal plugin contract, released tag-only (`name@version`). | | |
 | NuGet publish (pack + push --skip-duplicate, registry-aware) | ✅ | ✅ | | | | |
 | npm / cargo publish | ➖ | ✅ | 🟢 | rigsmith-only — net had no npm/cargo publish. | `npm publish` (idempotent via `npm view`), `cargo publish` (already-detect). | |
 | Git tagging (`name@version`) | ✅ | ✅ | 🟢 | Adds the Go module-path tag form beyond net's `name@version`. | | |
@@ -229,7 +234,7 @@ source tools; **rigsmith** is the Go `cli/` module.
 | Test enumeration / filter shorthand / MTP-VSTest | ✅ | ➖ | ✅ | 🟢 | Enumerates via the platform's own discovery (`dotnet test --list-tests`) instead of the C#'s MetadataLoadContext reflection: VSTest emits fully-qualified names (accurate, framework-agnostic); MTP runners that list only display names (e.g. MSTest) fall back to the source scan. Both shapes are pinned by the `testdata/dotnet` vstest + mtp fixtures. | filter shorthands + MTP/VSTest arg forms + class fuzzy; discovery shows a spinner while dotnet builds + lists. | |
 | Coverage engine (ReportGenerator / vitest) | ✅ | ✅ | ✅ | 🟢 | ReportGenerator is used for **all** ecosystems where it can read the output (.NET Cobertura, node lcov, go via conversion) — the C# wired RG for .NET only; vitest reporters are auto-injected so lcov/html/json-summary exist. Native fallback when RG is absent. Detection + mode configurable (`coverage.reportGenerator`, `coverage.license`). | See the `coverage` verb. | |
 | RID/self-contained publish · dnx/dlx · global.json doctor | ✅ | ➖ | ✅ | | | Done — `publish` (rid/`--self-contained`/`PublishSingleFile`), the `dnx`/`dlx` verbs, and `doctor` + test-runner detection both read `global.json`. | |
-| ni-parity commands · scripts→verbs · Vite+ · port-kill | ➖ | ✅ | ✅ | 🟡 | No special Vite dev-server detection — `dev` just runs the package.json script. | Done — pm-detected `install`/`ci`/`upgrade`, package.json scripts→verbs, `kill --port`. | |
+| ni-parity commands · scripts→verbs · Vite+ · port-kill | ➖ | ✅ | ✅ | | | `dev` runs the package.json script (which launches Vite); Vite is detected (config file / `vite` dep) so a bare `rig kill` also frees the dev-server port (`--port` from the dev script, a `port:` in the vite config, else 5173). Plus pm-detected `install`/`ci`/`upgrade`, scripts→verbs, `kill --port`. | |
 | Shell completion (zsh/bash/pwsh) | ✅ | ✅ | ✅ | | | cobra completion + dynamic project/runnable completion; `setup` installs the sourcing (zsh/bash/fish; pwsh prints only, like the C#). | |
 | `[suggest]` protocol + cross-ecosystem completion | ✅ | ✅ | ✅ | 🟢 | cobra owns `__complete`; dynamic completions cover the same surface, so the bespoke argv protocol isn't needed. | | |
 | `rig cd` shell wrapper | ✅ | ✅ | ✅ | | | `rig setup` installs a `rig()` function that cds on `rig cd` and passes everything else through (zsh/bash/fish; verified live). | |
@@ -257,8 +262,9 @@ source tools; **rigsmith** is the Go `cli/` module.
    for its own self-update. The ergonomics tail otherwise landed — env presets
    as flags, `--no-env`/`--root`, and node `clean` (project `clean` script) are
    now done.
-2. **relrig tail**: interactive plan-chooser TUI, `packages.versionRegex`,
-   NuGet feed-protocol unit tests if a native feed client lands.
+2. **relrig tail**: interactive plan-chooser TUI, NuGet feed-protocol unit tests
+   if a native feed client lands. (`packages.versionRegex` shipped as the
+   generic `regex` ecosystem adapter.)
 
 *(Done since the original audit: status `--since`/`--output`/pre-mode
 reflection, add `--since`, changelog git/github enrichment, the `format:`
