@@ -100,6 +100,16 @@ type Coverage struct {
 	Open      *bool    `json:"open,omitempty"`      // default: open the report
 	Full      *bool    `json:"full,omitempty"`      // default: full multi-file report
 	Min       *float64 `json:"min,omitempty"`       // default line-coverage gate
+
+	// ReportGenerator selects how the rich HTML report is produced:
+	//   "auto"     (default) use ReportGenerator if it's already present
+	//              (PATH global tool or local tool-manifest), else the native
+	//              per-ecosystem fallback;
+	//   "off"      never use ReportGenerator — always the native fallback;
+	//   "download" use ReportGenerator, fetching it on demand (dnx) if missing.
+	ReportGenerator string `json:"reportGenerator,omitempty"`
+	// ReportTypes overrides ReportGenerator's -reporttypes (default "Html").
+	ReportTypes string `json:"reportTypes,omitempty"`
 }
 
 // Kill configures `rig kill`'s default (no-arg, no-port) sweep. When Match is
