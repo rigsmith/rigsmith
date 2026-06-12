@@ -10,7 +10,6 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
-	"github.com/rigsmith/cli/internal/detect"
 	"github.com/rigsmith/core/ecosystem"
 	"github.com/rigsmith/core/plugin"
 	"github.com/spf13/cobra"
@@ -75,7 +74,7 @@ wrapper that captures stdout, e.g. in your shell rc:
 // a fallthrough; the explicit exit paths print to stderr and return a sentinel.
 func runCd(cmd *cobra.Command, query string) error {
 	cwd, _ := os.Getwd()
-	root := detect.Root(cwd)
+	root := resolveRoot(cwd)
 	targets := buildCdTargets(cdContext(cmd), root, excludeFor(root))
 
 	out := cmd.OutOrStdout()
@@ -215,7 +214,7 @@ func cdNameCompletion(cmd *cobra.Command, args []string, _ string) ([]string, co
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	cwd, _ := os.Getwd()
-	root := detect.Root(cwd)
+	root := resolveRoot(cwd)
 	targets := buildCdTargets(cdContext(cmd), root, excludeFor(root))
 	names := make([]string, 0, len(targets))
 	for _, t := range targets {

@@ -57,7 +57,7 @@ func newKillCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			cwd, _ := os.Getwd()
-			root := detect.Root(cwd)
+			root := resolveRoot(cwd)
 			// Read the root's persistent --dry-run rather than redefining it.
 			dry, _ := cmd.Flags().GetBool("dry-run")
 

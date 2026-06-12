@@ -22,7 +22,7 @@ func newInfoCmd() *cobra.Command {
 		Short: "Show what rig discovered for this repo",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			root := detect.Root(cwd)
+			root := resolveRoot(cwd)
 			out := cmd.OutOrStdout()
 
 			cfg, _ := config.LoadMerged(root)

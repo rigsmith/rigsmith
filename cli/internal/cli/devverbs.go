@@ -16,9 +16,10 @@ import (
 // workspace package in dependency order, narrowable with `--filter`.
 func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.Command {
 	var (
-		all    bool
-		filter string
-		watch  bool
+		all     bool
+		filter  string
+		watch   bool
+		presets []presetFlag
 	)
 	cmd := &cobra.Command{
 		Use:               verb + " [project]",
@@ -27,7 +28,10 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 		ValidArgsFunction: workspaceNameCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			root := detect.Root(cwd)
+			root := resolveRoot(cwd)
+			// Activate any selected env presets for this run (applied as the top
+			// env layer in commandEnv).
+			presetEnv = activePresetEnv(root, presets)
 
 			if all {
 				if watch {
@@ -79,6 +83,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 	if watchableVerb(verb) {
 		cmd.Flags().BoolVarP(&watch, "watch", "w", false, "run in the ecosystem's watch mode (re-run on change)")
 	}
+	presets = registerPresetFlags(cmd)
 	return cmd
 }
 
@@ -92,7 +97,7 @@ func workspaceNameCompletion(cmd *cobra.Command, args []string, _ string) ([]str
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	cwd, _ := os.Getwd()
-	root := detect.Root(cwd)
+	root := resolveRoot(cwd)
 	ts := discoverWorkspace(cdContext(cmd), root, excludeFor(root))
 	names := make([]string, 0, len(ts))
 	for _, t := range ts {
@@ -111,7 +116,7 @@ func runnableProjectCompletion(_ *cobra.Command, args []string, _ string) ([]str
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	cwd, _ := os.Getwd()
-	root := detect.Root(cwd)
+	root := resolveRoot(cwd)
 	cfg, _ := config.LoadMerged(root)
 	var names []string
 	for _, p := range detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude) {

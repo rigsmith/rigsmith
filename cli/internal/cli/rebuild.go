@@ -32,6 +32,11 @@ func runRebuild(cmd *cobra.Command, eco, root string, args []string) error {
 	}
 
 	for _, verb := range []string{"clean", "build"} {
+		// Node clean is a project-defined script, not a canonical command; skip it
+		// in rebuild unless the project actually provides one (build alone is fine).
+		if verb == "clean" && eco == detect.Node && !detect.NodeHasScript(root, "clean") {
+			continue
+		}
 		argv, ok := detect.CommandFor(eco, verb, root)
 		if !ok {
 			if verb == "clean" {
