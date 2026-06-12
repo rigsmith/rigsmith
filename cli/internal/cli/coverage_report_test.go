@@ -157,19 +157,43 @@ func TestAugmentNodeCoverageArgs_Vitest(t *testing.T) {
 	writePackageJSON(t, root, `{"devDependencies":{"vitest":"^2.0.0"}}`)
 	base := []string{"pnpm", "run", "coverage"}
 
-	got := augmentNodeCoverageArgs(base, root, true, false, nil)
+	got := augmentNodeCoverageArgs(base, root, "", true, false, nil)
 	eqSlice(t, got, []string{"pnpm", "run", "coverage", "--", "--coverage",
 		"--coverage.reporter=lcov", "--coverage.reporter=html", "--coverage.reporter=json-summary"})
 
-	// Neither open nor min → untouched.
-	eqSlice(t, augmentNodeCoverageArgs(base, root, false, false, nil), base)
+	// Neither open nor min, no name → untouched.
+	eqSlice(t, augmentNodeCoverageArgs(base, root, "", false, false, nil), base)
+
+	// A [name] is forwarded as a positional past `--`, before the reporters.
+	eqSlice(t, augmentNodeCoverageArgs(base, root, "Auth", true, false, nil),
+		[]string{"pnpm", "run", "coverage", "--", "Auth", "--coverage",
+			"--coverage.reporter=lcov", "--coverage.reporter=html", "--coverage.reporter=json-summary"})
 }
 
-func TestAugmentNodeCoverageArgs_NonVitestUntouched(t *testing.T) {
+func TestAugmentNodeCoverageArgs_NonVitest(t *testing.T) {
 	root := t.TempDir()
 	writePackageJSON(t, root, `{"devDependencies":{"jest":"^29.0.0"}}`)
 	base := []string{"npm", "run", "coverage"}
-	eqSlice(t, augmentNodeCoverageArgs(base, root, true, true, nil), base)
+
+	// No name → untouched (rig consumes whatever the runner wrote).
+	eqSlice(t, augmentNodeCoverageArgs(base, root, "", true, true, nil), base)
+
+	// A [name] is still forwarded through `--`, without vitest reporters.
+	eqSlice(t, augmentNodeCoverageArgs(base, root, "Auth", true, true, nil),
+		[]string{"npm", "run", "coverage", "--", "Auth"})
+}
+
+func TestDotnetCoverageFilter(t *testing.T) {
+	// A bare name → FullyQualifiedName substring match.
+	if got := dotnetCoverageFilter("Auth"); got != "FullyQualifiedName~Auth" {
+		t.Fatalf("bare name: %q", got)
+	}
+	// An explicit MSTest operator is passed through unchanged.
+	for _, tok := range []string{"~Auth", "=Acme.AuthTests", "!~Slow", "!=Acme.Flaky"} {
+		if got := dotnetCoverageFilter(tok); got != "FullyQualifiedName"+tok {
+			t.Fatalf("operator %q: %q", tok, got)
+		}
+	}
 }
 
 func TestNodeUsesVitest(t *testing.T) {

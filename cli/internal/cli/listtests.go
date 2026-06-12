@@ -11,6 +11,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"sort"
@@ -104,7 +105,7 @@ func captureWithSpinner(cmd *cobra.Command, dir, label, name string, args ...str
 	}()
 
 	w := cmd.ErrOrStderr()
-	if quiet || !term.IsTerminal(os.Stderr.Fd()) {
+	if quiet || !writerIsTerminal(w) {
 		if !quiet {
 			fmt.Fprintln(w, dimStyle.Render(label+"…"))
 		}
@@ -125,4 +126,14 @@ func captureWithSpinner(cmd *cobra.Command, dir, label, name string, args ...str
 			fmt.Fprintf(w, "\r%s %s", spinnerStyle.Render(frames[i%len(frames)]), dimStyle.Render(label))
 		}
 	}
+}
+
+// writerIsTerminal reports whether the spinner's destination is a real
+// terminal. It checks the actual writer's fd (the default cmd.ErrOrStderr() is
+// os.Stderr, an *os.File) so a redirected Cobra stderr — a pipe or a test
+// buffer — is correctly seen as non-TTY and the spinner stays silent rather
+// than animating escape codes into captured output.
+func writerIsTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && term.IsTerminal(f.Fd())
 }

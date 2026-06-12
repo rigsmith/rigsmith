@@ -423,18 +423,27 @@ func ratio(covered, total int) string {
 	return strconv.FormatFloat(float64(covered)/float64(total), 'f', 4, 64)
 }
 
-// augmentNodeCoverageArgs appends coverage reporters to a vitest `<pm> run
-// coverage` command so the lcov (ReportGenerator input), html (native open),
-// and json-summary (--min) artifacts are produced. Only vitest is augmented —
-// its `--coverage.reporter` flag repeats cleanly; other runners are left as-is
-// and rig consumes whatever they wrote.
-func augmentNodeCoverageArgs(argv []string, root string, open, min bool, cov *config.Coverage) []string {
-	if (!open && !min) || !nodeUsesVitest(root) {
+// augmentNodeCoverageArgs forwards the optional [name] filter and, for vitest,
+// the coverage reporters --min/--open need — everything past a single `--` so
+// the package manager hands them to the test runner (a bare positional after
+// `<pm> run coverage` is dropped without it). The reporters (lcov →
+// ReportGenerator input, html → native open, json-summary → --min) are only
+// added for vitest, whose `--coverage.reporter` flag repeats cleanly; other
+// runners just get the forwarded name and rig consumes whatever they wrote.
+func augmentNodeCoverageArgs(argv []string, root, name string, open, min bool, cov *config.Coverage) []string {
+	vitest := (open || min) && nodeUsesVitest(root)
+	if name == "" && !vitest {
 		return argv
 	}
 	out := append([]string{}, argv...)
-	out = append(out, "--", "--coverage",
-		"--coverage.reporter=lcov", "--coverage.reporter=html", "--coverage.reporter=json-summary")
+	out = append(out, "--") // forward everything past here to the test runner
+	if name != "" {
+		out = append(out, name)
+	}
+	if vitest {
+		out = append(out, "--coverage",
+			"--coverage.reporter=lcov", "--coverage.reporter=html", "--coverage.reporter=json-summary")
+	}
 	return out
 }
 

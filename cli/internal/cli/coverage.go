@@ -76,10 +76,14 @@ func newCoverageCmd() *cobra.Command {
 			if len(args) == 1 {
 				name = strings.TrimSpace(args[0])
 			}
-			// Append the optional [name] only where it's meaningful. For Go the
-			// `go test -cover ./...` form takes no test name here, so we ignore it.
-			if name != "" && eco != detect.Go {
-				argv = append(argv, name)
+			// Narrow to the optional [name] the way each ecosystem actually
+			// accepts it: .NET takes a --filter expression; Node forwards it to
+			// the test runner past `--` (handled in augmentNodeCoverageArgs
+			// below). Go's `go test -cover ./...` form takes no name, so it's
+			// ignored. A bare positional would be misread (a project path for
+			// `dotnet test`, dropped by `npm run` without `--`).
+			if name != "" && eco == detect.DotNet {
+				argv = append(argv, "--filter", dotnetCoverageFilter(name))
 			}
 
 			// Fold the .rig.json `coverage` defaults into the CLI flags: a
@@ -98,9 +102,10 @@ func newCoverageCmd() *cobra.Command {
 			if eco == detect.Go {
 				return runGoCoverage(cmd, root, argv, effMin, open, cov)
 			}
-			// Node: ensure the run emits the reporters --min/--open need.
+			// Node: ensure the run emits the reporters --min/--open need, and
+			// forward [name] to the test runner through `--`.
 			if eco == detect.Node {
-				argv = augmentNodeCoverageArgs(argv, root, open, effMin != nil, cov)
+				argv = augmentNodeCoverageArgs(argv, root, name, open, effMin != nil, cov)
 			}
 
 			if err := runCommand(cmd, root, argv); err != nil {
@@ -134,6 +139,17 @@ func newCoverageCmd() *cobra.Command {
 // so coverage agrees with the dev verbs about "what kind of repo is this".
 func resolveCoverageEcosystem(cwd, root string) (string, error) {
 	return resolvePrimary(cwd, root)
+}
+
+// dotnetCoverageFilter turns the optional `rig coverage <name>` token into a
+// `dotnet test --filter` expression — the same shapes `rig test <name>`
+// produces: an explicit MSTest operator (~ = !~ !=) is passed through, anything
+// else is a FullyQualifiedName substring match. Pure.
+func dotnetCoverageFilter(name string) string {
+	if f := testShorthandFilter(name); f != "" {
+		return f
+	}
+	return "FullyQualifiedName~" + name
 }
 
 // gateMinimum reads the produced coverage for node/.NET and fails when line
@@ -232,10 +248,11 @@ func parseGoCoverage(output string) (float64, bool) {
 	return best, true
 }
 
-// runGoCoverage runs `go test -cover …` end-to-end: it captures stdout so the
-// --min percent can be parsed while still streaming output, and when --open is
-// set it adds a -coverprofile so a report can be produced (ReportGenerator via
-// a Cobertura conversion when available, else `go tool cover -html`).
+// runGoCoverage runs `go test -cover …` end-to-end: stderr streams live while
+// stdout is captured (then echoed once the run completes) so the --min percent
+// can be parsed from it, and when --open is set it adds a -coverprofile so a
+// report can be produced (ReportGenerator via a Cobertura conversion when
+// available, else `go tool cover -html`).
 func runGoCoverage(cmd *cobra.Command, root string, argv []string, min *float64, open bool, cov *config.Coverage) error {
 	profile := ""
 	if open {
