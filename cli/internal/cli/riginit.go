@@ -29,8 +29,8 @@ const defaultRigJSON = `{
 // persists `defaultProject` in the repo's .rig.json via the comment-preserving
 // config writer, returning the config path written. It writes nothing when the
 // query matches no runnable project (error) or several (ambiguous — the caller
-// decides). Port of the .NET rig's DefaultVerb set path; the interactive
-// `rig default` verb itself is not ported yet.
+// decides). Port of the .NET rig's DefaultVerb set path; the full verb
+// (interactive picker, current-value display) lives in defaultverb.go.
 func setDefaultProject(root string, cfg config.Config, query string) (string, error) {
 	projects := detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude)
 	res := resolveRunProject(projects, query, "")

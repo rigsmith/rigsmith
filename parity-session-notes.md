@@ -13,20 +13,21 @@ Verify the Go port (`rigsmith`) reproduces, byte-for-byte, the behavior of the t
 **shared, language-neutral golden corpus** that multiple implementations assert
 against, instead of hand-comparing test suites.
 
-## What exists now (all in the working tree; nothing committed)
+## What exists now
 
-The whole `rigsmith` repo is still uncommitted (`git status` = all untracked) — by
-prior decision. Do **not** commit without explicit approval.
+(The repo is now committed — initial import 2026-06-12, then one commit per
+parity phase; see `git log`.)
 
 ### The corpus — `core/testdata/parity/`
-- `scenarios.json` — **21** language-neutral scenarios (packages, changesets,
+- `scenarios.json` — **22** language-neutral scenarios (packages, changesets,
   `expectedVersions`, optional `expectedRanges`, optional `fixed`/`linked`/
   `ignore` config, optional `knownDivergence` marker). 12 original + 8 added
   2026-06-12: 3 threshold scenarios (`in-range-rewrite-at-threshold`,
   `in-range-below-threshold`, `out-of-range-below-threshold`), `fixed-group`,
   `fixed-group-highest`, `linked-group`, `linked-group-partial`,
-  `ignored-dependent`; + `transitive-divergence` (same day, second session —
-  the one deliberate Node mismatch, see Known divergence below).
+  `ignored-dependent`; + `transitive-divergence` and
+  `fixed-group-dependent-cascade` (same day, second session — the deliberate
+  Node mismatches, see Known divergence below).
 - `golden/<scenario>/<pkg>/CHANGELOG.md` — frozen Node `@changesets` output
   (config `format:false`, default changelog generator).
 - `prerelease/step{1,2,3}/pkg-a/CHANGELOG.md` — goldens for the prerelease flow.
@@ -245,6 +246,20 @@ runsettings + rebuild bin/obj scoping wired into runRebuild. ~100 new tests;
 cli module now at 160. sln/slnx now count as a .NET ecosystem signal.
 Remaining N/A or gaps: Windows CIM kill path, real-assembly test enumeration,
 interactive `rig default` verb, MenuInput async case.)*
+
+*(2026-06-12, third session cont.: **rig ergonomics tail DONE** (~58 tests) —
+global `~/.rig.json` wired everywhere (`$RIG_GLOBAL_CONFIG` seam, self-merge
+guard) · `rig default` (print/picker/persist) · `rig setup` (idempotent shell
+integration for zsh/bash/fish: the `rig cd` wrapper + completion sourcing —
+NOTE: deliberate divergence, the C# setup is a config walkthrough) · dynamic
+project completion on run/test/build/kill/publish/default · per-verb
+`--watch`/`-w` on run/build/test · `rig test <Class>` fuzzy matching with the
+C# filter shapes (class names via source scan, no CLR) · menu project picker +
+focus scoping (verbs run scoped) · Windows CIM kill (command-line matching via
+PowerShell, C# parser tests ported) · `rig self-update` (releases/latest vs
+the ldflags-stamped version — goreleaser now stamps it — install.sh handoff,
+graceful on dev builds). Remaining rig leftovers: C#-style config walkthrough,
+real-assembly test enumeration, relrig version seam.)*
 
 1. **Snapshot/prerelease e2e leftovers** — `snapshot.useCalculatedVersion` e2e
    (probe Node first) and a two-package prerelease flow golden (pre-mode dep

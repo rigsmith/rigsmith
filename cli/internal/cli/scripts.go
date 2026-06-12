@@ -23,7 +23,7 @@ var isBuiltinVerb = map[string]bool{
 	"uninstall": true, "outdated": true, "upgrade": true, "clean": true,
 	"global": true, "dlx": true, "coverage": true, "kill": true, "doctor": true,
 	"info": true, "ui": true, "cd": true, "init": true, "watch": true,
-	"publish": true,
+	"publish": true, "default": true, "setup": true, "completion": true,
 }
 
 // customCmds turns each .rig.json "commands" entry into a rig subcommand.

@@ -17,13 +17,16 @@ import (
 )
 
 // tempRepo creates an isolated repo root (a .git marker pins detect.Root so
-// the walk never escapes the temp dir) and chdirs into it.
+// the walk never escapes the temp dir) and chdirs into it. The user-wide
+// config path is pinned inside the temp dir too, so the merged loaders never
+// read the developer's real ~/.rig.json.
 func tempRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("RIG_GLOBAL_CONFIG", filepath.Join(dir, "global-rig.json"))
 	t.Chdir(dir)
 	return dir
 }

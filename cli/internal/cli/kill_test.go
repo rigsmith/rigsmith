@@ -61,6 +61,74 @@ func TestParseNetstatPids(t *testing.T) {
 	}
 }
 
+// ---- Windows CIM command-line matching (ported from the .NET rig's
+// VerbLogicTests: Kill_parses_tab_delimited_pid_and_command_line /
+// Kill_matches_driver_and_apphost_but_not_self_or_unrelated). ----
+
+func TestParseProcessList_TabDelimitedPidAndCommandLine(t *testing.T) {
+	// PID<tab>CommandLine, CRLF endings, a command-line-less system process,
+	// and a blank line — exactly the shape the CIM query emits.
+	output := "1001\tC:\\dotnet.exe run --project C:\\src\\App\\App.csproj\r\n" +
+		"1002\tC:\\src\\App\\bin\\Debug\\net8.0\\App.exe\r\n" +
+		"4\t\r\n" +
+		"\r\n"
+	procs := parseProcessList(output)
+
+	if len(procs) != 3 {
+		t.Fatalf("len = %d, want 3 (%v)", len(procs), procs)
+	}
+	if procs[0] != (processEntry{1001, `C:\dotnet.exe run --project C:\src\App\App.csproj`}) {
+		t.Fatalf("procs[0] = %+v", procs[0])
+	}
+	if procs[2] != (processEntry{4, ""}) { // system process, empty command line
+		t.Fatalf("procs[2] = %+v", procs[2])
+	}
+}
+
+func TestParseProcessList_SkipsUnparseableLines(t *testing.T) {
+	output := "garbage\nWARNING: something\t/usr/bin/x\n  42 \t/bin/app\n"
+	procs := parseProcessList(output)
+	if len(procs) != 1 || procs[0] != (processEntry{42, "/bin/app"}) {
+		t.Fatalf("procs = %+v, want only (42, /bin/app)", procs)
+	}
+}
+
+func TestMatchProcesses_DriverAndApphostButNotSelfOrUnrelated(t *testing.T) {
+	procs := []processEntry{
+		{1001, `C:\dotnet.exe run --project C:\src\App\App.csproj`}, // the run/watch driver
+		{1002, `C:\src\App\bin\Debug\net8.0\App.exe`},               // the apphost
+		{1003, `C:\dotnet.exe run --project C:\src\Other\Other.csproj`},
+		{4, ""},               // system process
+		{777, "rig kill App"}, // ourselves
+	}
+
+	matched := matchProcesses(procs, "App", 777)
+	var pids []int
+	for _, p := range matched {
+		pids = append(pids, p.Pid)
+	}
+	if !reflect.DeepEqual(pids, []int{1001, 1002}) { // driver + apphost; not Other, system, or self
+		t.Fatalf("matched PIDs = %v, want [1001 1002]", pids)
+	}
+}
+
+func TestMatchProcesses_IsCaseInsensitive(t *testing.T) {
+	procs := []processEntry{{10, `C:\src\APP\app.exe`}}
+	if got := matchProcesses(procs, "app", 1); len(got) != 1 {
+		t.Fatalf("case-insensitive match failed: %v", got)
+	}
+	if got := matchProcesses(procs, "missing", 1); len(got) != 0 {
+		t.Fatalf("unexpected match: %v", got)
+	}
+}
+
+func TestEncodePowerShell_IsBase64OverUTF16LE(t *testing.T) {
+	// "ab" → UTF-16LE 61 00 62 00 → base64 "YQBiAA==".
+	if got := encodePowerShell("ab"); got != "YQBiAA==" {
+		t.Fatalf("encodePowerShell(ab) = %q, want YQBiAA==", got)
+	}
+}
+
 func TestMatchProjectNames(t *testing.T) {
 	names := []string{"Buoy.Web.Api", "Buoy.Web.Worker", "Buoy.Core"}
 	tests := []struct {

@@ -25,7 +25,7 @@ func newInfoCmd() *cobra.Command {
 			root := detect.Root(cwd)
 			out := cmd.OutOrStdout()
 
-			cfg, _ := config.Load(root)
+			cfg, _ := config.LoadMerged(root)
 
 			fmt.Fprintln(out, headerStyle.Render("Repo"))
 			fmt.Fprintf(out, "  root:    %s\n", root)

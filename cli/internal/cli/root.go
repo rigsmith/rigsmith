@@ -39,11 +39,12 @@ func Execute(ctx context.Context) error {
 		Long:          "rig wraps the everyday dev loop — run, build, test, format, lint, typecheck —\nwith project discovery, so the same command works in any ecosystem.",
 		SilenceUsage:  true,
 		SilenceErrors: false,
-		// Fold .rig.json's quiet into the flag before any verb runs, so the
-		// config sets the default and an explicit --quiet always wins.
+		// Fold .rig.json's quiet (global ~/.rig.json layered under the repo's)
+		// into the flag before any verb runs, so the config sets the default
+		// and an explicit --quiet always wins.
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			if cfg, err := config.Load(detect.Root(cwd)); err == nil && cfg.IsQuiet() {
+			if cfg, err := config.LoadMerged(detect.Root(cwd)); err == nil && cfg.IsQuiet() {
 				quiet = true
 			}
 			return nil
@@ -76,14 +77,16 @@ func Execute(ctx context.Context) error {
 		newRigInitCmd(),
 		newInfoCmd(),
 		newUICmd(),
+		newSelfUpdateCmd(),
 	)
 	root.AddCommand(extraCmds()...)
 
 	cwd, _ := os.Getwd()
 	repoRoot := detect.Root(cwd)
-	// Surface per-repo custom commands from the nearest .rig.json, plus (for Node)
-	// every package.json script that isn't already a built-in verb.
-	if cfg, err := config.Load(repoRoot); err == nil {
+	// Surface custom commands from the nearest .rig.json (with the user-wide
+	// ~/.rig.json layered underneath, so personal verbs work everywhere), plus
+	// (for Node) every package.json script that isn't already a built-in verb.
+	if cfg, err := config.LoadMerged(repoRoot); err == nil {
 		root.AddCommand(customCmds(cfg)...)
 	}
 	root.AddCommand(scriptCmds(repoRoot)...)
@@ -109,7 +112,13 @@ func Execute(ctx context.Context) error {
 	}
 	root.SetArgs(append(head, tail...))
 
-	return fang.Execute(ctx, root)
+	// Surface the ldflags-stamped build version in `rig --version` (fang owns
+	// the flag); a source build keeps fang's "built from source" default.
+	var opts []fang.Option
+	if version != "dev" {
+		opts = append(opts, fang.WithVersion(version))
+	}
+	return fang.Execute(ctx, root, opts...)
 }
 
 // resolvePrefix rewrites an unambiguous *prefix* of a verb name to the full
@@ -152,7 +161,7 @@ func resolvePrefix(args []string, verbs []string) []string {
 // ecosystems coexist and no .rig.json pins one) or when nothing was found, so
 // the dev verbs and `ui` can stop with a clear message instead of guessing.
 func resolvePrimary(cwd, root string) (eco string, err error) {
-	if cfg, cerr := config.Load(root); cerr == nil && cfg.Ecosystem != "" {
+	if cfg, cerr := config.LoadMerged(root); cerr == nil && cfg.Ecosystem != "" {
 		return cfg.Ecosystem, nil
 	}
 	id, candidates := detect.NearestEcosystem(cwd)
@@ -205,11 +214,12 @@ func runCommand(cmd *cobra.Command, dir string, argv []string) error {
 }
 
 // commandEnv builds the spawned-process environment with the rig layering
-// (low to high): .env/.env.local files, ambient process env, `.rig.json` env.
+// (low to high): .env/.env.local files, ambient process env, `.rig.json` env
+// (the user-wide ~/.rig.json merged under the repo's, repo winning per key).
 // Returns nil (inherit) when no file or config env exists.
 func commandEnv(root string) []string {
 	fileEnv, _ := envstack.Load(root)
-	cfg, _ := config.Load(root)
+	cfg, _ := config.LoadMerged(root)
 	if len(fileEnv) == 0 && len(cfg.Env) == 0 {
 		return nil
 	}

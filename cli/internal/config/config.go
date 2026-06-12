@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -154,9 +155,15 @@ func Load(root string) (Config, error) {
 	return loadFile(filepath.Join(root, FileName))
 }
 
-// GlobalPath returns the user-wide config location (~/.rig.json), "" when the
-// home directory can't be resolved.
+// GlobalPath returns the user-wide config location: $RIG_GLOBAL_CONFIG when
+// set (the injection seam tests use, mirroring the .NET rig's
+// RigSession.GlobalConfigPath), otherwise ~/.rig.json, "" when the home
+// directory can't be resolved. Existence isn't checked here — a missing file
+// loads as empty.
 func GlobalPath() string {
+	if custom := os.Getenv("RIG_GLOBAL_CONFIG"); custom != "" {
+		return custom
+	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return ""
@@ -165,21 +172,37 @@ func GlobalPath() string {
 }
 
 // LoadMerged loads the user-wide ~/.rig.json and the repo's .rig.json at root,
-// layering the repo over the global (repo wins per key; see Merge).
+// layering the repo over the global (repo wins per key; see Merge). The merge
+// is skipped when the global file IS the repo's file (running rig inside the
+// home dir that anchors the repo), matching the .NET rig's RigSession.Load.
 func LoadMerged(root string) (Config, error) {
-	var global Config
-	if gp := GlobalPath(); gp != "" {
-		g, err := loadFile(gp)
-		if err != nil {
-			return Config{}, err
-		}
-		global = g
-	}
 	repo, err := Load(root)
 	if err != nil {
 		return Config{}, err
 	}
+	gp := GlobalPath()
+	if gp == "" || samePath(gp, filepath.Join(root, FileName)) {
+		return repo, nil
+	}
+	global, err := loadFile(gp)
+	if err != nil {
+		return Config{}, err
+	}
 	return Merge(global, repo), nil
+}
+
+// samePath reports whether a and b name the same file, comparing absolute
+// paths (case-insensitively on the case-insensitive-filesystem platforms).
+func samePath(a, b string) bool {
+	aa, errA := filepath.Abs(a)
+	bb, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.EqualFold(aa, bb)
+	}
+	return aa == bb
 }
 
 func loadFile(path string) (Config, error) {

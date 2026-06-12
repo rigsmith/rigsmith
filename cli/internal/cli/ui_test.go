@@ -7,6 +7,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -77,6 +78,105 @@ func TestMenu_EscapePopsASubmenuBeforeCancelling(t *testing.T) {
 	// …and a second esc cancels for real.
 	if _, cmd = model.(menuModel).Update(key(tea.KeyEscape)); !isQuit(cmd) {
 		t.Fatal("esc at the top level must quit")
+	}
+}
+
+// scriptedFocusMenu is a menu with a project picker entry and two verbs,
+// mirroring newMenu's layout in a multi-project repo.
+func scriptedFocusMenu() menuModel {
+	return menuModel{
+		projects: []string{"App", "Worker"},
+		stack: []frame{{items: []menuItem{
+			{pickFocus: true},
+			{label: "build", verb: "build"},
+			{label: "test", verb: "test"},
+		}}},
+	}
+}
+
+func TestMenu_FocusPickerListsWholeRepoThenProjects(t *testing.T) {
+	model, cmd := scriptedFocusMenu().Update(key(tea.KeyEnter)) // open the picker
+	if cmd != nil {
+		t.Fatal("opening the picker must not produce a command")
+	}
+	m := model.(menuModel)
+	if depth := len(m.stack); depth != 2 {
+		t.Fatalf("stack depth = %d, want 2 (picker pushed)", depth)
+	}
+	items := m.stack[1].items
+	if len(items) != 3 || !items[0].clearFocus || items[1].focusName != "App" || items[2].focusName != "Worker" {
+		t.Fatalf("picker items = %+v, want (whole repo), App, Worker", items)
+	}
+}
+
+func TestMenu_PickingAProjectSetsTheFocusAndReturns(t *testing.T) {
+	var model tea.Model = scriptedFocusMenu()
+	for _, k := range []tea.KeyType{tea.KeyEnter, tea.KeyDown, tea.KeyEnter} { // open, down to App, pick
+		model, _ = model.(menuModel).Update(key(k))
+	}
+	m := model.(menuModel)
+	if m.focus != "App" {
+		t.Fatalf("focus = %q, want App", m.focus)
+	}
+	if depth := len(m.stack); depth != 1 {
+		t.Fatalf("stack depth = %d, want 1 (picker popped)", depth)
+	}
+}
+
+func TestMenu_FocusedVerbSelectionCarriesTheFocus(t *testing.T) {
+	var model tea.Model = scriptedFocusMenu()
+	// Focus Worker, then run "test" (cursor stays on the picker row after the
+	// pop, so: down ×2 to test).
+	for _, k := range []tea.KeyType{tea.KeyEnter, tea.KeyDown, tea.KeyDown, tea.KeyEnter, tea.KeyDown, tea.KeyDown, tea.KeyEnter} {
+		model, _ = model.(menuModel).Update(key(k))
+	}
+	m := model.(menuModel)
+	if m.chosen != "test" || m.focus != "Worker" {
+		t.Fatalf("chosen = %q focus = %q, want test/Worker", m.chosen, m.focus)
+	}
+}
+
+func TestMenu_WholeRepoEntryClearsTheFocus(t *testing.T) {
+	m := scriptedFocusMenu()
+	m.focus = "App"
+	var model tea.Model = m
+	for _, k := range []tea.KeyType{tea.KeyEnter, tea.KeyEnter} { // open picker, pick "(whole repo)"
+		model, _ = model.(menuModel).Update(key(k))
+	}
+	got := model.(menuModel)
+	if got.focus != "" {
+		t.Fatalf("focus = %q, want cleared", got.focus)
+	}
+	if depth := len(got.stack); depth != 1 {
+		t.Fatalf("stack depth = %d, want 1", depth)
+	}
+}
+
+func TestMenu_ViewShowsTheFocusInTitleAndPickerRow(t *testing.T) {
+	m := scriptedFocusMenu()
+	if view := m.View(); !strings.Contains(view, "project: (all)") {
+		t.Fatalf("unfocused view must show the picker row as project: (all)\n%s", view)
+	}
+	m.focus = "App"
+	view := m.View()
+	if !strings.Contains(view, "project: App") {
+		t.Fatalf("focused view must show project: App on the picker row\n%s", view)
+	}
+	if !strings.Contains(view, "rig") || !strings.Contains(view, "App") {
+		t.Fatalf("focused view must carry the focus in the header\n%s", view)
+	}
+}
+
+func TestMenu_EscapePopsTheFocusPickerWithoutFocusing(t *testing.T) {
+	var model tea.Model = scriptedFocusMenu()
+	model, _ = model.(menuModel).Update(key(tea.KeyEnter)) // open picker
+	model, cmd := model.(menuModel).Update(key(tea.KeyEscape))
+	if isQuit(cmd) {
+		t.Fatal("esc in the picker must go back, not quit")
+	}
+	m := model.(menuModel)
+	if m.focus != "" || len(m.stack) != 1 {
+		t.Fatalf("focus = %q depth = %d, want unfocused at the top level", m.focus, len(m.stack))
 	}
 }
 

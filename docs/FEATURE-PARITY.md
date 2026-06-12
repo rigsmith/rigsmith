@@ -35,9 +35,10 @@ Audit of the Go rigsmith implementation against its two source projects
   menu + **JSONC `.rig.json`** (merge, namespaces, rich per-OS commands,
   did-you-mean warnings, comment-preserving writes) + **`.env`/`.env.local`
   layering** + C#-precedence root resolution + full .NET project discovery
-  (slnx/sln). Remaining tail: `[suggest]` completion, menu project-pickers,
-  `setup`/`self-update`, the interactive `default` verb, test-class fuzzy,
-  per-verb `--watch` flag, Windows CIM kill. One architectural win:
+  (slnx/sln). The ergonomics tail landed
+  2026-06-12: `default`/`setup` (shell integration)/`self-update`, dynamic
+  completion + the `cd` shell wrapper, menu focus scoping, per-verb `--watch`,
+  test-class fuzzy, Windows CIM kill, global `~/.rig.json`. One architectural win:
   **no cross-tool delegation needed** — the single Go binary handles every
   ecosystem natively (the .NET/Node rig split exists only because neither
   could).
@@ -162,13 +163,13 @@ tools; **rigsmith** is the Go `cli/` module.
 | `doctor` | ✅ | ✅ | ✅ | Per-ecosystem env checklist; non-zero exit on errors. |
 | `cd` | ✅ | ✅ | ✅ | Tiered fuzzy match (exact/prefix/substring/subsequence, name>path, short-name); prints dir to stdout (needs shell wrapper); picker on TTY; name completion. |
 | `publish` (rig's dotnet publish) | ✅ | ➖ | ✅ | rid/output/configuration/self-contained/single-file: flag > `.rig.json publish.*` > default; `{rid}` output templating. |
-| `default` / `setup` / `self-update` | ✅ | ✅ | 🟡 | default-project SETTER done (validate + persist via ConfigWriter); the interactive `default` verb, `setup`, `self-update` ⬜. |
+| `default` / `setup` / `self-update` | ✅ | ✅ | ✅ | `default`: print/picker/persist (comment-preserving). `self-update`: GitHub-releases check vs the ldflags-stamped version, installs via install.sh, graceful on dev builds. **`setup` diverges**: the C# verb is an interactive config walkthrough (covered in Go by `init`+`default`); Go's `setup` installs the shell integration (cd wrapper + completion) into zsh/bash/fish rc files, idempotently. |
 | `init` (.rig.json scaffold) | ✅ | ✅ | ✅ | Writes a `.rig.json` with all keys; refuses to overwrite. |
-| `completion` | ✅ | ✅ | 🟡 | cobra completion + dynamic name completion (cd); not the self-contained `[suggest]` protocol. |
+| `completion` | ✅ | ✅ | ✅ | cobra completion + dynamic project/runnable completion (cd/run/test/build/kill/publish/default); installed by `rig setup`. The bespoke `[suggest]` protocol is ➖ (cobra owns the shell protocol). |
 | scripts → verbs (auto) | ➖ | ✅ | ✅ | Node: every package.json script (not shadowing a built-in) becomes `rig <script>` → `<pm> run <script>` (flags after `--`). |
 | custom `commands` | ✅ | ⬜ (gap) | 🟢 | string / argv / object forms with per-OS (`macos`/`windows`/`linux`), `env`, `cwd`, `description`; missing-OS-spec errors cleanly. |
-| `watch` modifier | ✅ | ✅ | 🟡 | `rig watch <verb>` / `rig w r` / trailing `--watch` via the pre-parse pipeline; per-verb `--watch` flag at any position ⬜. |
-| bare `rig` menu / `ui` | ✅ | ✅ | 🟡 | grouped bubbletea menu (Dependencies ▸ / Maintenance ▸) + breadcrumb/back-nav; project-picker / focus-scoping ⬜. |
+| `watch` modifier | ✅ | ✅ | ✅ | `rig watch <verb>` / `rig w r` / and a real position-independent `--watch`/`-w` on run/build/test (the C# verb set). |
+| bare `rig` menu / `ui` | ✅ | ✅ | ✅ | grouped bubbletea menu + breadcrumb/back-nav + **project picker / focus scoping** (`rig · <project>` crumb; dev verbs + kill run scoped). |
 | `info` | ✅ | ✅ | ✅ | root, primary ecosystem, `.rig.json`, command mappings, packages (exclude-filtered). |
 
 ## Config (`.rig.json`)
@@ -183,7 +184,7 @@ tools; **rigsmith** is the Go `cli/` module.
 | `commands` | ✅ | ⬜ | ✅ | |
 | `ecosystem` (pin primary) | ➖ | ➖ | 🟢 | new — resolves polyglot ambiguity. |
 | `envPresets` / `aliases` / `kill` / `coverage.*` / `dotnet.*` | ✅ | partial | ✅ | full schema parsed (JSONC); `dotnet.*` namespace folds over legacy top-level; `coverage.*` feeds the gate/HTML; unknown keys get did-you-mean warnings. |
-| global `~/.rig.json` | ✅ | ✅ | 🟡 | `LoadMerged` (repo-over-global per the C# rules) implemented; not yet wired into Execute. |
+| global `~/.rig.json` | ✅ | ✅ | ✅ | wired everywhere (commandEnv, custom commands, info, ui, kill, coverage, publish); `$RIG_GLOBAL_CONFIG` test seam; self-merge guard when cwd is $HOME. |
 | comment-preserving writes | ✅ | ✅ | ✅ | `core/jsonc` editor + ConfigWriter (`$schema` on fresh files, splice on existing, refuse-clobber). |
 
 ## Discovery & resolution
@@ -195,20 +196,20 @@ tools; **rigsmith** is the Go `cli/` module.
 | Nearest-manifest primary + ambiguity stop | ➖ | ➖ | 🟢 | new — polyglot-aware primary selection. |
 | Workspace detection (pnpm/yarn/npm/bun) | ➖ | ✅ | ✅ | node adapter resolves workspaces; rig detects the pm (pnpm/yarn/bun) for commands. |
 | Monorepo graph / `--all` (topo) / `--filter` | ❌ | ✅ | ✅ | `rig build --all` runs across the workspace in dependency order (topo sort, cycle-tolerant); `--filter <glob>` narrows; works across polyglot packages. |
-| Fuzzy match / short-name / verb-prefix / watch-modifier | ✅ | ✅ | ✅ | `rig build <project>` scopes to a package (exact/short-name/substring); `rig cove`→coverage (prefix); `rig watch <verb>`/`rig w r` per ecosystem. (Test-class fuzzy ⬜.) |
-| Capabilities probing (hide verbs) | ✅ | ✅ | 🟡 | the menu hides verbs the ecosystem doesn't map; cobra still lists all subcommands. |
+| Fuzzy match / short-name / verb-prefix / watch-modifier | ✅ | ✅ | ✅ | `rig build <project>` scopes to a package (exact/short-name/substring); `rig cove`→coverage (prefix); `rig watch <verb>`/`rig w r` per ecosystem. Test-class fuzzy: `rig test MyClass` tiered-matches classes scanned from test sources (no CLR — see Test enumeration row) and builds the C# `--filter` shapes. |
+| Capabilities probing (hide verbs) | ✅ | ✅ | ✅ | menu gating + dynamic project-name completion on run/test/build/kill/publish/default/cd (cobra still lists subcommands in help — cosmetic). |
 
 ## Ecosystem-specific & shell integration
 
 | Feature | .NET | Node | rigsmith | Notes |
 |---|---|---|---|---|
-| Test enumeration / filter shorthand / MTP-VSTest | ✅ | ➖ | ⬜ | |
+| Test enumeration / filter shorthand / MTP-VSTest | ✅ | ➖ | 🟡 | filter shorthands + MTP/VSTest arg forms + class fuzzy done; class names come from a source scan ([TestClass]/[Fact]/… markers) instead of the C#'s MetadataLoadContext assembly read. |
 | Coverage engine (ReportGenerator / vitest) | ✅ | ✅ | ⬜ | |
 | RID/self-contained publish · dnx/dlx · global.json doctor | ✅ | ➖ | ⬜ | |
 | ni-parity commands · scripts→verbs · Vite+ · port-kill | ➖ | ✅ | ⬜ | |
-| Shell completion (zsh/bash/pwsh) | ✅ | ✅ | 🟡 | cobra default only. |
-| `[suggest]` protocol + cross-ecosystem completion | ✅ | ✅ | ⬜ | |
-| `rig cd` shell wrapper | ✅ | ✅ | ⬜ | |
+| Shell completion (zsh/bash/pwsh) | ✅ | ✅ | ✅ | cobra completion + dynamic project/runnable completion; `setup` installs the sourcing (zsh/bash/fish; pwsh prints only, like the C#). |
+| `[suggest]` protocol + cross-ecosystem completion | ✅ | ✅ | ➖ | cobra owns the shell-completion protocol (`__complete`); dynamic completions cover the same surface — the bespoke argv protocol has no Go counterpart by design. |
+| `rig cd` shell wrapper | ✅ | ✅ | ✅ | `rig setup` installs a `rig()` function that cds on `rig cd` and passes everything else through (zsh/bash/fish; verified live). |
 | Cross-tool delegation (.NET↔Node) + `rig-net`/`rig-node` | ✅ | ✅ | ➖ | **N/A by design** — one Go binary handles all ecosystems natively; the source split exists only because neither tool could. |
 | `RIG_*` env vars | ✅ | ✅ | ⬜ | (most relate to delegation, which is moot here). |
 
@@ -216,22 +217,22 @@ tools; **rigsmith** is the Go `cli/` module.
 
 | Feature | .NET | Node | rigsmith | Notes |
 |---|---|---|---|---|
-| Interactive menu (groups, pickers, back-nav) | ✅ | ✅ | 🟡 | basic bubbletea menu; no grouped sub-menus / focus scoping yet. |
+| Interactive menu (groups, pickers, back-nav) | ✅ | ✅ | ✅ | groups, project picker, focus scoping, back-nav. |
 | `--dry-run` / `--quiet` / `→` echo | ✅ | ✅ | ✅ | |
 | `.env` / `.env.local` loading + precedence | ✅ | ✅ | ✅ | `cli/internal/envstack`: exact C# quoting; file < ambient < config < command; wired into every spawn path. |
 | env presets as flags | ✅ | ✅ | ⬜ | |
 | custom commands (shell/argv/OS/env/cwd) | ✅ | ⬜ | 🟡 | rigsmith runs the shell-string form; no per-OS/env/cwd/argv variants. |
 | `--no-env` / `--root` | ✅ | ✅ | ⬜ | |
-| self-update | ✅ | ✅ | ⬜ | (GoReleaser/install.sh scaffolded for distribution). |
+| self-update | ✅ | ✅ | ✅ | `rig self-update` (+ menu entry): releases/latest vs stamped version, install.sh handoff; goreleaser now stamps the version ldflag. |
 
 ---
 
 ## Suggested next steps (by leverage)
 
-1. **rig ergonomics tail** (Phase 6 core is done): `[suggest]` completion, menu
-   project-pickers/focus-scoping, `setup`/`self-update`, the interactive
-   `default` verb, test-class fuzzy match, per-verb `--watch` flag, `cd` shell
-   wrapper, global `~/.rig.json` wiring (LoadMerged exists), Windows CIM kill.
+1. **rig leftovers** (the ergonomics tail landed 2026-06-12): the C#-style
+   interactive config walkthrough if wanted (Go's `setup` became the shell
+   installer instead), real-assembly test enumeration (needs a .NET metadata
+   reader), relrig version seam for its own self-update.
 2. **changerig tail**: `--independent` (+ `dotnet.versionStrategy`), `commit`
    config key, `add --open`, `shell-init`.
 3. **relrig tail**: interactive plan-chooser TUI, `packages.versionRegex`,

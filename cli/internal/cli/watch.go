@@ -19,35 +19,60 @@ func newWatchCmd() *cobra.Command {
 		Short:   "Run a dev verb in watch mode",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			verb := normalizeWatchVerb(args[0])
-			cwd, _ := os.Getwd()
-			root := detect.Root(cwd)
-
-			// Optional project selector.
-			dir, eco := root, ""
-			if len(args) > 1 {
-				ts := discoverWorkspace(cdContext(cmd), root)
-				if t, ok := matchTarget(ts, args[1]); ok {
-					dir, eco = t.Dir, t.Eco
-				} else {
-					return fmt.Errorf("no project matching %q", args[1])
-				}
-			}
-			if eco == "" {
-				resolved, err := resolvePrimary(cwd, root)
-				if err != nil {
-					return err
-				}
-				eco = resolved
-			}
-
-			argv, ok := watchCommandFor(eco, verb, root)
-			if !ok {
-				return fmt.Errorf("watch %q is not supported for ecosystem %q", verb, eco)
-			}
-			return runCommand(cmd, dir, argv)
+			return runWatchVerb(cmd, normalizeWatchVerb(args[0]), args[1:])
 		},
 	}
+}
+
+// runWatchVerb runs verb in the ecosystem's watch mode, optionally scoped to a
+// project named by rest[0]; any further tokens are forwarded to the watch argv.
+// Shared by the `watch` modifier subcommand and the per-verb --watch flag (the
+// .NET rig's `run --watch` / `test --watch` at any flag position).
+func runWatchVerb(cmd *cobra.Command, verb string, rest []string) error {
+	cwd, _ := os.Getwd()
+	root := detect.Root(cwd)
+
+	// Optional project selector: a first token naming a package scopes the
+	// watch to that package's directory.
+	dir, eco, forwarded, matched := root, "", rest, false
+	if len(rest) > 0 {
+		ts := discoverWorkspace(cdContext(cmd), root)
+		if t, ok := matchTarget(ts, rest[0]); ok {
+			dir, eco, forwarded, matched = t.Dir, t.Eco, rest[1:], true
+		}
+	}
+	if eco == "" {
+		resolved, err := resolvePrimary(cwd, root)
+		if err != nil {
+			return err
+		}
+		eco = resolved
+	}
+
+	if len(rest) > 0 && !matched {
+		// `rig test <class> --watch` in a .NET repo: the unmatched token is a
+		// test-class query / filter shorthand, run under `dotnet watch test`.
+		if verb == "test" && eco == detect.DotNet {
+			return runDotnetTest(cmd, root, rest, true)
+		}
+		return fmt.Errorf("no project matching %q", rest[0])
+	}
+
+	argv, ok := watchCommandFor(eco, verb, root)
+	if !ok {
+		return fmt.Errorf("watch %q is not supported for ecosystem %q", verb, eco)
+	}
+	return runCommand(cmd, dir, append(argv, forwarded...))
+}
+
+// watchableVerb reports whether a dev verb carries a --watch flag, mirroring
+// the .NET rig (RunCommand/BuildCommand/TestCommand declare `--watch -w`).
+func watchableVerb(verb string) bool {
+	switch verb {
+	case "run", "build", "test":
+		return true
+	}
+	return false
 }
 
 // expandWatch turns a leading `watch`/`w` modifier into a `--watch` flag on the
