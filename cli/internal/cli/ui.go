@@ -32,37 +32,62 @@ func newUICmd() *cobra.Command {
 			if final.chosen == "" {
 				return nil
 			}
-			return dispatch(cmd, final.chosen)
+			return dispatch(cmd, final.chosen, final.focus)
 		},
 	}
 }
 
+// devLoopVerbs are the verbs that accept a [project] selector (devVerbCmd), so
+// a menu focus can scope them to one package.
+var devLoopVerbs = map[string]bool{
+	"build": true, "test": true, "run": true, "format": true,
+	"lint": true, "typecheck": true, "clean": true, "rebuild": true,
+}
+
 // dispatch runs the verb chosen in the menu, routing to the standalone commands
-// where one exists, otherwise to the generic ecosystem verb.
-func dispatch(cmd *cobra.Command, verb string) error {
+// where one exists, otherwise to the generic ecosystem verb. A non-empty focus
+// (the menu's project picker) scopes project-aware verbs to that package, the
+// .NET rig Menu's project submenu / the Node menu's focus.
+func dispatch(cmd *cobra.Command, verb, focus string) error {
 	var sub *cobra.Command
-	switch verb {
-	case "coverage":
+	var args []string
+	switch {
+	case verb == "coverage":
 		sub = newCoverageCmd()
-	case "doctor":
+	case verb == "doctor":
 		sub = newDoctorCmd()
-	case "kill":
+	case verb == "kill":
 		sub = newKillCmd()
+		if focus != "" {
+			args = []string{focus}
+		}
+	case verb == "self-update":
+		sub = newSelfUpdateCmd()
+	case devLoopVerbs[verb]:
+		sub = devVerbCmd(verb, "", false)
+		if focus != "" {
+			args = []string{focus}
+		}
 	default:
 		sub = verbCmd(verb, "")
 	}
 	sub.SetContext(cmd.Context())
 	sub.SetOut(cmd.OutOrStdout())
 	sub.SetErr(cmd.ErrOrStderr())
-	return sub.RunE(sub, nil)
+	return sub.RunE(sub, args)
 }
 
-// menuItem is either an action (verb set) or a group (children set).
+// menuItem is an action (verb set), a group (children set), or a focus
+// control (pickFocus opens the project picker; focusName/clearFocus set or
+// clear the focus from inside it).
 type menuItem struct {
-	label    string
-	desc     string
-	verb     string
-	children []menuItem
+	label      string
+	desc       string
+	verb       string
+	children   []menuItem
+	pickFocus  bool   // opens the project picker
+	focusName  string // selecting focuses this project
+	clearFocus bool   // selecting returns to the whole repo
 }
 
 type frame struct {
@@ -72,9 +97,11 @@ type frame struct {
 }
 
 type menuModel struct {
-	header string
-	stack  []frame // stack[len-1] is the visible level
-	chosen string
+	header   string
+	stack    []frame // stack[len-1] is the visible level
+	chosen   string
+	focus    string   // the focused project ("" = whole repo); scopes verbs
+	projects []string // picker candidates (shown when more than one exists)
 }
 
 var (
@@ -98,7 +125,7 @@ func newMenu() menuModel {
 	// no test/coverage, no runnable project → no run. Kill/doctor always apply.
 	caps := detect.AllCapabilities
 	if eco == detect.DotNet {
-		cfg, _ := config.Load(root)
+		cfg, _ := config.LoadMerged(root)
 		caps = detect.ProbeCapabilities(root, "", cfg.Exclude)
 	}
 	maps := func(verb string) bool {
@@ -134,16 +161,36 @@ func newMenu() menuModel {
 		menuItem{label: "doctor", desc: "check the environment", verb: "doctor"},
 	)
 
-	top := dev
+	maint = append(maint, menuItem{label: "self-update", desc: "update rig itself", verb: "self-update"})
+
+	// Project focus (the .NET rig Menu's project submenu / the Node menu's
+	// focus): with several projects, a picker entry scopes subsequent verbs.
+	projects := discoveredPackageNames(root)
+	var top []menuItem
+	if len(projects) > 1 {
+		top = append(top, menuItem{pickFocus: true, desc: "scope verbs to one project"})
+	}
+	top = append(top, dev...)
 	if len(deps) > 0 {
 		top = append(top, menuItem{label: "▸ Dependencies", desc: "install / outdated / upgrade …", children: deps})
 	}
 	top = append(top, menuItem{label: "▸ Maintenance", desc: "clean / coverage / kill / doctor", children: maint})
 
 	return menuModel{
-		header: fmt.Sprintf("%s  ·  %s", root, primary),
-		stack:  []frame{{title: "", items: top}},
+		header:   fmt.Sprintf("%s  ·  %s", root, primary),
+		stack:    []frame{{title: "", items: top}},
+		projects: projects,
 	}
+}
+
+// focusPickerItems builds the project-picker frame: "(whole repo)" to clear
+// the focus, then every project.
+func focusPickerItems(projects []string) []menuItem {
+	items := []menuItem{{label: "(whole repo)", desc: "all projects", clearFocus: true}}
+	for _, p := range projects {
+		items = append(items, menuItem{label: p, focusName: p})
+	}
+	return items
 }
 
 // keepMapped filters menu items to those whose verb the ecosystem maps.
@@ -186,7 +233,19 @@ func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case "enter", "right", "l":
 		it := cur.items[cur.cursor]
-		if len(it.children) > 0 {
+		switch {
+		case it.pickFocus:
+			m.stack = append(m.stack, frame{title: "▸ Project", items: focusPickerItems(m.projects)})
+			return m, nil
+		case it.focusName != "":
+			m.focus = it.focusName
+			m.stack = m.stack[:len(m.stack)-1] // back out of the picker
+			return m, nil
+		case it.clearFocus:
+			m.focus = ""
+			m.stack = m.stack[:len(m.stack)-1]
+			return m, nil
+		case len(it.children) > 0:
 			m.stack = append(m.stack, frame{title: it.label, items: it.children})
 			return m, nil
 		}
@@ -196,17 +255,32 @@ func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// itemLabel renders an item's label; the focus-picker entry shows the live
+// focus ("project: <name>", or "(all)" when unfocused).
+func (m menuModel) itemLabel(it menuItem) string {
+	if it.pickFocus {
+		if m.focus != "" {
+			return "▸ project: " + m.focus
+		}
+		return "▸ project: (all)"
+	}
+	return it.label
+}
+
 func (m menuModel) View() string {
 	cur := m.stack[len(m.stack)-1]
 	var b strings.Builder
 	crumb := "rig"
+	if m.focus != "" {
+		crumb += dimStyle.Render(" · ") + menuSelected.Render(m.focus)
+	}
 	if cur.title != "" {
 		crumb += dimStyle.Render(" / ") + strings.TrimPrefix(cur.title, "▸ ")
 	}
 	b.WriteString(menuTitle.Render(crumb) + "  " + dimStyle.Render(m.header) + "\n\n")
 	for i, it := range cur.items {
 		cursor := "  "
-		label := it.label
+		label := m.itemLabel(it)
 		if i == cur.cursor {
 			cursor = menuCursor.Render("▸ ")
 			label = menuSelected.Render(label)

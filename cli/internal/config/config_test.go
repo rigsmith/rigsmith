@@ -397,3 +397,89 @@ func TestCommandObjectResolvesPerOSOverride(t *testing.T) {
 		}
 	}
 }
+
+// ---- GlobalPath / LoadMerged (the wired global+repo view) ----
+
+// RIG_GLOBAL_CONFIG overrides the ~/.rig.json location — the injection seam
+// tests use so they never read the developer's real global config (the .NET
+// rig's tests inject the path the same way).
+func TestGlobalPathHonorsTheEnvOverride(t *testing.T) {
+	custom := filepath.Join(t.TempDir(), "elsewhere.rig.json")
+	t.Setenv("RIG_GLOBAL_CONFIG", custom)
+	if got := GlobalPath(); got != custom {
+		t.Fatalf("GlobalPath() = %q, want %q", got, custom)
+	}
+}
+
+func TestLoadMergedLayersTheGlobalUnderTheRepo(t *testing.T) {
+	global := filepath.Join(t.TempDir(), ".rig.json")
+	if err := os.WriteFile(global, []byte(
+		`{ "quiet": true, "defaultProject": "FromGlobal", "env": { "FROM_GLOBAL": "1", "SHARED": "global" } }`,
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RIG_GLOBAL_CONFIG", global)
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, FileName), []byte(
+		`{ "defaultProject": "FromRepo", "env": { "SHARED": "repo" } }`,
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadMerged(root)
+	if err != nil {
+		t.Fatalf("LoadMerged: %v", err)
+	}
+	if cfg.DefaultProject != "FromRepo" {
+		t.Errorf("DefaultProject = %q, want the repo's FromRepo", cfg.DefaultProject)
+	}
+	if !cfg.IsQuiet() {
+		t.Error("quiet should fall through from the global config")
+	}
+	if cfg.Env["FROM_GLOBAL"] != "1" {
+		t.Errorf("env.FROM_GLOBAL = %q, want the global-only key to survive", cfg.Env["FROM_GLOBAL"])
+	}
+	if cfg.Env["SHARED"] != "repo" {
+		t.Errorf("env.SHARED = %q, want the repo to win per key", cfg.Env["SHARED"])
+	}
+}
+
+func TestLoadMergedWithoutARepoFileIsTheGlobalView(t *testing.T) {
+	global := filepath.Join(t.TempDir(), ".rig.json")
+	if err := os.WriteFile(global, []byte(`{ "quiet": true }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RIG_GLOBAL_CONFIG", global)
+
+	cfg, err := LoadMerged(t.TempDir())
+	if err != nil {
+		t.Fatalf("LoadMerged: %v", err)
+	}
+	if !cfg.IsQuiet() {
+		t.Error("quiet should come from the global config when the repo has none")
+	}
+}
+
+// Running rig in the directory that holds the global config must not merge
+// the file with itself (observable as doubled warnings), mirroring the .NET
+// RigSession.Load skip.
+func TestLoadMergedSkipsTheGlobalWhenItIsTheRepoFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, FileName)
+	if err := os.WriteFile(path, []byte(`{ "quiet": true, "typoKey": 1 }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RIG_GLOBAL_CONFIG", path)
+
+	cfg, err := LoadMerged(root)
+	if err != nil {
+		t.Fatalf("LoadMerged: %v", err)
+	}
+	if !cfg.IsQuiet() {
+		t.Error("quiet should load from the (single) file")
+	}
+	if len(cfg.Warnings) != 1 {
+		t.Fatalf("warnings = %v, want exactly one (the file must not be merged with itself)", cfg.Warnings)
+	}
+}

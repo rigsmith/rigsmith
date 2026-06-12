@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rigsmith/cli/internal/config"
@@ -35,8 +37,10 @@ var killWarnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 //     root command already owns the persistent --dry-run flag; we read it.
 //
 // On darwin/linux it uses `lsof` (by port) and `pgrep`/`pkill -f` (by command
-// line). On Windows it parses `netstat -ano` for ports and uses `taskkill`;
-// pattern mode there matches the image name only and is best-effort.
+// line). On Windows it parses `netstat -ano` for ports and matches patterns
+// against full command lines via CIM (Get-CimInstance Win32_Process through
+// PowerShell), falling back to image-name `taskkill /IM` when PowerShell is
+// unreachable.
 func newKillCmd() *cobra.Command {
 	var ports []int
 
@@ -48,7 +52,8 @@ func newKillCmd() *cobra.Command {
 			"  rig kill <name>     narrow to a project/pattern\n" +
 			"  rig kill 3000       a bare number is treated as --port\n" +
 			"  rig kill --port N   free whatever is listening on port N (repeatable)",
-		Args: cobra.MaximumNArgs(1),
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: workspaceNameCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			cwd, _ := os.Getwd()
@@ -75,7 +80,7 @@ func newKillCmd() *cobra.Command {
 				return killByPorts(cmd, out, root, allPorts, dry)
 			}
 
-			cfg, _ := config.Load(root)
+			cfg, _ := config.LoadMerged(root)
 			patterns := resolveKillPatterns(cfg, root, name)
 			if len(patterns) == 0 {
 				fmt.Fprintln(out, dimStyle.Render(
@@ -358,8 +363,6 @@ func killPids(cmd *cobra.Command, root string, pids []int) int {
 
 func killByPatterns(cmd *cobra.Command, out io.Writer, root string, patterns []string, dry bool) error {
 	if runtime.GOOS == "windows" {
-		fmt.Fprintln(out, dimStyle.Render(
-			"pattern-based kill is best-effort on Windows; prefer `rig kill --port <n>`"))
 		return killByPatternsWindows(cmd, out, root, patterns, dry)
 	}
 
@@ -400,9 +403,141 @@ func killByPatterns(cmd *cobra.Command, out io.Writer, root string, patterns []s
 	return nil
 }
 
-// killByPatternsWindows is a best-effort image-name kill (taskkill /IM). It
-// can't match the full command line the way pkill -f does on Unix.
+// killByPatternsWindows matches patterns against the FULL process command line
+// (CIM Win32_Process via PowerShell — the .NET rig's KillVerb.ExecuteWindows),
+// so the `dotnet run`/`dotnet watch` driver (image dotnet.exe) is caught
+// alongside the apphost. When PowerShell/CIM can't be reached it falls back to
+// the image-name taskkill path.
 func killByPatternsWindows(cmd *cobra.Command, out io.Writer, root string, patterns []string, dry bool) error {
+	procs, ok := windowsProcessList(cmd, root)
+	if !ok {
+		fmt.Fprintln(out, dimStyle.Render(
+			"pattern-based kill is best-effort on Windows; prefer `rig kill --port <n>`"))
+		return killByImageWindows(cmd, out, root, patterns, dry)
+	}
+
+	self := os.Getpid()
+	alreadyKilled := map[int]bool{}
+	for _, pattern := range patterns {
+		matches := matchProcesses(procs, pattern, self)
+
+		if dry {
+			if len(matches) == 0 {
+				fmt.Fprintln(out, dimStyle.Render(fmt.Sprintf("no process matches '%s'", pattern)))
+				continue
+			}
+			fmt.Fprintln(out, killWarnStyle.Render(
+				fmt.Sprintf("would kill %d process(es) matching '%s':", len(matches), pattern)))
+			for _, p := range matches {
+				fmt.Fprintln(out, dimStyle.Render(fmt.Sprintf("  %d  %s", p.Pid, p.CommandLine)))
+			}
+			continue
+		}
+
+		any := false
+		for _, p := range matches {
+			// A prior pattern's /T may already have taken this PID down in a tree.
+			if alreadyKilled[p.Pid] {
+				any = true
+				continue
+			}
+			alreadyKilled[p.Pid] = true
+			c := exec.CommandContext(cmd.Context(), "taskkill", "/F", "/T", "/PID", strconv.Itoa(p.Pid))
+			c.Dir = root
+			if err := c.Run(); err == nil {
+				any = true
+			}
+		}
+		if any {
+			fmt.Fprintln(out, "killed process(es) matching '"+pattern+"'")
+		} else {
+			fmt.Fprintln(out, dimStyle.Render("no process matched '"+pattern+"'"))
+		}
+	}
+	return nil
+}
+
+// processEntry is one running process: its PID and full command line.
+type processEntry struct {
+	Pid         int
+	CommandLine string
+}
+
+// cimProcessListScript prints "PID<tab>CommandLine" per process. Silencing the
+// progress stream keeps stdout clean of the CLIXML noise CIM writes.
+const cimProcessListScript = "$ProgressPreference='SilentlyContinue'; " +
+	"Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }"
+
+// windowsProcessList returns (PID, command line) for every process via the CIM
+// query. ok=false when PowerShell/CIM can't be reached, so the caller can fall
+// back to image-name matching.
+func windowsProcessList(cmd *cobra.Command, root string) ([]processEntry, bool) {
+	// -EncodedCommand sidesteps every nested-quoting pitfall; tab-delimited
+	// output parses cleanly even when command lines contain spaces or quotes.
+	output, err := capture(cmd, root, "powershell",
+		"-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(cimProcessListScript))
+	if err != nil && output == "" {
+		return nil, false // couldn't start / produced nothing usable
+	}
+	return parseProcessList(output), true
+}
+
+// encodePowerShell encodes a script for powershell -EncodedCommand
+// (base64 over UTF-16LE). Pure.
+func encodePowerShell(script string) string {
+	units := utf16.Encode([]rune(script))
+	buf := make([]byte, 0, len(units)*2)
+	for _, u := range units {
+		buf = append(buf, byte(u), byte(u>>8))
+	}
+	return base64.StdEncoding.EncodeToString(buf)
+}
+
+// parseProcessList parses the tab-delimited `PID<tab>CommandLine` lines the
+// CIM query emits. Lines without a parseable PID are skipped; a missing
+// command line (system processes) yields an empty string. Pure — the .NET
+// rig's KillVerb.ParseProcessList.
+func parseProcessList(output string) []processEntry {
+	var result []processEntry
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimRight(raw, "\r")
+		if line == "" {
+			continue
+		}
+		pidText, cmdline := line, ""
+		if tab := strings.IndexByte(line, '\t'); tab >= 0 {
+			pidText, cmdline = line[:tab], line[tab+1:]
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(pidText))
+		if err != nil {
+			continue
+		}
+		result = append(result, processEntry{Pid: pid, CommandLine: cmdline})
+	}
+	return result
+}
+
+// matchProcesses returns the processes whose command line contains pattern
+// (case-insensitive), excluding our own process and command-line-less system
+// processes. Mirrors pkill -f's substring match. Pure — the .NET rig's
+// KillVerb.MatchProcesses.
+func matchProcesses(procs []processEntry, pattern string, self int) []processEntry {
+	p := strings.ToLower(pattern)
+	var out []processEntry
+	for _, proc := range procs {
+		if proc.Pid == self || proc.CommandLine == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(proc.CommandLine), p) {
+			out = append(out, proc)
+		}
+	}
+	return out
+}
+
+// killByImageWindows is the pre-CIM safety net: a best-effort image-name kill
+// (taskkill /IM). It can't match the full command line the way pkill -f does.
+func killByImageWindows(cmd *cobra.Command, out io.Writer, root string, patterns []string, dry bool) error {
 	for _, pattern := range patterns {
 		image := pattern
 		if !strings.HasSuffix(strings.ToLower(image), ".exe") {

@@ -27,13 +27,14 @@ func newPublishCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "publish [project]",
-		Short: "Publish a self-contained build (.NET)",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "publish [project]",
+		Short:             "Publish a self-contained build (.NET)",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: runnableProjectCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
 			root := detect.Root(cwd)
-			cfg, _ := config.Load(root)
+			cfg, _ := config.LoadMerged(root)
 
 			// A solution or project at the root is .NET regardless of what the
 			// generic resolver says (it keys off per-ecosystem manifests, and a
