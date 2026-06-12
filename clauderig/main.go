@@ -38,8 +38,10 @@ func run(ctx context.Context) error {
 	root.AddCommand(
 		commands.NewInitCmd(),
 		commands.NewSyncCmd(),
+		commands.NewPullCmd(),
 		commands.NewRestoreCmd(),
 		commands.NewStatusCmd(),
+		commands.NewHooksCmd(),
 		commands.NewDoctorCmd(),
 		commands.NewConfigCmd(),
 		commands.NewUICmd(),
