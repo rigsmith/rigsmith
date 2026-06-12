@@ -35,7 +35,7 @@ Legend: ✅ done · 🟡 partial/scaffolded · ⬜ not started · ➖ n/a
 | Changelog generators (git/github) | `ChangelogReleaseLine.cs` | ⬜ | commit/PR/author enrichment; needs git+gh |
 | Changelog generator **plugins** | design doc | 🟡 | contract + host exist; built-in not yet routed through `ChangelogRequest` (dogfood step) |
 | `ui` interactive menu | `Ui/` | ⬜ | bubbletea menu |
-| `shell-init` | `ShellInit/` | ⬜ | cobra has `completion`; the `relrig` shell function TBD |
+| `shell-init` | `ShellInit/` | ➖ | obviated — single binary on PATH (aliases `changeset`); cobra `completion` covers tab-completion, so no resolve-the-binary wrapper is needed |
 | Native markdown formatter | `NativeMarkdownFormatter.cs` | ⬜ | port the prettier-compatible formatter |
 | Node interop mode | `NodeChangesetService.cs` | ➖ | superseded by native node adapter (north-star); keep format-level coexistence |
 

@@ -3,7 +3,10 @@
 /dist/
 *.test
 *.out
+# Coverage output (reports/profiles), but never the `rig coverage` source.
 coverage.*
+!coverage.go
+!coverage_report.go
 
 # Editors / OS
 .DS_Store

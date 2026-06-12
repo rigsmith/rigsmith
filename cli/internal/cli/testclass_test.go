@@ -175,7 +175,13 @@ func TestResolveDotnetTestProject_ConfigOverrideWins(t *testing.T) {
 		t.Fatalf("relative override: %q, want %q", got, want)
 	}
 
-	abs := filepath.Join(string(filepath.Separator), "abs", "T.csproj")
+	// A genuinely host-absolute path (drive-qualified on Windows, where a
+	// bare "\abs\T.csproj" is rooted but NOT absolute) must pass through
+	// untouched rather than being joined onto root.
+	abs, err := filepath.Abs(filepath.Join("abs", "T.csproj"))
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
 	cfg = config.Config{Test: &config.Test{Project: abs}}
 	if got := resolveDotnetTestProject(cfg, "/r", projects); got != abs {
 		t.Fatalf("absolute override: %q, want %q", got, abs)
