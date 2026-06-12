@@ -196,6 +196,25 @@ func (c *Config) ChangelogSpec() string {
 	return "default"
 }
 
+// FormatSpec interprets the polymorphic `format` value and returns the
+// formatter name: false/null/absent/"" → "" (disabled); a string → itself;
+// true → "true" (mirroring the C# converter — it lands on the
+// unknown-formatter warning path rather than silently enabling anything).
+func (c *Config) FormatSpec() string {
+	raw := bytesTrim(c.Format)
+	switch {
+	case len(raw) == 0, string(raw) == "false", string(raw) == "null":
+		return ""
+	case string(raw) == "true":
+		return "true"
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	return ""
+}
+
 func bytesTrim(b []byte) []byte {
 	i, j := 0, len(b)
 	for i < j && (b[i] == ' ' || b[i] == '\t' || b[i] == '\n' || b[i] == '\r') {

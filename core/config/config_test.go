@@ -130,6 +130,25 @@ func TestParseFormatBoolOrString(t *testing.T) {
 	if len(c.Format) != 0 {
 		t.Errorf("absent format should stay empty, got %s", c.Format)
 	}
+
+	// FormatSpec resolves the raw value to a formatter name.
+	for in, want := range map[string]string{
+		`{}`:                       "",
+		`{ "format": false }`:      "",
+		`{ "format": null }`:       "",
+		`{ "format": "native" }`:   "native",
+		`{ "format": "auto" }`:     "auto",
+		`{ "format": "prettier" }`: "prettier",
+		`{ "format": true }`:       "true", // lands on the unknown-formatter warning path
+	} {
+		c, err := Parse([]byte(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := c.FormatSpec(); got != want {
+			t.Errorf("FormatSpec(%s) = %q, want %q", in, got, want)
+		}
+	}
 }
 
 // Mirrors ChangelogConfigTests: the polymorphic `changelog` value resolves to a

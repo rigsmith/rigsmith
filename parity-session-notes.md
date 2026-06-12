@@ -191,25 +191,28 @@ vs the live C# binary, byte-identical on 18 scenarios; build the oracle with
 goldens in `polyglot/`). The probe surfaced planner bug 7 (above). Repo now has
 its initial commit; corpus work committed separately.)*
 
-1. **Phase 3: changelog formatting feature parity** (43 C# tests; the Go code
-   doesn't exist yet) — `core/mdfmt` native markdown formatter (prettier-
-   equivalent block model), formatter dispatch (`format` config: native/auto/
-   oxfmt/deno/biome/prettier via lockfile-detected package manager, graceful
-   degradation), extract the changelog file writer from
-   `changerig/commands/version.go` into core, changelog-git/-github generators
-   (commit resolver + release-line decoration, fakes only). A detailed design
-   brief from the C# sources is in the approved plan
-   (`~/.claude/plans/functional-cooking-tiger.md`).
-2. **Snapshot/prerelease e2e leftovers** — `snapshot.useCalculatedVersion` e2e
+*(2026-06-12, third session: **Phase 3 DONE** — `core/mdfmt` (NativeMarkdownFormatter
+port, 18 golden tests, all idempotency-checked, hand-ported rune widths) +
+`core/mdfmt/dispatch.go` (formatter dispatch, 10 tests, injectable Runner) +
+`core/changelog` (setting/resolver/release-line, 24 tests with fake exec;
+`WriteEntry` extracted from version.go, 3 tests). Wired into `changerig
+version`: git/github enrichment decorates summaries before `Plan`; the
+`format` config drives an mdfmt.FormatFiles pass over touched changelogs
+(warn-only). Fixed latent bug: the three @changesets generator ids now map to
+the builtin layout instead of subprocess plugin resolution. `config.FormatSpec()`
+added. E2E-verified with changelog-git + format:native; parity corpus
+unchanged/green.)*
+
+1. **Snapshot/prerelease e2e leftovers** — `snapshot.useCalculatedVersion` e2e
    (probe Node first) and a two-package prerelease flow golden (pre-mode dep
    retargeting has unit coverage only).
-3. **Phase 4: changerig command tests** — init/add/status/version/pre/tag/info
+2. **Phase 4: changerig command tests** — init/add/status/version/pre/tag/info
    error paths + `--since` (substrate `gitutil.ChangedFilesSince` is ready;
    wire `status --since`/`add --since` + the SinceChanges logic with it).
-4. **Phase 5: relrig release pipeline** — steps/hooks/vars/confirm/forge +
+3. **Phase 5: relrig release pipeline** — steps/hooks/vars/confirm/forge +
    reporters (design brief in the plan file; publish confirm + `--yes` lands
    here). Build the shared `core/jsonc` parser with it.
-5. **Phase 6: rig dev-CLI parity** — JSONC editor, rig config, dotenv/env stack,
+4. **Phase 6: rig dev-CLI parity** — JSONC editor, rig config, dotenv/env stack,
    prefix/root resolvers, verb logic (~160 tests).
 
 ### Lower-value / poor fit

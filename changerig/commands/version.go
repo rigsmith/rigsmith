@@ -3,12 +3,15 @@ package commands
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/rigsmith/core/changelog"
 	"github.com/rigsmith/core/changeset"
 	"github.com/rigsmith/core/gitutil"
+	"github.com/rigsmith/core/mdfmt"
 	"github.com/rigsmith/core/planner"
 	"github.com/rigsmith/core/plugin"
 	"github.com/rigsmith/core/prestate"
@@ -81,6 +84,25 @@ func NewVersionCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// changelog-git / changelog-github enrichment: resolve the commit
+			// (and PR/author) that added each changeset and decorate the summary's
+			// first line before planning. Every lookup failure degrades to an
+			// undecorated line — enrichment never fails the run.
+			setting := changelog.ParseSetting(ws.Config)
+			if setting.Kind != changelog.KindDefault {
+				ids := make([]string, 0, len(active))
+				for _, cs := range active {
+					ids = append(ids, cs.ID)
+				}
+				infos := changelog.Resolve(ids, setting, ws.Root, execRunner(cmd))
+				for _, cs := range active {
+					if info, ok := infos[cs.ID]; ok {
+						cs.Summary = changelog.RenderLine(cs.Summary, setting, &info)
+					}
+				}
+			}
+
 			plan := planner.Plan(active, pkgs, ws.Config)
 
 			// Apply the mode's version overrides.
@@ -112,8 +134,17 @@ func NewVersionCmd() *cobra.Command {
 				return nil
 			}
 
-			gen, _ := plugin.ResolveChangelogGenerator(ws.Config.ChangelogSpec(), ws.Root, planner.Builtins(ws.Config.Groups()))
+			// The three @changesets generators (default, changelog-git,
+			// changelog-github) all render the default layout — git/github only
+			// decorate the release lines (done above). Anything else resolves as
+			// an external plugin.
+			genSpec := ws.Config.ChangelogSpec()
+			if setting.Kind != changelog.KindDefault {
+				genSpec = "default"
+			}
+			gen, _ := plugin.ResolveChangelogGenerator(genSpec, ws.Root, planner.Builtins(ws.Config.Groups()))
 
+			var changelogPaths []string
 			for _, m := range plan {
 				if eco, ok := ws.EcosystemFor(ecoOf[m.Name]); ok {
 					req := plugin.SetVersionRequest{
@@ -133,10 +164,21 @@ func NewVersionCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
 				}
-				if err := writeChangelogEntry(ws.Root, m.ManifestPath, m.DisplayName, entry); err != nil {
+				pkgDir := filepath.Dir(filepath.Join(ws.Root, m.ManifestPath))
+				if err := changelog.WriteEntry(pkgDir, m.DisplayName, entry); err != nil {
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
 				}
+				changelogPaths = append(changelogPaths, filepath.Join(pkgDir, changelog.FileName))
 			}
+
+			// Formatting pass over the touched changelogs, per the `format`
+			// config (false/absent = off; "native" runs in-process; "auto"
+			// detects a tool; failures only warn).
+			mdfmt.FormatFiles(changelogPaths, ws.Config.FormatSpec(), ws.Root,
+				mdfmt.Runner(execRunner(cmd)),
+				func(format string, a ...any) {
+					fmt.Fprintln(out, DimStyle.Render("warn "+fmt.Sprintf(format, a...)))
+				})
 
 			// Changeset disposal + pre-state bookkeeping per mode.
 			switch mode {
@@ -178,35 +220,13 @@ func NewVersionCmd() *cobra.Command {
 	return cmd
 }
 
-// writeChangelogEntry prepends a pre-rendered release entry under the package's
-// CHANGELOG.md (the engine owns file placement; the generator only rendered the
-// entry — per the changelog plugin contract).
-func writeChangelogEntry(root, manifestPath, displayName, entry string) error {
-	dir := filepath.Dir(filepath.Join(root, manifestPath))
-	path := filepath.Join(dir, "CHANGELOG.md")
-
-	existing, _ := os.ReadFile(path)
-	header := fmt.Sprintf("# %s\n", displayName)
-
-	var body string
-	if len(existing) == 0 {
-		body = header + "\n" + entry
-	} else {
-		text := string(existing)
-		if nl := indexByte(text, '\n'); nl >= 0 {
-			body = text[:nl+1] + "\n" + entry + text[nl+1:]
-		} else {
-			body = header + "\n" + entry
-		}
+// execRunner adapts os/exec to the injectable Runner seam shared by the
+// changelog resolver and the formatter dispatch.
+func execRunner(cmd *cobra.Command) func(dir, name string, args ...string) (string, error) {
+	return func(dir, name string, args ...string) (string, error) {
+		c := exec.CommandContext(cmd.Context(), name, args...)
+		c.Dir = dir
+		out, err := c.CombinedOutput()
+		return string(out), err
 	}
-	return os.WriteFile(path, []byte(body), 0o644)
-}
-
-func indexByte(s string, b byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			return i
-		}
-	}
-	return -1
 }
