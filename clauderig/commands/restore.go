@@ -21,7 +21,7 @@ import (
 // non-empty ~/.claude it refuses unless --backup or --force (safe default for
 // non-interactive/hook contexts).
 func NewRestoreCmd() *cobra.Command {
-	var backup, force bool
+	var backup, force, prune bool
 	var dir string
 	cmd := &cobra.Command{
 		Use:   "restore",
@@ -102,6 +102,7 @@ func NewRestoreCmd() *cobra.Command {
 			opts.Config = cfg
 			opts.Machine = me
 			opts.Manifest = man
+			opts.Prune = prune
 			rep, err := engine.Restore(opts)
 			if err != nil {
 				return err
@@ -111,7 +112,11 @@ func NewRestoreCmd() *cobra.Command {
 					fmt.Fprintf(out, "  %-8s %s\n", r.ID, DimStyle.Render("skipped (nothing staged)"))
 					continue
 				}
-				fmt.Fprintf(out, "  %-8s %d files, %d slug(s) rewritten for this machine\n", r.ID, r.Files, r.SlugsRewritten)
+				pruned := ""
+				if r.Pruned > 0 {
+					pruned = fmt.Sprintf(", %d pruned", r.Pruned)
+				}
+				fmt.Fprintf(out, "  %-8s %d files, %d slug(s) rewritten%s\n", r.ID, r.Files, r.SlugsRewritten, pruned)
 			}
 			if man.ClaudeVersion != "" {
 				fmt.Fprintf(out, "  %s\n", DimStyle.Render("synced from Claude Code "+man.ClaudeVersion))
@@ -123,6 +128,7 @@ func NewRestoreCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&backup, "backup", false, "copy an existing ~/.claude to ~/.claude.bak before restoring")
 	cmd.Flags().BoolVar(&force, "force", false, "restore over an existing ~/.claude without prompting")
 	cmd.Flags().StringVar(&dir, "dir", "", "restore the CLI payload into this folder instead of ~/.claude (test/inspect)")
+	cmd.Flags().BoolVar(&prune, "prune", false, "remove config files (skills/commands/agents/plans) deleted upstream; never touches projects")
 	return cmd
 }
 

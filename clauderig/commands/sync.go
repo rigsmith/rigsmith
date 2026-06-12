@@ -6,6 +6,7 @@ import (
 	"github.com/rigsmith/clauderig/internal/config"
 	"github.com/rigsmith/clauderig/internal/engine"
 	"github.com/rigsmith/clauderig/internal/gitrepo"
+	"github.com/rigsmith/core/pathmap"
 	"github.com/spf13/cobra"
 )
 
@@ -33,8 +34,13 @@ func NewSyncCmd() *cobra.Command {
 			}
 
 			fmt.Fprintln(out, HeaderStyle.Render("clauderig sync"))
+			claudeVer := ""
+			if cliLoc, st := cfg.RootLocation("cli", me); st == pathmap.StatusResolved {
+				claudeVer = config.DetectClaudeVersion(cliLoc)
+			}
 			rep, serr := engine.Sync(engine.Options{
-				StagingDir: staging, Config: cfg, Machine: me,
+				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
+				RetentionDays: cfg.Retention.HistoryDays,
 			})
 			if rep != nil {
 				for _, r := range rep.Roots {
@@ -42,11 +48,17 @@ func NewSyncCmd() *cobra.Command {
 						fmt.Fprintf(out, "  %-8s %s\n", r.ID, DimStyle.Render("skipped (absent here)"))
 						continue
 					}
-					skipped := ""
-					if r.SkippedFiles > 0 {
-						skipped = fmt.Sprintf(", %d skipped (churn)", r.SkippedFiles)
+					extra := ""
+					if r.Unchanged > 0 {
+						extra += fmt.Sprintf(", %d unchanged", r.Unchanged)
 					}
-					fmt.Fprintf(out, "  %-8s %d files, %d secret field(s) redacted%s\n", r.ID, r.Files, r.Redactions, skipped)
+					if r.RetentionByAge > 0 {
+						extra += fmt.Sprintf(", %d aged out", r.RetentionByAge)
+					}
+					if r.SkippedFiles > 0 {
+						extra += fmt.Sprintf(", %d skipped (churn)", r.SkippedFiles)
+					}
+					fmt.Fprintf(out, "  %-8s %d files, %d secret field(s) redacted%s\n", r.ID, r.Files, r.Redactions, extra)
 				}
 				fmt.Fprintf(out, "  manifest  %d projects\n", rep.ManifestProjects)
 			}

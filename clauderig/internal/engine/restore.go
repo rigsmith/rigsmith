@@ -20,8 +20,14 @@ type RestoreRootResult struct {
 	ID             string
 	Files          int
 	SlugsRewritten int
+	Pruned         int // files removed as deleted-upstream (--prune)
 	Skipped        bool
 }
+
+// prunableDirs are the authoritative config dirs where "deleted upstream" means
+// "remove locally". projects/ is deliberately excluded — it's additive (a machine
+// accumulates its own local sessions), so it is never pruned.
+var prunableDirs = []string{"skills", "commands", "agents", "plans"}
 
 // RestoreReport is the outcome of a restore.
 type RestoreReport struct {
@@ -40,6 +46,10 @@ type RestoreOptions struct {
 	// OverriddenOnly restores only roots present in TargetOverride (so a --dir
 	// restore touches the test folder and nothing else).
 	OverriddenOnly bool
+	// Prune removes files under the authoritative config dirs (prunableDirs) that
+	// aren't in the synced set — so a skill deleted upstream is deleted locally.
+	// Never touches projects/ (additive).
+	Prune bool
 }
 
 // Restore writes the staged file set back to this machine's roots, rewriting CLI
@@ -73,6 +83,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			slugMap = buildSlugMap(opts.Manifest, opts.Machine)
 		}
 		rewritten := map[string]bool{}
+		written := map[string]bool{}
 
 		files, err := listFiles(stageRoot)
 		if err != nil {
@@ -97,12 +108,54 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			} else if err := copyFile(src, dst); err != nil {
 				return nil, err
 			}
+			written[targetRel] = true
 			rr.Files++
 		}
 		rr.SlugsRewritten = len(rewritten)
+
+		if opts.Prune && r.ID == "cli" {
+			pruned, err := pruneConfigDirs(target, written)
+			if err != nil {
+				return nil, err
+			}
+			rr.Pruned = pruned
+		}
 		rep.Roots = append(rep.Roots, rr)
 	}
 	return rep, nil
+}
+
+// pruneConfigDirs removes files under the authoritative config dirs that aren't in
+// the restored set (deleted upstream). written holds the slash-relative paths just
+// written. projects/ is never visited.
+func pruneConfigDirs(target string, written map[string]bool) (int, error) {
+	pruned := 0
+	for _, dir := range prunableDirs {
+		base := filepath.Join(target, dir)
+		if !dirExists(base) {
+			continue
+		}
+		err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			rel, rerr := filepath.Rel(target, p)
+			if rerr != nil {
+				return rerr
+			}
+			if !written[filepath.ToSlash(rel)] {
+				if err := os.Remove(p); err != nil {
+					return err
+				}
+				pruned++
+			}
+			return nil
+		})
+		if err != nil {
+			return pruned, err
+		}
+	}
+	return pruned, nil
 }
 
 // buildSlugMap maps each source slug to this machine's slug, via the manifest's
