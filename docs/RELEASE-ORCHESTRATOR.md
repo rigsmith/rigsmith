@@ -157,13 +157,16 @@ This builds on the `ui` menu already in changerig/relrig.
 
 ## Go architecture notes (decisions to make at build time)
 
-1. **`packages.versionRegex` ≈ an ecosystem adapter.** The source design has an
-   optional `packages` registry to version arbitrary files via a named-capture
-   regex (`{ "file": "Chart.yaml", "pattern": "version: (?<version>.*)" }`). That
-   is functionally our `plugin.Ecosystem.SetVersion` for a one-off manifest. **Unify
-   it**: a `regex` built-in ecosystem adapter (or a config-declared adapter)
-   rather than a second version-stamping mechanism. This keeps "version read/write"
-   in one place (the adapter contract) per [PLUGIN-PROTOCOL.md](PLUGIN-PROTOCOL.md).
+1. **`packages.versionRegex` ≈ an ecosystem adapter. ✅ Done.** The source design
+   had an optional `packages` registry to version arbitrary files via a
+   named-capture regex (`{ "file": "Chart.yaml", "pattern": "version: (?<version>.*)" }`).
+   Rather than a second version-stamping mechanism, this shipped as a `regex`
+   built-in ecosystem adapter (`core/ecosystem/regex`): a `.changeset/config.json`
+   `regex` block lists `{ name, file, pattern }` entries, and discover/SetVersion
+   go through the normal `plugin.Ecosystem` contract (released tag-only, like Go).
+   `(?<version>…)` patterns copied from net/@changesets are auto-normalized to
+   Go's `(?P<version>…)`. Keeps "version read/write" in one place (the adapter
+   contract) per [PLUGIN-PROTOCOL.md](PLUGIN-PROTOCOL.md).
 
 2. **Cascade fallback.** net's design says: native graph where the ecosystem
    exposes one (npm/pnpm/Cargo/.NET), **declared-edge fallback** otherwise (for

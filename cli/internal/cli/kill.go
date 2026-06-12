@@ -82,12 +82,31 @@ func newKillCmd() *cobra.Command {
 
 			cfg, _ := config.LoadMerged(root)
 			patterns := resolveKillPatterns(cfg, root, name)
-			if len(patterns) == 0 {
+
+			// A bare sweep on a Vite repo also frees the dev-server port: the Vite
+			// process (esbuild/node child) doesn't always carry the project name in
+			// its command line, but it holds the port.
+			var vitePorts []int
+			if name == "" && detect.NodeUsesVite(root) {
+				if p := detect.ViteDevPort(root); p > 0 {
+					vitePorts = append(vitePorts, p)
+				}
+			}
+
+			if len(patterns) == 0 && len(vitePorts) == 0 {
 				fmt.Fprintln(out, dimStyle.Render(
 					"nothing to kill: no kill.match patterns and no projects to infer from"))
 				return nil
 			}
-			return killByPatterns(cmd, out, root, patterns, dry)
+			if len(patterns) > 0 {
+				if err := killByPatterns(cmd, out, root, patterns, dry); err != nil {
+					return err
+				}
+			}
+			if len(vitePorts) > 0 {
+				return killByPorts(cmd, out, root, vitePorts, dry)
+			}
+			return nil
 		},
 	}
 
