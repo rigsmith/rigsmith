@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/clauderig/internal/config"
 	"github.com/rigsmith/clauderig/internal/engine"
 	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/manifest"
+	"github.com/rigsmith/clauderig/internal/project"
 	"github.com/rigsmith/core/pathmap"
 	"github.com/spf13/cobra"
 )
@@ -79,15 +81,27 @@ func NewRestoreCmd() *cobra.Command {
 				fmt.Fprintf(out, "  %s restoring CLI root into %s\n", DimStyle.Render("→"), abs)
 			}
 
-			// Safety: refuse to write over a non-empty CLI target unless told to.
 			cliTarget, st := cfg.RootLocation("cli", me)
 			if dir != "" {
 				cliTarget, st = opts.TargetOverride["cli"], pathmap.StatusResolved
 			}
-			if st == pathmap.StatusResolved && nonEmptyDir(cliTarget) && !force {
-				if !backup {
-					return fmt.Errorf("%s is not empty; re-run with --backup (copy it aside first) or --force", cliTarget)
+
+			// Preview what restore will do before touching anything.
+			printRestorePreview(out, man, me, cliTarget)
+
+			// Safety: don't write over a non-empty target unless told to. Prompt
+			// interactively; non-interactively default to abort.
+			if st == pathmap.StatusResolved && nonEmptyDir(cliTarget) && !force && !backup {
+				switch chooseRestoreSafety(cliTarget) {
+				case "backup":
+					backup = true
+				case "inplace":
+					force = true
+				default:
+					return fmt.Errorf("aborted: %s is not empty (re-run with --backup or --force)", cliTarget)
 				}
+			}
+			if backup {
 				bak := cliTarget + ".bak"
 				if _, err := os.Stat(bak); err == nil {
 					return fmt.Errorf("backup %s already exists; move it away first", bak)
@@ -140,6 +154,52 @@ func NewRestoreCmd() *cobra.Command {
 func nonEmptyDir(dir string) bool {
 	entries, err := os.ReadDir(dir)
 	return err == nil && len(entries) > 0
+}
+
+// printRestorePreview shows where restore lands and a few sample slug rewrites for
+// this machine, before anything is written.
+func printRestorePreview(out io.Writer, man *manifest.Manifest, me config.Machine, target string) {
+	fmt.Fprintln(out, DimStyle.Render("  preview:"))
+	fmt.Fprintf(out, "  target    %s\n", target)
+	if man.ClaudeVersion != "" {
+		fmt.Fprintf(out, "  source    %s\n", DimStyle.Render("Claude Code "+man.ClaudeVersion))
+	}
+	res := me.Resolver()
+	shown := 0
+	for _, slug := range man.Slugs() {
+		p := man.Projects[slug]
+		if p.Template == "" {
+			continue
+		}
+		ns, _, stt := project.RewriteFromTemplate(p.Template, res)
+		if stt != pathmap.StatusResolved || ns == slug {
+			continue
+		}
+		fmt.Fprintf(out, "  rewrite   %s → %s\n", slug, ns)
+		if shown++; shown >= 3 {
+			break
+		}
+	}
+	fmt.Fprintf(out, "  projects  %d\n", len(man.Projects))
+}
+
+// chooseRestoreSafety prompts (interactively) for how to handle a non-empty
+// target. Non-interactively it returns "abort" (the safe default for hooks/CI).
+func chooseRestoreSafety(target string) string {
+	if !interactive() {
+		return "abort"
+	}
+	choice := "backup"
+	_ = huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title(target+" is not empty — restore how?").
+			Options(
+				huh.NewOption("Back up to .bak, then restore", "backup"),
+				huh.NewOption("Restore in place (config merges; local secrets kept)", "inplace"),
+				huh.NewOption("Abort", "abort"),
+			).Value(&choice),
+	)).Run()
+	return choice
 }
 
 // copyTree recursively copies src to dst (used for the pre-restore backup).

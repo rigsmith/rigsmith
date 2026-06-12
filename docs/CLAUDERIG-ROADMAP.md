@@ -20,7 +20,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started
 5. ✅ **Distribution.** goreleaser build+archive for `clauderig`, `install.sh` target, version stamping (`-X main.version`), module + tool READMEs. (Homebrew tap still commented out pending the public repo, same as the other rigs.)
 6. ✅ **Desktop `config.json` preferences.** Synced via a keep-only filter (`engine.keepOnly`) that retains just `preferences`, dropping the volatile caches/tokens the app constantly rewrites.
 7. ✅ **Conflict resolution.** On a rejected push (remote advanced), sync fetch+merges; clean merges auto-reconcile, real conflicts hand off to `git mergetool` (interactive only; non-interactive aborts with a clear message). No comparison tool built.
-8. ⬜ **Richer TUIs.** `ui` dashboard is read-only + dispatch; add the restore-preview screen and interactive restore-safety prompt.
+8. ✅ **Richer TUIs.** Restore now prints a preview (target, source version, sample slug rewrites, project count) and prompts interactively (huh) for non-empty targets — back up / restore in place / abort; non-interactive defaults to abort.
 9. ✅ **Device registry.** Synced `clauderig-devices.json`; each machine touches its entry on sync, shown in `status` and `ui` with relative last-sync times.
 10. ✅ **Multi-machine project union.** Sync unions the freshly-built manifest with the existing one in staging, so every machine's projects are preserved (files already union via incremental sync); on restore each is re-slugged for the local machine.
 
