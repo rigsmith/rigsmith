@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -21,7 +23,8 @@ import (
 // self-contained [suggest] directive.
 
 // setupShells are the shells `rig setup` can write an rc snippet for.
-var setupShells = []string{"zsh", "bash", "fish"}
+// "pwsh" is accepted as an alias for powershell.
+var setupShells = []string{"zsh", "bash", "fish", "powershell"}
 
 // Markers bracketing the managed block in the rc file. A re-run replaces
 // everything between them, so upgrades never duplicate the snippet.
@@ -45,9 +48,11 @@ Install rig's shell integration into your shell's startup file:
     cds to it — everything else passes through to the binary), and
   - tab completion, loaded via cobra's "rig completion <shell>".
 
-The shell is taken from the argument, else $SHELL. Supported: zsh, bash, fish
-(rc files ~/.zshrc, ~/.bashrc, ~/.config/fish/config.fish). The snippet lives
-between marker comments and is replaced in place, so re-running is safe.
+The shell is taken from the argument, else $SHELL. Supported: zsh, bash, fish,
+powershell (alias: pwsh). Startup files: ~/.zshrc, ~/.bashrc,
+~/.config/fish/config.fish, and the PowerShell $PROFILE (asked from pwsh, or
+the Documents/PowerShell default). The snippet lives between marker comments
+and is replaced in place, so re-running is safe.
 
 Use --print to inspect the snippet (or wire it up yourself) without writing.
 `),
@@ -57,6 +62,9 @@ Use --print to inspect the snippet (or wire it up yourself) without writing.
 			shell := ""
 			if len(args) == 1 {
 				shell = strings.ToLower(strings.TrimSpace(args[0]))
+			}
+			if shell == "pwsh" {
+				shell = "powershell"
 			}
 			if shell == "" {
 				shell = shellFromEnv()
@@ -144,8 +152,33 @@ func rcFileFor(shell string) (string, error) {
 			cfg = filepath.Join(home, ".config")
 		}
 		return filepath.Join(cfg, "fish", "config.fish"), nil
+	case "powershell":
+		return powershellProfile(home)
 	}
 	return "", fmt.Errorf("unknown shell %q", shell)
+}
+
+// powershellProfile resolves the PowerShell $PROFILE path: an explicit
+// $RIG_PWSH_PROFILE wins (also the test seam); otherwise ask pwsh (then
+// Windows PowerShell) — $PROFILE is a pwsh variable, not an env var, and
+// OneDrive folder redirection means the path can't be derived reliably;
+// finally fall back to the conventional Documents location.
+func powershellProfile(home string) (string, error) {
+	if p := os.Getenv("RIG_PWSH_PROFILE"); p != "" {
+		return p, nil
+	}
+	for _, exe := range []string{"pwsh", "powershell"} {
+		out, err := exec.Command(exe, "-NoProfile", "-NonInteractive", "-Command", "$PROFILE").Output()
+		if err == nil {
+			if p := strings.TrimSpace(string(out)); p != "" {
+				return p, nil
+			}
+		}
+	}
+	if runtime.GOOS == "windows" {
+		return filepath.Join(home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1"), nil
+	}
+	return filepath.Join(home, ".config", "powershell", "Microsoft.PowerShell_profile.ps1"), nil
 }
 
 // installSnippet writes snippet into the rc file at rcPath: replacing the
@@ -198,6 +231,9 @@ func setupSnippet(shell string) string {
 	if shell == "fish" {
 		return setupBegin + "\n" + fishIntegration + "\n" + setupEnd
 	}
+	if shell == "powershell" {
+		return setupBegin + "\n" + powershellIntegration + "\n" + setupEnd
+	}
 	completion := fmt.Sprintf(`eval "$(command rig completion %s)"`, shell)
 	if shell == "zsh" {
 		// Initialize zsh's completion system if it isn't already (no-op on
@@ -221,6 +257,29 @@ const posixWrapper = `rig() {
   else
     command rig "$@"
   fi
+}`
+
+// powershellIntegration is the completion + wrapper block for PowerShell
+// ($PROFILE). Set-Location is pwsh's cd; the function resolves the real
+// binary via Get-Command -CommandType Application so it doesn't recurse
+// into itself.
+const powershellIntegration = `# Installed by 'rig setup' — safe to re-run; this block is replaced in place.
+# Tab completion, plus the 'rig cd' wrapper: a subprocess can't change the
+# parent shell's directory, so 'rig cd [query]' prints the project dir (its
+# picker draws on stderr) and the function Set-Locations to it. Everything
+# else passes straight through to the binary.
+$__rigBin = (Get-Command -Name rig -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+if ($__rigBin) {
+    & $__rigBin completion powershell | Out-String | Invoke-Expression
+    function rig {
+        $bin = (Get-Command -Name rig -CommandType Application | Select-Object -First 1).Source
+        if ($args.Count -ge 1 -and $args[0] -eq 'cd') {
+            $dir = & $bin @args | Select-Object -Last 1
+            if ($LASTEXITCODE -eq 0 -and $dir) { Set-Location -LiteralPath $dir }
+        } else {
+            & $bin @args
+        }
+    }
 }`
 
 // fishIntegration is the completion + wrapper block for fish.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -96,15 +97,8 @@ func runCustom(cmd *cobra.Command, cfg config.Config, root, name string, def *co
 	env := customEnv(cfg, def.Env)
 
 	if spec.IsShell() {
-		line := spec.Shell
-		if len(args) > 0 {
-			quoted := make([]string, len(args))
-			for i, a := range args {
-				quoted[i] = shellArg(a)
-			}
-			line = line + " " + strings.Join(quoted, " ")
-		}
-		return runIn(cmd, dir, env, line, "sh", "-c", line)
+		display, argv := shellInvocation(spec.Shell, args)
+		return runIn(cmd, dir, env, display, argv...)
 	}
 
 	if len(spec.Argv) == 0 {
@@ -151,6 +145,32 @@ func shellArg(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// shellInvocation builds the OS shell run of a custom shell-string command
+// with forwarded args appended: POSIX `sh -c` on unix, `cmd.exe /d /s /c` on
+// Windows (args caret-escaped per the .NET rig's Exec.WinCmdArguments rules).
+func shellInvocation(line string, args []string) (display string, argv []string) {
+	if runtime.GOOS == "windows" {
+		full := line
+		if len(args) > 0 {
+			esc := make([]string, len(args))
+			for i, a := range args {
+				esc[i] = winShellArg(a)
+			}
+			full = line + " " + strings.Join(esc, " ")
+		}
+		return full, []string{"cmd.exe", "/d", "/s", "/c", full}
+	}
+	full := line
+	if len(args) > 0 {
+		quoted := make([]string, len(args))
+		for i, a := range args {
+			quoted[i] = shellArg(a)
+		}
+		full = line + " " + strings.Join(quoted, " ")
+	}
+	return full, []string{"sh", "-c", full}
 }
 
 // scriptCmds surfaces every package.json script (in a Node repo) that isn't

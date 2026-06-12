@@ -108,7 +108,15 @@ func TestMain(m *testing.M) {
 	repoRoot = root
 	corpusDir = filepath.Join(root, "core", "testdata", "parity")
 
-	bin := filepath.Join(os.TempDir(), "changerig-parity")
+	// Build into a per-process temp dir: a fixed name collides with the cmdtest
+	// harness (go test runs packages in parallel) and, on Windows, a leftover
+	// running binary cannot be overwritten.
+	tmp, err := os.MkdirTemp("", "changerig-parity-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "parity: temp dir:", err)
+		os.Exit(1)
+	}
+	bin := filepath.Join(tmp, "changerig-parity")
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
@@ -116,11 +124,14 @@ func TestMain(m *testing.M) {
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "parity: build changerig:\n%s\n", out)
+		os.RemoveAll(tmp)
 		os.Exit(1)
 	}
 	changerigBin = bin
 
-	os.Exit(m.Run())
+	code := m.Run()
+	os.RemoveAll(tmp)
+	os.Exit(code)
 }
 
 func TestParity(t *testing.T) {
@@ -526,12 +537,14 @@ func loadCorpus(t *testing.T) corpus {
 }
 
 // normalize trims trailing whitespace per line and trailing blank lines, matching
-// net-changesets ParityFixtures.Normalize.
+// net-changesets ParityFixtures.Normalize. \r is stripped both as part of CRLF
+// and per line, so goldens checked out with core.autocrlf=true (the Windows git
+// default) still compare equal.
 func normalize(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	lines := strings.Split(s, "\n")
 	for i := range lines {
-		lines[i] = strings.TrimRight(lines[i], " \t")
+		lines[i] = strings.TrimRight(lines[i], " \t\r")
 	}
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
 }

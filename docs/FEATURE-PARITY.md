@@ -163,11 +163,11 @@ tools; **rigsmith** is the Go `cli/` module.
 | `doctor` | ✅ | ✅ | ✅ | Per-ecosystem env checklist; non-zero exit on errors. |
 | `cd` | ✅ | ✅ | ✅ | Tiered fuzzy match (exact/prefix/substring/subsequence, name>path, short-name); prints dir to stdout (needs shell wrapper); picker on TTY; name completion. |
 | `publish` (rig's dotnet publish) | ✅ | ➖ | ✅ | rid/output/configuration/self-contained/single-file: flag > `.rig.json publish.*` > default; `{rid}` output templating. |
-| `default` / `setup` / `self-update` | ✅ | ✅ | ✅ | `default`: print/picker/persist (comment-preserving). `self-update`: GitHub-releases check vs the ldflags-stamped version, installs via install.sh, graceful on dev builds. **`setup` diverges**: the C# verb is an interactive config walkthrough (covered in Go by `init`+`default`); Go's `setup` installs the shell integration (cd wrapper + completion) into zsh/bash/fish rc files, idempotently. |
+| `default` / `setup` / `self-update` | ✅ | ✅ | ✅ | `default`: print/picker/persist (comment-preserving). `self-update`: GitHub-releases check vs the ldflags-stamped version, installs via install.sh, graceful on dev builds. **`setup` diverges**: the C# verb is an interactive config walkthrough (covered in Go by `init`+`default`); Go's `setup` installs the shell integration (cd wrapper + completion) into zsh/bash/fish rc files **and the PowerShell $PROFILE** (asked from pwsh; `RIG_PWSH_PROFILE` override), idempotently — 🟢 beyond the C#'s print-only pwsh support. |
 | `init` (.rig.json scaffold) | ✅ | ✅ | ✅ | Writes a `.rig.json` with all keys; refuses to overwrite. |
 | `completion` | ✅ | ✅ | ✅ | cobra completion + dynamic project/runnable completion (cd/run/test/build/kill/publish/default); installed by `rig setup`. The bespoke `[suggest]` protocol is ➖ (cobra owns the shell protocol). |
 | scripts → verbs (auto) | ➖ | ✅ | ✅ | Node: every package.json script (not shadowing a built-in) becomes `rig <script>` → `<pm> run <script>` (flags after `--`). |
-| custom `commands` | ✅ | ⬜ (gap) | 🟢 | string / argv / object forms with per-OS (`macos`/`windows`/`linux`), `env`, `cwd`, `description`; missing-OS-spec errors cleanly. |
+| custom `commands` | ✅ | ⬜ (gap) | 🟢 | string / argv / object forms with per-OS (`macos`/`windows`/`linux`), `env`, `cwd`, `description`; missing-OS-spec errors cleanly. Shell-string form is OS-native (`sh -c` / `cmd.exe /d /s /c` with caret-escaped args). |
 | `watch` modifier | ✅ | ✅ | ✅ | `rig watch <verb>` / `rig w r` / and a real position-independent `--watch`/`-w` on run/build/test (the C# verb set). |
 | bare `rig` menu / `ui` | ✅ | ✅ | ✅ | grouped bubbletea menu + breadcrumb/back-nav + **project picker / focus scoping** (`rig · <project>` crumb; dev verbs + kill run scoped). |
 | `info` | ✅ | ✅ | ✅ | root, primary ecosystem, `.rig.json`, command mappings, packages (exclude-filtered). |
@@ -207,7 +207,7 @@ tools; **rigsmith** is the Go `cli/` module.
 | Coverage engine (ReportGenerator / vitest) | ✅ | ✅ | ⬜ | |
 | RID/self-contained publish · dnx/dlx · global.json doctor | ✅ | ➖ | ⬜ | |
 | ni-parity commands · scripts→verbs · Vite+ · port-kill | ➖ | ✅ | ⬜ | |
-| Shell completion (zsh/bash/pwsh) | ✅ | ✅ | ✅ | cobra completion + dynamic project/runnable completion; `setup` installs the sourcing (zsh/bash/fish; pwsh prints only, like the C#). |
+| Shell completion (zsh/bash/pwsh) | ✅ | ✅ | 🟢 | cobra completion + dynamic project/runnable completion; `setup` installs the sourcing for zsh/bash/fish AND PowerShell (the C# printed pwsh only). |
 | `[suggest]` protocol + cross-ecosystem completion | ✅ | ✅ | ➖ | cobra owns the shell-completion protocol (`__complete`); dynamic completions cover the same surface — the bespoke argv protocol has no Go counterpart by design. |
 | `rig cd` shell wrapper | ✅ | ✅ | ✅ | `rig setup` installs a `rig()` function that cds on `rig cd` and passes everything else through (zsh/bash/fish; verified live). |
 | Cross-tool delegation (.NET↔Node) + `rig-net`/`rig-node` | ✅ | ✅ | ➖ | **N/A by design** — one Go binary handles all ecosystems natively; the source split exists only because neither tool could. |
