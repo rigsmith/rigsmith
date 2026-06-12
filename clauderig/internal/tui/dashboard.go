@@ -86,7 +86,19 @@ func (m Model) View() string {
 	if len(m.info.Hooks) > 0 {
 		hk = okC.Render(strings.Join(m.info.Hooks, ", "))
 	}
-	b.WriteString("  hooks     " + hk + "\n\n")
+	b.WriteString("  hooks     " + hk + "\n")
+
+	if len(m.info.Devices) > 0 {
+		b.WriteString(dim.Render("  devices:") + "\n")
+		for _, d := range m.info.Devices {
+			self := ""
+			if d.Name == m.info.Machine.Name {
+				self = dim.Render(" (this)")
+			}
+			b.WriteString(fmt.Sprintf("  %-12s %s%s\n", d.Name, dim.Render(d.OS), self))
+		}
+	}
+	b.WriteString("\n")
 
 	b.WriteString("  " + keyC.Render("s") + " sync   " + keyC.Render("r") + " restore   " +
 		keyC.Render("t") + " status   " + keyC.Render("q") + " quit\n")

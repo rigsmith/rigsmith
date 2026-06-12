@@ -10,6 +10,7 @@ import (
 
 	"github.com/rigsmith/clauderig/internal/allowlist"
 	"github.com/rigsmith/clauderig/internal/config"
+	"github.com/rigsmith/clauderig/internal/devices"
 	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/hooks"
 	"github.com/rigsmith/core/pathmap"
@@ -31,6 +32,7 @@ type Info struct {
 	Dirty      bool
 	Roots      []RootInfo
 	Hooks      []string
+	Devices    []devices.Device
 }
 
 // Gather collects the local snapshot. settingsPath points at ~/.claude/settings.json.
@@ -62,6 +64,10 @@ func Gather(ctx context.Context, cfg *config.Config, me config.Machine, staging,
 	}
 
 	info.Hooks, _ = hooks.Status(settingsPath)
+
+	if reg, err := devices.Load(staging); err == nil {
+		info.Devices = reg.List()
+	}
 	return info
 }
 

@@ -21,7 +21,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started
 6. ✅ **Desktop `config.json` preferences.** Synced via a keep-only filter (`engine.keepOnly`) that retains just `preferences`, dropping the volatile caches/tokens the app constantly rewrites.
 7. ⬜ **Conflict resolution.** Pull is ff-only; on divergence it errors. Build the per-file picker / `git mergetool` handoff.
 8. ⬜ **Richer TUIs.** `ui` dashboard is read-only + dispatch; add the restore-preview screen and interactive restore-safety prompt.
-9. ⬜ **Device registry.** Track per-device last-sync timestamps for the dashboard.
+9. ✅ **Device registry.** Synced `clauderig-devices.json`; each machine touches its entry on sync, shown in `status` and `ui` with relative last-sync times.
 10. ⬜ **Multi-machine project union.** Manifest is rebuilt from the local machine each sync (reflects last pusher only); merge projects across devices.
 
 ## Deferred / v2

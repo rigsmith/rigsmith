@@ -70,7 +70,37 @@ func NewStatusCmd() *cobra.Command {
 			} else {
 				fmt.Fprintf(out, "  hooks     %s\n", DimStyle.Render("not installed (run `clauderig hooks install`)"))
 			}
+
+			if len(info.Devices) > 0 {
+				fmt.Fprintln(out, DimStyle.Render("  devices:"))
+				for _, d := range info.Devices {
+					self := ""
+					if d.Name == info.Machine.Name {
+						self = DimStyle.Render(" (this)")
+					}
+					fmt.Fprintf(out, "  %-12s %s  %s%s\n", d.Name, d.OS,
+						DimStyle.Render(humanizeSince(d.LastSync)), self)
+				}
+			}
 			return nil
 		},
+	}
+}
+
+// humanizeSince renders a coarse relative time for device last-sync display.
+func humanizeSince(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
 }

@@ -2,8 +2,10 @@ package commands
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/rigsmith/clauderig/internal/config"
+	"github.com/rigsmith/clauderig/internal/devices"
 	"github.com/rigsmith/clauderig/internal/engine"
 	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/core/pathmap"
@@ -73,6 +75,12 @@ func NewSyncCmd() *cobra.Command {
 			if dryRun {
 				fmt.Fprintln(out, DimStyle.Render("\n  dry-run: staged + scanned, not committing"))
 				return nil
+			}
+
+			// Record this machine in the synced device registry.
+			if reg, err := devices.Load(staging); err == nil {
+				reg.Touch(me.Name, me.OS, claudeVer, time.Now())
+				_ = reg.Save(staging)
 			}
 
 			repo, err := gitrepo.Init(ctx, staging)
