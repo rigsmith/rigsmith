@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
 	"github.com/rigsmith/cli/internal/config"
+	"github.com/rigsmith/cli/internal/detect"
 )
 
 func TestParsePids(t *testing.T) {
@@ -111,5 +114,94 @@ func TestResolveKillPatterns_ConfigMatchWins(t *testing.T) {
 	got := resolveKillPatterns(cfg, t.TempDir(), "")
 	if !reflect.DeepEqual(got, []string{"dotnet watch", "vite"}) {
 		t.Fatalf("resolveKillPatterns = %v, want config match", got)
+	}
+}
+
+func TestResolveKillPatterns_ConfigMatchWinsEvenOverAnArg(t *testing.T) {
+	// Config kill.match still wins over a name arg (it may pin non-project
+	// processes), matching the .NET rig.
+	cfg := config.Config{Kill: config.Kill{Match: []string{"Pinned"}}, DefaultProject: "Other"}
+	got := resolveKillPatterns(cfg, t.TempDir(), "MicaSpike")
+	if !reflect.DeepEqual(got, []string{"Pinned"}) {
+		t.Fatalf("resolveKillPatterns = %v, want [Pinned]", got)
+	}
+}
+
+func TestResolveKillPatterns_UnmatchedArgIsHonoredAsARawPattern(t *testing.T) {
+	// A name that matches nothing is honored as-is, so you can still
+	// `rig kill SomeExternalProc`.
+	got := resolveKillPatterns(config.Config{}, t.TempDir(), "ghost")
+	if !reflect.DeepEqual(got, []string{"ghost"}) {
+		t.Fatalf("resolveKillPatterns = %v, want [ghost]", got)
+	}
+}
+
+func TestDotnetKillPatterns_BareKillSweepsEveryRunnableProject(t *testing.T) {
+	// The "stop everything I started" sweep — all runnables, libs/tests excluded.
+	projects := []detect.ProjectInfo{
+		{Name: "App", OutputType: "Exe"},
+		{Name: "MicaSpike", OutputType: "WinExe"},
+		{Name: "Core"}, // library
+		{Name: "App.Tests", OutputType: "Exe", IsTest: true}, // test host
+	}
+	got := dotnetKillPatterns(projects, "")
+	if !reflect.DeepEqual(got, []string{"App", "MicaSpike"}) {
+		t.Fatalf("sweep = %v, want [App MicaSpike]", got)
+	}
+	// Only libraries → nothing to sweep (never fall back to something broader).
+	if got := dotnetKillPatterns([]detect.ProjectInfo{{Name: "OnlyLib"}}, ""); got != nil {
+		t.Fatalf("lib-only sweep = %v, want nil", got)
+	}
+}
+
+func TestDotnetKillPatterns_WithArgTargetsTheNamedProject(t *testing.T) {
+	projects := []detect.ProjectInfo{
+		{Name: "Acme.App", OutputType: "Exe"},
+		{Name: "Acme.MicaSpike", OutputType: "Exe"},
+		{Name: "Core"},
+	}
+	// short-name exact wins, then substring.
+	if got := dotnetKillPatterns(projects, "MicaSpike"); !reflect.DeepEqual(got, []string{"Acme.MicaSpike"}) {
+		t.Fatalf("exact = %v, want [Acme.MicaSpike]", got)
+	}
+	if got := dotnetKillPatterns(projects, "Acme"); !reflect.DeepEqual(got, []string{"Acme.App", "Acme.MicaSpike"}) {
+		t.Fatalf("substring = %v, want both Acme projects", got)
+	}
+	// No match → nil, so the caller can honor the raw string.
+	if got := dotnetKillPatterns(projects, "ghost"); got != nil {
+		t.Fatalf("no match = %v, want nil", got)
+	}
+}
+
+func TestDotnetKillPatterns_PatternIsTheProjectNameNotTheAssemblyName(t *testing.T) {
+	// Both platforms match the full command line, so the (narrower) project name
+	// is the target — present in the `dotnet run --project` cmdline and the
+	// apphost path — never the AssemblyName.
+	app := detect.ProjectInfo{Name: "App", OutputType: "Exe", AssemblyName: "AcmeApp"}
+	if got := dotnetKillPatterns([]detect.ProjectInfo{app}, ""); !reflect.DeepEqual(got, []string{"App"}) {
+		t.Fatalf("sweep = %v, want [App] (the project name, not AcmeApp)", got)
+	}
+}
+
+func TestResolveKillPatterns_DotnetRepoSweepsRunnableProjectNames(t *testing.T) {
+	// End-to-end through discovery: a .NET repo's bare sweep targets the
+	// runnable projects' names only.
+	root := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("Repo.slnx", `<Solution><Project Path="App/App.csproj" /><Project Path="Core/Core.csproj" /></Solution>`)
+	write("App/App.csproj", `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>`)
+	write("Core/Core.csproj", `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>`)
+
+	if got := resolveKillPatterns(config.Config{}, root, ""); !reflect.DeepEqual(got, []string{"App"}) {
+		t.Fatalf("sweep = %v, want [App]", got)
 	}
 }

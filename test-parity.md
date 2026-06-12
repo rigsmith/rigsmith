@@ -57,8 +57,8 @@ the **Parity corpus** section at the bottom — it's the highest-leverage item.
 | **core: config / git / prestate / since** | 19 | ✅ done |
 | **changerig: CLI commands** | 47 | ✅ done (cmdtest, 31 tests; TTY/interop N/A) |
 | **relrig: release pipeline + publish** | 68 | ✅ done (53 ported; NuGet-protocol units deferred) |
-| **rig: config/jsonc/dotenv/discovery** | ~90 | ⬜ |
-| **rig: verb logic / matching** | ~70 | 🟡 (cd done, rest TODO) |
+| **rig: config/jsonc/dotenv/discovery** | ~90 | ✅ done |
+| **rig: verb logic / matching** | ~70 | ✅ done (CIM/real-assembly/TTY cases N/A) |
 | **NEW in Go (no .NET ancestor)** | — | ✅ ranges, gomod, cargo, walkutil, topo-sort |
 
 ---
@@ -356,101 +356,94 @@ publish confirm gate.
 
 ---
 
-# Source B — rig (.NET) → `rig` (Go)
+# Source B — rig (.NET) → `rig` (Go) — ✅ DONE (Phase 6, 2026-06-12)
 
-Go `rig` tests live in `cli/internal/...`. Today: `cd` (done), partial
-`coverage`/`doctor`/`kill`/discovery; everything else TODO.
+160 Go tests in `cli/internal/...`. Built this phase: the comment-preserving
+JSONC editor (`core/jsonc.Set`), the full RigConfig schema (JSONC, merge,
+namespaces, rich command forms), `cli/internal/envstack` (dotenv + layering,
+wired into every spawn path), the C# root-resolution precedence, .NET project
+discovery (`detect/dotnet.go`: slnx/sln/conventions), capabilities probing,
+the prefix/watch pre-parse pipeline, the dotnet verb-logic layer
+(`dotnetverbs.go`), a `rig publish` verb, the .NET coverage `--min` gate +
+in-process cobertura HTML, the ConfigWriter, and the default-project setter.
 
 ### Matching / navigation
-`CdTests.cs` (5) → `cli/internal/cli/cd_test.go`:
-- [x] all 5 (exact-short-name, no-match, path-basename, subsequence, name-outranks-path)
-      → Go has a **superset** (`TestRank*` ×13).
-
-`GlobTests.cs` (1 method / 9 cases) → glob matcher:
-- [~] anchored `*`/`?` case-insensitive matching → partially via
-      `walkutil` `TestIgnorer`; add a dedicated glob test with these 9 cases.
-
-`PrefixResolverTests.cs` (7) → ⬜ (verb prefix expansion, watch-modifier):
-- [ ] unambiguous-prefix-rewritten, ambiguous-left-alone, exact/options
-      passthrough, unknown-token passthrough, `ExpandWatch` flag, bare-watch,
-      longer-unambiguous-prefix.
+- [x] `CdTests.cs` (5) → `TestRank*` ×13 (superset).
+- [x] `GlobTests.cs` (9 cases) → `glob_test.go` (canonical anchored
+      case-insensitive `*`/`?` in `detect.GlobMatch`; cli delegates).
+- [x] `PrefixResolverTests.cs` (7) → `prefix_test.go` (+ `resolvePrefix`/
+      `expandWatch` and the Execute pre-parse pipeline implemented).
 
 ### Discovery / root resolution
-`ProjectDiscoveryTests.cs` (7) → `cli/internal/detect/detect_test.go`:
-- [~] nearest-ecosystem detection done (`TestNearestEcosystem_*` ×5), but the
-      .NET-specific cases are TODO: classify-from-slnx, exclude-globs,
-      IsExcluded name/path, classic-sln parse, *Tests convention, csproj
-      fallback, configured-solution override.
-
-`RootResolverTests.cs` (6) → ⬜ (anchor: rig.json > solution > git root):
-- [ ] rig.json wins over closer solution, solution fallback, git-root fallback,
-      git boundary stops climb, in-repo solution beats git root, .git-file worktree.
-
-`CapabilitiesTests.cs` (4) → ⬜:
-- [ ] run/publish gated on runnable, test/coverage gated on test project,
-      build/kill/custom always available, empty-dir reports nothing.
+- [x] `ProjectDiscoveryTests.cs` (7) → `detect/dotnet_test.go`
+      (slnx classify, exclude globs, IsExcluded, classic-sln parse, *Tests
+      convention, csproj fallback skip bin/, configured-solution override);
+      `TestNearestEcosystem_*` retained. sln/slnx now count as a .NET signal
+      in `ecosystemsInDir`.
+- [x] `RootResolverTests.cs` (6) → `detect/root_test.go` — `Root` rewritten to
+      the C# precedence (`.rig.json` > workspace manifest/solution > git root,
+      `.git`-file worktrees count, git boundary stops the climb).
+- [x] `CapabilitiesTests.cs` (4) → `detect/capabilities_test.go`
+      (+ menu gating wired in ui.go).
 
 ### Config / JSONC / env
-`RigConfigTests.cs` (15) → `cli/internal/config` (⬜, no tests):
-- [ ] unknown-key suggestion, known-keys-no-warning, merge (repo wins + dict
-      union), exclude-list union + quiet precedence, blank-license falls through,
-      malformed degrades to defaults, missing→defaults, full JSONC schema parse,
-      dotnet-namespace fold, dotnet beats legacy top-level, node-namespace
-      ignored, command string/array/object forms, per-OS override.
-
-`JsoncEditorTests.cs` (13) → ⬜ (comment-preserving JSONC edit):
-- [ ] replace-preserving-comments, insert-keeping-members, no-nested-name-match,
-      insert-empty-object, unicode byte-offsets, malformed→false,
-      nested replace/insert, create-parent, create-in-empty-root,
-      refuse-non-object-parent, inline single-line insert, BOM tolerance.
-
-`ConfigWriterTests.cs` (5) + `ConventionTests.cs` (11) → ⬜:
-- [ ] fresh-file with schema+nested, splice subsequent writes, refuse-clobber,
-      whitespace-only fresh, SetString returns repo path; ConfigWriter
-      create/update/preserve-comments, default-setter persists/rejects, rebuild
-      scoping + dry-run, slnx-before-sln, runsettings discovery (single/ambiguous/none).
-
-`DotEnvTests.cs` (8) + `EnvStackTests.cs` (2) → ⬜:
-- [ ] quoted-escapes, basic pairs+comments, strip-export, quote-literal rules,
-      inline-comment-unquoted-only, skip-invalid-keys, `.env.local` overlay,
-      empty-when-none; env precedence (file>ambient>config>command), null-layers-ignored.
+- [x] `RigConfigTests.cs` (15) → `config_test.go` — full schema (Solution,
+      Test, Coverage, Rebuild, Publish, EnvPresets, Aliases, rich Commands),
+      JSONC parse, unknown-key did-you-mean on `Config.Warnings`,
+      `Merge` (repo wins, dict union, blank-string fall-through, pointer
+      coalesce), dotnet-namespace fold (beats legacy), node ignored,
+      command string/argv/object + per-OS (`macos`/`windows`/`linux`).
+- [x] `JsoncEditorTests.cs` (13) → `core/jsonc/editor_test.go`
+      (`jsonc.Set`/`SetTopLevelString`: comment-preserving splice, byte
+      offsets, create-parent, BOM, refuse-non-object-parent).
+- [x] `ConfigWriterTests.cs` (5) → `config/writer_test.go`
+      (`SetRepoString`/`Set*`: fresh file w/ `$schema`, splice, refuse-clobber).
+- [x] `ConventionTests.cs` (11) → `writer_test.go` + `conventions_test.go` +
+      `detect/solution_test.go` (default-setter persists/rejects, rebuild
+      bin/obj scoping + dry-run + within-root guard — now wired into
+      `runRebuild`, slnx-before-sln, runsettings single/ambiguous/none).
+      The interactive `rig default` verb itself is unported (setter only).
+- [x] `DotEnvTests.cs` (8) + `EnvStackTests.cs` (2) → `envstack/` — exact C#
+      quoting/comment/export rules; precedence (low→high) file < ambient <
+      config < command (note: ambient beats file, per the C#); wired into
+      `commandEnv` + `customEnv` so every spawned command gets the layers.
 
 ### Coverage / doctor
-`CoverageTests.cs` (8) → `cli/internal/cli/coverage_test.go`:
-- [~] Go has `TestParseLinePct`, `TestParseGoCoverage` (parsing only). TODO:
-      MeetsMinimum gate, ResolveOptions CLI-over-config, runner explicit/auto-mtp,
-      collect-args by-runner + filter-when-scoped, cobertura ReadRates,
-      in-process HTML render.
+- [x] `CoverageTests.cs` (8) → `coverage_test.go` — parsing (pre-existing) +
+      `meetsMinimum` gate (the .NET `--min` gate is now implemented),
+      `resolveCoverageOptions` CLI-over-config, runner explicit/auto-MTP via
+      global.json, collect-args by runner + filter-when-scoped, cobertura
+      `readCoberturaRates`, in-process HTML render (stand-in for
+      ReportGenerator.Core).
+- [x] `DoctorTests.cs` (5) → `doctor_test.go` — `SdkSatisfies` (incl.
+      defers-when-pin-absent), `readSdkPin` (now walks ancestors).
 
-`DoctorTests.cs` (5) → `cli/internal/cli/doctor_test.go`:
-- [x] `SdkSatisfies` same/newer + older → `TestSdkSatisfies`, `TestMajorOf`
-- [ ] `SdkSatisfies_defersWhenPinAbsent`, `ReadSdkPin_returnsPinOrNull`,
-      `ReadSdkPin_findsGlobalJsonInAncestor`
-
-### Verb logic — `VerbLogicTests.cs` (34) → mostly ⬜
-- [~] **Kill** (8 of the 34) → `cli/internal/cli/kill_test.go` covers PID/netstat
-      parsing, name-match, self-filter (6 tests). Confirm: prefers-configured-match,
-      bare-kill-sweeps-all, kill-named, project-name-not-assembly, lsof parsing.
-- [ ] **Run/Test** (10): sole-runnable, prefers-default, ambiguous, query match,
-      no-runnable error, run-arg ordering (framework/launch-profile before `--`),
-      omit-unset+prepend-watch, test framework+filter, vstest-positional, mtp-`--project`.
-- [ ] **Rebuild** (2): skip exact/prefix segments, within-root delete guard.
-- [ ] **Publish** (2): rid/output defaults+overrides, self-contained+single-file args.
-- [ ] **Add/Remove/Global/Dlx** (5): add target resolution, `dotnet remove package`,
-      `tool install -g`, `dnx` tool-first, dnx availability check.
-- [ ] **Update/Outdated** (5): latest-stable-ignores-prerelease, is-newer compare,
-      sibling self-only, outdated lens defaults, lens mutual-exclusivity.
-- [ ] **Win exec** (1): cmd.exe caret-escaping.
-- [ ] **Test/build config** (1): configuration passing.
+### Verb logic — `VerbLogicTests.cs` (34) → ✅ `dotnetverbs_test.go` + `kill_test.go`
+- [x] **Kill** — config-match-wins (fixed: arg no longer beats `kill.match`),
+      bare-kill sweeps runnable projects only (fixed for .NET), kill-named,
+      project-name-not-assembly, lsof/netstat/self-filter. ⛔ the Windows
+      CIM/command-line cases (Go uses `taskkill /IM` only — feature gap noted).
+- [x] **Run/Test** (10) — resolution (sole/default/ambiguous/query/none),
+      run-arg ordering (framework/launch-profile before `--`), watch prepend,
+      test framework+filter shorthand, vstest-positional vs MTP `--project`.
+- [x] **Rebuild** (2), **Publish** (2, + the `rig publish` verb itself),
+      **Add/Remove/Global/Dlx** (5), **Update/Outdated** (5), **Win exec** (1),
+      **configuration passing** (1).
 
 ### Other rig tests
-- `InfoInitTests.cs` (4) → ⬜: init template, refuse-overwrite, info-on-empty,
-  coverage-defaults summary.
-- `MenuInputTests.cs` (4) → ⬜: escape/backspace cancel, passthrough, async path.
-- `IntegrationTests.cs` (6) → ⬜: real `dotnet` build E2E, custom shell/argv
-  command exit codes + arg forwarding + env + missing-os-spec error.
-- `TestEnumerationTests.cs` (6) → ⬜: detect mstest/nunit/xunit, plain-class-not-test,
-  real-assembly enumeration, cross-tfm metadata gate.
+- [x] `InfoInitTests.cs` (4) → `infoinit_test.go` (init template,
+      refuse-overwrite [Go exits 0 w/ message; C# exited 1], info-on-empty,
+      coverage-defaults summary).
+- [x] `MenuInputTests.cs` (4) → `ui_test.go` via `menuModel.Update`
+      (escape/backspace cancel, submenu pop, passthrough). ⛔ async-read case
+      (no async input path in bubbletea).
+- [x] `IntegrationTests.cs` (5 of 6) → `scripts_test.go` in-process
+      (shell/argv exit codes, arg forwarding, env, missing-OS-spec error).
+      ⛔ real-`dotnet`-build E2E (SDK spawn; covered generically).
+- [x] `TestEnumerationTests.cs` → `detect/dotnet_test.go` at the
+      csproj-classification level (mstest/nunit/xunit/IsTestProject/*Tests).
+      ⛔ real-assembly enumeration + cross-TFM gate (needs a .NET metadata
+      reader; no prebuilt fixtures to port against).
 - ⛔ `SmokeTests.cs` (1) — N/A (harness-wiring smoke).
 
 ➕ **Go-only `rig` tests (no .NET ancestor):** `workspace_test.go`

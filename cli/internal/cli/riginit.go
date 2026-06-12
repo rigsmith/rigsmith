@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,24 @@ const defaultRigJSON = `{
   "kill": { "match": [] }
 }
 `
+
+// setDefaultProject validates query against the repo's runnable projects and
+// persists `defaultProject` in the repo's .rig.json via the comment-preserving
+// config writer, returning the config path written. It writes nothing when the
+// query matches no runnable project (error) or several (ambiguous — the caller
+// decides). Port of the .NET rig's DefaultVerb set path; the interactive
+// `rig default` verb itself is not ported yet.
+func setDefaultProject(root string, cfg config.Config, query string) (string, error) {
+	projects := detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude)
+	res := resolveRunProject(projects, query, "")
+	if res.Err != "" {
+		return "", errors.New(res.Err)
+	}
+	if res.Selected == nil {
+		return "", fmt.Errorf("%q matches multiple projects", query)
+	}
+	return config.SetRepoString(root, "defaultProject", res.Selected.Name), nil
+}
 
 // newRigInitCmd scaffolds a .rig.json at the repo root. It refuses to overwrite.
 func newRigInitCmd() *cobra.Command {

@@ -1,7 +1,7 @@
 # Feature parity audit — rigsmith vs the source tools
 
 Audit of the Go rigsmith implementation against its two source projects
-(updated 2026-06-12 after parity phases 1–5; originally 2026-06-11):
+(updated 2026-06-12 after parity phases 1–6; originally 2026-06-11):
 
 - **net-changesets** (.NET) → `changerig` / `relrig` + `core`
 - **rig** (.NET + Node, kept at parity) → `rig` (the `cli/` module) + `core`
@@ -27,16 +27,20 @@ Audit of the Go rigsmith implementation against its two source projects
   (`format:` incl. the native prettier-equivalent and a 🟢 custom-command
   escape hatch). Remaining changerig tail: `--independent`, `commit` config
   key, `shell-init`.
-- **`rig` (dev launcher): mid-to-high.** Dev loop + full package management (with
-  pnpm/yarn/bun detection) + `coverage`/`kill`/`doctor`/`cd`/`init`/`rebuild`/
-  `global`/`dlx` + node scripts→verbs + **`--all` topo graph run + `--filter` +
-  project scoping + verb-prefix + watch** + capability-probed grouped menu +
-  `.rig.json` env all work; the remaining tail (`[suggest]` completion,
-  `setup`/`self-update`/`default`, menu project-pickers, test-class fuzzy) is
-  smaller now. One architectural win:
-  **no cross-tool delegation needed** — the single Go binary handles every ecosystem
-  natively (the .NET/Node rig split exists only
-  because neither could).
+- **`rig` (dev launcher): high (Phase 6, 2026-06-12).** Dev loop + full package
+  management + `coverage` (incl. .NET `--min` gate + in-process cobertura HTML)
+  + `kill` (C#-aligned semantics) + `doctor`/`cd`/`init`/`rebuild`/`publish`/
+  `global`/`dlx` + node scripts→verbs + **`--all` topo graph + `--filter` +
+  project scoping + verb-prefix + watch-modifier pipeline** + capability-probed
+  menu + **JSONC `.rig.json`** (merge, namespaces, rich per-OS commands,
+  did-you-mean warnings, comment-preserving writes) + **`.env`/`.env.local`
+  layering** + C#-precedence root resolution + full .NET project discovery
+  (slnx/sln). Remaining tail: `[suggest]` completion, menu project-pickers,
+  `setup`/`self-update`, the interactive `default` verb, test-class fuzzy,
+  per-verb `--watch` flag, Windows CIM kill. One architectural win:
+  **no cross-tool delegation needed** — the single Go binary handles every
+  ecosystem natively (the .NET/Node rig split exists only because neither
+  could).
 
 ---
 
@@ -148,7 +152,7 @@ tools; **rigsmith** is the Go `cli/` module.
 |---|---|---|---|---|
 | `build` / `test` / `run`/`dev` / `format` | ✅ | ✅ | ✅ | Via each ecosystem's `EcosystemInfo.DevCommands`; `--dry-run`/`--quiet`. |
 | `lint` / `typecheck` | ➖ | ✅ | 🟡 | Mapped where the ecosystem declares them (node/cargo); dotnet/go report "no mapping". |
-| `coverage` | ✅ | ✅ | 🟡 | Runs the native coverage command; `--min` gate (go/node), `--open` (node report). No ReportGenerator-style HTML; .NET `--min` not parsed yet. |
+| `coverage` | ✅ | ✅ | ✅ | Native coverage per ecosystem; `--min` gate (go/node/**dotnet**), `--open`; **in-process cobertura→HTML** for .NET (stands in for ReportGenerator); runner auto-MTP via global.json; `.rig.json coverage.*` defaults. |
 | `kill` (proc/port) | ✅ | ✅ | ✅ | `--port` (lsof/netstat), name/pattern (pgrep/pkill·taskkill), `kill.match` config, `--dry-run`; short auto-patterns guarded. |
 | `add` / `uninstall` / `outdated` | ✅ | ✅ | ✅ | Per-ecosystem native; aliases `remove`/`rm`/`od`. |
 | `global` / `dlx` | ✅ | ✅ | ✅ | Per-ecosystem (`dotnet tool install -g`/`dnx`, `go install`, `cargo install`); node pm-aware (`pnpm dlx`, `yarn global add`, `bun x`…). aliases `g`/`x`. |
@@ -157,13 +161,13 @@ tools; **rigsmith** is the Go `cli/` module.
 | `rebuild` | ✅ | ✅ | ✅ | Sequences clean → build; alias `rb`. |
 | `doctor` | ✅ | ✅ | ✅ | Per-ecosystem env checklist; non-zero exit on errors. |
 | `cd` | ✅ | ✅ | ✅ | Tiered fuzzy match (exact/prefix/substring/subsequence, name>path, short-name); prints dir to stdout (needs shell wrapper); picker on TTY; name completion. |
-| `publish` (rig's dotnet publish) | ✅ | ➖ | ⬜ | (distinct from relrig publish). |
-| `default` / `setup` / `self-update` | ✅ | ✅ | ⬜ | |
+| `publish` (rig's dotnet publish) | ✅ | ➖ | ✅ | rid/output/configuration/self-contained/single-file: flag > `.rig.json publish.*` > default; `{rid}` output templating. |
+| `default` / `setup` / `self-update` | ✅ | ✅ | 🟡 | default-project SETTER done (validate + persist via ConfigWriter); the interactive `default` verb, `setup`, `self-update` ⬜. |
 | `init` (.rig.json scaffold) | ✅ | ✅ | ✅ | Writes a `.rig.json` with all keys; refuses to overwrite. |
 | `completion` | ✅ | ✅ | 🟡 | cobra completion + dynamic name completion (cd); not the self-contained `[suggest]` protocol. |
 | scripts → verbs (auto) | ➖ | ✅ | ✅ | Node: every package.json script (not shadowing a built-in) becomes `rig <script>` → `<pm> run <script>` (flags after `--`). |
-| custom `commands` | ✅ | ⬜ (gap) | 🟡 | rigsmith surfaces `.rig.json commands` as subcommands (Node never did), but shell-string form only — no per-OS/env/cwd/argv variants. |
-| `watch` modifier | ✅ | ✅ | ⬜ | |
+| custom `commands` | ✅ | ⬜ (gap) | 🟢 | string / argv / object forms with per-OS (`macos`/`windows`/`linux`), `env`, `cwd`, `description`; missing-OS-spec errors cleanly. |
+| `watch` modifier | ✅ | ✅ | 🟡 | `rig watch <verb>` / `rig w r` / trailing `--watch` via the pre-parse pipeline; per-verb `--watch` flag at any position ⬜. |
 | bare `rig` menu / `ui` | ✅ | ✅ | 🟡 | grouped bubbletea menu (Dependencies ▸ / Maintenance ▸) + breadcrumb/back-nav; project-picker / focus-scoping ⬜. |
 | `info` | ✅ | ✅ | ✅ | root, primary ecosystem, `.rig.json`, command mappings, packages (exclude-filtered). |
 
@@ -171,16 +175,16 @@ tools; **rigsmith** is the Go `cli/` module.
 
 | Key | .NET | Node | rigsmith | Notes |
 |---|---|---|---|---|
-| `defaultProject` | ✅ | ✅ | 🟡 | loaded, not yet enforced. |
+| `defaultProject` | ✅ | ✅ | ✅ | enforced in run/test resolution; settable via the default-setter. |
 | `quiet` | ✅ | ✅ | ✅ | |
 | `exclude` | ✅ | ✅ | 🟡 | enforced in `info` discovery; not yet in menu pickers. |
 | `env` | ✅ | ✅ | ✅ | applied to spawned commands. |
 | `kill.match` | ✅ | ✅ | ✅ | patterns for the default kill sweep. |
 | `commands` | ✅ | ⬜ | ✅ | |
 | `ecosystem` (pin primary) | ➖ | ➖ | 🟢 | new — resolves polyglot ambiguity. |
-| `envPresets` / `aliases` / `kill` / `coverage.*` / `dotnet.*` | ✅ | partial | ⬜ | |
-| global `~/.rig.json` | ✅ | ✅ | ⬜ | |
-| comment-preserving writes | ✅ | ✅ | ⬜ | rigsmith doesn't write config yet. |
+| `envPresets` / `aliases` / `kill` / `coverage.*` / `dotnet.*` | ✅ | partial | ✅ | full schema parsed (JSONC); `dotnet.*` namespace folds over legacy top-level; `coverage.*` feeds the gate/HTML; unknown keys get did-you-mean warnings. |
+| global `~/.rig.json` | ✅ | ✅ | 🟡 | `LoadMerged` (repo-over-global per the C# rules) implemented; not yet wired into Execute. |
+| comment-preserving writes | ✅ | ✅ | ✅ | `core/jsonc` editor + ConfigWriter (`$schema` on fresh files, splice on existing, refuse-clobber). |
 
 ## Discovery & resolution
 
@@ -214,7 +218,7 @@ tools; **rigsmith** is the Go `cli/` module.
 |---|---|---|---|---|
 | Interactive menu (groups, pickers, back-nav) | ✅ | ✅ | 🟡 | basic bubbletea menu; no grouped sub-menus / focus scoping yet. |
 | `--dry-run` / `--quiet` / `→` echo | ✅ | ✅ | ✅ | |
-| `.env` / `.env.local` loading + precedence | ✅ | ✅ | ⬜ | |
+| `.env` / `.env.local` loading + precedence | ✅ | ✅ | ✅ | `cli/internal/envstack`: exact C# quoting; file < ambient < config < command; wired into every spawn path. |
 | env presets as flags | ✅ | ✅ | ⬜ | |
 | custom commands (shell/argv/OS/env/cwd) | ✅ | ⬜ | 🟡 | rigsmith runs the shell-string form; no per-OS/env/cwd/argv variants. |
 | `--no-env` / `--root` | ✅ | ✅ | ⬜ | |
@@ -224,11 +228,10 @@ tools; **rigsmith** is the Go `cli/` module.
 
 ## Suggested next steps (by leverage)
 
-1. **rig (Phase 6 of the parity roadmap)**: JSONC config + comment-preserving
-   editor, dotenv/env stack, prefix/root resolvers, capabilities, verb-logic
-   coverage — then the dev-launcher tail (`[suggest]` completion, menu
-   project-pickers/focus-scoping, `setup`/`self-update`/`default`, test-class
-   fuzzy match, `watch` modifier, `cd` shell wrapper).
+1. **rig ergonomics tail** (Phase 6 core is done): `[suggest]` completion, menu
+   project-pickers/focus-scoping, `setup`/`self-update`, the interactive
+   `default` verb, test-class fuzzy match, per-verb `--watch` flag, `cd` shell
+   wrapper, global `~/.rig.json` wiring (LoadMerged exists), Windows CIM kill.
 2. **changerig tail**: `--independent` (+ `dotnet.versionStrategy`), `commit`
    config key, `add --open`, `shell-init`.
 3. **relrig tail**: interactive plan-chooser TUI, `packages.versionRegex`,

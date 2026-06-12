@@ -10,5 +10,6 @@ func extraCmds() []*cobra.Command {
 		newKillCmd(),
 		newDoctorCmd(),
 		newCdCmd(),
+		newPublishCmd(),
 	}
 }

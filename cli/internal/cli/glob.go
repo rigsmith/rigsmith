@@ -1,6 +1,6 @@
 package cli
 
-import "strings"
+import "github.com/rigsmith/cli/internal/detect"
 
 // excluded reports whether name matches any of the .rig.json `exclude` globs.
 func excluded(name string, patterns []string) bool {
@@ -12,32 +12,10 @@ func excluded(name string, patterns []string) bool {
 	return false
 }
 
-// globMatch is a minimal '*' glob (matches the planner's ignore semantics):
-// supports leading/trailing/middle '*', e.g. "*Bench", "Acme.*", "*.Demo".
+// globMatch is minimal glob matching for config patterns (the .NET rig's Glob
+// semantics): '*' matches any run of characters, '?' a single one.
+// Case-insensitive, anchored (the whole input must match). The implementation
+// lives in detect so project discovery shares it.
 func globMatch(pattern, name string) bool {
-	if pattern == name {
-		return true
-	}
-	if !strings.Contains(pattern, "*") {
-		return false
-	}
-	parts := strings.Split(pattern, "*")
-	pos := 0
-	for i, part := range parts {
-		if part == "" {
-			continue
-		}
-		idx := strings.Index(name[pos:], part)
-		if idx < 0 {
-			return false
-		}
-		if i == 0 && idx != 0 {
-			return false
-		}
-		pos += idx + len(part)
-	}
-	if last := parts[len(parts)-1]; last != "" {
-		return strings.HasSuffix(name, last)
-	}
-	return true
+	return detect.GlobMatch(pattern, name)
 }

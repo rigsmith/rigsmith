@@ -1,6 +1,10 @@
 package cli
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestSdkSatisfies(t *testing.T) {
 	tests := []struct {
@@ -47,5 +51,56 @@ func TestMajorOf(t *testing.T) {
 				t.Fatalf("major = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+// ---- ports of the .NET rig's DoctorTests (ReadSdkPin) ----
+
+func TestSdkSatisfies_DefersToSatisfiedWhenAPinIsAbsentOrUnparseable(t *testing.T) {
+	if !sdkSatisfies("9.0.100", "") {
+		t.Fatal("absent pin must defer to satisfied")
+	}
+	if !sdkSatisfies("9.0.100", "   ") {
+		t.Fatal("whitespace pin must defer to satisfied")
+	}
+	if !sdkSatisfies("not-a-version", "9.0.100") {
+		t.Fatal("an unparseable installed version must defer to satisfied")
+	}
+}
+
+func TestReadSdkPin_ReturnsThePinnedVersionOrEmpty(t *testing.T) {
+	pinned := t.TempDir()
+	writeFile(t, filepath.Join(pinned, "global.json"),
+		`{ "sdk": { "version": "9.0.100", "rollForward": "latestMinor" } }`)
+	if got := readSdkPin(pinned); got != "9.0.100" {
+		t.Fatalf("pinned = %q, want 9.0.100", got)
+	}
+
+	// The nearest global.json wins, pin or not: one without sdk.version is no pin.
+	unpinned := t.TempDir()
+	writeFile(t, filepath.Join(unpinned, "global.json"),
+		`{ "test": { "runner": "Microsoft.Testing.Platform" } }`)
+	if got := readSdkPin(unpinned); got != "" {
+		t.Fatalf("unpinned = %q, want empty", got)
+	}
+}
+
+func TestReadSdkPin_FindsAGlobalJsonInAnAncestorDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "global.json"), `{ "sdk": { "version": "8.0.0" } }`)
+	nested := filepath.Join(root, "src", "App")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSdkPin(nested); got != "8.0.0" {
+		t.Fatalf("nested = %q, want 8.0.0", got)
+	}
+}
+
+// writeFile writes content to path, failing the test on error.
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

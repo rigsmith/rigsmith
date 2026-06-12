@@ -41,7 +41,10 @@ func newInfoCmd() *cobra.Command {
 				fmt.Fprintf(out, "  file:           %s\n", cfg.Path)
 				fmt.Fprintf(out, "  defaultProject: %s\n", orNone(cfg.DefaultProject))
 				fmt.Fprintf(out, "  ecosystem:      %s\n", orNone(cfg.Ecosystem))
-				fmt.Fprintf(out, "  quiet:          %t\n", cfg.Quiet)
+				fmt.Fprintf(out, "  quiet:          %t\n", cfg.IsQuiet())
+				if cfg.Coverage != nil {
+					fmt.Fprintf(out, "  coverage:       %s\n", coverageDefaults(cfg.Coverage))
+				}
 				if len(cfg.Commands) > 0 {
 					names := make([]string, 0, len(cfg.Commands))
 					for name := range cfg.Commands {
@@ -123,4 +126,28 @@ func orNone(s string) string {
 		return "none"
 	}
 	return s
+}
+
+// coverageDefaults summarizes the persisted coverage prefs actually in effect
+// (so a repo that gates at N% isn't a surprise), or "(none)". The license is
+// deliberately excluded — it isn't a default that changes a run's outcome.
+// Mirrors the .NET rig's InfoVerb.CoverageDefaults. Pure.
+func coverageDefaults(c *config.Coverage) string {
+	if c == nil {
+		return "(none)"
+	}
+	var parts []string
+	if c.Min != nil {
+		parts = append(parts, "min "+trimFloat(*c.Min)+"%")
+	}
+	if c.Open != nil && *c.Open {
+		parts = append(parts, "auto-open")
+	}
+	if c.Full != nil && *c.Full {
+		parts = append(parts, "full report")
+	}
+	if len(parts) == 0 {
+		return "(none)"
+	}
+	return strings.Join(parts, ", ")
 }

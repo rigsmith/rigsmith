@@ -10,13 +10,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rigsmith/cli/internal/config"
 	"github.com/rigsmith/cli/internal/detect"
+	"github.com/rigsmith/cli/internal/envstack"
 	"github.com/spf13/cobra"
 )
 
@@ -42,7 +43,7 @@ func Execute(ctx context.Context) error {
 		// config sets the default and an explicit --quiet always wins.
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			if cfg, err := config.Load(detect.Root(cwd)); err == nil && cfg.Quiet {
+			if cfg, err := config.Load(detect.Root(cwd)); err == nil && cfg.IsQuiet() {
 				quiet = true
 			}
 			return nil
@@ -87,7 +88,62 @@ func Execute(ctx context.Context) error {
 	}
 	root.AddCommand(scriptCmds(repoRoot)...)
 
+	// Pre-parse pipeline, mirroring the .NET rig: a leading `watch`/`w` modifier
+	// expands to a --watch flag on the target verb, then an unambiguous verb
+	// prefix resolves (`rig cove` → coverage). Tokens after `--` are forwarded
+	// verbatim and never rewritten.
+	args := os.Args[1:]
+	head, tail := args, []string(nil)
+	if sep := slices.Index(args, "--"); sep >= 0 {
+		head, tail = args[:sep:sep], args[sep:]
+	}
+	verbs := make([]string, 0, len(root.Commands()))
+	for _, c := range root.Commands() {
+		verbs = append(verbs, c.Name())
+	}
+	head = resolvePrefix(expandWatch(head), verbs)
+	// Go's watch mode is the `watch` subcommand rather than per-verb --watch
+	// flags; fold the expanded flag back onto it.
+	if n := len(head); n > 0 && head[n-1] == "--watch" {
+		head = append([]string{"watch"}, head[:n-1]...)
+	}
+	root.SetArgs(append(head, tail...))
+
 	return fang.Execute(ctx, root)
+}
+
+// resolvePrefix rewrites an unambiguous *prefix* of a verb name to the full
+// name before the parser sees it (`rig cove` → `rig coverage`), matching the
+// .NET rig's PrefixResolver.Resolve. Exact names, option-looking tokens, and
+// ambiguous/unknown tokens pass through for the parser to handle.
+func resolvePrefix(args []string, verbs []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	token := args[0]
+	if token == "" || token[0] == '-' {
+		return args
+	}
+	for _, v := range verbs {
+		if strings.EqualFold(v, token) {
+			return args // exact name
+		}
+	}
+	matched := map[string]bool{}
+	match := ""
+	for _, v := range verbs {
+		if len(v) >= len(token) && strings.EqualFold(v[:len(token)], token) {
+			matched[strings.ToLower(v)] = true
+			match = v
+		}
+	}
+	if len(matched) != 1 {
+		return args // ambiguous / none → the parser handles it (or an alias does)
+	}
+	rewritten := make([]string, len(args))
+	copy(rewritten, args)
+	rewritten[0] = match
+	return rewritten
 }
 
 // resolvePrimary picks the primary ecosystem for the repo at root: .rig.json's
@@ -133,46 +189,6 @@ func verbCmd(verb, short string, aliases ...string) *cobra.Command {
 	}
 }
 
-// customCmds turns each .rig.json "commands" entry into a rig subcommand that
-// runs the shell string via `sh -c`. Names that collide with a built-in verb are
-// skipped so the dev loop always wins.
-func customCmds(cfg config.Config) []*cobra.Command {
-	if len(cfg.Commands) == 0 {
-		return nil
-	}
-	builtin := isBuiltinVerb
-	names := make([]string, 0, len(cfg.Commands))
-	for name := range cfg.Commands {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	var cmds []*cobra.Command
-	for _, name := range names {
-		if builtin[name] {
-			continue
-		}
-		script := cfg.Commands[name]
-		cmds = append(cmds, &cobra.Command{
-			Use:   name,
-			Short: "Custom command: " + script,
-			// Let unknown flags fall through to the script while rig's own
-			// --dry-run/--quiet still bind.
-			FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
-			RunE: func(cmd *cobra.Command, args []string) error {
-				cwd, _ := os.Getwd()
-				root := detect.Root(cwd)
-				line := script
-				if len(args) > 0 {
-					line = line + " " + strings.Join(args, " ")
-				}
-				return runShell(cmd, root, line)
-			},
-		})
-	}
-	return cmds
-}
-
 // runCommand runs an ecosystem verb's argv in dir, echoing it first unless quiet.
 func runCommand(cmd *cobra.Command, dir string, argv []string) error {
 	echo(cmd, strings.Join(argv, " "))
@@ -188,33 +204,16 @@ func runCommand(cmd *cobra.Command, dir string, argv []string) error {
 	return c.Run()
 }
 
-// runShell runs a custom command's shell string in dir via `sh -c`.
-func runShell(cmd *cobra.Command, dir, line string) error {
-	echo(cmd, line)
-	if dryRun {
-		return nil
-	}
-	c := exec.CommandContext(cmd.Context(), "sh", "-c", line)
-	c.Dir = dir
-	c.Env = commandEnv(dir)
-	c.Stdout = cmd.OutOrStdout()
-	c.Stderr = cmd.ErrOrStderr()
-	c.Stdin = os.Stdin
-	return c.Run()
-}
-
-// commandEnv returns the ambient environment plus any `.rig.json` `env` entries
-// (config env overrides ambient). Returns nil (inherit) when there's no config env.
+// commandEnv builds the spawned-process environment with the rig layering
+// (low to high): .env/.env.local files, ambient process env, `.rig.json` env.
+// Returns nil (inherit) when no file or config env exists.
 func commandEnv(root string) []string {
-	cfg, err := config.Load(root)
-	if err != nil || len(cfg.Env) == 0 {
+	fileEnv, _ := envstack.Load(root)
+	cfg, _ := config.Load(root)
+	if len(fileEnv) == 0 && len(cfg.Env) == 0 {
 		return nil
 	}
-	env := os.Environ()
-	for k, v := range cfg.Env {
-		env = append(env, k+"="+v)
-	}
-	return env
+	return envstack.Environ(envstack.Merge(fileEnv, envstack.Ambient(), cfg.Env, nil))
 }
 
 // echo prints the `→ command` line unless --quiet (or .rig.json quiet) is set.
