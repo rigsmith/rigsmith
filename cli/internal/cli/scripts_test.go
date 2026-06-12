@@ -123,8 +123,10 @@ func TestShellInvocationShapes(t *testing.T) {
 		if argv[0] != "cmd.exe" || argv[1] != "/d" || argv[3] != "/c" {
 			t.Fatalf("windows argv = %v, want cmd.exe /d /s /c", argv)
 		}
-		if !strings.Contains(display, "echo hi ") || !strings.Contains(display, "a b") {
-			t.Fatalf("windows display = %q", display)
+		// The forwarded arg is appended caret-escaped (winShellArg), so the
+		// raw "a b" won't appear verbatim — the space is escaped to "a^ b".
+		if want := "echo hi " + winShellArg("a b"); display != want {
+			t.Fatalf("windows display = %q, want %q", display, want)
 		}
 		return
 	}

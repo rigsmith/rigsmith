@@ -1,0 +1,13 @@
+<Project>
+
+  <!-- EnableMSTestRunner must be set BEFORE the MSTest package props import,
+       because MSTest.TestAdapter.props derives IsTestingPlatformApplication
+       (the marker `dotnet test` uses to route to MTP) from it at props time —
+       a value set in the .csproj body lands too late. Directory.Build.props is
+       imported early enough, so the MTP runner is correctly selected. -->
+  <PropertyGroup>
+    <EnableMSTestRunner>true</EnableMSTestRunner>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+</Project>
