@@ -15,5 +15,10 @@ relrig info
 cascades bumps to dependents, applies linked/fixed/lockstep grouping, stamps the
 new versions into each ecosystem's manifest, and writes `CHANGELOG.md`.
 
-Wired: `init`, `add`, `status`, `version`, `info`. Scaffolded (stubs): `publish`,
-`tag`, `pre`. See [../docs/PORTING-PLAN.md](../docs/PORTING-PLAN.md).
+The full surface is wired: `init`, `add`, `status` (incl. `--since` and
+`--output`), `version` (normal/pre/snapshot, changelog enrichment + `format:`),
+`pre`, `info`, `ui`, `tag`, `publish` (idempotent, confirm-gated on a TTY,
+`--yes` for CI), and `release` — the configurable step pipeline
+(`.changeset/release.jsonc`: steps/hooks/vars/confirm gates/secret masking,
+GitHub forge releases). See [../docs/RELEASE-ORCHESTRATOR.md](../docs/RELEASE-ORCHESTRATOR.md)
+and [../docs/FEATURE-PARITY.md](../docs/FEATURE-PARITY.md).

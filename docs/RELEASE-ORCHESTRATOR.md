@@ -1,6 +1,10 @@
 # Release orchestrator (`relrig release`) — design
 
-> Status: **design, not built — ON HOLD** (2026-06-11). This maps the net-changesets
+> Status: **BUILT** (2026-06-12) — implemented in `release/internal/pipeline` +
+> `release/internal/forge`, wired as `relrig release`; see FEATURE-PARITY.md
+> for the delivered surface (deferred: interactive plan-chooser TUI,
+> `packages.versionRegex`; `tool` defaults to `relrig` itself). The design
+> below is the original mapping and remains the reference. This maps the net-changesets
 > `changeset release` orchestrator (fully implemented there on the `jcamp` branch,
 > `src/Changesets/Commands/Release/`, `docs/release-command-design.md`) onto the
 > rigsmith Go architecture, so it's ready to build when greenlit. Nothing here is

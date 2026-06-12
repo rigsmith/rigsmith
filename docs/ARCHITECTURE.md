@@ -47,21 +47,34 @@ the same property that made it portable out of C# in the first place.
 | `config` | The unified `.changeset/config.json` schema; ecosystem blocks kept raw for per-adapter decoding | `Shared/ChangesetConfig.cs`, `DotnetConfig.cs` |
 | `planner` | The release plan: per-package version, the dependency **cascade**, **linked/fixed/lockstep** grouping, and the changelog entry renderer | `Commands/Version/Helpers/ChangelogGenerator.cs`, `ChangelogFileWriter.cs`, `ModuleChangelog.cs` |
 | `plugin` | The extension contract (interfaces + JSON protocol + subprocess host + registry) for both ecosystem adapters and changelog generators | `docs/changelog-generator-plugins-design.md` |
-| `ecosystem/{dotnet,node,gomod}` | Built-in language adapters — in-process implementations of `plugin.Ecosystem` | `Commands/Version/Helpers/CsProjectsRepository.cs` (+ new node/go) |
+| `ecosystem/{dotnet,node,gomod,cargo}` | Built-in language adapters — in-process implementations of `plugin.Ecosystem` | `Commands/Version/Helpers/CsProjectsRepository.cs` (+ new node/go/cargo) |
+| `changelog` | changelog-git/-github enrichment (commit/PR/author), the release-line decorator, and the CHANGELOG file writer | `Version/Helpers/ChangelogCommitResolver.cs`, `ChangelogReleaseLine.cs`, `ChangelogFileWriter.cs` |
+| `mdfmt` | the native prettier-equivalent markdown formatter + the `format:` dispatcher (auto-detect, package-manager exec, custom argv) | `Version/Helpers/NativeMarkdownFormatter.cs`, `ChangelogFormatter.cs` |
+| `jsonc` | tolerant JSONC parse (offset-preserving) + the comment-preserving editor | rig's `JsoncEditor.cs` |
+| `gitutil` / `prestate` / `since` / `walkutil` | git tags + merge-base diffs, `.changeset/pre.json`, changed-files→projects mapping, ignore-aware tree walking | `Shared/GitService.cs`, `PreStateRepository.cs`, `SinceChanges.cs` |
 
 ### `cli/` → `rig`
 
-`internal/detect` reuses `core/ecosystem` for detection and maps rig verbs to
-native commands. `internal/cli` is the cobra+fang command tree. Today: `build`,
-`test`, `run`, `format`, `info`, with `--dry-run`. The long tail (coverage,
-kill, publish, menu, completion, cross-ecosystem delegation, `.rig.json`) is
-scaffolded in PORTING-PLAN.md, not yet built.
+`internal/detect` reuses `core/ecosystem` for detection, resolves the repo
+root with the rig precedence (`.rig.json` > solution/manifest > git root), and
+carries the .NET project discovery (slnx/sln, test classification,
+capabilities). `internal/config` is the JSONC `.rig.json` (merge, namespaces,
+rich per-OS commands, comment-preserving writes); `internal/envstack` layers
+`.env`/`.env.local` < ambient < config < command into every spawn.
+`internal/cli` is the cobra+fang command tree: the dev loop, package
+management, `coverage`/`kill`/`doctor`/`cd`/`rebuild`/`publish`, scripts→verbs,
+the verb-prefix + watch pre-parse pipeline, `--all` topo runs, and the
+capability-gated menu. Remaining ergonomics tail is listed in
+FEATURE-PARITY.md.
 
 ### `release/` → `relrig`
 
 `internal/app` resolves the workspace (repo root, `.changeset`, config,
-registry, discovery). `internal/cli` is the cobra+fang command tree: `init`,
-`add`, `status`, `version`, `info` wired; `publish`, `tag`, `pre` scaffolded.
+registry, discovery). `internal/cli` is the cobra+fang command tree: the full
+changeset surface (`init`, `add`, `status`, `version`, `pre`, `info`, `ui`)
+plus `publish` (confirm-gated), `tag`, and `release` — the configurable step
+pipeline in `internal/pipeline` (steps/hooks/vars/gates/secret-masking) with
+forge (GitHub) releases in `internal/forge`.
 
 ## The north-star property
 

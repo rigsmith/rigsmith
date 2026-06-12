@@ -16,11 +16,14 @@ Scoop on any machine John roams onto.
 
 ## Status
 
-**Early scaffold — built 2026-06-11.** The shared engine is real and tested; the
-release pipeline works end-to-end (see below); the CLIs are functional skeletons
-with the full command surfaces stubbed where not yet wired. See
-[docs/PORTING-PLAN.md](docs/PORTING-PLAN.md) for what's done and what's next, and
-[claude-questions.md](claude-questions.md) for decisions awaiting John's input.
+**At parity — ported 2026-06-11/12.** The shared engine, both CLIs, and the
+release orchestrator are built and tested at functional parity with the two
+.NET source projects (see [docs/FEATURE-PARITY.md](docs/FEATURE-PARITY.md) for
+the feature audit and [test-parity.md](test-parity.md) for per-suite test
+coverage). Behavior is pinned by a cross-implementation golden corpus
+(`core/testdata/parity/`, 22 scenarios verified against live Node @changesets
+and the live C# binary). [claude-questions.md](claude-questions.md) records
+the decisions made along the way.
 
 ### What works today
 
@@ -31,10 +34,12 @@ changerig add -p my/pkg --bump minor -m "…" # write a changeset (interactive w
 changerig status --verbose                  # show the pending release plan
 changerig version                           # bump versions + write CHANGELOG.md, with dependency cascade
 changerig ui                                # interactive bubbletea menu
-relrig info                                 # config + ecosystems + discovered packages (relrig = superset)
+relrig publish                              # registries + tags (idempotent, confirm-gated on a TTY)
+relrig release                              # the configurable step pipeline (.changeset/release.jsonc)
 
 rig info                                    # what rig discovered
-rig build / test / run / format             # run the right native command for the detected ecosystem
+rig build / test / run / format             # the right native command for the detected ecosystem
+rig coverage --min 80 / kill / doctor / cd  # the dev-loop verbs (see cli/README.md for all)
 ```
 
 The release engine — changeset parsing, the dependency **cascade** (a dependent
@@ -52,9 +57,9 @@ is a Node reference plugin producing changelogen-style output. Set
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module layout, the shared-core boundary, how `rig` and `relrig` relate.
 - [docs/PLUGIN-PROTOCOL.md](docs/PLUGIN-PROTOCOL.md) — the one extension mechanism (subprocess + versioned JSON) for both ecosystem adapters and changelog generators, and why built-ins dogfood it.
-- [docs/PORTING-PLAN.md](docs/PORTING-PLAN.md) — feature-parity inventory of both source projects and the staged plan to reach it.
+- [docs/PORTING-PLAN.md](docs/PORTING-PLAN.md) — the original staged porting plan (historical; the port is complete — see FEATURE-PARITY.md for current state).
 - [docs/FEATURE-PARITY.md](docs/FEATURE-PARITY.md) — exhaustive feature-by-feature parity audit of rigsmith against net-changesets and rig (.NET + Node).
-- [docs/RELEASE-ORCHESTRATOR.md](docs/RELEASE-ORCHESTRATOR.md) — design for `relrig release` + `.changeset/release.jsonc` (the configurable pipeline), mapped from net-changesets. Not built yet (on hold).
+- [docs/RELEASE-ORCHESTRATOR.md](docs/RELEASE-ORCHESTRATOR.md) — design for `relrig release` + `.changeset/release.jsonc` (the configurable pipeline), mapped from net-changesets. **Built** (`release/internal/pipeline` + `forge`).
 
 ## Building
 

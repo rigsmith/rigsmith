@@ -1,5 +1,11 @@
 # rigsmith porting plan
 
+> **Historical (2026-06-11).** This was the original staged plan; the port is
+> complete as of 2026-06-12. Current state lives in
+> [FEATURE-PARITY.md](FEATURE-PARITY.md) (feature surface) and
+> [../test-parity.md](../test-parity.md) (test coverage). Status markers below
+> are NOT maintained.
+
 Two source projects → two Go binaries on a shared core, at feature parity.
 
 - **net-changesets** (C#, ~7k LOC) → `relrig`
