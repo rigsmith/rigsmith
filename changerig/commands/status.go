@@ -143,10 +143,13 @@ func BuildPlan(ctx context.Context, ws *Workspace) ([]*planner.Module, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading changesets: %w", err)
 	}
-	pkgs, _, err := ws.Discover(ctx)
+	pkgs, ecoOf, err := ws.Discover(ctx)
 	if err != nil {
 		return nil, err
 	}
+	// Reflect per-ecosystem versionStrategy overrides so status shows the same
+	// targets `version` would write.
+	ws.Config.PerPackageStrategy = ws.Config.StrategyByPackage(ecoOf)
 	return assemblePlan(ctx, ws, changesets, pkgs)
 }
 

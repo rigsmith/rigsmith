@@ -131,6 +131,19 @@ type depLink struct {
 	dev bool   // devDependency: range rewritten, no changelog line
 }
 
+// strategyFor returns the effective version strategy for a package: a
+// per-package override (populated from per-ecosystem config) when present, else
+// the top-level VersionStrategy. A nil config defaults to lockstep.
+func strategyFor(cfg *config.Config, name string) config.VersionStrategy {
+	if cfg == nil {
+		return config.Lockstep
+	}
+	if s, ok := cfg.PerPackageStrategy[name]; ok && s != "" {
+		return s
+	}
+	return cfg.VersionStrategy
+}
+
 // Plan computes the release plan for the given changesets and packages.
 func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *config.Config) []*Module {
 	byName := make(map[string]plugin.Package, len(packages))
@@ -296,9 +309,10 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 
 	// Independent strategy: write each package's version inline into its own
 	// manifest, overriding any shared version file (SetVersion targets the
-	// manifest when VersionFile is empty).
-	if cfg != nil && cfg.VersionStrategy == config.Independent {
-		for _, m := range out {
+	// manifest when VersionFile is empty). The strategy is resolved per package,
+	// so a per-ecosystem override applies only to that ecosystem's packages.
+	for _, m := range out {
+		if strategyFor(cfg, m.Name) == config.Independent {
 			m.VersionFile = ""
 		}
 	}
@@ -521,17 +535,17 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 		}
 	}
 
-	// Lockstep: packages sharing a version file move together — unless the
+	// Lockstep: packages sharing a version file move together — unless their
 	// strategy is independent, in which case each versions on its own changesets
-	// (Plan writes those inline; see the VersionFile clearing below).
-	if cfg != nil && cfg.VersionStrategy == config.Independent {
-		return changed
-	}
+	// (Plan writes those inline; see the VersionFile clearing below). The
+	// strategy is resolved per package, so a globally-independent repo simply
+	// contributes no lockstep groups.
 	lockstep := map[string][]string{}
 	for _, p := range packages {
-		if p.VersionFile != "" {
-			lockstep[p.VersionFile] = append(lockstep[p.VersionFile], p.Name)
+		if p.VersionFile == "" || strategyFor(cfg, p.Name) == config.Independent {
+			continue
 		}
+		lockstep[p.VersionFile] = append(lockstep[p.VersionFile], p.Name)
 	}
 	for _, names := range lockstep {
 		releasing := releasingIn(names)

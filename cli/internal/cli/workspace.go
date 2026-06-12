@@ -22,16 +22,15 @@ type target struct {
 
 // shortName is the last '/'-segment of a (possibly slashy) package name.
 func (t target) shortName() string {
-	if i := strings.LastIndexByte(t.Name, '/'); i >= 0 {
-		return t.Name[i+1:]
-	}
-	return t.Name
+	return shortName(t.Name)
 }
 
 // discoverWorkspace returns every package across every applicable ecosystem,
-// tagged with its ecosystem id and absolute dir. Best-effort: discovery errors
-// for one ecosystem are skipped.
-func discoverWorkspace(ctx context.Context, root string) []target {
+// tagged with its ecosystem id and absolute dir. Packages matching the
+// `exclude` globs (by full or short name) are dropped, keeping discovery and the
+// pickers consistent with `info`. Best-effort: discovery errors for one
+// ecosystem are skipped.
+func discoverWorkspace(ctx context.Context, root string, exclude []string) []target {
 	var out []target
 	for _, eco := range ecosystem.Default().All() {
 		ok, err := eco.Detect(ctx, root)
@@ -48,7 +47,11 @@ func discoverWorkspace(ctx context.Context, root string) []target {
 			for _, d := range p.Dependencies {
 				deps = append(deps, d.Name)
 			}
-			out = append(out, target{Name: p.Name, Eco: id, Dir: filepath.Join(root, p.Dir), Deps: deps})
+			t := target{Name: p.Name, Eco: id, Dir: filepath.Join(root, p.Dir), Deps: deps}
+			if excluded(t.Name, exclude) || excluded(t.shortName(), exclude) {
+				continue
+			}
+			out = append(out, t)
 		}
 	}
 	return out

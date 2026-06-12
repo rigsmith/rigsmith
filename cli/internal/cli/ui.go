@@ -165,7 +165,7 @@ func newMenu() menuModel {
 
 	// Project focus (the .NET rig Menu's project submenu / the Node menu's
 	// focus): with several projects, a picker entry scopes subsequent verbs.
-	projects := discoveredPackageNames(root)
+	projects := discoveredPackageNames(root, excludeFor(root))
 	var top []menuItem
 	if len(projects) > 1 {
 		top = append(top, menuItem{pickFocus: true, desc: "scope verbs to one project"})

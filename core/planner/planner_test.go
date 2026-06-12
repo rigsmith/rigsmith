@@ -563,3 +563,40 @@ func TestVersionStrategyLockstepVsIndependent(t *testing.T) {
 		t.Errorf("independent: VersionFile should be cleared for inline writes, got A=%q B=%q", a.VersionFile, b.VersionFile)
 	}
 }
+
+func TestPerPackageVersionStrategy(t *testing.T) {
+	// A and B share a version file. A is forced independent (e.g. its ecosystem
+	// block sets versionStrategy=independent); B inherits the lockstep default.
+	pkgs := []plugin.Package{
+		{Name: "A", Version: "1.0.0", ManifestPath: "A/A.csproj", VersionFile: "Directory.Build.props"},
+		{Name: "B", Version: "1.0.0", ManifestPath: "B/B.csproj", VersionFile: "Directory.Build.props"},
+	}
+	changesets := []*changeset.Changeset{
+		cs("a", changeset.Release{Name: "A", Bump: changeset.BumpMinor}),
+		cs("b", changeset.Release{Name: "B", Bump: changeset.BumpPatch}),
+	}
+
+	cfg := config.Default() // top-level stays lockstep
+	cfg.PerPackageStrategy = map[string]config.VersionStrategy{"A": config.Independent}
+
+	plan := Plan(changesets, pkgs, cfg)
+	a, b := find(plan, "A"), find(plan, "B")
+	if a == nil || b == nil {
+		t.Fatal("A or B missing")
+	}
+	// A is independent: inline write, its own minor bump.
+	if a.VersionFile != "" {
+		t.Errorf("A (independent): VersionFile should be cleared, got %q", a.VersionFile)
+	}
+	if got := a.NewVersion().String(); got != "1.1.0" {
+		t.Errorf("A = %s, want 1.1.0", got)
+	}
+	// B stays lockstep: it keeps its shared version file and is not dragged to
+	// A's minor (A is no longer part of B's lockstep group).
+	if b.VersionFile != "Directory.Build.props" {
+		t.Errorf("B (lockstep): VersionFile should be retained, got %q", b.VersionFile)
+	}
+	if got := b.NewVersion().String(); got != "1.0.1" {
+		t.Errorf("B = %s, want 1.0.1 (own patch, not lockstepped to A)", got)
+	}
+}

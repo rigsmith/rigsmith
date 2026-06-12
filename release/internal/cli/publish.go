@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/rigsmith/changerig/commands"
+	"github.com/rigsmith/core/config"
 	"github.com/rigsmith/core/gitutil"
 	"github.com/rigsmith/core/plugin"
 	"github.com/spf13/cobra"
@@ -70,7 +71,7 @@ func newPublishCmd() *cobra.Command {
 				resp, err := eco.Publish(cmd.Context(), plugin.PublishRequest{
 					RepoRoot:      ws.Root,
 					Package:       p,
-					PackageSource: ecosystemSource(ecoOf[p.Name]),
+					PackageSource: packageSourceFor(ws.Config, ecoOf[p.Name]),
 					Access:        acc,
 					DryRun:        dryRun,
 				})
@@ -135,6 +136,16 @@ func newPublishCmd() *cobra.Command {
 	f.BoolVar(&noPush, "no-push", false, "create tags locally but do not push them")
 	f.StringVar(&access, "access", "", "npm access (public|restricted); defaults to config")
 	return cmd
+}
+
+// packageSourceFor resolves the publish feed for a package's ecosystem: the
+// per-ecosystem `packageSource` config block wins, falling back to the built-in
+// default. The adapters fall back to their own defaults on "".
+func packageSourceFor(cfg *config.Config, eco string) string {
+	if src := cfg.EcoConfig(eco).PackageSource; src != "" {
+		return src
+	}
+	return ecosystemSource(eco)
 }
 
 // ecosystemSource returns the default package source per ecosystem when config
