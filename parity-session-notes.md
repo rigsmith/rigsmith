@@ -108,6 +108,18 @@ per-pkg `packages/<name>/package.json` + `.changeset/config.json` +
    `Module.RangeOnly` (planner assembly demotes instead of dropping; `version`
    skips changelog for them). Also fixed `--snapshot <tag>` space-form parsing
    (cobra NoOptDefVal only binds `--snapshot=tag`; the tag landed in args).
+7. **No cascade off group-pulled members** (found by the polyglot probe,
+   Node-verified) — a fixed pull moves a member out of a dependent's exact
+   range; Node patch-bumps that dependent (range rewritten + dep line), Go
+   left it untouched because group coordination ran after the cascade. Fixed:
+   `Plan` now iterates cascade + `coordinateGroups` (fixed/linked/lockstep
+   unified) to a fixpoint, mirroring @changesets `assembleReleasePlan`; dep
+   materialization sees the final coordinated versions. NOTE: net-changesets
+   shares the old behavior — the first **net divergence** (Go follows Node),
+   marked `netDivergence` in scenarios.json; the dotnet cross-oracle skips
+   marked packages. Node's changelog for such a dependent drops the "Updated
+   dependencies" header (same quirk as transitive) → the scenario also carries
+   `knownDivergence`.
 
 ## Key semantic findings (Node-verified, consistent across all 3 implementations)
 
@@ -167,18 +179,19 @@ existing core code" phase:
 
 ## Where to resume — backlog (from highest value)
 
-The approved roadmap (phases): corpus completion → ~~core unit tests~~ (done) →
-changelog formatting (Phase 3) → changerig command tests (Phase 4) → relrig
-release pipeline (Phase 5) → rig dev-CLI (Phase 6). Within that:
+The approved roadmap (phases): ~~corpus completion~~ (done) → ~~core unit
+tests~~ (done) → changelog formatting (Phase 3) → changerig command tests
+(Phase 4) → relrig release pipeline (Phase 5) → rig dev-CLI (Phase 6).
 
-1. **dotnet ecosystem corpus** — materialize a csproj tree, run `changerig
-   version`, assert csproj versions + CHANGELOG. Oracle = **net-changesets itself**
-   (cross-run the C# binary on the same fixture). Realizes the "one corpus, both
-   implementations" vision.
-2. **Cross-ecosystem polyglot cascade** — node + dotnet/go in one repo, a changeset
-   cascading across ecosystems. No external oracle (self-authored goldens); the
-   north-star differentiator.
-3. **Phase 3: changelog formatting feature parity** (43 C# tests; the Go code
+*(2026-06-12, second session, later: corpus items 1–2 landed — the dotnet
+corpus (`TestDotnetParity` vs the same Node goldens + `TestDotnetCrossOracle`
+vs the live C# binary, byte-identical on 18 scenarios; build the oracle with
+`dotnet build -c Release` in ~/Git/net-changesets) and the polyglot cascade
+(`TestPolyglotParity`, fixed group spanning dotnet+node+go+cargo, self-authored
+goldens in `polyglot/`). The probe surfaced planner bug 7 (above). Repo now has
+its initial commit; corpus work committed separately.)*
+
+1. **Phase 3: changelog formatting feature parity** (43 C# tests; the Go code
    doesn't exist yet) — `core/mdfmt` native markdown formatter (prettier-
    equivalent block model), formatter dispatch (`format` config: native/auto/
    oxfmt/deno/biome/prettier via lockfile-detected package manager, graceful
@@ -187,16 +200,16 @@ release pipeline (Phase 5) → rig dev-CLI (Phase 6). Within that:
    (commit resolver + release-line decoration, fakes only). A detailed design
    brief from the C# sources is in the approved plan
    (`~/.claude/plans/functional-cooking-tiger.md`).
-4. **Snapshot/prerelease e2e leftovers** — `snapshot.useCalculatedVersion` e2e
+2. **Snapshot/prerelease e2e leftovers** — `snapshot.useCalculatedVersion` e2e
    (probe Node first) and a two-package prerelease flow golden (pre-mode dep
    retargeting has unit coverage only).
-5. **Phase 4: changerig command tests** — init/add/status/version/pre/tag/info
+3. **Phase 4: changerig command tests** — init/add/status/version/pre/tag/info
    error paths + `--since` (substrate `gitutil.ChangedFilesSince` is ready;
    wire `status --since`/`add --since` + the SinceChanges logic with it).
-6. **Phase 5: relrig release pipeline** — steps/hooks/vars/confirm/forge +
+4. **Phase 5: relrig release pipeline** — steps/hooks/vars/confirm/forge +
    reporters (design brief in the plan file; publish confirm + `--yes` lands
    here). Build the shared `core/jsonc` parser with it.
-7. **Phase 6: rig dev-CLI parity** — JSONC editor, rig config, dotenv/env stack,
+5. **Phase 6: rig dev-CLI parity** — JSONC editor, rig config, dotenv/env stack,
    prefix/root resolvers, verb logic (~160 tests).
 
 ### Lower-value / poor fit
