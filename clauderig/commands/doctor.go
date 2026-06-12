@@ -2,8 +2,8 @@ package commands
 
 import (
 	"fmt"
-	"os"
 
+	"github.com/rigsmith/clauderig/internal/config"
 	"github.com/rigsmith/core/pathmap"
 	"github.com/spf13/cobra"
 )
@@ -19,31 +19,26 @@ func NewDoctorCmd() *cobra.Command {
 		Short: "Preview path resolution for this machine and flag unmapped paths",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
-			osTok := currentOSToken()
-
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return fmt.Errorf("resolve home dir: %w", err)
-			}
-
-			r := pathmap.NewResolver(pathmap.MapFolders{"HOME": home}, osTok, nil)
+			cfg := config.Default()
+			me := config.Detect("this")
 
 			fmt.Fprintln(out, HeaderStyle.Render("clauderig doctor"))
-			fmt.Fprintf(out, "  os    %s\n", osTok)
-			fmt.Fprintf(out, "  $HOME %s %s\n\n", home, OkStyle.Render("✓"))
+			fmt.Fprintf(out, "  os    %s\n", me.OS)
+			fmt.Fprintf(out, "  $HOME %s %s\n\n", me.Home, OkStyle.Render("✓"))
 
-			fmt.Fprintln(out, DimStyle.Render("  sample template resolution:"))
-			for _, tmpl := range []string{"$HOME/Git/rigsmith", "~/.claude/plans"} {
-				res := r.Resolve(tmpl)
-				switch res.Status {
-				case pathmap.StatusResolved:
-					fmt.Fprintf(out, "  %s  →  %s\n", tmpl, res.Path)
-				case pathmap.StatusUnconfigured:
-					fmt.Fprintf(out, "  %s  %s unmapped (%s)\n", tmpl, WarnStyle.Render("⚠"), res.MissingToken)
-				default:
-					fmt.Fprintf(out, "  %s  %s %v\n", tmpl, ErrStyle.Render("✗"), res.Status)
+			fmt.Fprintln(out, DimStyle.Render("  sync roots (resolved for this machine):"))
+			for _, r := range cfg.Roots {
+				loc, st := cfg.RootLocation(r.ID, me)
+				if st == pathmap.StatusResolved {
+					fmt.Fprintf(out, "  %-8s →  %s\n", r.ID, loc)
+				} else {
+					fmt.Fprintf(out, "  %-8s %s %v\n", r.ID, WarnStyle.Render("⚠"), st)
 				}
 			}
+
+			fmt.Fprintln(out, DimStyle.Render("\n  sample slug rewrite (this machine):"))
+			res := me.Resolver().Resolve("$HOME/Git/rigsmith")
+			fmt.Fprintf(out, "  $HOME/Git/rigsmith  →  %s\n", res.Path)
 			return nil
 		},
 	}

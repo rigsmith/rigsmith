@@ -3,9 +3,6 @@ package commands
 import (
 	"fmt"
 	"io"
-	"runtime"
-
-	"github.com/rigsmith/core/pathmap"
 )
 
 // planned prints a scaffolded command's intended behaviour plus a clear
@@ -17,17 +14,4 @@ func planned(w io.Writer, title string, lines ...string) {
 		fmt.Fprintf(w, "  %s\n", l)
 	}
 	fmt.Fprintf(w, "\n  %s\n", DimStyle.Render("(not yet implemented)"))
-}
-
-// currentOSToken maps Go's runtime.GOOS to the pathmap OS token used by the
-// cascade/resolver.
-func currentOSToken() string {
-	switch runtime.GOOS {
-	case "windows":
-		return pathmap.OSWindows
-	case "darwin":
-		return pathmap.OSMacOS
-	default:
-		return pathmap.OSLinux
-	}
 }
