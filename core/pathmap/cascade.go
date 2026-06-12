@@ -9,13 +9,13 @@ import "strings"
 // Keeping this free of expansion logic lets every entry share one cascade.
 type Cascade struct {
 	// Override wins on this machine only (empty when this machine doesn't diverge).
-	Override string
+	Override string `json:"override,omitempty"`
 	// PerOS maps an OS token (macos/windows/linux) to a literal path. The literal
 	// for the *target* OS is the roaming default; other OSes' entries are dormant.
-	PerOS map[string]string
+	PerOS map[string]string `json:"perOS,omitempty"`
 	// Portable is a single token-bearing path used when no per-OS literal exists —
 	// the layout is identical across OSes (e.g. $HOME/Dropbox).
-	Portable string
+	Portable string `json:"portable,omitempty"`
 }
 
 // RawFor picks the raw template for os by precedence: override → per-OS literal →
