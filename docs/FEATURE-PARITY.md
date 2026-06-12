@@ -71,9 +71,9 @@ rigsmith is done.
 
 | Feature | net-changesets | rigsmith | Diffs | Diff Details | Notes | Next steps |
 |---|---|---|---|---|---|---|
-| `init` | ✅ | ⬜ | | | Creates `.changeset/` + `config.json` + README; simpler than net's (interactive prompts + 1/2 exit-code taxonomy not reproduced — interop prompts tie to the dropped Node bridge). | Add the 1/2 exit-code taxonomy; optional interactive walkthrough. |
-| `add` (default) | ✅ | ⬜ | | | `-m/--message`, `-p/--package`, `--empty`, `--since` (picker preselect), human-id filename, plus `--type`/`-t` (conventional) + `--bump` + omittable bump. | Add the `--open` (editor) flag. |
-| `version` | ✅ | ⬜ | | | normal/snapshot/pre/exit modes; `--snapshot[=tag]` + template (flag `--snapshot-template` vs net's `--snapshot-prerelease-template`); changelog enrichment + `format:` pass. | Add `--independent` mode. |
+| `init` | ✅ | ✅ | 🟡 | Simpler by design: already-initialized is a benign no-op (exit 0) rather than net's distinct `AlreadyInitialized` code, and there's no interactive walkthrough — the prompts it would show (sourcePath/packageSource/interop) don't apply, since rigsmith uses top-level `paths` and dropped the Node-interop bridge. | Creates `.changeset/` + `config.json` + README. | |
+| `add` (default) | ✅ | ✅ | 🟢 | Adds `--type`/`-t` (conventional) + `--bump` + omittable bump beyond net. | `-m/--message`, `-p/--package`, `--empty`, `--since` (picker preselect), `--open` ($EDITOR on the created changeset), human-id filename. | |
+| `version` | ✅ | ✅ | 🟡 | snapshot-template flag is named `--snapshot-template` (net: `--snapshot-prerelease-template`). | normal/snapshot/pre/exit modes; `--snapshot[=tag]` + template; `--independent` (inline per-package versioning; also a `versionStrategy` config key); changelog enrichment + `format:` pass. | |
 | `status` | ✅ | ✅ | | | `--verbose`, `--since` (changed-without-changeset guard + narrowing), `--output` JSON plan, pre-mode reflection, no-changesets → non-zero exit. (net groups under bump headers — cosmetic.) | |
 | `pre enter`/`exit` | ✅ | ✅ | | | `.changeset/pre.json` shape, counter, graduation — full parity. | |
 | `tag` | ✅ | ✅ | 🟢 | Adds Go module-path tags (`dir/vX.Y.Z`) and `--dry-run` beyond net. | `name@version`, skip existing. | |
@@ -254,11 +254,11 @@ source tools; **rigsmith** is the Go `cli/` module.
    installer instead), `env` presets as flags, `--no-env`/`--root`, node
    dist-dir `clean`, `exclude` in menu pickers, relrig version seam for its own
    self-update.
-2. **changerig tail**: `--independent` (+ `dotnet.versionStrategy`), `commit`
-   config key, `add --open`, `init` exit codes, and **wiring the
-   per-ecosystem config block** — the `Ecosystem(id, dst)` decoder exists but
-   nothing reads `sourcePath`/`packageSource` from it yet (discovery uses
-   top-level `paths`, publish registries are hardcoded).
+2. **changerig tail**: the `commit` config key, per-ecosystem `dotnet.versionStrategy`
+   (the top-level `versionStrategy` + `version --independent` landed), and
+   **wiring the per-ecosystem config block** — the `Ecosystem(id, dst)` decoder
+   exists but nothing reads `sourcePath`/`packageSource` from it yet (discovery
+   uses top-level `paths`, publish registries are hardcoded).
 3. **relrig tail**: interactive plan-chooser TUI, `packages.versionRegex`,
    NuGet feed-protocol unit tests if a native feed client lands.
 

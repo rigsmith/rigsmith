@@ -10,6 +10,7 @@ import (
 
 	"github.com/rigsmith/core/changelog"
 	"github.com/rigsmith/core/changeset"
+	"github.com/rigsmith/core/config"
 	"github.com/rigsmith/core/gitutil"
 	"github.com/rigsmith/core/mdfmt"
 	"github.com/rigsmith/core/planner"
@@ -25,6 +26,7 @@ func NewVersionCmd() *cobra.Command {
 		dryRun           bool
 		snapshotTag      string
 		snapshotTemplate string
+		independent      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "version",
@@ -101,6 +103,11 @@ func NewVersionCmd() *cobra.Command {
 						cs.Summary = changelog.RenderLine(cs.Summary, setting, &info)
 					}
 				}
+			}
+
+			// --independent overrides the configured strategy for this run.
+			if independent {
+				ws.Config.VersionStrategy = config.Independent
 			}
 
 			plan := planner.Plan(active, pkgs, ws.Config)
@@ -221,6 +228,7 @@ func NewVersionCmd() *cobra.Command {
 	f.StringVar(&snapshotTag, "snapshot", "", "create a snapshot release (optional tag)")
 	f.Lookup("snapshot").NoOptDefVal = " " // allow bare --snapshot (no tag)
 	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")
+	f.BoolVar(&independent, "independent", false, "version each package on its own changesets, writing inline (overrides a shared version file)")
 	return cmd
 }
 

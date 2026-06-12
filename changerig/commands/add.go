@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -24,6 +26,7 @@ func NewAddCmd() *cobra.Command {
 		packages []string
 		empty    bool
 		sinceRef string
+		open     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add",
@@ -105,6 +108,13 @@ func NewAddCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Created %s\n", filepath.Join(".changeset", id+".md"))
+
+			if open {
+				if err := openInEditor(cmd, path); err != nil {
+					// The changeset is written; opening it is a convenience.
+					fmt.Fprintf(cmd.ErrOrStderr(), "could not open editor: %v\n", err)
+				}
+			}
 			return nil
 		},
 	}
@@ -115,7 +125,42 @@ func NewAddCmd() *cobra.Command {
 	f.StringSliceVarP(&packages, "package", "p", nil, "package to include (repeatable)")
 	f.BoolVar(&empty, "empty", false, "write an empty changeset (names no packages)")
 	f.StringVar(&sinceRef, "since", "", "preselect the packages changed since this git ref in the picker")
+	f.BoolVar(&open, "open", false, "open the created changeset in $EDITOR")
 	return cmd
+}
+
+// openInEditor opens path in the user's editor, inheriting the terminal so the
+// edit is interactive.
+func openInEditor(cmd *cobra.Command, path string) error {
+	argv := append(resolveEditor(os.Getenv("VISUAL"), os.Getenv("EDITOR"), runtime.GOOS), path)
+	c := exec.CommandContext(cmd.Context(), argv[0], argv[1:]...)
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr()
+	return c.Run()
+}
+
+// resolveEditor returns the editor command (program + any args) to launch:
+// $VISUAL, then $EDITOR, else a per-OS default. Splitting on spaces honors
+// forms like EDITOR="code -w". Pure.
+func resolveEditor(visual, editorEnv, goos string) []string {
+	editor := firstNonEmpty(visual, editorEnv)
+	if editor == "" {
+		if goos == "windows" {
+			editor = "notepad"
+		} else {
+			editor = "vi"
+		}
+	}
+	return strings.Fields(editor)
+}
+
+// firstNonEmpty returns the first argument that isn't blank, else "".
+func firstNonEmpty(xs ...string) string {
+	for _, x := range xs {
+		if strings.TrimSpace(x) != "" {
+			return x
+		}
+	}
+	return ""
 }
 
 func runAddForm(names []string, selected *[]string, bump, summary *string) error {
