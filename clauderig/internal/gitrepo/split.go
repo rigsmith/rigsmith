@@ -67,6 +67,43 @@ func (r *Repo) PushBranch(ctx context.Context, remote, branch string) error {
 	return err
 }
 
+// ForcePushBranch force-pushes a local branch (after SquashBranch rewrote it).
+func (r *Repo) ForcePushBranch(ctx context.Context, remote, branch string) error {
+	_, err := runGit(ctx, r.Dir, "push", "--force", remote, branch+":"+branch)
+	return err
+}
+
+// BranchCommitCount returns how many commits branch has, or 0 if it doesn't exist.
+func (r *Repo) BranchCommitCount(ctx context.Context, branch string) int {
+	out, err := runGit(ctx, r.Dir, "rev-list", "--count", branch)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, c := range strings.TrimSpace(out) {
+		if c >= '0' && c <= '9' {
+			n = n*10 + int(c-'0')
+		}
+	}
+	return n
+}
+
+// SquashBranch collapses a branch (not necessarily the current one) to a single
+// parent-less commit holding its current tree — bounding a side branch like
+// config-history whose commit count would otherwise grow without limit.
+func (r *Repo) SquashBranch(ctx context.Context, branch, msg string) error {
+	tree, err := runGit(ctx, r.Dir, "rev-parse", branch+"^{tree}")
+	if err != nil {
+		return err
+	}
+	commit, err := runGit(ctx, r.Dir, "commit-tree", strings.TrimSpace(tree), "-m", msg)
+	if err != nil {
+		return err
+	}
+	_, err = runGit(ctx, r.Dir, "update-ref", "refs/heads/"+branch, strings.TrimSpace(commit))
+	return err
+}
+
 func (r *Repo) gitDir(ctx context.Context) (string, error) {
 	out, err := runGit(ctx, r.Dir, "rev-parse", "--git-dir")
 	if err != nil {

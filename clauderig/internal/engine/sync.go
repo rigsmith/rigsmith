@@ -36,6 +36,7 @@ type RootResult struct {
 type Report struct {
 	Roots            []RootResult
 	ManifestProjects int
+	RetentionPruned  int              // staged transcript files removed as aged-out
 	Findings         []redact.Finding // non-empty ⇒ Sync returned an error (tripwire)
 }
 
@@ -154,6 +155,19 @@ func Sync(opts Options) (*Report, error) {
 		rep.Roots = append(rep.Roots, rr)
 	}
 
+	// Enforce the rolling retention window on the STAGING tree, not just on copy:
+	// remove staged transcript files older than the cutoff (across all machines'
+	// slugs) and the dirs they empty. This also ages out projects deleted or gone
+	// idle on any machine, so stale slugs don't accumulate forever.
+	var stagedSlugs map[string]bool
+	if !cutoff.IsZero() {
+		pruned, remaining, err := pruneAgedStagedProjects(filepath.Join(opts.StagingDir, "cli", "projects"), cutoff)
+		if err != nil {
+			return nil, err
+		}
+		rep.RetentionPruned, stagedSlugs = pruned, remaining
+	}
+
 	// Build the project manifest from the CLI root's projects dir.
 	if cliLoc, st := sourceLoc(opts, "cli"); st == pathmap.StatusResolved {
 		projects := filepath.Join(cliLoc, "projects")
@@ -169,6 +183,14 @@ func Sync(opts Options) (*Report, error) {
 				for slug, p := range existing.Projects {
 					if _, mine := m.Projects[slug]; !mine {
 						m.Projects[slug] = p
+					}
+				}
+			}
+			// Drop entries whose staged files were just pruned away (no transcripts left).
+			if stagedSlugs != nil {
+				for slug := range m.Projects {
+					if !stagedSlugs[slug] {
+						delete(m.Projects, slug)
 					}
 				}
 			}
@@ -241,6 +263,70 @@ func writeFile(path string, data []byte) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+// pruneAgedStagedProjects removes files under projectsDir older than cutoff and
+// the directories they empty, enforcing the rolling window on the staged tree.
+// It returns the count removed and the set of top-level slugs that still have
+// content (so the manifest can drop the rest). A missing dir is a no-op.
+func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, remaining map[string]bool, err error) {
+	remaining = map[string]bool{}
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, remaining, nil
+		}
+		return 0, nil, err
+	}
+	for _, slugEntry := range entries {
+		if !slugEntry.IsDir() {
+			continue
+		}
+		slug := slugEntry.Name()
+		slugDir := filepath.Join(projectsDir, slug)
+		var kept int
+		// remove aged files, deepest first so dirs can be cleaned afterwards
+		filepath.WalkDir(slugDir, func(p string, d os.DirEntry, werr error) error {
+			if werr != nil || d.IsDir() {
+				return nil
+			}
+			info, e := d.Info()
+			if e != nil {
+				return nil
+			}
+			if info.ModTime().Before(cutoff) {
+				if os.Remove(p) == nil {
+					pruned++
+				}
+			} else {
+				kept++
+			}
+			return nil
+		})
+		if kept == 0 {
+			_ = os.RemoveAll(slugDir)
+		} else {
+			remaining[slug] = true
+			removeEmptyDirs(slugDir)
+		}
+	}
+	return pruned, remaining, nil
+}
+
+// removeEmptyDirs removes now-empty subdirectories of root (deepest first).
+func removeEmptyDirs(root string) {
+	var dirs []string
+	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			dirs = append(dirs, p)
+		}
+		return nil
+	})
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if dirs[i] != root {
+			_ = os.Remove(dirs[i]) // removes only if empty
+		}
+	}
 }
 
 // copyPreserveMtime streams src to dst and stamps dst with src's mtime, so the

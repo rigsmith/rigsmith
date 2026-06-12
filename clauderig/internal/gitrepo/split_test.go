@@ -56,3 +56,33 @@ func TestCommitSubtree_ConfigHistorySurvivesSquash(t *testing.T) {
 		t.Error("expected no-op CommitSubtree when config unchanged")
 	}
 }
+
+func TestSquashBranch_BoundsConfigHistory(t *testing.T) {
+	ctx := context.Background()
+	r, _ := Init(ctx, t.TempDir())
+	write(t, r.Dir, "cli/projects/-p/s.jsonl", "x")
+	r.Commit(ctx, "main")
+	for i := 0; i < 3; i++ {
+		write(t, r.Dir, "cli/settings.json", string(rune('a'+i)))
+		if _, err := r.CommitSubtree(ctx, "config-history", []string{".", ":!cli/projects"}, "c"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := r.BranchCommitCount(ctx, "config-history"); n != 3 {
+		t.Fatalf("config-history commits = %d, want 3", n)
+	}
+	if err := r.SquashBranch(ctx, "config-history", "squashed"); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.BranchCommitCount(ctx, "config-history"); n != 1 {
+		t.Fatalf("after squash = %d, want 1", n)
+	}
+	// content intact + still excludes projects
+	files, _ := runGit(ctx, r.Dir, "ls-tree", "-r", "--name-only", "config-history")
+	if !strings.Contains(files, "cli/settings.json") || strings.Contains(files, "projects") {
+		t.Errorf("config-history content wrong after squash:\n%s", files)
+	}
+	if n := r.BranchCommitCount(ctx, "no-such-branch"); n != 0 {
+		t.Errorf("absent branch count = %d, want 0", n)
+	}
+}

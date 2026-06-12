@@ -12,6 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// configHistoryMaxCommits bounds the config-history side branch: once it grows
+// past this, it's squashed to a single commit (it's tiny, so this is generous).
+const configHistoryMaxCommits = 200
+
 // NewSyncCmd builds the `sync` command — walk → redact → manifest → tripwire into
 // the staging repo, then commit (empty-guarded) and push. Streams the report so
 // redaction is visible, not magic. The tripwire fails the sync loudly if a secret
@@ -63,6 +67,9 @@ func NewSyncCmd() *cobra.Command {
 					fmt.Fprintf(out, "  %-8s %d files, %d secret field(s) redacted%s\n", r.ID, r.Files, r.Redactions, extra)
 				}
 				fmt.Fprintf(out, "  manifest  %d projects\n", rep.ManifestProjects)
+				if rep.RetentionPruned > 0 {
+					fmt.Fprintf(out, "  retention %d aged file(s) pruned from staging\n", rep.RetentionPruned)
+				}
 			}
 			if serr != nil {
 				if rep != nil {
@@ -138,9 +145,16 @@ func NewSyncCmd() *cobra.Command {
 			}
 
 			// Preserve config history on a separate branch that survives main's
-			// squash (everything except the disposable transcript tree). Best-effort.
-			if changed, cerr := repo.CommitSubtree(ctx, "config-history", []string{".", ":!cli/projects"}, "clauderig config: "+me.Name); cerr == nil && changed && cfg.Remote != "" {
-				_ = repo.PushBranch(ctx, "origin", "config-history")
+			// squash (everything except the disposable transcript tree). Bounded:
+			// squash it once its commit count grows large. Best-effort throughout.
+			if changed, cerr := repo.CommitSubtree(ctx, "config-history", []string{".", ":!cli/projects"}, "clauderig config: "+me.Name); cerr == nil && changed {
+				if repo.BranchCommitCount(ctx, "config-history") > configHistoryMaxCommits {
+					if err := repo.SquashBranch(ctx, "config-history", "clauderig: squashed config history"); err == nil && cfg.Remote != "" {
+						_ = repo.ForcePushBranch(ctx, "origin", "config-history")
+					}
+				} else if cfg.Remote != "" {
+					_ = repo.PushBranch(ctx, "origin", "config-history")
+				}
 			}
 
 			// Size-based squash: bound .git when transcript history has bloated it.

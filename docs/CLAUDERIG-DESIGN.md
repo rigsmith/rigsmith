@@ -125,9 +125,12 @@ cwd mappings (Q4).
 
 ## Retention & repo shape
 
-- **30-day** working-tree window on `projects/` (≈ all of John's current 467 MB;
-  the byte/​session curve is shallow past 14d but 30d is fine under the orphan
-  scheme).
+- **30-day** working-tree window on `projects/`, enforced two ways: sync skips
+  *copying* transcripts older than the window, AND **prunes already-staged files
+  that have since aged out** (deepest-first, removing emptied dirs). So it's a true
+  rolling window, not just "don't add old" — and a project deleted or gone idle on
+  any machine ages out globally, so stale slugs don't accumulate. Pruned slugs are
+  dropped from the manifest too.
 - **Two branches**: `main` = config (precious, tiny, full history kept);
   `history` = **orphan branch** for `projects/`, squashed to a single root commit
   so `.git` never grows past the working tree. Transcript sync history is

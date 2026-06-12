@@ -12,6 +12,76 @@ import (
 
 func fexists(p string) bool { _, err := os.Stat(p); return err == nil }
 
+func TestPruneAgedStagedProjects(t *testing.T) {
+	projects := t.TempDir()
+	// fresh slug
+	write(t, projects, "-fresh/s.jsonl", "new")
+	// aged slug (set its file's mtime to the past)
+	write(t, projects, "-aged/s.jsonl", "old")
+	write(t, projects, "-aged/sub/tool.txt", "old")
+	old := time.Now().AddDate(0, 0, -40)
+	for _, f := range []string{"-aged/s.jsonl", "-aged/sub/tool.txt"} {
+		os.Chtimes(filepath.Join(projects, filepath.FromSlash(f)), old, old)
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -30)
+	pruned, remaining, err := pruneAgedStagedProjects(projects, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pruned != 2 {
+		t.Errorf("pruned = %d, want 2", pruned)
+	}
+	if fexists(filepath.Join(projects, "-aged")) {
+		t.Error("aged slug dir should be removed entirely")
+	}
+	if !fexists(filepath.Join(projects, "-fresh", "s.jsonl")) {
+		t.Error("fresh slug should remain")
+	}
+	if !remaining["-fresh"] || remaining["-aged"] {
+		t.Errorf("remaining = %v, want only -fresh", remaining)
+	}
+}
+
+// A project synced while fresh, then deleted locally and gone stale, is pruned
+// from staging AND the manifest on the next sync (retention disk-prune == the
+// fix for stale-slug accumulation).
+func TestSync_AgedDeletedProjectPrunedFromStaging(t *testing.T) {
+	staging := t.TempDir()
+	live := t.TempDir()
+	write(t, live, "projects/-Users-john-Git-p/s.jsonl",
+		`{"type":"user","cwd":"/Users/john/Git/p","isSidechain":false}`+"\n")
+	m := config.Machine{Name: "j", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	cfg := cliOnlyConfig(live)
+
+	if _, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, RetentionDays: 30}); err != nil {
+		t.Fatal(err)
+	}
+	staged := filepath.Join(staging, "cli", "projects", "-Users-john-Git-p")
+	if !fexists(staged) {
+		t.Fatal("project should be staged after first sync")
+	}
+
+	// Age the staged file and delete the project locally.
+	old := time.Now().AddDate(0, 0, -40)
+	os.Chtimes(filepath.Join(staged, "s.jsonl"), old, old)
+	os.RemoveAll(filepath.Join(live, "projects", "-Users-john-Git-p"))
+
+	rep, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, RetentionDays: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fexists(staged) {
+		t.Error("aged+deleted project should be pruned from staging")
+	}
+	if rep.ManifestProjects != 0 {
+		t.Errorf("manifest should drop the pruned project, got %d", rep.ManifestProjects)
+	}
+	if rep.RetentionPruned == 0 {
+		t.Error("expected RetentionPruned > 0")
+	}
+}
+
 func TestSync_RetentionDropsOldTranscripts(t *testing.T) {
 	live := t.TempDir()
 	write(t, live, "projects/-p/old.jsonl", "old session")
