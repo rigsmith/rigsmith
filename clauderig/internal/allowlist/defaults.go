@@ -1,5 +1,13 @@
 package allowlist
 
+// For returns the allowlist for a root id ("desktop" → Desktop, else CLI).
+func For(rootID string) List {
+	if rootID == "desktop" {
+		return Desktop()
+	}
+	return CLI()
+}
+
 // CLI is the allowlist for the ~/.claude root. Mirrors the design doc's table:
 // config + skills + plans + commands/agents + the marketplaces/data plugin config
 // + the project transcripts (retention is applied separately by mtime, not here).

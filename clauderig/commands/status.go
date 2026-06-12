@@ -3,15 +3,11 @@ package commands
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
-	"github.com/rigsmith/clauderig/internal/allowlist"
 	"github.com/rigsmith/clauderig/internal/config"
 	"github.com/rigsmith/clauderig/internal/gitrepo"
-	"github.com/rigsmith/clauderig/internal/hooks"
-	"github.com/rigsmith/core/pathmap"
+	"github.com/rigsmith/clauderig/internal/status"
 	"github.com/spf13/cobra"
 )
 
@@ -32,74 +28,49 @@ func NewStatusCmd() *cobra.Command {
 			}
 			me := config.Detect(machineName(cfg))
 			staging, _ := config.StagingDir()
+			settings, _ := settingsPath()
+			info := status.Gather(ctx, cfg, me, staging, settings)
 
 			fmt.Fprintln(out, HeaderStyle.Render("clauderig status"))
-			fmt.Fprintf(out, "  machine   %s (%s)\n", me.Name, me.OS)
+			fmt.Fprintf(out, "  machine   %s (%s)\n", info.Machine.Name, info.Machine.OS)
 
-			// Remote
-			if cfg.Remote == "" {
+			if info.Remote == "" {
 				fmt.Fprintf(out, "  remote    %s\n", DimStyle.Render("none configured — run `clauderig init`"))
 			} else {
 				rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-				reach := gitrepo.Reachable(rctx, cfg.Remote)
+				reach := gitrepo.Reachable(rctx, info.Remote)
 				cancel()
 				mark := ErrStyle.Render("unreachable")
 				if reach {
 					mark = OkStyle.Render("reachable")
 				}
-				fmt.Fprintf(out, "  remote    %s  %s\n", cfg.Remote, mark)
+				fmt.Fprintf(out, "  remote    %s  %s\n", info.Remote, mark)
 			}
 
-			// Staging repo / last sync
-			if _, err := os.Stat(filepath.Join(staging, ".git")); err == nil {
-				if repo, err := gitrepo.Open(ctx, staging); err == nil {
-					if h, subj, when, err := repo.LastCommit(ctx); err == nil {
-						fmt.Fprintf(out, "  last sync %s %s %s\n", h, when, DimStyle.Render(subj))
-					}
-					if dirty, _ := repo.Dirty(ctx); dirty {
-						fmt.Fprintf(out, "            %s\n", WarnStyle.Render("staging has uncommitted changes"))
-					}
-				}
+			if info.LastSync != "" {
+				fmt.Fprintf(out, "  last sync %s\n", info.LastSync)
 			} else {
 				fmt.Fprintf(out, "  last sync %s\n", DimStyle.Render("never (no staging repo yet)"))
 			}
+			if info.Dirty {
+				fmt.Fprintf(out, "            %s\n", WarnStyle.Render("staging has uncommitted changes"))
+			}
 
-			// Roots
 			fmt.Fprintln(out, DimStyle.Render("  roots:"))
-			for _, r := range cfg.Roots {
-				if !r.Enabled {
-					continue
-				}
-				loc, st := cfg.RootLocation(r.ID, me)
-				if st != pathmap.StatusResolved || !dirExists(loc) {
+			for _, r := range info.Roots {
+				if !r.Present {
 					fmt.Fprintf(out, "  %-8s %s\n", r.ID, DimStyle.Render("absent here"))
 					continue
 				}
-				files, _ := allowlist.Walk(loc, allowlistFor(r.ID))
-				fmt.Fprintf(out, "  %-8s %d files\n", r.ID, len(files))
+				fmt.Fprintf(out, "  %-8s %d files\n", r.ID, r.Files)
 			}
 
-			// Hooks
-			if path, err := settingsPath(); err == nil {
-				if present, _ := hooks.Status(path); len(present) > 0 {
-					fmt.Fprintf(out, "  hooks     %v\n", present)
-				} else {
-					fmt.Fprintf(out, "  hooks     %s\n", DimStyle.Render("not installed (run `clauderig hooks install`)"))
-				}
+			if len(info.Hooks) > 0 {
+				fmt.Fprintf(out, "  hooks     %v\n", info.Hooks)
+			} else {
+				fmt.Fprintf(out, "  hooks     %s\n", DimStyle.Render("not installed (run `clauderig hooks install`)"))
 			}
 			return nil
 		},
 	}
-}
-
-func dirExists(p string) bool {
-	info, err := os.Stat(p)
-	return err == nil && info.IsDir()
-}
-
-func allowlistFor(rootID string) allowlist.List {
-	if rootID == "desktop" {
-		return allowlist.Desktop()
-	}
-	return allowlist.CLI()
 }
