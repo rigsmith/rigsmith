@@ -19,12 +19,12 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started
 ## Polish / UX
 5. ✅ **Distribution.** goreleaser build+archive for `clauderig`, `install.sh` target, version stamping (`-X main.version`), module + tool READMEs. (Homebrew tap still commented out pending the public repo, same as the other rigs.)
 6. ✅ **Desktop `config.json` preferences.** Synced via a keep-only filter (`engine.keepOnly`) that retains just `preferences`, dropping the volatile caches/tokens the app constantly rewrites.
-7. ⬜ **Conflict resolution.** Pull is ff-only; on divergence it errors. Build the per-file picker / `git mergetool` handoff.
+7. ✅ **Conflict resolution.** On a rejected push (remote advanced), sync fetch+merges; clean merges auto-reconcile, real conflicts hand off to `git mergetool` (interactive only; non-interactive aborts with a clear message). No comparison tool built.
 8. ⬜ **Richer TUIs.** `ui` dashboard is read-only + dispatch; add the restore-preview screen and interactive restore-safety prompt.
 9. ✅ **Device registry.** Synced `clauderig-devices.json`; each machine touches its entry on sync, shown in `status` and `ui` with relative last-sync times.
 10. ✅ **Multi-machine project union.** Sync unions the freshly-built manifest with the existing one in staging, so every machine's projects are preserved (files already union via incremental sync); on restore each is re-slugged for the local machine.
 
-## Deferred / v2
+## Remaining
 11. ⬜ **Orphan history branch split.** Squash runs on `main` directly (bounded repo achieved); preserving config history separately is the refinement.
 12. ⬜ **Hooks auto-restore.** `SessionStart` only pulls (updates staging); a new machine still needs a manual `restore` (intentionally safe).
 13. ⬜ **Empirical Desktop-app resume check (Q4).** Rewrite is built + unit-proven; "does Cowork actually resume" needs driving the Electron app.

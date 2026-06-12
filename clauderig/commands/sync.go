@@ -107,7 +107,29 @@ func NewSyncCmd() *cobra.Command {
 			// Always push (even with no new commit) so a previously-failed push
 			// recovers; an in-sync push is a cheap no-op.
 			if err := repo.Push(ctx, "origin", "main"); err != nil {
-				return fmt.Errorf("push: %w", err)
+				// The remote likely advanced (another machine pushed). Reconcile:
+				// fetch + merge, hand conflicts to git mergetool, then push again.
+				conflicted, merr := repo.FetchMerge(ctx, "origin", "main")
+				if merr != nil {
+					return fmt.Errorf("push rejected and reconcile failed: %w", merr)
+				}
+				if conflicted {
+					if !interactive() {
+						_ = repo.AbortMerge(ctx)
+						return fmt.Errorf("remote diverged with conflicts; re-run `clauderig sync` in a terminal to resolve via git mergetool")
+					}
+					fmt.Fprintln(out, WarnStyle.Render("  merge conflicts — launching git mergetool…"))
+					if err := repo.RunMergeTool(ctx); err != nil {
+						_ = repo.AbortMerge(ctx)
+						return fmt.Errorf("mergetool: %w", err)
+					}
+					if err := repo.CommitMerge(ctx); err != nil {
+						return err
+					}
+				}
+				if err := repo.Push(ctx, "origin", "main"); err != nil {
+					return fmt.Errorf("push after reconcile: %w", err)
+				}
 			}
 			if changed {
 				fmt.Fprintln(out, OkStyle.Render("\n  ✓ synced & pushed"))
