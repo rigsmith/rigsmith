@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/rigsmith/cli/internal/detect"
 	"github.com/spf13/cobra"
@@ -47,6 +48,27 @@ func newWatchCmd() *cobra.Command {
 			return runCommand(cmd, dir, argv)
 		},
 	}
+}
+
+// expandWatch turns a leading `watch`/`w` modifier into a `--watch` flag on the
+// target verb (the .NET rig's PrefixResolver.ExpandWatch): `rig watch run` /
+// `rig w r` → `rig run --watch`. Execute then folds the flag back onto the
+// `watch` subcommand, which owns the per-ecosystem watch mapping, so the verb
+// still gets prefix resolution first. Bare `watch` → empty (falls through).
+func expandWatch(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	if !strings.EqualFold(args[0], "watch") && !strings.EqualFold(args[0], "w") {
+		return args
+	}
+	rest := args[1:]
+	if len(rest) == 0 {
+		return []string{}
+	}
+	out := make([]string, 0, len(rest)+1)
+	out = append(out, rest...)
+	return append(out, "--watch")
 }
 
 // normalizeWatchVerb maps shorthands to canonical verbs.

@@ -228,16 +228,33 @@ confirm gate (TTY prompt before first real push; `--yes`/non-TTY/dry-run skip
 masked as `***` everywhere, resume hint on failure. Deferred: interactive
 plan-chooser TUI; NuGet feed-protocol adapter units.)*
 
-1. **Phase 6: rig dev-CLI parity** — JSONC editor (extend `core/jsonc`), rig
-   config (JSONC + merge + namespaces), dotenv/env stack, prefix/root
-   resolvers, capabilities, glob matcher, verb logic, coverage/doctor gaps,
-   init/info, menu input, test enumeration (~160 tests). The last phase.
-2. **Snapshot/prerelease e2e leftovers** — `snapshot.useCalculatedVersion` e2e
+*(2026-06-12, third session cont.: **Phase 6 DONE — the roadmap's last phase.**
+`core/jsonc` editor (comment-preserving Set, 13 tests) · full RigConfig schema
+(JSONC, merge w/ ~/.rig.json support, dotnet-namespace fold, did-you-mean
+warnings, rich command forms incl. per-OS — consumers updated, 15 tests) ·
+`cli/internal/envstack` (exact C# dotenv quoting + file<ambient<config<command
+layering, wired into commandEnv/customEnv, 10 tests) · `detect.Root` rewritten
+to the C# precedence (.rig.json > solution/manifest > git root) · `detect/
+dotnet.go` (slnx/sln parsing, test classification, exclusions, capabilities) ·
+prefix/watch pre-parse pipeline · `dotnetverbs.go` (full C# verb-logic port:
+run/test/publish/add/remove/global/dlx/update/outdated/win-exec arg builders)
++ a real `rig publish` verb · kill semantics aligned to C# (config-match wins;
+runnable-only sweep) · coverage `--min` gate + auto-MTP + in-process cobertura
+HTML · doctor ancestor global.json · ConfigWriter + default-setter +
+runsettings + rebuild bin/obj scoping wired into runRebuild. ~100 new tests;
+cli module now at 160. sln/slnx now count as a .NET ecosystem signal.
+Remaining N/A or gaps: Windows CIM kill path, real-assembly test enumeration,
+interactive `rig default` verb, MenuInput async case.)*
+
+1. **Snapshot/prerelease e2e leftovers** — `snapshot.useCalculatedVersion` e2e
    (probe Node first) and a two-package prerelease flow golden (pre-mode dep
    retargeting has unit coverage only).
-3. **Small deferred items** — interactive plan-chooser TUI for `release`;
-   NuGet feed-protocol unit tests if a native feed client replaces the nuget
-   CLI delegation; point the C# parity tests at the shared corpus (optional).
+2. **Small deferred items** — interactive plan-chooser TUI for `release`;
+   `packages.versionRegex`; NuGet feed-protocol unit tests if a native feed
+   client replaces the nuget CLI delegation; Windows CIM kill; the interactive
+   `rig default` verb; point the C# parity tests at the shared corpus
+   (optional). Dev-launcher ergonomics tail per FEATURE-PARITY.md (`[suggest]`
+   completion, menu pickers, setup/self-update, test-class fuzzy).
 
 ### Lower-value / poor fit
 - `changelog-git` / `changelog-github` generators (env-dependent, non-hermetic) —

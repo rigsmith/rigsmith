@@ -239,22 +239,30 @@ func probeVersion(cmd *cobra.Command, root, bin string, args ...string) (string,
 	return out, true
 }
 
-// readSdkPin returns the sdk.version pinned by a global.json at root, or "".
-// Tolerant: a missing/garbled file is treated as no pin.
+// readSdkPin returns the sdk.version pinned by the nearest global.json at or
+// above root, or "" when none pins one. Tolerant: a missing/garbled file is
+// treated as no pin, and the nearest global.json wins, pin or not (a parent's
+// pin never overrides a closer, pin-less file).
 func readSdkPin(root string) string {
-	data, err := os.ReadFile(filepath.Join(root, "global.json"))
-	if err != nil {
-		return ""
+	for dir := root; ; {
+		data, err := os.ReadFile(filepath.Join(dir, "global.json"))
+		if err == nil {
+			var doc struct {
+				SDK struct {
+					Version string `json:"version"`
+				} `json:"sdk"`
+			}
+			if json.Unmarshal(data, &doc) != nil {
+				return "" // unreadable global.json → treat as no pin
+			}
+			return doc.SDK.Version
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
 	}
-	var doc struct {
-		SDK struct {
-			Version string `json:"version"`
-		} `json:"sdk"`
-	}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return ""
-	}
-	return doc.SDK.Version
 }
 
 // sdkSatisfies reports whether an installed SDK version satisfies a global.json

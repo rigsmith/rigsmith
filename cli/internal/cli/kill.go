@@ -90,30 +90,46 @@ func newKillCmd() *cobra.Command {
 	return cmd
 }
 
-// resolveKillPatterns builds the command-line substrings to match. Precedence:
+// resolveKillPatterns builds the command-line substrings to match. Precedence
+// (matching the .NET rig's KillVerb.ResolvePatterns):
 //
-//  1. an explicit `name` arg — resolve it like `rig run` would (exact project
+//  1. `.rig.json` kill.match — wins outright when set, even over a name arg
+//     (it may pin non-project processes like a hung test host).
+//  2. an explicit `name` arg — resolve it like `rig run` would (exact project
 //     name, else substring), falling back to the raw string so you can still
 //     `rig kill SomeExternalProc`.
-//  2. `.rig.json` kill.match — wins outright when set (may name non-projects).
 //  3. default sweep — every discovered package's Name (narrow, present in the
-//     dev driver's command line). Falls back to the repo directory name when no
-//     packages are discovered, so the sweep still does something useful.
+//     dev driver's command line); in a .NET repo only the RUNNABLE projects'
+//     names (libs/tests never own a process). Falls back to the repo directory
+//     name when no packages are discovered, so the sweep still does something.
 func resolveKillPatterns(cfg config.Config, root, name string) []string {
+	if len(cfg.Kill.Match) > 0 {
+		return cfg.Kill.Match
+	}
+	// A .NET repo follows the .NET rig's resolution exactly: the project Name —
+	// present in the `dotnet run --project …/Foo.csproj` driver's cmdline and in
+	// the apphost path — is the target, never the AssemblyName.
+	var dotnetProjects []detect.ProjectInfo
+	if hasDotNet(root) {
+		dotnetProjects = detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude)
+	}
 	if name != "" {
+		if matched := dotnetKillPatterns(dotnetProjects, name); len(matched) > 0 {
+			return matched
+		}
 		names := discoveredPackageNames(root)
 		if matched := matchProjectNames(names, name); len(matched) > 0 {
 			return matched
 		}
 		return []string{name}
 	}
-	if len(cfg.Kill.Match) > 0 {
-		return cfg.Kill.Match
-	}
 	// Default sweep patterns are auto-derived, so guard against dangerously broad
 	// matches: a 1–2 char name (e.g. a module called "ex") would `pgrep -f` half
 	// the system. Drop anything shorter than 3 chars; if nothing survives, sweep
 	// nothing (the user can pass an explicit name or kill.match).
+	if len(dotnetProjects) > 0 {
+		return safePatterns(dotnetKillPatterns(dotnetProjects, ""))
+	}
 	if names := safePatterns(discoveredPackageNames(root)); len(names) > 0 {
 		return names
 	}
@@ -121,6 +137,38 @@ func resolveKillPatterns(cfg config.Config, root, name string) []string {
 		return []string{base}
 	}
 	return nil
+}
+
+// dotnetKillPatterns mirrors the .NET rig's project-based pattern resolution
+// over the discovered .NET projects: a named query resolves exact
+// Name/ShortName first, then substring (nil when nothing matches, so the
+// caller can fall back to the raw string); a bare kill sweeps every RUNNABLE
+// project's Name — the "stop everything I started" sweep, libs/tests excluded
+// and never the AssemblyName. Pure.
+func dotnetKillPatterns(projects []detect.ProjectInfo, query string) []string {
+	if query != "" {
+		var exact, sub []string
+		q := strings.ToLower(strings.TrimSpace(query))
+		for _, p := range projects {
+			switch {
+			case strings.ToLower(p.Name) == q || strings.ToLower(p.ShortName()) == q:
+				exact = append(exact, p.Name)
+			case strings.Contains(strings.ToLower(p.Name), q):
+				sub = append(sub, p.Name)
+			}
+		}
+		if len(exact) > 0 {
+			return exact
+		}
+		return sub
+	}
+	var names []string
+	for _, p := range projects {
+		if p.IsRunnable() {
+			names = append(names, p.Name)
+		}
+	}
+	return names
 }
 
 // safePatterns drops auto-derived patterns too short to match safely.

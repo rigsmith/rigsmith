@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rigsmith/cli/internal/config"
 	"github.com/rigsmith/cli/internal/detect"
 	"github.com/spf13/cobra"
 )
@@ -92,11 +93,20 @@ func newMenu() menuModel {
 		eco = ""
 	}
 
-	// Capabilities probing: only show verbs the primary ecosystem actually maps.
-	// Verbs handled by dedicated commands (coverage/kill/doctor) always apply.
+	// Capabilities probing: only show verbs the primary ecosystem actually maps,
+	// and (for .NET) only verbs the repo's projects support — no test project →
+	// no test/coverage, no runnable project → no run. Kill/doctor always apply.
+	caps := detect.AllCapabilities
+	if eco == detect.DotNet {
+		cfg, _ := config.Load(root)
+		caps = detect.ProbeCapabilities(root, "", cfg.Exclude)
+	}
 	maps := func(verb string) bool {
 		if eco == "" {
 			return true
+		}
+		if caps.Unavailable(verb) != "" {
+			return false
 		}
 		_, ok := detect.CommandFor(eco, verb, root)
 		return ok
@@ -115,8 +125,11 @@ func newMenu() menuModel {
 		{label: "outdated", desc: "list outdated deps", verb: "outdated"},
 		{label: "upgrade", desc: "upgrade deps", verb: "upgrade"},
 	})
-	maint := append(keepMapped(maps, []menuItem{{label: "clean", desc: "remove build outputs", verb: "clean"}}),
-		menuItem{label: "coverage", desc: "tests + coverage", verb: "coverage"},
+	maint := keepMapped(maps, []menuItem{{label: "clean", desc: "remove build outputs", verb: "clean"}})
+	if caps.Unavailable("coverage") == "" {
+		maint = append(maint, menuItem{label: "coverage", desc: "tests + coverage", verb: "coverage"})
+	}
+	maint = append(maint,
 		menuItem{label: "kill", desc: "terminate app processes", verb: "kill"},
 		menuItem{label: "doctor", desc: "check the environment", verb: "doctor"},
 	)

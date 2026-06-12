@@ -22,25 +22,69 @@ const (
 	Cargo  = "cargo"
 )
 
-// Root walks up from start to the repo root: the nearest dir with a .git, a
-// .rig.json, or a recognized manifest. Falls back to start.
+// Root walks up from start to the repo root. Precedence is by CATEGORY, not
+// distance (matching the .NET rig's RootResolver): the nearest .rig.json wins;
+// else the nearest workspace manifest (*.slnx/*.sln, go.work, go.mod,
+// package.json, Cargo.toml); else the nearest .git; else start. Explicit config
+// therefore wins even over a closer manifest.
+//
+// A .git ancestor bounds the walk: it's the outer edge of the repo, so the
+// search never climbs past it to anchor on a manifest / config that lives
+// outside the repository (e.g. a stray solution up in the home directory).
 func Root(start string) string {
 	dir, err := filepath.Abs(start)
 	if err != nil {
 		return start
 	}
-	for {
-		for _, marker := range []string{".git", ".rig.json", "go.work", "go.mod", "package.json"} {
-			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
-				return dir
+	var rigDir, manifestDir, gitDir string
+	for d := dir; ; {
+		if rigDir == "" {
+			if _, err := os.Stat(filepath.Join(d, ".rig.json")); err == nil {
+				rigDir = d
 			}
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return start
+		if manifestDir == "" && hasWorkspaceManifest(d) {
+			manifestDir = d
 		}
-		dir = parent
+		// The repo boundary: record it (inclusive of this dir's own config/
+		// manifest, checked above) and stop — don't escape the repository.
+		// `.git` is a directory for normal clones, a file for worktrees.
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			gitDir = d
+			break
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
 	}
+	switch {
+	case rigDir != "":
+		return rigDir
+	case manifestDir != "":
+		return manifestDir
+	case gitDir != "":
+		return gitDir
+	}
+	return dir
+}
+
+// hasWorkspaceManifest reports whether dir directly contains a workspace-level
+// manifest that can anchor the repo root: a .NET solution or an ecosystem
+// manifest. Per-project files (*.csproj) deliberately don't anchor the root.
+func hasWorkspaceManifest(dir string) bool {
+	for _, marker := range []string{"go.work", "go.mod", "package.json", "Cargo.toml"} {
+		if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+			return true
+		}
+	}
+	for _, pat := range []string{"*.slnx", "*.sln"} {
+		if matches, _ := filepath.Glob(filepath.Join(dir, pat)); len(matches) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // manifestEcosystem maps a manifest filename — checked DIRECTLY in a directory,
@@ -64,8 +108,13 @@ func ecosystemsInDir(dir string) []string {
 			seen[id] = true
 		}
 	}
-	if matches, _ := filepath.Glob(filepath.Join(dir, "*.csproj")); len(matches) > 0 {
-		seen[DotNet] = true
+	// A solution file is a .NET signal too (a solution-only root has no csproj
+	// directly in it) — see the C# ProjectDiscovery, which anchors on solutions.
+	for _, pat := range []string{"*.csproj", "*.sln", "*.slnx"} {
+		if matches, _ := filepath.Glob(filepath.Join(dir, pat)); len(matches) > 0 {
+			seen[DotNet] = true
+			break
+		}
 	}
 	ids := make([]string, 0, len(seen))
 	for id := range seen {
