@@ -18,6 +18,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version is stamped at release time via -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	if err := run(context.Background()); err != nil {
 		os.Exit(1)
@@ -26,8 +29,9 @@ func main() {
 
 func run(ctx context.Context) error {
 	root := &cobra.Command{
-		Use:   "clauderig",
-		Short: "Sync your Claude Code setup across machines, path-correct on restore",
+		Use:     "clauderig",
+		Version: version,
+		Short:   "Sync your Claude Code setup across machines, path-correct on restore",
 		Long: "clauderig syncs your Claude Code config, skills, and session history to your\n" +
 			"own git remote and restores it on any machine — rewriting paths across OSes\n" +
 			"and never leaking secrets. Pick up where you left off on a different computer.",
@@ -46,5 +50,5 @@ func run(ctx context.Context) error {
 		commands.NewConfigCmd(),
 		commands.NewUICmd(),
 	)
-	return fang.Execute(ctx, root)
+	return fang.Execute(ctx, root, fang.WithVersion(version))
 }

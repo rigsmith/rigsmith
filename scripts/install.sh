@@ -129,8 +129,8 @@ main() {
 
   target="${1:-both}"
   case "$target" in
-    rig | relrig | both) ;;
-    *) error "unknown binary '$target' (expected: rig, relrig, or omit for both)" ;;
+    rig | relrig | clauderig | both) ;;
+    *) error "unknown binary '$target' (expected: rig, relrig, clauderig, or omit for both)" ;;
   esac
 
   os="$(detect_os)"
@@ -138,8 +138,9 @@ main() {
   tag="$(resolve_version)"
 
   case "$target" in
-    rig)    install_binary rig    "$tag" "$os" "$arch" ;;
-    relrig) install_binary relrig "$tag" "$os" "$arch" ;;
+    rig)       install_binary rig       "$tag" "$os" "$arch" ;;
+    relrig)    install_binary relrig    "$tag" "$os" "$arch" ;;
+    clauderig) install_binary clauderig "$tag" "$os" "$arch" ;;
     both)
       install_binary rig    "$tag" "$os" "$arch"
       install_binary relrig "$tag" "$os" "$arch"

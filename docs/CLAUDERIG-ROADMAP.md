@@ -14,9 +14,10 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started
 2. ✅ **Incremental sync.** Skip re-copying unchanged transcripts (mtime/size) instead of rewriting the whole tree each sync.
 3. ✅ **Mirror-delete on restore.** Remove files deleted upstream — scoped to authoritative config dirs (skills/commands/agents/plans), never `projects/` (additive), behind `--prune`.
 4. ✅ **Detect Claude Code version.** Stamp the real version in the manifest (was `""`) for the skew warning.
+   - ✅ **Always-prune config option** (`alwaysPrune` / `config set-prune` / `init --prune`): make `--prune` the restore default; `--prune=false` overrides per-run.
 
 ## Polish / UX
-5. ⬜ **Distribution.** goreleaser entry + install script + README; wire `curl|sh` / brew / scoop.
+5. ✅ **Distribution.** goreleaser build+archive for `clauderig`, `install.sh` target, version stamping (`-X main.version`), module + tool READMEs. (Homebrew tap still commented out pending the public repo, same as the other rigs.)
 6. ⬜ **Desktop `config.json` preferences.** Currently excluded wholesale (volatile); add a keep-only filter to sync just `preferences`.
 7. ⬜ **Conflict resolution.** Pull is ff-only; on divergence it errors. Build the per-file picker / `git mergetool` handoff.
 8. ⬜ **Richer TUIs.** `ui` dashboard is read-only + dispatch; add the restore-preview screen and interactive restore-safety prompt.
