@@ -575,4 +575,3 @@ func resolveCoberturaSource(sources []string, filename string) string {
 	}
 	return ""
 }
-
