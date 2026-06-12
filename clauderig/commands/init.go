@@ -1,21 +1,23 @@
 package commands
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/clauderig/internal/config"
+	"github.com/rigsmith/clauderig/internal/ghrepo"
 	"github.com/rigsmith/clauderig/internal/hooks"
 	"github.com/spf13/cobra"
 )
 
-// NewInitCmd builds the `init` command — the first-run wizard. Interactively
-// (huh) or via flags it captures this machine's name, the git remote, whether to
-// sync the Desktop root, and whether to install hooks, then writes config.json.
-// --yes runs non-interactively from flags/defaults (for scripting and fresh
-// machines without a TTY).
+// NewInitCmd builds the `init` command — the first-run wizard. It captures this
+// machine's name, the (always-private) sync remote, whether to sync the Desktop
+// root, and whether to install hooks, then writes config.json. --yes runs
+// non-interactively from flags. The remote is ALWAYS verified private via gh.
 func NewInitCmd() *cobra.Command {
 	var remote, name string
 	installHooks, syncDesktop, yes := true, true, false
@@ -24,6 +26,7 @@ func NewInitCmd() *cobra.Command {
 		Use:   "init",
 		Short: "First-run wizard: configure remote, machine identity, roots, and hooks",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 
 			me := config.Detect("")
@@ -32,21 +35,34 @@ func NewInitCmd() *cobra.Command {
 			}
 			me.Name = name
 
-			if existing, err := config.LoadOrDefault(); err == nil && existing.Remote != "" && remote == "" {
-				remote = existing.Remote // reconfigure keeps the known remote as default
+			existingRemote := ""
+			if existing, err := config.LoadOrDefault(); err == nil {
+				existingRemote = existing.Remote
 			}
 
-			if !yes {
+			if yes {
+				if remote == "" {
+					remote = existingRemote
+				}
+				if remote != "" {
+					if err := ghrepo.EnsurePrivate(ctx, remote); err != nil {
+						return err
+					}
+				}
+			} else {
 				form := huh.NewForm(huh.NewGroup(
 					huh.NewInput().Title("This machine's name").Value(&me.Name),
-					huh.NewInput().Title("Git remote URL (a private repo)").
-						Placeholder("git@github.com:you/claude-sync.git").Value(&remote),
 					huh.NewConfirm().Title("Sync the Desktop/Cowork root too?").Value(&syncDesktop),
 					huh.NewConfirm().Title("Install Claude Code hooks (auto pull on start, sync on stop)?").Value(&installHooks),
 				))
 				if err := form.Run(); err != nil {
 					return err
 				}
+				r, err := chooseRemote(ctx, out, existingRemote)
+				if err != nil {
+					return err
+				}
+				remote = r
 			}
 
 			cfg := config.Default()
@@ -80,16 +96,69 @@ func NewInitCmd() *cobra.Command {
 				}
 			}
 			if remote == "" {
-				fmt.Fprintln(out, WarnStyle.Render("\n  no remote set — sync will commit locally only"))
+				fmt.Fprintln(out, WarnStyle.Render("\n  no remote set — sync will commit locally only; run `clauderig config set-remote` later"))
 			}
 			fmt.Fprintln(out, DimStyle.Render("\n  next: clauderig sync"))
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&remote, "remote", "", "git remote URL")
+	cmd.Flags().StringVar(&remote, "remote", "", "private GitHub repo URL (verified via gh)")
 	cmd.Flags().StringVar(&name, "name", "", "this machine's name (default: hostname)")
 	cmd.Flags().BoolVar(&installHooks, "hooks", true, "install Claude Code hooks")
 	cmd.Flags().BoolVar(&syncDesktop, "desktop", true, "sync the Desktop/Cowork root")
 	cmd.Flags().BoolVar(&yes, "yes", false, "non-interactive: use flags/defaults, no prompts")
 	return cmd
+}
+
+// chooseRemote runs the interactive repo picker: create a new private repo via gh,
+// or supply an existing one (verified private). Returns "" (local-only) when gh
+// isn't available — the only way to skip the private-repo requirement is to have
+// no remote at all.
+func chooseRemote(ctx context.Context, out io.Writer, defaultURL string) (string, error) {
+	if !ghrepo.Available() {
+		fmt.Fprintln(out, WarnStyle.Render(
+			"GitHub CLI (gh) not found — it's required to guarantee a private repo. Skipping remote for now."))
+		return "", nil
+	}
+
+	mode := "create"
+	if defaultURL != "" {
+		mode = "existing"
+	}
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().Title("Sync repository (must be private)").
+			Options(
+				huh.NewOption("Create a new private GitHub repo with gh", "create"),
+				huh.NewOption("Use an existing private GitHub repo", "existing"),
+			).Value(&mode),
+	)).Run(); err != nil {
+		return "", err
+	}
+
+	if mode == "create" {
+		repoName := "claude-sync"
+		if err := huh.NewForm(huh.NewGroup(
+			huh.NewInput().Title("New private repo name").Value(&repoName),
+		)).Run(); err != nil {
+			return "", err
+		}
+		url, err := ghrepo.CreatePrivate(ctx, repoName)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(out, "%s created private repo %s\n", OkStyle.Render("✓"), url)
+		return url, nil
+	}
+
+	url := defaultURL
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewInput().Title("Private GitHub repo URL").
+			Placeholder("git@github.com:you/claude-sync.git").Value(&url),
+	)).Run(); err != nil {
+		return "", err
+	}
+	if err := ghrepo.EnsurePrivate(ctx, url); err != nil {
+		return "", err
+	}
+	return url, nil
 }

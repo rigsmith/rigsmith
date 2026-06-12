@@ -1,22 +1,68 @@
 package commands
 
-import "github.com/spf13/cobra"
+import (
+	"fmt"
+	"os"
+	"path/filepath"
 
-// NewConfigCmd builds the `config` command — view/edit the clauderig config: the
-// remote, machine identity + home maps (the single source of truth pathmap
-// reads), roots, allowlist overrides, and retention. The `ui` editor pane writes
-// the same file; the file always wins.
+	"github.com/rigsmith/clauderig/internal/config"
+	"github.com/rigsmith/clauderig/internal/ghrepo"
+	"github.com/spf13/cobra"
+)
+
+// NewConfigCmd builds the `config` command group — view the config and change the
+// sync remote. set-remote enforces the same private-repo gate as init.
 func NewConfigCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "View or edit clauderig configuration (remote, machine maps, roots)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			planned(cmd.OutOrStdout(), "clauderig config",
-				"machine maps   $HOME + per-OS/per-machine path overrides (pathmap source of truth)",
-				"roots          which roots sync, allowlist overrides",
-				"retention      history window + squash threshold",
-			)
-			return nil
-		},
+		Short: "View or change clauderig configuration",
 	}
+	cmd.AddCommand(
+		&cobra.Command{
+			Use:   "show",
+			Short: "Print the current configuration",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				dir, err := config.Dir()
+				if err != nil {
+					return err
+				}
+				b, err := os.ReadFile(filepath.Join(dir, "config.json"))
+				if err != nil {
+					fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("no config yet — run `clauderig init`"))
+					return nil
+				}
+				fmt.Fprint(cmd.OutOrStdout(), string(b))
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "set-remote <url>",
+			Short: "Set the sync remote (verified private via gh)",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				url := args[0]
+				if err := ghrepo.EnsurePrivate(cmd.Context(), url); err != nil {
+					return err
+				}
+				cfg, err := config.LoadOrDefault()
+				if err != nil {
+					return err
+				}
+				cfg.Remote = url
+				dir, err := config.Dir()
+				if err != nil {
+					return err
+				}
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return err
+				}
+				if err := config.Save(cfg, dir); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s remote set to %s\n", OkStyle.Render("✓"), url)
+				return nil
+			},
+		},
+	)
+	return cmd
 }
