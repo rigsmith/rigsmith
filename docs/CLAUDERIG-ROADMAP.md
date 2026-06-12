@@ -27,5 +27,5 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started
 ## Remaining
 11. ✅ **Config history preserved across squash.** Sync mirrors config-only commits (everything except `cli/projects`) to a `config-history` branch via a temp-index `CommitSubtree`. main stays bounded (squashed); config history survives on the side branch. (Lower-risk than restructuring restore around a main=config/history=projects split; meets the stated goal.)
 12. ✅ **Hooks auto-restore.** `clauderig pull` (the SessionStart hook) auto-restores when `autoRestore` is set AND the machine is fresh (no projects) — wires up a new computer on first session, never clobbers an established one. `config set-autorestore`.
-13. ⬜ **Empirical Desktop-app resume check (Q4).** Rewrite is built + unit-proven; "does Cowork actually resume" needs driving the Electron app.
+13. ✅ **Desktop rewrite completeness (Q4).** Gated e2e round-trips real Desktop session files and asserts zero residual source paths — it found + fixed a real gap (`//`-prefixed permission ruleContent). The remaining manual half (does the Electron app resume) is documented.
 14. ✅ **Non-GitHub private remotes.** GitLab supported via `glab` (verified private), dispatched by host alongside GitHub/`gh`. Hosts with no verifiable privacy stay refused — the no-exceptions rule holds.

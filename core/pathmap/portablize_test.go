@@ -50,6 +50,15 @@ func TestPortablize_CaseInsensitiveOffLinux(t *testing.T) {
 	}
 }
 
+func TestPortablize_LeadingDoubleSlash(t *testing.T) {
+	// A permission rule's "//Users/john/Git/x/**" still portablizes (the leading
+	// slash-run collapses to match the home prefix; the glob suffix is preserved).
+	tmpl, ok := Portablize("//Users/john/Git/gitninja/**", map[string]string{"HOME": "/Users/john"}, OSMacOS)
+	if !ok || tmpl != "$HOME/Git/gitninja/**" {
+		t.Fatalf("got %q ok=%v", tmpl, ok)
+	}
+}
+
 func TestPortablize_NoMatch(t *testing.T) {
 	if _, ok := Portablize("/opt/elsewhere", map[string]string{"HOME": "/Users/john"}, OSMacOS); ok {
 		t.Fatalf("unrelated path should not portablize")

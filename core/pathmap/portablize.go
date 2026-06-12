@@ -23,6 +23,18 @@ func Portablize(abs string, folders map[string]string, srcOS string) (template s
 	}
 	fold := srcOS != OSLinux
 
+	// Collapse a leading run of POSIX separators so artifacts like a permission
+	// rule's "//Users/john/…/**" still match the home prefix (keeping one slash).
+	if sep == '/' {
+		i := 0
+		for i < len(abs) && abs[i] == '/' {
+			i++
+		}
+		if i > 1 {
+			abs = abs[i-1:]
+		}
+	}
+
 	bestName, bestBase := "", ""
 	for name, base := range folders {
 		base = trimTrailingSep(base)

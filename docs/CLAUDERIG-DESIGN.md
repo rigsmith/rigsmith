@@ -348,8 +348,12 @@ mirror — no path correction, manual excludes.
    string under a known mapped prefix to `$HOME/…`; `pathmap.ResolveJSONValues`
    (restore) resolves `$`-templates to the target, leaving unmapped/system paths
    (`/tmp`) and non-path values untouched. Applied to every `.json` in both roots
-   (so `settings.json` paths translate too). **Still deferred (non-blocking):** the
-   empirical "does the Desktop app actually resume after rewrite" test, which needs
-   driving the Electron app rather than the headless CLI trick used for Q1. (One
-   known edge: a permission `ruleContent` with a leading `//` or globs may not
-   prefix-match — best-effort; a stale rule simply fails safe on the new machine.)
+   (so `settings.json` paths translate too). **Completeness verified on real data**
+   by a gated e2e (`TestE2E_DesktopRewriteCompleteOnRealData`): it round-trips this
+   machine's actual Desktop session files (portablize → resolve onto another OS)
+   and asserts **zero** values retain a source-home path. That test *found* a real
+   gap — a permission `ruleContent` written as `//Users/john/Git/x/**` — now fixed
+   (`Portablize` collapses a leading slash-run, so the `//`-prefixed glob matches);
+   re-run shows 0 residual across all session files. **Still manual (non-blocking):**
+   whether the Electron app itself resumes after rewrite — drive it by hand; the
+   data-completeness half is automated.
