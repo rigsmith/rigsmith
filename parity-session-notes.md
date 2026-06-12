@@ -215,15 +215,29 @@ Also: status with no changesets now exits non-zero (the CI gate), and the
 `mdfmt.FormatFilesCustom`. Behavior notes vs C#: init/info report state by
 message with exit 0 rather than distinct result codes.)*
 
-1. **Snapshot/prerelease e2e leftovers** — `snapshot.useCalculatedVersion` e2e
+*(2026-06-12, third session cont.: **Phase 5 DONE** — `core/jsonc` (tolerant
+parse, offset-preserving Strip; the comment-preserving editor is Phase 6) +
+`release/internal/pipeline` (full C# port: config/resolve/run/vars/masker/
+uimode/plain-reporter, 43 tests, injectable runner/prompter/reporter) +
+`release/internal/forge` (6 tests) + lipgloss rich reporter (4 tests) + the
+`relrig release` command (`--dry-run --only --skip --from --to --config -y
+--git-only --ui --no-ui`; TTY-detected rich/plain; huh confirm gates;
+githubRelease native → forge; `tool` defaults to relrig itself) + the publish
+confirm gate (TTY prompt before first real push; `--yes`/non-TTY/dry-run skip
+— per decision). E2E-verified: gates stop piped runs without `--yes`, secrets
+masked as `***` everywhere, resume hint on failure. Deferred: interactive
+plan-chooser TUI; NuGet feed-protocol adapter units.)*
+
+1. **Phase 6: rig dev-CLI parity** — JSONC editor (extend `core/jsonc`), rig
+   config (JSONC + merge + namespaces), dotenv/env stack, prefix/root
+   resolvers, capabilities, glob matcher, verb logic, coverage/doctor gaps,
+   init/info, menu input, test enumeration (~160 tests). The last phase.
+2. **Snapshot/prerelease e2e leftovers** — `snapshot.useCalculatedVersion` e2e
    (probe Node first) and a two-package prerelease flow golden (pre-mode dep
    retargeting has unit coverage only).
-2. **Phase 5: relrig release pipeline** — steps/hooks/vars/confirm/forge +
-   reporters (design brief in the plan file; publish confirm + `--yes` lands
-   here). Build the shared `core/jsonc` parser with it. (Publish's new ignore
-   filtering gets its tests here with the rest of the publish suite.)
-3. **Phase 6: rig dev-CLI parity** — JSONC editor, rig config, dotenv/env stack,
-   prefix/root resolvers, verb logic (~160 tests).
+3. **Small deferred items** — interactive plan-chooser TUI for `release`;
+   NuGet feed-protocol unit tests if a native feed client replaces the nuget
+   CLI delegation; point the C# parity tests at the shared corpus (optional).
 
 ### Lower-value / poor fit
 - `changelog-git` / `changelog-github` generators (env-dependent, non-hermetic) —

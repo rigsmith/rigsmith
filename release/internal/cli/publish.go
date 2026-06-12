@@ -2,11 +2,13 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/rigsmith/changerig/commands"
 	"github.com/rigsmith/core/gitutil"
 	"github.com/rigsmith/core/plugin"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // newPublishCmd publishes each discovered package to its ecosystem's registry
@@ -19,6 +21,7 @@ func newPublishCmd() *cobra.Command {
 		noGitTag bool
 		noPush   bool
 		access   string
+		yes      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "publish",
@@ -36,6 +39,23 @@ func newPublishCmd() *cobra.Command {
 			acc := access
 			if acc == "" {
 				acc = ws.Config.Access
+			}
+
+			// Confirm before the first real network side effect (registry
+			// pushes, tag pushes) when a human is at the terminal. --yes and
+			// non-TTY runs (CI) skip the gate; --dry-run never needs it.
+			if !dryRun && !yes &&
+				term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+				n := 0
+				for _, p := range pkgs {
+					if !ws.Config.IsIgnored(p.Name) {
+						n++
+					}
+				}
+				if !(ttyPrompter{}).Confirm(fmt.Sprintf("Publish %d package(s) to their registries (and push tags)?", n)) {
+					fmt.Fprintln(out, commands.DimStyle.Render("Publish cancelled."))
+					return nil
+				}
 			}
 
 			// 1. Registry publish per package (ignored packages are never published).
@@ -109,6 +129,7 @@ func newPublishCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
+	f.BoolVarP(&yes, "yes", "y", false, "skip the confirm prompt (CI / scripted runs)")
 	f.BoolVarP(&dryRun, "dry-run", "n", false, "show what would be published/tagged without doing it")
 	f.BoolVar(&noGitTag, "no-git-tag", false, "skip creating git tags")
 	f.BoolVar(&noPush, "no-push", false, "create tags locally but do not push them")

@@ -56,7 +56,7 @@ the **Parity corpus** section at the bottom — it's the highest-leverage item.
 | **core: node ecosystem (workspaces)** | 7 | ✅ done |
 | **core: config / git / prestate / since** | 19 | ✅ done |
 | **changerig: CLI commands** | 47 | ✅ done (cmdtest, 31 tests; TTY/interop N/A) |
-| **relrig: release pipeline + publish** | 68 | ⬜ |
+| **relrig: release pipeline + publish** | 68 | ✅ done (53 ported; NuGet-protocol units deferred) |
 | **rig: config/jsonc/dotenv/discovery** | ~90 | ⬜ |
 | **rig: verb logic / matching** | ~70 | 🟡 (cd done, rest TODO) |
 | **NEW in Go (no .NET ancestor)** | — | ✅ ranges, gomod, cargo, walkutil, topo-sort |
@@ -302,33 +302,57 @@ a TTY; the non-interactive flag forms cover the contracts).
 - **Dispatcher** — [x] unknown subcommand → non-zero + usage error.
 - ⛔ `ProcessExecutorTests` (2), `NodeChangesetServiceTests` (3) — N/A.
 
-## A3. `relrig` — release orchestrator (all ⬜)
+## A3. `relrig` — release orchestrator — ✅ pipeline DONE (Phase 5, 2026-06-12)
 
-Tracks [[release-command-design]]. Largely deferred design in Go; no tests yet.
+Built this phase: `core/jsonc` (tolerant JSONC parse, offset-preserving Strip),
+`release/internal/pipeline` (config/resolve/run/vars/masker/uimode/reporter),
+`release/internal/forge`, the rich reporter + `relrig release` command, and the
+publish confirm gate.
 
-- **ReleasePipeline** (`ReleasePipelineTests`, 28): step resolution (default
-  order, builtin version/publish delegation, custom run steps, unknown-step
-  errors), `--only`/`--skip`/`--from`/`--to` filtering, disabled-step skip
-  reasons, before/action/after hook ordering, on-error + skip-later, `${tool}`
-  interpolation + shell dispatch, lazy/eager var capture + secret masking,
-  dry-run no-op, confirm gate (approve/decline), native step handler invoke/fail/skip.
-- **ReleaseConfigService** (6): empty-on-missing, JSONC comments+trailing commas,
-  command shapes (shell/argv), hooks+vars, confirm as bool-or-string, invalid-JSON throws.
-- **ReleaseUiMode** (6): terminal defaults rich+interactive, redirected→plain,
-  `--ui` rich-not-interactive-when-piped, `--no-ui` wins, `--yes` disables
-  interactivity, redirected input disables interactivity.
-- **TuiReleaseReporter** (4) + **PlainReleaseReporter** (2): plan/step rendering,
-  resume hint on failure, success panel/no-hint, secret masking.
-- **PlanChooser** (1): passthrough.
-- **ForgeReleaseService** (6): none-mode no-op, github create-for-missing-tag,
-  skip-existing, non-github origin skip, auto-mode+gh-ready creates, changelog
-  section as release notes.
+- **ReleasePipeline** (28) → [x] `release/internal/pipeline` (pipeline_test.go
+  et al., 28/28 with fake runner/reporter/prompter): step resolution + builtin
+  delegation (`${tool} version|publish`, git commit/push argv), custom run
+  steps, unknown-step errors, `--only/--skip/--from/--to` with the exact
+  skip-reason precedence, before/action/after ordering, onError hooks +
+  skip-later, `${tool}`/`${vars.*}`/`${env.*}` interpolation (unknown verbatim),
+  lazy/eager var capture + caching, secret masking (longest-first `***`),
+  dry-run no-op (no vars), confirm gate (decline = cancel, no onError), native
+  handler invoke/fail/no-handler-skip.
+- **ReleaseConfigService** (6) → [x] config_test.go (`.changeset/release.jsonc`
+  via `core/jsonc`; CommandSpec string=shell / array=argv; command lists mix
+  both; confirm bool-or-string; missing→empty; invalid→error).
+- **ReleaseUiMode** (6) → [x] uimode_test.go (`rich = !noUi && (ui ||
+  !outputRedirected)`; `interactive = !yes && !outRedir && !inRedir`).
+- **PlainReleaseReporter** (2) → [x] reporter_test.go (plan + resume hint
+  `Resume with: <tool> release --from <lastStarted>`, masking).
+- **TuiReleaseReporter** (4) → [x] `release/internal/cli/reporter_test.go`
+  (lipgloss `richReporter`: plan w/ gates+skips+native line, failure panel w/
+  resume hint, success panel w/o hint, masking everywhere) — content asserted,
+  styling not.
+- **PlanChooser** (1) → [x] passthrough (`PassthroughChooser`); the interactive
+  TUI step-toggle chooser is deferred (noted below).
+- **ForgeReleaseService** (6) → [x] `release/internal/forge` (fake gh/git:
+  none-mode, create-for-missing-tag, skip-existing, non-github origin skip,
+  auto+gh-ready creates, CHANGELOG `## <version>` section as notes w/ tag
+  fallback; ignored packages filtered).
+- **`relrig release` command** → wired: `--dry-run --only --skip --from --to
+  --config -y/--yes --git-only --ui --no-ui`; rich vs plain by TTY detection;
+  interactive gates via huh on a TTY, `FixedPrompter(--yes)` otherwise;
+  githubRelease native handler → forge. `tool` defaults to `relrig` (the Go
+  binary IS the engine; set `"tool": "npx changeset"` to drive the Node CLI).
+  E2E-verified piped + `--yes` + gate-decline + masking + resume hint.
+- **Publish confirm gate** → [x] `relrig publish` now prompts before the first
+  real side effect when stdin+stdout are TTYs; `--yes`/non-TTY/`--dry-run`
+  skip it (CI behavior unchanged — per decision).
 - **Publish** (`PublishChangesetCommandTests` 9 + `DotnetServiceTests` 2 +
-  `NuGetPackageRegistryTests` 4): pack+publish happy path, auto-tag/no-tag,
-  no-project/all-published early exits, selective publish by feed state,
-  PackageId feed queries, push `--skip-duplicate`, empty-source throws,
-  nuget.org lowercase id, 404→empty, non-http→null, V3 base-address resolution.
-  ⛔ the interop "auto-run node publish" case is N/A.
+  `NuGetPackageRegistryTests` 4) → [~] the Go publish delegates to ecosystem
+  adapters (each has `TestPublishPrivateSkipped`; idempotency via registry
+  probes); cmdtest covers tag flows + ignore. The NuGet feed-protocol unit
+  tests (lowercase id, 404→empty, V3 base-address) describe registry client
+  details the Go dotnet adapter handles via the nuget CLI — port as adapter
+  unit tests if/when a native feed client lands. ⛔ interop auto-run-node N/A.
+- Deferred (lower value): the interactive plan-chooser TUI (toggle steps before
+  the run when rich+interactive).
 
 ---
 
