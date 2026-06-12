@@ -68,6 +68,10 @@ type Config struct {
 	// agents/plans deleted upstream) by default, as if --prune were passed.
 	// `restore --prune=false` overrides it for a single run.
 	AlwaysPrune bool `json:"alwaysPrune,omitempty"`
+	// AutoRestore makes the SessionStart hook (`clauderig pull`) also restore on a
+	// FRESH machine (no projects yet) — auto-wiring a new computer. It deliberately
+	// never restores over an established machine (would churn/clobber).
+	AutoRestore bool `json:"autoRestore,omitempty"`
 }
 
 // Default returns a config with the standard roots and retention, no machines or
