@@ -162,6 +162,16 @@ func Sync(opts Options) (*Report, error) {
 			if err != nil {
 				return nil, fmt.Errorf("manifest: %w", err)
 			}
+			// Union with the existing manifest so other machines' projects (whose
+			// files persist in staging) keep their entries — this machine's local
+			// projects are authoritative for their own slugs; others are preserved.
+			if existing, err := manifest.Load(opts.StagingDir); err == nil {
+				for slug, p := range existing.Projects {
+					if _, mine := m.Projects[slug]; !mine {
+						m.Projects[slug] = p
+					}
+				}
+			}
 			if err := m.Save(opts.StagingDir); err != nil {
 				return nil, err
 			}
