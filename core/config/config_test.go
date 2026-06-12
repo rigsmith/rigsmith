@@ -151,6 +151,35 @@ func TestParseFormatBoolOrString(t *testing.T) {
 	}
 }
 
+func TestFormatCommand(t *testing.T) {
+	// The array form is the custom-command escape hatch: argv as written.
+	c, err := Parse([]byte(`{ "format": ["myfmt", "--write"] }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, ok := c.FormatCommand()
+	if !ok || len(argv) != 2 || argv[0] != "myfmt" || argv[1] != "--write" {
+		t.Errorf("FormatCommand = %v, %v; want [myfmt --write], true", argv, ok)
+	}
+	if c.FormatSpec() != "" {
+		t.Errorf("array form must not leak into FormatSpec, got %q", c.FormatSpec())
+	}
+
+	// Every other shape — including invalid arrays — is not a custom command.
+	for _, in := range []string{
+		`{}`, `{ "format": false }`, `{ "format": "native" }`,
+		`{ "format": [] }`, `{ "format": [""] }`, `{ "format": ["ok", 3] }`,
+	} {
+		c, err := Parse([]byte(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := c.FormatCommand(); ok {
+			t.Errorf("FormatCommand(%s) ok = true, want false", in)
+		}
+	}
+}
+
 // Mirrors ChangelogConfigTests: the polymorphic `changelog` value resolves to a
 // generator id.
 func TestChangelogSpec(t *testing.T) {

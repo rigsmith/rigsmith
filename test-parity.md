@@ -54,8 +54,8 @@ the **Parity corpus** section at the bottom — it's the highest-leverage item.
 | **core: changelog rendering/formatter** | 43 | ✅ done (built `core/mdfmt` + `core/changelog`) |
 | **core: dotnet ecosystem (csproj)** | 13 | 🟡 (3 left: shared-props write, strategy ×2) |
 | **core: node ecosystem (workspaces)** | 7 | ✅ done |
-| **core: config / git / prestate / since** | 19 | 🟡 (since-consumers left, with A2) |
-| **changerig: CLI commands** | 47 | ⬜ (parity harness covers version/pre/status e2e) |
+| **core: config / git / prestate / since** | 19 | ✅ done |
+| **changerig: CLI commands** | 47 | ✅ done (cmdtest, 31 tests; TTY/interop N/A) |
 | **relrig: release pipeline + publish** | 68 | ⬜ |
 | **rig: config/jsonc/dotenv/discovery** | ~90 | ⬜ |
 | **rig: verb logic / matching** | ~70 | 🟡 (cd done, rest TODO) |
@@ -256,41 +256,50 @@ the decorated, prettier-formatted output.
       JS-shared on-disk shape: two-space indent, key set, trailing newline)
 - [x] `Remove_DeletesFile` → `TestRemoveDeletesFile`
 
-`Shared/SinceChangesTests.cs` (2) — the `--since` consumers (changerig
-`status --since` / `add --since`) don't exist in Go yet; the git substrate
-(`ChangedFilesSince`) is now in place. Pair these with the A2 command tests:
-- [ ] `ChangedProjectNames_ReturnsProjectsOwningChangedFile`
-- [ ] `AnyChangesetAdded_DetectsChangesetFiles_NotReadme`
+`Shared/SinceChangesTests.cs` (2) → `core/since/since_test.go` (new package,
+ports SinceChanges.cs; consumed by `status --since` + `add --since`):
+- [x] `ChangedProjectNames_ReturnsProjectsOwningChangedFile` →
+      `TestChangedProjectNamesReturnsProjectsOwningChangedFile`
+- [x] `AnyChangesetAdded_DetectsChangesetFiles_NotReadme` →
+      `TestAnyChangesetAddedDetectsChangesetFilesNotReadme` (+ `TestChangedChangesetIDs`)
 
-## A2. `changerig` — changeset CLI commands (all ⬜)
+## A2. `changerig` — changeset CLI commands — ✅ DONE (Phase 4, 2026-06-12)
 
-These are command-level tests (C# uses Spectre `CommandAppTester`). Go equivalent
-= `testscript`/`.txtar` end-to-end or cobra command tests. None exist yet.
+Binary-driven tests in `changerig/cmdtest/` (TestMain builds changerig AND
+relrig once; real npm-workspace + git fixtures), mirroring the C#
+`CommandAppTester` suites. Interop/.net.mkd, Node-delegation, and
+interactive-TTY prompt cases are ⛔ N/A throughout (huh/bubbletea prompts need
+a TTY; the non-interactive flag forms cover the contracts).
 
-- **Add** (`AddCommandTests`, 9): happy path, `--since` preselect, `--empty`,
-  `--open`/no-open, `-m` message, not-initialized error.
-  ⛔ the two interop-extension cases are N/A.
-- **Init** (`InitCommandTests`, 4): creates folder+config, re-run regenerates
-  missing config, "already exists" message, interactive config write.
-- **Info** (`InfoChangesetCommandTests`, 7): renders config+project count,
-  pending-changeset breakdown, skipped-no-version, before-init error.
-  ⛔ the three Node-probe cases are N/A.
-- **Pre** (`PreChangesetCommandTests`, 6): enter writes pre-mode+versions,
-  already-in-pre fails, no-tag fails, exit flips mode, exit-when-not-pre fails,
-  unknown-action fails. [~] the enter/exit + version lifecycle is now covered
-  end-to-end by parity `TestPrereleaseParity`; the error-path unit cases TODO.
-- **Status** (`StatusChangesetCommandTests`, 10): changeset present/absent exit
-  codes, `--since`, `--verbose`, bump-level grouping. [~] `--output` JSON plan now
-  implemented + covered by parity `TestStatusPlan`; the rest TODO.
-  ⛔ the three Node-delegation cases are N/A.
-- **Tag** (`TagChangesetCommandTests`, 4): tag per project at version, skip
-  existing, honor ignore, use PackageId. *(shared with relrig `tag`)*
-- **Ui** (`UiChangesetCommandTests`, 2): runs selected command, non-interactive guard.
-- **Version** (`VersionChangesetCommandTests`, 3): [~] happy path *(exercised
-  end-to-end by parity `TestParity`)*; [x] snapshot zero-version + changeset
-  consumption → parity `TestSnapshotParity`; pre-mode writes prerelease +
-  records id → parity `TestPrereleaseParity`.
-- **Dispatcher** (`CommandDispatcherTests`, 1): nested dispatch + exit-code propagation.
+- **Add** — [x] `--empty`, `-m`+`-p` (patch default), `--bump` override,
+  `--type` (bump derives), not-initialized error → `TestAdd*` ×5.
+  **NEW:** `add --since <ref>` preselects the changed packages in the picker
+  (wired this phase; interactive, so exercised via the `since` package tests).
+  ⛔ `--open` (no Go flag), interactive happy paths.
+- **Init** — [x] creates folder+config+README, re-run reports
+  already-initialized (exit 0, message-differentiated — C# used result codes),
+  regenerates a deleted config → `TestInit*` ×3.
+- **Info** — [x] config+package listing; before-init reports
+  `initialized: false` with exit 0 (Go's choice; C# errored) → `TestInfo*` ×2.
+- **Pre** — [x] all 6: enter writes pre.json (mode/tag/initialVersions),
+  no-tag fails, enter-twice fails (original tag survives), exit flips mode,
+  exit-when-not-pre fails, unknown action fails → `TestPre*`.
+- **Status** — [x] all (the Go set): present→0 / absent→non-zero
+  ("no changesets found"), `--verbose` summaries, `--output` JSON plan,
+  **`--since`** ×3 (narrows to since-changesets; changed-project-without-
+  changeset guard fails with `add` guidance; invalid ref fails), and pre-mode
+  reflection (status shows the same prerelease target `version` would write —
+  `assemblePlan` now mirrors version's mode handling) → `TestStatus*` ×8.
+- **Tag** (relrig) — [x] tag per package (`name@version`), skip existing +
+  idempotent re-run, **honor ignore** → `TestTag*` ×3. The ignore case exposed
+  a real gap: `tag` (and `publish`) looped every package without consulting
+  `ignore` — fixed via the new `config.IsIgnored` (planner's glob matcher
+  promoted to config and shared). ⛔ PackageId case (no npm analogue).
+- **Ui** — [x] non-interactive guard fails fast without hanging (Setsid, no
+  TTY) → `TestUINonInteractiveFailsFast`. ⛔ runs-selected-command (needs TTY).
+- **Version** — [x] `--dry-run` writes nothing; no-changesets no-op → ×2.
+  Full normal/snapshot/pre flows live in the parity suite.
+- **Dispatcher** — [x] unknown subcommand → non-zero + usage error.
 - ⛔ `ProcessExecutorTests` (2), `NodeChangesetServiceTests` (3) — N/A.
 
 ## A3. `relrig` — release orchestrator (all ⬜)

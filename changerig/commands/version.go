@@ -173,12 +173,16 @@ func NewVersionCmd() *cobra.Command {
 
 			// Formatting pass over the touched changelogs, per the `format`
 			// config (false/absent = off; "native" runs in-process; "auto"
-			// detects a tool; failures only warn).
-			mdfmt.FormatFiles(changelogPaths, ws.Config.FormatSpec(), ws.Root,
-				mdfmt.Runner(execRunner(cmd)),
-				func(format string, a ...any) {
-					fmt.Fprintln(out, DimStyle.Render("warn "+fmt.Sprintf(format, a...)))
-				})
+			// detects a tool; an argv array runs a custom command as written;
+			// failures only warn).
+			warnf := func(format string, a ...any) {
+				fmt.Fprintln(out, DimStyle.Render("warn "+fmt.Sprintf(format, a...)))
+			}
+			if argv, ok := ws.Config.FormatCommand(); ok {
+				mdfmt.FormatFilesCustom(changelogPaths, argv, ws.Root, mdfmt.Runner(execRunner(cmd)), warnf)
+			} else {
+				mdfmt.FormatFiles(changelogPaths, ws.Config.FormatSpec(), ws.Root, mdfmt.Runner(execRunner(cmd)), warnf)
+			}
 
 			// Changeset disposal + pre-state bookkeeping per mode.
 			switch mode {

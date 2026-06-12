@@ -83,6 +83,24 @@ func FormatFiles(files []string, format, workingDir string, run Runner, warnf Wa
 	}
 }
 
+// FormatFilesCustom runs a user-supplied formatter command (the config's
+// `format: ["mytool", "--write"]` array form) with the changelog paths
+// appended. The argv runs as written in workingDir — no package-manager
+// wrapping, no name table. Same degradation contract as FormatFiles: empty
+// inputs are no-ops and failures only warn.
+func FormatFilesCustom(files, argv []string, workingDir string, run Runner, warnf WarnFunc) {
+	if warnf == nil {
+		warnf = func(string, ...any) {}
+	}
+	if len(files) == 0 || len(argv) == 0 {
+		return
+	}
+	args := append(append([]string{}, argv[1:]...), files...)
+	if _, err := run(workingDir, argv[0], args...); err != nil {
+		warnf("The custom formatter %q failed (%v); changelogs may be unformatted.", argv[0], err)
+	}
+}
+
 func formatNatively(files []string, warnf WarnFunc) {
 	for _, file := range files {
 		content, err := os.ReadFile(file)

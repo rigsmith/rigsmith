@@ -38,8 +38,11 @@ func newPublishCmd() *cobra.Command {
 				acc = ws.Config.Access
 			}
 
-			// 1. Registry publish per package.
+			// 1. Registry publish per package (ignored packages are never published).
 			for _, p := range pkgs {
+				if ws.Config.IsIgnored(p.Name) {
+					continue
+				}
 				eco, ok := ws.EcosystemFor(ecoOf[p.Name])
 				if !ok {
 					continue
@@ -74,6 +77,9 @@ func newPublishCmd() *cobra.Command {
 			}
 			fmt.Fprintln(out)
 			for _, p := range pkgs {
+				if ws.Config.IsIgnored(p.Name) {
+					continue
+				}
 				tag := tagName(ecoOf[p.Name], p.Dir, p.Name, p.Version)
 				if gitutil.TagExists(cmd.Context(), ws.Root, tag) {
 					fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("tag exists"), tag)

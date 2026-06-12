@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // UpdateInternalDependencies controls how far dependents of a changed package
@@ -196,10 +197,28 @@ func (c *Config) ChangelogSpec() string {
 	return "default"
 }
 
+// FormatCommand returns the custom formatter command when `format` is an
+// array of strings — the escape hatch for tools the built-in table doesn't
+// know: `"format": ["myfmt", "--write"]` runs that argv with the touched
+// changelog paths appended, exactly as written (no package-manager wrapping —
+// spell out `["pnpm", "exec", ...]` if that's what you want). ok=false for
+// every other shape, including arrays holding non-strings.
+func (c *Config) FormatCommand() (argv []string, ok bool) {
+	raw := bytesTrim(c.Format)
+	if len(raw) == 0 || raw[0] != '[' {
+		return nil, false
+	}
+	if err := json.Unmarshal(raw, &argv); err != nil || len(argv) == 0 || argv[0] == "" {
+		return nil, false
+	}
+	return argv, true
+}
+
 // FormatSpec interprets the polymorphic `format` value and returns the
 // formatter name: false/null/absent/"" → "" (disabled); a string → itself;
 // true → "true" (mirroring the C# converter — it lands on the
 // unknown-formatter warning path rather than silently enabling anything).
+// The array form is FormatCommand's; it resolves to "" here.
 func (c *Config) FormatSpec() string {
 	raw := bytesTrim(c.Format)
 	switch {
@@ -224,6 +243,48 @@ func bytesTrim(b []byte) []byte {
 		j--
 	}
 	return b[i:j]
+}
+
+// IsIgnored reports whether the package name matches the `ignore` config (by
+// exact name or a '*' glob, e.g. "*Bench" / "Acme.*"). Ignored packages are
+// never released, tagged, or published — though their manifest dependency
+// ranges are still rewritten (a "none" release).
+func (c *Config) IsIgnored(name string) bool {
+	for _, pat := range c.Ignore {
+		if ignoreGlobMatch(pat, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// ignoreGlobMatch is a minimal glob supporting '*'.
+func ignoreGlobMatch(pattern, name string) bool {
+	if pattern == name {
+		return true
+	}
+	if !strings.Contains(pattern, "*") {
+		return false
+	}
+	parts := strings.Split(pattern, "*")
+	pos := 0
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		idx := strings.Index(name[pos:], part)
+		if idx < 0 {
+			return false
+		}
+		if i == 0 && idx != 0 {
+			return false // anchored prefix
+		}
+		pos += idx + len(part)
+	}
+	if last := parts[len(parts)-1]; last != "" && !strings.HasSuffix(name, last) {
+		return false // anchored suffix
+	}
+	return true
 }
 
 // Ecosystem decodes the named ecosystem block into dst. Returns false if the
