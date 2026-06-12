@@ -1,11 +1,12 @@
 // Test-class resolution for `rig test <name>` in a .NET repo, ported from the
-// .NET rig's TestVerb.FilterForName + TestEnumeration. The C# tool enumerates
-// test classes from the BUILT assembly via MetadataLoadContext; Go has no CLR,
-// so candidate class names come from a best-effort scan of the test project's
-// *.cs sources instead (namespace + class declarations, classified with the
-// same markers as TestEnumeration.IsTestClass). Matching uses rig's tiered
-// fuzzy matcher (exact > prefix > substring > subsequence, as in `rig cd`);
-// filter building is pure and mirrors the C# FullyQualifiedName shapes.
+// .NET rig's TestVerb.FilterForName + TestEnumeration. Candidate class names
+// come from the platform's own discovery (`dotnet test --list-tests`, see
+// listtests.go) — runner-aware and framework-agnostic — with a best-effort
+// scan of the test project's *.cs sources as the fallback when listing fails
+// (discoverTestClassNames, classified with the same markers as
+// TestEnumeration.IsTestClass). Matching uses rig's tiered fuzzy matcher
+// (exact > prefix > substring > subsequence, as in `rig cd`); filter building
+// is pure and mirrors the C# FullyQualifiedName shapes.
 package cli
 
 import (
@@ -33,9 +34,15 @@ func runDotnetTest(cmd *cobra.Command, root string, args []string, watch bool) e
 		return fmt.Errorf("no test project found — add one (IsTestProject / Microsoft.NET.Test.Sdk / *Tests), or set test.project in %s", config.FileName)
 	}
 
+	runner := detectDotnetTestRunner(root, "")
 	filter := testShorthandFilter(args[0])
 	if filter == "" {
-		classes := discoverTestClassNames(filepath.Dir(testProject))
+		// Prefer the platform's own discovery (every framework's tests, no
+		// hardcoded attribute set); fall back to the source scan if it fails.
+		classes := listTestClassNames(cmd, root, runner, testProject)
+		if len(classes) == 0 {
+			classes = discoverTestClassNames(filepath.Dir(testProject))
+		}
 		matches := matchTestClasses(classes, args[0])
 		if len(matches) == 1 {
 			echo(cmd, "matched test class: "+matches[0])
@@ -43,7 +50,6 @@ func runDotnetTest(cmd *cobra.Command, root string, args []string, watch bool) e
 		filter = testClassFilter(matches, args[0])
 	}
 
-	runner := detectDotnetTestRunner(root, "")
 	argv := buildDotnetTestArgs(runner, testProject, filter, "", args[1:], watch, "")
 	return runCommand(cmd, root, append([]string{"dotnet"}, argv...))
 }
@@ -127,8 +133,8 @@ func testClassShortName(fullName string) string {
 
 // discoverTestClassNames scans the test project directory's *.cs sources
 // (skipping bin/obj) for test classes and returns their fully-qualified names,
-// sorted and deduped. Best-effort: an unreadable tree or file yields whatever
-// was found.
+// sorted and deduped. The no-build fallback for listTestClassNames. Best-effort:
+// an unreadable tree or file yields whatever was found.
 func discoverTestClassNames(projectDir string) []string {
 	seen := map[string]bool{}
 	_ = filepath.WalkDir(projectDir, func(path string, d fs.DirEntry, err error) error {

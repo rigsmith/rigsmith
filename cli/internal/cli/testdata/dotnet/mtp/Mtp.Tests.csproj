@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Microsoft.Testing.Platform test project (MSTest runner mode). The MTP
+       switches (EnableMSTestRunner + OutputType Exe) live in
+       Directory.Build.props so they apply before the package props; paired with
+       the global.json test.runner this exercises the MTP `dotnet test`
+       project-flag list-tests grammar. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest" Version="4.2.3" />
+  </ItemGroup>
+
+</Project>
