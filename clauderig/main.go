@@ -1,0 +1,48 @@
+// Command clauderig syncs your Claude Code environment (config, skills, and
+// session history) across machines via your own git remote, correcting paths
+// across OSes on restore. The fourth rig: a single statically-linked Go binary,
+// zero runtime deps, installable by curl|sh / Homebrew / Scoop on any machine —
+// the same north-star as rig / relrig / changerig.
+//
+// The two hard problems the community tools punt on — cross-OS path correction
+// and not leaking secrets — are clauderig's reason to exist. See
+// docs/CLAUDERIG-DESIGN.md for the full spec.
+package main
+
+import (
+	"context"
+	"os"
+
+	"github.com/charmbracelet/fang"
+	"github.com/rigsmith/clauderig/commands"
+	"github.com/spf13/cobra"
+)
+
+func main() {
+	if err := run(context.Background()); err != nil {
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context) error {
+	root := &cobra.Command{
+		Use:   "clauderig",
+		Short: "Sync your Claude Code setup across machines, path-correct on restore",
+		Long: "clauderig syncs your Claude Code config, skills, and session history to your\n" +
+			"own git remote and restores it on any machine — rewriting paths across OSes\n" +
+			"and never leaking secrets. Pick up where you left off on a different computer.",
+		SilenceUsage:  true,
+		SilenceErrors: false,
+	}
+
+	root.AddCommand(
+		commands.NewInitCmd(),
+		commands.NewSyncCmd(),
+		commands.NewRestoreCmd(),
+		commands.NewStatusCmd(),
+		commands.NewDoctorCmd(),
+		commands.NewConfigCmd(),
+		commands.NewUICmd(),
+	)
+	return fang.Execute(ctx, root)
+}
