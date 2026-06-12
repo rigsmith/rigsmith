@@ -32,3 +32,23 @@ func TestParseSlug(t *testing.T) {
 		}
 	}
 }
+
+func TestParseRemote_HostDispatch(t *testing.T) {
+	cases := map[string]struct{ host, slug string }{
+		"git@github.com:john/x.git":         {"github.com", "john/x"},
+		"https://gitlab.com/grp/sub/x.git":  {"gitlab.com", "grp/sub/x"}, // GitLab subgroup
+		"git@gitlab.com:john/x":             {"gitlab.com", "john/x"},
+		"ssh://git@github.com/org/repo.git": {"github.com", "org/repo"},
+	}
+	for in, want := range cases {
+		host, slug, ok := parseRemote(in)
+		if !ok || host != want.host || slug != want.slug {
+			t.Errorf("parseRemote(%q) = (%q,%q,%v), want (%q,%q)", in, host, slug, ok, want.host, want.slug)
+		}
+	}
+	for _, in := range []string{"/local/path", "git@host", "https://bitbucket.org/a"} {
+		if _, _, ok := parseRemote(in); ok {
+			t.Errorf("parseRemote(%q) should be rejected", in)
+		}
+	}
+}

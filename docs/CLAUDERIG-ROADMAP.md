@@ -28,4 +28,4 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started
 11. ⬜ **Orphan history branch split.** Squash runs on `main` directly (bounded repo achieved); preserving config history separately is the refinement.
 12. ✅ **Hooks auto-restore.** `clauderig pull` (the SessionStart hook) auto-restores when `autoRestore` is set AND the machine is fresh (no projects) — wires up a new computer on first session, never clobbers an established one. `config set-autorestore`.
 13. ⬜ **Empirical Desktop-app resume check (Q4).** Rewrite is built + unit-proven; "does Cowork actually resume" needs driving the Electron app.
-14. ⬜ **Non-GitHub private remotes.** GitLab/self-hosted refused by the hard private gate; v2 if wanted.
+14. ✅ **Non-GitHub private remotes.** GitLab supported via `glab` (verified private), dispatched by host alongside GitHub/`gh`. Hosts with no verifiable privacy stay refused — the no-exceptions rule holds.

@@ -140,10 +140,11 @@ cwd mappings (Q4).
 
 ## Transport
 
-Plain **git** for push/pull. But the remote is **hard-gated to a private GitHub
+Plain **git** for push/pull. But the remote is **hard-gated to a verified-private
 repo, no exceptions** (`internal/ghrepo`): the synced data is your Claude Code
 state and must never land somewhere public or unverifiable. A remote is accepted
-only when `gh` confirms `isPrivate`. `init` offers **create a new private repo via
+only when a provider CLI confirms it's private — **GitHub via `gh`, GitLab via
+`glab`** (dispatched by host). Other hosts are refused (can't verify privacy). `init` offers **create a new private repo via
 `gh repo create --private`** or **use an existing private repo** (verified);
 `config set-remote` applies the same gate. Every failure mode — `gh` absent,
 non-GitHub URL, unverifiable, or public — is refused; the only way to have no
