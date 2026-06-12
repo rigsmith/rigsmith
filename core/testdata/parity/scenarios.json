@@ -1,0 +1,235 @@
+{
+  "_comment": "Language-neutral parity corpus. Ported from net-changesets ParityScenarios.cs. Each scenario is versioned identically by @changesets (Node), net-changesets (C#), and rigsmith (Go); the golden/ CHANGELOG.md files are frozen Node @changesets output (config format:false). See README.md for provenance and regeneration.",
+  "scenarios": [
+    {
+      "id": "single-patch",
+      "updateInternalDependencies": "patch",
+      "packages": [{ "name": "pkg-a", "version": "1.0.0" }],
+      "changesets": [{ "file": "c.md", "summary": "A small fix", "releases": [{ "package": "pkg-a", "bump": "patch" }] }],
+      "expectedVersions": { "pkg-a": "1.0.1" }
+    },
+    {
+      "id": "single-minor",
+      "updateInternalDependencies": "patch",
+      "packages": [{ "name": "pkg-a", "version": "1.0.0" }],
+      "changesets": [{ "file": "c.md", "summary": "A cool change", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0" }
+    },
+    {
+      "id": "single-major",
+      "updateInternalDependencies": "patch",
+      "packages": [{ "name": "pkg-a", "version": "1.2.3" }],
+      "changesets": [{ "file": "c.md", "summary": "Breaking change here", "releases": [{ "package": "pkg-a", "bump": "major" }] }],
+      "expectedVersions": { "pkg-a": "2.0.0" }
+    },
+    {
+      "id": "combined-bumps",
+      "updateInternalDependencies": "patch",
+      "packages": [{ "name": "pkg-a", "version": "1.0.0" }],
+      "changesets": [
+        { "file": "one.md", "summary": "A small fix", "releases": [{ "package": "pkg-a", "bump": "patch" }] },
+        { "file": "two.md", "summary": "A new feature", "releases": [{ "package": "pkg-a", "bump": "minor" }] }
+      ],
+      "expectedVersions": { "pkg-a": "1.1.0" }
+    },
+    {
+      "id": "multiline-summary",
+      "updateInternalDependencies": "patch",
+      "packages": [{ "name": "pkg-a", "version": "1.0.0" }],
+      "changesets": [{ "file": "c.md", "summary": "First line of summary.\n\nSecond paragraph with more detail.", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0" }
+    },
+    {
+      "id": "dependency-patch",
+      "updateInternalDependencies": "patch",
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "dependencies": ["pkg-a"] }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "A cool change", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.0.1" },
+      "expectedRanges": { "pkg-b": { "pkg-a": "1.1.0" } }
+    },
+    {
+      "id": "dependency-minor-threshold",
+      "updateInternalDependencies": "minor",
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "dependencies": ["pkg-a"] }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "A cool change", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.0.1" },
+      "expectedRanges": { "pkg-b": { "pkg-a": "1.1.0" } }
+    },
+    {
+      "id": "own-change-plus-dependency",
+      "updateInternalDependencies": "patch",
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "dependencies": ["pkg-a"] }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "Touches both", "releases": [{ "package": "pkg-a", "bump": "minor" }, { "package": "pkg-b", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.1.0" },
+      "expectedRanges": { "pkg-b": { "pkg-a": "1.1.0" } }
+    },
+    {
+      "id": "zerover-minor",
+      "updateInternalDependencies": "patch",
+      "packages": [{ "name": "pkg-a", "version": "0.1.0" }],
+      "changesets": [{ "file": "c.md", "summary": "A cool change", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "0.2.0" }
+    },
+    {
+      "id": "zerover-major",
+      "updateInternalDependencies": "patch",
+      "packages": [{ "name": "pkg-a", "version": "0.1.5" }],
+      "changesets": [{ "file": "c.md", "summary": "Breaking change here", "releases": [{ "package": "pkg-a", "bump": "major" }] }],
+      "expectedVersions": { "pkg-a": "1.0.0" }
+    },
+    {
+      "_comment": "A dependent of two changed packages groups both under one 'Updated dependencies' header.",
+      "id": "dependency-multi",
+      "updateInternalDependencies": "patch",
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0" },
+        { "name": "pkg-c", "version": "1.0.0", "dependencies": ["pkg-a", "pkg-b"] }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "A shared change", "releases": [{ "package": "pkg-a", "bump": "minor" }, { "package": "pkg-b", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.1.0", "pkg-c": "1.0.1" },
+      "expectedRanges": { "pkg-c": { "pkg-a": "1.1.0", "pkg-b": "1.1.0" } }
+    },
+    {
+      "_comment": "In-range dependent is NOT released: pkg-a patch stays within pkg-b's ^1.0.0 range, so pkg-b is untouched (no version change, no CHANGELOG). Matches @changesets and net-changesets.",
+      "id": "in-range-no-release",
+      "updateInternalDependencies": "patch",
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "dependencies": [{ "name": "pkg-a", "range": "^1.0.0" }] }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "An in-range fix", "releases": [{ "package": "pkg-a", "bump": "patch" }] }],
+      "expectedVersions": { "pkg-a": "1.0.1", "pkg-b": "1.0.0" },
+      "expectedRanges": { "pkg-b": { "pkg-a": "^1.0.0" } }
+    },
+    {
+      "_comment": "In-range rewrite AT threshold: pkg-b releases for its own minor; pkg-a's in-range patch meets updateInternalDependencies=patch, so the range IS rewritten (^1.0.0→^1.0.1) and the changelog gets an Updated dependencies line.",
+      "id": "in-range-rewrite-at-threshold",
+      "updateInternalDependencies": "patch",
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "dependencies": [{ "name": "pkg-a", "range": "^1.0.0" }] }
+      ],
+      "changesets": [
+        { "file": "a.md", "summary": "Dep change", "releases": [{ "package": "pkg-a", "bump": "patch" }] },
+        { "file": "b.md", "summary": "Own change", "releases": [{ "package": "pkg-b", "bump": "minor" }] }
+      ],
+      "expectedVersions": { "pkg-a": "1.0.1", "pkg-b": "1.1.0" },
+      "expectedRanges": { "pkg-b": { "pkg-a": "^1.0.1" } }
+    },
+    {
+      "_comment": "In-range BELOW threshold: same shape with updateInternalDependencies=minor. pkg-a's patch is below the threshold, so the range is left alone AND pkg-b's changelog has no Updated dependencies line.",
+      "id": "in-range-below-threshold",
+      "updateInternalDependencies": "minor",
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "dependencies": [{ "name": "pkg-a", "range": "^1.0.0" }] }
+      ],
+      "changesets": [
+        { "file": "a.md", "summary": "Dep change", "releases": [{ "package": "pkg-a", "bump": "patch" }] },
+        { "file": "b.md", "summary": "Own change", "releases": [{ "package": "pkg-b", "bump": "minor" }] }
+      ],
+      "expectedVersions": { "pkg-a": "1.0.1", "pkg-b": "1.1.0" },
+      "expectedRanges": { "pkg-b": { "pkg-a": "^1.0.0" } }
+    },
+    {
+      "_comment": "Out-of-range BELOW threshold: exact dep, patch bump, updateInternalDependencies=minor. Out-of-range always cascades, rewrites, and gets the changelog line — the threshold only gates in-range deps.",
+      "id": "out-of-range-below-threshold",
+      "updateInternalDependencies": "minor",
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "dependencies": ["pkg-a"] }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "Small dep fix", "releases": [{ "package": "pkg-a", "bump": "patch" }] }],
+      "expectedVersions": { "pkg-a": "1.0.1", "pkg-b": "1.0.1" },
+      "expectedRanges": { "pkg-b": { "pkg-a": "1.0.1" } }
+    },
+    {
+      "_comment": "Fixed group: a changeset on one member releases every member at the coordinated version.",
+      "id": "fixed-group",
+      "updateInternalDependencies": "patch",
+      "fixed": [["pkg-a", "pkg-b"]],
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0" }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "A cool change", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.1.0" }
+    },
+    {
+      "_comment": "Fixed group with diverged versions: the group moves from the HIGHEST member version.",
+      "id": "fixed-group-highest",
+      "updateInternalDependencies": "patch",
+      "fixed": [["pkg-a", "pkg-b"]],
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "2.3.0" }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "A cool change", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "2.4.0", "pkg-b": "2.4.0" }
+    },
+    {
+      "_comment": "Linked group: releasing members share the highest bump from the highest current version; each keeps its own changelog.",
+      "id": "linked-group",
+      "updateInternalDependencies": "patch",
+      "linked": [["pkg-a", "pkg-b"]],
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0" }
+      ],
+      "changesets": [
+        { "file": "a.md", "summary": "A feature", "releases": [{ "package": "pkg-a", "bump": "minor" }] },
+        { "file": "b.md", "summary": "A fix", "releases": [{ "package": "pkg-b", "bump": "patch" }] }
+      ],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.1.0" }
+    },
+    {
+      "_comment": "Linked group, only one member has a changeset: the other is NOT released (unlike fixed).",
+      "id": "linked-group-partial",
+      "updateInternalDependencies": "patch",
+      "linked": [["pkg-a", "pkg-b"]],
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0" }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "A cool change", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.0.0" }
+    },
+    {
+      "_comment": "KNOWN DIVERGENCE (self-policing): versions and ranges agree, but Node drops the 'Updated dependencies' header on the TRANSITIVE entry (pkg-c gets only the bare nested bullet); Go keeps the header, matching net-changesets. The pkg-c golden is the Node output; TestKnownDivergence asserts Go still differs from it in exactly this way. If they ever converge, that test fails on purpose — remove knownDivergence to promote this into the matching set.",
+      "id": "transitive-divergence",
+      "updateInternalDependencies": "patch",
+      "knownDivergence": { "pkg-c": "Node drops the 'Updated dependencies' header on transitive entries; Go keeps it (matching net-changesets)" },
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "dependencies": ["pkg-a"] },
+        { "name": "pkg-c", "version": "1.0.0", "dependencies": ["pkg-b"] }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "Root change", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.0.1", "pkg-c": "1.0.1" },
+      "expectedRanges": { "pkg-b": { "pkg-a": "1.1.0" }, "pkg-c": { "pkg-b": "1.0.1" } }
+    },
+    {
+      "_comment": "Ignored dependent: pkg-b would cascade (exact dep), but ignore demotes it to a 'none' release — no version change, no CHANGELOG, yet the manifest range IS rewritten (Node-verified).",
+      "id": "ignored-dependent",
+      "updateInternalDependencies": "patch",
+      "ignore": ["pkg-b"],
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "dependencies": ["pkg-a"] }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "A cool change", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.0.0" },
+      "expectedRanges": { "pkg-b": { "pkg-a": "1.1.0" } }
+    }
+  ]
+}

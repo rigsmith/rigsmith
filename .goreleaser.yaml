@@ -1,0 +1,164 @@
+# GoReleaser configuration for the rigsmith monorepo.
+#
+# This is a go.work workspace with multiple main packages living in separate
+# modules:
+#   - ./cli     -> binary `rig`    (dev launcher)
+#   - ./release -> binary `relrig` (release tool)
+#   - ./changerig (future)         -> binary `changerig` (changeset tool)
+#
+# Because the main packages are in different modules/directories, each binary
+# gets its own build block with an explicit `dir`.
+#
+# Note: neither main package currently exposes a `version` variable, so we only
+# strip symbols (-s -w) rather than stamping `-X main.version=...`. Once a
+# `var version string` lands in a main package, add it back, e.g.:
+#   ldflags: -s -w -X main.version={{.Version}}
+#
+# Run `goreleaser check` after editing to validate.
+version: 2
+
+project_name: rigsmith
+
+builds:
+  - id: rig
+    dir: ./cli
+    main: .
+    binary: rig
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      # - -s -w -X main.version={{.Version}}  # enable once cli main has a version var
+
+  - id: relrig
+    dir: ./release
+    main: .
+    binary: relrig
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      # - -s -w -X main.version={{.Version}}  # enable once release main has a version var
+
+  # --- uncomment when the changerig binary lands ---
+  # - id: changerig
+  #   dir: ./changerig        # or ./release if it ships from that module
+  #   main: .
+  #   binary: changerig
+  #   env:
+  #     - CGO_ENABLED=0
+  #   goos:
+  #     - linux
+  #     - darwin
+  #     - windows
+  #   goarch:
+  #     - amd64
+  #     - arm64
+  #   ldflags:
+  #     - -s -w
+
+archives:
+  - id: rig
+    ids:
+      - rig
+    name_template: "rig_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+  - id: relrig
+    ids:
+      - relrig
+    name_template: "relrig_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+  # --- uncomment alongside the changerig build above ---
+  # - id: changerig
+  #   ids:
+  #     - changerig
+  #   name_template: "changerig_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  #   formats:
+  #     - tar.gz
+  #   format_overrides:
+  #     - goos: windows
+  #       formats:
+  #         - zip
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: git
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "merge conflict"
+      - Merge pull request
+      - Merge branch
+
+# TODO: enable once a Homebrew tap repo (e.g. rigsmith/homebrew-tap) exists.
+# This skeleton publishes both binaries as formulae. Cask form is also an
+# option for GUI-style installs, but these are CLIs so `brews` is the fit.
+# brews:
+#   - name: rig
+#     ids:
+#       - rig
+#     repository:
+#       owner: rigsmith
+#       name: homebrew-tap
+#     homepage: "https://rigsmith.dev"
+#     description: "rigsmith's convention-first dev launcher"
+#     license: "MIT"
+#     install: |
+#       bin.install "rig"
+#   - name: relrig
+#     ids:
+#       - relrig
+#     repository:
+#       owner: rigsmith
+#       name: homebrew-tap
+#     homepage: "https://rigsmith.dev"
+#     description: "rigsmith's uniform changeset -> version -> publish release tool"
+#     license: "MIT"
+#     install: |
+#       bin.install "relrig"
+
+release:
+  github:
+    # TODO: replace with the real repo slug once the public repo is created.
+    owner: rigsmith
+    name: rigsmith

@@ -1,0 +1,212 @@
+package commands
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/rigsmith/core/changeset"
+	"github.com/rigsmith/core/gitutil"
+	"github.com/rigsmith/core/planner"
+	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/core/prestate"
+	"github.com/spf13/cobra"
+)
+
+// NewVersionCmd builds the `version` command, including snapshot (--snapshot) and
+// prerelease (driven by .changeset/pre.json) modes.
+func NewVersionCmd() *cobra.Command {
+	var (
+		dryRun           bool
+		snapshotTag      string
+		snapshotTemplate string
+	)
+	cmd := &cobra.Command{
+		Use:   "version",
+		Short: "Consume changesets: bump versions and write changelogs",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Cobra's NoOptDefVal only binds `--snapshot=tag`; accept the
+			// @changesets spelling `--snapshot tag` too (the tag lands in args).
+			if cmd.Flags().Changed("snapshot") && strings.TrimSpace(snapshotTag) == "" && len(args) > 0 {
+				snapshotTag = args[0]
+			}
+			ws, err := Open()
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+
+			changesets, err := changeset.Dir(ws.ChangesetDir, "")
+			if err != nil {
+				return err
+			}
+			pre, err := prestate.Read(ws.ChangesetDir)
+			if err != nil {
+				return err
+			}
+
+			// Determine the release mode.
+			mode := planner.ModeNormal
+			switch {
+			case cmd.Flags().Changed("snapshot"):
+				mode = planner.ModeSnapshot
+			case pre != nil && pre.Mode == prestate.ModePre:
+				mode = planner.ModePre
+			case pre != nil && pre.Mode == prestate.ModeExit:
+				mode = planner.ModeExit
+			}
+
+			// In prerelease mode only the not-yet-consumed changesets drive the run
+			// (their summaries shouldn't re-appear each version); the prerelease
+			// counter still advances from the current version.
+			active := changesets
+			if mode == planner.ModePre {
+				active = nil
+				for _, cs := range changesets {
+					if !pre.Contains(cs.ID) {
+						active = append(active, cs)
+					}
+				}
+			}
+
+			if len(active) == 0 && mode != planner.ModeExit {
+				fmt.Fprintln(out, DimStyle.Render("No changesets — nothing to version."))
+				return nil
+			}
+
+			pkgs, ecoOf, err := ws.Discover(cmd.Context())
+			if err != nil {
+				return err
+			}
+			plan := planner.Plan(active, pkgs, ws.Config)
+
+			// Apply the mode's version overrides.
+			switch mode {
+			case planner.ModeSnapshot:
+				template := snapshotTemplate
+				if template == "" {
+					template = ws.Config.Snapshot.PrereleaseTemplate
+				}
+				suffix, err := planner.SnapshotSuffix(template, strings.TrimSpace(snapshotTag), gitutil.ShortHead(cmd.Context(), ws.Root), time.Now())
+				if err != nil {
+					return err
+				}
+				planner.ApplySnapshot(plan, ws.Config.Snapshot.UseCalculatedVersion, suffix)
+			case planner.ModePre:
+				planner.ApplyPre(plan, pre.Tag)
+			case planner.ModeExit:
+				plan = planner.GraduatePrereleases(plan, pkgs)
+			}
+
+			if len(plan) == 0 {
+				fmt.Fprintln(out, DimStyle.Render("Nothing to version."))
+				return nil
+			}
+
+			PrintPlan(out, plan, false)
+			if dryRun {
+				fmt.Fprintln(out, DimStyle.Render("\n(dry run — no files written)"))
+				return nil
+			}
+
+			gen, _ := plugin.ResolveChangelogGenerator(ws.Config.ChangelogSpec(), ws.Root, planner.Builtins(ws.Config.Groups()))
+
+			for _, m := range plan {
+				if eco, ok := ws.EcosystemFor(ecoOf[m.Name]); ok {
+					req := plugin.SetVersionRequest{
+						RepoRoot:          ws.Root,
+						Package:           plugin.Package{Name: m.Name, ManifestPath: m.ManifestPath, VersionFile: m.VersionFile},
+						NewVersion:        m.ResolvedVersion(),
+						DependencyUpdates: m.DepUpdates,
+					}
+					if err := eco.SetVersion(cmd.Context(), req); err != nil {
+						return fmt.Errorf("set version for %s: %w", m.Name, err)
+					}
+				}
+				if m.RangeOnly {
+					continue // "none" release: ranges rewritten, no version bump, no changelog
+				}
+				entry, err := gen.Render(cmd.Context(), planner.ModuleToRequest(m))
+				if err != nil {
+					return fmt.Errorf("changelog for %s: %w", m.Name, err)
+				}
+				if err := writeChangelogEntry(ws.Root, m.ManifestPath, m.DisplayName, entry); err != nil {
+					return fmt.Errorf("changelog for %s: %w", m.Name, err)
+				}
+			}
+
+			// Changeset disposal + pre-state bookkeeping per mode.
+			switch mode {
+			case planner.ModeSnapshot:
+				// Snapshot consumes changesets like a normal run (verified against
+				// @changesets v3.0.0-next.5); the run is throwaway because the
+				// working-tree changes are never committed.
+				for _, cs := range changesets {
+					_ = os.Remove(filepath.Join(ws.ChangesetDir, cs.ID+".md"))
+				}
+				fmt.Fprintf(out, "\nSnapshot-versioned %d package(s); removed %d changeset(s).\n", len(plan), len(changesets))
+			case planner.ModePre:
+				for _, cs := range active {
+					pre.Changesets = append(pre.Changesets, cs.ID)
+				}
+				if err := prestate.Write(ws.ChangesetDir, pre); err != nil {
+					return err
+				}
+				fmt.Fprintf(out, "\nPrereleased %d package(s) (tag %q); changesets kept.\n", len(plan), pre.Tag)
+			default: // Normal, Exit
+				for _, cs := range changesets {
+					_ = os.Remove(filepath.Join(ws.ChangesetDir, cs.ID+".md"))
+				}
+				if mode == planner.ModeExit {
+					_ = prestate.Remove(ws.ChangesetDir)
+					fmt.Fprintf(out, "\nGraduated %d package(s) to stable; exited prerelease mode.\n", len(plan))
+				} else {
+					fmt.Fprintf(out, "\nVersioned %d package(s); removed %d changeset(s).\n", len(plan), len(changesets))
+				}
+			}
+			return nil
+		},
+	}
+	f := cmd.Flags()
+	f.BoolVarP(&dryRun, "dry-run", "n", false, "print the plan without writing files")
+	f.StringVar(&snapshotTag, "snapshot", "", "create a snapshot release (optional tag)")
+	f.Lookup("snapshot").NoOptDefVal = " " // allow bare --snapshot (no tag)
+	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")
+	return cmd
+}
+
+// writeChangelogEntry prepends a pre-rendered release entry under the package's
+// CHANGELOG.md (the engine owns file placement; the generator only rendered the
+// entry — per the changelog plugin contract).
+func writeChangelogEntry(root, manifestPath, displayName, entry string) error {
+	dir := filepath.Dir(filepath.Join(root, manifestPath))
+	path := filepath.Join(dir, "CHANGELOG.md")
+
+	existing, _ := os.ReadFile(path)
+	header := fmt.Sprintf("# %s\n", displayName)
+
+	var body string
+	if len(existing) == 0 {
+		body = header + "\n" + entry
+	} else {
+		text := string(existing)
+		if nl := indexByte(text, '\n'); nl >= 0 {
+			body = text[:nl+1] + "\n" + entry + text[nl+1:]
+		} else {
+			body = header + "\n" + entry
+		}
+	}
+	return os.WriteFile(path, []byte(body), 0o644)
+}
+
+func indexByte(s string, b byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == b {
+			return i
+		}
+	}
+	return -1
+}

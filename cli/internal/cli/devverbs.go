@@ -1,0 +1,104 @@
+package cli
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/rigsmith/cli/internal/detect"
+	"github.com/spf13/cobra"
+)
+
+// devVerbCmd builds a dev-loop verb (build/test/run/format/lint/typecheck/clean)
+// with workspace awareness: an optional project selector scopes the verb to one
+// package's directory, and (when supportsAll) `--all` runs it across every
+// workspace package in dependency order, narrowable with `--filter`.
+func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.Command {
+	var (
+		all    bool
+		filter string
+	)
+	cmd := &cobra.Command{
+		Use:     verb + " [project]",
+		Short:   short,
+		Aliases: aliases,
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			cwd, _ := os.Getwd()
+			ts := discoverWorkspace(cdContext(cmd), detect.Root(cwd))
+			var names []string
+			for _, t := range ts {
+				names = append(names, t.Name)
+			}
+			return names, cobra.ShellCompDirectiveNoFileComp
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			root := detect.Root(cwd)
+
+			if all {
+				return runAcross(cmd, root, verb, filter, args)
+			}
+			// A first arg that names a package scopes the verb to that package.
+			if len(args) > 0 {
+				ts := discoverWorkspace(cdContext(cmd), root)
+				if t, ok := matchTarget(ts, args[0]); ok {
+					argv, has := devCommandFor(t, verb, root)
+					if !has {
+						return fmt.Errorf("verb %q has no mapping for ecosystem %q", verb, t.Eco)
+					}
+					return runCommand(cmd, t.Dir, append(argv, args[1:]...))
+				}
+			}
+			// Default: the primary ecosystem at the repo root.
+			eco, err := resolvePrimary(cwd, root)
+			if err != nil {
+				return err
+			}
+			if verb == "rebuild" {
+				return runRebuild(cmd, eco, root, args)
+			}
+			argv, ok := detect.CommandFor(eco, verb, root)
+			if !ok {
+				return fmt.Errorf("verb %q has no mapping for ecosystem %q yet", verb, eco)
+			}
+			return runCommand(cmd, root, append(argv, args...))
+		},
+	}
+	if supportsAll {
+		cmd.Flags().BoolVarP(&all, "all", "a", false, "run across every workspace package (dependency order)")
+		cmd.Flags().StringVar(&filter, "filter", "", "with --all, limit to packages matching this glob")
+	}
+	return cmd
+}
+
+// runAcross runs the verb in every workspace package (topo order), optionally
+// filtered, skipping packages whose ecosystem doesn't map the verb.
+func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) error {
+	targets := topoSort(filterTargets(discoverWorkspace(cdContext(cmd), root), filter))
+	if len(targets) == 0 {
+		return fmt.Errorf("no workspace packages found%s", filterNote(filter))
+	}
+	out := cmd.OutOrStdout()
+	ran := 0
+	for _, t := range targets {
+		argv, ok := devCommandFor(t, verb, root)
+		if !ok {
+			continue
+		}
+		fmt.Fprintln(out, dimStyle.Render(fmt.Sprintf("· %s (%s)", t.Name, t.Eco)))
+		if err := runCommand(cmd, t.Dir, append(argv, args...)); err != nil {
+			return fmt.Errorf("%s in %s: %w", verb, t.Name, err)
+		}
+		ran++
+	}
+	if ran == 0 {
+		return fmt.Errorf("no workspace package maps verb %q", verb)
+	}
+	return nil
+}
+
+func filterNote(filter string) string {
+	if filter == "" {
+		return ""
+	}
+	return " matching " + filter
+}
