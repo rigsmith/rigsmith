@@ -8,9 +8,14 @@ package ghrepo
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // Available reports whether the gh CLI is installed.
@@ -107,18 +112,87 @@ func EnsurePrivate(ctx context.Context, remote string) error {
 	}
 	switch host {
 	case "github.com":
-		if !have("gh") {
-			return fmt.Errorf("the GitHub CLI (gh) is required to verify %s is private — install gh and try again", slug)
+		if have("gh") {
+			return verify(ctx, slug, IsPrivate)
 		}
-		return verify(ctx, slug, IsPrivate)
+		if tok := firstEnv("GITHUB_TOKEN", "GH_TOKEN"); tok != "" {
+			return verify(ctx, slug, func(c context.Context, s string) (bool, error) { return apiPrivateGitHub(c, s, tok) })
+		}
+		return fmt.Errorf("verifying %s needs the gh CLI or a GITHUB_TOKEN env var", slug)
 	case "gitlab.com":
-		if !have("glab") {
-			return fmt.Errorf("the GitLab CLI (glab) is required to verify %s is private — install glab and try again", slug)
+		if have("glab") {
+			return verify(ctx, slug, isPrivateGitLab)
 		}
-		return verify(ctx, slug, isPrivateGitLab)
+		if tok := firstEnv("GITLAB_TOKEN", "GL_TOKEN"); tok != "" {
+			return verify(ctx, slug, func(c context.Context, s string) (bool, error) { return apiPrivateGitLab(c, s, tok) })
+		}
+		return fmt.Errorf("verifying %s needs the glab CLI or a GITLAB_TOKEN env var", slug)
 	default:
 		return fmt.Errorf("clauderig verifies private repos on github.com and gitlab.com only; %q (%s) is unsupported", remote, host)
 	}
+}
+
+func firstEnv(keys ...string) string {
+	for _, k := range keys {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+var httpClient = &http.Client{Timeout: 10 * time.Second}
+
+// apiPrivateGitHub confirms a repo is private via the GitHub REST API using a
+// token from the environment (no CLI needed). A 404 means not-found-or-no-access
+// — which we treat as an error, never as "assume private".
+func apiPrivateGitHub(ctx context.Context, slug, token string) (bool, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/"+slug, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, fmt.Errorf("not found or token lacks access (HTTP 404)")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("github api: %s", resp.Status)
+	}
+	var r struct {
+		Private bool `json:"private"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return false, err
+	}
+	return r.Private, nil
+}
+
+// apiPrivateGitLab confirms a project's visibility is private via the GitLab API
+// using a token from the environment.
+func apiPrivateGitLab(ctx context.Context, slug, token string) (bool, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://gitlab.com/api/v4/projects/"+url.PathEscape(slug), nil)
+	req.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, fmt.Errorf("not found or token lacks access (HTTP 404)")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("gitlab api: %s", resp.Status)
+	}
+	var r struct {
+		Visibility string `json:"visibility"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return false, err
+	}
+	return r.Visibility == "private", nil
 }
 
 func verify(ctx context.Context, slug string, check func(context.Context, string) (bool, error)) error {
