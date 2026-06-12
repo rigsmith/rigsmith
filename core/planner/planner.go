@@ -168,6 +168,14 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 	// patch-bump. config.UpdateInternalDependencies does NOT affect release decisions — it is
 	// only the threshold for rewriting an *in-range* dependency's range spec on a dependent
 	// that is already releasing for its own reasons (modeled in section 3 below).
+	//
+	// The cascade and the fixed/linked/lockstep group coordination iterate TOGETHER to a
+	// fixpoint (port of @changesets assembleReleasePlan, which loops determineDependents +
+	// matchFixedConstraint until stable): a group pull can move a member out of a
+	// dependent's range, which must cascade in turn. Node-verified: a dependent of a
+	// fixed-pulled package patch-bumps with its range rewritten, exactly as if the member
+	// had its own changeset. (net-changesets does NOT re-cascade after coordination — a
+	// known net divergence; Go follows Node.)
 	for {
 		changed := false
 		for _, name := range order {
@@ -220,7 +228,7 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 				}
 			}
 		}
-		if !changed {
+		if !changed && !coordinateGroups(rel, &order, byName, packages, cfg) {
 			break
 		}
 	}
@@ -256,8 +264,9 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 		m.materializeDeps(false)
 	}
 
-	// 4. Assemble the plan, apply grouping, filter ignores. A module with no bump
-	// but pending range rewrites (dev-dependent) rides along as a "none" release.
+	// 4. Assemble the plan (grouping already coordinated in the fixpoint above).
+	// A module with no bump but pending range rewrites (dev-dependent) rides
+	// along as a "none" release.
 	plan := make([]*Module, 0, len(order))
 	for _, name := range order {
 		m := rel[name]
@@ -269,10 +278,6 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 			plan = append(plan, m)
 		}
 	}
-
-	applyLinked(plan, byName, cfg.Linked)
-	plan = applyFixed(plan, byName, cfg.Fixed, cfg.Ignore)
-	applyLockstep(plan, packages)
 
 	// An ignored package is not released, but Node still rewrites its manifest
 	// dependency ranges (a "none" release) — demote rather than drop it.
@@ -445,86 +450,87 @@ func coordinate(m *Module, version semver.Version, bump changeset.Bump) {
 	m.hasBumpOverride = true
 }
 
-func applyLinked(plan []*Module, byName map[string]plugin.Package, groups [][]string) {
-	for _, grp := range groups {
-		releasing := membersIn(plan, grp)
+// coordinateGroups applies linked/fixed/lockstep coordination to the working
+// release set, adding missing fixed-group members. It runs inside the cascade
+// fixpoint (see Plan section 2) and reports whether anything changed so the
+// dependent cascade re-runs over the coordinated versions.
+func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string]plugin.Package, packages []plugin.Package, cfg *config.Config) bool {
+	changed := false
+
+	releasingIn := func(names []string) []*Module {
+		var out []*Module
+		for _, n := range names {
+			if m, ok := rel[n]; ok && m.HighestBump() != changeset.BumpNone {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	apply := func(m *Module, version semver.Version, bump changeset.Bump) {
+		if m.hasBumpOverride && m.bumpOverride == bump && semver.Compare(m.Current, version) == 0 {
+			return // already coordinated — keeps the fixpoint terminating
+		}
+		coordinate(m, version, bump)
+		changed = true
+	}
+
+	// Linked: only the members already releasing coordinate.
+	for _, grp := range cfg.Linked {
+		releasing := releasingIn(grp)
 		if len(releasing) == 0 {
 			continue
 		}
 		bump := highestBump(releasing)
 		version := highestCurrentVersion(grp, byName)
 		for _, m := range releasing {
-			coordinate(m, version, bump)
+			apply(m, version, bump)
 		}
 	}
-}
 
-func applyLockstep(plan []*Module, packages []plugin.Package) {
-	// Group packages by their shared version file.
-	groups := map[string][]string{}
-	for _, p := range packages {
-		if p.VersionFile != "" {
-			groups[p.VersionFile] = append(groups[p.VersionFile], p.Name)
-		}
-	}
-	byName := map[string]plugin.Package{}
-	for _, p := range packages {
-		byName[p.Name] = p
-	}
-	for _, names := range groups {
-		releasing := membersIn(plan, names)
-		if len(releasing) <= 1 {
-			continue
-		}
-		bump := highestBump(releasing)
-		version := highestCurrentVersion(names, byName)
-		for _, m := range releasing {
-			coordinate(m, version, bump)
-		}
-	}
-}
-
-// applyFixed coordinates a group AND adds entries for non-releasing members.
-// Returns the (possibly extended) plan.
-func applyFixed(plan []*Module, byName map[string]plugin.Package, groups [][]string, ignore []string) []*Module {
-	for _, grp := range groups {
-		releasing := membersIn(plan, grp)
+	// Fixed: coordinate AND add the non-releasing members.
+	for _, grp := range cfg.Fixed {
+		releasing := releasingIn(grp)
 		if len(releasing) == 0 {
 			continue
 		}
 		bump := highestBump(releasing)
 		version := highestCurrentVersion(grp, byName)
 		for _, member := range grp {
-			if isIgnored(member, ignore) {
+			if isIgnored(member, cfg.Ignore) {
 				continue
 			}
-			if existing := findModule(plan, member); existing != nil {
-				coordinate(existing, version, bump)
+			if m, ok := rel[member]; ok {
+				apply(m, version, bump)
 				continue
 			}
 			if pkg, ok := byName[member]; ok {
 				m := newModule(pkg)
-				m.Current = version
-				coordinate(m, version, bump)
-				plan = append(plan, m)
+				rel[member] = m
+				*order = append(*order, member)
+				apply(m, version, bump)
 			}
 		}
 	}
-	return plan
-}
 
-func membersIn(plan []*Module, names []string) []*Module {
-	set := map[string]bool{}
-	for _, n := range names {
-		set[n] = true
-	}
-	var out []*Module
-	for _, m := range plan {
-		if set[m.Name] {
-			out = append(out, m)
+	// Lockstep: packages sharing a version file move together.
+	lockstep := map[string][]string{}
+	for _, p := range packages {
+		if p.VersionFile != "" {
+			lockstep[p.VersionFile] = append(lockstep[p.VersionFile], p.Name)
 		}
 	}
-	return out
+	for _, names := range lockstep {
+		releasing := releasingIn(names)
+		if len(releasing) <= 1 {
+			continue
+		}
+		bump := highestBump(releasing)
+		version := highestCurrentVersion(names, byName)
+		for _, m := range releasing {
+			apply(m, version, bump)
+		}
+	}
+	return changed
 }
 
 func findModule(plan []*Module, name string) *Module {

@@ -66,10 +66,27 @@ else — blank lines between sections, bullet indentation — is significant.
   pinned to the **exact** snapshot version (operator dropped), changesets are
   **consumed** (not kept), and release decisions still follow stable-version
   math (an in-range dependent stays untouched).
+- **`TestDotnetParity`** (`dotnet_test.go`) — the same scenarios materialized as
+  a **csproj tree** (mirroring net-changesets' `WriteNetRepo`) must reproduce
+  the same Node goldens: the engine's decisions and changelog output are
+  ecosystem-independent. Scenarios with explicit npm ranges are excluded
+  (ProjectReferences are rangeless), as is the range-rewrite oracle.
+- **`TestDotnetCrossOracle`** — runs the **real net-changesets C# CLI** and
+  changerig on identical csproj fixtures and requires byte-identical versions
+  and changelogs (skipped when the C# tool isn't built; set
+  `$NET_CHANGESETS_DLL` or build `~/Git/net-changesets`). Packages under a
+  scenario's `netDivergence` marker are skipped (see below).
+- **`TestPolyglotParity`** (`polyglot_test.go`) — the north-star scenario: one
+  changeset on a C# library releases a fixed group spanning **dotnet + node +
+  go + cargo** (each manifest written natively) and cascades onward into an npm
+  dependent of a group member. No external oracle can run a mixed repo, so the
+  goldens in `polyglot/` are **self-authored**, justified piecewise: version
+  math + cascade semantics are Node-verified, the dotnet write-back is
+  C#-cross-checked, the changelog format is pinned by the Node goldens.
 
 ## Scope (current)
 
-21 scenarios (`fixed`/`linked`/`ignore` config keys are supported in
+22 scenarios (`fixed`/`linked`/`ignore` config keys are supported in
 `scenarios.json` and written into the materialized config):
 
 - 10 "matching" scenarios (single bumps, combined, multiline, dependency cascade,
@@ -94,11 +111,19 @@ else — blank lines between sections, bullet indentation — is significant.
   no version change, no CHANGELOG, but its manifest dep range IS rewritten
   (and it appears in `status --output` with `type: "none"`, like Node).
 
-- `transitive-divergence` (pkg-c → pkg-b → pkg-a) — the one **known divergence**:
-  versions and ranges agree, but Node drops the "Updated dependencies" header on
-  the transitive entry (bare nested bullet only); Go keeps it, matching
-  net-changesets. The scenario carries a `knownDivergence` marker: `TestParity`
-  skips the byte-compare for the marked package and `TestKnownDivergence`
-  asserts the outputs still differ in exactly that way — if they converge it
-  fails on purpose, and the marker should be removed to promote the scenario
-  into the matching set.
+- `fixed-group-dependent-cascade` — a dependent of a **fixed-pulled** member
+  cascades (Node-verified): the group pull moves pkg-b out of pkg-c's exact
+  range, so pkg-c patch-bumps with the range rewritten, exactly as if pkg-b had
+  its own changeset. Carries BOTH markers: `knownDivergence` on pkg-c's
+  changelog (Node's header quirk, below) and `netDivergence` on pkg-c
+  (net-changesets does not re-cascade after group coordination at all — Go
+  follows Node; the dotnet cross-oracle skips the package).
+- `transitive-divergence` (pkg-c → pkg-b → pkg-a) — the **known divergence**:
+  versions and ranges agree, but Node drops the "Updated dependencies" header
+  whenever the dependency's release carries no changeset of its own (transitive
+  entries, group-pulled members), emitting only the bare nested bullet; Go
+  keeps the header, matching net-changesets. Such scenarios carry a
+  `knownDivergence` marker: `TestParity` skips the byte-compare for the marked
+  package and `TestKnownDivergence` asserts the outputs still differ in exactly
+  that way — if they converge it fails on purpose, and the marker should be
+  removed to promote the scenario into the matching set.

@@ -205,6 +205,22 @@
       "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.0.0" }
     },
     {
+      "_comment": "Dependent of a FIXED-PULLED member cascades (Node-verified): pkg-b releases only because its fixed group moved; that still pushes pkg-b out of pkg-c's exact range, so pkg-c patch-bumps with the range rewritten — exactly as if pkg-b had its own changeset. knownDivergence: Node drops the 'Updated dependencies' header on pkg-c (the dep's release has no changeset of its own — same quirk as transitive-divergence); Go keeps it. netDivergence: net-changesets does not re-cascade after group coordination and leaves pkg-c untouched entirely, so the dotnet cross-oracle skips pkg-c.",
+      "id": "fixed-group-dependent-cascade",
+      "updateInternalDependencies": "patch",
+      "fixed": [["pkg-a", "pkg-b"]],
+      "knownDivergence": { "pkg-c": "Node drops the 'Updated dependencies' header when the dep's release has no changeset of its own; Go keeps it" },
+      "netDivergence": { "pkg-c": "net-changesets does not cascade dependents of group-pulled members; Go follows Node" },
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0" },
+        { "name": "pkg-c", "version": "1.0.0", "dependencies": ["pkg-b"] }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "A cool change", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.1.0", "pkg-c": "1.0.1" },
+      "expectedRanges": { "pkg-c": { "pkg-b": "1.1.0" } }
+    },
+    {
       "_comment": "KNOWN DIVERGENCE (self-policing): versions and ranges agree, but Node drops the 'Updated dependencies' header on the TRANSITIVE entry (pkg-c gets only the bare nested bullet); Go keeps the header, matching net-changesets. The pkg-c golden is the Node output; TestKnownDivergence asserts Go still differs from it in exactly this way. If they ever converge, that test fails on purpose — remove knownDivergence to promote this into the matching set.",
       "id": "transitive-divergence",
       "updateInternalDependencies": "patch",

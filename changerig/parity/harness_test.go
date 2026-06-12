@@ -81,6 +81,10 @@ type scenario struct {
 	// outputs really do differ (self-policing, like net-changesets'
 	// KnownDivergenceTests).
 	KnownDivergence map[string]string `json:"knownDivergence"`
+	// NetDivergence marks packages where the net-changesets C# tool deliberately
+	// differs from Node AND Go (package → why) — e.g. it does not cascade
+	// dependents of group-pulled members. TestDotnetCrossOracle skips these.
+	NetDivergence map[string]string `json:"netDivergence"`
 }
 
 type corpus struct {

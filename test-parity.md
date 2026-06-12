@@ -499,8 +499,20 @@ changerig/parity/harness_test.go       # builds changerig, runs both oracles
       and `TestKnownDivergence` self-polices that Go (which keeps the "Updated
       dependencies" header, like net-changesets) still differs from Node's bare
       nested bullet — converging on Node makes it fail on purpose.
-- [ ] dotnet ecosystem corpus (goldens cross-generated from net-changesets);
-      cross-ecosystem polyglot cascade.
+- [x] dotnet ecosystem corpus — `TestDotnetParity` (same scenarios as a csproj
+      tree vs the SAME Node goldens; npm-range scenarios excluded) +
+      `TestDotnetCrossOracle` (runs the real net-changesets C# CLI and changerig
+      on identical fixtures, byte-identical required; skips when the C# tool
+      isn't built). 18 applicable scenarios, all green both ways.
+- [x] `fixed-group-dependent-cascade` — a dependent of a fixed-PULLED member
+      cascades (Node-verified; bug 7 below). Carries `knownDivergence` (Node's
+      header quirk) AND `netDivergence` (net-changesets doesn't re-cascade
+      after group coordination; the cross-oracle skips pkg-c).
+- [x] Cross-ecosystem polyglot cascade — `TestPolyglotParity`: one changeset on
+      a C# lib releases a fixed group spanning dotnet+node+go+cargo (native
+      write-back each) and cascades into an npm dependent of a member.
+      Self-authored goldens in `polyglot/` (no external oracle runs mixed
+      repos), justified piecewise by the Node/C# oracles.
 - [ ] (optional) Point the C# parity tests at this same corpus so one golden set
       is authoritative for both implementations.
 
@@ -532,6 +544,16 @@ changerig/parity/harness_test.go       # builds changerig, runs both oracles
    (version unchanged, no changelog) and appear in `status --output` as
    `type: "none"`. Go dropped them from the plan entirely. Fixed via
    `Module.RangeOnly`.
+7. **No cascade off group-pulled members** — a fixed-group pull moves a member
+   out of a dependent's exact range, and Node then patch-bumps that dependent
+   (range rewritten, dep changelog line) exactly as if the member had its own
+   changeset. Go ran group coordination AFTER the cascade (and after dep-line
+   materialization), so the dependent stayed untouched — as does net-changesets
+   (a deliberate net divergence now marked `netDivergence` in the corpus).
+   Fixed by restructuring `Plan`: cascade + `coordinateGroups`
+   (fixed/linked/lockstep) now iterate together to a fixpoint, mirroring
+   @changesets `assembleReleasePlan`, and dep materialization runs on the final
+   coordinated versions.
 
 ---
 
