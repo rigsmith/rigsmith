@@ -67,14 +67,70 @@ func LooksSecret(s string) (kind string, ok bool) {
 	if jwtRe.MatchString(s) {
 		return "jwt", true
 	}
-	// Generic high-entropy token: a single opaque blob, not a UUID, not a path.
-	if uuidRe.MatchString(s) {
+	return highEntropySecret(s)
+}
+
+// highEntropySecret is the generic, conservative backstop: a long opaque token
+// with mixed letters+digits. It deliberately excludes the shapes that produced
+// false positives on real configs — hex hashes / git SHAs, UUIDs (with an
+// optional word prefix like local_<uuid>), and paths/sentences — so it flags
+// prefix-less API keys without drowning in commit hashes and session ids.
+func highEntropySecret(s string) (string, bool) {
+	if len(s) < 40 {
 		return "", false
 	}
-	if len(s) >= 40 && tokenChar.MatchString(s) && shannonBits(s) >= 3.5 {
-		return "high-entropy", true
+	if strings.ContainsAny(s, "/ \t") { // paths, sentences
+		return "", false
 	}
-	return "", false
+	if isHex(s) { // git SHAs, content hashes
+		return "", false
+	}
+	if isUUIDish(s) { // session ids etc.
+		return "", false
+	}
+	if !tokenChar.MatchString(s) || !hasLetter(s) || !hasDigit(s) {
+		return "", false
+	}
+	if shannonBits(s) < 4.0 {
+		return "", false
+	}
+	return "high-entropy", true
+}
+
+func isHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// isUUIDish matches a UUID, optionally with a leading word_ prefix (local_<uuid>).
+func isUUIDish(s string) bool {
+	if i := strings.IndexByte(s, '_'); i >= 0 {
+		s = s[i+1:]
+	}
+	return uuidRe.MatchString(s)
+}
+
+func hasLetter(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if (s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDigit(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 // Scan walks parsed JSON and reports string values that look like credentials.

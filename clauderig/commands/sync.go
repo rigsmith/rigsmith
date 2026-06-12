@@ -42,13 +42,19 @@ func NewSyncCmd() *cobra.Command {
 						fmt.Fprintf(out, "  %-8s %s\n", r.ID, DimStyle.Render("skipped (absent here)"))
 						continue
 					}
-					fmt.Fprintf(out, "  %-8s %d files, %d secret field(s) redacted\n", r.ID, r.Files, r.Redactions)
+					skipped := ""
+					if r.SkippedFiles > 0 {
+						skipped = fmt.Sprintf(", %d skipped (churn)", r.SkippedFiles)
+					}
+					fmt.Fprintf(out, "  %-8s %d files, %d secret field(s) redacted%s\n", r.ID, r.Files, r.Redactions, skipped)
 				}
 				fmt.Fprintf(out, "  manifest  %d projects\n", rep.ManifestProjects)
 			}
 			if serr != nil {
-				for _, f := range rep.Findings {
-					fmt.Fprintf(out, "  %s %s (%s)\n", ErrStyle.Render("LEAK"), f.Path, f.Kind)
+				if rep != nil {
+					for _, f := range rep.Findings {
+						fmt.Fprintf(out, "  %s %s (%s)\n", ErrStyle.Render("LEAK"), f.Path, f.Kind)
+					}
 				}
 				return serr
 			}
@@ -70,18 +76,24 @@ func NewSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !changed {
-				fmt.Fprintln(out, OkStyle.Render("\n  ✓ already up to date"))
-				return nil
-			}
 			if cfg.Remote == "" {
-				fmt.Fprintln(out, OkStyle.Render("\n  ✓ committed locally (no remote configured — run init)"))
+				if changed {
+					fmt.Fprintln(out, OkStyle.Render("\n  ✓ committed locally (no remote — run init)"))
+				} else {
+					fmt.Fprintln(out, OkStyle.Render("\n  ✓ already up to date (no remote)"))
+				}
 				return nil
 			}
+			// Always push (even with no new commit) so a previously-failed push
+			// recovers; an in-sync push is a cheap no-op.
 			if err := repo.Push(ctx, "origin", "main"); err != nil {
 				return fmt.Errorf("push: %w", err)
 			}
-			fmt.Fprintln(out, OkStyle.Render("\n  ✓ synced & pushed"))
+			if changed {
+				fmt.Fprintln(out, OkStyle.Render("\n  ✓ synced & pushed"))
+			} else {
+				fmt.Fprintln(out, OkStyle.Render("\n  ✓ in sync"))
+			}
 
 			// Size-based squash: bound .git when transcript history has bloated it.
 			gitBytes, _ := repo.GitDirBytes(ctx)

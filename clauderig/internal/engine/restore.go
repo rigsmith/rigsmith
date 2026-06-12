@@ -34,6 +34,12 @@ type RestoreOptions struct {
 	Config     *config.Config
 	Machine    config.Machine
 	Manifest   *manifest.Manifest
+	// TargetOverride maps a root id to an absolute target dir, overriding its
+	// resolved location (used by `restore --dir` to write into a test folder).
+	TargetOverride map[string]string
+	// OverriddenOnly restores only roots present in TargetOverride (so a --dir
+	// restore touches the test folder and nothing else).
+	OverriddenOnly bool
 }
 
 // Restore writes the staged file set back to this machine's roots, rewriting CLI
@@ -47,7 +53,14 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			continue
 		}
 		rr := RestoreRootResult{ID: r.ID}
-		target, st := opts.Config.RootLocation(r.ID, opts.Machine)
+		override, hasOverride := opts.TargetOverride[r.ID]
+		if opts.OverriddenOnly && !hasOverride {
+			continue // --dir mode: only the overridden root(s)
+		}
+		target, st := override, pathmap.StatusResolved
+		if !hasOverride {
+			target, st = opts.Config.RootLocation(r.ID, opts.Machine)
+		}
 		stageRoot := filepath.Join(opts.StagingDir, r.ID)
 		if st != pathmap.StatusResolved || !dirExists(stageRoot) {
 			rr.Skipped = true
@@ -78,7 +91,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			dst := filepath.Join(target, filepath.FromSlash(targetRel))
 
 			if strings.HasSuffix(rel, ".json") {
-				if err := restoreJSON(src, dst, isRedactable(rel), opts.Machine.Resolver()); err != nil {
+				if err := restoreJSON(src, dst, opts.Machine.Resolver()); err != nil {
 					return nil, err
 				}
 			} else if err := copyFile(src, dst); err != nil {
@@ -133,9 +146,10 @@ func rewriteProjectRel(rel string, slugMap map[string]string) (newRel, srcSlug s
 }
 
 // restoreJSON writes a synced JSON file to dst, resolving portable path values to
-// this machine and (for config files) merging onto the local file so local
-// secrets survive. Unparseable JSON falls back to a raw copy.
-func restoreJSON(src, dst string, isConfig bool, resolver *pathmap.Resolver) error {
+// this machine and merging onto the local file so the machine's real secrets
+// survive (any synced JSON may carry redaction placeholders). Unparseable JSON
+// falls back to a raw copy.
+func restoreJSON(src, dst string, resolver *pathmap.Resolver) error {
 	synced, err := os.ReadFile(src)
 	if err != nil {
 		return err
@@ -151,9 +165,6 @@ func restoreJSON(src, dst string, isConfig bool, resolver *pathmap.Resolver) err
 	}
 	resolved = append(resolved, '\n')
 
-	if !isConfig {
-		return writeFile(dst, resolved)
-	}
 	local, _ := os.ReadFile(dst) // absent on a fresh machine
 	merged, err := redact.MergeBytes(resolved, local)
 	if err != nil {

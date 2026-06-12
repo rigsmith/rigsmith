@@ -54,12 +54,13 @@ func IsPrivate(ctx context.Context, slug string) (bool, error) {
 }
 
 // CreatePrivate creates a private repo under the authenticated user and returns
-// its SSH URL.
-func CreatePrivate(ctx context.Context, name string) (sshURL string, err error) {
+// its HTTPS clone URL. HTTPS works out of the box with gh's git credential helper
+// (gh is mandatory anyway), whereas SSH needs separately-configured keys.
+func CreatePrivate(ctx context.Context, name string) (httpsURL string, err error) {
 	if _, err := runGH(ctx, "repo", "create", name, "--private", "--clone=false"); err != nil {
 		return "", err
 	}
-	url, err := runGH(ctx, "repo", "view", name, "--json", "sshUrl", "--jq", ".sshUrl")
+	url, err := runGH(ctx, "repo", "view", name, "--json", "url", "--jq", `.url + ".git"`)
 	if err != nil {
 		return "", err
 	}

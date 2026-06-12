@@ -57,6 +57,33 @@ func TestMerge_PreservesLocalOnlyKeys(t *testing.T) {
 	}
 }
 
+func TestMerge_FreshMachineDropsNestedPlaceholder(t *testing.T) {
+	// A placeholder nested under a key with no local counterpart must still be
+	// dropped (not written as a literal) — the bug the live restore caught.
+	synced := []byte(`{"custom-tools":{"command":"x","env":{"API_KEY":"__CLAUDERIG_REDACTED__","DEBUG":"__CLAUDERIG_REDACTED__"}},"list":[{"token":"__CLAUDERIG_REDACTED__"}]}`)
+	out, err := MergeBytes(synced, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains := string(out); len(contains) > 0 && (indexOf(contains, "REDACTED") >= 0) {
+		t.Fatalf("nested placeholder survived fresh restore: %s", out)
+	}
+	// the non-secret structure survives
+	m := unmarshal(t, out)
+	if m["custom-tools"].(map[string]any)["command"] != "x" {
+		t.Errorf("structure lost: %s", out)
+	}
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestMerge_NestedContainerSecret(t *testing.T) {
 	synced := []byte(`{"env":{"API":"__CLAUDERIG_REDACTED__","PORT":"3000"}}`)
 	local := []byte(`{"env":{"API":"real-key","PORT":"9999"}}`)

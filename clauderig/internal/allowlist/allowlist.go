@@ -7,6 +7,7 @@ package allowlist
 
 import (
 	"io/fs"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -88,6 +89,11 @@ func Walk(root string, l List) ([]string, error) {
 	var out []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
+			// A live ~/.claude churns under us; an entry that vanished between
+			// listing and visiting must not abort the walk — skip it.
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		rel, rerr := filepath.Rel(root, p)

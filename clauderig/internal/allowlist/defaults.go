@@ -40,9 +40,12 @@ func Desktop() List {
 		inc("claude-code-sessions"),
 		inc("local-agent-mode-sessions"),
 		inc("claude_desktop_config.json"),
-		inc("config.json"),
 		inc("cowork-enabled-cli-ops.json"),
 		inc("extensions-blocklist.json"),
 		inc("git-worktrees.json"),
+		// config.json is intentionally NOT synced: the Desktop app rewrites it
+		// constantly with rotating cache/token values (oauth.tokenCache,
+		// dxt.allowlistCache, …). Its portable `preferences` can return later via a
+		// keep-only filter; for now it's excluded to keep sync reliable and clean.
 	}}
 }

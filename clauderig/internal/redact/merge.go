@@ -9,12 +9,8 @@ import "encoding/json"
 // dropped entirely rather than written as a literal. Local-only keys are kept
 // (machine-specific additions survive a restore).
 func Merge(synced, local any) any {
-	sm, sok := synced.(map[string]any)
-	lm, lok := local.(map[string]any)
-	if sok {
-		if !lok {
-			lm = map[string]any{}
-		}
+	if sm, ok := synced.(map[string]any); ok {
+		lm, _ := local.(map[string]any)
 		out := make(map[string]any, len(sm))
 		for k, sv := range sm {
 			lv, hasLocal := lm[k]
@@ -24,16 +20,26 @@ func Merge(synced, local any) any {
 				}
 				continue // fresh machine: drop the placeholder
 			}
-			if hasLocal {
-				out[k] = Merge(sv, lv)
-			} else {
-				out[k] = sv
-			}
+			// Always recurse (lv is nil when absent) so nested placeholders are
+			// dropped/kept correctly even where the local side has no counterpart.
+			out[k] = Merge(sv, lv)
 		}
 		for k, lv := range lm {
 			if _, in := sm[k]; !in {
 				out[k] = lv // preserve local-only keys
 			}
+		}
+		return out
+	}
+	if sa, ok := synced.([]any); ok {
+		la, _ := local.([]any)
+		out := make([]any, len(sa))
+		for i, sv := range sa {
+			var lv any
+			if i < len(la) {
+				lv = la[i]
+			}
+			out[i] = Merge(sv, lv)
 		}
 		return out
 	}

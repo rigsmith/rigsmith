@@ -31,8 +31,12 @@ func TestLooksSecret_Negatives(t *testing.T) {
 	// Things that must NOT trip: UUID, file paths, short/plain strings, redaction
 	// placeholder, low-entropy repeats.
 	negatives := []string{
-		"03d1c0c9-823d-464b-a468-a9bea2383338", // account UUID
+		"03d1c0c9-823d-464b-a468-a9bea2383338",             // account UUID
+		"local_74333a0f-d788-42ac-8da4-0ea39064d471",       // session id: prefix_<uuid>
+		"e3055f13cb034ffea75ca73062b8f9ea3a9c7d11deadbeef", // 48-char hex (content hash)
+		"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",         // 40-char hex (git SHA)
 		"/Users/john/Git/rigsmith/some/long/path/here/file.go",
+		"plugins/marketplaces/claude-plugins-official/x.json", // a path value
 		"high",
 		"acceptEdits",
 		Placeholder,

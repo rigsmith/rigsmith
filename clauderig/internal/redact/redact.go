@@ -45,8 +45,9 @@ func DefaultPolicy() Policy {
 			"apikey", "api_key", "authtoken", "auth_token", "password", "passwd",
 			"secret", "clientsecret", "client_secret", "authorization", "auth",
 			"bearer", "x-api-key", "anthropic_api_key", "openai_api_key",
+			"tokencache", "token_cache", "sessiontoken", "session_token",
 		),
-		SecretContainers: set("env", "headers"),
+		SecretContainers: set("env", "headers", "oauth", "credentials"),
 	}
 }
 

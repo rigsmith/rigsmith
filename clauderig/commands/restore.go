@@ -22,6 +22,7 @@ import (
 // non-interactive/hook contexts).
 func NewRestoreCmd() *cobra.Command {
 	var backup, force bool
+	var dir string
 	cmd := &cobra.Command{
 		Use:   "restore",
 		Short: "Restore your Claude Code setup here, rewriting paths for this OS",
@@ -65,8 +66,24 @@ func NewRestoreCmd() *cobra.Command {
 				return fmt.Errorf("read manifest (nothing synced yet?): %w", err)
 			}
 
+			// --dir: restore only the CLI payload into a test folder, never the
+			// real ~/.claude or the desktop root.
+			var opts engine.RestoreOptions
+			if dir != "" {
+				abs, err := filepath.Abs(dir)
+				if err != nil {
+					return err
+				}
+				opts.TargetOverride = map[string]string{"cli": abs}
+				opts.OverriddenOnly = true
+				fmt.Fprintf(out, "  %s restoring CLI root into %s\n", DimStyle.Render("→"), abs)
+			}
+
 			// Safety: refuse to write over a non-empty CLI target unless told to.
 			cliTarget, st := cfg.RootLocation("cli", me)
+			if dir != "" {
+				cliTarget, st = opts.TargetOverride["cli"], pathmap.StatusResolved
+			}
 			if st == pathmap.StatusResolved && nonEmptyDir(cliTarget) && !force {
 				if !backup {
 					return fmt.Errorf("%s is not empty; re-run with --backup (copy it aside first) or --force", cliTarget)
@@ -81,9 +98,11 @@ func NewRestoreCmd() *cobra.Command {
 				}
 			}
 
-			rep, err := engine.Restore(engine.RestoreOptions{
-				StagingDir: staging, Config: cfg, Machine: me, Manifest: man,
-			})
+			opts.StagingDir = staging
+			opts.Config = cfg
+			opts.Machine = me
+			opts.Manifest = man
+			rep, err := engine.Restore(opts)
 			if err != nil {
 				return err
 			}
@@ -103,6 +122,7 @@ func NewRestoreCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&backup, "backup", false, "copy an existing ~/.claude to ~/.claude.bak before restoring")
 	cmd.Flags().BoolVar(&force, "force", false, "restore over an existing ~/.claude without prompting")
+	cmd.Flags().StringVar(&dir, "dir", "", "restore the CLI payload into this folder instead of ~/.claude (test/inspect)")
 	return cmd
 }
 

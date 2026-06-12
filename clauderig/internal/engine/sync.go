@@ -21,10 +21,11 @@ import (
 
 // RootResult summarises one root's contribution to a sync.
 type RootResult struct {
-	ID         string
-	Files      int
-	Redactions int
-	Skipped    bool // root absent on this machine
+	ID           string
+	Files        int
+	Redactions   int
+	SkippedFiles int  // files that vanished/were unreadable mid-sync (live churn)
+	Skipped      bool // root absent on this machine
 }
 
 // Report is the outcome of a sync into the staging dir.
@@ -71,18 +72,21 @@ func Sync(opts Options) (*Report, error) {
 		for _, rel := range files {
 			data, err := os.ReadFile(filepath.Join(loc, filepath.FromSlash(rel)))
 			if err != nil {
-				return nil, fmt.Errorf("read %s/%s: %w", r.ID, rel, err)
+				// The live ~/.claude churns under us (sessions writing transcripts);
+				// a file vanishing or being briefly unreadable must not abort the
+				// whole sync — skip it.
+				rr.SkippedFiles++
+				continue
 			}
 			out := data
-			// JSON files: redact secrets (config only), portablize path values, scan.
-			// Transcripts (*.jsonl) and other files are copied verbatim.
+			// Every JSON file: redact secret-bearing fields (nested MCP/oauth configs
+			// carry real tokens, not just top-level settings), portablize path values,
+			// scan. Transcripts (*.jsonl) and other files are copied verbatim.
 			if strings.HasSuffix(rel, ".json") {
 				var v any
 				if json.Unmarshal(data, &v) == nil {
-					if isRedactable(rel) {
-						red, paths := redact.Redact(v, policy)
-						v, rr.Redactions = red, rr.Redactions+len(paths)
-					}
+					red, paths := redact.Redact(v, policy)
+					v, rr.Redactions = red, rr.Redactions+len(paths)
 					v, _ = pathmap.PortablizeJSONValues(v, opts.Machine.Folders(), opts.Machine.OS)
 					if b, e := json.MarshalIndent(v, "", "  "); e == nil {
 						out = append(b, '\n')
@@ -128,12 +132,6 @@ func allowlistFor(rootID string) allowlist.List {
 		return allowlist.Desktop()
 	}
 	return allowlist.CLI()
-}
-
-// isRedactable marks the top-level config JSON files (the ones that can carry
-// inline secrets). Deeper JSON is still tripwire-scanned but not field-redacted.
-func isRedactable(rel string) bool {
-	return !strings.Contains(rel, "/") && strings.HasSuffix(rel, ".json")
 }
 
 func dirExists(p string) bool {
