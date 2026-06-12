@@ -51,7 +51,7 @@ the **Parity corpus** section at the bottom — it's the highest-leverage item.
 | **core: changeset parse/render** | 7 | ✅ done (interop N/A; polyglot cleanup TODO) |
 | **core: planner (cascade/group)** | 20 | ✅ done |
 | **core: release/pre/snapshot planning** | 14 | ✅ done |
-| **core: changelog rendering/formatter** | 43 | ⬜ **largest gap** (feature missing too) |
+| **core: changelog rendering/formatter** | 43 | ✅ done (built `core/mdfmt` + `core/changelog`) |
 | **core: dotnet ecosystem (csproj)** | 13 | 🟡 (3 left: shared-props write, strategy ×2) |
 | **core: node ecosystem (workspaces)** | 7 | ✅ done |
 | **core: config / git / prestate / since** | 19 | 🟡 (since-consumers left, with A2) |
@@ -148,62 +148,51 @@ the **Parity corpus** section at the bottom — it's the highest-leverage item.
 - [x] `SnapshotSuffix_TagGivenButTemplateLacksPlaceholder_Throws` → `TestSnapshotSuffix`
 - [x] `SnapshotSuffix_PlaceholderNoValue_Throws` → `TestSnapshotSuffix`
 
-### Changelog rendering & formatting — ⬜ **LARGEST GAP** (no Go tests)
+### Changelog rendering & formatting — ✅ DONE (Phase 3, 2026-06-12)
 Tracks [[changelog-formatter-native-design]] and [[changelog-generator-plugins-design]].
-First confirm whether the Go code even exists yet, then test.
+The Go code did not exist; built + tested this phase: `core/mdfmt` (native
+formatter + dispatch), `core/changelog` (setting/resolver/release-line +
+extracted file writer), wired into `changerig version` (enrichment before
+planning; formatting pass over touched changelogs after writes).
 
-`Version/NativeMarkdownFormatterTests.cs` (18) → `core/...` formatter:
-- [ ] `InsertsBlankLineBetweenVersionAndSectionHeadings`
-- [ ] `StripsTrailingWhitespace`
-- [ ] `CollapsesRunsOfBlankLines`
-- [ ] `KeepsListItemsTight`
-- [ ] `OneMultiParagraphItemMakesWholeSectionLoose`
-- [ ] `LooseListSpacesBeforeNestedDependencySublist`
-- [ ] `AlignsTableColumns`
-- [ ] `AlignsTopLevelTableWithDefaultAlignment`
-- [ ] `LeavesNonTableWithPipesUntouched`
-- [ ] `FormatsAGnarlyChangeset`
-- [ ] `EnsuresSingleTrailingNewline`
-- [ ] `DropsLeadingBlankLines`
-- [ ] `PreservesBlankLinesInsideCodeFences`
-- [ ] `StripsTrailingWhitespaceInsideCodeFences`
-- [ ] `SeparatesHeadingFromFollowingFence`
-- [ ] `NormalizesCarriageReturns`
-- [ ] `IsIdempotent`
-- [ ] `DoesNotTreatIndentedHashAsHeading`
+`Version/NativeMarkdownFormatterTests.cs` (18) → `core/mdfmt/mdfmt_test.go`:
+- [x] all 18 ported with the exact C# input/expected literals, same test names
+      (`TestInsertsBlankLineBetweenVersionAndSectionHeadings` …
+      `TestDoesNotTreatIndentedHashAsHeading`); every case additionally asserts
+      idempotency (`Format(Format(x)) == Format(x)`). Rune-width ranges
+      hand-ported (no dependency); .NET `ReplaceLineEndings` set mirrored
+      (CRLF/CR/NEL/FF/LS/PS).
 
-`Version/ChangelogFormatterTests.cs` (10) → formatter dispatch:
-- [ ] `WhenDisabled_DoesNothing`
-- [ ] `WithNoFiles_DoesNothing`
-- [ ] `ExplicitOxfmt_RunsViaPackageManager`
-- [ ] `Deno_RunsDenoFmtDirectly`
-- [ ] `Auto_DetectsFormatterFromConfigFile`
-- [ ] `Auto_NoFormatterConfigured_DoesNothing`
-- [ ] `InPnpmRepo_UsesPnpmExec`
-- [ ] `UnknownFormatter_DoesNothing`
-- [ ] `WhenFormatterCannotStart_DegradesGracefully`
-- [ ] `Native_RewritesInPlaceWithoutRunningProcess`
+`Version/ChangelogFormatterTests.cs` (10) → `core/mdfmt/dispatch_test.go`:
+- [x] all 10 (`TestWhenDisabledDoesNothing` …
+      `TestNativeRewritesInPlaceWithoutRunningProcess`) with a fake Runner;
+      detection order (dprint→deno→oxfmt→biome→prettier), lockfile→package
+      manager (pnpm exec / yarn / bun x / npx), deno direct, graceful
+      degradation. `config.FormatSpec()` added (false/absent→"", string→itself,
+      true→"true" unknown-warn path) + cases in `TestParseFormatBoolOrString`.
 
-`Version/ChangelogFileWriterTests.cs` (3):
-- [ ] `GeneratesNewFile_WhenAbsent`
-- [ ] `AmendsExistingFile_WhenExists`
-- [ ] `GeneratesTwoChangelogs_ForMultipleProjects`
+`Version/ChangelogFileWriterTests.cs` (3) → `core/changelog/writer_test.go`:
+- [x] `GeneratesNewFile_WhenAbsent` → `TestWriteEntryGeneratesNewFileWhenAbsent`
+- [x] `AmendsExistingFile_WhenExists` → `TestWriteEntryAmendsExistingFileNewestOnTop`
+- [x] `GeneratesTwoChangelogs_ForMultipleProjects` → `TestWriteEntryGeneratesTwoChangelogsForMultipleProjects`
+      (`changelog.WriteEntry` extracted from `changerig/commands/version.go`;
+      byte layout unchanged — parity goldens still green)
 
-`Version/ChangelogCommitResolverTests.cs` (5) — git/GitHub enrichment:
-- [ ] `Default_DoesNotTouchGit_ReturnsEmpty`
-- [ ] `Git_ResolvesShortCommitThatAddedChangeset`
-- [ ] `Git_NoCommitFound_SkipsChangeset`
-- [ ] `GitHub_ResolvesCommitPullRequestAndAuthor`
-- [ ] `GitHub_WhenGhFails_KeepsCommitNullsPrAuthor`
+`Version/ChangelogCommitResolverTests.cs` (5) → `core/changelog/resolver_test.go`:
+- [x] all 5 with a fake Runner (`git log --diff-filter=A` + `.net.mkd`
+      fallback, gh PR/author lookups, "null"-literal filtering, failures
+      degrade to empty fields)
 
-`Version/ChangelogReleaseLineTests.cs` (7):
-- [ ] `Default_ReturnsSummaryUnchanged`
-- [ ] `Git_PrefixesShortCommit`
-- [ ] `Git_WithoutCommit_Unchanged`
-- [ ] `Git_OnlyPrefixesFirstLine`
-- [ ] `GitHub_BuildsPrLinkCommitLinkAndThanks`
-- [ ] `GitHub_WithoutPr_UsesCommitLinkOnly`
-- [ ] `GitHub_WithoutData_Unchanged`
+`Version/ChangelogReleaseLineTests.cs` (7) → `core/changelog/line_test.go`:
+- [x] all 7 (git short-hash prefix, first-line-only, GitHub PR/commit/Thanks
+      link wrapper with independently-omitted parts, unchanged fallbacks)
+
+Wiring notes: the three @changesets generator ids (`@changesets/cli/changelog`,
+`-git`, `-github`) all render the **default layout** — git/github only decorate
+release lines, applied to changeset summaries before `Plan`. This also fixed a
+latent bug: those ids previously fell through to subprocess plugin resolution.
+E2E-verified: changelog-git + format:native through the real binary produces
+the decorated, prettier-formatted output.
 
 ### dotnet ecosystem (csproj) — `CsProjectsRepositoryTests` + `CsProjectStrategyTests` + `ProjectVersionResolverTests` → `core/ecosystem/dotnet/dotnet_test.go`
 - [x] `UpdateModuleCsProjs_IncreasesVersion` → `TestSetVersionInline`
