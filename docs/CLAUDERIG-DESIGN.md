@@ -335,11 +335,14 @@ mirror — no path correction, manual excludes.
    branch when its packed footprint exceeds 2× retained working-tree size (floor
    ~500 MB). See Retention & repo shape.
 4. **Q4 — `claude-code-sessions` resume fidelity.** *Approach decided (2026-06-12
-   census):* the rewrite surface is broader than `cwd`/`originCwd` — also
-   `planPath`, permission `ruleContent` (`//Users/john/Git/gitninja/**`), and
-   added `directories[]`. So the rewriter is **value-based**: walk the JSON and
-   rewrite any string value under a *known mapped prefix* (`$HOME`, mapped repo
-   roots), leaving unmapped/system paths (`/tmp`) alone — more robust than a
-   named-field list and future-proof. **Still deferred (non-blocking):** the
-   empirical "does the Desktop app actually resume after rewrite" test, which
-   needs driving the Electron app rather than the headless CLI trick used for Q1.
+   census), now **BUILT**.* The rewrite surface is broader than `cwd`/`originCwd` —
+   also `planPath`, permission `ruleContent`, and added `directories[]` — so the
+   rewriter is **value-based**: `pathmap.PortablizeJSONValues` (sync) rewrites any
+   string under a known mapped prefix to `$HOME/…`; `pathmap.ResolveJSONValues`
+   (restore) resolves `$`-templates to the target, leaving unmapped/system paths
+   (`/tmp`) and non-path values untouched. Applied to every `.json` in both roots
+   (so `settings.json` paths translate too). **Still deferred (non-blocking):** the
+   empirical "does the Desktop app actually resume after rewrite" test, which needs
+   driving the Electron app rather than the headless CLI trick used for Q1. (One
+   known edge: a permission `ruleContent` with a leading `//` or globs may not
+   prefix-match — best-effort; a stale rule simply fails safe on the new machine.)

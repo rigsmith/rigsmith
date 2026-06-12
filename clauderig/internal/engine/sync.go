@@ -6,6 +6,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -73,22 +74,28 @@ func Sync(opts Options) (*Report, error) {
 				return nil, fmt.Errorf("read %s/%s: %w", r.ID, rel, err)
 			}
 			out := data
-			if isRedactable(rel) {
-				if red, paths, rerr := redact.RedactBytes(data, policy); rerr == nil {
-					out, rr.Redactions = red, rr.Redactions+len(paths)
-				}
-			}
-			if err := writeFile(filepath.Join(stageRoot, filepath.FromSlash(rel)), out); err != nil {
-				return nil, err
-			}
+			// JSON files: redact secrets (config only), portablize path values, scan.
+			// Transcripts (*.jsonl) and other files are copied verbatim.
 			if strings.HasSuffix(rel, ".json") {
-				if found, _ := redact.ScanBytes(out); len(found) > 0 {
-					for _, f := range found {
+				var v any
+				if json.Unmarshal(data, &v) == nil {
+					if isRedactable(rel) {
+						red, paths := redact.Redact(v, policy)
+						v, rr.Redactions = red, rr.Redactions+len(paths)
+					}
+					v, _ = pathmap.PortablizeJSONValues(v, opts.Machine.Folders(), opts.Machine.OS)
+					if b, e := json.MarshalIndent(v, "", "  "); e == nil {
+						out = append(b, '\n')
+					}
+					for _, f := range redact.Scan(v) {
 						rep.Findings = append(rep.Findings, redact.Finding{
 							Path: r.ID + "/" + rel + ":" + f.Path, Kind: f.Kind,
 						})
 					}
 				}
+			}
+			if err := writeFile(filepath.Join(stageRoot, filepath.FromSlash(rel)), out); err != nil {
+				return nil, err
 			}
 			rr.Files++
 		}

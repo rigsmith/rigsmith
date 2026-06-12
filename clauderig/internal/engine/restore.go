@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"io"
 	"io/fs"
 	"os"
@@ -76,8 +77,8 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			src := filepath.Join(stageRoot, filepath.FromSlash(rel))
 			dst := filepath.Join(target, filepath.FromSlash(targetRel))
 
-			if isRedactable(rel) {
-				if err := mergeConfig(src, dst); err != nil {
+			if strings.HasSuffix(rel, ".json") {
+				if err := restoreJSON(src, dst, isRedactable(rel), opts.Machine.Resolver()); err != nil {
 					return nil, err
 				}
 			} else if err := copyFile(src, dst); err != nil {
@@ -131,17 +132,32 @@ func rewriteProjectRel(rel string, slugMap map[string]string) (newRel, srcSlug s
 	return newRel, srcSlug, true
 }
 
-// mergeConfig merges a synced (redacted) config file onto the local one so local
-// secrets survive; falls back to a raw copy if either side isn't valid JSON.
-func mergeConfig(src, dst string) error {
+// restoreJSON writes a synced JSON file to dst, resolving portable path values to
+// this machine and (for config files) merging onto the local file so local
+// secrets survive. Unparseable JSON falls back to a raw copy.
+func restoreJSON(src, dst string, isConfig bool, resolver *pathmap.Resolver) error {
 	synced, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	local, _ := os.ReadFile(dst) // absent on a fresh machine
-	merged, err := redact.MergeBytes(synced, local)
+	var v any
+	if err := json.Unmarshal(synced, &v); err != nil {
+		return copyBytes(dst, synced) // not JSON after all — copy raw
+	}
+	v, _ = pathmap.ResolveJSONValues(v, resolver)
+	resolved, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return copyBytes(dst, synced)
+	}
+	resolved = append(resolved, '\n')
+
+	if !isConfig {
+		return writeFile(dst, resolved)
+	}
+	local, _ := os.ReadFile(dst) // absent on a fresh machine
+	merged, err := redact.MergeBytes(resolved, local)
+	if err != nil {
+		return writeFile(dst, resolved)
 	}
 	return writeFile(dst, merged)
 }
