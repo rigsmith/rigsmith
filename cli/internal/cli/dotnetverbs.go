@@ -315,6 +315,15 @@ func winCmdArguments(file string, args []string) string {
 	return `/d /s /c "` + strings.Join(parts, " ") + `"`
 }
 
+// winShellArg quotes ONE forwarded argument for a `cmd.exe /c <line>` command
+// line (single caret-escape — the line is parsed once, unlike the .cmd-shim
+// double parse winCmdArguments covers). Pure — testable on any OS.
+func winShellArg(arg string) string {
+	s := winQuoteRe.ReplaceAllString(arg, `$1$1\"`)
+	s = winTrailingSlashRe.ReplaceAllString(s, "$1$1")
+	return cmdMetaRe.ReplaceAllString(`"`+s+`"`, "^${0}")
+}
+
 // ---- publish (PublishVerb) ----
 
 // hostRid is the .NET runtime identifier for the host platform, the default

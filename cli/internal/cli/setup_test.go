@@ -17,8 +17,10 @@ func fakeHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads this on Windows
 	t.Setenv("ZDOTDIR", "")
 	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("RIG_PWSH_PROFILE", "") // never query a real pwsh in tests
 	return home
 }
 
@@ -198,5 +200,53 @@ func TestSetupCommand_RejectsAnUnknownShell(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), `unknown shell "tcsh"`) {
 		t.Fatalf("err = %v, want the unknown-shell message", err)
+	}
+}
+
+func TestSetupPowershellSnippet(t *testing.T) {
+	got := setupSnippet("powershell")
+	for _, want := range []string{
+		setupBegin, setupEnd,
+		"completion powershell | Out-String | Invoke-Expression",
+		"function rig {",
+		"Set-Location -LiteralPath $dir",
+		"Get-Command -Name rig -CommandType Application",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("powershell snippet missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSetupPowershellProfileSeamAndInstall(t *testing.T) {
+	home := fakeHome(t)
+	profile := filepath.Join(home, "pwsh", "profile.ps1")
+	t.Setenv("RIG_PWSH_PROFILE", profile)
+
+	rc, err := rcFileFor("powershell")
+	if err != nil || rc != profile {
+		t.Fatalf("rcFileFor(powershell) = %q, %v; want the RIG_PWSH_PROFILE seam", rc, err)
+	}
+	changed, err := installSnippet(rc, setupSnippet("powershell"))
+	if err != nil || !changed {
+		t.Fatalf("install = %v, %v", changed, err)
+	}
+	data, err := os.ReadFile(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "function rig {") {
+		t.Errorf("profile missing the wrapper:\n%s", data)
+	}
+	// pwsh alias normalizes (exercised at the command layer elsewhere); the
+	// fallback path stays under the test home when no seam and no pwsh on PATH.
+	t.Setenv("RIG_PWSH_PROFILE", "")
+	t.Setenv("PATH", home) // hide any real pwsh/powershell
+	rc, err = rcFileFor("powershell")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(rc, home) {
+		t.Errorf("fallback profile %q escaped the test home", rc)
 	}
 }

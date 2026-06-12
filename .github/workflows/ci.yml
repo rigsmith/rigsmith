@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          # one cache key across the workspace's modules
+          cache-dependency-path: |
+            core/go.mod
+            cli/go.sum
+            changerig/go.sum
+            release/go.sum
+
+      # The parity/cmdtest harnesses create real git repos; give git an identity
+      # and quiet the default-branch hint on every runner.
+      - name: Configure git for tests
+        run: |
+          git config --global user.email ci@rigsmith.test
+          git config --global user.name rigsmith-ci
+          git config --global init.defaultBranch main
+
+      # go.work quirk: `go test ./...` from the root reports "setup failed";
+      # enumerate the module trees instead (same invocation used locally).
+      - name: Test
+        run: go test ./core/... ./changerig/... ./cli/... ./release/... -count=1
+
+  lint:
+    name: vet + gofmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.mod
+            cli/go.sum
+            changerig/go.sum
+            release/go.sum
+      - name: go vet
+        run: go vet ./core/... ./changerig/... ./cli/... ./release/...
+      - name: gofmt
+        run: |
+          out="$(gofmt -l core changerig cli release)"
+          if [ -n "$out" ]; then
+            echo "gofmt needed on:" && echo "$out" && exit 1
+          fi

@@ -86,7 +86,9 @@ func TestAddEmptyWritesChangesetNamingNoPackages(t *testing.T) {
 	code, out := runChangerig(t, dir, "add", "--empty")
 
 	assertExitZero(t, code, out)
-	assertContains(t, out, "created .changeset/")
+	// The binary prints the path with the OS separator (filepath.Join), so
+	// assert only up to the directory name.
+	assertContains(t, out, "created .changeset")
 	files := changesetFiles(t, dir)
 	if len(files) != 1 {
 		t.Fatalf("changeset files = %d, want 1", len(files))

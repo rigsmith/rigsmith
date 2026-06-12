@@ -261,6 +261,20 @@ the ldflags-stamped version — goreleaser now stamps it — install.sh handoff,
 graceful on dev builds). Remaining rig leftovers: C#-style config walkthrough,
 real-assembly test enumeration, relrig version seam.)*
 
+*(2026-06-12, third session cont.: **Windows first-class** — CI added
+(`.github/workflows/ci.yml`: test matrix ubuntu/macos/windows + vet/gofmt job;
+activates when the repo gets a GitHub remote). Custom shell commands now run
+OS-native (`cmd.exe /d /s /c` with caret-escaped args on Windows — the old
+`sh -c` hardcode + test skips removed); `rig setup powershell` installs the
+$PROFILE integration (Set-Location cd wrapper + cobra pwsh completion;
+profile path asked from pwsh, `RIG_PWSH_PROFILE` seam). Portability audit
+fixed: parity harness binary collision (fixed temp name → per-process dir),
+CRLF-robust golden normalize + a root `.gitattributes` (eol=lf — Windows
+checkouts stay byte-identical to the goldens), USERPROFILE pinning in setup
+tests, a separator-sensitive cmdtest assertion. Residual noted: ecosystem
+`relTo` emits OS-native separators across the plugin protocol — needs a
+deliberate ToSlash decision; TUI paths unverified under ConPTY until CI runs.)*
+
 1. **Snapshot/prerelease e2e leftovers** — `snapshot.useCalculatedVersion` e2e
    (probe Node first) and a two-package prerelease flow golden (pre-mode dep
    retargeting has unit coverage only).
