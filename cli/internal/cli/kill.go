@@ -122,7 +122,7 @@ func resolveKillPatterns(cfg config.Config, root, name string) []string {
 		if matched := dotnetKillPatterns(dotnetProjects, name); len(matched) > 0 {
 			return matched
 		}
-		names := discoveredPackageNames(root)
+		names := discoveredPackageNames(root, cfg.Exclude)
 		if matched := matchProjectNames(names, name); len(matched) > 0 {
 			return matched
 		}
@@ -135,7 +135,7 @@ func resolveKillPatterns(cfg config.Config, root, name string) []string {
 	if len(dotnetProjects) > 0 {
 		return safePatterns(dotnetKillPatterns(dotnetProjects, ""))
 	}
-	if names := safePatterns(discoveredPackageNames(root)); len(names) > 0 {
+	if names := safePatterns(discoveredPackageNames(root, cfg.Exclude)); len(names) > 0 {
 		return names
 	}
 	if base := dirBase(root); len(base) >= 3 {
@@ -211,9 +211,10 @@ func matchProjectNames(names []string, query string) []string {
 }
 
 // discoveredPackageNames asks the ecosystem registry which packages live at
-// root and returns their Names (sorted, deduped). Best-effort: discovery errors
-// yield no names, and the caller falls back to the repo directory name.
-func discoveredPackageNames(root string) []string {
+// root and returns their Names (sorted, deduped), dropping any matching the
+// `exclude` globs. Best-effort: discovery errors yield no names, and the caller
+// falls back to the repo directory name.
+func discoveredPackageNames(root string, exclude []string) []string {
 	ctx := context.Background()
 	seen := map[string]bool{}
 	for _, eco := range ecosystem.Default().All() {
@@ -225,9 +226,10 @@ func discoveredPackageNames(root string) []string {
 			continue
 		}
 		for _, p := range resp.Packages {
-			if p.Name != "" {
-				seen[p.Name] = true
+			if p.Name == "" || excluded(p.Name, exclude) || excluded(shortName(p.Name), exclude) {
+				continue
 			}
+			seen[p.Name] = true
 		}
 	}
 	names := make([]string, 0, len(seen))

@@ -105,9 +105,14 @@ func NewVersionCmd() *cobra.Command {
 				}
 			}
 
-			// --independent overrides the configured strategy for this run.
+			// --independent forces every package independent for this run,
+			// overriding both the top-level strategy and any per-ecosystem block.
+			// Otherwise honor per-ecosystem `versionStrategy` overrides (a package's
+			// ecosystem block wins over the top-level VersionStrategy).
 			if independent {
 				ws.Config.VersionStrategy = config.Independent
+			} else {
+				ws.Config.PerPackageStrategy = ws.Config.StrategyByPackage(ecoOf)
 			}
 
 			plan := planner.Plan(active, pkgs, ws.Config)
@@ -218,6 +223,19 @@ func NewVersionCmd() *cobra.Command {
 					fmt.Fprintf(out, "\nGraduated %d package(s) to stable; exited prerelease mode.\n", len(plan))
 				} else {
 					fmt.Fprintf(out, "\nVersioned %d package(s); removed %d changeset(s).\n", len(plan), len(changesets))
+				}
+			}
+
+			// Auto-commit the version bumps + changelogs + changeset deletions when
+			// the `commit` config key is enabled. Snapshot runs are throwaway (their
+			// working-tree changes are never meant to be committed), so they opt out.
+			if mode != planner.ModeSnapshot && ws.Config.CommitEnabled() {
+				committed, err := gitutil.StageAndCommit(cmd.Context(), ws.Root, "Version Packages")
+				switch {
+				case err != nil:
+					fmt.Fprintln(out, DimStyle.Render("warn could not commit: "+err.Error()))
+				case committed:
+					fmt.Fprintln(out, DimStyle.Render("committed version changes."))
 				}
 			}
 			return nil

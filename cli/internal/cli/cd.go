@@ -76,7 +76,7 @@ wrapper that captures stdout, e.g. in your shell rc:
 func runCd(cmd *cobra.Command, query string) error {
 	cwd, _ := os.Getwd()
 	root := detect.Root(cwd)
-	targets := buildCdTargets(cdContext(cmd), root)
+	targets := buildCdTargets(cdContext(cmd), root, excludeFor(root))
 
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
@@ -142,8 +142,9 @@ func cdContext(cmd *cobra.Command) context.Context {
 }
 
 // buildCdTargets enumerates every discoverable package as a cdTarget, plus the
-// repo root as "(root)". Dir is absolute; Rel is relative to root.
-func buildCdTargets(ctx context.Context, root string) []cdTarget {
+// repo root as "(root)". Packages matching the `exclude` globs are dropped. Dir
+// is absolute; Rel is relative to root.
+func buildCdTargets(ctx context.Context, root string, exclude []string) []cdTarget {
 	var targets []cdTarget
 	seen := map[string]bool{}
 
@@ -157,6 +158,9 @@ func buildCdTargets(ctx context.Context, root string) []cdTarget {
 			continue
 		}
 		for _, pkg := range resp.Packages {
+			if excluded(pkg.Name, exclude) || excluded(shortName(pkg.Name), exclude) {
+				continue
+			}
 			dir := filepath.Join(root, pkg.Dir)
 			if seen[dir] {
 				continue
@@ -212,7 +216,7 @@ func cdNameCompletion(cmd *cobra.Command, args []string, _ string) ([]string, co
 	}
 	cwd, _ := os.Getwd()
 	root := detect.Root(cwd)
-	targets := buildCdTargets(cdContext(cmd), root)
+	targets := buildCdTargets(cdContext(cmd), root, excludeFor(root))
 	names := make([]string, 0, len(targets))
 	for _, t := range targets {
 		if t.Name == "(root)" {

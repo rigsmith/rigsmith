@@ -58,12 +58,20 @@ type Config struct {
 	// VersionStrategy controls how a shared version (e.g. a Directory.Build.props
 	// <Version>) is written: "lockstep" (default, also "") moves every inheritor
 	// together; "independent" writes an inline version per package, so each
-	// versions on its own changesets. Overridable per run with `version --independent`.
+	// versions on its own changesets. Overridable per run with `version --independent`,
+	// or per ecosystem with a `versionStrategy` in that ecosystem's block.
 	VersionStrategy VersionStrategy `json:"versionStrategy,omitempty"`
 
-	// Format and Changelog are raw because their JSON shape is polymorphic.
+	// PerPackageStrategy optionally overrides VersionStrategy for individual
+	// packages (keyed by package name). The version/status commands populate it
+	// from the per-ecosystem `versionStrategy` blocks before planning; nil means
+	// "use VersionStrategy for every package". Runtime-only, never serialized.
+	PerPackageStrategy map[string]VersionStrategy `json:"-"`
+
+	// Format, Changelog, and Commit are raw because their JSON shape is polymorphic.
 	Format    json.RawMessage `json:"format,omitempty"`
 	Changelog json.RawMessage `json:"changelog,omitempty"`
+	Commit    json.RawMessage `json:"commit,omitempty"`
 
 	// ChangelogGroups maps conventional-commit types to a changelog section and
 	// the version bump they imply. Configurable; empty falls back to the built-in
@@ -203,6 +211,27 @@ func (c *Config) ChangelogSpec() string {
 	return "default"
 }
 
+// CommitEnabled interprets the polymorphic `commit` value (mirroring
+// @changesets): false/null/absent → false; true → true; a [resolver, options]
+// tuple → true (the run auto-commits; rigsmith uses its default message, the
+// custom-resolver options are not consulted). Any other shape is false.
+func (c *Config) CommitEnabled() bool {
+	raw := bytesTrim(c.Commit)
+	switch {
+	case len(raw) == 0, string(raw) == "false", string(raw) == "null":
+		return false
+	case string(raw) == "true":
+		return true
+	case raw[0] == '[':
+		// [resolver, options] — a configured resolver means "commit".
+		var tuple []json.RawMessage
+		if err := json.Unmarshal(raw, &tuple); err == nil && len(tuple) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // FormatCommand returns the custom formatter command when `format` is an
 // array of strings — the escape hatch for tools the built-in table doesn't
 // know: `"format": ["myfmt", "--write"]` runs that argv with the touched
@@ -291,6 +320,56 @@ func ignoreGlobMatch(pattern, name string) bool {
 		return false // anchored suffix
 	}
 	return true
+}
+
+// EcosystemConfig is the generalized per-ecosystem block (keyed by an
+// adapter's id: "dotnet"/"node"/"go"/"cargo"), the polyglot replacement for
+// net-changesets' single `dotnet` block. Production code reads these via
+// EcoConfig: discovery honors SourcePath, publish honors PackageSource, and the
+// planner honors VersionStrategy. Unknown keys in a block are ignored.
+type EcosystemConfig struct {
+	// SourcePath narrows this ecosystem's discovery to a repo-relative root,
+	// overriding the top-level `paths` for this ecosystem only (net's
+	// `dotnet.sourcePath`).
+	SourcePath string `json:"sourcePath,omitempty"`
+	// PackageSource overrides the publish feed/registry for this ecosystem
+	// (net's `dotnet.packageSource`); empty falls back to the built-in default.
+	PackageSource string `json:"packageSource,omitempty"`
+	// VersionStrategy overrides the top-level VersionStrategy for this
+	// ecosystem's packages (net's `dotnet.versionStrategy`); empty inherits it.
+	VersionStrategy VersionStrategy `json:"versionStrategy,omitempty"`
+}
+
+// EcoConfig decodes the per-ecosystem block for id into an EcosystemConfig,
+// returning the zero value when the block is absent or malformed (config is
+// best-effort: a bad block degrades to defaults rather than failing a run).
+func (c *Config) EcoConfig(id string) EcosystemConfig {
+	var ec EcosystemConfig
+	_, _ = c.Ecosystem(id, &ec)
+	return ec
+}
+
+// EcoStrategy returns the per-ecosystem versionStrategy override for id, or ""
+// when the block does not set one (the caller falls back to VersionStrategy).
+func (c *Config) EcoStrategy(id string) VersionStrategy {
+	return c.EcoConfig(id).VersionStrategy
+}
+
+// StrategyByPackage builds the planner's PerPackageStrategy map from the
+// per-ecosystem versionStrategy blocks. ecoOf maps each package name to its
+// ecosystem id; packages whose ecosystem sets no override are omitted (they
+// inherit the top-level VersionStrategy).
+func (c *Config) StrategyByPackage(ecoOf map[string]string) map[string]VersionStrategy {
+	out := map[string]VersionStrategy{}
+	for name, id := range ecoOf {
+		if s := c.EcoStrategy(id); s != "" {
+			out[name] = s
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Ecosystem decodes the named ecosystem block into dst. Returns false if the

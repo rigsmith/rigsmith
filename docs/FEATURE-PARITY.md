@@ -45,8 +45,11 @@ rigsmith is done.
   designed, the **`release` orchestrator** (steps/hooks/vars/gates/forge),
   **changelog git/github enrichment**, and the **markdown formatter**
   (`format:` incl. the native prettier-equivalent and a custom-command
-  escape hatch). Remaining changerig gaps: `--independent`, `commit` config
-  key, and wiring the per-ecosystem config block.
+  escape hatch). The changerig config surface is now complete: `--independent`,
+  the `commit` key (auto-commit on version/add), and the **generalized
+  per-ecosystem config block** (`sourcePath`/`packageSource`/`versionStrategy`,
+  consumed by discovery/publish/planner) all land here. The only remaining gap
+  is the relrig tail (interactive step-chooser TUI, `packages.versionRegex`).
 - **`rig` (dev launcher): high (Phase 6, 2026-06-12).** Dev loop + full package
   management + `coverage` (incl. .NET `--min` gate + in-process cobertura HTML)
   + `kill` (C#-aligned semantics) + `doctor`/`cd`/`init`/`rebuild`/`publish`/
@@ -96,7 +99,7 @@ rigsmith is done.
 | `ignore` (names + globs) | ✅ | ✅ | | | | |
 | `updateInternalDependencies` | ✅ | ✅ | | | patch/minor threshold honored by the cascade. | |
 | Version strategy: lockstep | ✅ | ✅ | | | shared version file moves together. | |
-| Version strategy: independent + `--independent` | ✅ | ⬜ | | | No inline-per-project override yet. | Inline per-project `--independent` override. |
+| Version strategy: independent + `--independent` | ✅ | ✅ | | | Inline per-project via `--independent`, the top-level `versionStrategy` key, and a per-ecosystem `versionStrategy` override (resolved per package in the planner). | |
 | Prerelease mode (pre.json, counter) | ✅ | ✅ | | | | |
 | Snapshot mode (templates, useCalculatedVersion) | ✅ | ✅ | | | `{tag}`/`{commit}`/`{datetime}`/`{timestamp}`; base 0.0.0 or calculated. | |
 | Prerelease graduation on exit | ✅ | ✅ | | | | |
@@ -124,12 +127,12 @@ rigsmith is done.
 | `snapshot.{useCalculatedVersion,prereleaseTemplate}` | ✅ | ✅ | | | | |
 | `changelog` | ✅ | ✅ | | | resolves the generator (default/path/name). | |
 | `format` | ✅ | ✅ | 🟢 | Adds the argv custom-command form beyond net. | full dispatch (false/native/auto/named tool). | |
-| `commit` | ✅ (written) | ⬜ | | | Not read or written yet. | Read/write the `commit` config key. |
-| `dotnet.sourcePath` | ✅ | ⬜ | | | rigsmith uses the top-level `paths` key for discovery instead of a per-ecosystem sourcePath; the `dotnet` block isn't read (and the generic per-ecosystem block isn't wired either — see that row). | Wire the per-ecosystem block to read `sourcePath`. |
-| `dotnet.packageSource` | ✅ | ⬜ | | | publish registry defaults are hardcoded per ecosystem (`nuget`/npm/crates); not configurable via any config key yet. | Read `packageSource` from config (per-ecosystem wiring). |
-| `dotnet.versionStrategy` | ✅ | ⬜ | | | ties to `--independent`, not built. | Implement `versionStrategy` (with `--independent`). |
+| `commit` | ✅ (written) | ✅ | | | Read via the polymorphic `commit` value (false/true/`[resolver,…]`): `version` auto-commits the bumps + changelogs + changeset deletions as "Version Packages"; `add` commits just the new changeset (its summary as the message). Snapshot runs opt out (throwaway). | |
+| `dotnet.sourcePath` | ✅ | ✅ | | | Read from the per-ecosystem block's `sourcePath`, narrowing discovery for that ecosystem only; the top-level `paths` key is the default. | |
+| `dotnet.packageSource` | ✅ | ✅ | | | Read from the per-ecosystem `packageSource` block (publish feed/registry); falls back to the built-in default (`nuget` for .NET, adapter default otherwise). | |
+| `dotnet.versionStrategy` | ✅ | ✅ | | | Per-ecosystem `versionStrategy` overrides the top-level for that ecosystem's packages; the planner resolves the strategy per package. `version --independent` still forces all. | |
 | `dotnet.{interop,changesetExtension,autoRunNode,nodeChangesetCommand}` | ✅ | ✅ | 🟡 | Interop config block dropped — no Node-interop bridge or `.net.mkd` extension to configure (deliberate). | | |
-| Per-ecosystem block (generalized) | ➖ | ⬜ | | | A generic `ecosystems` map + `Ecosystem(id, dst)` decoder live in `core/config` and parse, but no production code calls the decoder yet (tests only) — the scaffold exists but nothing consumes it. Intended replacement for the `dotnet.*` block. | Call `Ecosystem(id, dst)` from discovery/publish to consume `sourcePath`/`packageSource`. |
+| Per-ecosystem block (generalized) | ➖ | ✅ | 🟢 | Generalized beyond net's single `dotnet` block: a typed `EcosystemConfig` (`sourcePath`/`packageSource`/`versionStrategy`), keyed by adapter id (dotnet/node/go/cargo) and read via `EcoConfig(id)`, is consumed by discovery, publish, and the planner. The replacement for the `dotnet.*` block. | | |
 | `changelogGroups`, `paths` | ➖ | ✅ | 🟢 | rigsmith-only top-level keys (conventional grouping; discovery narrowing) — and they *are* consumed (unlike the per-ecosystem block). | | |
 | Legacy flat-key migration | ✅ | ✅ | 🟡 | Not ported — rigsmith won't auto-migrate net's legacy flat config keys (no compat). | | |
 
@@ -198,7 +201,7 @@ source tools; **rigsmith** is the Go `cli/` module.
 |---|---|---|---|---|---|---|---|
 | `defaultProject` | ✅ | ✅ | ✅ | | | enforced in run/test resolution; settable via the default-setter. | |
 | `quiet` | ✅ | ✅ | ✅ | | | | |
-| `exclude` | ✅ | ✅ | ⬜ | | | enforced in `info` discovery. | Honor `exclude` in the menu pickers. |
+| `exclude` | ✅ | ✅ | ✅ | | | enforced in `info` discovery, the cross-ecosystem pickers (menu focus, `cd`, dev-verb scoping/`--all`/completion, `watch`), and the kill sweep — matched by full or short package name. | |
 | `env` | ✅ | ✅ | ✅ | | | applied to spawned commands. | |
 | `kill.match` | ✅ | ✅ | ✅ | | | patterns for the default kill sweep. | |
 | `commands` | ✅ | ⬜ | ✅ | | | full support incl. per-OS/env/cwd. | |
@@ -252,18 +255,15 @@ source tools; **rigsmith** is the Go `cli/` module.
 1. **rig leftovers** (the ergonomics tail landed 2026-06-12): the C#-style
    interactive config walkthrough if wanted (Go's `setup` became the shell
    installer instead), `env` presets as flags, `--no-env`/`--root`, node
-   dist-dir `clean`, `exclude` in menu pickers, relrig version seam for its own
-   self-update.
-2. **changerig tail**: the `commit` config key, per-ecosystem `dotnet.versionStrategy`
-   (the top-level `versionStrategy` + `version --independent` landed), and
-   **wiring the per-ecosystem config block** — the `Ecosystem(id, dst)` decoder
-   exists but nothing reads `sourcePath`/`packageSource` from it yet (discovery
-   uses top-level `paths`, publish registries are hardcoded).
-3. **relrig tail**: interactive plan-chooser TUI, `packages.versionRegex`,
+   dist-dir `clean`, relrig version seam for its own self-update.
+2. **relrig tail**: interactive plan-chooser TUI, `packages.versionRegex`,
    NuGet feed-protocol unit tests if a native feed client lands.
 
 *(Done since the original audit: status `--since`/`--output`/pre-mode
 reflection, add `--since`, changelog git/github enrichment, the `format:`
 formatter incl. the native port, the entire release orchestrator + forge
-releases, publish confirm gate + ignore filtering, and the cross-ecosystem
-parity corpus with dotnet + polyglot oracles.)*
+releases, publish confirm gate + ignore filtering, the cross-ecosystem
+parity corpus with dotnet + polyglot oracles, and — most recently — the full
+changerig config surface: the `commit` key, the generalized per-ecosystem
+config block (`sourcePath`/`packageSource`/`versionStrategy`), and `exclude`
+honored across rig's pickers.)*

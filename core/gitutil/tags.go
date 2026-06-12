@@ -127,6 +127,60 @@ func ShortHead(ctx context.Context, repoRoot string) string {
 	return strings.TrimSpace(out)
 }
 
+// StageAndCommit stages every change under repoRoot (`git add -A`) and commits
+// it with message. It returns committed=false (nil error) when there is nothing
+// to commit — the working tree is clean after staging. GPG signing is disabled
+// for the commit so it never blocks on a passphrase in CI. This mirrors the
+// release orchestrator's built-in `commit` step, reused by `version` when the
+// `commit` config key is enabled.
+func StageAndCommit(ctx context.Context, repoRoot, message string) (committed bool, err error) {
+	if _, err := runGit(ctx, repoRoot, "add", "-A"); err != nil {
+		return false, err
+	}
+	out, err := runGit(ctx, repoRoot, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return false, nil
+	}
+	if message == "" {
+		message = "Version Packages"
+	}
+	if _, err := runGit(ctx, repoRoot, "-c", "commit.gpgsign=false", "commit", "-m", message); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// CommitPaths stages exactly the given paths and commits them with message,
+// returning committed=false (nil error) when none of them changed. Unlike
+// StageAndCommit it does not sweep the whole tree — the right tool when only a
+// specific file (e.g. a freshly written changeset) should be committed. GPG
+// signing is disabled.
+func CommitPaths(ctx context.Context, repoRoot, message string, paths ...string) (committed bool, err error) {
+	if len(paths) == 0 {
+		return false, nil
+	}
+	if _, err := runGit(ctx, repoRoot, append([]string{"add", "--"}, paths...)...); err != nil {
+		return false, err
+	}
+	out, err := runGit(ctx, repoRoot, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return false, nil
+	}
+	if message == "" {
+		message = "Add changeset"
+	}
+	if _, err := runGit(ctx, repoRoot, "-c", "commit.gpgsign=false", "commit", "-m", message); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir

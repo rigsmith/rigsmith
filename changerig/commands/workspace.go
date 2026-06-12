@@ -87,15 +87,11 @@ func (w *Workspace) Initialized() bool {
 }
 
 // Discover enumerates packages across every ecosystem that applies to the repo,
-// returning the packages and a name→ecosystem-id map. When config.Paths is set,
-// discovery is narrowed to those repo-relative roots; otherwise the whole repo
-// is scanned (minus the usual ignores and .gitignored files).
+// returning the packages and a name→ecosystem-id map. Discovery is narrowed to
+// the top-level config.Paths roots; a per-ecosystem `sourcePath` block overrides
+// those for that ecosystem only. With neither, the whole repo is scanned (minus
+// the usual ignores and .gitignored files).
 func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]string, error) {
-	roots := w.Config.Paths
-	if len(roots) == 0 {
-		roots = []string{"."}
-	}
-
 	var all []plugin.Package
 	ecoOf := map[string]string{}
 	seen := map[string]bool{} // dedupe a package discovered via overlapping roots
@@ -107,6 +103,15 @@ func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]
 		}
 		if !ok {
 			continue
+		}
+		// A per-ecosystem sourcePath narrows just this ecosystem; otherwise the
+		// top-level paths (or "." for the whole repo) apply.
+		roots := w.Config.Paths
+		if sp := w.Config.EcoConfig(eco.Info().ID).SourcePath; sp != "" {
+			roots = []string{sp}
+		}
+		if len(roots) == 0 {
+			roots = []string{"."}
 		}
 		for _, root := range roots {
 			resp, err := eco.Discover(ctx, plugin.DiscoverRequest{RepoRoot: w.Root, SourcePath: root})
