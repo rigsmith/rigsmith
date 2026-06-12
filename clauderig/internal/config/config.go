@@ -64,6 +64,10 @@ type Config struct {
 	Machines  map[string]Machine `json:"machines"`
 	Roots     []Root             `json:"roots"`
 	Retention Retention          `json:"retention"`
+	// AlwaysPrune makes `restore` prune stale config files (skills/commands/
+	// agents/plans deleted upstream) by default, as if --prune were passed.
+	// `restore --prune=false` overrides it for a single run.
+	AlwaysPrune bool `json:"alwaysPrune,omitempty"`
 }
 
 // Default returns a config with the standard roots and retention, no machines or

@@ -98,11 +98,16 @@ func NewRestoreCmd() *cobra.Command {
 				}
 			}
 
+			// Prune defaults to the config's AlwaysPrune; an explicit --prune
+			// (true or false) overrides it for this run.
+			opts.Prune = cfg.AlwaysPrune
+			if cmd.Flags().Changed("prune") {
+				opts.Prune = prune
+			}
 			opts.StagingDir = staging
 			opts.Config = cfg
 			opts.Machine = me
 			opts.Manifest = man
-			opts.Prune = prune
 			rep, err := engine.Restore(opts)
 			if err != nil {
 				return err

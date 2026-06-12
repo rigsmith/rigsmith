@@ -21,6 +21,7 @@ import (
 func NewInitCmd() *cobra.Command {
 	var remote, name string
 	installHooks, syncDesktop, yes := true, true, false
+	alwaysPrune := false
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -54,6 +55,7 @@ func NewInitCmd() *cobra.Command {
 					huh.NewInput().Title("This machine's name").Value(&me.Name),
 					huh.NewConfirm().Title("Sync the Desktop/Cowork root too?").Value(&syncDesktop),
 					huh.NewConfirm().Title("Install Claude Code hooks (auto pull on start, sync on stop)?").Value(&installHooks),
+					huh.NewConfirm().Title("On restore, prune config files (skills/commands/agents/plans) deleted elsewhere?").Value(&alwaysPrune),
 				))
 				if err := form.Run(); err != nil {
 					return err
@@ -67,6 +69,7 @@ func NewInitCmd() *cobra.Command {
 
 			cfg := config.Default()
 			cfg.Remote = remote
+			cfg.AlwaysPrune = alwaysPrune
 			if !syncDesktop {
 				for i := range cfg.Roots {
 					if cfg.Roots[i].ID == "desktop" {
@@ -106,6 +109,7 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "this machine's name (default: hostname)")
 	cmd.Flags().BoolVar(&installHooks, "hooks", true, "install Claude Code hooks")
 	cmd.Flags().BoolVar(&syncDesktop, "desktop", true, "sync the Desktop/Cowork root")
+	cmd.Flags().BoolVar(&alwaysPrune, "prune", false, "prune stale config files on every restore by default")
 	cmd.Flags().BoolVar(&yes, "yes", false, "non-interactive: use flags/defaults, no prompts")
 	return cmd
 }

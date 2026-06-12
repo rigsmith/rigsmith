@@ -36,6 +36,31 @@ func NewConfigCmd() *cobra.Command {
 			},
 		},
 		&cobra.Command{
+			Use:   "set-prune <true|false>",
+			Short: "Set whether `restore` prunes stale config files by default",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				on := args[0] == "true" || args[0] == "1" || args[0] == "yes"
+				cfg, err := config.LoadOrDefault()
+				if err != nil {
+					return err
+				}
+				cfg.AlwaysPrune = on
+				dir, err := config.Dir()
+				if err != nil {
+					return err
+				}
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return err
+				}
+				if err := config.Save(cfg, dir); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s alwaysPrune = %v\n", OkStyle.Render("✓"), on)
+				return nil
+			},
+		},
+		&cobra.Command{
 			Use:   "set-remote <url>",
 			Short: "Set the sync remote (verified private via gh)",
 			Args:  cobra.ExactArgs(1),
