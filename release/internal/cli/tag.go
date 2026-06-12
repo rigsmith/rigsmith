@@ -29,6 +29,9 @@ func newTagCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			created, skipped := 0, 0
 			for _, p := range pkgs {
+				if ws.Config.IsIgnored(p.Name) {
+					continue // ignored packages are never tagged
+				}
 				tag := tagName(ecoOf[p.Name], p.Dir, p.Name, p.Version)
 				if gitutil.TagExists(cmd.Context(), ws.Root, tag) {
 					skipped++

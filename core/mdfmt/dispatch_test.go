@@ -154,6 +154,34 @@ func TestWhenFormatterCannotStartDegradesGracefully(t *testing.T) {
 	}
 }
 
+func TestCustomCommandRunsAsWritten(t *testing.T) {
+	dir := t.TempDir()
+	f := writeTemp(t, dir, "CHANGELOG.md", "# x\n")
+	var calls []call
+	FormatFilesCustom([]string{f}, []string{"myfmt", "--write"}, dir, fakeRunner(&calls, nil), nil)
+	if len(calls) != 1 || calls[0].name != "myfmt" || calls[0].dir != dir {
+		t.Fatalf("calls = %+v, want one myfmt run in %s", calls, dir)
+	}
+	if want := []string{"--write", f}; strings.Join(calls[0].args, " ") != strings.Join(want, " ") {
+		t.Errorf("args = %v, want %v", calls[0].args, want)
+	}
+
+	// Empty inputs are no-ops; failure only warns.
+	calls = nil
+	FormatFilesCustom(nil, []string{"myfmt"}, dir, fakeRunner(&calls, nil), nil)
+	FormatFilesCustom([]string{f}, nil, dir, fakeRunner(&calls, nil), nil)
+	if len(calls) != 0 {
+		t.Errorf("empty inputs ran %d command(s)", len(calls))
+	}
+	var warned []string
+	FormatFilesCustom([]string{f}, []string{"myfmt"}, dir,
+		fakeRunner(&calls, errors.New("exec: not found")),
+		func(format string, a ...any) { warned = append(warned, format) })
+	if len(warned) != 1 {
+		t.Errorf("expected one warning, got %v", warned)
+	}
+}
+
 func TestNativeRewritesInPlaceWithoutRunningProcess(t *testing.T) {
 	dir := t.TempDir()
 	// Raw @changesets output: no blank line between version and section heading.

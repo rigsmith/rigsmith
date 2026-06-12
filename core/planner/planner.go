@@ -284,7 +284,7 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 	out := plan[:0]
 	for _, m := range plan {
 		switch {
-		case !isIgnored(m.Name, cfg.Ignore):
+		case !cfg.IsIgnored(m.Name):
 			out = append(out, m)
 		case len(m.DepUpdates) > 0:
 			m.RangeOnly = true
@@ -496,7 +496,7 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 		bump := highestBump(releasing)
 		version := highestCurrentVersion(grp, byName)
 		for _, member := range grp {
-			if isIgnored(member, cfg.Ignore) {
+			if cfg.IsIgnored(member) {
 				continue
 			}
 			if m, ok := rel[member]; ok {
@@ -571,43 +571,4 @@ func highestCurrentVersion(names []string, byName map[string]plugin.Package) sem
 		}
 	}
 	return highest
-}
-
-func isIgnored(name string, ignore []string) bool {
-	for _, pat := range ignore {
-		if globMatch(pat, name) {
-			return true
-		}
-	}
-	return false
-}
-
-// globMatch is a minimal glob supporting '*'. Mirrors PackageIgnore semantics
-// well enough for the common "*Bench" / "Acme.*" patterns.
-func globMatch(pattern, name string) bool {
-	if pattern == name {
-		return true
-	}
-	if !strings.Contains(pattern, "*") {
-		return false
-	}
-	parts := strings.Split(pattern, "*")
-	pos := 0
-	for i, part := range parts {
-		if part == "" {
-			continue
-		}
-		idx := strings.Index(name[pos:], part)
-		if idx < 0 {
-			return false
-		}
-		if i == 0 && idx != 0 {
-			return false
-		}
-		pos += idx + len(part)
-	}
-	if last := parts[len(parts)-1]; last != "" {
-		return strings.HasSuffix(name, last)
-	}
-	return true
 }

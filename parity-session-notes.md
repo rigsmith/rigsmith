@@ -203,16 +203,26 @@ the builtin layout instead of subprocess plugin resolution. `config.FormatSpec()
 added. E2E-verified with changelog-git + format:native; parity corpus
 unchanged/green.)*
 
+*(2026-06-12, third session cont.: **Phase 4 DONE** — `core/since` (SinceChanges
+port), `status --since` (no-changeset guard + narrowing) + status now reflects
+pre-mode like version (`assemblePlan`), `add --since` picker preselect, and
+`changerig/cmdtest/` (31 binary-driven command tests over both binaries; real
+git fixtures). Found + fixed: `tag`/`publish` did not honor `ignore` — added
+`config.IsIgnored` (planner's glob matcher promoted) and filtered both loops.
+Also: status with no changesets now exits non-zero (the CI gate), and the
+`format` config gained a custom-command escape hatch — an argv array
+(`"format": ["myfmt", "--write"]`) runs as written via `FormatCommand()` +
+`mdfmt.FormatFilesCustom`. Behavior notes vs C#: init/info report state by
+message with exit 0 rather than distinct result codes.)*
+
 1. **Snapshot/prerelease e2e leftovers** — `snapshot.useCalculatedVersion` e2e
    (probe Node first) and a two-package prerelease flow golden (pre-mode dep
    retargeting has unit coverage only).
-2. **Phase 4: changerig command tests** — init/add/status/version/pre/tag/info
-   error paths + `--since` (substrate `gitutil.ChangedFilesSince` is ready;
-   wire `status --since`/`add --since` + the SinceChanges logic with it).
-3. **Phase 5: relrig release pipeline** — steps/hooks/vars/confirm/forge +
+2. **Phase 5: relrig release pipeline** — steps/hooks/vars/confirm/forge +
    reporters (design brief in the plan file; publish confirm + `--yes` lands
-   here). Build the shared `core/jsonc` parser with it.
-4. **Phase 6: rig dev-CLI parity** — JSONC editor, rig config, dotenv/env stack,
+   here). Build the shared `core/jsonc` parser with it. (Publish's new ignore
+   filtering gets its tests here with the rest of the publish suite.)
+3. **Phase 6: rig dev-CLI parity** — JSONC editor, rig config, dotenv/env stack,
    prefix/root resolvers, verb logic (~160 tests).
 
 ### Lower-value / poor fit

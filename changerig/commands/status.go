@@ -3,14 +3,20 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/rigsmith/core/changeset"
+	"github.com/rigsmith/core/gitutil"
 	"github.com/rigsmith/core/planner"
+	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/core/prestate"
+	"github.com/rigsmith/core/since"
 	"github.com/spf13/cobra"
 )
 
@@ -31,8 +37,9 @@ type statusPlan struct {
 // NewStatusCmd builds the `status` command.
 func NewStatusCmd() *cobra.Command {
 	var (
-		verbose bool
-		output  string
+		verbose  bool
+		output   string
+		sinceRef string
 	)
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -42,7 +49,49 @@ func NewStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			plan, err := BuildPlan(cmd.Context(), ws)
+			changesets, err := changeset.Dir(ws.ChangesetDir, "")
+			if err != nil {
+				return fmt.Errorf("reading changesets: %w", err)
+			}
+			pkgs, _, err := ws.Discover(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			// --since: guard against changes with no changeset, then narrow the
+			// displayed changesets to those added since the ref (mirrors
+			// @changesets and net-changesets).
+			if sinceRef != "" {
+				changedFiles, err := gitutil.ChangedFilesSince(cmd.Context(), ws.Root, sinceRef)
+				if err != nil {
+					return fmt.Errorf("could not determine changes since %q: %w", sinceRef, err)
+				}
+				changedProjects := since.ChangedProjectNames(changedFiles, pkgs, ws.Root)
+				if len(changedProjects) > 0 && !since.AnyChangesetAdded(changedFiles, ws.ChangesetDir) {
+					return fmt.Errorf("some projects have changed since %q but no changeset was found (%s) — run `changerig add` to add one, or `changerig add --empty` if no release is needed",
+						sinceRef, strings.Join(changedProjects, ", "))
+				}
+				ids := since.ChangedChangesetIDs(changedFiles, ws.ChangesetDir)
+				inSince := map[string]bool{}
+				for _, id := range ids {
+					inSince[id] = true
+				}
+				kept := changesets[:0]
+				for _, cs := range changesets {
+					if inSince[cs.ID] {
+						kept = append(kept, cs)
+					}
+				}
+				changesets = kept
+			}
+
+			// A missing changeset is a failure, like @changesets and
+			// net-changesets (the CI gate this command exists for).
+			if len(changesets) == 0 {
+				return errors.New("no changesets found")
+			}
+
+			plan, err := assemblePlan(cmd.Context(), ws, changesets, pkgs)
 			if err != nil {
 				return err
 			}
@@ -50,7 +99,7 @@ func NewStatusCmd() *cobra.Command {
 				return writeStatusPlan(ws.Root, output, plan)
 			}
 			if len(plan) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("No changesets found — nothing to release."))
+				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("Changesets found, but nothing to release."))
 				return nil
 			}
 			PrintPlan(cmd.OutOrStdout(), plan, verbose)
@@ -59,6 +108,7 @@ func NewStatusCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "show the changes driving each package")
 	cmd.Flags().StringVar(&output, "output", "", "write the release plan as JSON to this file (matches @changesets status --output)")
+	cmd.Flags().StringVar(&sinceRef, "since", "", "only consider changes since this git ref; fail if projects changed without a changeset")
 	return cmd
 }
 
@@ -86,7 +136,8 @@ func writeStatusPlan(root, output string, plan []*planner.Module) error {
 	return os.WriteFile(path, append(data, '\n'), 0o644)
 }
 
-// BuildPlan loads changesets + packages and runs the planner.
+// BuildPlan loads changesets + packages and assembles the release plan,
+// reflecting prerelease mode the same way `version` does.
 func BuildPlan(ctx context.Context, ws *Workspace) ([]*planner.Module, error) {
 	changesets, err := changeset.Dir(ws.ChangesetDir, "")
 	if err != nil {
@@ -96,7 +147,37 @@ func BuildPlan(ctx context.Context, ws *Workspace) ([]*planner.Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	return planner.Plan(changesets, pkgs, ws.Config), nil
+	return assemblePlan(ctx, ws, changesets, pkgs)
+}
+
+// assemblePlan runs the planner over the changesets, reflecting prerelease
+// mode (pre.json) the same way the version command does — status must never
+// show a different target version than the release that would follow.
+// Snapshot has no status equivalent.
+func assemblePlan(ctx context.Context, ws *Workspace, changesets []*changeset.Changeset, pkgs []plugin.Package) ([]*planner.Module, error) {
+	pre, err := prestate.Read(ws.ChangesetDir)
+	if err != nil {
+		return nil, err
+	}
+
+	active := changesets
+	if pre != nil && pre.Mode == prestate.ModePre {
+		active = nil
+		for _, cs := range changesets {
+			if !pre.Contains(cs.ID) {
+				active = append(active, cs)
+			}
+		}
+	}
+
+	plan := planner.Plan(active, pkgs, ws.Config)
+	switch {
+	case pre != nil && pre.Mode == prestate.ModePre:
+		planner.ApplyPre(plan, pre.Tag)
+	case pre != nil && pre.Mode == prestate.ModeExit:
+		plan = planner.GraduatePrereleases(plan, pkgs)
+	}
+	return plan, nil
 }
 
 // PrintPlan renders a release plan to w.

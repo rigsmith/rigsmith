@@ -10,6 +10,8 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/core/changeset"
+	"github.com/rigsmith/core/gitutil"
+	"github.com/rigsmith/core/since"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +23,7 @@ func NewAddCmd() *cobra.Command {
 		typeStr  string
 		packages []string
 		empty    bool
+		sinceRef string
 	)
 	cmd := &cobra.Command{
 		Use:   "add",
@@ -49,9 +52,21 @@ func NewAddCmd() *cobra.Command {
 			typ := strings.TrimSpace(typeStr)
 			summary := message
 
+			// --since preselects the packages owning files changed since the
+			// ref in the interactive picker (it does not skip the prompts).
+			var preselect []string
+			if sinceRef != "" {
+				changedFiles, err := gitutil.ChangedFilesSince(cmd.Context(), ws.Root, sinceRef)
+				if err != nil {
+					return fmt.Errorf("could not determine changes since %q: %w", sinceRef, err)
+				}
+				preselect = since.ChangedProjectNames(changedFiles, pkgs, ws.Root)
+			}
+
 			// Interactive only when nothing was given. With a --type (or --bump) and
 			// --message + --package, we skip prompts entirely.
 			if !empty && len(selected) == 0 && bump == "" && typ == "" && summary == "" {
+				selected = preselect
 				if err := runAddForm(names, &selected, &bump, &summary); err != nil {
 					return err
 				}
@@ -99,6 +114,7 @@ func NewAddCmd() *cobra.Command {
 	f.StringVarP(&typeStr, "type", "t", "", "conventional type (feat|fix|…, suffix ! for breaking); bump derives from it")
 	f.StringSliceVarP(&packages, "package", "p", nil, "package to include (repeatable)")
 	f.BoolVar(&empty, "empty", false, "write an empty changeset (names no packages)")
+	f.StringVar(&sinceRef, "since", "", "preselect the packages changed since this git ref in the picker")
 	return cmd
 }
 
