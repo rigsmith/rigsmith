@@ -521,3 +521,45 @@ func TestIgnoreFiltersPackage(t *testing.T) {
 		t.Error("CoreBench should be filtered by ignore")
 	}
 }
+
+func TestVersionStrategyLockstepVsIndependent(t *testing.T) {
+	// A and B share a version file. A bumps minor, B bumps patch.
+	pkgs := []plugin.Package{
+		{Name: "A", Version: "1.0.0", ManifestPath: "A/A.csproj", VersionFile: "Directory.Build.props"},
+		{Name: "B", Version: "1.0.0", ManifestPath: "B/B.csproj", VersionFile: "Directory.Build.props"},
+	}
+	changesets := []*changeset.Changeset{
+		cs("a", changeset.Release{Name: "A", Bump: changeset.BumpMinor}),
+		cs("b", changeset.Release{Name: "B", Bump: changeset.BumpPatch}),
+	}
+
+	// Lockstep (default): the shared version moves together — both → 1.1.0.
+	lock := Plan(changesets, pkgs, config.Default())
+	for _, n := range []string{"A", "B"} {
+		m := find(lock, n)
+		if m == nil {
+			t.Fatalf("lockstep: %s missing", n)
+		}
+		if got := m.NewVersion().String(); got != "1.1.0" {
+			t.Errorf("lockstep: %s = %s, want 1.1.0 (unified)", n, got)
+		}
+	}
+
+	// Independent: each versions on its own changeset, written inline.
+	cfg := config.Default()
+	cfg.VersionStrategy = config.Independent
+	ind := Plan(changesets, pkgs, cfg)
+	a, b := find(ind, "A"), find(ind, "B")
+	if a == nil || b == nil {
+		t.Fatal("independent: A or B missing")
+	}
+	if got := a.NewVersion().String(); got != "1.1.0" {
+		t.Errorf("independent: A = %s, want 1.1.0", got)
+	}
+	if got := b.NewVersion().String(); got != "1.0.1" {
+		t.Errorf("independent: B = %s, want 1.0.1 (separate)", got)
+	}
+	if a.VersionFile != "" || b.VersionFile != "" {
+		t.Errorf("independent: VersionFile should be cleared for inline writes, got A=%q B=%q", a.VersionFile, b.VersionFile)
+	}
+}

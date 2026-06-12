@@ -55,6 +55,12 @@ type Config struct {
 	UpdateInternalDependencies UpdateInternalDependencies `json:"updateInternalDependencies,omitempty"`
 	Snapshot                   Snapshot                   `json:"snapshot,omitempty"`
 
+	// VersionStrategy controls how a shared version (e.g. a Directory.Build.props
+	// <Version>) is written: "lockstep" (default, also "") moves every inheritor
+	// together; "independent" writes an inline version per package, so each
+	// versions on its own changesets. Overridable per run with `version --independent`.
+	VersionStrategy VersionStrategy `json:"versionStrategy,omitempty"`
+
 	// Format and Changelog are raw because their JSON shape is polymorphic.
 	Format    json.RawMessage `json:"format,omitempty"`
 	Changelog json.RawMessage `json:"changelog,omitempty"`

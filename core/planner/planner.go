@@ -293,6 +293,15 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 			out = append(out, m)
 		}
 	}
+
+	// Independent strategy: write each package's version inline into its own
+	// manifest, overriding any shared version file (SetVersion targets the
+	// manifest when VersionFile is empty).
+	if cfg != nil && cfg.VersionStrategy == config.Independent {
+		for _, m := range out {
+			m.VersionFile = ""
+		}
+	}
 	return out
 }
 
@@ -512,7 +521,12 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 		}
 	}
 
-	// Lockstep: packages sharing a version file move together.
+	// Lockstep: packages sharing a version file move together — unless the
+	// strategy is independent, in which case each versions on its own changesets
+	// (Plan writes those inline; see the VersionFile clearing below).
+	if cfg != nil && cfg.VersionStrategy == config.Independent {
+		return changed
+	}
 	lockstep := map[string][]string{}
 	for _, p := range packages {
 		if p.VersionFile != "" {
