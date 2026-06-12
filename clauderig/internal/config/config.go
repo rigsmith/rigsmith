@@ -6,6 +6,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -171,14 +172,20 @@ func StagingDir() (string, error) {
 	return filepath.Join(d, "repo"), nil
 }
 
-// LoadOrDefault loads the saved config, falling back to Default when none exists.
+// LoadOrDefault loads the saved config, falling back to Default ONLY when no
+// config file exists. A present-but-corrupt config.json (parse error, permission
+// issue) is surfaced rather than silently replaced with defaults.
 func LoadOrDefault() (*Config, error) {
 	d, err := Dir()
 	if err != nil {
 		return nil, err
 	}
-	if c, err := Load(d); err == nil {
+	c, err := Load(d)
+	if err == nil {
 		return c, nil
 	}
-	return Default(), nil
+	if os.IsNotExist(err) {
+		return Default(), nil
+	}
+	return nil, fmt.Errorf("load config (%s): %w", filepath.Join(d, "config.json"), err)
 }

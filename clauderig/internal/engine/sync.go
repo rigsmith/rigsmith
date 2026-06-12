@@ -131,21 +131,28 @@ func Sync(opts Options) (*Report, error) {
 				rr.SkippedFiles++
 				continue
 			}
-			out := data
 			var v any
-			if json.Unmarshal(data, &v) == nil {
-				v = applyKeepFilter(r.ID, rel, v)
-				red, paths := redact.Redact(v, policy)
-				v, rr.Redactions = red, rr.Redactions+len(paths)
-				v, _ = pathmap.PortablizeJSONValues(v, opts.Machine.Folders(), opts.Machine.OS)
-				if b, e := json.MarshalIndent(v, "", "  "); e == nil {
-					out = append(b, '\n')
-				}
-				for _, f := range redact.Scan(v) {
-					rep.Findings = append(rep.Findings, redact.Finding{
-						Path: r.ID + "/" + rel + ":" + f.Path, Kind: f.Kind,
-					})
-				}
+			if json.Unmarshal(data, &v) != nil {
+				// A .json that doesn't parse can't be redacted or scanned — syncing it
+				// raw would defeat the "secrets never leave the machine" guarantee. Skip
+				// it (it's likely a half-written file; the next sync gets the valid one).
+				rr.SkippedFiles++
+				continue
+			}
+			v = applyKeepFilter(r.ID, rel, v)
+			red, paths := redact.Redact(v, policy)
+			v, rr.Redactions = red, rr.Redactions+len(paths)
+			v, _ = pathmap.PortablizeJSONValues(v, opts.Machine.Folders(), opts.Machine.OS)
+			out, e := json.MarshalIndent(v, "", "  ")
+			if e != nil {
+				rr.SkippedFiles++
+				continue
+			}
+			out = append(out, '\n')
+			for _, f := range redact.Scan(v) {
+				rep.Findings = append(rep.Findings, redact.Finding{
+					Path: r.ID + "/" + rel + ":" + f.Path, Kind: f.Kind,
+				})
 			}
 			if err := writeFile(dstPath, out); err != nil {
 				return nil, err

@@ -42,8 +42,12 @@ func Init(ctx context.Context, dir string) (*Repo, error) {
 		return nil, err
 	}
 	_, _ = runGit(ctx, dir, "config", "commit.gpgsign", "false")
+	// Set name and email independently so a partial global config (e.g. email set
+	// but not name) can't cause "Please tell me who you are" on commit.
 	if _, err := runGit(ctx, dir, "config", "user.email"); err != nil {
 		_, _ = runGit(ctx, dir, "config", "user.email", "clauderig@localhost")
+	}
+	if _, err := runGit(ctx, dir, "config", "user.name"); err != nil {
 		_, _ = runGit(ctx, dir, "config", "user.name", "clauderig")
 	}
 	return &Repo{Dir: dir}, nil

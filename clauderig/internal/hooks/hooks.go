@@ -39,7 +39,11 @@ func Install(path string) (added []string, err error) {
 	}
 	h := hooksMap(s)
 	for _, p := range DefaultPlans() {
-		groups, _ := h[p.Event].([]any)
+		raw, exists := h[p.Event]
+		groups, ok := raw.([]any)
+		if exists && !ok {
+			continue // unexpected shape (malformed / future schema) — don't clobber it
+		}
 		if anyHasMarker(groups) {
 			continue
 		}

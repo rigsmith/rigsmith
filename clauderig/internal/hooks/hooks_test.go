@@ -74,6 +74,24 @@ func TestInstall_PreservesOtherSettingsAndHooks(t *testing.T) {
 	}
 }
 
+func TestInstall_DoesNotClobberMalformedEvent(t *testing.T) {
+	// An event whose value isn't the expected array (malformed / future schema)
+	// must be left untouched, not overwritten.
+	p := settingsPath(t, `{"hooks":{"Stop":"weird-non-array-value"}}`)
+	if _, err := Install(p); err != nil {
+		t.Fatal(err)
+	}
+	m := load_(t, p)
+	h := m["hooks"].(map[string]any)
+	if h["Stop"] != "weird-non-array-value" {
+		t.Errorf("malformed Stop should be preserved, got %v", h["Stop"])
+	}
+	// SessionStart (well-formed/absent) is still installed
+	if _, ok := h["SessionStart"]; !ok {
+		t.Error("SessionStart should still be installed")
+	}
+}
+
 func TestUninstall(t *testing.T) {
 	existing := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"keep-me"}]}]}}`
 	p := settingsPath(t, existing)

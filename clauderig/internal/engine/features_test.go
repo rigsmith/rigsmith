@@ -12,6 +12,29 @@ import (
 
 func fexists(p string) bool { _, err := os.Stat(p); return err == nil }
 
+// An unparseable .json must be skipped, never synced raw (it can't be redacted or
+// scanned — syncing it would defeat the secrets guarantee).
+func TestSync_InvalidJSONSkippedNotRaw(t *testing.T) {
+	live := t.TempDir()
+	write(t, live, "settings.json", `{ not valid json, sk-ant-SECRET12345678`)
+	write(t, live, "skills/a/SKILL.md", "ok")
+	staging := t.TempDir()
+	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
+	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fexists(filepath.Join(staging, "cli", "settings.json")) {
+		t.Error("invalid JSON should be skipped, not synced raw")
+	}
+	if !fexists(filepath.Join(staging, "cli", "skills", "a", "SKILL.md")) {
+		t.Error("valid files should still sync")
+	}
+	if rep.Roots[0].SkippedFiles == 0 {
+		t.Error("expected the skipped invalid file to be counted")
+	}
+}
+
 func TestPruneAgedStagedProjects(t *testing.T) {
 	projects := t.TempDir()
 	// fresh slug

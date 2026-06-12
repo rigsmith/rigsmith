@@ -105,7 +105,7 @@ func NewInitCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&remote, "remote", "", "private GitHub repo URL (verified via gh)")
+	cmd.Flags().StringVar(&remote, "remote", "", "private GitHub/GitLab repo URL (verified via gh/glab or GITHUB_TOKEN/GITLAB_TOKEN)")
 	cmd.Flags().StringVar(&name, "name", "", "this machine's name (default: hostname)")
 	cmd.Flags().BoolVar(&installHooks, "hooks", true, "install Claude Code hooks")
 	cmd.Flags().BoolVar(&syncDesktop, "desktop", true, "sync the Desktop/Cowork root")

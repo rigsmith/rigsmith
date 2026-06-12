@@ -1,10 +1,28 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/rigsmith/core/pathmap"
 )
+
+func TestLoad_MissingVsCorrupt(t *testing.T) {
+	dir := t.TempDir()
+	// absent → an IsNotExist error (so LoadOrDefault falls back to Default)
+	if _, err := Load(dir); !os.IsNotExist(err) {
+		t.Errorf("missing config should be IsNotExist, got %v", err)
+	}
+	// present but corrupt → a non-IsNotExist error (so LoadOrDefault surfaces it
+	// instead of silently replacing the user's config with defaults)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{ corrupt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, e := Load(dir); e == nil || os.IsNotExist(e) {
+		t.Errorf("corrupt config should surface a non-IsNotExist error, got %v", e)
+	}
+}
 
 func TestDefault(t *testing.T) {
 	c := Default()
