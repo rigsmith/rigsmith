@@ -144,3 +144,33 @@ func Load(dir string) (*Config, error) {
 	}
 	return &c, nil
 }
+
+// Dir is clauderig's config directory (~/.clauderig), where config.json lives.
+func Dir() (string, error) {
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(h, ".clauderig"), nil
+}
+
+// StagingDir is the local staging repo (~/.clauderig/repo) that sync pushes from.
+func StagingDir() (string, error) {
+	d, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "repo"), nil
+}
+
+// LoadOrDefault loads the saved config, falling back to Default when none exists.
+func LoadOrDefault() (*Config, error) {
+	d, err := Dir()
+	if err != nil {
+		return nil, err
+	}
+	if c, err := Load(d); err == nil {
+		return c, nil
+	}
+	return Default(), nil
+}
