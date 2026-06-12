@@ -18,7 +18,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started
 
 ## Polish / UX
 5. ✅ **Distribution.** goreleaser build+archive for `clauderig`, `install.sh` target, version stamping (`-X main.version`), module + tool READMEs. (Homebrew tap still commented out pending the public repo, same as the other rigs.)
-6. ⬜ **Desktop `config.json` preferences.** Currently excluded wholesale (volatile); add a keep-only filter to sync just `preferences`.
+6. ✅ **Desktop `config.json` preferences.** Synced via a keep-only filter (`engine.keepOnly`) that retains just `preferences`, dropping the volatile caches/tokens the app constantly rewrites.
 7. ⬜ **Conflict resolution.** Pull is ff-only; on divergence it errors. Build the per-file picker / `git mergetool` handoff.
 8. ⬜ **Richer TUIs.** `ui` dashboard is read-only + dispatch; add the restore-preview screen and interactive restore-safety prompt.
 9. ⬜ **Device registry.** Track per-device last-sync timestamps for the dashboard.

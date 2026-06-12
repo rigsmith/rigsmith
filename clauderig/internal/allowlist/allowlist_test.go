@@ -50,7 +50,7 @@ func TestDesktop_PrunesCacheTree(t *testing.T) {
 	mustWrite(t, root, "Cache/data_0", "junk")
 	mustWrite(t, root, "GPUCache/x", "junk")
 	mustWrite(t, root, "IndexedDB/y", "junk")
-	mustWrite(t, root, "config.json", "{}")                // volatile — excluded
+	mustWrite(t, root, "config.json", "{}")                // synced (keep-filtered to preferences)
 	mustWrite(t, root, "claude_desktop_config.json", "{}") // synced (MCP config)
 	mustWrite(t, root, "claude-code-sessions/03d/uuid/local_1.json", "{}")
 	mustWrite(t, root, "window-state.json", "{}") // machine-local, excluded
@@ -62,6 +62,7 @@ func TestDesktop_PrunesCacheTree(t *testing.T) {
 	want := []string{
 		"claude-code-sessions/03d/uuid/local_1.json",
 		"claude_desktop_config.json",
+		"config.json",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Walk = %v, want %v", got, want)

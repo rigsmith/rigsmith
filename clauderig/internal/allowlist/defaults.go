@@ -43,9 +43,9 @@ func Desktop() List {
 		inc("cowork-enabled-cli-ops.json"),
 		inc("extensions-blocklist.json"),
 		inc("git-worktrees.json"),
-		// config.json is intentionally NOT synced: the Desktop app rewrites it
-		// constantly with rotating cache/token values (oauth.tokenCache,
-		// dxt.allowlistCache, …). Its portable `preferences` can return later via a
-		// keep-only filter; for now it's excluded to keep sync reliable and clean.
+		// config.json IS synced, but a keep-only filter (engine.keepOnly) reduces it
+		// to its stable `preferences` — the Desktop app rewrites the rest constantly
+		// with rotating cache/token values (oauth.tokenCache, dxt.allowlistCache, …).
+		inc("config.json"),
 	}}
 }

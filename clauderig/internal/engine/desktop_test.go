@@ -17,6 +17,32 @@ func twoRootConfig(cliDir, deskDir string) *config.Config {
 	return c
 }
 
+// The Desktop config.json is reduced to its stable `preferences` — the volatile
+// caches/tokens (which previously tripped the wire) are dropped before sync.
+func TestSync_DesktopConfigKeepFilter(t *testing.T) {
+	liveCli, liveDesk := t.TempDir(), t.TempDir()
+	write(t, liveDesk, "config.json",
+		`{"preferences":{"sidebarMode":"compact","coworkWebSearchEnabled":true},`+
+			`"oauth":{"tokenCache":"Zk9q3xR7tLmA1cD8eF0gH2iJ4kL6mN8oP0qR2sT4uV6wX8y"},`+
+			`"dxt":{"allowlistCache":{"sid":"Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0Kk1Ll2Mm3Nn4"}}}`)
+
+	staging := t.TempDir()
+	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	rep, err := Sync(Options{StagingDir: staging, Config: twoRootConfig(liveCli, liveDesk), Machine: john})
+	if err != nil {
+		t.Fatalf("sync: %v (findings=%v)", err, rep.Findings)
+	}
+	staged := read(t, filepath.Join(staging, "desktop", "config.json"))
+	if !contains(staged, "sidebarMode") {
+		t.Errorf("preferences should be kept: %s", staged)
+	}
+	for _, gone := range []string{"oauth", "tokenCache", "dxt", "allowlistCache"} {
+		if contains(staged, gone) {
+			t.Errorf("volatile key %q should have been dropped: %s", gone, staged)
+		}
+	}
+}
+
 // A Desktop session file's cwd must portablize on sync and resolve to the target
 // machine on restore — the Q4 value-based rewrite, end to end through the engine.
 func TestDesktopValueRewrite_RoundTrip(t *testing.T) {

@@ -133,6 +133,7 @@ func Sync(opts Options) (*Report, error) {
 			out := data
 			var v any
 			if json.Unmarshal(data, &v) == nil {
+				v = applyKeepFilter(r.ID, rel, v)
 				red, paths := redact.Redact(v, policy)
 				v, rr.Redactions = red, rr.Redactions+len(paths)
 				v, _ = pathmap.PortablizeJSONValues(v, opts.Machine.Folders(), opts.Machine.OS)
@@ -181,6 +182,36 @@ func sourceLoc(opts Options, rootID string) (string, pathmap.Status) {
 		return loc, pathmap.StatusResolved
 	}
 	return opts.Config.RootLocation(rootID, opts.Machine)
+}
+
+// keepOnly returns the top-level keys to retain for a file that's mostly volatile,
+// or nil to keep the whole document. The Desktop config.json is rewritten
+// constantly with rotating caches/tokens; only its `preferences` are stable and
+// worth syncing.
+func keepOnly(rootID, rel string) []string {
+	if rootID == "desktop" && rel == "config.json" {
+		return []string{"preferences"}
+	}
+	return nil
+}
+
+// applyKeepFilter prunes a parsed JSON object to keepOnly's allowed top-level keys.
+func applyKeepFilter(rootID, rel string, v any) any {
+	keep := keepOnly(rootID, rel)
+	if keep == nil {
+		return v
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	out := make(map[string]any, len(keep))
+	for _, k := range keep {
+		if val, present := m[k]; present {
+			out[k] = val
+		}
+	}
+	return out
 }
 
 func allowlistFor(rootID string) allowlist.List {
