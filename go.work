@@ -4,5 +4,6 @@ use (
 	./core
 	./changerig
 	./cli
+	./clauderig
 	./release
 )

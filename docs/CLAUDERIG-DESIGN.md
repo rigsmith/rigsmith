@@ -49,7 +49,7 @@ Legend: ✅ sync · 🔧 junk (machine-local/ephemeral) · 🔑 secret (never le
 | `plugins/{marketplaces,data}` | ✅ | config; **not** `plugins/cache` |
 | `projects/<slug>/*.jsonl` | ✅ | the **resume payload**; slug-rewrite + 30d retention (history branch) |
 | `sessions/*.json` | 🔧 | PID-named live-process registry; stale PIDs on another machine (see Open Q1) |
-| `file-history/` | 🔧 (v1) | 92 MB rewind cache; not needed for resume. Opt-in later |
+| `file-history/` | 🔧 | 92 MB rewind cache; not needed for resume — **excluded, no opt-in** (Q2) |
 | `cache/`, `*-cache.json`, `statsig/`, `telemetry/`, `debug/` | 🔧 | machine-local / device ids |
 | `shell-snapshots/`, `session-env/`, `ide/*.lock`, `tasks/*/.lock` | 🔧 | runtime/host state |
 | `downloads/`, `.DS_Store`, `.last-*` | 🔧 | junk |
@@ -92,34 +92,67 @@ Ported from halyard's `Favorites` path system into `core/pathmap`: a **token +
 cascade** resolver (`$HOME`, per-OS literals, machine override) with cycle
 detection and OS-aware case comparison. Two fidelities, both v1:
 
-- **Slug rewrite** (`projects/`): un-flatten slug → absolute → reverse-resolve to
-  `$HOME/Git/x` → on target, token → absolute → re-flatten to that machine's slug.
-  Transcript *contents* are left as-is (slug-only) — tool references inside merely
-  record where a tool *ran*; resume works without rewriting them.
-- **Field rewrite** (Desktop sessions, `git-worktrees.json`): rewrite `cwd` /
-  `originCwd` / path fields in place.
+- **Slug rewrite** (`projects/`): read the real `cwd` from the transcript →
+  portablize to `$HOME/Git/x` → on target, resolve → re-flatten to that machine's
+  slug. Slugs are **never un-flattened** — Claude Code maps every non-alphanumeric
+  char to `-` (lossy: a `-` may have been `/`, `.`, `_`, or literal `-`; confirmed
+  on real slugs, e.g. `/nuxt-roost/.dmux` → `--dmux`), so the cwd comes from the
+  transcript, where it sits ~800 bytes in (188/197 within 4 KB) → a **bounded
+  header scan**, never a whole-file parse. Transcript *contents* are left as-is —
+  tool references inside merely record where a tool *ran*; resume works without
+  rewriting them. (`core/pathmap.Portablize` + `clauderig/internal/project`.)
+- **Value-based rewrite** (Desktop sessions, `git-worktrees.json`): walk the JSON
+  and rewrite any string value that resolves under a *known mapped prefix*
+  (`$HOME`, mapped repo roots), leaving unmapped/system paths (`/tmp`) untouched.
+  Robust to fields beyond `cwd`/`originCwd` — a census found `planPath`, permission
+  `ruleContent`, and added `directories[]` also carry paths (see Q4).
 
 Default mapping is the **home convention** (`~/Git` ⇄ `C:\Users\John\Git`, tail
 identical = halyard's "portable" case). Overridable: custom home dir + explicit
 per-path rewrites (halyard's per-OS literal + machine override). When a target
 path doesn't exist yet (repo not cloned), **restore anyway** so a later
-`git clone` lands the user ready to go (`PathStatus.Unconfigured` → write-anyway).
+`git clone` lands the user ready to go (`StatusUnconfigured` → write-anyway).
+
+### Manifest
+
+`sync` writes a small `clauderig-manifest.json` recording, per project, the
+**portable cwd template** (`$HOME/Git/x`) — extracted once via the bounded scan
+above. `restore` then reads **only the manifest** to rewrite slugs, reopening
+**zero transcripts** (decoupling restore from Claude Code's transcript format).
+The manifest also stamps the producing **Claude Code version** (skew warning) and
+the **source OS**, and is the natural home for the Desktop `claude-code-sessions`
+cwd mappings (Q4).
 
 ## Retention & repo shape
 
-- **30-day** working-tree window on `projects/` (≈ all of John's current 467 MB;
-  the byte/​session curve is shallow past 14d but 30d is fine under the orphan
-  scheme).
+- **30-day** working-tree window on `projects/`, enforced two ways: sync skips
+  *copying* transcripts older than the window, AND **prunes already-staged files
+  that have since aged out** (deepest-first, removing emptied dirs). So it's a true
+  rolling window, not just "don't add old" — and a project deleted or gone idle on
+  any machine ages out globally, so stale slugs don't accumulate. Pruned slugs are
+  dropped from the manifest too.
 - **Two branches**: `main` = config (precious, tiny, full history kept);
-  `history` = **orphan branch** for `projects/`, **periodically squashed** to a
-  single root commit so `.git` never grows past the working tree. Transcript sync
-  history is disposable — squashing loses nothing that matters.
+  `history` = **orphan branch** for `projects/`, squashed to a single root commit
+  so `.git` never grows past the working tree. Transcript sync history is
+  disposable — squashing loses nothing that matters.
+- **Squash trigger: size-based (Q3).** Squash when the `history` branch's packed
+  git footprint exceeds **2× the retained working-tree size** (self-tunes to your
+  actual churn), with a floor (skip below ~500 MB — not worth the rewrite).
+  Preferred over a time-based cron because it tracks the thing we care about
+  (repo size) directly.
 
 ## Transport
 
-Plain **git** — works with any remote, so transport stays remote-agnostic.
-"GitHub" only enters as the bootstrap convenience: use `gh` to create the private
-repo. (A hosted clauderig backend is a possible v2; not v1.)
+Plain **git** for push/pull. But the remote is **hard-gated to a verified-private
+repo, no exceptions** (`internal/ghrepo`): the synced data is your Claude Code
+state and must never land somewhere public or unverifiable. A remote is accepted
+only when a provider CLI confirms it's private — **GitHub via `gh`, GitLab via
+`glab`** (dispatched by host). Other hosts are refused (can't verify privacy). `init` offers **create a new private repo via
+`gh repo create --private`** or **use an existing private repo** (verified);
+`config set-remote` applies the same gate. Every failure mode — `gh` absent,
+non-GitHub URL, unverifiable, or public — is refused; the only way to have no
+verified-private remote is to have **no remote** (local-only staging). (A hosted
+clauderig backend / non-GitHub private-repo support is possible v2; not v1.)
 
 ## Triggers
 
@@ -135,16 +168,31 @@ clobber**: pull is safe-fast-forward-or-skip, push is best-effort. Only explicit
 
 ## Conflict resolution
 
-git auto-merges non-conflicting files (the common case across machines). **Last
-writer wins** is only the *fallback* on a true same-file conflict — simultaneous
-multi-machine editing is explicitly **out of scope**. Append-only JSONL deltas
-cleanly, so transcript conflicts are rare.
+git auto-merges non-conflicting files (the common case across machines).
+Simultaneous multi-machine editing is explicitly **out of scope**. For true
+same-file conflicts, the strategy is **content-aware, keyed by file type** (idea
+lifted from claude-sync's merge engine, but keyed on git content — **not mtime**,
+which is fragile across machines with clock/checkout skew):
+
+| Pattern | Strategy | Why |
+|---|---|---|
+| `memory/**`, `MEMORY.md` | **append-union** (dedup) | memory is append-y; latest-wins would silently drop entries |
+| `settings*`, `skills/**`, `commands/**` | latest-wins | declarative; newest intent should win |
+| `projects/**` (`*.jsonl`) | append | append-only logs delta + union cleanly |
+| anything else | latest-wins (safe default) | |
+
+A **lock file** prevents the watcher and a hook from racing into a concurrent
+sync (lifted from claude-sync).
 
 ## Restore safety
 
 First `clauderig restore` onto a non-empty `~/.claude`: **user chooses** back-up-
 then-proceed or abort. Non-interactive contexts (hooks/CI) **default to abort**.
 Flags: `--backup`, `--force`.
+
+Mechanism: a **pre-sync snapshot** is taken before any tree-touching pull/restore
+(lifted from claude-sync) so every operation is rollback-able. Snapshots are
+pruned to the N most recent.
 
 ## Version skew
 
@@ -164,16 +212,151 @@ other rigs (cobra/fang/huh/lipgloss, MIT, goreleaser entry). Generalized into
 - The allowlist/rewrite-rule model is clauderig-specific; keep it in the module
   unless a second consumer appears.
 
+## Interactive UI
+
+Stack: cobra + fang + huh + lipgloss + bubbletea (rigsmith standard). Model is
+**hub + focused TUIs** (matches `changerig`): a `clauderig ui` dashboard for
+at-a-glance status/actions, plus dedicated TUIs for the heavy flows. Every command
+also runs **non-interactive/scriptable** when piped or given flags (TUIs are
+gated on a TTY).
+
+### `clauderig ui` — hub dashboard (bubbletea)
+At-a-glance: remote reachability, local/behind status, last sync, per-root file
+state, device registry. Hotkeys dispatch to the focused TUIs.
+```
+ clauderig                          machine: johns-mbp (macOS)
+ ────────────────────────────────────────────────────────────
+  Remote    github.com/john/claude-sync      ✓ reachable
+  Status    ● 3 local changes · 1 behind remote
+  Last sync 2h ago · pushed from johns-mbp
+  Roots
+   ~/.claude                  142 files   ✓ clean
+   ~/Library/…/Claude           6 files   ● 2 changed
+  Devices
+   johns-mbp (this) 2h ago   work-pc 1d   linux-box 3d
+  [s] sync  [r] restore  [d] diff  [p] path-map  [c] config  [q] quit
+```
+
+### `clauderig init` — first-run wizard (huh, ~5 steps)
+remote (create via `gh` / paste URL) → machine identity + home maps → roots &
+retention → secrets confirm (shows what will be stripped) → install hooks? →
+first sync. Idempotent; re-running reconfigures without destroying config.
+
+### `clauderig sync` — progress (bubbletea spinner stream)
+Streams the pipeline so redaction/secret-scan/rewrite are visible, not magic:
+```
+  ✓ Snapshot taken (rollback-able)
+  ✓ Redacted 3 secret fields from settings.json
+  ✓ Secret scan: clean
+  ⠹ Rewriting 14 project slugs → portable form
+  ⠹ Pushing → origin/main
+  ✓ Synced · 8 changed · 0 conflicts
+```
+
+### `clauderig restore` — preview + safety (huh)
+Shows path rewrites and the write/skip set **before** touching the tree, then the
+non-empty-target choice (default abort under no-TTY):
+```
+ restore ─ preview onto work-pc (Windows)
+  Path rewrites   $HOME/Git/rigsmith → C:\Users\John\Git\rigsmith  (+47 slugs)
+  Write 142 files (config + 30d history) · skip sessions/, file-history/
+  ~/.claude is non-empty:  (•) Back up to ~/.claude.bak and proceed  ( ) Abort
+```
+
+### Conflict resolution — **per-file select, with mergetool escape hatch**
+True conflicts are rare (simultaneous editing out of scope). A huh prompt per
+conflicting file:
+```
+ Conflict: settings.json (both changed)
+  (•) Keep this machine's version
+  ( ) Keep remote (work-pc, 1h ago)
+  ( ) Open in $EDITOR
+  ( ) Send all conflicts to git mergetool
+```
+The last option delegates the whole conflict set to the user's configured
+`git mergetool` — no in-app diff viewer to build.
+
+### Path map — **config file canonical + editor in `ui`**
+The mapping lives in the config file (single source of truth that `pathmap`
+reads). An editor pane in `clauderig ui` (`[p]`) adds/edits home + per-OS +
+machine overrides with validation + cycle detection (halyard-style); the file
+always wins. `clauderig doctor` previews resolved rewrites and flags unmapped
+machines:
+```
+ clauderig doctor
+  $HOME → /Users/john ✓   work-pc C:\Users\John ✓
+  linux-box: UNMAPPED ⚠  (its sessions won't translate on restore)
+```
+
+## Prior art — what we lift, what's whitespace
+
+Reviewed the three leading community tools (2026-06-12).
+
+**`renefichtmueller/claude-sync`** (TS; pluggable backends, merge engine — the most
+ambitious). **Lift:** content-aware per-file merge strategies (see Conflict
+resolution); pre-sync snapshot + rollback; a sync **lock file**; a per-device
+**registry** (last-sync timestamps → good `status`). **Its gaps = our edge:** it
+copies the whole tree minus `.git`, so `.credentials.json` is **pushed in
+plaintext by default** (encryption off by default, README never warns); its
+`SelectiveSyncConfig` include/exclude is **defined but never wired** (you can't
+actually exclude anything); **no path correction**; transcripts synced **uncapped**;
+`latest-wins` keyed on **mtime** (clock-skew fragile).
+
+**`elizabethfuentes12/claude-code-dotfiles`** (AWS author, but really a README
+tutorial — 5 files, no binary). **Lift:** the empty-commit guard
+(`git diff --cached --quiet` → skip); `git -C` discipline (never `cd`); the
+idempotent **mirror-with-deletion** pattern from its `sync-to-kiro.sh` (Claude
+commands → Kiro steering files, GC orphans) → generalize into pluggable
+**exporters** (v2). **Instructive bugs:** its gitignore lists `credentials.json`
+**without the leading dot**, so the real `~/.claude/.credentials.json` is never
+matched and **gets committed** — the canonical case for *never matching secrets by
+filename*; its `!`-allowlist lines are **inert** (it's actually a denylist); and
+its two exclude lists (`gitignore` vs `git add`) had already **drifted**
+(`skills/` in one, missing the other).
+
+**`miwidot/ccms`** (bash, rsync-over-SSH, no git history). **Lift:** SHA256
+integrity check; automatic backup before every pull. Otherwise a history-less
+mirror — no path correction, manual excludes.
+
+**Design rules these confirm:**
+- **One allowlist as the single source of truth**, driving *both* what's copied
+  and the generated `.gitignore` — so the two can never drift (the dotfiles bug).
+- **Strip secrets by content/field + known paths + entropy tripwire**, never by
+  fragile filename match (the `.credentials.json` miss).
+- **Path correction and transcript retention are the real white space** — no
+  reviewed tool does either.
+
 ## Open questions
 
-1. **Q1 — `sessions/*.json` exclusion.** Believed safe to exclude (PID-keyed live
-   registry; durable mapping is in `projects/` + `claude-code-sessions/`). **Verify
-   empirically**: on the next machine move, restore *without* it and confirm
-   `--resume`/`--continue` still lists everything. If not, it joins the allowlist.
-2. **Q2 — `file-history/` (92 MB).** Excluded v1. Worth an opt-in flag for users
-   who want rewind/checkpoint continuity across machines?
-3. **Q3 — squash cadence.** Time-based (weekly) vs size-based (when `history`
-   branch exceeds N MB) vs on-restore-prune. Pick before building retention.
-4. **Q4 — `claude-code-sessions` resume fidelity.** Does rewriting only
-   `cwd`/`originCwd` fully restore Desktop/Cowork session resumability, or are
-   there nested path refs? Spike alongside Q1.
+1. ~~**Q1 — `sessions/*.json` exclusion.**~~ **RESOLVED (2026-06-12, spike): safe to
+   exclude.** Evidence: (a) only 6 registry files vs 307 transcripts — resume can't
+   be registry-driven; (b) the registry references sessionIds with no transcript on
+   disk — it's a live-process list, not a resume index; (c) transcripts self-contain
+   `cwd`/`timestamp`/`gitBranch` — all a picker needs; (d) **decisive isolated test**:
+   with `CLAUDE_CONFIG_DIR` containing only one transcript and **no `sessions/`**,
+   `claude --resume <id>` resolved the session (advanced past lookup to the auth
+   gate), while a bogus id returned `No conversation found with session ID`. So
+   `projects/<slug>/*.jsonl` is the resume source of truth. **Side-finding:** auth
+   did **not** carry into a fresh config dir even on macOS (`Not logged in`) —
+   empirically confirms the "strip secrets, re-auth per device" model.
+2. ~~**Q2 — `file-history/` opt-in.**~~ **RESOLVED: killed.** 92 MB rewind cache,
+   not needed for resume — permanently excluded, no opt-in flag.
+3. ~~**Q3 — squash cadence.**~~ **RESOLVED: size-based** — squash the `history`
+   branch when its packed footprint exceeds 2× retained working-tree size (floor
+   ~500 MB). See Retention & repo shape.
+4. **Q4 — `claude-code-sessions` resume fidelity.** *Approach decided (2026-06-12
+   census), now **BUILT**.* The rewrite surface is broader than `cwd`/`originCwd` —
+   also `planPath`, permission `ruleContent`, and added `directories[]` — so the
+   rewriter is **value-based**: `pathmap.PortablizeJSONValues` (sync) rewrites any
+   string under a known mapped prefix to `$HOME/…`; `pathmap.ResolveJSONValues`
+   (restore) resolves `$`-templates to the target, leaving unmapped/system paths
+   (`/tmp`) and non-path values untouched. Applied to every `.json` in both roots
+   (so `settings.json` paths translate too). **Completeness verified on real data**
+   by a gated e2e (`TestE2E_DesktopRewriteCompleteOnRealData`): it round-trips this
+   machine's actual Desktop session files (portablize → resolve onto another OS)
+   and asserts **zero** values retain a source-home path. That test *found* a real
+   gap — a permission `ruleContent` written as `//Users/john/Git/x/**` — now fixed
+   (`Portablize` collapses a leading slash-run, so the `//`-prefixed glob matches);
+   re-run shows 0 residual across all session files. **Still manual (non-blocking):**
+   whether the Electron app itself resumes after rewrite — drive it by hand; the
+   data-completeness half is automated.

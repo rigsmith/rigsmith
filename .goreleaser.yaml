@@ -50,6 +50,22 @@ builds:
     ldflags:
       - -s -w  # add a version seam in release/main when relrig needs self-update
 
+  - id: clauderig
+    dir: ./clauderig
+    main: .
+    binary: clauderig
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
   # --- uncomment when the changerig binary lands ---
   # - id: changerig
   #   dir: ./changerig        # or ./release if it ships from that module
@@ -72,6 +88,17 @@ archives:
     ids:
       - rig
     name_template: "rig_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+  - id: clauderig
+    ids:
+      - clauderig
+    name_template: "clauderig_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
     format_overrides:
