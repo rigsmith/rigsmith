@@ -25,9 +25,9 @@ const (
 
 // pickWorkspaceVerbTarget asks which package a bare dev verb should act on. When
 // offerAll is set (verbs that support --all) an "All packages" entry leads the
-// list (→ the --all dashboard); otherwise (e.g. `run`, single-target) it's
-// omitted. Each package shows as name · path · ecosystem. Returns pickAll,
-// pickCancel, or a task index.
+// list (→ the --all dashboard); otherwise it's omitted. Each package shows as
+// aligned columns: name · ecosystem · path. Returns pickAll, pickCancel, or a
+// task index. (`run` uses the grouped pickRunTarget instead.)
 func pickWorkspaceVerbTarget(verb string, tasks []allTask, offerAll bool) int {
 	choice := 0
 	opts := make([]huh.Option[int], 0, len(tasks)+1)
@@ -35,8 +35,13 @@ func pickWorkspaceVerbTarget(verb string, tasks []allTask, offerAll bool) int {
 		choice = pickAll
 		opts = append(opts, huh.NewOption("All packages", pickAll))
 	}
+	nameW, ecoW := 0, 0
+	for _, t := range tasks {
+		nameW = max(nameW, runeLen(t.name))
+		ecoW = max(ecoW, runeLen(t.eco))
+	}
 	for i, t := range tasks {
-		opts = append(opts, huh.NewOption(t.name+"  ("+t.rel+" · "+t.eco+")", i))
+		opts = append(opts, huh.NewOption(pickColumns(t.name, t.eco, taskPath(t), nameW, ecoW), i))
 	}
 	title := strings.ToUpper(verb[:1]) + verb[1:] + " which?"
 	sel := huh.NewSelect[int]().Title(title).Options(opts...).Value(&choice)

@@ -34,12 +34,72 @@ var isBuiltinVerb = map[string]bool{
 	"publish": true, "default": true, "setup": true, "completion": true,
 }
 
+// scriptEntry is one runnable script rig surfaces: a .rig.json custom command, a
+// package.json script, or a Go scripts//cmd verb. It is the shared source for
+// both the top-level `rig <name>` subcommands (scriptEntryCmds) and the `run`
+// picker's Scripts group (discoverScripts), so a script runs identically however
+// it is invoked. eco/loc populate the picker's ecosystem and path columns.
+type scriptEntry struct {
+	name        string // the verb name
+	eco         string // source: "custom", "node", "go"
+	loc         string // where it is defined, for the picker's path column
+	short       string // the cobra command's help line
+	annotations map[string]string
+	run         func(cmd *cobra.Command, args []string) error
+}
+
+// scriptEntryCmds turns script entries into rig subcommands. Unknown flags fall
+// through to the underlying command while rig's own --dry-run/--quiet still bind.
+func scriptEntryCmds(entries []scriptEntry) []*cobra.Command {
+	var cmds []*cobra.Command
+	for _, e := range entries {
+		e := e
+		cmds = append(cmds, &cobra.Command{
+			Use:                e.name,
+			Short:              e.short,
+			Annotations:        e.annotations,
+			FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return e.run(cmd, args)
+			},
+		})
+	}
+	return cmds
+}
+
+// discoverScripts aggregates every runnable script at root for the `run` picker,
+// applying the same precedence as the command wiring: a custom command wins over
+// a package.json script of the same name, which wins over a Go scripts//cmd
+// verb. Built-in verbs are already excluded by each source.
+func discoverScripts(root string, cfg config.Config) []scriptEntry {
+	var out []scriptEntry
+	seen := map[string]bool{}
+	add := func(entries []scriptEntry) {
+		for _, e := range entries {
+			if seen[e.name] {
+				continue
+			}
+			seen[e.name] = true
+			out = append(out, e)
+		}
+	}
+	add(customScripts(cfg))
+	add(nodeScripts(root))
+	add(goScripts(root))
+	return out
+}
+
 // customCmds turns each .rig.json "commands" entry into a rig subcommand.
 // A string entry runs through the shell (`sh -c`), an argv array is exec'd
 // directly, and the object form applies its per-OS override (macos | windows |
 // linux), per-command env, and cwd. Names that collide with a built-in verb
 // are skipped so the dev loop always wins.
 func customCmds(cfg config.Config) []*cobra.Command {
+	return scriptEntryCmds(customScripts(cfg))
+}
+
+// customScripts builds the script entries for the .rig.json custom commands.
+func customScripts(cfg config.Config) []scriptEntry {
 	if len(cfg.Commands) == 0 {
 		return nil
 	}
@@ -49,26 +109,29 @@ func customCmds(cfg config.Config) []*cobra.Command {
 	}
 	sort.Strings(names)
 
-	var cmds []*cobra.Command
+	loc := ".rig.json"
+	if cfg.Path != "" {
+		loc = filepath.Base(cfg.Path)
+	}
+	var entries []scriptEntry
 	for _, name := range names {
 		if isBuiltinVerb[name] {
 			continue
 		}
 		name, def := name, cfg.Commands[name]
-		cmds = append(cmds, &cobra.Command{
-			Use:   name,
-			Short: customShort(name, def),
-			// Let unknown flags fall through to the command while rig's own
-			// --dry-run/--quiet still bind.
-			FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
-			RunE: func(cmd *cobra.Command, args []string) error {
+		entries = append(entries, scriptEntry{
+			name:  name,
+			eco:   "custom",
+			loc:   loc,
+			short: customShort(name, def),
+			run: func(cmd *cobra.Command, args []string) error {
 				cwd, _ := os.Getwd()
 				root := resolveRoot(cwd)
 				return runCustom(cmd, cfg, root, name, def, args)
 			},
 		})
 	}
-	return cmds
+	return entries
 }
 
 // customShort picks the help line for a custom command: its description if it
@@ -185,6 +248,11 @@ func shellInvocation(line string, args []string) (display string, argv []string)
 // the Node rig's scripts→verbs. Each runs `<pm> run <script>` (package-manager
 // detected) with any extra args forwarded.
 func scriptCmds(root string) []*cobra.Command {
+	return scriptEntryCmds(nodeScripts(root))
+}
+
+// nodeScripts builds the script entries for a Node repo's package.json scripts.
+func nodeScripts(root string) []scriptEntry {
 	data, err := os.ReadFile(filepath.Join(root, "package.json"))
 	if err != nil {
 		return nil
@@ -203,24 +271,24 @@ func scriptCmds(root string) []*cobra.Command {
 	}
 	sort.Strings(names)
 
-	var cmds []*cobra.Command
+	var entries []scriptEntry
 	for _, name := range names {
 		if isBuiltinVerb[name] {
 			continue // a built-in dev verb already maps this
 		}
 		script := name
-		cmds = append(cmds, &cobra.Command{
-			Use:                script,
-			Short:              "Script: " + pkg.Scripts[script],
-			GroupID:            "",
-			FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
-			RunE: func(cmd *cobra.Command, args []string) error {
+		entries = append(entries, scriptEntry{
+			name:  script,
+			eco:   "node",
+			loc:   "package.json",
+			short: "Script: " + pkg.Scripts[script],
+			run: func(cmd *cobra.Command, args []string) error {
 				argv := append([]string{pm, "run", script}, args...)
 				return runCommand(cmd, root, argv)
 			},
 		})
 	}
-	return cmds
+	return entries
 }
 
 // goScriptCmds surfaces runnable Go tools that the workspace declares under a
@@ -235,13 +303,18 @@ func scriptCmds(root string) []*cobra.Command {
 // or cmd/. Names colliding with a built-in verb are skipped so the dev loop
 // always wins.
 func goScriptCmds(root string) []*cobra.Command {
+	return scriptEntryCmds(goScripts(root))
+}
+
+// goScripts builds the script entries for the workspace's Go scripts//cmd verbs.
+func goScripts(root string) []scriptEntry {
 	dirs := goWorkUseDirs(root)
 	if len(dirs) == 0 {
 		return nil
 	}
 	sort.Strings(dirs)
 
-	var cmds []*cobra.Command
+	var entries []scriptEntry
 	seen := map[string]bool{}
 	for _, rel := range dirs {
 		if top := firstSegment(rel); top != "scripts" && top != "cmd" {
@@ -256,18 +329,19 @@ func goScriptCmds(root string) []*cobra.Command {
 		}
 		seen[name] = true
 		rel := rel
-		cmds = append(cmds, &cobra.Command{
-			Use:                name,
-			Short:              "Script: go run ./" + rel,
-			Annotations:        map[string]string{scriptVerbAnnotation: "1"},
-			FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
-			RunE: func(cmd *cobra.Command, args []string) error {
+		entries = append(entries, scriptEntry{
+			name:        name,
+			eco:         "go",
+			loc:         rel,
+			short:       "Script: go run ./" + rel,
+			annotations: map[string]string{scriptVerbAnnotation: "1"},
+			run: func(cmd *cobra.Command, args []string) error {
 				argv := append([]string{"go", "run", "./" + rel}, args...)
 				return runCommand(cmd, root, argv)
 			},
 		})
 	}
-	return cmds
+	return entries
 }
 
 // goWorkUseEntry matches one `./path` entry of a go.work `use` block, whether
