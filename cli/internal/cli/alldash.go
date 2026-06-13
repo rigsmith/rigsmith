@@ -11,10 +11,34 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 )
+
+// Sentinels returned by pickWorkspaceVerbTarget alongside a real task index.
+const (
+	pickAll    = -1 // "All packages" → the --all dashboard
+	pickCancel = -2 // the user aborted the picker
+)
+
+// pickWorkspaceVerbTarget asks which package a bare dev verb should act on: an
+// "All packages" entry (→ the --all dashboard) followed by each package
+// (name · path · ecosystem). Returns pickAll, pickCancel, or a task index.
+func pickWorkspaceVerbTarget(verb string, tasks []allTask) int {
+	choice := pickAll
+	opts := make([]huh.Option[int], 0, len(tasks)+1)
+	opts = append(opts, huh.NewOption("All packages", pickAll))
+	for i, t := range tasks {
+		opts = append(opts, huh.NewOption(t.name+"  ("+t.rel+" · "+t.eco+")", i))
+	}
+	title := strings.ToUpper(verb[:1]) + verb[1:] + " which?"
+	if err := huh.NewSelect[int]().Title(title).Options(opts...).Value(&choice).Run(); err != nil {
+		return pickCancel
+	}
+	return choice
+}
 
 // The live `--all` dashboard. The dev verb runs across every workspace package
 // in topo order; instead of streaming each package's output straight to the

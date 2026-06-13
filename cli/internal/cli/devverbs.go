@@ -70,6 +70,14 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			if verb == "test" && eco == detect.DotNet && len(args) > 0 {
 				return runDotnetTest(cmd, root, args, false)
 			}
+			// A bare verb at a workspace root (packages only in subdirs) has no
+			// single target — offer a picker instead of running a doomed root
+			// command. Only for --all-capable verbs.
+			if supportsAll && len(args) == 0 {
+				if handled, herr := offerWorkspaceChoice(cmd, root, verb); handled {
+					return herr
+				}
+			}
 			argv, ok := detect.CommandFor(eco, verb, root)
 			if !ok {
 				return fmt.Errorf("verb %q has no mapping for ecosystem %q yet", verb, eco)
@@ -168,6 +176,51 @@ func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) err
 		}
 	}
 	return nil
+}
+
+// offerWorkspaceChoice handles a bare dev verb at a workspace root: when packages
+// live only in subdirectories (no buildable package at the root) and several
+// exist, running the verb at the root has no single target. On an interactive
+// terminal it offers a picker ("All packages" → the --all dashboard, or one
+// package); off a TTY it returns a helpful error. handled=false lets the normal
+// root command run (single-package repos, or a package at the root).
+func offerWorkspaceChoice(cmd *cobra.Command, root, verb string) (handled bool, err error) {
+	targets := topoSort(filterTargets(discoverWorkspace(cdContext(cmd), root, excludeFor(root)), ""))
+	var tasks []allTask
+	rootHasPackage := false
+	for _, t := range targets {
+		rel, rerr := filepath.Rel(root, t.Dir)
+		if rerr != nil {
+			rel = t.Dir
+		}
+		if rel == "." {
+			rootHasPackage = true
+		}
+		argv, ok := devCommandFor(t, verb, root)
+		if !ok {
+			continue
+		}
+		tasks = append(tasks, allTask{name: t.Name, eco: t.Eco, dir: t.Dir, rel: rel, argv: argv})
+	}
+	// A buildable package at the root, or ≤1 runnable: the normal root command is
+	// the right thing — let it run.
+	if rootHasPackage || len(tasks) <= 1 {
+		return false, nil
+	}
+	if !interactive() {
+		return true, fmt.Errorf(
+			"no single %s target here — this is a workspace root with %d packages; run `rig %s --all` or `rig %s <project>`",
+			verb, len(tasks), verb, verb)
+	}
+	switch choice := pickWorkspaceVerbTarget(verb, tasks); choice {
+	case pickCancel:
+		return true, nil
+	case pickAll:
+		return true, runAcrossDashboard(cmd, tasks, verb)
+	default:
+		t := tasks[choice]
+		return true, runCommand(cmd, t.dir, t.argv)
+	}
 }
 
 func filterNote(filter string) string {
