@@ -17,6 +17,9 @@ import (
 // warnStyle marks warning-level doctor checks (yellow).
 var warnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 
+// ecoHeaderStyle is the per-ecosystem group header (bold cyan).
+var ecoHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
+
 // docLevel is a check's severity. Only docError fails the command.
 type docLevel int
 
@@ -57,8 +60,14 @@ func newDoctorCmd() *cobra.Command {
 				// Live checklist: each check spins until its probe resolves.
 				severity = runDoctorLive(cmd, checks)
 			} else {
-				// Static path (CI / piped / --quiet): run and print each line.
+				// Static path (CI / piped / --quiet): run and print each line,
+				// grouped under an ecosystem header.
+				lastEco := ""
 				for _, pc := range checks {
+					if pc.eco != lastEco {
+						fmt.Fprintln(out, ecoHeaderStyle.Render(ecoDisplayName(pc.eco)))
+						lastEco = pc.eco
+					}
 					c := pc.run()
 					if c.level > severity {
 						severity = c.level
@@ -91,19 +100,39 @@ func bad(label, detail string) check  { return check{docError, label, detail} }
 // pendingCheck is a check whose label is known up front but whose result comes
 // from running it (a probe that may shell out). The live checklist shows the
 // label with a spinner, then fills in the result; the static path just runs it.
+// eco is the owning ecosystem id, used to group the output.
 type pendingCheck struct {
+	eco   string
 	label string
 	run   func() check
 }
 
 // gatherChecks builds the ordered list of deferred checks across the detected
-// ecosystems.
+// ecosystems, tagging each with its ecosystem so the output can be grouped.
 func gatherChecks(cmd *cobra.Command, root string, ecos []string) []pendingCheck {
 	var all []pendingCheck
 	for _, eco := range ecos {
-		all = append(all, checksFor(cmd, eco, root)...)
+		for _, pc := range checksFor(cmd, eco, root) {
+			pc.eco = eco
+			all = append(all, pc)
+		}
 	}
 	return all
+}
+
+// ecoDisplayName is the human header for an ecosystem group.
+func ecoDisplayName(eco string) string {
+	switch eco {
+	case detect.Go:
+		return "Go"
+	case detect.Node:
+		return "Node"
+	case detect.DotNet:
+		return ".NET"
+	case detect.Cargo:
+		return "Cargo"
+	}
+	return eco
 }
 
 // detectEcosystems lists the ecosystem ids that apply at root by checking
@@ -143,20 +172,20 @@ func checksFor(cmd *cobra.Command, eco, root string) []pendingCheck {
 
 func goChecks(cmd *cobra.Command, root string) []pendingCheck {
 	return []pendingCheck{
-		{"go", func() check {
+		{label: "go", run: func() check {
 			if v, present := probeVersion(cmd, root, "go", "version"); present {
 				return ok2("go", strings.TrimPrefix(v, "go version "))
 			}
-			return bad("go", "go not found on PATH")
+			return bad("go", "the `go` command isn't on your PATH — install Go")
 		}},
-		{"module", func() check {
+		{label: "module", run: func() check {
 			switch {
 			case exists(filepath.Join(root, "go.work")):
-				return ok("module", "go.work present")
+				return ok("module", "go.work workspace")
 			case exists(filepath.Join(root, "go.mod")):
-				return ok("module", "go.mod present")
+				return ok("module", "go.mod module")
 			default:
-				return warn("module", "no go.mod/go.work found")
+				return warn("module", "no go.mod or go.work here")
 			}
 		}},
 	}
@@ -165,58 +194,56 @@ func goChecks(cmd *cobra.Command, root string) []pendingCheck {
 func nodeChecks(cmd *cobra.Command, root string) []pendingCheck {
 	pm := string(detect.DetectNodePM(root))
 	return []pendingCheck{
-		{"node", func() check {
+		{label: "node", run: func() check {
 			if v, present := probeVersion(cmd, root, "node", "--version"); present {
 				return ok2("node", v)
 			}
-			return bad("node", "node not found on PATH")
+			return bad("node", "the `node` runtime isn't on your PATH — install Node.js")
 		}},
-		{"pm", func() check {
+		{label: pm, run: func() check {
 			if v, present := probeVersion(cmd, root, pm, "--version"); present {
-				return ok2("pm", pm+" "+v)
+				return ok2(pm, pm+" "+v)
 			}
-			return bad("pm", pm+" not found on PATH")
+			return bad(pm, fmt.Sprintf("package manager %q isn't on your PATH (detected from the lockfile)", pm))
 		}},
-		{"package", func() check {
-			if exists(filepath.Join(root, "package.json")) {
-				return ok("package", "package.json present")
+		{label: "deps", run: func() check {
+			switch {
+			case !nodeHasDependencies(root):
+				return ok("deps", "no dependencies declared")
+			case exists(filepath.Join(root, "node_modules")):
+				return ok("deps", "installed (node_modules present)")
+			default:
+				return warn("deps", "dependencies declared but not installed — run `rig install`")
 			}
-			return warn("package", "no package.json")
-		}},
-		{"install", func() check {
-			if exists(filepath.Join(root, "node_modules")) {
-				return ok("install", "node_modules present")
-			}
-			return warn("install", "not installed — run `rig install`")
 		}},
 	}
 }
 
 func dotnetChecks(cmd *cobra.Command, root string) []pendingCheck {
 	return []pendingCheck{
-		{"dotnet", func() check {
+		{label: "dotnet", run: func() check {
 			sdk, present := probeVersion(cmd, root, "dotnet", "--version")
 			if !present {
-				return bad("dotnet", "dotnet not found on PATH")
+				return bad("dotnet", "the `dotnet` SDK isn't on your PATH — install the .NET SDK")
 			}
 			pin := readSdkPin(root)
 			switch {
 			case pin == "":
-				return ok2("dotnet", sdk)
+				return ok2("dotnet", "SDK "+sdk)
 			case sdkSatisfies(sdk, pin):
-				return ok2("dotnet", fmt.Sprintf("%s (global.json pins %s)", sdk, pin))
+				return ok2("dotnet", fmt.Sprintf("SDK %s (satisfies global.json pin %s)", sdk, pin))
 			default:
-				return bad("dotnet", fmt.Sprintf("%s — global.json pins %s", sdk, pin))
+				return bad("dotnet", fmt.Sprintf("SDK %s is installed, but global.json pins %s — install that SDK", sdk, pin))
 			}
 		}},
-		{"layout", func() check {
+		{label: "project", run: func() check {
 			switch {
 			case hasSolution(root):
-				return ok("layout", "solution present")
+				return ok("project", "solution (.sln) present")
 			case hasCsproj(root):
-				return ok("layout", "project(s) present")
+				return ok("project", "project file(s) present")
 			default:
-				return warn("layout", "no solution or project found")
+				return warn("project", "no .sln or .csproj here")
 			}
 		}},
 	}
@@ -224,19 +251,37 @@ func dotnetChecks(cmd *cobra.Command, root string) []pendingCheck {
 
 func cargoChecks(cmd *cobra.Command, root string) []pendingCheck {
 	return []pendingCheck{
-		{"cargo", func() check {
+		{label: "cargo", run: func() check {
 			if v, present := probeVersion(cmd, root, "cargo", "--version"); present {
 				return ok2("cargo", strings.TrimPrefix(v, "cargo "))
 			}
-			return bad("cargo", "cargo not found on PATH")
+			return bad("cargo", "the `cargo` command isn't on your PATH — install Rust (rustup)")
 		}},
-		{"manifest", func() check {
+		{label: "manifest", run: func() check {
 			if exists(filepath.Join(root, "Cargo.toml")) {
 				return ok("manifest", "Cargo.toml present")
 			}
-			return warn("manifest", "no Cargo.toml")
+			return warn("manifest", "no Cargo.toml here")
 		}},
 	}
+}
+
+// nodeHasDependencies reports whether the root package.json declares any
+// (dev)dependencies — used to keep the "deps not installed" warning quiet for a
+// project that has nothing to install.
+func nodeHasDependencies(root string) bool {
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err != nil {
+		return false
+	}
+	var pj struct {
+		Deps map[string]string `json:"dependencies"`
+		Dev  map[string]string `json:"devDependencies"`
+	}
+	if json.Unmarshal(data, &pj) != nil {
+		return false
+	}
+	return len(pj.Deps) > 0 || len(pj.Dev) > 0
 }
 
 // ok2 is ok() with the detail already trimmed — a small helper so version

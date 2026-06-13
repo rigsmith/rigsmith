@@ -21,6 +21,7 @@ func doctorLiveEligible() bool {
 }
 
 type docRow struct {
+	eco    string
 	label  string
 	done   bool
 	result check
@@ -46,7 +47,7 @@ func newDoctorModel(checks []pendingCheck) doctorModel {
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	rows := make([]docRow, len(checks))
 	for i, c := range checks {
-		rows[i] = docRow{label: c.label}
+		rows[i] = docRow{eco: c.eco, label: c.label}
 	}
 	return doctorModel{pending: checks, rows: rows, spin: sp}
 }
@@ -94,7 +95,12 @@ func (m doctorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m doctorModel) View() string {
 	var b []byte
+	lastEco := ""
 	for _, r := range m.rows {
+		if r.eco != lastEco {
+			b = append(b, (ecoHeaderStyle.Render(ecoDisplayName(r.eco)) + "\n")...)
+			lastEco = r.eco
+		}
 		var glyph, detail string
 		if r.done {
 			glyph = renderMark(r.result.level)

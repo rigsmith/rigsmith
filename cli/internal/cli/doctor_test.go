@@ -104,3 +104,27 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestNodeHasDependencies(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) {
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if nodeHasDependencies(dir) {
+		t.Error("no package.json → no dependencies")
+	}
+	write(`{"name":"x"}`)
+	if nodeHasDependencies(dir) {
+		t.Error("package.json without deps → false")
+	}
+	write(`{"dependencies":{"left-pad":"^1"}}`)
+	if !nodeHasDependencies(dir) {
+		t.Error("dependencies present → true")
+	}
+	write(`{"devDependencies":{"vitest":"^2"}}`)
+	if !nodeHasDependencies(dir) {
+		t.Error("devDependencies present → true")
+	}
+}
