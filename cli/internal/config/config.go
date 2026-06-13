@@ -72,6 +72,12 @@ type Config struct {
 	// default and naming custom verbs' aliases (e.g. "coverage": "c").
 	Aliases map[string]string `json:"aliases,omitempty"`
 
+	// Tools maps an optional external tool's name to how rig handles it when
+	// it's missing: "auto" (default — use if present, offer to install on a
+	// TTY), "off" (never use / never ask), or "install" (acquire without
+	// asking). See docs/EXTERNAL-TOOLS.md.
+	Tools map[string]string `json:"tools,omitempty"`
+
 	// Path is the resolved location the config was loaded from, "" if none.
 	Path string `json:"-"`
 	// Warnings collects non-fatal load problems (malformed file degraded to
@@ -101,12 +107,13 @@ type Coverage struct {
 	Full      *bool    `json:"full,omitempty"`      // default: full multi-file report
 	Min       *float64 `json:"min,omitempty"`       // default line-coverage gate
 
-	// ReportGenerator selects how the rich HTML report is produced:
+	// ReportGenerator selects how the rich HTML report is produced (the
+	// extTool mode for ReportGenerator — see docs/EXTERNAL-TOOLS.md):
 	//   "auto"     (default) use ReportGenerator if it's already present
 	//              (PATH global tool or local tool-manifest), else the native
 	//              per-ecosystem fallback;
 	//   "off"      never use ReportGenerator — always the native fallback;
-	//   "download" use ReportGenerator, fetching it on demand (dnx) if missing.
+	//   "install"  use ReportGenerator, fetching it on demand (dnx) if missing.
 	ReportGenerator string `json:"reportGenerator,omitempty"`
 	// ReportTypes overrides ReportGenerator's -reporttypes (default "Html").
 	ReportTypes string `json:"reportTypes,omitempty"`
@@ -346,6 +353,7 @@ func Merge(base, overlay Config) Config {
 		Env:            mergeDict(base.Env, overlay.Env),
 		Commands:       mergeDict(base.Commands, overlay.Commands),
 		Aliases:        mergeDict(base.Aliases, overlay.Aliases),
+		Tools:          mergeDict(base.Tools, overlay.Tools),
 		Exclude:        mergeList(base.Exclude, overlay.Exclude),
 		Quiet:          quiet,
 		Path:           path,
@@ -475,7 +483,7 @@ func mergePublish(base, overlay *Publish) *Publish {
 var knownKeys = []string{
 	"$schema", "solution", "defaultProject", "ecosystem", "test", "coverage",
 	"kill", "rebuild", "publish", "env", "envPresets", "commands", "aliases",
-	"exclude", "quiet", "dotnet", "node",
+	"tools", "exclude", "quiet", "dotnet", "node",
 }
 
 // UnknownKey is a top-level key rig doesn't recognize, with the closest known

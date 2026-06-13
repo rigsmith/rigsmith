@@ -333,6 +333,9 @@ func runGoCoverage(cmd *cobra.Command, root string, argv []string, min *float64,
 // paths the rig table/--browse use don't apply to Cargo. The optional
 // `rig coverage <name>` token is ignored (as for Go).
 func runCargoCoverage(cmd *cobra.Command, root string, argv []string, min *float64, open bool) error {
+	if _, err := toolCargoLlvmCov.require(cmd, root); err != nil {
+		return err
+	}
 	if min != nil {
 		argv = append(argv, "--fail-under-lines", trimFloat(*min))
 	}
