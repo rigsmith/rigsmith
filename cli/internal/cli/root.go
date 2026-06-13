@@ -100,6 +100,17 @@ func Execute(ctx context.Context) error {
 		root.AddCommand(customCmds(cfg)...)
 	}
 	root.AddCommand(scriptCmds(repoRoot)...)
+	// Go script-dir verbs are added last and never override an already-surfaced
+	// command (a custom command or a package.json script keeps its name).
+	taken := map[string]bool{}
+	for _, c := range root.Commands() {
+		taken[c.Name()] = true
+	}
+	for _, c := range goScriptCmds(repoRoot) {
+		if !taken[c.Name()] {
+			root.AddCommand(c)
+		}
+	}
 
 	// Pre-parse pipeline, mirroring the .NET rig: a leading `watch`/`w` modifier
 	// expands to a --watch flag on the target verb, then an unambiguous verb
@@ -112,6 +123,11 @@ func Execute(ctx context.Context) error {
 	}
 	verbs := make([]string, 0, len(root.Commands()))
 	for _, c := range root.Commands() {
+		// Script-directory verbs are exact-match only: keep them out of prefix
+		// resolution so a typo can't expand into repo-provided code.
+		if c.Annotations[scriptVerbAnnotation] != "" {
+			continue
+		}
 		verbs = append(verbs, c.Name())
 	}
 	head = resolvePrefix(expandWatch(head), verbs)
