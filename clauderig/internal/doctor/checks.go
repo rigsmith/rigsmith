@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/clauderig/internal/claudemd"
+	"github.com/rigsmith/clauderig/internal/config"
 	"github.com/rigsmith/clauderig/internal/ghrepo"
 	"github.com/rigsmith/clauderig/internal/gitignore"
 	"github.com/rigsmith/clauderig/internal/gitrepo"
@@ -39,11 +40,22 @@ func checkGh(ctx context.Context) Result {
 }
 
 func checkCode(ctx context.Context) Result {
-	if !look("code") {
-		return Result{Name: "code (VS Code CLI)", Status: Warn, Detail: "not on PATH",
-			Hint: "`clauderig worktree open` can't launch a window; in VS Code run “Shell Command: Install 'code' command in PATH”"}
+	// The worktree opener is configurable (worktree.openCmd); check whatever
+	// program it resolves to, defaulting to VS Code's `code`.
+	openCmd := config.DefaultWorktreeOpenCmd
+	if cfg, err := config.LoadOrDefault(); err == nil {
+		openCmd = cfg.WorktreeOpenCmd()
 	}
-	return Result{Name: "code (VS Code CLI)", Status: OK, Detail: "available"}
+	prog := openCmd[0]
+	name := fmt.Sprintf("%s (worktree opener)", prog)
+	if !look(prog) {
+		hint := fmt.Sprintf("`clauderig worktree open` can't launch a window with %q", prog)
+		if prog == "code" {
+			hint = "`clauderig worktree open` can't launch a window; in VS Code run “Shell Command: Install 'code' command in PATH”, or set another opener with `clauderig config set-worktree-opener`"
+		}
+		return Result{Name: name, Status: Warn, Detail: "not on PATH", Hint: hint}
+	}
+	return Result{Name: name, Status: OK, Detail: "available"}
 }
 
 func checkClauderigOnPath(_ context.Context) Result {

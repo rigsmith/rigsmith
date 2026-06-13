@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/rigsmith/core/pathmap"
 )
@@ -58,6 +59,23 @@ type Root struct {
 	Location pathmap.Cascade `json:"location"`
 }
 
+// Worktree configures `clauderig worktree`. It's a pointer on Config so an
+// unconfigured install serializes nothing here and falls through to the
+// defaults (auto-open in a new VS Code window).
+type Worktree struct {
+	// AutoOpen controls whether `worktree new` opens the new sibling checkout in
+	// a separate window for review. Defaults to true; set false to just print the
+	// path (the per-run equivalent is `worktree new --no-open`). It's a pointer so
+	// an explicit false is distinguishable from "unset" (which means the default).
+	AutoOpen *bool `json:"autoOpen,omitempty"`
+	// OpenCmd is the command used to open a worktree for review. The worktree path
+	// is appended as the final argument, so the value is the program plus any
+	// flags — e.g. "code -n" (the default), "cursor -n", "code-insiders -n",
+	// "subl -n", "idea". It is whitespace-split into argv and run directly (no
+	// shell), so quotes/pipes/globs are not interpreted.
+	OpenCmd string `json:"openCmd,omitempty"`
+}
+
 // Config is the clauderig configuration document.
 type Config struct {
 	Schema    int                `json:"schema"`
@@ -73,6 +91,35 @@ type Config struct {
 	// FRESH machine (no projects yet) — auto-wiring a new computer. It deliberately
 	// never restores over an established machine (would churn/clobber).
 	AutoRestore bool `json:"autoRestore,omitempty"`
+	// Worktree configures `clauderig worktree` (auto-open and what to open). Nil
+	// when unconfigured; read it through the WorktreeAutoOpen/WorktreeOpenCmd
+	// accessors, which apply the defaults.
+	Worktree *Worktree `json:"worktree,omitempty"`
+}
+
+// DefaultWorktreeOpenCmd is the command `worktree` uses to open a checkout for
+// review when none is configured: a new VS Code window (`code -n <path>`).
+var DefaultWorktreeOpenCmd = []string{"code", "-n"}
+
+// WorktreeAutoOpen reports whether `worktree new` should open a review window.
+// Defaults to true when unset.
+func (c *Config) WorktreeAutoOpen() bool {
+	if c.Worktree != nil && c.Worktree.AutoOpen != nil {
+		return *c.Worktree.AutoOpen
+	}
+	return true
+}
+
+// WorktreeOpenCmd returns the configured open command as argv (program + flags),
+// or DefaultWorktreeOpenCmd when unset/blank. The worktree path is appended by
+// the caller.
+func (c *Config) WorktreeOpenCmd() []string {
+	if c.Worktree != nil {
+		if fields := strings.Fields(c.Worktree.OpenCmd); len(fields) > 0 {
+			return fields
+		}
+	}
+	return append([]string{}, DefaultWorktreeOpenCmd...)
 }
 
 // Default returns a config with the standard roots and retention, no machines or

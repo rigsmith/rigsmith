@@ -100,17 +100,65 @@ another verb under them.
 ## `clauderig worktree` — the safe way to branch
 
 ```sh
-clauderig worktree new <branch>   # sibling checkout off the repo's mainline + new VS Code window
+clauderig worktree new <branch>   # sibling checkout off the repo's mainline + new review window
 clauderig worktree new fix/x --base release-1 --no-open
-clauderig worktree list           # ls this repo's worktrees
-clauderig worktree open <branch>  # (re)open a worktree's window for review
-clauderig worktree rm <branch>    # remove the worktree (branch is kept)
+clauderig worktree list           # ls this repo's worktrees (alias: ls)
+clauderig worktree open <branch>  # (re)open a worktree's window for review (branch or path)
+clauderig worktree rm <branch>    # remove the worktree (branch is kept; -f if it has changes)
 ```
+
+The command group is also aliased `clauderig wt`.
 
 Worktrees live at `<parent>/<repo>-worktrees/<branch>` — a **sibling** of the repo,
 so they never clutter the primary checkout's file tree, and each has its own folder
-path (its own review-window history). `new` **never moves this session's cwd**; it
-prints the path and opens a separate window with `code -n`.
+path (its own review-window history). The branch name is sanitized to one path
+segment, so `feat/x` lands in `…-worktrees/feat-x` (not a nested `feat/x`).
+
+`new` **never moves this session's cwd**: it adds the worktree, prints the path,
+and opens it in a *separate* window for review. Flags:
+
+- `--base <branch>` — fork the new branch from `<branch>` instead of the repo's
+  mainline. If the branch already exists, it's checked out as-is (no `--base`).
+- `--no-open` — skip the review window for this run and just print the path.
+
+`open` takes either a branch name (resolved to its sibling path) or a path
+directly, so you can re-open a window any time. `rm` removes the checkout but
+keeps the branch (so the PR is unaffected); add `-f`/`--force` if it has
+uncommitted changes.
+
+### Configuring the review window
+
+Auto-open and *what* gets opened are configurable — by default `new` opens a new
+VS Code window (`code -n <path>`). Override either in `~/.clauderig/config.json`:
+
+```sh
+clauderig config set-worktree-open false          # never auto-open (like --no-open every time)
+clauderig config set-worktree-opener "cursor -n"  # open Cursor instead of VS Code
+clauderig config set-worktree-opener "code-insiders -n"
+clauderig config set-worktree-opener ""           # reset to the default (code -n)
+```
+
+This writes a `worktree` block:
+
+```json
+"worktree": {
+  "autoOpen": false,
+  "openCmd": "cursor -n"
+}
+```
+
+- **`autoOpen`** (default `true`) — whether `new` opens a window at all. When
+  off, `new` just prints the path and the `code -n …` hint; `--no-open` is the
+  per-run equivalent. (`worktree open` is an explicit request and always opens,
+  regardless of this setting.)
+- **`openCmd`** (default `code -n`) — the program plus any flags. The worktree
+  path is appended as the final argument and the command is run **directly, with
+  no shell**, so pipes/globs/quotes aren't interpreted. Examples: `code -n`,
+  `cursor -n`, `code-insiders -n`, `subl -n`, `idea`.
+
+When the opener's program isn't on `PATH`, `new`/`open` fall back to printing the
+command to run, and `clauderig doctor` flags it (checking whichever program your
+`openCmd` resolves to).
 
 ## The CLAUDE.md guide — teach every Claude context
 

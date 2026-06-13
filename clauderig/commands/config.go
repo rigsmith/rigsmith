@@ -4,11 +4,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/rigsmith/clauderig/internal/config"
 	"github.com/rigsmith/clauderig/internal/ghrepo"
 	"github.com/spf13/cobra"
 )
+
+// saveConfig writes cfg to the config dir, creating the dir if needed.
+func saveConfig(cfg *config.Config) error {
+	dir, err := config.Dir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return config.Save(cfg, dir)
+}
 
 // NewConfigCmd builds the `config` command group — view the config and change the
 // sync remote. set-remote enforces the same private-repo gate as init.
@@ -82,6 +95,53 @@ func NewConfigCmd() *cobra.Command {
 					return err
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "%s autoRestore = %v\n", OkStyle.Render("✓"), on)
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "set-worktree-open <true|false>",
+			Short: "Set whether `worktree new` auto-opens a review window",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				on := args[0] == "true" || args[0] == "1" || args[0] == "yes"
+				cfg, err := config.LoadOrDefault()
+				if err != nil {
+					return err
+				}
+				if cfg.Worktree == nil {
+					cfg.Worktree = &config.Worktree{}
+				}
+				cfg.Worktree.AutoOpen = &on
+				if err := saveConfig(cfg); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s worktree.autoOpen = %v\n", OkStyle.Render("✓"), on)
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "set-worktree-opener <command…>",
+			Short: "Set the command `worktree` uses to open a review window (path appended); blank resets to `code -n`",
+			Long: "Set the command `clauderig worktree` runs to open a checkout for review.\n" +
+				"The worktree path is appended as the final argument, so pass the program\n" +
+				"plus any flags — e.g. \"code -n\" (default), \"cursor -n\", \"code-insiders -n\",\n" +
+				"\"subl -n\", \"idea\". It runs directly (no shell). Pass an empty string to\n" +
+				"reset to the default.",
+			Args: cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				cfg, err := config.LoadOrDefault()
+				if err != nil {
+					return err
+				}
+				if cfg.Worktree == nil {
+					cfg.Worktree = &config.Worktree{}
+				}
+				cfg.Worktree.OpenCmd = strings.TrimSpace(args[0])
+				if err := saveConfig(cfg); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s worktree opener = %s\n", OkStyle.Render("✓"),
+					strings.Join(cfg.WorktreeOpenCmd(), " "))
 				return nil
 			},
 		},

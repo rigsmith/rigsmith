@@ -66,9 +66,9 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
 | `guard` | PreToolUse hook: require worktrees/PRs, block cwd-moving worktree tools (wired by `project`/`local`) |
-| `worktree` | `new` / `list` / `open` / `rm` sibling worktrees, opened in their own VS Code window |
+| `worktree` | `new` / `list` / `open` / `rm` sibling worktrees, opened in their own review window (configurable; alias `wt`) |
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md block standalone (e.g. `--global`) |
-| `config` | `show` / `set-remote` / `set-prune` |
+| `config` | `show` / `set-remote` / `set-prune` / `set-autorestore` / `set-worktree-open` / `set-worktree-opener` |
 | `doctor` | Health-check environment + sync + worktree discipline; `--fix` repairs, or pick fixes interactively |
 | `ui` | Interactive dashboard |
 
