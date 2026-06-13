@@ -30,7 +30,7 @@ func newWatchCmd() *cobra.Command {
 // .NET rig's `run --watch` / `test --watch` at any flag position).
 func runWatchVerb(cmd *cobra.Command, verb string, rest []string) error {
 	cwd, _ := os.Getwd()
-	root := detect.Root(cwd)
+	root := resolveRoot(cwd)
 
 	// Optional project selector: a first token naming a package scopes the
 	// watch to that package's directory.

@@ -21,7 +21,7 @@ func newUICmd() *cobra.Command {
 		Short: "Interactive menu",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			if _, err := resolvePrimary(cwd, detect.Root(cwd)); err != nil {
+			if _, err := resolvePrimary(cwd, resolveRoot(cwd)); err != nil {
 				return err
 			}
 			res, err := tea.NewProgram(newMenu()).Run()
@@ -112,7 +112,7 @@ var (
 
 func newMenu() menuModel {
 	cwd, _ := os.Getwd()
-	root := detect.Root(cwd)
+	root := resolveRoot(cwd)
 	eco, err := resolvePrimary(cwd, root)
 	primary := eco
 	if err != nil {

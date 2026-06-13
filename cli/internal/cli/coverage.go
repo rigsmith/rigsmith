@@ -60,7 +60,7 @@ func newCoverageCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			root := detect.Root(cwd)
+			root := resolveRoot(cwd)
 
 			eco, err := resolveCoverageEcosystem(cwd, root)
 			if err != nil {

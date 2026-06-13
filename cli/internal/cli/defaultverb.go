@@ -25,7 +25,7 @@ func newDefaultCmd() *cobra.Command {
 		ValidArgsFunction: runnableProjectCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			root := detect.Root(cwd)
+			root := resolveRoot(cwd)
 			var query string
 			if len(args) == 1 {
 				query = strings.TrimSpace(args[0])

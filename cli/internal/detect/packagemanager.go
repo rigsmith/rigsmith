@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 
@@ -38,6 +39,23 @@ func DetectNodePM(root string) NodePM {
 	return NPM
 }
 
+// NodeHasScript reports whether dir/package.json defines the named script.
+// Used to keep `rebuild` tolerant of a node project without a `clean` script.
+func NodeHasScript(dir, name string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return false
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(data, &pkg) != nil {
+		return false
+	}
+	_, ok := pkg.Scripts[name]
+	return ok
+}
+
 // nodeScript maps a dev-loop verb to its package.json script name.
 var nodeScript = map[string]string{
 	plugin.VerbBuild:     "build",
@@ -47,6 +65,10 @@ var nodeScript = map[string]string{
 	plugin.VerbLint:      "lint",
 	plugin.VerbTypecheck: "typecheck",
 	plugin.VerbCoverage:  "coverage",
+	// Node has no canonical clean — there's no standard output dir to assume.
+	// Map it to the project's own `clean` script (in its package.json), the
+	// same convention as build/test/format; absent, the pm reports it plainly.
+	plugin.VerbClean: "clean",
 }
 
 // nodeCommand returns the argv for a verb under the given package manager,
