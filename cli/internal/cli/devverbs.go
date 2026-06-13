@@ -48,11 +48,11 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			if watch {
 				return runWatchVerb(cmd, verb, args)
 			}
-			// `rig run --pick` (no project arg) always opens the grouped picker —
-			// even when a single target would otherwise run directly — listing
-			// every runnable package and surfaced script. With an explicit project
-			// arg the arg wins (matched below).
-			if pick && verb == "run" && len(args) == 0 {
+			// `--pick` (no project arg) always opens the picker — even when a single
+			// target would otherwise run directly. `run` lists every runnable
+			// package and surfaced script; the --all verbs list every package (with
+			// "All packages"). With an explicit project arg the arg wins (below).
+			if pick && len(args) == 0 && (supportsAll || verb == "run") {
 				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll, true); handled {
 					return herr
 				}
@@ -114,8 +114,12 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 	if watchableVerb(verb) {
 		cmd.Flags().BoolVarP(&watch, "watch", "w", false, "run in the ecosystem's watch mode (re-run on change)")
 	}
-	if verb == "run" {
-		cmd.Flags().BoolVarP(&pick, "pick", "p", false, "always open the picker (choose a package or script to run)")
+	if supportsAll || verb == "run" {
+		usage := "always open the picker (choose a package)"
+		if verb == "run" {
+			usage = "always open the picker (choose a package or script to run)"
+		}
+		cmd.Flags().BoolVarP(&pick, "pick", "p", false, usage)
 	}
 	presets = registerPresetFlags(cmd)
 	return cmd
@@ -212,8 +216,8 @@ func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) err
 // handled=false lets the normal root command run (single-package repos, or a
 // package at the root).
 //
-// forcePick (only `rig run --pick`) always shows the picker: a runnable root
-// package and the surfaced scripts are included even when one obvious target
+// forcePick (`--pick`) always shows the picker: a runnable root package (and,
+// for `run`, the surfaced scripts) is included even when one obvious target
 // exists, and a single candidate still opens the picker rather than running.
 func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, forcePick bool) (handled bool, err error) {
 	targets := topoSort(filterTargets(discoverWorkspace(cdContext(cmd), root, excludeFor(root)), ""))
@@ -250,10 +254,19 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 
 	if forcePick {
 		// `--pick`: always the picker, including a runnable root package.
-		if len(tasks)+len(scripts) == 0 {
-			return true, fmt.Errorf("nothing runnable here to pick from")
+		if verb == "run" {
+			if len(tasks)+len(scripts) == 0 {
+				return true, fmt.Errorf("nothing runnable here to pick from")
+			}
+			return offerRunChoice(cmd, tasks, scripts, true)
 		}
-		return offerRunChoice(cmd, tasks, scripts, true)
+		if len(tasks) == 0 {
+			return true, fmt.Errorf("no %s targets here to pick from", verb)
+		}
+		if !interactive() {
+			return true, fmt.Errorf("--pick needs an interactive terminal; run `rig %s <project>`", verb)
+		}
+		return dispatchVerbPick(cmd, verb, tasks, offerAll)
 	}
 
 	// A buildable package at the root, or nothing to offer: the normal root
@@ -280,6 +293,13 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 			"no single %s target here — this is a workspace root with %d packages; %s",
 			verb, len(tasks), hint)
 	}
+	return dispatchVerbPick(cmd, verb, tasks, offerAll)
+}
+
+// dispatchVerbPick shows the package picker for an --all-capable verb and runs
+// the choice: "All packages" → the --all dashboard, a package → its command,
+// cancel → nothing. Shared by the implicit multi-package case and `--pick`.
+func dispatchVerbPick(cmd *cobra.Command, verb string, tasks []allTask, offerAll bool) (handled bool, err error) {
 	switch choice := pickWorkspaceVerbTarget(verb, tasks, offerAll); choice {
 	case pickCancel:
 		return true, nil

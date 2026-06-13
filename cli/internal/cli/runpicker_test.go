@@ -86,12 +86,17 @@ func TestPickColumns_AlignsNameAndEco(t *testing.T) {
 	}
 }
 
-func TestRunCmd_HasPickFlagRunOnly(t *testing.T) {
+func TestDevVerbCmd_PickFlagScope(t *testing.T) {
+	// run and the --all-capable verbs expose --pick…
 	if devVerbCmd("run", "", false).Flags().Lookup("pick") == nil {
 		t.Error("`rig run` should expose a --pick flag")
 	}
-	if f := devVerbCmd("build", "", true).Flags().Lookup("pick"); f != nil {
-		t.Error("--pick is run-only; build should not have it")
+	if devVerbCmd("build", "", true).Flags().Lookup("pick") == nil {
+		t.Error("`rig build` (an --all verb) should expose a --pick flag")
+	}
+	// …but a single-target verb like rebuild (no --all, not run) does not.
+	if f := devVerbCmd("rebuild", "", false).Flags().Lookup("pick"); f != nil {
+		t.Error("rebuild has no workspace picker, so no --pick")
 	}
 }
 
@@ -103,6 +108,17 @@ func TestOfferWorkspaceChoice_ForcePickEmptyErrors(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "nothing runnable") {
 		t.Fatalf("--pick on an empty root err = %v, want a nothing-runnable error", err)
+	}
+}
+
+func TestOfferWorkspaceChoice_ForcePickEmptyVerb(t *testing.T) {
+	host, _ := newRunHost()
+	handled, err := offerWorkspaceChoice(host, t.TempDir(), "build", true, true)
+	if !handled {
+		t.Fatal("--pick must handle the verb (never falls through to a root command)")
+	}
+	if err == nil || !strings.Contains(err.Error(), "no build targets") {
+		t.Fatalf("`build --pick` on an empty root err = %v, want a no-targets error", err)
 	}
 }
 
