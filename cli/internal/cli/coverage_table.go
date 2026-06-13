@@ -54,6 +54,22 @@ func coverageTableEligible() bool {
 	return !quiet && !dryRun && term.IsTerminal(os.Stdout.Fd())
 }
 
+// presentCoverage shows the post-run coverage view: the interactive browser
+// when --browse is set (falling back to the static table if no per-line data
+// can be assembled), otherwise the static summary table. goProfile is the go
+// coverage profile path (go only; "" elsewhere).
+func presentCoverage(cmd *cobra.Command, eco, root, goProfile string, summary, browse bool) {
+	if browse {
+		if runCoverageBrowser(cmd, eco, root, goProfile) {
+			return
+		}
+		// No per-line data (e.g. node without lcov) — fall back to the table.
+	}
+	if summary || browse {
+		showCoverageSummary(cmd, eco, root, goProfile)
+	}
+}
+
 // showCoverageSummary renders the per-file coverage table for eco when one can
 // be assembled from the run's artifacts. Best-effort and silent on miss — the
 // table is a convenience, never a failure mode. goProfile is the go coverage
@@ -141,11 +157,11 @@ func coberturaFileCov(doc coberturaDoc) []fileCov {
 	return out
 }
 
-// goProfileFileCov parses a `go test -coverprofile` profile into per-file line
-// coverage, flattening statement blocks to line granularity (a line counts as
-// covered if any block touching it ran). Names are made repo-relative where the
-// module path resolves under root. Pure.
-func goProfileFileCov(profile, root string) []fileCov {
+// parseGoProfile parses a `go test -coverprofile` profile into per-file line
+// hits, flattening statement blocks to line granularity (a line takes the max
+// hit count of any block touching it). Returns the file→line→hits map and the
+// files in first-seen order. Pure.
+func parseGoProfile(profile string) (map[string]map[int]int, []string) {
 	files := map[string]map[int]int{} // file → line → max hits
 	var order []string
 	sc := bufio.NewScanner(strings.NewReader(profile))
@@ -191,6 +207,13 @@ func goProfileFileCov(profile, root string) []fileCov {
 			}
 		}
 	}
+	return files, order
+}
+
+// goProfileFileCov parses a go coverage profile into per-file line coverage.
+// Names are made repo-relative where the module path resolves under root. Pure.
+func goProfileFileCov(profile, root string) []fileCov {
+	files, order := parseGoProfile(profile)
 	out := make([]fileCov, 0, len(order))
 	for _, file := range order {
 		covered := 0

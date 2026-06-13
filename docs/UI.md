@@ -125,6 +125,29 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   it's a convenience, never a failure. Independent of `--min` (the gate still
   prints its own verdict) and `--open`.
 
+## `rig coverage --browse` — per-file/per-line browser (bubbletea + viewport)
+- **Trigger:** `rig coverage --browse` (`-b`) on an interactive terminal — the
+  in-terminal counterpart to `--open` (which renders the same thing as HTML in a
+  browser).
+- **What you see:** two views in one alt-screen program.
+  - **List:** the files (worst-covered first), each a selectable row with the
+    block bar and colored line-% — the summary table with a cursor. `↑/↓`/`j/k`
+    move, `g/G` jump to ends, `enter`/`→` opens the selected file.
+  - **Detail:** the file's source in a scrollable viewport, each line prefixed
+    with its number, a covered (`│` green) / uncovered (`✗` red, line tinted) /
+    non-executable (blank) marker and the hit count. `↑/↓`/pgup/pgdn scroll,
+    `esc`/`←` returns to the list. `q`/`ctrl+c` quits from either view.
+- **Where the per-line data comes from:** Cobertura (.NET), the `-coverprofile`
+  (go — a throwaway temp profile when `--open` isn't set), or **`lcov.info`**
+  (node — note: per-line needs lcov, not `coverage-summary.json`; rig requests
+  the lcov reporter for vitest automatically). Source files are resolved on disk
+  (the report's `<sources>` for .NET, the workspace module map for go, lcov's
+  `SF:` for node); a file whose source can't be located still shows its bare
+  line→hits ledger.
+- **Fallback:** when no per-line data can be assembled (e.g. a node runner that
+  emits neither lcov nor a summary), `--browse` falls back to the static summary
+  table. Uses the alt-screen, so it leaves no clutter in scrollback on exit.
+
 ## `rig doctor` — live checklist (bubbletea + bubbles)
 - **Trigger:** `rig doctor` on an interactive terminal (not `--quiet`/piped).
   Otherwise the static checklist prints.
@@ -329,6 +352,7 @@ flow below.
 | `default` picker | rig | huh select | `rig default` (TTY, ambiguous/bare) | print current |
 | Coverage RG prompt | rig | huh select | RG absent, TTY, dnx, auto | native report |
 | Coverage summary table | rig | lipgloss | after `rig coverage` (TTY, not `--no-summary`) | skipped |
+| Coverage browser | rig | bubbletea + viewport | `rig coverage --browse` (TTY) | static table |
 | `doctor` live checklist | rig | bubbletea + bubbles | `rig doctor` (TTY) | static checklist |
 | `kill` review-and-select | rig | huh multi-select | `rig kill` (TTY, not `--yes`) | kill all matches |
 | workspace-root picker | rig | huh select | bare verb at a multi-pkg root (TTY) | helpful error |
