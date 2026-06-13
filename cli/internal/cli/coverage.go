@@ -39,7 +39,7 @@ var (
 //   - dotnet → dotnet test --collect:"XPlat Code Coverage"
 //   - node   → <pm> run coverage
 //   - go     → go test -cover ./...
-//   - cargo  → (unsupported)
+//   - cargo  → cargo llvm-cov (see runCargoCoverage)
 //
 // --min <pct> gates line coverage (non-zero exit if below); --open opens the
 // produced HTML report when one can be located.
@@ -109,6 +109,12 @@ func newCoverageCmd() *cobra.Command {
 			// --min percent and a coverage profile for the report/summary/browser.
 			if eco == detect.Go {
 				return runGoCoverage(cmd, root, argv, effMin, open, summary, browse, cov)
+			}
+			// Cargo defers to cargo-llvm-cov, which prints its own per-file +
+			// TOTAL table and gates/reports natively (the rig summary table and
+			// --browse, built on Cobertura/Go profiles, don't cover Cargo yet).
+			if eco == detect.Cargo {
+				return runCargoCoverage(cmd, root, argv, effMin, open)
 			}
 			// Node: ensure the run emits the reporters --min/--open/the summary
 			// and browser need, and forward [name] to the test runner through `--`.
@@ -315,6 +321,35 @@ func runGoCoverage(cmd *cobra.Command, root string, argv []string, min *float64,
 			return nil
 		}
 		return reportMin(cmd, pct, *min)
+	}
+	return nil
+}
+
+// runCargoCoverage runs `cargo llvm-cov` (the cargo-llvm-cov subcommand). The
+// tool prints its own per-file and TOTAL coverage table, gates a minimum line
+// percentage natively via --fail-under-lines, and writes an HTML report under
+// target/llvm-cov/html with --html. rig therefore defers to it rather than
+// re-deriving a summary/browser, since the Cobertura- and Go-profile-based
+// paths the rig table/--browse use don't apply to Cargo. The optional
+// `rig coverage <name>` token is ignored (as for Go).
+func runCargoCoverage(cmd *cobra.Command, root string, argv []string, min *float64, open bool) error {
+	if min != nil {
+		argv = append(argv, "--fail-under-lines", trimFloat(*min))
+	}
+	if open {
+		argv = append(argv, "--html")
+	}
+	if err := runCommand(cmd, root, argv); err != nil {
+		return err
+	}
+	if dryRun {
+		return nil
+	}
+	if open {
+		report := filepath.Join(root, "target", "llvm-cov", "html", "index.html")
+		if fileExists(report) {
+			openPath(cmd, report)
+		}
 	}
 	return nil
 }

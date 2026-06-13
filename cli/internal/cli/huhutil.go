@@ -27,3 +27,9 @@ func runHuhSelect[T comparable](sel *huh.Select[T]) error {
 func runHuhMultiSelect[T comparable](ms *huh.MultiSelect[T]) error {
 	return huh.NewForm(huh.NewGroup(ms)).WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme()).Run()
 }
+
+// runHuhConfirm runs a single yes/no confirm with esc-to-cancel. The error is
+// non-nil on esc/ctrl+c (huh.ErrUserAborted), which callers treat as "declined".
+func runHuhConfirm(c *huh.Confirm) error {
+	return huh.NewForm(huh.NewGroup(c)).WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme()).Run()
+}

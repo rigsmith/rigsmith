@@ -159,15 +159,7 @@ func discoverOutdated(cmd *cobra.Command, eco, root string) (deps []outdatedDep,
 // pickOutdated shows the outdated deps in an (initially unchecked) multi-select
 // and returns the chosen ones. ok=false on esc/ctrl+c.
 func pickOutdated(deps []outdatedDep) (chosen []outdatedDep, ok bool) {
-	width := 0
-	for _, d := range deps {
-		if n := len(d.name); n > width {
-			width = n
-		}
-	}
-	if width > 40 {
-		width = 40
-	}
+	width := nameWidth(deps)
 	var selected []int
 	opts := make([]huh.Option[int], 0, len(deps))
 	for i, d := range deps {
