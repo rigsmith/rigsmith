@@ -12,8 +12,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
@@ -115,6 +118,115 @@ func TestCustomCommandWithNoSpecForThisOS_ErrorsCleanly(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no command defined for this OS") {
 		t.Fatalf("err = %v, want a clean no-spec-for-this-OS error", err)
 	}
+}
+
+// writeGoPkg creates root/rel with a single .go file declaring `package pkg`.
+func writeGoPkg(t *testing.T, root, rel, pkg string) {
+	t.Helper()
+	dir := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := "package " + pkg + "\n"
+	if pkg == "main" {
+		src += "func main() {}\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func cmdNames(cmds []*cobra.Command) []string {
+	names := make([]string, len(cmds))
+	for i, c := range cmds {
+		names[i] = c.Name()
+	}
+	sort.Strings(names)
+	return names
+}
+
+func TestGoScriptCmds_SurfacesDeclaredMainsUnderScriptsAndCmd(t *testing.T) {
+	root := t.TempDir()
+	// Declared in go.work and a runnable main under a conventional dir → a verb.
+	writeGoPkg(t, root, "scripts/dev-install", "main")
+	writeGoPkg(t, root, "cmd/gen", "main")
+	// Excluded: a library (not main), a main outside scripts//cmd/, a main whose
+	// name collides with a built-in verb, and a main NOT listed in go.work.
+	writeGoPkg(t, root, "scripts/lib", "lib")
+	writeGoPkg(t, root, "tools/x", "main")
+	writeGoPkg(t, root, "scripts/run", "main")
+	writeGoPkg(t, root, "scripts/undeclared", "main")
+	goWork := "go 1.26\n\nuse (\n\t./scripts/dev-install\n\t./cmd/gen\n\t./scripts/lib\n\t./tools/x\n\t./scripts/run\n)\n"
+	if err := os.WriteFile(filepath.Join(root, "go.work"), []byte(goWork), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmds := goScriptCmds(root)
+	if got, want := cmdNames(cmds), []string{"dev-install", "gen"}; !slicesEqual(got, want) {
+		t.Fatalf("verbs = %v, want %v (only declared scripts//cmd/ mains, no builtins/libs/undeclared)", got, want)
+	}
+	for _, c := range cmds {
+		if c.Annotations[scriptVerbAnnotation] == "" {
+			t.Errorf("%q missing the script-verb annotation (needed to keep it out of prefix-matching)", c.Name())
+		}
+	}
+}
+
+func TestGoScriptCmds_NoGoWorkIsNoOp(t *testing.T) {
+	if cmds := goScriptCmds(t.TempDir()); cmds != nil {
+		t.Fatalf("want nil without a go.work, got %d cmd(s)", len(cmds))
+	}
+}
+
+func TestGoScriptCmd_RunsGoRunFromRoot(t *testing.T) {
+	root := t.TempDir()
+	writeGoPkg(t, root, "scripts/dev-install", "main")
+	if err := os.WriteFile(filepath.Join(root, "go.work"),
+		[]byte("go 1.26\n\nuse ./scripts/dev-install\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmds := goScriptCmds(root)
+	if len(cmds) != 1 {
+		t.Fatalf("want 1 verb, got %d", len(cmds))
+	}
+	// --dry-run echoes the command instead of spawning the toolchain.
+	defer func(p bool) { dryRun = p }(dryRun)
+	dryRun = true
+	host, buf := newRunHost()
+	if err := cmds[0].RunE(host, []string{"--flag"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); !strings.Contains(got, "go run ./scripts/dev-install --flag") {
+		t.Fatalf("echo = %q, want it to run `go run ./scripts/dev-install` with forwarded args", got)
+	}
+}
+
+func TestIsGoMainPackage(t *testing.T) {
+	root := t.TempDir()
+	writeGoPkg(t, root, "ismain", "main")
+	writeGoPkg(t, root, "islib", "lib")
+	if !isGoMainPackage(filepath.Join(root, "ismain")) {
+		t.Error("package main not detected as runnable")
+	}
+	if isGoMainPackage(filepath.Join(root, "islib")) {
+		t.Error("a library package wrongly detected as runnable")
+	}
+	if isGoMainPackage(filepath.Join(root, "missing")) {
+		t.Error("a missing dir wrongly detected as runnable")
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestShellInvocationShapes(t *testing.T) {
