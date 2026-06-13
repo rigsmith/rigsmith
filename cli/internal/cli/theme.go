@@ -2,9 +2,9 @@ package cli
 
 import (
 	lgv2 "charm.land/lipgloss/v2"
-	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/core/brand"
+	"github.com/rigsmith/core/fang"
 )
 
 // The brand palette and theme constructors now live in the shared core/brand

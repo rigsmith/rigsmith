@@ -7,9 +7,9 @@ package cli
 import (
 	"context"
 
-	"github.com/charmbracelet/fang"
 	"github.com/rigsmith/changerig/commands"
 	"github.com/rigsmith/core/brand"
+	"github.com/rigsmith/core/fang"
 	"github.com/spf13/cobra"
 )
 
