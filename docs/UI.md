@@ -256,6 +256,33 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
 - **Note:** output is captured (combined stdout+stderr) to stream it into the
   rows, so child-process TTY coloring is lost — the tradeoff for the live view.
 
+## `rig init` — config wizard (huh form)
+- **Trigger:** `rig init` on an interactive terminal with no existing
+  `.rig.json`. `--yes`/`-y` (or a non-TTY) writes the plain scaffold instead;
+  an existing `.rig.json` is never overwritten.
+- **What you see:** a `Detected: …` summary line (per-ecosystem counts, e.g.
+  `3 Go modules · 2 Node packages · 1 .NET project`) above a short huh form,
+  seeded from what's detected:
+  - **Primary ecosystem** — a select of the ecosystems actually present (plus
+    `Auto-detect (don't pin)`), defaulting to the nearest one. This is the value
+    `resolvePrimary` reads to disambiguate a polyglot repo.
+  - **Solution** — shown only when several `.sln`/`.slnx` exist; a select (with
+    `(auto)`) of which one rig builds/discovers against.
+  - **Default project** — shown only when there are several runnable .NET
+    projects; a select (with `(none)`) of their short names.
+  - **Exclude from discovery?** — shown only when sample/example-ish dirs
+    (`examples`/`samples`/`fixtures`/`testdata`/`demo`/`e2e`/…) actually hold
+    packages; a multi-select to keep them out of `--all`/`doctor`.
+  - **Quiet by default?** — a confirm that sets `quiet` (suppress the `→ command`
+    echo).
+- **What it does:** writes a `.rig.json` scaffold (all keys shown) with the
+  chosen `ecosystem` / `solution` / `defaultProject` / `exclude` / `quiet` filled
+  in. Esc/ctrl+c cancels without writing. The conditional fields only appear when
+  the repo gives them something to choose, so a simple repo still sees just
+  ecosystem + quiet.
+- **Non-TTY / `--yes`:** the original behavior — the plain scaffold with empty
+  defaults.
+
 ## `rig setup` — shell-integration installer (not interactive)
 - **Trigger:** `rig setup [shell]`. Detects the shell, splices an idempotent
   marker block (the `rig()` cd wrapper + completion sourcing) into the rc file
@@ -417,6 +444,7 @@ flow below.
 | workspace-root picker | rig | huh select | bare verb at a multi-pkg root (TTY) | helpful error |
 | `--list-tests` spinner | rig | lipgloss anim | `rig test <q>` (.NET) | `…` line / silent |
 | `<verb> --all` dashboard | rig | bubbletea + bubbles | `rig build/test --all` (TTY) | plain sequential |
+| `init` wizard | rig | huh form | `rig init` (TTY, no `.rig.json`) | plain scaffold |
 | `setup` | rig | none (file I/O) | `rig setup` | (not interactive) |
 | `add` form | changerig/relrig | huh form | `add`, no flags | provide flags |
 | `ui` menu | changerig/relrig | bubbletea | `changerig ui` | fails fast |
