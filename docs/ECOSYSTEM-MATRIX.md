@@ -20,7 +20,7 @@ and are omitted.
 | test | ✅ | ✅ | ✅ | ✅ | |
 | run / dev | ✅ | ✅ | ✅ | ✅ | |
 | format / fmt | ✅ | ✅ | ✅ | ✅ | .NET→`dotnet format` or CSharpier (`dotnet.formatter` / `.csharpierrc` / tool-manifest); go→gofmt; cargo→`cargo fmt`; node→`format` script |
-| lint | ⚠️ | ✅ | ✅ | ✅ | go→`go vet`, cargo→clippy; .NET has no native lint verb |
+| lint | ✅ | ✅ | ✅ | ✅ | .NET→`dotnet format analyzers --verify-no-changes` (runs referenced Roslyn analyzers); go→`go vet`, cargo→clippy |
 | typecheck / check | ⚠️ | ✅ | ✅ | ✅ | go→`go vet`, cargo→`cargo check`; Go folds type-checking into vet |
 | clean | ✅ | — | ✅ | ✅ | Node has no canonical clean (maps to a `clean` script if present) |
 | rebuild / rb | ✅ | ✅ | ✅ | ✅ | clean→build seam (.NET also wipes bin/obj; Node skips clean when no script) |
@@ -62,8 +62,10 @@ dependents always cascade rather than gating on whether the bump stays in range.
 
 ## Remaining gaps (⚠️ above)
 
-- **.NET** `lint` / `typecheck` — no native SDK verb (`typecheck` would just be
-  `build`; `lint` would need an external analyzer).
+- **.NET** `typecheck` — no native SDK verb (`typecheck` would just be `build`).
+  `lint` maps to `dotnet format analyzers --verify-no-changes`, which surfaces
+  whatever Roslyn analyzers the project references (e.g. SonarAnalyzer.CSharp,
+  Meziantou.Analyzer); a repo with no analyzers referenced simply passes clean.
 - **Cargo** `dlx` — Cargo has no one-shot run equivalent (`cargo install` is
   persistent).
 - **Node** `clean` — npm has no canonical clean (maps to a project `clean`
