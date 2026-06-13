@@ -34,7 +34,9 @@ func (g BuiltinGenerator) Render(_ context.Context, req plugin.ChangelogRequest)
 	if groups == nil {
 		groups = config.DefaultChangelogGroups
 	}
-	return renderSections(req.Package.NewVersion, req.Changes, groups), nil
+	out := renderSections(req.Package.NewVersion, req.Changes, groups)
+	out += renderContributors(req.Contributors, req.ContributorsSection)
+	return out, nil
 }
 
 var _ plugin.ChangelogGenerator = BuiltinGenerator{}

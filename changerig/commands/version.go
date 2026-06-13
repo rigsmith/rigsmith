@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,7 +45,13 @@ func NewVersionCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 
-			changesets, err := changeset.Dir(ws.ChangesetDir, "")
+			// Discover first: commit-based versioning needs the package set to
+			// attribute commits before it can synthesize changesets.
+			pkgs, ecoOf, err := ws.Discover(cmd.Context())
+			if err != nil {
+				return err
+			}
+			changesets, fromCommits, err := ws.LoadChangesets(cmd.Context(), pkgs)
 			if err != nil {
 				return err
 			}
@@ -82,11 +89,6 @@ func NewVersionCmd() *cobra.Command {
 				return nil
 			}
 
-			pkgs, ecoOf, err := ws.Discover(cmd.Context())
-			if err != nil {
-				return err
-			}
-
 			// Split the run's changesets into consumed (released → deleted
 			// afterwards) and kept (every named package ignored → left for a
 			// future run). Mixed and unknown-package changesets are hard
@@ -96,17 +98,28 @@ func NewVersionCmd() *cobra.Command {
 				return err
 			}
 
-			// changelog-git / changelog-github enrichment: resolve the commit
-			// (and PR/author) that added each changeset and decorate the summary's
-			// first line before planning. Every lookup failure degrades to an
+			// changelog-git / changelog-github enrichment: decorate each summary's
+			// first line with its commit (and PR/author) before planning. For
+			// on-disk changesets that means finding the commit that ADDED the
+			// changeset file; for commit-derived changesets the source commit is
+			// already in hand (cs.Commit), so we decorate straight from it — better
+			// provenance, no archaeology. Every lookup failure degrades to an
 			// undecorated line — enrichment never fails the run.
 			setting := changelog.ParseSetting(ws.Config)
 			if setting.Kind != changelog.KindDefault {
-				ids := make([]string, 0, len(active))
+				fileIDs := make([]string, 0, len(active))
+				commitIDs := map[string]string{}
 				for _, cs := range active {
-					ids = append(ids, cs.ID)
+					if cs.Commit != "" {
+						commitIDs[cs.ID] = cs.Commit
+					} else {
+						fileIDs = append(fileIDs, cs.ID)
+					}
 				}
-				infos := changelog.Resolve(ids, setting, ws.Root, execRunner(cmd))
+				infos := changelog.Resolve(fileIDs, setting, ws.Root, execRunner(cmd))
+				for id, info := range changelog.ResolveFromCommits(commitIDs, setting, ws.Root, execRunner(cmd)) {
+					infos[id] = info
+				}
 				for _, cs := range active {
 					if info, ok := infos[cs.ID]; ok {
 						cs.Summary = changelog.RenderLine(cs.Summary, setting, &info)
@@ -153,6 +166,16 @@ func NewVersionCmd() *cobra.Command {
 			if dryRun {
 				fmt.Fprintln(out, DimStyle.Render("\n(dry run — no files written)"))
 				return nil
+			}
+
+			// Contributors section: resolve each changeset's author (from its
+			// source commit in commit mode, or the commit that added the file in
+			// changeset mode), then attach the per-package list — de-duplicated,
+			// run through the exclude/bot filter, sorted — to its module. Works
+			// for both versioning sources. Skipped on dry runs (above) since no
+			// changelog is written.
+			if ws.Config.Contributors.Enabled {
+				attachContributors(cmd, ws, plan, active, setting)
 			}
 
 			// The three @changesets generators (default, changelog-git,
@@ -213,10 +236,8 @@ func NewVersionCmd() *cobra.Command {
 				// Snapshot consumes changesets like a normal run (verified against
 				// @changesets v3.0.0-next.5); the run is throwaway because the
 				// working-tree changes are never committed.
-				for _, cs := range consumed {
-					_ = os.Remove(filepath.Join(ws.ChangesetDir, cs.ID+".md"))
-				}
-				fmt.Fprintf(out, "\nSnapshot-versioned %d package(s); removed %d changeset(s).\n", len(plan), len(consumed))
+				removed := removeConsumedFiles(ws.ChangesetDir, consumed)
+				fmt.Fprintf(out, "\nSnapshot-versioned %d package(s)%s.\n", len(plan), removedSuffix(removed, fromCommits))
 			case planner.ModePre:
 				for _, cs := range consumed {
 					pre.Changesets = append(pre.Changesets, cs.ID)
@@ -226,14 +247,12 @@ func NewVersionCmd() *cobra.Command {
 				}
 				fmt.Fprintf(out, "\nPrereleased %d package(s) (tag %q); changesets kept.\n", len(plan), pre.Tag)
 			default: // Normal, Exit
-				for _, cs := range consumed {
-					_ = os.Remove(filepath.Join(ws.ChangesetDir, cs.ID+".md"))
-				}
+				removed := removeConsumedFiles(ws.ChangesetDir, consumed)
 				if mode == planner.ModeExit {
 					_ = prestate.Remove(ws.ChangesetDir)
 					fmt.Fprintf(out, "\nGraduated %d package(s) to stable; exited prerelease mode.\n", len(plan))
 				} else {
-					fmt.Fprintf(out, "\nVersioned %d package(s); removed %d changeset(s).\n", len(plan), len(consumed))
+					fmt.Fprintf(out, "\nVersioned %d package(s)%s.\n", len(plan), removedSuffix(removed, fromCommits))
 				}
 			}
 			if len(kept) > 0 {
@@ -262,6 +281,124 @@ func NewVersionCmd() *cobra.Command {
 	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")
 	f.BoolVar(&independent, "independent", false, "version each package on its own changesets, writing inline (overrides a shared version file)")
 	return cmd
+}
+
+// attachContributors resolves the author behind each active changeset and sets
+// each releasing module's Contributors (deduped, excluded, sorted) so the
+// builtin changelog generator renders the "Contributors" section. The GitHub
+// repo for linking is the changelog-github setting's repo when present, else the
+// origin remote's slug — so links work even with the default changelog.
+func attachContributors(cmd *cobra.Command, ws *Workspace, plan []*planner.Module, active []*changeset.Changeset, setting changelog.Setting) {
+	repo := setting.Repo
+	if repo == "" {
+		repo = gitutil.GitHubRepoSlug(cmd.Context(), ws.Root)
+	}
+
+	ids := make([]string, 0, len(active))
+	known := map[string]string{}
+	for _, cs := range active {
+		ids = append(ids, cs.ID)
+		if cs.Commit != "" {
+			known[cs.ID] = cs.Commit
+		}
+	}
+	authorsByID := changelog.ResolveAuthors(ids, known, repo, ws.Root, execRunner(cmd))
+	section := ws.Config.Contributors.SectionHeading()
+
+	for _, m := range plan {
+		// Collect this package's contributors (commit author + any co-authors of
+		// every changeset naming it), de-duplicated by identity. The email is the
+		// merge key (most stable across name spellings); a later occurrence that
+		// carries a GitHub login upgrades an earlier bare entry — so a co-author
+		// who is elsewhere a commit author still gets linked.
+		byKey := map[string]*plugin.Author{}
+		var order []string
+		for _, cs := range active {
+			if !changesetNames(cs, m.Name) {
+				continue
+			}
+			for _, a := range authorsByID[cs.ID] {
+				if ws.Config.Contributors.IsContributorExcluded(a.Login, a.Name, a.Email) {
+					continue
+				}
+				key := contributorKey(a)
+				if existing, ok := byKey[key]; ok {
+					if existing.Login == "" && a.Login != "" {
+						existing.Login = a.Login
+					}
+					if existing.Name == "" {
+						existing.Name = a.Name
+					}
+					continue
+				}
+				// Drop the email before it reaches the changelog — it is never rendered.
+				byKey[key] = &plugin.Author{Name: a.Name, Login: a.Login}
+				order = append(order, key)
+			}
+		}
+		if len(order) == 0 {
+			continue
+		}
+		list := make([]plugin.Author, 0, len(order))
+		for _, k := range order {
+			list = append(list, *byKey[k])
+		}
+		sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+		m.Contributors = list
+		m.ContributorsSection = section
+	}
+}
+
+// changesetNames reports whether the changeset names the given package.
+func changesetNames(cs *changeset.Changeset, name string) bool {
+	for _, n := range cs.ChangedNames() {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// contributorKey is the de-duplication key for an author: email when known (the
+// most stable identity across name spellings and the only thing a co-author and
+// their own commits reliably share), else GitHub login, else name — all lowered.
+func contributorKey(a plugin.Author) string {
+	switch {
+	case a.Email != "":
+		return "email:" + strings.ToLower(a.Email)
+	case a.Login != "":
+		return "login:" + strings.ToLower(a.Login)
+	default:
+		return "name:" + strings.ToLower(a.Name)
+	}
+}
+
+// removeConsumedFiles deletes the on-disk changeset file backing each consumed
+// changeset, returning how many actually existed. Commit-derived changesets
+// have no file (their ID is a commit hash), so they are silently skipped —
+// keeping the "removed N changeset(s)" count honest in commits/both mode.
+func removeConsumedFiles(changesetDir string, consumed []*changeset.Changeset) int {
+	removed := 0
+	for _, cs := range consumed {
+		if err := os.Remove(filepath.Join(changesetDir, cs.ID+".md")); err == nil {
+			removed++
+		}
+	}
+	return removed
+}
+
+// removedSuffix renders the trailing clause of a version summary: how many
+// changeset files were removed, or "from commits" when the run had no files to
+// remove because its releases came from the commit log.
+func removedSuffix(removed int, fromCommits bool) string {
+	switch {
+	case removed > 0:
+		return fmt.Sprintf("; removed %d changeset(s)", removed)
+	case fromCommits:
+		return " from commits"
+	default:
+		return ""
+	}
 }
 
 // execRunner adapts os/exec to the injectable Runner seam shared by the
