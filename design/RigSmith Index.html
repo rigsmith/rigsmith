@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RigSmith — Brand System</title>
+<link rel="icon" type="image/svg+xml" href="marks/favicon.svg">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="marks.js"></script>
+<style>
+  :root{
+    --ink:#0E0E12; --ink-2:#15151b; --ink-3:#1c1c24;
+    --line:#26262f; --line-soft:#1d1d25;
+    --paper:#ECECEE; --muted:#8a8a96; --muted-2:#56565f;
+    --rig:oklch(0.70 0.15 250); --change:oklch(0.70 0.15 300);
+    --ship:oklch(0.70 0.15 150); --claude:oklch(0.70 0.15 55);
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--ink);color:var(--paper);font-family:var(--mono);line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh;}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 32px 90px;}
+  a{text-decoration:none;color:inherit;}
+  .wm{letter-spacing:-0.02em;white-space:nowrap;}
+  .wm b{font-weight:800;}.wm .lite{font-weight:400;color:var(--muted);}
+
+  .hero{position:relative;text-align:center;padding:96px 0 56px;overflow:hidden;}
+  .hero-bg{position:absolute;inset:0;z-index:0;pointer-events:none;
+    background:radial-gradient(60% 50% at 50% 0%, color-mix(in srgb,var(--rig) 12%, transparent), transparent 70%),
+      linear-gradient(var(--line-soft) 1px,transparent 1px),linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);
+    background-size:100% 100%,58px 58px,58px 58px;
+    -webkit-mask-image:radial-gradient(75% 70% at 50% 25%, #000 35%, transparent 80%);
+            mask-image:radial-gradient(75% 70% at 50% 25%, #000 35%, transparent 80%);}
+  .hero-in{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:24px;}
+  .eyebrow{font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--muted-2);}
+  .lockup{display:flex;align-items:center;gap:24px;}
+  .lockup svg{width:80px;height:80px;}
+  .lockup .wm{font-size:62px;}
+  .hero p{font-size:16px;color:var(--muted);max-width:60ch;margin:0;}
+  .hero p b{color:var(--paper);font-weight:600;}
+
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin:42px 0 24px;}
+  .sec-head .k{font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--rig);font-weight:700;}
+  .sec-head h2{font-size:18px;font-weight:600;margin:0;}
+  .sec-head .rule{flex:1;height:1px;background:var(--line);align-self:center;}
+
+  .hub-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+  .hub-card{position:relative;display:flex;align-items:center;gap:20px;border:1px solid var(--line);border-radius:16px;
+    background:var(--ink-2);padding:24px;overflow:hidden;transition:border-color .18s, transform .18s;}
+  .hub-card:hover{border-color:color-mix(in srgb,var(--accent) 55%, var(--line));transform:translateY(-2px);}
+  .hub-glow{position:absolute;width:220px;height:220px;border-radius:50%;right:-100px;top:-110px;background:var(--accent);filter:blur(60px);opacity:.13;}
+  .hub-icon{width:50px;height:50px;flex:none;position:relative;}
+  .hub-body{flex:1;position:relative;}
+  .hub-tag{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin-bottom:4px;}
+  .hub-name{font-size:17px;font-weight:700;letter-spacing:-0.01em;}
+  .hub-desc{font-size:13px;color:var(--muted);margin-top:5px;line-height:1.6;}
+  .hub-arrow{font-size:20px;color:var(--muted-2);flex:none;position:relative;transition:.18s;}
+  .hub-card:hover .hub-arrow{color:var(--accent);transform:translateX(3px);}
+
+  .files{margin-top:26px;border:1px solid var(--line-soft);border-radius:14px;background:var(--ink-2);padding:22px 24px;}
+  .files .fh{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted-2);margin-bottom:14px;}
+  .files .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 28px;}
+  .files .row{display:flex;justify-content:space-between;font-size:13px;border-bottom:1px solid var(--line-soft);padding:7px 0;}
+  .files .row code{color:var(--paper);}
+  .files .row .meta{color:var(--muted-2);}
+  @media(max-width:760px){.hub-grid,.files .grid{grid-template-columns:1fr;}.lockup .wm{font-size:42px;}.lockup svg{width:58px;height:58px;}}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="hero-bg"></div>
+  <div class="wrap hero-in">
+    <div class="eyebrow">brand system</div>
+    <div class="lockup">
+      <svg id="hub-mark" viewBox="0 0 100 100"></svg>
+      <span class="wm"><b>Rig</b>Smith</span>
+    </div>
+    <p>The complete identity for the <b>rig</b> family — one bracket mark, four tools, built from a single source so every surface stays in sync.</p>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="sec-head"><span class="k">·</span><h2>Deliverables</h2><span class="rule"></span></div>
+  <div class="hub-grid" id="hub-grid"></div>
+
+  <div class="files">
+    <div class="fh">Source &amp; exports</div>
+    <div class="grid">
+      <div class="row"><code>marks.js</code><span class="meta">mark system · single source</span></div>
+      <div class="row"><code>marks/*.svg</code><span class="meta">exportable marks + tiles</span></div>
+      <div class="row"><code>marks/favicon.svg</code><span class="meta">favicon</span></div>
+      <div class="row"><code>brand.js · landing.js · …</code><span class="meta">per-page render scripts</span></div>
+    </div>
+  </div>
+</div>
+
+<script src="hub.js"></script>
+</body>
+</html>

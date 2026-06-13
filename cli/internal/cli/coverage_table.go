@@ -379,7 +379,7 @@ func coverageBandStyle(pct float64) lipgloss.Style {
 	case pct >= 80:
 		return okStyle
 	case pct >= 50:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // yellow
+		return lipgloss.NewStyle().Foreground(brandYellow)
 	default:
 		return failStyle
 	}
