@@ -35,6 +35,112 @@ const (
 	Independent VersionStrategy = "independent"
 )
 
+// VersioningSource selects where a version run reads its release intent from.
+type VersioningSource string
+
+const (
+	// SourceChangesets (default, also "") consumes on-disk changeset files.
+	SourceChangesets VersioningSource = "changesets"
+	// SourceCommits synthesizes changesets from conventional commits since the
+	// last release.
+	SourceCommits VersioningSource = "commits"
+	// SourceBoth unions on-disk changesets with commit-derived ones.
+	SourceBoth VersioningSource = "both"
+)
+
+// Versioning configures commit-based versioning (knope-style). The zero value
+// is changeset mode, so existing repos are unaffected.
+type Versioning struct {
+	// Source is "changesets" (default), "commits", or "both".
+	Source VersioningSource `json:"source,omitempty"`
+	// Scopes optionally maps a conventional-commit scope to a package name, so
+	// `feat(core): …` attributes to the package aliased "core" regardless of
+	// which files it touched. A commit whose scope is absent from this map falls
+	// back to path-based attribution.
+	Scopes map[string]string `json:"scopes,omitempty"`
+}
+
+// CommitSource returns the normalized versioning source, defaulting an empty
+// value to changeset mode.
+func (c *Config) CommitSource() VersioningSource {
+	switch c.Versioning.Source {
+	case SourceCommits:
+		return SourceCommits
+	case SourceBoth:
+		return SourceBoth
+	default:
+		return SourceChangesets
+	}
+}
+
+// UsesCommits reports whether the run reads release intent from commits (either
+// "commits" or "both").
+func (c *Config) UsesCommits() bool {
+	s := c.CommitSource()
+	return s == SourceCommits || s == SourceBoth
+}
+
+// UsesChangesets reports whether the run reads on-disk changeset files (either
+// "changesets" or "both").
+func (c *Config) UsesChangesets() bool {
+	s := c.CommitSource()
+	return s == SourceChangesets || s == SourceBoth
+}
+
+// Contributors configures the trailing "❤️ Contributors" changelog section.
+type Contributors struct {
+	// Enabled turns the section on. Off (the zero value) means no section.
+	Enabled bool `json:"enabled,omitempty"`
+	// ExcludeBots drops authors whose login/name looks like a bot (`*[bot]`).
+	// A pointer so an unset value defaults to true; set it to false to keep bots.
+	ExcludeBots *bool `json:"excludeBots,omitempty"`
+	// Exclude is a list of author logins, names, or emails to omit (glob `*`
+	// supported, same matcher as `ignore`). Lets a maintainer keep their own name
+	// off every release.
+	Exclude []string `json:"exclude,omitempty"`
+	// Section overrides the section heading. Empty uses the default
+	// "❤️ Contributors", mirroring how `changelogGroups` set their own headings.
+	Section string `json:"section,omitempty"`
+}
+
+// DefaultContributorsSection is the heading used when none is configured.
+const DefaultContributorsSection = "❤️ Contributors"
+
+// SectionHeading returns the configured contributors heading, or the default.
+func (c Contributors) SectionHeading() string {
+	if s := strings.TrimSpace(c.Section); s != "" {
+		return s
+	}
+	return DefaultContributorsSection
+}
+
+// ExcludesBots reports whether bot authors should be dropped (default true).
+func (c Contributors) ExcludesBots() bool {
+	return c.ExcludeBots == nil || *c.ExcludeBots
+}
+
+// IsContributorExcluded reports whether an author should be omitted from the
+// Contributors section — by the bot filter (when on) or any `exclude` pattern,
+// matched against the login, name, and email (email is matched but never shown).
+func (c Contributors) IsContributorExcluded(login, name, email string) bool {
+	if c.ExcludesBots() && (looksLikeBot(login) || looksLikeBot(name)) {
+		return true
+	}
+	for _, pat := range c.Exclude {
+		for _, field := range []string{login, name, email} {
+			if field != "" && ignoreGlobMatch(pat, field) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// looksLikeBot matches the conventional GitHub bot suffix, e.g. `renovate[bot]`.
+func looksLikeBot(s string) bool {
+	return strings.HasSuffix(s, "[bot]")
+}
+
 // Snapshot holds snapshot-release settings (shared @changesets key).
 type Snapshot struct {
 	UseCalculatedVersion bool   `json:"useCalculatedVersion,omitempty"`
@@ -82,6 +188,15 @@ type Config struct {
 	// (globs allowed). Empty means scan the whole repo (minus the usual ignores
 	// and .gitignored files).
 	Paths []string `json:"paths,omitempty"`
+
+	// Versioning selects where release intent comes from: on-disk changesets
+	// (default), conventional commits, or both. Absent/zero is changeset mode —
+	// the historical behavior.
+	Versioning Versioning `json:"versioning,omitempty"`
+
+	// Contributors configures the changelogen-style "Contributors" section.
+	// Absent/disabled means no section (the historical behavior).
+	Contributors Contributors `json:"contributors,omitempty"`
 
 	// Ecosystems holds per-ecosystem config blocks (dotnet/node/go/...), kept raw
 	// so each ecosystem adapter decodes its own settings. This generalizes the
@@ -150,6 +265,7 @@ var sharedKeys = map[string]bool{
 	"fixed": true, "linked": true, "updateInternalDependencies": true,
 	"snapshot": true, "format": true, "changelog": true, "commit": true,
 	"privatePackages": true, "changelogGroups": true, "paths": true,
+	"versioning": true, "contributors": true,
 }
 
 // Parse decodes config bytes, applying defaults and bucketing unknown

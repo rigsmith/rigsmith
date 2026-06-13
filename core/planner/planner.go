@@ -51,6 +51,12 @@ type Module struct {
 	// the stable bump — used by prerelease and snapshot runs whose versions carry
 	// a suffix the stable bump can't express (e.g. 1.1.0-next.0, 0.0.0-canary-…).
 	VersionOverride string
+	// Contributors are the release's authors for the changelog "Contributors"
+	// section, already de-duplicated, excluded, and sorted by the caller. Empty
+	// unless the `contributors` config is enabled.
+	Contributors []plugin.Author
+	// ContributorsSection overrides the contributors heading (empty = default).
+	ContributorsSection string
 	// RangeOnly marks a @changesets "none"-type release: the package's version
 	// does not change and no changelog is written, but its manifest dependency
 	// ranges are rewritten. Produced for an ignored dependent and for a

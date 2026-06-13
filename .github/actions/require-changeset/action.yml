@@ -1,13 +1,17 @@
 name: 'rigsmith require changeset'
-description: 'Fail the check and post a sticky comment when a pull request adds no changeset (the @changesets-bot equivalent, no hosting).'
+description: 'Fail the check and post a sticky comment when a pull request carries no release intent — an added changeset file, or (in commit mode) a conventional PR title.'
 
 inputs:
+  mode:
+    description: 'What proves release intent: "changeset" (an added .changeset/*.md file, the default) or "commit" (a conventional-commit PR title, for commit-based versioning).'
+    required: false
+    default: 'changeset'
   cwd:
     description: 'Working directory containing the .changeset folder.'
     required: false
     default: '.'
   skipLabel:
-    description: 'A PR carrying this label waives the changeset requirement.'
+    description: 'A PR carrying this label waives the requirement.'
     required: false
     default: 'skip-changeset'
   comment:
@@ -15,7 +19,7 @@ inputs:
     required: false
     default: 'true'
   addCommand:
-    description: 'The command shown in the nag comment for creating a changeset.'
+    description: 'The command shown in the changeset-mode nag comment for creating a changeset.'
     required: false
     default: 'changerig add'
 
@@ -25,6 +29,7 @@ runs:
     - id: gate
       shell: bash
       env:
+        INPUT_MODE: ${{ inputs.mode }}
         INPUT_CWD: ${{ inputs.cwd }}
         INPUT_SKIP_LABEL: ${{ inputs.skipLabel }}
         INPUT_COMMENT: ${{ inputs.comment }}

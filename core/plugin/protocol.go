@@ -191,6 +191,22 @@ type ChangelogRequest struct {
 	Changes           []ChangelogChange  `json:"changes"`
 	DependencyUpdates []DependencyUpdate `json:"dependencyUpdates,omitempty"`
 	Context           ChangelogContext   `json:"context"`
+	// Contributors are the release's authors, already de-duplicated, filtered by
+	// the configured exclude list, and sorted. Empty unless the `contributors`
+	// config is enabled. The builtin generator renders them as a trailing section.
+	Contributors []Author `json:"contributors,omitempty"`
+	// ContributorsSection overrides the contributors heading; empty renders the
+	// default "❤️ Contributors".
+	ContributorsSection string `json:"contributorsSection,omitempty"`
+}
+
+// Author identifies a changelog contributor. Email is carried for de-duplication
+// and exclude-matching only — it is never rendered. Login is the GitHub handle
+// when it could be resolved (used to link to the author's GitHub page).
+type Author struct {
+	Name  string `json:"name"`
+	Login string `json:"login,omitempty"`
+	Email string `json:"email,omitempty"`
 }
 
 // ChangelogPackage is the package facet relevant to changelog rendering.

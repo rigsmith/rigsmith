@@ -112,6 +112,39 @@ func DefaultRemote(ctx context.Context, repoRoot string) string {
 	return ""
 }
 
+// GitHubRepoSlug returns the "owner/repo" of the repo's GitHub origin remote, or
+// "" when there is no remote, it isn't a github.com URL, or git is absent. Used
+// to link changelog contributors to their GitHub pages without requiring the
+// changelog-github generator to be configured.
+func GitHubRepoSlug(ctx context.Context, repoRoot string) string {
+	remote := DefaultRemote(ctx, repoRoot)
+	if remote == "" {
+		return ""
+	}
+	out, err := runGit(ctx, repoRoot, "remote", "get-url", remote)
+	if err != nil {
+		return ""
+	}
+	return parseGitHubSlug(strings.TrimSpace(out))
+}
+
+// parseGitHubSlug extracts "owner/repo" from a github.com remote URL in either
+// SSH (git@github.com:owner/repo.git) or HTTPS (https://github.com/owner/repo)
+// form. Returns "" for non-github or unparseable URLs.
+func parseGitHubSlug(url string) string {
+	url = strings.TrimSuffix(url, ".git")
+	i := strings.Index(url, "github.com")
+	if i < 0 {
+		return ""
+	}
+	rest := strings.TrimLeft(url[i+len("github.com"):], ":/")
+	parts := strings.SplitN(rest, "/", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return ""
+	}
+	return parts[0] + "/" + parts[1]
+}
+
 // PushTag pushes a single tag to the given remote.
 func PushTag(ctx context.Context, repoRoot, remote, tag string) error {
 	_, err := runGit(ctx, repoRoot, "push", remote, tag)
