@@ -38,9 +38,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
+
+	"github.com/rigsmith/core/gowork"
 )
 
 func main() {
@@ -51,11 +52,15 @@ func main() {
 }
 
 func run() error {
-	repo, err := findRepoRoot()
+	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	modules, err := workspaceModules(repo)
+	repo, err := gowork.FindRoot(cwd)
+	if err != nil {
+		return err
+	}
+	tools, err := gowork.Tools(repo)
 	if err != nil {
 		return err
 	}
@@ -66,18 +71,17 @@ func run() error {
 	}
 
 	var made []string
-	for _, mod := range modules {
-		name := commandName(filepath.Join(repo, mod))
-		if name == "" {
-			continue // library module (no main package) — nothing to launch
+	for _, t := range tools {
+		if strings.HasPrefix(t.Module, "scripts/") {
+			continue // installers (scripts/*) don't get their own launchers
 		}
-		devPath, wtPath, err := writeWrapper(bin, name, repo, mod)
+		devPath, wtPath, err := writeWrapper(bin, t.Name, repo, t.Module)
 		if err != nil {
 			return err
 		}
 		made = append(made,
-			fmt.Sprintf("  %-18s build %s from cwd (override tree via RIGSMITH_DEV_SRC)", filepath.Base(devPath), name),
-			fmt.Sprintf("  %-18s run a worktree's %s: %s <branch|path> [args]", filepath.Base(wtPath), name, name),
+			fmt.Sprintf("  %-18s build %s from cwd (override tree via RIGSMITH_DEV_SRC)", filepath.Base(devPath), t.Name),
+			fmt.Sprintf("  %-18s run a worktree's %s: %s <branch|path> [args]", filepath.Base(wtPath), t.Name, t.Name),
 		)
 	}
 
@@ -88,59 +92,6 @@ func run() error {
 	fmt.Println(strings.Join(made, "\n"))
 	printPathHint(bin)
 	return nil
-}
-
-// findRepoRoot walks up from the working directory to the dir containing go.work.
-func findRepoRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.work")); err == nil {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("no go.work found above the current directory; run this from inside the rigsmith repo")
-		}
-		dir = parent
-	}
-}
-
-var useEntry = regexp.MustCompile(`(?m)^\s*(?:use\s+)?(\./[^\s()]+)`)
-
-// workspaceModules returns the module directories listed in go.work's use block,
-// as repo-relative slash paths (e.g. "cli", "release").
-func workspaceModules(repo string) ([]string, error) {
-	data, err := os.ReadFile(filepath.Join(repo, "go.work"))
-	if err != nil {
-		return nil, err
-	}
-	var mods []string
-	for _, m := range useEntry.FindAllStringSubmatch(string(data), -1) {
-		mod := strings.TrimPrefix(filepath.ToSlash(m[1]), "./")
-		if mod == "scripts/dev-install" {
-			continue // don't make a launcher for the installer itself
-		}
-		mods = append(mods, mod)
-	}
-	return mods, nil
-}
-
-var commandDoc = regexp.MustCompile(`(?m)^// Command (\S+)`)
-
-// commandName reads "// Command <name>" from the module's main.go. Returns ""
-// when the module has no main.go (a library).
-func commandName(moduleDir string) string {
-	data, err := os.ReadFile(filepath.Join(moduleDir, "main.go"))
-	if err != nil {
-		return ""
-	}
-	if m := commandDoc.FindStringSubmatch(string(data)); m != nil {
-		return m[1]
-	}
-	return ""
 }
 
 func installDir() string {

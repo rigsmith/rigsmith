@@ -1,4 +1,4 @@
-module github.com/rigsmith/scripts/dev-install
+module github.com/rigsmith/scripts/source-install
 
 go 1.26
 

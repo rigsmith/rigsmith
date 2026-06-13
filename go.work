@@ -7,5 +7,6 @@ use (
 	./core
 	./release
 	./scripts/dev-install
+	./scripts/source-install
 	./tools
 )
