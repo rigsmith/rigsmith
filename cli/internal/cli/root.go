@@ -14,11 +14,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rigsmith/cli/internal/config"
 	"github.com/rigsmith/cli/internal/detect"
 	"github.com/rigsmith/cli/internal/envstack"
+	"github.com/rigsmith/core/fang"
 	"github.com/spf13/cobra"
 )
 

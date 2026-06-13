@@ -20,9 +20,9 @@ import (
 	"image/color"
 
 	lgv2 "charm.land/lipgloss/v2"
-	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rigsmith/core/fang"
 )
 
 // Brand palette — mirrored from design/ (marks.js RS_PALETTE + the semantic CLI
