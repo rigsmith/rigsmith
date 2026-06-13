@@ -35,6 +35,10 @@ type Config struct {
 	Solution string `json:"solution,omitempty"`
 	// DefaultProject names the project to act on when several are runnable.
 	DefaultProject string `json:"defaultProject,omitempty"`
+	// DotnetFormatter is the resolved `dotnet.formatter` choice (csharpier |
+	// dotnet | auto). Internal: set by normalize() from the dotnet block, not a
+	// top-level key.
+	DotnetFormatter string `json:"-"`
 	// Ecosystem pins the primary ecosystem (dotnet/node/go/cargo) for the dev
 	// verbs and `ui`, overriding nearest-manifest resolution. Set this to
 	// disambiguate a directory where several ecosystems coexist.
@@ -154,6 +158,10 @@ type Dotnet struct {
 	Coverage       *DotnetCoverage `json:"coverage,omitempty"`
 	Rebuild        *Rebuild        `json:"rebuild,omitempty"`
 	Publish        *Publish        `json:"publish,omitempty"`
+	// Formatter selects the .NET formatter `rig format` uses: "csharpier",
+	// "dotnet" (dotnet format), or "auto" (default — CSharpier when the repo
+	// opts in, else dotnet format). See cli formatter resolution.
+	Formatter string `json:"formatter,omitempty"`
 }
 
 // DotnetCoverage holds the .NET-only coverage knobs (the open/full/min gate
@@ -311,6 +319,7 @@ func (c *Config) normalize() {
 		if d.Publish != nil {
 			c.Publish = d.Publish
 		}
+		c.DotnetFormatter = coalesce(d.Formatter, c.DotnetFormatter)
 		c.Dotnet = nil
 	}
 }
@@ -342,22 +351,23 @@ func Merge(base, overlay Config) Config {
 	warnings = append(warnings, overlay.Warnings...)
 
 	return Config{
-		Solution:       coalesce(overlay.Solution, base.Solution),
-		DefaultProject: coalesce(overlay.DefaultProject, base.DefaultProject),
-		Ecosystem:      coalesce(overlay.Ecosystem, base.Ecosystem),
-		Test:           mergeTest(base.Test, overlay.Test),
-		Coverage:       mergeCoverage(base.Coverage, overlay.Coverage),
-		Kill:           kill,
-		Rebuild:        rebuild,
-		Publish:        mergePublish(base.Publish, overlay.Publish),
-		Env:            mergeDict(base.Env, overlay.Env),
-		Commands:       mergeDict(base.Commands, overlay.Commands),
-		Aliases:        mergeDict(base.Aliases, overlay.Aliases),
-		Tools:          mergeDict(base.Tools, overlay.Tools),
-		Exclude:        mergeList(base.Exclude, overlay.Exclude),
-		Quiet:          quiet,
-		Path:           path,
-		Warnings:       warnings,
+		Solution:        coalesce(overlay.Solution, base.Solution),
+		DefaultProject:  coalesce(overlay.DefaultProject, base.DefaultProject),
+		DotnetFormatter: coalesce(overlay.DotnetFormatter, base.DotnetFormatter),
+		Ecosystem:       coalesce(overlay.Ecosystem, base.Ecosystem),
+		Test:            mergeTest(base.Test, overlay.Test),
+		Coverage:        mergeCoverage(base.Coverage, overlay.Coverage),
+		Kill:            kill,
+		Rebuild:         rebuild,
+		Publish:         mergePublish(base.Publish, overlay.Publish),
+		Env:             mergeDict(base.Env, overlay.Env),
+		Commands:        mergeDict(base.Commands, overlay.Commands),
+		Aliases:         mergeDict(base.Aliases, overlay.Aliases),
+		Tools:           mergeDict(base.Tools, overlay.Tools),
+		Exclude:         mergeList(base.Exclude, overlay.Exclude),
+		Quiet:           quiet,
+		Path:            path,
+		Warnings:        warnings,
 	}
 }
 
