@@ -14,6 +14,15 @@ cd examples/polyglot
 rig doctor
 ```
 
-It is intentionally **not buildable** — there's no source, just the manifests
-needed for detection. The `go.mod` is deliberately left out of the workspace
-`go.work`, so the repo's Go tooling ignores it.
+The **.NET** project is a real, runnable console app (`Poly.csproj` +
+`Program.cs`), so `rig build` / `rig run` have something to actually do:
+
+```sh
+cd examples/polyglot
+rig run        # → "polyglot fixture: hello from .NET"
+```
+
+The Go/Node/Cargo entries are **detection-only** — just the manifests, no source
+or scripts — so they exercise discovery and `doctor` without pulling real
+toolchains. The `go.mod` is deliberately left out of the workspace `go.work`, so
+the repo's Go tooling ignores it.
