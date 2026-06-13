@@ -129,27 +129,38 @@ func runnableProjectCompletion(_ *cobra.Command, args []string, _ string) ([]str
 }
 
 // runAcross runs the verb in every workspace package (topo order), optionally
-// filtered, skipping packages whose ecosystem doesn't map the verb.
+// filtered, skipping packages whose ecosystem doesn't map the verb. On an
+// interactive terminal it renders a live dashboard (per-package status +
+// streamed output); otherwise it streams sequentially as plain output.
 func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) error {
 	targets := topoSort(filterTargets(discoverWorkspace(cdContext(cmd), root, excludeFor(root)), filter))
 	if len(targets) == 0 {
 		return fmt.Errorf("no workspace packages found%s", filterNote(filter))
 	}
-	out := cmd.OutOrStdout()
-	ran := 0
+	// Resolve the runnable tasks up front (packages whose ecosystem maps the verb).
+	var tasks []allTask
 	for _, t := range targets {
 		argv, ok := devCommandFor(t, verb, root)
 		if !ok {
 			continue
 		}
-		fmt.Fprintln(out, dimStyle.Render(fmt.Sprintf("· %s (%s)", t.Name, t.Eco)))
-		if err := runCommand(cmd, t.Dir, append(argv, args...)); err != nil {
-			return fmt.Errorf("%s in %s: %w", verb, t.Name, err)
-		}
-		ran++
+		tasks = append(tasks, allTask{name: t.Name, eco: t.Eco, dir: t.Dir, argv: append(argv, args...)})
 	}
-	if ran == 0 {
+	if len(tasks) == 0 {
 		return fmt.Errorf("no workspace package maps verb %q", verb)
+	}
+
+	if allDashboardEligible() {
+		return runAcrossDashboard(cmd, tasks, verb)
+	}
+
+	// Plain sequential path (CI, piped, --quiet, --dry-run): abort on first failure.
+	out := cmd.OutOrStdout()
+	for _, t := range tasks {
+		fmt.Fprintln(out, dimStyle.Render(fmt.Sprintf("· %s (%s)", t.name, t.eco)))
+		if err := runCommand(cmd, t.dir, t.argv); err != nil {
+			return fmt.Errorf("%s in %s: %w", verb, t.name, err)
+		}
 	}
 	return nil
 }
