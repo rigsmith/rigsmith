@@ -28,3 +28,18 @@ func TestPathFor(t *testing.T) {
 		t.Errorf("PathFor with trailing slash = %q", got)
 	}
 }
+
+func TestQuoteCmd(t *testing.T) {
+	if got := QuoteCmd([]string{"code", "-n"}, "/wt/x"); got != "code -n /wt/x" {
+		t.Errorf("QuoteCmd = %q", got)
+	}
+	if got := QuoteCmd([]string{"idea"}, "/wt/x"); got != "idea /wt/x" {
+		t.Errorf("QuoteCmd single-arg = %q", got)
+	}
+}
+
+func TestOpenerAvailable_Empty(t *testing.T) {
+	if OpenerAvailable(nil) {
+		t.Error("empty open command must never be available")
+	}
+}
