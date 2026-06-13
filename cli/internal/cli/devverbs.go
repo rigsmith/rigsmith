@@ -21,6 +21,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 		all     bool
 		filter  string
 		watch   bool
+		pick    bool
 		presets []presetFlag
 	)
 	cmd := &cobra.Command{
@@ -46,6 +47,15 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// pre-parse pipeline; both land in runWatchVerb).
 			if watch {
 				return runWatchVerb(cmd, verb, args)
+			}
+			// `rig run --pick` (no project arg) always opens the grouped picker —
+			// even when a single target would otherwise run directly — listing
+			// every runnable package and surfaced script. With an explicit project
+			// arg the arg wins (matched below).
+			if pick && verb == "run" && len(args) == 0 {
+				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll, true); handled {
+					return herr
+				}
 			}
 			// A first arg that names a package scopes the verb to that package.
 			if len(args) > 0 {
@@ -81,7 +91,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// command. For --all-capable verbs the picker leads with "All
 			// packages"; `run` gets a single-select of the runnable packages.
 			if len(args) == 0 && (supportsAll || verb == "run") {
-				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll); handled {
+				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll, false); handled {
 					return herr
 				}
 			}
@@ -103,6 +113,9 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 	}
 	if watchableVerb(verb) {
 		cmd.Flags().BoolVarP(&watch, "watch", "w", false, "run in the ecosystem's watch mode (re-run on change)")
+	}
+	if verb == "run" {
+		cmd.Flags().BoolVarP(&pick, "pick", "p", false, "always open the picker (choose a package or script to run)")
 	}
 	presets = registerPresetFlags(cmd)
 	return cmd
@@ -198,7 +211,11 @@ func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) err
 // packages and surfaced scripts); off a TTY it returns a helpful error.
 // handled=false lets the normal root command run (single-package repos, or a
 // package at the root).
-func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll bool) (handled bool, err error) {
+//
+// forcePick (only `rig run --pick`) always shows the picker: a runnable root
+// package and the surfaced scripts are included even when one obvious target
+// exists, and a single candidate still opens the picker rather than running.
+func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, forcePick bool) (handled bool, err error) {
 	targets := topoSort(filterTargets(discoverWorkspace(cdContext(cmd), root, excludeFor(root)), ""))
 	var tasks []allTask
 	rootHasPackage := false
@@ -226,9 +243,17 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll bool) 
 	// scripts, .rig.json commands, Go scripts//cmd verbs) as a second group —
 	// the same scripts `rig <name>` runs. Other verbs don't map to scripts.
 	var scripts []scriptEntry
-	if verb == "run" && !rootHasPackage {
+	if verb == "run" && (forcePick || !rootHasPackage) {
 		cfg, _ := config.LoadMerged(root)
 		scripts = discoverScripts(root, cfg)
+	}
+
+	if forcePick {
+		// `--pick`: always the picker, including a runnable root package.
+		if len(tasks)+len(scripts) == 0 {
+			return true, fmt.Errorf("nothing runnable here to pick from")
+		}
+		return offerRunChoice(cmd, tasks, scripts, true)
 	}
 
 	// A buildable package at the root, or nothing to offer: the normal root
@@ -238,7 +263,7 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll bool) 
 	}
 
 	if verb == "run" {
-		return offerRunChoice(cmd, tasks, scripts)
+		return offerRunChoice(cmd, tasks, scripts, false)
 	}
 
 	// --all-capable verbs (build/test/…): a lone subpackage falls through to the
@@ -269,8 +294,9 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll bool) 
 // offerRunChoice resolves a bare `rig run` at a workspace root over the runnable
 // packages and surfaced scripts. A single target runs directly; several open the
 // grouped picker (Projects, then Scripts). Off a TTY it returns a helpful error.
-func offerRunChoice(cmd *cobra.Command, tasks []allTask, scripts []scriptEntry) (handled bool, err error) {
-	if len(tasks)+len(scripts) == 1 {
+// With forcePick set (`--pick`) the picker always opens, even for one candidate.
+func offerRunChoice(cmd *cobra.Command, tasks []allTask, scripts []scriptEntry, forcePick bool) (handled bool, err error) {
+	if !forcePick && len(tasks)+len(scripts) == 1 {
 		if len(tasks) == 1 {
 			t := tasks[0]
 			return true, runCommand(cmd, t.dir, t.argv)

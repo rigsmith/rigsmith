@@ -86,6 +86,26 @@ func TestPickColumns_AlignsNameAndEco(t *testing.T) {
 	}
 }
 
+func TestRunCmd_HasPickFlagRunOnly(t *testing.T) {
+	if devVerbCmd("run", "", false).Flags().Lookup("pick") == nil {
+		t.Error("`rig run` should expose a --pick flag")
+	}
+	if f := devVerbCmd("build", "", true).Flags().Lookup("pick"); f != nil {
+		t.Error("--pick is run-only; build should not have it")
+	}
+}
+
+func TestOfferWorkspaceChoice_ForcePickEmptyErrors(t *testing.T) {
+	host, _ := newRunHost()
+	handled, err := offerWorkspaceChoice(host, t.TempDir(), "run", false, true)
+	if !handled {
+		t.Fatal("--pick must handle the run (it never falls through to a root command)")
+	}
+	if err == nil || !strings.Contains(err.Error(), "nothing runnable") {
+		t.Fatalf("--pick on an empty root err = %v, want a nothing-runnable error", err)
+	}
+}
+
 func TestDiscoverScripts_AggregatesSourcesWithPrecedence(t *testing.T) {
 	root := t.TempDir()
 	// A package.json script and a Go scripts/ verb.
