@@ -45,8 +45,10 @@ var (
 // produced HTML report when one can be located.
 func newCoverageCmd() *cobra.Command {
 	var (
-		open bool
-		min  float64
+		open      bool
+		min       float64
+		noSummary bool
+		browse    bool
 	)
 
 	cmd := &cobra.Command{
@@ -56,7 +58,11 @@ func newCoverageCmd() *cobra.Command {
 			"  rig coverage              run coverage for the repo\n" +
 			"  rig coverage <name>       narrow to a project/filter (node/.NET)\n" +
 			"  rig coverage --open       open the produced HTML report\n" +
-			"  rig coverage --min 80     fail if line coverage is below 80%",
+			"  rig coverage --min 80     fail if line coverage is below 80%\n" +
+			"  rig coverage --browse     explore per-file, per-line coverage in the terminal\n\n" +
+			"On an interactive terminal it prints a per-file summary table after the " +
+			"run (worst-covered first); pass --no-summary to suppress it, or --browse " +
+			"to open an interactive browser that drills into each file's source.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
@@ -97,15 +103,17 @@ func newCoverageCmd() *cobra.Command {
 			_, open, effMin = resolveCoverageOptions(false, open, cliMin, cfg.Coverage)
 
 			cov := cfg.Coverage
+			browse := browse && coverageTableEligible()
+			summary := !noSummary && coverageTableEligible()
 			// Go is handled end-to-end: it needs the command's stdout for the
-			// --min percent and a coverage profile for the report.
+			// --min percent and a coverage profile for the report/summary/browser.
 			if eco == detect.Go {
-				return runGoCoverage(cmd, root, argv, effMin, open, cov)
+				return runGoCoverage(cmd, root, argv, effMin, open, summary, browse, cov)
 			}
-			// Node: ensure the run emits the reporters --min/--open need, and
-			// forward [name] to the test runner through `--`.
+			// Node: ensure the run emits the reporters --min/--open/the summary
+			// and browser need, and forward [name] to the test runner through `--`.
 			if eco == detect.Node {
-				argv = augmentNodeCoverageArgs(argv, root, name, open, effMin != nil, cov)
+				argv = augmentNodeCoverageArgs(argv, root, name, open, effMin != nil, summary || browse, cov)
 			}
 
 			if err := runCommand(cmd, root, argv); err != nil {
@@ -114,6 +122,8 @@ func newCoverageCmd() *cobra.Command {
 			if dryRun {
 				return nil
 			}
+
+			presentCoverage(cmd, eco, root, "", summary, browse)
 
 			if effMin != nil {
 				if err := gateMinimum(cmd, eco, root, *effMin); err != nil {
@@ -132,6 +142,8 @@ func newCoverageCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&open, "open", false, "open the produced HTML report")
 	cmd.Flags().Float64Var(&min, "min", 0, "fail if line coverage is below this percent")
+	cmd.Flags().BoolVar(&noSummary, "no-summary", false, "don't print the per-file coverage table")
+	cmd.Flags().BoolVarP(&browse, "browse", "b", false, "open an interactive per-file/per-line coverage browser")
 	return cmd
 }
 
@@ -253,10 +265,22 @@ func parseGoCoverage(output string) (float64, bool) {
 // can be parsed from it, and when --open is set it adds a -coverprofile so a
 // report can be produced (ReportGenerator via a Cobertura conversion when
 // available, else `go tool cover -html`).
-func runGoCoverage(cmd *cobra.Command, root string, argv []string, min *float64, open bool, cov *config.Coverage) error {
+func runGoCoverage(cmd *cobra.Command, root string, argv []string, min *float64, open, summary, browse bool, cov *config.Coverage) error {
+	// A profile is needed for the HTML report (--open) and for the per-file
+	// summary table / browser. --open writes it next to the repo (it's the
+	// report input); a summary/browse-only run uses a throwaway temp file.
 	profile := ""
-	if open {
+	switch {
+	case open:
 		profile = filepath.Join(root, "coverage.out")
+	case summary || browse:
+		if f, err := os.CreateTemp("", "rig-cov-*.out"); err == nil {
+			profile = f.Name()
+			f.Close()
+			defer os.Remove(profile)
+		}
+	}
+	if profile != "" {
 		argv = withGoCoverProfile(argv, profile)
 	}
 	echo(cmd, strings.Join(argv, " "))
@@ -277,6 +301,9 @@ func runGoCoverage(cmd *cobra.Command, root string, argv []string, min *float64,
 		return err
 	}
 
+	if (summary || browse) && profile != "" && fileExists(profile) {
+		presentCoverage(cmd, detect.Go, root, profile, summary, browse)
+	}
 	if open && profile != "" && fileExists(profile) {
 		produceGoReport(cmd, root, profile, cov)
 	}
