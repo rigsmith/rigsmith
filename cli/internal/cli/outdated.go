@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -62,6 +63,14 @@ func runPlainOutdated(cmd *cobra.Command, eco, root string, args []string) error
 // upgrade, and applies the upgrade. Falls back to the plain list when the
 // ecosystem/manager isn't supported for interactive upgrade.
 func runOutdatedInteractive(cmd *cobra.Command, eco, root string) error {
+	// Yarn Berry has no machine-readable outdated report; hand off to its
+	// built-in interactive upgrader (`yarn up -i`), the native equivalent.
+	if eco == detect.Node && detect.DetectNodePM(root) == detect.Yarn && yarnIsBerry(cmd, root) {
+		fmt.Fprintln(cmd.ErrOrStderr(), dimStyle.Render(
+			"yarn (berry) has no outdated report — using its built-in `yarn up -i`"))
+		return runCommand(cmd, root, []string{"yarn", "up", "-i", "*"})
+	}
+
 	deps, supported := discoverOutdated(cmd, eco, root)
 	if !supported {
 		fmt.Fprintln(cmd.ErrOrStderr(), dimStyle.Render(
@@ -122,8 +131,13 @@ func discoverOutdated(cmd *cobra.Command, eco, root string) (deps []outdatedDep,
 			// bun has no --json; it prints a pipe-delimited ASCII table.
 			out, _ := captureOutdated(cmd, root, "bun", "outdated")
 			return parseBunOutdated(out), true
+		case detect.Yarn:
+			// Classic only (berry is handled before discovery). yarn v1 emits
+			// NDJSON; the table row carries the outdated packages.
+			out, _ := captureOutdated(cmd, root, "yarn", "outdated", "--json")
+			return parseYarnClassicOutdated(out), true
 		default:
-			return nil, false // yarn outdated --json is a different shape — not wired yet
+			return nil, false
 		}
 	case detect.DotNet:
 		out, err := captureOutdated(cmd, root, "dotnet", "list", "package", "--outdated", "--format", "json")
@@ -190,16 +204,32 @@ func upgradeCommands(eco, root string, chosen []outdatedDep) [][]string {
 	case detect.Go:
 		return goUpgradeCommands(chosen)
 	case detect.Node:
-		pm := detect.DetectNodePM(root)
-		if pm == detect.Bun {
+		switch pm := detect.DetectNodePM(root); pm {
+		case detect.Bun:
 			return bunUpgradeCommands(chosen) // preserves dev vs prod sections
+		case detect.Yarn:
+			return yarnUpgradeCommands(chosen) // classic; --latest keeps sections
+		default:
+			return nodeUpgradeCommands(pm, chosen)
 		}
-		return nodeUpgradeCommands(pm, chosen)
 	case detect.DotNet:
 		return dotnetUpgradeCommands(chosen)
 	default:
 		return nil
 	}
+}
+
+// yarnIsBerry reports whether the project's yarn is v2+ (berry), which has no
+// `outdated` command. It asks `yarn --version`, falling back to the presence of
+// a `.yarnrc.yml` (berry's config file; classic uses `.yarnrc`).
+func yarnIsBerry(cmd *cobra.Command, root string) bool {
+	if out, err := captureOutdated(cmd, root, "yarn", "--version"); err == nil {
+		major, _, _ := strings.Cut(strings.TrimSpace(out), ".")
+		if n, e := strconv.Atoi(major); e == nil {
+			return n >= 2
+		}
+	}
+	return fileExists(filepath.Join(root, ".yarnrc.yml"))
 }
 
 // captureOutdated runs argv in root with the rig env layering and returns its

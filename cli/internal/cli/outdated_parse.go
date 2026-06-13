@@ -78,6 +78,76 @@ func parseNpmOutdated(jsonText string) []outdatedDep {
 	return out
 }
 
+// parseYarnClassicOutdated parses yarn v1's `yarn outdated --json` — NDJSON
+// where the row of interest is `{"type":"table","data":{"head":[…],"body":[[…]]}}`
+// with columns Package/Current/Wanted/Latest/Package Type/URL. Columns are
+// located by header name (defensive against ordering). Pure.
+func parseYarnClassicOutdated(text string) []outdatedDep {
+	var out []outdatedDep
+	dec := json.NewDecoder(strings.NewReader(text))
+	for {
+		var msg struct {
+			Type string          `json:"type"`
+			Data json.RawMessage `json:"data"`
+		}
+		if err := dec.Decode(&msg); err != nil {
+			break // EOF or malformed tail
+		}
+		if msg.Type != "table" {
+			continue
+		}
+		var table struct {
+			Head []string   `json:"head"`
+			Body [][]string `json:"body"`
+		}
+		if json.Unmarshal(msg.Data, &table) != nil {
+			continue
+		}
+		col := map[string]int{}
+		for i, h := range table.Head {
+			col[strings.ToLower(strings.TrimSpace(h))] = i
+		}
+		nameI, okN := col["package"]
+		latI, okL := col["latest"]
+		curI, okC := col["current"]
+		typeI, okT := col["package type"]
+		if !okN || !okL {
+			continue
+		}
+		for _, row := range table.Body {
+			if nameI >= len(row) || latI >= len(row) {
+				continue
+			}
+			current := ""
+			if okC && curI < len(row) {
+				current = row[curI]
+			}
+			name, latest := row[nameI], row[latI]
+			if name == "" || latest == "" || latest == current {
+				continue
+			}
+			dev := okT && typeI < len(row) && strings.Contains(strings.ToLower(row[typeI]), "dev")
+			out = append(out, outdatedDep{name: name, current: current, latest: latest, dev: dev})
+		}
+	}
+	sortDeps(out)
+	return out
+}
+
+// yarnUpgradeCommands builds `yarn upgrade --latest name…` for the chosen deps
+// (yarn v1; --latest ignores the semver range and keeps each package in its
+// existing dependencies/devDependencies section). Pure.
+func yarnUpgradeCommands(deps []outdatedDep) [][]string {
+	if len(deps) == 0 {
+		return nil
+	}
+	args := []string{"yarn", "upgrade", "--latest"}
+	for _, d := range deps {
+		args = append(args, d.name)
+	}
+	return [][]string{args}
+}
+
 // parseDotnetOutdated parses `dotnet list package --outdated --format json` into
 // per-package deps (deduped across target frameworks, keeping the owning
 // project path so upgrades can be applied per project). Pure.

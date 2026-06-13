@@ -193,16 +193,21 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
 - **What it does:** upgrades the packages you pick, echoing each command —
   **go** `go get pkg@latest …` then `go mod tidy`; **node** `npm install` /
   `pnpm add` with `name@latest` specs (**bun** `bun add` / `bun add --dev`,
-  split so dev deps stay dev); **.NET** `dotnet add [project] package id
-  --version latest` per package. Esc/empty selection upgrades nothing.
-- **Support / fallback:** wired for **go**, **node (npm/pnpm/bun)**, and
-  **.NET**. Yarn and other ecosystems, or an unparseable report, fall back to
-  the plain list; off a TTY, `-i` prints a hint and lists.
+  split so dev deps stay dev; **yarn classic** `yarn upgrade --latest`); **.NET**
+  `dotnet add [project] package id --version latest` per package. Esc/empty
+  selection upgrades nothing.
+- **Support / fallback:** wired for **go**, **node (npm/pnpm/bun/yarn)**, and
+  **.NET**. **Yarn Berry** has no machine-readable outdated, so rig hands off to
+  its built-in interactive upgrader (`yarn up -i`) instead of the rig picker.
+  Unrecognized ecosystems or an unparseable report fall back to the plain list;
+  off a TTY, `-i` prints a hint and lists.
 - **Data sources:** `go list -m -u -json all` (go); `<pm> outdated --json`
   (npm/pnpm — npm exits non-zero with valid JSON, which rig tolerates); `bun
   outdated` (bun has no `--json`, so rig parses its pipe-delimited ASCII table,
-  preserving the `(dev)` tag so the upgrade stays in devDependencies);
-  `dotnet list package --outdated --format json` (.NET).
+  preserving the `(dev)` tag); `yarn outdated --json` (yarn classic — NDJSON,
+  rig reads the `table` row); `dotnet list package --outdated --format json`
+  (.NET). The yarn-classic / bun upgrades use `yarn upgrade --latest` /
+  `bun add [--dev]`, which keep each package in its existing section.
 
 ## `rig <verb>` at a workspace root — project picker (huh single-select)
 - **Trigger:** a bare `--all`-capable dev verb (`rig build`/`test`/…) at a

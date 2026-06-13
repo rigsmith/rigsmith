@@ -113,6 +113,36 @@ func TestBunUpgradeCommands_SplitsDevAndProd(t *testing.T) {
 	}
 }
 
+func TestParseYarnClassicOutdated(t *testing.T) {
+	// Real `yarn outdated --json` (NDJSON: an info line, then the table).
+	text := `{"type":"info","data":"Color legend : ..."}
+{"type":"table","data":{"head":["Package","Current","Wanted","Latest","Package Type","URL"],"body":[["is-odd","2.0.0","2.0.0","3.0.1","devDependencies","https://x"],["lodash","4.17.20","4.17.20","4.18.1","dependencies","https://y"],["pinned","1.0.0","1.0.0","1.0.0","dependencies","https://z"]]}}`
+	got := parseYarnClassicOutdated(text)
+	want := []outdatedDep{
+		{name: "is-odd", current: "2.0.0", latest: "3.0.1", dev: true},
+		{name: "lodash", current: "4.17.20", latest: "4.18.1"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestYarnUpgradeCommands(t *testing.T) {
+	deps := []outdatedDep{
+		{name: "lodash", latest: "4.18.1"},
+		{name: "is-odd", latest: "3.0.1", dev: true},
+	}
+	got := yarnUpgradeCommands(deps)
+	// yarn v1: a single `yarn upgrade --latest` keeps each dep in its section.
+	want := [][]string{{"yarn", "upgrade", "--latest", "lodash", "is-odd"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+	if yarnUpgradeCommands(nil) != nil {
+		t.Fatal("empty deps → no commands")
+	}
+}
+
 func TestGoUpgradeCommands(t *testing.T) {
 	deps := []outdatedDep{
 		{name: "github.com/a/b", latest: "v1.3.0"},
