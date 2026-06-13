@@ -64,50 +64,78 @@ func newReleaseCmd() *cobra.Command {
 			mode := pipeline.ResolveUIMode(ui, noUI, yes, outRedirected, inRedirected)
 
 			masker := pipeline.NewSecretMasker()
+
+			// githubRelease native handler: per-package forge releases. Output is
+			// routed through the active reporter (so the live dashboard captures it
+			// instead of writing raw to the terminal).
+			fmode := forge.ParseMode(stepForge(cfg))
+			if gitOnly {
+				fmode = forge.None
+			}
+			newPipeline := func(reporter pipeline.Reporter, prompter pipeline.Prompter) *pipeline.Pipeline {
+				handler := func() bool {
+					pkgs, _, err := ws.Discover(cmd.Context())
+					if err != nil {
+						reporter.CommandOutput([]string{"discover: " + err.Error()})
+						return false
+					}
+					ok, msg := forge.Run(pkgs, ws.Config, fmode, ws.Root, execForgeRunner(cmd), func(lines ...string) {
+						reporter.CommandOutput(lines)
+					})
+					if msg != "" {
+						reporter.CommandOutput([]string{msg})
+					}
+					return ok
+				}
+				return pipeline.New(pipeline.ExecRunner, reporter, masker, prompter, ws.Root,
+					map[string]pipeline.NativeHandler{"githubRelease": handler})
+			}
+
+			fail := func() error {
+				cmd.SilenceUsage = true
+				cmd.SilenceErrors = true // the reporter already told the story
+				return errors.New("release failed")
+			}
+
+			// Full TUI flow (interactive, rich, real run): the plan editor lets the
+			// user toggle steps, then the live dashboard drives the run with inline
+			// confirm gates. Everything else uses the sequential reporters.
+			if mode.Interactive && mode.Rich && !dryRun {
+				chosen, proceed := interactiveChooser{
+					in: cmd.InOrStdin(), out: cmd.OutOrStdout(), masker: masker,
+				}.Choose(steps)
+				if !proceed {
+					fmt.Fprintln(cmd.OutOrStdout(), "Release cancelled.")
+					return nil
+				}
+				ok, err := runDashboard(chosen, cfg, cfg.Tool,
+					cmd.InOrStdin(), cmd.OutOrStdout(), masker, newPipeline)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return fail()
+				}
+				return nil
+			}
+
+			// Sequential path (CI, --yes, piped, --no-ui, or --dry-run).
 			var reporter pipeline.Reporter
 			if mode.Rich {
 				reporter = newRichReporter(cmd.OutOrStdout(), masker, cfg.Tool)
 			} else {
 				reporter = pipeline.NewPlainReporter(cmd.OutOrStdout(), masker, cfg.Tool)
 			}
-
 			var prompter pipeline.Prompter
 			if mode.Interactive {
 				prompter = ttyPrompter{}
 			} else {
-				// Non-interactive: --yes approves gates; otherwise a gate
-				// safely stops the release rather than guessing.
+				// Non-interactive: --yes approves gates; otherwise a gate safely
+				// stops the release rather than guessing.
 				prompter = pipeline.FixedPrompter{Answer: yes}
 			}
-
-			// githubRelease native handler: per-package forge releases.
-			fmode := forge.ParseMode(stepForge(cfg))
-			if gitOnly {
-				fmode = forge.None
-			}
-			handler := func() bool {
-				pkgs, _, err := ws.Discover(cmd.Context())
-				if err != nil {
-					fmt.Fprintln(cmd.OutOrStdout(), "discover:", err)
-					return false
-				}
-				ok, msg := forge.Run(pkgs, ws.Config, fmode, ws.Root, execForgeRunner(cmd), func(lines ...string) {
-					for _, l := range lines {
-						fmt.Fprintln(cmd.OutOrStdout(), "  "+masker.Mask(l))
-					}
-				})
-				if msg != "" {
-					fmt.Fprintln(cmd.OutOrStdout(), "  "+masker.Mask(msg))
-				}
-				return ok
-			}
-
-			p := pipeline.New(pipeline.ExecRunner, reporter, masker, prompter, ws.Root,
-				map[string]pipeline.NativeHandler{"githubRelease": handler})
-			if !p.Run(steps, cfg, dryRun) {
-				cmd.SilenceUsage = true
-				cmd.SilenceErrors = true // the reporter already told the story
-				return errors.New("release failed")
+			if !newPipeline(reporter, prompter).Run(steps, cfg, dryRun) {
+				return fail()
 			}
 			return nil
 		},
