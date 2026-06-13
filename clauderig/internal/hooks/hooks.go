@@ -8,37 +8,55 @@ package hooks
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
 // Marker identifies a clauderig-owned hook (its command contains this).
 const Marker = "clauderig"
 
-// Plan is one event→command hook clauderig installs.
+// Plan is one event→command hook clauderig installs. Matcher, when set, scopes
+// the hook to matching tool names (PreToolUse/PostToolUse only).
 type Plan struct {
 	Event   string
+	Matcher string
 	Command string
 }
 
-// DefaultPlans are the hooks clauderig installs. Bare `clauderig` keeps them
-// portable across machines (each machine resolves it on PATH).
-func DefaultPlans() []Plan {
+// SyncPlans keep ~/.claude in sync and belong at user scope (`clauderig hooks
+// install`): SessionStart pulls, Stop pushes. Bare `clauderig` keeps them
+// portable — each machine resolves it on PATH.
+func SyncPlans() []Plan {
 	return []Plan{
 		{Event: "SessionStart", Command: "clauderig pull"},
 		{Event: "Stop", Command: "clauderig sync"},
 	}
 }
 
-// Install adds clauderig's hooks to the settings.json at path (created if absent),
+// GuardPlans enforce worktree/PR discipline and belong at repo scope (`clauderig
+// project|local install`): the PreToolUse guard runs on the tool calls that can
+// move the session dir or write code to a base branch.
+func GuardPlans() []Plan {
+	return []Plan{
+		{Event: "PreToolUse", Matcher: "Edit|Write|NotebookEdit|Bash|EnterWorktree|ExitWorktree", Command: "clauderig guard"},
+	}
+}
+
+// DefaultPlans is every plan clauderig knows (used where the full set is wanted).
+func DefaultPlans() []Plan {
+	return append(SyncPlans(), GuardPlans()...)
+}
+
+// Install adds the given plans to the settings.json at path (created if absent),
 // idempotently — an event already carrying a clauderig hook is left alone. Other
 // settings and other hooks are preserved. Returns the events newly added.
-func Install(path string) (added []string, err error) {
+func Install(path string, plans []Plan) (added []string, err error) {
 	s, err := load(path)
 	if err != nil {
 		return nil, err
 	}
 	h := hooksMap(s)
-	for _, p := range DefaultPlans() {
+	for _, p := range plans {
 		raw, exists := h[p.Event]
 		groups, ok := raw.([]any)
 		if exists && !ok {
@@ -47,9 +65,13 @@ func Install(path string) (added []string, err error) {
 		if anyHasMarker(groups) {
 			continue
 		}
-		groups = append(groups, map[string]any{
+		group := map[string]any{
 			"hooks": []any{map[string]any{"type": "command", "command": p.Command}},
-		})
+		}
+		if p.Matcher != "" {
+			group["matcher"] = p.Matcher
+		}
+		groups = append(groups, group)
 		h[p.Event] = groups
 		added = append(added, p.Event)
 	}
@@ -141,6 +163,9 @@ func load(path string) (map[string]any, error) {
 func save(path string, m map[string]any) error {
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, append(b, '\n'), 0o644)
