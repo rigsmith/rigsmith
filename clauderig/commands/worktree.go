@@ -28,7 +28,7 @@ func NewWorktreeCmd() *cobra.Command {
 		Aliases: []string{"wt"},
 		Short:   "Create/list/open git worktrees as sibling checkouts (never moves this session)",
 	}
-	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd(), newWorktreePickCmd())
+	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd(), newWorktreePruneCmd(), newWorktreePickCmd())
 	return cmd
 }
 
@@ -297,6 +297,140 @@ func newWorktreeRemoveCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "remove even if the worktree has changes")
 	return cmd
+}
+
+// newWorktreePruneCmd sweeps the repo's linked worktrees and removes each one
+// that is safe to drop: clean (no uncommitted changes) AND merged (its branch
+// is fully contained in the base). Removing a worktree keeps the branch and its
+// commits, so a false positive costs only a `worktree new` to recreate — the
+// genuinely destructive --delete-branches is opt-in. It acts unattended (no
+// prompt), which is what lets a SessionStart hook call it to reap the orphans
+// left when a session ends without a clean exit.
+func newWorktreePruneCmd() *cobra.Command {
+	var dryRun, deleteBranches bool
+	var base string
+	cmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Remove worktrees whose branch is clean and already merged",
+		Long: `Sweep this repo's linked worktrees and remove each one that is both:
+
+  • clean   no uncommitted or untracked changes
+  • merged  its branch is fully contained in the base branch
+            (detects squash-merges as well as ordinary merges)
+
+The primary checkout and the worktree you're running from are never touched, and
+dirty or unmerged worktrees are skipped with a reason. Removing a worktree keeps
+its branch unless --delete-branches is given. Merge state is tested against the
+local base branch, so keep it current (e.g. pull main) for accurate results.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			repo, root, err := openRepo(ctx)
+			if err != nil {
+				return err
+			}
+			if base == "" {
+				base = repo.DefaultBranch(ctx)
+			}
+			wts, err := repo.WorktreeList(ctx)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+
+			// Clear stale records for worktree dirs removed by hand, so the list
+			// we act on reflects reality. Harmless on existing checkouts.
+			if !dryRun {
+				_ = repo.WorktreePruneMeta(ctx)
+			}
+
+			var removed, kept int
+			skip := func(label, reason string) {
+				kept++
+				fmt.Fprintf(out, "%s %s  %s\n", DimStyle.Render("•"), HeaderStyle.Render(label), DimStyle.Render(reason))
+			}
+			for _, wt := range wts {
+				// Never the primary checkout, the base-branch worktree, or the one
+				// we're standing in (openRepo's root is this session's worktree).
+				if sameDir(wt.Path, root) || wt.Branch == base {
+					continue
+				}
+				if wt.Branch == "" {
+					skip("(detached)", "detached HEAD — skipped")
+					continue
+				}
+				label := wt.Branch
+				clean, err := repo.WorktreeClean(ctx, wt.Path)
+				if err != nil {
+					skip(label, "couldn't read status — skipped")
+					continue
+				}
+				if !clean {
+					skip(label, "uncommitted changes — skipped")
+					continue
+				}
+				merged, err := repo.IsMerged(ctx, wt.Branch, base)
+				if err != nil {
+					skip(label, "couldn't check merge state — skipped")
+					continue
+				}
+				if !merged {
+					skip(label, fmt.Sprintf("not merged into %s — skipped", base))
+					continue
+				}
+				if dryRun {
+					removed++
+					fmt.Fprintf(out, "%s %s  %s\n", WarnStyle.Render("⤳"), HeaderStyle.Render(label), DimStyle.Render("would remove "+wt.Path))
+					continue
+				}
+				if err := repo.WorktreeRemove(ctx, wt.Path, false); err != nil {
+					skip(label, "remove failed: "+err.Error())
+					continue
+				}
+				removed++
+				fmt.Fprintf(out, "%s %s  %s\n", OkStyle.Render("✓"), HeaderStyle.Render(label), DimStyle.Render("removed "+wt.Path))
+				if deleteBranches {
+					if err := repo.DeleteBranch(ctx, wt.Branch, false); err != nil {
+						fmt.Fprintf(out, "  %s\n", WarnStyle.Render("kept branch "+wt.Branch+": "+err.Error()))
+					} else {
+						fmt.Fprintf(out, "  %s\n", DimStyle.Render("deleted branch "+wt.Branch))
+					}
+				}
+			}
+
+			verb := "removed"
+			if dryRun {
+				verb = "to remove"
+			}
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf("%d %s, %d kept", removed, verb, kept)))
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what would be removed without removing anything")
+	cmd.Flags().BoolVarP(&deleteBranches, "delete-branches", "b", false, "also delete the local branch of each removed worktree")
+	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
+	return cmd
+}
+
+// sameDir reports whether two paths point at the same directory, resolving both
+// to absolute, symlink-free form first. That matters on macOS, where temp dirs
+// (and /var) live behind /private symlinks, so a raw string compare of a git
+// path against a resolved one would miss.
+func sameDir(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return resolveDir(a) == resolveDir(b)
+}
+
+func resolveDir(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real
+	}
+	return filepath.Clean(p)
 }
 
 // openReview opens path in a review window using the configured opener (default
