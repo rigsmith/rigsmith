@@ -217,6 +217,9 @@ func toolChecks(present map[string]bool, root string) []pendingCheck {
 	}
 	if present[detect.DotNet] {
 		tools = append(tools, toolDnx)
+		if dotnetFormatterIsCsharpier(root) {
+			tools = append(tools, toolCsharpier)
+		}
 		addRG()
 	}
 	if present[detect.Node] {

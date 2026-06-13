@@ -29,6 +29,7 @@ the subject of this doc.
 | **cargo-llvm-cov** | `rig coverage` (cargo) | `cargo llvm-cov` | ✅ `extTool` (LookPath) | ✅ prompt → `cargo install cargo-llvm-cov` | `tools.cargo-llvm-cov` | guidance error (`require`) |
 | **cargo-outdated** | `rig outdated` (cargo) | `cargo outdated` | ✅ `extTool` | ✅ prompt → `cargo install cargo-outdated` | `tools.cargo-outdated` | guidance error (`require`) |
 | **cargo-watch** | `rig watch` (cargo) | `cargo watch -x <verb>` | ✅ `extTool` | ✅ prompt → `cargo install cargo-watch` | `tools.cargo-watch` | guidance error (`require`) |
+| **csharpier** | `rig format` (.NET, when selected) | `csharpier format .` / `dotnet csharpier format .` | ✅ `extTool` (LookPath + tool-manifest) | ✅ prompt → `dotnet tool install -g csharpier` | `dotnet.formatter` (auto/dotnet/csharpier) | guidance error (`require`) |
 | **vitest** | `rig coverage` (node) | reporters injected into the test run | ✅ config-file/dep detection | — (project dev-dep) | — | reporters not injected (no rich report) |
 | **OS process tools** | `rig kill` | `lsof`/`netstat` (port), `pgrep`/`pkill`/`taskkill` (name) | ⚠️ implicit (non-zero exit = "no match") | — | `kill.match` | treated as no matches |
 | **git** | release/version/tagging (`core/gitutil`), `rig outdated` discovery | `git …` | ❌ none | — | — | raw error |
@@ -80,6 +81,20 @@ outdated, and watch paths `require`: detected via `exec.LookPath("cargo-<sub>")`
 and when absent, on a TTY rig offers to run `cargo install cargo-<sub>` (persisted
 to `tools.<name>`), else fails with that install guidance. The cargo binary stays
 the invoker (the `extTool` only gates presence/install).
+
+### csharpier (.NET formatter, alternative to `dotnet format`)
+
+`rig format` on .NET uses CSharpier instead of the in-box `dotnet format` when
+the repo opts in — convention-first like the rest of rig. Selection
+(`dotnetFormatterIsCsharpier`): the `dotnet.formatter` config key
+(`csharpier`/`dotnet`) wins; `auto` (default) picks CSharpier when a
+`.csharpierrc*` config or a dotnet tool-manifest entry is present, else
+`dotnet format`. Resolved like ReportGenerator — a `csharpier` on PATH (global
+tool) or a local tool-manifest (`dotnet csharpier`) — and invoked as
+`csharpier format .` (CSharpier 1.0+). The `extTool` (`toolCsharpier`) is
+`require`d on the format run (offer `dotnet tool install -g csharpier` on a TTY,
+else a guidance error), and it joins the doctor Tools group when CSharpier is the
+selected .NET formatter.
 
 ### vitest (node coverage)
 

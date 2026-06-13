@@ -19,7 +19,7 @@ and are omitted.
 | build | ✅ | ✅ | ✅ | ✅ | |
 | test | ✅ | ✅ | ✅ | ✅ | |
 | run / dev | ✅ | ✅ | ✅ | ✅ | |
-| format / fmt | ✅ | ✅ | ✅ | ✅ | |
+| format / fmt | ✅ | ✅ | ✅ | ✅ | .NET→`dotnet format` or CSharpier (`dotnet.formatter` / `.csharpierrc` / tool-manifest); go→gofmt; cargo→`cargo fmt`; node→`format` script |
 | lint | ⚠️ | ✅ | ✅ | ✅ | go→`go vet`, cargo→clippy; .NET has no native lint verb |
 | typecheck / check | ⚠️ | ✅ | ✅ | ✅ | go→`go vet`, cargo→`cargo check`; Go folds type-checking into vet |
 | clean | ✅ | — | ✅ | ✅ | Node has no canonical clean (maps to a `clean` script if present) |

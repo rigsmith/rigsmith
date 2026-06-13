@@ -55,6 +55,11 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 					if !has {
 						return fmt.Errorf("verb %q has no mapping for ecosystem %q", verb, t.Eco)
 					}
+					if verb == "format" {
+						if err := requireDotnetFormatter(cmd, t.Eco, root); err != nil {
+							return err
+						}
+					}
 					return runCommand(cmd, t.Dir, append(argv, args[1:]...))
 				}
 			}
@@ -80,9 +85,14 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 					return herr
 				}
 			}
-			argv, ok := detect.CommandFor(eco, verb, root)
+			argv, ok := resolveVerbCommand(eco, verb, root)
 			if !ok {
 				return fmt.Errorf("verb %q has no mapping for ecosystem %q yet", verb, eco)
+			}
+			if verb == "format" {
+				if err := requireDotnetFormatter(cmd, eco, root); err != nil {
+					return err
+				}
 			}
 			return runCommand(cmd, root, append(argv, args...))
 		},
