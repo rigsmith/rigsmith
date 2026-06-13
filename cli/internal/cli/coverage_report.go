@@ -442,6 +442,7 @@ func augmentNodeCoverageArgs(argv []string, root, name string, open, min, summar
 var toolReportGenerator = extTool{
 	name:       "reportgenerator",
 	why:        "renders a richer HTML coverage report",
+	hint:       "fetched on demand via dnx, or: dotnet tool install -g dotnet-reportgenerator-globaltool",
 	resolve:    func(root, mode string) ([]string, bool) { return resolveReportGenerator(root, mode) },
 	canInstall: func(string) bool { _, err := exec.LookPath("dnx"); return err == nil },
 	readMode: func(cfg config.Config) string {

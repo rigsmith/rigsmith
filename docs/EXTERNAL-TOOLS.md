@@ -131,11 +131,17 @@ miss so the command still prints what it would run. Tools rig can't install
 (dnx — ships with the .NET 10 SDK) carry a `hint` and an optional `openURL` that's
 offered for opening on a TTY.
 
+## Surfaced in `rig doctor`
+
+`rig doctor` reports a **Tools** group: for the ecosystems present it lists the
+relevant `extTool`s (cargo-llvm-cov/outdated/watch, dnx, reportgenerator) as
+installed or "not installed — <how to get it>" (a warn — optional tools only
+bite when used). The `extTool` values are the source list, so a new tool shows
+up automatically. The .NET toolchain check standardizes on .NET 10: an older SDK
+warns (the dnx-based features need 10) and a missing SDK offers the dot.net
+install page on a TTY.
+
 ## Remaining
 
-- **`doctor` could surface Tier-2 tools.** Today `rig doctor` validates only the
-  core toolchain. It could report which auxiliary tools are present/absent for
-  the detected ecosystem (e.g. "cargo-llvm-cov: not installed — `rig coverage`
-  will error"). The `extTool` values are the natural source for that list.
 - **Future tools** (a Go `watch` via `watchexec`/`air`, etc.) drop in as another
-  `extTool` value.
+  `extTool` value and are picked up by the doctor Tools group automatically.
