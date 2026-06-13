@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/cli/internal/config"
@@ -18,6 +19,7 @@ import (
 // reads JSON, not JSONC), with every optional key shown.
 const defaultRigJSON = `{
   "$schema": "https://rigsmith.dev/schemas/rig.json",
+  "solution": "",
   "defaultProject": "",
   "ecosystem": "",
   "quiet": false,
@@ -33,6 +35,9 @@ const defaultRigJSON = `{
 func runInitWizard(cmd *cobra.Command, root string) (content string, ok bool, err error) {
 	ctx := cdContext(cmd)
 
+	// A one-line summary of what was found, so the choices below are informed.
+	fmt.Fprintln(cmd.OutOrStdout(), dimStyle.Render("Detected: "+workspaceSummary(ctx, root)))
+
 	// Offer the ecosystems actually present, defaulting to the nearest one.
 	ecoOptions := []huh.Option[string]{huh.NewOption("Auto-detect (don't pin)", "")}
 	for _, eco := range detectedEcosystems(ctx, root) {
@@ -45,11 +50,9 @@ func runInitWizard(cmd *cobra.Command, root string) (content string, ok bool, er
 		eco = candidates[0]
 	}
 
-	// Default project only makes sense when there are several runnable .NET
-	// projects to choose between.
-	runnable := runnableDotnetNames(root)
+	solution := ""
 	defaultProject := ""
-
+	var excludeSel []string
 	quiet := false
 
 	fields := []huh.Field{
@@ -59,17 +62,46 @@ func runInitWizard(cmd *cobra.Command, root string) (content string, ok bool, er
 			Options(ecoOptions...).
 			Value(&eco),
 	}
-	if len(runnable) > 1 {
-		dpOptions := []huh.Option[string]{huh.NewOption("(none)", "")}
+
+	// Solution: only when several .sln/.slnx files exist to choose between.
+	if solutions := solutionFiles(root); len(solutions) > 1 {
+		opts := []huh.Option[string]{huh.NewOption("(auto)", "")}
+		for _, s := range solutions {
+			opts = append(opts, huh.NewOption(s, s))
+		}
+		fields = append(fields, huh.NewSelect[string]().
+			Title("Solution").
+			Description("Which .sln rig builds/discovers against.").
+			Options(opts...).
+			Value(&solution))
+	}
+
+	// Default project: only when there are several runnable .NET projects.
+	if runnable := runnableDotnetNames(root); len(runnable) > 1 {
+		opts := []huh.Option[string]{huh.NewOption("(none)", "")}
 		for _, n := range runnable {
-			dpOptions = append(dpOptions, huh.NewOption(n, n))
+			opts = append(opts, huh.NewOption(n, n))
 		}
 		fields = append(fields, huh.NewSelect[string]().
 			Title("Default project").
 			Description("The project `rig run`/`default` targets when none is named.").
-			Options(dpOptions...).
+			Options(opts...).
 			Value(&defaultProject))
 	}
+
+	// Exclude: offer detected sample/example-ish dirs that hold packages.
+	if candidates := excludeCandidates(ctx, root); len(candidates) > 0 {
+		opts := make([]huh.Option[string], 0, len(candidates))
+		for _, c := range candidates {
+			opts = append(opts, huh.NewOption(c, c))
+		}
+		fields = append(fields, huh.NewMultiSelect[string]().
+			Title("Exclude from discovery?").
+			Description("Dirs to keep out of `--all`/`doctor` (space toggles).").
+			Options(opts...).
+			Value(&excludeSel))
+	}
+
 	fields = append(fields, huh.NewConfirm().
 		Title("Quiet by default?").
 		Description("Suppress the `→ command` echo on every run.").
@@ -79,7 +111,7 @@ func runInitWizard(cmd *cobra.Command, root string) (content string, ok bool, er
 	if err := form.Run(); err != nil {
 		return "", false, nil // esc / ctrl+c → cancelled
 	}
-	return wizardRigJSON(eco, defaultProject, quiet), true, nil
+	return wizardRigJSON(eco, solution, defaultProject, excludeSel, quiet), true, nil
 }
 
 // detectedEcosystems returns the distinct ecosystems present in the workspace,
@@ -91,6 +123,81 @@ func detectedEcosystems(ctx context.Context, root string) []string {
 		if !seen[t.Eco] {
 			seen[t.Eco] = true
 			out = append(out, t.Eco)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// workspaceSummary is a one-line count of what discovery found, per ecosystem
+// (e.g. "3 Go modules · 2 Node packages · 1 .NET project").
+func workspaceSummary(ctx context.Context, root string) string {
+	counts := map[string]int{}
+	for _, t := range discoverWorkspace(ctx, root, excludeFor(root)) {
+		counts[t.Eco]++
+	}
+	if len(counts) == 0 {
+		return "no packages detected"
+	}
+	ecos := make([]string, 0, len(counts))
+	for eco := range counts {
+		ecos = append(ecos, eco)
+	}
+	sort.Strings(ecos)
+	nouns := map[string]string{"go": "module", "node": "package", "dotnet": "project", "cargo": "crate"}
+	parts := make([]string, 0, len(ecos))
+	for _, eco := range ecos {
+		noun := nouns[eco]
+		if noun == "" {
+			noun = "package"
+		}
+		n := counts[eco]
+		if n != 1 {
+			noun += "s"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s %s", n, ecoDisplayName(eco), noun))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// solutionFiles lists the .sln/.slnx files at the repo root (base names), sorted.
+func solutionFiles(root string) []string {
+	var out []string
+	for _, pat := range []string{"*.sln", "*.slnx"} {
+		hits, _ := filepath.Glob(filepath.Join(root, pat))
+		for _, h := range hits {
+			out = append(out, filepath.Base(h))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// excludeDirNames are the top-level dir names commonly excluded from discovery.
+var excludeDirNames = map[string]bool{
+	"example": true, "examples": true, "sample": true, "samples": true,
+	"fixture": true, "fixtures": true, "testdata": true, "demo": true,
+	"demos": true, "e2e": true, "integration": true,
+}
+
+// excludeCandidates returns the top-level dirs (matching common sample/example
+// names) that actually contain discovered packages — the exclude picker's
+// options. Tying candidates to real packages avoids offering empty dirs.
+func excludeCandidates(ctx context.Context, root string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range discoverWorkspace(ctx, root, excludeFor(root)) {
+		rel, err := filepath.Rel(root, t.Dir)
+		if err != nil {
+			continue
+		}
+		top := rel
+		if i := strings.IndexAny(rel, `/\`); i >= 0 {
+			top = rel[:i]
+		}
+		if excludeDirNames[strings.ToLower(top)] && !seen[top] {
+			seen[top] = true
+			out = append(out, top)
 		}
 	}
 	sort.Strings(out)
@@ -112,18 +219,27 @@ func runnableDotnetNames(root string) []string {
 }
 
 // wizardRigJSON renders the scaffold with the wizard's chosen values filled in.
-func wizardRigJSON(eco, defaultProject string, quiet bool) string {
+func wizardRigJSON(eco, solution, defaultProject string, exclude []string, quiet bool) string {
+	excludeJSON := "[]"
+	if len(exclude) > 0 {
+		quoted := make([]string, len(exclude))
+		for i, e := range exclude {
+			quoted[i] = fmt.Sprintf("%q", e)
+		}
+		excludeJSON = "[" + strings.Join(quoted, ", ") + "]"
+	}
 	return fmt.Sprintf(`{
   "$schema": "https://rigsmith.dev/schemas/rig.json",
+  "solution": %q,
   "defaultProject": %q,
   "ecosystem": %q,
   "quiet": %t,
-  "exclude": [],
+  "exclude": %s,
   "env": {},
   "commands": {},
   "kill": { "match": [] }
 }
-`, defaultProject, eco, quiet)
+`, solution, defaultProject, eco, quiet, excludeJSON)
 }
 
 // setDefaultProject validates query against the repo's runnable projects and

@@ -11,29 +11,66 @@ import (
 
 func TestWizardRigJSON(t *testing.T) {
 	cases := []struct {
-		eco, dp string
-		quiet   bool
+		eco, sln, dp string
+		exclude      []string
+		quiet        bool
 	}{
-		{"go", "", false},
-		{"dotnet", "App", true},
-		{"", "", false},
+		{"go", "", "", nil, false},
+		{"dotnet", "App.sln", "App", nil, true},
+		{"node", "", "", []string{"examples", "fixtures"}, false},
 	}
 	for _, c := range cases {
-		out := wizardRigJSON(c.eco, c.dp, c.quiet)
+		out := wizardRigJSON(c.eco, c.sln, c.dp, c.exclude, c.quiet)
 		if !json.Valid([]byte(out)) {
 			t.Fatalf("not valid JSON for %+v:\n%s", c, out)
 		}
 		var doc struct {
-			Ecosystem      string `json:"ecosystem"`
-			DefaultProject string `json:"defaultProject"`
-			Quiet          bool   `json:"quiet"`
+			Ecosystem      string   `json:"ecosystem"`
+			Solution       string   `json:"solution"`
+			DefaultProject string   `json:"defaultProject"`
+			Exclude        []string `json:"exclude"`
+			Quiet          bool     `json:"quiet"`
 		}
 		if err := json.Unmarshal([]byte(out), &doc); err != nil {
 			t.Fatal(err)
 		}
-		if doc.Ecosystem != c.eco || doc.DefaultProject != c.dp || doc.Quiet != c.quiet {
+		if doc.Ecosystem != c.eco || doc.Solution != c.sln || doc.DefaultProject != c.dp || doc.Quiet != c.quiet {
 			t.Fatalf("round-trip = %+v, want %+v", doc, c)
 		}
+		if !slices.Equal(doc.Exclude, c.exclude) && !(len(doc.Exclude) == 0 && len(c.exclude) == 0) {
+			t.Fatalf("exclude = %v, want %v", doc.Exclude, c.exclude)
+		}
+	}
+}
+
+func TestSolutionFiles(t *testing.T) {
+	root := t.TempDir()
+	for _, f := range []string{"Beta.slnx", "Alpha.sln", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(root, f), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := solutionFiles(root)
+	if !slices.Equal(got, []string{"Alpha.sln", "Beta.slnx"}) {
+		t.Fatalf("got %v, want [Alpha.sln Beta.slnx]", got)
+	}
+}
+
+func TestExcludeCandidates(t *testing.T) {
+	root := t.TempDir()
+	// examples/* and src/* both hold packages; only "examples" is an exclude candidate.
+	for _, dir := range []string{"examples/demo", "examples/sample", "src/app", "vendoredstuff"} {
+		full := filepath.Join(root, dir)
+		if err := os.MkdirAll(full, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(full, "package.json"), []byte(`{"name":"`+filepath.Base(dir)+`"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := excludeCandidates(context.Background(), root)
+	if !slices.Equal(got, []string{"examples"}) {
+		t.Fatalf("got %v, want [examples]", got)
 	}
 }
 

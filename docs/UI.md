@@ -260,17 +260,26 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
 - **Trigger:** `rig init` on an interactive terminal with no existing
   `.rig.json`. `--yes`/`-y` (or a non-TTY) writes the plain scaffold instead;
   an existing `.rig.json` is never overwritten.
-- **What you see:** a short huh form, seeded from what's detected in the repo:
+- **What you see:** a `Detected: …` summary line (per-ecosystem counts, e.g.
+  `3 Go modules · 2 Node packages · 1 .NET project`) above a short huh form,
+  seeded from what's detected:
   - **Primary ecosystem** — a select of the ecosystems actually present (plus
     `Auto-detect (don't pin)`), defaulting to the nearest one. This is the value
     `resolvePrimary` reads to disambiguate a polyglot repo.
+  - **Solution** — shown only when several `.sln`/`.slnx` exist; a select (with
+    `(auto)`) of which one rig builds/discovers against.
   - **Default project** — shown only when there are several runnable .NET
     projects; a select (with `(none)`) of their short names.
+  - **Exclude from discovery?** — shown only when sample/example-ish dirs
+    (`examples`/`samples`/`fixtures`/`testdata`/`demo`/`e2e`/…) actually hold
+    packages; a multi-select to keep them out of `--all`/`doctor`.
   - **Quiet by default?** — a confirm that sets `quiet` (suppress the `→ command`
     echo).
 - **What it does:** writes a `.rig.json` scaffold (all keys shown) with the
-  chosen `ecosystem` / `defaultProject` / `quiet` filled in. Esc/ctrl+c cancels
-  without writing.
+  chosen `ecosystem` / `solution` / `defaultProject` / `exclude` / `quiet` filled
+  in. Esc/ctrl+c cancels without writing. The conditional fields only appear when
+  the repo gives them something to choose, so a simple repo still sees just
+  ecosystem + quiet.
 - **Non-TTY / `--yes`:** the original behavior — the plain scaffold with empty
   defaults.
 
