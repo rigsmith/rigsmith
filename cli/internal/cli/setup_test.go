@@ -25,35 +25,59 @@ func fakeHome(t *testing.T) string {
 }
 
 func TestSetupSnippet_ZshCarriesCompletionAndTheCdWrapper(t *testing.T) {
-	s := setupSnippet("zsh")
+	s := setupSnippet("zsh", "rig")
 	for _, want := range []string{
-		setupBegin,
+		markerBegin("rig"),
 		"compinit", // cobra's zsh script needs compdef
 		`eval "$(command rig completion zsh)"`,
 		`rig() {`,
 		`__rig_dir="$(command rig "$@")"`,
 		`builtin cd -- "$__rig_dir"`,
 		`command rig "$@"`,
-		setupEnd,
+		markerEnd("rig"),
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("zsh snippet missing %q:\n%s", want, s)
 		}
 	}
+	// The base block must NOT carry the rebind line — cobra's own script binds rig.
+	if strings.Contains(s, "compdef _rig rig\n") {
+		t.Errorf("base zsh snippet should not add a redundant compdef:\n%s", s)
+	}
+}
+
+func TestSetupSnippet_DevTargetsRigDev(t *testing.T) {
+	s := setupSnippet("zsh", "rig-dev")
+	for _, want := range []string{
+		markerBegin("rig-dev"),                     // its own markers, so it coexists with a rig block
+		`eval "$(command rig-dev completion zsh)"`, // completion sourced from the dev binary
+		"compdef _rig rig-dev",                     // ...and bound to the rig-dev command
+		`rig-dev() {`,                              // dev-named wrapper
+		`command rig-dev "$@"`,
+		markerEnd("rig-dev"),
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("rig-dev zsh snippet missing %q:\n%s", want, s)
+		}
+	}
 }
 
 func TestSetupSnippet_BashSkipsTheZshOnlyCompinitGuard(t *testing.T) {
-	s := setupSnippet("bash")
+	s := setupSnippet("bash", "rig")
 	if !strings.Contains(s, `eval "$(command rig completion bash)"`) {
 		t.Error("bash snippet should source cobra's bash completion")
 	}
 	if strings.Contains(s, "compinit") {
 		t.Error("compinit is zsh-only")
 	}
+	// The dev variant rebinds the bash completion function to rig-dev.
+	if dev := setupSnippet("bash", "rig-dev"); !strings.Contains(dev, "__start_rig rig-dev") {
+		t.Errorf("rig-dev bash snippet should rebind the completion to rig-dev:\n%s", dev)
+	}
 }
 
 func TestSetupSnippet_FishUsesFishSyntax(t *testing.T) {
-	s := setupSnippet("fish")
+	s := setupSnippet("fish", "rig")
 	for _, want := range []string{
 		"command rig completion fish | source",
 		"function rig",
@@ -64,32 +88,42 @@ func TestSetupSnippet_FishUsesFishSyntax(t *testing.T) {
 			t.Errorf("fish snippet missing %q:\n%s", want, s)
 		}
 	}
+	// The dev variant rewrites cobra's `complete -c rig` registration to rig-dev.
+	dev := setupSnippet("fish", "rig-dev")
+	for _, want := range []string{
+		"function rig-dev",
+		"string replace -a -- '-c rig ' '-c rig-dev '",
+	} {
+		if !strings.Contains(dev, want) {
+			t.Errorf("rig-dev fish snippet missing %q:\n%s", want, dev)
+		}
+	}
 }
 
 func TestSpliceSnippet_AppendsPreservingExistingContent(t *testing.T) {
-	got, changed := spliceSnippet("# my rc\nalias ll='ls -l'\n", setupSnippet("zsh"))
+	got, changed := spliceSnippet("# my rc\nalias ll='ls -l'\n", setupSnippet("zsh", "rig"), "rig")
 	if !changed {
 		t.Fatal("a first install should change the file")
 	}
 	if !strings.HasPrefix(got, "# my rc\nalias ll='ls -l'\n") {
 		t.Errorf("existing content must be preserved:\n%s", got)
 	}
-	if !strings.Contains(got, setupBegin) || !strings.HasSuffix(got, setupEnd+"\n") {
+	if !strings.Contains(got, markerBegin("rig")) || !strings.HasSuffix(got, markerEnd("rig")+"\n") {
 		t.Errorf("the snippet should be appended as a marked block:\n%s", got)
 	}
 }
 
 func TestSpliceSnippet_IsIdempotent(t *testing.T) {
-	once, _ := spliceSnippet("", setupSnippet("zsh"))
-	again, changed := spliceSnippet(once, setupSnippet("zsh"))
+	once, _ := spliceSnippet("", setupSnippet("zsh", "rig"), "rig")
+	again, changed := spliceSnippet(once, setupSnippet("zsh", "rig"), "rig")
 	if changed {
 		t.Fatalf("re-splicing an up-to-date block should be a no-op, got:\n%s", again)
 	}
 }
 
 func TestSpliceSnippet_ReplacesAStaleBlockInPlace(t *testing.T) {
-	stale := "before\n" + setupBegin + "\nold contents\n" + setupEnd + "\nafter\n"
-	got, changed := spliceSnippet(stale, setupSnippet("bash"))
+	stale := "before\n" + markerBegin("rig") + "\nold contents\n" + markerEnd("rig") + "\nafter\n"
+	got, changed := spliceSnippet(stale, setupSnippet("bash", "rig"), "rig")
 	if !changed {
 		t.Fatal("a stale block should be rewritten")
 	}
@@ -99,8 +133,29 @@ func TestSpliceSnippet_ReplacesAStaleBlockInPlace(t *testing.T) {
 	if !strings.HasPrefix(got, "before\n") || !strings.HasSuffix(got, "\nafter\n") {
 		t.Errorf("content around the block must be preserved:\n%s", got)
 	}
-	if strings.Count(got, setupBegin) != 1 {
+	if strings.Count(got, markerBegin("rig")) != 1 {
 		t.Errorf("exactly one block expected:\n%s", got)
+	}
+}
+
+// A rig-dev block uses its own markers, so installing it leaves an existing
+// rig block intact (they coexist) rather than clobbering it.
+func TestSpliceSnippet_DevAndBaseBlocksCoexist(t *testing.T) {
+	withRig, _ := spliceSnippet("", setupSnippet("zsh", "rig"), "rig")
+	both, changed := spliceSnippet(withRig, setupSnippet("zsh", "rig-dev"), "rig-dev")
+	if !changed {
+		t.Fatal("installing the rig-dev block into a file with only a rig block should change it")
+	}
+	if !strings.Contains(both, markerBegin("rig")) || !strings.Contains(both, markerBegin("rig-dev")) {
+		t.Errorf("both blocks should be present:\n%s", both)
+	}
+	if strings.Count(both, "rig() {") != 1 || strings.Count(both, "rig-dev() {") != 1 {
+		t.Errorf("each wrapper should appear exactly once:\n%s", both)
+	}
+	// Re-installing rig-dev is idempotent and still doesn't disturb the rig block.
+	again, changed := spliceSnippet(both, setupSnippet("zsh", "rig-dev"), "rig-dev")
+	if changed || again != both {
+		t.Errorf("re-installing rig-dev should be a no-op")
 	}
 }
 
@@ -145,7 +200,7 @@ func TestSetupCommand_InstallsOnceAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the rc file should exist: %v", err)
 	}
-	if !strings.Contains(string(data), setupBegin) || !strings.Contains(string(data), "rig() {") {
+	if !strings.Contains(string(data), markerBegin("rig")) || !strings.Contains(string(data), "rig() {") {
 		t.Fatalf("rc file missing the integration block:\n%s", data)
 	}
 
@@ -165,7 +220,7 @@ func TestSetupCommand_InstallsOnceAndIsIdempotent(t *testing.T) {
 	if string(after) != string(data) {
 		t.Fatal("a re-run must leave the rc file byte-identical")
 	}
-	if strings.Count(string(after), setupBegin) != 1 {
+	if strings.Count(string(after), markerBegin("rig")) != 1 {
 		t.Fatal("the block must not duplicate on re-run")
 	}
 }
@@ -204,9 +259,9 @@ func TestSetupCommand_RejectsAnUnknownShell(t *testing.T) {
 }
 
 func TestSetupPowershellSnippet(t *testing.T) {
-	got := setupSnippet("powershell")
+	got := setupSnippet("powershell", "rig")
 	for _, want := range []string{
-		setupBegin, setupEnd,
+		markerBegin("rig"), markerEnd("rig"),
 		"completion powershell | Out-String | Invoke-Expression",
 		"function rig {",
 		"Set-Location -LiteralPath $dir",
@@ -215,6 +270,10 @@ func TestSetupPowershellSnippet(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("powershell snippet missing %q:\n%s", want, got)
 		}
+	}
+	// The dev variant re-registers cobra's completer block for rig-dev.
+	if dev := setupSnippet("powershell", "rig-dev"); !strings.Contains(dev, "Register-ArgumentCompleter -CommandName 'rig-dev' -ScriptBlock ${__rigCompleterBlock}") {
+		t.Errorf("rig-dev powershell snippet should re-register the completer:\n%s", dev)
 	}
 }
 
@@ -227,7 +286,7 @@ func TestSetupPowershellProfileSeamAndInstall(t *testing.T) {
 	if err != nil || rc != profile {
 		t.Fatalf("rcFileFor(powershell) = %q, %v; want the RIG_PWSH_PROFILE seam", rc, err)
 	}
-	changed, err := installSnippet(rc, setupSnippet("powershell"))
+	changed, err := installSnippet(rc, setupSnippet("powershell", "rig"), "rig")
 	if err != nil || !changed {
 		t.Fatalf("install = %v, %v", changed, err)
 	}
