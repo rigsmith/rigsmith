@@ -154,7 +154,7 @@ func pickOutdated(deps []outdatedDep) (chosen []outdatedDep, ok bool) {
 		opts = append(opts, huh.NewOption(outdatedLabel(d, width), i))
 	}
 	ms := huh.NewMultiSelect[int]().
-		Title("Upgrade which packages? (space toggles · enter confirms · esc cancels)").
+		Title("Upgrade which packages? (space toggles · ctrl+a all · / filter · enter confirms · esc cancels)").
 		Options(opts...).
 		Value(&selected)
 	if err := runHuhMultiSelect(ms); err != nil {
