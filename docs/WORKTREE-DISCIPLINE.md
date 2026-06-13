@@ -56,12 +56,33 @@ touch .claude/allow-main          # for the repo, until you delete it
 Install / inspect:
 
 ```sh
-clauderig hooks install           # adds the PreToolUse guard (+ SessionStart/Stop sync)
-clauderig hooks status
+clauderig hooks install              # sync hooks → user scope, guard → project scope
+clauderig hooks install --scope local # everything in .claude/settings.local.json (gitignored)
+clauderig hooks status               # sweeps user + project + local
+clauderig hooks uninstall            # removes clauderig hooks from every scope
 ```
 
-The hook command is the bare `clauderig guard`, so it stays correct when
-`settings.json` itself syncs to another machine.
+Hooks live at the [scope](#scopes) that fits them: the sync hooks
+(SessionStart→pull, Stop→sync) at **user** scope, because they ride clauderig's
+`~/.claude` sync; the **guard** at **project** scope (`<repo>/.claude/settings.json`),
+because it's repo policy — commit it and your team inherits it (Claude Code asks
+to trust a project hook the first time). `--scope user|project|local` forces a
+single target. The hook command is the bare `clauderig guard`, portable across
+machines.
+
+## Scopes
+
+Claude Code merges settings from several tiers; clauderig writes to the one a
+command picks (`internal/settings`):
+
+| Scope | File | Travels via |
+|---|---|---|
+| `user` | `~/.claude/settings.json` | clauderig sync |
+| `project` | `<repo>/.claude/settings.json` | committed to the repo |
+| `local` | `<repo>/.claude/settings.local.json` | nowhere (gitignore it) |
+
+This is the shared seam for future repo-local commands, too — anything that should
+affect just this checkout writes at `project` or `local` scope.
 
 ## `clauderig worktree` — the safe way to branch
 

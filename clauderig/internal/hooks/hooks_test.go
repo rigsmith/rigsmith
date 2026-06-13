@@ -34,7 +34,7 @@ func load_(t *testing.T, p string) map[string]any {
 
 func TestInstall_FreshAndIdempotent(t *testing.T) {
 	p := settingsPath(t, "") // absent file
-	added, err := Install(p)
+	added, err := Install(p, DefaultPlans())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestInstall_FreshAndIdempotent(t *testing.T) {
 		t.Fatalf("added = %v", added)
 	}
 	// re-install is a no-op
-	added2, _ := Install(p)
+	added2, _ := Install(p, DefaultPlans())
 	if len(added2) != 0 {
 		t.Fatalf("re-install should add nothing, added %v", added2)
 	}
@@ -67,7 +67,7 @@ func TestInstall_PreservesOtherSettingsAndHooks(t *testing.T) {
 		}
 	}`
 	p := settingsPath(t, existing)
-	if _, err := Install(p); err != nil {
+	if _, err := Install(p, DefaultPlans()); err != nil {
 		t.Fatal(err)
 	}
 	m := load_(t, p)
@@ -84,7 +84,7 @@ func TestInstall_DoesNotClobberMalformedEvent(t *testing.T) {
 	// An event whose value isn't the expected array (malformed / future schema)
 	// must be left untouched, not overwritten.
 	p := settingsPath(t, `{"hooks":{"Stop":"weird-non-array-value"}}`)
-	if _, err := Install(p); err != nil {
+	if _, err := Install(p, DefaultPlans()); err != nil {
 		t.Fatal(err)
 	}
 	m := load_(t, p)
@@ -101,7 +101,7 @@ func TestInstall_DoesNotClobberMalformedEvent(t *testing.T) {
 func TestUninstall(t *testing.T) {
 	existing := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"keep-me"}]}]}}`
 	p := settingsPath(t, existing)
-	Install(p)
+	Install(p, DefaultPlans())
 	removed, err := Uninstall(p)
 	if err != nil {
 		t.Fatal(err)

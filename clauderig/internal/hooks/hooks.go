@@ -8,18 +8,24 @@ package hooks
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/rigsmith/clauderig/internal/settings"
 )
 
 // Marker identifies a clauderig-owned hook (its command contains this).
 const Marker = "clauderig"
 
 // Plan is one event→command hook clauderig installs. Matcher, when set, scopes
-// the hook to matching tool names (PreToolUse/PostToolUse only).
+// the hook to matching tool names (PreToolUse/PostToolUse only). Scope is where
+// the plan belongs by default — sync hooks at user scope (they ride clauderig's
+// ~/.claude sync), the guard at project scope (it rides the repo).
 type Plan struct {
 	Event   string
 	Matcher string
 	Command string
+	Scope   settings.Scope
 }
 
 // DefaultPlans are the hooks clauderig installs. Bare `clauderig` keeps them
@@ -27,22 +33,33 @@ type Plan struct {
 // the tool calls that can move the session dir or write code to a base branch.
 func DefaultPlans() []Plan {
 	return []Plan{
-		{Event: "SessionStart", Command: "clauderig pull"},
-		{Event: "Stop", Command: "clauderig sync"},
-		{Event: "PreToolUse", Matcher: "Edit|Write|NotebookEdit|Bash|EnterWorktree|ExitWorktree", Command: "clauderig guard"},
+		{Event: "SessionStart", Command: "clauderig pull", Scope: settings.User},
+		{Event: "Stop", Command: "clauderig sync", Scope: settings.User},
+		{Event: "PreToolUse", Matcher: "Edit|Write|NotebookEdit|Bash|EnterWorktree|ExitWorktree", Command: "clauderig guard", Scope: settings.Project},
 	}
 }
 
-// Install adds clauderig's hooks to the settings.json at path (created if absent),
+// PlansFor returns the default plans whose scope is scope.
+func PlansFor(scope settings.Scope) []Plan {
+	var out []Plan
+	for _, p := range DefaultPlans() {
+		if p.Scope == scope {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// Install adds the given plans to the settings.json at path (created if absent),
 // idempotently — an event already carrying a clauderig hook is left alone. Other
 // settings and other hooks are preserved. Returns the events newly added.
-func Install(path string) (added []string, err error) {
+func Install(path string, plans []Plan) (added []string, err error) {
 	s, err := load(path)
 	if err != nil {
 		return nil, err
 	}
 	h := hooksMap(s)
-	for _, p := range DefaultPlans() {
+	for _, p := range plans {
 		raw, exists := h[p.Event]
 		groups, ok := raw.([]any)
 		if exists && !ok {
@@ -149,6 +166,9 @@ func load(path string) (map[string]any, error) {
 func save(path string, m map[string]any) error {
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, append(b, '\n'), 0o644)

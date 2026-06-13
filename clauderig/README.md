@@ -16,7 +16,7 @@ clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect,
 clauderig status               # remote reachability, last sync, per-root counts, hooks
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
 clauderig doctor               # preview path resolution + sync roots for this machine
-clauderig hooks install        # PreToolUse guard + SessionStart→pull, Stop→sync (portable, idempotent)
+clauderig hooks install        # sync hooks → user scope, guard → project scope (--scope to force)
 clauderig worktree new feat/x  # sibling worktree + new VS Code window; never moves this session
 clauderig guide install        # add the worktree-discipline block to CLAUDE.md (marker-managed)
 clauderig ui                   # interactive dashboard
@@ -59,7 +59,7 @@ See [docs/WORKTREE-DISCIPLINE.md](../docs/WORKTREE-DISCIPLINE.md).
 | `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
 | `status` | Sync state: remote, last sync, roots, hooks |
-| `hooks` | `install` / `uninstall` / `status` the Claude Code hooks (guard + sync) |
+| `hooks` | `install` / `uninstall` / `status` the Claude Code hooks; `--scope user\|project\|local` (sync→user, guard→project by default) |
 | `guard` | PreToolUse hook: require worktrees/PRs, block cwd-moving worktree tools (used by `hooks`) |
 | `worktree` | `new` / `list` / `open` / `rm` sibling worktrees, opened in their own VS Code window |
 | `guide` | `install` / `uninstall` / `status` / `show` the worktree-discipline block in CLAUDE.md |

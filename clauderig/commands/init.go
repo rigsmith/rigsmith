@@ -11,6 +11,7 @@ import (
 	"github.com/rigsmith/clauderig/internal/config"
 	"github.com/rigsmith/clauderig/internal/ghrepo"
 	"github.com/rigsmith/clauderig/internal/hooks"
+	"github.com/rigsmith/clauderig/internal/settings"
 	"github.com/spf13/cobra"
 )
 
@@ -92,9 +93,11 @@ func NewInitCmd() *cobra.Command {
 			fmt.Fprintf(out, "%s wrote %s\n", OkStyle.Render("✓"), filepath.Join(dir, "config.json"))
 
 			if installHooks {
+				// init wires the user-scope sync hooks (pull/sync); the project-scope
+				// guard is opt-in via `clauderig hooks install` inside a repo.
 				if path, err := settingsPath(); err == nil {
-					if _, err := hooks.Install(path); err == nil {
-						fmt.Fprintln(out, OkStyle.Render("✓ Claude Code hooks installed"))
+					if _, err := hooks.Install(path, hooks.PlansFor(settings.User)); err == nil {
+						fmt.Fprintln(out, OkStyle.Render("✓ Claude Code sync hooks installed"))
 					}
 				}
 			}
