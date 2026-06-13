@@ -73,7 +73,7 @@ func newDoctorCmd() *cobra.Command {
 					if c.level > severity {
 						severity = c.level
 					}
-					fmt.Fprintln(out, "  "+renderMark(c.level)+" "+pad(c.label, 10)+" "+dimStyle.Render(c.detail))
+					fmt.Fprintln(out, docRowLine(renderMark(c.level), c.label, c.detail, pc.path))
 				}
 				fmt.Fprintln(out)
 				fmt.Fprintln(out, doctorSummary(severity))
@@ -105,7 +105,19 @@ func bad(label, detail string) check  { return check{docError, label, detail} }
 type pendingCheck struct {
 	eco   string
 	label string
+	path  string // repo-relative project dir for per-project rows ("" for toolchain rows)
 	run   func() check
+}
+
+// docRowLine formats one checklist line: mark, padded label, dim detail, and —
+// for per-project rows — the repo-relative path in a trailing dim column.
+// Shared by the static and live renderers so they stay identical.
+func docRowLine(glyph, label, detail, path string) string {
+	body := detail
+	if path != "" {
+		body = pad(detail+"  ", 24) + path // align the path into a column after the detail
+	}
+	return "  " + glyph + " " + pad(label, 10) + " " + dimStyle.Render(body)
 }
 
 // gatherChecks builds the ordered, ecosystem-grouped check list for the whole
@@ -237,9 +249,10 @@ func toolchainChecks(cmd *cobra.Command, eco, root string) []pendingCheck {
 func packageCheck(eco string, t target, root string) pendingCheck {
 	name := shortName(t.Name)
 	dir := t.Dir
+	rel := filepath.ToSlash(relToRoot(root, dir))
 	switch eco {
 	case detect.Node:
-		return pendingCheck{label: name, run: func() check {
+		return pendingCheck{label: name, path: rel, run: func() check {
 			switch {
 			case !nodeHasDependencies(dir):
 				return ok(name, "no dependencies")
@@ -250,21 +263,21 @@ func packageCheck(eco string, t target, root string) pendingCheck {
 			}
 		}}
 	case detect.DotNet:
-		return pendingCheck{label: name, run: func() check {
+		return pendingCheck{label: name, path: rel, run: func() check {
 			if tfm := readTargetFramework(dir); tfm != "" {
 				return ok(name, tfm)
 			}
 			return ok(name, "project")
 		}}
 	case detect.Go:
-		return pendingCheck{label: name, run: func() check {
+		return pendingCheck{label: name, path: rel, run: func() check {
 			if v := readGoVersion(dir); v != "" {
 				return ok(name, "go "+v)
 			}
 			return ok(name, "module")
 		}}
 	case detect.Cargo:
-		return pendingCheck{label: name, run: func() check {
+		return pendingCheck{label: name, path: rel, run: func() check {
 			if v := readCargoVersion(dir); v != "" {
 				return ok(name, "v"+v)
 			}

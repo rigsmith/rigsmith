@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/rigsmith/cli/internal/config"
 	"github.com/rigsmith/cli/internal/detect"
@@ -72,9 +73,10 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			}
 			// A bare verb at a workspace root (packages only in subdirs) has no
 			// single target — offer a picker instead of running a doomed root
-			// command. Only for --all-capable verbs.
-			if supportsAll && len(args) == 0 {
-				if handled, herr := offerWorkspaceChoice(cmd, root, verb); handled {
+			// command. For --all-capable verbs the picker leads with "All
+			// packages"; `run` gets a single-select of the runnable packages.
+			if len(args) == 0 && (supportsAll || verb == "run") {
+				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll); handled {
 					return herr
 				}
 			}
@@ -181,10 +183,11 @@ func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) err
 // offerWorkspaceChoice handles a bare dev verb at a workspace root: when packages
 // live only in subdirectories (no buildable package at the root) and several
 // exist, running the verb at the root has no single target. On an interactive
-// terminal it offers a picker ("All packages" → the --all dashboard, or one
-// package); off a TTY it returns a helpful error. handled=false lets the normal
-// root command run (single-package repos, or a package at the root).
-func offerWorkspaceChoice(cmd *cobra.Command, root, verb string) (handled bool, err error) {
+// terminal it offers a picker (with "All packages" → the --all dashboard when
+// offerAll is set, e.g. build/test; `run` gets a single-select of the runnable
+// packages); off a TTY it returns a helpful error. handled=false lets the
+// normal root command run (single-package repos, or a package at the root).
+func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll bool) (handled bool, err error) {
 	targets := topoSort(filterTargets(discoverWorkspace(cdContext(cmd), root, excludeFor(root)), ""))
 	var tasks []allTask
 	rootHasPackage := false
@@ -200,19 +203,38 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string) (handled bool, 
 		if !ok {
 			continue
 		}
+		// For `run`, list only packages that are actually runnable (a Go module
+		// with a main package, etc.) so libraries don't clutter the picker.
+		if verb == "run" && !isRunnable(t) {
+			continue
+		}
 		tasks = append(tasks, allTask{name: t.Name, eco: t.Eco, dir: t.Dir, rel: rel, argv: argv})
 	}
-	// A buildable package at the root, or ≤1 runnable: the normal root command is
-	// the right thing — let it run.
-	if rootHasPackage || len(tasks) <= 1 {
+	// A buildable package at the root, or nothing this verb maps: the normal
+	// root command is the right thing — let it run (or produce its own error).
+	if rootHasPackage || len(tasks) == 0 {
+		return false, nil
+	}
+	if len(tasks) == 1 {
+		// A lone runnable subpackage is the obvious `run` target — run it rather
+		// than falling through to a doomed root command. --all verbs keep their
+		// prior behavior (let the root command run).
+		if verb == "run" {
+			t := tasks[0]
+			return true, runCommand(cmd, t.dir, t.argv)
+		}
 		return false, nil
 	}
 	if !interactive() {
+		hint := "run `rig " + verb + " <project>`"
+		if offerAll {
+			hint = "run `rig " + verb + " --all` or `rig " + verb + " <project>`"
+		}
 		return true, fmt.Errorf(
-			"no single %s target here — this is a workspace root with %d packages; run `rig %s --all` or `rig %s <project>`",
-			verb, len(tasks), verb, verb)
+			"no single %s target here — this is a workspace root with %d packages; %s",
+			verb, len(tasks), hint)
 	}
-	switch choice := pickWorkspaceVerbTarget(verb, tasks); choice {
+	switch choice := pickWorkspaceVerbTarget(verb, tasks, offerAll); choice {
 	case pickCancel:
 		return true, nil
 	case pickAll:
@@ -221,6 +243,50 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string) (handled bool, 
 		t := tasks[choice]
 		return true, runCommand(cmd, t.dir, t.argv)
 	}
+}
+
+// isRunnable reports whether a workspace target can actually be run — it filters
+// the `run` picker so libraries don't appear. Precise for Go (looks for a
+// `package main`); other ecosystems pass through (their `run` mapping is the
+// gate).
+func isRunnable(t target) bool {
+	if t.Eco == detect.Go {
+		return goDirHasMain(t.Dir)
+	}
+	return true
+}
+
+// goDirHasMain reports whether dir has a buildable `package main` — a non-test
+// *.go file at the dir root whose package clause is `main`. Best-effort.
+func goDirHasMain(dir string) bool {
+	matches, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+	for _, f := range matches {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		if fileDeclaresMainPackage(f) {
+			return true
+		}
+	}
+	return false
+}
+
+// fileDeclaresMainPackage reports whether a .go file's package clause is `main`.
+// The first non-blank, non-comment line of a Go file is its `package` clause, so
+// scanning to it is enough. Best-effort (line comments / build tags skipped).
+func fileDeclaresMainPackage(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "/*") || strings.HasPrefix(line, "*") {
+			continue
+		}
+		return line == "package main"
+	}
+	return false
 }
 
 func filterNote(filter string) string {

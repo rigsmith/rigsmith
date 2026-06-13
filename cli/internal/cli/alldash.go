@@ -23,13 +23,18 @@ const (
 	pickCancel = -2 // the user aborted the picker
 )
 
-// pickWorkspaceVerbTarget asks which package a bare dev verb should act on: an
-// "All packages" entry (→ the --all dashboard) followed by each package
-// (name · path · ecosystem). Returns pickAll, pickCancel, or a task index.
-func pickWorkspaceVerbTarget(verb string, tasks []allTask) int {
-	choice := pickAll
+// pickWorkspaceVerbTarget asks which package a bare dev verb should act on. When
+// offerAll is set (verbs that support --all) an "All packages" entry leads the
+// list (→ the --all dashboard); otherwise (e.g. `run`, single-target) it's
+// omitted. Each package shows as name · path · ecosystem. Returns pickAll,
+// pickCancel, or a task index.
+func pickWorkspaceVerbTarget(verb string, tasks []allTask, offerAll bool) int {
+	choice := 0
 	opts := make([]huh.Option[int], 0, len(tasks)+1)
-	opts = append(opts, huh.NewOption("All packages", pickAll))
+	if offerAll {
+		choice = pickAll
+		opts = append(opts, huh.NewOption("All packages", pickAll))
+	}
 	for i, t := range tasks {
 		opts = append(opts, huh.NewOption(t.name+"  ("+t.rel+" · "+t.eco+")", i))
 	}
