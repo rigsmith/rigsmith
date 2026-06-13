@@ -1,0 +1,77 @@
+name: 'rigsmith release'
+description: 'Open a Version Packages pull request or publish packages with relrig (polyglot: .NET / Node / Go / Rust).'
+
+inputs:
+  version:
+    description: 'Command run to update versions and changelogs when changesets exist.'
+    required: false
+    default: 'relrig version'
+  publish:
+    description: 'Command run to publish when there are no changesets. Leave empty to skip publishing.'
+    required: false
+    default: ''
+  status:
+    description: 'Command run to render the pending release plan into the pull request body.'
+    required: false
+    default: 'relrig status'
+  cwd:
+    description: 'Working directory to run in.'
+    required: false
+    default: '.'
+  branch:
+    description: 'Release branch the version PR is opened from. Defaults to changeset-release/<current branch>.'
+    required: false
+    default: ''
+  title:
+    description: 'Title (and commit message) for the version pull request.'
+    required: false
+    default: 'Version Packages'
+  setupGitUser:
+    description: 'Set the git user to github-actions[bot].'
+    required: false
+    default: 'true'
+  install:
+    description: 'Auto-install relrig before running. Set to false if relrig is already on PATH.'
+    required: false
+    default: 'true'
+  relrigVersion:
+    description: 'relrig version to install ("latest", "v1.2.3", "main", …). Only used when install is true.'
+    required: false
+    default: 'latest'
+
+outputs:
+  hasChangesets:
+    description: 'true when pending changesets were found and a version PR was opened or updated.'
+    value: ${{ steps.run.outputs.hasChangesets }}
+  published:
+    description: 'true when at least one package was published.'
+    value: ${{ steps.run.outputs.published }}
+  publishedPackages:
+    description: 'JSON array of { name, version } objects that were published.'
+    value: ${{ steps.run.outputs.publishedPackages }}
+  pullRequestNumber:
+    description: 'The number of the opened or updated version pull request.'
+    value: ${{ steps.run.outputs.pullRequestNumber }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      if: ${{ inputs.install == 'true' }}
+      shell: bash
+      env:
+        INPUT_RELRIG_VERSION: ${{ inputs.relrigVersion }}
+        RELRIG_REPO: ${{ github.action_repository || 'rigsmith/rigsmith' }}
+      run: ${{ github.action_path }}/install-relrig.sh
+
+    - id: run
+      shell: bash
+      working-directory: ${{ inputs.cwd }}
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_PUBLISH: ${{ inputs.publish }}
+        INPUT_STATUS: ${{ inputs.status }}
+        INPUT_BRANCH: ${{ inputs.branch }}
+        INPUT_TITLE: ${{ inputs.title }}
+        INPUT_SETUP_GIT_USER: ${{ inputs.setupGitUser }}
+      run: ${{ github.action_path }}/release.sh
