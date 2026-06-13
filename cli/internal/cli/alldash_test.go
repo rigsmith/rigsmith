@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -94,5 +95,17 @@ func TestLineSinkSplitsAndFlushes(t *testing.T) {
 	s.flush() // trailing partial line
 	if len(got) != 3 || got[2] != "foo" {
 		t.Fatalf("after flush, got %v", got)
+	}
+}
+
+func TestAllModelRowShowsPath(t *testing.T) {
+	tasks := []allTask{{name: "@demo/core", eco: "node", rel: "examples/demo/node/core"}}
+	m := newAllModel("build", tasks, func() {})
+	v := m.View()
+	if !strings.Contains(v, "examples/demo/node/core") {
+		t.Errorf("row should show the package's path:\n%s", v)
+	}
+	if !strings.Contains(v, "node") {
+		t.Errorf("row should still show the ecosystem:\n%s", v)
 	}
 }

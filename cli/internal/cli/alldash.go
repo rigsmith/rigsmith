@@ -31,7 +31,8 @@ const maxAllOutput = 8
 type allTask struct {
 	name string
 	eco  string
-	dir  string
+	dir  string // absolute
+	rel  string // dir relative to the repo root, for display
 	argv []string
 }
 
@@ -190,7 +191,11 @@ func (m allModel) rowLine(i int, r allRow) string {
 	default:
 		glyph, name = allDimStyle.Render("○"), r.task.name
 	}
-	return "  " + glyph + " " + name + "  " + allDimStyle.Render("("+r.task.eco+")")
+	meta := r.task.eco
+	if r.task.rel != "" && r.task.rel != "." {
+		meta = r.task.rel + " · " + r.task.eco
+	}
+	return "  " + glyph + " " + name + "  " + allDimStyle.Render(meta)
 }
 
 func pluralN(n int, word string) string {

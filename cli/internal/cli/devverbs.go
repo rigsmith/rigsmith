@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/rigsmith/cli/internal/config"
@@ -144,7 +145,11 @@ func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) err
 		if !ok {
 			continue
 		}
-		tasks = append(tasks, allTask{name: t.Name, eco: t.Eco, dir: t.Dir, argv: append(argv, args...)})
+		rel, err := filepath.Rel(root, t.Dir)
+		if err != nil {
+			rel = t.Dir
+		}
+		tasks = append(tasks, allTask{name: t.Name, eco: t.Eco, dir: t.Dir, rel: rel, argv: append(argv, args...)})
 	}
 	if len(tasks) == 0 {
 		return fmt.Errorf("no workspace package maps verb %q", verb)
