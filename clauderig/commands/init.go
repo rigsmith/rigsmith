@@ -102,7 +102,7 @@ func NewInitCmd() *cobra.Command {
 				}
 			}
 			if remote == "" {
-				fmt.Fprintln(out, WarnStyle.Render("\n  no remote set — sync will commit locally only; run `clauderig config set-remote` later"))
+				fmt.Fprintln(out, WarnStyle.Render("\n  no remote set — sync will commit locally only; run `clauderig config set remote <url>` later"))
 			}
 			fmt.Fprintln(out, DimStyle.Render("\n  next: clauderig sync"))
 			return nil

@@ -15,8 +15,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// defaultRigJSON is the scaffold written by `rig init`. Plain JSON (rig's loader
-// reads JSON, not JSONC), with every optional key shown.
+// defaultRigJSON is the scaffold written by `rig init`. Plain JSON for the
+// scaffold (the loader also accepts JSONC — comments/trailing commas), with
+// every optional key shown.
 const defaultRigJSON = `{
   "$schema": "https://rigsmith.dev/schemas/rig.json",
   "solution": "",

@@ -3,7 +3,9 @@ package commands
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/rigsmith/clauderig/internal/config"
@@ -23,156 +25,240 @@ func saveConfig(cfg *config.Config) error {
 	return config.Save(cfg, dir)
 }
 
-// NewConfigCmd builds the `config` command group — view the config and change the
-// sync remote. set-remote enforces the same private-repo gate as init.
+// configKeys documents the settable keys for `config set <key> <value>`, in the
+// order shown by an unknown-key error.
+var configKeys = []string{"remote", "alwaysPrune", "autoRestore", "worktree.autoOpen", "worktree.openCmd"}
+
+// NewConfigCmd builds the uniform `config` command group: get / set / path /
+// edit (and the legacy-friendly `show`). `set remote` enforces the same
+// private-repo gate as init.
 func NewConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "View or change clauderig configuration",
 	}
 	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "show",
-			Short: "Print the current configuration",
-			RunE: func(cmd *cobra.Command, args []string) error {
-				dir, err := config.Dir()
-				if err != nil {
-					return err
-				}
-				b, err := os.ReadFile(filepath.Join(dir, "config.json"))
-				if err != nil {
-					fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("no config yet — run `clauderig init`"))
-					return nil
-				}
-				fmt.Fprint(cmd.OutOrStdout(), string(b))
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "set-prune <true|false>",
-			Short: "Set whether `restore` prunes stale config files by default",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				on := args[0] == "true" || args[0] == "1" || args[0] == "yes"
-				cfg, err := config.LoadOrDefault()
-				if err != nil {
-					return err
-				}
-				cfg.AlwaysPrune = on
-				dir, err := config.Dir()
-				if err != nil {
-					return err
-				}
-				if err := os.MkdirAll(dir, 0o755); err != nil {
-					return err
-				}
-				if err := config.Save(cfg, dir); err != nil {
-					return err
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s alwaysPrune = %v\n", OkStyle.Render("✓"), on)
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "set-autorestore <true|false>",
-			Short: "Auto-restore on a fresh machine via the SessionStart hook",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				on := args[0] == "true" || args[0] == "1" || args[0] == "yes"
-				cfg, err := config.LoadOrDefault()
-				if err != nil {
-					return err
-				}
-				cfg.AutoRestore = on
-				dir, err := config.Dir()
-				if err != nil {
-					return err
-				}
-				if err := os.MkdirAll(dir, 0o755); err != nil {
-					return err
-				}
-				if err := config.Save(cfg, dir); err != nil {
-					return err
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s autoRestore = %v\n", OkStyle.Render("✓"), on)
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "set-worktree-open <true|false>",
-			Short: "Set whether `worktree new` auto-opens a review window",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				on := args[0] == "true" || args[0] == "1" || args[0] == "yes"
-				cfg, err := config.LoadOrDefault()
-				if err != nil {
-					return err
-				}
-				if cfg.Worktree == nil {
-					cfg.Worktree = &config.Worktree{}
-				}
-				cfg.Worktree.AutoOpen = &on
-				if err := saveConfig(cfg); err != nil {
-					return err
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s worktree.autoOpen = %v\n", OkStyle.Render("✓"), on)
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "set-worktree-opener <command…>",
-			Short: "Set the command `worktree` uses to open a review window (path appended); blank resets to `code -n`",
-			Long: "Set the command `clauderig worktree` runs to open a checkout for review.\n" +
-				"The worktree path is appended as the final argument, so pass the program\n" +
-				"plus any flags — e.g. \"code -n\" (default), \"cursor -n\", \"code-insiders -n\",\n" +
-				"\"subl -n\", \"idea\". It runs directly (no shell). Pass an empty string to\n" +
-				"reset to the default.",
-			Args: cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				cfg, err := config.LoadOrDefault()
-				if err != nil {
-					return err
-				}
-				if cfg.Worktree == nil {
-					cfg.Worktree = &config.Worktree{}
-				}
-				cfg.Worktree.OpenCmd = strings.TrimSpace(args[0])
-				if err := saveConfig(cfg); err != nil {
-					return err
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s worktree opener = %s\n", OkStyle.Render("✓"),
-					strings.Join(cfg.WorktreeOpenCmd(), " "))
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "set-remote <url>",
-			Short: "Set the sync remote (verified private via gh)",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				url := args[0]
-				if err := ghrepo.EnsurePrivate(cmd.Context(), url); err != nil {
-					return err
-				}
-				cfg, err := config.LoadOrDefault()
-				if err != nil {
-					return err
-				}
-				cfg.Remote = url
-				dir, err := config.Dir()
-				if err != nil {
-					return err
-				}
-				if err := os.MkdirAll(dir, 0o755); err != nil {
-					return err
-				}
-				if err := config.Save(cfg, dir); err != nil {
-					return err
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s remote set to %s\n", OkStyle.Render("✓"), url)
-				return nil
-			},
-		},
+		newConfigShowCmd(),
+		newConfigGetCmd(),
+		newConfigSetCmd(),
+		newConfigPathCmd(),
+		newConfigEditCmd(),
 	)
 	return cmd
+}
+
+// configPath returns ~/.clauderig/config.json.
+func configPath() (string, error) {
+	dir, err := config.Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
+}
+
+func newConfigShowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Print the whole configuration",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := configPath()
+			if err != nil {
+				return err
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("no config yet — run `clauderig init`"))
+				return nil
+			}
+			fmt.Fprint(cmd.OutOrStdout(), string(b))
+			return nil
+		},
+	}
+}
+
+func newConfigGetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "get [key]",
+		Short: "Print one setting (or all known settings when no key is given)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadOrDefault()
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if len(args) == 0 {
+				for _, k := range configKeys {
+					v, _ := configValue(cfg, k)
+					fmt.Fprintf(out, "%s = %s\n", k, v)
+				}
+				return nil
+			}
+			v, ok := configValue(cfg, args[0])
+			if !ok {
+				return unknownKeyErr(args[0])
+			}
+			fmt.Fprintln(out, v)
+			return nil
+		},
+	}
+}
+
+func newConfigSetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set <key> <value>",
+		Short: "Set one setting: " + strings.Join(configKeys, ", "),
+		Long: "Set a clauderig setting. Known keys:\n" +
+			"  remote             sync remote URL (verified private via gh/glab)\n" +
+			"  alwaysPrune        prune stale config on `restore` by default (bool)\n" +
+			"  autoRestore        auto-restore on a fresh machine via SessionStart (bool)\n" +
+			"  worktree.autoOpen  `worktree new` opens a review window (bool)\n" +
+			"  worktree.openCmd   command to open a worktree (path appended), e.g. \"code -n\";\n" +
+			"                     blank resets to the default.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key, value := args[0], args[1]
+			cfg, err := config.LoadOrDefault()
+			if err != nil {
+				return err
+			}
+			msg, err := applyConfigSet(cmd, cfg, key, value)
+			if err != nil {
+				return err
+			}
+			if err := saveConfig(cfg); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", OkStyle.Render("✓"), msg)
+			return nil
+		},
+	}
+}
+
+func newConfigPathCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "path",
+		Short: "Print the path to the config file",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := configPath()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), path)
+			return nil
+		},
+	}
+}
+
+func newConfigEditCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "edit",
+		Short: "Open the config file in $VISUAL/$EDITOR",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := configPath()
+			if err != nil {
+				return err
+			}
+			return openInEditor(cmd, path)
+		},
+	}
+}
+
+// applyConfigSet validates and applies key=value onto cfg, returning a confirmation
+// message. The `remote` key runs the private-repo gate; bools accept 1/0/true/
+// false/yes/no/on/off.
+func applyConfigSet(cmd *cobra.Command, cfg *config.Config, key, value string) (string, error) {
+	switch key {
+	case "remote":
+		if err := ghrepo.EnsurePrivate(cmd.Context(), value); err != nil {
+			return "", err
+		}
+		cfg.Remote = value
+		return "remote set to " + value, nil
+	case "alwaysPrune":
+		on, err := parseBoolArg(value)
+		if err != nil {
+			return "", err
+		}
+		cfg.AlwaysPrune = on
+		return fmt.Sprintf("alwaysPrune = %v", on), nil
+	case "autoRestore":
+		on, err := parseBoolArg(value)
+		if err != nil {
+			return "", err
+		}
+		cfg.AutoRestore = on
+		return fmt.Sprintf("autoRestore = %v", on), nil
+	case "worktree.autoOpen":
+		on, err := parseBoolArg(value)
+		if err != nil {
+			return "", err
+		}
+		if cfg.Worktree == nil {
+			cfg.Worktree = &config.Worktree{}
+		}
+		cfg.Worktree.AutoOpen = &on
+		return fmt.Sprintf("worktree.autoOpen = %v", on), nil
+	case "worktree.openCmd":
+		if cfg.Worktree == nil {
+			cfg.Worktree = &config.Worktree{}
+		}
+		cfg.Worktree.OpenCmd = strings.TrimSpace(value)
+		return "worktree opener = " + strings.Join(cfg.WorktreeOpenCmd(), " "), nil
+	default:
+		return "", unknownKeyErr(key)
+	}
+}
+
+// configValue renders the current value of a known key for `config get`.
+func configValue(cfg *config.Config, key string) (string, bool) {
+	switch key {
+	case "remote":
+		return cfg.Remote, true
+	case "alwaysPrune":
+		return fmt.Sprintf("%v", cfg.AlwaysPrune), true
+	case "autoRestore":
+		return fmt.Sprintf("%v", cfg.AutoRestore), true
+	case "worktree.autoOpen":
+		return fmt.Sprintf("%v", cfg.WorktreeAutoOpen()), true
+	case "worktree.openCmd":
+		return strings.Join(cfg.WorktreeOpenCmd(), " "), true
+	default:
+		return "", false
+	}
+}
+
+func unknownKeyErr(key string) error {
+	keys := append([]string(nil), configKeys...)
+	sort.Strings(keys)
+	return fmt.Errorf("unknown config key %q (known: %s)", key, strings.Join(keys, ", "))
+}
+
+// parseBoolArg accepts the usual on/off spellings for a bool config value.
+func parseBoolArg(s string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "yes", "on":
+		return true, nil
+	case "0", "false", "no", "off":
+		return false, nil
+	}
+	return false, fmt.Errorf("expected a boolean (true/false), got %q", s)
+}
+
+// openInEditor opens path in $VISUAL, then $EDITOR, inheriting the terminal.
+func openInEditor(cmd *cobra.Command, path string) error {
+	editor := strings.TrimSpace(os.Getenv("VISUAL"))
+	if editor == "" {
+		editor = strings.TrimSpace(os.Getenv("EDITOR"))
+	}
+	if editor == "" {
+		return fmt.Errorf("no editor set — export $VISUAL or $EDITOR (file: %s)", path)
+	}
+	fields := strings.Fields(editor)
+	ed := exec.CommandContext(cmd.Context(), fields[0], append(fields[1:], path)...)
+	ed.Stdin, ed.Stdout, ed.Stderr = os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr()
+	return ed.Run()
 }

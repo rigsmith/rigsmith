@@ -48,6 +48,7 @@ func run(ctx context.Context) error {
 		commands.NewVersionCmd(),
 		commands.NewPreCmd(),
 		commands.NewInfoCmd(),
+		commands.NewConfigCmd(),
 		commands.NewUICmd(),
 	)
 	return fang.Execute(ctx, root, fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentChange)))

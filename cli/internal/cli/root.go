@@ -87,6 +87,7 @@ func Execute(ctx context.Context) error {
 		newWorktreeCmd(),
 		newRigInitCmd(),
 		newInfoCmd(),
+		newConfigCmd(),
 		newUICmd(),
 		newSelfUpdateCmd(),
 	)
