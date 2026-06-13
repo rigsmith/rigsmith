@@ -1,0 +1,1 @@
+{ "name": "@acme/cli", "version": "0.8.0", "dependencies": { "@acme/core": "1.4.2" } }

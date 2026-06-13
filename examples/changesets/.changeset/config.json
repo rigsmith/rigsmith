@@ -1,0 +1,9 @@
+{
+  "$schema": "https://rigsmith.dev/schemas/changeset-config.json",
+  "baseBranch": "main",
+  "access": "restricted",
+  "updateInternalDependencies": "patch",
+  "ignore": [],
+  "linked": [],
+  "fixed": []
+}
