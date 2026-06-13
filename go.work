@@ -6,4 +6,5 @@ use (
 	./cli
 	./clauderig
 	./release
+	./scripts/dev-install
 )
