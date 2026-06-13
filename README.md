@@ -78,10 +78,16 @@ To dogfood the tools from source without disturbing a globally installed
 via `go run` and coexist with the stable binaries:
 
 ```sh
-rig run dev-install     # or: go run ./scripts/dev-install
+rig dev-install         # or: rig run dev-install, or: go run ./scripts/dev-install
 ```
 
 This writes `rig-dev`, `relrig-dev`, `clauderig-dev`, … to `~/.local/bin` (sh
 wrappers on macOS/Linux, `.cmd` on Windows). Each recompiles the current source
 on every run, so edits take effect with no reinstall. The launchers are
 discovered from `go.work`, so a new workspace module gets one automatically.
+
+`rig dev-install` works because rig surfaces any `main` package the workspace
+declares under `scripts/` or `cmd/` (in `go.work`) as a bare `rig <name>` verb —
+the Go counterpart to how it exposes a Node repo's `package.json` scripts. These
+verbs are exact-match only (excluded from prefix-matching) and never shadow a
+built-in.
