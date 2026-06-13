@@ -18,8 +18,9 @@ go.work.sum
 
 # Build artifacts
 **/__debug_bin*
-# `go build` artifact when run inside the dev-install tool dir
+# `go build` artifacts when run inside the installer tool dirs
 /scripts/dev-install/dev-install
+/scripts/source-install/source-install
 
 # .NET build output (e.g. the examples/demo dotnet fixture)
 [Bb]in/
