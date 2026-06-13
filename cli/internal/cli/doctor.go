@@ -223,6 +223,7 @@ func toolChecks(present map[string]bool, root string) []pendingCheck {
 		addRG()
 	}
 	if present[detect.Go] {
+		tools = append(tools, toolWgo)
 		addRG()
 	}
 
