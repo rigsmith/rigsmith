@@ -53,36 +53,40 @@ export CLAUDERIG_ALLOW_MAIN=1     # for the session
 touch .claude/allow-main          # for the repo, until you delete it
 ```
 
-Install / inspect:
+Install / inspect — the scope is the command, no flags:
 
 ```sh
-clauderig hooks install              # sync hooks → user scope, guard → project scope
-clauderig hooks install --scope local # everything in .claude/settings.local.json (gitignored)
-clauderig hooks status               # sweeps user + project + local
-clauderig hooks uninstall            # removes clauderig hooks from every scope
+clauderig project install   # guard hook (.claude/settings.json) + CLAUDE.md guide — committed
+clauderig local install     # same, but .claude/settings.local.json — gitignored
+clauderig project status    # what's set up here
+clauderig project uninstall # remove it
 ```
 
-Hooks live at the [scope](#scopes) that fits them: the sync hooks
-(SessionStart→pull, Stop→sync) at **user** scope, because they ride clauderig's
-`~/.claude` sync; the **guard** at **project** scope (`<repo>/.claude/settings.json`),
-because it's repo policy — commit it and your team inherits it (Claude Code asks
-to trust a project hook the first time). `--scope user|project|local` forces a
-single target. The hook command is the bare `clauderig guard`, portable across
-machines.
+`project install` is the one-shot "protect this repo": it wires the guard at
+**project** scope (`<repo>/.claude/settings.json`) — commit it and your team
+inherits it (Claude Code asks to trust a project hook the first time) — and drops
+the [CLAUDE.md guide](#clauderig-guide--teach-every-claude-context). `local` does
+the same in the gitignored `settings.local.json`. The hook command is the bare
+`clauderig guard`, portable across machines.
+
+The **sync** hooks (SessionStart→pull, Stop→sync) are separate and global —
+`clauderig global install` (aliased `clauderig hooks install`) writes them to
+`~/.claude/settings.json`, where they ride clauderig's own sync.
 
 ## Scopes
 
-Claude Code merges settings from several tiers; clauderig writes to the one a
-command picks (`internal/settings`):
+`clauderig <scope> <action>` writes to the Claude Code settings tier that fits the
+scope (`internal/settings`). Claude Code merges all tiers at runtime.
 
-| Scope | File | Travels via |
-|---|---|---|
-| `user` | `~/.claude/settings.json` | clauderig sync |
-| `project` | `<repo>/.claude/settings.json` | committed to the repo |
-| `local` | `<repo>/.claude/settings.local.json` | nowhere (gitignore it) |
+| Scope command | File | Installs | Travels via |
+|---|---|---|---|
+| `global` (alias `hooks`) | `~/.claude/settings.json` | sync hooks | clauderig sync |
+| `project` | `<repo>/.claude/settings.json` | guard + guide | committed to the repo |
+| `local` | `<repo>/.claude/settings.local.json` | guard + guide | nowhere (gitignore it) |
 
-This is the shared seam for future repo-local commands, too — anything that should
-affect just this checkout writes at `project` or `local` scope.
+`project` and `local` are also the home for any future command that should affect
+just this checkout — scope is the command, so a new repo-local action is just
+another verb under them.
 
 ## `clauderig worktree` — the safe way to branch
 
@@ -99,15 +103,14 @@ so they never clutter the primary checkout's file tree, and each has its own fol
 path (its own review-window history). `new` **never moves this session's cwd**; it
 prints the path and opens a separate window with `code -n`.
 
-## `clauderig guide` — teach every Claude context
+## The CLAUDE.md guide — teach every Claude context
 
-The guard *enforces* the rules; the guide *explains* them, so a session works with
-the guard instead of bumping into denials. It manages a marker-delimited block in
-`CLAUDE.md` — the de-facto convention for a tool owning a region of a shared
-instruction file — and rewrites only that block, never the rest:
+The guard *enforces* the rules; a marker-delimited block in `CLAUDE.md` *explains*
+them, so a session works with the guard instead of bumping into denials. **`project
+install` / `local install` drop this block for you** — the standalone `guide`
+command is only for cases they don't cover (a global block, or an explicit path):
 
 ```sh
-clauderig guide install            # add/update the block in the repo's CLAUDE.md
 clauderig guide install --global   # ~/.claude/CLAUDE.md (applies to every project)
 clauderig guide install --path P   # an explicit CLAUDE.md
 clauderig guide status             # is the block present?
@@ -115,7 +118,8 @@ clauderig guide uninstall          # remove just the block
 clauderig guide show               # print the block
 ```
 
-The block is fenced by:
+It owns only its block — the de-facto convention for a tool managing a region of a
+shared instruction file — fenced by markers, and rewrites only that block:
 
 ```
 <!-- BEGIN clauderig:worktree-discipline -->

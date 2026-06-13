@@ -10,44 +10,41 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/rigsmith/clauderig/internal/settings"
 )
 
 // Marker identifies a clauderig-owned hook (its command contains this).
 const Marker = "clauderig"
 
 // Plan is one event→command hook clauderig installs. Matcher, when set, scopes
-// the hook to matching tool names (PreToolUse/PostToolUse only). Scope is where
-// the plan belongs by default — sync hooks at user scope (they ride clauderig's
-// ~/.claude sync), the guard at project scope (it rides the repo).
+// the hook to matching tool names (PreToolUse/PostToolUse only).
 type Plan struct {
 	Event   string
 	Matcher string
 	Command string
-	Scope   settings.Scope
 }
 
-// DefaultPlans are the hooks clauderig installs. Bare `clauderig` keeps them
-// portable across machines (each machine resolves it on PATH). The guard runs on
-// the tool calls that can move the session dir or write code to a base branch.
-func DefaultPlans() []Plan {
+// SyncPlans keep ~/.claude in sync and belong at user scope (`clauderig hooks
+// install`): SessionStart pulls, Stop pushes. Bare `clauderig` keeps them
+// portable — each machine resolves it on PATH.
+func SyncPlans() []Plan {
 	return []Plan{
-		{Event: "SessionStart", Command: "clauderig pull", Scope: settings.User},
-		{Event: "Stop", Command: "clauderig sync", Scope: settings.User},
-		{Event: "PreToolUse", Matcher: "Edit|Write|NotebookEdit|Bash|EnterWorktree|ExitWorktree", Command: "clauderig guard", Scope: settings.Project},
+		{Event: "SessionStart", Command: "clauderig pull"},
+		{Event: "Stop", Command: "clauderig sync"},
 	}
 }
 
-// PlansFor returns the default plans whose scope is scope.
-func PlansFor(scope settings.Scope) []Plan {
-	var out []Plan
-	for _, p := range DefaultPlans() {
-		if p.Scope == scope {
-			out = append(out, p)
-		}
+// GuardPlans enforce worktree/PR discipline and belong at repo scope (`clauderig
+// project|local install`): the PreToolUse guard runs on the tool calls that can
+// move the session dir or write code to a base branch.
+func GuardPlans() []Plan {
+	return []Plan{
+		{Event: "PreToolUse", Matcher: "Edit|Write|NotebookEdit|Bash|EnterWorktree|ExitWorktree", Command: "clauderig guard"},
 	}
-	return out
+}
+
+// DefaultPlans is every plan clauderig knows (used where the full set is wanted).
+func DefaultPlans() []Plan {
+	return append(SyncPlans(), GuardPlans()...)
 }
 
 // Install adds the given plans to the settings.json at path (created if absent),
