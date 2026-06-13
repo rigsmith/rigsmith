@@ -21,6 +21,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 		all     bool
 		filter  string
 		watch   bool
+		pick    bool
 		presets []presetFlag
 	)
 	cmd := &cobra.Command{
@@ -46,6 +47,15 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// pre-parse pipeline; both land in runWatchVerb).
 			if watch {
 				return runWatchVerb(cmd, verb, args)
+			}
+			// `--pick` (no project arg) always opens the picker — even when a single
+			// target would otherwise run directly. `run` lists every runnable
+			// package and surfaced script; the --all verbs list every package (with
+			// "All packages"). With an explicit project arg the arg wins (below).
+			if pick && len(args) == 0 && (supportsAll || verb == "run") {
+				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll, true); handled {
+					return herr
+				}
 			}
 			// A first arg that names a package scopes the verb to that package.
 			if len(args) > 0 {
@@ -81,7 +91,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// command. For --all-capable verbs the picker leads with "All
 			// packages"; `run` gets a single-select of the runnable packages.
 			if len(args) == 0 && (supportsAll || verb == "run") {
-				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll); handled {
+				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll, false); handled {
 					return herr
 				}
 			}
@@ -103,6 +113,13 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 	}
 	if watchableVerb(verb) {
 		cmd.Flags().BoolVarP(&watch, "watch", "w", false, "run in the ecosystem's watch mode (re-run on change)")
+	}
+	if supportsAll || verb == "run" {
+		usage := "always open the picker (choose a package)"
+		if verb == "run" {
+			usage = "always open the picker (choose a package or script to run)"
+		}
+		cmd.Flags().BoolVarP(&pick, "pick", "p", false, usage)
 	}
 	presets = registerPresetFlags(cmd)
 	return cmd
@@ -194,10 +211,15 @@ func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) err
 // live only in subdirectories (no buildable package at the root) and several
 // exist, running the verb at the root has no single target. On an interactive
 // terminal it offers a picker (with "All packages" → the --all dashboard when
-// offerAll is set, e.g. build/test; `run` gets a single-select of the runnable
-// packages); off a TTY it returns a helpful error. handled=false lets the
-// normal root command run (single-package repos, or a package at the root).
-func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll bool) (handled bool, err error) {
+// offerAll is set, e.g. build/test; `run` gets a grouped picker of runnable
+// packages and surfaced scripts); off a TTY it returns a helpful error.
+// handled=false lets the normal root command run (single-package repos, or a
+// package at the root).
+//
+// forcePick (`--pick`) always shows the picker: a runnable root package (and,
+// for `run`, the surfaced scripts) is included even when one obvious target
+// exists, and a single candidate still opens the picker rather than running.
+func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, forcePick bool) (handled bool, err error) {
 	targets := topoSort(filterTargets(discoverWorkspace(cdContext(cmd), root, excludeFor(root)), ""))
 	var tasks []allTask
 	rootHasPackage := false
@@ -220,19 +242,46 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll bool) 
 		}
 		tasks = append(tasks, allTask{name: t.Name, eco: t.Eco, dir: t.Dir, rel: rel, argv: argv})
 	}
-	// A buildable package at the root, or nothing this verb maps: the normal
-	// root command is the right thing — let it run (or produce its own error).
-	if rootHasPackage || len(tasks) == 0 {
+
+	// `run` additionally offers the repo's surfaced scripts (package.json
+	// scripts, .rig.json commands, Go scripts//cmd verbs) as a second group —
+	// the same scripts `rig <name>` runs. Other verbs don't map to scripts.
+	var scripts []scriptEntry
+	if verb == "run" && (forcePick || !rootHasPackage) {
+		cfg, _ := config.LoadMerged(root)
+		scripts = discoverScripts(root, cfg)
+	}
+
+	if forcePick {
+		// `--pick`: always the picker, including a runnable root package.
+		if verb == "run" {
+			if len(tasks)+len(scripts) == 0 {
+				return true, fmt.Errorf("nothing runnable here to pick from")
+			}
+			return offerRunChoice(cmd, tasks, scripts, true)
+		}
+		if len(tasks) == 0 {
+			return true, fmt.Errorf("no %s targets here to pick from", verb)
+		}
+		if !interactive() {
+			return true, fmt.Errorf("--pick needs an interactive terminal; run `rig %s <project>`", verb)
+		}
+		return dispatchVerbPick(cmd, verb, tasks, offerAll)
+	}
+
+	// A buildable package at the root, or nothing to offer: the normal root
+	// command is the right thing — let it run (or produce its own error).
+	if rootHasPackage || len(tasks)+len(scripts) == 0 {
 		return false, nil
 	}
+
+	if verb == "run" {
+		return offerRunChoice(cmd, tasks, scripts, false)
+	}
+
+	// --all-capable verbs (build/test/…): a lone subpackage falls through to the
+	// root command; several open the package picker (with "All packages").
 	if len(tasks) == 1 {
-		// A lone runnable subpackage is the obvious `run` target — run it rather
-		// than falling through to a doomed root command. --all verbs keep their
-		// prior behavior (let the root command run).
-		if verb == "run" {
-			t := tasks[0]
-			return true, runCommand(cmd, t.dir, t.argv)
-		}
 		return false, nil
 	}
 	if !interactive() {
@@ -244,6 +293,13 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll bool) 
 			"no single %s target here — this is a workspace root with %d packages; %s",
 			verb, len(tasks), hint)
 	}
+	return dispatchVerbPick(cmd, verb, tasks, offerAll)
+}
+
+// dispatchVerbPick shows the package picker for an --all-capable verb and runs
+// the choice: "All packages" → the --all dashboard, a package → its command,
+// cancel → nothing. Shared by the implicit multi-package case and `--pick`.
+func dispatchVerbPick(cmd *cobra.Command, verb string, tasks []allTask, offerAll bool) (handled bool, err error) {
 	switch choice := pickWorkspaceVerbTarget(verb, tasks, offerAll); choice {
 	case pickCancel:
 		return true, nil
@@ -251,6 +307,34 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll bool) 
 		return true, runAcrossDashboard(cmd, tasks, verb)
 	default:
 		t := tasks[choice]
+		return true, runCommand(cmd, t.dir, t.argv)
+	}
+}
+
+// offerRunChoice resolves a bare `rig run` at a workspace root over the runnable
+// packages and surfaced scripts. A single target runs directly; several open the
+// grouped picker (Projects, then Scripts). Off a TTY it returns a helpful error.
+// With forcePick set (`--pick`) the picker always opens, even for one candidate.
+func offerRunChoice(cmd *cobra.Command, tasks []allTask, scripts []scriptEntry, forcePick bool) (handled bool, err error) {
+	if !forcePick && len(tasks)+len(scripts) == 1 {
+		if len(tasks) == 1 {
+			t := tasks[0]
+			return true, runCommand(cmd, t.dir, t.argv)
+		}
+		return true, scripts[0].run(cmd, nil)
+	}
+	if !interactive() {
+		return true, fmt.Errorf(
+			"no single run target here — this is a workspace root with %s and %s; run `rig run <project>` or `rig <script>`",
+			pluralN(len(tasks), "package"), pluralN(len(scripts), "script"))
+	}
+	switch sel := pickRunTarget(tasks, scripts); {
+	case sel.cancel:
+		return true, nil
+	case sel.script:
+		return true, scripts[sel.index].run(cmd, nil)
+	default:
+		t := tasks[sel.index]
 		return true, runCommand(cmd, t.dir, t.argv)
 	}
 }
