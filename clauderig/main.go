@@ -48,6 +48,7 @@ func run(ctx context.Context) error {
 		commands.NewHooksCmd(),
 		commands.NewGuardCmd(),
 		commands.NewWorktreeCmd(),
+		commands.NewGuideCmd(),
 		commands.NewDoctorCmd(),
 		commands.NewConfigCmd(),
 		commands.NewUICmd(),

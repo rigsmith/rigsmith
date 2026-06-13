@@ -18,6 +18,7 @@ clauderig pull                 # fetch latest into the staging repo (SessionStar
 clauderig doctor               # preview path resolution + sync roots for this machine
 clauderig hooks install        # PreToolUse guard + SessionStart→pull, Stop→sync (portable, idempotent)
 clauderig worktree new feat/x  # sibling worktree + new VS Code window; never moves this session
+clauderig guide install        # add the worktree-discipline block to CLAUDE.md (marker-managed)
 clauderig ui                   # interactive dashboard
 ```
 
@@ -29,8 +30,9 @@ history — which is keyed to the folder path — by moving the session's workin
 directory. The guard denies `EnterWorktree`, denies a `cd` out of the repo root,
 and on `main` requires a branch+worktree+PR for code while letting docs/config
 through (override: `CLAUDERIG_ALLOW_MAIN=1` or `touch .claude/allow-main`). It
-fails open on anything it isn't sure about. See
-[docs/WORKTREE-DISCIPLINE.md](../docs/WORKTREE-DISCIPLINE.md).
+fails open on anything it isn't sure about. `clauderig guide install` drops a
+marker-managed block into `CLAUDE.md` so every Claude context learns these rules.
+See [docs/WORKTREE-DISCIPLINE.md](../docs/WORKTREE-DISCIPLINE.md).
 
 ## What it does
 
@@ -60,6 +62,7 @@ fails open on anything it isn't sure about. See
 | `hooks` | `install` / `uninstall` / `status` the Claude Code hooks (guard + sync) |
 | `guard` | PreToolUse hook: require worktrees/PRs, block cwd-moving worktree tools (used by `hooks`) |
 | `worktree` | `new` / `list` / `open` / `rm` sibling worktrees, opened in their own VS Code window |
+| `guide` | `install` / `uninstall` / `status` / `show` the worktree-discipline block in CLAUDE.md |
 | `config` | `show` / `set-remote` / `set-prune` |
 | `doctor` | Preview path resolution + roots for this machine |
 | `ui` | Interactive dashboard |

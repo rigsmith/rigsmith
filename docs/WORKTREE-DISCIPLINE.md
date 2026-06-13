@@ -78,6 +78,34 @@ so they never clutter the primary checkout's file tree, and each has its own fol
 path (its own review-window history). `new` **never moves this session's cwd**; it
 prints the path and opens a separate window with `code -n`.
 
+## `clauderig guide` — teach every Claude context
+
+The guard *enforces* the rules; the guide *explains* them, so a session works with
+the guard instead of bumping into denials. It manages a marker-delimited block in
+`CLAUDE.md` — the de-facto convention for a tool owning a region of a shared
+instruction file — and rewrites only that block, never the rest:
+
+```sh
+clauderig guide install            # add/update the block in the repo's CLAUDE.md
+clauderig guide install --global   # ~/.claude/CLAUDE.md (applies to every project)
+clauderig guide install --path P   # an explicit CLAUDE.md
+clauderig guide status             # is the block present?
+clauderig guide uninstall          # remove just the block
+clauderig guide show               # print the block
+```
+
+The block is fenced by:
+
+```
+<!-- BEGIN clauderig:worktree-discipline -->
+…
+<!-- END clauderig:worktree-discipline -->
+```
+
+Re-installing replaces it in place (idempotent), so a machine that pulls a newer
+clauderig picks up the latest guidance on the next `install`. The `:slug` suffix
+leaves room for clauderig to own further independent blocks later.
+
 ### Typical loop
 
 ```sh
