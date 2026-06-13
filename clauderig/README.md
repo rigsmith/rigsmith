@@ -68,6 +68,7 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `guard` | PreToolUse hook: require worktrees/PRs, block cwd-moving worktree tools (wired by `project`/`local`) |
 | `worktree` | `new` / `list` / `open` / `rm` / `prune` sibling worktrees, opened in their own review window (configurable; alias `wt`) |
 | `branch` | `list` / `rm` / `prune` local branches; prune reaps merged (or, with `--gone`, gone-upstream) ones; alias `br` |
+| `prune` | One sweep: reap merged/done worktrees, then their branches and other merged (`--gone`) branches; alias `tidy` |
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md block standalone (e.g. `--global`) |
 | `config` | `get` / `set` / `show` / `path` / `edit` |
 | `doctor` | Health-check environment + sync + worktree discipline; `--fix` repairs, or pick fixes interactively |

@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/spf13/cobra"
@@ -202,61 +203,11 @@ Deleted branches keep no worktree but are recoverable from the reflog.`,
 			if base == "" {
 				base = repo.DefaultBranch(ctx)
 			}
-			branches, err := repo.LocalBranches(ctx)
+			out := cmd.OutOrStdout()
+			removed, kept, err := pruneBranches(ctx, out, repo, base, dryRun, gone, nil)
 			if err != nil {
 				return err
 			}
-			// Branches checked out in a worktree can't be deleted (git refuses) and
-			// belong to `worktree prune` anyway — collect them to skip cleanly.
-			inWorktree := worktreeBranches(ctx, repo)
-
-			out := cmd.OutOrStdout()
-			var removed, kept int
-			skip := func(label, reason string) {
-				kept++
-				fmt.Fprintf(out, "%s %s  %s\n", DimStyle.Render("•"), HeaderStyle.Render(label), DimStyle.Render(reason))
-			}
-			for _, b := range branches {
-				if b.Current || b.Name == base {
-					continue
-				}
-				if inWorktree[b.Name] {
-					skip(b.Name, "checked out in a worktree — use `worktree prune`")
-					continue
-				}
-				merged, err := repo.IsMerged(ctx, b.Name, base)
-				if err != nil {
-					skip(b.Name, "couldn't check merge state — skipped")
-					continue
-				}
-				reason := ""
-				switch {
-				case merged:
-					reason = "merged into " + base
-				case b.Gone && gone:
-					reason = "upstream gone"
-				case b.Gone:
-					skip(b.Name, "upstream gone but not provably merged — skipped (use --gone)")
-					continue
-				default:
-					skip(b.Name, fmt.Sprintf("not merged into %s — skipped", base))
-					continue
-				}
-				if dryRun {
-					removed++
-					fmt.Fprintf(out, "%s %s  %s\n", WarnStyle.Render("⤳"), HeaderStyle.Render(b.Name), DimStyle.Render("would delete ("+reason+")"))
-					continue
-				}
-				// Force-delete: we've established the branch is done with, but a
-				// squash-merge or gone upstream isn't something `branch -d` recognises.
-				if err := repo.DeleteBranch(ctx, b.Name, true); err != nil {
-					skip(b.Name, "delete failed: "+err.Error())
-					continue
-				}
-				removed++
-				fmt.Fprintf(out, "%s %s  %s\n", OkStyle.Render("✓"), HeaderStyle.Render(b.Name), DimStyle.Render("deleted ("+reason+")"))
-			}
-
 			verb := "deleted"
 			if dryRun {
 				verb = "to delete"
@@ -269,4 +220,69 @@ Deleted branches keep no worktree but are recoverable from the reflog.`,
 	cmd.Flags().BoolVar(&gone, "gone", false, "also delete branches whose upstream was deleted on the remote, even if a merge can't be proven")
 	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
 	return cmd
+}
+
+// pruneBranches deletes local branches that are merged into base or (with gone)
+// whose upstream the remote deleted. It prints one line per branch and returns
+// the removed/kept counts; the caller prints the summary. The current branch,
+// the base, and branches still checked out in a worktree are skipped — except
+// any in detached, whose worktrees a combined sweep just removed (or, in
+// dry-run, would remove), so they're now deletable.
+func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base string, dryRun, gone bool, detached map[string]bool) (removed, kept int, err error) {
+	branches, err := repo.LocalBranches(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	// Branches checked out in a worktree can't be deleted (git refuses); skip
+	// them unless their worktree was just freed by a combined sweep.
+	inWorktree := worktreeBranches(ctx, repo)
+	for name := range detached {
+		delete(inWorktree, name)
+	}
+
+	skip := func(label, reason string) {
+		kept++
+		fmt.Fprintf(out, "%s %s  %s\n", DimStyle.Render("•"), HeaderStyle.Render(label), DimStyle.Render(reason))
+	}
+	for _, b := range branches {
+		if b.Current || b.Name == base {
+			continue
+		}
+		if inWorktree[b.Name] {
+			skip(b.Name, "checked out in a worktree — use `worktree prune`")
+			continue
+		}
+		merged, err := repo.IsMerged(ctx, b.Name, base)
+		if err != nil {
+			skip(b.Name, "couldn't check merge state — skipped")
+			continue
+		}
+		reason := ""
+		switch {
+		case merged:
+			reason = "merged into " + base
+		case b.Gone && gone:
+			reason = "upstream gone"
+		case b.Gone:
+			skip(b.Name, "upstream gone but not provably merged — skipped (use --gone)")
+			continue
+		default:
+			skip(b.Name, fmt.Sprintf("not merged into %s — skipped", base))
+			continue
+		}
+		if dryRun {
+			removed++
+			fmt.Fprintf(out, "%s %s  %s\n", WarnStyle.Render("⤳"), HeaderStyle.Render(b.Name), DimStyle.Render("would delete ("+reason+")"))
+			continue
+		}
+		// Force-delete: we've established the branch is done with, but a
+		// squash-merge or gone upstream isn't something `branch -d` recognises.
+		if err := repo.DeleteBranch(ctx, b.Name, true); err != nil {
+			skip(b.Name, "delete failed: "+err.Error())
+			continue
+		}
+		removed++
+		fmt.Fprintf(out, "%s %s  %s\n", OkStyle.Render("✓"), HeaderStyle.Render(b.Name), DimStyle.Render("deleted ("+reason+")"))
+	}
+	return removed, kept, nil
 }

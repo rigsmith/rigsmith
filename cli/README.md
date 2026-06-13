@@ -38,6 +38,7 @@ rig build --quiet        # suppress the → command echo
 | `watch <verb>` / `rig w r` | Watch modifier via the pre-parse pipeline (verb prefixes work too: `rig cove`) |
 | `worktree` / `wt` | Sibling git worktrees (`new`/`list`/`open`/`rm`/`prune`), delegating to `clauderig worktree` |
 | `branch` / `br` | Local branches (`list`/`rm`/`prune`, `--gone`), delegating to `clauderig branch` |
+| `prune` / `tidy` | One sweep: reap merged worktrees then their branches, delegating to `clauderig prune` |
 | `init` | Scaffold a `.rig.json` |
 | `config` | `get` / `set` / `path` / `edit` the `.rig.json` (comment-preserving writes) |
 | `info` | Show what rig discovered (root, primary ecosystem, `.rig.json`, per-ecosystem dev commands, packages) |
