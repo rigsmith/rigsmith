@@ -496,7 +496,7 @@ func promptDownloadReportGenerator() rgPromptChoice {
 			huh.NewOption("Never ask again", rgNever),
 		).
 		Value(&choice)
-	if err := sel.Run(); err != nil {
+	if err := runHuhSelect(sel); err != nil {
 		return rgNotNow
 	}
 	return choice

@@ -34,7 +34,8 @@ func pickWorkspaceVerbTarget(verb string, tasks []allTask) int {
 		opts = append(opts, huh.NewOption(t.name+"  ("+t.rel+" · "+t.eco+")", i))
 	}
 	title := strings.ToUpper(verb[:1]) + verb[1:] + " which?"
-	if err := huh.NewSelect[int]().Title(title).Options(opts...).Value(&choice).Run(); err != nil {
+	sel := huh.NewSelect[int]().Title(title).Options(opts...).Value(&choice)
+	if err := runHuhSelect(sel); err != nil {
 		return pickCancel
 	}
 	return choice

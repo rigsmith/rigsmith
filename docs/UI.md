@@ -30,6 +30,10 @@ non-interactive path — it never hangs waiting for input. Two helpers gate this
 `--quiet` suppresses the `→ command` echo and the spinner; `--yes`/`-y` bypasses
 confirm gates (the CI path).
 
+**Escape cancels.** Every one-shot huh picker (`cd`/`default`/coverage/workspace/
+kill) binds **esc** (and ctrl+c) to cancel — backing out is always the no-op
+path. The bubbletea models (menu, plan editor, dashboards) handle esc/q too.
+
 **Color legend (lipgloss).** dim gray `245` (secondary text), cyan `14`
 (cursor/selection/spinner), magenta `13` (menu title), and the bump palette —
 major = red `9`, minor = yellow `11`, patch = green `10`.
@@ -100,6 +104,31 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   - `Not now — use the basic report` → one-time native report; asks again next time.
   - `Never ask again` → persists `coverage.reportGenerator = off`.
 - **Non-TTY / interrupt:** silently uses the native report (defaults to "not now").
+
+## `rig kill` — review-and-select (huh multi-select)
+- **Trigger:** `rig kill` / `rig kill <name>` / `rig kill --port N` on an
+  interactive terminal, not `--dry-run` and not `--yes`. The default — killing
+  is destructive, so review before it happens.
+- **What you see:** the matched processes (`<pid>  <command line>`) in a
+  multi-select, **all pre-checked**. Title: `Kill which processes? (space toggles
+  · enter confirms · esc cancels)`. Uncheck any you want to spare.
+- **What it does:** kills the PIDs you keep (`kill -TERM` / `taskkill /F /T`) and
+  reports the count. Esc/empty selection kills nothing.
+- **Bypass / fallback:** `--yes`/`-y` skips the picker and kills every match (the
+  old behavior); off a TTY (CI/piped) it likewise kills all matches without
+  asking. `--dry-run` still just lists. Matches come from the same enumeration as
+  before — project-name patterns (`pgrep -fl` / CIM) or listening PIDs by port.
+
+## `rig <verb>` at a workspace root — project picker (huh single-select)
+- **Trigger:** a bare `--all`-capable dev verb (`rig build`/`test`/…) at a
+  workspace root where packages live only in subdirs (e.g. a `go.work` root) and
+  several exist — running the verb at the root has no single target.
+- **What you see:** a select titled `Build which?` (verb-specific) with
+  **`All packages`** first (→ the `--all` dashboard) then each package
+  (`name  (path · ecosystem)`).
+- **Non-TTY:** a helpful error — `no single build target here … run rig build
+  --all or rig build <project>`. Single-package repos (or a package at the root)
+  are unaffected: the normal root command runs.
 
 ## `--list-tests` discovery spinner
 - **Trigger:** during `rig test <query>` on a .NET repo, while
@@ -260,6 +289,8 @@ flow below.
 | `cd` picker | rig | huh select | `rig cd` (TTY, ambiguous/bare) | print root / list+fail |
 | `default` picker | rig | huh select | `rig default` (TTY, ambiguous/bare) | print current |
 | Coverage RG prompt | rig | huh select | RG absent, TTY, dnx, auto | native report |
+| `kill` review-and-select | rig | huh multi-select | `rig kill` (TTY, not `--yes`) | kill all matches |
+| workspace-root picker | rig | huh select | bare verb at a multi-pkg root (TTY) | helpful error |
 | `--list-tests` spinner | rig | lipgloss anim | `rig test <q>` (.NET) | `…` line / silent |
 | `<verb> --all` dashboard | rig | bubbletea + bubbles | `rig build/test --all` (TTY) | plain sequential |
 | `setup` | rig | none (file I/O) | `rig setup` | (not interactive) |

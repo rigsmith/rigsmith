@@ -196,7 +196,7 @@ func pickCdTarget(targets []cdTarget) (string, error) {
 		Title("cd to which project?").
 		Options(opts...).
 		Value(&chosen)
-	if err := sel.Run(); err != nil {
+	if err := runHuhSelect(sel); err != nil {
 		return "", err
 	}
 	return chosen, nil

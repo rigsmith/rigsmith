@@ -42,7 +42,10 @@ var killWarnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 // PowerShell), falling back to image-name `taskkill /IM` when PowerShell is
 // unreachable.
 func newKillCmd() *cobra.Command {
-	var ports []int
+	var (
+		ports []int
+		yes   bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "kill [name]",
@@ -77,7 +80,7 @@ func newKillCmd() *cobra.Command {
 			}
 
 			if len(allPorts) > 0 {
-				return killByPorts(cmd, out, root, allPorts, dry)
+				return killByPorts(cmd, out, root, allPorts, dry, yes)
 			}
 
 			cfg, _ := config.LoadMerged(root)
@@ -99,18 +102,19 @@ func newKillCmd() *cobra.Command {
 				return nil
 			}
 			if len(patterns) > 0 {
-				if err := killByPatterns(cmd, out, root, patterns, dry); err != nil {
+				if err := killByPatterns(cmd, out, root, patterns, dry, yes); err != nil {
 					return err
 				}
 			}
 			if len(vitePorts) > 0 {
-				return killByPorts(cmd, out, root, vitePorts, dry)
+				return killByPorts(cmd, out, root, vitePorts, dry, yes)
 			}
 			return nil
 		},
 	}
 
 	cmd.Flags().IntSliceVar(&ports, "port", nil, "kill the process(es) listening on this TCP port (repeatable)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the review picker and kill every match")
 	return cmd
 }
 
@@ -270,7 +274,7 @@ func dirBase(root string) string {
 
 // ---- Port mode: free whatever is LISTENING on the given TCP ports. ----
 
-func killByPorts(cmd *cobra.Command, out io.Writer, root string, ports []int, dry bool) error {
+func killByPorts(cmd *cobra.Command, out io.Writer, root string, ports []int, dry, yes bool) error {
 	self := os.Getpid()
 	seen := map[int]bool{}
 	var pids []int
@@ -293,6 +297,10 @@ func killByPorts(cmd *cobra.Command, out io.Writer, root string, ports []int, dr
 		fmt.Fprintln(out, killWarnStyle.Render(
 			fmt.Sprintf("would kill %d process(es) on %s: %s", len(pids), portList, joinInts(pids, ", "))))
 		return nil
+	}
+	// Interactive default: review the matched processes and pick which to kill.
+	if !yes && interactive() {
+		return killReview(cmd, out, root, portCandidates(cmd, root, pids))
 	}
 
 	killed := killPids(cmd, root, pids)
@@ -382,9 +390,9 @@ func killPids(cmd *cobra.Command, root string, pids []int) int {
 
 // ---- Pattern mode: match the full command line. ----
 
-func killByPatterns(cmd *cobra.Command, out io.Writer, root string, patterns []string, dry bool) error {
+func killByPatterns(cmd *cobra.Command, out io.Writer, root string, patterns []string, dry, yes bool) error {
 	if runtime.GOOS == "windows" {
-		return killByPatternsWindows(cmd, out, root, patterns, dry)
+		return killByPatternsWindows(cmd, out, root, patterns, dry, yes)
 	}
 
 	if dry {
@@ -408,6 +416,12 @@ func killByPatterns(cmd *cobra.Command, out io.Writer, root string, patterns []s
 		return nil
 	}
 
+	// Interactive default: enumerate the matches and let the user pick which to
+	// kill, instead of a blind `pkill`.
+	if !yes && interactive() {
+		return killReview(cmd, out, root, patternCandidatesPosix(cmd, root, patterns))
+	}
+
 	killed := 0
 	for _, pattern := range patterns {
 		c := exec.CommandContext(cmd.Context(), "pkill", "-f", pattern)
@@ -429,7 +443,27 @@ func killByPatterns(cmd *cobra.Command, out io.Writer, root string, patterns []s
 // so the `dotnet run`/`dotnet watch` driver (image dotnet.exe) is caught
 // alongside the apphost. When PowerShell/CIM can't be reached it falls back to
 // the image-name taskkill path.
-func killByPatternsWindows(cmd *cobra.Command, out io.Writer, root string, patterns []string, dry bool) error {
+func killByPatternsWindows(cmd *cobra.Command, out io.Writer, root string, patterns []string, dry, yes bool) error {
+	// On a TTY, review the matches and pick which to kill (matches the POSIX path).
+	if !dry && !yes && interactive() {
+		procs, ok := windowsProcessList(cmd, root)
+		if ok {
+			self := os.Getpid()
+			seen := map[int]bool{}
+			var cands []killCandidate
+			for _, pattern := range patterns {
+				for _, p := range matchProcesses(procs, pattern, self) {
+					if seen[p.Pid] {
+						continue
+					}
+					seen[p.Pid] = true
+					cands = append(cands, killCandidate{pid: p.Pid, label: p.CommandLine})
+				}
+			}
+			return killReview(cmd, out, root, cands)
+		}
+		// fall through to the best-effort image-name path when CIM is unreachable
+	}
 	procs, ok := windowsProcessList(cmd, root)
 	if !ok {
 		fmt.Fprintln(out, dimStyle.Render(
