@@ -393,6 +393,16 @@ func toolchainChecks(cmd *cobra.Command, eco, root string) []pendingCheck {
 					dotnetTargetMajor, dotnetTargetMajor))
 			}
 			return ok2("dotnet", detail)
+		}}, {label: "analyzers", run: func() check {
+			// `rig lint` runs `dotnet format analyzers`; without a third-party
+			// analyzer package it only exercises the SDK's built-in rules, so flag
+			// the absence as the it-only-bites-when-you-lint warn.
+			pkgs := dotnetAnalyzerPackages(root)
+			if len(pkgs) == 0 {
+				return warn("analyzers", "none referenced — `rig lint` runs only the SDK's built-in rules; "+
+					"add SonarAnalyzer.CSharp or Meziantou.Analyzer for deeper analysis")
+			}
+			return ok2("analyzers", strings.Join(pkgs, ", ")+" — `rig lint` runs these")
 		}}}
 	case detect.Cargo:
 		return []pendingCheck{{label: "cargo", run: func() check {

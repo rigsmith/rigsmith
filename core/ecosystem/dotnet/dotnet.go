@@ -67,10 +67,15 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish},
 		ManifestPatterns: []string{"*.csproj"},
 		DevCommands: map[string][]string{
-			plugin.VerbBuild:    {"dotnet", "build"},
-			plugin.VerbTest:     {"dotnet", "test"},
-			plugin.VerbRun:      {"dotnet", "run"},
-			plugin.VerbFormat:   {"dotnet", "format"},
+			plugin.VerbBuild:  {"dotnet", "build"},
+			plugin.VerbTest:   {"dotnet", "test"},
+			plugin.VerbRun:    {"dotnet", "run"},
+			plugin.VerbFormat: {"dotnet", "format"},
+			// Roslyn analyzers (e.g. SonarAnalyzer.CSharp, Meziantou.Analyzer)
+			// have no standalone CLI; `dotnet format analyzers` runs whatever
+			// analyzers the project references. --verify-no-changes makes it a
+			// non-mutating check that exits non-zero on findings.
+			plugin.VerbLint:     {"dotnet", "format", "analyzers", "--verify-no-changes"},
 			plugin.VerbCoverage: {"dotnet", "test", "--collect:XPlat Code Coverage"},
 			plugin.VerbInstall:  {"dotnet", "restore"},
 			// Frozen restore: --locked-mode fails if it would change packages.lock.json.
