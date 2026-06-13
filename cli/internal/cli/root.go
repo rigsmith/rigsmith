@@ -183,15 +183,24 @@ func resolvePrefix(args []string, verbs []string) []string {
 
 // resolvePrimary picks the primary ecosystem for the repo at root: .rig.json's
 // "ecosystem" wins if set, otherwise the nearest manifest walking up from cwd.
-// It returns a non-nil error when the nearest level is ambiguous (several
-// ecosystems coexist and no .rig.json pins one) or when nothing was found, so
-// the dev verbs and `ui` can stop with a clear message instead of guessing.
+// When the nearest level is ambiguous (several ecosystems coexist and no
+// .rig.json pins one) it offers an interactive picker on a TTY (caching the
+// choice per root so it asks once per process, and offering to persist it);
+// off a TTY it returns the "set ecosystem" error so the dev verbs and `ui` stop
+// with a clear message instead of guessing. A "nothing found" result errors too.
 func resolvePrimary(cwd, root string) (eco string, err error) {
 	if cfg, cerr := config.LoadMerged(root); cerr == nil && cfg.Ecosystem != "" {
 		return cfg.Ecosystem, nil
 	}
+	if e, ok := pickedEcosystem[root]; ok {
+		return e, nil
+	}
 	id, candidates := detect.NearestEcosystem(cwd)
 	if len(candidates) > 0 {
+		if chosen, ok := pickPrimaryEcosystem(root, candidates); ok {
+			pickedEcosystem[root] = chosen
+			return chosen, nil
+		}
 		return "", fmt.Errorf(
 			"multiple ecosystems found here (%s) — set \"ecosystem\" in %s to choose one",
 			strings.Join(candidates, ", "), config.FileName)
