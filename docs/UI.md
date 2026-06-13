@@ -228,23 +228,23 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   (.NET). The yarn-classic / bun upgrades use `yarn upgrade --latest` /
   `bun add [--dev]`, which keep each package in its existing section.
 
-## `rig <verb>` at a workspace root — project picker (huh single-select)
+## `rig <verb>` at a workspace root — project / run picker
 - **Trigger:** a bare dev verb at a workspace root where packages live only in
-  subdirs (e.g. a `go.work` root) and several exist — running the verb at the
-  root has no single target. Applies to the `--all`-capable verbs
-  (`build`/`test`/`format`/`lint`/`typecheck`/`clean`) **and `run`**.
-- **What you see:** a select titled `Build which?` / `Run which?` (verb-specific)
-  listing each package (`name  (path · ecosystem)`).
-  - For `--all`-capable verbs, **`All packages`** leads the list (→ the `--all`
-    dashboard).
-  - For **`run`** (which has no `--all`), there's **no "All packages"** entry —
-    it's a single pick, and the list is filtered to **runnable** packages (a Go
-    module with no `package main` is omitted, so libraries don't clutter it). A
-    lone runnable package is run directly without a prompt.
-- **Non-TTY:** a helpful error — `no single build target here … run rig build
-  --all or rig build <project>` (the `--all` hint is dropped for `run`).
-  Single-package repos (or a package at the root) are unaffected: the normal
-  root command runs.
+  subdirs (e.g. a `go.work` root) and there's no single target. Covers the
+  `--all`-capable verbs (`build`/`test`/`format`/`lint`/`typecheck`/`clean`) and
+  `run`. `--pick`/`-p` forces the picker even when one obvious target exists.
+- **`--all`-capable verbs — huh single-select:** titled `Build which?`, with
+  **`All packages`** first (→ the `--all` dashboard) then each package
+  (`name  (path · ecosystem)`). A lone subpackage just runs (no prompt).
+- **`run` — grouped bubbletea picker:** titled `Run which?`, with two aligned,
+  column-matched groups: **Projects** (the runnable packages — a Go module with
+  no `package main` is filtered out) and **Scripts** (the repo's surfaced
+  scripts: `package.json` scripts, `.rig.json` commands, Go `scripts/*/cmd`
+  verbs — the same ones `rig <name>` runs). No "All packages"; `↑/↓ move · enter
+  select · q quit`, drawn on stderr so stdout stays clean for the chosen command.
+- **Non-TTY:** a helpful error (`no single build target here … rig build --all or
+  rig build <project>`; the `--all` hint is dropped for `run`). A package at the
+  root (or a single-package repo) runs the normal root command.
 
 ## `--list-tests` discovery spinner
 - **Trigger:** during `rig test <query>` on a .NET repo, while
@@ -473,7 +473,7 @@ flow below.
 | `doctor` live checklist | rig | bubbletea + bubbles | `rig doctor` (TTY) | static checklist |
 | `kill` review-and-select | rig | huh multi-select | `rig kill` (TTY, not `--yes`) | kill all matches |
 | `outdated -i` upgrade | rig | huh multi-select | `rig outdated -i` (TTY) | plain list |
-| workspace-root picker | rig | huh select | bare verb at a multi-pkg root (TTY) | helpful error |
+| workspace-root picker | rig | huh select (`run`: bubbletea, grouped projects+scripts) | bare verb / `--pick` at a multi-pkg root (TTY) | helpful error |
 | primary-ecosystem picker | rig | huh select + confirm | ambiguous ecosystem, no pin (TTY) | "set ecosystem" error |
 | `--list-tests` spinner | rig | lipgloss anim | `rig test <q>` (.NET) | `…` line / silent |
 | `<verb> --all` dashboard | rig | bubbletea + bubbles | `rig build/test --all` (TTY) | plain sequential |
@@ -511,6 +511,12 @@ interactive surface:
 - **Publish confirm**, **cd/default pickers**, **coverage download prompt**,
   **list-tests spinner** — rigsmith surfaces (the pickers/spinner have no direct
   Spectre equivalent; they're rig-side ergonomics).
+- **Expanded rig-side interactive surface** (no source equivalent — net-new
+  ergonomics): the **`--all` live dashboard**, **`kill` review-and-select**,
+  **`doctor` live checklist** (per-project rows + paths), **`coverage` summary
+  table + `--browse`**, **`outdated -i` upgrade**, **`changerig browse`** changeset
+  manager, the **workspace-root / `run` pickers**, and the **primary-ecosystem
+  picker** below.
 
 ### Done — the relrig step-chooser TUI
 The source's interactive **step picker** (toggle which steps run before the
@@ -519,20 +525,22 @@ a **live run dashboard** (streaming per-step status + inline confirm gates) on
 top of the same headless pipeline. The `PassthroughChooser` remains the
 non-interactive fallback. This was the last real interactive-UI gap.
 
-### Remaining (accepted divergences, optional)
-1. **C#-style interactive config walkthrough** — *accepted divergence, optional.*
-   net-changesets' `init` and the .NET `rig setup` ran an interactive
-   config-prompt wizard (sourcePath/packageSource/interop for changesets; rig
-   config for setup). rigsmith deliberately split this: `changerig init` writes a
-   sensible default config (the dropped prompts — interop/sourcePath — don't
-   apply to the Go design), and `rig setup` became the **shell installer**
-   instead, with `rig default` covering the one config a wizard would still set.
-   A guided first-run wizard could be added if wanted, but nothing functional is
-   missing.
-2. **Interactive `rig default` as its own verb** — minor. The picker described
-   above exists and persists; this is only noting that the source exposed a
-   dedicated interactive config verb, which here is folded into `default`/`init`.
+### Done — the config wizard
+The C#-style interactive config walkthrough (net-changesets' `init` and the .NET
+`rig setup` config-prompt) is now built as the **`rig init` wizard** above
+(ecosystem / solution / default project / exclude / quiet, seeded from
+detection), backed by the **primary-ecosystem picker** that resolves an ambiguous
+repo on first use and offers to persist the choice. The Go-specific divergences
+remain intentional: `changerig init` writes a sensible default (the dropped
+interop/sourcePath prompts don't apply to the Go design), and `rig setup` stays
+the **shell installer**.
 
-**Bottom line:** the interactive-UI surface is now at parity — the relrig
-step-chooser TUI (plan editor + live dashboard) is built. What remains is the
-optional C#-style config wizard, an intentional, documented divergence.
+### Remaining (accepted divergences, optional)
+- **Interactive `rig default` as its own verb** — minor. The set-default picker
+  exists and persists; this only notes that the source exposed a dedicated
+  interactive config verb, which here is folded into `default` / `init`.
+
+**Bottom line:** the interactive-UI surface is at or above parity. The two TUI
+gaps that remained — the relrig step-chooser (now the plan editor + live
+dashboard) and the C#-style config wizard (now `rig init` + the ecosystem
+picker) — are both built; nothing functional is missing.
