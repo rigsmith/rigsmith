@@ -1,0 +1,3 @@
+// Marks this fixture as its own rig workspace root, so `rig` commands run here
+// resolve to examples/polyglot rather than the parent rigsmith repo.
+{}

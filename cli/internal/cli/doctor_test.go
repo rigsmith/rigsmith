@@ -104,3 +104,89 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestNodeHasDependencies(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) {
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if nodeHasDependencies(dir) {
+		t.Error("no package.json → no dependencies")
+	}
+	write(`{"name":"x"}`)
+	if nodeHasDependencies(dir) {
+		t.Error("package.json without deps → false")
+	}
+	write(`{"dependencies":{"left-pad":"^1"}}`)
+	if !nodeHasDependencies(dir) {
+		t.Error("dependencies present → true")
+	}
+	write(`{"devDependencies":{"vitest":"^2"}}`)
+	if !nodeHasDependencies(dir) {
+		t.Error("devDependencies present → true")
+	}
+}
+
+func TestManifestParsers(t *testing.T) {
+	dir := t.TempDir()
+	must := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must("App.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>")
+	must("go.mod", "module example.com/x\n\ngo 1.23\n")
+	must("Cargo.toml", "[package]\nname = \"x\"\nversion = \"3.1.4\"\n")
+
+	if got := readTargetFramework(dir); got != "net8.0" {
+		t.Errorf("readTargetFramework = %q, want net8.0", got)
+	}
+	if got := readGoVersion(dir); got != "1.23" {
+		t.Errorf("readGoVersion = %q, want 1.23", got)
+	}
+	if got := readCargoVersion(dir); got != "3.1.4" {
+		t.Errorf("readCargoVersion = %q, want 3.1.4", got)
+	}
+	empty := t.TempDir()
+	if readTargetFramework(empty) != "" || readGoVersion(empty) != "" || readCargoVersion(empty) != "" {
+		t.Error("missing manifests should parse to empty")
+	}
+}
+
+func TestOrderedEcos(t *testing.T) {
+	byEco := map[string][]target{
+		"cargo":  {{}},
+		"go":     {{}},
+		"dotnet": {{}},
+		"zzz":    {{}}, // unknown ecosystem → appended after the canonical ones
+	}
+	got := orderedEcos(byEco)
+	// canonical go, (node absent), dotnet, cargo — then the unknown.
+	if len(got) != 4 || got[0] != "go" || got[1] != "dotnet" || got[2] != "cargo" || got[3] != "zzz" {
+		t.Errorf("orderedEcos = %v", got)
+	}
+}
+
+func TestDiscoverDotnetProjectsFindsVersionlessProjects(t *testing.T) {
+	root := t.TempDir()
+	// a version-less app csproj (no <Version>, no Directory.Build.props)
+	app := filepath.Join(root, "app")
+	if err := os.MkdirAll(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, "App.csproj"),
+		[]byte("<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// noise that must be skipped
+	for _, d := range []string{"bin", "obj"} {
+		_ = os.MkdirAll(filepath.Join(app, d), 0o755)
+		_ = os.WriteFile(filepath.Join(app, d, "Ghost.csproj"), []byte("<Project/>"), 0o644)
+	}
+	got := discoverDotnetProjects(root)
+	if len(got) != 1 || got[0].Name != "App" {
+		t.Fatalf("discoverDotnetProjects = %+v, want one 'App'", got)
+	}
+}
