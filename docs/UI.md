@@ -111,11 +111,12 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
 - **Why:** the per-ecosystem checks shell out (`go version`, `node --version`,
   `dotnet --version`, …), so a live view that spins each row until its probe
   resolves feels responsive instead of a frozen pause.
-- **What you see:** the header + one row per check, each with a spinner and
-  `checking…` until it resolves, then `✓`/`!`/`✗` + detail (version, or the
-  problem). Checks run **concurrently** (each as a bubbletea Cmd), so rows fill
-  in as their probes return. A final verdict line: `all good` / `some warnings` /
-  `problems found`.
+- **What you see:** the header, then checks **grouped under an ecosystem header**
+  (`Go` / `Node` / `.NET` / `Cargo`), each row spinning with `checking…` until it
+  resolves to `✓`/`!`/`✗` + a specific, actionable detail (a version, or e.g.
+  `dependencies declared but not installed — run rig install`). Checks run
+  **concurrently** (each a bubbletea Cmd), so rows fill in as their probes
+  return. A final verdict: `all good` / `some warnings` / `problems found`.
 - **What it does:** read-only — exits non-zero only when an error-level check
   fails (warnings don't), so it still doubles as a CI gate (via the static
   path). `q`/`ctrl+c` quits early. Renders inline, so the result stays in

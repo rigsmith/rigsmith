@@ -46,3 +46,16 @@ func TestDoctorModelSeverityKeepsMax(t *testing.T) {
 		t.Errorf("severity should stay at warn, got %d", m.severity)
 	}
 }
+
+func TestDoctorModelGroupsByEcosystem(t *testing.T) {
+	m := newDoctorModel([]pendingCheck{
+		{eco: "go", label: "go"},
+		{eco: "node", label: "node"},
+	})
+	m, _ = du(m, checkDoneMsg{idx: 0, result: ok("go", "go1.26")})
+	m, _ = du(m, checkDoneMsg{idx: 1, result: ok("node", "v24")})
+	v := m.View()
+	if !strings.Contains(v, "Go") || !strings.Contains(v, "Node") {
+		t.Errorf("view should show ecosystem group headers:\n%s", v)
+	}
+}
