@@ -84,6 +84,7 @@ func Execute(ctx context.Context) error {
 		verbCmd("global", "Install a global tool", "g"),
 		newDlxCmd(),
 		newWatchCmd(),
+		newWorktreeCmd(),
 		newRigInitCmd(),
 		newInfoCmd(),
 		newUICmd(),
