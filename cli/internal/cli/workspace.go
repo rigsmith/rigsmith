@@ -162,5 +162,19 @@ func matchTarget(targets []target, query string) (target, bool) {
 // devCommandFor resolves verb's argv for a target's ecosystem (node pm-detection
 // keys off root).
 func devCommandFor(t target, verb, root string) ([]string, bool) {
-	return detect.CommandFor(t.Eco, verb, root)
+	return resolveVerbCommand(t.Eco, verb, root)
+}
+
+// resolveVerbCommand maps a verb to its argv for an ecosystem, with the .NET
+// `format` verb routed through the configured/conventional formatter (CSharpier
+// or `dotnet format`); everything else is the shared registry. Pure resolution
+// (no install/prompt) so display, --all, info, and completion all agree — the
+// run paths add the CSharpier preflight via requireDotnetFormatter.
+func resolveVerbCommand(eco, verb, root string) ([]string, bool) {
+	if eco == detect.DotNet && verb == "format" {
+		if argv, ok := dotnetFormatArgv(root); ok {
+			return argv, true
+		}
+	}
+	return detect.CommandFor(eco, verb, root)
 }
