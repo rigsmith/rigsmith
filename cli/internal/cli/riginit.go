@@ -50,7 +50,7 @@ func newRigInitCmd() *cobra.Command {
 		Short: "Scaffold a .rig.json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			root := detect.Root(cwd)
+			root := resolveRoot(cwd)
 			path := filepath.Join(root, config.FileName)
 			if _, err := os.Stat(path); err == nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s already exists at %s\n", config.FileName, root)

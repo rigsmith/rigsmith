@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -24,8 +25,15 @@ import (
 var dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 var (
-	dryRun bool
-	quiet  bool
+	dryRun   bool
+	quiet    bool
+	noEnv    bool   // --no-env: skip .env/.env.local loading
+	rootFlag string // --root: override walk-up root resolution
+
+	// presetEnv holds the env vars contributed by the active `.rig.json` env
+	// presets (set per run from the dev-verb preset flags); merged as the top
+	// layer of the spawned-process environment.
+	presetEnv map[string]string
 )
 
 // Execute builds and runs the rig command tree.
@@ -44,7 +52,7 @@ func Execute(ctx context.Context) error {
 		// and an explicit --quiet always wins.
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			if cfg, err := config.LoadMerged(detect.Root(cwd)); err == nil && cfg.IsQuiet() {
+			if cfg, err := config.LoadMerged(resolveRoot(cwd)); err == nil && cfg.IsQuiet() {
 				quiet = true
 			}
 			return nil
@@ -52,6 +60,8 @@ func Execute(ctx context.Context) error {
 	}
 	root.PersistentFlags().BoolVarP(&dryRun, "dry-run", "n", false, "print the command instead of running it")
 	root.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "suppress the → command echo")
+	root.PersistentFlags().BoolVar(&noEnv, "no-env", false, "skip .env/.env.local loading for this run")
+	root.PersistentFlags().StringVar(&rootFlag, "root", "", "override the working root (skip walk-up discovery)")
 
 	root.AddCommand(
 		// Dev loop (workspace-aware: [project] scopes; --all runs across the
@@ -183,7 +193,7 @@ func verbCmd(verb, short string, aliases ...string) *cobra.Command {
 		Aliases: aliases,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			root := detect.Root(cwd)
+			root := resolveRoot(cwd)
 			eco, err := resolvePrimary(cwd, root)
 			if err != nil {
 				return err
@@ -213,17 +223,34 @@ func runCommand(cmd *cobra.Command, dir string, argv []string) error {
 	return c.Run()
 }
 
+// resolveRoot resolves the working root for a command: the explicit `--root`
+// override when given (skipping walk-up discovery), else the nearest discovered
+// root walking up from cwd.
+func resolveRoot(cwd string) string {
+	if rootFlag != "" {
+		if abs, err := filepath.Abs(rootFlag); err == nil {
+			return abs
+		}
+		return rootFlag
+	}
+	return detect.Root(cwd)
+}
+
 // commandEnv builds the spawned-process environment with the rig layering
 // (low to high): .env/.env.local files, ambient process env, `.rig.json` env
-// (the user-wide ~/.rig.json merged under the repo's, repo winning per key).
-// Returns nil (inherit) when no file or config env exists.
+// (the user-wide ~/.rig.json merged under the repo's, repo winning per key),
+// and finally the active env presets. `--no-env` drops the file layer.
+// Returns nil (inherit) when no layer contributes anything.
 func commandEnv(root string) []string {
-	fileEnv, _ := envstack.Load(root)
+	var fileEnv map[string]string
+	if !noEnv {
+		fileEnv, _ = envstack.Load(root)
+	}
 	cfg, _ := config.LoadMerged(root)
-	if len(fileEnv) == 0 && len(cfg.Env) == 0 {
+	if len(fileEnv) == 0 && len(cfg.Env) == 0 && len(presetEnv) == 0 {
 		return nil
 	}
-	return envstack.Environ(envstack.Merge(fileEnv, envstack.Ambient(), cfg.Env, nil))
+	return envstack.Environ(envstack.Merge(fileEnv, envstack.Ambient(), cfg.Env, presetEnv))
 }
 
 // echo prints the `→ command` line unless --quiet (or .rig.json quiet) is set.

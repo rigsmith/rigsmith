@@ -38,7 +38,7 @@ func newDoctorCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			cwd, _ := os.Getwd()
-			root := detect.Root(cwd)
+			root := resolveRoot(cwd)
 
 			ecos := detectEcosystems(root)
 			fmt.Fprintln(out, headerStyle.Render("rig doctor")+"  "+dimStyle.Render(root))
