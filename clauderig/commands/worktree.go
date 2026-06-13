@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/charmbracelet/huh"
+	"github.com/mattn/go-isatty"
 	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/worktree"
 	"github.com/spf13/cobra"
@@ -22,8 +24,75 @@ func NewWorktreeCmd() *cobra.Command {
 		Aliases: []string{"wt"},
 		Short:   "Create/list/open git worktrees as sibling checkouts (never moves this session)",
 	}
-	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd())
+	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd(), newWorktreePickCmd())
 	return cmd
+}
+
+// newWorktreePickCmd shows an interactive picker over the repo's worktrees and
+// prints the chosen worktree's path to stdout. It powers the `<tool>-wt` dev
+// launchers (run with no branch argument): the huh UI draws on stderr so stdout
+// carries only the path the launcher captures. --repo lets a launcher invoked
+// from another repo still list *this* repo's worktrees.
+func newWorktreePickCmd() *cobra.Command {
+	var repoDir string
+	cmd := &cobra.Command{
+		Use:    "pick",
+		Short:  "Interactively select a worktree and print its path (used by <tool>-wt)",
+		Args:   cobra.NoArgs,
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			dir := repoDir
+			if dir == "" {
+				cwd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				dir = cwd
+			}
+			repo, err := gitrepo.Open(ctx, dir)
+			if err != nil {
+				return fmt.Errorf("not inside a git repository")
+			}
+			wts, err := repo.WorktreeList(ctx)
+			if err != nil {
+				return err
+			}
+			if len(wts) == 0 {
+				return fmt.Errorf("no worktrees found")
+			}
+			if !pickerTTY() {
+				return fmt.Errorf("no terminal for the picker; pass a branch or path explicitly")
+			}
+			opts := make([]huh.Option[string], 0, len(wts))
+			for _, wt := range wts {
+				branch := wt.Branch
+				if branch == "" {
+					branch = "(detached)"
+				}
+				label := fmt.Sprintf("%s  %s", HeaderStyle.Render(branch), DimStyle.Render(wt.Path))
+				opts = append(opts, huh.NewOption(label, wt.Path))
+			}
+			var chosen string
+			err = huh.NewForm(huh.NewGroup(
+				huh.NewSelect[string]().Title("Run from which worktree?").Options(opts...).Value(&chosen),
+			)).Run()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), chosen)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repoDir, "repo", "", "repo directory whose worktrees to list (default: current directory)")
+	return cmd
+}
+
+// pickerTTY reports whether we can show the worktree picker. Unlike the shared
+// interactive(), it checks stderr (where huh draws) rather than stdout, because
+// callers capture stdout for the chosen path.
+func pickerTTY() bool {
+	return isatty.IsTerminal(os.Stderr.Fd()) && isatty.IsTerminal(os.Stdin.Fd())
 }
 
 // openRepo opens the git repo containing the current directory.
