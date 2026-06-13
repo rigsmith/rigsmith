@@ -194,19 +194,19 @@ func nodeChecks(cmd *cobra.Command, root string) []pendingCheck {
 
 func dotnetChecks(cmd *cobra.Command, root string) []pendingCheck {
 	return []pendingCheck{
-		{"sdk", func() check {
+		{"dotnet", func() check {
 			sdk, present := probeVersion(cmd, root, "dotnet", "--version")
 			if !present {
-				return bad("sdk", "dotnet not found on PATH")
+				return bad("dotnet", "dotnet not found on PATH")
 			}
 			pin := readSdkPin(root)
 			switch {
 			case pin == "":
-				return ok2("sdk", sdk)
+				return ok2("dotnet", sdk)
 			case sdkSatisfies(sdk, pin):
-				return ok2("sdk", fmt.Sprintf("%s (global.json pins %s)", sdk, pin))
+				return ok2("dotnet", fmt.Sprintf("%s (global.json pins %s)", sdk, pin))
 			default:
-				return bad("sdk", fmt.Sprintf("%s — global.json pins %s", sdk, pin))
+				return bad("dotnet", fmt.Sprintf("%s — global.json pins %s", sdk, pin))
 			}
 		}},
 		{"layout", func() check {
