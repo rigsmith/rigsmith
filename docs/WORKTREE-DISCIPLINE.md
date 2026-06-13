@@ -62,6 +62,10 @@ clauderig project status    # what's set up here
 clauderig project uninstall # remove it
 ```
 
+`local install` also adds `.claude/settings.local.json` to `.gitignore` (unless a
+broader pattern already covers it), so a personal hook can't be committed by
+accident.
+
 `project install` is the one-shot "protect this repo": it wires the guard at
 **project** scope (`<repo>/.claude/settings.json`) — commit it and your team
 inherits it (Claude Code asks to trust a project hook the first time) — and drops

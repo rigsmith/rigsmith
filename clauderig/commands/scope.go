@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/rigsmith/clauderig/internal/claudemd"
+	"github.com/rigsmith/clauderig/internal/gitignore"
+	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/hooks"
 	"github.com/rigsmith/clauderig/internal/settings"
 	"github.com/spf13/cobra"
@@ -75,25 +77,25 @@ func newScopeCmd(sp scopeSpec) *cobra.Command {
 	return cmd
 }
 
-// scopePaths resolves the settings file (and CLAUDE.md, when the scope manages the
-// guide) for a scope. A project/local scope outside a git repo fails with a clear
-// message from settings.Scope.Path.
-func scopePaths(ctx context.Context, sp scopeSpec) (settingsFile, guideFile string, err error) {
+// scopePaths resolves the repo root, settings file, and CLAUDE.md (when the scope
+// manages the guide) for a scope. A project/local scope outside a git repo fails
+// with a clear message from settings.Scope.Path.
+func scopePaths(ctx context.Context, sp scopeSpec) (root, settingsFile, guideFile string, err error) {
 	home, _ := os.UserHomeDir()
-	root := repoRootBestEffort(ctx)
+	root = repoRootBestEffort(ctx)
 	settingsFile, err = sp.scope.Path(home, root)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if sp.guide {
 		guideFile = filepath.Join(root, "CLAUDE.md")
 	}
-	return settingsFile, guideFile, nil
+	return root, settingsFile, guideFile, nil
 }
 
 func scopeInstall(c *cobra.Command, sp scopeSpec) error {
 	out := c.OutOrStdout()
-	settingsFile, guideFile, err := scopePaths(c.Context(), sp)
+	root, settingsFile, guideFile, err := scopePaths(c.Context(), sp)
 	if err != nil {
 		return err
 	}
@@ -113,15 +115,45 @@ func scopeInstall(c *cobra.Command, sp scopeSpec) error {
 		}
 		fmt.Fprintf(out, "%s guide %s %s\n", OkStyle.Render("✓"), act, DimStyle.Render(guideFile))
 	}
+	// A local settings file is personal — keep it out of version control.
+	if sp.scope == settings.Local {
+		act, err := ensureLocalIgnored(c.Context(), root)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "%s gitignore %s %s\n", OkStyle.Render("✓"), act, DimStyle.Render(filepath.Join(root, ".gitignore")))
+	}
 	if sp.scope == settings.Project {
 		fmt.Fprintln(out, DimStyle.Render("  commit .claude/settings.json to share it; Claude Code will ask to trust the hook"))
 	}
 	return nil
 }
 
+// ensureLocalIgnored makes sure .claude/settings.local.json is gitignored, unless
+// an existing pattern already covers it. Returns what it did for reporting.
+func ensureLocalIgnored(ctx context.Context, root string) (string, error) {
+	const entry = ".claude/settings.local.json"
+	if repo, err := gitrepo.Open(ctx, root); err == nil && repo.IsIgnored(ctx, entry) {
+		return "already ignored", nil
+	}
+	giPath := filepath.Join(root, ".gitignore")
+	b, err := os.ReadFile(giPath)
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	next, changed := gitignore.EnsureLine(string(b), entry)
+	if !changed {
+		return "already ignored", nil
+	}
+	if err := os.WriteFile(giPath, []byte(next), 0o644); err != nil {
+		return "", err
+	}
+	return "added", nil
+}
+
 func scopeUninstall(c *cobra.Command, sp scopeSpec) error {
 	out := c.OutOrStdout()
-	settingsFile, guideFile, err := scopePaths(c.Context(), sp)
+	_, settingsFile, guideFile, err := scopePaths(c.Context(), sp)
 	if err != nil {
 		return err
 	}
@@ -146,7 +178,7 @@ func scopeUninstall(c *cobra.Command, sp scopeSpec) error {
 
 func scopeStatus(c *cobra.Command, sp scopeSpec) error {
 	out := c.OutOrStdout()
-	settingsFile, guideFile, err := scopePaths(c.Context(), sp)
+	_, settingsFile, guideFile, err := scopePaths(c.Context(), sp)
 	if err != nil {
 		return err
 	}
