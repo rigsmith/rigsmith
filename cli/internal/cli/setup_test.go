@@ -60,6 +60,65 @@ func TestSetupSnippet_DevTargetsRigDev(t *testing.T) {
 			t.Errorf("rig-dev zsh snippet missing %q:\n%s", want, s)
 		}
 	}
+	// The --dev block carries the family too, but bound to the -dev launchers so
+	// `clauderig-dev <Tab>` completes against the live build.
+	for _, want := range []string{
+		"Family completions",
+		`command -v clauderig-dev >/dev/null 2>&1 && { eval "$(command clauderig-dev completion zsh)"; compdef _clauderig clauderig-dev; }`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("rig-dev zsh block missing %q:\n%s", want, s)
+		}
+	}
+}
+
+func TestSetupSnippet_CanonicalBlockLoadsTheFamily(t *testing.T) {
+	// Each shell must source every companion by its own name, guarded so a
+	// missing one is skipped.
+	cases := map[string][]string{
+		"zsh": {
+			`command -v clauderig >/dev/null 2>&1 && eval "$(command clauderig completion zsh)"`,
+			`command -v relrig >/dev/null 2>&1 && eval "$(command relrig completion zsh)"`,
+			`command -v changerig >/dev/null 2>&1 && eval "$(command changerig completion zsh)"`,
+		},
+		"bash": {`command -v clauderig >/dev/null 2>&1 && eval "$(command clauderig completion bash)"`},
+		"fish": {"command -q clauderig; and clauderig completion fish | source"},
+		"powershell": {
+			"Get-Command -Name clauderig -CommandType Application",
+			"& $__bin completion powershell | Out-String | Invoke-Expression",
+		},
+	}
+	for shell, wants := range cases {
+		s := setupSnippet(shell, "rig")
+		if !strings.Contains(s, "Family completions") {
+			t.Errorf("%s canonical block missing the family-completions header:\n%s", shell, s)
+		}
+		// The canonical block binds the plain names, never the -dev launchers.
+		if strings.Contains(s, "clauderig-dev") {
+			t.Errorf("%s canonical block should not reference -dev launchers:\n%s", shell, s)
+		}
+		for _, want := range wants {
+			if !strings.Contains(s, want) {
+				t.Errorf("%s snippet missing companion line %q:\n%s", shell, want, s)
+			}
+		}
+	}
+}
+
+func TestSetupSnippet_DevBlockBindsTheDevCompanions(t *testing.T) {
+	// The --dev family lines source the -dev launchers and rebind cobra's
+	// completer (named for the base tool) to the -dev command, per shell.
+	cases := map[string]string{
+		"bash":       `command -v clauderig-dev >/dev/null 2>&1 && { eval "$(command clauderig-dev completion bash)"; complete -o default -o nospace -F __start_clauderig clauderig-dev 2>/dev/null || complete -o default -F __start_clauderig clauderig-dev; }`,
+		"fish":       "command -q clauderig-dev; and clauderig-dev completion fish | string replace -a -- '-c clauderig ' '-c clauderig-dev ' | source",
+		"powershell": "Register-ArgumentCompleter -CommandName 'clauderig-dev' -ScriptBlock ${__clauderigCompleterBlock}",
+	}
+	for shell, want := range cases {
+		s := setupSnippet(shell, "rig-dev")
+		if !strings.Contains(s, want) {
+			t.Errorf("%s rig-dev block missing %q:\n%s", shell, want, s)
+		}
+	}
 }
 
 func TestSetupSnippet_BashSkipsTheZshOnlyCompinitGuard(t *testing.T) {

@@ -44,10 +44,11 @@ func NewWorktreeCmd() *cobra.Command {
 func newWorktreePickCmd() *cobra.Command {
 	var repoDir string
 	cmd := &cobra.Command{
-		Use:    "pick [query]",
-		Short:  "Resolve or select a worktree and print its path (used by <tool>-wt)",
-		Args:   cobra.MaximumNArgs(1),
-		Hidden: true,
+		Use:               "pick [query]",
+		Short:             "Resolve or select a worktree and print its path (used by <tool>-wt)",
+		Args:              cobra.MaximumNArgs(1),
+		Hidden:            true,
+		ValidArgsFunction: worktreeCompletion(cobra.ShellCompDirectiveNoFileComp),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			dir := repoDir
@@ -117,6 +118,55 @@ func resolveWorktree(wts []gitrepo.Worktree, query string) (string, error) {
 		return "", fmt.Errorf("no worktree matching %q", query)
 	}
 	return ranked[0].Path, nil
+}
+
+// worktreeCompletion builds a Cobra ValidArgsFunction that completes the first
+// positional arg with this repo's worktree branch names, each described by its
+// path. It's what makes `open`/`rm`/`pick` a single <Tab> away from picking an
+// existing checkout. dir is the directive returned alongside the names: pass
+// ShellCompDirectiveNoFileComp for a branch-only arg (rm/pick), or
+// ShellCompDirectiveFilterDirs for one that also accepts a path (open), so
+// directory completion still works. Any failure (not in a repo, no worktrees)
+// degrades to "no completions" rather than erroring — completion must never get
+// in the user's way.
+func worktreeCompletion(dir cobra.ShellCompDirective) func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+	return func(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+		if len(args) > 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		repo, _, err := openRepo(cmd.Context())
+		if err != nil {
+			return nil, dir
+		}
+		wts, err := repo.WorktreeList(cmd.Context())
+		if err != nil {
+			return nil, dir
+		}
+		return worktreeCompletions(wts), dir
+	}
+}
+
+// worktreeCompletions turns a worktree list into Cobra completion candidates in
+// "value\tdescription" form — the branch name (and its short name, when it
+// differs) keyed to the worktree's path. Those are the same two name forms
+// resolveWorktree ranks against, so anything that completes also resolves.
+// Detached worktrees (empty branch) contribute nothing. Pure, so it's unit
+// tested directly.
+func worktreeCompletions(wts []gitrepo.Worktree) []string {
+	seen := map[string]bool{}
+	var comps []string
+	add := func(name, path string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		comps = append(comps, name+"\t"+path)
+	}
+	for _, wt := range wts {
+		add(wt.Branch, wt.Path)
+		add(match.ShortName(wt.Branch), wt.Path)
+	}
+	return comps
 }
 
 // pickWorktree shows the filterable huh worktree picker and returns the chosen
@@ -252,9 +302,10 @@ func newWorktreeListCmd() *cobra.Command {
 
 func newWorktreeOpenCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "open <branch|path>",
-		Short: "Open a worktree in a new VS Code window (for review/diff)",
-		Args:  cobra.ExactArgs(1),
+		Use:               "open <branch|path>",
+		Short:             "Open a worktree in a new VS Code window (for review/diff)",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: worktreeCompletion(cobra.ShellCompDirectiveFilterDirs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			_, root, err := openRepo(ctx)
@@ -277,10 +328,11 @@ func newWorktreeOpenCmd() *cobra.Command {
 func newWorktreeRemoveCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
-		Use:     "rm <branch>",
-		Aliases: []string{"remove"},
-		Short:   "Remove a worktree (its branch is kept)",
-		Args:    cobra.ExactArgs(1),
+		Use:               "rm <branch>",
+		Aliases:           []string{"remove"},
+		Short:             "Remove a worktree (its branch is kept)",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: worktreeCompletion(cobra.ShellCompDirectiveNoFileComp),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			repo, root, err := openRepo(ctx)
