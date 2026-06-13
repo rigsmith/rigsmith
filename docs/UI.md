@@ -105,6 +105,25 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   - `Never ask again` → persists `coverage.reportGenerator = off`.
 - **Non-TTY / interrupt:** silently uses the native report (defaults to "not now").
 
+## `rig doctor` — live checklist (bubbletea + bubbles)
+- **Trigger:** `rig doctor` on an interactive terminal (not `--quiet`/piped).
+  Otherwise the static checklist prints.
+- **Why:** the toolchain checks shell out (`go version`, `node --version`,
+  `dotnet --version`, …), so a live view that spins each row until its probe
+  resolves feels responsive instead of a frozen pause.
+- **What you see:** **workspace-aware** — it discovers every project (the shared
+  `discoverWorkspace` searcher) and shows, **grouped under an ecosystem header**
+  (`Go` / `Node` / `.NET` / `Cargo`): the toolchain rows once (tool version, SDK
+  + any global.json pin), then **one row per project** with its own state — node
+  deps (`deps installed` / `deps declared, not installed — run rig install` /
+  `no dependencies`), .NET target framework, go/cargo versions. Each row spins
+  `checking…` then resolves to `✓`/`!`/`✗`; checks run **concurrently** (each a
+  bubbletea Cmd). A final verdict: `all good` / `some warnings` / `problems found`.
+- **What it does:** read-only — exits non-zero only when an error-level check
+  fails (warnings don't), so it still doubles as a CI gate (via the static
+  path). `q`/`ctrl+c` quits early. Renders inline, so the result stays in
+  scrollback.
+
 ## `rig kill` — review-and-select (huh multi-select)
 - **Trigger:** `rig kill` / `rig kill <name>` / `rig kill --port N` on an
   interactive terminal, not `--dry-run` and not `--yes`. The default — killing
@@ -289,6 +308,7 @@ flow below.
 | `cd` picker | rig | huh select | `rig cd` (TTY, ambiguous/bare) | print root / list+fail |
 | `default` picker | rig | huh select | `rig default` (TTY, ambiguous/bare) | print current |
 | Coverage RG prompt | rig | huh select | RG absent, TTY, dnx, auto | native report |
+| `doctor` live checklist | rig | bubbletea + bubbles | `rig doctor` (TTY) | static checklist |
 | `kill` review-and-select | rig | huh multi-select | `rig kill` (TTY, not `--yes`) | kill all matches |
 | workspace-root picker | rig | huh select | bare verb at a multi-pkg root (TTY) | helpful error |
 | `--list-tests` spinner | rig | lipgloss anim | `rig test <q>` (.NET) | `…` line / silent |
