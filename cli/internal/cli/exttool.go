@@ -131,6 +131,14 @@ func (t extTool) resolver() func(root, mode string) ([]string, bool) {
 	}
 }
 
+// available reports whether the tool is actually installed now — the auto-mode
+// resolve (on PATH or a tool-manifest), not counting a fetch-on-use path. Used
+// by `rig doctor` to report tool presence regardless of the configured mode.
+func (t extTool) available(root string) bool {
+	_, ok := t.resolver()(root, toolAuto)
+	return ok
+}
+
 // installable reports whether rig can install the tool right now.
 func (t extTool) installable(root string) bool {
 	if t.canInstall != nil {
@@ -204,15 +212,21 @@ func (t extTool) offerOpen(cmd *cobra.Command) {
 	if t.openURL == "" {
 		return
 	}
+	offerOpenURL(cmd, t.name+" isn't installed — "+t.why, t.openURL)
+}
+
+// offerOpenURL prompts (on a TTY) to open url in a browser, opening it on yes.
+// Shared by extTool.offerOpen and the doctor .NET-SDK install offer.
+func offerOpenURL(cmd *cobra.Command, title, url string) {
 	var open bool
 	c := huh.NewConfirm().
-		Title(t.name + " isn't installed — " + t.why).
-		Description("Open " + t.openURL + " to install it?").
+		Title(title).
+		Description("Open " + url + " to install it?").
 		Affirmative("Open").
 		Negative("Not now").
 		Value(&open)
 	if err := runHuhConfirm(c); err == nil && open {
-		openPath(cmd, t.openURL)
+		openPath(cmd, url)
 	}
 }
 
