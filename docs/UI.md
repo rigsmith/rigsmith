@@ -93,6 +93,23 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   (comment-preserving) and prints where it landed.
 - **Non-TTY:** prints the current default (or "No default project set.").
 
+## Primary-ecosystem picker (huh select + confirm)
+- **Trigger:** any verb that resolves the primary ecosystem (`build`/`test`/`run`/
+  …, `coverage`, `outdated`, `upgrade`, `ui`, …) in a repo where **several
+  ecosystems coexist at the same level and no `.rig.json` pins one** — the case
+  that used to hard-error with "multiple ecosystems found…". On a TTY only.
+- **What you see:** a select titled `Which ecosystem should rig use here?` over
+  the coexisting ecosystems (display names), then a confirm `Remember this in
+  .rig.json?` (default yes).
+- **What it does:** the chosen ecosystem is used for the run; if you keep
+  "remember", it's persisted as `"ecosystem"` in `.rig.json` (comment-preserving,
+  created if absent) and a dim `set ecosystem = <id> in .rig.json` note prints.
+  Either way the choice is **cached per repo root for the rest of the process**,
+  so a single command never asks twice (and `ui` → verb don't double-prompt).
+- **Non-TTY / cancel:** unchanged behavior — the `multiple ecosystems found (…)
+  — set "ecosystem" in .rig.json` error, so CI stays deterministic. Pairs with
+  the `rig init` wizard, which sets the same key up front.
+
 ## Coverage ReportGenerator download prompt (huh single-select)
 - **Trigger:** `rig coverage` on a TTY when ReportGenerator isn't installed,
   `dnx` is available to fetch it, mode is `auto`, and not `--quiet`/`--dry-run`.
@@ -457,6 +474,7 @@ flow below.
 | `kill` review-and-select | rig | huh multi-select | `rig kill` (TTY, not `--yes`) | kill all matches |
 | `outdated -i` upgrade | rig | huh multi-select | `rig outdated -i` (TTY) | plain list |
 | workspace-root picker | rig | huh select | bare verb at a multi-pkg root (TTY) | helpful error |
+| primary-ecosystem picker | rig | huh select + confirm | ambiguous ecosystem, no pin (TTY) | "set ecosystem" error |
 | `--list-tests` spinner | rig | lipgloss anim | `rig test <q>` (.NET) | `…` line / silent |
 | `<verb> --all` dashboard | rig | bubbletea + bubbles | `rig build/test --all` (TTY) | plain sequential |
 | `init` wizard | rig | huh form | `rig init` (TTY, no `.rig.json`) | plain scaffold |
