@@ -168,3 +168,25 @@ func TestOrderedEcos(t *testing.T) {
 		t.Errorf("orderedEcos = %v", got)
 	}
 }
+
+func TestDiscoverDotnetProjectsFindsVersionlessProjects(t *testing.T) {
+	root := t.TempDir()
+	// a version-less app csproj (no <Version>, no Directory.Build.props)
+	app := filepath.Join(root, "app")
+	if err := os.MkdirAll(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, "App.csproj"),
+		[]byte("<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// noise that must be skipped
+	for _, d := range []string{"bin", "obj"} {
+		_ = os.MkdirAll(filepath.Join(app, d), 0o755)
+		_ = os.WriteFile(filepath.Join(app, d, "Ghost.csproj"), []byte("<Project/>"), 0o644)
+	}
+	got := discoverDotnetProjects(root)
+	if len(got) != 1 || got[0].Name != "App" {
+		t.Fatalf("discoverDotnetProjects = %+v, want one 'App'", got)
+	}
+}

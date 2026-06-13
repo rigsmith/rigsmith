@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,7 +116,16 @@ func gatherChecks(cmd *cobra.Command, root string) []pendingCheck {
 	targets := discoverWorkspace(cdContext(cmd), root, excludeFor(root))
 	byEco := map[string][]target{}
 	for _, t := range targets {
+		// .NET is handled by the presence scan below: discoverWorkspace is
+		// release-discovery and skips version-less projects (most apps), but
+		// doctor is an environment check and should list them too.
+		if t.Eco == detect.DotNet {
+			continue
+		}
 		byEco[t.Eco] = append(byEco[t.Eco], t)
+	}
+	if dn := discoverDotnetProjects(root); len(dn) > 0 {
+		byEco[detect.DotNet] = dn
 	}
 
 	var all []pendingCheck
@@ -270,16 +280,69 @@ var (
 	cargoVerRe = regexp.MustCompile(`(?m)^\s*version\s*=\s*"([^"]+)"`)
 )
 
-// readTargetFramework returns the first project file's TargetFramework(s) in dir.
+// dotnetProjectGlobs are the project-file patterns a .NET project is found by.
+var dotnetProjectGlobs = []string{"*.csproj", "*.fsproj", "*.vbproj"}
+
+// discoverDotnetProjects finds every .NET project by presence (walking for
+// project files), independent of whether it declares a version — doctor lists
+// apps (usually version-less) alongside versioned libraries. bin/obj/.git/
+// node_modules are skipped; the `exclude` globs are honored.
+func discoverDotnetProjects(root string) []target {
+	exclude := excludeFor(root)
+	skip := map[string]bool{"bin": true, "obj": true, ".git": true, "node_modules": true, "vendor": true}
+	var out []target
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if skip[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		switch filepath.Ext(path) {
+		case ".csproj", ".fsproj", ".vbproj":
+			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			if !excluded(name, exclude) {
+				out = append(out, target{Name: name, Eco: detect.DotNet, Dir: filepath.Dir(path)})
+			}
+		}
+		return nil
+	})
+	return out
+}
+
+// readTargetFramework returns a project's TargetFramework(s): inline in the
+// project file first, then from an ancestor Directory.Build.props (the common
+// place to set it repo-wide).
 func readTargetFramework(dir string) string {
-	for _, pat := range []string{"*.csproj", "*.fsproj", "*.vbproj"} {
+	for _, pat := range dotnetProjectGlobs {
 		ms, _ := filepath.Glob(filepath.Join(dir, pat))
 		for _, m := range ms {
-			if data, err := os.ReadFile(m); err == nil {
-				if mt := tfmRe.FindSubmatch(data); mt != nil {
-					return strings.TrimSpace(string(mt[1]))
-				}
+			if tfm := tfmFromFile(m); tfm != "" {
+				return tfm
 			}
+		}
+	}
+	for d := dir; ; {
+		if tfm := tfmFromFile(filepath.Join(d, "Directory.Build.props")); tfm != "" {
+			return tfm
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	return ""
+}
+
+// tfmFromFile reads a single TargetFramework(s) value out of an MSBuild file.
+func tfmFromFile(path string) string {
+	if data, err := os.ReadFile(path); err == nil {
+		if m := tfmRe.FindSubmatch(data); m != nil {
+			return strings.TrimSpace(string(m[1]))
 		}
 	}
 	return ""
