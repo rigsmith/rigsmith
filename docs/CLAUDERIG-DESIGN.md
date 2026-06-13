@@ -149,7 +149,7 @@ state and must never land somewhere public or unverifiable. A remote is accepted
 only when a provider CLI confirms it's private — **GitHub via `gh`, GitLab via
 `glab`** (dispatched by host). Other hosts are refused (can't verify privacy). `init` offers **create a new private repo via
 `gh repo create --private`** or **use an existing private repo** (verified);
-`config set-remote` applies the same gate. Every failure mode — `gh` absent,
+`config set remote` applies the same gate. Every failure mode — `gh` absent,
 non-GitHub URL, unverifiable, or public — is refused; the only way to have no
 verified-private remote is to have **no remote** (local-only staging). (A hosted
 clauderig backend / non-GitHub private-repo support is possible v2; not v1.)

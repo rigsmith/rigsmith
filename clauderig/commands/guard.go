@@ -10,6 +10,7 @@ import (
 
 	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/guard"
+	"github.com/rigsmith/core/confkit"
 	"github.com/spf13/cobra"
 )
 
@@ -77,8 +78,7 @@ func decide(ctx context.Context, stdin []byte) guard.Result {
 // overridden reports an explicit opt-out of base-branch protection: a truthy
 // CLAUDERIG_ALLOW_MAIN, or a .claude/allow-main sentinel file at the repo root.
 func overridden(root string) bool {
-	switch strings.ToLower(os.Getenv("CLAUDERIG_ALLOW_MAIN")) {
-	case "1", "true", "yes", "on":
+	if confkit.Truthy("CLAUDERIG_ALLOW_MAIN") {
 		return true
 	}
 	if root != "" {

@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/rigsmith/core/jsonc"
 	"github.com/rigsmith/core/pathmap"
 )
 
@@ -195,7 +196,9 @@ func Load(dir string) (*Config, error) {
 		return nil, err
 	}
 	var c Config
-	if err := json.Unmarshal(b, &c); err != nil {
+	// JSONC: tolerate comments/trailing commas, consistent with the other
+	// rigsmith config files. Save still emits plain indented JSON.
+	if err := jsonc.Unmarshal(b, &c); err != nil {
 		return nil, err
 	}
 	return &c, nil

@@ -32,6 +32,29 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+func TestParseToleratesJSONComments(t *testing.T) {
+	// .changeset/config.json must accept JSONC (comments + trailing commas),
+	// consistent with .rig.json and release.jsonc.
+	c, err := Parse([]byte(`{
+		// the branch we compare against
+		"baseBranch": "develop",
+		"access": "public", // publish publicly
+		"ignore": ["pkg-a",], // trailing comma
+	}`))
+	if err != nil {
+		t.Fatalf("Parse with comments: %v", err)
+	}
+	if c.BaseBranch != "develop" {
+		t.Errorf("BaseBranch = %q, want develop", c.BaseBranch)
+	}
+	if c.Access != "public" {
+		t.Errorf("Access = %q, want public", c.Access)
+	}
+	if len(c.Ignore) != 1 || c.Ignore[0] != "pkg-a" {
+		t.Errorf("Ignore = %v, want [pkg-a]", c.Ignore)
+	}
+}
+
 func TestParseSharedKeysAndEcosystemBlocks(t *testing.T) {
 	c, err := Parse([]byte(`{
 		"$schema": "https://unpkg.com/@changesets/config/schema.json",

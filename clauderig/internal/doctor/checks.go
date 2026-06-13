@@ -51,7 +51,7 @@ func checkCode(ctx context.Context) Result {
 	if !look(prog) {
 		hint := fmt.Sprintf("`clauderig worktree open` can't launch a window with %q", prog)
 		if prog == "code" {
-			hint = "`clauderig worktree open` can't launch a window; in VS Code run “Shell Command: Install 'code' command in PATH”, or set another opener with `clauderig config set-worktree-opener`"
+			hint = "`clauderig worktree open` can't launch a window; in VS Code run “Shell Command: Install 'code' command in PATH”, or set another opener with `clauderig config set worktree.openCmd \"<cmd>\"`"
 		}
 		return Result{Name: name, Status: Warn, Detail: "not on PATH", Hint: hint}
 	}
@@ -71,7 +71,7 @@ func checkClauderigOnPath(_ context.Context) Result {
 func checkRemote(ctx context.Context, env Env) Result {
 	if env.Cfg == nil || env.Cfg.Remote == "" {
 		return Result{Name: "remote", Status: Warn, Detail: "not configured",
-			Hint: "run `clauderig config set-remote <url>` (must be a PRIVATE repo)"}
+			Hint: "run `clauderig config set remote <url>` (must be a PRIVATE repo)"}
 	}
 	remote := env.Cfg.Remote
 	if !gitrepo.Reachable(ctx, remote) {

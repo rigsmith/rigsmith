@@ -31,7 +31,7 @@ var version = "dev"
 
 // defaultUpdateRepo is the GitHub repo self-update checks and installs from,
 // matching scripts/install.sh. Overridable at build time via
-// -X …cli.defaultUpdateRepo=…, or at run time with $RIGSMITH_REPO.
+// -X …cli.defaultUpdateRepo=…, or at run time with $RIG_SELFUPDATE_REPO.
 var defaultUpdateRepo = "rigsmith/rigsmith"
 
 func newSelfUpdateCmd() *cobra.Command {
@@ -53,7 +53,7 @@ func newSelfUpdateCmd() *cobra.Command {
 
 func runSelfUpdate(cmd *cobra.Command, check bool) error {
 	out := cmd.OutOrStdout()
-	repo := resolveUpdateRepo(os.Getenv("RIGSMITH_REPO"))
+	repo := resolveUpdateRepo(os.Getenv("RIG_SELFUPDATE_REPO"))
 
 	// A source ("dev") build isn't managed by the installer — nothing to update.
 	current := strings.TrimPrefix(version, "v")
@@ -102,8 +102,8 @@ func runSelfUpdate(cmd *cobra.Command, check bool) error {
 	return runCommand(cmd, cwd, argv)
 }
 
-// resolveUpdateRepo picks the GitHub repo slug: the $RIGSMITH_REPO override
-// when set, else the build-time default. Pure.
+// resolveUpdateRepo picks the GitHub repo slug: the $RIG_SELFUPDATE_REPO
+// override when set, else the build-time default. Pure.
 func resolveUpdateRepo(env string) string {
 	if s := strings.TrimSpace(env); s != "" {
 		return s

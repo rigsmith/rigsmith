@@ -132,10 +132,10 @@ Auto-open and *what* gets opened are configurable — by default `new` opens a n
 VS Code window (`code -n <path>`). Override either in `~/.clauderig/config.json`:
 
 ```sh
-clauderig config set-worktree-open false          # never auto-open (like --no-open every time)
-clauderig config set-worktree-opener "cursor -n"  # open Cursor instead of VS Code
-clauderig config set-worktree-opener "code-insiders -n"
-clauderig config set-worktree-opener ""           # reset to the default (code -n)
+clauderig config set worktree.autoOpen false      # never auto-open (like --no-open every time)
+clauderig config set worktree.openCmd "cursor -n"  # open Cursor instead of VS Code
+clauderig config set worktree.openCmd "code-insiders -n"
+clauderig config set worktree.openCmd ""           # reset to the default (code -n)
 ```
 
 This writes a `worktree` block:

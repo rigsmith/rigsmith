@@ -32,6 +32,7 @@ var isBuiltinVerb = map[string]bool{
 	"global": true, "dlx": true, "coverage": true, "kill": true, "doctor": true,
 	"info": true, "ui": true, "cd": true, "init": true, "watch": true,
 	"publish": true, "default": true, "setup": true, "completion": true,
+	"config": true,
 }
 
 // scriptEntry is one runnable script rig surfaces: a .rig.json custom command, a
