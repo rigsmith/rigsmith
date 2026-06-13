@@ -1,25 +1,34 @@
 # rigsmith require-changeset action
 
-The **changeset gate** — the in-Action equivalent of the
+The **release-intent gate** — the in-Action equivalent of the
 [`@changesets` bot](https://github.com/apps/changeset-bot), with no hosted service to run. On every
 pull request it:
 
-1. checks whether the PR **adds a changeset** (`.changeset/<id>.md`, excluding `README.md`),
-2. **upserts a sticky comment** — a nag with instructions when one is missing, a ✅ when present, and
-3. **fails the check** when none is found, so a *required status check* blocks the merge until a
-   changeset is added (or the PR is labelled to opt out).
+1. checks whether the PR carries **release intent**,
+2. **upserts a sticky comment** — a nag with instructions when it's missing, a ✅ when present, and
+3. **fails the check** when none is found, so a *required status check* blocks the merge until intent
+   is added (or the PR is labelled to opt out).
 
 That covers the same job as the official bot — comment **and** block — without registering a GitHub
 App or hosting a webhook server.
 
+What counts as "release intent" depends on the `mode` input:
+
+- **`changeset`** (default): the PR **adds a changeset** (`.changeset/<id>.md`, excluding `README.md`).
+- **`commit`**: the PR **title is a conventional commit** (`feat: …`, `fix(scope): …`, `feat!: …`).
+  Use this with [commit-based versioning](../../../docs/COMMIT-VERSIONING.md). On a squash-merge repo
+  the PR title becomes the squash subject that lands on the base branch and drives the next release,
+  so that is exactly what the gate validates.
+
 ## Inputs
 
-| Input        | Default          | Description                                                           |
-| ------------ | ---------------- | -------------------------------------------------------------------- |
-| `cwd`        | `.`              | Working directory containing the `.changeset` folder.                |
-| `skipLabel`  | `skip-changeset` | A PR carrying this label waives the requirement (gate passes green). |
-| `comment`    | `true`           | Upsert the sticky comment. `false` ⇒ check-only, no comment.         |
-| `addCommand` | `changerig add`  | Command shown in the nag comment for creating a changeset.           |
+| Input        | Default          | Description                                                                       |
+| ------------ | ---------------- | -------------------------------------------------------------------------------- |
+| `mode`       | `changeset`      | `changeset` (added `.changeset/*.md`) or `commit` (conventional PR title).        |
+| `cwd`        | `.`              | Working directory containing the `.changeset` folder.                            |
+| `skipLabel`  | `skip-changeset` | A PR carrying this label waives the requirement (gate passes green).             |
+| `comment`    | `true`           | Upsert the sticky comment. `false` ⇒ check-only, no comment.                     |
+| `addCommand` | `changerig add`  | Command shown in the **changeset-mode** nag comment for creating a changeset.    |
 
 ## Usage
 
@@ -63,8 +72,26 @@ blocks the merge**. If you want the comment on fork PRs too, run this action fro
 note the usual `pull_request_target` security caveats — this action only reads the PR's changed-file
 list and never executes PR code, but anything else in that workflow must stay just as careful.
 
+## Commit mode
+
+For repositories using commit-based versioning, set `mode: commit`:
+
+```yaml
+      - uses: rigsmith/rigsmith/.github/actions/require-changeset@main
+        with:
+          mode: commit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+The gate then passes when the **PR title** parses as a conventional commit and nags/blocks otherwise.
+The `skip-changeset` label still waives it. `checkout` does not need `fetch-depth: 0` in this mode —
+only the PR title (from the event payload) is inspected, not the git range.
+
 ## How detection works
 
-It diffs the PR range (`base..head`) for **added or modified** files matching
-`.changeset/*.md` other than `README.md`. The base commit is fetched if the checkout was shallow;
-if the range can't be resolved it falls back to the merge-base against the PR's base branch.
+- **changeset mode** diffs the PR range (`base..head`) for **added or modified** files matching
+  `.changeset/*.md` other than `README.md`. The base commit is fetched if the checkout was shallow;
+  if the range can't be resolved it falls back to the merge-base against the PR's base branch.
+- **commit mode** matches the PR title against the conventional-commit header grammar
+  `type(scope)?!?: description` (case-insensitive type). No git history is consulted.

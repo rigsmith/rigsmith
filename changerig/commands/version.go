@@ -97,17 +97,28 @@ func NewVersionCmd() *cobra.Command {
 				return err
 			}
 
-			// changelog-git / changelog-github enrichment: resolve the commit
-			// (and PR/author) that added each changeset and decorate the summary's
-			// first line before planning. Every lookup failure degrades to an
+			// changelog-git / changelog-github enrichment: decorate each summary's
+			// first line with its commit (and PR/author) before planning. For
+			// on-disk changesets that means finding the commit that ADDED the
+			// changeset file; for commit-derived changesets the source commit is
+			// already in hand (cs.Commit), so we decorate straight from it — better
+			// provenance, no archaeology. Every lookup failure degrades to an
 			// undecorated line — enrichment never fails the run.
 			setting := changelog.ParseSetting(ws.Config)
 			if setting.Kind != changelog.KindDefault {
-				ids := make([]string, 0, len(active))
+				fileIDs := make([]string, 0, len(active))
+				commitIDs := map[string]string{}
 				for _, cs := range active {
-					ids = append(ids, cs.ID)
+					if cs.Commit != "" {
+						commitIDs[cs.ID] = cs.Commit
+					} else {
+						fileIDs = append(fileIDs, cs.ID)
+					}
 				}
-				infos := changelog.Resolve(ids, setting, ws.Root, execRunner(cmd))
+				infos := changelog.Resolve(fileIDs, setting, ws.Root, execRunner(cmd))
+				for id, info := range changelog.ResolveFromCommits(commitIDs, setting, ws.Root, execRunner(cmd)) {
+					infos[id] = info
+				}
 				for _, cs := range active {
 					if info, ok := infos[cs.ID]; ok {
 						cs.Summary = changelog.RenderLine(cs.Summary, setting, &info)

@@ -132,3 +132,48 @@ func TestResolveGitHubTreatsTheNullLiteralAsMissing(t *testing.T) {
 		t.Errorf("result[cs1] = %+v, want %+v", got, want)
 	}
 }
+
+func TestResolveFromCommitsDefaultGeneratorIsEmptyAndSilent(t *testing.T) {
+	runner := &fakeRunner{}
+	result := ResolveFromCommits(map[string]string{"abc1234": "abc1234567890"}, Setting{Kind: KindDefault}, "/repo", runner.run)
+	if len(result) != 0 {
+		t.Errorf("ResolveFromCommits() = %v, want empty", result)
+	}
+	if runner.calls != 0 {
+		t.Errorf("runner called %d times, want 0", runner.calls)
+	}
+}
+
+func TestResolveFromCommitsGitUsesTheKnownShaWithoutArchaeology(t *testing.T) {
+	runner := &fakeRunner{}
+	result := ResolveFromCommits(map[string]string{"abc1234": "abc1234567890"}, Setting{Kind: KindGit}, "/repo", runner.run)
+
+	want := CommitInfo{Commit: "abc1234"} // abbreviated to 7 chars, no git call
+	if got := result["abc1234"]; got != want {
+		t.Errorf("result = %+v, want %+v", got, want)
+	}
+	if runner.calls != 0 {
+		t.Errorf("git mode made %d calls, want 0 (the SHA is already known)", runner.calls)
+	}
+}
+
+func TestResolveFromCommitsGitHubLooksUpPrAndAuthorFromTheSha(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{name: "gh", marker: "/pulls", output: "42"},
+		{name: "gh", marker: ".author.login", output: "octocat"},
+	}}
+	result := ResolveFromCommits(map[string]string{"abc1234": "abc1234567890"}, Setting{Kind: KindGitHub, Repo: "acme/widgets"}, "/repo", runner.run)
+
+	want := CommitInfo{Commit: "abc1234", PullRequest: 42, Author: "octocat"}
+	if got := result["abc1234"]; got != want {
+		t.Errorf("result = %+v, want %+v", got, want)
+	}
+}
+
+func TestResolveFromCommitsSkipsEmptySha(t *testing.T) {
+	runner := &fakeRunner{}
+	result := ResolveFromCommits(map[string]string{"x": ""}, Setting{Kind: KindGit}, "/repo", runner.run)
+	if len(result) != 0 {
+		t.Errorf("empty SHA should be skipped, got %v", result)
+	}
+}

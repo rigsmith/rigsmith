@@ -1,9 +1,9 @@
 # Commit-based vs. changeset-based changelogs (design plan)
 
-> Status: **foundation implemented.** The source-adapter described below is
-> built: a `versioning.source` of `"commits"` / `"both"` now drives `version`
-> and `status`. See **Implementation notes** at the end for the decisions taken
-> on the open forks.
+> Status: **implemented.** The source-adapter described below is built: a
+> `versioning.source` of `"commits"` / `"both"` drives `version` and `status`,
+> with commit-native changelog provenance and a commit-mode CI gate. See
+> **Implementation notes** at the end for the decisions taken on the open forks.
 
 ## Context: what already exists
 
@@ -170,7 +170,24 @@ Decisions taken on the open forks:
   package's own release window. Untagged packages share the empty ref (whole
   history).
 
-Deferred (not yet built): commit-native changelog provenance enrichment (the
-git/github decorators still key off changeset-file ids, so commit-derived
-entries render undecorated for now), and turning the `require-changeset` CI
-action into a "require conventional commit" check.
+### Commit-native changelog provenance
+
+When `changelog` is `@changesets/changelog-git` or `-github`, commit-derived
+entries are decorated **straight from their source commit** rather than via the
+file archaeology used for on-disk changesets. The synthetic changeset carries
+the full SHA ([`Changeset.Commit`](../core/changeset/changeset.go)), and
+[`changelog.ResolveFromCommits`](../core/changelog/resolver.go) builds the
+`CommitInfo` directly — abbreviating the hash and (for the github generator)
+still resolving the PR number and author via `gh api`. `version` splits the two
+populations: file changesets go through `Resolve` (find the commit that *added*
+the file), commit changesets through `ResolveFromCommits` (the commit *is* the
+provenance). The decorators themselves are unchanged.
+
+### Require-conventional-commit CI gate
+
+The [`require-changeset` action](../.github/actions/require-changeset/) gained a
+`mode` input. `mode: changeset` (default) is unchanged — it diffs the PR range
+for an added `.changeset/*.md`. `mode: commit` validates that the **PR title**
+parses as a conventional commit, which on a squash-merge repo is exactly the
+subject that lands on the base branch and drives the next release. The sticky
+comment, skip-label waiver, and fork-PR handling are shared between both modes.

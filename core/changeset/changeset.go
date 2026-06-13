@@ -87,6 +87,12 @@ type Changeset struct {
 	// Breaking marks a breaking change (a `!` on the type, e.g. `feat!`). A
 	// breaking changeset bumps major and renders under "Breaking Changes".
 	Breaking bool
+	// Commit is the source commit SHA for a changeset synthesized from a commit
+	// (commit-based versioning). Empty for on-disk changeset files. When set, the
+	// changelog generators decorate the release line straight from this commit —
+	// the commit IS the provenance — instead of hunting for the commit that added
+	// a changeset file.
+	Commit string
 }
 
 // EffectiveType resolves the changeset's conventional type: the explicit

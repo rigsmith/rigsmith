@@ -44,6 +44,14 @@ func TestSynthesizeAttributesByPathAndStripsPrefix(t *testing.T) {
 	if cs.Releases[0].Bump != changeset.BumpNone {
 		t.Errorf("bump = %v, want none (derived from type)", cs.Releases[0].Bump)
 	}
+	// The full source SHA is retained (for changelog provenance); the ID is the
+	// 7-char abbreviation.
+	if cs.Commit != "aaaaaaaaaa" {
+		t.Errorf("Commit = %q, want full hash", cs.Commit)
+	}
+	if cs.ID != "aaaaaaa" {
+		t.Errorf("ID = %q, want 7-char short hash", cs.ID)
+	}
 }
 
 func TestSynthesizeSkipsNonConventional(t *testing.T) {

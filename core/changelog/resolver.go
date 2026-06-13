@@ -66,6 +66,41 @@ func Resolve(changesetIDs []string, setting Setting, dir string, run Runner) map
 	return result
 }
 
+// ResolveFromCommits builds CommitInfo for changesets whose source commit is
+// already known — the commit-based versioning case, where the commit IS the
+// provenance, so no `--diff-filter=A` archaeology is needed. idToSHA maps each
+// changeset id to its full source SHA. For the github generator with a
+// configured repo it still looks up the PR number and author via `gh api`
+// (degrading each to a zero value on failure). The default generator returns an
+// empty map. An empty SHA is skipped.
+func ResolveFromCommits(idToSHA map[string]string, setting Setting, dir string, run Runner) map[string]CommitInfo {
+	result := map[string]CommitInfo{}
+	if setting.Kind == KindDefault {
+		return result
+	}
+	for id, sha := range idToSHA {
+		if sha == "" {
+			continue
+		}
+		info := CommitInfo{Commit: shortSHA(sha)}
+		if setting.Kind == KindGitHub && setting.Repo != "" {
+			info.PullRequest = pullRequestForCommit(run, dir, setting.Repo, sha)
+			info.Author = authorForCommit(run, dir, setting.Repo, sha)
+		}
+		result[id] = info
+	}
+	return result
+}
+
+// shortSHA abbreviates a full commit SHA to git's conventional 7 characters,
+// matching the `%h` abbreviation the file-based resolver uses.
+func shortSHA(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
+}
+
 func commitThatAddedChangeset(run Runner, dir, id, format string) string {
 	for _, extension := range changesetExtensions {
 		hash := runFirstLine(run, dir,
