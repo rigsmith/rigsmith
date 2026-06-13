@@ -92,9 +92,11 @@ func NewInitCmd() *cobra.Command {
 			fmt.Fprintf(out, "%s wrote %s\n", OkStyle.Render("✓"), filepath.Join(dir, "config.json"))
 
 			if installHooks {
+				// init wires the global sync hooks (pull/sync); the per-repo guard is
+				// opt-in via `clauderig project install` inside a repo.
 				if path, err := settingsPath(); err == nil {
-					if _, err := hooks.Install(path); err == nil {
-						fmt.Fprintln(out, OkStyle.Render("✓ Claude Code hooks installed"))
+					if _, err := hooks.Install(path, hooks.SyncPlans()); err == nil {
+						fmt.Fprintln(out, OkStyle.Render("✓ Claude Code sync hooks installed"))
 					}
 				}
 			}

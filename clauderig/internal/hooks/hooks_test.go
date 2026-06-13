@@ -34,22 +34,28 @@ func load_(t *testing.T, p string) map[string]any {
 
 func TestInstall_FreshAndIdempotent(t *testing.T) {
 	p := settingsPath(t, "") // absent file
-	added, err := Install(p)
+	added, err := Install(p, DefaultPlans())
 	if err != nil {
 		t.Fatal(err)
 	}
 	sort.Strings(added)
-	if len(added) != 2 || added[0] != "SessionStart" || added[1] != "Stop" {
+	if len(added) != 3 || added[0] != "PreToolUse" || added[1] != "SessionStart" || added[2] != "Stop" {
 		t.Fatalf("added = %v", added)
 	}
 	// re-install is a no-op
-	added2, _ := Install(p)
+	added2, _ := Install(p, DefaultPlans())
 	if len(added2) != 0 {
 		t.Fatalf("re-install should add nothing, added %v", added2)
 	}
 	present, _ := Status(p)
-	if len(present) != 2 {
+	if len(present) != 3 {
 		t.Fatalf("status = %v", present)
+	}
+	// the guard hook carries its tool-name matcher
+	pre := load_(t, p)["hooks"].(map[string]any)["PreToolUse"].([]any)
+	group := pre[0].(map[string]any)
+	if m, _ := group["matcher"].(string); m == "" {
+		t.Errorf("PreToolUse hook should have a matcher, got %v", group)
 	}
 }
 
@@ -61,7 +67,7 @@ func TestInstall_PreservesOtherSettingsAndHooks(t *testing.T) {
 		}
 	}`
 	p := settingsPath(t, existing)
-	if _, err := Install(p); err != nil {
+	if _, err := Install(p, DefaultPlans()); err != nil {
 		t.Fatal(err)
 	}
 	m := load_(t, p)
@@ -78,7 +84,7 @@ func TestInstall_DoesNotClobberMalformedEvent(t *testing.T) {
 	// An event whose value isn't the expected array (malformed / future schema)
 	// must be left untouched, not overwritten.
 	p := settingsPath(t, `{"hooks":{"Stop":"weird-non-array-value"}}`)
-	if _, err := Install(p); err != nil {
+	if _, err := Install(p, DefaultPlans()); err != nil {
 		t.Fatal(err)
 	}
 	m := load_(t, p)
@@ -95,13 +101,13 @@ func TestInstall_DoesNotClobberMalformedEvent(t *testing.T) {
 func TestUninstall(t *testing.T) {
 	existing := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"keep-me"}]}]}}`
 	p := settingsPath(t, existing)
-	Install(p)
+	Install(p, DefaultPlans())
 	removed, err := Uninstall(p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sort.Strings(removed)
-	if len(removed) != 2 {
+	if len(removed) != 3 {
 		t.Fatalf("removed = %v", removed)
 	}
 	// the non-clauderig hook survives; SessionStart (clauderig-only) is gone

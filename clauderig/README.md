@@ -16,9 +16,26 @@ clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect,
 clauderig status               # remote reachability, last sync, per-root counts, hooks
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
 clauderig doctor               # preview path resolution + sync roots for this machine
-clauderig hooks install        # SessionStart→pull, Stop→sync (portable, idempotent)
+clauderig global install       # global sync hooks in ~/.claude (alias: clauderig hooks install)
+clauderig project install      # protect THIS repo: guard hook + CLAUDE.md guide (committed)
+clauderig local install        # same, but gitignored to this checkout
+clauderig worktree new feat/x  # sibling worktree + new VS Code window; never moves this session
 clauderig ui                   # interactive dashboard
 ```
+
+## Worktree discipline
+
+`clauderig guard` (a PreToolUse hook) and `clauderig worktree` make worktrees and
+PRs the default for Claude Code, and stop it from scrambling your VS Code chat
+history — which is keyed to the folder path — by moving the session's working
+directory. The guard denies `EnterWorktree`, denies a `cd` out of the repo root,
+and on `main` requires a branch+worktree+PR for code while letting docs/config
+through (override: `CLAUDERIG_ALLOW_MAIN=1` or `touch .claude/allow-main`). It
+fails open on anything it isn't sure about. `clauderig project install` sets a repo
+up in one shot — the guard hook in `.claude/settings.json` plus a marker-managed
+block in `CLAUDE.md` so every Claude context learns the rules (`local install` does
+the same in the gitignored `.claude/settings.local.json`). See
+[docs/WORKTREE-DISCIPLINE.md](../docs/WORKTREE-DISCIPLINE.md).
 
 ## What it does
 
@@ -45,7 +62,12 @@ clauderig ui                   # interactive dashboard
 | `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
 | `status` | Sync state: remote, last sync, roots, hooks |
-| `hooks` | `install` / `uninstall` / `status` the Claude Code hooks |
+| `global` | `install` / `uninstall` / `status` the global sync hooks in ~/.claude (alias: `hooks`) |
+| `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
+| `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
+| `guard` | PreToolUse hook: require worktrees/PRs, block cwd-moving worktree tools (wired by `project`/`local`) |
+| `worktree` | `new` / `list` / `open` / `rm` sibling worktrees, opened in their own VS Code window |
+| `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md block standalone (e.g. `--global`) |
 | `config` | `show` / `set-remote` / `set-prune` |
 | `doctor` | Preview path resolution + roots for this machine |
 | `ui` | Interactive dashboard |

@@ -45,10 +45,13 @@ func run(ctx context.Context) error {
 		commands.NewPullCmd(),
 		commands.NewRestoreCmd(),
 		commands.NewStatusCmd(),
-		commands.NewHooksCmd(),
+		commands.NewGuardCmd(),
+		commands.NewWorktreeCmd(),
+		commands.NewGuideCmd(),
 		commands.NewDoctorCmd(),
 		commands.NewConfigCmd(),
 		commands.NewUICmd(),
 	)
+	root.AddCommand(commands.ScopeCommands()...) // global (alias: hooks) / project / local
 	return fang.Execute(ctx, root, fang.WithVersion(version))
 }
