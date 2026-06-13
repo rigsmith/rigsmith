@@ -32,7 +32,7 @@ and are omitted.
 | upgrade | ✅ | ✅ | ✅ | ✅ | range-respecting; .NET to latest (no ranges) — see below |
 | global / g | ✅ | ✅ | ✅ | ✅ | |
 | dlx / x | ✅ | ✅ | ✅ | ⚠️ | .NET→`dnx`, node→npx/bun x/dlx, go→`go run pkg@latest`; Cargo has no one-shot run |
-| watch / w | ✅ | ✅ | ⚠️ | ✅ | .NET→`dotnet watch`, cargo→cargo-watch; Go has no native watch |
+| watch / w | ✅ | ✅ | ✅ | ✅ | .NET→`dotnet watch`, cargo→cargo-watch, Go→wgo (`wgo go <verb>`); node `--watch` |
 | coverage | ✅ | ✅ | ✅ | ✅ | cargo→`cargo llvm-cov` |
 | publish (app) | ✅ | — | — | — | `dotnet publish` self-contained app packaging |
 
@@ -64,8 +64,6 @@ dependents always cascade rather than gating on whether the bump stays in range.
 
 - **.NET** `lint` / `typecheck` — no native SDK verb (`typecheck` would just be
   `build`; `lint` would need an external analyzer).
-- **Go** `watch` — no native watcher (would assume an external tool like
-  `air`/`watchexec`).
 - **Cargo** `dlx` — Cargo has no one-shot run equivalent (`cargo install` is
   persistent).
 - **Node** `clean` — npm has no canonical clean (maps to a project `clean`

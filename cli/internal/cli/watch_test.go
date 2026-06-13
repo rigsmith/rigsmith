@@ -101,8 +101,25 @@ func TestWatchCommandFor_NodeRunUsesTheDevScript(t *testing.T) {
 	eqSlice(t, argv, []string{"npm", "run", "test", "--", "--watch"})
 }
 
-func TestWatchCommandFor_GoHasNoNativeWatch(t *testing.T) {
-	if _, ok := watchCommandFor(detect.Go, "run", t.TempDir()); ok {
-		t.Fatal("go watch run should not be supported")
+func TestWatchCommandFor_GoPrefixesWgo(t *testing.T) {
+	root := t.TempDir()
+	// wgo wraps the same `go` command each verb runs.
+	cases := map[string][]string{
+		"run":       {"wgo", "go", "run", "."},
+		"test":      {"wgo", "go", "test", "./..."},
+		"build":     {"wgo", "go", "build", "./..."},
+		"lint":      {"wgo", "go", "vet", "./..."},
+		"typecheck": {"wgo", "go", "vet", "./..."},
+	}
+	for verb, want := range cases {
+		argv, ok := watchCommandFor(detect.Go, verb, root)
+		if !ok {
+			t.Fatalf("go watch %s: not supported", verb)
+		}
+		eqSlice(t, argv, want)
+	}
+	// A verb Go doesn't map (e.g. format isn't a watch verb) → unsupported.
+	if _, ok := watchCommandFor(detect.Go, "nope", root); ok {
+		t.Fatal("go watch of an unmapped verb should not be supported")
 	}
 }
