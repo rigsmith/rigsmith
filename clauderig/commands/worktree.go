@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/mattn/go-isatty"
+	"github.com/rigsmith/clauderig/internal/config"
 	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/worktree"
 	"github.com/rigsmith/core/match"
@@ -202,7 +203,13 @@ func newWorktreeNewCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "%s worktree for %s (%s)\n", OkStyle.Render("✓"), HeaderStyle.Render(branch), verb)
 			fmt.Fprintf(out, "  %s\n", path)
-			openReview(cmd, path, noOpen)
+			// Skip the review window when --no-open was passed or the config has
+			// turned auto-open off; either way openReview still prints the hint.
+			skip := noOpen
+			if cfg, err := config.LoadOrDefault(); err == nil && !cfg.WorktreeAutoOpen() {
+				skip = true
+			}
+			openReview(cmd, path, skip)
 			fmt.Fprintln(out, DimStyle.Render("  This window stays put. Edit there by absolute path; run git via:"))
 			fmt.Fprintf(out, "  %s\n", DimStyle.Render("git -C "+path+" add/commit/push  →  then open a PR"))
 			return nil
@@ -291,17 +298,24 @@ func newWorktreeRemoveCmd() *cobra.Command {
 	return cmd
 }
 
-// openReview launches path in a new VS Code window, or prints the command to run
-// when `code` isn't on PATH or the caller asked to skip it.
+// openReview opens path in a review window using the configured opener (default
+// `code -n`), or prints the command to run when skip is set or the opener isn't
+// on PATH. skip carries the caller's decision (the --no-open flag and, for
+// `new`, the worktree.autoOpen config); the opener choice comes from config.
 func openReview(cmd *cobra.Command, path string, skip bool) {
 	out := cmd.OutOrStdout()
-	if skip || !worktree.VSCodeAvailable() {
-		fmt.Fprintf(out, "  %s\n", DimStyle.Render("review it: code -n "+path))
+	openCmd := config.DefaultWorktreeOpenCmd
+	if cfg, err := config.LoadOrDefault(); err == nil {
+		openCmd = cfg.WorktreeOpenCmd()
+	}
+	hint := worktree.QuoteCmd(openCmd, path)
+	if skip || !worktree.OpenerAvailable(openCmd) {
+		fmt.Fprintf(out, "  %s\n", DimStyle.Render("review it: "+hint))
 		return
 	}
-	if err := worktree.OpenInVSCode(cmd.Context(), path); err != nil {
-		fmt.Fprintf(out, "  %s\n", WarnStyle.Render("couldn't open VS Code; run: code -n "+path))
+	if err := worktree.Open(cmd.Context(), openCmd, path); err != nil {
+		fmt.Fprintf(out, "  %s\n", WarnStyle.Render("couldn't open a review window; run: "+hint))
 		return
 	}
-	fmt.Fprintf(out, "  %s\n", DimStyle.Render("opened in a new VS Code window for review"))
+	fmt.Fprintf(out, "  %s\n", DimStyle.Render("opened in a new window for review"))
 }
