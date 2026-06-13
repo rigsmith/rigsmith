@@ -12,14 +12,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rigsmith/clauderig/internal/status"
+	"github.com/rigsmith/core/brand"
 )
 
 var (
 	header = lipgloss.NewStyle().Bold(true).Underline(true)
-	dim    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	okC    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	warnC  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	keyC   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	dim    = lipgloss.NewStyle().Foreground(brand.Muted)
+	okC    = lipgloss.NewStyle().Foreground(brand.Green)
+	warnC  = lipgloss.NewStyle().Foreground(brand.Yellow)
+	keyC   = lipgloss.NewStyle().Bold(true).Foreground(brand.AccentClaude)
 )
 
 // Model is the dashboard. Chosen is the action selected on exit ("" = none).

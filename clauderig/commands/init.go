@@ -11,6 +11,7 @@ import (
 	"github.com/rigsmith/clauderig/internal/config"
 	"github.com/rigsmith/clauderig/internal/ghrepo"
 	"github.com/rigsmith/clauderig/internal/hooks"
+	"github.com/rigsmith/core/brand"
 	"github.com/spf13/cobra"
 )
 
@@ -56,7 +57,7 @@ func NewInitCmd() *cobra.Command {
 					huh.NewConfirm().Title("Sync the Desktop/Cowork root too?").Value(&syncDesktop),
 					huh.NewConfirm().Title("Install Claude Code hooks (auto pull on start, sync on stop)?").Value(&installHooks),
 					huh.NewConfirm().Title("On restore, prune config files (skills/commands/agents/plans) deleted elsewhere?").Value(&alwaysPrune),
-				))
+				)).WithTheme(brand.Theme(brand.AccentClaude))
 				if err := form.Run(); err != nil {
 					return err
 				}
@@ -137,7 +138,7 @@ func chooseRemote(ctx context.Context, out io.Writer, defaultURL string) (string
 				huh.NewOption("Create a new private GitHub repo with gh", "create"),
 				huh.NewOption("Use an existing private GitHub repo", "existing"),
 			).Value(&mode),
-	)).Run(); err != nil {
+	)).WithTheme(brand.Theme(brand.AccentClaude)).Run(); err != nil {
 		return "", err
 	}
 
@@ -145,7 +146,7 @@ func chooseRemote(ctx context.Context, out io.Writer, defaultURL string) (string
 		repoName := "claude-sync"
 		if err := huh.NewForm(huh.NewGroup(
 			huh.NewInput().Title("New private repo name").Value(&repoName),
-		)).Run(); err != nil {
+		)).WithTheme(brand.Theme(brand.AccentClaude)).Run(); err != nil {
 			return "", err
 		}
 		url, err := ghrepo.CreatePrivate(ctx, repoName)
@@ -160,7 +161,7 @@ func chooseRemote(ctx context.Context, out io.Writer, defaultURL string) (string
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewInput().Title("Private GitHub repo URL").
 			Placeholder("git@github.com:you/claude-sync.git").Value(&url),
-	)).Run(); err != nil {
+	)).WithTheme(brand.Theme(brand.AccentClaude)).Run(); err != nil {
 		return "", err
 	}
 	if err := ghrepo.EnsurePrivate(ctx, url); err != nil {
