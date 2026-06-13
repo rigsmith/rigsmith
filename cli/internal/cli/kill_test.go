@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/cli/internal/config"
@@ -271,5 +272,16 @@ func TestResolveKillPatterns_DotnetRepoSweepsRunnableProjectNames(t *testing.T) 
 
 	if got := resolveKillPatterns(config.Config{}, root, ""); !reflect.DeepEqual(got, []string{"App"}) {
 		t.Fatalf("sweep = %v, want [App]", got)
+	}
+}
+
+func TestTruncateLabel(t *testing.T) {
+	if got := truncateLabel("short", 90); got != "short" {
+		t.Errorf("short string should be unchanged, got %q", got)
+	}
+	long := strings.Repeat("a", 100)
+	got := truncateLabel(long, 10)
+	if len([]rune(got)) != 10 || !strings.HasSuffix(got, "…") {
+		t.Errorf("truncate(len100, 10) = %q (len %d)", got, len([]rune(got)))
 	}
 }

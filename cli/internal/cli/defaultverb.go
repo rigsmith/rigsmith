@@ -103,7 +103,7 @@ func pickProject(title string, projects []detect.ProjectInfo) (*detect.ProjectIn
 		opts = append(opts, huh.NewOption(p.Name, i))
 	}
 	sel := huh.NewSelect[int]().Title(title).Options(opts...).Value(&chosen)
-	if err := sel.Run(); err != nil {
+	if err := runHuhSelect(sel); err != nil {
 		return nil, err
 	}
 	return &projects[chosen], nil
