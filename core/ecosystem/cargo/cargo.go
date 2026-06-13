@@ -41,17 +41,27 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish},
 		ManifestPatterns: []string{"Cargo.toml"},
 		DevCommands: map[string][]string{
-			plugin.VerbBuild:     {"cargo", "build"},
-			plugin.VerbTest:      {"cargo", "test"},
-			plugin.VerbRun:       {"cargo", "run"},
-			plugin.VerbFormat:    {"cargo", "fmt"},
-			plugin.VerbLint:      {"cargo", "clippy"},
-			plugin.VerbInstall:   {"cargo", "fetch"},
+			plugin.VerbBuild:  {"cargo", "build"},
+			plugin.VerbTest:   {"cargo", "test"},
+			plugin.VerbRun:    {"cargo", "run"},
+			plugin.VerbFormat: {"cargo", "fmt"},
+			plugin.VerbLint:   {"cargo", "clippy"},
+			// `cargo check` type-checks without producing a binary — the canonical
+			// fast feedback loop, mapped to rig's typecheck verb.
+			plugin.VerbTypecheck: {"cargo", "check"},
+			// Coverage uses cargo-llvm-cov (external subcommand); the CLI's coverage
+			// command drives the --min/--open handling — see runCargoCoverage.
+			plugin.VerbCoverage: {"cargo", "llvm-cov"},
+			plugin.VerbInstall:  {"cargo", "fetch"},
+			// Frozen install: --locked errors out rather than updating Cargo.lock.
+			plugin.VerbCI:        {"cargo", "fetch", "--locked"},
 			plugin.VerbAdd:       {"cargo", "add"},
 			plugin.VerbUninstall: {"cargo", "remove"},
-			plugin.VerbUpgrade:   {"cargo", "update"},
-			plugin.VerbClean:     {"cargo", "clean"},
-			plugin.VerbGlobal:    {"cargo", "install"},
+			// Requires cargo-outdated (external subcommand), like clippy/llvm-cov.
+			plugin.VerbOutdated: {"cargo", "outdated"},
+			plugin.VerbUpgrade:  {"cargo", "update"},
+			plugin.VerbClean:    {"cargo", "clean"},
+			plugin.VerbGlobal:   {"cargo", "install"},
 		},
 	}
 }

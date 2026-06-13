@@ -32,8 +32,8 @@ func TestParseNpmOutdated(t *testing.T) {
     }`
 	got := parseNpmOutdated(js)
 	want := []outdatedDep{
-		{name: "left-pad", current: "—", latest: "1.3.0"},
-		{name: "lodash", current: "4.17.20", latest: "4.17.21"},
+		{name: "left-pad", current: "—", latest: "1.3.0", wanted: "1.3.0"},
+		{name: "lodash", current: "4.17.20", latest: "4.17.21", wanted: "4.17.21"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
@@ -85,8 +85,8 @@ func TestParseBunOutdated(t *testing.T) {
 		"|-------------------------------------------|\n"
 	got := parseBunOutdated(text)
 	want := []outdatedDep{
-		{name: "is-odd", current: "2.0.0", latest: "3.0.1", dev: true},
-		{name: "lodash", current: "4.17.20", latest: "4.18.1"},
+		{name: "is-odd", current: "2.0.0", latest: "3.0.1", wanted: "2.0.0", dev: true},
+		{name: "lodash", current: "4.17.20", latest: "4.18.1", wanted: "4.17.20"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
@@ -119,8 +119,8 @@ func TestParseYarnClassicOutdated(t *testing.T) {
 {"type":"table","data":{"head":["Package","Current","Wanted","Latest","Package Type","URL"],"body":[["is-odd","2.0.0","2.0.0","3.0.1","devDependencies","https://x"],["lodash","4.17.20","4.17.20","4.18.1","dependencies","https://y"],["pinned","1.0.0","1.0.0","1.0.0","dependencies","https://z"]]}}`
 	got := parseYarnClassicOutdated(text)
 	want := []outdatedDep{
-		{name: "is-odd", current: "2.0.0", latest: "3.0.1", dev: true},
-		{name: "lodash", current: "4.17.20", latest: "4.18.1"},
+		{name: "is-odd", current: "2.0.0", latest: "3.0.1", wanted: "2.0.0", dev: true},
+		{name: "lodash", current: "4.17.20", latest: "4.18.1", wanted: "4.17.20"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
