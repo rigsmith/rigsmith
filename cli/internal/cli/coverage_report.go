@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/cli/internal/config"
 	"github.com/rigsmith/cli/internal/detect"
 	"github.com/spf13/cobra"
@@ -24,33 +23,18 @@ import (
 // present rig prefers it for every ecosystem whose output it can read; when
 // it's absent rig falls back to a native per-ecosystem report.
 
-// rgMode normalizes the configured ReportGenerator mode. Default "auto".
-// Recognized: auto | off | download (anything else is treated as auto).
-func rgMode(cov *config.Coverage) string {
-	if cov == nil {
-		return "auto"
-	}
-	switch strings.ToLower(strings.TrimSpace(cov.ReportGenerator)) {
-	case "off":
-		return "off"
-	case "download":
-		return "download"
-	default:
-		return "auto"
-	}
-}
-
 // resolveReportGenerator decides how to invoke ReportGenerator, returning the
 // command prefix (e.g. ["reportgenerator"] or ["dotnet","tool","run",...]) and
-// whether RG is usable under the configured mode:
+// whether RG is usable under the given mode (auto|off|install). It is the
+// `resolve` hook of toolReportGenerator:
 //
 //   - mode "off"      → never (false);
 //   - a `reportgenerator` on PATH (global tool)            → use it;
 //   - a local tool-manifest entry (.config/dotnet-tools.json) → `dotnet tool run`;
-//   - mode "download" with none of the above              → `dnx` (fetch on use);
+//   - mode "install" with none of the above               → `dnx` (fetch on use);
 //   - otherwise                                            → false (native fallback).
 func resolveReportGenerator(root, mode string) ([]string, bool) {
-	if mode == "off" {
+	if mode == toolOff {
 		return nil, false
 	}
 	if p, err := exec.LookPath("reportgenerator"); err == nil {
@@ -59,7 +43,7 @@ func resolveReportGenerator(root, mode string) ([]string, bool) {
 	if manifestHasReportGenerator(root) {
 		return []string{"dotnet", "tool", "run", "reportgenerator"}, true
 	}
-	if mode == "download" {
+	if mode == toolInstall {
 		if _, err := exec.LookPath("dnx"); err == nil {
 			return []string{"dnx", "-y", "dotnet-reportgenerator-globaltool"}, true
 		}
@@ -173,7 +157,7 @@ func fileExists(path string) bool {
 // prints a note when nothing can be produced. The go path is handled by the
 // caller (runGoCoverage), which already has the coverage profile in hand.
 func produceCoverageReport(cmd *cobra.Command, eco, root string, cov *config.Coverage) {
-	invoker, rgOK := resolveReportGeneratorOrPrompt(cmd, root, cov)
+	invoker, rgOK := toolReportGenerator.ensure(cmd, root)
 	if rgOK {
 		if reports := rgInputsFor(eco, root); len(reports) > 0 {
 			target := reportTargetDir(eco, root)
@@ -266,7 +250,7 @@ func openReportFile(cmd *cobra.Command, report string) {
 // produceGoReport renders the go coverage profile: ReportGenerator (via an
 // in-process Cobertura conversion) when available, else `go tool cover -html`.
 func produceGoReport(cmd *cobra.Command, root, profile string, cov *config.Coverage) {
-	if invoker, ok := resolveReportGeneratorOrPrompt(cmd, root, cov); ok {
+	if invoker, ok := toolReportGenerator.ensure(cmd, root); ok {
 		if cobertura, err := writeGoCobertura(profile); err == nil {
 			target := reportTargetDir(detect.Go, root)
 			if index, rerr := runReportGenerator(cmd, root, invoker, []string{cobertura}, target, cov); rerr == nil {
@@ -448,68 +432,25 @@ func augmentNodeCoverageArgs(argv []string, root, name string, open, min, summar
 	return out
 }
 
-// rgPromptChoice is the user's answer to the "download ReportGenerator?" prompt.
-type rgPromptChoice int
-
-const (
-	rgDownloadNow rgPromptChoice = iota
-	rgNotNow
-	rgNever
-)
-
-// resolveReportGeneratorOrPrompt resolves ReportGenerator, and when it's absent
-// in "auto" mode on an interactive terminal (with dnx available to fetch it)
-// offers to download it — a standard yes / not-now / never prompt: "yes"
-// remembers coverage.reportGenerator=download, "never" remembers =off, and
-// "not now" is a one-time decline.
-func resolveReportGeneratorOrPrompt(cmd *cobra.Command, root string, cov *config.Coverage) ([]string, bool) {
-	if invoker, ok := resolveReportGenerator(root, rgMode(cov)); ok {
-		return invoker, true
-	}
-	if rgMode(cov) != "auto" || quiet || dryRun || !interactive() {
-		return nil, false
-	}
-	if _, err := exec.LookPath("dnx"); err != nil {
-		return nil, false // nothing to download with
-	}
-	switch promptDownloadReportGenerator() {
-	case rgDownloadNow:
-		persistRGMode(cmd, root, "download")
-		return resolveReportGenerator(root, "download")
-	case rgNever:
-		persistRGMode(cmd, root, "off")
-		return nil, false
-	default:
-		return nil, false
-	}
-}
-
-// promptDownloadReportGenerator shows the yes/not-now/never picker. Any error
-// (e.g. Ctrl-C) is treated as not-now.
-func promptDownloadReportGenerator() rgPromptChoice {
-	var choice rgPromptChoice
-	sel := huh.NewSelect[rgPromptChoice]().
-		Title("ReportGenerator isn't installed — it renders a richer coverage report.").
-		Description("Download it on demand (via dnx)?").
-		Options(
-			huh.NewOption("Yes — download and use it from now on", rgDownloadNow),
-			huh.NewOption("Not now — use the basic report", rgNotNow),
-			huh.NewOption("Never ask again", rgNever),
-		).
-		Value(&choice)
-	if err := runHuhSelect(sel); err != nil {
-		return rgNotNow
-	}
-	return choice
-}
-
-// persistRGMode writes coverage.reportGenerator to the repo .rig.json (comment-
-// preserving) so the choice is remembered, and notes where it landed.
-func persistRGMode(cmd *cobra.Command, root, mode string) {
-	path := filepath.Join(root, config.FileName)
-	if config.SetString(path, []string{"coverage", "reportGenerator"}, mode) {
-		fmt.Fprintln(cmd.OutOrStdout(), dimStyle.Render("set coverage.reportGenerator = "+mode+" in "+filepath.Base(path)))
-	}
+// toolReportGenerator is the optional ReportGenerator tool. Unlike the cargo
+// tools it resolves via several strategies (a `reportgenerator` on PATH, a local
+// dotnet tool-manifest, or — in install mode — fetch-on-use via dnx) and has a
+// native fallback, so callers use ensure() (not require()). It keeps its own
+// coverage.reportGenerator config key and is only "installable" when dnx is
+// present (the fetch vehicle), so the shared prompt is offered exactly when the
+// old bespoke flow did.
+var toolReportGenerator = extTool{
+	name:       "reportgenerator",
+	why:        "renders a richer HTML coverage report",
+	resolve:    func(root, mode string) ([]string, bool) { return resolveReportGenerator(root, mode) },
+	canInstall: func(string) bool { _, err := exec.LookPath("dnx"); return err == nil },
+	readMode: func(cfg config.Config) string {
+		if cfg.Coverage != nil {
+			return cfg.Coverage.ReportGenerator
+		}
+		return ""
+	},
+	configKey: []string{"coverage", "reportGenerator"},
 }
 
 // nodeUsesVitest reports whether the repo's node project uses vitest (a vitest
