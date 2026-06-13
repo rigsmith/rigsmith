@@ -70,3 +70,18 @@ go test ./...           # core has full unit tests
 go build -o bin/relrig ./release
 go build -o bin/rig ./cli
 ```
+
+### Running a dev build alongside the installed binaries
+
+To dogfood the tools from source without disturbing a globally installed
+`rig`/`relrig`/etc., install `<tool>-dev` launchers — they run the working tree
+via `go run` and coexist with the stable binaries:
+
+```sh
+rig run dev-install     # or: go run ./scripts/dev-install
+```
+
+This writes `rig-dev`, `relrig-dev`, `clauderig-dev`, … to `~/.local/bin` (sh
+wrappers on macOS/Linux, `.cmd` on Windows). Each recompiles the current source
+on every run, so edits take effect with no reinstall. The launchers are
+discovered from `go.work`, so a new workspace module gets one automatically.
