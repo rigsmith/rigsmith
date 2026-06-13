@@ -71,30 +71,20 @@ func helpFn(c *cobra.Command, w *colorprofile.Writer, styles Styles, appender He
 		_, _ = fmt.Fprintln(w, blockStyle.Render(strings.Join(examples, "\n")))
 	}
 
-	cmds, cmdKeys := evalCmds(c, styles)
+	cmds := evalCmds(c, styles)
 	groups, groupKeys := evalGroups(c, cmds)
 	flags, flagKeys := evalFlags(c, styles)
-	space := calculateSpace(cmdKeys, flagKeys)
 
 	for _, groupID := range groupKeys {
-		group := cmds[groupID]
-		if len(group) == 0 {
+		rows := cmds[groupID]
+		if len(rows) == 0 {
 			continue
 		}
-		renderGroup(w, styles, space, groups[groupID], func(yield func(string, string) bool) {
-			for _, k := range cmdKeys {
-				cmds, ok := group[k]
-				if !ok {
-					continue
-				}
-				if !yield(k, cmds) {
-					return
-				}
-			}
-		})
+		renderCmdGroup(w, styles, groups[groupID], rows)
 	}
 
 	if len(flags) > 0 {
+		space := calculateSpace(flagKeys, nil)
 		renderGroup(w, styles, space, "flags", func(yield func(string, string) bool) {
 			for _, k := range flagKeys {
 				if !yield(k, flags[k]) {
@@ -197,14 +187,6 @@ func styleUsage(c *cobra.Command, styles Program, complete bool) string {
 		}
 	} else {
 		useLine = append(useLine, styles.Command.Render(u))
-		// In the command list, surface short names alongside the canonical
-		// name ("format, fmt") so aliases are discoverable from --help.
-		if len(c.Aliases) > 0 {
-			useLine = append(
-				useLine,
-				styles.DimmedArgument.Render(", "+strings.Join(c.Aliases, ", ")),
-			)
-		}
 	}
 	if hasCommands {
 		useLine = append(
@@ -423,28 +405,37 @@ func evalFlags(c *cobra.Command, styles Styles) (map[string]string, []string) {
 	return flags, keys
 }
 
-// result is map[groupID]map[styled cmd name]styled cmd help, and the keys in
-// the order they are defined.
-func evalCmds(c *cobra.Command, styles Styles) (map[string](map[string]string), []string) {
-	padStyle := lipgloss.NewStyle().PaddingLeft(0) //nolint:mnd
-	keys := []string{}
-	cmds := map[string]map[string]string{}
+// cmdRow is one rendered command in the help command list: its (styled) usage,
+// its (styled) comma-joined aliases — empty when it has none — and its (styled)
+// short description. Aliases live in their own cell so they can be rendered as a
+// separate, self-aligned column between the command and its description.
+type cmdRow struct {
+	usage   string
+	aliases string
+	help    string
+}
+
+// evalCmds groups the visible subcommands by GroupID, in declaration order.
+func evalCmds(c *cobra.Command, styles Styles) map[string][]cmdRow {
+	cmds := map[string][]cmdRow{}
 	for _, sc := range c.Commands() {
 		if sc.Hidden {
 			continue
 		}
-		if _, ok := cmds[sc.GroupID]; !ok {
-			cmds[sc.GroupID] = map[string]string{}
+		var aliases string
+		if len(sc.Aliases) > 0 {
+			aliases = styles.Program.DimmedArgument.Render(strings.Join(sc.Aliases, ", "))
 		}
-		key := padStyle.Render(styleUsage(sc, styles.Program, false))
-		help := styles.FlagDescription.Render(sc.Short)
-		cmds[sc.GroupID][key] = help
-		keys = append(keys, key)
+		cmds[sc.GroupID] = append(cmds[sc.GroupID], cmdRow{
+			usage:   styleUsage(sc, styles.Program, false),
+			aliases: aliases,
+			help:    styles.FlagDescription.Render(sc.Short),
+		})
 	}
-	return cmds, keys
+	return cmds
 }
 
-func evalGroups(c *cobra.Command, cmds map[string]map[string]string) (map[string]string, []string) {
+func evalGroups(c *cobra.Command, cmds map[string][]cmdRow) (map[string]string, []string) {
 	// make sure the default group is the first
 	ids := []string{""}
 	groups := map[string]string{"": "commands"}
@@ -482,6 +473,34 @@ func calculateSpace(k1, k2 []string) int {
 		space = max(space, lipgloss.Width(k)+spaceBetween)
 	}
 	return space
+}
+
+// renderCmdGroup renders a command group as aligned columns: command, then
+// (only when some command in the group has aliases) a separate aliases column,
+// then the description. Each column is self-aligned to its widest cell, so the
+// section stays tidy without coupling its widths to the flags section.
+func renderCmdGroup(w io.Writer, styles Styles, name string, rows []cmdRow) {
+	const gap = 2
+	var usageW, aliasW int
+	for _, r := range rows {
+		usageW = max(usageW, lipgloss.Width(r.usage))
+		aliasW = max(aliasW, lipgloss.Width(r.aliases))
+	}
+	_, _ = fmt.Fprintln(w, styles.Title.Render(name))
+	for _, r := range rows {
+		cells := []string{
+			lipgloss.NewStyle().PaddingLeft(longPad).Render(r.usage),
+			strings.Repeat(" ", usageW-lipgloss.Width(r.usage)+gap),
+		}
+		if aliasW > 0 {
+			cells = append(cells,
+				r.aliases,
+				strings.Repeat(" ", aliasW-lipgloss.Width(r.aliases)+gap),
+			)
+		}
+		cells = append(cells, r.help)
+		_, _ = fmt.Fprintln(w, lipgloss.JoinHorizontal(lipgloss.Left, cells...))
+	}
 }
 
 func isSubCommand(c *cobra.Command, args []string, word string) bool {

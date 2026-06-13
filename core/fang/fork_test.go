@@ -27,8 +27,8 @@ func runHelp(t *testing.T, root *cobra.Command, opts []fang.Option, args ...stri
 	return buf.String()
 }
 
-// Local fork behavior: command aliases appear next to the canonical name in the
-// help command list ("format, fmt").
+// Local fork behavior: a command's aliases are listed in the help command list,
+// in their own column (comma-joined) between the command and its description.
 func TestHelpListsAliases(t *testing.T) {
 	root := &cobra.Command{Use: "demo", Run: func(*cobra.Command, []string) {}}
 	root.AddCommand(&cobra.Command{
@@ -39,9 +39,19 @@ func TestHelpListsAliases(t *testing.T) {
 	})
 
 	out := runHelp(t, root, nil, "--help")
-	if !strings.Contains(out, "format, fmt, f") {
-		t.Errorf("help should list aliases inline; got:\n%s", out)
+	// The command, its aliases column, and the description share one line.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "format") {
+			fmtIdx := strings.Index(line, "format")
+			aliasIdx := strings.Index(line, "fmt, f")
+			descIdx := strings.Index(line, "Format the code")
+			if aliasIdx < 0 || !(fmtIdx < aliasIdx && aliasIdx < descIdx) {
+				t.Errorf("expected command | aliases | description order; got line:\n%q", line)
+			}
+			return
+		}
 	}
+	t.Errorf("command 'format' not found in help; got:\n%s", out)
 }
 
 // Local fork behavior (upstream #88): WithHelpAppender content is rendered
