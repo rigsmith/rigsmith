@@ -1,11 +1,11 @@
 # The release pipeline
 
-`relrig release` runs a configurable step pipeline defined in
+`shiprig release` runs a configurable step pipeline defined in
 `.changeset/release.jsonc` — the orchestration layer on top of `version`,
 `tag`, and `publish`. It's the Go port of net-changesets' release orchestrator.
 
 ```sh
-relrig release
+shiprig release
 ```
 
 ## `.changeset/release.jsonc`

@@ -12,23 +12,29 @@ import type { Config, Context } from 'https://edge.netlify.com'
 const DOCS_ORIGIN = 'https://rigsmith.dev'
 
 // Hosts that should serve the installer, and the tool each defaults to at "/".
+// relrig.sh stays a back-compat alias host that defaults to shiprig.
 const INSTALL_HOSTS: Record<string, string> = {
   'rigsmith.sh': 'all',
   'www.rigsmith.sh': 'all',
-  'relrig.sh': 'relrig',
-  'www.relrig.sh': 'relrig',
+  'relrig.sh': 'shiprig',
+  'www.relrig.sh': 'shiprig',
   'rigcli.sh': 'rig',
   'www.rigcli.sh': 'rig',
 }
 
 // Tools the installer can fetch today. (changerig isn't a release artifact yet;
 // requests for it fall through to the docs.)
-const TOOLS = new Set(['rig', 'relrig', 'clauderig'])
+const TOOLS = new Set(['rig', 'shiprig', 'clauderig'])
+
+// Deprecated tool names → canonical. `relrig` was renamed to `shiprig`.
+const ALIASES: Record<string, string> = {
+  relrig: 'shiprig',
+}
 
 // Where a browser lands per tool.
 const DOCS_PATH: Record<string, string> = {
   rig: '/rig/',
-  relrig: '/relrig/',
+  shiprig: '/shiprig/',
   clauderig: '/clauderig/',
   all: '/guide/installation',
 }
@@ -49,8 +55,10 @@ export default async function handler(req: Request, context: Context) {
   if (!hostDefault) return // docs host / unknown — let Netlify serve normally.
 
   // The first path segment selects the tool; empty path uses the host default.
+  // Fold deprecated aliases (relrig → shiprig) to the canonical name.
   const seg = url.pathname.replace(/^\/+|\/+$/g, '').split('/')[0]
-  const tool = seg === '' ? hostDefault : seg
+  const raw = seg === '' ? hostDefault : seg
+  const tool = ALIASES[raw] || raw
 
   // Anything that isn't an installable tool (or "all") → send to the docs.
   if (tool !== 'all' && !TOOLS.has(tool)) {

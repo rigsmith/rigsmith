@@ -1,6 +1,6 @@
 # core
 
-The shared engine behind `rig`, `changerig`, and `relrig`. **Zero external
+The shared engine behind `rig`, `changerig`, and `shiprig`. **Zero external
 dependencies** (standard library only) — kept that way on purpose.
 
 It's a Go module (`github.com/rigsmith/core`), not a CLI you install; it's
@@ -18,12 +18,12 @@ documented here because it's where the release logic actually lives.
 | `plugin` | the extension contract (ecosystem adapters + changelog generators) |
 | `ecosystem/{dotnet,node,gomod,cargo}` | built-in language adapters (reference impls of `plugin.Ecosystem`) |
 | `gitutil` / `prestate` / `since` / `walkutil` | git tags + merge-base diffs, pre.json, changed-files mapping, ignore-aware walking |
-| `pathmap` | cross-OS path resolution (used by clauderig) |
+| `pathmap` | cross-OS path resolution (used by claudeRig) |
 
 ## Parity corpus
 
 `testdata/parity/` is the cross-implementation golden corpus — 22 scenarios with
-both Node (@changesets) and C# (net-changesets) oracles — that pins rigsmith's
+both Node (@changesets) and C# (net-changesets) oracles — that pins RigSmith's
 behavior against the implementations it was ported from.
 
 - [The plugin protocol →](./plugin-protocol)

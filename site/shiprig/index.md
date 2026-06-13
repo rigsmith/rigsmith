@@ -1,16 +1,16 @@
-# relrig
+# shipRig
 
-rigsmith's release tool — the Go successor to net-changesets. One uniform
+RigSmith's release tool — the Go successor to net-changesets. One uniform
 `add changeset → version → publish` workflow across .NET, Node, and Go.
 
 ```sh
-relrig init
-relrig add -p my/pkg --bump minor -m "Add a feature"   # interactive without flags
-relrig status --verbose
-relrig version            # bump + changelog, with dependency cascade
-relrig publish            # registries + tags (idempotent, confirm-gated on a TTY)
-relrig release            # the configurable step pipeline
-relrig info
+shiprig init
+shiprig add -p my/pkg --bump minor -m "Add a feature"   # interactive without flags
+shiprig status --verbose
+shiprig version            # bump + changelog, with dependency cascade
+shiprig publish            # registries + tags (idempotent, confirm-gated on a TTY)
+shiprig release            # the configurable step pipeline
+shiprig info
 ```
 
 `version` runs the shared engine in [`rigsmith/core`](/core/): it parses
@@ -30,11 +30,17 @@ The whole workflow is wired:
 - `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI
 - `release` — the [configurable step pipeline](./pipeline)
 
-## relrig vs changerig
+## shipRig vs changeRig
 
-[`changerig`](/changerig/) is the changeset lifecycle on its own. `relrig` is
-everything changerig does **plus** `tag`, `publish`, `pre`, and `release`. They
+[`changeRig`](/changerig/) is the changeset lifecycle on its own. shipRig is
+everything changeRig does **plus** `tag`, `publish`, `pre`, and `release`. They
 share the same `add`/`status`/`version` code, so the changeset half behaves
 identically.
+
+::: tip The rename
+shipRig is the release tool formerly known as `relrig`. The `relrig` name keeps
+working as a deprecated alias, and `relrig.dev` / `relrig.sh` redirect to the
+shipRig equivalents.
+:::
 
 - [The release pipeline →](./pipeline)
