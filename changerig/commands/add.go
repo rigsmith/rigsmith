@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/rigsmith/core/brand"
 	"github.com/rigsmith/core/changeset"
 	"github.com/rigsmith/core/gitutil"
 	"github.com/rigsmith/core/since"
@@ -200,7 +201,7 @@ func runAddForm(names []string, selected *[]string, bump, summary *string) error
 				Placeholder("Describe the change for the changelog").
 				Value(summary),
 		),
-	)
+	).WithTheme(brand.Theme(brand.AccentChange))
 	return form.Run()
 }
 

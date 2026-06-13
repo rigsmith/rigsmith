@@ -11,6 +11,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/worktree"
+	"github.com/rigsmith/core/brand"
 	"github.com/rigsmith/core/match"
 	"github.com/spf13/cobra"
 )
@@ -135,7 +136,7 @@ func pickWorktree(wts []gitrepo.Worktree) (string, error) {
 	var chosen string
 	err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().Title("Run from which worktree?").Options(opts...).Filtering(true).Value(&chosen),
-	)).Run()
+	)).WithTheme(brand.Theme(brand.AccentClaude)).Run()
 	if err != nil {
 		return "", err
 	}

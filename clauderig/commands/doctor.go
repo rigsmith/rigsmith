@@ -13,6 +13,7 @@ import (
 	"github.com/rigsmith/clauderig/internal/config"
 	"github.com/rigsmith/clauderig/internal/doctor"
 	"github.com/rigsmith/clauderig/internal/settings"
+	"github.com/rigsmith/core/brand"
 	"github.com/spf13/cobra"
 )
 
@@ -110,7 +111,7 @@ func selectFixes(out io.Writer, fixable []doctor.Result) []doctor.Result {
 			Title("Fix which issues? (all selected — space toggles, enter applies)").
 			Options(opts...).
 			Value(&picked),
-	)).Run()
+	)).WithTheme(brand.Theme(brand.AccentClaude)).Run()
 	if err != nil {
 		fmt.Fprintln(out, DimStyle.Render("  (no fixes applied)"))
 		return nil

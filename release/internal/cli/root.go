@@ -9,12 +9,13 @@ import (
 
 	"github.com/charmbracelet/fang"
 	"github.com/rigsmith/changerig/commands"
+	"github.com/rigsmith/core/brand"
 	"github.com/spf13/cobra"
 )
 
 // Execute builds the command tree and runs it through fang.
 func Execute(ctx context.Context) error {
-	return fang.Execute(ctx, newRootCmd())
+	return fang.Execute(ctx, newRootCmd(), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentShip)))
 }
 
 func newRootCmd() *cobra.Command {

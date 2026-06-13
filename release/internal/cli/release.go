@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/changerig/commands"
+	"github.com/rigsmith/core/brand"
 	"github.com/rigsmith/release/internal/forge"
 	"github.com/rigsmith/release/internal/pipeline"
 	"github.com/spf13/cobra"
@@ -167,7 +168,7 @@ type ttyPrompter struct{}
 
 func (ttyPrompter) Confirm(message string) bool {
 	ok := false
-	err := huh.NewConfirm().Title(message).Value(&ok).Run()
+	err := huh.NewConfirm().Title(message).Value(&ok).WithTheme(brand.Theme(brand.AccentShip)).Run()
 	if err != nil {
 		return false // treat an aborted prompt as a decline
 	}

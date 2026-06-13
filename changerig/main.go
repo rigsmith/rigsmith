@@ -14,6 +14,7 @@ import (
 
 	"github.com/charmbracelet/fang"
 	"github.com/rigsmith/changerig/commands"
+	"github.com/rigsmith/core/brand"
 	"github.com/spf13/cobra"
 )
 
@@ -49,5 +50,5 @@ func run(ctx context.Context) error {
 		commands.NewInfoCmd(),
 		commands.NewUICmd(),
 	)
-	return fang.Execute(ctx, root)
+	return fang.Execute(ctx, root, fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentChange)))
 }

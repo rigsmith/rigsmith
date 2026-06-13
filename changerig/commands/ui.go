@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rigsmith/core/brand"
 	"github.com/rigsmith/core/changeset"
 	"github.com/spf13/cobra"
 )
@@ -52,9 +53,9 @@ type menuModel struct {
 }
 
 var (
-	menuTitle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
-	menuSelected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
-	menuCursor   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	menuTitle    = lipgloss.NewStyle().Bold(true).Foreground(brand.AccentChange)
+	menuSelected = lipgloss.NewStyle().Bold(true).Foreground(brand.Cyan)
+	menuCursor   = lipgloss.NewStyle().Foreground(brand.Cyan)
 )
 
 func newMenu(ctx context.Context) menuModel {
