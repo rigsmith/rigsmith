@@ -21,7 +21,9 @@ func runHuhSelect[T comparable](sel *huh.Select[T]) error {
 	return huh.NewForm(huh.NewGroup(sel)).WithKeyMap(huhEscKeyMap()).Run()
 }
 
-// runHuhMultiSelect runs a single multi-select with esc-to-cancel.
+// runHuhMultiSelect runs a single multi-select with esc-to-cancel. huh's
+// default keymap already provides ctrl+a (select all/none, a toggle) and `/`
+// (filter), which coexist; advertise them in the field title where useful.
 func runHuhMultiSelect[T comparable](ms *huh.MultiSelect[T]) error {
 	return huh.NewForm(huh.NewGroup(ms)).WithKeyMap(huhEscKeyMap()).Run()
 }
