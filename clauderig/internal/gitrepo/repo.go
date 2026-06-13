@@ -8,6 +8,7 @@ package gitrepo
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -179,6 +180,25 @@ func dirSize(path string) (int64, error) {
 		return nil
 	})
 	return total, err
+}
+
+// gitExitCode runs git and returns its exit code (0 = success). It is for
+// commands whose non-zero exit is a meaningful answer rather than a failure —
+// e.g. `merge-base --is-ancestor` exits 1 for "no". A failure to even run git
+// (binary missing, etc.) returns a negative code and the error.
+func gitExitCode(ctx context.Context, dir string, args ...string) (int, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return ee.ExitCode(), nil
+		}
+		return -1, err
+	}
+	return 0, nil
 }
 
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
