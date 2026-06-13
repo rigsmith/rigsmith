@@ -13,8 +13,8 @@ const DOCS_ORIGIN = 'https://rigsmith.dev'
 
 // Hosts that should serve the installer, and the tool each defaults to at "/".
 const INSTALL_HOSTS: Record<string, string> = {
-  'rigsmith.sh': 'both',
-  'www.rigsmith.sh': 'both',
+  'rigsmith.sh': 'all',
+  'www.rigsmith.sh': 'all',
   'relrig.sh': 'relrig',
   'www.relrig.sh': 'relrig',
   'rigcli.sh': 'rig',
@@ -30,7 +30,7 @@ const DOCS_PATH: Record<string, string> = {
   rig: '/rig/',
   relrig: '/relrig/',
   clauderig: '/clauderig/',
-  both: '/guide/installation',
+  all: '/guide/installation',
 }
 
 function wantsHtml(req: Request): boolean {
@@ -52,8 +52,8 @@ export default async function handler(req: Request, context: Context) {
   const seg = url.pathname.replace(/^\/+|\/+$/g, '').split('/')[0]
   const tool = seg === '' ? hostDefault : seg
 
-  // Anything that isn't an installable tool (or "both") → send to the docs.
-  if (tool !== 'both' && !TOOLS.has(tool)) {
+  // Anything that isn't an installable tool (or "all") → send to the docs.
+  if (tool !== 'all' && !TOOLS.has(tool)) {
     return Response.redirect(DOCS_ORIGIN + (DOCS_PATH[tool] || '/'), 302)
   }
 
@@ -72,7 +72,7 @@ export default async function handler(req: Request, context: Context) {
     })
   }
   const script = await scriptRes.text()
-  const prelude = tool === 'both' ? '' : `set -- ${tool}\n`
+  const prelude = tool === 'all' ? '' : `set -- ${tool}\n`
 
   return new Response(prelude + script, {
     status: 200,
