@@ -4,6 +4,8 @@ package changelog
 import (
 	"strconv"
 	"strings"
+
+	"github.com/rigsmith/core/plugin"
 )
 
 // Runner executes a command in dir and returns its combined stdout. A spawn
@@ -90,6 +92,62 @@ func ResolveFromCommits(idToSHA map[string]string, setting Setting, dir string, 
 		result[id] = info
 	}
 	return result
+}
+
+// ResolveAuthors finds the author of the provenance commit behind each
+// changeset id, for the "Contributors" section. knownSHA supplies the source
+// commit for commit-derived changesets (where the commit IS the provenance);
+// for on-disk changesets the commit that added the file is looked up. Each SHA
+// is resolved once. The git author name/email always resolves (offline); when a
+// repo slug is given, the GitHub login is additionally resolved via `gh api` so
+// the contributor can be linked to their GitHub page (failure leaves it empty,
+// rendering the bare name). An id whose author can't be resolved is omitted.
+func ResolveAuthors(ids []string, knownSHA map[string]string, repo, dir string, run Runner) map[string]plugin.Author {
+	result := map[string]plugin.Author{}
+	bySHA := map[string]plugin.Author{}
+	for _, id := range ids {
+		sha := knownSHA[id]
+		if sha == "" {
+			sha = commitThatAddedChangeset(run, dir, id, "%H")
+		}
+		if sha == "" {
+			continue
+		}
+		a, ok := bySHA[sha]
+		if !ok {
+			a = authorOfCommit(run, dir, sha)
+			if repo != "" {
+				if login := authorForCommit(run, dir, repo, sha); login != "" {
+					a.Login = login
+				}
+			}
+			bySHA[sha] = a
+		}
+		if a.Name == "" && a.Login == "" {
+			continue
+		}
+		result[id] = a
+	}
+	return result
+}
+
+// authorOfCommit reads the git author name and email of a commit. Email is used
+// only for de-duplication and exclude-matching; it is never rendered.
+func authorOfCommit(run Runner, dir, sha string) plugin.Author {
+	out, err := run(dir, "git", "show", "-s", "--format=%an\x1f%ae", sha)
+	if err != nil {
+		return plugin.Author{}
+	}
+	line := strings.TrimSpace(out)
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	parts := strings.SplitN(line, "\x1f", 2)
+	a := plugin.Author{Name: strings.TrimSpace(parts[0])}
+	if len(parts) == 2 {
+		a.Email = strings.TrimSpace(parts[1])
+	}
+	return a
 }
 
 // shortSHA abbreviates a full commit SHA to git's conventional 7 characters,

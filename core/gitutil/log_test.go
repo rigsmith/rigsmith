@@ -87,3 +87,20 @@ func TestLogSinceInvalidRef(t *testing.T) {
 		t.Error("non-repo should error")
 	}
 }
+
+func TestParseGitHubSlug(t *testing.T) {
+	cases := []struct{ url, want string }{
+		{"git@github.com:JohnCampionJr/rigsmith.git", "JohnCampionJr/rigsmith"},
+		{"https://github.com/unjs/changelogen.git", "unjs/changelogen"},
+		{"https://github.com/unjs/changelogen", "unjs/changelogen"},
+		{"ssh://git@github.com/acme/widgets.git", "acme/widgets"},
+		{"git@gitlab.com:acme/widgets.git", ""}, // not github
+		{"https://example.com/a/b", ""},
+		{"github.com/only-owner", ""},
+	}
+	for _, c := range cases {
+		if got := parseGitHubSlug(c.url); got != c.want {
+			t.Errorf("parseGitHubSlug(%q) = %q, want %q", c.url, got, c.want)
+		}
+	}
+}

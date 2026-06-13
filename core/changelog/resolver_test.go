@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/rigsmith/core/plugin"
 )
 
 // fakeRunner matches invocations the way the C# tests do: by executable name
@@ -175,5 +177,39 @@ func TestResolveFromCommitsSkipsEmptySha(t *testing.T) {
 	result := ResolveFromCommits(map[string]string{"x": ""}, Setting{Kind: KindGit}, "/repo", runner.run)
 	if len(result) != 0 {
 		t.Errorf("empty SHA should be skipped, got %v", result)
+	}
+}
+
+func TestResolveAuthorsCommitModeUsesKnownSha(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{name: "git", marker: "show", output: "Pooya Parsa\x1fpooya@pi0.io"},
+	}}
+	// commit mode: the SHA is known, so no archaeology; no repo → no gh login.
+	got := ResolveAuthors([]string{"abc1234"}, map[string]string{"abc1234": "abc1234567890"}, "", "/repo", runner.run)
+	want := map[string]plugin.Author{"abc1234": {Name: "Pooya Parsa", Email: "pooya@pi0.io"}}
+	if len(got) != 1 || got["abc1234"] != want["abc1234"] {
+		t.Errorf("ResolveAuthors = %+v, want %+v", got, want)
+	}
+}
+
+func TestResolveAuthorsFileModeLooksUpAddingCommitAndLogin(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		// file mode: find the commit that added the changeset, then read its author.
+		{name: "git", marker: "--diff-filter=A", output: "deadbee1234567"},
+		{name: "git", marker: "show", output: "Jane Doe\x1fjane@example.com"},
+		{name: "gh", marker: ".author.login", output: "janedoe"},
+	}}
+	got := ResolveAuthors([]string{"brave-otters-dance"}, nil, "acme/widgets", "/repo", runner.run)
+	want := plugin.Author{Name: "Jane Doe", Email: "jane@example.com", Login: "janedoe"}
+	if got["brave-otters-dance"] != want {
+		t.Errorf("ResolveAuthors = %+v, want %+v", got["brave-otters-dance"], want)
+	}
+}
+
+func TestResolveAuthorsSkipsUnresolvable(t *testing.T) {
+	runner := &fakeRunner{} // every call fails
+	got := ResolveAuthors([]string{"x"}, nil, "", "/repo", runner.run)
+	if len(got) != 0 {
+		t.Errorf("unresolvable author should be omitted, got %v", got)
 	}
 }

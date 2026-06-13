@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -167,6 +168,16 @@ func NewVersionCmd() *cobra.Command {
 				return nil
 			}
 
+			// Contributors section: resolve each changeset's author (from its
+			// source commit in commit mode, or the commit that added the file in
+			// changeset mode), then attach the per-package list — de-duplicated,
+			// run through the exclude/bot filter, sorted — to its module. Works
+			// for both versioning sources. Skipped on dry runs (above) since no
+			// changelog is written.
+			if ws.Config.Contributors.Enabled {
+				attachContributors(cmd, ws, plan, active, setting)
+			}
+
 			// The three @changesets generators (default, changelog-git,
 			// changelog-github) all render the default layout — git/github only
 			// decorate the release lines (done above). Anything else resolves as
@@ -270,6 +281,82 @@ func NewVersionCmd() *cobra.Command {
 	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")
 	f.BoolVar(&independent, "independent", false, "version each package on its own changesets, writing inline (overrides a shared version file)")
 	return cmd
+}
+
+// attachContributors resolves the author behind each active changeset and sets
+// each releasing module's Contributors (deduped, excluded, sorted) so the
+// builtin changelog generator renders the "Contributors" section. The GitHub
+// repo for linking is the changelog-github setting's repo when present, else the
+// origin remote's slug — so links work even with the default changelog.
+func attachContributors(cmd *cobra.Command, ws *Workspace, plan []*planner.Module, active []*changeset.Changeset, setting changelog.Setting) {
+	repo := setting.Repo
+	if repo == "" {
+		repo = gitutil.GitHubRepoSlug(cmd.Context(), ws.Root)
+	}
+
+	ids := make([]string, 0, len(active))
+	known := map[string]string{}
+	for _, cs := range active {
+		ids = append(ids, cs.ID)
+		if cs.Commit != "" {
+			known[cs.ID] = cs.Commit
+		}
+	}
+	authorByID := changelog.ResolveAuthors(ids, known, repo, ws.Root, execRunner(cmd))
+	section := ws.Config.Contributors.SectionHeading()
+
+	for _, m := range plan {
+		var list []plugin.Author
+		seen := map[string]bool{}
+		for _, cs := range active {
+			if !changesetNames(cs, m.Name) {
+				continue
+			}
+			a, ok := authorByID[cs.ID]
+			if !ok {
+				continue
+			}
+			if ws.Config.Contributors.IsContributorExcluded(a.Login, a.Name, a.Email) {
+				continue
+			}
+			key := contributorKey(a)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			// Drop the email before it reaches the changelog — it is never rendered.
+			list = append(list, plugin.Author{Name: a.Name, Login: a.Login})
+		}
+		sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+		if len(list) > 0 {
+			m.Contributors = list
+			m.ContributorsSection = section
+		}
+	}
+}
+
+// changesetNames reports whether the changeset names the given package.
+func changesetNames(cs *changeset.Changeset, name string) bool {
+	for _, n := range cs.ChangedNames() {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// contributorKey is the de-duplication key for an author: GitHub login when
+// known, else email, else name (all lowered) — so the same person via different
+// commits collapses to one entry.
+func contributorKey(a plugin.Author) string {
+	switch {
+	case a.Login != "":
+		return "login:" + strings.ToLower(a.Login)
+	case a.Email != "":
+		return "email:" + strings.ToLower(a.Email)
+	default:
+		return "name:" + strings.ToLower(a.Name)
+	}
 }
 
 // removeConsumedFiles deletes the on-disk changeset file backing each consumed

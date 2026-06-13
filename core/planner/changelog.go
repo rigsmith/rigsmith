@@ -41,9 +41,39 @@ func ModuleToRequest(m *Module) plugin.ChangelogRequest {
 			CurrentVersion: m.Current.String(),
 			NewVersion:     m.ResolvedVersion(),
 		},
-		Bump:    m.HighestBump().String(),
-		Changes: changes,
+		Bump:                m.HighestBump().String(),
+		Changes:             changes,
+		Contributors:        m.Contributors,
+		ContributorsSection: m.ContributorsSection,
 	}
+}
+
+// renderContributors renders the trailing "Contributors" section (changelogen
+// style): one bullet per author, linked to their GitHub page when a login was
+// resolved, bare name otherwise. Emails are never rendered. Returns "" when
+// there are no contributors. The leading blank line separates it from the
+// change sections, matching the inter-section spacing.
+func renderContributors(authors []plugin.Author, section string) string {
+	if len(authors) == 0 {
+		return ""
+	}
+	if strings.TrimSpace(section) == "" {
+		section = config.DefaultContributorsSection
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n### %s\n\n", section)
+	for _, a := range authors {
+		name := a.Name
+		if name == "" {
+			name = a.Login
+		}
+		if a.Login != "" {
+			fmt.Fprintf(&b, "- %s ([@%s](https://github.com/%s))\n", name, a.Login, a.Login)
+		} else {
+			fmt.Fprintf(&b, "- %s\n", name)
+		}
+	}
+	return b.String()
 }
 
 // renderSections renders the "## <version>" header and the change sections.

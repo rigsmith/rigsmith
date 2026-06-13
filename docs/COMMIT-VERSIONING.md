@@ -189,6 +189,44 @@ populations: file changesets go through `Resolve` (find the commit that *added*
 the file), commit changesets through `ResolveFromCommits` (the commit *is* the
 provenance). The decorators themselves are unchanged.
 
+### Contributors section
+
+An optional changelogen-style "Contributors" section, configured independently
+of the versioning source so it works for **both** changesets and commits:
+
+```jsonc
+{
+  "contributors": {
+    "enabled": true,
+    "excludeBots": true,                 // default; drops `*[bot]` authors
+    "exclude": ["my-login", "me@work.com", "Bot *"],
+    "section": "❤️ Contributors"         // optional heading override
+  }
+}
+```
+
+Both sources reduce to the same provenance: a changeset has a commit, and a
+commit has an author. [`changelog.ResolveAuthors`](../core/changelog/resolver.go)
+resolves each — from `Changeset.Commit` (commit mode) or the commit that added
+the file (changeset mode) — reading the git author name, and the GitHub **login**
+via `gh api` when a repo is known (the changelog-github setting's repo, else the
+origin remote's slug via [`gitutil.GitHubRepoSlug`](../core/gitutil/tags.go)).
+`version` aggregates authors per package, de-dupes, applies the exclude/bot
+filter, and attaches them to the module; the builtin generator renders the
+section last:
+
+```
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Jane Doe
+```
+
+Emails are used only for de-duplication and `exclude` matching — they are never
+rendered. Authors are linked to their GitHub page when a login resolved, bare
+name otherwise. (Per-commit `Co-authored-by:` trailers are not yet collected — a
+possible follow-up.)
+
 ### Require-conventional-commit CI gate
 
 The [`require-changeset` action](../.github/actions/require-changeset/) gained a
