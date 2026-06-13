@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -43,17 +45,15 @@ func newDoctorCmd() *cobra.Command {
 			cwd, _ := os.Getwd()
 			root := resolveRoot(cwd)
 
-			ecos := detectEcosystems(root)
 			fmt.Fprintln(out, headerStyle.Render("rig doctor")+"  "+dimStyle.Render(root))
 			fmt.Fprintln(out)
 
-			if len(ecos) == 0 {
+			checks := gatherChecks(cmd, root)
+			if len(checks) == 0 {
 				fmt.Fprintln(out, dimStyle.Render(
-					"no recognized ecosystem (.NET/Node/Go/Cargo) found here — nothing to check"))
+					"no recognized projects (.NET/Node/Go/Cargo) found here — nothing to check"))
 				return nil
 			}
-
-			checks := gatherChecks(cmd, root, ecos)
 
 			var severity docLevel
 			if doctorLiveEligible() {
@@ -107,17 +107,50 @@ type pendingCheck struct {
 	run   func() check
 }
 
-// gatherChecks builds the ordered list of deferred checks across the detected
-// ecosystems, tagging each with its ecosystem so the output can be grouped.
-func gatherChecks(cmd *cobra.Command, root string, ecos []string) []pendingCheck {
+// gatherChecks builds the ordered, ecosystem-grouped check list for the whole
+// workspace: it discovers every project (the shared workspace searcher), and for
+// each ecosystem emits the toolchain rows once, then a row per project with its
+// own state (node deps / .NET TFM / go+cargo versions).
+func gatherChecks(cmd *cobra.Command, root string) []pendingCheck {
+	targets := discoverWorkspace(cdContext(cmd), root, excludeFor(root))
+	byEco := map[string][]target{}
+	for _, t := range targets {
+		byEco[t.Eco] = append(byEco[t.Eco], t)
+	}
+
 	var all []pendingCheck
-	for _, eco := range ecos {
-		for _, pc := range checksFor(cmd, eco, root) {
+	for _, eco := range orderedEcos(byEco) {
+		for _, pc := range toolchainChecks(cmd, eco, root) {
+			pc.eco = eco
+			all = append(all, pc)
+		}
+		pkgs := byEco[eco]
+		sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].Name < pkgs[j].Name })
+		for _, t := range pkgs {
+			pc := packageCheck(eco, t, root)
 			pc.eco = eco
 			all = append(all, pc)
 		}
 	}
 	return all
+}
+
+// orderedEcos returns the ecosystems present, in a stable canonical order.
+func orderedEcos(byEco map[string][]target) []string {
+	var out []string
+	for _, eco := range []string{detect.Go, detect.Node, detect.DotNet, detect.Cargo} {
+		if len(byEco[eco]) > 0 {
+			out = append(out, eco)
+		}
+	}
+	for eco := range byEco {
+		switch eco {
+		case detect.Go, detect.Node, detect.DotNet, detect.Cargo:
+		default:
+			out = append(out, eco)
+		}
+	}
+	return out
 }
 
 // ecoDisplayName is the human header for an ecosystem group.
@@ -135,93 +168,35 @@ func ecoDisplayName(eco string) string {
 	return eco
 }
 
-// detectEcosystems lists the ecosystem ids that apply at root by checking
-// manifests directly (dependency-free, no registry round-trip). A polyglot repo
-// legitimately matches several.
-func detectEcosystems(root string) []string {
-	var ecos []string
-	if exists(filepath.Join(root, "go.mod")) || exists(filepath.Join(root, "go.work")) {
-		ecos = append(ecos, detect.Go)
-	}
-	if exists(filepath.Join(root, "package.json")) {
-		ecos = append(ecos, detect.Node)
-	}
-	if exists(filepath.Join(root, "Cargo.toml")) {
-		ecos = append(ecos, detect.Cargo)
-	}
-	if hasDotNet(root) {
-		ecos = append(ecos, detect.DotNet)
-	}
-	return ecos
-}
-
-// checksFor returns the per-ecosystem environment checks (deferred).
-func checksFor(cmd *cobra.Command, eco, root string) []pendingCheck {
+// toolchainChecks are the once-per-ecosystem environment probes (is the tool
+// installed, which version) that head each group.
+func toolchainChecks(cmd *cobra.Command, eco, root string) []pendingCheck {
 	switch eco {
 	case detect.Go:
-		return goChecks(cmd, root)
-	case detect.Node:
-		return nodeChecks(cmd, root)
-	case detect.DotNet:
-		return dotnetChecks(cmd, root)
-	case detect.Cargo:
-		return cargoChecks(cmd, root)
-	}
-	return nil
-}
-
-func goChecks(cmd *cobra.Command, root string) []pendingCheck {
-	return []pendingCheck{
-		{label: "go", run: func() check {
+		return []pendingCheck{{label: "go", run: func() check {
 			if v, present := probeVersion(cmd, root, "go", "version"); present {
 				return ok2("go", strings.TrimPrefix(v, "go version "))
 			}
 			return bad("go", "the `go` command isn't on your PATH — install Go")
-		}},
-		{label: "module", run: func() check {
-			switch {
-			case exists(filepath.Join(root, "go.work")):
-				return ok("module", "go.work workspace")
-			case exists(filepath.Join(root, "go.mod")):
-				return ok("module", "go.mod module")
-			default:
-				return warn("module", "no go.mod or go.work here")
-			}
-		}},
-	}
-}
-
-func nodeChecks(cmd *cobra.Command, root string) []pendingCheck {
-	pm := string(detect.DetectNodePM(root))
-	return []pendingCheck{
-		{label: "node", run: func() check {
-			if v, present := probeVersion(cmd, root, "node", "--version"); present {
-				return ok2("node", v)
-			}
-			return bad("node", "the `node` runtime isn't on your PATH — install Node.js")
-		}},
-		{label: pm, run: func() check {
-			if v, present := probeVersion(cmd, root, pm, "--version"); present {
-				return ok2(pm, pm+" "+v)
-			}
-			return bad(pm, fmt.Sprintf("package manager %q isn't on your PATH (detected from the lockfile)", pm))
-		}},
-		{label: "deps", run: func() check {
-			switch {
-			case !nodeHasDependencies(root):
-				return ok("deps", "no dependencies declared")
-			case exists(filepath.Join(root, "node_modules")):
-				return ok("deps", "installed (node_modules present)")
-			default:
-				return warn("deps", "dependencies declared but not installed — run `rig install`")
-			}
-		}},
-	}
-}
-
-func dotnetChecks(cmd *cobra.Command, root string) []pendingCheck {
-	return []pendingCheck{
-		{label: "dotnet", run: func() check {
+		}}}
+	case detect.Node:
+		pm := string(detect.DetectNodePM(root))
+		return []pendingCheck{
+			{label: "node", run: func() check {
+				if v, present := probeVersion(cmd, root, "node", "--version"); present {
+					return ok2("node", v)
+				}
+				return bad("node", "the `node` runtime isn't on your PATH — install Node.js")
+			}},
+			{label: pm, run: func() check {
+				if v, present := probeVersion(cmd, root, pm, "--version"); present {
+					return ok2(pm, pm+" "+v)
+				}
+				return bad(pm, fmt.Sprintf("package manager %q isn't on your PATH (detected from the lockfile)", pm))
+			}},
+		}
+	case detect.DotNet:
+		return []pendingCheck{{label: "dotnet", run: func() check {
 			sdk, present := probeVersion(cmd, root, "dotnet", "--version")
 			if !present {
 				return bad("dotnet", "the `dotnet` SDK isn't on your PATH — install the .NET SDK")
@@ -235,42 +210,107 @@ func dotnetChecks(cmd *cobra.Command, root string) []pendingCheck {
 			default:
 				return bad("dotnet", fmt.Sprintf("SDK %s is installed, but global.json pins %s — install that SDK", sdk, pin))
 			}
-		}},
-		{label: "project", run: func() check {
-			switch {
-			case hasSolution(root):
-				return ok("project", "solution (.sln) present")
-			case hasCsproj(root):
-				return ok("project", "project file(s) present")
-			default:
-				return warn("project", "no .sln or .csproj here")
-			}
-		}},
-	}
-}
-
-func cargoChecks(cmd *cobra.Command, root string) []pendingCheck {
-	return []pendingCheck{
-		{label: "cargo", run: func() check {
+		}}}
+	case detect.Cargo:
+		return []pendingCheck{{label: "cargo", run: func() check {
 			if v, present := probeVersion(cmd, root, "cargo", "--version"); present {
 				return ok2("cargo", strings.TrimPrefix(v, "cargo "))
 			}
 			return bad("cargo", "the `cargo` command isn't on your PATH — install Rust (rustup)")
-		}},
-		{label: "manifest", run: func() check {
-			if exists(filepath.Join(root, "Cargo.toml")) {
-				return ok("manifest", "Cargo.toml present")
-			}
-			return warn("manifest", "no Cargo.toml here")
-		}},
+		}}}
 	}
+	return nil
 }
 
-// nodeHasDependencies reports whether the root package.json declares any
+// packageCheck builds the per-project row for one discovered package, labeled by
+// its short name with an ecosystem-appropriate detail.
+func packageCheck(eco string, t target, root string) pendingCheck {
+	name := shortName(t.Name)
+	dir := t.Dir
+	switch eco {
+	case detect.Node:
+		return pendingCheck{label: name, run: func() check {
+			switch {
+			case !nodeHasDependencies(dir):
+				return ok(name, "no dependencies")
+			case exists(filepath.Join(dir, "node_modules")) || exists(filepath.Join(root, "node_modules")):
+				return ok(name, "deps installed")
+			default:
+				return warn(name, "deps declared, not installed — run `rig install`")
+			}
+		}}
+	case detect.DotNet:
+		return pendingCheck{label: name, run: func() check {
+			if tfm := readTargetFramework(dir); tfm != "" {
+				return ok(name, tfm)
+			}
+			return ok(name, "project")
+		}}
+	case detect.Go:
+		return pendingCheck{label: name, run: func() check {
+			if v := readGoVersion(dir); v != "" {
+				return ok(name, "go "+v)
+			}
+			return ok(name, "module")
+		}}
+	case detect.Cargo:
+		return pendingCheck{label: name, run: func() check {
+			if v := readCargoVersion(dir); v != "" {
+				return ok(name, "v"+v)
+			}
+			return ok(name, "crate")
+		}}
+	}
+	return pendingCheck{label: name, run: func() check { return ok(name, "") }}
+}
+
+var (
+	tfmRe      = regexp.MustCompile(`(?i)<TargetFrameworks?>([^<]+)</TargetFrameworks?>`)
+	goVerRe    = regexp.MustCompile(`(?m)^go\s+(\S+)`)
+	cargoVerRe = regexp.MustCompile(`(?m)^\s*version\s*=\s*"([^"]+)"`)
+)
+
+// readTargetFramework returns the first project file's TargetFramework(s) in dir.
+func readTargetFramework(dir string) string {
+	for _, pat := range []string{"*.csproj", "*.fsproj", "*.vbproj"} {
+		ms, _ := filepath.Glob(filepath.Join(dir, pat))
+		for _, m := range ms {
+			if data, err := os.ReadFile(m); err == nil {
+				if mt := tfmRe.FindSubmatch(data); mt != nil {
+					return strings.TrimSpace(string(mt[1]))
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// readGoVersion returns the go directive version from dir/go.mod.
+func readGoVersion(dir string) string {
+	if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil {
+		if m := goVerRe.FindSubmatch(data); m != nil {
+			return string(m[1])
+		}
+	}
+	return ""
+}
+
+// readCargoVersion returns the package version from dir/Cargo.toml (best-effort:
+// the first `version = "..."`, which is the [package] one in a normal manifest).
+func readCargoVersion(dir string) string {
+	if data, err := os.ReadFile(filepath.Join(dir, "Cargo.toml")); err == nil {
+		if m := cargoVerRe.FindSubmatch(data); m != nil {
+			return string(m[1])
+		}
+	}
+	return ""
+}
+
+// nodeHasDependencies reports whether dir/package.json declares any
 // (dev)dependencies — used to keep the "deps not installed" warning quiet for a
 // project that has nothing to install.
-func nodeHasDependencies(root string) bool {
-	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+func nodeHasDependencies(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
 	if err != nil {
 		return false
 	}

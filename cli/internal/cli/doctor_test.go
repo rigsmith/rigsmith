@@ -128,3 +128,43 @@ func TestNodeHasDependencies(t *testing.T) {
 		t.Error("devDependencies present → true")
 	}
 }
+
+func TestManifestParsers(t *testing.T) {
+	dir := t.TempDir()
+	must := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must("App.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>")
+	must("go.mod", "module example.com/x\n\ngo 1.23\n")
+	must("Cargo.toml", "[package]\nname = \"x\"\nversion = \"3.1.4\"\n")
+
+	if got := readTargetFramework(dir); got != "net8.0" {
+		t.Errorf("readTargetFramework = %q, want net8.0", got)
+	}
+	if got := readGoVersion(dir); got != "1.23" {
+		t.Errorf("readGoVersion = %q, want 1.23", got)
+	}
+	if got := readCargoVersion(dir); got != "3.1.4" {
+		t.Errorf("readCargoVersion = %q, want 3.1.4", got)
+	}
+	empty := t.TempDir()
+	if readTargetFramework(empty) != "" || readGoVersion(empty) != "" || readCargoVersion(empty) != "" {
+		t.Error("missing manifests should parse to empty")
+	}
+}
+
+func TestOrderedEcos(t *testing.T) {
+	byEco := map[string][]target{
+		"cargo":  {{}},
+		"go":     {{}},
+		"dotnet": {{}},
+		"zzz":    {{}}, // unknown ecosystem → appended after the canonical ones
+	}
+	got := orderedEcos(byEco)
+	// canonical go, (node absent), dotnet, cargo — then the unknown.
+	if len(got) != 4 || got[0] != "go" || got[1] != "dotnet" || got[2] != "cargo" || got[3] != "zzz" {
+		t.Errorf("orderedEcos = %v", got)
+	}
+}
