@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RigSmith — Sticker Sheet</title>
+<link rel="icon" type="image/svg+xml" href="marks/favicon.svg">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="marks.js"></script>
+<style>
+  :root{
+    --ink:#0E0E12; --ink-2:#15151b; --line:#26262f; --line-soft:#1d1d25;
+    --paper:#ECECEE; --muted:#8a8a96; --muted-2:#56565f;
+    --rig:oklch(0.70 0.15 250); --change:oklch(0.70 0.15 300);
+    --ship:oklch(0.70 0.15 150); --claude:oklch(0.70 0.15 55);
+    --sticker:#f4f4f2; --sticker-ink:#13131a;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:
+      radial-gradient(70% 60% at 50% -5%, #18181f, var(--ink));
+    color:var(--paper);font-family:var(--mono);line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh;}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 32px 80px;}
+  .wm{letter-spacing:-0.02em;white-space:nowrap;}
+  .wm b{font-weight:800;}
+  .page-head{text-align:center;padding:70px 0 6px;display:flex;flex-direction:column;align-items:center;gap:14px;}
+  .page-head .eyebrow{font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--muted-2);}
+  .page-head h1{font-size:28px;font-weight:700;margin:0;letter-spacing:-0.02em;}
+  .page-head p{color:var(--muted);font-size:15px;max-width:56ch;margin:0;}
+
+  section{padding:42px 0;}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:34px;}
+  .sec-head .k{font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--rig);font-weight:700;}
+  .sec-head h2{font-size:18px;font-weight:600;margin:0;}
+  .sec-head .rule{flex:1;height:1px;background:var(--line);align-self:center;}
+
+  .row{display:flex;flex-wrap:wrap;gap:34px;align-items:center;}
+  .row.center{justify-content:center;}
+
+  /* die-cut sticker base: white border + soft shadow + slight rotation */
+  .sticker{position:relative;background:var(--sticker);color:var(--sticker-ink);
+    box-shadow:0 1px 0 2px #fff, 0 16px 26px -14px rgba(0,0,0,.7);
+    transition:transform .18s ease;}
+  .sticker:hover{transform:translateY(-4px) rotate(0deg) scale(1.03);}
+  .sticker.round{width:128px;height:128px;border-radius:50%;display:flex;align-items:center;justify-content:center;}
+  .sticker.round svg{width:62%;height:62%;}
+  .sticker.round::after{content:"";position:absolute;inset:9px;border-radius:50%;border:2px solid color-mix(in srgb,var(--accent) 35%, transparent);}
+  .sticker .peel{position:absolute;right:8px;bottom:8px;width:34px;height:34px;border-radius:0 0 14px 0;
+    background:linear-gradient(135deg, transparent 46%, rgba(0,0,0,.10) 50%, rgba(255,255,255,.5) 54%);
+    border-bottom-right-radius:50%;opacity:.5;pointer-events:none;}
+
+  /* rotations for a scattered sheet feel */
+  #st-rounds .sticker:nth-child(1){transform:rotate(-7deg);}
+  #st-rounds .sticker:nth-child(2){transform:rotate(4deg);}
+  #st-rounds .sticker:nth-child(3){transform:rotate(-3deg);}
+  #st-rounds .sticker:nth-child(4){transform:rotate(8deg);}
+
+  .sticker.pill{border-radius:999px;display:flex;align-items:center;gap:13px;padding:14px 24px 14px 18px;font-size:23px;}
+  .sticker.pill svg{width:34px;height:34px;}
+  .sticker.pill .wm .lite{color:#8a8a93;font-weight:400;}
+  .sticker.pill .wm b{color:var(--sticker-ink);}
+  #st-pills .sticker:nth-child(odd){transform:rotate(-2.5deg);}
+  #st-pills .sticker:nth-child(even){transform:rotate(2.5deg);}
+
+  .sticker.hex{width:230px;height:230px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+    clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);
+    box-shadow:0 18px 34px -16px rgba(0,0,0,.75);}
+  .sticker.hex::before{content:"";position:absolute;inset:7px;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);border:2px solid color-mix(in srgb,var(--accent) 35%,transparent);}
+  .sticker.hex .m{width:96px;height:96px;}
+  .sticker.hex .wm{font-size:30px;}
+  .sticker.hex .wm b{color:var(--sticker-ink);}
+
+  .sticker.bracket{width:118px;height:118px;border-radius:26px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:54px;font-weight:800;color:var(--rig);transform:rotate(-5deg);}
+  .sticker.bracket b{color:var(--rig);font-size:34px;}
+  .sticker.tag{border-radius:14px;padding:14px 20px;font-size:20px;font-weight:700;display:flex;align-items:center;gap:10px;color:var(--sticker-ink);}
+  .sticker.tag .ok{color:var(--ship);}
+  .sticker.tag .d{color:var(--accent);}
+  .sticker.tag:nth-child(2){transform:rotate(3deg);}
+  .sticker.tag:nth-child(3){transform:rotate(-2deg);}
+  .sticker.tag:nth-child(4){transform:rotate(2deg);color:var(--accent);}
+
+  .note{text-align:center;color:var(--muted-2);font-size:12px;margin-top:30px;}
+</style>
+</head>
+<body>
+<a href="RigSmith Index.html" class="om-hublink" style="position:fixed;left:16px;bottom:16px;z-index:200;background:rgba(21,21,27,.82);backdrop-filter:blur(8px);border:1px solid #2a2a33;border-radius:999px;padding:7px 14px;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;color:#9a9aa4;text-decoration:none;">← Index</a>
+<div class="wrap">
+  <div class="page-head">
+    <div class="eyebrow">rigsmith.dev / swag</div>
+    <h1>Sticker Sheet</h1>
+    <p>Die-cut stickers for laptops and the conference booth. Same marks, white cut-line, scattered for that just-peeled feel.</p>
+  </div>
+
+  <section>
+    <div class="sec-head"><span class="k">01</span><h2>Mark stickers — die-cut circles</h2><span class="rule"></span></div>
+    <div class="row center" id="st-rounds"></div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="k">02</span><h2>Wordmark pills</h2><span class="rule"></span></div>
+    <div class="row center" id="st-pills"></div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="k">03</span><h2>Hero badge + extras</h2><span class="rule"></span></div>
+    <div class="row center" style="gap:46px;">
+      <span id="st-hero"></span>
+      <div class="row" style="max-width:440px;" id="st-fun"></div>
+    </div>
+  </section>
+
+  <div class="note">Stickers shown on dark for contrast · cut-line = white border · export each from the mark SVGs at 2–3in</div>
+</div>
+<script src="sticker.js"></script>
+</body>
+</html>

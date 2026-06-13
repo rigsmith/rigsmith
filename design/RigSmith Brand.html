@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RigSmith — Brand & Logo System</title>
+<link rel="icon" type="image/svg+xml" href="marks/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="marks.js"></script>
+<style>
+  :root{
+    --ink:#0E0E12;
+    --ink-2:#15151b;
+    --ink-3:#1c1c24;
+    --line:#26262f;
+    --line-soft:#1d1d25;
+    --paper:#ECECEE;
+    --muted:#7b7b87;
+    --muted-2:#52525c;
+    --rig:oklch(0.70 0.15 250);
+    --change:oklch(0.70 0.15 300);
+    --ship:oklch(0.70 0.15 150);
+    --claude:oklch(0.70 0.15 55);
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;background:var(--ink);color:var(--paper);
+    font-family:var(--mono);font-weight:400;
+    -webkit-font-smoothing:antialiased;line-height:1.6;
+    font-feature-settings:"liga" 0;
+  }
+  a{color:inherit;}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 40px;}
+  .eyebrow{font-size:12px;letter-spacing:0.22em;text-transform:uppercase;color:var(--muted);font-weight:500;}
+  .seclabel{
+    display:flex;align-items:center;gap:14px;
+    font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:var(--muted);
+    margin:0 0 40px;font-weight:500;
+  }
+  .seclabel .num{color:var(--rig);font-weight:700;}
+  .seclabel .rule{flex:1;height:1px;background:var(--line);}
+  section{padding:96px 0;border-top:1px solid var(--line-soft);}
+  h1,h2,h3{font-weight:700;margin:0;letter-spacing:-0.01em;line-height:1.1;}
+  .lede{color:var(--muted);max-width:62ch;font-size:15px;line-height:1.7;}
+
+  /* wordmark */
+  .wm{font-family:var(--mono);letter-spacing:-0.02em;white-space:nowrap;}
+  .wm b{font-weight:800;}
+  .wm .lite{font-weight:400;color:var(--muted);}
+
+  /* ---------- HERO ---------- */
+  .hero{
+    min-height:92vh;display:flex;flex-direction:column;justify-content:center;
+    border-top:none;padding:80px 0 96px;position:relative;overflow:hidden;
+  }
+  .hero .grid-bg{
+    position:absolute;inset:0;
+    background-image:linear-gradient(var(--line-soft) 1px,transparent 1px),linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);
+    background-size:64px 64px;
+    -webkit-mask-image:radial-gradient(ellipse 80% 70% at 50% 42%,#000 10%,transparent 75%);
+    mask-image:radial-gradient(ellipse 80% 70% at 50% 42%,#000 10%,transparent 75%);
+    opacity:.6;pointer-events:none;
+  }
+  .hero-inner{position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;gap:34px;}
+  .hero-lockup{display:flex;align-items:center;gap:28px;}
+  .hero-lockup svg{width:118px;height:118px;}
+  .hero-lockup .wm{font-size:76px;}
+  .hero-tag{font-size:17px;color:var(--muted);letter-spacing:0.01em;max-width:54ch;line-height:1.6;}
+  .hero-tag b{color:var(--paper);font-weight:600;}
+  .hero-tools{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:6px;}
+  .chip{
+    display:inline-flex;align-items:center;gap:9px;
+    border:1px solid var(--line);border-radius:999px;padding:8px 15px 8px 11px;
+    font-size:13.5px;color:var(--muted);
+  }
+  .chip svg{width:20px;height:20px;display:block;}
+  .chip b{font-weight:700;color:var(--paper);}
+  .scrollcue{position:absolute;bottom:26px;left:50%;transform:translateX(-50%);font-size:11px;letter-spacing:.2em;color:var(--muted-2);text-transform:uppercase;}
+
+  /* ---------- THE MARK ---------- */
+  .mark-feature{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center;}
+  .mark-stage{
+    aspect-ratio:1/1;border:1px solid var(--line);border-radius:20px;background:
+      radial-gradient(120% 120% at 50% 0%,var(--ink-2),var(--ink));
+    display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;
+  }
+  .mark-stage svg{width:54%;height:54%;}
+  .mark-stage .corner{position:absolute;font-size:11px;color:var(--muted-2);letter-spacing:.14em;}
+  h2.big{font-size:42px;margin-bottom:22px;}
+  .mark-copy p{color:var(--muted);font-size:15px;line-height:1.75;max-width:46ch;}
+  .mark-copy p+p{margin-top:18px;}
+  .mark-copy .key{color:var(--paper);font-weight:600;}
+  .meta-row{display:flex;gap:40px;margin-top:34px;flex-wrap:wrap;}
+  .meta-row .m .l{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted-2);}
+  .meta-row .m .v{font-size:14px;color:var(--paper);margin-top:5px;}
+
+  /* ---------- CONSTRUCTION ---------- */
+  .con-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;}
+  .con-card{border:1px solid var(--line);border-radius:16px;background:var(--ink-2);padding:26px;display:flex;flex-direction:column;gap:18px;}
+  .con-card .cap{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);}
+  .con-card .desc{font-size:13px;color:var(--muted);line-height:1.6;}
+  .con-vis{aspect-ratio:1/1;border-radius:10px;background:var(--ink);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;}
+  .con-vis svg{width:70%;height:70%;}
+
+  /* ---------- COLOR ---------- */
+  .swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;}
+  .sw{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--ink-2);}
+  .sw .chip-c{height:130px;display:flex;align-items:flex-end;padding:14px;}
+  .sw .chip-c svg{width:34px;height:34px;}
+  .sw .meta{padding:16px 16px 18px;}
+  .sw .name{font-weight:700;font-size:15px;}
+  .sw .role{font-size:12px;color:var(--muted);margin-top:3px;}
+  .sw .vals{margin-top:14px;display:flex;flex-direction:column;gap:5px;}
+  .sw .vals code{font-size:11.5px;color:var(--muted);letter-spacing:0;}
+  .neutrals{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:18px;}
+  .nsw{border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;align-items:center;gap:14px;}
+  .nsw .dot{width:42px;height:42px;border-radius:9px;border:1px solid var(--line);flex:none;}
+  .nsw .name{font-weight:600;font-size:14px;}
+  .nsw code{font-size:11.5px;color:var(--muted);}
+
+  /* ---------- FAMILY ---------- */
+  .fam{display:grid;grid-template-columns:repeat(2,1fr);gap:20px;}
+  .fam-card{border:1px solid var(--line);border-radius:18px;background:var(--ink-2);padding:30px;display:flex;gap:26px;align-items:center;position:relative;overflow:hidden;}
+  .fam-card .glow{position:absolute;width:240px;height:240px;border-radius:50%;right:-90px;top:-90px;filter:blur(50px);opacity:.18;}
+  .fam-card svg{width:84px;height:84px;flex:none;position:relative;}
+  .fam-card .fm .nm{font-size:24px;font-weight:400;letter-spacing:-.02em;}
+  .fam-card .fm .nm b{font-weight:800;}
+  .fam-card .fm .role{font-size:13px;color:var(--muted);margin-top:6px;}
+  .fam-card .fm .tag{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted-2);margin-top:14px;}
+
+  /* ---------- WORDMARK / LOCKUPS ---------- */
+  .lock-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+  .lock{border:1px solid var(--line);border-radius:16px;background:var(--ink-2);padding:40px;display:flex;flex-direction:column;align-items:center;gap:22px;min-height:230px;justify-content:center;}
+  .lock .tagc{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted-2);}
+  .lh{display:flex;align-items:center;gap:18px;}
+  .lh svg{width:60px;height:60px;}
+  .lh .wm{font-size:40px;}
+  .lv{display:flex;flex-direction:column;align-items:center;gap:14px;}
+  .lv svg{width:64px;height:64px;}
+  .lv .wm{font-size:30px;}
+  .type-spec{border:1px solid var(--line);border-radius:16px;background:var(--ink-2);padding:32px 36px;margin-top:20px;}
+  .type-spec .row{display:flex;justify-content:space-between;align-items:baseline;padding:16px 0;border-bottom:1px solid var(--line-soft);gap:20px;flex-wrap:wrap;}
+  .type-spec .row:last-child{border-bottom:none;}
+  .type-spec .sample{font-size:30px;}
+  .type-spec .note{font-size:12px;color:var(--muted);text-align:right;}
+
+  /* ---------- ICONS ---------- */
+  .icons-row{display:flex;align-items:flex-end;gap:30px;flex-wrap:wrap;}
+  .ic{display:flex;flex-direction:column;align-items:center;gap:12px;}
+  .ic .tile{background:var(--ink-2);border:1px solid var(--line);border-radius:22%;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  .ic .tile svg{width:64%;height:64%;}
+  .ic .sz{font-size:11px;color:var(--muted-2);}
+  .icon-note{margin-top:34px;display:grid;grid-template-columns:repeat(4,1fr);gap:18px;}
+  .icon-note .it{border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;align-items:center;gap:12px;background:var(--ink-2);}
+  .icon-note .it .lab{font-size:12px;color:var(--muted);}
+  .icon-note .it .box{width:62px;height:62px;border-radius:14px;display:flex;align-items:center;justify-content:center;}
+  .icon-note .it .box svg{width:62%;height:62%;}
+
+  /* ---------- USAGE ---------- */
+  .usage{display:grid;grid-template-columns:repeat(2,1fr);gap:20px;}
+  .use{border:1px solid var(--line);border-radius:16px;overflow:hidden;}
+  .use .head{padding:14px 18px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line);}
+  .use .head .tick{font-weight:700;}
+  .use.ok .tick{color:var(--ship);}
+  .use.no .tick{color:var(--change);}
+  .use .body{height:150px;display:flex;align-items:center;justify-content:center;gap:24px;}
+  .use .body svg{width:74px;height:74px;}
+  .use .cap{padding:0 18px 16px;font-size:12.5px;color:var(--muted);}
+
+  /* ---------- FOOTER ---------- */
+  footer{border-top:1px solid var(--line);padding:48px 0 64px;}
+  footer .row{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:20px;}
+  footer .wm{font-size:22px;}
+  footer .meta{font-size:12px;color:var(--muted-2);letter-spacing:.05em;}
+
+  @media(max-width:860px){
+    .wrap{padding:0 22px;}
+    .mark-feature{grid-template-columns:1fr;gap:36px;}
+    .con-grid{grid-template-columns:1fr;}
+    .swatches{grid-template-columns:repeat(2,1fr);}
+    .fam{grid-template-columns:1fr;}
+    .lock-grid,.usage{grid-template-columns:1fr;}
+    .neutrals,.icon-note{grid-template-columns:1fr 1fr;}
+    .hero-lockup{flex-direction:column;gap:18px;}
+    .hero-lockup .wm{font-size:52px;}
+    .hero-lockup svg{width:88px;height:88px;}
+    h2.big{font-size:32px;}
+  }
+</style>
+</head>
+<body>
+<a href="RigSmith Index.html" class="om-hublink" style="position:fixed;left:16px;bottom:16px;z-index:200;background:rgba(21,21,27,.82);backdrop-filter:blur(8px);border:1px solid #2a2a33;border-radius:999px;padding:7px 14px;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;color:#9a9aa4;text-decoration:none;">← Index</a>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <div class="grid-bg"></div>
+  <div class="wrap hero-inner">
+    <div class="eyebrow">RigSmith.dev — Logo System</div>
+    <div class="hero-lockup">
+      <svg id="hero-mark" viewBox="0 0 100 100" aria-label="RigSmith mark"></svg>
+      <span class="wm"><b>Rig</b>Smith</span>
+    </div>
+    <p class="hero-tag">One rig, four tools. A command-line family wired up from a single mark — the <b>bracket harness</b> that wraps every tool in the set.</p>
+    <div class="hero-tools" id="hero-chips"></div>
+  </div>
+  <div class="scrollcue">scroll ↓</div>
+</header>
+
+<!-- ===================== THE MARK ===================== -->
+<section>
+  <div class="wrap">
+    <div class="seclabel"><span class="num">01</span> The mark <span class="rule"></span></div>
+    <div class="mark-feature">
+      <div class="mark-stage">
+        <svg id="feat-mark" viewBox="0 0 100 100"></svg>
+        <span class="corner" style="left:16px;top:14px;">[</span>
+        <span class="corner" style="right:16px;top:14px;">]</span>
+        <span class="corner" style="left:16px;bottom:14px;">node</span>
+        <span class="corner" style="right:16px;bottom:14px;">harness</span>
+      </div>
+      <div class="mark-copy">
+        <h2 class="big">A harness,<br>not a hull.</h2>
+        <p>Every RigSmith tool lives inside a pair of <span class="key">brackets</span> — the rig that holds your setup together. It reads as code the instant you see it, and it's the one element that never changes across the family.</p>
+        <p>At the center sits the <span class="key">node</span>: the core <code>rig</code>. Each tool swaps that node for its own glyph, so the set stays unmistakably related while every member keeps its own identity.</p>
+        <div class="meta-row">
+          <div class="m"><div class="l">Construction</div><div class="v">Bracket + interior glyph</div></div>
+          <div class="m"><div class="l">Grid</div><div class="v">100 × 100, 8u stroke</div></div>
+          <div class="m"><div class="l">Min size</div><div class="v">16px</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== CONSTRUCTION ===================== -->
+<section>
+  <div class="wrap">
+    <div class="seclabel"><span class="num">02</span> Construction &amp; clearspace <span class="rule"></span></div>
+    <div class="con-grid">
+      <div class="con-card">
+        <div class="cap">Anatomy</div>
+        <div class="con-vis" id="con-anatomy"></div>
+        <div class="desc">Two brackets on a 100-unit grid, 8-unit stroke, rounded joins. The glyph occupies the central 30 units.</div>
+      </div>
+      <div class="con-card">
+        <div class="cap">Clearspace</div>
+        <div class="con-vis" id="con-clear"></div>
+        <div class="desc">Keep clearspace equal to one bracket arm on every side. Nothing crosses the boundary.</div>
+      </div>
+      <div class="con-card">
+        <div class="cap">Min size</div>
+        <div class="con-vis" id="con-min"></div>
+        <div class="desc">The mark holds down to 16px. Below that, use the solid tile so the glyph stays legible.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== COLOR ===================== -->
+<section>
+  <div class="wrap">
+    <div class="seclabel"><span class="num">03</span> Color <span class="rule"></span></div>
+    <p class="lede" style="margin-bottom:34px;">One accent per tool, all built on a shared <code>oklch(0.70&nbsp;0.15&nbsp;h)</code> — identical lightness and chroma, hue is the only variable. They sit together without one shouting over another.</p>
+    <div class="swatches" id="swatches"></div>
+    <div class="neutrals" id="neutrals"></div>
+  </div>
+</section>
+
+<!-- ===================== FAMILY ===================== -->
+<section>
+  <div class="wrap">
+    <div class="seclabel"><span class="num">04</span> The family <span class="rule"></span></div>
+    <div class="fam" id="fam"></div>
+  </div>
+</section>
+
+<!-- ===================== WORDMARK / LOCKUPS ===================== -->
+<section>
+  <div class="wrap">
+    <div class="seclabel"><span class="num">05</span> Wordmark &amp; lockups <span class="rule"></span></div>
+    <div class="lock-grid">
+      <div class="lock">
+        <div class="lh"><svg id="lock-h" viewBox="0 0 100 100"></svg><span class="wm" style="font-size:40px;"><b>Rig</b>Smith</span></div>
+        <div class="tagc">Horizontal lockup — primary</div>
+      </div>
+      <div class="lock">
+        <div class="lv"><svg id="lock-v" viewBox="0 0 100 100"></svg><span class="wm" style="font-size:30px;"><b>Rig</b>Smith</span></div>
+        <div class="tagc">Stacked lockup</div>
+      </div>
+    </div>
+    <div class="type-spec">
+      <div class="row"><span class="wm sample"><b>Rig</b>Smith</span><span class="note">JetBrains Mono · <b>Rig</b> 800 / Smith 400<br>house wordmark</span></div>
+      <div class="row"><span class="wm sample lite">change<b style="color:var(--paper)">Rig</b></span><span class="note">tool wordmarks — prefix 400 muted,<br><b>Rig</b> suffix 800 paper</span></div>
+      <div class="row"><span class="wm sample lite">ship<b style="color:var(--paper)">Rig</b></span><span class="note">camelCase, lowercase prefix<br>never break the word</span></div>
+      <div class="row"><span class="wm sample lite">claude<b style="color:var(--paper)">Rig</b></span><span class="note">the <b>Rig</b> suffix is the<br>family signature</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ICONS ===================== -->
+<section>
+  <div class="wrap">
+    <div class="seclabel"><span class="num">06</span> App icons &amp; favicons <span class="rule"></span></div>
+    <div class="icons-row" id="icons-row"></div>
+    <div class="icon-note" id="icon-tiles"></div>
+  </div>
+</section>
+
+<!-- ===================== USAGE ===================== -->
+<section>
+  <div class="wrap">
+    <div class="seclabel"><span class="num">07</span> Usage <span class="rule"></span></div>
+    <div class="usage" id="usage"></div>
+  </div>
+</section>
+
+<!-- ===================== FOOTER ===================== -->
+<footer>
+  <div class="wrap row">
+    <span class="wm"><b>Rig</b>Smith</span>
+    <span class="meta">RigSmith.dev · logo system v1 · 2026</span>
+  </div>
+</footer>
+
+<script src="brand.js"></script>
+</body>
+</html>

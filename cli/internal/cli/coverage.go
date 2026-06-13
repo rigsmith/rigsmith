@@ -24,8 +24,8 @@ import (
 // Styles for coverage/doctor result lines. Kept local to avoid touching the
 // shared root.go; dimStyle there is reused for the muted details.
 var (
-	okStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // green
-	failStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // red
+	okStyle   = lipgloss.NewStyle().Foreground(brandGreen)
+	failStyle = lipgloss.NewStyle().Foreground(brandRed)
 )
 
 // newCoverageCmd builds `rig coverage [name]` — run the ecosystem's coverage

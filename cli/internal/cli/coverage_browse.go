@@ -253,11 +253,11 @@ func nodeDisplayPath(sf, root string) string {
 // ---- the browser (bubbletea) -------------------------------------------
 
 var (
-	covCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
-	covGutterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	covMissBgStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	covHitMark     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("│")
-	covMissMark    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("│")
+	covCursorStyle = lipgloss.NewStyle().Foreground(brandCyan).Bold(true)
+	covGutterStyle = lipgloss.NewStyle().Foreground(brandMuted)
+	covMissBgStyle = lipgloss.NewStyle().Foreground(brandRed)
+	covHitMark     = lipgloss.NewStyle().Foreground(brandGreen).Render("│")
+	covMissMark    = lipgloss.NewStyle().Foreground(brandRed).Render("│")
 )
 
 // covBrowser is the bubbletea model: a selectable file list that drills into a

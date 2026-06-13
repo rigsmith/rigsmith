@@ -106,7 +106,7 @@ type allModel struct {
 func newAllModel(verb string, tasks []allTask, cancel context.CancelFunc) allModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	sp.Style = lipgloss.NewStyle().Foreground(brandCyan)
 	rows := make([]allRow, len(tasks))
 	for i, t := range tasks {
 		rows[i] = allRow{task: t}
@@ -161,9 +161,9 @@ func (m allModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 var (
-	allDoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-	allFailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	allDimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	allDoneStyle = lipgloss.NewStyle().Foreground(brandGreen).Bold(true)
+	allFailStyle = lipgloss.NewStyle().Foreground(brandRed).Bold(true)
+	allDimStyle  = lipgloss.NewStyle().Foreground(brandMuted)
 )
 
 func (m allModel) View() string {

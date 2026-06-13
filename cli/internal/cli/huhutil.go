@@ -18,12 +18,12 @@ func huhEscKeyMap() *huh.KeyMap {
 // returns the form error (huh.ErrUserAborted on esc/ctrl+c), so callers treat
 // any non-nil error as "cancelled".
 func runHuhSelect[T comparable](sel *huh.Select[T]) error {
-	return huh.NewForm(huh.NewGroup(sel)).WithKeyMap(huhEscKeyMap()).Run()
+	return huh.NewForm(huh.NewGroup(sel)).WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme()).Run()
 }
 
 // runHuhMultiSelect runs a single multi-select with esc-to-cancel. huh's
 // default keymap already provides ctrl+a (select all/none, a toggle) and `/`
 // (filter), which coexist; advertise them in the field title where useful.
 func runHuhMultiSelect[T comparable](ms *huh.MultiSelect[T]) error {
-	return huh.NewForm(huh.NewGroup(ms)).WithKeyMap(huhEscKeyMap()).Run()
+	return huh.NewForm(huh.NewGroup(ms)).WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme()).Run()
 }
