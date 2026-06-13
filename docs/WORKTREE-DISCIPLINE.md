@@ -66,6 +66,11 @@ clauderig project uninstall # remove it
 broader pattern already covers it), so a personal hook can't be committed by
 accident.
 
+`clauderig doctor` verifies all of this — guard installed, CLAUDE.md guide
+present, local settings gitignored, plus the environment (`git`/`gh`/`code`, and
+whether `clauderig` itself is on `PATH` so the hooks actually run) — and offers to
+fix what it can (`--fix`, or pick interactively).
+
 `project install` is the one-shot "protect this repo": it wires the guard at
 **project** scope (`<repo>/.claude/settings.json`) — commit it and your team
 inherits it (Claude Code asks to trust a project hook the first time) — and drops

@@ -15,7 +15,7 @@ clauderig restore              # pull → rewrite slugs for this OS → merge (k
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)
 clauderig status               # remote reachability, last sync, per-root counts, hooks
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
-clauderig doctor               # preview path resolution + sync roots for this machine
+clauderig doctor               # health-check env + sync + worktree discipline (--fix to repair)
 clauderig global install       # global sync hooks in ~/.claude (alias: clauderig hooks install)
 clauderig project install      # protect THIS repo: guard hook + CLAUDE.md guide (committed)
 clauderig local install        # same, but gitignored to this checkout
@@ -69,7 +69,7 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `worktree` | `new` / `list` / `open` / `rm` sibling worktrees, opened in their own VS Code window |
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md block standalone (e.g. `--global`) |
 | `config` | `show` / `set-remote` / `set-prune` |
-| `doctor` | Preview path resolution + roots for this machine |
+| `doctor` | Health-check environment + sync + worktree discipline; `--fix` repairs, or pick fixes interactively |
 | `ui` | Interactive dashboard |
 
 See [docs/CLAUDERIG-DESIGN.md](../docs/CLAUDERIG-DESIGN.md) for the design and
