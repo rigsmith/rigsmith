@@ -182,13 +182,13 @@ func TestResolveFromCommitsSkipsEmptySha(t *testing.T) {
 
 func TestResolveAuthorsCommitModeUsesKnownSha(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
-		{name: "git", marker: "show", output: "Pooya Parsa\x1fpooya@pi0.io"},
+		{name: "git", marker: "show", output: "Pooya Parsa\x1fpooya@pi0.io\x1f"},
 	}}
 	// commit mode: the SHA is known, so no archaeology; no repo → no gh login.
 	got := ResolveAuthors([]string{"abc1234"}, map[string]string{"abc1234": "abc1234567890"}, "", "/repo", runner.run)
-	want := map[string]plugin.Author{"abc1234": {Name: "Pooya Parsa", Email: "pooya@pi0.io"}}
-	if len(got) != 1 || got["abc1234"] != want["abc1234"] {
-		t.Errorf("ResolveAuthors = %+v, want %+v", got, want)
+	want := []plugin.Author{{Name: "Pooya Parsa", Email: "pooya@pi0.io"}}
+	if !reflect.DeepEqual(got["abc1234"], want) {
+		t.Errorf("ResolveAuthors = %+v, want %+v", got["abc1234"], want)
 	}
 }
 
@@ -196,13 +196,30 @@ func TestResolveAuthorsFileModeLooksUpAddingCommitAndLogin(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		// file mode: find the commit that added the changeset, then read its author.
 		{name: "git", marker: "--diff-filter=A", output: "deadbee1234567"},
-		{name: "git", marker: "show", output: "Jane Doe\x1fjane@example.com"},
+		{name: "git", marker: "show", output: "Jane Doe\x1fjane@example.com\x1f"},
 		{name: "gh", marker: ".author.login", output: "janedoe"},
 	}}
 	got := ResolveAuthors([]string{"brave-otters-dance"}, nil, "acme/widgets", "/repo", runner.run)
-	want := plugin.Author{Name: "Jane Doe", Email: "jane@example.com", Login: "janedoe"}
-	if got["brave-otters-dance"] != want {
+	want := []plugin.Author{{Name: "Jane Doe", Email: "jane@example.com", Login: "janedoe"}}
+	if !reflect.DeepEqual(got["brave-otters-dance"], want) {
 		t.Errorf("ResolveAuthors = %+v, want %+v", got["brave-otters-dance"], want)
+	}
+}
+
+func TestResolveAuthorsIncludesCoAuthors(t *testing.T) {
+	body := "Some body text.\n\nCo-authored-by: Pooya Parsa <pooya@pi0.io>\nco-authored-by: Bob <bob@example.com>"
+	runner := &fakeRunner{responses: []fakeResponse{
+		{name: "git", marker: "show", output: "Jannchie\x1fjannchie@gmail.com\x1f" + body},
+		{name: "gh", marker: ".author.login", output: "jannchie"}, // login only on the commit author
+	}}
+	got := ResolveAuthors([]string{"id"}, map[string]string{"id": "abc1234567890"}, "acme/widgets", "/repo", runner.run)
+	want := []plugin.Author{
+		{Name: "Jannchie", Email: "jannchie@gmail.com", Login: "jannchie"},
+		{Name: "Pooya Parsa", Email: "pooya@pi0.io"},
+		{Name: "Bob", Email: "bob@example.com"},
+	}
+	if !reflect.DeepEqual(got["id"], want) {
+		t.Errorf("ResolveAuthors with co-authors = %+v, want %+v", got["id"], want)
 	}
 }
 

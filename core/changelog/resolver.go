@@ -2,6 +2,7 @@
 package changelog
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -94,17 +95,19 @@ func ResolveFromCommits(idToSHA map[string]string, setting Setting, dir string, 
 	return result
 }
 
-// ResolveAuthors finds the author of the provenance commit behind each
-// changeset id, for the "Contributors" section. knownSHA supplies the source
-// commit for commit-derived changesets (where the commit IS the provenance);
-// for on-disk changesets the commit that added the file is looked up. Each SHA
-// is resolved once. The git author name/email always resolves (offline); when a
-// repo slug is given, the GitHub login is additionally resolved via `gh api` so
-// the contributor can be linked to their GitHub page (failure leaves it empty,
-// rendering the bare name). An id whose author can't be resolved is omitted.
-func ResolveAuthors(ids []string, knownSHA map[string]string, repo, dir string, run Runner) map[string]plugin.Author {
-	result := map[string]plugin.Author{}
-	bySHA := map[string]plugin.Author{}
+// ResolveAuthors finds the authors of the provenance commit behind each
+// changeset id, for the "Contributors" section: the commit author first, then
+// any `Co-authored-by:` trailers. knownSHA supplies the source commit for
+// commit-derived changesets (where the commit IS the provenance); for on-disk
+// changesets the commit that added the file is looked up. Each SHA is resolved
+// once. Names/emails always resolve (offline); when a repo slug is given the
+// commit author's GitHub login is additionally resolved via `gh api` so they can
+// be linked to their GitHub page (co-author logins are not resolved — they
+// render as bare names, or pick up a login when they appear as the author of
+// another commit and merge by email). An id with no resolvable author is omitted.
+func ResolveAuthors(ids []string, knownSHA map[string]string, repo, dir string, run Runner) map[string][]plugin.Author {
+	result := map[string][]plugin.Author{}
+	bySHA := map[string][]plugin.Author{}
 	for _, id := range ids {
 		sha := knownSHA[id]
 		if sha == "" {
@@ -113,41 +116,53 @@ func ResolveAuthors(ids []string, knownSHA map[string]string, repo, dir string, 
 		if sha == "" {
 			continue
 		}
-		a, ok := bySHA[sha]
+		authors, ok := bySHA[sha]
 		if !ok {
-			a = authorOfCommit(run, dir, sha)
-			if repo != "" {
+			authors = authorsOfCommit(run, dir, sha)
+			if repo != "" && len(authors) > 0 {
 				if login := authorForCommit(run, dir, repo, sha); login != "" {
-					a.Login = login
+					authors[0].Login = login // the commit author is first
 				}
 			}
-			bySHA[sha] = a
+			bySHA[sha] = authors
 		}
-		if a.Name == "" && a.Login == "" {
-			continue
+		if len(authors) > 0 {
+			result[id] = authors
 		}
-		result[id] = a
 	}
 	return result
 }
 
-// authorOfCommit reads the git author name and email of a commit. Email is used
-// only for de-duplication and exclude-matching; it is never rendered.
-func authorOfCommit(run Runner, dir, sha string) plugin.Author {
-	out, err := run(dir, "git", "show", "-s", "--format=%an\x1f%ae", sha)
+// coAuthorRe matches a `Co-authored-by: Name <email>` trailer (one per line,
+// case-insensitive), mirroring changelogen's CoAuthoredByRegex.
+var coAuthorRe = regexp.MustCompile(`(?im)^\s*co-authored-by:\s*(.+?)\s*<(.+?)>\s*$`)
+
+// authorsOfCommit reads a commit's author and its Co-authored-by trailers. The
+// commit author is returned first. Emails are used only for de-duplication and
+// exclude-matching; they are never rendered.
+func authorsOfCommit(run Runner, dir, sha string) []plugin.Author {
+	// %b (the body) is last so it can contain newlines without breaking the split.
+	out, err := run(dir, "git", "show", "-s", "--format=%an\x1f%ae\x1f%b", sha)
 	if err != nil {
-		return plugin.Author{}
+		return nil
 	}
-	line := strings.TrimSpace(out)
-	if i := strings.IndexByte(line, '\n'); i >= 0 {
-		line = line[:i]
+	parts := strings.SplitN(strings.TrimRight(out, "\n"), "\x1f", 3)
+	if len(parts) < 2 {
+		return nil
 	}
-	parts := strings.SplitN(line, "\x1f", 2)
-	a := plugin.Author{Name: strings.TrimSpace(parts[0])}
-	if len(parts) == 2 {
-		a.Email = strings.TrimSpace(parts[1])
+	var authors []plugin.Author
+	if name, email := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]); name != "" || email != "" {
+		authors = append(authors, plugin.Author{Name: name, Email: email})
 	}
-	return a
+	if len(parts) == 3 {
+		for _, m := range coAuthorRe.FindAllStringSubmatch(parts[2], -1) {
+			name, email := strings.TrimSpace(m[1]), strings.TrimSpace(m[2])
+			if name != "" || email != "" {
+				authors = append(authors, plugin.Author{Name: name, Email: email})
+			}
+		}
+	}
+	return authors
 }
 
 // shortSHA abbreviates a full commit SHA to git's conventional 7 characters,

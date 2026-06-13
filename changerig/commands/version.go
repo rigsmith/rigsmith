@@ -302,36 +302,50 @@ func attachContributors(cmd *cobra.Command, ws *Workspace, plan []*planner.Modul
 			known[cs.ID] = cs.Commit
 		}
 	}
-	authorByID := changelog.ResolveAuthors(ids, known, repo, ws.Root, execRunner(cmd))
+	authorsByID := changelog.ResolveAuthors(ids, known, repo, ws.Root, execRunner(cmd))
 	section := ws.Config.Contributors.SectionHeading()
 
 	for _, m := range plan {
-		var list []plugin.Author
-		seen := map[string]bool{}
+		// Collect this package's contributors (commit author + any co-authors of
+		// every changeset naming it), de-duplicated by identity. The email is the
+		// merge key (most stable across name spellings); a later occurrence that
+		// carries a GitHub login upgrades an earlier bare entry — so a co-author
+		// who is elsewhere a commit author still gets linked.
+		byKey := map[string]*plugin.Author{}
+		var order []string
 		for _, cs := range active {
 			if !changesetNames(cs, m.Name) {
 				continue
 			}
-			a, ok := authorByID[cs.ID]
-			if !ok {
-				continue
+			for _, a := range authorsByID[cs.ID] {
+				if ws.Config.Contributors.IsContributorExcluded(a.Login, a.Name, a.Email) {
+					continue
+				}
+				key := contributorKey(a)
+				if existing, ok := byKey[key]; ok {
+					if existing.Login == "" && a.Login != "" {
+						existing.Login = a.Login
+					}
+					if existing.Name == "" {
+						existing.Name = a.Name
+					}
+					continue
+				}
+				// Drop the email before it reaches the changelog — it is never rendered.
+				byKey[key] = &plugin.Author{Name: a.Name, Login: a.Login}
+				order = append(order, key)
 			}
-			if ws.Config.Contributors.IsContributorExcluded(a.Login, a.Name, a.Email) {
-				continue
-			}
-			key := contributorKey(a)
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			// Drop the email before it reaches the changelog — it is never rendered.
-			list = append(list, plugin.Author{Name: a.Name, Login: a.Login})
+		}
+		if len(order) == 0 {
+			continue
+		}
+		list := make([]plugin.Author, 0, len(order))
+		for _, k := range order {
+			list = append(list, *byKey[k])
 		}
 		sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
-		if len(list) > 0 {
-			m.Contributors = list
-			m.ContributorsSection = section
-		}
+		m.Contributors = list
+		m.ContributorsSection = section
 	}
 }
 
@@ -345,15 +359,15 @@ func changesetNames(cs *changeset.Changeset, name string) bool {
 	return false
 }
 
-// contributorKey is the de-duplication key for an author: GitHub login when
-// known, else email, else name (all lowered) — so the same person via different
-// commits collapses to one entry.
+// contributorKey is the de-duplication key for an author: email when known (the
+// most stable identity across name spellings and the only thing a co-author and
+// their own commits reliably share), else GitHub login, else name — all lowered.
 func contributorKey(a plugin.Author) string {
 	switch {
-	case a.Login != "":
-		return "login:" + strings.ToLower(a.Login)
 	case a.Email != "":
 		return "email:" + strings.ToLower(a.Email)
+	case a.Login != "":
+		return "login:" + strings.ToLower(a.Login)
 	default:
 		return "name:" + strings.ToLower(a.Name)
 	}

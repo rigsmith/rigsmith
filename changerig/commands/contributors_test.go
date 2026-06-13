@@ -80,6 +80,45 @@ func TestAttachContributorsCommitMode(t *testing.T) {
 	})
 }
 
+// TestAttachContributorsIncludesCoAuthors: a commit with a Co-authored-by
+// trailer credits both the author and the co-author (sorted by name).
+func TestAttachContributorsIncludesCoAuthors(t *testing.T) {
+	dir := initGoRepo(t, "example.com/a", "v1.0.0")
+	writeF(t, filepath.Join(dir, "feature.go"), "package main\n")
+	gitCmd(t, dir, "add", "-A")
+	gitCmd(t, dir, "commit", "-m", "feat: pair feature\n\nCo-authored-by: Ada Lovelace <ada@example.com>")
+
+	cfg, err := config.Parse([]byte(`{"versioning":{"source":"commits"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Contributors = config.Contributors{Enabled: true}
+	ws := &Workspace{Root: dir, ChangesetDir: filepath.Join(dir, ".changeset"), Config: cfg, Registry: ecosystem.Default()}
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	pkgs, _, _ := ws.Discover(context.Background())
+	sets, _, _ := ws.LoadChangesets(context.Background(), pkgs)
+	plan := planner.Plan(sets, pkgs, ws.Config)
+	attachContributors(cmd, ws, plan, sets, changelog.Setting{Kind: changelog.KindDefault})
+
+	m := findModuleByName(plan, "example.com/a")
+	if m == nil {
+		t.Fatal("expected example.com/a in plan")
+	}
+	var names []string
+	for _, a := range m.Contributors {
+		names = append(names, a.Name)
+		if a.Email != "" {
+			t.Errorf("email leaked into changelog: %q", a.Email)
+		}
+	}
+	// Sorted by name: "Ada Lovelace" before "Test".
+	if len(names) != 2 || names[0] != "Ada Lovelace" || names[1] != "Test" {
+		t.Errorf("contributors = %v, want [Ada Lovelace Test]", names)
+	}
+}
+
 func findModuleByName(plan []*planner.Module, name string) *planner.Module {
 	for _, m := range plan {
 		if m.Name == name {

@@ -224,8 +224,9 @@ section last:
 
 Emails are used only for de-duplication and `exclude` matching — they are never
 rendered. Authors are linked to their GitHub page when a login resolved, bare
-name otherwise. (Per-commit `Co-authored-by:` trailers are not yet collected — a
-possible follow-up.)
+name otherwise. `Co-authored-by:` trailers are credited too (one step beyond
+changelogen, which parses but doesn't list them); a co-author is linked when
+they also appear as the author of another commit and merge by email.
 
 ### Require-conventional-commit CI gate
 
