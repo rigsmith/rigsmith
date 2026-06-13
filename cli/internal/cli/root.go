@@ -82,7 +82,7 @@ func Execute(ctx context.Context) error {
 		newOutdatedCmd(),
 		newUpgradeCmd(),
 		verbCmd("global", "Install a global tool", "g"),
-		verbCmd("dlx", "Run a tool once without installing", "x"),
+		newDlxCmd(),
 		newWatchCmd(),
 		newRigInitCmd(),
 		newInfoCmd(),

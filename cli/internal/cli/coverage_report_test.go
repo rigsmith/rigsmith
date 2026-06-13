@@ -12,32 +12,34 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ---- persisted "remember" choice ---------------------------------------
+// ---- ReportGenerator's extTool wiring (persist + mode) -----------------
 
-func TestPersistRGMode_RoundTrips(t *testing.T) {
+func TestReportGeneratorPersist_RoundTrips(t *testing.T) {
 	root := t.TempDir()
 	cmd := &cobra.Command{}
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	persistRGMode(cmd, root, "download")
+	// persist writes to RG's own config key (coverage.reportGenerator).
+	toolReportGenerator.persist(cmd, root, toolInstall)
 
 	cfg, _ := config.LoadMerged(root)
-	if cfg.Coverage == nil || cfg.Coverage.ReportGenerator != "download" {
-		t.Fatalf("expected coverage.reportGenerator=download, got %+v", cfg.Coverage)
+	if cfg.Coverage == nil || cfg.Coverage.ReportGenerator != "install" {
+		t.Fatalf("expected coverage.reportGenerator=install, got %+v", cfg.Coverage)
 	}
 }
 
-// ---- rgMode / buildReportGeneratorArgs ---------------------------------
-
-func TestRGMode(t *testing.T) {
-	cases := map[string]string{"": "auto", "auto": "auto", "AUTO": "auto", "off": "off", "Off": "off", "download": "download", "weird": "auto"}
-	for in, want := range cases {
-		if got := rgMode(&config.Coverage{ReportGenerator: in}); got != want {
-			t.Errorf("rgMode(%q) = %q, want %q", in, got, want)
-		}
+func TestReportGeneratorMode(t *testing.T) {
+	root := t.TempDir()
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	// No config → auto; the readMode hook reads coverage.reportGenerator.
+	if got := toolReportGenerator.mode(root); got != toolAuto {
+		t.Errorf("default mode = %q, want auto", got)
 	}
-	if got := rgMode(nil); got != "auto" {
-		t.Errorf("rgMode(nil) = %q, want auto", got)
+	toolReportGenerator.persist(cmd, root, toolOff)
+	if got := toolReportGenerator.mode(root); got != toolOff {
+		t.Errorf("after persist off, mode = %q, want off", got)
 	}
 }
 

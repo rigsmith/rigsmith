@@ -62,6 +62,11 @@ func runWatchVerb(cmd *cobra.Command, verb string, rest []string) error {
 	if !ok {
 		return fmt.Errorf("watch %q is not supported for ecosystem %q", verb, eco)
 	}
+	if eco == detect.Cargo {
+		if _, err := toolCargoWatch.require(cmd, root); err != nil {
+			return err
+		}
+	}
 	return runCommand(cmd, dir, append(argv, forwarded...))
 }
 

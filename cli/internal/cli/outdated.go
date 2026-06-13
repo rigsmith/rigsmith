@@ -52,6 +52,11 @@ func newOutdatedCmd() *cobra.Command {
 // runPlainOutdated runs the ecosystem's outdated command and streams it — the
 // non-interactive default.
 func runPlainOutdated(cmd *cobra.Command, eco, root string, args []string) error {
+	if eco == detect.Cargo {
+		if _, err := toolCargoOutdated.require(cmd, root); err != nil {
+			return err
+		}
+	}
 	argv, ok := detect.CommandFor(eco, "outdated", root)
 	if !ok {
 		return fmt.Errorf("verb %q has no mapping for ecosystem %q yet", "outdated", eco)
