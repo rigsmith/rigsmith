@@ -142,7 +142,11 @@ func ColorSchemeFunc(accent lipgloss.AdaptiveColor) func(lgv2.LightDarkFunc) fan
 		cs.Help = pick(Muted)         // the bottom help hint
 		cs.Dash = pick(Muted)
 		cs.ErrorDetails = pick(Red)
-		cs.ErrorHeader = [2]color.Color{lgv2.Color(Paper.Dark), pick(Red)}
+		// The "ERROR" badge is a filled block behind bright text, so it always
+		// wants the deep red (Red.Light, #B63132) regardless of terminal
+		// background — the light coral Red.Dark reads as pink when used as a
+		// solid background fill. Bright paper text keeps it legible on both.
+		cs.ErrorHeader = [2]color.Color{lgv2.Color(Paper.Dark), lgv2.Color(Red.Light)}
 		return cs
 	}
 }
