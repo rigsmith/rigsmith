@@ -100,8 +100,9 @@ another verb under them.
 ## `clauderig worktree` — the safe way to branch
 
 ```sh
-clauderig worktree new <branch>   # sibling checkout off the repo's mainline + new review window
-clauderig worktree new fix/x --base release-1 --no-open
+clauderig worktree new <branch>   # sibling checkout off the repo's mainline (prints the path)
+clauderig worktree new <branch> --open    # …and open a review window for this run
+clauderig worktree new fix/x --base release-1
 clauderig worktree list           # ls this repo's worktrees (alias: ls)
 clauderig worktree open <branch>  # (re)open a worktree's window for review (branch or path)
 clauderig worktree rm <branch>    # remove the worktree (branch is kept; -f if it has changes)
@@ -114,12 +115,15 @@ so they never clutter the primary checkout's file tree, and each has its own fol
 path (its own review-window history). The branch name is sanitized to one path
 segment, so `feat/x` lands in `…-worktrees/feat-x` (not a nested `feat/x`).
 
-`new` **never moves this session's cwd**: it adds the worktree, prints the path,
-and opens it in a *separate* window for review. Flags:
+`new` **never moves this session's cwd**: it adds the worktree and prints the
+path. By default it does **not** open a window — opening is opt-in (per run with
+`--open`, or always via the `worktree.autoOpen` config). Flags:
 
 - `--base <branch>` — fork the new branch from `<branch>` instead of the repo's
   mainline. If the branch already exists, it's checked out as-is (no `--base`).
-- `--no-open` — skip the review window for this run and just print the path.
+- `--open` — open the review window for this run (overrides the config default).
+- `--no-open` — skip the review window for this run, even when `worktree.autoOpen`
+  is on. (Mutually exclusive with `--open`.)
 
 `open` takes either a branch name (resolved to its sibling path) or a path
 directly, so you can re-open a window any time. `rm` removes the checkout but
@@ -128,11 +132,12 @@ uncommitted changes.
 
 ### Configuring the review window
 
-Auto-open and *what* gets opened are configurable — by default `new` opens a new
-VS Code window (`code -n <path>`). Override either in `~/.clauderig/config.json`:
+Auto-open and *what* gets opened are configurable. By default `new` does **not**
+open a window; opt in with `worktree.autoOpen`, and set `worktree.openCmd` to
+choose the opener (default `code -n <path>`). Configure in `~/.clauderig/config.json`:
 
 ```sh
-clauderig config set worktree.autoOpen false      # never auto-open (like --no-open every time)
+clauderig config set worktree.autoOpen true       # always auto-open (like --open every time)
 clauderig config set worktree.openCmd "cursor -n"  # open Cursor instead of VS Code
 clauderig config set worktree.openCmd "code-insiders -n"
 clauderig config set worktree.openCmd ""           # reset to the default (code -n)
@@ -142,15 +147,16 @@ This writes a `worktree` block:
 
 ```json
 "worktree": {
-  "autoOpen": false,
+  "autoOpen": true,
   "openCmd": "cursor -n"
 }
 ```
 
-- **`autoOpen`** (default `true`) — whether `new` opens a window at all. When
-  off, `new` just prints the path and the `code -n …` hint; `--no-open` is the
-  per-run equivalent. (`worktree open` is an explicit request and always opens,
-  regardless of this setting.)
+- **`autoOpen`** (default `false`) — whether `new` opens a window at all. When
+  off (the default), `new` just prints the path and the `code -n …` hint; `--open`
+  opens it for a single run. When on, `--no-open` skips it for a single run.
+  (`worktree open` is an explicit request and always opens, regardless of this
+  setting.)
 - **`openCmd`** (default `code -n`) — the program plus any flags. The worktree
   path is appended as the final argument and the command is run **directly, with
   no shell**, so pipes/globs/quotes aren't interpreted. Examples: `code -n`,

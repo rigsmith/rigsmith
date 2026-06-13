@@ -62,12 +62,12 @@ type Root struct {
 
 // Worktree configures `clauderig worktree`. It's a pointer on Config so an
 // unconfigured install serializes nothing here and falls through to the
-// defaults (auto-open in a new VS Code window).
+// defaults (no auto-open; just print the path and review hint).
 type Worktree struct {
 	// AutoOpen controls whether `worktree new` opens the new sibling checkout in
-	// a separate window for review. Defaults to true; set false to just print the
-	// path (the per-run equivalent is `worktree new --no-open`). It's a pointer so
-	// an explicit false is distinguishable from "unset" (which means the default).
+	// a separate window for review. Defaults to false (opt-in); set true to open
+	// automatically (the per-run equivalent is `worktree new --open`). It's a
+	// pointer so an explicit value is distinguishable from "unset" (the default).
 	AutoOpen *bool `json:"autoOpen,omitempty"`
 	// OpenCmd is the command used to open a worktree for review. The worktree path
 	// is appended as the final argument, so the value is the program plus any
@@ -103,12 +103,12 @@ type Config struct {
 var DefaultWorktreeOpenCmd = []string{"code", "-n"}
 
 // WorktreeAutoOpen reports whether `worktree new` should open a review window.
-// Defaults to true when unset.
+// Defaults to false (opt-in) when unset.
 func (c *Config) WorktreeAutoOpen() bool {
 	if c.Worktree != nil && c.Worktree.AutoOpen != nil {
 		return *c.Worktree.AutoOpen
 	}
-	return true
+	return false
 }
 
 // WorktreeOpenCmd returns the configured open command as argv (program + flags),

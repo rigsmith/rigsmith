@@ -36,8 +36,8 @@ func TestDefault(t *testing.T) {
 
 func TestWorktreeDefaults(t *testing.T) {
 	c := Default() // Worktree unset
-	if !c.WorktreeAutoOpen() {
-		t.Error("auto-open should default to true when unset")
+	if c.WorktreeAutoOpen() {
+		t.Error("auto-open should default to false (opt-in) when unset")
 	}
 	if got := c.WorktreeOpenCmd(); len(got) != 2 || got[0] != "code" || got[1] != "-n" {
 		t.Errorf("open cmd default = %v, want [code -n]", got)
