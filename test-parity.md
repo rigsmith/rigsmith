@@ -48,15 +48,15 @@ the **Parity corpus** section at the bottom — it's the highest-leverage item.
 | Area | .NET tests | Go status |
 |---|---:|---|
 | **core: semver** | 17 | ✅ done |
-| **core: changeset parse/render** | 7 | ✅ done (interop N/A; polyglot cleanup TODO) |
+| **core: changeset parse/render** | 7 | ✅ done (interop N/A; polyglot cleanup done) |
 | **core: planner (cascade/group)** | 20 | ✅ done |
 | **core: release/pre/snapshot planning** | 14 | ✅ done |
 | **core: changelog rendering/formatter** | 43 | ✅ done (built `core/mdfmt` + `core/changelog`) |
-| **core: dotnet ecosystem (csproj)** | 13 | 🟡 (3 left: shared-props write, strategy ×2) |
+| **core: dotnet ecosystem (csproj)** | 13 | ✅ done |
 | **core: node ecosystem (workspaces)** | 7 | ✅ done |
 | **core: config / git / prestate / since** | 19 | ✅ done |
 | **changerig: CLI commands** | 47 | ✅ done (cmdtest, 31 tests; TTY/interop N/A) |
-| **relrig: release pipeline + publish** | 68 | ✅ done (53 ported; NuGet-protocol units deferred) |
+| **relrig: release pipeline + publish** | 68 | ✅ done (53 ported; NuGet-protocol units N/A — no native feed client) |
 | **rig: config/jsonc/dotenv/discovery** | ~90 | ✅ done |
 | **rig: verb logic / matching** | ~70 | ✅ done (CIM/real-assembly/TTY cases N/A) |
 | **NEW in Go (no .NET ancestor)** | — | ✅ ranges, gomod, cargo, walkutil, topo-sort |
@@ -92,9 +92,19 @@ the **Parity corpus** section at the bottom — it's the highest-leverage item.
 - ⛔ `Cleanup_PureDotnetInteropFile_IsDeleted` — N/A
 - ⛔ `Cleanup_MixedSharedMd_StripsDotnetKeepsNode` — N/A
 - ⛔ `Cleanup_MixedInteropFile_RenamedToMdWithNodeRemainder` — N/A
-- ⛔ `Cleanup_PureNodeMd_IsLeftUntouched` — N/A (but a polyglot "remove processed
-      changeset" test is still needed — see TODO below)
-- [ ] **NEW:** polyglot changeset cleanup (remove fully-consumed, keep partial)
+- ⛔ `Cleanup_PureNodeMd_IsLeftUntouched` — N/A (replaced by the polyglot
+      consumed-vs-kept semantics below)
+- [x] **NEW:** polyglot changeset cleanup → `planner.PartitionChangesets`
+      (`core/planner/partition_test.go` ×4) + cmdtest
+      `TestVersionKeepsIgnoredOnlyChangeset` / `TestVersionMixedIgnoredChangesetFails`
+      / `TestVersionUnknownPackageChangesetFails`. Node-verified (live
+      @changesets v3.0.0-next.5): there is no "partial rewrite" — a changeset
+      naming only ignored packages is **kept** (not consumed, exit 0); a
+      changeset mixing ignored and not-ignored packages is a **hard error**
+      ("Mixed changesets … are not allowed"); a changeset naming a package not
+      in the workspace is a **hard error**. Fixed a real gap: `version`
+      previously deleted every changeset unconditionally (and silently consumed
+      unknown-package changesets via the planner's interop-era skip).
 - ➕ **Go-only:** `TestParseCRLF`, `TestTypeDrivenChangeset`, `TestBreakingType`,
   `TestConventionalFromSummary`, `TestParseEmpty`
 
@@ -198,10 +208,21 @@ the decorated, prettier-formatted output.
 - [x] `UpdateModuleCsProjs_IncreasesVersion` → `TestSetVersionInline`
 - [x] `AddsInlineVersion_WhenNone` → `TestSetVersionInsertsWhenAbsent`
 - [x] `WritesVersionPrefix_LeavesSuffix` → `TestSetVersionWritesPrefixLeavesSuffix`
-- [ ] `WritesSharedPropsOnce_ForLockstepGroup` (Directory.Build.props lockstep write)
+- [x] `WritesSharedPropsOnce_ForLockstepGroup` → cmdtest
+      `TestVersionLockstepWritesSharedPropsOnce` (Go writes per module —
+      idempotent regex rewrite, not a dedup pass — so the contract is asserted
+      as the end state: exactly one `<Version>1.1.0</Version>` in the props,
+      no inline version added to either csproj)
 - [x] `GetCsProjects_OnlyValidVersion` → `TestDiscover`
-- [ ] `CsProjectStrategy_ToIndependent_RedirectsSharedToOwnCsproj`
-- [ ] `CsProjectStrategy_ToIndependent_LeavesInlineUntouched`
+- [x] `CsProjectStrategy_ToIndependent_RedirectsSharedToOwnCsproj` →
+      `TestVersionStrategyLockstepVsIndependent` (planner clears `VersionFile`,
+      so SetVersion targets the manifest) + cmdtest
+      `TestVersionIndependentWritesInline` (e2e: inline writes, props untouched).
+      The strategy lives in the planner, not a CsProjectStrategy class —
+      landed with `version --independent`; this entry had gone stale.
+- [x] `CsProjectStrategy_ToIndependent_LeavesInlineUntouched` → inline-package
+      case in `TestVersionStrategyLockstepVsIndependent` (already-inline C is
+      unchanged under both strategies: own bump, own manifest)
 - [x] `Resolve_InlineVersion_IsIndependent` → `TestDiscover`
 - [x] `Resolve_VersionPrefix_UsesPrefixElement` → `TestDiscover`
 - [x] `Resolve_FromDirectoryBuildProps_IsShared` → `TestDiscover` (inheritance case)
@@ -222,7 +243,7 @@ the decorated, prettier-formatted output.
   C# repository; parity corpus unaffected).
 - ➕ **Go-only:** `TestSetVersionAndDeps`, `TestPublishPrivateSkipped`
 
-### config / git / prestate / since — 🟡 (tests landed; `since` consumers TODO)
+### config / git / prestate / since — ✅ DONE (`since` consumers: `status --since` ×3 + `add --since`, see A2)
 `Shared/ConfigurationServiceTests.cs` (5) → `core/config/config_test.go`:
 - [x] `ReadsSharedKeysAndNestedDotnet` → `TestParseSharedKeysAndEcosystemBlocks`
 - [x] `ReadsFormatKey_AsBoolOrString` → `TestParseFormatBoolOrString`
@@ -230,8 +251,10 @@ the decorated, prettier-formatted output.
       tool's legacy flat keys; nothing to migrate)
 - [x] `UnknownAndMissingKeys_ToleratedWithDefaults` → `TestParseUnknownAndMissingKeysTolerated`
       (+ `TestDefaults`)
-- [~] `CreateDefault_WritesDualToolConfigThatRoundTrips` → `TestDefaults` covers the
-      default values; the file-writing half belongs to the `init` command tests (A2)
+- [x] `CreateDefault_WritesDualToolConfigThatRoundTrips` → `TestDefaults` (values)
+      + cmdtest `TestInitConfigRoundTrips` (the config `init` writes parses back
+      to the documented defaults; the C# `dotnet.sourcePath` half is N/A — the
+      Go default config has no privileged dotnet block)
 
 `Shared/ChangelogConfigTests.cs` (5) → `core/config/config_test.go`:
 - [x] all five shapes (git string / github array / false / stock string / absent)
@@ -344,13 +367,16 @@ publish confirm gate.
 - **Publish confirm gate** → [x] `relrig publish` now prompts before the first
   real side effect when stdin+stdout are TTYs; `--yes`/non-TTY/`--dry-run`
   skip it (CI behavior unchanged — per decision).
-- **Publish** (`PublishChangesetCommandTests` 9 + `DotnetServiceTests` 2 +
-  `NuGetPackageRegistryTests` 4) → [~] the Go publish delegates to ecosystem
-  adapters (each has `TestPublishPrivateSkipped`; idempotency via registry
-  probes); cmdtest covers tag flows + ignore. The NuGet feed-protocol unit
-  tests (lowercase id, 404→empty, V3 base-address) describe registry client
-  details the Go dotnet adapter handles via the nuget CLI — port as adapter
-  unit tests if/when a native feed client lands. ⛔ interop auto-run-node N/A.
+- **Publish** (`PublishChangesetCommandTests` 9 + `DotnetServiceTests` 2) →
+  [x] the Go publish delegates to ecosystem adapters (each has
+  `TestPublishPrivateSkipped`); cmdtest covers tag flows + ignore.
+  ⛔ `NuGetPackageRegistryTests` 4 — N/A under the current design: the C# tool
+  speaks the NuGet V3 flat-container protocol natively (lowercase id,
+  404→empty, service-index base-address), while the Go dotnet adapter has no
+  HTTP feed client at all — idempotency is `dotnet nuget push
+  --skip-duplicate`, so the protocol behaviors live inside the dotnet CLI.
+  These four only become portable if a native feed client ever lands.
+  ⛔ interop auto-run-node N/A.
 - Deferred (lower value): the interactive plan-chooser TUI (toggle steps before
   the run when rich+interactive).
 
@@ -529,7 +555,17 @@ changerig/parity/harness_test.go       # builds changerig, runs both oracles
       Self-authored goldens in `polyglot/` (no external oracle runs mixed
       repos), justified piecewise by the Node/C# oracles.
 - [ ] (optional) Point the C# parity tests at this same corpus so one golden set
-      is authoritative for both implementations.
+      is authoritative for both implementations. Scoped (2026-06-12) — the work
+      is all on the net-changesets side: (1) deserialize `scenarios.json`
+      (System.Text.Json; today's `ParityScenarios` are inline records) incl.
+      `expectedRanges`/`knownDivergence`/`netDivergence` and the
+      string-or-object dependency form; (2) write `fixed`/`linked`/`ignore`
+      into the materialized config.json (C# fixtures don't yet); (3) point
+      goldens at `core/testdata/parity/golden/` (22 scenarios frozen there vs
+      C#'s 10) and gate the npm-range scenarios (csproj refs are rangeless —
+      same `dotnetApplicable` filter as Go's `TestDotnetParity`); (4) skip
+      Oracle 3 (manifest ranges are npm-only). Cross-checking already exists
+      from the Go side via `TestDotnetCrossOracle`.
 
 ### Bugs the corpus has already caught
 

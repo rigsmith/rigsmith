@@ -523,14 +523,16 @@ func TestIgnoreFiltersPackage(t *testing.T) {
 }
 
 func TestVersionStrategyLockstepVsIndependent(t *testing.T) {
-	// A and B share a version file. A bumps minor, B bumps patch.
+	// A and B share a version file; C versions inline. A bumps minor, B and C patch.
 	pkgs := []plugin.Package{
 		{Name: "A", Version: "1.0.0", ManifestPath: "A/A.csproj", VersionFile: "Directory.Build.props"},
 		{Name: "B", Version: "1.0.0", ManifestPath: "B/B.csproj", VersionFile: "Directory.Build.props"},
+		{Name: "C", Version: "2.0.0", ManifestPath: "C/C.csproj"},
 	}
 	changesets := []*changeset.Changeset{
 		cs("a", changeset.Release{Name: "A", Bump: changeset.BumpMinor}),
 		cs("b", changeset.Release{Name: "B", Bump: changeset.BumpPatch}),
+		cs("c", changeset.Release{Name: "C", Bump: changeset.BumpPatch}),
 	}
 
 	// Lockstep (default): the shared version moves together — both → 1.1.0.
@@ -561,6 +563,23 @@ func TestVersionStrategyLockstepVsIndependent(t *testing.T) {
 	}
 	if a.VersionFile != "" || b.VersionFile != "" {
 		t.Errorf("independent: VersionFile should be cleared for inline writes, got A=%q B=%q", a.VersionFile, b.VersionFile)
+	}
+
+	// Ported from ToIndependent_LeavesInlineProjectsUntouched: a package that
+	// already versions inline is unchanged by the strategy — same write target
+	// (its own manifest), its own bump — under lockstep and independent alike.
+	for label, plan := range map[string][]*Module{"lockstep": lock, "independent": ind} {
+		c := find(plan, "C")
+		if c == nil {
+			t.Fatalf("%s: C missing", label)
+		}
+		if got := c.NewVersion().String(); got != "2.0.1" {
+			t.Errorf("%s: C = %s, want 2.0.1 (own patch)", label, got)
+		}
+		if c.VersionFile != "" || c.EffectiveVersionFile() != "C/C.csproj" {
+			t.Errorf("%s: C should keep writing inline to its own manifest, got VersionFile=%q effective=%q",
+				label, c.VersionFile, c.EffectiveVersionFile())
+		}
 	}
 }
 

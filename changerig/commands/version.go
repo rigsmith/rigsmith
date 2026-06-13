@@ -87,6 +87,15 @@ func NewVersionCmd() *cobra.Command {
 				return err
 			}
 
+			// Split the run's changesets into consumed (released → deleted
+			// afterwards) and kept (every named package ignored → left for a
+			// future run). Mixed and unknown-package changesets are hard
+			// errors before anything is written, matching @changesets.
+			consumed, kept, err := planner.PartitionChangesets(active, pkgs, ws.Config)
+			if err != nil {
+				return err
+			}
+
 			// changelog-git / changelog-github enrichment: resolve the commit
 			// (and PR/author) that added each changeset and decorate the summary's
 			// first line before planning. Every lookup failure degrades to an
@@ -196,18 +205,20 @@ func NewVersionCmd() *cobra.Command {
 				mdfmt.FormatFiles(changelogPaths, ws.Config.FormatSpec(), ws.Root, mdfmt.Runner(execRunner(cmd)), warnf)
 			}
 
-			// Changeset disposal + pre-state bookkeeping per mode.
+			// Changeset disposal + pre-state bookkeeping per mode. Only the
+			// consumed changesets are removed (or, in pre mode, recorded);
+			// ignored-only ones stay on disk, as Node leaves them.
 			switch mode {
 			case planner.ModeSnapshot:
 				// Snapshot consumes changesets like a normal run (verified against
 				// @changesets v3.0.0-next.5); the run is throwaway because the
 				// working-tree changes are never committed.
-				for _, cs := range changesets {
+				for _, cs := range consumed {
 					_ = os.Remove(filepath.Join(ws.ChangesetDir, cs.ID+".md"))
 				}
-				fmt.Fprintf(out, "\nSnapshot-versioned %d package(s); removed %d changeset(s).\n", len(plan), len(changesets))
+				fmt.Fprintf(out, "\nSnapshot-versioned %d package(s); removed %d changeset(s).\n", len(plan), len(consumed))
 			case planner.ModePre:
-				for _, cs := range active {
+				for _, cs := range consumed {
 					pre.Changesets = append(pre.Changesets, cs.ID)
 				}
 				if err := prestate.Write(ws.ChangesetDir, pre); err != nil {
@@ -215,15 +226,18 @@ func NewVersionCmd() *cobra.Command {
 				}
 				fmt.Fprintf(out, "\nPrereleased %d package(s) (tag %q); changesets kept.\n", len(plan), pre.Tag)
 			default: // Normal, Exit
-				for _, cs := range changesets {
+				for _, cs := range consumed {
 					_ = os.Remove(filepath.Join(ws.ChangesetDir, cs.ID+".md"))
 				}
 				if mode == planner.ModeExit {
 					_ = prestate.Remove(ws.ChangesetDir)
 					fmt.Fprintf(out, "\nGraduated %d package(s) to stable; exited prerelease mode.\n", len(plan))
 				} else {
-					fmt.Fprintf(out, "\nVersioned %d package(s); removed %d changeset(s).\n", len(plan), len(changesets))
+					fmt.Fprintf(out, "\nVersioned %d package(s); removed %d changeset(s).\n", len(plan), len(consumed))
 				}
+			}
+			if len(kept) > 0 {
+				fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("kept %d changeset(s) naming only ignored packages.", len(kept))))
 			}
 
 			// Auto-commit the version bumps + changelogs + changeset deletions when
