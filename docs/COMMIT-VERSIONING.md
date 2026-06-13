@@ -139,6 +139,11 @@ load seam. New/changed surface:
   `!` **or** a `BREAKING CHANGE:`/`BREAKING-CHANGE:` footer (whose description is
   surfaced changelogen-style as a continuation line under the bullet), attributes
   the commit to package(s), and emits one synthetic changeset per commit. The
+  header grammar is validated against @unjs/changelogen's parser fixtures
+  ([changelogen_parity_test.go](../core/commitsource/changelogen_parity_test.go)):
+  it tolerates a leading emoji / `:shortcode:` prefix (`🚀 feat: …`, `:bug: fix: …`)
+  and strips a trailing `(#NN)` PR reference from the description, matching
+  changelogen's `type`/`scope`/`breaking`/`description` output. The
   per-package bump is left `BumpNone` so the **planner** derives it from the type
   via `changelogGroups` — identical to a type-driven changeset file. The bullet
   text is the subject with the conventional prefix stripped (changelogen-style).

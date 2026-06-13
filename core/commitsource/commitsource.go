@@ -20,9 +20,17 @@ import (
 	"github.com/rigsmith/core/plugin"
 )
 
-// headerRe matches a conventional-commit subject: type(scope)!: description.
-// Groups: 1=type, 2=scope, 3=`!`, 4=description.
-var headerRe = regexp.MustCompile(`^([a-zA-Z]+)(?:\(([^)]*)\))?(!)?:\s*(.*)$`)
+// headerRe matches a conventional-commit subject: type(scope)!: description,
+// tolerating an optional leading emoji or `:shortcode:` gitmoji prefix (e.g.
+// `🚀 feat: …`, `:bug: fix: …`) the way @unjs/changelogen does. Groups: 1=type,
+// 2=scope, 3=`!`, 4=description.
+var headerRe = regexp.MustCompile(`^\s*(?::[^:\s]+:|\p{So})?\s*([a-zA-Z]+)(?:\(([^)]*)\))?(!)?:\s*(.*)$`)
+
+// trailingRefRe matches a parenthetical pull-request reference like `(#134)` or
+// `(resolves #37)`, mirroring changelogen's PullRequestRE — these are stripped
+// from the changelog description (an inline `… close #123` with no parens is
+// left in place).
+var trailingRefRe = regexp.MustCompile(`\([ a-z]*#\d+\s*\)`)
 
 // breakingFooterRe matches a `BREAKING CHANGE:`/`BREAKING-CHANGE:` footer token
 // at the start of a body line, per the Conventional Commits spec (uppercase).
@@ -44,11 +52,14 @@ func parseHeader(subject string) (header, bool) {
 	if m == nil {
 		return header{}, false
 	}
+	// Strip parenthetical PR references from the description (changelogen does the
+	// same), leaving inline issue mentions intact.
+	desc := strings.TrimSpace(trailingRefRe.ReplaceAllString(m[4], ""))
 	return header{
 		typ:      strings.ToLower(m[1]),
 		scope:    m[2],
 		breaking: m[3] == "!",
-		desc:     strings.TrimSpace(m[4]),
+		desc:     desc,
 	}, true
 }
 
