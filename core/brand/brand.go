@@ -142,11 +142,16 @@ func ColorSchemeFunc(accent lipgloss.AdaptiveColor) func(lgv2.LightDarkFunc) fan
 		cs.Help = pick(Muted)         // the bottom help hint
 		cs.Dash = pick(Muted)
 		cs.ErrorDetails = pick(Red)
-		// The "ERROR" badge is a filled block behind bright text, so it always
-		// wants the deep red (Red.Light, #B63132) regardless of terminal
-		// background — the light coral Red.Dark reads as pink when used as a
-		// solid background fill. Bright paper text keeps it legible on both.
-		cs.ErrorHeader = [2]color.Color{lgv2.Color(Paper.Dark), lgv2.Color(Red.Light)}
+		// Match the design's error treatment (design/RigSmith CLI.html → .badge.err):
+		// the brand red as TEXT over a faint red wash, not a solid bright fill.
+		// fang's default badge fills the block at full saturation, which turns the
+		// design's coral c-red into "pink"; the wash keeps it reading as a red
+		// error badge. The wash hexes are color-mix(c-red 22%, terminal bg) for the
+		// dark (#0E0E12) and light (#ECECEE) backgrounds.
+		cs.ErrorHeader = [2]color.Color{
+			pick(Red),
+			c(lgv2.Color("#F7DAD9"), lgv2.Color("#3F2123")),
+		}
 		return cs
 	}
 }
