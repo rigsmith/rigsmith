@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/x/term"
 	"github.com/rigsmith/core/brand"
 	"github.com/rigsmith/core/changeset"
 	"github.com/rigsmith/core/gitutil"
@@ -38,7 +39,13 @@ func NewAddCmd() *cobra.Command {
 				return err
 			}
 			if !ws.Initialized() {
-				return fmt.Errorf("not initialized — run `init` first")
+				ready, err := offerInit(cmd, ws)
+				if err != nil {
+					return err
+				}
+				if !ready {
+					return nil // declined the setup offer — nothing to create
+				}
 			}
 
 			pkgs, _, err := ws.Discover(cmd.Context())
@@ -174,6 +181,59 @@ func firstNonEmpty(xs ...string) string {
 		}
 	}
 	return ""
+}
+
+// offerInit handles a bare `add` in a workspace with no .changeset folder. On an
+// interactive terminal it shows where changesets would live and offers to set
+// them up inline (a huh confirm), so the first changeset is one prompt away
+// rather than a dead-end error. It reports whether the workspace is ready to
+// proceed (scaffolded or already set up). Off a TTY — CI, pipes — it can't ask,
+// so it returns a clear, actionable error pointing at `changerig init`.
+func offerInit(cmd *cobra.Command, ws *Workspace) (ready bool, err error) {
+	where := relDir(ws.Root, ws.ChangesetDir)
+	if !addInteractive() {
+		return false, fmt.Errorf("changesets aren't set up here yet — run `changerig init` to create %s", where)
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("No changesets set up in %s yet.", ws.Root)))
+	setup := false
+	if err := huh.NewConfirm().
+		Title("Set up changesets here?").
+		Description(fmt.Sprintf("Creates %s with a default config.", where)).
+		Value(&setup).
+		Run(); err != nil {
+		return false, nil // aborted prompt (esc/ctrl+c) — treat as a decline, no error
+	}
+	if !setup {
+		fmt.Fprintln(out, DimStyle.Render("No changeset created. Run `changerig init` when you're ready."))
+		return false, nil
+	}
+
+	created, err := Scaffold(ws)
+	if err != nil {
+		return false, err
+	}
+	if created {
+		fmt.Fprintf(out, "%s %s\n", PatchStyle.Render("✓"), fmt.Sprintf("Initialized changesets in %s", where))
+	}
+	return true, nil
+}
+
+// addInteractive reports whether `add` can prompt — both stdin and stdout must
+// be a real terminal (matches browseInteractive).
+func addInteractive() bool {
+	return term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd())
+}
+
+// relDir renders dir relative to root for display, falling back to the absolute
+// path. A trailing separator keeps directory paths legible (".changeset/").
+func relDir(root, dir string) string {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return dir
+	}
+	return rel + string(filepath.Separator)
 }
 
 func runAddForm(names []string, selected *[]string, bump, summary *string) error {
