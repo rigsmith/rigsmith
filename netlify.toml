@@ -1,0 +1,41 @@
+# Netlify config for the rigsmith web presence. One site, many domains:
+#
+#   rigsmith.dev   the docs site (this VitePress build)
+#   rigsmith.sh    canonical curl|sh install domain (edge function below)
+#   relrig.sh      install alias, default tool = relrig (edge function)
+#   rigcli.sh      install alias, default tool = rig (edge function)
+#   rigcli.dev     301 -> rigsmith.dev/rig/*   (host redirect below)
+#   relrig.dev     301 -> rigsmith.dev/relrig/* (host redirect below)
+#
+# See docs/WEBSITE.md for the plan of record.
+
+[build]
+  base = "site"
+  publish = ".vitepress/dist"
+  # Keep scripts/install.sh the single source of truth — copy it into the
+  # published site so the install edge function can serve it from /install.sh.
+  command = "cp ../scripts/install.sh public/install.sh && npm run build"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# --- Edge function: the curl|sh install domains ------------------------------
+# Runs on every request but only acts on the *.sh install hosts; for the docs
+# host it passes through. UA-sniffs: curl gets the script, browsers get the docs.
+[[edge_functions]]
+  path = "/*"
+  function = "install"
+
+# --- Host redirects: the functional .dev domains -----------------------------
+# Netlify matches full-URL `from`, so these are host-scoped.
+[[redirects]]
+  from = "https://rigcli.dev/*"
+  to = "https://rigsmith.dev/rig/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://relrig.dev/*"
+  to = "https://rigsmith.dev/relrig/:splat"
+  status = 301
+  force = true
