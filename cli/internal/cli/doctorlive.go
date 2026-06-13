@@ -44,7 +44,7 @@ type doctorModel struct {
 func newDoctorModel(checks []pendingCheck) doctorModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	sp.Style = lipgloss.NewStyle().Foreground(brandCyan)
 	rows := make([]docRow, len(checks))
 	for i, c := range checks {
 		rows[i] = docRow{eco: c.eco, label: c.label}

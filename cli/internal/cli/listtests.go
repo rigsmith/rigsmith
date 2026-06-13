@@ -23,7 +23,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // cyan
+var spinnerStyle = lipgloss.NewStyle().Foreground(brandCyan)
 
 // listTestClassNames asks the .NET test platform to enumerate the test project
 // and returns the discovered test classes' fully-qualified names (sorted,

@@ -22,7 +22,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+var dimStyle = lipgloss.NewStyle().Foreground(brandMuted)
 
 var (
 	dryRun   bool
@@ -140,7 +140,7 @@ func Execute(ctx context.Context) error {
 
 	// Surface the ldflags-stamped build version in `rig --version` (fang owns
 	// the flag); a source build keeps fang's "built from source" default.
-	var opts []fang.Option
+	opts := []fang.Option{fang.WithColorSchemeFunc(rigColorScheme)}
 	if version != "dev" {
 		opts = append(opts, fang.WithVersion(version))
 	}

@@ -105,9 +105,9 @@ type menuModel struct {
 }
 
 var (
-	menuTitle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
-	menuSelected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
-	menuCursor   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	menuTitle    = lipgloss.NewStyle().Bold(true).Foreground(brandViolet)
+	menuSelected = lipgloss.NewStyle().Bold(true).Foreground(brandCyan)
+	menuCursor   = lipgloss.NewStyle().Foreground(brandCyan)
 )
 
 func newMenu() menuModel {

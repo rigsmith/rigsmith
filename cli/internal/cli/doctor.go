@@ -18,10 +18,10 @@ import (
 )
 
 // warnStyle marks warning-level doctor checks (yellow).
-var warnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+var warnStyle = lipgloss.NewStyle().Foreground(brandYellow)
 
 // ecoHeaderStyle is the per-ecosystem group header (bold cyan).
-var ecoHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
+var ecoHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(brandCyan)
 
 // docLevel is a check's severity. Only docError fails the command.
 type docLevel int

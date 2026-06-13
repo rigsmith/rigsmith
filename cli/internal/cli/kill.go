@@ -22,7 +22,7 @@ import (
 )
 
 // killWarnStyle highlights the "would kill" header in dry-run output.
-var killWarnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+var killWarnStyle = lipgloss.NewStyle().Foreground(brandYellow)
 
 // newKillCmd builds `rig kill [name] [--port N]` — terminate running dev/app
 // processes. It mirrors the .NET/Node `rig kill` verbs:

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RigSmith — Animated Logo</title>
+<link rel="icon" type="image/svg+xml" href="marks/favicon.svg">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0E0E12; --ink-2:#15151b; --line:#26262f; --line-soft:#1d1d25;
+    --paper:#ECECEE; --muted:#8a8a96; --muted-2:#56565f;
+    --rig:oklch(0.70 0.15 250); --change:oklch(0.70 0.15 300);
+    --ship:oklch(0.70 0.15 150); --claude:oklch(0.70 0.15 55);
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--ink);color:var(--paper);font-family:var(--mono);line-height:1.6;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 32px 70px;}
+  .wm{letter-spacing:-0.02em;white-space:nowrap;}
+  .wm b{font-weight:800;}
+  .wm .lite{font-weight:400;color:var(--muted);}
+  .page-head{text-align:center;padding:64px 0 6px;display:flex;flex-direction:column;align-items:center;gap:13px;}
+  .page-head .eyebrow{font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--muted-2);}
+  .page-head h1{font-size:28px;font-weight:700;margin:0;letter-spacing:-0.02em;}
+  .page-head p{color:var(--muted);font-size:15px;max-width:56ch;margin:0;}
+
+  section{padding:46px 0;}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:30px;}
+  .sec-head .k{font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--rig);font-weight:700;}
+  .sec-head h2{font-size:18px;font-weight:600;margin:0;}
+  .sec-head .rule{flex:1;height:1px;background:var(--line);align-self:center;}
+
+  /* hero assembly */
+  .stage{border:1px solid var(--line);border-radius:20px;background:radial-gradient(120% 120% at 50% 0%,var(--ink-2),var(--ink));
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:30px;padding:70px 24px;position:relative;overflow:hidden;}
+  .hero-lock{display:flex;align-items:center;gap:28px;}
+  .hero-lock svg{width:120px;height:120px;overflow:visible;}
+  .hero-lock .wm{font-size:60px;opacity:0;transform:translateX(-12px);}
+  .replay{position:absolute;top:16px;right:16px;border:1px solid var(--line);background:var(--ink-2);color:var(--muted);
+    font-family:var(--mono);font-size:12px;border-radius:8px;padding:7px 14px;cursor:pointer;transition:.15s;}
+  .replay:hover{color:var(--paper);border-color:var(--muted);}
+
+  /* shared animated mark element styling */
+  .am .bk{fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-width:8;}
+  .am .gl{fill:none;stroke-linecap:round;stroke-linejoin:round;}
+
+  /* ---- assembly keyframes ---- */
+  @keyframes draw{from{stroke-dashoffset:96;}to{stroke-dashoffset:0;}}
+  @keyframes pop{0%{transform:scale(0);opacity:0;}60%{transform:scale(1.25);}100%{transform:scale(1);opacity:1;}}
+  @keyframes glowpulse{0%,100%{filter:drop-shadow(0 0 0 transparent);}50%{filter:drop-shadow(0 0 7px var(--rig));}}
+  @keyframes wmin{to{opacity:1;transform:translateX(0);}}
+
+  .play .bk{stroke-dasharray:96;stroke-dashoffset:96;animation:draw .55s ease forwards;}
+  .play .bk.r{animation-delay:.12s;}
+  .play .node{transform-box:fill-box;transform-origin:center;opacity:0;animation:pop .5s cubic-bezier(.34,1.56,.64,1) .6s forwards, glowpulse 2.4s ease-in-out 1.2s infinite;}
+  .play .wm{animation:wmin .5s ease .85s forwards;}
+
+  /* ---- tool loop row ---- */
+  .tools{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;}
+  .tool{border:1px solid var(--line);border-radius:16px;background:var(--ink-2);padding:26px 18px;display:flex;flex-direction:column;align-items:center;gap:16px;}
+  .tool svg{width:84px;height:84px;overflow:visible;}
+  .tool .nm{font-size:15px;}
+  .tool .nm b{font-weight:800;}
+  .tool .nm .lite{color:var(--muted);}
+  .tool .cap{font-size:11px;color:var(--muted-2);letter-spacing:.08em;}
+
+  /* rig: node pulse */
+  @keyframes nodepulse{0%,100%{transform:scale(1);}50%{transform:scale(1.18);}}
+  .lp-rig .node{transform-box:fill-box;transform-origin:center;animation:nodepulse 2s ease-in-out infinite;}
+  /* change: cycle rotate */
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .lp-change .spin{transform-box:fill-box;transform-origin:50px 50px;animation:spin 3.4s linear infinite;}
+  /* ship: arrow launch */
+  @keyframes launch{0%{transform:translateY(0);opacity:1;}55%{transform:translateY(-20px);opacity:0;}56%{transform:translateY(14px);opacity:0;}100%{transform:translateY(0);opacity:1;}}
+  .lp-ship .arrow{transform-box:fill-box;transform-origin:center;animation:launch 2s cubic-bezier(.5,0,.3,1) infinite;}
+  /* claude: spark twinkle */
+  @keyframes twinkle{0%,100%{transform:scale(1) rotate(0);opacity:1;}50%{transform:scale(.78) rotate(45deg);opacity:.7;}}
+  .lp-claude .burst{transform-box:fill-box;transform-origin:50px 50px;animation:twinkle 2.2s ease-in-out infinite;}
+
+  .usage{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:6px;}
+  .uc{border:1px solid var(--line);border-radius:14px;background:var(--ink-2);padding:22px;}
+  .uc h3{font-size:14px;margin:0 0 7px;font-weight:600;}
+  .uc p{font-size:13px;color:var(--muted);margin:0;line-height:1.65;}
+  @media(max-width:780px){.tools,.usage{grid-template-columns:1fr 1fr;}.hero-lock .wm{font-size:40px;}.hero-lock svg{width:84px;height:84px;}}
+</style>
+</head>
+<body>
+<a href="RigSmith Index.html" class="om-hublink" style="position:fixed;left:16px;bottom:16px;z-index:200;background:rgba(21,21,27,.82);backdrop-filter:blur(8px);border:1px solid #2a2a33;border-radius:999px;padding:7px 14px;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;color:#9a9aa4;text-decoration:none;">← Index</a>
+<div class="wrap">
+  <div class="page-head">
+    <div class="eyebrow">rigsmith.dev / motion</div>
+    <h1>Animated Logo</h1>
+    <p>The mark assembles itself: brackets draw in, the node snaps into place. Each tool's glyph has a signature idle loop for site heroes and loading states.</p>
+  </div>
+
+  <section>
+    <div class="sec-head"><span class="k">01</span><h2>Assembly</h2><span class="rule"></span></div>
+    <div class="stage">
+      <button class="replay" onclick="replay()">↻ replay</button>
+      <div class="hero-lock">
+        <svg id="hero" class="am play" viewBox="0 0 100 100">
+          <path class="bk l" stroke="var(--rig)" d="M38 21 L23 21 L23 79 L38 79"/>
+          <path class="bk r" stroke="var(--rig)" d="M62 21 L77 21 L77 79 L62 79"/>
+          <circle class="node" cx="50" cy="50" r="8.5" fill="var(--rig)"/>
+        </svg>
+        <span class="wm"><b>Rig</b>Smith</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="k">02</span><h2>Idle loops — one per tool</h2><span class="rule"></span></div>
+    <div class="tools">
+      <div class="tool">
+        <svg class="am lp-rig" viewBox="0 0 100 100">
+          <path class="bk" stroke="var(--rig)" d="M38 21 L23 21 L23 79 L38 79"/>
+          <path class="bk" stroke="var(--rig)" d="M62 21 L77 21 L77 79 L62 79"/>
+          <circle class="node" cx="50" cy="50" r="8.5" fill="var(--rig)"/>
+        </svg>
+        <div class="nm wm"><b>rig</b></div>
+        <div class="cap">node · pulse</div>
+      </div>
+      <div class="tool">
+        <svg class="am lp-change" viewBox="0 0 100 100">
+          <path class="bk" stroke="var(--change)" d="M38 21 L23 21 L23 79 L38 79"/>
+          <path class="bk" stroke="var(--change)" d="M62 21 L77 21 L77 79 L62 79"/>
+          <g class="spin">
+            <path class="gl" stroke="var(--change)" stroke-width="6.5" d="M37 44 A16 16 0 0 1 65 41"/>
+            <path class="gl" stroke="var(--change)" stroke-width="6.5" d="M65 41 L66 33 M65 41 L57 42"/>
+            <path class="gl" stroke="var(--change)" stroke-width="6.5" d="M63 56 A16 16 0 0 1 35 59"/>
+            <path class="gl" stroke="var(--change)" stroke-width="6.5" d="M35 59 L34 67 M35 59 L43 58"/>
+          </g>
+        </svg>
+        <div class="nm wm"><span class="lite">change</span><b>Rig</b></div>
+        <div class="cap">cycle · rotate</div>
+      </div>
+      <div class="tool">
+        <svg class="am lp-ship" viewBox="0 0 100 100">
+          <path class="bk" stroke="var(--ship)" d="M38 21 L23 21 L23 79 L38 79"/>
+          <path class="bk" stroke="var(--ship)" d="M62 21 L77 21 L77 79 L62 79"/>
+          <path class="gl arrow" stroke="var(--ship)" stroke-width="7" d="M50 63 L50 38 M41 47 L50 37 L59 47"/>
+        </svg>
+        <div class="nm wm"><span class="lite">ship</span><b>Rig</b></div>
+        <div class="cap">arrow · launch</div>
+      </div>
+      <div class="tool">
+        <svg class="am lp-claude" viewBox="0 0 100 100">
+          <path class="bk" stroke="var(--claude)" d="M38 21 L23 21 L23 79 L38 79"/>
+          <path class="bk" stroke="var(--claude)" d="M62 21 L77 21 L77 79 L62 79"/>
+          <g class="burst" stroke="var(--claude)" stroke-width="6" stroke-linecap="round">
+            <line x1="50" y1="36" x2="50" y2="64"/><line x1="36" y1="50" x2="64" y2="50"/>
+            <line x1="40" y1="40" x2="60" y2="60"/><line x1="60" y1="40" x2="40" y2="60"/>
+          </g>
+        </svg>
+        <div class="nm wm"><span class="lite">claude</span><b>Rig</b></div>
+        <div class="cap">spark · twinkle</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="k">03</span><h2>Where to use it</h2><span class="rule"></span></div>
+    <div class="usage">
+      <div class="uc"><h3>Site hero</h3><p>Play the assembly once on first paint, then let the node settle into a slow glow. Never loop the full assembly.</p></div>
+      <div class="uc"><h3>Loading / spinner</h3><p>The changeRig cycle doubles as a brand spinner. Use it while a command runs in the web playground.</p></div>
+      <div class="uc"><h3>Reduced motion</h3><p>Honor <code>prefers-reduced-motion</code> — fall back to the static mark, no draw-on, no loop.</p></div>
+    </div>
+  </section>
+</div>
+<script>
+  function replay(){
+    const h=document.getElementById('hero');
+    h.classList.remove('play'); void h.offsetWidth; h.classList.add('play');
+  }
+  // respect reduced motion
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches){
+    document.querySelectorAll('.am').forEach(a=>a.classList.remove('play'));
+  }
+</script>
+</body>
+</html>

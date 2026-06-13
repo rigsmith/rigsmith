@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RigSmith — one rig, four tools</title>
+<link rel="icon" type="image/svg+xml" href="marks/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="marks.js"></script>
+<style>
+  :root{
+    --ink:#0E0E12; --ink-2:#15151b; --ink-3:#1c1c24;
+    --line:#26262f; --line-soft:#1d1d25;
+    --paper:#ECECEE; --muted:#8a8a96; --muted-2:#56565f;
+    --rig:oklch(0.70 0.15 250); --change:oklch(0.70 0.15 300);
+    --ship:oklch(0.70 0.15 150); --claude:oklch(0.70 0.15 55);
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;background:var(--ink);color:var(--paper);
+    font-family:var(--mono);font-weight:400;line-height:1.6;
+    -webkit-font-smoothing:antialiased;font-feature-settings:"liga" 0;
+  }
+  .wrap{max-width:1120px;margin:0 auto;padding:0 32px;}
+  a{color:inherit;text-decoration:none;}
+  .wm{letter-spacing:-0.02em;white-space:nowrap;}
+  .wm b{font-weight:800;}
+  .wm .lite{font-weight:400;color:var(--muted);}
+
+  /* ---------- NAV ---------- */
+  nav{position:sticky;top:0;z-index:30;backdrop-filter:blur(12px);
+      background:color-mix(in srgb, var(--ink) 82%, transparent);
+      border-bottom:1px solid var(--line-soft);}
+  .nav-in{display:flex;align-items:center;justify-content:space-between;height:64px;}
+  .nav-logo{display:flex;align-items:center;gap:12px;}
+  .nav-logo svg{width:28px;height:28px;}
+  .nav-logo .wm{font-size:20px;}
+  .nav-links{display:flex;align-items:center;gap:28px;font-size:14px;color:var(--muted);}
+  .nav-links a:hover{color:var(--paper);}
+  .nav-cta{border:1px solid var(--line);border-radius:8px;padding:8px 16px;color:var(--paper);font-size:13px;}
+  .nav-cta:hover{border-color:var(--rig);color:var(--rig);}
+
+  /* ---------- HERO ---------- */
+  .hero{position:relative;text-align:center;padding:110px 0 90px;overflow:hidden;}
+  .hero-bg{position:absolute;inset:0;z-index:0;pointer-events:none;
+    background:
+      radial-gradient(60% 50% at 50% 0%, color-mix(in srgb,var(--rig) 12%, transparent), transparent 70%),
+      linear-gradient(var(--line-soft) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);
+    background-size:100% 100%, 56px 56px, 56px 56px;
+    background-position:0 0, center, center;
+    -webkit-mask-image:radial-gradient(80% 70% at 50% 30%, #000 30%, transparent 78%);
+            mask-image:radial-gradient(80% 70% at 50% 30%, #000 30%, transparent 78%);
+  }
+  .hero-in{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:30px;}
+  .hero-eyebrow{font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--muted-2);}
+  .hero-lockup{display:flex;align-items:center;gap:26px;}
+  .hero-lockup svg{width:84px;height:84px;}
+  .hero-lockup .wm{font-size:66px;}
+  .hero h1{font-size:30px;font-weight:500;line-height:1.35;margin:0;max-width:22ch;letter-spacing:-0.01em;}
+  .hero h1 b{font-weight:700;}
+  .hero-sub{font-size:16px;color:var(--muted);max-width:58ch;margin:-12px 0 0;}
+  .hero-sub b{color:var(--paper);font-weight:600;}
+
+  /* install block */
+  .install{display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:6px;}
+  .cmd{display:flex;align-items:center;gap:16px;background:var(--ink-2);border:1px solid var(--line);
+       border-radius:12px;padding:15px 18px;font-size:15px;min-width:min(520px,90vw);}
+  .cmd .dollar{color:var(--rig);font-weight:700;}
+  .cmd code{color:var(--paper);flex:1;text-align:left;}
+  .cmd .copy{border:1px solid var(--line);background:var(--ink-3);color:var(--muted);
+             border-radius:7px;padding:6px 12px;font-family:var(--mono);font-size:12px;cursor:pointer;transition:.15s;}
+  .cmd .copy:hover{color:var(--paper);border-color:var(--muted);}
+  .alts{display:flex;gap:22px;font-size:13px;color:var(--muted-2);}
+  .alts b{color:var(--muted);font-weight:600;}
+
+  /* ---------- SECTION SHELL ---------- */
+  section{padding:84px 0;}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:44px;}
+  .sec-head .k{font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--rig);font-weight:700;}
+  .sec-head h2{font-size:22px;font-weight:600;margin:0;letter-spacing:-0.01em;}
+  .sec-head .rule{flex:1;height:1px;background:var(--line);align-self:center;}
+  .sec-head .note{font-size:13px;color:var(--muted-2);}
+
+  /* ---------- TOOLS ---------- */
+  .tools{display:grid;grid-template-columns:1fr 1fr;gap:22px;}
+  .tool{position:relative;border:1px solid var(--line);border-radius:18px;background:var(--ink-2);
+        padding:30px;overflow:hidden;transition:border-color .18s, transform .18s;}
+  .tool:hover{border-color:color-mix(in srgb,var(--accent) 55%, var(--line));transform:translateY(-2px);}
+  .tool-glow{position:absolute;width:260px;height:260px;border-radius:50%;right:-110px;top:-120px;
+             background:var(--accent);filter:blur(60px);opacity:.14;pointer-events:none;}
+  .tool-head{display:flex;align-items:center;gap:18px;position:relative;}
+  .tool-mark{width:54px;height:54px;flex:none;}
+  .tool-name{font-size:26px;}
+  .tool-name b{color:var(--paper);}
+  .tool-tag{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin-top:3px;}
+  .tool-desc{color:var(--muted);font-size:14px;line-height:1.7;margin:20px 0 18px;}
+  .tool-verbs{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:22px;}
+  .verb{font-size:12px;color:var(--muted);background:var(--ink-3);border:1px solid var(--line-soft);
+        border-radius:6px;padding:4px 9px;}
+  .term{background:var(--ink);border:1px solid var(--line-soft);border-radius:11px;padding:16px 18px;
+        font-size:13px;line-height:1.85;}
+  .term-line{white-space:pre;color:var(--muted);}
+  .term .dollar{color:var(--accent);font-weight:700;}
+  .term .p-prompt span:last-child{color:var(--paper);}
+  .p-ok span:first-child,.term .p-ok{color:var(--ship);}
+  .p-arrow{color:var(--muted-2);}
+  .p-q{color:var(--accent);}
+
+  /* ---------- WHY ---------- */
+  .why{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;}
+  .why-card{border:1px solid var(--line);border-radius:16px;background:var(--ink-2);padding:28px;}
+  .why-card .ico{width:34px;height:34px;color:var(--rig);margin-bottom:16px;}
+  .why-card h3{font-size:16px;font-weight:600;margin:0 0 8px;}
+  .why-card p{font-size:13.5px;color:var(--muted);line-height:1.7;margin:0;}
+  .why-card code{color:var(--paper);background:var(--ink-3);border-radius:5px;padding:1px 6px;font-size:12.5px;}
+
+  /* ---------- CTA ---------- */
+  .cta{text-align:center;border:1px solid var(--line);border-radius:22px;background:
+        radial-gradient(120% 130% at 50% 0%, var(--ink-2), var(--ink));padding:64px 32px;}
+  .cta h2{font-size:30px;font-weight:700;margin:0 0 14px;letter-spacing:-0.02em;}
+  .cta h2 .lite{color:var(--muted);font-weight:400;}
+  .cta p{color:var(--muted);font-size:15px;margin:0 0 30px;}
+
+  /* ---------- FOOTER ---------- */
+  footer{border-top:1px solid var(--line-soft);padding:46px 0;margin-top:30px;}
+  .foot-in{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:20px;}
+  .foot-logo{display:flex;align-items:center;gap:11px;color:var(--muted);}
+  .foot-logo svg{width:22px;height:22px;}
+  .foot-logo .wm{font-size:16px;color:var(--muted);}
+  .foot-logo .wm b{color:var(--paper);}
+  .foot-links{display:flex;gap:24px;font-size:13px;color:var(--muted-2);}
+  .foot-links a:hover{color:var(--paper);}
+  .foot-copy{font-size:12px;color:var(--muted-2);}
+
+  @media(max-width:780px){
+    .tools,.why{grid-template-columns:1fr;}
+    .hero-lockup .wm{font-size:46px;}
+    .hero-lockup svg{width:60px;height:60px;}
+    .nav-links a:not(.nav-cta){display:none;}
+  }
+</style>
+</head>
+<body>
+<a href="RigSmith Index.html" class="om-hublink" style="position:fixed;left:16px;bottom:16px;z-index:200;background:rgba(21,21,27,.82);backdrop-filter:blur(8px);border:1px solid #2a2a33;border-radius:999px;padding:7px 14px;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;color:#9a9aa4;text-decoration:none;">← Index</a>
+
+<nav>
+  <div class="wrap nav-in">
+    <a class="nav-logo" href="#top">
+      <svg id="nav-mark" viewBox="0 0 100 100"></svg>
+      <span class="wm"><b>Rig</b>Smith</span>
+    </a>
+    <div class="nav-links">
+      <a href="#tools">Tools</a>
+      <a href="#why">Why</a>
+      <a href="#install">Install</a>
+      <a class="nav-cta" href="https://github.com/rigsmith">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="hero-bg"></div>
+  <div class="wrap hero-in">
+    <div class="hero-eyebrow">rigsmith.dev</div>
+    <div class="hero-lockup">
+      <svg id="hero-mark" viewBox="0 0 100 100"></svg>
+      <span class="wm"><b>Rig</b>Smith</span>
+    </div>
+    <h1>One rig, four tools for the <b>whole dev loop</b>.</h1>
+    <p class="hero-sub">A family of single-binary command-line tools that wrap your stack — from the inner build/test loop to changesets, releases and your Claude Code setup.</p>
+    <div class="install" id="install">
+      <div class="cmd">
+        <span class="dollar">$</span>
+        <code>curl -fsSL https://rigsmith.dev/install.sh | sh</code>
+        <button class="copy" onclick="navigator.clipboard&&navigator.clipboard.writeText('curl -fsSL https://rigsmith.dev/install.sh | sh');this.textContent='copied';setTimeout(()=>this.textContent='copy',1200)">copy</button>
+      </div>
+      <div class="alts"><span><b>brew</b> install rigsmith</span><span><b>scoop</b> install rigsmith</span></div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section id="tools">
+    <div class="sec-head">
+      <span class="k">01</span><h2>The family</h2><span class="rule"></span>
+      <span class="note">one mark, one suffix — <b style="color:var(--muted)">Rig</b></span>
+    </div>
+    <div class="tools" id="tools-grid"></div>
+  </section>
+
+  <section id="why">
+    <div class="sec-head">
+      <span class="k">02</span><h2>Built to disappear into your workflow</h2><span class="rule"></span>
+    </div>
+    <div class="why">
+      <div class="why-card">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+        <h3>Single static binary</h3>
+        <p>Each tool ships as one statically-linked Go binary with <b style="color:var(--paper)">zero runtime dependencies</b>. Drop it on a path and go.</p>
+      </div>
+      <div class="why-card">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5"/></svg>
+        <h3>Convention-first</h3>
+        <p><code>rig</code> auto-detects .NET, Node, Go and Rust, then runs the right native command — no config to write on day one.</p>
+      </div>
+      <div class="why-card">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+        <h3>Install anywhere</h3>
+        <p>Ship via <code>curl | sh</code>, <code>brew</code> or <code>scoop</code> — with cross-OS path handling baked in everywhere it matters.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="cta">
+      <h2><span class="lite">$</span> rig doctor</h2>
+      <p>Everything green? Good. Now wire up the rest of the loop.</p>
+      <div class="install">
+        <div class="cmd" style="margin:0 auto;">
+          <span class="dollar">$</span>
+          <code>curl -fsSL https://rigsmith.dev/install.sh | sh</code>
+          <button class="copy" onclick="navigator.clipboard&&navigator.clipboard.writeText('curl -fsSL https://rigsmith.dev/install.sh | sh');this.textContent='copied';setTimeout(()=>this.textContent='copy',1200)">copy</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap foot-in">
+    <div class="foot-logo">
+      <svg id="foot-mark" viewBox="0 0 100 100"></svg>
+      <span class="wm"><b>Rig</b>Smith</span>
+    </div>
+    <div class="foot-links">
+      <a href="#tools">Tools</a>
+      <a href="#">Docs</a>
+      <a href="https://github.com/rigsmith">GitHub</a>
+      <a href="#">Changelog</a>
+    </div>
+    <div class="foot-copy">© 2026 RigSmith · MIT</div>
+  </div>
+</footer>
+
+<script>
+  // fix: tools render target id
+  document.addEventListener('DOMContentLoaded',()=>{});
+</script>
+<script src="landing.js"></script>
+</body>
+</html>
