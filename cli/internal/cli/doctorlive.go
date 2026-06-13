@@ -23,6 +23,7 @@ func doctorLiveEligible() bool {
 type docRow struct {
 	eco    string
 	label  string
+	path   string
 	done   bool
 	result check
 }
@@ -47,7 +48,7 @@ func newDoctorModel(checks []pendingCheck) doctorModel {
 	sp.Style = lipgloss.NewStyle().Foreground(brandCyan)
 	rows := make([]docRow, len(checks))
 	for i, c := range checks {
-		rows[i] = docRow{eco: c.eco, label: c.label}
+		rows[i] = docRow{eco: c.eco, label: c.label, path: c.path}
 	}
 	return doctorModel{pending: checks, rows: rows, spin: sp}
 }
@@ -104,12 +105,12 @@ func (m doctorModel) View() string {
 		var glyph, detail string
 		if r.done {
 			glyph = renderMark(r.result.level)
-			detail = dimStyle.Render(r.result.detail)
+			detail = r.result.detail
 		} else {
 			glyph = m.spin.View()
-			detail = dimStyle.Render("checking…")
+			detail = "checking…"
 		}
-		b = append(b, ("  " + glyph + " " + pad(r.label, 10) + " " + detail + "\n")...)
+		b = append(b, (docRowLine(glyph, r.label, detail, r.path) + "\n")...)
 	}
 	if m.doneN == len(m.rows) {
 		b = append(b, '\n')
