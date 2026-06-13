@@ -44,8 +44,9 @@ folder path, so the model edits from one pinned window while worktrees open in
 their *own* window for review only.
 
 ```sh
-clauderig worktree new <branch>   # sibling checkout off mainline + a new review window
-clauderig worktree new fix/x --base release-1 --no-open
+clauderig worktree new <branch>   # sibling checkout off mainline (prints the path)
+clauderig worktree new <branch> --open    # …and open a review window for this run
+clauderig worktree new fix/x --base release-1
 clauderig worktree list           # this repo's worktrees (alias: ls)
 clauderig worktree open <branch>  # (re)open a worktree's review window (branch or path)
 clauderig worktree rm <branch>    # remove the worktree, keep the branch (-f if dirty)
@@ -54,15 +55,16 @@ clauderig worktree rm <branch>    # remove the worktree, keep the branch (-f if 
 Worktrees live at `<parent>/<repo>-worktrees/<branch>` — a **sibling** of the
 repo, so they never clutter the primary checkout and each gets its own
 review-window history. `new` never moves the session's cwd; it prints the path
-and opens a separate window.
+and, when opted in, opens a separate window.
 
 ### Configuring the review window
 
-By default `new` opens a new VS Code window (`code -n <path>`). Both *whether* it
-opens and *what* it opens are configurable:
+By default `new` does **not** open a window — opt in per run with `--open`, or
+always with the `worktree.autoOpen` config. Both *whether* it opens and *what* it
+opens are configurable:
 
 ```sh
-clauderig config set worktree.autoOpen false      # never auto-open (like --no-open)
+clauderig config set worktree.autoOpen true       # always auto-open (like --open)
 clauderig config set worktree.openCmd "cursor -n"  # open Cursor instead of VS Code
 clauderig config set worktree.openCmd ""           # reset to the default (code -n)
 ```
@@ -70,11 +72,12 @@ clauderig config set worktree.openCmd ""           # reset to the default (code 
 This writes a `worktree` block to `~/.clauderig/config.json`:
 
 ```json
-"worktree": { "autoOpen": false, "openCmd": "cursor -n" }
+"worktree": { "autoOpen": true, "openCmd": "cursor -n" }
 ```
 
-- **`autoOpen`** (default `true`) — whether `new` opens a window at all.
-  `worktree open` is an explicit request and always opens regardless.
+- **`autoOpen`** (default `false`) — whether `new` opens a window at all. Off by
+  default; `--open`/`--no-open` override it per run. `worktree open` is an
+  explicit request and always opens regardless.
 - **`openCmd`** (default `code -n`) — the program plus any flags; the worktree
   path is appended as the final argument and run directly (no shell). Examples:
   `code -n`, `cursor -n`, `code-insiders -n`, `subl -n`, `idea`.

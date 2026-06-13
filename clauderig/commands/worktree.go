@@ -220,10 +220,10 @@ func openRepo(ctx context.Context) (*gitrepo.Repo, string, error) {
 
 func newWorktreeNewCmd() *cobra.Command {
 	var base string
-	var noOpen bool
+	var open, noOpen bool
 	cmd := &cobra.Command{
 		Use:   "new <branch>",
-		Short: "Create a worktree (and branch) at a sibling path, then open it for review",
+		Short: "Create a worktree (and branch) at a sibling path",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -254,20 +254,29 @@ func newWorktreeNewCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "%s worktree for %s (%s)\n", OkStyle.Render("✓"), HeaderStyle.Render(branch), verb)
 			fmt.Fprintf(out, "  %s\n", path)
-			// Skip the review window when --no-open was passed or the config has
-			// turned auto-open off; either way openReview still prints the hint.
-			skip := noOpen
-			if cfg, err := config.LoadOrDefault(); err == nil && !cfg.WorktreeAutoOpen() {
-				skip = true
+			// Auto-open is opt-in: off by default, enabled via the worktree.autoOpen
+			// config. The --open/--no-open flags override that per run. When we skip,
+			// openReview still prints the review hint.
+			openWindow := false
+			if cfg, err := config.LoadOrDefault(); err == nil {
+				openWindow = cfg.WorktreeAutoOpen()
 			}
-			openReview(cmd, path, skip)
+			if cmd.Flags().Changed("open") {
+				openWindow = open
+			}
+			if noOpen {
+				openWindow = false
+			}
+			openReview(cmd, path, !openWindow)
 			fmt.Fprintln(out, DimStyle.Render("  This window stays put. Edit there by absolute path; run git via:"))
 			fmt.Fprintf(out, "  %s\n", DimStyle.Render("git -C "+path+" add/commit/push  →  then open a PR"))
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&base, "base", "", "branch to fork from (default: repo's mainline)")
-	cmd.Flags().BoolVar(&noOpen, "no-open", false, "don't open the worktree in a new VS Code window")
+	cmd.Flags().BoolVar(&open, "open", false, "open the worktree in a new VS Code window for review")
+	cmd.Flags().BoolVar(&noOpen, "no-open", false, "don't open a window even if worktree.autoOpen is set")
+	cmd.MarkFlagsMutuallyExclusive("open", "no-open")
 	return cmd
 }
 
