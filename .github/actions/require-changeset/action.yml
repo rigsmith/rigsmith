@@ -1,0 +1,32 @@
+name: 'rigsmith require changeset'
+description: 'Fail the check and post a sticky comment when a pull request adds no changeset (the @changesets-bot equivalent, no hosting).'
+
+inputs:
+  cwd:
+    description: 'Working directory containing the .changeset folder.'
+    required: false
+    default: '.'
+  skipLabel:
+    description: 'A PR carrying this label waives the changeset requirement.'
+    required: false
+    default: 'skip-changeset'
+  comment:
+    description: 'Upsert a sticky comment on the PR (nag when missing, ✅ when present). Set false for check-only.'
+    required: false
+    default: 'true'
+  addCommand:
+    description: 'The command shown in the nag comment for creating a changeset.'
+    required: false
+    default: 'changerig add'
+
+runs:
+  using: composite
+  steps:
+    - id: gate
+      shell: bash
+      env:
+        INPUT_CWD: ${{ inputs.cwd }}
+        INPUT_SKIP_LABEL: ${{ inputs.skipLabel }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        INPUT_ADD_COMMAND: ${{ inputs.addCommand }}
+      run: ${{ github.action_path }}/require-changeset.sh

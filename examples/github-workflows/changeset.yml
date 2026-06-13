@@ -1,0 +1,27 @@
+# Copy to .github/workflows/changeset.yml in your repo.
+#
+# The changeset gate: fails the check and posts a sticky comment when a PR adds
+# no changeset. Make "require-changeset" a required status check in branch
+# protection so a missing changeset blocks the merge. Add the `skip-changeset`
+# label to a PR to waive it (docs/CI/refactor-only changes).
+name: Changeset
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write   # post/update the sticky comment
+
+jobs:
+  require-changeset:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need the base commit to diff the PR range
+
+      - uses: rigsmith/rigsmith/.github/actions/require-changeset@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
