@@ -112,13 +112,19 @@ func discoverOutdated(cmd *cobra.Command, eco, root string) (deps []outdatedDep,
 		return parseGoListUpdates(out), true
 	case detect.Node:
 		pm := detect.DetectNodePM(root)
-		if pm != detect.NPM && pm != detect.PNPM {
-			return nil, false // yarn/bun outdated --json shapes differ — not wired yet
+		// `outdated` exits non-zero when anything is outdated; the report on
+		// stdout is still valid, so the error is ignored.
+		switch pm {
+		case detect.NPM, detect.PNPM:
+			out, _ := captureOutdated(cmd, root, string(pm), "outdated", "--json")
+			return parseNpmOutdated(out), true
+		case detect.Bun:
+			// bun has no --json; it prints a pipe-delimited ASCII table.
+			out, _ := captureOutdated(cmd, root, "bun", "outdated")
+			return parseBunOutdated(out), true
+		default:
+			return nil, false // yarn outdated --json is a different shape — not wired yet
 		}
-		// `npm/pnpm outdated` exits non-zero when anything is outdated; the JSON
-		// on stdout is still valid, so the error is ignored.
-		out, _ := captureOutdated(cmd, root, string(pm), "outdated", "--json")
-		return parseNpmOutdated(out), true
 	case detect.DotNet:
 		out, err := captureOutdated(cmd, root, "dotnet", "list", "package", "--outdated", "--format", "json")
 		if err != nil && out == "" {
@@ -184,7 +190,11 @@ func upgradeCommands(eco, root string, chosen []outdatedDep) [][]string {
 	case detect.Go:
 		return goUpgradeCommands(chosen)
 	case detect.Node:
-		return nodeUpgradeCommands(detect.DetectNodePM(root), chosen)
+		pm := detect.DetectNodePM(root)
+		if pm == detect.Bun {
+			return bunUpgradeCommands(chosen) // preserves dev vs prod sections
+		}
+		return nodeUpgradeCommands(pm, chosen)
 	case detect.DotNet:
 		return dotnetUpgradeCommands(chosen)
 	default:

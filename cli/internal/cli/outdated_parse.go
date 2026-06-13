@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -16,6 +17,7 @@ type outdatedDep struct {
 	current string // installed/resolved version ("—" when not installed)
 	latest  string // the version to upgrade to
 	project string // .NET only: owning project path
+	dev     bool   // node: a devDependency (so the upgrade keeps it there)
 }
 
 // parseGoListUpdates parses the concatenated JSON objects from
@@ -121,6 +123,61 @@ func parseDotnetOutdated(jsonText string) []outdatedDep {
 	return out
 }
 
+// parseBunOutdated parses `bun outdated`'s pipe-delimited ASCII table (bun has
+// no --json) into deps. Columns are Package | Current | Update | Latest; a
+// package name carries a " (dev)"/" (peer)"/… suffix marking its section, which
+// is stripped (and recorded for dev). Border/separator/header rows and the
+// banner are skipped; rows are deduped by name (workspaces can repeat). Pure.
+func parseBunOutdated(text string) []outdatedDep {
+	var out []outdatedDep
+	seen := map[string]bool{}
+	for _, raw := range strings.Split(stripANSI(text), "\n") {
+		line := strings.TrimSpace(raw)
+		if !strings.HasPrefix(line, "|") {
+			continue // banner / blank — not a table row
+		}
+		cells := splitTableRow(line)
+		if len(cells) < 4 {
+			continue // top/bottom border (one cell of dashes)
+		}
+		name, current, latest := cells[0], cells[1], cells[3]
+		if name == "" || name == "Package" || strings.Trim(name, "- ") == "" {
+			continue // header or separator row
+		}
+		dev := false
+		if i := strings.Index(name, " ("); i >= 0 {
+			dev = strings.Contains(name[i:], "dev")
+			name = strings.TrimSpace(name[:i])
+		}
+		if latest == "" || latest == current || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, outdatedDep{name: name, current: current, latest: latest, dev: dev})
+	}
+	sortDeps(out)
+	return out
+}
+
+// splitTableRow splits a "| a | b | c |" row into its trimmed inner cells,
+// dropping the empty fragments before the first and after the last pipe. Pure.
+func splitTableRow(line string) []string {
+	parts := strings.Split(line, "|")
+	if len(parts) >= 2 {
+		parts = parts[1 : len(parts)-1] // drop the empties outside the outer pipes
+	}
+	cells := make([]string, len(parts))
+	for i, p := range parts {
+		cells[i] = strings.TrimSpace(p)
+	}
+	return cells
+}
+
+// stripANSI removes ANSI SGR escape sequences (bun colorizes on a TTY). Pure.
+func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
+
+var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
 // sortDeps orders deps by project then name for a stable picker. Pure.
 func sortDeps(deps []outdatedDep) {
 	sort.SliceStable(deps, func(i, j int) bool {
@@ -159,6 +216,29 @@ func nodeUpgradeCommands(pm detect.NodePM, deps []outdatedDep) [][]string {
 		base = append(base, d.name+"@"+d.latest)
 	}
 	return [][]string{base}
+}
+
+// bunUpgradeCommands builds `bun add name@latest …` for the chosen deps,
+// splitting dev dependencies into a `bun add --dev …` so they stay in
+// devDependencies. At most two commands (prod, dev). Pure.
+func bunUpgradeCommands(deps []outdatedDep) [][]string {
+	var prod, dev []string
+	for _, d := range deps {
+		spec := d.name + "@" + d.latest
+		if d.dev {
+			dev = append(dev, spec)
+		} else {
+			prod = append(prod, spec)
+		}
+	}
+	var cmds [][]string
+	if len(prod) > 0 {
+		cmds = append(cmds, append([]string{"bun", "add"}, prod...))
+	}
+	if len(dev) > 0 {
+		cmds = append(cmds, append([]string{"bun", "add", "--dev"}, dev...))
+	}
+	return cmds
 }
 
 // dotnetUpgradeCommands builds one `dotnet add [project] package id --version`

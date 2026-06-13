@@ -192,13 +192,16 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   opt packages in. "All dependencies are up to date 🎉" when there's nothing to do.
 - **What it does:** upgrades the packages you pick, echoing each command —
   **go** `go get pkg@latest …` then `go mod tidy`; **node** `npm install` /
-  `pnpm add` with `name@latest` specs; **.NET** `dotnet add [project] package id
+  `pnpm add` with `name@latest` specs (**bun** `bun add` / `bun add --dev`,
+  split so dev deps stay dev); **.NET** `dotnet add [project] package id
   --version latest` per package. Esc/empty selection upgrades nothing.
-- **Support / fallback:** wired for **go**, **node (npm/pnpm)**, and **.NET**.
-  Other managers (yarn/bun) and ecosystems, or an unparseable report, fall back
-  to the plain list; off a TTY, `-i` prints a hint and lists.
-- **Data sources:** `go list -m -u -json all` (go), `<pm> outdated --json`
-  (node — npm exits non-zero with valid JSON, which rig tolerates),
+- **Support / fallback:** wired for **go**, **node (npm/pnpm/bun)**, and
+  **.NET**. Yarn and other ecosystems, or an unparseable report, fall back to
+  the plain list; off a TTY, `-i` prints a hint and lists.
+- **Data sources:** `go list -m -u -json all` (go); `<pm> outdated --json`
+  (npm/pnpm — npm exits non-zero with valid JSON, which rig tolerates); `bun
+  outdated` (bun has no `--json`, so rig parses its pipe-delimited ASCII table,
+  preserving the `(dev)` tag so the upgrade stays in devDependencies);
   `dotnet list package --outdated --format json` (.NET).
 
 ## `rig <verb>` at a workspace root — project picker (huh single-select)

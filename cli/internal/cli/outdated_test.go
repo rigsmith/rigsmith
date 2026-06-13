@@ -71,6 +71,48 @@ func TestParseDotnetOutdated(t *testing.T) {
 	}
 }
 
+func TestParseBunOutdated(t *testing.T) {
+	// Real `bun outdated` output (banner + pipe-delimited ASCII table).
+	text := "bun outdated v1.3.14 (0d9b296a)\n" +
+		"|-------------------------------------------|\n" +
+		"| Package      | Current | Update  | Latest |\n" +
+		"|--------------|---------|---------|--------|\n" +
+		"| lodash       | 4.17.20 | 4.17.20 | 4.18.1 |\n" +
+		"|--------------|---------|---------|--------|\n" +
+		"| is-odd (dev) | 2.0.0   | 2.0.0   | 3.0.1  |\n" +
+		"|--------------|---------|---------|--------|\n" +
+		"| same (peer)  | 1.0.0   | 1.0.0   | 1.0.0  |\n" + // up to date → skipped
+		"|-------------------------------------------|\n"
+	got := parseBunOutdated(text)
+	want := []outdatedDep{
+		{name: "is-odd", current: "2.0.0", latest: "3.0.1", dev: true},
+		{name: "lodash", current: "4.17.20", latest: "4.18.1"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestBunUpgradeCommands_SplitsDevAndProd(t *testing.T) {
+	deps := []outdatedDep{
+		{name: "lodash", latest: "4.18.1"},
+		{name: "is-odd", latest: "3.0.1", dev: true},
+	}
+	got := bunUpgradeCommands(deps)
+	want := [][]string{
+		{"bun", "add", "lodash@4.18.1"},
+		{"bun", "add", "--dev", "is-odd@3.0.1"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+
+	// Only-prod → a single command (no empty --dev call).
+	if got := bunUpgradeCommands([]outdatedDep{{name: "a", latest: "2"}}); len(got) != 1 {
+		t.Fatalf("prod-only should be one command, got %+v", got)
+	}
+}
+
 func TestGoUpgradeCommands(t *testing.T) {
 	deps := []outdatedDep{
 		{name: "github.com/a/b", latest: "v1.3.0"},
