@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
 	"github.com/rigsmith/core/ecosystem"
+	"github.com/rigsmith/core/match"
 	"github.com/rigsmith/core/plugin"
 	"github.com/spf13/cobra"
 )
@@ -157,7 +158,7 @@ func buildCdTargets(ctx context.Context, root string, exclude []string) []cdTarg
 			continue
 		}
 		for _, pkg := range resp.Packages {
-			if excluded(pkg.Name, exclude) || excluded(shortName(pkg.Name), exclude) {
+			if excluded(pkg.Name, exclude) || excluded(match.ShortName(pkg.Name), exclude) {
 				continue
 			}
 			dir := filepath.Join(root, pkg.Dir)
@@ -228,8 +229,8 @@ func cdNameCompletion(cmd *cobra.Command, args []string, _ string) ([]string, co
 }
 
 // ---------------------------------------------------------------------------
-// Pure matcher — mirrors rig's tiered ranking (exact > prefix > substring >
-// subsequence; name fields beat path fields).
+// Pure matcher — rig's tiered ranking lives in core/match; this adapts cdTarget
+// to it (name + short name beat relative path + dir basename).
 // ---------------------------------------------------------------------------
 
 // rankCdTargets returns the targets matching query, best first. Path-aware
@@ -237,92 +238,18 @@ func cdNameCompletion(cmd *cobra.Command, args []string, _ string) ([]string, co
 // > substring > subsequence). Ties break by name-match over path-match, then
 // deepest directory, then shortest name. Pure.
 func rankCdTargets(targets []cdTarget, query string) []cdTarget {
-	q := strings.ToLower(strings.TrimSpace(query))
-	if q == "" {
-		out := make([]cdTarget, len(targets))
-		copy(out, targets)
-		return out
-	}
-	type scored struct {
-		t      cdTarget
-		best   int
-		byName bool
-	}
-	var hits []scored
-	for _, t := range targets {
-		best, byName := rankCdTarget(t, q)
-		if best > 0 {
-			hits = append(hits, scored{t: t, best: best, byName: byName})
+	return match.Rank(targets, query, func(t cdTarget) match.Fields {
+		return match.Fields{
+			Name:  []string{t.Name, match.ShortName(t.Name)},
+			Path:  []string{t.Rel, filepath.Base(t.Dir)},
+			Depth: len(t.Dir),
+			Tie:   len(t.Name),
 		}
-	}
-	sort.SliceStable(hits, func(i, j int) bool {
-		a, b := hits[i], hits[j]
-		if a.best != b.best {
-			return a.best > b.best
-		}
-		if a.byName != b.byName {
-			return a.byName // a name match beats a path-only match
-		}
-		if len(a.t.Dir) != len(b.t.Dir) {
-			return len(a.t.Dir) > len(b.t.Dir) // deepest on ties
-		}
-		return len(a.t.Name) < len(b.t.Name) // then the closest (shortest) name
 	})
-	out := make([]cdTarget, len(hits))
-	for i, h := range hits {
-		out[i] = h.t
-	}
-	return out
 }
 
-// rankCdTarget scores a target as (best tier, matched-on-name?): the best tier
-// across the name/short-name fields and the path fields, plus whether a name
-// field was at least as good (so `cd web` prefers Foo.Web over a sibling that
-// only matches on its `web` directory basename).
-func rankCdTarget(t cdTarget, q string) (best int, byName bool) {
-	nameTier := max(fieldScore(t.Name, q), fieldScore(shortName(t.Name), q))
-	pathTier := max(fieldScore(t.Rel, q), fieldScore(filepath.Base(t.Dir), q))
-	return max(nameTier, pathTier), nameTier > 0 && nameTier >= pathTier
-}
-
-// fieldScore scores one field against the (already-lowercased) query:
-// exact > prefix > substring > subsequence.
-func fieldScore(field, q string) int {
-	h := strings.ToLower(field)
-	switch {
-	case h == q:
-		return 100
-	case strings.HasPrefix(h, q):
-		return 80
-	case strings.Contains(h, q):
-		return 60
-	case isSubsequence(q, h):
-		return 40
-	default:
-		return 0
-	}
-}
-
-// shortName is the segment after the last '/' of a (possibly scoped/slashy)
-// name, e.g. "myapp" from "github.com/me/myapp".
-func shortName(name string) string {
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		return name[i+1:]
-	}
-	return name
-}
-
-// isSubsequence reports whether needle is a subsequence of haystack (both
-// already lowercased).
-func isSubsequence(needle, haystack string) bool {
-	if needle == "" {
-		return true
-	}
-	i := 0
-	for j := 0; j < len(haystack) && i < len(needle); j++ {
-		if haystack[j] == needle[i] {
-			i++
-		}
-	}
-	return i == len(needle)
-}
+// shortName, fieldScore, and isSubsequence are package-local aliases for the
+// shared matcher in core/match, used across the cli package (doctor, kill, …).
+func shortName(name string) string          { return match.ShortName(name) }
+func fieldScore(field, q string) int        { return match.Tier(field, q) }
+func isSubsequence(needle, hay string) bool { return match.IsSubsequence(needle, hay) }
