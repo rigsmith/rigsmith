@@ -2,6 +2,7 @@ package gitrepo
 
 import (
 	"context"
+	"fmt"
 	"strings"
 )
 
@@ -93,6 +94,88 @@ func (r *Repo) WorktreeRemove(ctx context.Context, path string, force bool) erro
 	}
 	args = append(args, path)
 	_, err := runGit(ctx, r.Dir, args...)
+	return err
+}
+
+// WorktreePruneMeta runs `git worktree prune`, clearing the administrative
+// records of worktrees whose directories were deleted by hand. It does not
+// touch any existing checkout.
+func (r *Repo) WorktreePruneMeta(ctx context.Context) error {
+	_, err := runGit(ctx, r.Dir, "worktree", "prune")
+	return err
+}
+
+// WorktreeClean reports whether the worktree rooted at path has no uncommitted
+// or untracked changes. path is the worktree's own directory (git is run there
+// so the answer is that tree's status, not the main checkout's).
+func (r *Repo) WorktreeClean(ctx context.Context, path string) (bool, error) {
+	out, err := runGit(ctx, path, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) == "", nil
+}
+
+// IsMerged reports whether branch's changes are already contained in base. It
+// recognises two shapes of "merged":
+//
+//   - ordinary merge / fast-forward — branch's tip is an ancestor of base; and
+//   - squash-merge — base holds an equivalent patch under a different commit
+//     (so branch's tip is NOT an ancestor). This is the common case here, since
+//     PRs land as a single squashed commit, and a plain ancestor test would
+//     wrongly call every merged branch un-merged.
+//
+// The squash case is detected by synthesising a commit that carries branch's
+// tree on top of the merge-base, then asking `git cherry` whether base already
+// contains an equivalent change (matched by patch-id). It compares against the
+// *local* base ref, so keep base current (e.g. pull main) for accurate results;
+// when in doubt it errs toward "not merged", which only means a worktree is
+// kept rather than wrongly removed.
+func (r *Repo) IsMerged(ctx context.Context, branch, base string) (bool, error) {
+	code, err := gitExitCode(ctx, r.Dir, "merge-base", "--is-ancestor", branch, base)
+	if err != nil {
+		return false, err
+	}
+	switch code {
+	case 0:
+		return true, nil // ancestor → ordinary merge or fast-forward
+	case 1:
+		// Not an ancestor — fall through to the squash-merge check.
+	default:
+		return false, fmt.Errorf("git merge-base --is-ancestor %s %s: exit %d", branch, base, code)
+	}
+
+	mergeBase, err := runGit(ctx, r.Dir, "merge-base", base, branch)
+	if err != nil {
+		return false, err
+	}
+	tree, err := runGit(ctx, r.Dir, "rev-parse", branch+"^{tree}")
+	if err != nil {
+		return false, err
+	}
+	synthetic, err := runGit(ctx, r.Dir, "commit-tree", strings.TrimSpace(tree),
+		"-p", strings.TrimSpace(mergeBase), "-m", "clauderig prune merge-check")
+	if err != nil {
+		return false, err
+	}
+	// git cherry prefixes a commit with '-' when base already has an equivalent
+	// patch, '+' when it does not. Our synthetic commit is the only one ahead of
+	// the merge-base, so a leading '-' means base contains branch's changes.
+	cherry, err := runGit(ctx, r.Dir, "cherry", base, strings.TrimSpace(synthetic))
+	if err != nil {
+		return false, err
+	}
+	return strings.HasPrefix(strings.TrimSpace(cherry), "-"), nil
+}
+
+// DeleteBranch deletes a local branch. Without force it uses `branch -d`, which
+// refuses to drop a branch git still considers unmerged.
+func (r *Repo) DeleteBranch(ctx context.Context, branch string, force bool) error {
+	flag := "-d"
+	if force {
+		flag = "-D"
+	}
+	_, err := runGit(ctx, r.Dir, "branch", flag, branch)
 	return err
 }
 
