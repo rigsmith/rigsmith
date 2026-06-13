@@ -10,12 +10,13 @@
 #
 # This is the script that sits behind:
 #
-#     curl -fsSL https://rigsmith.sh | sh           # installs all tools
-#     curl -fsSL https://rigsmith.sh | sh -s rig    # just rig
-#     curl -fsSL https://relrig.sh   | sh -s relrig # just relrig
+#     curl -fsSL https://rigsmith.sh | sh            # installs all tools
+#     curl -fsSL https://rigsmith.sh | sh -s rig     # just rig
+#     curl -fsSL https://rigsmith.sh | sh -s shiprig # just shiprig
 #
 # Usage:
-#     install.sh [rig|relrig|clauderig|all]   (default: all)
+#     install.sh [rig|shiprig|clauderig|all]   (default: all)
+#     ('relrig' is accepted as a deprecated alias for 'shiprig')
 #
 # Env:
 #     RIGSMITH_INSTALL   install prefix (default: $HOME/.local) -> bin/ underneath
@@ -128,9 +129,14 @@ main() {
   command -v tar  >/dev/null 2>&1 || error "tar is required"
 
   target="${1:-all}"
+  # 'relrig' is a deprecated alias for 'shiprig'.
+  if [ "$target" = "relrig" ]; then
+    warn "'relrig' was renamed to 'shiprig'; installing shiprig."
+    target="shiprig"
+  fi
   case "$target" in
-    rig | relrig | clauderig | all) ;;
-    *) error "unknown binary '$target' (expected: rig, relrig, clauderig, or omit for all)" ;;
+    rig | shiprig | clauderig | all) ;;
+    *) error "unknown binary '$target' (expected: rig, shiprig, clauderig, or omit for all)" ;;
   esac
 
   os="$(detect_os)"
@@ -139,11 +145,11 @@ main() {
 
   case "$target" in
     rig)       install_binary rig       "$tag" "$os" "$arch" ;;
-    relrig)    install_binary relrig    "$tag" "$os" "$arch" ;;
+    shiprig)   install_binary shiprig   "$tag" "$os" "$arch" ;;
     clauderig) install_binary clauderig "$tag" "$os" "$arch" ;;
     all)
       install_binary rig       "$tag" "$os" "$arch"
-      install_binary relrig    "$tag" "$os" "$arch"
+      install_binary shiprig   "$tag" "$os" "$arch"
       install_binary clauderig "$tag" "$os" "$arch"
       ;;
   esac

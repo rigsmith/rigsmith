@@ -1,6 +1,6 @@
 # rig
 
-rigsmith's convention-first dev launcher — the Go successor to the .NET/Node
+RigSmith's convention-first dev launcher — the Go successor to the .NET/Node
 `rig`. The same verb works in any ecosystem; rig detects the repo and runs the
 right native command.
 
@@ -20,7 +20,7 @@ rig build --quiet        # suppress the → command echo
 rig is **convention-first**: it works with zero configuration. An optional
 [`.rig.json`](./configuration) supplies only what can't be inferred.
 
-The dev verbs map through each ecosystem's `DevCommands` (shared with relrig),
+The dev verbs map through each ecosystem's `DevCommands` (shared with shipRig),
 so an ecosystem declares its own commands. Ecosystems that don't define
 `lint`/`typecheck` report "no mapping" cleanly.
 

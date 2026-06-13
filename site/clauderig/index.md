@@ -1,4 +1,4 @@
-# clauderig
+# claudeRig
 
 Sync your Claude Code setup across machines — config, skills, and session
 history — to your own **private** git repo, and restore it on any computer with

@@ -1,6 +1,6 @@
 # The lifecycle
 
-changerig follows the @changesets model: contributors describe *intent* in small
+changeRig follows the @changesets model: contributors describe *intent* in small
 markdown files, and a later `version` step turns the accumulated intent into
 version bumps and a changelog.
 

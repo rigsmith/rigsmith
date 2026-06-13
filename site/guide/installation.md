@@ -1,6 +1,6 @@
 # Installation
 
-Every rigsmith tool is a single, statically-linked Go binary — no .NET runtime,
+Every RigSmith tool is a single, statically-linked Go binary — no .NET runtime,
 no Node. Install the whole family or just one tool.
 
 ## curl | sh
@@ -8,7 +8,7 @@ no Node. Install the whole family or just one tool.
 ```sh
 curl -fsSL https://rigsmith.sh | sh            # the whole family
 curl -fsSL https://rigsmith.sh/rig | sh        # just rig
-curl -fsSL https://rigsmith.sh/relrig | sh     # just relrig
+curl -fsSL https://rigsmith.sh/shiprig | sh    # just shiprig
 curl -fsSL https://rigsmith.sh/clauderig | sh  # just clauderig
 ```
 
@@ -24,7 +24,7 @@ browser to read it before piping it to a shell.
 
 ```sh
 brew install rigsmith/tap/rig
-brew install rigsmith/tap/relrig
+brew install rigsmith/tap/shiprig
 ```
 
 ## Scoop (Windows)
@@ -41,7 +41,7 @@ The repo is a `go.work` workspace; build any module from its directory:
 ```sh
 go build -o bin/rig       ./cli
 go build -o bin/changerig ./changerig
-go build -o bin/relrig    ./release
+go build -o bin/shiprig   ./shiprig
 go build -o bin/clauderig ./clauderig
 ```
 
