@@ -424,14 +424,15 @@ func ratio(covered, total int) string {
 }
 
 // augmentNodeCoverageArgs forwards the optional [name] filter and, for vitest,
-// the coverage reporters --min/--open need — everything past a single `--` so
-// the package manager hands them to the test runner (a bare positional after
-// `<pm> run coverage` is dropped without it). The reporters (lcov →
-// ReportGenerator input, html → native open, json-summary → --min) are only
-// added for vitest, whose `--coverage.reporter` flag repeats cleanly; other
+// the coverage reporters --min/--open/the summary table need — everything past
+// a single `--` so the package manager hands them to the test runner (a bare
+// positional after `<pm> run coverage` is dropped without it). The reporters
+// (lcov → ReportGenerator input, html → native open, json-summary → --min and
+// the summary table) are only added for vitest, whose `--coverage.reporter`
+// flag repeats cleanly; other
 // runners just get the forwarded name and rig consumes whatever they wrote.
-func augmentNodeCoverageArgs(argv []string, root, name string, open, min bool, cov *config.Coverage) []string {
-	vitest := (open || min) && nodeUsesVitest(root)
+func augmentNodeCoverageArgs(argv []string, root, name string, open, min, summary bool, cov *config.Coverage) []string {
+	vitest := (open || min || summary) && nodeUsesVitest(root)
 	if name == "" && !vitest {
 		return argv
 	}
