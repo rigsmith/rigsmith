@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/mattn/go-isatty"
 	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/worktree"
+	"github.com/rigsmith/core/match"
 	"github.com/spf13/cobra"
 )
 
@@ -28,19 +30,23 @@ func NewWorktreeCmd() *cobra.Command {
 	return cmd
 }
 
-// newWorktreePickCmd shows an interactive picker over the repo's worktrees and
-// prints the chosen worktree's path to stdout. It powers the `<tool>-wt` dev
-// launchers (run with no branch argument): the huh UI draws on stderr so stdout
-// carries only the path the launcher captures. --repo lets a launcher invoked
-// from another repo still list *this* repo's worktrees.
+// newWorktreePickCmd resolves a worktree and prints its path to stdout. It
+// powers the `<tool>-wt` dev launchers: the huh UI (when needed) draws on stderr
+// so stdout carries only the path the launcher captures. --repo lets a launcher
+// invoked from another repo still resolve *this* repo's worktrees.
+//
+// With a [query] it's the best fuzzy match (exact > prefix > substring >
+// subsequence), or a directory path used as-is. With no query it auto-selects
+// the lone linked worktree, falls back to the main checkout when there are no
+// linked worktrees, or shows an interactive picker when several exist.
 func newWorktreePickCmd() *cobra.Command {
 	var repoDir string
 	cmd := &cobra.Command{
-		Use:    "pick",
-		Short:  "Interactively select a worktree and print its path (used by <tool>-wt)",
-		Args:   cobra.NoArgs,
+		Use:    "pick [query]",
+		Short:  "Resolve or select a worktree and print its path (used by <tool>-wt)",
+		Args:   cobra.MaximumNArgs(1),
 		Hidden: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			dir := repoDir
 			if dir == "" {
@@ -61,22 +67,11 @@ func newWorktreePickCmd() *cobra.Command {
 			if len(wts) == 0 {
 				return fmt.Errorf("no worktrees found")
 			}
-			if !pickerTTY() {
-				return fmt.Errorf("no terminal for the picker; pass a branch or path explicitly")
+			query := ""
+			if len(args) == 1 {
+				query = strings.TrimSpace(args[0])
 			}
-			opts := make([]huh.Option[string], 0, len(wts))
-			for _, wt := range wts {
-				branch := wt.Branch
-				if branch == "" {
-					branch = "(detached)"
-				}
-				label := fmt.Sprintf("%s  %s", HeaderStyle.Render(branch), DimStyle.Render(wt.Path))
-				opts = append(opts, huh.NewOption(label, wt.Path))
-			}
-			var chosen string
-			err = huh.NewForm(huh.NewGroup(
-				huh.NewSelect[string]().Title("Run from which worktree?").Options(opts...).Value(&chosen),
-			)).Run()
+			chosen, err := resolveWorktree(wts, query)
 			if err != nil {
 				return err
 			}
@@ -84,8 +79,67 @@ func newWorktreePickCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&repoDir, "repo", "", "repo directory whose worktrees to list (default: current directory)")
+	cmd.Flags().StringVar(&repoDir, "repo", "", "repo directory whose worktrees to resolve (default: current directory)")
 	return cmd
+}
+
+// resolveWorktree maps a query (or its absence) to a worktree path. git lists
+// the main worktree first, so wts[0] is the main checkout and wts[1:] are the
+// linked ones.
+func resolveWorktree(wts []gitrepo.Worktree, query string) (string, error) {
+	if query == "" {
+		linked := wts[1:]
+		switch len(linked) {
+		case 0:
+			return wts[0].Path, nil // no linked worktrees → main (same as -dev)
+		case 1:
+			return linked[0].Path, nil // exactly one → auto-select
+		default:
+			return pickWorktree(wts)
+		}
+	}
+	// A directory path wins outright — lets you point at any checkout.
+	if fi, err := os.Stat(query); err == nil && fi.IsDir() {
+		return filepath.Abs(query)
+	}
+	ranked := match.Rank(wts, query, func(w gitrepo.Worktree) match.Fields {
+		return match.Fields{
+			Name: []string{w.Branch, match.ShortName(w.Branch)},
+			Path: []string{filepath.Base(w.Path)},
+			// No depth preference for worktrees; ties go to the shortest
+			// (closest) branch name.
+			Tie: len(w.Branch),
+		}
+	})
+	if len(ranked) == 0 {
+		return "", fmt.Errorf("no worktree matching %q", query)
+	}
+	return ranked[0].Path, nil
+}
+
+// pickWorktree shows the filterable huh worktree picker and returns the chosen
+// path. Requires a TTY on stderr (stdout carries the result).
+func pickWorktree(wts []gitrepo.Worktree) (string, error) {
+	if !pickerTTY() {
+		return "", fmt.Errorf("multiple worktrees and no terminal for the picker; pass a branch or path")
+	}
+	opts := make([]huh.Option[string], 0, len(wts))
+	for _, wt := range wts {
+		branch := wt.Branch
+		if branch == "" {
+			branch = "(detached)"
+		}
+		label := fmt.Sprintf("%s  %s", HeaderStyle.Render(branch), DimStyle.Render(wt.Path))
+		opts = append(opts, huh.NewOption(label, wt.Path))
+	}
+	var chosen string
+	err := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().Title("Run from which worktree?").Options(opts...).Filtering(true).Value(&chosen),
+	)).Run()
+	if err != nil {
+		return "", err
+	}
+	return chosen, nil
 }
 
 // pickerTTY reports whether we can show the worktree picker. Unlike the shared
