@@ -30,6 +30,7 @@ the subject of this doc.
 | **cargo-outdated** | `rig outdated` (cargo) | `cargo outdated` | ✅ `extTool` | ✅ prompt → `cargo install cargo-outdated` | `tools.cargo-outdated` | guidance error (`require`) |
 | **cargo-watch** | `rig watch` (cargo) | `cargo watch -x <verb>` | ✅ `extTool` | ✅ prompt → `cargo install cargo-watch` | `tools.cargo-watch` | guidance error (`require`) |
 | **csharpier** | `rig format` (.NET, when selected) | `csharpier format .` / `dotnet csharpier format .` | ✅ `extTool` (LookPath + tool-manifest) | ✅ prompt → `dotnet tool install -g csharpier` | `dotnet.formatter` (auto/dotnet/csharpier) | guidance error (`require`) |
+| **wgo** | `rig watch` (go) | `wgo go <verb>` | ✅ `extTool` (LookPath) | ✅ prompt → `go install github.com/bokwoon95/wgo@latest` | `tools.wgo` | guidance error (`require`) |
 | **vitest** | `rig coverage` (node) | reporters injected into the test run | ✅ config-file/dep detection | — (project dev-dep) | — | reporters not injected (no rich report) |
 | **OS process tools** | `rig kill` | `lsof`/`netstat` (port), `pgrep`/`pkill`/`taskkill` (name) | ⚠️ implicit (non-zero exit = "no match") | — | `kill.match` | treated as no matches |
 | **git** | release/version/tagging (`core/gitutil`), `rig outdated` discovery | `git …` | ❌ none | — | — | raw error |
@@ -95,6 +96,15 @@ tool) or a local tool-manifest (`dotnet csharpier`) — and invoked as
 `require`d on the format run (offer `dotnet tool install -g csharpier` on a TTY,
 else a guidance error), and it joins the doctor Tools group when CSharpier is the
 selected .NET formatter.
+### wgo (go watch)
+
+Go has no native watcher, so `rig watch` for Go uses
+[wgo](https://github.com/bokwoon95/wgo) — which transparently wraps the `go`
+command, so the watch argv is just `wgo` prefixed onto the same command the
+non-watch verb runs (`wgo go test ./...`, `wgo go run .`, `wgo go vet ./...`).
+The watch path `require`s `toolWgo`; when absent, on a TTY rig offers
+`go install github.com/bokwoon95/wgo@latest` (persisted to `tools.wgo`), else
+fails with that guidance.
 
 ### vitest (node coverage)
 
@@ -158,5 +168,6 @@ install page on a TTY.
 
 ## Remaining
 
-- **Future tools** (a Go `watch` via `watchexec`/`air`, etc.) drop in as another
-  `extTool` value and are picked up by the doctor Tools group automatically.
+- **Future tools** drop in as another `extTool` value and are picked up by the
+  doctor Tools group automatically (e.g. `rig watch` for Go landed this way via
+  wgo).

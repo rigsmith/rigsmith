@@ -67,6 +67,11 @@ func runWatchVerb(cmd *cobra.Command, verb string, rest []string) error {
 			return err
 		}
 	}
+	if eco == detect.Go {
+		if _, err := toolWgo.require(cmd, root); err != nil {
+			return err
+		}
+	}
 	return runCommand(cmd, dir, append(argv, forwarded...))
 }
 
@@ -143,7 +148,12 @@ func watchCommandFor(eco, verb, root string) ([]string, bool) {
 			return []string{pm, "run", verb, "--", "--watch"}, true
 		}
 	case detect.Go:
-		// Go has no native watch; `rig run`/`test` re-run is the closest.
+		// Go has no native watch; wgo (github.com/bokwoon95/wgo) re-runs the
+		// verb's `go` command on change — so prefix it onto the same argv the
+		// non-watch verb uses (`wgo go test ./...`, `wgo go run .`, …).
+		if argv, ok := detect.CommandFor(detect.Go, verb, root); ok {
+			return append([]string{"wgo"}, argv...), true
+		}
 		return nil, false
 	}
 	return nil, false

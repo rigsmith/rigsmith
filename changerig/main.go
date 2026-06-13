@@ -43,6 +43,7 @@ func run(ctx context.Context) error {
 		commands.NewInitCmd(),
 		add,
 		commands.NewStatusCmd(),
+		commands.NewBrowseCmd(),
 		commands.NewVersionCmd(),
 		commands.NewPreCmd(),
 		commands.NewInfoCmd(),
