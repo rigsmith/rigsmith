@@ -159,9 +159,11 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   (`Go` / `Node` / `.NET` / `Cargo`): the toolchain rows once (tool version, SDK
   + any global.json pin), then **one row per project** with its own state — node
   deps (`deps installed` / `deps declared, not installed — run rig install` /
-  `no dependencies`), .NET target framework, go/cargo versions. Each row spins
-  `checking…` then resolves to `✓`/`!`/`✗`; checks run **concurrently** (each a
-  bubbletea Cmd). A final verdict: `all good` / `some warnings` / `problems found`.
+  `no dependencies`), .NET target framework, go/cargo versions — and the
+  project's **repo-relative path** in a trailing dim column (so it's clear where
+  each project lives). Each row spins `checking…` then resolves to `✓`/`!`/`✗`;
+  checks run **concurrently** (each a bubbletea Cmd). A final verdict: `all good`
+  / `some warnings` / `problems found`. (Toolchain rows carry no path.)
 - **What it does:** read-only — exits non-zero only when an error-level check
   fails (warnings don't), so it still doubles as a CI gate (via the static
   path). `q`/`ctrl+c` quits early. Renders inline, so the result stays in
@@ -210,15 +212,22 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   `bun add [--dev]`, which keep each package in its existing section.
 
 ## `rig <verb>` at a workspace root — project picker (huh single-select)
-- **Trigger:** a bare `--all`-capable dev verb (`rig build`/`test`/…) at a
-  workspace root where packages live only in subdirs (e.g. a `go.work` root) and
-  several exist — running the verb at the root has no single target.
-- **What you see:** a select titled `Build which?` (verb-specific) with
-  **`All packages`** first (→ the `--all` dashboard) then each package
-  (`name  (path · ecosystem)`).
+- **Trigger:** a bare dev verb at a workspace root where packages live only in
+  subdirs (e.g. a `go.work` root) and several exist — running the verb at the
+  root has no single target. Applies to the `--all`-capable verbs
+  (`build`/`test`/`format`/`lint`/`typecheck`/`clean`) **and `run`**.
+- **What you see:** a select titled `Build which?` / `Run which?` (verb-specific)
+  listing each package (`name  (path · ecosystem)`).
+  - For `--all`-capable verbs, **`All packages`** leads the list (→ the `--all`
+    dashboard).
+  - For **`run`** (which has no `--all`), there's **no "All packages"** entry —
+    it's a single pick, and the list is filtered to **runnable** packages (a Go
+    module with no `package main` is omitted, so libraries don't clutter it). A
+    lone runnable package is run directly without a prompt.
 - **Non-TTY:** a helpful error — `no single build target here … run rig build
-  --all or rig build <project>`. Single-package repos (or a package at the root)
-  are unaffected: the normal root command runs.
+  --all or rig build <project>` (the `--all` hint is dropped for `run`).
+  Single-package repos (or a package at the root) are unaffected: the normal
+  root command runs.
 
 ## `--list-tests` discovery spinner
 - **Trigger:** during `rig test <query>` on a .NET repo, while
