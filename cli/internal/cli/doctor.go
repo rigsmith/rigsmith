@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rigsmith/cli/internal/config"
 	"github.com/rigsmith/cli/internal/detect"
 	"github.com/spf13/cobra"
 )
@@ -79,12 +80,36 @@ func newDoctorCmd() *cobra.Command {
 				fmt.Fprintln(out, doctorSummary(severity))
 			}
 
+			// On a TTY with a .NET project here but no SDK, offer the install page.
+			maybeOfferDotnetInstall(cmd, root)
+
 			if severity == docError {
 				return fmt.Errorf("doctor: problems found")
 			}
 			return nil
 		},
 	}
+}
+
+// dotnetTargetMajor is the .NET SDK major version rig standardizes on. Older
+// SDKs still work for most verbs (a graceful warn in doctor), but the dnx-based
+// features (the `dlx` verb, on-demand ReportGenerator) need this one.
+const dotnetTargetMajor = 10
+
+// maybeOfferDotnetInstall offers to open the .NET download page when a .NET
+// project is here but no SDK is installed, on an interactive terminal. (The
+// checklist already reported the error; this is the actionable follow-up.)
+func maybeOfferDotnetInstall(cmd *cobra.Command, root string) {
+	if !doctorLiveEligible() {
+		return
+	}
+	if _, err := exec.LookPath("dotnet"); err == nil {
+		return
+	}
+	if len(discoverDotnetProjects(root)) == 0 {
+		return
+	}
+	offerOpenURL(cmd, "the .NET SDK isn't installed", "https://dot.net/download")
 }
 
 // check is one checklist line.
@@ -140,6 +165,20 @@ func gatherChecks(cmd *cobra.Command, root string) []pendingCheck {
 		byEco[detect.DotNet] = dn
 	}
 
+	// The ecosystems present, and every discovered project name (full + short)
+	// — used by the tools and config groups below.
+	present := map[string]bool{}
+	names := map[string]bool{}
+	for eco, ts := range byEco {
+		if len(ts) > 0 {
+			present[eco] = true
+		}
+		for _, t := range ts {
+			names[t.Name] = true
+			names[shortName(t.Name)] = true
+		}
+	}
+
 	var all []pendingCheck
 	for _, eco := range orderedEcos(byEco) {
 		for _, pc := range toolchainChecks(cmd, eco, root) {
@@ -154,7 +193,112 @@ func gatherChecks(cmd *cobra.Command, root string) []pendingCheck {
 			all = append(all, pc)
 		}
 	}
+	// Optional external tools, then config-path validation — each its own group,
+	// emitted only when it has rows.
+	all = append(all, toolChecks(present, root)...)
+	all = append(all, configChecks(root, names)...)
 	return all
+}
+
+// toolChecks reports the optional external tools (extTool values) relevant to
+// the present ecosystems and whether each is installed. A missing optional tool
+// is a warn — it only bites when you use the feature it powers.
+func toolChecks(present map[string]bool, root string) []pendingCheck {
+	var tools []extTool
+	rgAdded := false
+	addRG := func() {
+		if !rgAdded {
+			tools = append(tools, toolReportGenerator)
+			rgAdded = true
+		}
+	}
+	if present[detect.Cargo] {
+		tools = append(tools, toolCargoLlvmCov, toolCargoOutdated, toolCargoWatch)
+	}
+	if present[detect.DotNet] {
+		tools = append(tools, toolDnx)
+		addRG()
+	}
+	if present[detect.Node] {
+		addRG()
+	}
+	if present[detect.Go] {
+		addRG()
+	}
+
+	var out []pendingCheck
+	for _, t := range tools {
+		t := t // capture
+		out = append(out, pendingCheck{eco: "tools", label: t.name, run: func() check {
+			if t.available(root) {
+				return ok(t.name, "installed")
+			}
+			return warn(t.name, "not installed — "+toolHowto(t))
+		}})
+	}
+	return out
+}
+
+// toolHowto is the "how to get it" suffix for a missing tool: its install
+// command, else its hint, else what it's for.
+func toolHowto(t extTool) string {
+	switch {
+	case len(t.install) > 0:
+		return strings.Join(t.install, " ")
+	case t.hint != "":
+		return t.hint
+	default:
+		return t.why
+	}
+}
+
+// configChecks validates that the paths a merged .rig.json points at resolve: a
+// pinned `solution` file, a `defaultProject` that names a real project, and any
+// custom-command `cwd`. Rows are emitted only for keys that are set, so a repo
+// without these shows no Config group. A broken path is an error (it will fail a
+// real command).
+func configChecks(root string, projectNames map[string]bool) []pendingCheck {
+	cfg, err := config.LoadMerged(root)
+	if err != nil {
+		return nil
+	}
+	var out []pendingCheck
+	if sol := strings.TrimSpace(cfg.Solution); sol != "" {
+		out = append(out, pendingCheck{eco: "config", label: "solution", run: func() check {
+			if exists(filepath.Join(root, sol)) {
+				return ok("solution", sol)
+			}
+			return bad("solution", sol+" — not found (config: solution)")
+		}})
+	}
+	if dp := strings.TrimSpace(cfg.DefaultProject); dp != "" {
+		out = append(out, pendingCheck{eco: "config", label: "default", run: func() check {
+			if projectNames[dp] || projectNames[shortName(dp)] {
+				return ok("default", dp)
+			}
+			return bad("default", dp+" — matches no discovered project (config: defaultProject)")
+		}})
+	}
+	cmdNames := make([]string, 0, len(cfg.Commands))
+	for name := range cfg.Commands {
+		cmdNames = append(cmdNames, name)
+	}
+	sort.Strings(cmdNames)
+	for _, name := range cmdNames {
+		c := cfg.Commands[name]
+		if c == nil || strings.TrimSpace(c.Cwd) == "" {
+			continue
+		}
+		cwd := c.Cwd
+		label := shortName(name)
+		out = append(out, pendingCheck{eco: "config", label: label, run: func() check {
+			if info, serr := os.Stat(filepath.Join(root, cwd)); serr == nil && info.IsDir() {
+				return ok(label, "cwd "+cwd)
+			}
+			return bad(label, cwd+" — cwd not found (config: commands."+name+".cwd)")
+		}})
+	}
+	return out
 }
 
 // orderedEcos returns the ecosystems present, in a stable canonical order.
@@ -186,6 +330,10 @@ func ecoDisplayName(eco string) string {
 		return ".NET"
 	case detect.Cargo:
 		return "Cargo"
+	case "tools":
+		return "Tools"
+	case "config":
+		return "Config"
 	}
 	return eco
 }
@@ -221,17 +369,26 @@ func toolchainChecks(cmd *cobra.Command, eco, root string) []pendingCheck {
 		return []pendingCheck{{label: "dotnet", run: func() check {
 			sdk, present := probeVersion(cmd, root, "dotnet", "--version")
 			if !present {
-				return bad("dotnet", "the `dotnet` SDK isn't on your PATH — install the .NET SDK")
+				return bad("dotnet", fmt.Sprintf(
+					"no .NET SDK on your PATH — install .NET %d from https://dot.net/download", dotnetTargetMajor))
 			}
+			// A global.json pin the installed SDK can't satisfy is a hard error.
 			pin := readSdkPin(root)
-			switch {
-			case pin == "":
-				return ok2("dotnet", "SDK "+sdk)
-			case sdkSatisfies(sdk, pin):
-				return ok2("dotnet", fmt.Sprintf("SDK %s (satisfies global.json pin %s)", sdk, pin))
-			default:
+			if pin != "" && !sdkSatisfies(sdk, pin) {
 				return bad("dotnet", fmt.Sprintf("SDK %s is installed, but global.json pins %s — install that SDK", sdk, pin))
 			}
+			detail := "SDK " + sdk
+			if pin != "" {
+				detail += fmt.Sprintf(" (satisfies global.json pin %s)", pin)
+			}
+			// rig standardizes on .NET 10; an older SDK still works for most
+			// verbs but not the dnx-based features, so it's a graceful warn.
+			if major, ok := majorOf(sdk); ok && major < dotnetTargetMajor {
+				return warn("dotnet", detail+fmt.Sprintf(
+					" — rig targets .NET %d; dnx-based features (dlx, on-demand ReportGenerator) need %d",
+					dotnetTargetMajor, dotnetTargetMajor))
+			}
+			return ok2("dotnet", detail)
 		}}}
 	case detect.Cargo:
 		return []pendingCheck{{label: "cargo", run: func() check {
