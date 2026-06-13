@@ -183,7 +183,8 @@ func TestAddTypeDerivesBump(t *testing.T) {
 }
 
 // Ported from AddCommand_NotInitialized_ReturnsErrorCodeWithMessage: in a
-// workspace without .changeset, add fails and points at `init`.
+// workspace without .changeset, add (off a TTY — it can't offer to set up
+// changesets) fails with a clear error pointing at `changerig init`.
 func TestAddNotInitialized(t *testing.T) {
 	dir := tempDir(t)
 	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
@@ -191,7 +192,8 @@ func TestAddNotInitialized(t *testing.T) {
 	code, out := runChangerig(t, dir, "add", "--empty")
 
 	assertExitNonZero(t, code, out)
-	assertContains(t, out, "init")
+	assertContains(t, out, "changerig init")
+	assertContains(t, out, ".changeset")
 }
 
 // --- status (StatusChangesetCommandTests) ---

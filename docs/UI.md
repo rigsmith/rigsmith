@@ -309,6 +309,21 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
 - **What it does:** writes `.changeset/<human-id>.md` from the answers; with
   `--open`, opens it in `$EDITOR`; with the `commit` config key, commits it.
 
+## `changerig add` — inline setup offer (huh confirm)
+- **Trigger:** `add` (or bare `changerig`) in a workspace with **no `.changeset/`
+  yet**, on an interactive terminal. Instead of erroring out, it offers to set
+  changesets up right there.
+- **What you see:** a dim line `No changesets set up in <root> yet.`, then a huh
+  confirm `Set up changesets here?` with description `Creates .changeset/ with a
+  default config.`. Accepting scaffolds the folder/config (the same
+  `Scaffold` `init` uses), prints a green `✓ Initialized changesets in
+  .changeset/`, and drops straight into the add form. Declining (or esc/ctrl+c)
+  prints `No changeset created. Run `changerig init` when you're ready.` and
+  exits cleanly (no error).
+- **Non-TTY:** can't prompt, so it fails with a clear, actionable error —
+  `changesets aren't set up here yet — run `changerig init` to create
+  .changeset/` (exit non-zero, the CI path).
+
 ## `changerig ui` — verb menu (bubbletea)
 - **Trigger:** `changerig ui` (and `relrig ui` — shared command).
 - **What you see:** header `<root>  ·  <N> package(s)  ·  <M> pending
@@ -447,6 +462,7 @@ flow below.
 | `init` wizard | rig | huh form | `rig init` (TTY, no `.rig.json`) | plain scaffold |
 | `setup` | rig | none (file I/O) | `rig setup` | (not interactive) |
 | `add` form | changerig/relrig | huh form | `add`, no flags | provide flags |
+| `add` setup offer | changerig/relrig | huh confirm | `add` in an uninit workspace (TTY) | clear `init` error |
 | `ui` menu | changerig/relrig | bubbletea | `changerig ui` | fails fast |
 | `browse` changesets | changerig/relrig | bubbletea + viewport | `changerig browse` (TTY) | plain list |
 | `publish` confirm | changerig/relrig | huh confirm | network side-effects (TTY) | proceed w/ `--yes` |
