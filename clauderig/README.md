@@ -67,6 +67,7 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
 | `guard` | PreToolUse hook: require worktrees/PRs, block cwd-moving worktree tools (wired by `project`/`local`) |
 | `worktree` | `new` / `list` / `open` / `rm` / `prune` sibling worktrees, opened in their own review window (configurable; alias `wt`) |
+| `branch` | `prune` local branches that are merged (or, with `--gone`, whose upstream the remote deleted); alias `br` |
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md block standalone (e.g. `--global`) |
 | `config` | `get` / `set` / `show` / `path` / `edit` |
 | `doctor` | Health-check environment + sync + worktree discipline; `--fix` repairs, or pick fixes interactively |
