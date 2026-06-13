@@ -10,12 +10,12 @@
 #
 # This is the script that sits behind:
 #
-#     curl -fsSL https://rigsmith.sh | sh           # installs both rig + relrig
+#     curl -fsSL https://rigsmith.sh | sh           # installs all tools
 #     curl -fsSL https://rigsmith.sh | sh -s rig    # just rig
 #     curl -fsSL https://relrig.sh   | sh -s relrig # just relrig
 #
 # Usage:
-#     install.sh [rig|relrig]        (default: install both)
+#     install.sh [rig|relrig|clauderig|all]   (default: all)
 #
 # Env:
 #     RIGSMITH_INSTALL   install prefix (default: $HOME/.local) -> bin/ underneath
@@ -127,10 +127,10 @@ main() {
   command -v curl >/dev/null 2>&1 || error "curl is required"
   command -v tar  >/dev/null 2>&1 || error "tar is required"
 
-  target="${1:-both}"
+  target="${1:-all}"
   case "$target" in
-    rig | relrig | clauderig | both) ;;
-    *) error "unknown binary '$target' (expected: rig, relrig, clauderig, or omit for both)" ;;
+    rig | relrig | clauderig | all) ;;
+    *) error "unknown binary '$target' (expected: rig, relrig, clauderig, or omit for all)" ;;
   esac
 
   os="$(detect_os)"
@@ -141,9 +141,10 @@ main() {
     rig)       install_binary rig       "$tag" "$os" "$arch" ;;
     relrig)    install_binary relrig    "$tag" "$os" "$arch" ;;
     clauderig) install_binary clauderig "$tag" "$os" "$arch" ;;
-    both)
-      install_binary rig    "$tag" "$os" "$arch"
-      install_binary relrig "$tag" "$os" "$arch"
+    all)
+      install_binary rig       "$tag" "$os" "$arch"
+      install_binary relrig    "$tag" "$os" "$arch"
+      install_binary clauderig "$tag" "$os" "$arch"
       ;;
   esac
 
