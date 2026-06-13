@@ -78,7 +78,7 @@ func Execute(ctx context.Context) error {
 		verbCmd("install", "Install/restore dependencies", "restore"),
 		verbCmd("ci", "Frozen/clean install"),
 		verbCmd("add", "Add a dependency"),
-		verbCmd("uninstall", "Remove a dependency", "remove", "rm"),
+		newUninstallCmd(),
 		newOutdatedCmd(),
 		newUpgradeCmd(),
 		verbCmd("global", "Install a global tool", "g"),

@@ -23,15 +23,15 @@ and are omitted.
 | lint | ⚠️ | ✅ | ✅ | ✅ | go→`go vet`, cargo→clippy; .NET has no native lint verb |
 | typecheck / check | ⚠️ | ✅ | ✅ | ✅ | go→`go vet`, cargo→`cargo check`; Go folds type-checking into vet |
 | clean | ✅ | — | ✅ | ✅ | Node has no canonical clean (maps to a `clean` script if present) |
-| rebuild / rb | ✅ | ✅ | ⚠️ | ⚠️ | clean→build seam; go/cargo not special-cased |
+| rebuild / rb | ✅ | ✅ | ✅ | ✅ | clean→build seam (.NET also wipes bin/obj; Node skips clean when no script) |
 | install / restore | ✅ | ✅ | ✅ | ✅ | |
 | ci (frozen install) | ✅ | ✅ | ✅ | ✅ | restore --locked-mode · npm ci/frozen-lockfile · go mod download · cargo fetch --locked |
 | add | ✅ | ✅ | ✅ | ✅ | |
-| uninstall / remove | ✅ | ✅ | ⚠️ | ✅ | Go: edit go.mod + `go mod tidy` |
+| uninstall / remove | ✅ | ✅ | ✅ | ✅ | Go: `go get pkg@none` + `go mod tidy` (bare = tidy) |
 | outdated / od | ✅ | ✅ | ✅ | ✅ | cargo via the `cargo-outdated` subcommand |
 | upgrade | ✅ | ✅ | ✅ | ✅ | range-respecting; .NET to latest (no ranges) — see below |
 | global / g | ✅ | ✅ | ✅ | ✅ | |
-| dlx / x | ✅ | ✅ | ⚠️ | ⚠️ | .NET→`dnx`, node→npx/bun x/dlx |
+| dlx / x | ✅ | ✅ | ✅ | ⚠️ | .NET→`dnx`, node→npx/bun x/dlx, go→`go run pkg@latest`; Cargo has no one-shot run |
 | watch / w | ✅ | ✅ | ⚠️ | ✅ | .NET→`dotnet watch`, cargo→cargo-watch; Go has no native watch |
 | coverage | ✅ | ✅ | ✅ | ✅ | cargo→`cargo llvm-cov` |
 | publish (app) | ✅ | — | — | — | `dotnet publish` self-contained app packaging |
@@ -62,10 +62,11 @@ dependents always cascade rather than gating on whether the bump stays in range.
 
 ## Remaining gaps (⚠️ above)
 
-- **.NET** `lint` / `typecheck` — no native SDK verb (would need an external
-  analyzer/tool).
-- **Go** `uninstall`, `dlx`, `watch`, and the `rebuild` seam — no native single
-  command; would wrap `go mod tidy`, `go run pkg@latest`, an external watcher.
-- **Cargo** `dlx` and the `rebuild` seam.
+- **.NET** `lint` / `typecheck` — no native SDK verb (`typecheck` would just be
+  `build`; `lint` would need an external analyzer).
+- **Go** `watch` — no native watcher (would assume an external tool like
+  `air`/`watchexec`).
+- **Cargo** `dlx` — Cargo has no one-shot run equivalent (`cargo install` is
+  persistent).
 - **Node** `clean` — npm has no canonical clean (maps to a project `clean`
   script when defined).

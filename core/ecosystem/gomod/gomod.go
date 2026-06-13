@@ -73,6 +73,9 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 			plugin.VerbOutdated: {"go", "list", "-m", "-u", "all"},
 			plugin.VerbClean:    {"go", "clean"},
 			plugin.VerbGlobal:   {"go", "install"},
+			// `go run pkg@latest` runs a tool once without installing it — Go's
+			// equivalent of npx/dnx. The caller appends the package@version.
+			plugin.VerbDlx: {"go", "run"},
 		},
 	}
 }
