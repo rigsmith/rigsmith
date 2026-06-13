@@ -1,10 +1,11 @@
 go 1.26
 
 use (
-	./core
 	./changerig
-	./cli
 	./clauderig
+	./cli
+	./core
 	./release
 	./scripts/dev-install
+	./tools
 )
