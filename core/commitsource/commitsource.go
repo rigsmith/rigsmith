@@ -78,6 +78,15 @@ func Synthesize(commits []gitutil.Commit, packages []plugin.Package, repoRoot st
 		}
 		breaking := h.breaking || breakingFooterRe.MatchString(c.Body)
 
+		// changelogen-style: when the body carries a `BREAKING CHANGE:` footer,
+		// surface its description as a continuation line under the bullet (the
+		// changelog writer indents continuation lines two spaces). The subject
+		// stays the headline.
+		summary := h.desc
+		if note := breakingNote(c.Body); note != "" {
+			summary = h.desc + "\n" + note
+		}
+
 		var names []string
 		if scopes != nil && h.scope != "" {
 			if pkg, mapped := scopes[h.scope]; mapped && known[pkg] {
@@ -99,7 +108,7 @@ func Synthesize(commits []gitutil.Commit, packages []plugin.Package, repoRoot st
 		}
 		out = append(out, &changeset.Changeset{
 			Releases: releases,
-			Summary:  h.desc,
+			Summary:  summary,
 			Type:     h.typ,
 			Breaking: breaking,
 			ID:       shortHash(c.Hash),
@@ -107,6 +116,28 @@ func Synthesize(commits []gitutil.Commit, packages []plugin.Package, repoRoot st
 		})
 	}
 	return out
+}
+
+// breakingNote extracts the description of a `BREAKING CHANGE:` /
+// `BREAKING-CHANGE:` footer: the text after the token, plus any continuation
+// lines up to the next blank line, collapsed to a single line. Returns "" when
+// there is no footer (a `!`-only breaking change carries no separate note).
+func breakingNote(body string) string {
+	loc := breakingFooterRe.FindStringIndex(body)
+	if loc == nil {
+		return ""
+	}
+	var parts []string
+	for i, line := range strings.Split(body[loc[1]:], "\n") {
+		t := strings.TrimSpace(line)
+		if i > 0 && t == "" {
+			break // a blank line ends the footer block
+		}
+		if t != "" {
+			parts = append(parts, t)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // attributeByPath returns the names of the packages that own at least one of the

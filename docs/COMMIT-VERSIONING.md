@@ -136,8 +136,9 @@ load seam. New/changed surface:
 - **[`core/commitsource`](../core/commitsource/commitsource.go)** —
   `Synthesize(commits, packages, repoRoot, cfg) []*changeset.Changeset`.
   Parses the conventional header (`type(scope)!: desc`), detects breaking via
-  `!` **or** a `BREAKING CHANGE:`/`BREAKING-CHANGE:` footer, attributes the
-  commit to package(s), and emits one synthetic changeset per commit. The
+  `!` **or** a `BREAKING CHANGE:`/`BREAKING-CHANGE:` footer (whose description is
+  surfaced changelogen-style as a continuation line under the bullet), attributes
+  the commit to package(s), and emits one synthetic changeset per commit. The
   per-package bump is left `BumpNone` so the **planner** derives it from the type
   via `changelogGroups` — identical to a type-driven changeset file. The bullet
   text is the subject with the conventional prefix stripped (changelogen-style).

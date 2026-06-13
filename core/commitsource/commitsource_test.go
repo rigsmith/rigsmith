@@ -85,8 +85,32 @@ func TestSynthesizeBreaking(t *testing.T) {
 	if !got[0].Breaking {
 		t.Error("`!` subject should be breaking")
 	}
+	// A `!`-only breaking change has no separate footer note — bullet stays the subject.
+	if got[0].Summary != "bang" {
+		t.Errorf("got[0].Summary = %q, want %q", got[0].Summary, "bang")
+	}
 	if !got[1].Breaking {
 		t.Error("BREAKING CHANGE footer should be breaking")
+	}
+	// changelogen-style: the footer description becomes a continuation line.
+	if want := "footer\nremoved Y"; got[1].Summary != want {
+		t.Errorf("got[1].Summary = %q, want %q", got[1].Summary, want)
+	}
+}
+
+func TestBreakingNoteMultilineUntilBlank(t *testing.T) {
+	commits := []gitutil.Commit{
+		{Hash: "m", Subject: "feat: x", Files: []string{abs("packages/pkg-a/x.go")},
+			Body: "BREAKING CHANGE: line one\ncontinues here\n\nReviewed-by: someone"},
+	}
+	got := Synthesize(commits, pkgs(), root, config.Default())
+	if len(got) != 1 {
+		t.Fatalf("got %d, want 1", len(got))
+	}
+	// Continuation lines join with a space; the trailing footer after the blank
+	// line is excluded.
+	if want := "x\nline one continues here"; got[0].Summary != want {
+		t.Errorf("Summary = %q, want %q", got[0].Summary, want)
 	}
 }
 
