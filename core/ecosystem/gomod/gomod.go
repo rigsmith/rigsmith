@@ -52,12 +52,22 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish},
 		ManifestPatterns: []string{"go.mod"},
 		DevCommands: map[string][]string{
-			plugin.VerbBuild:    {"go", "build", "./..."},
-			plugin.VerbTest:     {"go", "test", "./..."},
-			plugin.VerbRun:      {"go", "run", "."},
-			plugin.VerbFormat:   {"gofmt", "-l", "-w", "."},
-			plugin.VerbCoverage: {"go", "test", "-cover", "./..."},
-			plugin.VerbInstall:  {"go", "mod", "download"},
+			plugin.VerbBuild:  {"go", "build", "./..."},
+			plugin.VerbTest:   {"go", "test", "./..."},
+			plugin.VerbRun:    {"go", "run", "."},
+			plugin.VerbFormat: {"gofmt", "-l", "-w", "."},
+			// Go folds linting and type-checking into the compiler + `go vet`,
+			// which type-checks the program as part of its analysis. There is no
+			// separate type-only pass, so both lint and typecheck surface the
+			// canonical `go vet ./...` — giving `rig lint`/`rig check` a sensible
+			// Go behavior for cross-ecosystem muscle memory.
+			plugin.VerbLint:      {"go", "vet", "./..."},
+			plugin.VerbTypecheck: {"go", "vet", "./..."},
+			plugin.VerbCoverage:  {"go", "test", "-cover", "./..."},
+			plugin.VerbInstall:   {"go", "mod", "download"},
+			// Go has no distinct frozen-install: module downloads are checksum-
+			// verified against go.sum, so `ci` mirrors `install`.
+			plugin.VerbCI:       {"go", "mod", "download"},
 			plugin.VerbAdd:      {"go", "get"},
 			plugin.VerbUpgrade:  {"go", "get", "-u", "./..."},
 			plugin.VerbOutdated: {"go", "list", "-m", "-u", "all"},

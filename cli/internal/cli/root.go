@@ -80,7 +80,7 @@ func Execute(ctx context.Context) error {
 		verbCmd("add", "Add a dependency"),
 		verbCmd("uninstall", "Remove a dependency", "remove", "rm"),
 		newOutdatedCmd(),
-		verbCmd("upgrade", "Upgrade dependencies"),
+		newUpgradeCmd(),
 		verbCmd("global", "Install a global tool", "g"),
 		verbCmd("dlx", "Run a tool once without installing", "x"),
 		newWatchCmd(),

@@ -15,7 +15,9 @@ import (
 type outdatedDep struct {
 	name    string
 	current string // installed/resolved version ("—" when not installed)
-	latest  string // the version to upgrade to
+	latest  string // the newest available version (what `outdated -i` upgrades to)
+	wanted  string // the highest version inside the manifest's range, "" when the
+	// ecosystem has no ranges/this datum (go/.NET); `upgrade` targets this.
 	project string // .NET only: owning project path
 	dev     bool   // node: a devDependency (so the upgrade keeps it there)
 }
@@ -58,6 +60,7 @@ func parseNpmOutdated(jsonText string) []outdatedDep {
 	}
 	var doc map[string]struct {
 		Current string `json:"current"`
+		Wanted  string `json:"wanted"`
 		Latest  string `json:"latest"`
 	}
 	if json.Unmarshal([]byte(text), &doc) != nil {
@@ -72,7 +75,7 @@ func parseNpmOutdated(jsonText string) []outdatedDep {
 		if current == "" {
 			current = "—"
 		}
-		out = append(out, outdatedDep{name: name, current: current, latest: v.Latest})
+		out = append(out, outdatedDep{name: name, current: current, latest: v.Latest, wanted: v.Wanted})
 	}
 	sortDeps(out)
 	return out
@@ -110,6 +113,7 @@ func parseYarnClassicOutdated(text string) []outdatedDep {
 		nameI, okN := col["package"]
 		latI, okL := col["latest"]
 		curI, okC := col["current"]
+		wantI, okW := col["wanted"]
 		typeI, okT := col["package type"]
 		if !okN || !okL {
 			continue
@@ -122,12 +126,16 @@ func parseYarnClassicOutdated(text string) []outdatedDep {
 			if okC && curI < len(row) {
 				current = row[curI]
 			}
+			wanted := ""
+			if okW && wantI < len(row) {
+				wanted = row[wantI]
+			}
 			name, latest := row[nameI], row[latI]
 			if name == "" || latest == "" || latest == current {
 				continue
 			}
 			dev := okT && typeI < len(row) && strings.Contains(strings.ToLower(row[typeI]), "dev")
-			out = append(out, outdatedDep{name: name, current: current, latest: latest, dev: dev})
+			out = append(out, outdatedDep{name: name, current: current, latest: latest, wanted: wanted, dev: dev})
 		}
 	}
 	sortDeps(out)
@@ -210,7 +218,8 @@ func parseBunOutdated(text string) []outdatedDep {
 		if len(cells) < 4 {
 			continue // top/bottom border (one cell of dashes)
 		}
-		name, current, latest := cells[0], cells[1], cells[3]
+		// Columns: Package | Current | Update (in-range) | Latest.
+		name, current, wanted, latest := cells[0], cells[1], cells[2], cells[3]
 		if name == "" || name == "Package" || strings.Trim(name, "- ") == "" {
 			continue // header or separator row
 		}
@@ -223,7 +232,7 @@ func parseBunOutdated(text string) []outdatedDep {
 			continue
 		}
 		seen[name] = true
-		out = append(out, outdatedDep{name: name, current: current, latest: latest, dev: dev})
+		out = append(out, outdatedDep{name: name, current: current, latest: latest, wanted: wanted, dev: dev})
 	}
 	sortDeps(out)
 	return out
@@ -309,6 +318,26 @@ func bunUpgradeCommands(deps []outdatedDep) [][]string {
 		cmds = append(cmds, append([]string{"bun", "add", "--dev"}, dev...))
 	}
 	return cmds
+}
+
+// cargoUpdateRe matches a `cargo update --dry-run` upgrade line, e.g.
+// "    Updating foo v1.0.0 -> v1.2.0" (also "Upgrading"), capturing name, the
+// current version, and the in-range target. Lines without "-> v" (Updating the
+// index, Adding/Removing transitive deps) don't match. Anchored to the keyword
+// so stray output can't be misread as an upgrade.
+var cargoUpdateRe = regexp.MustCompile(`(?m)^\s*(?:Updating|Upgrading)\s+(\S+)\s+v(\S+)\s+->\s+v(\S+)`)
+
+// parseCargoUpdateDryRun parses `cargo update --dry-run` (the ground truth for a
+// range-respecting upgrade: it reports exactly the Cargo.lock changes that stay
+// within Cargo.toml's ranges) into deps. The target is in-range, so it's stored
+// as both wanted and latest. Pure.
+func parseCargoUpdateDryRun(text string) []outdatedDep {
+	var out []outdatedDep
+	for _, m := range cargoUpdateRe.FindAllStringSubmatch(text, -1) {
+		out = append(out, outdatedDep{name: m[1], current: m[2], wanted: m[3], latest: m[3]})
+	}
+	sortDeps(out)
+	return out
 }
 
 // dotnetUpgradeCommands builds one `dotnet add [project] package id --version`
