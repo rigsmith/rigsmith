@@ -108,6 +108,26 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   `Discovering tests (dotnet test --list-tests)`, on stderr, cleared when done.
 - **Non-TTY:** a single `…` status line (or nothing under `--quiet`).
 
+## `rig <verb> --all` — live workspace dashboard (bubbletea + bubbles)
+- **Trigger:** a dev verb with `--all` (`rig build --all`, `rig test --all`, …)
+  on an interactive terminal (not `--quiet`/`--dry-run`/piped). Otherwise the
+  plain sequential path streams each package as before.
+- **Why:** running a verb across a polyglot monorepo is exactly a per-row live
+  status display — see what's building, what passed, what failed, at a glance.
+- **What you see:** `── <verb> --all ──` then one row per runnable package (topo
+  order) with a live status glyph — `○` pending, a spinner while running, `✓` ok
+  (green), `✗` failed (red), `–` skipped. Under the running package its output
+  streams in (last ~8 lines, dim). Footer while running: `ctrl+c cancel`; on
+  finish: `✓ N ok   ✗ M failed   (cancelled)`.
+- **What it does:** runs each package's command sequentially in dependency order
+  (a goroutine feeds the program), **continuing through failures** so you see the
+  full picture (the sequential path still aborts on the first failure). Exits
+  non-zero if any package failed. `ctrl+c`/`q` cancels the remaining packages and
+  kills the running command (context cancellation); a clean cancel exits 0.
+  Renders inline (no alt-screen), so the final state stays in scrollback.
+- **Note:** output is captured (combined stdout+stderr) to stream it into the
+  rows, so child-process TTY coloring is lost — the tradeoff for the live view.
+
 ## `rig setup` — shell-integration installer (not interactive)
 - **Trigger:** `rig setup [shell]`. Detects the shell, splices an idempotent
   marker block (the `rig()` cd wrapper + completion sourcing) into the rc file
@@ -241,6 +261,7 @@ flow below.
 | `default` picker | rig | huh select | `rig default` (TTY, ambiguous/bare) | print current |
 | Coverage RG prompt | rig | huh select | RG absent, TTY, dnx, auto | native report |
 | `--list-tests` spinner | rig | lipgloss anim | `rig test <q>` (.NET) | `…` line / silent |
+| `<verb> --all` dashboard | rig | bubbletea + bubbles | `rig build/test --all` (TTY) | plain sequential |
 | `setup` | rig | none (file I/O) | `rig setup` | (not interactive) |
 | `add` form | changerig/relrig | huh form | `add`, no flags | provide flags |
 | `ui` menu | changerig/relrig | bubbletea | `changerig ui` | fails fast |
