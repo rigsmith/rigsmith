@@ -37,6 +37,7 @@ rig build --quiet        # suppress the → command echo
 | `cd` | Fuzzy project navigation (prints the dir; pair with a shell wrapper) |
 | `watch <verb>` / `rig w r` | Watch modifier via the pre-parse pipeline (verb prefixes work too: `rig cove`) |
 | `init` | Scaffold a `.rig.json` |
+| `config` | `get` / `set` / `path` / `edit` the `.rig.json` (comment-preserving writes) |
 | `info` | Show what rig discovered (root, primary ecosystem, `.rig.json`, per-ecosystem dev commands, packages) |
 | `ui` | Interactive bubbletea menu over the dev verbs (capability-gated) |
 | *custom* | Any `commands` entry in `.rig.json` becomes a subcommand |

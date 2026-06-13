@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/rigsmith/core/jsonc"
 )
 
 // UpdateInternalDependencies controls how far dependents of a changed package
@@ -153,15 +155,20 @@ var sharedKeys = map[string]bool{
 }
 
 // Parse decodes config bytes, applying defaults and bucketing unknown
-// object-valued keys as ecosystem blocks.
+// object-valued keys as ecosystem blocks. Comments and trailing commas are
+// tolerated (JSONC), keeping .changeset/config.json consistent with the other
+// rigsmith config files (.rig.json, release.jsonc).
 func Parse(data []byte) (*Config, error) {
 	cfg := Default()
 
-	if err := json.Unmarshal(data, cfg); err != nil {
+	// Strip JSONC (comments/trailing commas) once, then decode the cleaned bytes
+	// twice: into the typed config and into the raw map (for ecosystem blocks).
+	clean := jsonc.Strip(data)
+	if err := json.Unmarshal(clean, cfg); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	// Re-decode into the raw map to capture ecosystem blocks + unknown keys.
-	if err := json.Unmarshal(data, &cfg.raw); err != nil {
+	if err := json.Unmarshal(clean, &cfg.raw); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	for k, v := range cfg.raw {

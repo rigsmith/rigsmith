@@ -74,7 +74,7 @@ else — blank lines between sections, bullet indentation — is significant.
 - **`TestDotnetCrossOracle`** — runs the **real net-changesets C# CLI** and
   changerig on identical csproj fixtures and requires byte-identical versions
   and changelogs (skipped when the C# tool isn't built; set
-  `$NET_CHANGESETS_DLL` or build `~/Git/net-changesets`). Packages under a
+  `$CHANGERIG_NET_DLL` or build `~/Git/net-changesets`). Packages under a
   scenario's `netDivergence` marker are skipped (see below).
 - **`TestPolyglotParity`** (`polyglot_test.go`) — the north-star scenario: one
   changeset on a C# library releases a fixed group spanning **dotnet + node +

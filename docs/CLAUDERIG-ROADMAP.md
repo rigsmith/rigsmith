@@ -14,7 +14,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started
 2. ✅ **Incremental sync.** Skip re-copying unchanged transcripts (mtime/size) instead of rewriting the whole tree each sync.
 3. ✅ **Mirror-delete on restore.** Remove files deleted upstream — scoped to authoritative config dirs (skills/commands/agents/plans), never `projects/` (additive), behind `--prune`.
 4. ✅ **Detect Claude Code version.** Stamp the real version in the manifest (was `""`) for the skew warning.
-   - ✅ **Always-prune config option** (`alwaysPrune` / `config set-prune` / `init --prune`): make `--prune` the restore default; `--prune=false` overrides per-run.
+   - ✅ **Always-prune config option** (`alwaysPrune` / `config set alwaysPrune` / `init --prune`): make `--prune` the restore default; `--prune=false` overrides per-run.
 
 ## Polish / UX
 5. ✅ **Distribution.** goreleaser build+archive for `clauderig`, `install.sh` target, version stamping (`-X main.version`), module + tool READMEs. (Homebrew tap still commented out pending the public repo, same as the other rigs.)
@@ -26,6 +26,6 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started
 
 ## Remaining
 11. ✅ **Config history preserved across squash.** Sync mirrors config-only commits (everything except `cli/projects`) to a `config-history` branch via a temp-index `CommitSubtree`. main stays bounded (squashed); config history survives on the side branch. (Lower-risk than restructuring restore around a main=config/history=projects split; meets the stated goal.)
-12. ✅ **Hooks auto-restore.** `clauderig pull` (the SessionStart hook) auto-restores when `autoRestore` is set AND the machine is fresh (no projects) — wires up a new computer on first session, never clobbers an established one. `config set-autorestore`.
+12. ✅ **Hooks auto-restore.** `clauderig pull` (the SessionStart hook) auto-restores when `autoRestore` is set AND the machine is fresh (no projects) — wires up a new computer on first session, never clobbers an established one. `config set autoRestore`.
 13. ✅ **Desktop rewrite completeness (Q4).** Gated e2e round-trips real Desktop session files and asserts zero residual source paths — it found + fixed a real gap (`//`-prefixed permission ruleContent). The remaining manual half (does the Electron app resume) is documented.
 14. ✅ **Non-GitHub private remotes.** GitLab supported via `glab` (verified private), dispatched by host alongside GitHub/`gh`. Hosts with no verifiable privacy stay refused — the no-exceptions rule holds.

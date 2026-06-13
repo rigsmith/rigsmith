@@ -149,10 +149,10 @@ func TestDotnetParity(t *testing.T) {
 }
 
 // netChangesetsCli locates the built net-changesets CLI dll, preferring
-// $NET_CHANGESETS_DLL, then the conventional build outputs in ~/Git/net-changesets.
+// $CHANGERIG_NET_DLL, then the conventional build outputs in ~/Git/net-changesets.
 // Empty when unavailable (the cross-oracle test skips).
 func netChangesetsCli() string {
-	if p := os.Getenv("NET_CHANGESETS_DLL"); p != "" {
+	if p := os.Getenv("CHANGERIG_NET_DLL"); p != "" {
 		if fileExists(p) {
 			return p
 		}
@@ -180,7 +180,7 @@ func netChangesetsCli() string {
 func TestDotnetCrossOracle(t *testing.T) {
 	cli := netChangesetsCli()
 	if cli == "" {
-		t.Skip("net-changesets CLI not built (set NET_CHANGESETS_DLL or build ~/Git/net-changesets)")
+		t.Skip("net-changesets CLI not built (set CHANGERIG_NET_DLL or build ~/Git/net-changesets)")
 	}
 	if _, err := exec.LookPath("dotnet"); err != nil {
 		t.Skip("dotnet SDK not on PATH")

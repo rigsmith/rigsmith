@@ -13,7 +13,7 @@
 | `guard` | PreToolUse hook enforcing worktree/PR discipline (wired by `project`/`local`) |
 | `worktree` | `new` / `list` / `open` / `rm` sibling worktrees in their own review window (alias `wt`) |
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md block standalone |
-| `config` | `show` / `set-remote` / `set-prune` / `set-autorestore` / `set-worktree-open` / `set-worktree-opener` |
+| `config` | `get` / `set` / `show` / `path` / `edit` |
 | `doctor` | Health-check environment + sync + worktree discipline (`--fix` repairs) |
 | `ui` | Interactive dashboard |
 
@@ -62,9 +62,9 @@ By default `new` opens a new VS Code window (`code -n <path>`). Both *whether* i
 opens and *what* it opens are configurable:
 
 ```sh
-clauderig config set-worktree-open false          # never auto-open (like --no-open)
-clauderig config set-worktree-opener "cursor -n"  # open Cursor instead of VS Code
-clauderig config set-worktree-opener ""           # reset to the default (code -n)
+clauderig config set worktree.autoOpen false      # never auto-open (like --no-open)
+clauderig config set worktree.openCmd "cursor -n"  # open Cursor instead of VS Code
+clauderig config set worktree.openCmd ""           # reset to the default (code -n)
 ```
 
 This writes a `worktree` block to `~/.clauderig/config.json`:

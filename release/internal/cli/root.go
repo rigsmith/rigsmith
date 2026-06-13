@@ -39,6 +39,7 @@ func newRootCmd() *cobra.Command {
 		commands.NewStatusCmd(),
 		commands.NewVersionCmd(),
 		commands.NewInfoCmd(),
+		commands.NewConfigCmd(),
 		commands.NewUICmd(),
 		commands.NewPreCmd(),
 		newPublishCmd(),
