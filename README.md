@@ -72,6 +72,21 @@ go build -o bin/relrig ./release
 go build -o bin/rig ./cli
 ```
 
+### Installing the stable binaries from source
+
+To build the real, named binaries (`rig`, `clauderig`, `relrig`, `changerig`)
+from the working tree and put them on your PATH — so the tools resolve each
+other the same way a released install does:
+
+```sh
+rig source-install      # or: go run ./scripts/source-install
+```
+
+This installs to `${RIGSMITH_INSTALL:-$HOME/.local}/bin` (the same prefix as the
+`curl | sh` release installer). Tools are discovered from `go.work`, so a new
+module installs automatically. Use this when you want stable binaries; use
+`<tool>-dev` (below) when you want them to recompile on every run.
+
 ### Running a dev build alongside the installed binaries
 
 To dogfood the tools from source without disturbing a globally installed
