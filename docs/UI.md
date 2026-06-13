@@ -286,9 +286,30 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
 - **Trigger:** `changerig ui` (and `relrig ui` — shared command).
 - **What you see:** header `<root>  ·  <N> package(s)  ·  <M> pending
   changeset(s)`, title `relrig`/`changerig`, and the entries
-  `Status` / `Add changeset` / `Version` / `Info` with dim descriptions.
-  Cursor `▸` + bold-cyan selection; hint `↑/↓ move · enter select · q quit`.
+  `Status` / `Add changeset` / `Browse changesets` / `Version` / `Info` with dim
+  descriptions. Cursor `▸` + bold-cyan selection; hint `↑/↓ move · enter select
+  · q quit`.
 - **What it does:** runs the chosen verb immediately on selection.
+
+## `changerig browse` — changeset browser/manager (bubbletea + viewport)
+- **Trigger:** `changerig browse` (aliases `ls`/`list`, also in the `ui` menu)
+  on an interactive terminal. Off a TTY it prints a plain one-line-per-changeset
+  list instead.
+- **What you see:** two views in one program.
+  - **List:** `Changesets (N)` with one selectable row per pending changeset —
+    a bump/type **badge** (highest explicit release bump, else the conventional
+    type, else `auto`; colored major=red/minor=yellow/patch=green), the
+    changeset id, its packages, and the summary's first line (truncated to
+    width). Cursor `▸`.
+  - **Detail:** the selected changeset's `Releases` (each package + bump, `auto`
+    when derived from type), `Type` (with a breaking marker), and the full
+    `Summary` in a scrollable viewport.
+- **Manage:** `d` deletes the selected changeset (inline `y/n` confirm, removes
+  the file, refreshes the list); `e` opens it in `$VISUAL`/`$EDITOR` (suspending
+  the UI via `tea.ExecProcess`, re-reading on return). A transient status line
+  reports the last action (e.g. `deleted <id>`).
+- **Keys:** `↑/↓`/`j/k` move, `g/G` ends, `enter`/`→` view, `esc`/`←` back, `d`
+  delete, `e` edit, `q`/`ctrl+c` quit. Empty state points at `changerig add`.
 
 ## `changerig init` — not interactive
 Writes `.changeset/config.json` + README and prints
@@ -399,6 +420,7 @@ flow below.
 | `setup` | rig | none (file I/O) | `rig setup` | (not interactive) |
 | `add` form | changerig/relrig | huh form | `add`, no flags | provide flags |
 | `ui` menu | changerig/relrig | bubbletea | `changerig ui` | fails fast |
+| `browse` changesets | changerig/relrig | bubbletea + viewport | `changerig browse` (TTY) | plain list |
 | `publish` confirm | changerig/relrig | huh confirm | network side-effects (TTY) | proceed w/ `--yes` |
 | `release` confirm gates | relrig | huh confirm | `confirm:` step (TTY) | fixed answer |
 | `release` reporters (sequential) | relrig | lipgloss (rich) / text (plain) | non-interactive / piped / `--no-ui` / dry-run | plain |
