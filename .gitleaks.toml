@@ -1,0 +1,23 @@
+# gitleaks config — keep the full default ruleset, add narrow allowlists for
+# the synthetic, secret-shaped strings this repo carries on purpose.
+[extend]
+useDefault = true
+
+# Fabricated test fixtures: their job is to prove the sync engine STRIPS oauth
+# tokens, so they embed obviously-sequential placeholder values, not real keys.
+[[allowlists]]
+description = "Synthetic fixtures in clauderig sync tests"
+paths = ['''clauderig/internal/engine/desktop_test.go''']
+regexes = [
+  '''Zk9q3xR7tLmA1cD8eF0gH2iJ4kL6mN8oP0qR2sT4uV6wX8y''',
+  '''Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0Kk1Ll2Mm3Nn4''',
+]
+
+# The redaction module is a secret SCANNER: its source and tests intentionally
+# contain provider token prefixes (xoxb-, AKIA…) and AWS's public example key.
+[[allowlists]]
+description = "Redaction scanner's own detection patterns"
+paths = [
+  '''clauderig/internal/redact/scan\.go''',
+  '''clauderig/internal/redact/scan_test\.go''',
+]
