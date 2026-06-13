@@ -47,6 +47,12 @@ func TestToolChecks_RelevantPerEcosystem(t *testing.T) {
 		t.Error(".NET tools should include reportgenerator")
 	}
 
+	// Go → wgo (the watcher) + reportgenerator (coverage).
+	goTools := labelsOf(toolChecks(map[string]bool{detect.Go: true}, root))
+	if _, ok := goTools["wgo"]; !ok {
+		t.Error("Go tools should include wgo")
+	}
+
 	// node + go + .NET present → reportgenerator listed exactly once (deduped).
 	multi := toolChecks(map[string]bool{detect.Node: true, detect.Go: true, detect.DotNet: true}, root)
 	rg := 0

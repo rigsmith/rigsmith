@@ -279,6 +279,11 @@ var (
 		why:     "powers `rig watch` for Rust",
 		install: []string{"cargo", "install", "cargo-watch"},
 	}
+	toolWgo = extTool{
+		name:    "wgo",
+		why:     "powers `rig watch` for Go (live re-run on change)",
+		install: []string{"go", "install", "github.com/bokwoon95/wgo@latest"},
+	}
 	// dnx ships with the .NET 10 SDK — rig can't install it, so it only guides /
 	// offers the download page.
 	toolDnx = extTool{
