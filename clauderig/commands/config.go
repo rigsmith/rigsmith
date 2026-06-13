@@ -113,7 +113,7 @@ func newConfigSetCmd() *cobra.Command {
 			"  remote             sync remote URL (verified private via gh/glab)\n" +
 			"  alwaysPrune        prune stale config on `restore` by default (bool)\n" +
 			"  autoRestore        auto-restore on a fresh machine via SessionStart (bool)\n" +
-			"  worktree.autoOpen  `worktree new` opens a review window (bool)\n" +
+			"  worktree.autoOpen  `worktree new` opens a review window (bool, default false)\n" +
 			"  worktree.openCmd   command to open a worktree (path appended), e.g. \"code -n\";\n" +
 			"                     blank resets to the default.",
 		Args: cobra.ExactArgs(2),
