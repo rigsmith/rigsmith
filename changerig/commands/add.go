@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/core/changeset"
+	"github.com/rigsmith/core/config"
 	"github.com/rigsmith/core/gitutil"
 	"github.com/rigsmith/core/since"
 	"github.com/spf13/cobra"
@@ -38,6 +39,17 @@ func NewAddCmd() *cobra.Command {
 			}
 			if !ws.Initialized() {
 				return fmt.Errorf("not initialized — run `init` first")
+			}
+
+			// In pure commit mode the commits themselves are the release source,
+			// so there is nothing to add — guide the user to conventional commits
+			// instead. ("both" mode still accepts file changesets alongside.)
+			if ws.Config.CommitSource() == config.SourceCommits {
+				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render(
+					"versioning.source is \"commits\" — releases come from conventional commits, not changeset files."))
+				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render(
+					"Write a conventional commit (e.g. `feat(pkg): …`) instead. Set versioning.source to \"both\" to also use changeset files."))
+				return nil
 			}
 
 			pkgs, _, err := ws.Discover(cmd.Context())

@@ -35,6 +35,58 @@ const (
 	Independent VersionStrategy = "independent"
 )
 
+// VersioningSource selects where a version run reads its release intent from.
+type VersioningSource string
+
+const (
+	// SourceChangesets (default, also "") consumes on-disk changeset files.
+	SourceChangesets VersioningSource = "changesets"
+	// SourceCommits synthesizes changesets from conventional commits since the
+	// last release.
+	SourceCommits VersioningSource = "commits"
+	// SourceBoth unions on-disk changesets with commit-derived ones.
+	SourceBoth VersioningSource = "both"
+)
+
+// Versioning configures commit-based versioning (knope-style). The zero value
+// is changeset mode, so existing repos are unaffected.
+type Versioning struct {
+	// Source is "changesets" (default), "commits", or "both".
+	Source VersioningSource `json:"source,omitempty"`
+	// Scopes optionally maps a conventional-commit scope to a package name, so
+	// `feat(core): …` attributes to the package aliased "core" regardless of
+	// which files it touched. A commit whose scope is absent from this map falls
+	// back to path-based attribution.
+	Scopes map[string]string `json:"scopes,omitempty"`
+}
+
+// CommitSource returns the normalized versioning source, defaulting an empty
+// value to changeset mode.
+func (c *Config) CommitSource() VersioningSource {
+	switch c.Versioning.Source {
+	case SourceCommits:
+		return SourceCommits
+	case SourceBoth:
+		return SourceBoth
+	default:
+		return SourceChangesets
+	}
+}
+
+// UsesCommits reports whether the run reads release intent from commits (either
+// "commits" or "both").
+func (c *Config) UsesCommits() bool {
+	s := c.CommitSource()
+	return s == SourceCommits || s == SourceBoth
+}
+
+// UsesChangesets reports whether the run reads on-disk changeset files (either
+// "changesets" or "both").
+func (c *Config) UsesChangesets() bool {
+	s := c.CommitSource()
+	return s == SourceChangesets || s == SourceBoth
+}
+
 // Snapshot holds snapshot-release settings (shared @changesets key).
 type Snapshot struct {
 	UseCalculatedVersion bool   `json:"useCalculatedVersion,omitempty"`
@@ -82,6 +134,11 @@ type Config struct {
 	// (globs allowed). Empty means scan the whole repo (minus the usual ignores
 	// and .gitignored files).
 	Paths []string `json:"paths,omitempty"`
+
+	// Versioning selects where release intent comes from: on-disk changesets
+	// (default), conventional commits, or both. Absent/zero is changeset mode —
+	// the historical behavior.
+	Versioning Versioning `json:"versioning,omitempty"`
 
 	// Ecosystems holds per-ecosystem config blocks (dotnet/node/go/...), kept raw
 	// so each ecosystem adapter decodes its own settings. This generalizes the
@@ -150,6 +207,7 @@ var sharedKeys = map[string]bool{
 	"fixed": true, "linked": true, "updateInternalDependencies": true,
 	"snapshot": true, "format": true, "changelog": true, "commit": true,
 	"privatePackages": true, "changelogGroups": true, "paths": true,
+	"versioning": true,
 }
 
 // Parse decodes config bytes, applying defaults and bucketing unknown

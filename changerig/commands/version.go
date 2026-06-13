@@ -44,7 +44,13 @@ func NewVersionCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 
-			changesets, err := changeset.Dir(ws.ChangesetDir, "")
+			// Discover first: commit-based versioning needs the package set to
+			// attribute commits before it can synthesize changesets.
+			pkgs, ecoOf, err := ws.Discover(cmd.Context())
+			if err != nil {
+				return err
+			}
+			changesets, fromCommits, err := ws.LoadChangesets(cmd.Context(), pkgs)
 			if err != nil {
 				return err
 			}
@@ -80,11 +86,6 @@ func NewVersionCmd() *cobra.Command {
 			if len(active) == 0 && mode != planner.ModeExit {
 				fmt.Fprintln(out, DimStyle.Render("No changesets — nothing to version."))
 				return nil
-			}
-
-			pkgs, ecoOf, err := ws.Discover(cmd.Context())
-			if err != nil {
-				return err
 			}
 
 			// Split the run's changesets into consumed (released → deleted
@@ -213,10 +214,8 @@ func NewVersionCmd() *cobra.Command {
 				// Snapshot consumes changesets like a normal run (verified against
 				// @changesets v3.0.0-next.5); the run is throwaway because the
 				// working-tree changes are never committed.
-				for _, cs := range consumed {
-					_ = os.Remove(filepath.Join(ws.ChangesetDir, cs.ID+".md"))
-				}
-				fmt.Fprintf(out, "\nSnapshot-versioned %d package(s); removed %d changeset(s).\n", len(plan), len(consumed))
+				removed := removeConsumedFiles(ws.ChangesetDir, consumed)
+				fmt.Fprintf(out, "\nSnapshot-versioned %d package(s)%s.\n", len(plan), removedSuffix(removed, fromCommits))
 			case planner.ModePre:
 				for _, cs := range consumed {
 					pre.Changesets = append(pre.Changesets, cs.ID)
@@ -226,14 +225,12 @@ func NewVersionCmd() *cobra.Command {
 				}
 				fmt.Fprintf(out, "\nPrereleased %d package(s) (tag %q); changesets kept.\n", len(plan), pre.Tag)
 			default: // Normal, Exit
-				for _, cs := range consumed {
-					_ = os.Remove(filepath.Join(ws.ChangesetDir, cs.ID+".md"))
-				}
+				removed := removeConsumedFiles(ws.ChangesetDir, consumed)
 				if mode == planner.ModeExit {
 					_ = prestate.Remove(ws.ChangesetDir)
 					fmt.Fprintf(out, "\nGraduated %d package(s) to stable; exited prerelease mode.\n", len(plan))
 				} else {
-					fmt.Fprintf(out, "\nVersioned %d package(s); removed %d changeset(s).\n", len(plan), len(consumed))
+					fmt.Fprintf(out, "\nVersioned %d package(s)%s.\n", len(plan), removedSuffix(removed, fromCommits))
 				}
 			}
 			if len(kept) > 0 {
@@ -262,6 +259,34 @@ func NewVersionCmd() *cobra.Command {
 	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")
 	f.BoolVar(&independent, "independent", false, "version each package on its own changesets, writing inline (overrides a shared version file)")
 	return cmd
+}
+
+// removeConsumedFiles deletes the on-disk changeset file backing each consumed
+// changeset, returning how many actually existed. Commit-derived changesets
+// have no file (their ID is a commit hash), so they are silently skipped —
+// keeping the "removed N changeset(s)" count honest in commits/both mode.
+func removeConsumedFiles(changesetDir string, consumed []*changeset.Changeset) int {
+	removed := 0
+	for _, cs := range consumed {
+		if err := os.Remove(filepath.Join(changesetDir, cs.ID+".md")); err == nil {
+			removed++
+		}
+	}
+	return removed
+}
+
+// removedSuffix renders the trailing clause of a version summary: how many
+// changeset files were removed, or "from commits" when the run had no files to
+// remove because its releases came from the commit log.
+func removedSuffix(removed int, fromCommits bool) string {
+	switch {
+	case removed > 0:
+		return fmt.Sprintf("; removed %d changeset(s)", removed)
+	case fromCommits:
+		return " from commits"
+	default:
+		return ""
+	}
 }
 
 // execRunner adapts os/exec to the injectable Runner seam shared by the

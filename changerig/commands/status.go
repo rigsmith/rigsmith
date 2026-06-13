@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/core/changeset"
+	"github.com/rigsmith/core/config"
 	"github.com/rigsmith/core/gitutil"
 	"github.com/rigsmith/core/planner"
 	"github.com/rigsmith/core/plugin"
@@ -49,19 +50,21 @@ func NewStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			changesets, err := changeset.Dir(ws.ChangesetDir, "")
-			if err != nil {
-				return fmt.Errorf("reading changesets: %w", err)
-			}
 			pkgs, _, err := ws.Discover(cmd.Context())
+			if err != nil {
+				return err
+			}
+			changesets, fromCommits, err := ws.LoadChangesets(cmd.Context(), pkgs)
 			if err != nil {
 				return err
 			}
 
 			// --since: guard against changes with no changeset, then narrow the
 			// displayed changesets to those added since the ref (mirrors
-			// @changesets and net-changesets).
-			if sinceRef != "" {
+			// @changesets and net-changesets). The gate is changeset-file
+			// specific; in commit mode the commits themselves are the source, so
+			// there is nothing to require.
+			if sinceRef != "" && ws.Config.CommitSource() == config.SourceChangesets {
 				changedFiles, err := gitutil.ChangedFilesSince(cmd.Context(), ws.Root, sinceRef)
 				if err != nil {
 					return fmt.Errorf("could not determine changes since %q: %w", sinceRef, err)
@@ -85,9 +88,15 @@ func NewStatusCmd() *cobra.Command {
 				changesets = kept
 			}
 
-			// A missing changeset is a failure, like @changesets and
-			// net-changesets (the CI gate this command exists for).
+			// A missing changeset is a failure in changeset mode, like @changesets
+			// and net-changesets (the CI gate this command exists for). In commit
+			// mode there is no changeset to require — no qualifying commits since
+			// the last release simply means "nothing to release".
 			if len(changesets) == 0 {
+				if fromCommits || ws.Config.UsesCommits() {
+					fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("No releasable commits since the last release."))
+					return nil
+				}
 				return errors.New("no changesets found")
 			}
 
@@ -139,11 +148,11 @@ func writeStatusPlan(root, output string, plan []*planner.Module) error {
 // BuildPlan loads changesets + packages and assembles the release plan,
 // reflecting prerelease mode the same way `version` does.
 func BuildPlan(ctx context.Context, ws *Workspace) ([]*planner.Module, error) {
-	changesets, err := changeset.Dir(ws.ChangesetDir, "")
-	if err != nil {
-		return nil, fmt.Errorf("reading changesets: %w", err)
-	}
 	pkgs, ecoOf, err := ws.Discover(ctx)
+	if err != nil {
+		return nil, err
+	}
+	changesets, _, err := ws.LoadChangesets(ctx, pkgs)
 	if err != nil {
 		return nil, err
 	}
