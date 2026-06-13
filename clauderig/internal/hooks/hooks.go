@@ -14,18 +14,22 @@ import (
 // Marker identifies a clauderig-owned hook (its command contains this).
 const Marker = "clauderig"
 
-// Plan is one event→command hook clauderig installs.
+// Plan is one event→command hook clauderig installs. Matcher, when set, scopes
+// the hook to matching tool names (PreToolUse/PostToolUse only).
 type Plan struct {
 	Event   string
+	Matcher string
 	Command string
 }
 
 // DefaultPlans are the hooks clauderig installs. Bare `clauderig` keeps them
-// portable across machines (each machine resolves it on PATH).
+// portable across machines (each machine resolves it on PATH). The guard runs on
+// the tool calls that can move the session dir or write code to a base branch.
 func DefaultPlans() []Plan {
 	return []Plan{
 		{Event: "SessionStart", Command: "clauderig pull"},
 		{Event: "Stop", Command: "clauderig sync"},
+		{Event: "PreToolUse", Matcher: "Edit|Write|NotebookEdit|Bash|EnterWorktree|ExitWorktree", Command: "clauderig guard"},
 	}
 }
 
@@ -47,9 +51,13 @@ func Install(path string) (added []string, err error) {
 		if anyHasMarker(groups) {
 			continue
 		}
-		groups = append(groups, map[string]any{
+		group := map[string]any{
 			"hooks": []any{map[string]any{"type": "command", "command": p.Command}},
-		})
+		}
+		if p.Matcher != "" {
+			group["matcher"] = p.Matcher
+		}
+		groups = append(groups, group)
 		h[p.Event] = groups
 		added = append(added, p.Event)
 	}

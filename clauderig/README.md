@@ -16,9 +16,21 @@ clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect,
 clauderig status               # remote reachability, last sync, per-root counts, hooks
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
 clauderig doctor               # preview path resolution + sync roots for this machine
-clauderig hooks install        # SessionStart→pull, Stop→sync (portable, idempotent)
+clauderig hooks install        # PreToolUse guard + SessionStart→pull, Stop→sync (portable, idempotent)
+clauderig worktree new feat/x  # sibling worktree + new VS Code window; never moves this session
 clauderig ui                   # interactive dashboard
 ```
+
+## Worktree discipline
+
+`clauderig guard` (a PreToolUse hook) and `clauderig worktree` make worktrees and
+PRs the default for Claude Code, and stop it from scrambling your VS Code chat
+history — which is keyed to the folder path — by moving the session's working
+directory. The guard denies `EnterWorktree`, denies a `cd` out of the repo root,
+and on `main` requires a branch+worktree+PR for code while letting docs/config
+through (override: `CLAUDERIG_ALLOW_MAIN=1` or `touch .claude/allow-main`). It
+fails open on anything it isn't sure about. See
+[docs/WORKTREE-DISCIPLINE.md](../docs/WORKTREE-DISCIPLINE.md).
 
 ## What it does
 
@@ -45,7 +57,9 @@ clauderig ui                   # interactive dashboard
 | `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
 | `status` | Sync state: remote, last sync, roots, hooks |
-| `hooks` | `install` / `uninstall` / `status` the Claude Code hooks |
+| `hooks` | `install` / `uninstall` / `status` the Claude Code hooks (guard + sync) |
+| `guard` | PreToolUse hook: require worktrees/PRs, block cwd-moving worktree tools (used by `hooks`) |
+| `worktree` | `new` / `list` / `open` / `rm` sibling worktrees, opened in their own VS Code window |
 | `config` | `show` / `set-remote` / `set-prune` |
 | `doctor` | Preview path resolution + roots for this machine |
 | `ui` | Interactive dashboard |

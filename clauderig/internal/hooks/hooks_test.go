@@ -39,7 +39,7 @@ func TestInstall_FreshAndIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(added)
-	if len(added) != 2 || added[0] != "SessionStart" || added[1] != "Stop" {
+	if len(added) != 3 || added[0] != "PreToolUse" || added[1] != "SessionStart" || added[2] != "Stop" {
 		t.Fatalf("added = %v", added)
 	}
 	// re-install is a no-op
@@ -48,8 +48,14 @@ func TestInstall_FreshAndIdempotent(t *testing.T) {
 		t.Fatalf("re-install should add nothing, added %v", added2)
 	}
 	present, _ := Status(p)
-	if len(present) != 2 {
+	if len(present) != 3 {
 		t.Fatalf("status = %v", present)
+	}
+	// the guard hook carries its tool-name matcher
+	pre := load_(t, p)["hooks"].(map[string]any)["PreToolUse"].([]any)
+	group := pre[0].(map[string]any)
+	if m, _ := group["matcher"].(string); m == "" {
+		t.Errorf("PreToolUse hook should have a matcher, got %v", group)
 	}
 }
 
@@ -101,7 +107,7 @@ func TestUninstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(removed)
-	if len(removed) != 2 {
+	if len(removed) != 3 {
 		t.Fatalf("removed = %v", removed)
 	}
 	// the non-clauderig hook survives; SessionStart (clauderig-only) is gone
