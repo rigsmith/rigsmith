@@ -50,29 +50,25 @@ func newDoctorCmd() *cobra.Command {
 				return nil
 			}
 
-			severity := docOK
-			emit := func(c check) {
-				if c.level > severity {
-					severity = c.level
+			checks := gatherChecks(cmd, root, ecos)
+
+			var severity docLevel
+			if doctorLiveEligible() {
+				// Live checklist: each check spins until its probe resolves.
+				severity = runDoctorLive(cmd, checks)
+			} else {
+				// Static path (CI / piped / --quiet): run and print each line.
+				for _, pc := range checks {
+					c := pc.run()
+					if c.level > severity {
+						severity = c.level
+					}
+					fmt.Fprintln(out, "  "+renderMark(c.level)+" "+pad(c.label, 10)+" "+dimStyle.Render(c.detail))
 				}
-				fmt.Fprintln(out, "  "+renderMark(c.level)+" "+pad(c.label, 10)+" "+dimStyle.Render(c.detail))
+				fmt.Fprintln(out)
+				fmt.Fprintln(out, doctorSummary(severity))
 			}
 
-			for _, eco := range ecos {
-				for _, c := range checksFor(cmd, eco, root) {
-					emit(c)
-				}
-			}
-
-			fmt.Fprintln(out)
-			switch severity {
-			case docOK:
-				fmt.Fprintln(out, okStyle.Render("all good"))
-			case docWarn:
-				fmt.Fprintln(out, warnStyle.Render("some warnings"))
-			default:
-				fmt.Fprintln(out, failStyle.Render("problems found"))
-			}
 			if severity == docError {
 				return fmt.Errorf("doctor: problems found")
 			}
@@ -91,6 +87,24 @@ type check struct {
 func ok(label, detail string) check   { return check{docOK, label, detail} }
 func warn(label, detail string) check { return check{docWarn, label, detail} }
 func bad(label, detail string) check  { return check{docError, label, detail} }
+
+// pendingCheck is a check whose label is known up front but whose result comes
+// from running it (a probe that may shell out). The live checklist shows the
+// label with a spinner, then fills in the result; the static path just runs it.
+type pendingCheck struct {
+	label string
+	run   func() check
+}
+
+// gatherChecks builds the ordered list of deferred checks across the detected
+// ecosystems.
+func gatherChecks(cmd *cobra.Command, root string, ecos []string) []pendingCheck {
+	var all []pendingCheck
+	for _, eco := range ecos {
+		all = append(all, checksFor(cmd, eco, root)...)
+	}
+	return all
+}
 
 // detectEcosystems lists the ecosystem ids that apply at root by checking
 // manifests directly (dependency-free, no registry round-trip). A polyglot repo
@@ -112,8 +126,8 @@ func detectEcosystems(root string) []string {
 	return ecos
 }
 
-// checksFor runs the per-ecosystem environment checks.
-func checksFor(cmd *cobra.Command, eco, root string) []check {
+// checksFor returns the per-ecosystem environment checks (deferred).
+func checksFor(cmd *cobra.Command, eco, root string) []pendingCheck {
 	switch eco {
 	case detect.Go:
 		return goChecks(cmd, root)
@@ -127,93 +141,102 @@ func checksFor(cmd *cobra.Command, eco, root string) []check {
 	return nil
 }
 
-func goChecks(cmd *cobra.Command, root string) []check {
-	var out []check
-	if v, present := probeVersion(cmd, root, "go", "version"); present {
-		out = append(out, ok2("go", strings.TrimPrefix(v, "go version ")))
-	} else {
-		out = append(out, bad("go", "go not found on PATH"))
+func goChecks(cmd *cobra.Command, root string) []pendingCheck {
+	return []pendingCheck{
+		{"go", func() check {
+			if v, present := probeVersion(cmd, root, "go", "version"); present {
+				return ok2("go", strings.TrimPrefix(v, "go version "))
+			}
+			return bad("go", "go not found on PATH")
+		}},
+		{"module", func() check {
+			switch {
+			case exists(filepath.Join(root, "go.work")):
+				return ok("module", "go.work present")
+			case exists(filepath.Join(root, "go.mod")):
+				return ok("module", "go.mod present")
+			default:
+				return warn("module", "no go.mod/go.work found")
+			}
+		}},
 	}
-	switch {
-	case exists(filepath.Join(root, "go.work")):
-		out = append(out, ok("module", "go.work present"))
-	case exists(filepath.Join(root, "go.mod")):
-		out = append(out, ok("module", "go.mod present"))
-	default:
-		out = append(out, warn("module", "no go.mod/go.work found"))
-	}
-	return out
 }
 
-func nodeChecks(cmd *cobra.Command, root string) []check {
-	var out []check
-	if v, present := probeVersion(cmd, root, "node", "--version"); present {
-		out = append(out, ok2("node", v))
-	} else {
-		out = append(out, bad("node", "node not found on PATH"))
-	}
-
+func nodeChecks(cmd *cobra.Command, root string) []pendingCheck {
 	pm := string(detect.DetectNodePM(root))
-	if v, present := probeVersion(cmd, root, pm, "--version"); present {
-		out = append(out, ok2("pm", pm+" "+v))
-	} else {
-		out = append(out, bad("pm", pm+" not found on PATH"))
+	return []pendingCheck{
+		{"node", func() check {
+			if v, present := probeVersion(cmd, root, "node", "--version"); present {
+				return ok2("node", v)
+			}
+			return bad("node", "node not found on PATH")
+		}},
+		{"pm", func() check {
+			if v, present := probeVersion(cmd, root, pm, "--version"); present {
+				return ok2("pm", pm+" "+v)
+			}
+			return bad("pm", pm+" not found on PATH")
+		}},
+		{"package", func() check {
+			if exists(filepath.Join(root, "package.json")) {
+				return ok("package", "package.json present")
+			}
+			return warn("package", "no package.json")
+		}},
+		{"install", func() check {
+			if exists(filepath.Join(root, "node_modules")) {
+				return ok("install", "node_modules present")
+			}
+			return warn("install", "not installed — run `rig install`")
+		}},
 	}
-
-	if exists(filepath.Join(root, "package.json")) {
-		out = append(out, ok("package", "package.json present"))
-	} else {
-		out = append(out, warn("package", "no package.json"))
-	}
-
-	if exists(filepath.Join(root, "node_modules")) {
-		out = append(out, ok("install", "node_modules present"))
-	} else {
-		out = append(out, warn("install", "not installed — run `rig install`"))
-	}
-	return out
 }
 
-func dotnetChecks(cmd *cobra.Command, root string) []check {
-	var out []check
-	sdk, present := probeVersion(cmd, root, "dotnet", "--version")
-	if !present {
-		out = append(out, bad("sdk", "dotnet not found on PATH"))
-	} else {
-		pin := readSdkPin(root)
-		switch {
-		case pin == "":
-			out = append(out, ok2("sdk", sdk))
-		case sdkSatisfies(sdk, pin):
-			out = append(out, ok2("sdk", fmt.Sprintf("%s (global.json pins %s)", sdk, pin)))
-		default:
-			out = append(out, bad("sdk", fmt.Sprintf("%s — global.json pins %s", sdk, pin)))
-		}
+func dotnetChecks(cmd *cobra.Command, root string) []pendingCheck {
+	return []pendingCheck{
+		{"sdk", func() check {
+			sdk, present := probeVersion(cmd, root, "dotnet", "--version")
+			if !present {
+				return bad("sdk", "dotnet not found on PATH")
+			}
+			pin := readSdkPin(root)
+			switch {
+			case pin == "":
+				return ok2("sdk", sdk)
+			case sdkSatisfies(sdk, pin):
+				return ok2("sdk", fmt.Sprintf("%s (global.json pins %s)", sdk, pin))
+			default:
+				return bad("sdk", fmt.Sprintf("%s — global.json pins %s", sdk, pin))
+			}
+		}},
+		{"layout", func() check {
+			switch {
+			case hasSolution(root):
+				return ok("layout", "solution present")
+			case hasCsproj(root):
+				return ok("layout", "project(s) present")
+			default:
+				return warn("layout", "no solution or project found")
+			}
+		}},
 	}
-
-	if hasSolution(root) {
-		out = append(out, ok("layout", "solution present"))
-	} else if hasCsproj(root) {
-		out = append(out, ok("layout", "project(s) present"))
-	} else {
-		out = append(out, warn("layout", "no solution or project found"))
-	}
-	return out
 }
 
-func cargoChecks(cmd *cobra.Command, root string) []check {
-	var out []check
-	if v, present := probeVersion(cmd, root, "cargo", "--version"); present {
-		out = append(out, ok2("cargo", strings.TrimPrefix(v, "cargo ")))
-	} else {
-		out = append(out, bad("cargo", "cargo not found on PATH"))
+func cargoChecks(cmd *cobra.Command, root string) []pendingCheck {
+	return []pendingCheck{
+		{"cargo", func() check {
+			if v, present := probeVersion(cmd, root, "cargo", "--version"); present {
+				return ok2("cargo", strings.TrimPrefix(v, "cargo "))
+			}
+			return bad("cargo", "cargo not found on PATH")
+		}},
+		{"manifest", func() check {
+			if exists(filepath.Join(root, "Cargo.toml")) {
+				return ok("manifest", "Cargo.toml present")
+			}
+			return warn("manifest", "no Cargo.toml")
+		}},
 	}
-	if exists(filepath.Join(root, "Cargo.toml")) {
-		out = append(out, ok("manifest", "Cargo.toml present"))
-	} else {
-		out = append(out, warn("manifest", "no Cargo.toml"))
-	}
-	return out
 }
 
 // ok2 is ok() with the detail already trimmed — a small helper so version
@@ -319,6 +342,18 @@ func hasCsproj(root string) bool {
 func exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// doctorSummary renders the final one-line verdict for a severity.
+func doctorSummary(severity docLevel) string {
+	switch severity {
+	case docOK:
+		return okStyle.Render("all good")
+	case docWarn:
+		return warnStyle.Render("some warnings")
+	default:
+		return failStyle.Render("problems found")
+	}
 }
 
 // renderMark returns the colored status glyph for a level.
