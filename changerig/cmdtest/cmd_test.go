@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rigsmith/core/config"
 )
 
 // --- init (InitCommandTests) ---
@@ -73,6 +75,37 @@ func TestInitRegeneratesDeletedConfig(t *testing.T) {
 	assertContains(t, out, "initialized changesets")
 	if !fileExists(cfg) {
 		t.Error("config.json was not regenerated")
+	}
+}
+
+// Ported from CreateDefaultAsync_WritesDualToolValidConfigThatRoundTrips
+// (file-writing half; TestDefaults in core/config covers the values): the
+// config `init` writes parses back to the documented defaults.
+func TestInitConfigRoundTrips(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+
+	code, out := runChangerig(t, dir, "init")
+	assertExitZero(t, code, out)
+
+	cfg, err := config.Load(filepath.Join(dir, ".changeset"))
+	if err != nil {
+		t.Fatalf("written config does not parse: %v", err)
+	}
+	if cfg.BaseBranch != "main" {
+		t.Errorf("BaseBranch = %q, want main", cfg.BaseBranch)
+	}
+	if cfg.Access != "restricted" {
+		t.Errorf("Access = %q, want restricted", cfg.Access)
+	}
+	if cfg.UpdateInternalDependencies != config.UpdatePatch {
+		t.Errorf("UpdateInternalDependencies = %q, want patch", cfg.UpdateInternalDependencies)
+	}
+	if len(cfg.Ignore) != 0 || len(cfg.Fixed) != 0 || len(cfg.Linked) != 0 {
+		t.Error("ignore/fixed/linked should round-trip empty")
+	}
+	if got := cfg.ChangelogSpec(); got != "default" {
+		t.Errorf("ChangelogSpec() = %q, want default", got)
 	}
 }
 

@@ -358,7 +358,10 @@ func generateModules(changesets []*changeset.Changeset, byName map[string]plugin
 			if !ok {
 				pkg, found := byName[rel.Name]
 				if !found {
-					continue // names a package this ecosystem doesn't own (interop)
+					// Unknown names are a hard error in `version` (validated
+					// up front by PartitionChangesets, as in @changesets);
+					// Plan itself stays tolerant for read-only callers.
+					continue
 				}
 				m = newModule(pkg)
 				index[rel.Name] = m
