@@ -13,10 +13,10 @@ func newBranchCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "branch [args...]",
 		Short: "Manage local branches — delegates to `clauderig branch`",
-		Long: "rig branch forwards to `clauderig branch`, which prunes local branches that\n" +
-			"are merged (or, with --gone, whose upstream the remote deleted). All arguments\n" +
-			"and flags pass through unchanged — e.g. `rig br prune -n`, `rig branch prune\n" +
-			"--gone`, `rig branch --help`.",
+		Long: "rig branch forwards to `clauderig branch`: list/rm/prune local branches.\n" +
+			"prune reaps merged branches (or, with --gone, ones whose upstream the remote\n" +
+			"deleted). All arguments and flags pass through unchanged — e.g. `rig br list`,\n" +
+			"`rig branch prune -n --gone`, `rig branch rm feat/x`, `rig branch --help`.",
 		Aliases: []string{"br"},
 		// Forward flags like -n/--gone/--base straight to clauderig rather than
 		// letting cobra parse them against rig.

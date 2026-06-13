@@ -12,7 +12,7 @@
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
 | `guard` | PreToolUse hook enforcing worktree/PR discipline (wired by `project`/`local`) |
 | `worktree` | `new` / `list` / `open` / `rm` / `prune` sibling worktrees in their own review window (alias `wt`) |
-| `branch` | `prune` local branches that are merged (or, with `--gone`, whose upstream the remote deleted); alias `br` |
+| `branch` | `list` / `rm` / `prune` local branches; prune reaps merged (or, with `--gone`, gone-upstream) ones; alias `br` |
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md block standalone |
 | `config` | `get` / `set` / `show` / `path` / `edit` |
 | `doctor` | Health-check environment + sync + worktree discipline (`--fix` repairs) |

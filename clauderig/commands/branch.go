@@ -1,21 +1,170 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/spf13/cobra"
 )
 
 // NewBranchCmd builds the `branch` command group. It complements `worktree`:
 // where worktree prune reaps stale *checkouts*, branch prune reaps the local
 // branch refs left behind after their worktrees (and remote branches) are gone.
+// list/rm/prune mirror the worktree group's management trio.
 func NewBranchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "branch",
 		Aliases: []string{"br"},
-		Short:   "Manage local branches (prune merged/gone ones)",
+		Short:   "List/remove/prune local branches",
 	}
-	cmd.AddCommand(newBranchPruneCmd())
+	cmd.AddCommand(newBranchListCmd(), newBranchRemoveCmd(), newBranchPruneCmd())
+	return cmd
+}
+
+// branchStatus is a one-word classification of a local branch, shared by list
+// (to annotate) and conceptually echoed by prune (which acts on it).
+type branchStatus struct {
+	tag    string                 // current | worktree | merged | gone | unmerged
+	render func(...string) string // lipgloss style for the tag
+}
+
+// classifyBranch labels b against base and the set of worktree-attached
+// branches. merge state is only computed when needed (it shells out per branch).
+func classifyBranch(ctx context.Context, repo *gitrepo.Repo, b gitrepo.Branch, base string, inWorktree map[string]bool) branchStatus {
+	switch {
+	case b.Current:
+		return branchStatus{"current", OkStyle.Render}
+	case inWorktree[b.Name]:
+		return branchStatus{"worktree", HeaderStyle.Render}
+	}
+	if merged, err := repo.IsMerged(ctx, b.Name, base); err == nil && merged {
+		return branchStatus{"merged", OkStyle.Render}
+	}
+	if b.Gone {
+		return branchStatus{"gone", WarnStyle.Render}
+	}
+	return branchStatus{"unmerged", DimStyle.Render}
+}
+
+// worktreeBranches is the set of branches checked out in a worktree — they can't
+// be deleted (git refuses) and belong to the worktree commands. A list failure
+// yields an empty set, so callers degrade to "none attached" rather than erroring.
+func worktreeBranches(ctx context.Context, repo *gitrepo.Repo) map[string]bool {
+	set := map[string]bool{}
+	if wts, err := repo.WorktreeList(ctx); err == nil {
+		for _, wt := range wts {
+			if wt.Branch != "" {
+				set[wt.Branch] = true
+			}
+		}
+	}
+	return set
+}
+
+// branchCompletion offers local branch names for a single positional arg.
+func branchCompletion(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	repo, _, err := openRepo(cmd.Context())
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	branches, err := repo.LocalBranches(cmd.Context())
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var names []string
+	for _, b := range branches {
+		if !b.Current {
+			names = append(names, b.Name)
+		}
+	}
+	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
+func newBranchListCmd() *cobra.Command {
+	var base string
+	cmd := &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List local branches with their prune status",
+		Long: `List the repo's local branches, each tagged with how prune sees it:
+
+  • current   the checked-out branch (never pruned)
+  • worktree  checked out in a worktree (clean with ` + "`worktree prune`" + `)
+  • merged    contained in the base branch (pruned by default)
+  • gone      its upstream was deleted on the remote (pruned with --gone)
+  • unmerged  not contained in base and no gone upstream (kept)`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			repo, _, err := openRepo(ctx)
+			if err != nil {
+				return err
+			}
+			if base == "" {
+				base = repo.DefaultBranch(ctx)
+			}
+			branches, err := repo.LocalBranches(ctx)
+			if err != nil {
+				return err
+			}
+			inWorktree := worktreeBranches(ctx, repo)
+
+			width := 0
+			for _, b := range branches {
+				if len(b.Name) > width {
+					width = len(b.Name)
+				}
+			}
+			out := cmd.OutOrStdout()
+			for _, b := range branches {
+				st := classifyBranch(ctx, repo, b, base, inWorktree)
+				marker := "  "
+				if b.Current {
+					marker = OkStyle.Render("* ")
+				}
+				fmt.Fprintf(out, "%s%-*s  %s\n", marker, width, HeaderStyle.Render(b.Name), st.render(st.tag))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
+	return cmd
+}
+
+func newBranchRemoveCmd() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:               "rm <branch>",
+		Aliases:           []string{"remove"},
+		Short:             "Remove a local branch (-f to force an unmerged one)",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: branchCompletion,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			repo, _, err := openRepo(ctx)
+			if err != nil {
+				return err
+			}
+			branch := args[0]
+			if cur, err := repo.CurrentBranch(ctx); err == nil && cur == branch {
+				return fmt.Errorf("can't remove the current branch %q — switch away first", branch)
+			}
+			if worktreeBranches(ctx, repo)[branch] {
+				return fmt.Errorf("%q is checked out in a worktree — remove that with `worktree rm` first", branch)
+			}
+			// Without --force this is `branch -d`, which refuses an unmerged branch.
+			if err := repo.DeleteBranch(ctx, branch, force); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s removed %s\n", OkStyle.Render("✓"), HeaderStyle.Render(branch))
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "remove even if the branch isn't fully merged")
 	return cmd
 }
 
@@ -59,14 +208,7 @@ Deleted branches keep no worktree but are recoverable from the reflog.`,
 			}
 			// Branches checked out in a worktree can't be deleted (git refuses) and
 			// belong to `worktree prune` anyway — collect them to skip cleanly.
-			inWorktree := map[string]bool{}
-			if wts, err := repo.WorktreeList(ctx); err == nil {
-				for _, wt := range wts {
-					if wt.Branch != "" {
-						inWorktree[wt.Branch] = true
-					}
-				}
-			}
+			inWorktree := worktreeBranches(ctx, repo)
 
 			out := cmd.OutOrStdout()
 			var removed, kept int
