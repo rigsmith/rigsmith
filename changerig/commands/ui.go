@@ -72,6 +72,7 @@ func newMenu(ctx context.Context) menuModel {
 		items: []menuItem{
 			{"Status", "show the pending release plan", func() *cobra.Command { return withFlag(NewStatusCmd(), "verbose") }},
 			{"Add changeset", "describe a pending release", NewAddCmd},
+			{"Browse changesets", "view / delete / edit pending changesets", NewBrowseCmd},
 			{"Version", "bump versions + write changelogs", NewVersionCmd},
 			{"Info", "config + discovered packages", NewInfoCmd},
 		},
