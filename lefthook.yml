@@ -1,0 +1,33 @@
+# Git hooks for rigsmith, managed by lefthook (https://lefthook.dev).
+# Install (once per clone):  lefthook install
+# Skip in a pinch:           git commit/push --no-verify
+
+pre-commit:
+  parallel: true
+  commands:
+    gofmt:
+      glob: "*.go"
+      run: |
+        unformatted=$(gofmt -l {staged_files})
+        [ -z "$unformatted" ] && exit 0
+        echo "gofmt: these files need formatting:" >&2
+        echo "$unformatted" >&2
+        echo "→ run: gofmt -w ." >&2
+        exit 1
+
+pre-push:
+  commands:
+    # Guard against clobbering main: refuse to push when the local main branch
+    # has diverged from origin/main (the mistake that erases merged PRs). Only
+    # fires while you're on main; a fresh fetch makes it catch merges you don't
+    # have yet. Override with --no-verify.
+    no-clobber-main:
+      run: |
+        [ "$(git symbolic-ref --short HEAD 2>/dev/null)" = "main" ] || exit 0
+        git fetch -q origin main 2>/dev/null || exit 0
+        git merge-base --is-ancestor origin/main HEAD 2>/dev/null && exit 0
+        echo "refusing push: local 'main' has diverged from origin/main —" >&2
+        echo "  pushing would rewrite main and can erase already-merged PRs." >&2
+        echo "  sync:     git fetch && git reset --hard origin/main" >&2
+        echo "  override: git push --no-verify" >&2
+        exit 1
