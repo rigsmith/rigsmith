@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rigsmith/core/brand"
 	"github.com/rigsmith/release/internal/pipeline"
 )
 
@@ -114,12 +115,12 @@ func (m planEditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 var (
-	editorTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true)
-	editorOn    = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	editorOff   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	editorCur   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
-	editorDim   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	editorGate  = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	editorTitle = lipgloss.NewStyle().Foreground(brand.AccentShip).Bold(true)
+	editorOn    = lipgloss.NewStyle().Foreground(brand.Green)
+	editorOff   = lipgloss.NewStyle().Foreground(brand.Muted)
+	editorCur   = lipgloss.NewStyle().Foreground(brand.Cyan).Bold(true)
+	editorDim   = lipgloss.NewStyle().Foreground(brand.Muted)
+	editorGate  = lipgloss.NewStyle().Foreground(brand.Amber)
 )
 
 func (m planEditorModel) View() string {

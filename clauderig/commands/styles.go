@@ -1,11 +1,14 @@
 package commands
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
+	"github.com/rigsmith/core/brand"
+)
 
 var (
 	HeaderStyle = lipgloss.NewStyle().Bold(true).Underline(true)
-	DimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	OkStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	WarnStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	ErrStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	DimStyle    = lipgloss.NewStyle().Foreground(brand.Muted)
+	OkStyle     = lipgloss.NewStyle().Foreground(brand.Green)
+	WarnStyle   = lipgloss.NewStyle().Foreground(brand.Yellow)
+	ErrStyle    = lipgloss.NewStyle().Foreground(brand.Red)
 )

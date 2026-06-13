@@ -13,6 +13,7 @@ import (
 	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/manifest"
 	"github.com/rigsmith/clauderig/internal/project"
+	"github.com/rigsmith/core/brand"
 	"github.com/rigsmith/core/pathmap"
 	"github.com/spf13/cobra"
 )
@@ -198,7 +199,7 @@ func chooseRestoreSafety(target string) string {
 				huh.NewOption("Restore in place (config merges; local secrets kept)", "inplace"),
 				huh.NewOption("Abort", "abort"),
 			).Value(&choice),
-	)).Run()
+	)).WithTheme(brand.Theme(brand.AccentClaude)).Run()
 	return choice
 }
 

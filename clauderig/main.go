@@ -15,6 +15,7 @@ import (
 
 	"github.com/charmbracelet/fang"
 	"github.com/rigsmith/clauderig/commands"
+	"github.com/rigsmith/core/brand"
 	"github.com/spf13/cobra"
 )
 
@@ -53,5 +54,5 @@ func run(ctx context.Context) error {
 		commands.NewUICmd(),
 	)
 	root.AddCommand(commands.ScopeCommands()...) // global (alias: hooks) / project / local
-	return fang.Execute(ctx, root, fang.WithVersion(version))
+	return fang.Execute(ctx, root, fang.WithVersion(version), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentClaude)))
 }

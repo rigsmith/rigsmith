@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rigsmith/core/brand"
 	"github.com/rigsmith/release/internal/pipeline"
 )
 
@@ -76,7 +77,7 @@ type dashboardModel struct {
 func newDashboardModel(steps []pipeline.ResolvedStep, tool string) dashboardModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
+	sp.Style = lipgloss.NewStyle().Foreground(brand.Cyan)
 
 	ds := make([]dashStep, len(steps))
 	byName := make(map[string]int, len(steps))

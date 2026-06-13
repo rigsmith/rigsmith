@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rigsmith/core/brand"
 	"github.com/rigsmith/release/internal/pipeline"
 )
 
@@ -20,14 +21,14 @@ type richReporter struct {
 }
 
 var (
-	ruleStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true)
-	stepOkStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	skipStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	failStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	cancelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	successPanel = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("42")).Padding(0, 1)
-	failPanel    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("196")).Padding(0, 1)
-	cancelPanel  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("214")).Padding(0, 1)
+	ruleStyle    = lipgloss.NewStyle().Foreground(brand.AccentShip).Bold(true)
+	stepOkStyle  = lipgloss.NewStyle().Foreground(brand.Green)
+	skipStyle    = lipgloss.NewStyle().Foreground(brand.Muted)
+	failStyle    = lipgloss.NewStyle().Foreground(brand.Red).Bold(true)
+	cancelStyle  = lipgloss.NewStyle().Foreground(brand.Amber).Bold(true)
+	successPanel = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(brand.Green).Padding(0, 1)
+	failPanel    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(brand.Red).Padding(0, 1)
+	cancelPanel  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(brand.Amber).Padding(0, 1)
 )
 
 func newRichReporter(w io.Writer, masker *pipeline.SecretMasker, tool string) *richReporter {
