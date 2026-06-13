@@ -42,6 +42,24 @@ jobs:
       - name: Test
         run: go test ./core/... ./changerig/... ./cli/... ./release/... -count=1
 
+  secret-scan:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      # Full history so the scan covers every commit, not just the tip.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: Scan full history
+        run: gitleaks git --no-banner -v -c .gitleaks.toml
+
   lint:
     name: vet + gofmt
     runs-on: ubuntu-latest
