@@ -40,16 +40,17 @@ func (p FixedPrompter) Confirm(string) bool { return p.Answer }
 
 // PlanChooser lets the user review the plan and toggle which steps run before
 // the release starts. Abstracted so an interactive picker is swappable for a
-// passthrough in non-interactive runs (and tests).
+// passthrough in non-interactive runs (and tests). proceed is false when the
+// user cancels the whole release from the chooser.
 type PlanChooser interface {
-	// Choose returns the steps to run, possibly with some marked skipped by
-	// the user.
-	Choose(steps []ResolvedStep) []ResolvedStep
+	// Choose returns the steps to run (some possibly marked skipped by the
+	// user) and whether to proceed at all.
+	Choose(steps []ResolvedStep) (chosen []ResolvedStep, proceed bool)
 }
 
 // PassthroughChooser runs every step as resolved; used when there is no
 // terminal to interact with.
 type PassthroughChooser struct{}
 
-// Choose returns the steps unchanged.
-func (PassthroughChooser) Choose(steps []ResolvedStep) []ResolvedStep { return steps }
+// Choose returns the steps unchanged and always proceeds.
+func (PassthroughChooser) Choose(steps []ResolvedStep) ([]ResolvedStep, bool) { return steps, true }

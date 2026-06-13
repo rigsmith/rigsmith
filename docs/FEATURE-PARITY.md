@@ -48,9 +48,11 @@ rigsmith is done.
   escape hatch). The changerig config surface is now complete: `--independent`,
   the `commit` key (auto-commit on version/add), and the **generalized
   per-ecosystem config block** (`sourcePath`/`packageSource`/`versionStrategy`,
-  consumed by discovery/publish/planner) all land here. The only remaining gap
-  is the relrig interactive step-chooser TUI (`packages.versionRegex` landed as
-  a generic `regex` ecosystem adapter).
+  consumed by discovery/publish/planner) all land here. The relrig interactive
+  step-chooser is now built too — a bubbletea **plan editor** (toggle steps
+  pre-run) plus a **live run dashboard** (streaming status + inline confirm
+  gates) — and `packages.versionRegex` landed as a generic `regex` ecosystem
+  adapter, so the release surface is complete.
 - **`rig` (dev launcher): high (Phase 6, 2026-06-12).** Dev loop + full package
   management + `coverage` (incl. .NET `--min` gate + in-process cobertura HTML)
   + `kill` (C#-aligned semantics) + `doctor`/`cd`/`init`/`rebuild`/`publish`/
@@ -85,7 +87,7 @@ rigsmith is done.
 | `info` | ✅ | ✅ | | | Config + ecosystems + packages + changeset count. | |
 | `ui` | ✅ (Spectre) | ✅ (bubbletea) | | | Interactive menu dispatching the verbs — different toolkit, same surface. | |
 | `shell-init` | ✅ | ✅ | 🟢 | Obviated — net's shell fn resolved the .NET/Node tool split; rigsmith is one binary on PATH (and aliases `changeset`), so no resolve-the-binary wrapper is needed. | cobra `completion` covers tab-completion. | |
-| `release` (orchestrator) | ✅ | ⬜ | | | Built (`release/internal/pipeline` + `forge`) — see the orchestrator section; adds forge releases + 4-ecosystem reach. `packages.versionRegex` shipped as the generic `regex` ecosystem adapter. | Interactive step-chooser TUI. |
+| `release` (orchestrator) | ✅ | ✅ | 🟢 | Adds the live bubbletea run dashboard (streaming per-step status + inline confirm gates) on top of the source's interactive step picker, plus forge releases + 4-ecosystem reach. | Built (`release/internal/pipeline` + `forge`) — see the orchestrator section. Interactive flow: a **plan editor** (toggle which steps run) then a **live dashboard**; `packages.versionRegex` shipped as the generic `regex` ecosystem adapter. | |
 
 ## Changeset format & engine
 
@@ -152,8 +154,13 @@ reporters with resume hints, confirm gates (huh on a TTY; `--yes` otherwise),
 JSONC config via `core/jsonc`. `packages.versionRegex` is implemented as the
 generic `regex` ecosystem adapter (`core/ecosystem/regex`): declare files +
 named-capture patterns in a `.changeset/config.json` `regex` block and they
-version like any other package (tag-only release). ⬜ remaining: the interactive
-step-chooser TUI (passthrough today).
+version like any other package (tag-only release). The interactive flow is built
+(`release/internal/cli/planeditor.go` + `dashboard.go`): on an interactive rich
+TTY, a bubbletea **plan editor** lets you toggle which steps run, then a **live
+dashboard** drives the run (per-step status, streamed output, inline confirm
+gates) — one program owns the terminal via a `Reporter`→`tea.Msg` bridge and a
+confirm round-trip. CI / `--yes` / piped / `--no-ui` / `--dry-run` keep the
+sequential plain/rich reporters. See [UI.md](UI.md).
 
 ## Ecosystem / publishing
 
@@ -262,9 +269,9 @@ source tools; **rigsmith** is the Go `cli/` module.
    for its own self-update. The ergonomics tail otherwise landed — env presets
    as flags, `--no-env`/`--root`, and node `clean` (project `clean` script) are
    now done.
-2. **relrig tail**: interactive plan-chooser TUI, NuGet feed-protocol unit tests
-   if a native feed client lands. (`packages.versionRegex` shipped as the
-   generic `regex` ecosystem adapter.)
+2. **relrig tail**: NuGet feed-protocol unit tests if a native feed client
+   lands. (The interactive step-chooser TUI — plan editor + live dashboard — and
+   `packages.versionRegex` are now built.)
 
 *(Done since the original audit: status `--since`/`--output`/pre-mode
 reflection, add `--since`, changelog git/github enrichment, the `format:`
@@ -272,5 +279,6 @@ formatter incl. the native port, the entire release orchestrator + forge
 releases, publish confirm gate + ignore filtering, the cross-ecosystem
 parity corpus with dotnet + polyglot oracles, and — most recently — the full
 changerig config surface: the `commit` key, the generalized per-ecosystem
-config block (`sourcePath`/`packageSource`/`versionStrategy`), and `exclude`
-honored across rig's pickers.)*
+config block (`sourcePath`/`packageSource`/`versionStrategy`), `exclude`
+honored across rig's pickers, the `regex` versionRegex adapter, and the relrig
+interactive release TUI — plan editor + live dashboard.)*

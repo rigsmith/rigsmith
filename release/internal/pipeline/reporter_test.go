@@ -39,8 +39,11 @@ func TestPlainReporterSuccessPrintsNoResumeHint(t *testing.T) {
 func TestPassthroughChooserReturnsStepsUnchanged(t *testing.T) {
 	steps := mustResolve(t, &Config{}, ResolveOptions{})
 
-	chosen := PassthroughChooser{}.Choose(steps)
+	chosen, proceed := PassthroughChooser{}.Choose(steps)
 
+	if !proceed {
+		t.Error("passthrough chooser must always proceed")
+	}
 	if len(chosen) != len(steps) || &chosen[0] != &steps[0] {
 		t.Error("passthrough chooser must return the same steps slice")
 	}
