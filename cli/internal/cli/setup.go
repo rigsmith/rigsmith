@@ -31,6 +31,14 @@ var setupShells = []string{"zsh", "bash", "fish", "powershell"}
 // command's name, independent of which binary name the user invokes it under.
 const integrationBase = "rig"
 
+// companionTools are the sibling rig-family binaries whose tab-completion the
+// canonical `rig setup` block also loads, so one setup covers the whole family
+// (you never run setup once per tool). Each is cobra-based — so `<tool>
+// completion <shell>` produces a script — and is sourced only when present on
+// PATH, so a machine missing one simply skips it. They need no cd wrapper: none
+// has a `cd` subcommand; that's rig's alone.
+var companionTools = []string{"relrig", "changerig", "clauderig"}
+
 // Markers bracketing the managed block in the rc file. They carry the program
 // name so a `--dev` block (rig-dev) and the normal block coexist in one rc file
 // instead of overwriting each other; a re-run replaces only its own block.
@@ -51,7 +59,9 @@ Install rig's shell integration into your shell's startup file:
   - the rig() wrapper function, so "rig cd [query]" changes your directory
     (a subprocess can't cd its parent shell; rig prints the dir, the wrapper
     cds to it — everything else passes through to the binary), and
-  - tab completion, loaded via cobra's "rig completion <shell>".
+  - tab completion, loaded via cobra's "rig completion <shell>" — for rig and
+    the rest of the family (relrig, changerig, clauderig), so one setup wires
+    them all. A companion is loaded only when it's on your PATH.
 
 The shell is taken from the argument, else $SHELL. Supported: zsh, bash, fish,
 powershell (alias: pwsh). Startup files: ~/.zshrc, ~/.bashrc,
@@ -245,13 +255,67 @@ func spliceSnippet(content, snippet, prog string) (updated string, changed bool)
 // binary's `rig cd` contract: the dir on stdout, everything human on stderr.
 func setupSnippet(shell, prog string) string {
 	begin, end := markerBegin(prog), markerEnd(prog)
+	join := func(parts ...string) string { return begin + "\n" + strings.Join(parts, "\n") + "\n" + end }
 	switch shell {
 	case "fish":
-		return begin + "\n" + fishIntegration(prog) + "\n" + end
+		return join(fishIntegration(prog), companionCompletions(shell, prog))
 	case "powershell":
-		return begin + "\n" + powershellIntegration(prog) + "\n" + end
+		return join(powershellIntegration(prog), companionCompletions(shell, prog))
 	}
-	return begin + "\n" + posixHeader(prog) + "\n" + posixCompletion(shell, prog) + "\n" + posixWrapper(prog) + "\n" + end
+	return join(posixHeader(prog), posixCompletion(shell, prog), companionCompletions(shell, prog), posixWrapper(prog))
+}
+
+// companionCompletions renders the rc-file lines that load tab-completion for
+// each companionTools binary in the given shell, so one `rig setup` wires the
+// whole family. Each line is guarded so a tool that isn't installed is skipped
+// rather than erroring. It tracks the block it's in: the canonical block binds
+// each tool's own name (`clauderig`); a --dev block sources the matching `-dev`
+// launcher and rebinds cobra's completer to that name (`clauderig-dev`) — the
+// same base-name-vs-invoked-name split posixCompletion does for rig/rig-dev, so
+// `clauderig-dev <Tab>` completes against the live build. Returns "" when there
+// are no companions. Pure.
+func companionCompletions(shell, prog string) string {
+	if len(companionTools) == 0 {
+		return ""
+	}
+	dev := prog != integrationBase
+	lines := []string{"# Family completions — sibling rigs, each loaded only when it's installed."}
+	for _, base := range companionTools {
+		cmd := base // the binary we source completion from and bind to
+		if dev {
+			cmd = base + "-dev"
+		}
+		switch shell {
+		case "fish":
+			source := fmt.Sprintf("%s completion fish | source", cmd)
+			if dev { // cobra emits `complete -c <base>`; rebind it to the -dev name
+				source = fmt.Sprintf("%s completion fish | string replace -a -- '-c %s ' '-c %s ' | source", cmd, base, cmd)
+			}
+			lines = append(lines, fmt.Sprintf("command -q %s; and %s", cmd, source))
+		case "powershell":
+			body := "& $__bin completion powershell | Out-String | Invoke-Expression"
+			if dev { // re-register cobra's completer (named for the base) under the -dev name
+				body += fmt.Sprintf("; Register-ArgumentCompleter -CommandName '%s' -ScriptBlock ${__%sCompleterBlock}", cmd, base)
+			}
+			lines = append(lines, fmt.Sprintf(
+				"$__bin = (Get-Command -Name %s -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source\n"+
+					"if ($__bin) { %s }", cmd, body))
+		default: // zsh, bash — compinit was already initialized by posixCompletion
+			body := fmt.Sprintf(`eval "$(command %s completion %s)"`, cmd, shell)
+			if dev {
+				switch shell {
+				case "zsh":
+					body += fmt.Sprintf("; compdef _%s %s", base, cmd)
+				case "bash":
+					body += fmt.Sprintf("; complete -o default -o nospace -F __start_%s %s 2>/dev/null || complete -o default -F __start_%s %s", base, cmd, base, cmd)
+				}
+				lines = append(lines, fmt.Sprintf(`command -v %s >/dev/null 2>&1 && { %s; }`, cmd, body))
+			} else {
+				lines = append(lines, fmt.Sprintf(`command -v %s >/dev/null 2>&1 && %s`, cmd, body))
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // posixCompletion sources cobra's completion for zsh/bash. cobra binds the
