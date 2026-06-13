@@ -181,6 +181,26 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   asking. `--dry-run` still just lists. Matches come from the same enumeration as
   before — project-name patterns (`pgrep -fl` / CIM) or listening PIDs by port.
 
+## `rig outdated -i` — interactive upgrade (huh multi-select)
+- **Trigger:** `rig outdated -i`/`--interactive` on an interactive terminal (not
+  `--dry-run`). Plain `rig outdated` is unchanged — it streams the ecosystem's
+  outdated report as before.
+- **What you see:** rig runs the ecosystem's machine-readable outdated report,
+  parses it, and shows the outdated packages (`name  current → latest`, .NET also
+  tags the owning project) in a multi-select titled `Upgrade which packages?
+  (space toggles · enter confirms · esc cancels)` — **nothing pre-checked**, you
+  opt packages in. "All dependencies are up to date 🎉" when there's nothing to do.
+- **What it does:** upgrades the packages you pick, echoing each command —
+  **go** `go get pkg@latest …` then `go mod tidy`; **node** `npm install` /
+  `pnpm add` with `name@latest` specs; **.NET** `dotnet add [project] package id
+  --version latest` per package. Esc/empty selection upgrades nothing.
+- **Support / fallback:** wired for **go**, **node (npm/pnpm)**, and **.NET**.
+  Other managers (yarn/bun) and ecosystems, or an unparseable report, fall back
+  to the plain list; off a TTY, `-i` prints a hint and lists.
+- **Data sources:** `go list -m -u -json all` (go), `<pm> outdated --json`
+  (node — npm exits non-zero with valid JSON, which rig tolerates),
+  `dotnet list package --outdated --format json` (.NET).
+
 ## `rig <verb>` at a workspace root — project picker (huh single-select)
 - **Trigger:** a bare `--all`-capable dev verb (`rig build`/`test`/…) at a
   workspace root where packages live only in subdirs (e.g. a `go.work` root) and
@@ -355,6 +375,7 @@ flow below.
 | Coverage browser | rig | bubbletea + viewport | `rig coverage --browse` (TTY) | static table |
 | `doctor` live checklist | rig | bubbletea + bubbles | `rig doctor` (TTY) | static checklist |
 | `kill` review-and-select | rig | huh multi-select | `rig kill` (TTY, not `--yes`) | kill all matches |
+| `outdated -i` upgrade | rig | huh multi-select | `rig outdated -i` (TTY) | plain list |
 | workspace-root picker | rig | huh select | bare verb at a multi-pkg root (TTY) | helpful error |
 | `--list-tests` spinner | rig | lipgloss anim | `rig test <q>` (.NET) | `…` line / silent |
 | `<verb> --all` dashboard | rig | bubbletea + bubbles | `rig build/test --all` (TTY) | plain sequential |

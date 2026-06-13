@@ -1,0 +1,177 @@
+package cli
+
+import (
+	"encoding/json"
+	"sort"
+	"strings"
+
+	"github.com/rigsmith/cli/internal/detect"
+)
+
+// outdatedDep is one dependency with an available update, parsed from an
+// ecosystem's outdated report. project is set only for .NET (the csproj/sln the
+// package belongs to), where upgrades are applied per project.
+type outdatedDep struct {
+	name    string
+	current string // installed/resolved version ("—" when not installed)
+	latest  string // the version to upgrade to
+	project string // .NET only: owning project path
+}
+
+// parseGoListUpdates parses the concatenated JSON objects from
+// `go list -m -u -json all` into the modules that have an available update,
+// skipping the main module(s). Pure.
+func parseGoListUpdates(stream string) []outdatedDep {
+	type mod struct {
+		Path    string
+		Version string
+		Main    bool
+		Update  *struct {
+			Version string
+		}
+	}
+	dec := json.NewDecoder(strings.NewReader(stream))
+	var out []outdatedDep
+	for {
+		var m mod
+		if err := dec.Decode(&m); err != nil {
+			break // EOF or malformed tail — return what parsed
+		}
+		if m.Main || m.Update == nil || m.Update.Version == "" {
+			continue
+		}
+		out = append(out, outdatedDep{name: m.Path, current: m.Version, latest: m.Update.Version})
+	}
+	sortDeps(out)
+	return out
+}
+
+// parseNpmOutdated parses `npm/pnpm outdated --json` — an object keyed by
+// package name with current/wanted/latest — into deps whose latest differs from
+// what's installed. Handles both the npm and pnpm shapes (same fields). Pure.
+func parseNpmOutdated(jsonText string) []outdatedDep {
+	text := strings.TrimSpace(jsonText)
+	if text == "" || text == "{}" {
+		return nil
+	}
+	var doc map[string]struct {
+		Current string `json:"current"`
+		Latest  string `json:"latest"`
+	}
+	if json.Unmarshal([]byte(text), &doc) != nil {
+		return nil
+	}
+	var out []outdatedDep
+	for name, v := range doc {
+		if v.Latest == "" || v.Latest == v.Current {
+			continue
+		}
+		current := v.Current
+		if current == "" {
+			current = "—"
+		}
+		out = append(out, outdatedDep{name: name, current: current, latest: v.Latest})
+	}
+	sortDeps(out)
+	return out
+}
+
+// parseDotnetOutdated parses `dotnet list package --outdated --format json` into
+// per-package deps (deduped across target frameworks, keeping the owning
+// project path so upgrades can be applied per project). Pure.
+func parseDotnetOutdated(jsonText string) []outdatedDep {
+	var doc struct {
+		Projects []struct {
+			Path       string `json:"path"`
+			Frameworks []struct {
+				TopLevelPackages []struct {
+					ID              string `json:"id"`
+					ResolvedVersion string `json:"resolvedVersion"`
+					LatestVersion   string `json:"latestVersion"`
+				} `json:"topLevelPackages"`
+			} `json:"frameworks"`
+		} `json:"projects"`
+	}
+	if json.Unmarshal([]byte(jsonText), &doc) != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []outdatedDep
+	for _, p := range doc.Projects {
+		for _, f := range p.Frameworks {
+			for _, pkg := range f.TopLevelPackages {
+				if pkg.LatestVersion == "" || pkg.LatestVersion == pkg.ResolvedVersion {
+					continue
+				}
+				key := p.Path + "\x00" + pkg.ID
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				out = append(out, outdatedDep{
+					name:    pkg.ID,
+					current: pkg.ResolvedVersion,
+					latest:  pkg.LatestVersion,
+					project: p.Path,
+				})
+			}
+		}
+	}
+	sortDeps(out)
+	return out
+}
+
+// sortDeps orders deps by project then name for a stable picker. Pure.
+func sortDeps(deps []outdatedDep) {
+	sort.SliceStable(deps, func(i, j int) bool {
+		if deps[i].project != deps[j].project {
+			return deps[i].project < deps[j].project
+		}
+		return deps[i].name < deps[j].name
+	})
+}
+
+// goUpgradeCommands builds the commands to upgrade the chosen go modules: a
+// single `go get path@version …` followed by `go mod tidy`. Pure.
+func goUpgradeCommands(deps []outdatedDep) [][]string {
+	if len(deps) == 0 {
+		return nil
+	}
+	get := []string{"go", "get"}
+	for _, d := range deps {
+		get = append(get, d.name+"@"+d.latest)
+	}
+	return [][]string{get, {"go", "mod", "tidy"}}
+}
+
+// nodeUpgradeCommands builds the single package-manager command to upgrade the
+// chosen node deps to their latest, using the manager's add/install verb
+// (npm install · pnpm/yarn/bun add) with explicit name@version specs. Pure.
+func nodeUpgradeCommands(pm detect.NodePM, deps []outdatedDep) [][]string {
+	if len(deps) == 0 {
+		return nil
+	}
+	base := []string{string(pm), "add"}
+	if pm == detect.NPM {
+		base = []string{"npm", "install"}
+	}
+	for _, d := range deps {
+		base = append(base, d.name+"@"+d.latest)
+	}
+	return [][]string{base}
+}
+
+// dotnetUpgradeCommands builds one `dotnet add [project] package id --version`
+// per chosen package (upgrades are per project). Pure.
+func dotnetUpgradeCommands(deps []outdatedDep) [][]string {
+	var cmds [][]string
+	for _, d := range deps {
+		args := []string{"dotnet", "add"}
+		if d.project != "" {
+			args = append(args, d.project)
+		}
+		args = append(args, "package", d.name, "--version", d.latest)
+		cmds = append(cmds, args)
+	}
+	return cmds
+}
