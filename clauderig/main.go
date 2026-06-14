@@ -54,5 +54,5 @@ func run(ctx context.Context) error {
 		commands.NewUICmd(),
 	)
 	root.AddCommand(commands.ScopeCommands()...) // global (alias: hooks) / project / local
-	return fang.Execute(ctx, root, fang.WithVersion(version), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentClaude)))
+	return fang.Execute(ctx, root, fang.WithVersion(version), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentClaude)), fang.WithBanner(brand.ClaudeBanner))
 }

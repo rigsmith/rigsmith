@@ -15,7 +15,7 @@ import (
 
 // Execute builds the command tree and runs it through fang.
 func Execute(ctx context.Context) error {
-	return fang.Execute(ctx, newRootCmd(), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentShip)))
+	return fang.Execute(ctx, newRootCmd(), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentShip)), fang.WithBanner(brand.ShipBanner))
 }
 
 func newRootCmd() *cobra.Command {

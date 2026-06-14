@@ -70,6 +70,41 @@ func TestWithHelpAppender(t *testing.T) {
 	}
 }
 
+// Local fork behavior (rigsmith): WithBanner heads the root command's help and
+// stands in for the default `--version` line, but never appears on subcommand
+// help (it's a root-level identity, not a per-screen header).
+func TestWithBanner(t *testing.T) {
+	const marker = "RIGSMITH-BANNER"
+	newRoot := func() *cobra.Command {
+		root := &cobra.Command{Use: "demo", Short: "Demo", Run: func(*cobra.Command, []string) {}}
+		root.AddCommand(&cobra.Command{Use: "sub", Short: "A subcommand", Run: func(*cobra.Command, []string) {}})
+		return root
+	}
+	opts := []fang.Option{
+		fang.WithVersion("1.2.3"),
+		fang.WithBanner(func(version string) string { return marker + " " + version }),
+	}
+
+	// Root help: banner first, then the usual help body.
+	rootHelp := runHelp(t, newRoot(), opts, "--help")
+	if !strings.HasPrefix(strings.TrimLeft(rootHelp, "\n"), marker) {
+		t.Errorf("banner should head the root help; got:\n%s", rootHelp)
+	}
+
+	// Subcommand help: no banner.
+	subHelp := runHelp(t, newRoot(), opts, "sub", "--help")
+	if strings.Contains(subHelp, marker) {
+		t.Errorf("banner should not appear on subcommand help; got:\n%s", subHelp)
+	}
+
+	// Version: the banner replaces the default `demo version 1.2.3` line, and
+	// the resolved version is threaded through to it.
+	ver := runHelp(t, newRoot(), opts, "--version")
+	if !strings.Contains(ver, marker+" 1.2.3") {
+		t.Errorf("--version should render the banner with the version; got:\n%s", ver)
+	}
+}
+
 // Regression guard for the evalGroups signature change carried for upstream #97
 // (which makes evalGroups defensive about groups that aren't registered — a
 // state cobra itself rejects at Execute, so we only assert the normal path):

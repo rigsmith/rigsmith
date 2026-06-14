@@ -8,6 +8,8 @@
 //     (upstream PR #88)
 //   - evalGroups renders command groups that were never explicitly registered
 //     (upstream PR #97)
+//   - WithBanner, a brand header printed atop the root help and reused as the
+//     `--version` output (rigsmith-local)
 //
 // Keep this list current when re-syncing from upstream.
 package fang
@@ -36,6 +38,11 @@ type ErrorHandler = func(w io.Writer, styles Styles, err error)
 // writer, command, and styles so appended sections match fang's formatting.
 type HelpAppender = func(w *colorprofile.Writer, c *cobra.Command, styles Styles)
 
+// Banner renders a tool's header for a given resolved version string. The
+// returned (already-styled) block is printed above the root command's help and
+// is reused verbatim as the `--version` output.
+type Banner = func(version string) string
+
 // ColorSchemeFunc gets a [lipgloss.LightDarkFunc] and returns a [ColorScheme].
 type ColorSchemeFunc = func(lipgloss.LightDarkFunc) ColorScheme
 
@@ -48,6 +55,7 @@ type settings struct {
 	colorscheme  ColorSchemeFunc
 	errHandler   ErrorHandler
 	helpAppender HelpAppender
+	banner       Banner
 	signals      []os.Signal
 }
 
@@ -123,6 +131,16 @@ func WithHelpAppender(appender HelpAppender) Option {
 	}
 }
 
+// WithBanner sets a brand header (see [Banner]). fang renders it once with the
+// resolved version, prints it above the root command's help, and reuses it as
+// the `--version` output. It is intentionally not shown on subcommand help, so
+// the banner stays a root-level identity rather than appearing on every screen.
+func WithBanner(banner Banner) Option {
+	return func(s *settings) {
+		s.banner = banner
+	}
+}
+
 // WithNotifySignal sets the signals that should interrupt the execution of the
 // program.
 func WithNotifySignal(signals ...os.Signal) Option {
@@ -152,15 +170,25 @@ func Execute(ctx context.Context, root *cobra.Command, options ...Option) error 
 		_ = enableVirtualTerminalProcessing(w)
 	}
 
+	// Render the brand banner once with the resolved version, so the same block
+	// heads the root help and stands in for the default `--version` line.
+	var banner string
+	if opts.banner != nil {
+		banner = opts.banner(buildVersion(opts))
+	}
+
 	helpFunc := func(c *cobra.Command, _ []string) {
 		w := colorprofile.NewWriter(c.OutOrStdout(), os.Environ())
-		helpFn(c, w, makeStyles(mustColorscheme(opts.colorscheme)), opts.helpAppender)
+		helpFn(c, w, makeStyles(mustColorscheme(opts.colorscheme)), opts.helpAppender, banner)
 	}
 
 	root.SilenceUsage = true
 	root.SilenceErrors = true
 	if !opts.skipVersion {
 		root.Version = buildVersion(opts)
+		if banner != "" {
+			root.SetVersionTemplate(banner + "\n")
+		}
 	}
 	root.SetHelpFunc(helpFunc)
 
