@@ -2,11 +2,13 @@ package commands
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/spf13/cobra"
 )
 
@@ -60,26 +62,8 @@ branch, so keep it current (e.g. pull main).`,
 			}
 			out := cmd.OutOrStdout()
 
-			// run sweeps both phases (worktrees, then branches) to w, returning the
-			// removed counts. The freed set carries phase 1's branches into phase 2
-			// so they're no longer treated as worktree-attached.
-			run := func(w io.Writer, dry bool) (worktrees, branches int, err error) {
-				fmt.Fprintln(w, HeaderStyle.Render("worktrees"))
-				wRemoved, _, freed, err := pruneWorktrees(ctx, w, repo, root, base, dry, gone, false)
-				if err != nil {
-					return 0, 0, err
-				}
-				detached := map[string]bool{}
-				for _, b := range freed {
-					detached[b] = true
-				}
-				fmt.Fprintln(w, HeaderStyle.Render("branches"))
-				bRemoved, _, err := pruneBranches(ctx, w, repo, base, dry, gone, detached)
-				return wRemoved, bRemoved, err
-			}
-
 			if dryRun {
-				w, b, err := run(out, true)
+				w, b, err := pruneSweep(ctx, out, repo, root, base, true, gone)
 				if err != nil {
 					return err
 				}
@@ -90,7 +74,7 @@ branch, so keep it current (e.g. pull main).`,
 			// Destructive path: never proceed without a human at the keyboard.
 			// Fail before doing any work in a non-interactive context.
 			if !interactive() {
-				return fmt.Errorf("prune deletes branches and must be confirmed at a terminal — it won't run non-interactively; use -n to preview, or worktree prune / branch prune for unattended cleanup")
+				return fmt.Errorf("prune deletes branches and must be confirmed at a terminal — it won't run non-interactively; use -n (or prune list) to preview, or worktree prune / branch prune for unattended cleanup")
 			}
 
 			// Capture the plan into a buffer and show it *inside* the confirm dialog,
@@ -100,7 +84,7 @@ branch, so keep it current (e.g. pull main).`,
 			// over the already-printed lines, leaving stale tails bleeding through
 			// from longer scrollback — the misdisplay this avoids.)
 			var plan bytes.Buffer
-			planW, planB, err := run(&plan, true)
+			planW, planB, err := pruneSweep(ctx, &plan, repo, root, base, true, gone)
 			if err != nil {
 				return err
 			}
@@ -128,7 +112,7 @@ branch, so keep it current (e.g. pull main).`,
 			// the user just approved) print a terse summary, otherwise flush the
 			// detail so any failure or drift is visible.
 			var real bytes.Buffer
-			w, b, err := run(&real, false)
+			w, b, err := pruneSweep(ctx, &real, repo, root, base, false, gone)
 			if err != nil {
 				return err
 			}
@@ -141,6 +125,63 @@ branch, so keep it current (e.g. pull main).`,
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what would be removed without removing anything")
 	cmd.Flags().BoolVar(&gone, "gone", false, "also act on items whose upstream was deleted on the remote, even if a merge can't be proven")
+	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
+	cmd.AddCommand(newPruneListCmd())
+	return cmd
+}
+
+// pruneSweep runs both phases — worktrees first, then branches — writing one
+// line per item to w and returning the removed (or, in dry mode, would-remove)
+// counts. The freed branches from phase 1 are carried into phase 2 so they're no
+// longer treated as worktree-attached. Shared by the prune action and its list
+// subcommand.
+func pruneSweep(ctx context.Context, w io.Writer, repo *gitrepo.Repo, root, base string, dry, gone bool) (worktrees, branches int, err error) {
+	fmt.Fprintln(w, HeaderStyle.Render("worktrees"))
+	wRemoved, _, freed, err := pruneWorktrees(ctx, w, repo, root, base, dry, gone, false)
+	if err != nil {
+		return 0, 0, err
+	}
+	detached := map[string]bool{}
+	for _, b := range freed {
+		detached[b] = true
+	}
+	fmt.Fprintln(w, HeaderStyle.Render("branches"))
+	bRemoved, _, err := pruneBranches(ctx, w, repo, base, dry, gone, detached)
+	return wRemoved, bRemoved, err
+}
+
+// newPruneListCmd is the read-only companion to prune: it shows the same plan —
+// the worktrees and branches that would be removed (with --gone, also
+// gone-upstream ones) and what's skipped and why — without touching anything.
+// Equivalent to `prune -n`, surfaced as a subcommand for parity with
+// `worktree list` / `branch list`.
+func newPruneListCmd() *cobra.Command {
+	var gone bool
+	var base string
+	cmd := &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "Show what prune would remove (worktrees + branches), without removing",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			repo, root, err := openRepo(ctx)
+			if err != nil {
+				return err
+			}
+			if base == "" {
+				base = repo.DefaultBranch(ctx)
+			}
+			out := cmd.OutOrStdout()
+			w, b, err := pruneSweep(ctx, out, repo, root, base, true, gone)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf("%d worktrees, %d branches to remove", w, b)))
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&gone, "gone", false, "also include items whose upstream was deleted on the remote")
 	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
 	return cmd
 }
