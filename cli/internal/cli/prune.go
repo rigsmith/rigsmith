@@ -15,9 +15,9 @@ func newPruneCmd() *cobra.Command {
 		Short: "Tidy merged worktrees + branches — delegates to `clauderig prune`",
 		Long: "rig prune forwards to `clauderig prune` (alias `tidy`): remove merged/done\n" +
 			"worktrees first, then their branches and any other merged (or, with --gone,\n" +
-			"gone-upstream) branches. It previews and asks before acting (-y skips, -n\n" +
-			"previews). All arguments and flags pass through unchanged — e.g. `rig prune -n`,\n" +
-			"`rig prune --gone -y`, `rig tidy --help`.",
+			"gone-upstream) branches. It always asks for confirmation at a terminal and\n" +
+			"fails if run non-interactively; use -n to preview. All arguments and flags pass\n" +
+			"through unchanged — e.g. `rig prune -n`, `rig prune --gone`, `rig tidy --help`.",
 		Aliases: []string{"tidy"},
 		// Forward flags like -n/--gone/--base straight to clauderig rather than
 		// letting cobra parse them against rig.

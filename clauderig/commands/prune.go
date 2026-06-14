@@ -17,16 +17,19 @@ import (
 // together, this is the single "tidy up after a merged PR" command;
 // `worktree prune` and `branch prune` remain for one side at a time.
 //
-// Unlike those targeted commands, prune also deletes branches by default, so it
-// previews the plan and asks before acting. --yes skips the prompt; -n previews
-// only; a non-interactive run refuses without --yes rather than delete silently.
+// Unlike those targeted commands, prune deletes branches, so it ALWAYS requires
+// an interactive confirmation: it previews the plan, then asks at a real
+// terminal before touching anything. There is deliberately no flag to skip the
+// prompt — in a non-interactive context (a script, hook, or piped run) prune
+// fails outright rather than delete unattended. Use -n to preview anywhere, or
+// the unattended `worktree prune` / `branch prune` for automation.
 func NewPruneCmd() *cobra.Command {
-	var dryRun, gone, yes bool
+	var dryRun, gone bool
 	var base string
 	cmd := &cobra.Command{
 		Use:     "prune",
 		Aliases: []string{"tidy"},
-		Short:   "Remove merged/done worktrees and their branches in one sweep",
+		Short:   "Remove merged/done worktrees and their branches in one sweep (interactive)",
 		Long: `Tidy up after merged PRs: remove finished worktrees and branches together.
 
 Two phases run in order (worktrees first, since a checked-out branch can't be
@@ -38,8 +41,10 @@ deleted):
                  including the ones whose worktree phase 1 just removed
 
 The current branch/worktree, the base, and dirty or unmerged checkouts are never
-touched. prune previews the plan and asks before acting (--yes skips the prompt,
--n previews only); a non-interactive run needs --yes. Deleted branches are
+touched. Because prune deletes branches it ALWAYS asks for confirmation at a
+terminal — there is no flag to skip the prompt, and a non-interactive run fails
+instead of deleting unattended. Use -n to preview (works anywhere), or the
+unattended worktree prune / branch prune for automation. Deleted branches are
 recoverable from the reflog. Merge state is tested against the local base
 branch, so keep it current (e.g. pull main).`,
 		Args: cobra.NoArgs,
@@ -81,57 +86,50 @@ branch, so keep it current (e.g. pull main).`,
 				return nil
 			}
 
-			if !yes {
-				// Preview the plan, then confirm before touching anything.
-				planW, planB, err := run(out, true)
-				if err != nil {
-					return err
-				}
-				if planW+planB == 0 {
-					fmt.Fprintf(out, "%s\n", DimStyle.Render("nothing to prune"))
-					return nil
-				}
-				fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf("%d worktrees, %d branches to remove", planW, planB)))
-				if !interactive() {
-					return fmt.Errorf("refusing to prune without confirmation — re-run with --yes (or -n to preview)")
-				}
-				proceed := false
-				if err := huh.NewForm(huh.NewGroup(
-					huh.NewConfirm().
-						Title(fmt.Sprintf("Remove these %d worktree(s) and %d branch(es)?", planW, planB)).
-						Affirmative("Yes, prune").
-						Negative("Cancel").
-						Value(&proceed),
-				)).Run(); err != nil || !proceed {
-					fmt.Fprintf(out, "%s\n", DimStyle.Render("aborted"))
-					return nil
-				}
-
-				// Act for real into a buffer; on a clean run (results match the plan
-				// the user just approved) print a terse summary, otherwise flush the
-				// detail so any failure or drift is visible.
-				var real bytes.Buffer
-				w, b, err := run(&real, false)
-				if err != nil {
-					return err
-				}
-				if w != planW || b != planB {
-					io.Copy(out, &real)
-				}
-				fmt.Fprintf(out, "%s\n", OkStyle.Render(fmt.Sprintf("✓ %d worktrees, %d branches removed", w, b)))
-				return nil
+			// Destructive path: never proceed without a human at the keyboard.
+			// Fail before doing any work in a non-interactive context.
+			if !interactive() {
+				return fmt.Errorf("prune deletes branches and must be confirmed at a terminal — it won't run non-interactively; use -n to preview, or worktree prune / branch prune for unattended cleanup")
 			}
 
-			w, b, err := run(out, false)
+			// Preview the plan, then confirm before touching anything.
+			planW, planB, err := run(out, true)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf("%d worktrees, %d branches removed", w, b)))
+			if planW+planB == 0 {
+				fmt.Fprintf(out, "%s\n", DimStyle.Render("nothing to prune"))
+				return nil
+			}
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf("%d worktrees, %d branches to remove", planW, planB)))
+			proceed := false
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewConfirm().
+					Title(fmt.Sprintf("Remove these %d worktree(s) and %d branch(es)?", planW, planB)).
+					Affirmative("Yes, prune").
+					Negative("Cancel").
+					Value(&proceed),
+			)).Run(); err != nil || !proceed {
+				fmt.Fprintf(out, "%s\n", DimStyle.Render("aborted"))
+				return nil
+			}
+
+			// Act for real into a buffer; on a clean run (results match the plan
+			// the user just approved) print a terse summary, otherwise flush the
+			// detail so any failure or drift is visible.
+			var real bytes.Buffer
+			w, b, err := run(&real, false)
+			if err != nil {
+				return err
+			}
+			if w != planW || b != planB {
+				io.Copy(out, &real)
+			}
+			fmt.Fprintf(out, "%s\n", OkStyle.Render(fmt.Sprintf("✓ %d worktrees, %d branches removed", w, b)))
 			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what would be removed without removing anything")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	cmd.Flags().BoolVar(&gone, "gone", false, "also act on items whose upstream was deleted on the remote, even if a merge can't be proven")
 	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
 	return cmd
