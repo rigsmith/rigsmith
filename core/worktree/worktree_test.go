@@ -1,6 +1,9 @@
 package worktree
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestSanitize(t *testing.T) {
 	cases := map[string]string{
@@ -18,14 +21,16 @@ func TestSanitize(t *testing.T) {
 }
 
 func TestPathFor(t *testing.T) {
+	// PathFor builds with filepath.Join, so expectations use the OS separator
+	// (FromSlash is a no-op on unix, backslashes on Windows).
 	got := PathFor("/Users/john/Git/rigsmith", "feat/x")
-	want := "/Users/john/Git/rigsmith-worktrees/feat-x"
+	want := filepath.FromSlash("/Users/john/Git/rigsmith-worktrees/feat-x")
 	if got != want {
 		t.Errorf("PathFor = %q, want %q", got, want)
 	}
 	// Trailing slash on the root must not change the layout.
-	if got := PathFor("/Users/john/Git/rigsmith/", "main"); got != "/Users/john/Git/rigsmith-worktrees/main" {
-		t.Errorf("PathFor with trailing slash = %q", got)
+	if got, want := PathFor("/Users/john/Git/rigsmith/", "main"), filepath.FromSlash("/Users/john/Git/rigsmith-worktrees/main"); got != want {
+		t.Errorf("PathFor with trailing slash = %q, want %q", got, want)
 	}
 }
 
