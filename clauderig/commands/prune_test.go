@@ -79,3 +79,31 @@ func TestPruneDryRunDetachesFreed(t *testing.T) {
 		t.Error("dry-run deleted the branch")
 	}
 }
+
+// pruneSweep (shared by the prune action and `prune list`) counts both phases
+// together; in dry mode it touches nothing — this is what `prune list` runs.
+func TestPruneSweepDryRun(t *testing.T) {
+	ctx := context.Background()
+	r, err := gitrepo.Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "a", "1", "init")
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	if err := r.WorktreeAdd(ctx, wtPath, "feature", "main", true); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	w, b, err := pruneSweep(ctx, &buf, r, r.Dir, "main", true /*dry*/, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The merged worktree and its branch both show in the plan (freed→detached).
+	if w != 1 || b != 1 {
+		t.Errorf("dry sweep counts = %d worktrees, %d branches; want 1, 1", w, b)
+	}
+	if !r.BranchExists(ctx, "feature") {
+		t.Error("dry sweep must not delete anything")
+	}
+}
