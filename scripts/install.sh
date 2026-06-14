@@ -72,7 +72,7 @@ resolve_version() {
 }
 
 # --- install a single binary -------------------------------------------------
-# $1 = binary name (rig|relrig), $2 = tag, $3 = os, $4 = arch
+# $1 = binary name (rig|shiprig|clauderig), $2 = tag, $3 = os, $4 = arch
 install_binary() {
   bin="$1"
   tag="$2"
