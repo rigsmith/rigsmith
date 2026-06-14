@@ -110,16 +110,19 @@ stays public (outside `internal/`) so external users can import it.
 - [ ] curl|sh installer: confirm it drops all binaries; wire `RIGSMITH_TOOLS`
   subset. (Deferred.)
 
-### Phase 4 — Repo move & docs (last)
-- Transfer/rename `JohnCampionJr/rigsmith` → `rigsmith/rigsmith` (GitHub keeps a
-  redirect, but update remotes + module path references).
-- Update README/docs install commands to the matrix above. Drop public mentions
-  of `cli`/module names.
-- Verify the `main-merge-clobber` discipline: confirm the transfer landed and
-  origin/main is intact before closing out.
+### Phase 4 — Repo move & docs — ✅ MOSTLY DONE (2026-06-14)
+- [x] Transferred `JohnCampionJr/rigsmith` → `rigsmith/rigsmith`, now **public**
+  (default branch `main`; old URL redirects). Local `origin` updated to the
+  canonical `https://github.com/rigsmith/rigsmith.git`.
+- [x] README/docs install commands updated to the new layout (done in the Phase 1 PR).
+- [x] `go install github.com/rigsmith/rigsmith/cmd/rig@latest` verified working —
+  resolves via the Go proxy (currently a pseudo-version, `v0.0.0-…`, since untagged).
+- [ ] **Cut the first version tag / GitHub release** → clean semver for
+  `go install`, and goreleaser publishes the four binaries + checksums. Also the
+  prerequisite for the Homebrew tap (Phase 3 tail).
 
 ## Risks / watch-items
 - **Import-rewrite blast radius:** every `github.com/rigsmith/*` import string changes. Do it scripted + `go build ./...` as the gate; expect a large diff.
 - **`internal/` reachability:** fine within one module, but double-check no _test_ helper or external consumer relied on a now-`internal` package.
-- **`go install @latest` needs a tag** on `rigsmith/rigsmith` post-move; pre-tag it can't resolve.
+- **`go install @latest` works untagged** (resolves to a `v0.0.0-…` pseudo-version of the latest commit); a real tag is only needed for a *clean* semver and goreleaser artifacts.
 - **npm "no Node" story:** reserving names is free; building real wrapper packages later reintroduces a Node toolchain — revisit deliberately.
