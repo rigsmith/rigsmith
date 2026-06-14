@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/spf13/cobra"
 )
 
 // scriptedMenu is a two-level menu with deterministic items (newMenu probes
@@ -196,5 +197,56 @@ func TestMenu_OtherKeysPassThroughUntouched(t *testing.T) {
 	}
 	if chosen := model.(menuModel).chosen; chosen != "test" {
 		t.Fatalf("chosen = %q, want test", chosen)
+	}
+}
+
+// The top-level view surfaces the next-step line and tags the recommended item
+// ("init" when there's no .rig.json), so the suggested step is visible.
+func TestMenu_NextStepAndRecommendedTag(t *testing.T) {
+	m := menuModel{
+		nextStep: "No .rig.json yet — init pins conventions and adds custom verbs.",
+		stack: []frame{{items: []menuItem{
+			{label: "init", verb: "init", recommended: true},
+			{label: "build", verb: "build"},
+		}}},
+	}
+	view := m.View()
+	for _, want := range []string{"No .rig.json yet", "next", "init", "build"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view missing %q\n%s", want, view)
+		}
+	}
+}
+
+// A project command (custom/script verb) carries its own prebuilt command;
+// selecting it records that command to run on exit, not a built-in verb.
+func TestMenu_ProjectCommandCarriesItsCommand(t *testing.T) {
+	c := &cobra.Command{Use: "deploy", Short: "deploy it", RunE: func(*cobra.Command, []string) error { return nil }}
+	m := menuModel{stack: []frame{{items: []menuItem{{label: "deploy", cmd: c}}}}}
+	model, cmd := m.Update(key(tea.KeyEnter))
+	if !isQuit(cmd) {
+		t.Fatal("enter on a project command must quit the menu")
+	}
+	got := model.(menuModel)
+	if got.chosenCmd == nil || got.chosenCmd.Name() != "deploy" {
+		t.Fatalf("chosenCmd = %v, want the deploy command", got.chosenCmd)
+	}
+	if got.chosen != "" {
+		t.Errorf("chosen verb = %q, want empty (a carried command, not a verb)", got.chosen)
+	}
+}
+
+// The next-step line is about the repo, so it shows only at the top level — a
+// submenu keeps the bare header.
+func TestMenu_NextStepHiddenInSubmenu(t *testing.T) {
+	m := menuModel{
+		nextStep: "SHOULD-NOT-APPEAR",
+		stack: []frame{
+			{items: []menuItem{{label: "▸ More", children: []menuItem{{label: "kill", verb: "kill"}}}}},
+			{title: "▸ More", items: []menuItem{{label: "kill", verb: "kill"}}},
+		},
+	}
+	if got := m.View(); strings.Contains(got, "SHOULD-NOT-APPEAR") {
+		t.Errorf("next-step line must not show in a submenu\n%s", got)
 	}
 }

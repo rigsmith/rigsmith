@@ -35,7 +35,8 @@ func run(ctx context.Context) error {
 	}
 
 	add := commands.NewAddCmd()
-	// Bare `changerig` behaves like `changerig add`.
+	// With args/flags (e.g. `changerig -m "…"`), or off a TTY, bare `changerig`
+	// behaves like `changerig add` — scripted/flag-driven use is unchanged.
 	root.RunE = add.RunE
 	root.Args = add.Args
 	root.Flags().AddFlagSet(add.Flags())
@@ -51,5 +52,13 @@ func run(ctx context.Context) error {
 		commands.NewConfigCmd(),
 		commands.NewUICmd(),
 	)
+
+	// Bare, interactive `changerig` (no verb/flag) lands on the menu. Routing
+	// through the registered `ui` subcommand — rather than running a standalone
+	// NewUICmd — keeps the menu title resolving to "changerig" (via
+	// cmd.Root().Name()) and preserves cobra's unknown-command errors.
+	if len(os.Args) == 1 && commands.Interactive() {
+		root.SetArgs([]string{"ui"})
+	}
 	return fang.Execute(ctx, root, fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentChange)), fang.WithBanner(brand.ChangeBanner))
 }

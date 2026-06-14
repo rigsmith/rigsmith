@@ -6,6 +6,7 @@ package cli
 
 import (
 	"context"
+	"os"
 
 	"github.com/rigsmith/changerig/commands"
 	"github.com/rigsmith/core/brand"
@@ -28,10 +29,10 @@ func newRootCmd() *cobra.Command {
 	}
 
 	add := commands.NewAddCmd()
-	// Bare `shiprig` shows the pending release plan — the release front door's
-	// natural "what would I ship?" landing. `add` (changerig's default) stays a
-	// subcommand. status orients in every source mode and, in an uninitialized
-	// repo, offers source-aware setup rather than erroring.
+	// With args/flags, or off a TTY, bare `shiprig` stays the release front door's
+	// `status` ("what would I ship?") — the answer CI and pipes rely on. status
+	// orients in every source mode and offers source-aware setup in an
+	// uninitialized repo rather than erroring.
 	status := commands.NewStatusCmd()
 	root.RunE = status.RunE
 	root.Args = status.Args
@@ -44,11 +45,31 @@ func newRootCmd() *cobra.Command {
 		commands.NewVersionCmd(),
 		commands.NewInfoCmd(),
 		commands.NewConfigCmd(),
-		commands.NewUICmd(),
+		commands.NewUICmd(releaseMenuItems()...),
 		commands.NewPreCmd(),
 		newPublishCmd(),
 		newTagCmd(),
 		newReleaseCmd(),
 	)
+
+	// Bare, interactive `shiprig` (no verb/flag) lands on the menu. Routing
+	// through the registered `ui` subcommand — which already carries the release
+	// menu items — keeps the menu title resolving to "shiprig" (via
+	// cmd.Root().Name()) and preserves cobra's unknown-command errors.
+	if len(os.Args) == 1 && commands.Interactive() {
+		root.SetArgs([]string{"ui"})
+	}
 	return root
+}
+
+// releaseMenuItems are shiprig's own verbs, contributed to the shared changeset
+// menu so the release tool's menu reflects its full surface — not just the
+// lifecycle it inherits from changerig. They sit after Version (the natural
+// release order: version → publish → tag → run the pipeline).
+func releaseMenuItems() []commands.MenuItem {
+	return []commands.MenuItem{
+		{Label: "Publish", Desc: "publish built packages to their registries", Build: newPublishCmd},
+		{Label: "Tag", Desc: "create + push git tags for released versions", Build: newTagCmd},
+		{Label: "Release", Desc: "run the full release pipeline", Build: newReleaseCmd},
+	}
 }

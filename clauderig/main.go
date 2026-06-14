@@ -56,5 +56,14 @@ func run(ctx context.Context) error {
 		commands.NewUICmd(),
 	)
 	root.AddCommand(commands.ScopeCommands()...) // global (alias: hooks) / project / local
+
+	// Bare, interactive `clauderig` lands on the dashboard — a discoverable hub
+	// with the next step in view. Off a TTY (or with any verb/flag) the normal
+	// help/dispatch stands, so hooks, scripts, and `clauderig -h` are unchanged.
+	// Routing through the `ui` verb (not a root RunE) keeps cobra's
+	// unknown-command errors intact.
+	if len(os.Args) == 1 && commands.Interactive() {
+		root.SetArgs([]string{"ui"})
+	}
 	return fang.Execute(ctx, root, fang.WithVersion(version), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentClaude)), fang.WithBanner(brand.ClaudeBanner))
 }

@@ -10,7 +10,11 @@ import (
 
 // interactive reports whether we're attached to a terminal (so it's safe to
 // launch git mergetool / prompt). Hooks run non-interactively and must not.
-func interactive() bool {
+func interactive() bool { return Interactive() }
+
+// Interactive reports whether both stdin and stdout are real terminals — the
+// shared gate for any prompt and for landing bare `clauderig` on the dashboard.
+func Interactive() bool {
 	return isatty.IsTerminal(os.Stdout.Fd()) && isatty.IsTerminal(os.Stdin.Fd())
 }
 
