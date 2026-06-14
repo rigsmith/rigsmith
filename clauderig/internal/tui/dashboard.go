@@ -162,6 +162,7 @@ func (m Model) View() string {
 		return ""
 	}
 	var b strings.Builder
+	b.WriteString(brand.ClaudeBanner("") + "\n\n")
 	b.WriteString(m.statusPanel())
 	b.WriteString("\n")
 	b.WriteString(nextC.Render("  → ") + dim.Render(m.hint) + "\n\n")

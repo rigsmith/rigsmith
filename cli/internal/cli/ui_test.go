@@ -218,6 +218,14 @@ func TestMenu_NextStepAndRecommendedTag(t *testing.T) {
 	}
 }
 
+// The menu renders rig's brand banner above it (the same header --help/version
+// show), so a bare `rig` is self-identifying.
+func TestMenu_ShowsBanner(t *testing.T) {
+	if view := scriptedMenu().View(); !strings.Contains(view, "convention-first dev launcher") {
+		t.Errorf("menu should render the rig banner above it\n%s", view)
+	}
+}
+
 // Selecting a verb erases the menu (empty view on the quitting frame), so the
 // dispatched command's output starts clean instead of below a stale menu; a
 // plain quit keeps the menu in scrollback.

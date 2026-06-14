@@ -157,3 +157,18 @@ func TestMenuView_HintAndNextTag(t *testing.T) {
 		}
 	}
 }
+
+// The menu shows the invoking tool's brand banner above it — shiprig's when this
+// shared menu is reused there, changerig's otherwise (keyed by tagline).
+func TestMenuBanner(t *testing.T) {
+	if !strings.Contains(bannerFor("shiprig"), "release front door") {
+		t.Error("shiprig banner missing its tagline")
+	}
+	if !strings.Contains(bannerFor("changerig"), "changeset lifecycle") {
+		t.Error("changerig banner missing its tagline")
+	}
+	m := menuModel{banner: bannerFor("shiprig"), header: "x", items: []menuItem{{label: "Status"}}}
+	if !strings.Contains(m.View(), "release front door") {
+		t.Errorf("View should render the tool banner above the menu\n%s", m.View())
+	}
+}

@@ -61,10 +61,22 @@ type menuModel struct {
 	items   []menuItem
 	cursor  int
 	title   string // the invoking tool's name (rig/changerig/shiprig)
+	banner  string // the invoking tool's brand header, shown above the menu
 	header  string
 	hint    string // the context-aware "next step" line shown under the header
 	chosen  func() *cobra.Command
 	quitMsg string
+}
+
+// bannerFor returns the invoking tool's brand header — shiprig's when this menu
+// is reused there, changerig's otherwise. It's rendered without a version: the
+// menu is the interactive hub, and this is the same identity header --help and
+// --version show.
+func bannerFor(tool string) string {
+	if tool == "shiprig" {
+		return brand.ShipBanner("")
+	}
+	return brand.ChangeBanner("")
 }
 
 var (
@@ -86,11 +98,12 @@ type wsState struct {
 }
 
 func newMenu(ctx context.Context, title string, extra []MenuItem) menuModel {
+	banner := bannerFor(title)
 	ws, err := Open()
 	if err != nil {
 		// Couldn't resolve a workspace — offer the verbs anyway (each reports its
 		// own setup error if chosen) rather than dead-ending on a blank menu.
-		return menuModel{title: title, header: "rigsmith", items: buildItems(wsState{initialized: true, usesChangesets: true}, extra)}
+		return menuModel{title: title, banner: banner, header: "rigsmith", items: buildItems(wsState{initialized: true, usesChangesets: true}, extra)}
 	}
 
 	st := wsState{
@@ -101,6 +114,7 @@ func newMenu(ctx context.Context, title string, extra []MenuItem) menuModel {
 	if !st.initialized {
 		return menuModel{
 			title:  title,
+			banner: banner,
 			header: fmt.Sprintf("%s  ·  not set up", ws.Root),
 			hint:   "Releases aren't set up here yet — start with Initialize.",
 			items:  buildItems(st, extra),
@@ -123,7 +137,7 @@ func newMenu(ctx context.Context, title string, extra []MenuItem) menuModel {
 	if st.inPre {
 		header += "  ·  prerelease " + st.preTag
 	}
-	return menuModel{title: title, header: header, hint: hint, items: items, cursor: cursor}
+	return menuModel{title: title, banner: banner, header: header, hint: hint, items: items, cursor: cursor}
 }
 
 // buildItems assembles the menu for a given workspace state, showing only the
@@ -241,6 +255,7 @@ func (m menuModel) View() string {
 		return ""
 	}
 	var b strings.Builder
+	b.WriteString(m.banner + "\n\n")
 	b.WriteString(menuTitle.Render(m.title) + "  " + DimStyle.Render(m.header) + "\n")
 	if m.hint != "" {
 		b.WriteString(menuNext.Render("  → ") + DimStyle.Render(m.hint) + "\n")

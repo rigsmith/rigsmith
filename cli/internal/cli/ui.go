@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rigsmith/cli/internal/config"
 	"github.com/rigsmith/cli/internal/detect"
+	"github.com/rigsmith/core/brand"
 	"github.com/spf13/cobra"
 )
 
@@ -342,6 +343,7 @@ func (m menuModel) View() string {
 	}
 	cur := m.stack[len(m.stack)-1]
 	var b strings.Builder
+	b.WriteString(brand.RigBanner("") + "\n\n")
 	crumb := "rig"
 	if m.focus != "" {
 		crumb += dimStyle.Render(" · ") + menuSelected.Render(m.focus)
