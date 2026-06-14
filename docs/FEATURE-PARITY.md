@@ -3,7 +3,7 @@
 Audit of the Go rigsmith implementation against its two source projects
 (updated 2026-06-12 after parity phases 1–6; originally 2026-06-11):
 
-- **net-changesets** (.NET) → `changerig` / `relrig` + `core`
+- **net-changesets** (.NET) → `changerig` / `shiprig` + `core`
 - **rig** (.NET + Node, kept at parity) → `rig` (the `cli/` module) + `core`
 
 > Companion docs: [test-parity.md](../test-parity.md) tracks *test* coverage
@@ -38,17 +38,17 @@ rigsmith is done.
 
 ## Headline
 
-- **Release engine (changerig/relrig): at or above parity.** The full
+- **Release engine (changeRig/shipRig): at or above parity.** The full
   `init → add → status → version → publish → tag → release` loop works across
   **four** ecosystems (net-changesets had one), with a **range-aware cascade**,
   an **implemented pluggable-changelog system** that net-changesets only
   designed, the **`release` orchestrator** (steps/hooks/vars/gates/forge),
   **changelog git/github enrichment**, and the **markdown formatter**
   (`format:` incl. the native prettier-equivalent and a custom-command
-  escape hatch). The changerig config surface is now complete: `--independent`,
+  escape hatch). The changeRig config surface is now complete: `--independent`,
   the `commit` key (auto-commit on version/add), and the **generalized
   per-ecosystem config block** (`sourcePath`/`packageSource`/`versionStrategy`,
-  consumed by discovery/publish/planner) all land here. The relrig interactive
+  consumed by discovery/publish/planner) all land here. The shipRig interactive
   step-chooser is now built too — a bubbletea **plan editor** (toggle steps
   pre-run) plus a **live run dashboard** (streaming status + inline confirm
   gates) — and `packages.versionRegex` landed as a generic `regex` ecosystem
@@ -71,7 +71,7 @@ rigsmith is done.
 
 ---
 
-# Part A — changerig / relrig vs net-changesets
+# Part A — changeRig / shipRig vs net-changesets
 
 ## Commands
 
@@ -87,7 +87,7 @@ rigsmith is done.
 | `info` | ✅ | ✅ | | | Config + ecosystems + packages + changeset count. | |
 | `ui` | ✅ (Spectre) | ✅ (bubbletea) | | | Interactive menu dispatching the verbs — different toolkit, same surface. | |
 | `shell-init` | ✅ | ✅ | 🟢 | Obviated — net's shell fn resolved the .NET/Node tool split; rigsmith is one binary on PATH (and aliases `changeset`), so no resolve-the-binary wrapper is needed. | cobra `completion` covers tab-completion. | |
-| `release` (orchestrator) | ✅ | ✅ | 🟢 | Adds the live bubbletea run dashboard (streaming per-step status + inline confirm gates) on top of the source's interactive step picker, plus forge releases + 4-ecosystem reach. | Built (`release/internal/pipeline` + `forge`) — see the orchestrator section. Interactive flow: a **plan editor** (toggle which steps run) then a **live dashboard**; `packages.versionRegex` shipped as the generic `regex` ecosystem adapter. | |
+| `release` (orchestrator) | ✅ | ✅ | 🟢 | Adds the live bubbletea run dashboard (streaming per-step status + inline confirm gates) on top of the source's interactive step picker, plus forge releases + 4-ecosystem reach. | Built (`shiprig/internal/pipeline` + `forge`) — see the orchestrator section. Interactive flow: a **plan editor** (toggle which steps run) then a **live dashboard**; `packages.versionRegex` shipped as the generic `regex` ecosystem adapter. | |
 
 ## Changeset format & engine
 
@@ -141,8 +141,8 @@ rigsmith is done.
 
 ## Release orchestrator (`.changeset/release.jsonc`)
 
-**Built (2026-06-12)** — `release/internal/pipeline` + `release/internal/forge`,
-wired as `relrig release`. ✅: `tool` (defaults to relrig itself; set
+**Built (2026-06-12)** — `shiprig/internal/pipeline` + `shiprig/internal/forge`,
+wired as `shiprig release`. ✅: `tool` (defaults to shiprig itself; set
 `"npx changeset"` to drive the Node CLI)/`order`/`steps`(enabled/before/after/
 run/args/message/confirm/forge)/`hooks`(before/after/onError)/`vars`(lazy +
 eager, cached), CommandSpec (shell string / argv array, mixed lists), `${tool}`/
@@ -155,7 +155,7 @@ JSONC config via `core/jsonc`. `packages.versionRegex` is implemented as the
 generic `regex` ecosystem adapter (`core/ecosystem/regex`): declare files +
 named-capture patterns in a `.changeset/config.json` `regex` block and they
 version like any other package (tag-only release). The interactive flow is built
-(`release/internal/cli/planeditor.go` + `dashboard.go`): on an interactive rich
+(`shiprig/internal/cli/planeditor.go` + `dashboard.go`): on an interactive rich
 TTY, a bubbletea **plan editor** lets you toggle which steps run, then a **live
 dashboard** drives the run (per-step status, streamed output, inline confirm
 gates) — one program owns the terminal via a `Reporter`→`tea.Msg` bridge and a
@@ -227,7 +227,7 @@ source tools; **rigsmith** is the Go `cli/` module.
 | Feature | .NET | Node | rigsmith | Diffs | Diff Details | Notes | Next steps |
 |---|---|---|---|---|---|---|---|
 | Root resolution (walk-up) | ✅ | ✅ | ✅ | | | | |
-| Project/package discovery | ✅ | ✅ | ✅ | | | via `core/ecosystem` adapters (shared with relrig). | |
+| Project/package discovery | ✅ | ✅ | ✅ | | | via `core/ecosystem` adapters (shared with shipRig). | |
 | Nearest-manifest primary + ambiguity stop | ➖ | ➖ | ✅ | 🟢 | rigsmith-only — neither source had it; polyglot-aware primary selection. | | |
 | Workspace detection (pnpm/yarn/npm/bun) | ➖ | ✅ | ✅ | | | node adapter resolves workspaces; rig detects the pm (pnpm/yarn/bun) for commands. | |
 | Monorepo graph / `--all` (topo) / `--filter` | ❌ | ✅ | ✅ | | | `rig build --all` runs across the workspace in dependency order (topo sort, cycle-tolerant); `--filter <glob>` narrows; works across polyglot packages. | |
@@ -265,11 +265,11 @@ source tools; **rigsmith** is the Go `cli/` module.
 ## Suggested next steps (by leverage)
 
 1. **rig leftovers**: the C#-style interactive config walkthrough if wanted
-   (Go's `setup` became the shell installer instead) and a relrig version seam
+   (Go's `setup` became the shell installer instead) and a shipRig version seam
    for its own self-update. The ergonomics tail otherwise landed — env presets
    as flags, `--no-env`/`--root`, and node `clean` (project `clean` script) are
    now done.
-2. **relrig tail**: NuGet feed-protocol unit tests if a native feed client
+2. **shipRig tail**: NuGet feed-protocol unit tests if a native feed client
    lands. (The interactive step-chooser TUI — plan editor + live dashboard — and
    `packages.versionRegex` are now built.)
 
@@ -278,7 +278,7 @@ reflection, add `--since`, changelog git/github enrichment, the `format:`
 formatter incl. the native port, the entire release orchestrator + forge
 releases, publish confirm gate + ignore filtering, the cross-ecosystem
 parity corpus with dotnet + polyglot oracles, and — most recently — the full
-changerig config surface: the `commit` key, the generalized per-ecosystem
+changeRig config surface: the `commit` key, the generalized per-ecosystem
 config block (`sourcePath`/`packageSource`/`versionStrategy`), `exclude`
-honored across rig's pickers, the `regex` versionRegex adapter, and the relrig
+honored across rig's pickers, the `regex` versionRegex adapter, and the shipRig
 interactive release TUI — plan editor + live dashboard.)*

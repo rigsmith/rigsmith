@@ -20,7 +20,7 @@ func NewUICmd() *cobra.Command {
 		Use:   "ui",
 		Short: "Interactive menu",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			m := newMenu(cmd.Context())
+			m := newMenu(cmd.Context(), cmd.Root().Name())
 			res, err := tea.NewProgram(m).Run()
 			if err != nil {
 				return err
@@ -47,6 +47,7 @@ type menuItem struct {
 type menuModel struct {
 	items   []menuItem
 	cursor  int
+	title   string // the invoking tool's name (rig/changerig/shiprig)
 	header  string
 	chosen  func() *cobra.Command
 	quitMsg string
@@ -58,7 +59,7 @@ var (
 	menuCursor   = lipgloss.NewStyle().Foreground(brand.Cyan)
 )
 
-func newMenu(ctx context.Context) menuModel {
+func newMenu(ctx context.Context, title string) menuModel {
 	header := "rigsmith"
 	if ws, err := Open(); err == nil {
 		n := 0
@@ -69,6 +70,7 @@ func newMenu(ctx context.Context) menuModel {
 		header = fmt.Sprintf("%s  ·  %d package(s)  ·  %d pending changeset(s)", ws.Root, len(pkgs), n)
 	}
 	return menuModel{
+		title:  title,
 		header: header,
 		items: []menuItem{
 			{"Status", "show the pending release plan", func() *cobra.Command { return withFlag(NewStatusCmd(), "verbose") }},
@@ -115,7 +117,7 @@ func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m menuModel) View() string {
 	var b strings.Builder
-	b.WriteString(menuTitle.Render("relrig") + "  " + DimStyle.Render(m.header) + "\n\n")
+	b.WriteString(menuTitle.Render(m.title) + "  " + DimStyle.Render(m.header) + "\n\n")
 	for i, it := range m.items {
 		cursor := "  "
 		label := it.label

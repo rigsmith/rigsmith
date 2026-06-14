@@ -27,7 +27,7 @@ jobs:
             core/go.mod
             cli/go.sum
             changerig/go.sum
-            release/go.sum
+            shiprig/go.sum
 
       # The parity/cmdtest harnesses create real git repos; give git an identity
       # and quiet the default-branch hint on every runner.
@@ -40,7 +40,7 @@ jobs:
       # go.work quirk: `go test ./...` from the root reports "setup failed";
       # enumerate the module trees instead (same invocation used locally).
       - name: Test
-        run: go test ./core/... ./changerig/... ./cli/... ./release/... -count=1
+        run: go test ./core/... ./changerig/... ./cli/... ./shiprig/... -count=1
 
   secret-scan:
     name: gitleaks
@@ -72,12 +72,12 @@ jobs:
             core/go.mod
             cli/go.sum
             changerig/go.sum
-            release/go.sum
+            shiprig/go.sum
       - name: go vet
-        run: go vet ./core/... ./changerig/... ./cli/... ./release/...
+        run: go vet ./core/... ./changerig/... ./cli/... ./shiprig/...
       - name: gofmt
         run: |
-          out="$(gofmt -l core changerig cli release)"
+          out="$(gofmt -l core changerig cli shiprig)"
           if [ -n "$out" ]; then
             echo "gofmt needed on:" && echo "$out" && exit 1
           fi

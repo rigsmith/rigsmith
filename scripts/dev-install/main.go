@@ -1,6 +1,6 @@
 // Command dev-install creates "<tool>-dev" and "<tool>-wt" launchers that run
 // the rigsmith tools from your working tree, independent of whatever stable
-// rig/relrig/clauderig you have installed globally.
+// rig/shiprig/clauderig you have installed globally.
 //
 // It is cross-platform: on macOS/Linux it writes POSIX `sh` wrappers, on Windows
 // it writes `.cmd` wrappers. It discovers the tools from go.work, so adding a new

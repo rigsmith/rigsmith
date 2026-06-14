@@ -1,4 +1,4 @@
-// Package cmdtest drives the changerig (and, for `tag`, relrig) binaries
+// Package cmdtest drives the changerig (and, for `tag`, shiprig) binaries
 // end-to-end, porting the command-level suites from net-changesets
 // (tests/Changesets.Tests/**/ *CommandTests.cs) onto the Go CLI contract.
 //
@@ -25,7 +25,7 @@ import (
 
 var (
 	changerigBin string
-	relrigBin    string
+	shiprigBin   string
 )
 
 func TestMain(m *testing.M) {
@@ -47,7 +47,7 @@ func TestMain(m *testing.M) {
 		os.RemoveAll(tmp)
 		os.Exit(1)
 	}
-	relrigBin, err = buildBinary(root, tmp, "relrig", "./release")
+	shiprigBin, err = buildBinary(root, tmp, "shiprig", "./shiprig")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.RemoveAll(tmp)
@@ -114,9 +114,9 @@ func runChangerig(t *testing.T, dir string, args ...string) (int, string) {
 	return run(t, changerigBin, dir, args...)
 }
 
-func runRelrig(t *testing.T, dir string, args ...string) (int, string) {
+func runShiprig(t *testing.T, dir string, args ...string) (int, string) {
 	t.Helper()
-	return run(t, relrigBin, dir, args...)
+	return run(t, shiprigBin, dir, args...)
 }
 
 // --- assertions ---

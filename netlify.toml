@@ -2,10 +2,8 @@
 #
 #   rigsmith.dev   the docs site (this VitePress build)
 #   rigsmith.sh    canonical curl|sh install domain (edge function below)
-#   relrig.sh      install alias, default tool = shiprig (edge function)
 #   rigcli.sh      install alias, default tool = rig (edge function)
-#   rigcli.dev     301 -> rigsmith.dev/rig/*     (host redirect below)
-#   relrig.dev     301 -> rigsmith.dev/shiprig/* (host redirect below)
+#   rigcli.dev     301 -> rigsmith.dev/rig/* (host redirect below)
 #
 # See docs/WEBSITE.md for the plan of record.
 
@@ -31,11 +29,5 @@
 [[redirects]]
   from = "https://rigcli.dev/*"
   to = "https://rigsmith.dev/rig/:splat"
-  status = 301
-  force = true
-
-[[redirects]]
-  from = "https://relrig.dev/*"
-  to = "https://rigsmith.dev/shiprig/:splat"
   status = 301
   force = true

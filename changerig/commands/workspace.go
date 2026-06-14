@@ -1,6 +1,6 @@
 // Package commands holds the changeset lifecycle commands — init, add, status,
 // version, info — as a reusable library. The `changerig` binary exposes exactly
-// these; the `relrig` release tool imports the same builders and layers its
+// these; the `shiprig` release tool imports the same builders and layers its
 // orchestration verbs (publish/tag/pre) on top, so the two tools can never
 // diverge on what a changeset or a version run means.
 package commands

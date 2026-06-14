@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/rigsmith/release/internal/pipeline"
+	"github.com/rigsmith/shiprig/internal/pipeline"
 )
 
 // rkey builds a rune key message; tkey a special-key message. Shared by the

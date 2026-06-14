@@ -180,7 +180,7 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 
 // Publish for a Go module is a no-op at the registry level: there is no registry
 // push — a Go module is "published" by creating and pushing a git tag
-// (module/vX.Y.Z), which the module proxy then serves. The relrig `publish`
+// (module/vX.Y.Z), which the module proxy then serves. The shiprig `publish`
 // command performs that tag + push in its tagging phase (shared with `tag`), so
 // this adapter reports the version as handled-by-tag rather than pushing here.
 func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugin.PublishResponse, error) {

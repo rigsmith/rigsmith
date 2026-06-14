@@ -18,7 +18,7 @@ func dash(m dashboardModel, msg tea.Msg) dashboardModel {
 }
 
 func TestDashboardStepLifecycle(t *testing.T) {
-	m := newDashboardModel(editorSteps(), "relrig")
+	m := newDashboardModel(editorSteps(), "shiprig")
 	if m.steps[2].status != statusSkipped {
 		t.Fatal("a flag-skipped step should start skipped")
 	}
@@ -27,8 +27,8 @@ func TestDashboardStepLifecycle(t *testing.T) {
 	if m.steps[0].status != statusRunning || m.running != 0 {
 		t.Fatalf("version should be running, running=%d", m.running)
 	}
-	m = dash(m, dashCmdStarted{"relrig version"})
-	if m.cmdLine != "relrig version" {
+	m = dash(m, dashCmdStarted{"shiprig version"})
+	if m.cmdLine != "shiprig version" {
 		t.Errorf("cmdLine = %q", m.cmdLine)
 	}
 	m = dash(m, dashCmdOutput{[]string{"one", "two"}})
@@ -42,7 +42,7 @@ func TestDashboardStepLifecycle(t *testing.T) {
 }
 
 func TestDashboardOutputRingBuffer(t *testing.T) {
-	m := newDashboardModel(editorSteps(), "relrig")
+	m := newDashboardModel(editorSteps(), "shiprig")
 	m = dash(m, dashStepStarted{"version"})
 	for i := 0; i < maxDashOutput+5; i++ {
 		m = dash(m, dashCmdOutput{[]string{"line"}})
@@ -53,7 +53,7 @@ func TestDashboardOutputRingBuffer(t *testing.T) {
 }
 
 func TestDashboardConfirmFlow(t *testing.T) {
-	m := newDashboardModel(editorSteps(), "relrig")
+	m := newDashboardModel(editorSteps(), "shiprig")
 	resp := make(chan bool, 1)
 
 	m = dash(m, dashConfirm{message: "Proceed?", resp: resp})
@@ -75,7 +75,7 @@ func TestDashboardConfirmFlow(t *testing.T) {
 }
 
 func TestDashboardConfirmDecline(t *testing.T) {
-	m := newDashboardModel(editorSteps(), "relrig")
+	m := newDashboardModel(editorSteps(), "shiprig")
 	resp := make(chan bool, 1)
 	m = dash(m, dashConfirm{message: "Proceed?", resp: resp})
 	m = dash(m, tkey(tea.KeyEsc))
@@ -85,7 +85,7 @@ func TestDashboardConfirmDecline(t *testing.T) {
 }
 
 func TestDashboardCompletedQuitsAndRenders(t *testing.T) {
-	m := newDashboardModel(editorSteps(), "relrig")
+	m := newDashboardModel(editorSteps(), "shiprig")
 	m, cmd := dashUpdate(m, dashRunCompleted{success: true, message: ""})
 	if !m.done || !m.success {
 		t.Fatal("run should be marked done+success")
@@ -99,18 +99,18 @@ func TestDashboardCompletedQuitsAndRenders(t *testing.T) {
 }
 
 func TestDashboardFailureShowsResumeHint(t *testing.T) {
-	m := newDashboardModel(editorSteps(), "relrig")
+	m := newDashboardModel(editorSteps(), "shiprig")
 	m = dash(m, dashStepStarted{"publish"})
 	m = dash(m, dashStepFailed{"publish"})
 	m, _ = dashUpdate(m, dashRunCompleted{success: false, message: "boom"})
 	v := m.View()
-	if !strings.Contains(v, "Resume with: relrig release --from publish") {
+	if !strings.Contains(v, "Resume with: shiprig release --from publish") {
 		t.Errorf("failure view missing resume hint:\n%s", v)
 	}
 }
 
 func TestDashboardCancelUsesCancelPanel(t *testing.T) {
-	m := newDashboardModel(editorSteps(), "relrig")
+	m := newDashboardModel(editorSteps(), "shiprig")
 	m = dash(m, dashStepStarted{"publish"})
 	m = dash(m, dashStepCancelled{"publish"})
 	m, _ = dashUpdate(m, dashRunCompleted{success: false, message: "Release stopped at the 'publish' confirm gate."})

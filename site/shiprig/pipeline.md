@@ -24,6 +24,6 @@ in CI — the only difference is the confirm gates, which `--yes` skips.
 
 ::: tip Design reference
 See the [release orchestrator design](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/RELEASE-ORCHESTRATOR.md)
-for the full mapping from net-changesets and the `release/internal/pipeline` +
+for the full mapping from net-changesets and the `shiprig/internal/pipeline` +
 `forge` implementation.
 :::

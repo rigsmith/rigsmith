@@ -1,14 +1,14 @@
-# relrig
+# shipRig
 
 rigsmith's release tool — the Go successor to net-changesets. One uniform
 `add changeset → version → publish` workflow across .NET, Node, and Go.
 
 ```sh
-relrig init
-relrig add -p my/pkg --bump minor -m "Add a feature"   # interactive without flags
-relrig status --verbose
-relrig version            # bump + changelog, with dependency cascade
-relrig info
+shiprig init
+shiprig add -p my/pkg --bump minor -m "Add a feature"   # interactive without flags
+shiprig status --verbose
+shiprig version            # bump + changelog, with dependency cascade
+shiprig info
 ```
 
 `version` runs the shared engine in `rigsmith/core`: it parses changesets,

@@ -1,4 +1,4 @@
-module github.com/rigsmith/release
+module github.com/rigsmith/shiprig
 
 go 1.26
 

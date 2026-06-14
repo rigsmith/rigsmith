@@ -5,7 +5,7 @@ use (
 	./clauderig
 	./cli
 	./core
-	./release
+	./shiprig
 	./scripts/dev-install
 	./scripts/source-install
 	./tools

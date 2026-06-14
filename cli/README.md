@@ -47,7 +47,7 @@ rig build --quiet        # suppress the → command echo
 | *scripts* | In a Node repo, every package.json script becomes a verb |
 
 The dev verbs map through each ecosystem's `EcosystemInfo.DevCommands` (shared
-with relrig), so an ecosystem declares its own commands. Ecosystems that don't
+with shipRig), so an ecosystem declares its own commands. Ecosystems that don't
 define `lint`/`typecheck` report "no mapping" cleanly.
 
 Global flags: `--dry-run`/`-n` (print what would run, don't run it) and

@@ -1,4 +1,4 @@
-// The curl|sh install domains (rigsmith.sh, relrig.sh, rigcli.sh).
+// The curl|sh install domains (rigsmith.sh, rigcli.sh).
 //
 // Same family resolved one way: the path picks the tool, the User-Agent picks
 // the response. A shell (curl/wget) gets the install script with the tool baked
@@ -12,12 +12,9 @@ import type { Config, Context } from 'https://edge.netlify.com'
 const DOCS_ORIGIN = 'https://rigsmith.dev'
 
 // Hosts that should serve the installer, and the tool each defaults to at "/".
-// relrig.sh stays a back-compat alias host that defaults to shiprig.
 const INSTALL_HOSTS: Record<string, string> = {
   'rigsmith.sh': 'all',
   'www.rigsmith.sh': 'all',
-  'relrig.sh': 'shiprig',
-  'www.relrig.sh': 'shiprig',
   'rigcli.sh': 'rig',
   'www.rigcli.sh': 'rig',
 }
@@ -25,11 +22,6 @@ const INSTALL_HOSTS: Record<string, string> = {
 // Tools the installer can fetch today. (changerig isn't a release artifact yet;
 // requests for it fall through to the docs.)
 const TOOLS = new Set(['rig', 'shiprig', 'clauderig'])
-
-// Deprecated tool names → canonical. `relrig` was renamed to `shiprig`.
-const ALIASES: Record<string, string> = {
-  relrig: 'shiprig',
-}
 
 // Where a browser lands per tool.
 const DOCS_PATH: Record<string, string> = {
@@ -55,10 +47,8 @@ export default async function handler(req: Request, context: Context) {
   if (!hostDefault) return // docs host / unknown — let Netlify serve normally.
 
   // The first path segment selects the tool; empty path uses the host default.
-  // Fold deprecated aliases (relrig → shiprig) to the canonical name.
   const seg = url.pathname.replace(/^\/+|\/+$/g, '').split('/')[0]
-  const raw = seg === '' ? hostDefault : seg
-  const tool = ALIASES[raw] || raw
+  const tool = seg === '' ? hostDefault : seg
 
   // Anything that isn't an installable tool (or "all") → send to the docs.
   if (tool !== 'all' && !TOOLS.has(tool)) {

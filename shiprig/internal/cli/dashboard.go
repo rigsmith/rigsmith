@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rigsmith/core/brand"
-	"github.com/rigsmith/release/internal/pipeline"
+	"github.com/rigsmith/shiprig/internal/pipeline"
 )
 
 // The live release dashboard. The headless pipeline runs in a goroutine and

@@ -16,7 +16,6 @@
 #
 # Usage:
 #     install.sh [rig|shiprig|clauderig|all]   (default: all)
-#     ('relrig' is accepted as a deprecated alias for 'shiprig')
 #
 # Env:
 #     RIGSMITH_INSTALL   install prefix (default: $HOME/.local) -> bin/ underneath
@@ -72,7 +71,7 @@ resolve_version() {
 }
 
 # --- install a single binary -------------------------------------------------
-# $1 = binary name (rig|relrig), $2 = tag, $3 = os, $4 = arch
+# $1 = binary name (rig|shiprig|clauderig), $2 = tag, $3 = os, $4 = arch
 install_binary() {
   bin="$1"
   tag="$2"
@@ -129,11 +128,6 @@ main() {
   command -v tar  >/dev/null 2>&1 || error "tar is required"
 
   target="${1:-all}"
-  # 'relrig' is a deprecated alias for 'shiprig'.
-  if [ "$target" = "relrig" ]; then
-    warn "'relrig' was renamed to 'shiprig'; installing shiprig."
-    target="shiprig"
-  fi
   case "$target" in
     rig | shiprig | clauderig | all) ;;
     *) error "unknown binary '$target' (expected: rig, shiprig, clauderig, or omit for all)" ;;

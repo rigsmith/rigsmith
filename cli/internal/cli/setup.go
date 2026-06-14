@@ -37,7 +37,7 @@ const integrationBase = "rig"
 // completion <shell>` produces a script — and is sourced only when present on
 // PATH, so a machine missing one simply skips it. They need no cd wrapper: none
 // has a `cd` subcommand; that's rig's alone.
-var companionTools = []string{"relrig", "changerig", "clauderig"}
+var companionTools = []string{"shiprig", "changerig", "clauderig"}
 
 // Markers bracketing the managed block in the rc file. They carry the program
 // name so a `--dev` block (rig-dev) and the normal block coexist in one rc file
@@ -60,7 +60,7 @@ Install rig's shell integration into your shell's startup file:
     (a subprocess can't cd its parent shell; rig prints the dir, the wrapper
     cds to it — everything else passes through to the binary), and
   - tab completion, loaded via cobra's "rig completion <shell>" — for rig and
-    the rest of the family (relrig, changerig, clauderig), so one setup wires
+    the rest of the family (shiprig, changerig, clauderig), so one setup wires
     them all. A companion is loaded only when it's on your PATH.
 
 The shell is taken from the argument, else $SHELL. Supported: zsh, bash, fish,

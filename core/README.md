@@ -1,6 +1,6 @@
 # rigsmith/core
 
-The shared engine behind `rig` and `relrig`. **Zero external dependencies**
+The shared engine behind `rig` and `shiprig`. **Zero external dependencies**
 (stdlib only) — kept that way on purpose.
 
 | Package | What |

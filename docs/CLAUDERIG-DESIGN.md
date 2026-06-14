@@ -1,4 +1,4 @@
-# clauderig design
+# claudeRig design
 
 > Status: **scoping** (2026-06-12). Decisions below are agreed with John in the
 > scoping session; nothing is built yet. This is the spec to build against.
@@ -6,11 +6,11 @@
 `clauderig` — the fourth rig: sync your Claude Code environment (config, skills,
 and session history) across machines via your own git remote, correcting paths
 across OSes on restore. Single static Go binary, zero runtime deps, `curl | sh`
-onto any machine — the same north-star as `rig` / `relrig` / `changerig`.
+onto any machine — the same north-star as `rig` / `shiprig` / `changerig`.
 
 The job that's actually hard, and that the existing community tools (claude-sync,
 cc-sync-template, ccms, …) punt on: **cross-OS path correction** and **not
-leaking secrets**. clauderig owns both.
+leaking secrets**. claudeRig owns both.
 
 ## The one-line model
 
@@ -20,7 +20,7 @@ at `/Users/john/Git/x` resumes at `C:\Users\John\Git\x`. Config lives on a norma
 branch (precious, tiny); bulky session history lives on an **orphan branch** that
 is periodically squashed so the repo stays bounded.
 
-## Roots (clauderig is multi-root)
+## Roots (claudeRig is multi-root)
 
 Each root is `{ os-resolved location, allowlist, rewrite rules }`. The location is
 resolved per-OS by `core/pathmap` (ported from halyard's path cascade).
@@ -75,7 +75,7 @@ entropy/regex tripwire** that fails the commit loudly if a token slips through.
 ## Secrets
 
 Model: **strip, don't sync** (option c). Consequence, stated as a product
-promise: clauderig syncs *config, not credentials* — onboarding a new machine
+promise: claudeRig syncs *config, not credentials* — onboarding a new machine
 includes a re-auth step (`claude` login, re-enter API keys, re-auth MCP). This is
 also correct security hygiene (per-device credentials), and on macOS the creds
 aren't even in the synced tree (Keychain).
@@ -152,14 +152,14 @@ only when a provider CLI confirms it's private — **GitHub via `gh`, GitLab via
 `config set remote` applies the same gate. Every failure mode — `gh` absent,
 non-GitHub URL, unverifiable, or public — is refused; the only way to have no
 verified-private remote is to have **no remote** (local-only staging). (A hosted
-clauderig backend / non-GitHub private-repo support is possible v2; not v1.)
+claudeRig backend / non-GitHub private-repo support is possible v2; not v1.)
 
 ## Triggers
 
 - `clauderig sync` / `clauderig restore` — explicit, interactive.
 - Claude Code **hooks**: `SessionStart` → pull; `Stop`/`SessionEnd` → commit+push.
   The binary is the hook target (cross-platform because it's our static binary),
-  and clauderig installs its own hooks idempotently into the synced `settings.json`
+  and claudeRig installs its own hooks idempotently into the synced `settings.json`
   — self-bootstrapping.
 
 **Hooks are non-interactive** → the hook path must **never prompt and never
@@ -196,7 +196,7 @@ pruned to the N most recent.
 
 ## Version skew
 
-Claude Code self-updates (`.last-update-result.json`), so machines drift. clauderig
+Claude Code self-updates (`.last-update-result.json`), so machines drift. claudeRig
 stamps the producing Claude Code version in its manifest and **warns on mismatch**;
 it does **not** auto-update Claude Code (offer-only at most — auto-update is scope
 creep).
@@ -209,7 +209,7 @@ other rigs (cobra/fang/huh/lipgloss, MIT, goreleaser entry). Generalized into
 
 - `core/pathmap` — the halyard-derived token/cascade resolver (**at minimum** this).
 - `core/redact` — JSON field redaction + entropy tripwire (candidate).
-- The allowlist/rewrite-rule model is clauderig-specific; keep it in the module
+- The allowlist/rewrite-rule model is claudeRig-specific; keep it in the module
   unless a second consumer appears.
 
 ## Interactive UI

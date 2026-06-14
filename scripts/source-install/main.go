@@ -1,5 +1,5 @@
 // Command source-install builds the rigsmith tools from your working tree and
-// installs the real binaries — rig, clauderig, relrig, changerig — onto your
+// installs the real binaries — rig, clauderig, shiprig, changerig — onto your
 // PATH. It is the stable counterpart to dev-install: where dev-install writes
 // "<tool>-dev" launchers that recompile on every run, source-install produces
 // ordinary binaries with their real names, so the tools resolve each other on

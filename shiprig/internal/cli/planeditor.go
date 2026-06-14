@@ -6,7 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rigsmith/core/brand"
-	"github.com/rigsmith/release/internal/pipeline"
+	"github.com/rigsmith/shiprig/internal/pipeline"
 )
 
 // interactiveChooser is the bubbletea PlanChooser: it shows the resolved plan,

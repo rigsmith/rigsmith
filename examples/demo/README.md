@@ -1,6 +1,6 @@
 # rigsmith demo monorepo
 
-A small polyglot monorepo used to exercise the rigsmith tools (`relrig`, `rig`) by hand.
+A small polyglot monorepo used to exercise the rigsmith tools (`shiprig`, `rig`) by hand.
 This is illustrative sample data, not production code.
 
 ## Layout
@@ -30,11 +30,11 @@ which should cascade a patch to `Demo.App`.
 
 ```
 # from examples/demo:
-relrig status --verbose
-relrig version --dry-run
+shiprig status --verbose
+shiprig version --dry-run
 rig build      # picks an ecosystem based on cwd
 ```
 
-Because all four ecosystems coexist at the demo root, `relrig info` will show
+Because all four ecosystems coexist at the demo root, `shiprig info` will show
 packages from each ecosystem at once. You can also `cd` into a single-ecosystem
 subdir (e.g. `cd rust`) to scope the tools to just that ecosystem.
