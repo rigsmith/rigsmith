@@ -66,6 +66,7 @@ func Run(ctx context.Context, env Env) []Section {
 		checkGit(ctx),
 		checkGh(ctx),
 		checkClauderigOnPath(ctx),
+		checkRigOnPath(ctx),
 	}}
 
 	sync := Section{Title: "sync", Results: []Result{

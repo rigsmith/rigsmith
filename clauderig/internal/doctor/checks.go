@@ -46,6 +46,14 @@ func checkClauderigOnPath(_ context.Context) Result {
 	return Result{Name: "clauderig on PATH", Status: OK, Detail: "resolvable"}
 }
 
+func checkRigOnPath(_ context.Context) Result {
+	if !look("rig") {
+		return Result{Name: "rig on PATH", Status: Warn, Detail: "not on PATH",
+			Hint: "the worktree discipline points at `rig worktree new` — install rig (it ships alongside clauderig) so that guidance works"}
+	}
+	return Result{Name: "rig on PATH", Status: OK, Detail: "resolvable"}
+}
+
 // --- sync ---
 
 func checkRemote(ctx context.Context, env Env) Result {
