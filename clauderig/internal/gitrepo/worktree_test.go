@@ -102,6 +102,85 @@ func TestIsMergedSquashThenMoreWork(t *testing.T) {
 	}
 }
 
+func TestLocalBranches(t *testing.T) {
+	ctx := context.Background()
+	r, _ := Init(ctx, t.TempDir())
+	commitFile(t, r, "a", "1", "init")
+	if err := r.Checkout(ctx, "feature", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Checkout(ctx, "main", false); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.LocalBranches(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Branch{}
+	for _, b := range got {
+		byName[b.Name] = b
+	}
+	if len(byName) != 2 {
+		t.Fatalf("want 2 branches, got %d: %+v", len(byName), got)
+	}
+	if !byName["main"].Current {
+		t.Errorf("main should be current: %+v", byName["main"])
+	}
+	if byName["feature"].Current {
+		t.Errorf("feature should not be current: %+v", byName["feature"])
+	}
+	if byName["feature"].Gone {
+		t.Errorf("feature has no upstream, should not be gone: %+v", byName["feature"])
+	}
+}
+
+// A branch whose upstream the remote has deleted reads as Gone — the signal
+// branch prune --gone keys on once a merge can no longer be proven locally.
+func TestLocalBranchesGoneUpstream(t *testing.T) {
+	ctx := context.Background()
+	remote := t.TempDir()
+	if _, err := runGit(ctx, remote, "init", "--bare", "-b", "main"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := Init(ctx, t.TempDir())
+	commitFile(t, r, "a", "1", "init")
+	if _, err := runGit(ctx, r.Dir, "remote", "add", "origin", remote); err != nil {
+		t.Fatal(err)
+	}
+	// Push a feature branch with tracking, then delete it on the remote and prune.
+	if err := r.Checkout(ctx, "feature", true); err != nil {
+		t.Fatal(err)
+	}
+	commitFile(t, r, "b", "2", "feature work")
+	if _, err := runGit(ctx, r.Dir, "push", "-u", "origin", "feature"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Checkout(ctx, "main", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(ctx, r.Dir, "push", "origin", "--delete", "feature"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(ctx, r.Dir, "fetch", "--prune", "origin"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.LocalBranches(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range got {
+		if b.Name == "feature" {
+			if !b.Gone {
+				t.Fatalf("feature upstream deleted on remote, want Gone: %+v", b)
+			}
+			return
+		}
+	}
+	t.Fatalf("feature branch not found in %+v", got)
+}
+
 func TestWorktreeCleanAndPrune(t *testing.T) {
 	ctx := context.Background()
 	r, _ := Init(ctx, t.TempDir())

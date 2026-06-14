@@ -179,6 +179,44 @@ func (r *Repo) DeleteBranch(ctx context.Context, branch string, force bool) erro
 	return err
 }
 
+// Branch is one local branch from LocalBranches.
+type Branch struct {
+	Name    string
+	Current bool // the checked-out branch in this worktree
+	Gone    bool // had an upstream that no longer exists on the remote
+}
+
+// LocalBranches lists the repo's local branches with the upstream-tracking state
+// the prune logic needs. A "gone" upstream — git's marker for a remote branch
+// that was deleted — is the practical signal that a PR merged and the forge
+// auto-removed its branch; it's how a squash-merged branch is recognised once
+// the mainline has diverged too far for a patch-id match to hold.
+func (r *Repo) LocalBranches(ctx context.Context) ([]Branch, error) {
+	// NUL-separate fields so branch names with spaces survive; one branch per line.
+	out, err := runGit(ctx, r.Dir, "for-each-ref",
+		"--format=%(refname:short)%00%(HEAD)%00%(upstream:track)",
+		"refs/heads/")
+	if err != nil {
+		return nil, err
+	}
+	var list []Branch
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		f := strings.Split(line, "\x00")
+		if len(f) < 3 {
+			continue
+		}
+		list = append(list, Branch{
+			Name:    f[0],
+			Current: f[1] == "*",
+			Gone:    strings.Contains(f[2], "gone"),
+		})
+	}
+	return list, nil
+}
+
 // CommittableFiles lists the repo-relative paths a `git commit` would record:
 // staged changes, plus tracked-but-unstaged modifications when withAll is set
 // (the `git commit -a` case). The result feeds the guard's base-branch check.

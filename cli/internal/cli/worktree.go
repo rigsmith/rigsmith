@@ -27,17 +27,24 @@ func newWorktreeCmd() *cobra.Command {
 		// otherwise collide with rig's own --dry-run or error as unknown) straight
 		// to clauderig instead of letting cobra parse them against rig.
 		DisableFlagParsing: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			bin, err := clauderigBin()
-			if err != nil {
-				return err
-			}
-			c := exec.CommandContext(cmd.Context(), bin, append([]string{"worktree"}, args...)...)
-			c.Stdin = os.Stdin
-			c.Stdout = cmd.OutOrStdout()
-			c.Stderr = cmd.ErrOrStderr()
-			return c.Run()
-		},
+		RunE:               forwardToClauderig("worktree"),
+	}
+}
+
+// forwardToClauderig builds a RunE that execs `clauderig <group> <args...>`,
+// passing stdio and the exit status straight through. It backs the thin rig
+// aliases (worktree, branch) whose authority lives in clauderig.
+func forwardToClauderig(group string) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		bin, err := clauderigBin()
+		if err != nil {
+			return err
+		}
+		c := exec.CommandContext(cmd.Context(), bin, append([]string{group}, args...)...)
+		c.Stdin = os.Stdin
+		c.Stdout = cmd.OutOrStdout()
+		c.Stderr = cmd.ErrOrStderr()
+		return c.Run()
 	}
 }
 
