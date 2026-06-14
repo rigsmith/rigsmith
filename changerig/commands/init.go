@@ -65,6 +65,7 @@ func resolveInitSource(flag, where string) (config.VersioningSource, error) {
 		if s, ok := pickSource(where); ok {
 			return s, nil
 		}
+		return "", fmt.Errorf("setup cancelled")
 	}
 	return config.SourceChangesets, nil
 }
