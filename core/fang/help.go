@@ -39,7 +39,12 @@ var width = sync.OnceValue(func() int {
 	return min(w, 120)
 })
 
-func helpFn(c *cobra.Command, w *colorprofile.Writer, styles Styles, appender HelpAppender) {
+func helpFn(c *cobra.Command, w *colorprofile.Writer, styles Styles, appender HelpAppender, banner string) {
+	// The banner is a root-level identity: show it atop the root command's help
+	// only, not on every subcommand's --help.
+	if banner != "" && c == c.Root() {
+		_, _ = fmt.Fprintln(w, banner)
+	}
 	writeLongShort(w, styles, cmp.Or(c.Long, c.Short))
 	usage := styleUsage(c, styles.Codeblock.Program, true)
 	examples := styleExamples(c, styles)

@@ -51,5 +51,5 @@ func run(ctx context.Context) error {
 		commands.NewConfigCmd(),
 		commands.NewUICmd(),
 	)
-	return fang.Execute(ctx, root, fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentChange)))
+	return fang.Execute(ctx, root, fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentChange)), fang.WithBanner(brand.ChangeBanner))
 }

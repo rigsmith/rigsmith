@@ -18,6 +18,7 @@ import (
 	"github.com/rigsmith/cli/internal/config"
 	"github.com/rigsmith/cli/internal/detect"
 	"github.com/rigsmith/cli/internal/envstack"
+	"github.com/rigsmith/core/brand"
 	"github.com/rigsmith/core/fang"
 	"github.com/spf13/cobra"
 )
@@ -142,7 +143,7 @@ func Execute(ctx context.Context) error {
 
 	// Surface the ldflags-stamped build version in `rig --version` (fang owns
 	// the flag); a source build keeps fang's "built from source" default.
-	opts := []fang.Option{fang.WithColorSchemeFunc(rigColorScheme)}
+	opts := []fang.Option{fang.WithColorSchemeFunc(rigColorScheme), fang.WithBanner(brand.RigBanner)}
 	if version != "dev" {
 		opts = append(opts, fang.WithVersion(version))
 	}
