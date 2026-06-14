@@ -327,6 +327,12 @@ func (m menuModel) itemLabel(it menuItem) string {
 }
 
 func (m menuModel) View() string {
+	// A chosen verb / command means we're quitting to run it — erase the menu so
+	// the command's output starts clean instead of below a stale menu. (Plain
+	// quit, with nothing chosen, keeps the menu in scrollback.)
+	if m.chosen != "" || m.chosenCmd != nil {
+		return ""
+	}
 	cur := m.stack[len(m.stack)-1]
 	var b strings.Builder
 	crumb := "rig"

@@ -235,6 +235,11 @@ func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m menuModel) View() string {
+	// A chosen verb means we're quitting to run it — erase the menu so the verb's
+	// output starts clean instead of below a stale menu. (Plain quit keeps it.)
+	if m.chosen != nil {
+		return ""
+	}
 	var b strings.Builder
 	b.WriteString(menuTitle.Render(m.title) + "  " + DimStyle.Render(m.header) + "\n")
 	if m.hint != "" {
