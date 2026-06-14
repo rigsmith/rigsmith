@@ -39,19 +39,19 @@ a session ends). Both are portable across OSes and idempotent.
 
 ## Worktree discipline
 
-`clauderig guard` (a PreToolUse hook) and `clauderig worktree` make worktrees and
+`clauderig guard` (a PreToolUse hook) and `rig worktree` make worktrees and
 PRs the default path for Claude Code, and stop a session from scrambling your VS
 Code chat history by moving its working directory. Chat history is keyed to the
 folder path, so the model edits from one pinned window while worktrees open in
 their *own* window for review only.
 
 ```sh
-clauderig worktree new <branch>   # sibling checkout off mainline (prints the path)
-clauderig worktree new <branch> --open    # …and open a review window for this run
-clauderig worktree new fix/x --base release-1
-clauderig worktree list           # this repo's worktrees (alias: ls)
-clauderig worktree open <branch>  # (re)open a worktree's review window (branch or path)
-clauderig worktree rm <branch>    # remove the worktree, keep the branch (-f if dirty)
+rig worktree new <branch>   # sibling checkout off mainline (prints the path)
+rig worktree new <branch> --open    # …and open a review window for this run
+rig worktree new fix/x --base release-1
+rig worktree list           # this repo's worktrees (alias: ls)
+rig worktree open <branch>  # (re)open a worktree's review window (branch or path)
+rig worktree rm <branch>    # remove the worktree, keep the branch (-f if dirty)
 ```
 
 Worktrees live at `<parent>/<repo>-worktrees/<branch>` — a **sibling** of the

@@ -36,9 +36,9 @@ rig build --quiet        # suppress the → command echo
 | `doctor` | Environment checklist (SDK pins via nearest `global.json`) |
 | `cd` | Fuzzy project navigation (prints the dir; pair with a shell wrapper) |
 | `watch <verb>` / `rig w r` | Watch modifier via the pre-parse pipeline (verb prefixes work too: `rig cove`) |
-| `worktree` / `wt` | Sibling git worktrees (`new`/`list`/`open`/`rm`/`prune`), delegating to `clauderig worktree` |
-| `branch` / `br` | Local branches (`list`/`rm`/`prune`, `--gone`), delegating to `clauderig branch` |
-| `prune` / `tidy` | One sweep: reap merged worktrees then their branches, delegating to `clauderig prune` |
+| `worktree` / `wt` | Parallel-dev worktrees (`new`/`list`/`open`/`rm`/`prune`) + pin the active `-dev` route (`use`/`active`/`unset`) |
+| `branch` / `br` | Local branches (`list`/`rm`/`prune`, `--gone`) |
+| `prune` / `tidy` | One sweep: reap merged worktrees then their branches |
 | `init` | Scaffold a `.rig.json` |
 | `config` | `get` / `set` / `path` / `edit` the `.rig.json` (comment-preserving writes) |
 | `info` | Show what rig discovered (root, primary ecosystem, `.rig.json`, per-ecosystem dev commands, packages) |

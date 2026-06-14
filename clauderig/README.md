@@ -19,13 +19,13 @@ clauderig doctor               # health-check env + sync + worktree discipline (
 clauderig global install       # global sync hooks in ~/.claude (alias: clauderig hooks install)
 clauderig project install      # protect THIS repo: guard hook + CLAUDE.md guide (committed)
 clauderig local install        # same, but gitignored to this checkout
-clauderig worktree new feat/x  # sibling worktree + new VS Code window; never moves this session
+rig worktree new feat/x  # sibling worktree + new VS Code window; never moves this session
 clauderig ui                   # interactive dashboard
 ```
 
 ## Worktree discipline
 
-`clauderig guard` (a PreToolUse hook) and `clauderig worktree` make worktrees and
+`clauderig guard` (a PreToolUse hook) and `rig worktree` make worktrees and
 PRs the default for Claude Code, and stop it from scrambling your VS Code chat
 history — which is keyed to the folder path — by moving the session's working
 directory. The guard denies `EnterWorktree`, denies a `cd` out of the repo root,

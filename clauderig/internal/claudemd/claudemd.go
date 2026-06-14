@@ -54,7 +54,7 @@ A PreToolUse hook guards this environment. Work *with* it:
   conversation. They are denied. To act elsewhere, use an absolute path,
   ` + "`git -C <dir> …`" + `, or a subshell ` + "`(cd <dir> && …)`" + ` (which doesn't move this shell).
 - **Don't write code on ` + "`main`/`master`" + `.** Make a branch + worktree first:
-  run ` + "`clauderig worktree new <branch>`" + `. It creates a sibling checkout at
+  run ` + "`rig worktree new <branch>`" + `. It creates a sibling checkout at
   ` + "`<repo>-worktrees/<branch>`" + ` and opens it in a *new* VS Code window for review —
   this window stays put. Edit files in the worktree by absolute path, run git via
   ` + "`git -C <worktree> …`" + `, then push and open a PR.

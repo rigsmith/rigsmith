@@ -1,12 +1,33 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/mattn/go-isatty"
+	"github.com/rigsmith/core/gitrepo"
 )
+
+// openRepo opens the git repo containing the current directory and returns it
+// with its toplevel path. guide/hooks use it to locate the repo root; the
+// worktree commands themselves now live in rig.
+func openRepo(ctx context.Context) (*gitrepo.Repo, string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, "", err
+	}
+	repo, err := gitrepo.Open(ctx, cwd)
+	if err != nil {
+		return nil, "", fmt.Errorf("not inside a git repository")
+	}
+	root, err := repo.Toplevel(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	return repo, root, nil
+}
 
 // interactive reports whether we're attached to a terminal (so it's safe to
 // launch git mergetool / prompt). Hooks run non-interactively and must not.

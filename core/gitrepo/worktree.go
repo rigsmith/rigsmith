@@ -154,7 +154,7 @@ func (r *Repo) IsMerged(ctx context.Context, branch, base string) (bool, error) 
 		return false, err
 	}
 	synthetic, err := runGit(ctx, r.Dir, "commit-tree", strings.TrimSpace(tree),
-		"-p", strings.TrimSpace(mergeBase), "-m", "clauderig prune merge-check")
+		"-p", strings.TrimSpace(mergeBase), "-m", "rigsmith prune merge-check")
 	if err != nil {
 		return false, err
 	}

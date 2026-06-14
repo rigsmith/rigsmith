@@ -65,7 +65,6 @@ func Run(ctx context.Context, env Env) []Section {
 	environment := Section{Title: "environment", Results: []Result{
 		checkGit(ctx),
 		checkGh(ctx),
-		checkCode(ctx),
 		checkClauderigOnPath(ctx),
 	}}
 

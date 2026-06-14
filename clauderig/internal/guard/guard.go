@@ -5,7 +5,7 @@
 //   - EnterWorktree/ExitWorktree are denied — they move the *session's* working
 //     directory, and Claude Code keys chat history to the folder path (see
 //     internal/project). Moving cwd mid-session scrambles which ~/.claude/projects
-//     bucket the conversation lands in. Make worktrees with `clauderig worktree`
+//     bucket the conversation lands in. Make worktrees with `rig worktree`
 //     (a sibling checkout, reviewed in its own VS Code window) instead.
 //   - A `cd`/`pushd` that leaves the repo root is denied for the same reason — it
 //     silently relocates the session. A subshell `(cd ... && ...)` is fine and is
@@ -316,22 +316,22 @@ func Output(res Result) []byte {
 }
 
 const worktreeReason = "Worktree tools move this session's working directory, and Claude Code keys chat history to the folder path — moving it mid-session scrambles your VS Code chat. " +
-	"Create an isolated worktree without moving this window: run `clauderig worktree new <branch>`. It makes a sibling checkout and opens it in a separate VS Code window for review; keep editing here by absolute path and run git via `git -C <worktree>`."
+	"Create an isolated worktree without moving this window: run `rig worktree new <branch>`. It makes a sibling checkout and opens it in a separate VS Code window for review; keep editing here by absolute path and run git via `git -C <worktree>`."
 
 func baseReason(rel string) string {
 	return "You're on a base branch (main/master) and `" + rel + "` is code, not docs/config. " +
-		"Code changes need a branch + worktree + PR: run `clauderig worktree new <branch>`, edit the file under that worktree path, then open a PR. " +
+		"Code changes need a branch + worktree + PR: run `rig worktree new <branch>`, edit the file under that worktree path, then open a PR. " +
 		"Docs and root config may be edited on the base branch directly. To override for this change: set CLAUDERIG_ALLOW_MAIN=1 or `touch .claude/allow-main`."
 }
 
 func commitReason(rel string) string {
 	return "This commit lands code (`" + rel + "`) directly on a base branch. " +
-		"Use a branch + worktree + PR instead: `clauderig worktree new <branch>`. " +
+		"Use a branch + worktree + PR instead: `rig worktree new <branch>`. " +
 		"Commits touching only docs/config are allowed; override with CLAUDERIG_ALLOW_MAIN=1 or `touch .claude/allow-main`."
 }
 
 func cdReason(target string) string {
 	return "Refusing to `cd " + target + "` — that leaves the repo root and silently moves this session's working directory (and its chat history). " +
 		"Run the command from here using an absolute path or `git -C <dir>`, or wrap it in a subshell `(cd " + target + " && …)` which doesn't move this shell. " +
-		"To work in another tree, open it with `clauderig worktree open <branch>` in its own window."
+		"To work in another tree, open it with `rig worktree open <branch>` in its own window."
 }

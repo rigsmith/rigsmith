@@ -1,4 +1,4 @@
-// Package worktree holds clauderig's worktree-layout convention and its
+// Package worktree holds rigsmith's worktree-layout convention and its
 // review-window launcher (VS Code by default, configurable). Worktrees live in a
 // sibling directory of the repo (never inside it),
 // so they don't clutter the primary checkout's file tree and each gets its own

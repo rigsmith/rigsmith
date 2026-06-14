@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/rigsmith/clauderig/internal/config"
-	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/status"
+	"github.com/rigsmith/core/gitrepo"
 	"github.com/spf13/cobra"
 )
 

@@ -2,7 +2,7 @@
 // the worktree a repo's `<tool>-dev` launchers build from by default.
 //
 // The route is a per-repo pin: a tiny state file holding one absolute worktree
-// path. `clauderig worktree use/unset` writes it; the generated `<tool>-dev`
+// path. `rig worktree use/unset` writes it; the generated `<tool>-dev`
 // wrappers read it (with a plain `cat`, so `-dev` stays a build-and-exec fast
 // path with no clauderig subprocess). Both sides agree on the file location
 // because they compute it the same way here — dev-install bakes RouteFile's

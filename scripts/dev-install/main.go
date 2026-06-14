@@ -28,13 +28,13 @@
 // worktree and runs that tree's <tool> from your cwd, printing what it resolved
 // to. A query fuzzy-matches a worktree (exact > prefix > substring >
 // subsequence) — e.g. `rig-wt gowat doctor` — and runs it (resolution lives in
-// `clauderig worktree pick`, sharing core/match). With NO query it opens an
-// interactive menu (`clauderig worktree menu`): arrow to a worktree and run it,
+// `rig worktree pick`, sharing core/match). With NO query it opens an
+// interactive menu (`rig worktree menu`): arrow to a worktree and run it,
 // or pin/unpin it as the -dev route (below). Per-source builds go to separate
 // temp dirs so the main tree and a worktree never clobber each other's binary.
 //
 // `<tool>-wt --use [query]` goes a step further and *pins* the resolved worktree
-// as the repo's active route (`clauderig worktree use`), so a bare `<tool>-dev`
+// as the repo's active route (`rig worktree use`), so a bare `<tool>-dev`
 // builds from it without repeating the selection; `<tool>-wt --unset` clears it.
 // The pin is a per-repo file (see core/devroute) that the `-dev` wrappers read.
 // Build-source precedence is RIGSMITH_DEV_SRC env > pinned route > this repo, so
@@ -170,7 +170,7 @@ case "${1:-}" in
 		exec "{{PICKER}}" worktree use --repo "{{REPO}}"
 		;;
 	--unset|--off)
-		# Delete the pin here rather than via clauderig: the route is shared, so a
+		# Delete the pin here rather than via rig worktree unset: the route is shared, so a
 		# pin pointing at a tree that lacks the unset subcommand would otherwise
 		# build that tree and fail — leaving no way out. The wrapper knows the file,
 		# so this always works.
@@ -253,7 +253,7 @@ if not "%~2"=="" (
 exit /b %ERRORLEVEL%
 
 :unpin
-rem Delete the pin here rather than via clauderig: the route is shared, so a pin
+rem Delete the pin here rather than via rig worktree unset: the route is shared, so a pin
 rem pointing at a tree that lacks the unset subcommand would otherwise build it
 rem and fail.
 if exist "{{ROUTE}}" (
@@ -305,13 +305,13 @@ func writeWrapper(bin, name, repo, mod string) (devPath, wtPath string, err erro
 		wtPath = filepath.Join(bin, name+"-wt")
 		devTmpl, wtTmpl = devWrapperSh, wtWrapperSh
 	}
-	pickerName := "clauderig-dev"
+	pickerName := "rig-dev"
 	if runtime.GOOS == "windows" {
-		pickerName = "clauderig-dev.cmd"
+		pickerName = "rig-dev.cmd"
 	}
-	// route is the per-repo pin file the -dev wrapper reads; clauderig worktree
-	// use/unset writes it. Baking the path in keeps -dev a plain cat (no slug
-	// computation in the shell, no clauderig subprocess on the build fast path).
+	// route is the per-repo pin file the -dev wrapper reads; `rig worktree
+	// use/unset` writes it. Baking the path in keeps -dev a plain cat (no slug
+	// computation in the shell, no rig subprocess on the build fast path).
 	route, err := devroute.RouteFile(repo)
 	if err != nil {
 		return "", "", err
@@ -322,7 +322,7 @@ func writeWrapper(bin, name, repo, mod string) (devPath, wtPath string, err erro
 		"{{MOD}}":    mod,
 		"{{ROUTE}}":  route,
 		"{{DEV}}":    devPath,                        // -wt execs the sibling -dev launcher
-		"{{PICKER}}": filepath.Join(bin, pickerName), // -wt's no-arg picker (clauderig owns worktrees)
+		"{{PICKER}}": filepath.Join(bin, pickerName), // -wt's worktree picker (rig owns worktrees)
 	}
 	if err = writeLauncher(devPath, devTmpl, repl); err != nil {
 		return "", "", err

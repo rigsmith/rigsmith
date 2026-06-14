@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/guard"
 	"github.com/rigsmith/core/confkit"
+	"github.com/rigsmith/core/gitrepo"
 	"github.com/spf13/cobra"
 )
 

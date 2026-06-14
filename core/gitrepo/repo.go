@@ -1,8 +1,9 @@
-// Package gitrepo is clauderig's git transport: a thin shell over the system git
-// (matching rigsmith's core/gitutil convention — no go-git) for the staging repo
-// that sync pushes to and restore pulls from. Files are copied into the staging
-// repo (already redacted + slug-rewritten), committed, and pushed; the repo is
-// never ~/.claude itself, so secrets and transforms never touch the live tree.
+// Package gitrepo is rigsmith's git transport: a thin shell over the system git
+// (matching core/gitutil's convention — no go-git), shared across the tools.
+// rig's worktree/branch/prune commands drive it for worktree management, and
+// clauderig drives it for the sync staging repo (a repo that's never ~/.claude
+// itself, so redacted + slug-rewritten files are committed and pushed without
+// secrets or transforms ever touching the live tree).
 package gitrepo
 
 import (

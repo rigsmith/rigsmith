@@ -9,8 +9,8 @@ import (
 
 	"github.com/rigsmith/clauderig/internal/config"
 	"github.com/rigsmith/clauderig/internal/engine"
-	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/manifest"
+	"github.com/rigsmith/core/gitrepo"
 	"github.com/rigsmith/core/pathmap"
 	"github.com/spf13/cobra"
 )
