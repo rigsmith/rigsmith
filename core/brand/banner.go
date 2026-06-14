@@ -57,9 +57,9 @@ func (b banner) render(version string) string {
 	// the whole frame painted in the tool accent.
 	const pad = "   " // gap between the box and the wordmark/tagline column
 	return strings.Join([]string{
-		"  " + accent.Render("╭─╴     ╶─╮"),
-		"  " + accent.Render("│    "+b.glyph+"    │") + pad + word,
-		"  " + accent.Render("╰─╴     ╶─╯") + pad + muted.Render(b.tagline+" · rigsmith.dev"),
+		"  " + accent.Render("╭─╴ ╶─╮"),
+		"  " + accent.Render("│  "+b.glyph+"  │") + pad + word,
+		"  " + accent.Render("╰─╴ ╶─╯") + pad + muted.Render(b.tagline+" · rigsmith.dev"),
 	}, "\n")
 }
 
