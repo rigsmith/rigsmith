@@ -109,7 +109,7 @@ func scopeInstall(c *cobra.Command, sp scopeSpec) error {
 		fmt.Fprintf(out, "%s hooks: %s %s\n", OkStyle.Render("✓"), strings.Join(added, ", "), DimStyle.Render(settingsFile))
 	}
 	if sp.guide {
-		act, err := claudemd.Install(guideFile)
+		act, err := claudemd.InstallAll(guideFile)
 		if err != nil {
 			return err
 		}
@@ -167,7 +167,7 @@ func scopeUninstall(c *cobra.Command, sp scopeSpec) error {
 		fmt.Fprintf(out, "%s no hooks %s\n", DimStyle.Render("•"), DimStyle.Render(settingsFile))
 	}
 	if sp.guide {
-		act, err := claudemd.Uninstall(guideFile)
+		act, err := claudemd.UninstallAll(guideFile)
 		if err != nil {
 			return err
 		}
@@ -192,7 +192,7 @@ func scopeStatus(c *cobra.Command, sp scopeSpec) error {
 		fmt.Fprintf(out, "%s no hooks %s\n", DimStyle.Render("—"), DimStyle.Render(settingsFile))
 	}
 	if sp.guide {
-		ok, err := claudemd.Present(guideFile)
+		ok, err := claudemd.AllPresent(guideFile)
 		if err != nil {
 			return err
 		}

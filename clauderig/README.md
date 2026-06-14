@@ -69,7 +69,7 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `worktree` | `new` / `list` / `open` / `rm` / `prune` sibling worktrees, opened in their own review window (configurable; alias `wt`) |
 | `branch` | `list` / `rm` / `prune` local branches; prune reaps merged (or, with `--gone`, gone-upstream) ones; alias `br` |
 | `prune` | One sweep: reap merged/done worktrees, then their branches and other merged (`--gone`) branches; `prune list` previews read-only; always asks at a terminal (no skip flag; fails if non-interactive; `-n` previews); alias `tidy` |
-| `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md block standalone (e.g. `--global`) |
+| `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md blocks standalone (worktree discipline + rigsmith-tools usage; e.g. `--global`). `install` previews the blocks in a scrollable UI before writing — `-y` or a non-TTY skips it |
 | `config` | `get` / `set` / `show` / `path` / `edit` |
 | `doctor` | Health-check environment + sync + worktree discipline; `--fix` repairs, or pick fixes interactively |
 | `ui` | Interactive dashboard |

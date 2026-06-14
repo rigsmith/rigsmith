@@ -101,3 +101,51 @@ func TestUninstall(t *testing.T) {
 		t.Errorf("second uninstall act = %v, want absent", act)
 	}
 }
+
+func TestRigTools_DocumentsEachTool(t *testing.T) {
+	// The block carries one subsection per tool, so a session learns all three.
+	for _, want := range []string{"### rig", "### changerig", "### shiprig"} {
+		if !strings.Contains(RigTools.Block(), want) {
+			t.Errorf("rig-tools block missing %q subsection", want)
+		}
+	}
+}
+
+func TestSections_CoexistIndependently(t *testing.T) {
+	p := tmp(t, "# My project\n\nHouse rules.\n")
+	// Install every managed section the way `guide install` does.
+	for _, sec := range Sections {
+		if act, err := sec.Install(p); err != nil || act != Installed {
+			t.Fatalf("install %s: act=%v err=%v", sec.Begin, act, err)
+		}
+	}
+	got := read(t, p)
+	for _, sec := range Sections {
+		if !strings.Contains(got, sec.Begin) || !strings.Contains(got, sec.End) {
+			t.Fatalf("markers for %s missing after install", sec.Begin)
+		}
+	}
+	if !strings.HasPrefix(got, "# My project") {
+		t.Fatal("user content not preserved at top")
+	}
+	// Re-installing every section is a no-op once both are present.
+	for _, sec := range Sections {
+		if act, _ := sec.Install(p); act != Unchanged {
+			t.Errorf("re-install %s act = %v, want unchanged", sec.Begin, act)
+		}
+	}
+	// Removing one section leaves the other (and the user's content) intact.
+	if _, err := Worktree.Uninstall(p); err != nil {
+		t.Fatal(err)
+	}
+	after := read(t, p)
+	if strings.Contains(after, Worktree.Begin) {
+		t.Error("worktree block survived its uninstall")
+	}
+	if !strings.Contains(after, RigTools.Begin) {
+		t.Error("rig-tools block lost when the worktree block was removed")
+	}
+	if !strings.Contains(after, "House rules.") {
+		t.Error("user content lost on partial uninstall")
+	}
+}
