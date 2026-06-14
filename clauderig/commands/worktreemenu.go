@@ -93,22 +93,38 @@ func (m wtMenuModel) View() string {
 	var b strings.Builder
 	b.WriteString(HeaderStyle.Render("worktrees") + "  " +
 		DimStyle.Render("run one, or pin it as the -dev route") + "\n\n")
+
+	// Pad the branch into a fixed-width column so the dim path column lines up —
+	// matching the label + detail layout the other rig menus use.
+	branches := make([]string, len(m.wts))
+	width := 0
 	for i, wt := range m.wts {
-		branch := wt.Branch
-		if branch == "" {
-			branch = "(detached)"
+		branches[i] = wt.Branch
+		if branches[i] == "" {
+			branches[i] = "(detached)"
 		}
+		if w := lipgloss.Width(branches[i]); w > width {
+			width = w
+		}
+	}
+
+	for i, wt := range m.wts {
+		pinned := m.pinned != "" && sameDir(wt.Path, m.pinned)
 		cursor := "  "
-		label := branch
-		if i == m.cursor {
+		pad := strings.Repeat(" ", width-lipgloss.Width(branches[i]))
+		label := branches[i]
+		switch {
+		case i == m.cursor:
 			cursor = wtCursorStyle.Render("▸ ")
-			label = wtSelectedStyle.Render(branch)
+			label = wtSelectedStyle.Render(label) // cyan, like the other menus' cursor row
+		case pinned:
+			label = wtPinStyle.Render(label) // green marks the active route at a glance
 		}
 		mark := ""
-		if m.pinned != "" && sameDir(wt.Path, m.pinned) {
+		if pinned {
 			mark = "  " + wtPinStyle.Render("● pinned")
 		}
-		b.WriteString(fmt.Sprintf("%s%s  %s%s\n", cursor, label, DimStyle.Render(wt.Path), mark))
+		b.WriteString(fmt.Sprintf("%s%s%s  %s%s\n", cursor, label, pad, DimStyle.Render(wt.Path), mark))
 	}
 	b.WriteString("\n" + DimStyle.Render("↑/↓ move · enter run · p pin · u unpin · q quit") + "\n")
 	return b.String()

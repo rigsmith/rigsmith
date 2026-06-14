@@ -201,6 +201,9 @@ func newMenu() menuModel {
 		top = append(top, menuItem{pickFocus: true, desc: "scope verbs to one project"})
 	}
 	top = append(top, dev...)
+	// Worktrees are first-class in the build loop: the parallel-dev checkouts and
+	// the -dev route you pin live right alongside the build verbs.
+	top = append(top, menuItem{label: "▸ Worktrees", desc: "parallel-dev checkouts + the pinned -dev route", children: worktreeMenuItems()})
 	if len(deps) > 0 {
 		top = append(top, menuItem{label: "▸ Dependencies", desc: "install / outdated / upgrade …", children: deps})
 	}
@@ -217,6 +220,21 @@ func newMenu() menuModel {
 		nextStep: nextStep,
 		stack:    []frame{{title: "", items: top}},
 		projects: projects,
+	}
+}
+
+// worktreeMenuItems are the worktree / -dev-route actions shown under the menu's
+// Worktrees group — the pinning loop made first-class alongside the build verbs.
+// Each carries a prebuilt command that forwards to `clauderig worktree <sub>`
+// (the picker-driven verbs run interactively after the menu exits). `new` is
+// omitted — it needs a branch name, so it stays `rig wt new <branch>`.
+func worktreeMenuItems() []menuItem {
+	return []menuItem{
+		{label: "set -dev route", desc: "pin which worktree -dev builds from", cmd: worktreeForward("use")},
+		{label: "route", desc: "show the pinned -dev route", cmd: worktreeForward("active")},
+		{label: "unpin", desc: "clear the pinned -dev route", cmd: worktreeForward("unset")},
+		{label: "list", desc: "list this repo's worktrees", cmd: worktreeForward("list")},
+		{label: "prune", desc: "remove clean, merged worktrees", cmd: worktreeForward("prune")},
 	}
 }
 

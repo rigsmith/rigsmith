@@ -8,26 +8,46 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newWorktreeCmd surfaces clauderig's worktree command group under `rig` as a
-// convenience alias, so the disciplined worktree workflow (sibling checkouts
-// each opened in their own VS Code window) is reachable from the same CLI as the
-// rest of the dev loop. It is a thin passthrough: every argument and flag, and
-// the exit status, belong to `clauderig worktree`. The authority and
-// implementation stay in clauderig — rig only forwards.
+// newWorktreeCmd makes worktrees first-class in rig: they're the parallel-dev
+// loop's unit of work, and the -dev/-wt launchers and the pinned build route are
+// rig's domain (the build loop), not Claude sync. It's a thin passthrough — every
+// argument, flag, and the exit status belong to `clauderig worktree`, where the
+// mechanics live — but framed and surfaced (help + menu) as part of rig's loop.
 func newWorktreeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "worktree [args...]",
-		Short: "Manage git worktrees — delegates to `clauderig worktree`",
-		Long: "rig worktree forwards to `clauderig worktree`, where the disciplined worktree\n" +
-			"workflow lives: sibling checkouts at <repo>-worktrees/<branch>, each opened in\n" +
-			"its own VS Code window. All arguments and flags pass through unchanged — e.g.\n" +
-			"`rig wt new feat/x`, `rig wt prune -n`, `rig wt --help`.",
+		Short: "Parallel-dev worktrees — and pin which one the -dev tools build from",
+		Long: "rig worktree (alias `rig wt`) drives the parallel-dev loop: sibling checkouts\n" +
+			"at <repo>-worktrees/<branch> that you build and run independently with the\n" +
+			"-dev/-wt launchers, plus an active route you pin so a bare `rig-dev` builds\n" +
+			"from a chosen tree.\n\n" +
+			"Common flows:\n" +
+			"  rig wt new feat/x     create a worktree (+ branch)\n" +
+			"  rig wt use [query]    pin a worktree as the -dev route\n" +
+			"  rig wt active         show the pinned route\n" +
+			"  rig wt unset          clear the pin\n" +
+			"  rig wt list | prune   list / sweep clean, merged worktrees\n\n" +
+			"The worktree mechanics live in `clauderig worktree`; rig forwards to it so\n" +
+			"the whole build loop is reachable from one CLI. All args and flags pass\n" +
+			"through unchanged (e.g. `rig wt prune -n`).",
 		Aliases: []string{"wt"},
 		// Forward every token (including flags like -n/--base, which would
 		// otherwise collide with rig's own --dry-run or error as unknown) straight
 		// to clauderig instead of letting cobra parse them against rig.
 		DisableFlagParsing: true,
 		RunE:               forwardToClauderig("worktree"),
+	}
+}
+
+// worktreeForward builds a menu command that runs `clauderig worktree <sub>`
+// through the same passthrough that backs `rig worktree`, so the menu's worktree
+// actions share rig's forwarder (and its clauderig-not-found message).
+func worktreeForward(sub string) *cobra.Command {
+	return &cobra.Command{
+		Use: sub,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return forwardToClauderig("worktree")(cmd, []string{sub})
+		},
 	}
 }
 

@@ -1,12 +1,16 @@
 package commands
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/rigsmith/clauderig/internal/gitrepo"
 )
+
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func key(s string) tea.KeyMsg {
 	if s == "enter" {
@@ -89,4 +93,35 @@ func TestWtMenuModel(t *testing.T) {
 			t.Fatalf("view missing pinned marker:\n%s", out)
 		}
 	})
+}
+
+// The path column lines up regardless of branch width or which row holds the
+// (multi-byte) cursor — the "columns" half of the menu polish.
+func TestWtMenuColumnsAlign(t *testing.T) {
+	wts := []gitrepo.Worktree{
+		{Path: "/r", Branch: "main"},
+		{Path: "/r-wt/feat-a", Branch: "feat/a"},
+		{Path: "/r-wt/much-longer-branch", Branch: "feat/much-longer-branch"},
+	}
+	plain := ansiRE.ReplaceAllString(newWtMenu(wts, wts[1].Path).View(), "")
+	t.Logf("\n%s", plain) // eyeball the aligned columns + cursor/pinned rows
+
+	col := -1
+	for _, wt := range wts {
+		for _, line := range strings.Split(plain, "\n") {
+			idx := strings.Index(line, wt.Path)
+			if idx < 0 {
+				continue
+			}
+			// Compare display columns: the cursor glyph (▸) is multi-byte, so a raw
+			// byte index would differ between the cursor row and the rest.
+			dispCol := lipgloss.Width(line[:idx])
+			if col == -1 {
+				col = dispCol
+			} else if dispCol != col {
+				t.Errorf("path %q starts at column %d, want %d (not aligned)\nline: %q", wt.Path, dispCol, col, line)
+			}
+			break
+		}
+	}
 }

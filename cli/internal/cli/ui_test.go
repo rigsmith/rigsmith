@@ -265,3 +265,26 @@ func TestMenu_NextStepHiddenInSubmenu(t *testing.T) {
 		t.Errorf("next-step line must not show in a submenu\n%s", got)
 	}
 }
+
+// Worktrees are first-class in the menu: the group carries forwarding commands
+// for the worktree / -dev-route actions, and surfaces the pinning loop.
+func TestWorktreeMenuItems(t *testing.T) {
+	items := worktreeMenuItems()
+	if len(items) == 0 {
+		t.Fatal("expected worktree menu items")
+	}
+	for _, it := range items {
+		if it.cmd == nil {
+			t.Errorf("worktree item %q should carry a prebuilt command", it.label)
+		}
+	}
+	var pinning bool
+	for _, it := range items {
+		if strings.Contains(it.desc, "-dev") || it.label == "route" {
+			pinning = true
+		}
+	}
+	if !pinning {
+		t.Errorf("worktree menu should surface the -dev route pinning, got %+v", items)
+	}
+}
