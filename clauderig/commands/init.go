@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -52,18 +53,24 @@ func NewInitCmd() *cobra.Command {
 					}
 				}
 			} else {
-				form := huh.NewForm(huh.NewGroup(
-					huh.NewInput().Title("This machine's name").Value(&me.Name),
-					huh.NewConfirm().Title("Sync the Desktop/Cowork root too?").Value(&syncDesktop),
-					huh.NewConfirm().Title("Install Claude Code hooks (auto pull on start, sync on stop)?").Value(&installHooks),
-					huh.NewConfirm().Title("On restore, prune config files (skills/commands/agents/plans) deleted elsewhere?").Value(&alwaysPrune),
-				)).WithTheme(brand.Theme(brand.AccentClaude))
+				// Two pages so the prompts aren't all crammed onto one screen: the
+				// machine name on its own, then the three yes/no choices together.
+				form := huh.NewForm(
+					huh.NewGroup(
+						huh.NewInput().Title("This machine's name").Value(&me.Name),
+					),
+					huh.NewGroup(
+						huh.NewConfirm().Title("Sync the Desktop/Cowork root too?").Value(&syncDesktop),
+						huh.NewConfirm().Title("Install Claude Code hooks (auto pull on start, sync on stop)?").Value(&installHooks),
+						huh.NewConfirm().Title("On restore, prune config files (skills/commands/agents/plans) deleted elsewhere?").Value(&alwaysPrune),
+					),
+				).WithTheme(brand.Theme(brand.AccentClaude)).WithKeyMap(huhEscKeyMap())
 				if err := form.Run(); err != nil {
-					return err
+					return cancelOrErr(out, err)
 				}
 				r, err := chooseRemote(ctx, out, existingRemote)
 				if err != nil {
-					return err
+					return cancelOrErr(out, err)
 				}
 				remote = r
 			}
@@ -117,6 +124,17 @@ func NewInitCmd() *cobra.Command {
 	return cmd
 }
 
+// cancelOrErr maps a huh abort (esc/ctrl+c) to a clean cancel — a dim note and
+// a nil error so the wizard exits 0 instead of printing a red error box. Any
+// other error passes through unchanged.
+func cancelOrErr(out io.Writer, err error) error {
+	if errors.Is(err, huh.ErrUserAborted) {
+		fmt.Fprintln(out, DimStyle.Render("init cancelled"))
+		return nil
+	}
+	return err
+}
+
 // chooseRemote runs the interactive repo picker: create a new private repo via gh,
 // or supply an existing one (verified private). Returns "" (local-only) when gh
 // isn't available — the only way to skip the private-repo requirement is to have
@@ -138,7 +156,7 @@ func chooseRemote(ctx context.Context, out io.Writer, defaultURL string) (string
 				huh.NewOption("Create a new private GitHub repo with gh", "create"),
 				huh.NewOption("Use an existing private GitHub repo", "existing"),
 			).Value(&mode),
-	)).WithTheme(brand.Theme(brand.AccentClaude)).Run(); err != nil {
+	)).WithTheme(brand.Theme(brand.AccentClaude)).WithKeyMap(huhEscKeyMap()).Run(); err != nil {
 		return "", err
 	}
 
@@ -146,7 +164,7 @@ func chooseRemote(ctx context.Context, out io.Writer, defaultURL string) (string
 		repoName := "claude-sync"
 		if err := huh.NewForm(huh.NewGroup(
 			huh.NewInput().Title("New private repo name").Value(&repoName),
-		)).WithTheme(brand.Theme(brand.AccentClaude)).Run(); err != nil {
+		)).WithTheme(brand.Theme(brand.AccentClaude)).WithKeyMap(huhEscKeyMap()).Run(); err != nil {
 			return "", err
 		}
 		url, err := ghrepo.CreatePrivate(ctx, repoName)
@@ -161,7 +179,7 @@ func chooseRemote(ctx context.Context, out io.Writer, defaultURL string) (string
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewInput().Title("Private GitHub repo URL").
 			Placeholder("git@github.com:you/claude-sync.git").Value(&url),
-	)).WithTheme(brand.Theme(brand.AccentClaude)).Run(); err != nil {
+	)).WithTheme(brand.Theme(brand.AccentClaude)).WithKeyMap(huhEscKeyMap()).Run(); err != nil {
 		return "", err
 	}
 	if err := ghrepo.EnsurePrivate(ctx, url); err != nil {
