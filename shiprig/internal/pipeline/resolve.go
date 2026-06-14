@@ -191,7 +191,8 @@ func stepAction(name string, config *Config, stepConfig *StepConfig) ([]CommandS
 }
 
 // shellSingleQuote wraps s in single quotes for safe interpolation into a
-// /bin/sh command line, escaping any embedded single quote as '\”.
+// /bin/sh command line. Each embedded single quote is escaped with the standard
+// POSIX sequence: close the quote, emit a backslash-escaped quote, reopen it.
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
