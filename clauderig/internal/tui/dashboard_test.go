@@ -163,3 +163,11 @@ func TestDashboard_ViewRendersState(t *testing.T) {
 		}
 	}
 }
+
+// The dashboard renders the claudeRig brand banner above the status/menu (the
+// same header --help/version show).
+func TestDashboard_ShowsBanner(t *testing.T) {
+	if view := New(status.Info{}).View(); !strings.Contains(view, "Claude Code setup sync") {
+		t.Errorf("dashboard should render the claudeRig banner\n%s", view)
+	}
+}
