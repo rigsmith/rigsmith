@@ -20,6 +20,7 @@ type outdatedDep struct {
 	// ecosystem has no ranges/this datum (go/.NET); `upgrade` targets this.
 	project string // .NET only: owning project path
 	dev     bool   // node: a devDependency (so the upgrade keeps it there)
+	vuln    string // `rig deps --vulnerable`: highest known severity, "" when none
 }
 
 // parseGoListUpdates parses the concatenated JSON objects from

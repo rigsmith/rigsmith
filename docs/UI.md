@@ -76,7 +76,7 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   `.rig.json` yet, a green `→` **next-step** line and a top **`init`** entry
   tagged `next` (it pins conventions and is where custom verbs live). Then a
   grouped list: the dev verbs (build/test/run/format/lint/typecheck); a
-  `▸ Dependencies` submenu (install/ci/outdated/upgrade); a `▸ Maintenance`
+  `▸ Dependencies` submenu (install/ci/deps/outdated/upgrade); a `▸ Maintenance`
   submenu (clean, coverage, kill, doctor, self-update). The cursor is a cyan
   `▸`; the selected label is bold cyan; descriptions are dim. A breadcrumb shows
   the path (`rig`, `rig · <project>`, `rig / Maintenance`); the next-step line

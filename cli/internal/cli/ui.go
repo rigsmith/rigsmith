@@ -148,6 +148,12 @@ func newMenu() menuModel {
 		if eco == "" {
 			return true
 		}
+		// `deps` isn't an ecosystem-mapped verb (it composes the list + outdated
+		// reports), but it's usable everywhere — rich where supported, falling
+		// back to the outdated list otherwise — so always offer it.
+		if verb == "deps" {
+			return true
+		}
 		if caps.Unavailable(verb) != "" {
 			return false
 		}
@@ -165,6 +171,7 @@ func newMenu() menuModel {
 	deps := keepMapped(maps, []menuItem{
 		{label: "install", desc: "install/restore deps", verb: "install"},
 		{label: "ci", desc: "frozen/clean install", verb: "ci"},
+		{label: "deps", desc: "all deps: current → latest", verb: "deps"},
 		{label: "outdated", desc: "list outdated deps", verb: "outdated"},
 		{label: "upgrade", desc: "upgrade deps", verb: "upgrade"},
 	})
