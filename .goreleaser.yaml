@@ -68,7 +68,7 @@ builds:
 
   # --- uncomment when the changerig binary lands ---
   # - id: changerig
-  #   dir: ./changerig        # or ./release if it ships from that module
+  #   dir: ./changerig        # or ./shiprig if it ships from that module
   #   main: .
   #   binary: changerig
   #   env:
