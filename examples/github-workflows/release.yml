@@ -2,7 +2,7 @@
 #
 # The release loop: on every push to main, if changesets are pending it opens or
 # updates a "Version Packages" PR; once that PR is merged (no changesets left) it
-# publishes. relrig is installed automatically by the action.
+# publishes. shiprig is installed automatically by the action.
 name: Release
 
 on:
@@ -23,7 +23,7 @@ jobs:
         with:
           fetch-depth: 0   # tags + full history for status --since / publish
 
-      # Only needed if you pin relrigVersion to `main`/a branch (source fallback).
+      # Only needed if you pin shiprigVersion to `main`/a branch (source fallback).
       # - uses: actions/setup-go@v5
       #   with: { go-version-file: go.mod }
 
@@ -31,8 +31,8 @@ jobs:
         id: release
         uses: rigsmith/rigsmith/.github/actions/release@main
         with:
-          version: relrig version
-          publish: relrig publish --yes
+          version: shiprig version
+          publish: shiprig publish --yes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}

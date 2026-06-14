@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rigsmith/core/brand"
-	"github.com/rigsmith/release/internal/pipeline"
+	"github.com/rigsmith/shiprig/internal/pipeline"
 )
 
 // richReporter is the styled terminal reporter (the C# TuiReleaseReporter

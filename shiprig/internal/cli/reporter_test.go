@@ -6,16 +6,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rigsmith/release/internal/pipeline"
+	"github.com/rigsmith/shiprig/internal/pipeline"
 )
 
 func confirmText(s string) *string { return &s }
 
 func planSteps() []pipeline.ResolvedStep {
 	return []pipeline.ResolvedStep{
-		{Name: "version", IsBuiltin: true, Action: []pipeline.CommandSpec{pipeline.ShellCommand("relrig version")}},
+		{Name: "version", IsBuiltin: true, Action: []pipeline.CommandSpec{pipeline.ShellCommand("shiprig version")}},
 		{Name: "publish", IsBuiltin: true, Confirm: confirmText("Publish to registries?"),
-			Action: []pipeline.CommandSpec{pipeline.ShellCommand("relrig publish")}},
+			Action: []pipeline.CommandSpec{pipeline.ShellCommand("shiprig publish")}},
 		{Name: "githubRelease", Kind: pipeline.StepKindNative},
 		{Name: "docs", SkipReason: "--skip"},
 	}
@@ -23,12 +23,12 @@ func planSteps() []pipeline.ResolvedStep {
 
 func TestRichReporterRendersPlanWithGatesAndSkips(t *testing.T) {
 	var b strings.Builder
-	r := newRichReporter(&b, pipeline.NewSecretMasker(), "relrig")
+	r := newRichReporter(&b, pipeline.NewSecretMasker(), "shiprig")
 	r.Plan(planSteps(), true)
 	out := b.String()
 	for _, want := range []string{
 		"Release plan (dry run)",
-		"version", "relrig version",
+		"version", "shiprig version",
 		"confirm: Publish to registries?",
 		"(per-package forge release)",
 		"skip: --skip",
@@ -41,14 +41,14 @@ func TestRichReporterRendersPlanWithGatesAndSkips(t *testing.T) {
 
 func TestRichReporterFailureIncludesResumeHint(t *testing.T) {
 	var b strings.Builder
-	r := newRichReporter(&b, pipeline.NewSecretMasker(), "relrig")
+	r := newRichReporter(&b, pipeline.NewSecretMasker(), "shiprig")
 	r.StepStarted("version")
 	r.StepCompleted("version")
 	r.StepStarted("publish")
 	r.CommandFailed("publish", 1)
 	r.RunCompleted(false, "step 'publish' failed")
 	out := b.String()
-	if !strings.Contains(out, "Resume with: relrig release --from publish") {
+	if !strings.Contains(out, "Resume with: shiprig release --from publish") {
 		t.Errorf("failure output missing the resume hint:\n%s", out)
 	}
 	if !strings.Contains(out, "publish") || !strings.Contains(out, "failed") {
@@ -58,7 +58,7 @@ func TestRichReporterFailureIncludesResumeHint(t *testing.T) {
 
 func TestRichReporterSuccessHasNoResumeHint(t *testing.T) {
 	var b strings.Builder
-	r := newRichReporter(&b, pipeline.NewSecretMasker(), "relrig")
+	r := newRichReporter(&b, pipeline.NewSecretMasker(), "shiprig")
 	r.StepStarted("version")
 	r.StepCompleted("version")
 	r.RunCompleted(true, "")
@@ -75,7 +75,7 @@ func TestRichReporterMasksSecretsEverywhere(t *testing.T) {
 	masker := pipeline.NewSecretMasker()
 	masker.Add("hunter2-token")
 	var b strings.Builder
-	r := newRichReporter(&b, masker, "relrig")
+	r := newRichReporter(&b, masker, "shiprig")
 	r.Plan([]pipeline.ResolvedStep{{Name: "publish", IsBuiltin: true,
 		Action: []pipeline.CommandSpec{pipeline.ShellCommand("npm publish --otp hunter2-token")}}}, false)
 	r.CommandStarted("publish", pipeline.ShellCommand("npm publish --otp hunter2-token"))

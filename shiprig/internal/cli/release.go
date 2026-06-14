@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/changerig/commands"
 	"github.com/rigsmith/core/brand"
-	"github.com/rigsmith/release/internal/forge"
-	"github.com/rigsmith/release/internal/pipeline"
+	"github.com/rigsmith/shiprig/internal/forge"
+	"github.com/rigsmith/shiprig/internal/pipeline"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -48,9 +48,9 @@ func newReleaseCmd() *cobra.Command {
 				return err
 			}
 			// The Go binaries are their own changeset engine — default the
-			// built-in version/publish steps to relrig itself, not the Node CLI.
+			// built-in version/publish steps to shiprig itself, not the Node CLI.
 			if cfg.Tool == "" {
-				cfg.Tool = "relrig"
+				cfg.Tool = "shiprig"
 			}
 
 			steps, err := pipeline.Resolve(cfg, pipeline.ResolveOptions{

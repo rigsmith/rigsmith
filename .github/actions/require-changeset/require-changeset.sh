@@ -111,7 +111,7 @@ else
 ⚠️ **No changeset found in this PR.**
 
 This repository requires a changeset for every change that should appear in a
-release. Add one so the next \`relrig version\` knows what to bump:
+release. Add one so the next \`shiprig version\` knows what to bump:
 
 \`\`\`sh
 ${add_cmd}

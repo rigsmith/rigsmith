@@ -1,11 +1,11 @@
 name: 'rigsmith release'
-description: 'Open a Version Packages pull request or publish packages with relrig (polyglot: .NET / Node / Go / Rust).'
+description: 'Open a Version Packages pull request or publish packages with shiprig (polyglot: .NET / Node / Go / Rust).'
 
 inputs:
   version:
     description: 'Command run to update versions and changelogs when changesets exist.'
     required: false
-    default: 'relrig version'
+    default: 'shiprig version'
   publish:
     description: 'Command run to publish when there are no changesets. Leave empty to skip publishing.'
     required: false
@@ -13,7 +13,7 @@ inputs:
   status:
     description: 'Command run to render the pending release plan into the pull request body.'
     required: false
-    default: 'relrig status'
+    default: 'shiprig status'
   cwd:
     description: 'Working directory to run in.'
     required: false
@@ -31,11 +31,11 @@ inputs:
     required: false
     default: 'true'
   install:
-    description: 'Auto-install relrig before running. Set to false if relrig is already on PATH.'
+    description: 'Auto-install shiprig before running. Set to false if shiprig is already on PATH.'
     required: false
     default: 'true'
-  relrigVersion:
-    description: 'relrig version to install ("latest", "v1.2.3", "main", …). Only used when install is true.'
+  shiprigVersion:
+    description: 'shiprig version to install ("latest", "v1.2.3", "main", …). Only used when install is true.'
     required: false
     default: 'latest'
 
@@ -60,9 +60,9 @@ runs:
       if: ${{ inputs.install == 'true' }}
       shell: bash
       env:
-        INPUT_RELRIG_VERSION: ${{ inputs.relrigVersion }}
-        RELRIG_REPO: ${{ github.action_repository || 'rigsmith/rigsmith' }}
-      run: ${{ github.action_path }}/install-relrig.sh
+        INPUT_SHIPRIG_VERSION: ${{ inputs.shiprigVersion }}
+        SHIPRIG_REPO: ${{ github.action_repository || 'rigsmith/rigsmith' }}
+      run: ${{ github.action_path }}/install-shiprig.sh
 
     - id: run
       shell: bash

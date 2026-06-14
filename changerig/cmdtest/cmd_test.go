@@ -517,7 +517,7 @@ func TestUnknownSubcommandFails(t *testing.T) {
 	assertContains(t, out, "definitely-not-a-command")
 }
 
-// --- tag (TagChangesetCommandTests, relrig binary) ---
+// --- tag (TagChangesetCommandTests, shiprig binary) ---
 
 // tagWorkspace builds a committed two-package npm git repo for the tag tests.
 func tagWorkspace(t *testing.T) string {
@@ -543,7 +543,7 @@ func tagList(t *testing.T, dir string) []string {
 func TestTagCreatesTagPerPackage(t *testing.T) {
 	dir := tagWorkspace(t)
 
-	code, out := runRelrig(t, dir, "tag")
+	code, out := runShiprig(t, dir, "tag")
 
 	assertExitZero(t, code, out)
 	assertContains(t, out, "pkg-a@1.0.0")
@@ -565,7 +565,7 @@ func TestTagSkipsExistingTags(t *testing.T) {
 	dir := tagWorkspace(t)
 	git(t, dir, "tag", "pkg-a@1.0.0")
 
-	code, out := runRelrig(t, dir, "tag")
+	code, out := runShiprig(t, dir, "tag")
 
 	assertExitZero(t, code, out)
 	assertContains(t, out, "pkg-b@2.1.0")
@@ -575,7 +575,7 @@ func TestTagSkipsExistingTags(t *testing.T) {
 	}
 
 	// A full re-run skips everything and still exits 0.
-	code, out = runRelrig(t, dir, "tag")
+	code, out = runShiprig(t, dir, "tag")
 	assertExitZero(t, code, out)
 	assertContains(t, out, "2 already present")
 	if tags := tagList(t, dir); len(tags) != 2 {
@@ -602,7 +602,7 @@ func TestTagHonorsIgnore(t *testing.T) {
 		`{ "updateInternalDependencies": "patch", "ignore": ["pkg-b"] }`)
 	gitInit(t, dir)
 
-	code, out := runRelrig(t, dir, "tag")
+	code, out := runShiprig(t, dir, "tag")
 
 	assertExitZero(t, code, out)
 	tags := tagList(t, dir)

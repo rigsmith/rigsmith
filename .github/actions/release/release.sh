@@ -9,14 +9,14 @@
 #     (if configured), which pushes to registries and creates git tags
 #
 # The version/publish/status commands are configurable so the consumer controls
-# exactly how relrig is invoked (`relrig version`, `relrig publish`, a wrapper
-# script, …). NO_COLOR is set so relrig's styled output is plain for parsing.
+# exactly how shiprig is invoked (`shiprig version`, `shiprig publish`, a wrapper
+# script, …). NO_COLOR is set so shiprig's styled output is plain for parsing.
 set -euo pipefail
 export NO_COLOR=1
 
-version_cmd="${INPUT_VERSION:-relrig version}"
+version_cmd="${INPUT_VERSION:-shiprig version}"
 publish_cmd="${INPUT_PUBLISH:-}"
-status_cmd="${INPUT_STATUS:-relrig status}"
+status_cmd="${INPUT_STATUS:-shiprig status}"
 title="${INPUT_TITLE:-Version Packages}"
 setup_git_user="${INPUT_SETUP_GIT_USER:-true}"
 
@@ -82,7 +82,7 @@ else
       exit "${publish_exit}"
     fi
 
-    # relrig publish prints "published <name>@<version>  <message>" per package
+    # shiprig publish prints "published <name>@<version>  <message>" per package
     # that went to a registry; Go modules are published by their pushed tag, so
     # also harvest "tagged+pushed <module>/v<version>" lines. Strip any ANSI.
     clean="$(printf '%s\n' "${publish_output}" | sed -E 's/\x1b\[[0-9;]*m//g')"

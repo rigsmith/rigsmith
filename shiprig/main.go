@@ -1,4 +1,4 @@
-// Command relrig is rigsmith's release tool: a uniform changeset → version →
+// Command shiprig is rigsmith's release tool: a uniform changeset → version →
 // publish workflow that runs the same engine across every ecosystem and
 // delegates only the ecosystem-specific parts (publish, workspace-graph) to the
 // native package managers. It is the Go successor to net-changesets.
@@ -8,7 +8,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/rigsmith/release/internal/cli"
+	"github.com/rigsmith/shiprig/internal/cli"
 )
 
 func main() {

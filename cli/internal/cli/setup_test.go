@@ -78,7 +78,7 @@ func TestSetupSnippet_CanonicalBlockLoadsTheFamily(t *testing.T) {
 	cases := map[string][]string{
 		"zsh": {
 			`command -v clauderig >/dev/null 2>&1 && eval "$(command clauderig completion zsh)"`,
-			`command -v relrig >/dev/null 2>&1 && eval "$(command relrig completion zsh)"`,
+			`command -v shiprig >/dev/null 2>&1 && eval "$(command shiprig completion zsh)"`,
 			`command -v changerig >/dev/null 2>&1 && eval "$(command changerig completion zsh)"`,
 		},
 		"bash": {`command -v clauderig >/dev/null 2>&1 && eval "$(command clauderig completion bash)"`},

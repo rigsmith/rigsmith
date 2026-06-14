@@ -2,15 +2,15 @@
 #
 # This is a go.work workspace with multiple main packages living in separate
 # modules:
-#   - ./cli     -> binary `rig`    (dev launcher)
-#   - ./release -> binary `relrig` (release tool)
-#   - ./changerig (future)         -> binary `changerig` (changeset tool)
+#   - ./cli     -> binary `rig`     (dev launcher)
+#   - ./shiprig -> binary `shiprig` (release tool)
+#   - ./changerig (future)          -> binary `changerig` (changeset tool)
 #
 # Because the main packages are in different modules/directories, each binary
 # gets its own build block with an explicit `dir`.
 #
 # rig stamps its version via the internal/cli seam (used by `rig --version`
-# and `rig self-update`); relrig has no version var yet.
+# and `rig self-update`); shiprig has no version var yet.
 #
 # Run `goreleaser check` after editing to validate.
 version: 2
@@ -34,10 +34,10 @@ builds:
     ldflags:
       - -s -w -X github.com/rigsmith/cli/internal/cli.version={{.Version}}
 
-  - id: relrig
-    dir: ./release
+  - id: shiprig
+    dir: ./shiprig
     main: .
-    binary: relrig
+    binary: shiprig
     env:
       - CGO_ENABLED=0
     goos:
@@ -48,7 +48,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w  # add a version seam in release/main when relrig needs self-update
+      - -s -w  # add a version seam in shiprig/main when shiprig needs self-update
 
   - id: clauderig
     dir: ./clauderig
@@ -106,10 +106,10 @@ archives:
         formats:
           - zip
 
-  - id: relrig
+  - id: shiprig
     ids:
-      - relrig
-    name_template: "relrig_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+      - shiprig
+    name_template: "shiprig_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
     format_overrides:
@@ -168,9 +168,9 @@ changelog:
 #     license: "MIT"
 #     install: |
 #       bin.install "rig"
-#   - name: relrig
+#   - name: shiprig
 #     ids:
-#       - relrig
+#       - shiprig
 #     repository:
 #       owner: rigsmith
 #       name: homebrew-tap
@@ -178,7 +178,7 @@ changelog:
 #     description: "rigsmith's uniform changeset -> version -> publish release tool"
 #     license: "MIT"
 #     install: |
-#       bin.install "relrig"
+#       bin.install "shiprig"
 
 release:
   github:
