@@ -3,8 +3,8 @@ package planner
 import (
 	"context"
 
-	"github.com/rigsmith/core/config"
-	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/config"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 // BuiltinGenerator is the in-process reference implementation of

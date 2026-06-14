@@ -4,12 +4,12 @@
 package ecosystem
 
 import (
-	"github.com/rigsmith/core/ecosystem/cargo"
-	"github.com/rigsmith/core/ecosystem/dotnet"
-	"github.com/rigsmith/core/ecosystem/gomod"
-	"github.com/rigsmith/core/ecosystem/node"
-	"github.com/rigsmith/core/ecosystem/regex"
-	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/ecosystem/cargo"
+	"github.com/rigsmith/rigsmith/core/ecosystem/dotnet"
+	"github.com/rigsmith/rigsmith/core/ecosystem/gomod"
+	"github.com/rigsmith/rigsmith/core/ecosystem/node"
+	"github.com/rigsmith/rigsmith/core/ecosystem/regex"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 // Default returns a registry populated with the built-in adapters. The regex

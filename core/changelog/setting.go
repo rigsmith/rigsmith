@@ -11,7 +11,7 @@ package changelog
 import (
 	"encoding/json"
 
-	"github.com/rigsmith/core/config"
+	"github.com/rigsmith/rigsmith/core/config"
 )
 
 // Kind is the changelog generator to use, mirroring the @changesets

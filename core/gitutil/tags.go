@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/rigsmith/core/semver"
+	"github.com/rigsmith/rigsmith/core/semver"
 )
 
 // LatestModuleVersion returns the highest semver among the git tags for a Go

@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rigsmith/core/changeset"
-	"github.com/rigsmith/core/plugin"
-	"github.com/rigsmith/core/semver"
+	"github.com/rigsmith/rigsmith/core/changeset"
+	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/semver"
 )
 
 // renderModule renders a module the way `version` does (through the builtin

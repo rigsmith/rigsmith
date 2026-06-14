@@ -18,16 +18,16 @@ func TestTools(t *testing.T) {
 		}
 	}
 
-	write("go.work", "go 1.26\n\nuse (\n\t./cli\n\t./core\n\t./scripts/dev-install\n)\n")
-	write("cli/main.go", "// Command rig is the launcher.\npackage main\n")
-	write("core/doc.go", "package core\n") // library: no main.go → omitted
-	write("scripts/dev-install/main.go", "// Command dev-install installs things.\npackage main\n")
+	write("cmd/rig/main.go", "// Command rig is the launcher.\npackage main\n")
+	write("cmd/clauderig/main.go", "// Command clauderig syncs things.\npackage main\n")
+	write("cmd/notacmd/doc.go", "package notacmd\n") // no main.go → omitted
+	write("core/doc.go", "package core\n")           // outside cmd/ → ignored
 
 	got, err := Tools(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"cli": "rig", "scripts/dev-install": "dev-install"}
+	want := map[string]string{"cmd/rig": "rig", "cmd/clauderig": "clauderig"}
 	if len(got) != len(want) {
 		t.Fatalf("got %d tools (%v), want %d", len(got), got, len(want))
 	}
@@ -38,9 +38,20 @@ func TestTools(t *testing.T) {
 	}
 }
 
+func TestToolsNoCmdDir(t *testing.T) {
+	// A repo with no cmd/ directory yields no tools, not an error.
+	got, err := Tools(t.TempDir())
+	if err != nil {
+		t.Fatalf("Tools on cmd-less repo: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d tools, want 0", len(got))
+	}
+}
+
 func TestFindRoot(t *testing.T) {
 	repo := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repo, "go.work"), []byte("go 1.26\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.test\n\ngo 1.26\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	sub := filepath.Join(repo, "a", "b")
@@ -59,6 +70,6 @@ func TestFindRoot(t *testing.T) {
 	}
 
 	if _, err := FindRoot(t.TempDir()); err == nil {
-		t.Error("expected error when no go.work above dir")
+		t.Error("expected error when no go.mod above dir")
 	}
 }

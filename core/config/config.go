@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rigsmith/core/jsonc"
+	"github.com/rigsmith/rigsmith/core/jsonc"
 )
 
 // UpdateInternalDependencies controls how far dependents of a changed package

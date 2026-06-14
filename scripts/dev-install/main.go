@@ -3,9 +3,9 @@
 // rig/shiprig/clauderig you have installed globally.
 //
 // It is cross-platform: on macOS/Linux it writes POSIX `sh` wrappers, on Windows
-// it writes `.cmd` wrappers. It discovers the tools from go.work, so adding a new
-// module to the workspace makes new `<tool>-dev`/`<tool>-wt` launchers appear
-// here automatically.
+// it writes `.cmd` wrappers. It discovers the tools from cmd/, so adding a new
+// cmd/<tool> makes new `<tool>-dev`/`<tool>-wt` launchers appear here
+// automatically.
 //
 //	go run ./scripts/dev-install            # install (or refresh) the wrappers
 //	RIGSMITH_DEV_BIN=/some/dir go run ./scripts/dev-install
@@ -49,8 +49,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/rigsmith/core/devroute"
-	"github.com/rigsmith/core/gowork"
+	"github.com/rigsmith/rigsmith/core/devroute"
+	"github.com/rigsmith/rigsmith/core/gowork"
 )
 
 func main() {
@@ -81,9 +81,6 @@ func run() error {
 
 	var made []string
 	for _, t := range tools {
-		if strings.HasPrefix(t.Module, "scripts/") {
-			continue // installers (scripts/*) don't get their own launchers
-		}
 		devPath, wtPath, err := writeWrapper(bin, t.Name, repo, t.Module)
 		if err != nil {
 			return err
@@ -95,7 +92,7 @@ func run() error {
 	}
 
 	if len(made) == 0 {
-		return fmt.Errorf("no runnable tools found in %s/go.work", repo)
+		return fmt.Errorf("no runnable tools found in %s/cmd", repo)
 	}
 	fmt.Printf("Installed %d dev launcher(s) in %s:\n", len(made), bin)
 	fmt.Println(strings.Join(made, "\n"))

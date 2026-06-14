@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 // fakeRunner matches invocations the way the C# tests do: by executable name

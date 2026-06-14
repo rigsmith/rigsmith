@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 // ChangedProjectNames returns the names of the packages that own at least one

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 // writeRepo lays out a temp repo with a .changeset/config.json holding a regex
