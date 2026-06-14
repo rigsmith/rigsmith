@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -368,7 +369,7 @@ func newWorktreeRemoveCmd() *cobra.Command {
 // prompt), which is what lets a SessionStart hook call it to reap the orphans
 // left when a session ends without a clean exit.
 func newWorktreePruneCmd() *cobra.Command {
-	var dryRun, deleteBranches bool
+	var dryRun, deleteBranches, gone bool
 	var base string
 	cmd := &cobra.Command{
 		Use:   "prune",
@@ -379,10 +380,12 @@ func newWorktreePruneCmd() *cobra.Command {
   • merged  its branch is fully contained in the base branch
             (detects squash-merges as well as ordinary merges)
 
-The primary checkout and the worktree you're running from are never touched, and
-dirty or unmerged worktrees are skipped with a reason. Removing a worktree keeps
-its branch unless --delete-branches is given. Merge state is tested against the
-local base branch, so keep it current (e.g. pull main) for accurate results.`,
+With --gone a clean worktree is also removed when its branch's upstream was
+deleted on the remote. The primary checkout and the worktree you're running from
+are never touched, and dirty or unmerged worktrees are skipped with a reason.
+Removing a worktree keeps its branch unless --delete-branches is given. Merge
+state is tested against the local base branch, so keep it current (e.g. pull
+main) for accurate results.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -393,72 +396,11 @@ local base branch, so keep it current (e.g. pull main) for accurate results.`,
 			if base == "" {
 				base = repo.DefaultBranch(ctx)
 			}
-			wts, err := repo.WorktreeList(ctx)
+			out := cmd.OutOrStdout()
+			removed, kept, _, err := pruneWorktrees(ctx, out, repo, root, base, dryRun, gone, deleteBranches)
 			if err != nil {
 				return err
 			}
-			out := cmd.OutOrStdout()
-
-			// Clear stale records for worktree dirs removed by hand, so the list
-			// we act on reflects reality. Harmless on existing checkouts.
-			if !dryRun {
-				_ = repo.WorktreePruneMeta(ctx)
-			}
-
-			var removed, kept int
-			skip := func(label, reason string) {
-				kept++
-				fmt.Fprintf(out, "%s %s  %s\n", DimStyle.Render("•"), HeaderStyle.Render(label), DimStyle.Render(reason))
-			}
-			for _, wt := range wts {
-				// Never the primary checkout, the base-branch worktree, or the one
-				// we're standing in (openRepo's root is this session's worktree).
-				if sameDir(wt.Path, root) || wt.Branch == base {
-					continue
-				}
-				if wt.Branch == "" {
-					skip("(detached)", "detached HEAD — skipped")
-					continue
-				}
-				label := wt.Branch
-				clean, err := repo.WorktreeClean(ctx, wt.Path)
-				if err != nil {
-					skip(label, "couldn't read status — skipped")
-					continue
-				}
-				if !clean {
-					skip(label, "uncommitted changes — skipped")
-					continue
-				}
-				merged, err := repo.IsMerged(ctx, wt.Branch, base)
-				if err != nil {
-					skip(label, "couldn't check merge state — skipped")
-					continue
-				}
-				if !merged {
-					skip(label, fmt.Sprintf("not merged into %s — skipped", base))
-					continue
-				}
-				if dryRun {
-					removed++
-					fmt.Fprintf(out, "%s %s  %s\n", WarnStyle.Render("⤳"), HeaderStyle.Render(label), DimStyle.Render("would remove "+wt.Path))
-					continue
-				}
-				if err := repo.WorktreeRemove(ctx, wt.Path, false); err != nil {
-					skip(label, "remove failed: "+err.Error())
-					continue
-				}
-				removed++
-				fmt.Fprintf(out, "%s %s  %s\n", OkStyle.Render("✓"), HeaderStyle.Render(label), DimStyle.Render("removed "+wt.Path))
-				if deleteBranches {
-					if err := repo.DeleteBranch(ctx, wt.Branch, false); err != nil {
-						fmt.Fprintf(out, "  %s\n", WarnStyle.Render("kept branch "+wt.Branch+": "+err.Error()))
-					} else {
-						fmt.Fprintf(out, "  %s\n", DimStyle.Render("deleted branch "+wt.Branch))
-					}
-				}
-			}
-
 			verb := "removed"
 			if dryRun {
 				verb = "to remove"
@@ -469,8 +411,98 @@ local base branch, so keep it current (e.g. pull main) for accurate results.`,
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what would be removed without removing anything")
 	cmd.Flags().BoolVarP(&deleteBranches, "delete-branches", "b", false, "also delete the local branch of each removed worktree")
+	cmd.Flags().BoolVar(&gone, "gone", false, "also remove clean worktrees whose branch's upstream was deleted on the remote")
 	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
 	return cmd
+}
+
+// pruneWorktrees removes the repo's linked worktrees that are clean and either
+// merged into base or (with gone) whose branch's upstream the remote deleted. It
+// prints one line per worktree and returns the removed/kept counts plus freed —
+// the branch names whose worktrees were removed (or, in dry-run, would be), which
+// the combined sweep uses so the branch phase no longer treats them as attached.
+// The caller prints the summary line. root is this session's worktree, which —
+// like the primary checkout and the base — is never touched.
+func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root, base string, dryRun, gone, deleteBranches bool) (removed, kept int, freed []string, err error) {
+	wts, err := repo.WorktreeList(ctx)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	// Clear stale records for worktree dirs removed by hand, so the list we act
+	// on reflects reality. Harmless on existing checkouts.
+	if !dryRun {
+		_ = repo.WorktreePruneMeta(ctx)
+	}
+	goneSet := map[string]bool{}
+	if gone {
+		if brs, err := repo.LocalBranches(ctx); err == nil {
+			for _, b := range brs {
+				if b.Gone {
+					goneSet[b.Name] = true
+				}
+			}
+		}
+	}
+	skip := func(label, reason string) {
+		kept++
+		fmt.Fprintf(out, "%s %s  %s\n", DimStyle.Render("•"), HeaderStyle.Render(label), DimStyle.Render(reason))
+	}
+	for _, wt := range wts {
+		// Never the primary checkout, the base-branch worktree, or the one we're
+		// standing in (root is this session's worktree).
+		if sameDir(wt.Path, root) || wt.Branch == base {
+			continue
+		}
+		if wt.Branch == "" {
+			skip("(detached)", "detached HEAD — skipped")
+			continue
+		}
+		label := wt.Branch
+		clean, err := repo.WorktreeClean(ctx, wt.Path)
+		if err != nil {
+			skip(label, "couldn't read status — skipped")
+			continue
+		}
+		if !clean {
+			skip(label, "uncommitted changes — skipped")
+			continue
+		}
+		merged, err := repo.IsMerged(ctx, wt.Branch, base)
+		if err != nil {
+			skip(label, "couldn't check merge state — skipped")
+			continue
+		}
+		reason := "merged"
+		switch {
+		case merged:
+		case goneSet[wt.Branch]:
+			reason = "upstream gone"
+		default:
+			skip(label, fmt.Sprintf("not merged into %s — skipped", base))
+			continue
+		}
+		if dryRun {
+			removed++
+			freed = append(freed, wt.Branch)
+			fmt.Fprintf(out, "%s %s  %s\n", WarnStyle.Render("⤳"), HeaderStyle.Render(label), DimStyle.Render("would remove "+wt.Path+" ("+reason+")"))
+			continue
+		}
+		if err := repo.WorktreeRemove(ctx, wt.Path, false); err != nil {
+			skip(label, "remove failed: "+err.Error())
+			continue
+		}
+		removed++
+		freed = append(freed, wt.Branch)
+		fmt.Fprintf(out, "%s %s  %s\n", OkStyle.Render("✓"), HeaderStyle.Render(label), DimStyle.Render("removed "+wt.Path+" ("+reason+")"))
+		if deleteBranches {
+			if err := repo.DeleteBranch(ctx, wt.Branch, false); err != nil {
+				fmt.Fprintf(out, "  %s\n", WarnStyle.Render("kept branch "+wt.Branch+": "+err.Error()))
+			} else {
+				fmt.Fprintf(out, "  %s\n", DimStyle.Render("deleted branch "+wt.Branch))
+			}
+		}
+	}
+	return removed, kept, freed, nil
 }
 
 // sameDir reports whether two paths point at the same directory, resolving both

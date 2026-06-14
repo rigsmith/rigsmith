@@ -11,7 +11,9 @@
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
 | `guard` | PreToolUse hook enforcing worktree/PR discipline (wired by `project`/`local`) |
-| `worktree` | `new` / `list` / `open` / `rm` sibling worktrees in their own review window (alias `wt`) |
+| `worktree` | `new` / `list` / `open` / `rm` / `prune` sibling worktrees in their own review window (alias `wt`) |
+| `branch` | `list` / `rm` / `prune` local branches; prune reaps merged (or, with `--gone`, gone-upstream) ones; alias `br` |
+| `prune` | One sweep: reap merged/done worktrees, then their branches and other merged (`--gone`) branches; always asks at a terminal (no skip flag; fails if non-interactive; `-n` previews); alias `tidy` |
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md block standalone |
 | `config` | `get` / `set` / `show` / `path` / `edit` |
 | `doctor` | Health-check environment + sync + worktree discipline (`--fix` repairs) |
