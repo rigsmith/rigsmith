@@ -24,7 +24,8 @@ func NewInfoCmd() *cobra.Command {
 			fmt.Fprintf(out, "  root:        %s\n", ws.Root)
 			fmt.Fprintf(out, "  initialized: %v\n", ws.Initialized())
 			fmt.Fprintf(out, "  baseBranch:  %s\n", ws.Config.BaseBranch)
-			fmt.Fprintf(out, "  access:      %s\n\n", ws.Config.Access)
+			fmt.Fprintf(out, "  access:      %s\n", ws.Config.Access)
+			fmt.Fprintf(out, "  source:      %s\n\n", ws.Config.CommitSource())
 
 			fmt.Fprintln(out, HeaderStyle.Render("Ecosystems"))
 			detected, err := ws.Registry.DetectAll(cmd.Context(), ws.Root)

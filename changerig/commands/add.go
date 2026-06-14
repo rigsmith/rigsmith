@@ -40,7 +40,7 @@ func NewAddCmd() *cobra.Command {
 				return err
 			}
 			if !ws.Initialized() {
-				ready, err := offerInit(cmd, ws)
+				ready, err := offerSetup(cmd, ws)
 				if err != nil {
 					return err
 				}
@@ -195,41 +195,65 @@ func firstNonEmpty(xs ...string) string {
 	return ""
 }
 
-// offerInit handles a bare `add` in a workspace with no .changeset folder. On an
-// interactive terminal it shows where changesets would live and offers to set
-// them up inline (a huh confirm), so the first changeset is one prompt away
-// rather than a dead-end error. It reports whether the workspace is ready to
-// proceed (scaffolded or already set up). Off a TTY — CI, pipes — it can't ask,
-// so it returns a clear, actionable error pointing at `changerig init`.
-func offerInit(cmd *cobra.Command, ws *Workspace) (ready bool, err error) {
+// offerSetup handles a bare command in a workspace with no .changeset folder. On
+// an interactive terminal it shows where config will live and runs the source
+// picker (changeset files / conventional commits / both) inline, so setup is one
+// prompt away rather than a dead-end error, then scaffolds the chosen source and
+// reloads ws.Config so the caller sees it. It reports whether the workspace is
+// ready to proceed (scaffolded or already set up). Off a TTY — CI, pipes — it
+// can't ask, so it returns a clear, actionable error pointing at `<tool> init`.
+// Shared by `add` (before creating a changeset) and `status` (before planning).
+func offerSetup(cmd *cobra.Command, ws *Workspace) (ready bool, err error) {
+	tool := cmd.Root().Name()
 	where := relDir(ws.Root, ws.ChangesetDir)
 	if !addInteractive() {
-		return false, fmt.Errorf("changesets aren't set up here yet — run `changerig init` to create %s", where)
+		return false, fmt.Errorf("not set up here yet — run `%s init` to create %s (use --source commits for conventional-commit releases)", tool, where)
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("No changesets set up in %s yet.", ws.Root)))
-	setup := false
-	if err := huh.NewConfirm().
-		Title("Set up changesets here?").
-		Description(fmt.Sprintf("Creates %s with a default config.", where)).
-		Value(&setup).
-		Run(); err != nil {
-		return false, nil // aborted prompt (esc/ctrl+c) — treat as a decline, no error
-	}
-	if !setup {
-		fmt.Fprintln(out, DimStyle.Render("No changeset created. Run `changerig init` when you're ready."))
+	fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("Not set up in %s yet.", ws.Root)))
+	source, ok := pickSource(where)
+	if !ok {
+		fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("Nothing set up. Run `%s init` when you're ready.", tool)))
 		return false, nil
 	}
 
-	created, err := Scaffold(ws)
+	created, err := Scaffold(ws, source)
 	if err != nil {
 		return false, err
 	}
 	if created {
-		fmt.Fprintf(out, "%s %s\n", PatchStyle.Render("✓"), fmt.Sprintf("Initialized changesets in %s", where))
+		fmt.Fprintf(out, "%s %s\n", PatchStyle.Render("✓"), fmt.Sprintf("Initialized %s (source: %s)", where, source))
+	}
+	// Reload config from disk so the caller routes on the chosen source rather
+	// than the changesets default Open() loaded before the workspace existed.
+	if c, e := config.Load(ws.ChangesetDir); e == nil {
+		ws.Config = c
 	}
 	return true, nil
+}
+
+// pickSource runs the release-source chooser used by both the inline setup offer
+// and interactive `init`. It returns the chosen source and whether the user
+// confirmed; an aborted prompt (esc/ctrl+c) reports ok=false. Callers must only
+// invoke it on a TTY (see addInteractive).
+func pickSource(where string) (source config.VersioningSource, ok bool) {
+	source = config.SourceChangesets
+	err := huh.NewSelect[config.VersioningSource]().
+		Title("How do you want to drive releases?").
+		Description(fmt.Sprintf("Writes %sconfig.json.", where)).
+		Options(
+			huh.NewOption("Changeset files — explicit intent files (changerig add)", config.SourceChangesets),
+			huh.NewOption("Conventional commits — releases derive from commit messages", config.SourceCommits),
+			huh.NewOption("Both — changeset files and conventional commits", config.SourceBoth),
+		).
+		Value(&source).
+		WithTheme(brand.Theme(brand.AccentChange)).
+		Run()
+	if err != nil {
+		return config.SourceChangesets, false // aborted — treat as a decline
+	}
+	return source, true
 }
 
 // addInteractive reports whether `add` can prompt — both stdin and stdout must

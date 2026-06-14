@@ -50,6 +50,21 @@ func NewStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// An uninitialized workspace (e.g. bare `shiprig`, which lands here)
+			// shouldn't hard-error — offer source-aware setup, then point at the
+			// next step. A freshly scaffolded workspace has nothing to release
+			// yet, so don't fall through to the no-changesets gate below.
+			if !ws.Initialized() {
+				ready, err := offerSetup(cmd, ws)
+				if err != nil {
+					return err
+				}
+				if !ready {
+					return nil
+				}
+				printSetupNextStep(cmd, ws)
+				return nil
+			}
 			pkgs, _, err := ws.Discover(cmd.Context())
 			if err != nil {
 				return err
@@ -119,6 +134,23 @@ func NewStatusCmd() *cobra.Command {
 	cmd.Flags().StringVar(&output, "output", "", "write the release plan as JSON to this file (matches @changesets status --output)")
 	cmd.Flags().StringVar(&sinceRef, "since", "", "only consider changes since this git ref; fail if projects changed without a changeset")
 	return cmd
+}
+
+// printSetupNextStep tells a just-onboarded user how to produce a release, so a
+// bare command that triggered setup ends on source-appropriate guidance rather
+// than the no-changesets error a freshly scaffolded workspace would otherwise
+// hit.
+func printSetupNextStep(cmd *cobra.Command, ws *Workspace) {
+	out := cmd.OutOrStdout()
+	tool := cmd.Root().Name()
+	switch ws.Config.CommitSource() {
+	case config.SourceCommits:
+		fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("Write a conventional commit (e.g. `feat(pkg): …`), then re-run `%s` to see the plan.", tool)))
+	case config.SourceBoth:
+		fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("Write a conventional commit or run `%s add`, then re-run `%s` to see the plan.", tool, tool)))
+	default:
+		fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("Add a changeset with `%s add`, then re-run `%s` to see the plan.", tool, tool)))
+	}
 }
 
 // writeStatusPlan serializes the plan as { releases: [{ name, type, newVersion }] }.

@@ -50,6 +50,22 @@ const (
 	SourceBoth VersioningSource = "both"
 )
 
+// ParseSource normalizes a user-supplied source string to a VersioningSource,
+// reporting whether it was a known value. An empty string maps to the default
+// (changesets) and is reported valid, so a blank flag is a no-op.
+func ParseSource(s string) (VersioningSource, bool) {
+	switch VersioningSource(strings.TrimSpace(s)) {
+	case "", SourceChangesets:
+		return SourceChangesets, true
+	case SourceCommits:
+		return SourceCommits, true
+	case SourceBoth:
+		return SourceBoth, true
+	default:
+		return SourceChangesets, false
+	}
+}
+
 // Versioning configures commit-based versioning (knope-style). The zero value
 // is changeset mode, so existing repos are unaffected.
 type Versioning struct {

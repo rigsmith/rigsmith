@@ -109,6 +109,57 @@ func TestInitConfigRoundTrips(t *testing.T) {
 	}
 }
 
+// init --source commits scaffolds a commit-driven workspace non-interactively,
+// writing versioning.source so a version run reads intent from commits.
+func TestInitSourceCommitsWritesVersioning(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+
+	code, out := runChangerig(t, dir, "init", "--source", "commits")
+
+	assertExitZero(t, code, out)
+	assertContains(t, out, "source: commits")
+	cfg, err := config.Load(filepath.Join(dir, ".changeset"))
+	if err != nil {
+		t.Fatalf("written config does not parse: %v", err)
+	}
+	if got := cfg.CommitSource(); got != config.SourceCommits {
+		t.Errorf("CommitSource() = %q, want commits", got)
+	}
+}
+
+// An unknown --source is rejected before anything is written.
+func TestInitSourceInvalidFails(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+
+	code, out := runChangerig(t, dir, "init", "--source", "bogus")
+
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "source")
+	if fileExists(filepath.Join(dir, ".changeset", "config.json")) {
+		t.Error("config.json should not be written when --source is invalid")
+	}
+}
+
+// The default init (no --source, off a TTY) stays changeset mode and omits the
+// versioning block, so the classic config round-trips to changesets.
+func TestInitDefaultsToChangesets(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+
+	code, out := runChangerig(t, dir, "init")
+	assertExitZero(t, code, out)
+
+	cfg, err := config.Load(filepath.Join(dir, ".changeset"))
+	if err != nil {
+		t.Fatalf("written config does not parse: %v", err)
+	}
+	if got := cfg.CommitSource(); got != config.SourceChangesets {
+		t.Errorf("CommitSource() = %q, want changesets", got)
+	}
+}
+
 // --- add (AddCommandTests, non-interactive forms) ---
 
 // Ported from AddCommand_Empty_CreatesEmptyChangesetThatRoundTrips: --empty
@@ -194,6 +245,24 @@ func TestAddNotInitialized(t *testing.T) {
 	assertExitNonZero(t, code, out)
 	assertContains(t, out, "changerig init")
 	assertContains(t, out, ".changeset")
+}
+
+// In a commits-mode workspace, `add` doesn't write a changeset file — the
+// commits are the release source, so it guides the user to a conventional
+// commit instead. (Reachable now that init can scaffold commits mode.)
+func TestAddInCommitsModeGuidesToConventionalCommits(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "updateInternalDependencies": "patch", "versioning": { "source": "commits" } }`)
+
+	code, out := runChangerig(t, dir, "add", "-m", "a feature", "-p", "pkg-a")
+
+	assertExitZero(t, code, out)
+	assertContains(t, out, "conventional commit")
+	if files := changesetFiles(t, dir); len(files) != 0 {
+		t.Errorf("commits mode should write no changeset file, got %v", files)
+	}
 }
 
 // --- status (StatusChangesetCommandTests) ---
@@ -484,6 +553,7 @@ func TestInfoListsConfigAndPackages(t *testing.T) {
 	assertExitZero(t, code, out)
 	assertContains(t, out, "initialized: true")
 	assertContains(t, out, "baseBranch:  main")
+	assertContains(t, out, "source:      changesets")
 	assertContains(t, out, "Packages (1)")
 	assertContains(t, out, "pkg-a")
 	assertContains(t, out, "Changesets: 1")
@@ -515,6 +585,39 @@ func TestUnknownSubcommandFails(t *testing.T) {
 	assertExitNonZero(t, code, out)
 	assertContains(t, out, "unknown command")
 	assertContains(t, out, "definitely-not-a-command")
+}
+
+// --- shiprig default command (bare shiprig = status, not add) ---
+
+// Bare `shiprig` shows the pending release plan (it delegates to status), so an
+// initialized workspace with a changeset lists the package and its target
+// version — and writes no changeset, unlike the old `add` default.
+func TestShiprigBareShowsStatus(t *testing.T) {
+	dir := newWorkspace(t)
+	writeChangeset(t, dir, "cs1", "pkg-a", "minor", "a change")
+
+	code, out := runShiprig(t, dir)
+
+	assertExitZero(t, code, out)
+	assertContains(t, out, "pkg-a")
+	assertContains(t, out, "1.1.0")
+	// status never creates changesets; only the seeded one exists.
+	if files := changesetFiles(t, dir); len(files) != 1 {
+		t.Errorf("bare shiprig should not create a changeset, files = %v", files)
+	}
+}
+
+// Bare `shiprig` in an uninitialized repo, off a TTY (can't offer setup), fails
+// with actionable guidance pointing at `shiprig init` rather than the raw
+// no-changesets error.
+func TestShiprigBareUninitializedGuidesToInit(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+
+	code, out := runShiprig(t, dir)
+
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "shiprig init")
 }
 
 // --- tag (TagChangesetCommandTests, shiprig binary) ---
