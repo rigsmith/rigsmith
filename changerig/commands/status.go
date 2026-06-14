@@ -18,6 +18,8 @@ import (
 	"github.com/rigsmith/core/plugin"
 	"github.com/rigsmith/core/prestate"
 	"github.com/rigsmith/core/since"
+
+	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 )
 
@@ -65,7 +67,7 @@ func NewStatusCmd() *cobra.Command {
 				printSetupNextStep(cmd, ws)
 				return nil
 			}
-			pkgs, _, err := ws.Discover(cmd.Context())
+			pkgs, ecoOf, err := ws.Discover(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -112,6 +114,16 @@ func NewStatusCmd() *cobra.Command {
 					fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("No releasable commits since the last release."))
 					return nil
 				}
+				// On a real terminal (not a pipe/CI, and not the machine-readable
+				// --output or the --since gate), a bare `shiprig`/`status` with
+				// nothing pending shouldn't dead-end on a red error — show the
+				// source, the packages at their current versions, and the next
+				// step. The hard error stays for scripted/CI use, which is the
+				// whole reason `status` exists.
+				if output == "" && sinceRef == "" && term.IsTerminal(os.Stdout.Fd()) {
+					printEmptyStatusPanel(cmd, ws, pkgs, ecoOf)
+					return nil
+				}
 				return errors.New("no changesets found")
 			}
 
@@ -151,6 +163,25 @@ func printSetupNextStep(cmd *cobra.Command, ws *Workspace) {
 	default:
 		fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("Add a changeset with `%s add`, then re-run `%s` to see the plan.", tool, tool)))
 	}
+}
+
+// printEmptyStatusPanel renders the friendly "nothing pending" overview shown on
+// an interactive terminal in changeset mode: the active source, the discovered
+// packages at their current versions, and the next step. It replaces the hard
+// "no changesets found" gate error, which is preserved for scripted/CI use.
+func printEmptyStatusPanel(cmd *cobra.Command, ws *Workspace, pkgs []plugin.Package, ecoOf map[string]string) {
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "%s %s\n", HeaderStyle.Render("Source:"), ws.Config.CommitSource())
+
+	sorted := append([]plugin.Package(nil), pkgs...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	fmt.Fprintf(out, "\n%s\n", HeaderStyle.Render(fmt.Sprintf("Packages (%d)", len(sorted))))
+	for _, p := range sorted {
+		fmt.Fprintf(out, "  %s %s %s\n", p.Name, DimStyle.Render(p.Version), DimStyle.Render("["+ecoOf[p.Name]+"]"))
+	}
+
+	fmt.Fprintf(out, "\n%s\n", DimStyle.Render("Nothing to release yet."))
+	printSetupNextStep(cmd, ws)
 }
 
 // writeStatusPlan serializes the plan as { releases: [{ name, type, newVersion }] }.
