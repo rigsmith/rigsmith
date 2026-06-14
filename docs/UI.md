@@ -28,8 +28,9 @@ non-interactive path — it never hangs waiting for input. Two helpers gate this
 
 **Bare invocation → the menu.** Run truly bare (no verb, no flags) on a TTY,
 each tool lands on its interactive hub — `rig`/`changerig`/`shiprig` open their
-menu, `clauderig` its dashboard — with a context-aware **next step** in view
-(and, for the verb menus, pre-selected): `init` when nothing's set up, `add`
+menu, `clauderig` its dashboard (a status panel above the same navigable
+`↑/↓`+`enter` action list, with `i`/`s`/`r`/`t` as accelerators) — with a
+context-aware **next step** pre-selected: `init` when nothing's set up, `add`
 when there's nothing to release, `status`/`version` when changesets are pending.
 With *any* arg or flag, or off a TTY, the prior behavior stands — help for
 `rig`/`clauderig`, `status` for `shiprig`, `add` for `changerig` — so scripts,
@@ -40,9 +41,9 @@ hooks, and `-h` are unchanged. `rig`/`clauderig` route through their `ui` verb
 shows only what's actionable now. `rig` already hides verbs the ecosystem can't
 map and adds a `▸ Project commands` group for configured commands/scripts;
 `changerig`/`shiprig` gate the lifecycle by source mode + pending changesets +
-prerelease (and shipRig adds its release verbs); `clauderig` offers `sync` only
-with a remote and `restore` only with a snapshot to pull. The legend/menu lists
-only the available actions, so a verb that would just error never appears.
+prerelease (and shipRig adds its release verbs); `clauderig` lists `sync` only
+with a remote and `restore` only with a snapshot to pull. The menu shows only
+the available actions, so a verb that would just error never appears.
 
 **Bypass flags.** `--dry-run` skips side-effects (and the prompts guarding them);
 `--quiet` suppresses the `→ command` echo and the spinner; `--yes`/`-y` bypasses

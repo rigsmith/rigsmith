@@ -64,15 +64,59 @@ func TestDashboard_NextStep(t *testing.T) {
 		info status.Info
 		has  string
 	}{
-		{"no remote → init", status.Info{}, "init"},
+		{"no remote → init", status.Info{}, "Init"},
 		{"never synced → sync", status.Info{Remote: "git@x"}, "snapshot"},
 		{"dirty → sync", status.Info{Remote: "git@x", LastSync: "abc", Dirty: true}, "not pushed"},
-		{"clean → restore", status.Info{Remote: "git@x", LastSync: "abc"}, "restore"},
+		{"clean → restore", status.Info{Remote: "git@x", LastSync: "abc"}, "Restore"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := New(tc.info).nextStep(); !strings.Contains(got, tc.has) {
 				t.Errorf("nextStep = %q, want substring %q", got, tc.has)
+			}
+		})
+	}
+}
+
+// The menu is navigable: ↑/↓ move a cursor and enter selects the highlighted
+// action — not just hotkeys.
+func TestDashboard_NavigateAndSelect(t *testing.T) {
+	// Full state → items: Init, Sync, Restore, Status. Recommended (clean) is
+	// Restore, so the cursor starts there.
+	m := New(status.Info{Remote: "git@x", LastSync: "abc"})
+	if got := m.items[m.cursor].key; got != "restore" {
+		t.Fatalf("cursor starts on %q, want restore (the recommended step)", got)
+	}
+	// Move up twice (Restore → Sync → Init), then enter selects Init.
+	up, _ := m.Update(keyMsg("k"))
+	up, _ = up.(Model).Update(keyMsg("k"))
+	sel, cmd := up.(Model).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if sel.(Model).Chosen != "init" {
+		t.Fatalf("after up×2 + enter, Chosen = %q, want init", sel.(Model).Chosen)
+	}
+	if cmd == nil {
+		t.Error("enter should return a command (tea.Quit)")
+	}
+}
+
+// The cursor opens on the recommended next step for the state.
+func TestDashboard_CursorOnRecommended(t *testing.T) {
+	cases := map[string]struct {
+		info status.Info
+		want string
+	}{
+		"no remote":      {status.Info{}, "init"},
+		"remote, unsync": {status.Info{Remote: "git@x"}, "sync"},
+		"clean":          {status.Info{Remote: "git@x", LastSync: "abc"}, "restore"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			m := New(tc.info)
+			if got := m.items[m.cursor].key; got != tc.want {
+				t.Errorf("cursor on %q, want %q", got, tc.want)
+			}
+			if !m.items[m.cursor].recommended {
+				t.Error("cursor item should be flagged recommended")
 			}
 		})
 	}
