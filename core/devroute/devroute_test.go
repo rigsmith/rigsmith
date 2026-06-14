@@ -23,7 +23,8 @@ func TestSlug(t *testing.T) {
 
 func TestRouteFileUnderStateDir(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	t.Setenv("HOME", home)         // os.UserHomeDir on unix
+	t.Setenv("USERPROFILE", home)  // os.UserHomeDir on windows
 	t.Setenv("XDG_STATE_HOME", "") // exercise the ~/.local/state fallback
 	got, err := RouteFile("/repo/x")
 	if err != nil {
