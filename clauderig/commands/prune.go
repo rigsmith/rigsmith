@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -92,8 +93,14 @@ branch, so keep it current (e.g. pull main).`,
 				return fmt.Errorf("prune deletes branches and must be confirmed at a terminal — it won't run non-interactively; use -n to preview, or worktree prune / branch prune for unattended cleanup")
 			}
 
-			// Preview the plan, then confirm before touching anything.
-			planW, planB, err := run(out, true)
+			// Capture the plan into a buffer and show it *inside* the confirm dialog,
+			// as a Note above the Confirm in one huh form. The whole thing is then a
+			// single bubbletea view that owns and clears its own lines. (Printing the
+			// plan first and then launching a separate form makes the form repaint
+			// over the already-printed lines, leaving stale tails bleeding through
+			// from longer scrollback — the misdisplay this avoids.)
+			var plan bytes.Buffer
+			planW, planB, err := run(&plan, true)
 			if err != nil {
 				return err
 			}
@@ -101,11 +108,14 @@ branch, so keep it current (e.g. pull main).`,
 				fmt.Fprintf(out, "%s\n", DimStyle.Render("nothing to prune"))
 				return nil
 			}
-			fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf("%d worktrees, %d branches to remove", planW, planB)))
+			summary := fmt.Sprintf("%d worktree(s), %d branch(es) to remove", planW, planB)
+			planText := strings.TrimRight(plan.String(), "\n") + "\n\n" + DimStyle.Render(summary)
+
 			proceed := false
 			if err := huh.NewForm(huh.NewGroup(
+				huh.NewNote().Title("Prune plan").Description(planText),
 				huh.NewConfirm().
-					Title(fmt.Sprintf("Remove these %d worktree(s) and %d branch(es)?", planW, planB)).
+					Title("Remove these?").
 					Affirmative("Yes, prune").
 					Negative("Cancel").
 					Value(&proceed),
