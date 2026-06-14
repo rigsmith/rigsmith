@@ -436,9 +436,19 @@ func stringFieldRe(field string) *regexp.Regexp {
 	return regexp.MustCompile(`("` + regexp.QuoteMeta(field) + `"\s*:\s*")([^"]*)(")`)
 }
 
-// setStringField replaces the first `"field": "..."` value, preserving layout.
+// setStringField replaces only the FIRST `"field": "..."` value, preserving
+// layout. package.json's canonical top-level "version"/"name" precede any nested
+// occurrence, so replacing just the first avoids corrupting a same-named nested
+// field (e.g. publishConfig.version, or a "version" key inside a dependency
+// object) — ReplaceAllString would have rewritten every one of them.
 func setStringField(text, field, value string) string {
-	return stringFieldRe(field).ReplaceAllString(text, "${1}"+value+"${3}")
+	loc := stringFieldRe(field).FindStringSubmatchIndex(text)
+	if loc == nil {
+		return text
+	}
+	// Submatch indices: group 2 (the value) spans [loc[4], loc[5]); splice the
+	// new value in literally so it is not subject to `$` expansion.
+	return text[:loc[4]] + value + text[loc[5]:]
 }
 
 // setDependencyRange rewrites a `"<name>": "<range>"` entry's value wherever it

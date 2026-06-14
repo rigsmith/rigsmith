@@ -2,6 +2,8 @@ package commands
 
 import (
 	"fmt"
+	"os"
+	"sort"
 	"time"
 
 	"github.com/rigsmith/clauderig/internal/config"
@@ -177,10 +179,28 @@ func NewSyncCmd() *cobra.Command {
 	return cmd
 }
 
-// machineName returns this machine's configured name, or "this" if not yet named.
+// machineName returns this host's configured machine name. It identifies the
+// local machine by its stable path identity (OS token + home directory) rather
+// than picking an arbitrary map entry, so a config that registers more than one
+// machine resolves deterministically to the right one instead of flipping with
+// Go's randomized map iteration. Falls back to the OS hostname, then "this",
+// when no registered machine matches this host.
 func machineName(cfg *config.Config) string {
+	localOS := config.OSToken()
+	home, _ := os.UserHomeDir()
+
+	names := make([]string, 0, len(cfg.Machines))
 	for name := range cfg.Machines {
-		return name
+		names = append(names, name)
+	}
+	sort.Strings(names) // deterministic order if several entries somehow match
+	for _, name := range names {
+		if m := cfg.Machines[name]; m.OS == localOS && m.Home == home {
+			return name
+		}
+	}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return host
 	}
 	return "this"
 }

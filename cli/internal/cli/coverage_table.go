@@ -126,8 +126,11 @@ func coverageFiles(eco, root, goProfile string) ([]fileCov, bool) {
 // coberturaFileCov aggregates a Cobertura document into per-file line coverage,
 // merging the (possibly several) classes that share a filename. Pure.
 func coberturaFileCov(doc coberturaDoc) []fileCov {
-	type acc struct{ covered, total int }
-	byFile := map[string]*acc{}
+	// Dedupe by line number (max hits), exactly like coberturaDetail: Cobertura
+	// reports (notably C#/ReportGenerator) emit one <class> per method, so a
+	// source file's lines repeat across several class blocks. Counting per <line>
+	// element would inflate the denominator and skew the percentage.
+	byFile := map[string]map[int]int{} // file → line number → max hits
 	var order []string
 	for _, p := range doc.Packages {
 		for _, c := range p.Classes {
@@ -135,24 +138,29 @@ func coberturaFileCov(doc coberturaDoc) []fileCov {
 			if name == "" {
 				name = c.Name
 			}
-			a, ok := byFile[name]
+			m, ok := byFile[name]
 			if !ok {
-				a = &acc{}
-				byFile[name] = a
+				m = map[int]int{}
+				byFile[name] = m
 				order = append(order, name)
 			}
 			for _, l := range c.Lines {
-				a.total++
-				if l.Hits > 0 {
-					a.covered++
+				if cur, seen := m[l.Number]; !seen || l.Hits > cur {
+					m[l.Number] = l.Hits
 				}
 			}
 		}
 	}
 	out := make([]fileCov, 0, len(order))
 	for _, name := range order {
-		a := byFile[name]
-		out = append(out, fileCov{name: name, covered: a.covered, total: a.total})
+		var covered, total int
+		for _, hits := range byFile[name] {
+			total++
+			if hits > 0 {
+				covered++
+			}
+		}
+		out = append(out, fileCov{name: name, covered: covered, total: total})
 	}
 	return out
 }

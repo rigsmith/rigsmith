@@ -57,6 +57,18 @@ func ModuleTag(dirRel, version string) string {
 	return tagPrefix(dirRel) + "v" + strings.TrimPrefix(version, "v")
 }
 
+// PackageTag returns the canonical git tag for a package release: Go modules use
+// the module-path convention (dir/vX.Y.Z); every other ecosystem uses
+// name@version. This is the single source of truth shared by the tag/publish
+// steps and the forge (GitHub release) step, so a release attaches to the tag
+// that was actually pushed instead of creating a divergent one.
+func PackageTag(eco, dirRel, name, version string) string {
+	if eco == "go" {
+		return ModuleTag(dirRel, version)
+	}
+	return name + "@" + version
+}
+
 func tagPrefix(dirRel string) string {
 	dirRel = strings.TrimPrefix(filepathToSlash(dirRel), "./")
 	if dirRel == "" || dirRel == "." {
@@ -74,6 +86,17 @@ func filepathToSlash(p string) string {
 // TagExists reports whether a tag already exists in the repo.
 func TagExists(ctx context.Context, repoRoot, tag string) bool {
 	out, err := runGit(ctx, repoRoot, "tag", "--list", tag)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(out) != ""
+}
+
+// RemoteTagExists reports whether tag is present on the given remote. Used to
+// distinguish "fully published" from "tagged locally but the push failed", so a
+// re-run can recover by pushing the existing tag rather than skipping it.
+func RemoteTagExists(ctx context.Context, repoRoot, remote, tag string) bool {
+	out, err := runGit(ctx, repoRoot, "ls-remote", "--tags", remote, "refs/tags/"+tag)
 	if err != nil {
 		return false
 	}

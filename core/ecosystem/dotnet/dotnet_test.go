@@ -190,6 +190,52 @@ func TestSetVersionInsertsWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestSetVersionRewritesOnlyFirstVersion pins the fix where SetVersion rewrote
+// EVERY <Version> element. A csproj with two PropertyGroups, each carrying its
+// own <Version> under a different Condition, must have only the FIRST <Version>
+// changed; the second is left untouched.
+func TestSetVersionRewritesOnlyFirstVersion(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, "Multi.csproj")
+	writeFile(t, manifest, `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <Version>3.0.0</Version>
+  </PropertyGroup>
+</Project>`)
+
+	a := New()
+	err := a.SetVersion(context.Background(), plugin.SetVersionRequest{
+		RepoRoot:   root,
+		Package:    plugin.Package{ManifestPath: "Multi.csproj"},
+		NewVersion: "2.0.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(mustRead(t, manifest))
+	if !strings.Contains(got, "<Version>2.0.0</Version>") {
+		t.Errorf("first <Version> not updated: %q", got)
+	}
+	if !strings.Contains(got, "<Version>3.0.0</Version>") {
+		t.Errorf("second <Version> must stay 3.0.0: %q", got)
+	}
+	if strings.Contains(got, "<Version>1.0.0</Version>") {
+		t.Errorf("first <Version> should no longer be 1.0.0: %q", got)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 func keys(m map[string]plugin.Package) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

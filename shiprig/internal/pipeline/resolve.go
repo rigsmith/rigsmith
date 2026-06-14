@@ -168,9 +168,14 @@ func stepAction(name string, config *Config, stepConfig *StepConfig) ([]CommandS
 		if stepConfig != nil && stepConfig.Message != nil {
 			message = *stepConfig.Message
 		}
+		// Commit only when `git add -A` actually staged something. The `version`
+		// step (and changerig's `commit` config key) may have already committed,
+		// leaving an empty index — a bare `git commit` then exits non-zero with
+		// "nothing to commit" and fails the whole release. `git diff --cached
+		// --quiet` exits 0 when the index is clean, short-circuiting the commit.
 		return []CommandSpec{
 			ArgvCommand("git", "add", "-A"),
-			ArgvCommand("git", "commit", "-m", message),
+			ShellCommand("git diff --cached --quiet || git commit -m " + shellSingleQuote(message)),
 		}, true
 
 	case "publish":
@@ -183,6 +188,13 @@ func stepAction(name string, config *Config, stepConfig *StepConfig) ([]CommandS
 	default:
 		return nil, false
 	}
+}
+
+// shellSingleQuote wraps s in single quotes for safe interpolation into a
+// /bin/sh command line. Each embedded single quote is escaped with the standard
+// POSIX sequence: close the quote, emit a backslash-escaped quote, reopen it.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func toolOf(config *Config) string {

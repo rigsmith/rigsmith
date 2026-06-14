@@ -57,10 +57,8 @@ func newTagCmd() *cobra.Command {
 }
 
 // tagName builds the tag for a package. Go uses the module-path convention; all
-// others use name@version.
+// others use name@version. Delegates to gitutil.PackageTag so the tag/publish
+// steps and the forge release step agree on the tag name.
 func tagName(eco, dir, name, version string) string {
-	if eco == "go" {
-		return gitutil.ModuleTag(dir, version)
-	}
-	return name + "@" + version
+	return gitutil.PackageTag(eco, dir, name, version)
 }

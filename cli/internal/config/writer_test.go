@@ -116,7 +116,10 @@ func TestConfigWriter_WhitespaceOnlyExistingFileIsWrittenFresh(t *testing.T) {
 func TestConfigWriter_SetRepoStringReturnsTheRepoConfigPath(t *testing.T) {
 	dir := t.TempDir()
 
-	returned := SetRepoString(dir, "defaultProject", "App")
+	returned, ok := SetRepoString(dir, "defaultProject", "App")
+	if !ok {
+		t.Fatalf("SetRepoString reported failure writing to a fresh dir")
+	}
 
 	if want := filepath.Join(dir, FileName); returned != want {
 		t.Fatalf("returned path = %q, want %q", returned, want)
@@ -126,12 +129,33 @@ func TestConfigWriter_SetRepoStringReturnsTheRepoConfigPath(t *testing.T) {
 	}
 }
 
+func TestConfigWriter_SetRepoStringReportsFailureWithoutClobbering(t *testing.T) {
+	dir := t.TempDir()
+	// A non-empty .rig.json whose root is a JSON array (valid JSON, but not an
+	// object) can't have a top-level property spliced in — confkit.Writer.Set
+	// declines rather than clobber it (jsonc.Set returns false: "not a JSON
+	// object"). SetRepoString must surface that as ok==false.
+	const original = `[1, 2, 3]`
+	path := writeRigJSON(t, dir, original)
+
+	returned, ok := SetRepoString(dir, "defaultProject", "App")
+	if ok {
+		t.Fatal("SetRepoString reported success, want ok==false for an unspliceable file")
+	}
+	if want := filepath.Join(dir, FileName); returned != want {
+		t.Fatalf("returned path = %q, want %q even on failure", returned, want)
+	}
+	if text := readFileT(t, path); text != original {
+		t.Fatalf("file was modified, want it left intact:\ngot:  %q\nwant: %q", text, original)
+	}
+}
+
 // ---- ConventionTests (ConfigWriter cases) ----
 
 func TestConvention_ConfigWriterCreatesFileWithProperty(t *testing.T) {
 	dir := t.TempDir()
 
-	path := SetRepoString(dir, "defaultProject", "App.Desktop")
+	path, _ := SetRepoString(dir, "defaultProject", "App.Desktop")
 
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("config file not created: %v", err)

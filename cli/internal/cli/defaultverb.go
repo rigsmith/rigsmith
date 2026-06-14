@@ -112,7 +112,10 @@ func pickProject(title string, projects []detect.ProjectInfo) (*detect.ProjectIn
 // persistDefault writes defaultProject = name to the repo's .rig.json via the
 // comment-preserving writer and reports where it landed.
 func persistDefault(cmd *cobra.Command, root, name string) error {
-	path := config.SetRepoString(root, "defaultProject", name)
+	path, ok := config.SetRepoString(root, "defaultProject", name)
+	if !ok {
+		return fmt.Errorf("could not write defaultProject to %s: the existing file could not be edited in place", filepath.Base(path))
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Set defaultProject = %s in %s\n", name, filepath.Base(path))
 	return nil
 }

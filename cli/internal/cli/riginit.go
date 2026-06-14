@@ -258,7 +258,11 @@ func setDefaultProject(root string, cfg config.Config, query string) (string, er
 	if res.Selected == nil {
 		return "", fmt.Errorf("%q matches multiple projects", query)
 	}
-	return config.SetRepoString(root, "defaultProject", res.Selected.Name), nil
+	path, ok := config.SetRepoString(root, "defaultProject", res.Selected.Name)
+	if !ok {
+		return "", fmt.Errorf("could not write defaultProject to %s: the existing file could not be edited in place", filepath.Base(path))
+	}
+	return path, nil
 }
 
 // newRigInitCmd scaffolds a .rig.json at the repo root. It refuses to overwrite.

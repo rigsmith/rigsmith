@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/core/config"
+	"github.com/rigsmith/core/gitutil"
 	"github.com/rigsmith/core/plugin"
 )
 
@@ -78,7 +79,10 @@ const changelogFileName = "CHANGELOG.md"
 // run-level summary for the early-exit paths ("no packages", mode disabled,
 // auto-skip) or the failure description. ok is false only when a
 // `gh release create` exits non-zero.
-func Run(packages []plugin.Package, cfg *config.Config, mode Mode, repoRoot string, run Runner, report func(lines ...string)) (ok bool, message string) {
+// ecoOf maps a package name to its ecosystem id (e.g. "go", "node"), so the
+// release tag matches the one the tag/publish steps pushed. A package missing
+// from the map falls back to the name@version convention.
+func Run(packages []plugin.Package, ecoOf map[string]string, cfg *config.Config, mode Mode, repoRoot string, run Runner, report func(lines ...string)) (ok bool, message string) {
 	if report == nil {
 		report = func(...string) {}
 	}
@@ -106,7 +110,12 @@ func Run(packages []plugin.Package, cfg *config.Config, mode Mode, repoRoot stri
 	}
 
 	for _, pkg := range released {
-		tag := title(pkg) + "@" + pkg.Version
+		// The positional arg must be the tag the tag/publish steps actually pushed
+		// (Go: dir/vX.Y.Z), so gh attaches the release to it instead of creating a
+		// new, divergent tag at HEAD. The human-facing title keeps the friendly
+		// DisplayName@version form.
+		tag := gitutil.PackageTag(ecoOf[pkg.Name], pkg.Dir, pkg.Name, pkg.Version)
+		releaseTitle := title(pkg) + "@" + pkg.Version
 
 		if releaseExists(tag, repoRoot, run) {
 			report(tag + ": release already exists, skipped.")
@@ -115,10 +124,10 @@ func Run(packages []plugin.Package, cfg *config.Config, mode Mode, repoRoot stri
 
 		notes := extractNotes(pkg, repoRoot)
 		if notes == "" {
-			notes = tag
+			notes = releaseTitle
 		}
 
-		argv := []string{"gh", "release", "create", tag, "--title", tag, "--notes", notes}
+		argv := []string{"gh", "release", "create", tag, "--title", releaseTitle, "--notes", notes}
 		report("githubRelease: " + strings.Join(argv, " "))
 		out, err := run(repoRoot, argv[0], argv[1:]...)
 		if out != "" {

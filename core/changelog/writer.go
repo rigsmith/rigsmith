@@ -30,7 +30,10 @@ func WriteEntry(dir, displayName, entry string) error {
 		if nl := strings.IndexByte(text, '\n'); nl >= 0 {
 			body = text[:nl+1] + "\n" + entry + text[nl+1:]
 		} else {
-			body = header + "\n" + entry
+			// Non-empty but newline-free: a single line (e.g. an existing title
+			// with no trailing newline). Treat it as the first line and insert the
+			// entry after it — the old code discarded this content entirely.
+			body = text + "\n\n" + entry
 		}
 	}
 	return os.WriteFile(path, []byte(body), 0o644)

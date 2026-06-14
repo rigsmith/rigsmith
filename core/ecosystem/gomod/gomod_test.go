@@ -72,6 +72,81 @@ require (
 	}
 }
 
+// TestParseModuleForeignComment pins the fix that a FOREIGN trailing comment on
+// the module line (e.g. a `// Deprecated:` directive) no longer makes parseModule
+// return "" and silently skip the module. The canonical cases (rigsmith
+// annotation, and a bare module line) are asserted alongside to document intent.
+func TestParseModuleForeignComment(t *testing.T) {
+	cases := []struct {
+		name        string
+		line        string
+		wantModule  string
+		wantVersion string
+	}{
+		{
+			name:        "foreign comment tolerated",
+			line:        "module example.com/foo // Deprecated: use bar",
+			wantModule:  "example.com/foo",
+			wantVersion: defaultVersion, // no rigsmith annotation → default
+		},
+		{
+			name:        "rigsmith annotation still captured",
+			line:        "module example.com/foo // rigsmith:version 1.2.3",
+			wantModule:  "example.com/foo",
+			wantVersion: "1.2.3",
+		},
+		{
+			name:        "bare module line",
+			line:        "module example.com/foo",
+			wantModule:  "example.com/foo",
+			wantVersion: defaultVersion,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			text := c.line + "\n\ngo 1.26\n"
+			mod, ver := parseModule(text)
+			if mod != c.wantModule {
+				t.Errorf("module = %q, want %q", mod, c.wantModule)
+			}
+			if ver != c.wantVersion {
+				t.Errorf("version = %q, want %q", ver, c.wantVersion)
+			}
+		})
+	}
+}
+
+// TestSetVersionCommentForeignComment pins that setVersionComment does NOT
+// clobber a pre-existing foreign comment on the module line (go.mod allows one
+// comment per line; the authoritative version is the git tag). A clean line gets
+// the annotation appended; a line with an existing rigsmith annotation has it
+// replaced.
+func TestSetVersionCommentForeignComment(t *testing.T) {
+	// Foreign comment is preserved untouched.
+	foreign := "module example.com/foo // Deprecated: use bar\n\ngo 1.26\n"
+	got := setVersionComment(foreign, "2.0.0")
+	if !strings.Contains(got, "// Deprecated: use bar") {
+		t.Errorf("foreign comment clobbered: %q", got)
+	}
+	if strings.Contains(got, "rigsmith:version") {
+		t.Errorf("annotation should not be buried behind a foreign comment: %q", got)
+	}
+
+	// Clean line: annotation appended.
+	clean := "module example.com/foo\n\ngo 1.26\n"
+	got = setVersionComment(clean, "2.0.0")
+	if !strings.Contains(got, "module example.com/foo // rigsmith:version 2.0.0") {
+		t.Errorf("annotation not appended to clean line: %q", got)
+	}
+
+	// Existing rigsmith annotation: replaced, not duplicated.
+	annotated := "module example.com/foo // rigsmith:version 1.0.0\n\ngo 1.26\n"
+	got = setVersionComment(annotated, "2.0.0")
+	if strings.Count(got, "rigsmith:version") != 1 || !strings.Contains(got, "rigsmith:version 2.0.0") {
+		t.Errorf("annotation not replaced in place: %q", got)
+	}
+}
+
 func TestSetVersionCreatesComment(t *testing.T) {
 	root := t.TempDir()
 	manifest := filepath.Join(root, "go.mod")

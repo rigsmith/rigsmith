@@ -61,6 +61,45 @@ func TestParseCRLF(t *testing.T) {
 	}
 }
 
+// TestParseSummaryNoBlankSeparator pins the fix where a summary beginning on the
+// line IMMEDIATELY after the closing `---` (no blank separator) was dropped to
+// "". The canonical form (with a blank line) and an empty changeset are asserted
+// alongside to document intent.
+func TestParseSummaryNoBlankSeparator(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "no blank separator",
+			content: "---\n\"Pkg\": patch\n---\nfix it",
+			want:    "fix it",
+		},
+		{
+			name:    "canonical blank separator",
+			content: "---\n\"Pkg\": patch\n---\n\nfix it",
+			want:    "fix it",
+		},
+		{
+			name:    "empty changeset",
+			content: "---\n---\n",
+			want:    "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cs, err := Parse(c.content, "x")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cs.Summary != c.want {
+				t.Errorf("summary = %q, want %q", cs.Summary, c.want)
+			}
+		})
+	}
+}
+
 func TestRenderRoundTrip(t *testing.T) {
 	releases := []Release{{"PackageA", BumpMajor}, {"PackageB", BumpMinor}}
 	out := Render(releases, "a change", "", false)
