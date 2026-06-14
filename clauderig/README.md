@@ -74,8 +74,7 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `doctor` | Health-check environment + sync + worktree discipline; `--fix` repairs, or pick fixes interactively |
 | `ui` | Interactive dashboard |
 
-See [docs/CLAUDERIG-DESIGN.md](../docs/CLAUDERIG-DESIGN.md) for the design and
-[docs/CLAUDERIG-ROADMAP.md](../docs/CLAUDERIG-ROADMAP.md) for status.
+See [docs/CLAUDERIG-DESIGN.md](../docs/CLAUDERIG-DESIGN.md) for the design.
 
 ## Install
 

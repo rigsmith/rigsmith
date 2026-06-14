@@ -8,6 +8,9 @@ coverage.*
 !coverage.go
 !coverage_report.go
 
+# Local archive of pruned planning docs (purged from git history; kept on disk only)
+/docs-archive/
+
 # Editors / OS
 .DS_Store
 .idea/

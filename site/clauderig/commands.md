@@ -94,6 +94,5 @@ for the guard rules and the full model.
 
 ::: tip
 See the [design doc](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/CLAUDERIG-DESIGN.md)
-and [roadmap](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/CLAUDERIG-ROADMAP.md)
 for the full picture.
 :::

@@ -20,5 +20,4 @@ The full surface is wired: `init`, `add`, `status` (incl. `--since` and
 `pre`, `info`, `ui`, `tag`, `publish` (idempotent, confirm-gated on a TTY,
 `--yes` for CI), and `release` — the configurable step pipeline
 (`.changeset/release.jsonc`: steps/hooks/vars/confirm gates/secret masking,
-GitHub forge releases). See [../docs/RELEASE-ORCHESTRATOR.md](../docs/RELEASE-ORCHESTRATOR.md)
-and [../docs/FEATURE-PARITY.md](../docs/FEATURE-PARITY.md).
+GitHub forge releases). See [../docs/FEATURE-PARITY.md](../docs/FEATURE-PARITY.md).

@@ -50,6 +50,5 @@ its private-repo gate.
 
 ::: warning Status
 The native package channels (Homebrew, Scoop, the `rigsmith.sh` installer) are
-being wired up. Until the first tagged release, build from source. See the
-[distribution plan](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/DISTRIBUTION.md).
+being wired up. Until the first tagged release, build from source.
 :::

@@ -16,7 +16,7 @@ What counts as "release intent" depends on the `mode` input:
 
 - **`changeset`** (default): the PR **adds a changeset** (`.changeset/<id>.md`, excluding `README.md`).
 - **`commit`**: the PR **title is a conventional commit** (`feat: …`, `fix(scope): …`, `feat!: …`).
-  Use this with [commit-based versioning](../../../docs/COMMIT-VERSIONING.md). On a squash-merge repo
+  Use this with commit-based versioning. On a squash-merge repo
   the PR title becomes the squash subject that lands on the base branch and drives the next release,
   so that is exactly what the gate validates.
 

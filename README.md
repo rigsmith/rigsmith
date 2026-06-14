@@ -58,9 +58,7 @@ is a Node reference plugin producing changelogen-style output. Set
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module layout, the shared-core boundary, how `rig` and `shiprig` relate.
 - [docs/PLUGIN-PROTOCOL.md](docs/PLUGIN-PROTOCOL.md) — the one extension mechanism (subprocess + versioned JSON) for both ecosystem adapters and changelog generators, and why built-ins dogfood it.
-- [docs/PORTING-PLAN.md](docs/PORTING-PLAN.md) — the original staged porting plan (historical; the port is complete — see FEATURE-PARITY.md for current state).
 - [docs/FEATURE-PARITY.md](docs/FEATURE-PARITY.md) — exhaustive feature-by-feature parity audit of rigsmith against net-changesets and rig (.NET + Node).
-- [docs/RELEASE-ORCHESTRATOR.md](docs/RELEASE-ORCHESTRATOR.md) — design for `shiprig release` + `.changeset/release.jsonc` (the configurable pipeline), mapped from net-changesets. **Built** (`shiprig/internal/pipeline` + `forge`).
 - [docs/GITHUB-ACTIONS.md](docs/GITHUB-ACTIONS.md) — the two composite Actions: `release` (the version-PR/publish loop) and `require-changeset` (the per-PR gate — comment + block, no hosted bot). **Built** (`.github/actions/`).
 
 ## Building

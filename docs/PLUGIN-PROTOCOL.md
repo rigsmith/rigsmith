@@ -84,6 +84,6 @@ Resolution: `default` → in-process built-in; a path → executed; a bare name 
 ## Status
 
 The protocol types, subprocess host, registry, and in-process built-ins exist
-and compile. What remains (PORTING-PLAN.md): route the built-in changelog
+and compile. What remains: route the built-in changelog
 renderer through `ChangelogRequest` (the dogfooding step), and ship a reference
 external plugin of each kind as a conformance test.

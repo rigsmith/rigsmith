@@ -1,7 +1,9 @@
 # claudeRig design
 
-> Status: **scoping** (2026-06-12). Decisions below are agreed with John in the
-> scoping session; nothing is built yet. This is the spec to build against.
+> Status: **built** (2026-06-12). This is the design spec the implementation was
+> built against; it's retained for the rationale — the allowlist verdicts, the
+> secrets model, and the path-rewrite/slug logic. See [FEATURE-PARITY.md](FEATURE-PARITY.md)
+> for the delivered surface.
 
 `clauderig` — the fourth rig: sync your Claude Code environment (config, skills,
 and session history) across machines via your own git remote, correcting paths

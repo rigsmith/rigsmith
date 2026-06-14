@@ -22,8 +22,8 @@ The pipeline file describes:
 Because each step is explicit, the same pipeline runs the same way locally and
 in CI — the only difference is the confirm gates, which `--yes` skips.
 
-::: tip Design reference
-See the [release orchestrator design](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/RELEASE-ORCHESTRATOR.md)
-for the full mapping from net-changesets and the `shiprig/internal/pipeline` +
-`forge` implementation.
+::: tip Implementation
+The pipeline lives in `shiprig/internal/pipeline` + `forge`; see the
+[feature-parity audit](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/FEATURE-PARITY.md)
+for the delivered surface.
 :::
