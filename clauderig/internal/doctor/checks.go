@@ -164,14 +164,14 @@ func checkProjectGuard(env Env) Result {
 }
 
 func checkGuide(env Env) Result {
-	ok, _ := claudemd.Present(env.ClaudeMd)
+	ok, _ := claudemd.AllPresent(env.ClaudeMd)
 	if ok {
 		return Result{Name: "CLAUDE.md guide", Status: OK, Detail: "present"}
 	}
 	return Result{Name: "CLAUDE.md guide", Status: Warn, Detail: "block missing",
-		FixLabel: "add CLAUDE.md guide block",
+		FixLabel: "add CLAUDE.md guide blocks",
 		Fix: func(ctx context.Context) error {
-			_, err := claudemd.Install(env.ClaudeMd)
+			_, err := claudemd.InstallAll(env.ClaudeMd)
 			return err
 		}}
 }
