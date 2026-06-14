@@ -155,6 +155,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	// Once an action is picked the program is quitting and about to run that
+	// command — erase the dashboard so the command's output starts on a clean
+	// screen instead of below a stale menu. (Plain quit keeps the dashboard.)
+	if m.Chosen != "" {
+		return ""
+	}
 	var b strings.Builder
 	b.WriteString(m.statusPanel())
 	b.WriteString("\n")

@@ -45,6 +45,12 @@ prerelease (and shipRig adds its release verbs); `clauderig` lists `sync` only
 with a remote and `restore` only with a snapshot to pull. The menu shows only
 the available actions, so a verb that would just error never appears.
 
+**Clean menu→command transition.** When you pick an item, the menu/dashboard
+erases itself on exit (its final view is empty), so the chosen command's output
+starts on a clean screen instead of below a stale menu. A plain quit (`q`/`esc`,
+nothing chosen) leaves the menu in scrollback. This relies on bubbletea writing
+the final model's `View()` on graceful shutdown.
+
 **Bypass flags.** `--dry-run` skips side-effects (and the prompts guarding them);
 `--quiet` suppresses the `→ command` echo and the spinner; `--yes`/`-y` bypasses
 confirm gates (the CI path).

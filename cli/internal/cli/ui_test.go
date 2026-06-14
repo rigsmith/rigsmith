@@ -218,6 +218,21 @@ func TestMenu_NextStepAndRecommendedTag(t *testing.T) {
 	}
 }
 
+// Selecting a verb erases the menu (empty view on the quitting frame), so the
+// dispatched command's output starts clean instead of below a stale menu; a
+// plain quit keeps the menu in scrollback.
+func TestMenu_ClearsOnSelect(t *testing.T) {
+	m := menuModel{stack: []frame{{items: []menuItem{{label: "build", verb: "build"}}}}}
+	sel, _ := m.Update(key(tea.KeyEnter))
+	if sel.(menuModel).View() != "" {
+		t.Error("menu should render empty after a verb is chosen")
+	}
+	q, _ := m.Update(key(tea.KeyEscape))
+	if q.(menuModel).View() == "" {
+		t.Error("plain quit should keep the menu rendered")
+	}
+}
+
 // A project command (custom/script verb) carries its own prebuilt command;
 // selecting it records that command to run on exit, not a built-in verb.
 func TestMenu_ProjectCommandCarriesItsCommand(t *testing.T) {

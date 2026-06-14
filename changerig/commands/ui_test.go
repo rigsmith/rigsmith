@@ -3,6 +3,8 @@ package commands
 import (
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // labels extracts menu item labels for assertions.
@@ -118,6 +120,21 @@ func TestRecommend(t *testing.T) {
 				t.Errorf("markRecommended did not flag target %q", target)
 			}
 		})
+	}
+}
+
+// Selecting a verb erases the menu (empty view on the quitting frame), so the
+// dispatched command's output starts clean instead of below a stale menu.
+func TestMenuView_ClearsOnSelect(t *testing.T) {
+	m := menuModel{title: "changerig", items: buildItems(wsState{initialized: true, usesChangesets: true}, nil)}
+	sel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if sel.(menuModel).View() != "" {
+		t.Error("menu should render empty after a verb is chosen")
+	}
+	// A plain quit (nothing chosen) keeps the menu rendered.
+	q, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if q.(menuModel).View() == "" {
+		t.Error("plain quit should keep the menu rendered")
 	}
 }
 

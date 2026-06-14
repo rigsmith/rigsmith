@@ -122,6 +122,21 @@ func TestDashboard_CursorOnRecommended(t *testing.T) {
 	}
 }
 
+// On selecting an action the dashboard erases itself (empty view on the
+// quitting frame), so the dispatched command starts on a clean screen; a plain
+// quit keeps the dashboard visible.
+func TestDashboard_ClearsOnSelect(t *testing.T) {
+	m := New(status.Info{Remote: "git@x", LastSync: "abc"})
+	sel, _ := m.Update(keyMsg("s"))
+	if sel.(Model).View() != "" {
+		t.Error("dashboard should render empty after an action is chosen")
+	}
+	q, _ := m.Update(keyMsg("q"))
+	if q.(Model).View() == "" {
+		t.Error("plain quit should keep the dashboard rendered")
+	}
+}
+
 func TestDashboard_QuitChoosesNothing(t *testing.T) {
 	base := New(status.Info{})
 	m, cmd := base.Update(keyMsg("q"))
