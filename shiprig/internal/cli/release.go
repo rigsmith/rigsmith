@@ -75,12 +75,12 @@ func newReleaseCmd() *cobra.Command {
 			}
 			newPipeline := func(reporter pipeline.Reporter, prompter pipeline.Prompter) *pipeline.Pipeline {
 				handler := func() bool {
-					pkgs, _, err := ws.Discover(cmd.Context())
+					pkgs, ecoOf, err := ws.Discover(cmd.Context())
 					if err != nil {
 						reporter.CommandOutput([]string{"discover: " + err.Error()})
 						return false
 					}
-					ok, msg := forge.Run(pkgs, ws.Config, fmode, ws.Root, execForgeRunner(cmd), func(lines ...string) {
+					ok, msg := forge.Run(pkgs, ecoOf, ws.Config, fmode, ws.Root, execForgeRunner(cmd), func(lines ...string) {
 						reporter.CommandOutput(lines)
 					})
 					if msg != "" {

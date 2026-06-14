@@ -127,6 +127,76 @@ func TestResolveBuiltinVersionUsesToolAndAppendsArgs(t *testing.T) {
 	}
 }
 
+func TestResolveBuiltinCommitGuardsAgainstEmptyIndex(t *testing.T) {
+	// The commit step stages everything, then commits only when the index is
+	// non-empty — an earlier step may have already committed, leaving an empty
+	// index that a bare `git commit` would fail on.
+	config := &Config{Order: []string{"commit"}}
+
+	commit := findStep(t, mustResolve(t, config, ResolveOptions{}), "commit")
+
+	if len(commit.Action) != 2 {
+		t.Fatalf("commit action = %d commands, want 2 (%+v)", len(commit.Action), commit.Action)
+	}
+	if commit.Action[0].IsShell() {
+		t.Errorf("commit action[0] should be an argv command, got shell %q", commit.Action[0].Shell())
+	}
+	if got := commit.Action[0].Argv(); !equalStrings(got, []string{"git", "add", "-A"}) {
+		t.Errorf("commit action[0] argv = %v, want [git add -A]", got)
+	}
+	if !commit.Action[1].IsShell() {
+		t.Fatalf("commit action[1] should be a shell command")
+	}
+	if got, want := commit.Action[1].Shell(), "git diff --cached --quiet || git commit -m 'chore: release'"; got != want {
+		t.Errorf("commit action[1] shell = %q, want %q", got, want)
+	}
+}
+
+func TestResolveBuiltinCommitEscapesSingleQuoteInMessage(t *testing.T) {
+	config := &Config{
+		Order: []string{"commit"},
+		Steps: map[string]*StepConfig{
+			"commit": {Message: strPtr("it's a release")},
+		},
+	}
+
+	commit := findStep(t, mustResolve(t, config, ResolveOptions{}), "commit")
+
+	if len(commit.Action) != 2 {
+		t.Fatalf("commit action = %d commands, want 2", len(commit.Action))
+	}
+	if !commit.Action[1].IsShell() {
+		t.Fatalf("commit action[1] should be a shell command")
+	}
+	if got, want := commit.Action[1].Shell(), `git diff --cached --quiet || git commit -m 'it'\''s a release'`; got != want {
+		t.Errorf("commit action[1] shell = %q, want %q", got, want)
+	}
+}
+
+func TestRunBuiltinCommitEmptyIndexSucceeds(t *testing.T) {
+	// The guard short-circuits the commit when the index is clean; here the
+	// shell guard "succeeds" (exit 0), documenting that an empty-index commit no
+	// longer fails the release.
+	f := newFixture(nil)
+	config := &Config{Order: []string{"commit"}}
+
+	success := f.pipeline.Run(mustResolve(t, config, ResolveOptions{}), config, false)
+
+	if !success {
+		t.Error("run should succeed even when the commit guard short-circuits")
+	}
+	want := []string{
+		"git add -A",
+		"sh -c git diff --cached --quiet || git commit -m 'chore: release'",
+	}
+	if !equalStrings(f.runner.lines(), want) {
+		t.Errorf("calls = %v, want %v", f.runner.lines(), want)
+	}
+	if !equalStrings(f.reporter.completed, []string{"commit"}) {
+		t.Errorf("completed = %v, want [commit]", f.reporter.completed)
+	}
+}
+
 func TestResolveCustomStepUsesRunCommand(t *testing.T) {
 	config := &Config{
 		Order: []string{"smoke"},
@@ -304,7 +374,7 @@ func TestRunRunsBeforeActionAfterInOrder(t *testing.T) {
 	want := []string{
 		"sh -c echo before",
 		"git add -A",
-		"git commit -m release v1",
+		"sh -c git diff --cached --quiet || git commit -m 'release v1'",
 		"sh -c echo after",
 	}
 	if !equalStrings(f.runner.lines(), want) {
@@ -321,9 +391,11 @@ func TestRunStopsOnFailureRunsOnErrorAndSkipsLaterSteps(t *testing.T) {
 		Hooks: &Hooks{OnError: CommandList{ShellCommand("cleanup")}},
 	}
 
-	// Fail the `git commit` action; everything after it must not run.
+	// Fail the `git commit` action; everything after it must not run. The commit
+	// action is now a shell guard ("… || git commit …"), so match the command
+	// line rather than an argv token.
 	f.runner.responder = func(call recordedCommand) ([]string, int) {
-		if call.hasArg("commit") {
+		if strings.Contains(call.line(), "git commit") {
 			return []string{"boom"}, 1
 		}
 		return nil, 0
@@ -342,7 +414,7 @@ func TestRunStopsOnFailureRunsOnErrorAndSkipsLaterSteps(t *testing.T) {
 	commitIndex, cleanupIndex := -1, -1
 	for i, line := range lines {
 		switch line {
-		case "git commit -m chore: release":
+		case "sh -c git diff --cached --quiet || git commit -m 'chore: release'":
 			commitIndex = i
 		case "sh -c cleanup":
 			cleanupIndex = i

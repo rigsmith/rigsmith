@@ -229,6 +229,41 @@ func TestSetVersionAndDeps(t *testing.T) {
 	}
 }
 
+// TestSetVersionOnlyTopLevelVersion pins the fix where SetVersion rewrote EVERY
+// "version" key, including a nested publishConfig.version. Only the first/top-
+// level "version" must change; the nested one is left intact.
+func TestSetVersionOnlyTopLevelVersion(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, "package.json")
+	writeFile(t, manifest, `{
+  "name": "@acme/lib",
+  "version": "1.0.0",
+  "publishConfig": {
+    "version": "9.9.9"
+  }
+}`)
+
+	a := New()
+	err := a.SetVersion(context.Background(), plugin.SetVersionRequest{
+		RepoRoot:   root,
+		Package:    plugin.Package{ManifestPath: "package.json"},
+		NewVersion: "2.0.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(manifest)
+	if !strings.Contains(string(got), `"version": "2.0.0"`) {
+		t.Errorf("top-level version not updated: %s", got)
+	}
+	if !strings.Contains(string(got), `"version": "9.9.9"`) {
+		t.Errorf("nested publishConfig.version must stay 9.9.9: %s", got)
+	}
+	if strings.Contains(string(got), `"version": "2.0.0"`) && strings.Count(string(got), `"2.0.0"`) != 1 {
+		t.Errorf("expected exactly one 2.0.0 occurrence: %s", got)
+	}
+}
+
 func names(m map[string]plugin.Package) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

@@ -35,6 +35,33 @@ func set(words ...string) map[string]bool {
 	return m
 }
 
+// secretKeySuffixes flags compound / camelCase secret key names that the exact
+// SecretKeys set misses (apiToken, githubToken, clientSecret, privateKey, …).
+// Matched as a suffix of the separator-stripped, lowercased key, so the indicator
+// is the trailing word: telemetry fields like maxTokens, tokenCount, and
+// publicKey do not match and are left untouched.
+var secretKeySuffixes = []string{
+	"token", "secret", "password", "passwd", "apikey", "bearer",
+	"privatekey", "secretkey", "accesskey", "signingkey",
+}
+
+var keySepStripper = strings.NewReplacer("_", "", "-", "")
+
+// isSecretKey reports whether a JSON key name denotes a scalar secret: either an
+// exact policy key, or a name ending in a known secret-indicating word.
+func isSecretKey(lowerKey string, p Policy) bool {
+	if p.SecretKeys[lowerKey] {
+		return true
+	}
+	norm := keySepStripper.Replace(lowerKey)
+	for _, suf := range secretKeySuffixes {
+		if strings.HasSuffix(norm, suf) {
+			return true
+		}
+	}
+	return false
+}
+
 // DefaultPolicy covers the secret-bearing shapes Claude Code config can carry:
 // inline API keys/tokens by key name, and env/headers buckets (MCP servers,
 // settings env) by container.
@@ -83,7 +110,7 @@ func redactNode(node any, path string, redactAllStrings bool, p Policy, paths *[
 			child := joinPath(path, k)
 			kl := strings.ToLower(k)
 			switch {
-			case p.SecretKeys[kl] && isScalar(v):
+			case isSecretKey(kl, p) && isScalar(v):
 				out[k] = Placeholder
 				*paths = append(*paths, child)
 			default:

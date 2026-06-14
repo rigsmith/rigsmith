@@ -152,7 +152,7 @@ func Parse(content, id string) (*Changeset, error) {
 	i := 1
 	// Empty changeset: closing '---' immediately follows the opening one.
 	if i < len(lines) && lines[i] == "---" {
-		cs.Summary = joinFrom(lines, i+2)
+		cs.Summary = summaryAfter(lines, i)
 		return cs, nil
 	}
 
@@ -187,8 +187,20 @@ func Parse(content, id string) (*Changeset, error) {
 		return nil, fmt.Errorf("changeset %q: missing closing frontmatter delimiter", id)
 	}
 
-	cs.Summary = joinFrom(lines, i+2) // skip the closing '---' and the blank line after it
+	cs.Summary = summaryAfter(lines, i)
 	return cs, nil
+}
+
+// summaryAfter returns the changeset summary: everything after the closing '---'
+// at closeIdx. It skips a single blank separator line when one is present (the
+// canonical layout) but does NOT skip a summary that begins on the very next
+// line, which previously dropped the entire summary.
+func summaryAfter(lines []string, closeIdx int) string {
+	start := closeIdx + 1
+	if start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	return joinFrom(lines, start)
 }
 
 // joinFrom joins lines[start:] with '\n', trimming a single trailing newline's

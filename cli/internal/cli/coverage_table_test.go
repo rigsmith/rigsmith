@@ -43,6 +43,50 @@ func TestCoberturaFileCov_MergesClassesByFile(t *testing.T) {
 	}
 }
 
+func TestCoberturaFileCov_DedupesRepeatedLineNumberAcrossClasses(t *testing.T) {
+	// Two classes share one filename and BOTH report line 2 — class A as a miss,
+	// class B as a hit. The line must be counted once (max hits wins, so covered),
+	// not once per <class>. Before the dedupe fix total would be 4 (line 2 double).
+	// Class A: {1:miss, 2:miss}; class B: {2:hit, 3:hit}.
+	src := `<?xml version="1.0"?>
+<coverage>
+  <packages><package name="P">
+    <classes>
+      <class name="A" filename="dup.cs"><lines>
+        <line number="1" hits="0"/><line number="2" hits="0"/>
+      </lines></class>
+      <class name="B" filename="dup.cs"><lines>
+        <line number="2" hits="1"/><line number="3" hits="1"/>
+      </lines></class>
+    </classes>
+  </package></packages>
+</coverage>`
+	var doc coberturaDoc
+	if err := xml.Unmarshal([]byte(src), &doc); err != nil {
+		t.Fatal(err)
+	}
+
+	got := coberturaFileCov(doc)
+	if len(got) != 1 {
+		t.Fatalf("got %d files, want 1 (both classes share dup.cs): %+v", len(got), got)
+	}
+	// Lines 1,2,3 counted once each → total 3 (not 4). Line 2 is hit in class B
+	// (max hits > 0) and line 3 is hit → covered 2.
+	want := fileCov{name: "dup.cs", covered: 2, total: 3}
+	if got[0] != want {
+		t.Fatalf("dup.cs = %+v, want %+v", got[0], want)
+	}
+
+	// coberturaDetail dedupes by the same rule; its ledger must agree.
+	detail := coberturaDetail(doc)
+	if len(detail) != 1 || len(detail[0].lines) != 3 {
+		t.Fatalf("coberturaDetail lines = %+v, want 3 distinct line numbers", detail)
+	}
+	if h := detail[0].lines[2]; h != 1 {
+		t.Fatalf("coberturaDetail line 2 hits = %d, want 1 (max across classes)", h)
+	}
+}
+
 func TestGoProfileFileCov(t *testing.T) {
 	// Two files; flatten blocks to lines, a line is covered if any block ran.
 	profile := strings.Join([]string{

@@ -37,9 +37,13 @@ const defaultVersion = "0.0.0"
 
 var (
 	// moduleRe captures the module path and any trailing `// rigsmith:version X`.
-	// Trailing horizontal whitespace only ([ \t]) so the match never swallows the
-	// line's newline — that keeps SetVersion's in-place rewrite on the module line.
-	moduleRe         = regexp.MustCompile(`(?m)^module[ \t]+(\S+)[ \t]*(?://[ \t]*rigsmith:version[ \t]+(\S+))?[ \t]*$`)
+	// A foreign trailing comment (e.g. `// Deprecated: use bar`, a valid go.mod
+	// directive) is matched and ignored via the final `(?://.*)?` so the module is
+	// still discovered — earlier the line had to end right after the (optional)
+	// rigsmith annotation, so any other comment made the whole line fail to match
+	// and the module was silently skipped. `.` does not cross the newline under
+	// (?m), so the match stays on the module line for SetVersion's in-place rewrite.
+	moduleRe         = regexp.MustCompile(`(?m)^module[ \t]+(\S+)(?:[ \t]+//[ \t]*rigsmith:version[ \t]+(\S+))?[ \t]*(?://.*)?$`)
 	versionCommentRe = regexp.MustCompile(`//\s*rigsmith:version\s+\S+`)
 )
 
@@ -251,9 +255,18 @@ func setVersionComment(text, newVersion string) string {
 	line := text[loc[0]:loc[1]]
 	annotation := "// rigsmith:version " + newVersion
 	var newLine string
-	if versionCommentRe.MatchString(line) {
+	switch {
+	case versionCommentRe.MatchString(line):
+		// Update the existing rigsmith annotation in place.
 		newLine = versionCommentRe.ReplaceAllString(line, annotation)
-	} else {
+	case strings.Contains(line, "//"):
+		// The module line already carries a foreign comment (e.g. a
+		// `// Deprecated:` directive). go.mod allows only one comment per line and
+		// the authoritative version source is the git tag, so leave the line intact
+		// rather than clobber the existing comment (or bury the annotation behind it
+		// where parseModule could no longer read it back).
+		newLine = line
+	default:
 		newLine = strings.TrimRight(line, " \t") + " " + annotation
 	}
 	return text[:loc[0]] + newLine + text[loc[1]:]

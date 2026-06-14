@@ -72,6 +72,29 @@ func TestRaisePatch(t *testing.T) {
 	}
 }
 
+// TestPrereleaseGraduation pins the node-semver graduation rule for the
+// degenerate zero-core prerelease cases, so nobody "fixes" them into a no-op or a
+// double-bump. A prerelease whose lower components are all zero graduates to the
+// stable core WITHOUT incrementing.
+func TestPrereleaseGraduation(t *testing.T) {
+	cases := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"RaiseMajor 0.0.0-next.0 graduates", MustParse("0.0.0-next.0").RaiseMajor().String(), "0.0.0"},
+		{"RaiseMajor 1.0.0-next.0 graduates", MustParse("1.0.0-next.0").RaiseMajor().String(), "1.0.0"},
+		{"RaiseMinor 0.0.0-next.0 graduates", MustParse("0.0.0-next.0").RaiseMinor().String(), "0.0.0"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.got != c.want {
+				t.Errorf("got %s, want %s", c.got, c.want)
+			}
+		})
+	}
+}
+
 func TestWithPrerelease(t *testing.T) {
 	stable := MustParse("1.1.0")
 	if got := stable.WithPrerelease("next.0", "").String(); got != "1.1.0-next.0" {

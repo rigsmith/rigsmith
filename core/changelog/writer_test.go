@@ -4,6 +4,7 @@ package changelog
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -41,6 +42,30 @@ func TestWriteEntryAmendsExistingFileNewestOnTop(t *testing.T) {
 	want := "# pkg-a\n\n" + entryV2 + "\n## 1.0.0\n### Patch Changes\n\n- Old fix\n"
 	if string(got) != want {
 		t.Errorf("amended file:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+// TestWriteEntryPreservesNewlinelessFile pins the fix where an existing non-empty
+// file with NO trailing newline (a single line, e.g. "# Pkg") had its original
+// content discarded. The result must contain both the original title and the new
+// entry.
+func TestWriteEntryPreservesNewlinelessFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "CHANGELOG.md"), []byte("# Pkg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteEntry(dir, "Pkg", entryV2); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "CHANGELOG.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "# Pkg") {
+		t.Errorf("original title discarded: %q", got)
+	}
+	if !strings.Contains(string(got), entryV2) {
+		t.Errorf("new entry missing: %q", got)
 	}
 }
 

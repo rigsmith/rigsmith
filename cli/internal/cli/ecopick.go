@@ -41,8 +41,11 @@ func pickPrimaryEcosystem(root string, candidates []string) (string, bool) {
 		return "", false // esc / ctrl+c → cancelled
 	}
 	if remember {
-		config.SetRepoString(root, "ecosystem", chosen)
-		fmt.Fprintln(os.Stderr, dimStyle.Render("set ecosystem = "+chosen+" in "+config.FileName))
+		if _, ok := config.SetRepoString(root, "ecosystem", chosen); ok {
+			fmt.Fprintln(os.Stderr, dimStyle.Render("set ecosystem = "+chosen+" in "+config.FileName))
+		} else {
+			fmt.Fprintln(os.Stderr, dimStyle.Render("could not save ecosystem to "+config.FileName))
+		}
 	}
 	return chosen, true
 }

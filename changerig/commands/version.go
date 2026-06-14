@@ -188,9 +188,28 @@ func NewVersionCmd() *cobra.Command {
 			}
 			gen, _ := plugin.ResolveChangelogGenerator(genSpec, ws.Root, planner.Builtins(ws.Config.Groups()))
 
+			// Apply every manifest and changelog write under a file transaction:
+			// if any package fails partway, roll the already-written files back to
+			// their pre-run contents. Otherwise a mid-loop failure left earlier
+			// packages bumped on disk while their changesets stayed (they're only
+			// consumed below, after this loop), so a re-run bumped them a second
+			// time from the already-bumped versions.
+			txn := newFileTxn()
 			var changelogPaths []string
 			for _, m := range plan {
 				if eco, ok := ws.EcosystemFor(ecoOf[m.Name]); ok {
+					// Guard both candidate version targets (a shared VersionFile and
+					// the manifest) before mutating either.
+					if err := txn.guard(filepath.Join(ws.Root, m.ManifestPath)); err != nil {
+						txn.rollback()
+						return fmt.Errorf("set version for %s: %w", m.Name, err)
+					}
+					if m.VersionFile != "" {
+						if err := txn.guard(filepath.Join(ws.Root, m.VersionFile)); err != nil {
+							txn.rollback()
+							return fmt.Errorf("set version for %s: %w", m.Name, err)
+						}
+					}
 					req := plugin.SetVersionRequest{
 						RepoRoot:          ws.Root,
 						Package:           plugin.Package{Name: m.Name, ManifestPath: m.ManifestPath, VersionFile: m.VersionFile},
@@ -198,6 +217,7 @@ func NewVersionCmd() *cobra.Command {
 						DependencyUpdates: m.DepUpdates,
 					}
 					if err := eco.SetVersion(cmd.Context(), req); err != nil {
+						txn.rollback()
 						return fmt.Errorf("set version for %s: %w", m.Name, err)
 					}
 				}
@@ -206,13 +226,20 @@ func NewVersionCmd() *cobra.Command {
 				}
 				entry, err := gen.Render(cmd.Context(), planner.ModuleToRequest(m))
 				if err != nil {
+					txn.rollback()
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
 				}
 				pkgDir := filepath.Dir(filepath.Join(ws.Root, m.ManifestPath))
-				if err := changelog.WriteEntry(pkgDir, m.DisplayName, entry); err != nil {
+				changelogPath := filepath.Join(pkgDir, changelog.FileName)
+				if err := txn.guard(changelogPath); err != nil {
+					txn.rollback()
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
 				}
-				changelogPaths = append(changelogPaths, filepath.Join(pkgDir, changelog.FileName))
+				if err := changelog.WriteEntry(pkgDir, m.DisplayName, entry); err != nil {
+					txn.rollback()
+					return fmt.Errorf("changelog for %s: %w", m.Name, err)
+				}
+				changelogPaths = append(changelogPaths, changelogPath)
 			}
 
 			// Formatting pass over the touched changelogs, per the `format`
@@ -398,6 +425,52 @@ func removedSuffix(removed int, fromCommits bool) string {
 		return " from commits"
 	default:
 		return ""
+	}
+}
+
+// fileTxn snapshots files before they are mutated so a multi-file write can be
+// rolled back as a unit, keeping the version step atomic: either every manifest
+// and changelog update lands or none do.
+type fileTxn struct {
+	saved map[string]*savedFile
+}
+
+type savedFile struct {
+	data    []byte
+	existed bool
+}
+
+func newFileTxn() *fileTxn { return &fileTxn{saved: map[string]*savedFile{}} }
+
+// guard records path's current contents the first time it is seen, so the file
+// can be restored later. Call it before mutating path. Recording the same path
+// again is a no-op (the first snapshot is the pre-run state).
+func (t *fileTxn) guard(path string) error {
+	if _, ok := t.saved[path]; ok {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			t.saved[path] = &savedFile{existed: false}
+			return nil
+		}
+		return err
+	}
+	t.saved[path] = &savedFile{data: data, existed: true}
+	return nil
+}
+
+// rollback restores every guarded file to its recorded state (best effort):
+// pre-existing files are rewritten with their original bytes, freshly created
+// files are removed.
+func (t *fileTxn) rollback() {
+	for path, s := range t.saved {
+		if s.existed {
+			_ = os.WriteFile(path, s.data, 0o644)
+		} else {
+			_ = os.Remove(path)
+		}
 	}
 }
 

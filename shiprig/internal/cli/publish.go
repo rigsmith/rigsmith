@@ -102,7 +102,12 @@ func newPublishCmd() *cobra.Command {
 					continue
 				}
 				tag := tagName(ecoOf[p.Name], p.Dir, p.Name, p.Version)
-				if gitutil.TagExists(cmd.Context(), ws.Root, tag) {
+				localExists := gitutil.TagExists(cmd.Context(), ws.Root, tag)
+				// Without a remote, a local tag is the terminal state. With one, the
+				// tag is only "done" once it's actually on the remote — a previous run
+				// could have created the tag locally and then failed to push it.
+				onRemote := remote == "" || gitutil.RemoteTagExists(cmd.Context(), ws.Root, remote, tag)
+				if localExists && onRemote {
 					fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("tag exists"), tag)
 					continue
 				}
@@ -111,17 +116,27 @@ func newPublishCmd() *cobra.Command {
 					if remote != "" {
 						push = commands.DimStyle.Render(" → push " + remote)
 					}
-					fmt.Fprintf(out, "%s %s%s\n", commands.DimStyle.Render("would tag"), tag, push)
+					action := "would tag"
+					if localExists {
+						action = "would push" // recover a tag created but never pushed
+					}
+					fmt.Fprintf(out, "%s %s%s\n", commands.DimStyle.Render(action), tag, push)
 					continue
 				}
-				if err := gitutil.CreateTag(cmd.Context(), ws.Root, tag, tag); err != nil {
-					return fmt.Errorf("tagging %s: %w", p.Name, err)
+				if !localExists {
+					if err := gitutil.CreateTag(cmd.Context(), ws.Root, tag, tag); err != nil {
+						return fmt.Errorf("tagging %s: %w", p.Name, err)
+					}
 				}
 				if remote != "" {
 					if err := gitutil.PushTag(cmd.Context(), ws.Root, remote, tag); err != nil {
 						return fmt.Errorf("pushing tag %s: %w", tag, err)
 					}
-					fmt.Fprintf(out, "%s %s %s\n", commands.PatchStyle.Render("tagged+pushed"), tag, commands.DimStyle.Render("→ "+remote))
+					label := "tagged+pushed"
+					if localExists {
+						label = "pushed" // tag already existed locally from a prior run
+					}
+					fmt.Fprintf(out, "%s %s %s\n", commands.PatchStyle.Render(label), tag, commands.DimStyle.Render("→ "+remote))
 				} else {
 					fmt.Fprintf(out, "%s %s\n", commands.PatchStyle.Render("tagged"), tag)
 				}

@@ -345,7 +345,16 @@ func rewriteRange(oldRange, newVersion string) string {
 			break
 		}
 	}
-	return prefix + op + newVersion
+	// Replace only the version token immediately after the operator, preserving
+	// any trailing constraint in a compound range (e.g. ">=1.0.0 <2.0.0", a hyphen
+	// or "||" union). The old code returned op+newVersion, silently dropping
+	// everything after the first comparator and producing an unbounded range.
+	rest := r[len(op):]
+	tail := ""
+	if sp := strings.IndexByte(rest, ' '); sp >= 0 {
+		tail = rest[sp:]
+	}
+	return prefix + op + newVersion + tail
 }
 
 // generateModules creates one Module per directly-named package, merging the

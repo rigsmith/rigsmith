@@ -18,11 +18,14 @@ const SchemaURL = "https://rigsmith.dev/schemas/rig.json"
 var writer = confkit.Writer{SchemaURL: SchemaURL}
 
 // SetRepoString sets a top-level string in the repo's .rig.json, returning the
-// config path. Mirrors the .NET ConfigWriter.SetString(root, property, value).
-func SetRepoString(root, property, value string) string {
-	path := filepath.Join(root, FileName)
-	SetString(path, []string{property}, value)
-	return path
+// config path and whether the write actually landed. ok is false when SetString
+// declined to edit an existing non-empty file in place (see Set) — callers must
+// not report success in that case. Mirrors the .NET
+// ConfigWriter.SetString(root, property, value).
+func SetRepoString(root, property, value string) (path string, ok bool) {
+	path = filepath.Join(root, FileName)
+	ok = SetString(path, []string{property}, value)
+	return path, ok
 }
 
 // SetString sets path (depth 1–2) to a JSON string in the file at filePath.

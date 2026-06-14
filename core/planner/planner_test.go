@@ -619,3 +619,29 @@ func TestPerPackageVersionStrategy(t *testing.T) {
 		t.Errorf("B = %s, want 1.0.1 (own patch, not lockstepped to A)", got)
 	}
 }
+
+// TestRewriteRange pins the fix where a compound range's tail was dropped:
+// rewriting the version after the leading comparator must preserve any trailing
+// constraint (e.g. the upper bound in ">=1.0.0 <2.0.0"). The canonical single-
+// operator cases and the wildcard pass-throughs are asserted alongside.
+func TestRewriteRange(t *testing.T) {
+	cases := []struct {
+		name       string
+		oldRange   string
+		newVersion string
+		want       string
+	}{
+		{"compound preserves tail", ">=1.0.0 <2.0.0", "1.3.0", ">=1.3.0 <2.0.0"},
+		{"caret", "^1.0.0", "1.3.0", "^1.3.0"},
+		{"workspace caret", "workspace:^1.0.0", "1.3.0", "workspace:^1.3.0"},
+		{"wildcard unchanged", "*", "1.3.0", "*"},
+		{"workspace wildcard unchanged", "workspace:*", "1.3.0", "workspace:*"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := rewriteRange(c.oldRange, c.newVersion); got != c.want {
+				t.Errorf("rewriteRange(%q, %q) = %q, want %q", c.oldRange, c.newVersion, got, c.want)
+			}
+		})
+	}
+}

@@ -126,6 +126,50 @@ func TestTagExistsAndCreateTag(t *testing.T) {
 	}
 }
 
+// TestPackageTag pins the per-ecosystem tag convention: Go modules use the
+// module-path form (dir/vX.Y.Z, or vX.Y.Z at the root), every other ecosystem
+// uses name@version.
+func TestPackageTag(t *testing.T) {
+	cases := []struct {
+		eco, dirRel, name, version, want string
+	}{
+		{"go", "core", "core", "1.2.0", "core/v1.2.0"},
+		{"go", ".", "root", "1.2.0", "v1.2.0"},
+		{"node", "", "my-pkg", "1.2.0", "my-pkg@1.2.0"},
+	}
+	for _, c := range cases {
+		if got := PackageTag(c.eco, c.dirRel, c.name, c.version); got != c.want {
+			t.Errorf("PackageTag(%q,%q,%q,%q) = %q, want %q",
+				c.eco, c.dirRel, c.name, c.version, got, c.want)
+		}
+	}
+}
+
+// TestRemoteTagExists pins that RemoteTagExists distinguishes a tag that was
+// pushed to the remote from one that is absent there — the signal a re-run uses
+// to recover a locally-tagged-but-unpushed release.
+func TestRemoteTagExists(t *testing.T) {
+	ctx := context.Background()
+
+	// Bare "remote" repo plus a working repo with it added as origin.
+	remoteDir := t.TempDir()
+	git(t, remoteDir, "init", "--bare", "-b", "main")
+	work := initRepo(t)
+	git(t, work, "remote", "add", "origin", remoteDir)
+	git(t, work, "push", "origin", "main")
+
+	// Create a tag locally and push it.
+	git(t, work, "tag", "pkg@1.0.0")
+	git(t, work, "push", "origin", "pkg@1.0.0")
+
+	if !RemoteTagExists(ctx, work, "origin", "pkg@1.0.0") {
+		t.Error("pushed tag should be reported present on the remote")
+	}
+	if RemoteTagExists(ctx, work, "origin", "pkg@9.9.9") {
+		t.Error("absent tag should be reported missing on the remote")
+	}
+}
+
 func TestShortHead(t *testing.T) {
 	ctx := context.Background()
 	dir := initRepo(t)

@@ -55,7 +55,7 @@ func pkg(name, version string) plugin.Package {
 
 func runService(t *testing.T, packages []plugin.Package, mode Mode, repoRoot string, runner *recordingRunner) (bool, string) {
 	t.Helper()
-	ok, message := Run(packages, config.Default(), mode, repoRoot, runner.run, nil)
+	ok, message := Run(packages, nil, config.Default(), mode, repoRoot, runner.run, nil)
 	return ok, message
 }
 
@@ -175,6 +175,106 @@ func TestAutoMode_GithubOriginAndGhReady_CreatesRelease(t *testing.T) {
 	}
 	if creates != 1 {
 		t.Fatalf("gh create calls for pkg-a@1.2.0 = %d, want 1 (calls: %v)", creates, runner.calls)
+	}
+}
+
+// createTag returns the positional tag arg of the single `gh release create`
+// call recorded by the runner (the arg after "create"). It fails if there is no
+// such call or more than one. The positional tag is the source of truth the
+// forge attaches the GitHub release to, so it must equal the tag the
+// tag/publish steps pushed.
+func createTag(t *testing.T, runner *recordingRunner) string {
+	t.Helper()
+	tag := ""
+	found := false
+	for _, call := range runner.calls {
+		if call.name != "gh" || !call.has("create") {
+			continue
+		}
+		for i, arg := range call.args {
+			if arg == "create" && i+1 < len(call.args) {
+				if found {
+					t.Fatalf("multiple gh release create calls: %v", runner.calls)
+				}
+				tag = call.args[i+1]
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no gh release create call (calls: %v)", runner.calls)
+	}
+	return tag
+}
+
+func TestGithubMode_GoPackage_TagsWithModulePathTag(t *testing.T) {
+	runner := &recordingRunner{}
+	// `release view` fails -> the release does not yet exist, so Run creates it.
+	runner.responder = func(call recordedCall) (string, error) {
+		if isReleaseView(call) {
+			return "", errors.New("exit status 1")
+		}
+		return "", nil
+	}
+
+	// A Go-ecosystem package: the release tag must follow the module-path
+	// convention (dir/vX.Y.Z), matching the tag the publish/tag steps pushed,
+	// not the friendly DisplayName@version form.
+	packages := []plugin.Package{{Name: "core", Version: "1.2.0", Dir: "core"}}
+	ecoOf := map[string]string{"core": "go"}
+
+	ok, message := Run(packages, ecoOf, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	if !ok {
+		t.Fatalf("Run ok = false, want true (message: %q)", message)
+	}
+
+	if got := createTag(t, runner); got != "core/v1.2.0" {
+		t.Fatalf("release create tag = %q, want %q", got, "core/v1.2.0")
+	}
+}
+
+func TestGithubMode_NonGoPackage_TagsWithNameAtVersion(t *testing.T) {
+	runner := &recordingRunner{}
+	runner.responder = func(call recordedCall) (string, error) {
+		if isReleaseView(call) {
+			return "", errors.New("exit status 1")
+		}
+		return "", nil
+	}
+
+	// A non-Go package (here node) keeps the name@version tag convention.
+	packages := []plugin.Package{{Name: "widgets", Version: "1.2.0", Dir: "packages/widgets"}}
+	ecoOf := map[string]string{"widgets": "node"}
+
+	ok, message := Run(packages, ecoOf, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	if !ok {
+		t.Fatalf("Run ok = false, want true (message: %q)", message)
+	}
+
+	if got := createTag(t, runner); got != "widgets@1.2.0" {
+		t.Fatalf("release create tag = %q, want %q", got, "widgets@1.2.0")
+	}
+}
+
+func TestGithubMode_PackageAbsentFromEcoMap_TagsWithNameAtVersion(t *testing.T) {
+	runner := &recordingRunner{}
+	runner.responder = func(call recordedCall) (string, error) {
+		if isReleaseView(call) {
+			return "", errors.New("exit status 1")
+		}
+		return "", nil
+	}
+
+	// A package missing from ecoOf falls back to the name@version convention.
+	packages := []plugin.Package{{Name: "widgets", Version: "1.2.0", Dir: "packages/widgets"}}
+
+	ok, message := Run(packages, map[string]string{}, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	if !ok {
+		t.Fatalf("Run ok = false, want true (message: %q)", message)
+	}
+
+	if got := createTag(t, runner); got != "widgets@1.2.0" {
+		t.Fatalf("release create tag = %q, want %q", got, "widgets@1.2.0")
 	}
 }
 

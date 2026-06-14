@@ -353,7 +353,17 @@ func writeVersion(text string, elem versionElement, newVersion string) (string, 
 		if elem == elemVersionPrefix {
 			re = versionPrefixRe
 		}
-		return re.ReplaceAllString(text, "${1}"+newVersion+"${3}"), nil
+		// Replace only the FIRST matching element — the same one fromText reads.
+		// A project can declare several <Version> elements under different
+		// <PropertyGroup Condition="..."> blocks; ReplaceAllString would rewrite
+		// every one, collapsing the per-condition versions into a single value.
+		loc := re.FindStringSubmatchIndex(text)
+		if loc == nil {
+			return text, nil
+		}
+		// Group 2 (the value) spans [loc[4], loc[5]); splice literally so the new
+		// version is not subject to `$` expansion.
+		return text[:loc[4]] + newVersion + text[loc[5]:], nil
 	}
 
 	// Absent (an independent override in a project that inherited its version):
