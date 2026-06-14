@@ -1,7 +1,7 @@
 // Package detect resolves which ecosystem(s) a directory belongs to and maps
 // rig's verbs to the right native command. Detection AND the verb→command
 // mapping both come from the shared ecosystem registry in rigsmith/core, so
-// rig and relrig agree on "what kind of repo is this" and an ecosystem (built-in
+// rig and shiprig agree on "what kind of repo is this" and an ecosystem (built-in
 // or plugin) declares its own dev-loop commands.
 package detect
 

@@ -1,6 +1,6 @@
 # Distribution
 
-rigsmith ships two binaries today (`rig`, `relrig`) from a single go.work
+rigsmith ships two binaries today (`rig`, `shiprig`) from a single go.work
 monorepo, with `changerig` planned. All channels are driven by the
 [GoReleaser config](../.goreleaser.yaml) and the tagged GitHub Release it
 produces.
@@ -13,7 +13,7 @@ produces.
 | **`curl \| sh`** | ✅ | `curl -fsSL https://rigsmith.sh \| sh` (both binaries) and `curl -fsSL https://relrig.sh \| sh -s relrig`. Served by [`scripts/install.sh`](../scripts/install.sh); installs to `~/.local/bin` (override with `RIGSMITH_INSTALL`). |
 | **Homebrew tap** | ⛔ TODO | Skeleton `brews:` block is in `.goreleaser.yaml`, commented out until a `rigsmith/homebrew-tap` repo exists. Target: `brew install rigsmith/tap/rig`. |
 | **Scoop** | ⛔ TODO | Windows. Add a `scoops:` block + a `rigsmith/scoop-bucket` repo. Target: `scoop install rig`. |
-| **npm binary wrapper** | ⛔ TODO (secondary) | Thin npm package(s) (`@rigsmith/rig`, `@rigsmith/relrig`) whose `postinstall`/`bin` shim downloads the matching GitHub Release archive — lets Node users `npx rig` / add it as a devDependency. Secondary to the native channels above. |
+| **npm binary wrapper** | ⛔ TODO (secondary) | Thin npm package(s) (`@rigsmith/rig`, `@rigsmith/shiprig`) whose `postinstall`/`bin` shim downloads the matching GitHub Release archive — lets Node users `npx rig` / add it as a devDependency. Secondary to the native channels above. |
 
 ## Cutting a release locally
 

@@ -1,7 +1,7 @@
 # rigsmith config standardization
 
 How configuration is loaded, named, located, and overridden across the family —
-`rig`, `changerig`, `relrig`, `clauderig`, and the installer scripts. This is
+`rig`, `changerig`, `shiprig`, `clauderig`, and the installer scripts. This is
 the standard of record. It is **implemented** (see "What shipped" at the end).
 
 Decisions that shaped it:
@@ -25,12 +25,12 @@ merged:
 | File | Tool(s) | Domain |
 |---|---|---|
 | `.rig.json` (+ `~/.rig.json`) | rig | dev-loop |
-| `.changeset/config.json` | changerig, relrig | versioning |
-| `.changeset/release.jsonc` | relrig | release pipeline |
+| `.changeset/config.json` | changeRig, shipRig | versioning |
+| `.changeset/release.jsonc` | shipRig | release pipeline |
 | `~/.clauderig/config.json` | clauderig | machine sync |
 
 State/data files are **not** config and are untouched: `.changeset/*.md`,
-`.changeset/pre.json`, clauderig's manifests/devices registries, and Claude
+`.changeset/pre.json`, claudeRig's manifests/devices registries, and Claude
 Code's own `.claude/settings.json` / `.claude/allow-main`.
 
 ---
@@ -44,7 +44,7 @@ JSONC everywhere. **Every** loader routes top-level file decode through
 `config.json` or `~/.clauderig/config.json` was a silent parse trap). The
 `.json` extension stays (matches `.rig.json`, keeps `$schema`/editor wiring);
 `.jsonc` remains valid for `release.jsonc`. Writes that regenerate a whole
-document (clauderig's typed save) still emit plain JSON.
+document (claudeRig's typed save) still emit plain JSON.
 
 ### Canonical precedence ladder
 Every tool, low → high:
@@ -54,7 +54,7 @@ built-in defaults  →  user/global file  →  repo/project file  →  environme
 ```
 
 A tool may have no user/global tier — the ladder degrades gracefully.
-`changerig`/`relrig` deliberately have none: changeset config (`baseBranch`,
+`changerig`/`shiprig` deliberately have none: changeset config (`baseBranch`,
 package globs, ecosystem blocks) and the release pipeline are intrinsically
 per-repo, so a machine-wide default would be a footgun. Their ladder is
 `defaults → repo → env → flags`.
@@ -67,7 +67,7 @@ per-repo, so a machine-wide default would be a footgun. Their ladder is
   correctly co-located with its data).
 
 ### Env-var policy
-- `<BINARY>_*` for tool behavior: `RIG_`, `CHANGERIG_`, `RELRIG_`, `CLAUDERIG_`.
+- `<BINARY>_*` for tool behavior: `RIG_`, `CHANGERIG_`, `SHIPRIG_`, `CLAUDERIG_`.
 - `RIGSMITH_*` reserved for family/install-level vars.
 - External/standard vars used verbatim, never re-prefixed.
 - Test gates follow the binary prefix with a clear suffix (`_E2E`, `_IT`, …).
@@ -88,9 +88,9 @@ prints the resolved file path(s); `edit` opens `$VISUAL`/`$EDITOR`.
 | `RIG_PWSH_PROFILE` | rig | Override the PowerShell profile path for `rig setup` (test seam) |
 | `RIG_SELFUPDATE_REPO` | rig | GitHub repo slug `rig self-update` checks (was `RIGSMITH_REPO`) |
 | `RIG_DOTNET_IT` | rig | Gate the .NET integration tests (test) |
-| `CHANGERIG_NET_DLL` | changerig | Path to the net-changesets oracle DLL (was `NET_CHANGESETS_DLL`, test) |
-| `CLAUDERIG_ALLOW_MAIN` | clauderig | Opt out of the base-branch guard for this session |
-| `CLAUDERIG_E2E` | clauderig | Enable the end-to-end tests (test) |
+| `CHANGERIG_NET_DLL` | changeRig | Path to the net-changesets oracle DLL (was `NET_CHANGESETS_DLL`, test) |
+| `CLAUDERIG_ALLOW_MAIN` | claudeRig | Opt out of the base-branch guard for this session |
+| `CLAUDERIG_E2E` | claudeRig | Enable the end-to-end tests (test) |
 | `RIGSMITH_INSTALL` | installer | Install prefix (default `~/.local`) |
 | `RIGSMITH_DEV_BIN` | installer | Dev-install launcher dir (default `~/.local/bin`) |
 
@@ -116,11 +116,11 @@ expands arbitrary `${env.NAME}` references inside `release.jsonc`.
   others gain consistent env handling with no spurious global tier.
 - **WS4 — env renames (clean break).** `RIGSMITH_REPO` → `RIG_SELFUPDATE_REPO`;
   `NET_CHANGESETS_DLL` → `CHANGERIG_NET_DLL`. No fallbacks.
-- **WS5 — uniform `config` command.** Added to `rig`, `changerig`, `relrig`;
+- **WS5 — uniform `config` command.** Added to `rig`, `changerig`, `shiprig`;
   `clauderig`'s `set-prune` / `set-autorestore` / `set-worktree-open` /
   `set-worktree-opener` / `set-remote` collapsed into `config set <key> <value>`
   (the `remote` key keeps the private-repo gate).
-- **WS6 — docs.** This file, plus READMEs and the clauderig command docs.
+- **WS6 — docs.** This file, plus READMEs and the claudeRig command docs.
 
 ## Non-goals
 

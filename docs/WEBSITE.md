@@ -20,8 +20,8 @@ the stack — update it when reality diverges.
 | **rigsmith.dev** | The site. Landing page + all docs (see URL structure below). |
 | **rigsmith.sh** | Canonical install domain for *all* tools, current and future (see below). |
 | **rigcli.dev** | 301 → `rigsmith.dev/rig/*` (host-based rule in Netlify `_redirects`). |
-| **relrig.dev** | 301 → `rigsmith.dev/relrig/*`. |
-| **relrig.sh** | Temporary alias (`curl relrig.sh \| sh` installs relrig) until renewal, then lapses. |
+| **relrig.dev** | 301 → `rigsmith.dev/shiprig/*` (back-compat redirect from the old name). |
+| **relrig.sh** | Temporary back-compat alias (`curl relrig.sh \| sh` installs shiprig) until renewal, then lapses. |
 | **rigcli.sh** | Redirect only; lapses at renewal. |
 
 .sh renewals are expensive — the standing rule is **no new .sh purchases**
@@ -37,7 +37,7 @@ rigsmith.dev/
 ├── /            landing: the family, the pitch
 ├── /rig/        the dev launcher
 ├── /changerig/  the changeset tool
-├── /relrig/     release orchestration
+├── /shiprig/    release orchestration
 ├── /clauderig/  Claude Code sync
 └── /core/       the engine: plugin protocol, pathmap, release planner
 ```
@@ -49,9 +49,9 @@ Why command names and not concepts (`/changesets/`, `/release/`):
 - The binary name is already the key in install paths, GoReleaser artifacts,
   and (future) brew/scoop targets; doc paths reusing it keep every mapping 1:1.
 - `/changesets/` would collide with `@changesets/cli` in search results;
-  "changerig" is a unique token we own completely.
+  "changeRig" is a unique token we own completely.
 - Friendly naming for newcomers is solved in nav labels
-  ("relrig — release orchestration"), not URLs.
+  ("shipRig — release orchestration"), not URLs.
 
 `/core/` is the one non-command path; it matches the module name and has no
 command to mirror.
@@ -60,7 +60,7 @@ command to mirror.
 
 ```sh
 curl -fsSL rigsmith.sh | sh            # install the family
-curl -fsSL rigsmith.sh/relrig | sh     # install one tool (any binary name)
+curl -fsSL rigsmith.sh/shiprig | sh    # install one tool (any binary name)
 ```
 
 A piped script can't see the URL it came from, so per-tool paths are resolved

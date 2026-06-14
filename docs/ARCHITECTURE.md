@@ -6,7 +6,7 @@
                 ┌───────────────────────────┐
                 │  rigsmith/core (no deps)   │
                 │                            │
-   rig  ───────▶│  ecosystem registry  ◀────│───────  relrig
+   rig  ───────▶│  ecosystem registry  ◀────│───────  shiprig
  (dev launcher) │  + detection/discovery     │       (release tool)
                 │                            │
                 │  semver · changeset ·      │
@@ -21,18 +21,18 @@ heart of both tools. The charm/cobra UI stack lives only in the two CLI modules.
 
 ### Why a shared core (not two copies)
 
-`rig` and `relrig` both need to answer "what kind of repo is this, and what
+`rig` and `shiprig` both need to answer "what kind of repo is this, and what
 packages/projects does it contain?" That question — ecosystem detection plus
 package discovery — is the same in both tools, and getting it to disagree
 between them would be a bug. So it lives once in `core/ecosystem`, behind the
 `plugin.Ecosystem` interface, and both binaries consume the same registry.
 
-- **`relrig`** uses an adapter's `Discover` / `SetVersion` / `Publish` to run the
+- **`shiprig`** uses an adapter's `Discover` / `SetVersion` / `Publish` to run the
   release workflow.
 - **`rig`** uses the same `Detect` / `Discover` to know which native dev-loop
   command to run (`go build` vs `dotnet build` vs `npm run build`).
 
-The release **engine** (cascade, grouping, changelog) is `relrig`-only but also
+The release **engine** (cascade, grouping, changelog) is `shiprig`-only but also
 lives in `core` (`core/planner`) because it is pure, ecosystem-agnostic logic —
 the same property that made it portable out of C# in the first place.
 
@@ -67,7 +67,7 @@ the verb-prefix + watch pre-parse pipeline, `--all` topo runs, and the
 capability-gated menu. Remaining ergonomics tail is listed in
 FEATURE-PARITY.md.
 
-### `release/` → `relrig`
+### `shiprig/` → `shiprig`
 
 `internal/app` resolves the workspace (repo root, `.changeset`, config,
 registry, discovery). `internal/cli` is the cobra+fang command tree: the full

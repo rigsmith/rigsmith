@@ -89,7 +89,7 @@ type EcosystemInfo struct {
 
 	// DevCommands maps a dev-loop verb (build/test/run/format/lint/typecheck) to
 	// the native argv that runs it. This is how the `rig` dev launcher learns an
-	// ecosystem's commands from the same plugin relrig uses for releases —
+	// ecosystem's commands from the same plugin shiprig uses for releases —
 	// instead of a hardcoded table. External plugins return it in their info JSON.
 	DevCommands map[string][]string `json:"devCommands,omitempty"`
 }

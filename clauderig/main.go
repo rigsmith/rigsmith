@@ -2,7 +2,7 @@
 // session history) across machines via your own git remote, correcting paths
 // across OSes on restore. The fourth rig: a single statically-linked Go binary,
 // zero runtime deps, installable by curl|sh / Homebrew / Scoop on any machine —
-// the same north-star as rig / relrig / changerig.
+// the same north-star as rig / shiprig / changerig.
 //
 // The two hard problems the community tools punt on — cross-OS path correction
 // and not leaking secrets — are clauderig's reason to exist. See

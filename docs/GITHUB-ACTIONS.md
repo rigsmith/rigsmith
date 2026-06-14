@@ -23,13 +23,13 @@ and published packages, with a human approval gate in the middle (a PR).
 ```
 push to main
    │
-   ├─ pending changesets exist?  ──► YES ──► relrig version:
+   ├─ pending changesets exist?  ──► YES ──► shiprig version:
    │                                          consume .changeset/*.md,
    │                                          bump versions, write CHANGELOGs,
    │                                          commit to changeset-release/main,
    │                                          open/update "Version Packages" PR
    │
-   └─────────────────────────────► NO  ──► relrig publish:
+   └─────────────────────────────► NO  ──► shiprig publish:
                                             push packages to registries, create git tags
 ```
 
@@ -47,13 +47,13 @@ step 1 honest: it makes sure every feature PR actually carries a changeset.
 
 ## 1. The `release` action
 
-A faithful successor to the net-changesets composite action, driving `relrig` instead of the .NET
-CLI. It is **polyglot for free** — `relrig` runs the same engine across .NET, Node, Go, and Rust, so
+A faithful successor to the net-changesets composite action, driving `shiprig` instead of the .NET
+CLI. It is **polyglot for free** — `shiprig` runs the same engine across .NET, Node, Go, and Rust, so
 a single `version`/`publish` drives every ecosystem in the repo.
 
 Two improvements over the net-changesets version:
 
-- **It installs `relrig` for you** (`install: true`, default) — download the goreleaser asset, or
+- **It installs `shiprig` for you** (`install: true`, default) — download the goreleaser asset, or
   `go install` from the module proxy as a fallback. net-changesets required you to put the CLI on
   `PATH` first.
 - Same configurable `version` / `publish` / `status` inputs and the same outputs
@@ -87,7 +87,7 @@ For same-repo PR flows, the Action gate is the complete bot with zero infrastruc
 ## Dogfooding on this repo
 
 rigsmith itself currently releases its binaries via GoReleaser (see
-[`.goreleaser.yaml`](../.goreleaser.yaml)), not via `relrig publish`, and does not keep a
+[`.goreleaser.yaml`](../.goreleaser.yaml)), not via `shiprig publish`, and does not keep a
 `.changeset/` folder — so these actions are **not** wired into this repo's own CI. They are built
 here to be consumed by polyglot repos that use changesets. Copy the
 [example workflows](../examples/github-workflows) into such a repo to adopt them.

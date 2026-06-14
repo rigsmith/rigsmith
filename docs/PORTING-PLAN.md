@@ -8,12 +8,12 @@
 
 Two source projects → two Go binaries on a shared core, at feature parity.
 
-- **net-changesets** (C#, ~7k LOC) → `changerig` / `relrig`
+- **net-changesets** (C#, ~7k LOC) → `changerig` / `shiprig`
 - **rig** (.NET ~7.3k LOC + Node ~3.1k LOC, kept at parity) → `rig`
 
 Legend: ✅ done · ⬜ not started · ➖ n/a
 
-## changerig / relrig (from net-changesets)
+## changeRig / shipRig (from net-changesets)
 
 | Area | Source | Status | Notes |
 |---|---|---|---|
@@ -34,7 +34,7 @@ Legend: ✅ done · ⬜ not started · ➖ n/a
 | Snapshot releases | `ReleaseVersionPlanner.cs` | ✅ | `--snapshot[=tag]` + `--snapshot-template` ({tag}/{commit}/{datetime}/{timestamp}) |
 | Changelog generators (git/github) | `ChangelogReleaseLine.cs` | ✅ | `core/changelog`: commit-hash prefix via git log; PR/author/Thanks links via `gh api`, degrading gracefully |
 | Changelog generator **plugins** | design doc | ✅ | `ChangelogRequest` subprocess contract, implemented (net only designed it); built-in dogfoods it; Node `changelogen` reference plugin |
-| `release` orchestrator | (new) | ✅ | `relrig release` + `.changeset/release.jsonc`: steps/hooks/lazy vars/confirm gates/forge releases — see [RELEASE-ORCHESTRATOR.md](RELEASE-ORCHESTRATOR.md). Remaining tail: interactive step-chooser TUI (passthrough today), `packages.versionRegex` |
+| `release` orchestrator | (new) | ✅ | `shiprig release` + `.changeset/release.jsonc`: steps/hooks/lazy vars/confirm gates/forge releases — see [RELEASE-ORCHESTRATOR.md](RELEASE-ORCHESTRATOR.md). Remaining tail: interactive step-chooser TUI (passthrough today), `packages.versionRegex` |
 | `ui` interactive menu | `Ui/` | ✅ | bubbletea menu dispatching the verbs |
 | `shell-init` | `ShellInit/` | ➖ | obviated — single binary on PATH (aliases `changeset`); cobra `completion` covers tab-completion |
 | Native markdown formatter | `NativeMarkdownFormatter.cs` | ✅ | `core/mdfmt`: prettier-equivalent port (18 golden tests, idempotent) + `format:` dispatch incl. custom-argv escape hatch |
@@ -80,7 +80,7 @@ Legend: ✅ done · ⬜ not started · ➖ n/a
 
 ## Remaining work
 
-1. **relrig tail** — interactive step-chooser TUI for `release` (passthrough
+1. **shipRig tail** — interactive step-chooser TUI for `release` (passthrough
    today) and `packages.versionRegex`.
 2. **Distribution tail** — GitHub Releases + `curl|sh` are live; Homebrew tap,
    Scoop bucket, and the npm binary wrapper remain

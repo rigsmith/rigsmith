@@ -21,7 +21,7 @@ type banner struct {
 // Per-tool banners. The accent paints the bracket + glyph; the wordmark stem is
 // paper-bold over a muted prefix; the tagline and version read muted. The brand
 // wordmarks (rig/changeRig/shipRig/claudeRig) match the design, not the binary
-// names (changerig/relrig) — see design/"RigSmith CLI.html".
+// names (changerig/shiprig) — see design/"RigSmith CLI.html".
 var (
 	rigBanner    = banner{AccentRig, "●", "", "rig", "convention-first dev launcher"}
 	changeBanner = banner{AccentChange, "↻", "change", "Rig", "changeset lifecycle"}

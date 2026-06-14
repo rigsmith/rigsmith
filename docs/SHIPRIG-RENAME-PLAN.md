@@ -1,8 +1,11 @@
 # Rename plan: `relrig` → `shiprig` (+ family casing convention)
 
-> Status: **PLAN ONLY** — nothing renamed yet. This documents the agreed
-> decision and the full blast radius so the change can be executed (and
-> reviewed) in one deliberate pass.
+> Status: **DONE** — executed on 2026-06-13 via Option A (full dir + module
+> move) on branch `feat/shiprig-rename`. `relrig` is kept as a deprecated alias
+> (argv[0] detection in `shiprig`, an `install.sh` target, and the
+> `relrig.sh`/`relrig.dev` redirects). This document is retained as the record
+> of the decision and the blast radius; the prose below is left in its original
+> planning tense.
 
 ## Decision (settled)
 

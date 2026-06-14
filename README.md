@@ -7,8 +7,8 @@ tools and the shared engine they're built on:
 |---|---|---|
 | [`core/`](core/) | — | `github.com/rigsmith/core` — the shared engine: semver, changeset parsing, the release planner (cascade + grouping), the plugin contract, the built-in ecosystem adapters (.NET, Node, Go, Rust), and `pathmap` (cross-OS path resolution). No external dependencies. |
 | [`cli/`](cli/) | `rig` | The convention-first dev launcher (run/build/test/format across .NET, Node, Go, Rust). Successor to the .NET/Node [`rig`](https://github.com/JohnCampionJr/rig). |
-| [`changerig/`](changerig/) | `changerig` | The lean changeset tool: the lifecycle (init → add → status → version) isolated from release orchestration. Exports the shared `commands` package relrig reuses. Aliased `changeset`. |
-| [`release/`](release/) | `relrig` | The release front door: everything changerig does, plus publish/tag/pre orchestration. Successor to [net-changesets](../net-changesets). |
+| [`changerig/`](changerig/) | `changerig` | The lean changeset tool: the lifecycle (init → add → status → version) isolated from release orchestration. Exports the shared `commands` package shipRig reuses. Aliased `changeset`. |
+| [`shiprig/`](shiprig/) | `shiprig` | The release front door: everything changeRig does, plus publish/tag/pre orchestration. Successor to [net-changesets](../net-changesets). |
 | [`clauderig/`](clauderig/) | `clauderig` | Sync your Claude Code setup (config, skills, session history) across machines via a private git repo, with cross-OS path correction and secret stripping. See [docs/CLAUDERIG-DESIGN.md](docs/CLAUDERIG-DESIGN.md). |
 
 Both binaries are single, statically-linked Go executables — the north-star
@@ -35,8 +35,8 @@ changerig add -p my/pkg --bump minor -m "…" # write a changeset (interactive w
 changerig status --verbose                  # show the pending release plan
 changerig version                           # bump versions + write CHANGELOG.md, with dependency cascade
 changerig ui                                # interactive bubbletea menu
-relrig publish                              # registries + tags (idempotent, confirm-gated on a TTY)
-relrig release                              # the configurable step pipeline (.changeset/release.jsonc)
+shiprig publish                             # registries + tags (idempotent, confirm-gated on a TTY)
+shiprig release                             # the configurable step pipeline (.changeset/release.jsonc)
 
 rig info                                    # what rig discovered
 rig build / test / run / format             # the right native command for the detected ecosystem
@@ -56,11 +56,11 @@ is a Node reference plugin producing changelogen-style output. Set
 
 ## Design
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module layout, the shared-core boundary, how `rig` and `relrig` relate.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module layout, the shared-core boundary, how `rig` and `shiprig` relate.
 - [docs/PLUGIN-PROTOCOL.md](docs/PLUGIN-PROTOCOL.md) — the one extension mechanism (subprocess + versioned JSON) for both ecosystem adapters and changelog generators, and why built-ins dogfood it.
 - [docs/PORTING-PLAN.md](docs/PORTING-PLAN.md) — the original staged porting plan (historical; the port is complete — see FEATURE-PARITY.md for current state).
 - [docs/FEATURE-PARITY.md](docs/FEATURE-PARITY.md) — exhaustive feature-by-feature parity audit of rigsmith against net-changesets and rig (.NET + Node).
-- [docs/RELEASE-ORCHESTRATOR.md](docs/RELEASE-ORCHESTRATOR.md) — design for `relrig release` + `.changeset/release.jsonc` (the configurable pipeline), mapped from net-changesets. **Built** (`release/internal/pipeline` + `forge`).
+- [docs/RELEASE-ORCHESTRATOR.md](docs/RELEASE-ORCHESTRATOR.md) — design for `shiprig release` + `.changeset/release.jsonc` (the configurable pipeline), mapped from net-changesets. **Built** (`shiprig/internal/pipeline` + `forge`).
 - [docs/GITHUB-ACTIONS.md](docs/GITHUB-ACTIONS.md) — the two composite Actions: `release` (the version-PR/publish loop) and `require-changeset` (the per-PR gate — comment + block, no hosted bot). **Built** (`.github/actions/`).
 
 ## Building
@@ -68,13 +68,13 @@ is a Node reference plugin producing changelogen-style output. Set
 ```sh
 go build ./...          # from any module dir; the repo is a go.work workspace
 go test ./...           # core has full unit tests
-go build -o bin/relrig ./release
+go build -o bin/shiprig ./shiprig
 go build -o bin/rig ./cli
 ```
 
 ### Installing the stable binaries from source
 
-To build the real, named binaries (`rig`, `clauderig`, `relrig`, `changerig`)
+To build the real, named binaries (`rig`, `clauderig`, `shiprig`, `changerig`)
 from the working tree and put them on your PATH — so the tools resolve each
 other the same way a released install does:
 
@@ -90,14 +90,14 @@ module installs automatically. Use this when you want stable binaries; use
 ### Running a dev build alongside the installed binaries
 
 To dogfood the tools from source without disturbing a globally installed
-`rig`/`relrig`/etc., install `<tool>-dev` launchers — they run the working tree
+`rig`/`shiprig`/etc., install `<tool>-dev` launchers — they run the working tree
 via `go run` and coexist with the stable binaries:
 
 ```sh
 rig dev-install         # or: rig run dev-install, or: go run ./scripts/dev-install
 ```
 
-This writes `rig-dev`, `relrig-dev`, `clauderig-dev`, … to `~/.local/bin` (sh
+This writes `rig-dev`, `shiprig-dev`, `clauderig-dev`, … to `~/.local/bin` (sh
 wrappers on macOS/Linux, `.cmd` on Windows). Each recompiles the current source
 on every run, so edits take effect with no reinstall. The launchers are
 discovered from `go.work`, so a new workspace module gets one automatically.

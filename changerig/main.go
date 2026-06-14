@@ -1,6 +1,6 @@
 // Command changerig is the lean changeset tool: the changeset lifecycle
 // (init → add → status → version) isolated from the heavier release
-// orchestration that relrig layers on top. Both share the same engine
+// orchestration that shiprig layers on top. Both share the same engine
 // (rigsmith/core) and the same command builders (changerig/commands), so a
 // changeset and a version run mean exactly the same thing in either tool.
 //

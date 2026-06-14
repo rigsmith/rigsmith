@@ -1,9 +1,9 @@
-# Release orchestrator (`relrig release`) — design
+# Release orchestrator (`shiprig release`) — design
 
-> Status: **BUILT** (2026-06-12) — implemented in `release/internal/pipeline` +
-> `release/internal/forge`, wired as `relrig release`; see FEATURE-PARITY.md
+> Status: **BUILT** (2026-06-12) — implemented in `shiprig/internal/pipeline` +
+> `shiprig/internal/forge`, wired as `shiprig release`; see FEATURE-PARITY.md
 > for the delivered surface (deferred: interactive plan-chooser TUI,
-> `packages.versionRegex`; `tool` defaults to `relrig` itself). The design
+> `packages.versionRegex`; `tool` defaults to `shiprig` itself). The design
 > below is the original mapping and remains the reference. This maps the net-changesets
 > `changeset release` orchestrator (fully implemented there on the `jcamp` branch,
 > `src/Changesets/Commands/Release/`, `docs/release-command-design.md`) onto the
@@ -12,7 +12,7 @@
 
 ## What it is
 
-One command — `relrig release` — that runs the whole release chain end to end:
+One command — `shiprig release` — that runs the whole release chain end to end:
 
 ```
 version → commit → publish → push → githubRelease
@@ -20,10 +20,10 @@ version → commit → publish → push → githubRelease
 
 …where **every step is toggleable, reorderable, hook-wrapped, and overridable
 with your own scripts**, and step inputs (e.g. an npm OTP) can be captured from
-arbitrary commands at run time. It is a **thin sequencer over steps relrig
+arbitrary commands at run time. It is a **thin sequencer over steps shipRig
 already has** (`version`, `publish`, `tag`) plus one genuinely new capability
 (forge/GitHub releases). It is NOT a second versioning/changelog tool — the
-engine in `core` stays the engine; `release` only orchestrates it.
+engine in `core` stays the engine; `shiprig` only orchestrates it.
 
 The design discipline (from the source doc): keep the orchestration layer thin
 glue. The trap is letting `release.jsonc` drift into a general-purpose task
@@ -31,7 +31,7 @@ runner — that's knope's lane and the maintenance treadmill to avoid.
 
 ## The config: `.changeset/release.jsonc`
 
-JSONC, **entirely optional** — with no file, `relrig release` runs the built-in
+JSONC, **entirely optional** — with no file, `shiprig release` runs the built-in
 pipeline with defaults. Proposed Go shape (mirrors net-changesets `ReleaseConfig`):
 
 ```jsonc
@@ -73,8 +73,8 @@ pipeline with defaults. Proposed Go shape (mirrors net-changesets `ReleaseConfig
 
 > **`tool` is omitted on purpose.** net-changesets has a `tool` key (default
 > `changeset`) because its built-ins shell out to the `changeset` CLI (or
-> `npx changeset`). In Go, **relrig is the tool** — the `version`/`publish` steps
-> call relrig's own engine/commands directly, so there's no delegation base
+> `npx changeset`). In Go, **shipRig is the tool** — the `version`/`publish` steps
+> call shipRig's own engine/commands directly, so there's no delegation base
 > command to configure.
 
 ### Per-step (`StepConfig`)
@@ -100,13 +100,13 @@ hazards). Mirror `CommandSpec` exactly:
 "run":    [["gh", "release", "create", "..."]]  // argv list
 ```
 
-## Default pipeline → relrig mapping
+## Default pipeline → shipRig mapping
 
 | Step | net-changesets built-in | rigsmith Go mapping |
 |---|---|---|
-| `version` | `changeset version` | call `core/planner` + adapters in-process (relrig's `version`); auto-skip when no changesets |
+| `version` | `changeset version` | call `core/planner` + adapters in-process (shipRig's `version`); auto-skip when no changesets |
 | `commit` | `git add -A && git commit` | `gitutil` (new `Commit`); `message` template |
-| `publish` | `changeset publish` | relrig's `publish` (the per-ecosystem adapters already built); **OTP/`args` injection point** |
+| `publish` | `changeset publish` | shipRig's `publish` (the per-ecosystem adapters already built); **OTP/`args` injection point** |
 | `tag` | per-package git tags | already built (`gitutil` + `tagName`); usually folded into publish, available standalone |
 | `push` | `git push --follow-tags` | `gitutil` (new `Push`) |
 | `githubRelease` | `gh release create <pkg>@<ver>` per package | **the only genuinely new code** — native step via `gh`, notes lifted from each `CHANGELOG.md`, idempotent (skip existing), graceful when `gh`/GitHub absent |
@@ -129,10 +129,10 @@ the run is resumable**: a mid-pipeline failure resumes with `--only githubReleas
 A secret masker redacts captured `vars` values in all output; `--dry-run` never
 captures, so secrets stay literal in the printed plan.
 
-## CLI surface (`relrig release`)
+## CLI surface (`shiprig release`)
 
 ```
-relrig release
+shiprig release
   --dry-run        # print the resolved step plan + exact commands (secrets masked); run nothing
   --only  <steps>  # run only these steps
   --skip  <steps>  # skip these steps
@@ -153,7 +153,7 @@ step picker): plan table, per-step rules, masked command/output lines,
 success/cancel/failure panels with a `--only <step>` resume hint, on the same
 event stream as the plain reporter. `--ui`/`--no-ui`, auto-by-terminal default.
 Sequential (not single-frame-live) so mid-run `confirm` gates prompt normally.
-This builds on the `ui` menu already in changerig/relrig.
+This builds on the `ui` menu already in changeRig/shipRig.
 
 ## Go architecture notes (decisions to make at build time)
 
@@ -176,12 +176,12 @@ This builds on the `ui` menu already in changerig/relrig.
 
 3. **`confirm` is the home for the publish-safety prompt.** The open question
    logged in [claude-questions.md](../claude-questions.md) (should `publish` prompt
-   before a real push?) is answered by per-step `confirm` here — keep `relrig
+   before a real push?) is answered by per-step `confirm` here — keep `shiprig
    publish` non-interactive, and let `release`'s `confirm` gate add the prompt.
 
 4. **Steps reuse, don't reimplement.** `version`/`publish`/`tag` are already
-   in-process in relrig/core; the pipeline calls them as functions (not by
-   shelling `relrig version`), except where a step is a user `run` command.
+   in-process in shipRig/core; the pipeline calls them as functions (not by
+   shelling `shiprig version`), except where a step is a user `run` command.
 
 5. **Custom steps + hooks + vars are ecosystem-neutral** — pure command
    execution + `${...}` interpolation + secret masking. No new engine work; this

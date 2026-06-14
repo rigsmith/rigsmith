@@ -1,7 +1,7 @@
 # Interactive UI surface — rigsmith
 
 What interactive / terminal UI exists today across the three tools (`rig`,
-`changerig`, `relrig`), when each appears and why, what the user sees, and what
+`changerig`, `shiprig`), when each appears and why, what the user sees, and what
 it does. Companion to [FEATURE-PARITY.md](FEATURE-PARITY.md) (feature surface)
 — this file is the UI inventory. A gap analysis vs the .NET/Node sources lives
 at the end.
@@ -342,9 +342,9 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   .changeset/` (exit non-zero, the CI path).
 
 ## `changerig ui` — verb menu (bubbletea)
-- **Trigger:** `changerig ui` (and `relrig ui` — shared command).
+- **Trigger:** `changerig ui` (and `shiprig ui` — shared command).
 - **What you see:** header `<root>  ·  <N> package(s)  ·  <M> pending
-  changeset(s)`, title `relrig`/`changerig`, and the entries
+  changeset(s)`, title `shiprig`/`changerig`, and the entries
   `Status` / `Add changeset` / `Browse changesets` / `Version` / `Info` with dim
   descriptions. Cursor `▸` + bold-cyan selection; hint `↑/↓ move · enter select
   · q quit`.
@@ -382,13 +382,13 @@ prompts (deliberate — see the gap analysis).
 
 ---
 
-# `relrig` (release tool, `release/`)
+# `shiprig` (release tool, `shiprig/`)
 
-`relrig` reuses changerig's `add`/`ui`/`status`/`version` commands verbatim, so
+`shiprig` reuses changeRig's `add`/`ui`/`status`/`version` commands verbatim, so
 those UIs are identical. Its own surfaces:
 
 ## `publish` confirm gate (huh confirm)
-- **Trigger:** `relrig publish` (and `changerig publish`) just before the first
+- **Trigger:** `shiprig publish` (and `changerig publish`) just before the first
   network side-effect (registry push / tag push), on a TTY, when not `--dry-run`
   and not `--yes`.
 - **What you see:** a huh confirm `Publish <N> package(s) to their registries
@@ -396,7 +396,7 @@ those UIs are identical. Its own surfaces:
 - **What it does:** declining prints `Publish cancelled.` and exits cleanly.
 - **Non-TTY / `--yes`:** proceeds without prompting (the CI path).
 
-## `relrig release` — confirm gates (huh confirm)
+## `shiprig release` — confirm gates (huh confirm)
 - **Trigger:** any pipeline step whose `.changeset/release.jsonc` config sets
   `confirm: true` or `confirm: "<message>"`, on a TTY, unless `--yes`.
 - **What you see:** a huh confirm with the step's message (default
@@ -405,7 +405,7 @@ those UIs are identical. Its own surfaces:
   cancellation with a `--only <step>` resume hint. Off a TTY the gate resolves
   via a fixed answer (proceed under `--yes`, otherwise halt) — never hangs.
 
-## `relrig release` — reporters (plain vs rich)
+## `shiprig release` — reporters (plain vs rich)
 The pipeline is headless; everything renders through a `Reporter`. Mode is
 auto-by-TTY, forced with `--ui`/`--no-ui` (and `--yes` implies plain):
 - **Plain** (piped / `--no-ui`): `Release plan:` followed by `==> step`,
@@ -421,8 +421,8 @@ The above three describe the **sequential** path (CI, `--yes`, piped, `--no-ui`,
 `--dry-run`). On an interactive rich TTY a real run instead uses the full TUI
 flow below.
 
-## `relrig release` — plan editor (bubbletea, pre-run)
-- **Trigger:** an interactive, rich, non-dry-run `relrig release` (a TTY, not
+## `shiprig release` — plan editor (bubbletea, pre-run)
+- **Trigger:** an interactive, rich, non-dry-run `shiprig release` (a TTY, not
   `--yes`/`--no-ui`/piped). The `interactiveChooser` PlanChooser implementation.
 - **Why:** review the resolved plan and choose which steps run before anything
   executes — the faithful port of the source's interactive step picker.
@@ -438,7 +438,7 @@ flow below.
   (toggling a flag-skipped step back on re-enables it); the result feeds the run.
   Cancelling prints `Release cancelled.` and exits without running anything.
 
-## `relrig release` — live dashboard (bubbletea, during the run)
+## `shiprig release` — live dashboard (bubbletea, during the run)
 - **Trigger:** the same interactive-rich-real-run path, immediately after the
   editor. The headless pipeline runs in a goroutine and drives this single
   bubbletea program through a `Reporter`→`tea.Msg` bridge (`dashReporter`).
@@ -479,16 +479,16 @@ flow below.
 | `<verb> --all` dashboard | rig | bubbletea + bubbles | `rig build/test --all` (TTY) | plain sequential |
 | `init` wizard | rig | huh form | `rig init` (TTY, no `.rig.json`) | plain scaffold |
 | `setup` | rig | none (file I/O) | `rig setup` | (not interactive) |
-| `add` form | changerig/relrig | huh form | `add`, no flags | provide flags |
-| `add` setup offer | changerig/relrig | huh confirm | `add` in an uninit workspace (TTY) | clear `init` error |
-| `ui` menu | changerig/relrig | bubbletea | `changerig ui` | fails fast |
-| `browse` changesets | changerig/relrig | bubbletea + viewport | `changerig browse` (TTY) | plain list |
-| `publish` confirm | changerig/relrig | huh confirm | network side-effects (TTY) | proceed w/ `--yes` |
-| `release` confirm gates | relrig | huh confirm | `confirm:` step (TTY) | fixed answer |
-| `release` reporters (sequential) | relrig | lipgloss (rich) / text (plain) | non-interactive / piped / `--no-ui` / dry-run | plain |
-| `status`/`version` plan | changerig/relrig | lipgloss (styled) | always | (styled text) |
-| `release` plan editor | relrig | bubbletea | interactive rich real run | passthrough |
-| `release` live dashboard | relrig | bubbletea + bubbles | interactive rich real run | sequential reporter |
+| `add` form | changeRig/shipRig | huh form | `add`, no flags | provide flags |
+| `add` setup offer | changeRig/shipRig | huh confirm | `add` in an uninit workspace (TTY) | clear `init` error |
+| `ui` menu | changeRig/shipRig | bubbletea | `changerig ui` | fails fast |
+| `browse` changesets | changeRig/shipRig | bubbletea + viewport | `changerig browse` (TTY) | plain list |
+| `publish` confirm | changeRig/shipRig | huh confirm | network side-effects (TTY) | proceed w/ `--yes` |
+| `release` confirm gates | shipRig | huh confirm | `confirm:` step (TTY) | fixed answer |
+| `release` reporters (sequential) | shipRig | lipgloss (rich) / text (plain) | non-interactive / piped / `--no-ui` / dry-run | plain |
+| `status`/`version` plan | changeRig/shipRig | lipgloss (styled) | always | (styled text) |
+| `release` plan editor | shipRig | bubbletea | interactive rich real run | passthrough |
+| `release` live dashboard | shipRig | bubbletea + bubbles | interactive rich real run | sequential reporter |
 
 ---
 
@@ -518,7 +518,7 @@ interactive surface:
   manager, the **workspace-root / `run` pickers**, and the **primary-ecosystem
   picker** below.
 
-### Done — the relrig step-chooser TUI
+### Done — the shipRig step-chooser TUI
 The source's interactive **step picker** (toggle which steps run before the
 release starts) is now built as the **plan editor** above, and goes further with
 a **live run dashboard** (streaming per-step status + inline confirm gates) on
@@ -541,6 +541,6 @@ the **shell installer**.
   interactive config verb, which here is folded into `default` / `init`.
 
 **Bottom line:** the interactive-UI surface is at or above parity. The two TUI
-gaps that remained — the relrig step-chooser (now the plan editor + live
+gaps that remained — the shipRig step-chooser (now the plan editor + live
 dashboard) and the C#-style config wizard (now `rig init` + the ecosystem
 picker) — are both built; nothing functional is missing.

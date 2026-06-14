@@ -42,7 +42,7 @@ native bulk command, go/.NET pin per-package, and cargo's plan comes from
 `cargo update --dry-run`. .NET, which has no version ranges, upgrades to latest.
 `rig outdated -i` is the to-latest selective picker.
 
-## Release / version engine (`relrig` + `changerig`)
+## Release / version engine (`shiprig` + `changerig`)
 
 Driven by the shared adapter interface in
 [`core/plugin/ecosystem.go`](../core/plugin/ecosystem.go).

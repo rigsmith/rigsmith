@@ -1,9 +1,9 @@
-# relrig vs. release-it
+# shipRig vs. release-it
 
-How rigsmith's release tool (`relrig`) compares to
+How rigsmith's release tool (`shiprig`) compares to
 [release-it](https://github.com/release-it/release-it) — an excellent,
 battle-tested, configurable release automation tool. release-it is a great choice
-for a huge number of projects; relrig exists not because release-it falls short
+for a huge number of projects; shipRig exists not because release-it falls short
 but because rigsmith wanted a different *model* (polyglot monorepo + committed
 changeset intent + a single zero-dependency binary). Both automate the
 `bump → changelog → commit → tag → publish → GitHub release` chain and both are
@@ -11,7 +11,7 @@ configurable end to end, so the interesting differences are in the model each on
 uses, not in which tool is "better."
 
 > Companion docs: [RELEASE-ORCHESTRATOR.md](RELEASE-ORCHESTRATOR.md) (the
-> `relrig release` pipeline) and [FEATURE-PARITY.md](FEATURE-PARITY.md).
+> `shiprig release` pipeline) and [FEATURE-PARITY.md](FEATURE-PARITY.md).
 
 ## TL;DR
 
@@ -21,18 +21,18 @@ uses, not in which tool is "better."
   a rich, well-maintained **plugin ecosystem**. For a vast range of projects —
   especially Node, but well beyond it via plugins — it's the batteries-included
   default, and an easy recommendation.
-- **relrig** is a single static Go binary that releases a **whole polyglot
+- **shipRig** is a single static Go binary that releases a **whole polyglot
   monorepo per run**, derives the bump from **explicit changeset files** authored
   alongside each change, cascades that bump through the dependency graph, and
   orchestrates the publish chain via a thin, optional `release.jsonc` pipeline.
 
 They sit at different points on the same axis: release-it infers *what to
-release* from VCS state; relrig records *what to release* as committed intent and
+release* from VCS state; shipRig records *what to release* as committed intent and
 then plans the cascade across many packages and ecosystems.
 
 ## At a glance
 
-| | **relrig** | **release-it** |
+| | **shipRig** | **release-it** |
 |---|---|---|
 | Runtime | Single static Go binary, zero runtime deps | Node.js ≥ 20.19 |
 | Install | `curl \| sh` / Homebrew / Scoop | `npm i -D release-it` (or `npx`) |
@@ -59,9 +59,9 @@ changelog from the commits since that tag, and publishes. With
 Conventional Commits. The "what changed and how much" lives in your commit
 messages and tag history.
 
-**relrig** uses the changesets model (it's the Go successor to net-changesets,
+**shipRig** uses the changesets model (it's the Go successor to net-changesets,
 itself a port of the @changesets workflow). Each meaningful change ships with a
-small changeset file (`changerig add` / `relrig add`) declaring which packages it
+small changeset file (`changerig add` / `shiprig add`) declaring which packages it
 touches and at what bump level, plus prose for the changelog. At release time the
 planner reads the accumulated changesets, computes per-package bumps, **cascades**
 them to dependents, applies **linked/fixed/lockstep** grouping, stamps every
@@ -73,7 +73,7 @@ Trade-offs:
   from commit hygiene — you don't need disciplined Conventional Commits, and the
   changelog prose is written deliberately. release-it needs either a human in the
   loop or a commit convention to know the bump.
-- **Multi-package planning.** Because relrig holds the whole set of pending changes
+- **Multi-package planning.** Because shipRig holds the whole set of pending changes
   and the dependency graph, one run produces a coherent multi-package plan with a
   cascade. release-it releases a single package per invocation; a monorepo is a
   scripted sequence of runs (per its monorepo recipe), and inter-package bump
@@ -91,7 +91,7 @@ Trade-offs:
   footnote — there are community plugins for .NET, pnpm, Gitea, and others. If a
   target isn't covered, a plugin is a tractable amount of JS. (rigsmith's author
   wrote a .NET adapter for release-it years ago — the model works.)
-- **GitLab.** First-class GitLab releases alongside GitHub; relrig's forge step is
+- **GitLab.** First-class GitLab releases alongside GitHub; shipRig's forge step is
   GitHub-only today (via `gh`).
 - **In-process JS plugins.** If you live in Node, authoring or pulling a plugin is
   `npm install` and a JS module — lower ceremony than a subprocess plugin for
@@ -100,7 +100,7 @@ Trade-offs:
   no changeset files, no monorepo planner to reason about. That simplicity is a
   feature, and for most repos it's the right amount of tool.
 
-## How relrig differs
+## How shipRig differs
 
 - **Polyglot, by design.** One tool versions/publishes .NET, Node, Go, and Rust in
   the *same* repo, plus a generic `regex` adapter for arbitrary version files —
@@ -110,7 +110,7 @@ Trade-offs:
   grouping, and aggregated multi-package changelog are core, not a recipe you
   assemble.
 - **Zero-runtime-dependency distribution.** A single static binary installs via
-  `curl | sh` / Homebrew / Scoop with no Node toolchain — relrig's north-star
+  `curl | sh` / Homebrew / Scoop with no Node toolchain — shipRig's north-star
   property. release-it requires Node ≥ 20.19 on every machine that releases.
 - **Language-neutral plugins.** The subprocess + versioned-JSON contract means a
   changelog generator or adapter can be written in any language (the built-ins
@@ -128,7 +128,7 @@ release-it centers a single config object (`.release-it.json` /
 `after:bump`, `before:git:release`), and a `plugins` map. One run = one package's
 lifecycle.
 
-relrig keeps versioning/changelog in the `core` engine and treats `release` as a
+shipRig keeps versioning/changelog in the `core` engine and treats `release` as a
 **thin sequencer**. The optional `.changeset/release.jsonc` defines `order`,
 per-`steps` config (`before`/`after`/`run`/`args`/`confirm`/`message`/`forge`),
 global `hooks`, and lazy `vars` for secret capture, with `${...}` interpolation
@@ -137,7 +137,7 @@ into a general-purpose task runner. (See
 [RELEASE-ORCHESTRATOR.md](RELEASE-ORCHESTRATOR.md).)
 
 ```jsonc
-// relrig: .changeset/release.jsonc — thin sequencer over engine steps
+// shiprig: .changeset/release.jsonc — thin sequencer over engine steps
 {
   "vars":  { "npmOtp": { "command": ["op", "item", "get", "npm", "--otp"], "lazy": true } },
   "steps": {
@@ -166,14 +166,14 @@ into a general-purpose task runner. (See
   one at a time), you want a mature tool with a deep plugin ecosystem, you need
   **GitLab** releases or npm OIDC publishing, and you're fine driving version from
   tags/commits (optionally Conventional Commits).
-- **Reach for relrig** when: you have a **polyglot monorepo** (.NET/Node/Go/Rust),
+- **Reach for shipRig** when: you have a **polyglot monorepo** (.NET/Node/Go/Rust),
   you want **explicit, reviewed release intent** with a real cross-package
   **dependency cascade** and grouping, you want a **single static binary** with no
   Node runtime on release machines, and you want the publish chain orchestrated by
   a thin, auditable pipeline.
 
 In one line: **release-it infers the release from your VCS history, one package at
-a time; relrig plans the release from committed changeset intent, across the whole
+a time; shipRig plans the release from committed changeset intent, across the whole
 polyglot monorepo at once.**
 
 ## Sources

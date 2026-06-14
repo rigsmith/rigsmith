@@ -3,7 +3,7 @@
 How rigsmith's tools compare to [knope](https://knope.tech) — a single-binary,
 configurable release-and-workflow automation tool. Of all the tools we've
 compared against, knope is the closest cousin: it's a **single static binary**
-with **no runtime dependency** (Rust, where relrig is Go), and it's one of the
+with **no runtime dependency** (Rust, where shipRig is Go), and it's one of the
 few release tools that natively speaks **changesets**. So the interesting
 differences aren't "binary vs. Node script" (as with
 [release-it](VS-RELEASE-IT.md)) — they're about the *release model* and how far
@@ -15,7 +15,7 @@ candidate before rigsmith existed; the gaps below are gaps for *our* shape of
 project (a .NET-heavy polyglot monorepo), not flaws in knope.
 
 > Companion docs: [VS-RELEASE-IT.md](VS-RELEASE-IT.md),
-> [RELEASE-ORCHESTRATOR.md](RELEASE-ORCHESTRATOR.md) (the `relrig release`
+> [RELEASE-ORCHESTRATOR.md](RELEASE-ORCHESTRATOR.md) (the `shiprig release`
 > pipeline), and [FEATURE-PARITY.md](FEATURE-PARITY.md).
 
 ## What's being compared
@@ -25,7 +25,7 @@ knope is one tool that does two things: it **automates releases** (version bump
 arbitrary steps (select an issue, run a command, open a PR). rigsmith splits
 those concerns across the family:
 
-- **`relrig` / `changerig`** — the release engine. This is the head-to-head with
+- **`shiprig` / `changerig`** — the release engine. This is the head-to-head with
   knope's release half.
 - **`rig`** — the convention-first dev launcher (run/build/test/format/doctor).
   This covers the everyday-dev-loop "tedious tasks" that knope's `Command`
@@ -41,7 +41,7 @@ those concerns across the family:
   `knope.toml` defines named workflows as ordered `steps` (`PrepareRelease`,
   `Release`, `Command`, `CreatePullRequest`, `SelectGitHubIssue`, …), so it also
   automates issue selection, branch juggling, and PR creation.
-- **relrig** is a single Go binary that determines versions from **explicit
+- **shipRig** is a single Go binary that determines versions from **explicit
   changeset files only**, cascades the bump through the **dependency graph**,
   applies **linked/fixed/lockstep** grouping, stamps every ecosystem's manifest,
   aggregates the changelog, and **publishes to the native registries** — all as
@@ -56,7 +56,7 @@ a separate dev launcher, vs. one configurable release-and-workflow runner).
 
 ## At a glance
 
-| | **relrig** (+ `rig`) | **knope** |
+| | **shipRig** (+ `rig`) | **knope** |
 |---|---|---|
 | Runtime | Single static Go binary, zero runtime deps | Single static Rust binary, zero runtime deps |
 | Install | `curl \| sh` / Homebrew / Scoop | Prebuilt binaries / `cargo install knope` / `knope-dev/action` |
@@ -84,9 +84,9 @@ changeset prose, or both at once — knope adopted changesets *in addition to*
 commit parsing, so it sits on both sides of the
 [VS-RELEASE-IT](VS-RELEASE-IT.md) fence at the same time.
 
-**relrig** uses changesets **exclusively** (it's the Go successor to
+**shipRig** uses changesets **exclusively** (it's the Go successor to
 net-changesets, itself a port of the @changesets workflow). Every meaningful
-change ships a changeset file (`changerig add` / `relrig add`) declaring the
+change ships a changeset file (`changerig add` / `shiprig add`) declaring the
 packages it touches, the bump level, and the changelog prose. At release time the
 planner reads the accumulated set, computes per-package bumps, **cascades** them
 to dependents, applies **linked/fixed/lockstep** grouping, stamps every
@@ -95,10 +95,10 @@ ecosystem's manifest, and aggregates the changelog.
 Trade-offs:
 
 - **Flexibility vs. one source of truth.** knope lets a team mix commit-derived
-  and changeset-derived bumps; relrig insists the intent lives in changesets, so
+  and changeset-derived bumps; shipRig insists the intent lives in changesets, so
   there's exactly one place "what releases and how much" is recorded — no
   dependence on commit discipline, no ambiguity between two signals.
-- **Multi-package planning.** relrig holds the whole pending set *and* the
+- **Multi-package planning.** shipRig holds the whole pending set *and* the
   dependency graph, so one run produces a coherent cross-package plan with a
   cascade and grouping. knope's `PrepareRelease` runs **per package
   independently**; there's no automatic cross-package bump propagation (it can
@@ -109,18 +109,18 @@ Trade-offs:
 
 - **Two version sources.** If your team already lives on Conventional Commits,
   knope gives you releases with *zero* extra files, and lets you sprinkle in
-  changesets only where a commit can't capture the nuance. relrig has no
+  changesets only where a commit can't capture the nuance. shipRig has no
   commit-inference path at all.
 - **More forges.** GitHub, GitLab, **and Gitea** releases are first-class, plus
-  issue-tracker integration (GitHub/Gitea/Jira). relrig's forge step is
+  issue-tracker integration (GitHub/Gitea/Jira). shipRig's forge step is
   GitHub-only today (via `gh`) and has no issue-tracker step.
 - **A general workflow runner.** `knope.toml` workflows are arbitrary ordered
   steps — select an issue, switch branches, run a command, open a PR, cut a
-  release — so one tool scripts a lot of the day-to-day. relrig deliberately
+  release — so one tool scripts a lot of the day-to-day. shipRig deliberately
   keeps its pipeline thin (see below).
 - **Breadth of versioned formats out of the box.** Python (`pyproject.toml`),
   Java (`pom.xml`), Dart (`pubspec.yaml`), Deno, Gleam, and Tauri are built in;
-  relrig ships .NET/Node/Go/Rust adapters and reaches the rest through its
+  shipRig ships .NET/Node/Go/Rust adapters and reaches the rest through its
   `regex` adapter or a custom plugin.
 
 ## Where rigsmith is ahead
@@ -134,14 +134,14 @@ the other.
   no `.csproj`, `.nuspec`, `Directory.Build.props`, or `AssemblyInfo` — so .NET
   would run through its generic `regex` matcher with a hand-rolled NuGet publish.
   That's a perfectly reasonable scope choice for knope; it just happens that .NET
-  is central to our repos, and relrig ships a real .NET adapter that treats a .NET
+  is central to our repos, and shipRig ships a real .NET adapter that treats a .NET
   project exactly like the others. This was the single biggest reason we built
   rather than adopted.
 - **Polyglot release, not just polyglot version strings.** knope edits version
   numbers across many file formats, but by design it **does not build or
   publish** — its release step writes files and cuts a forge release; pushing to
   npm/NuGet/cargo is a `Command` step you wire up per ecosystem (a clean,
-  composable model). relrig instead detects each ecosystem and runs its **native
+  composable model). shipRig instead detects each ecosystem and runs its **native
   publish** (npm, NuGet, cargo, Go) as part of one planned run. "Polyglot" in
   rigsmith means the whole release, manifest-to-registry, across languages — a
   deliberately heavier, less composable trade than knope's.
@@ -149,7 +149,7 @@ the other.
   releases, with linked/fixed/lockstep grouping and an aggregated multi-package
   changelog — core behavior, not something you assemble. knope releases each
   package independently.
-- **Built-in registry publishing.** `relrig publish` runs the native publish for
+- **Built-in registry publishing.** `shiprig publish` runs the native publish for
   each ecosystem (npm, NuGet, cargo, Go), idempotently and confirm-gated on a
   TTY. knope's native release step creates the tag and forge release; pushing to
   a package registry is a `Command` step you wire up yourself.
@@ -157,13 +157,13 @@ the other.
   lets an ecosystem adapter or changelog generator be written in *any* language
   (the built-ins dogfood the same contract). knope is extended through `Command`
   steps and regex files, not a plugin API.
-- **A focused tool per job.** relrig stays a release engine; the everyday dev
+- **A focused tool per job.** shipRig stays a release engine; the everyday dev
   loop is the separate `rig` launcher (`run`/`build`/`test`/`format`/`doctor`).
   knope folds release and general task-running into one configurable surface —
   genuinely powerful, and many teams prefer one tool; rigsmith just makes the
   opposite bet, keeping the release sequencer thin and the dev loop separate.
 - **Deliberate changelog prose.** Notes are authored in changesets at change
-  time; relrig never reconstructs a changelog from commit subjects.
+  time; shipRig never reconstructs a changelog from commit subjects.
 
 ## The workflow / task-runner axis
 
@@ -172,7 +172,7 @@ knope's tagline is "handle all the tasks most developers find tedious," and its
 list of steps, and `Command` steps run arbitrary shell. rigsmith answers the same
 need but splits it deliberately:
 
-- **Release orchestration** is `relrig release` over an optional
+- **Release orchestration** is `shiprig release` over an optional
   `.changeset/release.jsonc` — a *thin sequencer* (steps with
   `before`/`after`/`run`/`args`/`confirm`/`forge`, plus lazy `vars` for secret
   capture and a secret masker). The design discipline is to keep it glue and
@@ -189,7 +189,7 @@ launcher.
 ## Configuration shape
 
 Both are "configurable pipelines," but knope's config is a list of general
-workflows while relrig's is a thin sequencer over a fixed engine.
+workflows while shipRig's is a thin sequencer over a fixed engine.
 
 ```toml
 # knope: knope.toml — named workflows, each an ordered list of steps
@@ -209,7 +209,7 @@ type = "Release"            # tag + GitHub/GitLab/Gitea release
 ```
 
 ```jsonc
-// relrig: .changeset/release.jsonc — thin sequencer over engine steps
+// shiprig: .changeset/release.jsonc — thin sequencer over engine steps
 {
   "vars":  { "npmOtp": { "command": ["op", "item", "get", "npm", "--otp"], "lazy": true } },
   "steps": {
@@ -221,7 +221,7 @@ type = "Release"            # tag + GitHub/GitLab/Gitea release
 }
 ```
 
-The version/changelog logic in relrig lives in the `core` engine (cascade,
+The version/changelog logic in shipRig lives in the `core` engine (cascade,
 grouping, manifest stamping); `release.jsonc` only orders and decorates those
 fixed steps. In knope, `PrepareRelease` and `Release` are themselves steps you
 arrange inside whatever workflow you author, alongside arbitrary `Command`s.
@@ -233,7 +233,7 @@ arrange inside whatever workflow you author, alongside arbitrary `Command`s.
   integration, you like one tool that scripts **general workflows** (issues, PRs,
   branches, commands) as well as releases, and your packages release largely
   independently of one another.
-- **Reach for relrig** (with `rig`) when: you want **changesets as the single
+- **Reach for shipRig** (with `rig`) when: you want **changesets as the single
   source of release intent**, you have a **polyglot monorepo** that needs a real
   cross-package **dependency cascade** and linked/fixed/lockstep grouping in one
   planned run, you want **built-in registry publishing** across .NET/Node/Go/Rust
@@ -241,7 +241,7 @@ arrange inside whatever workflow you author, alongside arbitrary `Command`s.
   release sequencer kept separate from a convention-first dev launcher.
 
 In one line: **knope decides versions from commits *and* changesets and is one
-configurable runner for releases and chores; relrig decides versions from
+configurable runner for releases and chores; shipRig decides versions from
 changesets alone, plans a cross-package cascade across a polyglot monorepo, and
 keeps release glue thin while `rig` handles the dev loop.**
 
