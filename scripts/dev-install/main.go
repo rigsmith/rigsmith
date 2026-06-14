@@ -170,7 +170,16 @@ case "${1:-}" in
 		exec "{{PICKER}}" worktree use --repo "{{REPO}}"
 		;;
 	--unset|--off)
-		exec "{{PICKER}}" worktree unset --repo "{{REPO}}"
+		# Delete the pin here rather than via clauderig: the route is shared, so a
+		# pin pointing at a tree that lacks the unset subcommand would otherwise
+		# build that tree and fail — leaving no way out. The wrapper knows the file,
+		# so this always works.
+		if [ -f "{{ROUTE}}" ]; then
+			rm -f "{{ROUTE}}" && echo "{{NAME}}-wt: cleared the pinned -dev route" >&2
+		else
+			echo "{{NAME}}-wt: no route was pinned" >&2
+		fi
+		exit 0
 		;;
 esac
 query=""
@@ -244,8 +253,16 @@ if not "%~2"=="" (
 exit /b %ERRORLEVEL%
 
 :unpin
-"{{PICKER}}" worktree unset --repo "{{REPO}}"
-exit /b %ERRORLEVEL%
+rem Delete the pin here rather than via clauderig: the route is shared, so a pin
+rem pointing at a tree that lacks the unset subcommand would otherwise build it
+rem and fail.
+if exist "{{ROUTE}}" (
+	del /q "{{ROUTE}}" >nul 2>&1
+	echo {{NAME}}-wt: cleared the pinned -dev route>&2
+) else (
+	echo {{NAME}}-wt: no route was pinned>&2
+)
+exit /b 0
 
 :run
 set "QUERY="
