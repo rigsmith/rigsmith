@@ -20,8 +20,6 @@ the stack — update it when reality diverges.
 | **rigsmith.dev** | The site. Landing page + all docs (see URL structure below). |
 | **rigsmith.sh** | Canonical install domain for *all* tools, current and future (see below). |
 | **rigcli.dev** | 301 → `rigsmith.dev/rig/*` (host-based rule in Netlify `_redirects`). |
-| **relrig.dev** | 301 → `rigsmith.dev/shiprig/*` (back-compat redirect from the old name). |
-| **relrig.sh** | Temporary back-compat alias (`curl relrig.sh \| sh` installs shiprig) until renewal, then lapses. |
 | **rigcli.sh** | Redirect only; lapses at renewal. |
 
 .sh renewals are expensive — the standing rule is **no new .sh purchases**
@@ -71,9 +69,8 @@ User-Agent:
   tool from the path baked in as the default selection (root = all tools);
 - browsers → 302 to the matching rigsmith.dev docs section.
 
-This supersedes the two-domain scheme in [DISTRIBUTION.md](DISTRIBUTION.md)
-(`rigsmith.sh` + `relrig.sh`); update that doc and `install.sh` when the edge
-function lands.
+This supersedes the two-domain scheme in [DISTRIBUTION.md](DISTRIBUTION.md);
+update that doc and `install.sh` when the edge function lands.
 
 ## Decisions & rationale
 

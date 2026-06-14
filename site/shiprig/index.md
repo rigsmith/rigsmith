@@ -37,10 +37,4 @@ everything changeRig does **plus** `tag`, `publish`, `pre`, and `release`. They
 share the same `add`/`status`/`version` code, so the changeset half behaves
 identically.
 
-::: tip The rename
-shipRig is the release tool formerly known as `relrig`. The `relrig` name keeps
-working as a deprecated alias, and `relrig.dev` / `relrig.sh` redirect to the
-shipRig equivalents.
-:::
-
 - [The release pipeline →](./pipeline)

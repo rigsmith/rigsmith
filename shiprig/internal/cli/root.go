@@ -6,10 +6,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/rigsmith/changerig/commands"
 	"github.com/rigsmith/core/brand"
@@ -19,19 +15,7 @@ import (
 
 // Execute builds the command tree and runs it through fang.
 func Execute(ctx context.Context) error {
-	warnIfDeprecatedAlias()
 	return fang.Execute(ctx, newRootCmd(), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentShip)), fang.WithBanner(brand.ShipBanner))
-}
-
-// warnIfDeprecatedAlias prints a one-line notice when the binary is invoked
-// under its old name. shiprig was renamed from relrig; the relrig name keeps
-// working as a deprecated alias (a symlink/copy installed alongside, or a
-// renamed download) so muscle memory and existing CI don't break.
-func warnIfDeprecatedAlias() {
-	base := strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe")
-	if base == "relrig" {
-		fmt.Fprintln(os.Stderr, "note: 'relrig' was renamed to 'shiprig'; 'relrig' is now a deprecated alias.")
-	}
 }
 
 func newRootCmd() *cobra.Command {

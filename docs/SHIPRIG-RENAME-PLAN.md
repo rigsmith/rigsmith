@@ -1,11 +1,12 @@
 # Rename plan: `relrig` → `shiprig` (+ family casing convention)
 
 > Status: **DONE** — executed on 2026-06-13 via Option A (full dir + module
-> move) on branch `feat/shiprig-rename`. `relrig` is kept as a deprecated alias
-> (argv[0] detection in `shiprig`, an `install.sh` target, and the
-> `relrig.sh`/`relrig.dev` redirects). This document is retained as the record
-> of the decision and the blast radius; the prose below is left in its original
-> planning tense.
+> move) on branch `feat/shiprig-rename`. **No back-compat was kept:** `relrig`
+> was never released, so there is nothing to be compatible with — the deprecated
+> alias, the `install.sh` target, and the `relrig.sh`/`relrig.dev` redirects
+> described in the "Back-compat" section below were *not* implemented. The tool
+> is simply `shiprig`. This document is retained as the record of the decision
+> and the blast radius; the prose below is left in its original planning tense.
 
 ## Decision (settled)
 

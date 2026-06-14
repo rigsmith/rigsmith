@@ -10,7 +10,7 @@ produces.
 | Channel | Status | Notes |
 | --- | --- | --- |
 | **GitHub Releases** | ✅ primary | GoReleaser builds linux/darwin/windows on amd64+arm64, uploads `.tar.gz` (unix) / `.zip` (windows) archives + `checksums.txt`. |
-| **`curl \| sh`** | ✅ | `curl -fsSL https://rigsmith.sh \| sh` (both binaries) and `curl -fsSL https://relrig.sh \| sh -s relrig`. Served by [`scripts/install.sh`](../scripts/install.sh); installs to `~/.local/bin` (override with `RIGSMITH_INSTALL`). |
+| **`curl \| sh`** | ✅ | `curl -fsSL https://rigsmith.sh \| sh` (all tools) or `… \| sh -s shiprig` for one. Served by [`scripts/install.sh`](../scripts/install.sh); installs to `~/.local/bin` (override with `RIGSMITH_INSTALL`). |
 | **Homebrew tap** | ⛔ TODO | Skeleton `brews:` block is in `.goreleaser.yaml`, commented out until a `rigsmith/homebrew-tap` repo exists. Target: `brew install rigsmith/tap/rig`. |
 | **Scoop** | ⛔ TODO | Windows. Add a `scoops:` block + a `rigsmith/scoop-bucket` repo. Target: `scoop install rig`. |
 | **npm binary wrapper** | ⛔ TODO (secondary) | Thin npm package(s) (`@rigsmith/rig`, `@rigsmith/shiprig`) whose `postinstall`/`bin` shim downloads the matching GitHub Release archive — lets Node users `npx rig` / add it as a devDependency. Secondary to the native channels above. |
