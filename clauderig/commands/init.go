@@ -53,12 +53,18 @@ func NewInitCmd() *cobra.Command {
 					}
 				}
 			} else {
-				form := huh.NewForm(huh.NewGroup(
-					huh.NewInput().Title("This machine's name").Value(&me.Name),
-					huh.NewConfirm().Title("Sync the Desktop/Cowork root too?").Value(&syncDesktop),
-					huh.NewConfirm().Title("Install Claude Code hooks (auto pull on start, sync on stop)?").Value(&installHooks),
-					huh.NewConfirm().Title("On restore, prune config files (skills/commands/agents/plans) deleted elsewhere?").Value(&alwaysPrune),
-				)).WithTheme(brand.Theme(brand.AccentClaude)).WithKeyMap(huhEscKeyMap())
+				// Two pages so the prompts aren't all crammed onto one screen: the
+				// machine name on its own, then the three yes/no choices together.
+				form := huh.NewForm(
+					huh.NewGroup(
+						huh.NewInput().Title("This machine's name").Value(&me.Name),
+					),
+					huh.NewGroup(
+						huh.NewConfirm().Title("Sync the Desktop/Cowork root too?").Value(&syncDesktop),
+						huh.NewConfirm().Title("Install Claude Code hooks (auto pull on start, sync on stop)?").Value(&installHooks),
+						huh.NewConfirm().Title("On restore, prune config files (skills/commands/agents/plans) deleted elsewhere?").Value(&alwaysPrune),
+					),
+				).WithTheme(brand.Theme(brand.AccentClaude)).WithKeyMap(huhEscKeyMap())
 				if err := form.Run(); err != nil {
 					return cancelOrErr(out, err)
 				}
