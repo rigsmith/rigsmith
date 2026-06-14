@@ -1,9 +1,14 @@
 package commands
 
 import (
+	"bytes"
+	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/clauderig/internal/gitrepo"
+	"github.com/rigsmith/core/devroute"
 )
 
 func TestResolveWorktree(t *testing.T) {
@@ -75,6 +80,77 @@ func TestWorktreeCompletions(t *testing.T) {
 		got := worktreeCompletions([]gitrepo.Worktree{detached})
 		assertEqual(t, got, nil)
 	})
+}
+
+func TestBranchAt(t *testing.T) {
+	main := gitrepo.Worktree{Path: "/repo", Branch: "main"}
+	gw := gitrepo.Worktree{Path: "/repo-wt/feat-x", Branch: "feat/x"}
+	detached := gitrepo.Worktree{Path: "/repo-wt/d", Branch: ""}
+	wts := []gitrepo.Worktree{main, gw, detached}
+
+	if got := branchAt(wts, "/repo-wt/feat-x"); got != "feat/x" {
+		t.Errorf("branchAt(known) = %q; want feat/x", got)
+	}
+	if got := branchAt(wts, "/repo-wt/d"); got != "(detached)" {
+		t.Errorf("branchAt(detached) = %q; want (detached)", got)
+	}
+	if got := branchAt(wts, "/somewhere/else"); got != "else" {
+		t.Errorf("branchAt(unknown) = %q; want base name 'else'", got)
+	}
+}
+
+// TestWorktreeUseActiveUnset drives the three route subcommands end to end
+// against a real repo + worktree, pinning under a temp HOME so the devroute file
+// lands in the sandbox.
+func TestWorktreeUseActiveUnset(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	r, err := gitrepo.Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "a", "1", "init")
+	wtPath := filepath.Join(t.TempDir(), "feat")
+	if err := r.WorktreeAdd(ctx, wtPath, "feature", "main", true); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := NewWorktreeCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs(args)
+		if err := cmd.ExecuteContext(ctx); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return buf.String()
+	}
+
+	if out := run("active", "--repo", r.Dir); !strings.Contains(out, "no pinned route") {
+		t.Errorf("active before pinning = %q", out)
+	}
+
+	// No query + exactly one linked worktree → auto-selects it.
+	if out := run("use", "--repo", r.Dir); !strings.Contains(out, "feature") {
+		t.Errorf("use = %q", out)
+	}
+	pinned, _ := devroute.Read(r.Dir)
+	if pinned == "" || !strings.Contains(pinned, "feat") {
+		t.Fatalf("pinned route = %q; want the feature worktree", pinned)
+	}
+
+	if out := run("active", "--repo", r.Dir); !strings.Contains(out, "feature") || !strings.Contains(out, pinned) {
+		t.Errorf("active after pinning = %q", out)
+	}
+
+	if out := run("unset", "--repo", r.Dir); !strings.Contains(out, "cleared") {
+		t.Errorf("unset = %q", out)
+	}
+	if got, _ := devroute.Read(r.Dir); got != "" {
+		t.Errorf("after unset pinned = %q; want empty", got)
+	}
 }
 
 func assertEqual(t *testing.T, got, want []string) {

@@ -14,6 +14,7 @@ import (
 	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/worktree"
 	"github.com/rigsmith/core/brand"
+	"github.com/rigsmith/core/devroute"
 	"github.com/rigsmith/core/match"
 	"github.com/spf13/cobra"
 )
@@ -29,8 +30,57 @@ func NewWorktreeCmd() *cobra.Command {
 		Aliases: []string{"wt"},
 		Short:   "Create/list/open git worktrees as sibling checkouts (never moves this session)",
 	}
-	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd(), newWorktreePruneCmd(), newWorktreePickCmd())
+	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd(), newWorktreePruneCmd(), newWorktreePickCmd(), newWorktreeMenuCmd(), newWorktreeUseCmd(), newWorktreeActiveCmd(), newWorktreeUnsetCmd())
 	return cmd
+}
+
+// worktreesFor opens the repo to act on (the --repo flag, or the current
+// directory) and returns its worktree list plus the path to key the dev route
+// on. That key is the --repo value verbatim when given — the `<tool>-wt`
+// launchers pass the same {{REPO}} the `-dev` wrapper bakes its route-file path
+// from, so writes here land where reads look. With no --repo it's the main
+// worktree (wts[0]), so `worktree use` keys consistently whether run from the
+// primary checkout or a linked one.
+func worktreesFor(ctx context.Context, repoDir string) (routeKey string, wts []gitrepo.Worktree, err error) {
+	dir := repoDir
+	if dir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", nil, err
+		}
+		dir = cwd
+	}
+	repo, err := gitrepo.Open(ctx, dir)
+	if err != nil {
+		return "", nil, fmt.Errorf("not inside a git repository")
+	}
+	wts, err = repo.WorktreeList(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(wts) == 0 {
+		return "", nil, fmt.Errorf("no worktrees found")
+	}
+	routeKey = repoDir
+	if routeKey == "" {
+		routeKey = wts[0].Path // git lists the main worktree first
+	}
+	return routeKey, wts, nil
+}
+
+// branchAt names the branch of the worktree at path for display, falling back to
+// the directory's base name when path isn't one of this repo's worktrees (e.g. a
+// bare directory passed as a query).
+func branchAt(wts []gitrepo.Worktree, path string) string {
+	for _, wt := range wts {
+		if sameDir(wt.Path, path) {
+			if wt.Branch != "" {
+				return wt.Branch
+			}
+			return "(detached)"
+		}
+	}
+	return filepath.Base(path)
 }
 
 // newWorktreePickCmd resolves a worktree and prints its path to stdout. It
@@ -51,25 +101,9 @@ func newWorktreePickCmd() *cobra.Command {
 		Hidden:            true,
 		ValidArgsFunction: worktreeCompletion(cobra.ShellCompDirectiveNoFileComp),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			dir := repoDir
-			if dir == "" {
-				cwd, err := os.Getwd()
-				if err != nil {
-					return err
-				}
-				dir = cwd
-			}
-			repo, err := gitrepo.Open(ctx, dir)
-			if err != nil {
-				return fmt.Errorf("not inside a git repository")
-			}
-			wts, err := repo.WorktreeList(ctx)
+			_, wts, err := worktreesFor(cmd.Context(), repoDir)
 			if err != nil {
 				return err
-			}
-			if len(wts) == 0 {
-				return fmt.Errorf("no worktrees found")
 			}
 			query := ""
 			if len(args) == 1 {
@@ -84,6 +118,115 @@ func newWorktreePickCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repoDir, "repo", "", "repo directory whose worktrees to resolve (default: current directory)")
+	return cmd
+}
+
+// newWorktreeUseCmd pins a worktree as this repo's active dev route, so a bare
+// `<tool>-dev` builds from it. It's the persistent counterpart to a transient
+// `<tool>-wt [query]`; the `<tool>-wt --use` sugar calls it. Selection reuses
+// resolveWorktree (auto-select the lone worktree, else the huh picker), and the
+// pin is written via core/devroute — the same file the `-dev` wrappers read.
+func newWorktreeUseCmd() *cobra.Command {
+	var repoDir string
+	cmd := &cobra.Command{
+		Use:   "use [query]",
+		Short: "Pin a worktree as the active route for the -dev launchers",
+		Long: `Pin a worktree so a bare <tool>-dev builds from it without repeating the
+selection. With [query] it's the best fuzzy match; with no query it auto-selects
+the lone worktree or shows a picker. Clear it with ` + "`worktree unset`" + `. An
+explicit RIGSMITH_DEV_SRC env var (or a one-off <tool>-wt [query]) still wins.`,
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: worktreeCompletion(cobra.ShellCompDirectiveNoFileComp),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			routeKey, wts, err := worktreesFor(cmd.Context(), repoDir)
+			if err != nil {
+				return err
+			}
+			query := ""
+			if len(args) == 1 {
+				query = strings.TrimSpace(args[0])
+			}
+			chosen, err := resolveWorktree(wts, query)
+			if err != nil {
+				return err
+			}
+			if err := devroute.Write(routeKey, chosen); err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "%s pinned -dev route → %s\n", OkStyle.Render("✓"), HeaderStyle.Render(branchAt(wts, chosen)))
+			fmt.Fprintf(out, "  %s\n", DimStyle.Render(chosen))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repoDir, "repo", "", "repo directory whose route to set (default: current directory)")
+	return cmd
+}
+
+// newWorktreeActiveCmd prints the pinned dev route, or a note that none is set.
+// A pin whose directory has since vanished is flagged — the `-dev` wrappers fall
+// back to the repo in that case.
+func newWorktreeActiveCmd() *cobra.Command {
+	var repoDir string
+	cmd := &cobra.Command{
+		Use:     "active",
+		Aliases: []string{"route"},
+		Short:   "Show the pinned -dev route, if any",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			routeKey, wts, err := worktreesFor(cmd.Context(), repoDir)
+			if err != nil {
+				return err
+			}
+			pinned, err := devroute.Read(routeKey)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if pinned == "" {
+				fmt.Fprintln(out, DimStyle.Render("no pinned route — -dev builds from the repo"))
+				return nil
+			}
+			stale := ""
+			if _, err := os.Stat(pinned); err != nil {
+				stale = WarnStyle.Render("  (missing — -dev falls back to the repo)")
+			}
+			fmt.Fprintf(out, "%s  %s%s\n", HeaderStyle.Render(branchAt(wts, pinned)), DimStyle.Render(pinned), stale)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repoDir, "repo", "", "repo directory whose route to show (default: current directory)")
+	return cmd
+}
+
+// newWorktreeUnsetCmd clears the pinned dev route, so `<tool>-dev` builds from
+// the repo again. Clearing when nothing is pinned is a harmless no-op.
+func newWorktreeUnsetCmd() *cobra.Command {
+	var repoDir string
+	cmd := &cobra.Command{
+		Use:     "unset",
+		Aliases: []string{"clear", "off"},
+		Short:   "Clear the pinned -dev route (build from the repo again)",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			routeKey, _, err := worktreesFor(cmd.Context(), repoDir)
+			if err != nil {
+				return err
+			}
+			pinned, _ := devroute.Read(routeKey)
+			if err := devroute.Unset(routeKey); err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if pinned == "" {
+				fmt.Fprintln(out, DimStyle.Render("no route was pinned"))
+				return nil
+			}
+			fmt.Fprintf(out, "%s cleared the pinned -dev route\n", OkStyle.Render("✓"))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repoDir, "repo", "", "repo directory whose route to clear (default: current directory)")
 	return cmd
 }
 
