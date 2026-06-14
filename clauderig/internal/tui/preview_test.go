@@ -16,18 +16,19 @@ func sized(content string) Preview {
 }
 
 func TestPreview_ProceedKeys(t *testing.T) {
-	for _, key := range []string{"y", "enter"} {
+	keys := []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune{'y'}},
+		{Type: tea.KeyEnter},
+	}
+	for _, km := range keys {
 		m := sized("hello")
-		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
-		if key == "enter" {
-			next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		}
+		next, cmd := m.Update(km)
 		got := next.(Preview)
 		if !got.Confirmed {
-			t.Errorf("%q did not confirm", key)
+			t.Errorf("%v did not confirm", km)
 		}
 		if cmd == nil {
-			t.Errorf("%q did not quit", key)
+			t.Errorf("%v did not quit", km)
 		}
 	}
 }
