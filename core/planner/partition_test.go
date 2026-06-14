@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rigsmith/core/changeset"
-	"github.com/rigsmith/core/config"
-	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/changeset"
+	"github.com/rigsmith/rigsmith/core/config"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 func idCS(id string, releases ...changeset.Release) *changeset.Changeset {

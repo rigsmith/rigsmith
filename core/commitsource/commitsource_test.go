@@ -4,10 +4,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/rigsmith/core/changeset"
-	"github.com/rigsmith/core/config"
-	"github.com/rigsmith/core/gitutil"
-	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/changeset"
+	"github.com/rigsmith/rigsmith/core/config"
+	"github.com/rigsmith/rigsmith/core/gitutil"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 var root = filepath.FromSlash("/repo")

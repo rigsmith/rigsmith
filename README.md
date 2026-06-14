@@ -3,15 +3,18 @@
 A Go monorepo housing a family of convention-first, zero-runtime-dependency CLI
 tools and the shared engine they're built on:
 
-| Module | Binary | What it is |
-|---|---|---|
-| [`core/`](core/) | — | `github.com/rigsmith/core` — the shared engine: semver, changeset parsing, the release planner (cascade + grouping), the plugin contract, the built-in ecosystem adapters (.NET, Node, Go, Rust), and `pathmap` (cross-OS path resolution). No external dependencies. |
-| [`cli/`](cli/) | `rig` | The convention-first dev launcher (run/build/test/format across .NET, Node, Go, Rust). Successor to the .NET/Node [`rig`](https://github.com/JohnCampionJr/rig). |
-| [`changerig/`](changerig/) | `changerig` | The lean changeset tool: the lifecycle (init → add → status → version) isolated from release orchestration. Exports the shared `commands` package shipRig reuses. Aliased `changeset`. |
-| [`shiprig/`](shiprig/) | `shiprig` | The release front door: everything changeRig does, plus publish/tag/pre orchestration. Successor to [net-changesets](../net-changesets). |
-| [`clauderig/`](clauderig/) | `clauderig` | Sync your Claude Code setup (config, skills, session history) across machines via a private git repo, with cross-OS path correction and secret stripping. See [docs/CLAUDERIG-DESIGN.md](docs/CLAUDERIG-DESIGN.md). |
+One Go module — `github.com/rigsmith/rigsmith` — with the binaries under `cmd/`
+and the shared engine under `core/`:
 
-Both binaries are single, statically-linked Go executables — the north-star
+| Path | Binary | What it is |
+|---|---|---|
+| [`core/`](core/) | — | `github.com/rigsmith/rigsmith/core` — the shared engine: semver, changeset parsing, the release planner (cascade + grouping), the plugin contract, the built-in ecosystem adapters (.NET, Node, Go, Rust), and `pathmap` (cross-OS path resolution). No external dependencies. |
+| [`cmd/rig/`](cmd/rig/) | `rig` | The convention-first dev launcher (run/build/test/format across .NET, Node, Go, Rust). Successor to the .NET/Node [`rig`](https://github.com/JohnCampionJr/rig). |
+| [`cmd/changerig/`](cmd/changerig/) | `changerig` | The lean changeset tool: the lifecycle (init → add → status → version) isolated from release orchestration. Its `commands` package (under `internal/changerig`) is reused by shiprig. Aliased `changeset`. |
+| [`cmd/shiprig/`](cmd/shiprig/) | `shiprig` | The release front door: everything changeRig does, plus publish/tag/pre orchestration. Successor to [net-changesets](../net-changesets). |
+| [`cmd/clauderig/`](cmd/clauderig/) | `clauderig` | Sync your Claude Code setup (config, skills, session history) across machines via a private git repo, with cross-OS path correction and secret stripping. See [docs/CLAUDERIG-DESIGN.md](docs/CLAUDERIG-DESIGN.md). |
+
+These binaries are single, statically-linked Go executables — the north-star
 property: no .NET runtime, no Node, installable via `curl | sh` / Homebrew /
 Scoop on any machine John roams onto.
 
@@ -64,10 +67,10 @@ is a Node reference plugin producing changelogen-style output. Set
 ## Building
 
 ```sh
-go build ./...          # from any module dir; the repo is a go.work workspace
+go build ./...          # single module (github.com/rigsmith/rigsmith)
 go test ./...           # core has full unit tests
-go build -o bin/shiprig ./shiprig
-go build -o bin/rig ./cli
+go build -o bin/shiprig ./cmd/shiprig
+go build -o bin/rig ./cmd/rig
 ```
 
 ### Installing the stable binaries from source
@@ -81,8 +84,8 @@ rig source-install      # or: go run ./scripts/source-install
 ```
 
 This installs to `${RIGSMITH_INSTALL:-$HOME/.local}/bin` (the same prefix as the
-`curl | sh` release installer). Tools are discovered from `go.work`, so a new
-module installs automatically. Use this when you want stable binaries; use
+`curl | sh` release installer). Tools are discovered from `cmd/`, so a new
+`cmd/<tool>` installs automatically. Use this when you want stable binaries; use
 `<tool>-dev` (below) when you want them to recompile on every run.
 
 ### Running a dev build alongside the installed binaries
@@ -98,10 +101,11 @@ rig dev-install         # or: rig run dev-install, or: go run ./scripts/dev-inst
 This writes `rig-dev`, `shiprig-dev`, `clauderig-dev`, … to `~/.local/bin` (sh
 wrappers on macOS/Linux, `.cmd` on Windows). Each recompiles the current source
 on every run, so edits take effect with no reinstall. The launchers are
-discovered from `go.work`, so a new workspace module gets one automatically.
+discovered from `cmd/`, so a new `cmd/<tool>` gets one automatically.
 
-`rig dev-install` works because rig surfaces any `main` package the workspace
-declares under `scripts/` or `cmd/` (in `go.work`) as a bare `rig <name>` verb —
-the Go counterpart to how it exposes a Node repo's `package.json` scripts. These
-verbs are exact-match only (excluded from prefix-matching) and never shadow a
-built-in.
+`rig dev-install` works because rig surfaces helper `main` packages committed
+under `scripts/` (e.g. `dev-install`, `source-install`) as bare `rig <name>`
+verbs — the Go counterpart to how it exposes a Node repo's `package.json`
+scripts. (In a multi-module workspace it also surfaces `scripts/`- or `cmd/`-located
+mains listed in `go.work`.) These verbs are exact-match only (excluded from
+prefix-matching) and never shadow a built-in.

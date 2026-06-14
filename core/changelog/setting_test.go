@@ -5,7 +5,7 @@ package changelog
 import (
 	"testing"
 
-	"github.com/rigsmith/core/config"
+	"github.com/rigsmith/rigsmith/core/config"
 )
 
 func TestParseSetting(t *testing.T) {

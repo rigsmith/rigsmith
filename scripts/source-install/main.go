@@ -5,9 +5,9 @@
 // ordinary binaries with their real names, so the tools resolve each other on
 // PATH the same way a released install does.
 //
-// Tools are discovered from go.work (any module with a "// Command <name>"
-// main.go), so a new workspace module installs automatically. Installers under
-// scripts/ are skipped.
+// Tools are discovered from cmd/ (each cmd/<tool> whose main.go has a
+// "// Command <name>" line), so adding a new command installs automatically.
+// The installers under scripts/ are not under cmd/, so they are never installed.
 //
 //	go run ./scripts/source-install                 # install to ~/.local/bin
 //	RIGSMITH_INSTALL=/opt/rigsmith go run ./scripts/source-install   # prefix → bin/
@@ -21,7 +21,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/rigsmith/core/gowork"
+	"github.com/rigsmith/rigsmith/core/gowork"
 )
 
 func main() {
@@ -55,9 +55,6 @@ func run() error {
 
 	var made []string
 	for _, t := range tools {
-		if strings.HasPrefix(t.Module, "scripts/") {
-			continue // don't install the installers themselves
-		}
 		out := filepath.Join(bin, exeName(t.Name))
 		cmd := exec.Command("go", "build", "-C", filepath.Join(repo, t.Module), "-o", out, ".")
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
@@ -68,7 +65,7 @@ func run() error {
 	}
 
 	if len(made) == 0 {
-		return fmt.Errorf("no runnable tools found in %s/go.work", repo)
+		return fmt.Errorf("no runnable tools found in %s/cmd", repo)
 	}
 	fmt.Printf("Installed %d binary(ies) from source in %s:\n", len(made), bin)
 	fmt.Println(strings.Join(made, "\n"))

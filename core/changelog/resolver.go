@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 // Runner executes a command in dir and returns its combined stdout. A spawn

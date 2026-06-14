@@ -3,9 +3,9 @@ package planner
 import (
 	"fmt"
 
-	"github.com/rigsmith/core/changeset"
-	"github.com/rigsmith/core/config"
-	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/changeset"
+	"github.com/rigsmith/rigsmith/core/config"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 // PartitionChangesets splits changesets into the ones a version run consumes

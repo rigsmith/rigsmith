@@ -17,7 +17,8 @@
 
 `core` is the only shared dependency. It deliberately has **zero external Go
 dependencies** (stdlib only) so it stays the stable, portable, fast-to-build
-heart of both tools. The charm/cobra UI stack lives only in the two CLI modules.
+heart of both tools. The charm/cobra UI stack lives only in the CLI command
+trees under `internal/`.
 
 ### Why a shared core (not two copies)
 
@@ -38,6 +39,12 @@ the same property that made it portable out of C# in the first place.
 
 ## Modules
 
+The repo is a **single Go module** (`github.com/rigsmith/rigsmith`): the shared
+engine under `core/` (public, importable), the binaries under `cmd/<tool>/`, and
+each tool's private packages under `internal/<tool>/`. The section headers below
+name the directory; package paths within a tool's section are relative to its
+`internal/<tool>/` root.
+
 ### `core/`
 
 | Package | Responsibility | Ported from |
@@ -53,9 +60,9 @@ the same property that made it portable out of C# in the first place.
 | `jsonc` | tolerant JSONC parse (offset-preserving) + the comment-preserving editor | rig's `JsoncEditor.cs` |
 | `gitutil` / `prestate` / `since` / `walkutil` | git tags + merge-base diffs, `.changeset/pre.json`, changed-files→projects mapping, ignore-aware tree walking | `Shared/GitService.cs`, `PreStateRepository.cs`, `SinceChanges.cs` |
 
-### `cli/` → `rig`
+### `cmd/rig/` + `internal/rig/` → `rig`
 
-`internal/detect` reuses `core/ecosystem` for detection, resolves the repo
+`internal/rig/detect` reuses `core/ecosystem` for detection, resolves the repo
 root with the rig precedence (`.rig.json` > solution/manifest > git root), and
 carries the .NET project discovery (slnx/sln, test classification,
 capabilities). `internal/config` is the JSONC `.rig.json` (merge, namespaces,
@@ -67,9 +74,9 @@ the verb-prefix + watch pre-parse pipeline, `--all` topo runs, and the
 capability-gated menu. Remaining ergonomics tail is listed in
 FEATURE-PARITY.md.
 
-### `shiprig/` → `shiprig`
+### `cmd/shiprig/` + `internal/shiprig/` → `shiprig`
 
-`internal/app` resolves the workspace (repo root, `.changeset`, config,
+`internal/shiprig/app` resolves the workspace (repo root, `.changeset`, config,
 registry, discovery). `internal/cli` is the cobra+fang command tree: the full
 changeset surface (`init`, `add`, `status`, `version`, `pre`, `info`, `ui`)
 plus `publish` (confirm-gated), `tag`, and `release` — the configurable step

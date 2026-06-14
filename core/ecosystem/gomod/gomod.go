@@ -19,9 +19,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/rigsmith/core/gitutil"
-	"github.com/rigsmith/core/plugin"
-	"github.com/rigsmith/core/walkutil"
+	"github.com/rigsmith/rigsmith/core/gitutil"
+	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/walkutil"
 )
 
 // Adapter is the in-process Go ecosystem adapter.

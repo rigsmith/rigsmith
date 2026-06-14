@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 func TestChangedProjectNamesReturnsProjectsOwningChangedFile(t *testing.T) {

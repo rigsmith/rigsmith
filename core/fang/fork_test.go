@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/colorprofile"
-	"github.com/rigsmith/core/fang"
+	"github.com/rigsmith/rigsmith/core/fang"
 	"github.com/spf13/cobra"
 )
 

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 func writeFile(t *testing.T, path, content string) {

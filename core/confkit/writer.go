@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rigsmith/core/jsonc"
+	"github.com/rigsmith/rigsmith/core/jsonc"
 )
 
 // Writer writes typed values into a single JSONC config file. SchemaURL is the

@@ -1,15 +1,15 @@
 # GoReleaser configuration for the rigsmith monorepo.
 #
-# This is a go.work workspace with multiple main packages living in separate
-# modules:
-#   - ./cli     -> binary `rig`     (dev launcher)
-#   - ./shiprig -> binary `shiprig` (release tool)
-#   - ./changerig (future)          -> binary `changerig` (changeset tool)
+# Single Go module (github.com/rigsmith/rigsmith) with the main packages under
+# cmd/:
+#   - ./cmd/rig       -> binary `rig`       (dev launcher)
+#   - ./cmd/shiprig   -> binary `shiprig`   (release tool)
+#   - ./cmd/clauderig -> binary `clauderig` (Claude config sync)
+#   - ./cmd/changerig -> binary `changerig` (changeset tool; build still commented out below)
 #
-# Because the main packages are in different modules/directories, each binary
-# gets its own build block with an explicit `dir`.
+# Each binary gets its own build block with an explicit `main` path.
 #
-# rig stamps its version via the internal/cli seam (used by `rig --version`
+# rig stamps its version via the internal cli seam (used by `rig --version`
 # and `rig self-update`); shiprig has no version var yet.
 #
 # Run `goreleaser check` after editing to validate.
@@ -19,8 +19,7 @@ project_name: rigsmith
 
 builds:
   - id: rig
-    dir: ./cli
-    main: .
+    main: ./cmd/rig
     binary: rig
     env:
       - CGO_ENABLED=0
@@ -32,11 +31,10 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X github.com/rigsmith/cli/internal/cli.version={{.Version}}
+      - -s -w -X github.com/rigsmith/rigsmith/internal/rig/cli.version={{.Version}}
 
   - id: shiprig
-    dir: ./shiprig
-    main: .
+    main: ./cmd/shiprig
     binary: shiprig
     env:
       - CGO_ENABLED=0
@@ -51,8 +49,7 @@ builds:
       - -s -w  # add a version seam in shiprig/main when shiprig needs self-update
 
   - id: clauderig
-    dir: ./clauderig
-    main: .
+    main: ./cmd/clauderig
     binary: clauderig
     env:
       - CGO_ENABLED=0
@@ -66,10 +63,9 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}}
 
-  # --- uncomment when the changerig binary lands ---
+  # --- uncomment to ship the changerig binary (cmd/changerig already builds) ---
   # - id: changerig
-  #   dir: ./changerig        # or ./shiprig if it ships from that module
-  #   main: .
+  #   main: ./cmd/changerig
   #   binary: changerig
   #   env:
   #     - CGO_ENABLED=0

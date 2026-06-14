@@ -20,8 +20,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/rigsmith/core/plugin"
-	"github.com/rigsmith/core/walkutil"
+	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/walkutil"
 )
 
 // Adapter is the in-process Cargo ecosystem adapter.

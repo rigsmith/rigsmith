@@ -26,8 +26,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/rigsmith/core/config"
-	"github.com/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/config"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 // Adapter is the in-process regex version-file adapter.

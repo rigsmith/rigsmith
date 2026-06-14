@@ -73,7 +73,7 @@ stays public (outside `internal/`) so external users can import it.
 - [x] Domains — `rigsmith.dev` + `rigsmith.sh` owned.
 - [ ] Homebrew tap repo `rigsmith/homebrew-tap` — not yet created; deferred to Phase 3 (goreleaser can create it). Org ownership already prevents squatting.
 
-### Phase 1 — Collapse to one module (the big one; one PR, one worktree)
+### Phase 1 — Collapse to one module — ✅ DONE (branch `refactor/single-module-monorepo`)
 1. New root `go.mod`: `module github.com/rigsmith/rigsmith`, `go 1.26`. Merge the union of all five `require` blocks; resolve versions; `go mod tidy`.
 2. Move trees:
    - `cli/main.go` → `cmd/rig/main.go`; `cli/internal` → `internal/rig`.
@@ -85,24 +85,30 @@ stays public (outside `internal/`) so external users can import it.
 4. Delete: all per-module `go.mod`/`go.sum`, all `replace` directives, `go.work`, `go.work.sum`, the `tools/` module (fold tool directives into root `go.mod` or a `tools.go`).
 5. `go build ./...` && `go test ./...` green.
 
-### Phase 2 — Fix tool discovery (depends on Phase 1)
-- `scripts/dev-install` & `scripts/source-install` currently discover tools via
-  `core/gowork.Tools()` scanning `go.work`. With one module there's no `go.work`
-  use-block — switch them to **scan `cmd/`** (each `cmd/<name>` = one tool).
-- `core/gowork`: either retire it, or repurpose to a `cmd/` walker. **Caution:**
-  `rig`'s *generic* project detection (`cli/internal/detect`, `scripts.go`)
-  supports user repos that have a `go.work` — that user-facing behavior must
-  stay. Only rigsmith's *own* self-install/self-run path moves off `go.work`.
-- Verify `rig <name>` / `rig run <name>` still surfaces `cmd/` + `scripts/` mains.
+### Phase 2 — Fix tool discovery — ✅ DONE (in the same branch/PR as Phase 1)
+- `core/gowork` repurposed from a `go.work` parser to a `cmd/` walker:
+  `FindRoot` now finds `go.mod`, `Tools` scans `cmd/<tool>` for `// Command`
+  mains. Both installers (`scripts/dev-install`, `scripts/source-install`)
+  consume it unchanged and dropped their now-dead `scripts/` skip.
+- `rig`'s verb-surfacing (`internal/rig/cli/scripts.go`) now scans `scripts/`
+  on disk (so `rig dev-install`/`rig source-install` work without `go.work`),
+  while still honoring `go.work` `use` entries for multi-module workspaces.
+  `cmd/` is intentionally *not* auto-scanned, to keep the product binaries
+  (`rig`/`shiprig`/…) out of rig's verb space.
+- Verified end-to-end: `source-install` builds all 4 `cmd/` tools; `rig --help`
+  surfaces the `scripts/` verbs; `dev-install` writes all 8 launchers.
 
-### Phase 3 — Release plumbing (depends on Phase 1)
-- `.goreleaser.yaml`: builds become single-context with `main: ./cmd/<tool>`
-  (drop the per-dir `main: .`). `project_name: rigsmith` already correct;
-  `owner/name: rigsmith/rigsmith` already correct.
-- Enable the commented `brews:` block → tap `rigsmith/homebrew-tap`, one formula
-  per binary + a `rigsmith` meta formula depending on all.
-- curl|sh installer: confirm it drops all binaries; wire `RIGSMITH_TOOLS` subset.
-- CI workflows (`.github/`): update module paths, single `go test ./...`.
+### Phase 3 — Release plumbing — 🟡 PARTIAL (config done in this PR; tap/installer deferred)
+- [x] `.goreleaser.yaml`: builds now use `main: ./cmd/<tool>` (dropped the
+  per-dir `dir:`/`main: .`); rig ldflags path updated to
+  `github.com/rigsmith/rigsmith/internal/rig/cli.version`. changerig build block
+  still commented (release-scope decision — `cmd/changerig` already builds).
+- [x] CI (`.github/workflows/ci.yml`): single `go test ./...` / `go vet ./...` /
+  `gofmt -l .`; `go-version-file`/cache → root `go.mod`/`go.sum`.
+- [ ] Enable the commented `brews:` block → tap `rigsmith/homebrew-tap`, one
+  formula per binary + a `rigsmith` meta formula. (Deferred.)
+- [ ] curl|sh installer: confirm it drops all binaries; wire `RIGSMITH_TOOLS`
+  subset. (Deferred.)
 
 ### Phase 4 — Repo move & docs (last)
 - Transfer/rename `JohnCampionJr/rigsmith` → `rigsmith/rigsmith` (GitHub keeps a

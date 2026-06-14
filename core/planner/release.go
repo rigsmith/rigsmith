@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rigsmith/core/changeset"
-	"github.com/rigsmith/core/plugin"
-	"github.com/rigsmith/core/semver"
+	"github.com/rigsmith/rigsmith/core/changeset"
+	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/semver"
 )
 
 // Mode selects how versions are computed for a release run.
