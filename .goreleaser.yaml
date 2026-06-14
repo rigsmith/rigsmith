@@ -5,7 +5,7 @@
 #   - ./cmd/rig       -> binary `rig`       (dev launcher)
 #   - ./cmd/shiprig   -> binary `shiprig`   (release tool)
 #   - ./cmd/clauderig -> binary `clauderig` (Claude config sync)
-#   - ./cmd/changerig -> binary `changerig` (changeset tool; build still commented out below)
+#   - ./cmd/changerig -> binary `changerig` (changeset tool)
 #
 # Each binary gets its own build block with an explicit `main` path.
 #
@@ -63,21 +63,20 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}}
 
-  # --- uncomment to ship the changerig binary (cmd/changerig already builds) ---
-  # - id: changerig
-  #   main: ./cmd/changerig
-  #   binary: changerig
-  #   env:
-  #     - CGO_ENABLED=0
-  #   goos:
-  #     - linux
-  #     - darwin
-  #     - windows
-  #   goarch:
-  #     - amd64
-  #     - arm64
-  #   ldflags:
-  #     - -s -w
+  - id: changerig
+    main: ./cmd/changerig
+    binary: changerig
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w  # no self-version var: changerig's `version` acts on the user's packages
 
 archives:
   - id: rig
@@ -113,17 +112,16 @@ archives:
         formats:
           - zip
 
-  # --- uncomment alongside the changerig build above ---
-  # - id: changerig
-  #   ids:
-  #     - changerig
-  #   name_template: "changerig_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-  #   formats:
-  #     - tar.gz
-  #   format_overrides:
-  #     - goos: windows
-  #       formats:
-  #         - zip
+  - id: changerig
+    ids:
+      - changerig
+    name_template: "changerig_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
 
 checksum:
   name_template: "checksums.txt"

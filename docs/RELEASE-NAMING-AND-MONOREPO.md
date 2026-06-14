@@ -101,8 +101,8 @@ stays public (outside `internal/`) so external users can import it.
 ### Phase 3 — Release plumbing — 🟡 PARTIAL (config done in this PR; tap/installer deferred)
 - [x] `.goreleaser.yaml`: builds now use `main: ./cmd/<tool>` (dropped the
   per-dir `dir:`/`main: .`); rig ldflags path updated to
-  `github.com/rigsmith/rigsmith/internal/rig/cli.version`. changerig build block
-  still commented (release-scope decision — `cmd/changerig` already builds).
+  `github.com/rigsmith/rigsmith/internal/rig/cli.version`. All four binaries
+  ship — `changerig` build + archive blocks enabled. `goreleaser check` passes.
 - [x] CI (`.github/workflows/ci.yml`): single `go test ./...` / `go vet ./...` /
   `gofmt -l .`; `go-version-file`/cache → root `go.mod`/`go.sum`.
 - [ ] Enable the commented `brews:` block → tap `rigsmith/homebrew-tap`, one
