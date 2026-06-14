@@ -214,19 +214,13 @@ func parseYarnClassicList(text string) []outdatedDep {
 // overlay on project+name (for .NET, where the same package can differ per
 // project); otherwise on name alone. Pure.
 func mergeLatest(all, outdated []outdatedDep, byProject bool) []outdatedDep {
-	key := func(d outdatedDep) string {
-		if byProject {
-			return d.project + "\x00" + d.name
-		}
-		return d.name
-	}
 	latest := make(map[string]string, len(outdated))
 	for _, d := range outdated {
-		latest[key(d)] = d.latest
+		latest[depKey(d, byProject)] = d.latest
 	}
 	out := make([]outdatedDep, len(all))
 	for i, d := range all {
-		if l, ok := latest[key(d)]; ok && l != "" {
+		if l, ok := latest[depKey(d, byProject)]; ok && l != "" {
 			d.latest = l
 		} else {
 			d.latest = d.current

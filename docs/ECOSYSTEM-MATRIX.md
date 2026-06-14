@@ -29,7 +29,7 @@ and are omitted.
 | add | ✅ | ✅ | ✅ | ✅ | |
 | uninstall / remove | ✅ | ✅ | ✅ | ✅ | Go: `go get pkg@none` + `go mod tidy` (bare = tidy) |
 | outdated / od | ✅ | ✅ | ✅ | ✅ | cargo via the `cargo-outdated` subcommand |
-| deps / dependencies | ✅ | ✅ | ✅ | ⚠️ | full report (current → latest, incl. up-to-date); node = npm/pnpm/bun/yarn-classic; cargo/yarn-berry fall back to the outdated list |
+| deps / dependencies | ✅ | ✅ | ✅ | ⚠️ | full report (current → latest, incl. up-to-date); node = npm/pnpm/bun/yarn-classic; cargo/yarn-berry fall back to the outdated list. `--vulnerable` adds a CVE-severity column (.NET via `--vulnerable`, node via `<pm> audit`; go/cargo need an external scanner) |
 | upgrade | ✅ | ✅ | ✅ | ✅ | range-respecting; .NET to latest (no ranges) — see below |
 | global / g | ✅ | ✅ | ✅ | ✅ | |
 | dlx / x | ✅ | ✅ | ✅ | ⚠️ | .NET→`dnx`, node→npx/bun x/dlx, go→`go run pkg@latest`; Cargo has no one-shot run |

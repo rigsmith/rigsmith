@@ -20,7 +20,7 @@ import (
 // the version details. Rich support: go, .NET, and Node (npm/pnpm/bun/yarn
 // classic); other ecosystems fall back to the plain outdated list.
 func newDepsCmd() *cobra.Command {
-	var updatesOnly, asJSON bool
+	var updatesOnly, asJSON, vulnerable bool
 	cmd := &cobra.Command{
 		Use:     "deps",
 		Short:   "List dependencies with current and latest versions",
@@ -28,6 +28,7 @@ func newDepsCmd() *cobra.Command {
 		Long: "List every dependency with its current and latest published version.\n\n" +
 			"  rig deps              show all dependencies (current → latest)\n" +
 			"  rig deps -u           only the ones with an update available\n" +
+			"  rig deps --vulnerable add a column with each package's highest known CVE severity\n" +
 			"  rig deps --json       machine-readable output",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
@@ -47,17 +48,28 @@ func newDepsCmd() *cobra.Command {
 					"full dependency report isn't wired for this ecosystem yet — listing updates instead"))
 				return runPlainOutdated(cmd, eco, root, nil)
 			}
+			showVuln := false
+			if vulnerable {
+				if sev, vok := auditSeverities(cmd, eco, root); vok {
+					applyVulnerabilities(rows, sev, eco == detect.DotNet)
+					showVuln = true
+				} else {
+					fmt.Fprintln(cmd.ErrOrStderr(), dimStyle.Render(
+						"vulnerability scan isn't wired for this ecosystem yet — needs an external scanner"))
+				}
+			}
 			if updatesOnly {
 				rows = filterUpdates(rows)
 			}
 			if asJSON {
 				return renderDepsJSON(cmd, rows)
 			}
-			renderDepsTable(cmd, rows)
+			renderDepsTable(cmd, rows, showVuln)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&updatesOnly, "updates-only", "u", false, "show only dependencies with an update available")
+	cmd.Flags().BoolVar(&vulnerable, "vulnerable", false, "add a column with each package's highest known CVE severity")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output the report as JSON")
 	return cmd
 }
@@ -143,27 +155,50 @@ func (d outdatedDep) hasUpdate() bool {
 	return d.latest != "" && d.latest != d.current
 }
 
-var depMarkStyle = lipgloss.NewStyle().Foreground(brandYellow)
+var (
+	depMarkStyle = lipgloss.NewStyle().Foreground(brandYellow)
+	sevHighStyle = lipgloss.NewStyle().Foreground(brandRed)
+	sevModStyle  = lipgloss.NewStyle().Foreground(brandYellow)
+)
+
+// severityStyle renders a severity label colored by its rank: critical/high in
+// red, moderate in yellow, anything lower dim.
+func severityStyle(sev string) string {
+	switch {
+	case severityRank(sev) >= 3: // critical, high
+		return sevHighStyle.Render(sev)
+	case severityRank(sev) == 2: // moderate
+		return sevModStyle.Render(sev)
+	default:
+		return dimStyle.Render(sev)
+	}
+}
 
 // renderDepsTable prints the dependency report as an aligned table: a ►-marked
-// row per package with an update, the count summary at the end.
-func renderDepsTable(cmd *cobra.Command, deps []outdatedDep) {
+// row per package with an update, the count summary at the end. With showVuln a
+// Vuln column carries each package's highest known severity.
+func renderDepsTable(cmd *cobra.Command, deps []outdatedDep, showVuln bool) {
 	out := cmd.OutOrStdout()
 	if len(deps) == 0 {
 		fmt.Fprintln(out, dimStyle.Render("no dependencies found"))
 		return
 	}
-	nameW, curW, latW := len("Package"), len("Current"), len("Latest")
+	nameW, curW, latW, vulnW := len("Package"), len("Current"), len("Latest"), len("Vuln")
 	for _, d := range deps {
 		nameW = max(nameW, len(d.name))
 		curW = max(curW, len(d.current))
 		latW = max(latW, len(d.latest))
+		vulnW = max(vulnW, len(d.vuln))
 	}
 
-	fmt.Fprintln(out, dimStyle.Render(fmt.Sprintf("  %-*s  %-*s  %-*s  %s",
-		nameW, "Package", curW, "Current", latW, "Latest", "Status")))
+	header := fmt.Sprintf("  %-*s  %-*s  %-*s", nameW, "Package", curW, "Current", latW, "Latest")
+	if showVuln {
+		header += fmt.Sprintf("  %-*s", vulnW, "Vuln")
+	}
+	header += "  Status"
+	fmt.Fprintln(out, dimStyle.Render(header))
 
-	updates := 0
+	updates, vulns := 0, 0
 	lastProject := ""
 	for _, d := range deps {
 		if d.project != "" && d.project != lastProject {
@@ -175,13 +210,25 @@ func renderDepsTable(cmd *cobra.Command, deps []outdatedDep) {
 			mark, status = depMarkStyle.Render("►"), depMarkStyle.Render("update")
 			updates++
 		}
-		fmt.Fprintf(out, "%s %-*s  %-*s  %-*s  %s\n",
-			mark, nameW, d.name, curW, d.current, latW, d.latest, status)
+		fmt.Fprintf(out, "%s %-*s  %-*s  %-*s", mark, nameW, d.name, curW, d.current, latW, d.latest)
+		if showVuln {
+			// Pad on the raw width, then colorize, so ANSI codes don't skew columns.
+			cell := fmt.Sprintf("%-*s", vulnW, d.vuln)
+			if d.vuln != "" {
+				cell = severityStyle(d.vuln) + strings.Repeat(" ", vulnW-len(d.vuln))
+				vulns++
+			}
+			fmt.Fprintf(out, "  %s", cell)
+		}
+		fmt.Fprintf(out, "  %s\n", status)
 	}
 
 	summary := fmt.Sprintf("%d package%s, %d with a newer version",
 		len(deps), plural(len(deps), "", "s"), updates)
-	if updates == 0 {
+	if showVuln {
+		summary += fmt.Sprintf(", %d vulnerable", vulns)
+	}
+	if updates == 0 && vulns == 0 {
 		fmt.Fprintln(out, "\n"+okStyle.Render(summary+" 🎉"))
 	} else {
 		fmt.Fprintln(out, "\n"+dimStyle.Render(summary))
@@ -195,11 +242,12 @@ func renderDepsJSON(cmd *cobra.Command, deps []outdatedDep) error {
 		Current string `json:"current"`
 		Latest  string `json:"latest"`
 		Update  bool   `json:"updateAvailable"`
+		Vuln    string `json:"vulnerability,omitempty"`
 		Project string `json:"project,omitempty"`
 	}
 	rows := make([]row, 0, len(deps))
 	for _, d := range deps {
-		rows = append(rows, row{d.name, d.current, d.latest, d.hasUpdate(), d.project})
+		rows = append(rows, row{d.name, d.current, d.latest, d.hasUpdate(), d.vuln, d.project})
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].Project != rows[j].Project {
