@@ -28,10 +28,14 @@ func newRootCmd() *cobra.Command {
 	}
 
 	add := commands.NewAddCmd()
-	// Bare `shiprig` behaves like `shiprig add`.
-	root.RunE = add.RunE
-	root.Args = add.Args
-	root.Flags().AddFlagSet(add.Flags())
+	// Bare `shiprig` shows the pending release plan — the release front door's
+	// natural "what would I ship?" landing. `add` (changerig's default) stays a
+	// subcommand. status orients in every source mode and, in an uninitialized
+	// repo, offers source-aware setup rather than erroring.
+	status := commands.NewStatusCmd()
+	root.RunE = status.RunE
+	root.Args = status.Args
+	root.Flags().AddFlagSet(status.Flags())
 
 	root.AddCommand(
 		commands.NewInitCmd(),
