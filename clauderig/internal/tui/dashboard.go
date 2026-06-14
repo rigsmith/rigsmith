@@ -21,7 +21,6 @@ var (
 	dim      = lipgloss.NewStyle().Foreground(brand.Muted)
 	okC      = lipgloss.NewStyle().Foreground(brand.Green)
 	warnC    = lipgloss.NewStyle().Foreground(brand.Yellow)
-	keyC     = lipgloss.NewStyle().Bold(true).Foreground(brand.AccentClaude)
 	nextC    = lipgloss.NewStyle().Bold(true).Foreground(brand.Green)
 	selected = lipgloss.NewStyle().Bold(true).Foreground(brand.Cyan)
 	cursorC  = lipgloss.NewStyle().Foreground(brand.Cyan)
