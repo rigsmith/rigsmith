@@ -18,7 +18,7 @@ leaking secrets**. claudeRig owns both.
 
 Sync a curated **allowlist** from a set of **roots** to a private git repo;
 **redact secrets** on commit; **rewrite paths** on restore so a session captured
-at `/Users/john/Git/x` resumes at `C:\Users\John\Git\x`. Config lives on a normal
+at `/Users/you/Git/x` resumes at `C:\Users\You\Git\x`. Config lives on a normal
 branch (precious, tiny); bulky session history lives on an **orphan branch** that
 is periodically squashed so the repo stays bounded.
 
@@ -109,7 +109,7 @@ detection and OS-aware case comparison. Two fidelities, both v1:
   Robust to fields beyond `cwd`/`originCwd` — a census found `planPath`, permission
   `ruleContent`, and added `directories[]` also carry paths (see Q4).
 
-Default mapping is the **home convention** (`~/Git` ⇄ `C:\Users\John\Git`, tail
+Default mapping is the **home convention** (`~/Git` ⇄ `C:\Users\You\Git`, tail
 identical = halyard's "portable" case). Overridable: custom home dir + explicit
 per-path rewrites (halyard's per-OS literal + machine override). When a target
 path doesn't exist yet (repo not cloned), **restore anyway** so a later
@@ -226,16 +226,16 @@ gated on a TTY).
 At-a-glance: remote reachability, local/behind status, last sync, per-root file
 state, device registry. Hotkeys dispatch to the focused TUIs.
 ```
- clauderig                          machine: johns-mbp (macOS)
+ clauderig                          machine: my-mac (macOS)
  ────────────────────────────────────────────────────────────
-  Remote    github.com/john/claude-sync      ✓ reachable
+  Remote    github.com/you/claude-sync      ✓ reachable
   Status    ● 3 local changes · 1 behind remote
-  Last sync 2h ago · pushed from johns-mbp
+  Last sync 2h ago · pushed from my-mac
   Roots
    ~/.claude                  142 files   ✓ clean
    ~/Library/…/Claude           6 files   ● 2 changed
   Devices
-   johns-mbp (this) 2h ago   work-pc 1d   linux-box 3d
+   my-mac (this) 2h ago   work-pc 1d   linux-box 3d
   [s] sync  [r] restore  [d] diff  [p] path-map  [c] config  [q] quit
 ```
 
@@ -260,7 +260,7 @@ Shows path rewrites and the write/skip set **before** touching the tree, then th
 non-empty-target choice (default abort under no-TTY):
 ```
  restore ─ preview onto work-pc (Windows)
-  Path rewrites   $HOME/Git/rigsmith → C:\Users\John\Git\rigsmith  (+47 slugs)
+  Path rewrites   $HOME/Git/rigsmith → C:\Users\You\Git\rigsmith  (+47 slugs)
   Write 142 files (config + 30d history) · skip sessions/, file-history/
   ~/.claude is non-empty:  (•) Back up to ~/.claude.bak and proceed  ( ) Abort
 ```
@@ -286,7 +286,7 @@ always wins. `clauderig doctor` previews resolved rewrites and flags unmapped
 machines:
 ```
  clauderig doctor
-  $HOME → /Users/john ✓   work-pc C:\Users\John ✓
+  $HOME → /Users/you ✓   work-pc C:\Users\You ✓
   linux-box: UNMAPPED ⚠  (its sessions won't translate on restore)
 ```
 
@@ -357,7 +357,7 @@ mirror — no path correction, manual excludes.
    by a gated e2e (`TestE2E_DesktopRewriteCompleteOnRealData`): it round-trips this
    machine's actual Desktop session files (portablize → resolve onto another OS)
    and asserts **zero** values retain a source-home path. That test *found* a real
-   gap — a permission `ruleContent` written as `//Users/john/Git/x/**` — now fixed
+   gap — a permission `ruleContent` written as `//Users/you/Git/x/**` — now fixed
    (`Portablize` collapses a leading slash-run, so the `//`-prefixed glob matches);
    re-run shows 0 residual across all session files. **Still manual (non-blocking):**
    whether the Electron app itself resumes after rewrite — drive it by hand; the
