@@ -34,50 +34,6 @@ func TestDefault(t *testing.T) {
 	}
 }
 
-func TestWorktreeDefaults(t *testing.T) {
-	c := Default() // Worktree unset
-	if c.WorktreeAutoOpen() {
-		t.Error("auto-open should default to false (opt-in) when unset")
-	}
-	if got := c.WorktreeOpenCmd(); len(got) != 2 || got[0] != "code" || got[1] != "-n" {
-		t.Errorf("open cmd default = %v, want [code -n]", got)
-	}
-}
-
-func TestWorktreeOverrides(t *testing.T) {
-	off := false
-	c := &Config{Worktree: &Worktree{AutoOpen: &off, OpenCmd: "  cursor   -n  "}}
-	if c.WorktreeAutoOpen() {
-		t.Error("explicit false auto-open should be honored")
-	}
-	// whitespace-splits into argv, extra spaces collapsed
-	if got := c.WorktreeOpenCmd(); len(got) != 2 || got[0] != "cursor" || got[1] != "-n" {
-		t.Errorf("open cmd = %v, want [cursor -n]", got)
-	}
-	// blank OpenCmd falls back to the default
-	if got := (&Config{Worktree: &Worktree{OpenCmd: "   "}}).WorktreeOpenCmd(); got[0] != "code" {
-		t.Errorf("blank open cmd should fall back to default, got %v", got)
-	}
-}
-
-func TestWorktreeRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	on := true
-	c := Default()
-	c.Worktree = &Worktree{AutoOpen: &on, OpenCmd: "code-insiders -n"}
-	if err := Save(c, dir); err != nil {
-		t.Fatal(err)
-	}
-	got, err := Load(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Worktree == nil || got.Worktree.AutoOpen == nil || !*got.Worktree.AutoOpen ||
-		got.Worktree.OpenCmd != "code-insiders -n" {
-		t.Fatalf("worktree config lost in round-trip: %+v", got.Worktree)
-	}
-}
-
 func TestRootLocation_PerOS(t *testing.T) {
 	c := Default()
 	mac := Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}

@@ -35,7 +35,7 @@ flow, so a bug can only ever fail *open*.
 
 | Tool call | Verdict |
 |---|---|
-| `EnterWorktree` / `ExitWorktree` | **Deny** — moves the session cwd; use `clauderig worktree new` |
+| `EnterWorktree` / `ExitWorktree` | **Deny** — moves the session cwd; use `rig worktree new` |
 | `Bash` with a top-level `cd`/`pushd` out of the repo root | **Deny** — relocates the shell. A subshell `(cd … && …)` is the escape hatch |
 | `Edit`/`Write`/`NotebookEdit` of **code** while on `main`/`master`/`trunk` | **Deny** — needs a branch + worktree + PR |
 | `git commit` of **code** while on a base branch | **Deny** — inspects the staged (and `-a` tracked) files |
@@ -97,15 +97,15 @@ scope (`internal/settings`). Claude Code merges all tiers at runtime.
 just this checkout — scope is the command, so a new repo-local action is just
 another verb under them.
 
-## `clauderig worktree` — the safe way to branch
+## `rig worktree` — the safe way to branch
 
 ```sh
-clauderig worktree new <branch>   # sibling checkout off the repo's mainline (prints the path)
-clauderig worktree new <branch> --open    # …and open a review window for this run
-clauderig worktree new fix/x --base release-1
-clauderig worktree list           # ls this repo's worktrees (alias: ls)
-clauderig worktree open <branch>  # (re)open a worktree's window for review (branch or path)
-clauderig worktree rm <branch>    # remove the worktree (branch is kept; -f if it has changes)
+rig worktree new <branch>   # sibling checkout off the repo's mainline (prints the path)
+rig worktree new <branch> --open    # …and open a review window for this run
+rig worktree new fix/x --base release-1
+rig worktree list           # ls this repo's worktrees (alias: ls)
+rig worktree open <branch>  # (re)open a worktree's window for review (branch or path)
+rig worktree rm <branch>    # remove the worktree (branch is kept; -f if it has changes)
 ```
 
 The command group is also aliased `clauderig wt`.
@@ -197,9 +197,9 @@ leaves room for clauderig to own further independent blocks later.
 ### Typical loop
 
 ```sh
-clauderig worktree new feat/thing            # creates worktree + opens review window
+rig worktree new feat/thing            # creates worktree + opens review window
 #   …Claude edits files under .../rigsmith-worktrees/feat-thing by absolute path,
 #   runs git via:  git -C .../feat-thing add -A && git -C .../feat-thing commit -m …
 git -C .../feat-thing push -u origin feat/thing && gh pr create   # open the PR
-clauderig worktree rm feat/thing             # after the PR merges
+rig worktree rm feat/thing             # after the PR merges
 ```

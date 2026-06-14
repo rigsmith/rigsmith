@@ -9,9 +9,9 @@ import (
 
 	"github.com/rigsmith/clauderig/internal/claudemd"
 	"github.com/rigsmith/clauderig/internal/gitignore"
-	"github.com/rigsmith/clauderig/internal/gitrepo"
 	"github.com/rigsmith/clauderig/internal/hooks"
 	"github.com/rigsmith/clauderig/internal/settings"
+	"github.com/rigsmith/core/gitrepo"
 	"github.com/spf13/cobra"
 )
 

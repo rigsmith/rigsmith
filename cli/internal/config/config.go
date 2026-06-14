@@ -82,6 +82,11 @@ type Config struct {
 	// asking). See docs/EXTERNAL-TOOLS.md.
 	Tools map[string]string `json:"tools,omitempty"`
 
+	// Worktree configures `rig worktree` (auto-open a review window, and what to
+	// open). Nil when unconfigured; read it through the WorktreeAutoOpen /
+	// WorktreeOpenCmd accessors, which apply the defaults.
+	Worktree *Worktree `json:"worktree,omitempty"`
+
 	// Path is the resolved location the config was loaded from, "" if none.
 	Path string `json:"-"`
 	// Warnings collects non-fatal load problems (malformed file degraded to
@@ -92,6 +97,41 @@ type Config struct {
 
 // IsQuiet reports whether quiet mode is enabled (false when unset).
 func (c Config) IsQuiet() bool { return c.Quiet != nil && *c.Quiet }
+
+// Worktree configures `rig worktree`. AutoOpen is a pointer so an explicit value
+// is distinguishable from "unset" (so a repo's `false` can override a global
+// `true` in Merge).
+type Worktree struct {
+	// AutoOpen controls whether `worktree new` opens the new sibling checkout in
+	// a separate window for review. Defaults to false (opt-in).
+	AutoOpen *bool `json:"autoOpen,omitempty"`
+	// OpenCmd is the command used to open a worktree for review; the worktree
+	// path is appended as the final argument. e.g. "code -n" (default),
+	// "cursor -n", "subl -n", "idea". Whitespace-split into argv, run directly.
+	OpenCmd string `json:"openCmd,omitempty"`
+}
+
+// DefaultWorktreeOpenCmd is the command `worktree` uses to open a checkout for
+// review when none is configured: a new VS Code window (`code -n <path>`).
+var DefaultWorktreeOpenCmd = []string{"code", "-n"}
+
+// WorktreeAutoOpen reports whether `worktree new` should open a review window.
+// Defaults to false (opt-in) when unset.
+func (c Config) WorktreeAutoOpen() bool {
+	return c.Worktree != nil && c.Worktree.AutoOpen != nil && *c.Worktree.AutoOpen
+}
+
+// WorktreeOpenCmd returns the configured open command as argv (program + flags),
+// or DefaultWorktreeOpenCmd when unset/blank. The worktree path is appended by
+// the caller.
+func (c Config) WorktreeOpenCmd() []string {
+	if c.Worktree != nil {
+		if fields := strings.Fields(c.Worktree.OpenCmd); len(fields) > 0 {
+			return fields
+		}
+	}
+	return append([]string{}, DefaultWorktreeOpenCmd...)
+}
 
 // Test configures the test verb.
 type Test struct {
@@ -338,6 +378,10 @@ func Merge(base, overlay Config) Config {
 	if rebuild == nil {
 		rebuild = base.Rebuild
 	}
+	worktree := overlay.Worktree
+	if worktree == nil {
+		worktree = base.Worktree
+	}
 	quiet := overlay.Quiet
 	if quiet == nil {
 		quiet = base.Quiet
@@ -359,6 +403,7 @@ func Merge(base, overlay Config) Config {
 		Coverage:        mergeCoverage(base.Coverage, overlay.Coverage),
 		Kill:            kill,
 		Rebuild:         rebuild,
+		Worktree:        worktree,
 		Publish:         mergePublish(base.Publish, overlay.Publish),
 		Env:             mergeDict(base.Env, overlay.Env),
 		Commands:        mergeDict(base.Commands, overlay.Commands),
@@ -493,7 +538,7 @@ func mergePublish(base, overlay *Publish) *Publish {
 var knownKeys = []string{
 	"$schema", "solution", "defaultProject", "ecosystem", "test", "coverage",
 	"kill", "rebuild", "publish", "env", "envPresets", "commands", "aliases",
-	"tools", "exclude", "quiet", "dotnet", "node",
+	"tools", "exclude", "quiet", "dotnet", "node", "worktree",
 }
 
 // UnknownKey is a top-level key rig doesn't recognize, with the closest known

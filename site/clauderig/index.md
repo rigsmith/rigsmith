@@ -15,7 +15,7 @@ clauderig restore              # pull → rewrite slugs for this OS → merge (k
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)
 clauderig status               # remote reachability, last sync, per-root counts, hooks
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
-clauderig worktree new feat/x  # sibling worktree + review window; never moves this session
+rig worktree new feat/x  # sibling worktree + review window; never moves this session
 clauderig doctor               # health-check env + sync + worktree discipline (--fix repairs)
 clauderig hooks install        # SessionStart→pull, Stop→sync (portable, idempotent)
 clauderig ui                   # interactive dashboard
@@ -36,7 +36,7 @@ clauderig ui                   # interactive dashboard
 - **Allowlist, default-deny.** Only curated files sync; the ~12 GB Desktop cache
   tree is pruned, never descended.
 - **Bounded repo.** 30-day retention on transcripts + a size-based history squash.
-- **Worktree discipline.** A guard hook plus `clauderig worktree` make branches +
+- **Worktree discipline.** A guard hook plus `rig worktree` make branches +
   PRs the default for Claude Code and keep a session from scrambling its chat
   history by moving the working directory. See [Commands](./commands#worktree-discipline).
 

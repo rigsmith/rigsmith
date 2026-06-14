@@ -15,7 +15,7 @@ import (
 // configScalarKeys are the scalar .rig.json knobs `rig config set` understands.
 // Richer fields (env, commands, aliases, tools, coverage, …) stay in
 // `rig config edit` — they don't reduce to a single get/set value.
-var configScalarKeys = []string{"solution", "defaultProject", "ecosystem", "quiet"}
+var configScalarKeys = []string{"solution", "defaultProject", "ecosystem", "quiet", "worktree.autoOpen", "worktree.openCmd"}
 
 // newConfigCmd builds the uniform `config` group: get / set / path / edit over
 // the repo's .rig.json (with the user-wide ~/.rig.json layered under `get`).
@@ -75,8 +75,10 @@ func newConfigSetCmd() *cobra.Command {
 		Long: "Set a scalar key in the repo's .rig.json. Keys:\n" +
 			"  solution        the .sln/.slnx the .NET verbs operate on\n" +
 			"  defaultProject  project `rig run` targets when none is named\n" +
-			"  ecosystem       pin the primary ecosystem (dotnet|node|go|cargo)\n" +
-			"  quiet           suppress the `→ command` echo (bool)",
+			"  ecosystem         pin the primary ecosystem (dotnet|node|go|cargo)\n" +
+			"  quiet             suppress the `→ command` echo (bool)\n" +
+			"  worktree.autoOpen `rig worktree new` opens a review window (bool, default false)\n" +
+			"  worktree.openCmd  command to open a worktree (path appended), e.g. \"code -n\"",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], args[1]
@@ -94,6 +96,14 @@ func newConfigSetCmd() *cobra.Command {
 					return err
 				}
 				ok = config.SetBool(path, []string{key}, on)
+			case "worktree.autoOpen":
+				on, err := parseConfigBool(value)
+				if err != nil {
+					return err
+				}
+				ok = config.SetBool(path, []string{"worktree", "autoOpen"}, on)
+			case "worktree.openCmd":
+				ok = config.SetString(path, []string{"worktree", "openCmd"}, value)
 			default:
 				return unknownConfigKeyErr(key)
 			}
@@ -145,6 +155,10 @@ func configScalarValue(cfg config.Config, key string) (string, bool) {
 		return cfg.Ecosystem, true
 	case "quiet":
 		return fmt.Sprintf("%v", cfg.IsQuiet()), true
+	case "worktree.autoOpen":
+		return fmt.Sprintf("%v", cfg.WorktreeAutoOpen()), true
+	case "worktree.openCmd":
+		return strings.Join(cfg.WorktreeOpenCmd(), " "), true
 	default:
 		return "", false
 	}

@@ -27,7 +27,7 @@ func saveConfig(cfg *config.Config) error {
 
 // configKeys documents the settable keys for `config set <key> <value>`, in the
 // order shown by an unknown-key error.
-var configKeys = []string{"remote", "alwaysPrune", "autoRestore", "worktree.autoOpen", "worktree.openCmd"}
+var configKeys = []string{"remote", "alwaysPrune", "autoRestore"}
 
 // NewConfigCmd builds the uniform `config` command group: get / set / path /
 // edit (and the legacy-friendly `show`). `set remote` enforces the same
@@ -112,10 +112,7 @@ func newConfigSetCmd() *cobra.Command {
 		Long: "Set a clauderig setting. Known keys:\n" +
 			"  remote             sync remote URL (verified private via gh/glab)\n" +
 			"  alwaysPrune        prune stale config on `restore` by default (bool)\n" +
-			"  autoRestore        auto-restore on a fresh machine via SessionStart (bool)\n" +
-			"  worktree.autoOpen  `worktree new` opens a review window (bool, default false)\n" +
-			"  worktree.openCmd   command to open a worktree (path appended), e.g. \"code -n\";\n" +
-			"                     blank resets to the default.",
+			"  autoRestore        auto-restore on a fresh machine via SessionStart (bool)",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], args[1]
@@ -192,22 +189,6 @@ func applyConfigSet(cmd *cobra.Command, cfg *config.Config, key, value string) (
 		}
 		cfg.AutoRestore = on
 		return fmt.Sprintf("autoRestore = %v", on), nil
-	case "worktree.autoOpen":
-		on, err := parseBoolArg(value)
-		if err != nil {
-			return "", err
-		}
-		if cfg.Worktree == nil {
-			cfg.Worktree = &config.Worktree{}
-		}
-		cfg.Worktree.AutoOpen = &on
-		return fmt.Sprintf("worktree.autoOpen = %v", on), nil
-	case "worktree.openCmd":
-		if cfg.Worktree == nil {
-			cfg.Worktree = &config.Worktree{}
-		}
-		cfg.Worktree.OpenCmd = strings.TrimSpace(value)
-		return "worktree opener = " + strings.Join(cfg.WorktreeOpenCmd(), " "), nil
 	default:
 		return "", unknownKeyErr(key)
 	}
@@ -222,10 +203,6 @@ func configValue(cfg *config.Config, key string) (string, bool) {
 		return fmt.Sprintf("%v", cfg.AlwaysPrune), true
 	case "autoRestore":
 		return fmt.Sprintf("%v", cfg.AutoRestore), true
-	case "worktree.autoOpen":
-		return fmt.Sprintf("%v", cfg.WorktreeAutoOpen()), true
-	case "worktree.openCmd":
-		return strings.Join(cfg.WorktreeOpenCmd(), " "), true
 	default:
 		return "", false
 	}

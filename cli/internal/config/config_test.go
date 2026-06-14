@@ -125,6 +125,49 @@ func TestMergeBlankRepoLicenseDoesNotShadowTheGlobalOne(t *testing.T) {
 	}
 }
 
+// Worktree accessors (moved here with `rig worktree`): nil → opt-in-off defaults.
+func TestWorktreeDefaults(t *testing.T) {
+	var c Config // Worktree unset
+	if c.WorktreeAutoOpen() {
+		t.Error("auto-open should default to false (opt-in) when unset")
+	}
+	if got := c.WorktreeOpenCmd(); len(got) != 2 || got[0] != "code" || got[1] != "-n" {
+		t.Errorf("open cmd default = %v, want [code -n]", got)
+	}
+}
+
+func TestWorktreeOverrides(t *testing.T) {
+	// explicit false honored; openCmd whitespace-splits into argv (extra spaces collapsed)
+	c := mustParse(t, `{ "worktree": { "autoOpen": false, "openCmd": "  cursor   -n  " } }`)
+	if c.WorktreeAutoOpen() {
+		t.Error("explicit false auto-open should be honored")
+	}
+	if got := c.WorktreeOpenCmd(); len(got) != 2 || got[0] != "cursor" || got[1] != "-n" {
+		t.Errorf("open cmd = %v, want [cursor -n]", got)
+	}
+	// explicit true honored
+	if !mustParse(t, `{ "worktree": { "autoOpen": true } }`).WorktreeAutoOpen() {
+		t.Error("explicit true auto-open should be honored")
+	}
+	// blank OpenCmd falls back to the default
+	if got := mustParse(t, `{ "worktree": { "openCmd": "   " } }`).WorktreeOpenCmd(); len(got) == 0 || got[0] != "code" {
+		t.Errorf("blank open cmd should fall back to default, got %v", got)
+	}
+}
+
+// Merge replaces the worktree block wholesale: overlay (repo) wins when set,
+// else the base (global) applies.
+func TestMergeWorktreeOverlayWinsElseBase(t *testing.T) {
+	global := mustParse(t, `{ "worktree": { "openCmd": "code -n" } }`)
+	repo := mustParse(t, `{ "worktree": { "openCmd": "cursor -n" } }`)
+	if got := Merge(global, repo).WorktreeOpenCmd(); got[0] != "cursor" {
+		t.Errorf("repo worktree should win, got %v", got)
+	}
+	if got := Merge(global, Config{}).WorktreeOpenCmd(); got[0] != "code" {
+		t.Errorf("global worktree should apply when repo has none, got %v", got)
+	}
+}
+
 // 6. Empty_whitespace_or_malformed_config_degrades_to_defaults_without_throwing
 func TestEmptyWhitespaceOrMalformedConfigDegradesToDefaultsWithoutThrowing(t *testing.T) {
 	if c := mustParse(t, ""); c.DefaultProject != "" {
