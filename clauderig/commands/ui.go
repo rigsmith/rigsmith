@@ -35,6 +35,8 @@ func NewUICmd() *cobra.Command {
 				return nil
 			}
 			switch final.Chosen {
+			case "init":
+				return NewInitCmd().RunE(cmd, nil)
 			case "sync":
 				return NewSyncCmd().RunE(cmd, nil)
 			case "restore":

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 	"github.com/rigsmith/cli/internal/config"
 	"github.com/rigsmith/cli/internal/detect"
 	"github.com/rigsmith/cli/internal/envstack"
@@ -122,6 +123,14 @@ func Execute(ctx context.Context) error {
 	// prefix resolves (`rig cove` → coverage). Tokens after `--` are forwarded
 	// verbatim and never rewritten.
 	args := os.Args[1:]
+	// Bare, interactive `rig` lands on the menu — a discoverable, capability-aware
+	// launcher with the next step in view. Off a TTY (or with any verb/flag) the
+	// normal help/dispatch stands, so scripts and `rig -h` are unchanged. Routing
+	// through the `ui` verb (rather than a root RunE) keeps cobra's
+	// unknown-command errors intact.
+	if len(args) == 0 && stdinStdoutTTY() {
+		args = []string{"ui"}
+	}
 	head, tail := args, []string(nil)
 	if sep := slices.Index(args, "--"); sep >= 0 {
 		head, tail = args[:sep:sep], args[sep:]
@@ -251,6 +260,12 @@ func runCommand(cmd *cobra.Command, dir string, argv []string) error {
 	c.Stderr = cmd.ErrOrStderr()
 	c.Stdin = os.Stdin
 	return c.Run()
+}
+
+// stdinStdoutTTY reports whether both stdin and stdout are real terminals — the
+// gate for landing bare `rig` on the interactive menu instead of printing help.
+func stdinStdoutTTY() bool {
+	return term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd())
 }
 
 // resolveRoot resolves the working root for a command: the explicit `--root`

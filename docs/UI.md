@@ -26,6 +26,24 @@ non-interactive path — it never hangs waiting for input. Two helpers gate this
 - `writerIsTerminal(w)` (`listtests.go`) → true only when the writer is a real
   `*os.File` TTY — lets the spinner fall back cleanly in tests/pipes.
 
+**Bare invocation → the menu.** Run truly bare (no verb, no flags) on a TTY,
+each tool lands on its interactive hub — `rig`/`changerig`/`shiprig` open their
+menu, `clauderig` its dashboard — with a context-aware **next step** in view
+(and, for the verb menus, pre-selected): `init` when nothing's set up, `add`
+when there's nothing to release, `status`/`version` when changesets are pending.
+With *any* arg or flag, or off a TTY, the prior behavior stands — help for
+`rig`/`clauderig`, `status` for `shiprig`, `add` for `changerig` — so scripts,
+hooks, and `-h` are unchanged. `rig`/`clauderig` route through their `ui` verb
+(not a root `RunE`), so cobra's unknown-command errors are preserved.
+
+**Context-aware menus.** Every hub reflects current state, not a fixed list — it
+shows only what's actionable now. `rig` already hides verbs the ecosystem can't
+map and adds a `▸ Project commands` group for configured commands/scripts;
+`changerig`/`shiprig` gate the lifecycle by source mode + pending changesets +
+prerelease (and shipRig adds its release verbs); `clauderig` offers `sync` only
+with a remote and `restore` only with a snapshot to pull. The legend/menu lists
+only the available actions, so a verb that would just error never appears.
+
 **Bypass flags.** `--dry-run` skips side-effects (and the prompts guarding them);
 `--quiet` suppresses the `→ command` echo and the spinner; `--yes`/`-y` bypasses
 confirm gates (the CI path).
@@ -43,26 +61,36 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
 # `rig` (dev launcher, `cli/`)
 
 ## `rig` / `rig ui` — the main menu (bubbletea)
-- **Trigger:** `rig ui`, or bare `rig` with no verb. First resolves the repo
-  root + primary ecosystem; errors out clearly if the ecosystem is ambiguous.
+- **Trigger:** `rig ui`, or bare `rig` with no verb/flag on a TTY (which routes
+  to `ui`). First resolves the repo root + primary ecosystem; on a TTY an
+  ambiguous ecosystem opens the picker rather than erroring.
 - **Why:** a discoverable, capability-aware launcher for the everyday verbs.
-- **What you see:** a header (`<root>  ·  <primary ecosystem>`), then a grouped
-  list. Top level holds the dev verbs (build/test/run/format/lint/typecheck);
-  a `▸ Dependencies` submenu (install/ci/outdated/upgrade); a `▸ Maintenance`
+- **What you see:** a header (`<root>  ·  <primary ecosystem>`); when there's no
+  `.rig.json` yet, a green `→` **next-step** line and a top **`init`** entry
+  tagged `next` (it pins conventions and is where custom verbs live). Then a
+  grouped list: the dev verbs (build/test/run/format/lint/typecheck); a
+  `▸ Dependencies` submenu (install/ci/outdated/upgrade); a `▸ Maintenance`
   submenu (clean, coverage, kill, doctor, self-update). The cursor is a cyan
   `▸`; the selected label is bold cyan; descriptions are dim. A breadcrumb shows
-  the path (`rig`, `rig · <project>`, `rig / Maintenance`). Hint line:
+  the path (`rig`, `rig · <project>`, `rig / Maintenance`); the next-step line
+  shows only at the top level. Hint line:
   `↑/↓ move · enter select · esc back · q quit`.
 - **Capability probing:** only verbs the primary ecosystem actually maps are
   shown. For .NET it probes the repo (no test project → no test/coverage; no
   runnable project → no run). `kill`/`doctor` always appear.
+- **Configured commands:** when the repo defines them, a **`▸ Project commands`**
+  submenu lists this repo's `.rig.json` custom commands and discovered scripts
+  (package.json scripts, Go `scripts/*/cmd` verbs) — the same set `rig <name>`
+  runs, deduped with the same precedence (custom > package.json > Go). Each runs
+  its own prebuilt command on selection. The group is omitted when there are none.
 - **Keys:** `↑/↓`/`k`/`j` move, `enter`/`l`/`→` select (open submenu / pick
   focus / run), `esc`/`backspace`/`h`/`←` back, `q`/`ctrl+c` quit.
 - **What it does:** selecting a verb quits the menu and dispatches it (routing to
   the standalone command — coverage/doctor/kill/self-update — or the generic
   ecosystem verb), scoped to the focused project if one is set.
-- **Non-TTY:** assumes a terminal; non-interactive invocation fails fast rather
-  than hanging.
+- **Non-TTY:** bare `rig` off a TTY prints help (the prior behavior), so scripts
+  and `rig | …` are unchanged; explicit `rig ui` off a TTY still fails fast
+  rather than hanging.
 
 ## Project focus picker (inside the menu)
 - **Trigger:** appears as a top entry **only when more than one project is
@@ -327,9 +355,11 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   `--open`, opens it in `$EDITOR`; with the `commit` config key, commits it.
 
 ## `changerig add` — inline setup offer (huh confirm)
-- **Trigger:** `add` (or bare `changerig`) in a workspace with **no `.changeset/`
-  yet**, on an interactive terminal. Instead of erroring out, it offers to set
-  changesets up right there.
+- **Trigger:** `add` (or `changerig -m …`/`--source …` — any flag keeps the bare
+  tool out of the menu) in a workspace with **no `.changeset/` yet**, on an
+  interactive terminal. (Truly bare `changerig` on a TTY opens the menu instead,
+  whose `Initialize` entry covers the same setup.) Instead of erroring out, it
+  offers to set changesets up right there.
 - **What you see:** a dim line `No changesets set up in <root> yet.`, then a huh
   confirm `Set up changesets here?` with description `Creates .changeset/ with a
   default config.`. Accepting scaffolds the folder/config (the same
@@ -342,12 +372,24 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   .changeset/` (exit non-zero, the CI path).
 
 ## `changerig ui` — verb menu (bubbletea)
-- **Trigger:** `changerig ui` (and `shiprig ui` — shared command).
-- **What you see:** header `<root>  ·  <N> package(s)  ·  <M> pending
-  changeset(s)`, title `shiprig`/`changerig`, and the entries
-  `Status` / `Add changeset` / `Browse changesets` / `Version` / `Info` with dim
-  descriptions. Cursor `▸` + bold-cyan selection; hint `↑/↓ move · enter select
-  · q quit`.
+- **Trigger:** `changerig ui` / `shiprig ui` (shared command), or bare
+  `changerig`/`shiprig` (no verb/flag) on a TTY.
+- **State-driven — shows only the verbs that currently apply.** The menu is
+  built from the workspace's live state, so it never offers a dead-end verb:
+  - **Uninitialized:** header `<root>  ·  not set up`; just **`Initialize`**
+    (tagged `next`) and `Info`.
+  - **Initialized:** header `<root>  ·  <N> package(s)  ·  <M> pending
+    changeset(s)`, then `Status` (always); `Add changeset` only in changeset
+    mode (changesets/both); `Browse changesets` only when changesets are pending;
+    `Version` only when there's something to release (pending changesets, or
+    commit mode); then any tool extras (see shipRig below); `Info` (always).
+  - **Prerelease active:** the header gains a `· prerelease <tag>` badge and an
+    **`Exit prerelease (<tag>)`** entry appears.
+- **Next step:** a green `→` line names the suggested action, which is
+  pre-selected and tagged `next` — `Status` when changesets are pending (or in
+  commit/prerelease mode), else `Add changeset` (or `Initialize` when unset).
+- **Look:** title `shiprig`/`changerig`, cursor `▸` + bold-cyan selection, dim
+  descriptions; hint `↑/↓ move · enter select · q quit`.
 - **What it does:** runs the chosen verb immediately on selection.
 
 ## `changerig browse` — changeset browser/manager (bubbletea + viewport)
@@ -385,7 +427,12 @@ prompts (deliberate — see the gap analysis).
 # `shiprig` (release tool, `shiprig/`)
 
 `shiprig` reuses changeRig's `add`/`ui`/`status`/`version` commands verbatim, so
-those UIs are identical. Its own surfaces:
+those UIs are identical. Bare `shiprig` (no verb/flag) on a TTY opens that shared
+menu; with any arg/flag or off a TTY it stays `status` (the "what would I ship?"
+answer CI and pipes rely on). shipRig **contributes its release verbs**
+(`Publish` / `Tag` / `Release`) to the shared menu via `commands.NewUICmd(extra…)`,
+so the menu reflects the release tool's full surface, not just the inherited
+lifecycle. Its own surfaces:
 
 ## `publish` confirm gate (huh confirm)
 - **Trigger:** `shiprig publish` (and `changerig publish`) just before the first
@@ -463,7 +510,7 @@ flow below.
 
 | Surface | Tool | Toolkit | Trigger | Off-TTY fallback |
 |---|---|---|---|---|
-| Main menu (`ui`/bare) | rig | bubbletea | `rig ui` / bare `rig` | fails fast |
+| Main menu (`ui`/bare) | rig | bubbletea | `rig ui`, or bare `rig` (TTY) | help (`rig ui`: fails fast) |
 | Project focus picker | rig | bubbletea (menu frame) | >1 project, in menu | n/a (in menu) |
 | `cd` picker | rig | huh select | `rig cd` (TTY, ambiguous/bare) | print root / list+fail |
 | `default` picker | rig | huh select | `rig default` (TTY, ambiguous/bare) | print current |
@@ -481,7 +528,7 @@ flow below.
 | `setup` | rig | none (file I/O) | `rig setup` | (not interactive) |
 | `add` form | changeRig/shipRig | huh form | `add`, no flags | provide flags |
 | `add` setup offer | changeRig/shipRig | huh confirm | `add` in an uninit workspace (TTY) | clear `init` error |
-| `ui` menu | changeRig/shipRig | bubbletea | `changerig ui` | fails fast |
+| `ui` menu | changeRig/shipRig | bubbletea | `changerig ui`/`shiprig ui`, or bare (TTY) | `status` (ship) / `add` (change) |
 | `browse` changesets | changeRig/shipRig | bubbletea + viewport | `changerig browse` (TTY) | plain list |
 | `publish` confirm | changeRig/shipRig | huh confirm | network side-effects (TTY) | proceed w/ `--yes` |
 | `release` confirm gates | shipRig | huh confirm | `confirm:` step (TTY) | fixed answer |

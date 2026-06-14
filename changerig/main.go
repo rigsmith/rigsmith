@@ -35,8 +35,20 @@ func run(ctx context.Context) error {
 	}
 
 	add := commands.NewAddCmd()
-	// Bare `changerig` behaves like `changerig add`.
-	root.RunE = add.RunE
+	// Bare, interactive `changerig` opens the menu — a discoverable landing with
+	// the next step pre-selected. With args/flags (e.g. `changerig -m "…"`), or
+	// off a TTY, it stays `changerig add` so scripted/flag-driven use is
+	// unchanged.
+	root.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 && cmd.Flags().NFlag() == 0 && commands.Interactive() {
+			ui := commands.NewUICmd()
+			ui.SetContext(cmd.Context())
+			ui.SetOut(cmd.OutOrStdout())
+			ui.SetErr(cmd.ErrOrStderr())
+			return ui.RunE(ui, nil)
+		}
+		return add.RunE(cmd, args)
+	}
 	root.Args = add.Args
 	root.Flags().AddFlagSet(add.Flags())
 

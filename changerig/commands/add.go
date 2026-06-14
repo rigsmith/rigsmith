@@ -258,7 +258,12 @@ func pickSource(where string) (source config.VersioningSource, ok bool) {
 
 // addInteractive reports whether `add` can prompt — both stdin and stdout must
 // be a real terminal (matches browseInteractive).
-func addInteractive() bool {
+func addInteractive() bool { return Interactive() }
+
+// Interactive reports whether both stdin and stdout are real terminals. It is
+// the shared gate for any surface that would block on input — the inline setup
+// offer, and (in changerig/shiprig main) the bare-invocation menu.
+func Interactive() bool {
 	return term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd())
 }
 

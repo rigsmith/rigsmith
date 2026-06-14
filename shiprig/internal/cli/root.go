@@ -28,12 +28,13 @@ func newRootCmd() *cobra.Command {
 	}
 
 	add := commands.NewAddCmd()
-	// Bare `shiprig` shows the pending release plan — the release front door's
-	// natural "what would I ship?" landing. `add` (changerig's default) stays a
-	// subcommand. status orients in every source mode and, in an uninitialized
-	// repo, offers source-aware setup rather than erroring.
+	// Bare, interactive `shiprig` opens the menu — a discoverable landing with the
+	// next step pre-selected. With args/flags, or off a TTY, it stays the release
+	// front door's `status` ("what would I ship?"), the answer CI and pipes rely
+	// on. status orients in every source mode and offers source-aware setup in an
+	// uninitialized repo rather than erroring.
 	status := commands.NewStatusCmd()
-	root.RunE = status.RunE
+	root.RunE = bareMenuOr(status.RunE)
 	root.Args = status.Args
 	root.Flags().AddFlagSet(status.Flags())
 
@@ -44,11 +45,40 @@ func newRootCmd() *cobra.Command {
 		commands.NewVersionCmd(),
 		commands.NewInfoCmd(),
 		commands.NewConfigCmd(),
-		commands.NewUICmd(),
+		commands.NewUICmd(releaseMenuItems()...),
 		commands.NewPreCmd(),
 		newPublishCmd(),
 		newTagCmd(),
 		newReleaseCmd(),
 	)
 	return root
+}
+
+// releaseMenuItems are shiprig's own verbs, contributed to the shared changeset
+// menu so the release tool's menu reflects its full surface — not just the
+// lifecycle it inherits from changerig. They sit after Version (the natural
+// release order: version → publish → tag → run the pipeline).
+func releaseMenuItems() []commands.MenuItem {
+	return []commands.MenuItem{
+		{Label: "Publish", Desc: "publish built packages to their registries", Build: newPublishCmd},
+		{Label: "Tag", Desc: "create + push git tags for released versions", Build: newTagCmd},
+		{Label: "Release", Desc: "run the full release pipeline", Build: newReleaseCmd},
+	}
+}
+
+// bareMenuOr returns a RunE that opens the interactive menu when shiprig is
+// invoked truly bare (no args, no flags) on a TTY, and otherwise falls through
+// to fallback (status — the CI/pipe path). Gating on "truly bare" keeps every
+// flag-driven and scripted invocation on the deterministic non-interactive path.
+func bareMenuOr(fallback func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 && cmd.Flags().NFlag() == 0 && commands.Interactive() {
+			ui := commands.NewUICmd(releaseMenuItems()...)
+			ui.SetContext(cmd.Context())
+			ui.SetOut(cmd.OutOrStdout())
+			ui.SetErr(cmd.ErrOrStderr())
+			return ui.RunE(ui, nil)
+		}
+		return fallback(cmd, args)
+	}
 }
