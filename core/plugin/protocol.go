@@ -253,6 +253,10 @@ type ReleaseInitRequest struct {
 	APIVersion int       `json:"apiVersion"`
 	RepoRoot   string    `json:"repoRoot"`
 	Packages   []Package `json:"packages,omitempty"` // this ecosystem's discovered packages
+	// OIDC reports whether OIDC trusted publishing is in play for this ecosystem
+	// (config `oidc` is not "off"). An adapter that supports it can then declare
+	// the token-based credential optional and emit setup guidance instead.
+	OIDC bool `json:"oidc,omitempty"`
 }
 
 // ReleaseInitResponse is an adapter's declaration of its release prerequisites.

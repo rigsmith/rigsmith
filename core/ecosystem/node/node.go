@@ -358,17 +358,29 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	return plugin.ArtifactsResponse{Built: true, Artifacts: arts, Message: "packed " + spec}, nil
 }
 
-// ReleaseInit declares Node's release prerequisites: an NPM_TOKEN for publishing.
-// npm produces its tarball natively (npm pack), so there is no build-config file
-// to scaffold.
+// ReleaseInit declares Node's release prerequisites. With OIDC trusted
+// publishing in play (the default), no NPM_TOKEN is required — instead we point
+// the operator at the one-time Trusted Publisher setup, which shiprig cannot do
+// for them. With OIDC off, it falls back to declaring NPM_TOKEN. npm produces
+// its tarball natively (npm pack), so there is no build-config file to scaffold.
 func (a *Adapter) ReleaseInit(ctx context.Context, req plugin.ReleaseInitRequest) (plugin.ReleaseInitResponse, error) {
+	if req.OIDC {
+		return plugin.ReleaseInitResponse{
+			Notes: []string{
+				"publishes to npm via OIDC trusted publishing — no NPM_TOKEN needed",
+				"one-time: add your release workflow as a Trusted Publisher (npmjs.com → package → Settings → Trusted Publisher)",
+				"CI must grant `id-token: write` and run actions/setup-node with registry-url; provenance needs npm ≥ 11.5.1",
+				"to use a token instead, set npm.oidc=\"off\" and provide NPM_TOKEN (or npm.auth)",
+			},
+		}, nil
+	}
 	return plugin.ReleaseInitResponse{
 		Tokens: []plugin.TokenSpec{{
 			EnvVar: "NPM_TOKEN",
 			For:    "npm publish",
 			URL:    "https://www.npmjs.com/settings/~/tokens",
 		}},
-		Notes: []string{"publishes to the npm registry"},
+		Notes: []string{"publishes to the npm registry (set npm.oidc to enable tokenless OIDC publishing)"},
 	}, nil
 }
 

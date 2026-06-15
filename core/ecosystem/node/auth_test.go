@@ -1,11 +1,41 @@
 package node
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
+
+func TestReleaseInit_OIDCMakesTokenOptional(t *testing.T) {
+	a := &Adapter{}
+
+	withOIDC, err := a.ReleaseInit(context.Background(), plugin.ReleaseInitRequest{OIDC: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(withOIDC.Tokens) != 0 {
+		t.Errorf("OIDC on: want no required tokens, got %+v", withOIDC.Tokens)
+	}
+	if !joinedHas(withOIDC.Notes, "Trusted Publisher") {
+		t.Errorf("OIDC on: missing trusted-publisher setup note: %v", withOIDC.Notes)
+	}
+
+	off, err := a.ReleaseInit(context.Background(), plugin.ReleaseInitRequest{OIDC: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(off.Tokens) != 1 || off.Tokens[0].EnvVar != "NPM_TOKEN" {
+		t.Errorf("OIDC off: want NPM_TOKEN required, got %+v", off.Tokens)
+	}
+}
+
+func joinedHas(notes []string, substr string) bool {
+	return strings.Contains(strings.Join(notes, "\n"), substr)
+}
 
 func TestNpmrcAuthKey(t *testing.T) {
 	cases := []struct {

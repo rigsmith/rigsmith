@@ -83,7 +83,9 @@ func releaseInitLayer(cmd *cobra.Command) error {
 		if !ok || !hasCapability(eco.Info(), plugin.MethodReleaseInit) {
 			continue
 		}
-		ri, err := eco.ReleaseInit(ctx, plugin.ReleaseInitRequest{RepoRoot: ws.Root, Packages: byEco[id]})
+		// OIDC is "in play" unless explicitly turned off (default/auto = on).
+		oidcEnabled := !strings.EqualFold(ws.Config.EcoConfig(id).OIDC, "off")
+		ri, err := eco.ReleaseInit(ctx, plugin.ReleaseInitRequest{RepoRoot: ws.Root, Packages: byEco[id], OIDC: oidcEnabled})
 		if err != nil {
 			fmt.Fprintf(out, "  %s: release-init failed: %v\n", eco.Info().DisplayName, err)
 			continue
