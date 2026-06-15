@@ -492,6 +492,17 @@ type EcosystemConfig struct {
 	// PackageSource overrides the publish feed/registry for this ecosystem
 	// (net's `dotnet.packageSource`); empty falls back to the built-in default.
 	PackageSource string `json:"packageSource,omitempty"`
+	// Auth resolves this ecosystem's registry credential at publish time, as a
+	// secret reference: "op://…" (1Password, via `op read`), "env:NAME" (an
+	// environment variable), or "cmd:…" (a shell command whose stdout is the
+	// token). Empty falls back to the ambient credential the package manager
+	// already uses (~/.npmrc, etc.).
+	Auth string `json:"auth,omitempty"`
+	// OIDC controls trusted publishing via the CI's OIDC identity: "auto"
+	// (default — use OIDC when a CI OIDC context is present and no explicit Auth
+	// ref is set, else fall back) or "off" (never). Only the npm ecosystem
+	// honors it today.
+	OIDC string `json:"oidc,omitempty"`
 	// VersionStrategy overrides the top-level VersionStrategy for this
 	// ecosystem's packages (net's `dotnet.versionStrategy`); empty inherits it.
 	VersionStrategy VersionStrategy `json:"versionStrategy,omitempty"`

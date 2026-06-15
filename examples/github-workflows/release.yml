@@ -12,6 +12,7 @@ on:
 permissions:
   contents: write       # push the release branch + tags
   pull-requests: write  # open/update the Version Packages PR
+  id-token: write       # npm OIDC trusted publishing (tokenless + provenance)
 
 concurrency: release-${{ github.ref }}
 
@@ -22,6 +23,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0   # tags + full history for status --since / publish
+
+      # For npm OIDC trusted publishing: one-time, add this workflow as a Trusted
+      # Publisher on npmjs.com (Package → Settings → Trusted Publisher). Then no
+      # NPM_TOKEN is needed — shiprig mints a short-lived token per publish and
+      # npm attaches provenance automatically. registry-url makes npm publish to
+      # the public registry.
+      - uses: actions/setup-node@v4
+        with:
+          registry-url: https://registry.npmjs.org
 
       # Only needed if you pin shiprigVersion to `main`/a branch (source fallback).
       # - uses: actions/setup-go@v5
@@ -36,7 +46,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-          # NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # NPM_TOKEN: ${{ secrets.NPM_TOKEN }}  # not needed with OIDC trusted publishing
 
       - name: Summary
         if: always()

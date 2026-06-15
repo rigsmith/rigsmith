@@ -164,12 +164,29 @@ type DependencyUpdate struct {
 // manager (dotnet nuget push, npm publish, ...). Adapters are expected to be
 // idempotent: query the registry and skip versions that already exist.
 type PublishRequest struct {
-	APIVersion    int     `json:"apiVersion"`
-	RepoRoot      string  `json:"repoRoot"`
-	Package       Package `json:"package"`
-	PackageSource string  `json:"packageSource"` // feed name or URL; "nuget", "npm", ...
-	Access        string  `json:"access"`        // "public" | "restricted"
-	DryRun        bool    `json:"dryRun"`
+	APIVersion    int             `json:"apiVersion"`
+	RepoRoot      string          `json:"repoRoot"`
+	Package       Package         `json:"package"`
+	PackageSource string          `json:"packageSource"` // feed name or URL; "nuget", "npm", ...
+	Access        string          `json:"access"`        // "public" | "restricted"
+	DryRun        bool            `json:"dryRun"`
+	Auth          *AuthCredential `json:"auth,omitempty"` // resolved by the engine; nil = use the ambient credential
+	OIDC          bool            `json:"oidc,omitempty"` // attempt OIDC trusted publishing (the adapter mints + exchanges the token)
+}
+
+// AuthCredential is a registry credential the engine resolved (OIDC exchange,
+// a 1Password/secret-manager reference, or an env token) and is handing to the
+// adapter to authenticate one publish. The adapter renders its own
+// ecosystem-native credentials file (npmrc / NuGet.config / cargo) from it.
+// Nil Auth on a PublishRequest means "use whatever credential the package
+// manager already has" — the pre-auth-seam behaviour.
+//
+// The token transits the plugin protocol (engine → adapter); it is never logged
+// and the engine redacts it from any surfaced output.
+type AuthCredential struct {
+	Token      string `json:"token"`
+	Method     string `json:"method,omitempty"`     // "oidc" | "secret-ref" | "env"
+	Provenance bool   `json:"provenance,omitempty"` // attach provenance when the toolchain supports it
 }
 
 // PublishResponse reports the outcome.
@@ -236,6 +253,10 @@ type ReleaseInitRequest struct {
 	APIVersion int       `json:"apiVersion"`
 	RepoRoot   string    `json:"repoRoot"`
 	Packages   []Package `json:"packages,omitempty"` // this ecosystem's discovered packages
+	// OIDC reports whether OIDC trusted publishing is in play for this ecosystem
+	// (config `oidc` is not "off"). An adapter that supports it can then declare
+	// the token-based credential optional and emit setup guidance instead.
+	OIDC bool `json:"oidc,omitempty"`
 }
 
 // ReleaseInitResponse is an adapter's declaration of its release prerequisites.
