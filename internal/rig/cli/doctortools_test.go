@@ -18,11 +18,11 @@ import (
 func fakeExeOnPath(t *testing.T, bin string) {
 	t.Helper()
 	dir := t.TempDir()
-	name := bin
+	name, body := bin, "#!/bin/sh\nexit 0\n"
 	if runtime.GOOS == "windows" {
-		name += ".bat"
+		name, body = bin+".bat", "@exit /b 0\r\n" // valid no-op batch, not a shell shebang
 	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
