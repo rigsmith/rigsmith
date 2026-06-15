@@ -130,43 +130,97 @@ The existing GitHub logic becomes `githubProvider`.
 
 `forge`: `auto | github | gitlab | gitea | none`.
 
-## Part 3 — Issue-tracker integration (roadmap; bigger)
+## Part 3 — Issue-tracker integration
 
-Parity target: on release, comment on / close issues referenced by the released
-changes, across GitHub / Gitea / Jira. This is a **new subsystem**, not a forge
-tweak — the data it needs (referenced issue refs) doesn't exist yet, and it
-touches `core/planner`, not just the forge step. Own design pass before build.
+> Design agreed 2026-06-15. Parity target: on release, comment on / close issues
+> referenced by the released changes, across the forge (GitHub/Gitea) and Jira.
+> **Forge issues ship first; Jira is a deferred follow-up** (REST + token, no CLI
+> — the most code). Comments are **idempotent via a hidden marker** so a re-run
+> never double-comments.
 
-### 3a. Ref-collection pass
+### 3a. Ref-collection pass — `core/issuerefs` (pure)
 
-Over the released commit range (the same range the changelog uses, in
-`core/planner`), collect issue refs — `#123` (GitHub/Gitea) and `KEY-123` (Jira) —
-from commit footers (`Closes #12`) and/or changeset metadata.
+A standalone parser over the **released commit range** (reuse
+`gitutil.LatestModuleVersion` + `gitutil.LogSince` — the same range the changelog
+uses, read from git so it works in both changeset and commit modes). It scans
+each commit's subject+body; it does **not** touch `core/planner`.
 
-### 3b. New native `issues` step + provider seam
+```go
+package issuerefs
+
+type Kind int
+const ( Forge Kind = iota; Jira )
+
+type Ref struct {
+    ID      string // "123" (forge) or "ENG-45" (Jira)
+    Kind    Kind
+    Closing bool   // preceded by a closing keyword (close/fix/resolve…)
+}
+
+// Collect parses forge refs (#123) and Jira refs (KEY-123, for the configured
+// project keys) from commit messages, deduped by (Kind, ID); Closing is the OR
+// across occurrences.
+func Collect(messages []string, jiraProjects []string) []Ref
+```
+
+- **Closing keywords** (GitHub/Gitea): `close|closes|closed|fix|fixes|fixed|`
+  `resolve|resolves|resolved` before a `#N` ⇒ `Closing:true` (eligible to close);
+  a bare `#N` is a mention (comment-only).
+- Same-repo refs only in v1 (no `owner/repo#N` cross-repo).
+
+This slice is pure and fully unit-testable with no side effects.
+
+### 3b. `IssueProvider` seam + native `issues` step (forge issues)
+
+Mirrors the forge `Provider`. `#N` refs route to the **release's forge** (reusing
+the release step's `Selection`); each provider wraps the forge's issue CLI.
 
 ```go
 type IssueRef struct{ ID, URL string }
 
 type IssueProvider interface {
-    Comment(ref IssueRef, body string, run Runner) error
-    Close(ref IssueRef, run Runner) error   // Jira = transition
+    Name() string
+    Ready(repoRoot string, run Runner) bool
+    Comment(ref IssueRef, body, repoRoot string, run Runner) error
+    Close(ref IssueRef, repoRoot string, run Runner) error
 }
 ```
 
-backed by `gh issue`, `tea issue`, and Jira REST.
+| forge  | comment                         | close                  | mention/exists           |
+|--------|---------------------------------|------------------------|--------------------------|
+| github | `gh issue comment N --body`     | `gh issue close N`     | `gh issue view N --json comments` |
+| gitea  | `tea issue …`                   | `tea issue close N`    | `tea issue …`            |
+
+- **Idempotent comments:** the body carries a hidden marker
+  `<!-- shiprig:released:<tag> -->`; before posting, the provider reads the
+  issue's existing comments and skips if the marker is already present. `Close`
+  is naturally idempotent (closing a closed issue is a no-op).
+- **New native `issues` step**, opt-in (only when `issues.enabled`), runs **after
+  `release`**: canonical order `… → release → issues`. Registered like the
+  `build`/`release` native handlers (`nativeBuiltins` + `NativeStepDescription` +
+  the handler map in `cli/release.go`). It collects refs (3a) over the released
+  range, then comments/closes per config.
+- Degrade-to-skip if the forge CLI isn't ready (same contract as the release
+  step), never an error.
 
 ### 3c. Config (`core/config.Config`)
 
+New top-level `issues` block (added to `sharedKeys` + a typed `Issues` field):
+
 ```jsonc
-"issues": { "provider": "jira", "url": "...", "project": "ENG",
-            "comment": "Released in {{version}}", "close": true }
+"issues": {
+  "enabled": true,
+  "comment": "Released in {{version}}",   // empty ⇒ no comment, close only
+  "close": true,                          // close issues with closing keywords
+  "jira": { "url": "…", "project": ["ENG"], "tokenEnv": "JIRA_TOKEN" }  // 3d
+}
 ```
 
-### 3d. Caveat
+### 3d. Jira provider — deferred follow-up
 
-Jira is the outlier — REST + token auth, no convenient CLI — so it's the most
-code. Defer to this part's own doc expansion.
+Jira is the outlier: REST + token auth (`tokenEnv`), `KEY-N` refs, and "close" is
+a workflow *transition*, not a simple close. It routes independently of the forge
+and is the most code, so it ships as its own PR after 3a+3b land.
 
 ## Build slices (independent, in order)
 
@@ -181,8 +235,11 @@ code. Defer to this part's own doc expansion.
    config; `auto` picks the first provider whose host matches origin and whose
    CLI is ready. Per-forge degrade-to-tags-only. Tests cover selection, auto-
    detection, per-forge argv, and the Gitea asset-skip.
-4. **Issue tracker (Part 3)** — ⬜ TODO. Its own design pass first, then planner
-   ref-collection + `issues` step + providers.
+4. **Issue tracker (Part 3)** — design agreed; forge-first, Jira deferred:
+   - **3a** `core/issuerefs` ref-collection pass (pure) — ⬜ next.
+   - **3b** `IssueProvider` seam + github/gitea + native `issues` step + config
+     (idempotent marker comments) — ⬜.
+   - **3d** Jira provider (REST/token) — ⬜ deferred follow-up.
 
 Each slice ships as its own PR off a worktree, with tests, leaving
 `go test ./...` green.
