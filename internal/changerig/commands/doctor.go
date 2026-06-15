@@ -43,7 +43,7 @@ func NewDoctorCmd() *cobra.Command {
 // tool. The changeset baseline (git/repo/config/workspace) is always included;
 // extra appends tool-specific sections (shiprig's release checks) and may be nil.
 // It exits non-zero while any failing check remains, so it's usable in scripts.
-func RunDoctor(cmd *cobra.Command, tool string, accent lipgloss.AdaptiveColor, fixAll bool, extra func(context.Context, *Workspace) []doctor.Section) error {
+func RunDoctor(cmd *cobra.Command, tool string, accent lipgloss.AdaptiveColor, fixAll bool, extra func(context.Context, *Workspace, Discovery) []doctor.Section) error {
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
 
@@ -51,9 +51,13 @@ func RunDoctor(cmd *cobra.Command, tool string, accent lipgloss.AdaptiveColor, f
 	if err != nil {
 		return err
 	}
-	sections := ChangesetDoctorSections(ctx, ws)
+	// Scan the workspace once and share it across the sections — the baseline's
+	// workspace row and shiprig's per-ecosystem publish checks both need it, and
+	// walking a monorepo twice is wasteful.
+	disc := discover(ctx, ws)
+	sections := ChangesetDoctorSections(ctx, ws, disc)
 	if extra != nil {
-		sections = append(sections, extra(ctx, ws)...)
+		sections = append(sections, extra(ctx, ws, disc)...)
 	}
 
 	fmt.Fprintf(out, "%s   %s\n\n", HeaderStyle.Render(tool+" doctor"), DimStyle.Render(runtime.GOOS))
@@ -71,13 +75,28 @@ func RunDoctor(cmd *cobra.Command, tool string, accent lipgloss.AdaptiveColor, f
 	return nil
 }
 
+// Discovery is a single workspace scan, shared across the doctor sections so the
+// repo is walked once. It summarizes ws.Discover: the package count, the
+// name→ecosystem map (also consumed by shiprig's publish checks), and any scan
+// error for the sections to surface.
+type Discovery struct {
+	PackageCount int
+	Ecosystems   map[string]string
+	Err          error
+}
+
+func discover(ctx context.Context, ws *Workspace) Discovery {
+	pkgs, ecoOf, err := ws.Discover(ctx)
+	return Discovery{PackageCount: len(pkgs), Ecosystems: ecoOf, Err: err}
+}
+
 // ChangesetDoctorSections builds the shared changeset health checks: the git
 // toolchain, then the repo / config / workspace / pending-changeset state. shiprig
-// appends its own "release" section to these.
-func ChangesetDoctorSections(ctx context.Context, ws *Workspace) []doctor.Section {
+// appends its own "release" section to these, reusing the same Discovery.
+func ChangesetDoctorSections(ctx context.Context, ws *Workspace, disc Discovery) []doctor.Section {
 	return []doctor.Section{
 		{Title: "environment", Results: []doctor.Result{checkGit(ctx)}},
-		{Title: "changesets", Results: changesetChecks(ctx, ws)},
+		{Title: "changesets", Results: changesetChecks(ctx, ws, disc)},
 	}
 }
 
@@ -97,7 +116,7 @@ func checkGit(ctx context.Context) doctor.Result {
 		Detail: strings.TrimSpace(strings.TrimPrefix(firstLine(string(v)), "git version "))}
 }
 
-func changesetChecks(ctx context.Context, ws *Workspace) []doctor.Result {
+func changesetChecks(ctx context.Context, ws *Workspace, disc Discovery) []doctor.Result {
 	var rs []doctor.Result
 
 	if _, err := gitrepo.Open(ctx, ws.Root); err != nil {
@@ -107,7 +126,7 @@ func changesetChecks(ctx context.Context, ws *Workspace) []doctor.Result {
 		rs = append(rs, doctor.Result{Name: "git repo", Status: doctor.OK, Detail: ws.Root})
 	}
 
-	rs = append(rs, checkChangesetConfig(ws), checkWorkspace(ctx, ws))
+	rs = append(rs, checkChangesetConfig(ws), checkWorkspace(disc))
 
 	// Pending changesets — neutral context, never a problem.
 	if css, err := changeset.Dir(ws.ChangesetDir, ""); err == nil {
@@ -142,17 +161,16 @@ func checkChangesetConfig(ws *Workspace) doctor.Result {
 	return doctor.Result{Name: "config", Status: doctor.OK, Detail: detail}
 }
 
-func checkWorkspace(ctx context.Context, ws *Workspace) doctor.Result {
-	pkgs, ecoOf, err := ws.Discover(ctx)
-	if err != nil {
-		return doctor.Result{Name: "workspace", Status: doctor.Warn, Detail: "discovery failed: " + err.Error()}
+func checkWorkspace(disc Discovery) doctor.Result {
+	if disc.Err != nil {
+		return doctor.Result{Name: "workspace", Status: doctor.Warn, Detail: "discovery failed: " + disc.Err.Error()}
 	}
-	if len(pkgs) == 0 {
+	if disc.PackageCount == 0 {
 		return doctor.Result{Name: "workspace", Status: doctor.Warn, Detail: "no packages detected",
 			Hint: "changerig versions packages it can find — none matched .NET/Node/Go/Cargo here"}
 	}
 	return doctor.Result{Name: "workspace", Status: doctor.OK,
-		Detail: fmt.Sprintf("%d package(s) across %s", len(pkgs), strings.Join(UniqueEcosystems(ecoOf), ", "))}
+		Detail: fmt.Sprintf("%d package(s) across %s", disc.PackageCount, strings.Join(UniqueEcosystems(disc.Ecosystems), ", "))}
 }
 
 // UniqueEcosystems returns the distinct ecosystem ids from a name→ecosystem map,

@@ -273,12 +273,15 @@ func toolChecks(present map[string]bool, root string) []pendingCheck {
 // missing AND rig owns an install command for — the "owned tools only" line:
 // only tools with a real `install` command appear (so fetch-on-use ReportGenerator
 // and SDK-shipped dnx don't), and a tool the user pinned `off` stays report-only.
-// Each result carries a Fix that runs the install; doctorui presents and applies.
+// A tool whose installer itself is missing (e.g. `cargo install …` with no cargo)
+// is skipped too — the install couldn't succeed, and the toolchain's own row
+// already flags that. Each result carries a Fix that runs the install; doctorui
+// presents and applies.
 func doctorToolFixes(cmd *cobra.Command, present map[string]bool, root string) []doctor.Section {
 	var results []doctor.Result
 	for _, t := range relevantTools(present, root) {
 		t := t // capture
-		if t.available(root) || len(t.install) == 0 || t.mode(root) == toolOff {
+		if t.available(root) || len(t.install) == 0 || t.mode(root) == toolOff || !installerOnPath(t) {
 			continue
 		}
 		results = append(results, doctor.Result{
@@ -293,6 +296,17 @@ func doctorToolFixes(cmd *cobra.Command, present map[string]bool, root string) [
 		return nil
 	}
 	return []doctor.Section{{Title: "tools", Results: results}}
+}
+
+// installerOnPath reports whether the command that installs t (the first word of
+// its install command, e.g. `cargo` / `go` / `dotnet`) is itself resolvable —
+// the precondition for the install to have any chance of succeeding.
+func installerOnPath(t extTool) bool {
+	if len(t.install) == 0 {
+		return false
+	}
+	_, err := exec.LookPath(t.install[0])
+	return err == nil
 }
 
 // toolHowto is the "how to get it" suffix for a missing tool: its install
