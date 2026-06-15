@@ -18,6 +18,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version is stamped at release time via -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	if err := run(context.Background()); err != nil {
 		os.Exit(1)
@@ -51,6 +54,7 @@ func run(ctx context.Context) error {
 		commands.NewInfoCmd(),
 		commands.NewConfigCmd(),
 		commands.NewUICmd(),
+		commands.NewDoctorCmd(version),
 	)
 
 	// Bare, interactive `changerig` (no verb/flag) lands on the menu. Routing
@@ -60,5 +64,5 @@ func run(ctx context.Context) error {
 	if len(os.Args) == 1 && commands.Interactive() {
 		root.SetArgs([]string{"ui"})
 	}
-	return fang.Execute(ctx, root, fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentChange)), fang.WithBanner(brand.ChangeBanner))
+	return fang.Execute(ctx, root, fang.WithVersion(version), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentChange)), fang.WithBanner(brand.ChangeBanner))
 }
