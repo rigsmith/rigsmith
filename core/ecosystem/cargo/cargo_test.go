@@ -123,3 +123,48 @@ func TestPublishPrivateSkipped(t *testing.T) {
 		t.Errorf("private publish = %+v, want {Skipped private}", resp)
 	}
 }
+
+// TestArtifactsPrivateSkipped checks a publish=false crate is skipped before any
+// `cargo package` (hermetic — no toolchain required).
+func TestArtifactsPrivateSkipped(t *testing.T) {
+	resp, err := New().Artifacts(context.Background(), plugin.ArtifactsRequest{
+		RepoRoot:  t.TempDir(),
+		OutputDir: t.TempDir(),
+		Package:   plugin.Package{Name: "app", Version: "0.1.0", Dir: ".", Private: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Built || !resp.Skipped || resp.Message != "private" {
+		t.Errorf("private artifacts = %+v, want {Skipped private}", resp)
+	}
+}
+
+// TestArtifactsDryRun reports intent without running cargo (hermetic).
+func TestArtifactsDryRun(t *testing.T) {
+	resp, err := New().Artifacts(context.Background(), plugin.ArtifactsRequest{
+		RepoRoot:  t.TempDir(),
+		OutputDir: t.TempDir(),
+		DryRun:    true,
+		Package:   plugin.Package{Name: "app", Version: "0.1.0", Dir: "."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Built || resp.Skipped || resp.Message != "dry-run: would cargo package app@0.1.0" {
+		t.Errorf("dry-run artifacts = %+v, want a would-cargo-package message", resp)
+	}
+}
+
+// TestInfoAdvertisesArtifacts locks the Cargo adapter's artifacts capability.
+func TestInfoAdvertisesArtifacts(t *testing.T) {
+	found := false
+	for _, c := range New().Info().Capabilities {
+		if c == plugin.MethodArtifacts {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("cargo Info() should advertise MethodArtifacts")
+	}
+}

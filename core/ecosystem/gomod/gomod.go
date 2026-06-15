@@ -13,8 +13,10 @@ package gomod
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -53,7 +55,7 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		APIVersion:       plugin.APIVersion,
 		ID:               "go",
 		DisplayName:      "Go",
-		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish},
+		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts},
 		ManifestPatterns: []string{"go.mod"},
 		DevCommands: map[string][]string{
 			plugin.VerbBuild:  {"go", "build", "./..."},
@@ -189,6 +191,98 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 // this adapter reports the version as handled-by-tag rather than pushing here.
 func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugin.PublishResponse, error) {
 	return plugin.PublishResponse{Skipped: true, Message: "published via git tag (publish tagging phase)"}, nil
+}
+
+// Artifacts builds the module's distributable binaries with goreleaser when a
+// .goreleaser.yaml is present (the cross-platform binary story for Go). A Go
+// module with no goreleaser config is "published" by its git tag and has no
+// binaries to ship, so it is skipped. The produced archives + checksums are
+// release assets (Attach: true). goreleaser builds into the repo's dist/.
+func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
+	if goreleaserConfig(req.RepoRoot) == "" {
+		return plugin.ArtifactsResponse{Skipped: true, Message: "no .goreleaser.yaml; Go modules ship via git tag"}, nil
+	}
+	if req.DryRun {
+		mode := "goreleaser release --skip=publish"
+		if req.Snapshot {
+			mode = "goreleaser release --snapshot"
+		}
+		return plugin.ArtifactsResponse{Message: "dry-run: would run " + mode}, nil
+	}
+	if _, err := exec.LookPath("goreleaser"); err != nil {
+		return plugin.ArtifactsResponse{}, fmt.Errorf("goreleaser not found on PATH (needed to build Go binaries; see https://goreleaser.com): %w", err)
+	}
+	// Build + archive into dist/ without uploading: --skip=publish for a real
+	// tagged release, --snapshot for a tagless rehearse.
+	args := []string{"release", "--clean", "--skip=publish"}
+	if req.Snapshot {
+		args = []string{"release", "--clean", "--snapshot"}
+	}
+	if _, _, err := runCmd(ctx, req.RepoRoot, "goreleaser", args...); err != nil {
+		return plugin.ArtifactsResponse{}, fmt.Errorf("goreleaser: %w", err)
+	}
+	arts, err := collectDist(filepath.Join(req.RepoRoot, "dist"))
+	if err != nil {
+		return plugin.ArtifactsResponse{}, err
+	}
+	return plugin.ArtifactsResponse{Built: true, Artifacts: arts, Message: "built binaries via goreleaser"}, nil
+}
+
+// goreleaserConfig returns the path to a goreleaser config in root, or "".
+func goreleaserConfig(root string) string {
+	for _, n := range []string{".goreleaser.yaml", ".goreleaser.yml"} {
+		if p := filepath.Join(root, n); fileExists(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// collectDist gathers the release assets goreleaser wrote to dist/: the archives
+// (.tar.gz/.zip) and the checksums file. The raw per-binary executables and
+// goreleaser's metadata.json/artifacts.json are left out — the archives ship.
+func collectDist(dist string) ([]plugin.Artifact, error) {
+	entries, err := os.ReadDir(dist)
+	if err != nil {
+		return nil, fmt.Errorf("reading goreleaser dist %s: %w", dist, err)
+	}
+	var arts []plugin.Artifact
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		path := filepath.Join(dist, name)
+		switch {
+		case strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".zip"):
+			arts = append(arts, plugin.Artifact{Path: path, Kind: plugin.ArtifactArchive, Attach: true})
+		case strings.Contains(strings.ToLower(name), "checksum"):
+			arts = append(arts, plugin.Artifact{Path: path, Kind: plugin.ArtifactChecksum, Attach: true})
+		}
+	}
+	return arts, nil
+}
+
+// runCmd runs name with args in dir, returning stdout/stderr for diagnostics.
+func runCmd(ctx context.Context, dir, name string, args ...string) (stdout, stderr string, err error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	var outBuf, errBuf strings.Builder
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err = cmd.Run()
+	stdout, stderr = outBuf.String(), errBuf.String()
+	if err != nil {
+		err = fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(stderr))
+	}
+	return stdout, stderr, err
 }
 
 // parseModule returns the module path and the optional `// rigsmith:version`

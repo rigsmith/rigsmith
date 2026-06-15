@@ -181,3 +181,101 @@ func TestSetVersionCreatesComment(t *testing.T) {
 		t.Errorf("annotation not updated: %q", got)
 	}
 }
+
+// TestArtifactsNoGoreleaserSkipped: a Go module with no .goreleaser.yaml has no
+// binaries to ship, so artifacts skips (hermetic — no toolchain required).
+func TestArtifactsNoGoreleaserSkipped(t *testing.T) {
+	resp, err := New().Artifacts(context.Background(), plugin.ArtifactsRequest{
+		RepoRoot:  t.TempDir(),
+		OutputDir: t.TempDir(),
+		Package:   plugin.Package{ManifestPath: "go.mod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Built || !resp.Skipped || !strings.Contains(resp.Message, "no .goreleaser.yaml") {
+		t.Errorf("no-goreleaser artifacts = %+v, want a skipped/no-config result", resp)
+	}
+}
+
+// TestArtifactsDryRun: with a .goreleaser.yaml present, dry-run reports the
+// goreleaser invocation without running it; snapshot switches the flag.
+func TestArtifactsDryRun(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goreleaser.yaml"), "version: 2\n")
+	a := New()
+
+	resp, err := a.Artifacts(context.Background(), plugin.ArtifactsRequest{
+		RepoRoot: root, OutputDir: t.TempDir(), DryRun: true,
+		Package: plugin.Package{ManifestPath: "go.mod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Built || resp.Skipped || !strings.Contains(resp.Message, "--skip=publish") {
+		t.Errorf("dry-run artifacts = %+v, want a would-run goreleaser --skip=publish message", resp)
+	}
+
+	snap, err := a.Artifacts(context.Background(), plugin.ArtifactsRequest{
+		RepoRoot: root, OutputDir: t.TempDir(), DryRun: true, Snapshot: true,
+		Package: plugin.Package{ManifestPath: "go.mod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(snap.Message, "--snapshot") {
+		t.Errorf("snapshot dry-run = %+v, want a --snapshot message", snap)
+	}
+}
+
+// TestCollectDist keeps only the shippable archives + checksums from a goreleaser
+// dist/ directory, dropping raw binaries and metadata.
+func TestCollectDist(t *testing.T) {
+	dist := t.TempDir()
+	for _, n := range []string{
+		"rig_1.0.0_darwin_arm64.tar.gz",
+		"rig_1.0.0_windows_amd64.zip",
+		"checksums.txt",
+		"metadata.json", // dropped
+		"rig",           // raw binary, dropped
+	} {
+		writeFile(t, filepath.Join(dist, n), "x")
+	}
+	arts, err := collectDist(dist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{} // base name -> kind
+	for _, art := range arts {
+		if !art.Attach {
+			t.Errorf("%s should be Attach:true", art.Path)
+		}
+		got[filepath.Base(art.Path)] = art.Kind
+	}
+	want := map[string]string{
+		"rig_1.0.0_darwin_arm64.tar.gz": plugin.ArtifactArchive,
+		"rig_1.0.0_windows_amd64.zip":   plugin.ArtifactArchive,
+		"checksums.txt":                 plugin.ArtifactChecksum,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("collectDist = %v, want %v", got, want)
+	}
+	for name, kind := range want {
+		if got[name] != kind {
+			t.Errorf("%s kind = %q, want %q", name, got[name], kind)
+		}
+	}
+}
+
+// TestInfoAdvertisesArtifacts locks the Go adapter's artifacts capability.
+func TestInfoAdvertisesArtifacts(t *testing.T) {
+	found := false
+	for _, c := range New().Info().Capabilities {
+		if c == plugin.MethodArtifacts {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("go Info() should advertise MethodArtifacts")
+	}
+}
