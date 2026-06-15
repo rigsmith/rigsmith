@@ -19,7 +19,7 @@ either fully isolated per-terminal, or by swapping the machine-wide login.
 | `clauderig account remove <id\|label>` (alias `rm`) | Stop tracking an account (and delete its session profile). |
 | `clauderig account purge` | Remove all of rig's account data. |
 
-`remove` and `purge` only touch rig's own store — they **never log you out of
+`remove` and `purge` only touch claudeRig's own store — they **never log you out of
 Claude Code**. Both require an interactive terminal to confirm and refuse to run
 non-interactively (no `--yes`/`--force` bypass). In the screen, `x` removes the
 selected account after a confirmation.
@@ -79,7 +79,7 @@ genuinely want the default login to change.
 
 ## Storage & safety
 
-- At rest, rig keeps its own copy of each account under
+- At rest, claudeRig keeps its own copy of each account under
   `~/.clauderig/accounts/<id>/` (`credentials.json` + `meta.json`, mode `0600`).
   The account `id` is a short fingerprint of the OAuth refresh token, so the same
   account always maps to the same id.
@@ -92,4 +92,4 @@ genuinely want the default login to change.
 - **macOS** — verified against Claude Code 2.x; live store is the Keychain entry
   `Claude Code-credentials`.
 - **Windows** — symlink-based sharing needs Developer Mode or an elevated shell;
-  otherwise rig falls back to copying customizations into the session.
+  otherwise claudeRig falls back to copying customizations into the session.

@@ -27,13 +27,13 @@ func NewAccountCmd() *cobra.Command {
 		Aliases: []string{"acct"},
 		Short:   "Manage multiple Claude Code logins (session-isolate or swap)",
 		Long: "Run several Claude Code accounts from one machine.\n\n" +
-			"  add     capture the currently logged-in account into rig's store\n" +
+			"  add     capture the currently logged-in account into claudeRig's store\n" +
 			"  list    show stored accounts and which one is live\n" +
 			"  run     launch Claude Code as an account in THIS terminal only\n" +
 			"          (isolated via CLAUDE_CONFIG_DIR — others stay on the default)\n" +
 			"  switch  swap the machine-wide live login to another account\n" +
 			"  remove  stop tracking an account (does not log it out)\n" +
-			"  purge   remove all of rig's account data",
+			"  purge   remove all of claudeRig's account data",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if Interactive() {
 				return runAccountUI(cmd)
@@ -50,9 +50,9 @@ func newAccountAddCmd() *cobra.Command {
 	var label string
 	cmd := &cobra.Command{
 		Use:   "add",
-		Short: "Capture the currently logged-in account into rig's store",
+		Short: "Capture the currently logged-in account into claudeRig's store",
 		Long: "Reads the live Claude Code credential (macOS Keychain, or .credentials.json\n" +
-			"elsewhere) and saves a copy under ~/.clauderig/accounts so rig can run or\n" +
+			"elsewhere) and saves a copy under ~/.clauderig/accounts so claudeRig can run or\n" +
 			"swap to it later. Log into the account in Claude Code first.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -195,8 +195,8 @@ func newAccountRemoveCmd() *cobra.Command {
 		Use:     "remove <id|label>",
 		Aliases: []string{"rm"},
 		Short:   "Stop tracking an account (does not log it out of Claude Code)",
-		Long: "Delete rig's copy of an account and any session profile for it. This does\n" +
-			"NOT touch the live Claude Code login — it just stops rig tracking the\n" +
+		Long: "Delete claudeRig's copy of an account and any session profile for it. This does\n" +
+			"NOT touch the live Claude Code login — it just stops claudeRig tracking the\n" +
 			"account. Requires an interactive terminal to confirm.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -211,7 +211,7 @@ func newAccountRemoveCmd() *cobra.Command {
 			if !Interactive() {
 				return errors.New("refusing to remove without a terminal to confirm")
 			}
-			ok, err := confirmDestructive(fmt.Sprintf("Remove account %s from rig's store? (does not log it out)", accountTitle(a)))
+			ok, err := confirmDestructive(fmt.Sprintf("Remove account %s from claudeRig's store? (does not log it out)", accountTitle(a)))
 			if err != nil {
 				return err
 			}
@@ -231,9 +231,9 @@ func newAccountRemoveCmd() *cobra.Command {
 func newAccountPurgeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "purge",
-		Short: "Remove all of rig's account data (does not log out of Claude Code)",
+		Short: "Remove all of claudeRig's account data (does not log out of Claude Code)",
 		Long: "Delete every tracked account, session profile, and credential backup from\n" +
-			"rig's store (~/.clauderig/accounts, sessions, cred-backups). This does NOT\n" +
+			"claudeRig's store (~/.clauderig/accounts, sessions, cred-backups). This does NOT\n" +
 			"touch the live Claude Code login. Requires an interactive terminal to confirm.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -348,7 +348,7 @@ func runAccountUI(cmd *cobra.Command) error {
 				note = errStyleNote(err)
 				continue
 			}
-			ok, err := confirmDestructive(fmt.Sprintf("Remove account %s from rig's store? (does not log it out)", accountTitle(target)))
+			ok, err := confirmDestructive(fmt.Sprintf("Remove account %s from claudeRig's store? (does not log it out)", accountTitle(target)))
 			if err != nil {
 				return err
 			}
