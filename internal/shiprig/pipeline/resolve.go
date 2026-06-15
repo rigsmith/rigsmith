@@ -60,6 +60,9 @@ const (
 	// StepKindNative runs a handler provided by the host (e.g. per-package
 	// forge releases).
 	StepKindNative
+
+	// StepKindScript runs the step's "script" (Tengo code) as its action.
+	StepKindScript
 )
 
 // ResolvedStep is a step after its config and built-in defaults have been
@@ -114,6 +117,9 @@ type ResolvedStep struct {
 	// If is the Tengo gate expression ("" when none); evaluated at run time —
 	// a falsy result skips the step.
 	If string
+
+	// Script is the step's Tengo code, when Kind is StepKindScript.
+	Script string
 }
 
 // Enabled reports whether the step will run.
@@ -189,20 +195,34 @@ func Resolve(config *Config, opts ResolveOptions) ([]ResolvedStep, error) {
 			return nil, err
 		}
 
-		commandAction, hasAction := stepAction(name, config, stepConfig)
-		isNative := !hasAction && slices.Contains(nativeBuiltins, name)
+		// A "script" step's action is Tengo code, not commands. It cannot also
+		// set "run".
+		isScript := stepConfig != nil && stepConfig.Script != nil
+		if isScript && stepConfig.Run != nil {
+			return nil, fmt.Errorf("release step '%s' sets both 'run' and 'script'; use one", name)
+		}
 
-		if !hasAction && !isNative {
-			return nil, fmt.Errorf("release step '%s' is not a built-in and defines no 'run' command", name)
+		var commandAction []CommandSpec
+		var hasAction bool
+		if !isScript {
+			commandAction, hasAction = stepAction(name, config, stepConfig)
+		}
+		isNative := !isScript && !hasAction && slices.Contains(nativeBuiltins, name)
+
+		if !isScript && !hasAction && !isNative {
+			return nil, fmt.Errorf("release step '%s' is not a built-in and defines no 'run' or 'script'", name)
 		}
 
 		kind := StepKindCommands
-		if isNative {
+		switch {
+		case isScript:
+			kind = StepKindScript
+		case isNative:
 			kind = StepKindNative
 		}
 
 		var before, after []CommandSpec
-		var displayName, ifExpr string
+		var displayName, ifExpr, script string
 		if stepConfig != nil {
 			before = stepConfig.Before
 			after = stepConfig.After
@@ -212,13 +232,16 @@ func Resolve(config *Config, opts ResolveOptions) ([]ResolvedStep, error) {
 			if stepConfig.If != nil {
 				ifExpr = strings.TrimSpace(*stepConfig.If)
 			}
+			if stepConfig.Script != nil {
+				script = stepConfig.Script.Code
+			}
 		}
 
-		// A native built-in with an explicit run is no longer native (hasAction
-		// is true, so isNative is false): the custom command replaces the native
-		// handler. Flag it so reporters can note the substitution.
-		overridesNative := hasAction && stepConfig != nil && stepConfig.Run != nil &&
-			slices.Contains(nativeBuiltins, name)
+		// A native built-in with an explicit run or script is no longer native:
+		// the custom action replaces the native handler. Flag it so reporters can
+		// note the substitution.
+		overridesNative := slices.Contains(nativeBuiltins, name) && stepConfig != nil &&
+			(stepConfig.Run != nil || stepConfig.Script != nil)
 
 		dryAction, dryHidden := dryRunPlan(stepConfig, commandAction)
 
@@ -236,6 +259,7 @@ func Resolve(config *Config, opts ResolveOptions) ([]ResolvedStep, error) {
 			DryRunAction:    dryAction,
 			DryRunHidden:    dryHidden,
 			If:              ifExpr,
+			Script:          script,
 		})
 	}
 

@@ -891,7 +891,7 @@ func TestPlainReporterNotesNativeOverrideInPlan(t *testing.T) {
 	}
 	reporter.Plan(mustResolve(t, config, ResolveOptions{}), false)
 
-	if got := out.String(); !strings.Contains(got, "custom run replaces the native step") {
+	if got := out.String(); !strings.Contains(got, "custom action replaces the native step") {
 		t.Errorf("plan missing native-override note: %q", got)
 	}
 }

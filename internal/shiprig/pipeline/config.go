@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/rigsmith/rigsmith/core/jsonc"
 )
@@ -247,6 +249,12 @@ type StepConfig struct {
 	// default action; for a custom step this is the action.
 	Run CommandList `json:"run"`
 
+	// Script is the step's action as Tengo code (instead of Run): it runs with
+	// the script ctx plus side-effecting helpers (sh, cp/mv/rm/mkdir, log, fail).
+	// A step sets at most one of Run / Script. Written as a string, an array of
+	// lines, or { "file": "path.tengo" } — see ScriptSpec.
+	Script *ScriptSpec `json:"script"`
+
 	// If is a Tengo expression that gates the step: when it evaluates to a falsy
 	// value the step is skipped (with a reason), like a runtime version of
 	// `enabled`. Evaluated against the script `ctx` (packages/versions/tags/
@@ -340,10 +348,63 @@ func (s *VarSpec) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// ScriptSpec is a step's Tengo script, written in JSONC as one of:
+//
+//   - a string:          "mkdir(`-p`, `dist`)"
+//   - an array of lines: ["mkdir(`-p`, `dist`)", "sh(`build`)"]  (joined with newlines)
+//   - a file reference:  { "file": "./release/stage.tengo" }
+//
+// Tip: write Tengo string literals with backticks (raw strings) so they don't
+// collide with JSON's double quotes — no \" escaping needed.
+type ScriptSpec struct {
+	// Code is the inline script (a string, or an array of lines joined with
+	// newlines), or the file's contents once File has been loaded.
+	Code string
+	// File is the path to a .tengo file (resolved relative to the config file),
+	// or "" for an inline script.
+	File string
+}
+
+// UnmarshalJSON reads the string / array-of-lines / { "file": … } shapes.
+func (s *ScriptSpec) UnmarshalJSON(data []byte) error {
+	var raw any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	switch v := raw.(type) {
+	case string:
+		s.Code = v
+	case []any:
+		lines := make([]string, len(v))
+		for i, item := range v {
+			line, ok := item.(string)
+			if !ok {
+				return errors.New("a script array must contain only strings (lines)")
+			}
+			lines[i] = line
+		}
+		s.Code = strings.Join(lines, "\n")
+	case map[string]any:
+		file, ok := v["file"].(string)
+		if !ok || file == "" {
+			return errors.New(`a script object must set "file" to a path`)
+		}
+		s.File = file
+	default:
+		return errors.New(`a script must be a string, an array of lines, or { "file": … }`)
+	}
+	return nil
+}
+
 // LoadConfig reads the release config at path. A missing file yields an
 // empty (all-defaults) config, so the command works with zero configuration;
 // a file that fails to parse is a real error.
 func LoadConfig(path string) (*Config, error) {
+	// Resolve to an absolute path so a script "file" ref resolves relative to the
+	// config's real location, independent of the working directory.
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return &Config{}, nil
@@ -362,7 +423,30 @@ func LoadConfig(path string) (*Config, error) {
 	if _, err := ShellMode(config.Shell); err != nil {
 		return nil, fmt.Errorf("release config '%s': %w", path, err)
 	}
+	if err := loadStepScripts(config, filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("release config '%s': %w", path, err)
+	}
 	return config, nil
+}
+
+// loadStepScripts inlines any step script given as { "file": … } by reading the
+// file (resolved relative to baseDir, the config's directory).
+func loadStepScripts(config *Config, baseDir string) error {
+	for name, step := range config.Steps {
+		if step == nil || step.Script == nil || step.Script.File == "" {
+			continue
+		}
+		p := step.Script.File
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(baseDir, p)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return fmt.Errorf("step '%s' script file: %w", name, err)
+		}
+		step.Script.Code = string(data)
+	}
+	return nil
 }
 
 // validateVars enforces that every variable sets exactly one of

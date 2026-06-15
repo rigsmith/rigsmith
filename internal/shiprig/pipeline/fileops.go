@@ -20,7 +20,7 @@ import (
 // and ignored (so e.g. `cp -p` copies without preserving timestamps); a release
 // that needs exact coreutils semantics can opt into "shell": "system".
 func portableFileOps(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
-	ops := map[string]func(interp.HandlerContext, []string) error{
+	ops := map[string]func(string, []string) error{
 		"cp":    fileOpCp,
 		"mv":    fileOpMv,
 		"rm":    fileOpRm,
@@ -30,7 +30,7 @@ func portableFileOps(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		if len(args) > 0 {
 			if op, ok := ops[args[0]]; ok {
 				hc := interp.HandlerCtx(ctx)
-				if err := op(hc, args[1:]); err != nil {
+				if err := op(hc.Dir, args[1:]); err != nil {
 					fmt.Fprintf(hc.Stderr, "%s: %v\n", args[0], err)
 					return interp.NewExitStatus(1)
 				}
@@ -77,13 +77,13 @@ func isDir(p string) bool {
 	return err == nil && info.IsDir()
 }
 
-func fileOpMkdir(hc interp.HandlerContext, args []string) error {
+func fileOpMkdir(dir string, args []string) error {
 	flags, ops := parseFlags(args)
 	if len(ops) == 0 {
 		return fmt.Errorf("missing operand")
 	}
 	for _, p := range ops {
-		path := resolve(hc.Dir, p)
+		path := resolve(dir, p)
 		var err error
 		if flags['p'] {
 			err = os.MkdirAll(path, 0o755)
@@ -97,7 +97,7 @@ func fileOpMkdir(hc interp.HandlerContext, args []string) error {
 	return nil
 }
 
-func fileOpRm(hc interp.HandlerContext, args []string) error {
+func fileOpRm(dir string, args []string) error {
 	flags, ops := parseFlags(args)
 	recursive := flags['r'] || flags['R']
 	force := flags['f']
@@ -108,7 +108,7 @@ func fileOpRm(hc interp.HandlerContext, args []string) error {
 		return fmt.Errorf("missing operand")
 	}
 	for _, p := range ops {
-		path := resolve(hc.Dir, p)
+		path := resolve(dir, p)
 		var err error
 		if recursive {
 			err = os.RemoveAll(path) // already a no-op on a missing path
@@ -125,12 +125,12 @@ func fileOpRm(hc interp.HandlerContext, args []string) error {
 	return nil
 }
 
-func fileOpMv(hc interp.HandlerContext, args []string) error {
+func fileOpMv(dir string, args []string) error {
 	_, ops := parseFlags(args)
 	if len(ops) < 2 {
 		return fmt.Errorf("need a source and a destination")
 	}
-	srcs, dst, dstIsDir, err := sourcesAndDest(hc.Dir, ops)
+	srcs, dst, dstIsDir, err := sourcesAndDest(dir, ops)
 	if err != nil {
 		return err
 	}
@@ -146,13 +146,13 @@ func fileOpMv(hc interp.HandlerContext, args []string) error {
 	return nil
 }
 
-func fileOpCp(hc interp.HandlerContext, args []string) error {
+func fileOpCp(dir string, args []string) error {
 	flags, ops := parseFlags(args)
 	recursive := flags['r'] || flags['R']
 	if len(ops) < 2 {
 		return fmt.Errorf("need a source and a destination")
 	}
-	srcs, dst, dstIsDir, err := sourcesAndDest(hc.Dir, ops)
+	srcs, dst, dstIsDir, err := sourcesAndDest(dir, ops)
 	if err != nil {
 		return err
 	}
