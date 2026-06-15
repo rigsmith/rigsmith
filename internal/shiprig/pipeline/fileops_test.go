@@ -121,6 +121,29 @@ func TestFileOpRm(t *testing.T) {
 	}
 }
 
+func TestFileOpRmRecursiveMissingFailsWithoutForce(t *testing.T) {
+	dir := t.TempDir()
+	// `rm -r missing` must fail (typo protection); `rm -rf missing` succeeds.
+	if _, code, _ := runPortable(t, nil, "rm -r nope", dir); code == 0 {
+		t.Error("rm -r on a missing path should fail without -f")
+	}
+	if _, code, _ := runPortable(t, nil, "rm -rf nope", dir); code != 0 {
+		t.Error("rm -rf on a missing path should succeed")
+	}
+}
+
+func TestFileOpCpRecursiveRequiresExistingDestParent(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "src", "a.txt"), "a")
+
+	if _, code, _ := runPortable(t, nil, "cp -r src missing/dst", dir); code == 0 {
+		t.Error("cp -r into a missing dest parent should fail")
+	}
+	if exists(filepath.Join(dir, "missing")) {
+		t.Error("cp -r must not create the missing dest parent directory")
+	}
+}
+
 func TestFileOpsComposeInOneScript(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "build", "app"), "binary")

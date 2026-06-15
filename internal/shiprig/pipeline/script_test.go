@@ -161,6 +161,34 @@ func TestComputedVarShownInDryRunPreview(t *testing.T) {
 	}
 }
 
+func TestDryRunFailsOnMalformedIf(t *testing.T) {
+	p := New((&recordingRunner{}).run, &recordingReporter{}, NewSecretMasker(),
+		&stubPrompter{answer: true}, "/tmp/repo", nil, nil, twoPackages())
+
+	bad := "1 +" // compile error
+	config := &Config{Order: []string{"s"}, Steps: map[string]*StepConfig{
+		"s": {If: &bad, Run: CommandList{ShellCommand("echo x")}},
+	}}
+	if p.Run(mustResolve(t, config, ResolveOptions{}), config, true) {
+		t.Error("a malformed if expression should fail the dry run, not pass silently")
+	}
+}
+
+func TestDryRunFailsOnMalformedScriptVar(t *testing.T) {
+	p := New((&recordingRunner{}).run, &recordingReporter{}, NewSecretMasker(),
+		&stubPrompter{answer: true}, "/tmp/repo", nil, nil, twoPackages())
+
+	bad := "1 +"
+	config := &Config{
+		Order: []string{"s"},
+		Vars:  map[string]*VarSpec{"x": {Script: &bad}},
+		Steps: map[string]*StepConfig{"s": {Run: CommandList{ShellCommand("echo x")}}},
+	}
+	if p.Run(mustResolve(t, config, ResolveOptions{}), config, true) {
+		t.Error("a malformed computed-var script should fail the dry run, not become a placeholder")
+	}
+}
+
 func TestVarRejectsValueAndScriptTogether(t *testing.T) {
 	_, err := parseConfig(t, `{ "vars": { "x": { "value": "a", "script": "1" } } }`)
 	if err == nil || !strings.Contains(err.Error(), "exactly one") {

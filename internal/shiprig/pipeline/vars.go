@@ -67,6 +67,30 @@ func (v *variables) eagerNames() []string {
 	return names
 }
 
+// evalScriptVars resolves every computed (script) variable once, surfacing a
+// malformed expression as an error. The dry run calls this so a broken
+// vars.*.script is reported up front instead of silently degrading to a
+// placeholder in previewValue. Names are visited in sorted order for a
+// deterministic first error.
+func (v *variables) evalScriptVars() error {
+	if v.scriptEval == nil {
+		return nil
+	}
+	names := make([]string, 0, len(v.specs))
+	for name, spec := range v.specs {
+		if spec != nil && spec.Script != nil {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, err := v.scriptEval(*v.specs[name].Script); err != nil {
+			return fmt.Errorf("variable '%s' script error: %v", name, err)
+		}
+	}
+	return nil
+}
+
 // previewValue returns a variable's value when it can be known with no side
 // effect — a literal, or a computed "script" var — for the dry-run preview. A
 // captured (command) var returns false, so the preview placeholders it instead

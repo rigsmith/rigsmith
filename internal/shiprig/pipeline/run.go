@@ -250,14 +250,30 @@ func (p *Pipeline) fail(hooks Hooks, message string) bool {
 // gates are not prompted and native handlers never fire — a native step runs in
 // a dry run only if it carries explicit "dryRun" commands.
 func (p *Pipeline) runDry(steps []ResolvedStep) bool {
+	// Fail fast on config errors a real run would hit, rather than hiding them
+	// behind a successful-looking plan: a malformed `if` expression or a broken
+	// computed-var script.
+	for _, step := range steps {
+		if step.Enabled() {
+			if _, reason, ok := p.evalStepIf(step); !ok {
+				p.reporter.RunCompleted(false, fmt.Sprintf("dry run: step '%s' if-condition error: %s", step.Name, reason))
+				return false
+			}
+		}
+	}
+	if err := p.vars.evalScriptVars(); err != nil {
+		p.reporter.RunCompleted(false, "dry run: "+err.Error())
+		return false
+	}
+
 	p.reporter.Plan(p.previewSteps(steps), true)
 
 	for _, step := range steps {
 		if !step.Enabled() {
 			continue
 		}
-		if run, _, ok := p.evalStepIf(step); !ok || !run {
-			continue // an if-false (or erroring) step runs nothing
+		if run, _, _ := p.evalStepIf(step); !run {
+			continue // an if-false step runs no dry commands (errors fail above)
 		}
 
 		// A script step runs in a dry run (its logic executes; sh/cp/… are
