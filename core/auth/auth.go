@@ -103,8 +103,9 @@ func Resolve(ctx context.Context, req Request) (Credential, error) {
 func resolveRef(ctx context.Context, ref string) (string, Method, error) {
 	switch {
 	case strings.HasPrefix(ref, "op://"):
-		// 1Password secret reference, resolved via the op CLI.
-		out, err := runToken(ctx, "op", "read", ref)
+		// 1Password secret reference, resolved via the op CLI (with actionable
+		// errors for the missing/signed-out/not-found cases).
+		out, err := resolveOpRef(ctx, ref)
 		return out, MethodRef, err
 
 	case strings.HasPrefix(ref, "env:"):

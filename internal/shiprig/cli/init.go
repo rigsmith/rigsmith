@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/rigsmith/rigsmith/core/auth"
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/core/plugin"
@@ -78,6 +80,7 @@ func releaseInitLayer(cmd *cobra.Command) error {
 	}
 
 	var tokens []plugin.TokenSpec
+	var authRefs []authRefEntry
 	seenToken := map[string]bool{}
 	for _, id := range sortedKeys(byEco) {
 		eco, ok := ws.EcosystemFor(id)
@@ -92,6 +95,9 @@ func releaseInitLayer(cmd *cobra.Command) error {
 			continue
 		}
 		name := eco.Info().DisplayName
+		if ref := ws.Config.EcoConfig(id).Auth; ref != "" {
+			authRefs = append(authRefs, authRefEntry{eco: name, ref: ref})
+		}
 		for _, n := range ri.Notes {
 			fmt.Fprintf(out, "  %s: %s\n", name, n)
 		}
@@ -116,7 +122,33 @@ func releaseInitLayer(cmd *cobra.Command) error {
 		return err
 	}
 	printTokenPreflight(out, tokens, env)
+	printAuthPreflight(ctx, out, authRefs)
 	return nil
+}
+
+// authRefEntry pairs an ecosystem with its configured publish-auth secret ref.
+type authRefEntry struct {
+	eco string
+	ref string
+}
+
+// printAuthPreflight reports readiness of each configured publish-auth ref
+// (op://, env:, cmd:) without resolving the secret — so the wizard surfaces a
+// missing `op` CLI or a signed-out 1Password session before a release run hits
+// it. Nothing here reads or stores a secret value.
+func printAuthPreflight(ctx context.Context, out io.Writer, refs []authRefEntry) {
+	if len(refs) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "\nPublish auth (configured refs, never stored):")
+	for _, r := range refs {
+		detail, ok := auth.PreflightRef(ctx, r.ref)
+		mark := "⚠"
+		if ok {
+			mark = "✓"
+		}
+		fmt.Fprintf(out, "  %s %s  %s — %s\n", mark, r.eco, r.ref, detail)
+	}
 }
 
 // scaffoldReleaseConfig writes a starter release.jsonc when none exists,
