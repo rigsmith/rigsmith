@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/rigsmith/rigsmith/internal/shiprig/pipeline"
@@ -108,7 +109,13 @@ func releaseInitLayer(cmd *cobra.Command) error {
 	}
 
 	// 3. Preflight the tokens a real release will need (reported, never stored).
-	printTokenPreflight(out, tokens)
+	// Check against the same layered .env/.env.local < ambient view the release
+	// runs with (honouring --no-env), so a token in a local .env reads as set.
+	env, err := loadReleaseEnv(ws.Root, noEnv)
+	if err != nil {
+		return err
+	}
+	printTokenPreflight(out, tokens, env)
 	return nil
 }
 
@@ -206,14 +213,24 @@ func confirmGenerate(path, tool string) bool {
 }
 
 // printTokenPreflight reports which release tokens are set, never reading their
-// values. Missing ones list what they're for and where to get one.
-func printTokenPreflight(out io.Writer, tokens []plugin.TokenSpec) {
+// values. Presence is checked against env, the layered release environment
+// (.env/.env.local < ambient), so a token in a local .env counts as set — the
+// same view the release will run with. A nil env falls back to the process
+// environment. Missing ones list what they're for and where to get one.
+func printTokenPreflight(out io.Writer, tokens []plugin.TokenSpec, env map[string]string) {
 	if len(tokens) == 0 {
 		return
 	}
+	tokenSet := func(name string) bool {
+		if env != nil {
+			v, _ := envstack.Lookup(env, name) // case-insensitive on Windows
+			return v != ""
+		}
+		return os.Getenv(name) != ""
+	}
 	fmt.Fprintln(out, "\nRelease tokens (checked, never stored):")
 	for _, t := range tokens {
-		if os.Getenv(t.EnvVar) != "" {
+		if tokenSet(t.EnvVar) {
 			fmt.Fprintf(out, "  ✓ %s  (%s)\n", t.EnvVar, t.For)
 			continue
 		}

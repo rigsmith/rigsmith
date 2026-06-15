@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
@@ -84,6 +85,16 @@ func newReleaseCmd() *cobra.Command {
 
 			masker := pipeline.NewSecretMasker()
 
+			// The layered .env/.env.local < ambient environment (skipped by
+			// --no-env) so release commands, captured variables, ${env.NAME}
+			// interpolation, and forge releases all see tokens declared in a local
+			// .env without exporting them.
+			releaseEnv, err := loadReleaseEnv(ws.Root, noEnv)
+			if err != nil {
+				return err
+			}
+			runnerEnv := envstack.Environ(releaseEnv)
+
 			// release native handler: per-package forge releases. Output is
 			// routed through the active reporter (so the live dashboard captures it
 			// instead of writing raw to the terminal).
@@ -136,7 +147,7 @@ func newReleaseCmd() *cobra.Command {
 						out("discover: " + err.Error())
 						return false
 					}
-					ok, msg := forge.Run(pkgs, ecoOf, attachPaths(built), ws.Config, fsel, ws.Root, execForgeRunner(cmd), out)
+					ok, msg := forge.Run(pkgs, ecoOf, attachPaths(built), ws.Config, fsel, ws.Root, execForgeRunner(cmd, runnerEnv), out)
 					if msg != "" {
 						out(msg)
 					}
@@ -171,15 +182,15 @@ func newReleaseCmd() *cobra.Command {
 					}
 					ok, msg := forge.RunIssues(messages, fsel,
 						forge.IssuesConfig{Comment: ic.Comment, Close: ic.Close},
-						strings.Join(tags, ", "), ws.Root, execForgeRunner(cmd), out)
+						strings.Join(tags, ", "), ws.Root, execForgeRunner(cmd, runnerEnv), out)
 					if msg != "" {
 						out(msg)
 					}
 					return ok
 				}
 
-				return pipeline.New(pipeline.ExecRunner, reporter, masker, prompter, ws.Root,
-					map[string]pipeline.NativeHandler{"build": buildHandler, "release": releaseHandler, "issues": issuesHandler})
+				return pipeline.New(pipeline.NewExecRunner(runnerEnv), reporter, masker, prompter, ws.Root,
+					releaseEnv, map[string]pipeline.NativeHandler{"build": buildHandler, "release": releaseHandler, "issues": issuesHandler})
 			}
 
 			fail := func() error {
@@ -289,7 +300,7 @@ func stepForgeURL(cfg *pipeline.Config) string {
 // is scanned.
 func releasedCommitMessages(cmd *cobra.Command, root string) ([]string, error) {
 	prev := ""
-	if out, err := execForgeRunner(cmd)(root, "git", "describe", "--tags", "--abbrev=0", "HEAD^"); err == nil {
+	if out, err := execForgeRunner(cmd, nil)(root, "git", "describe", "--tags", "--abbrev=0", "HEAD^"); err == nil {
 		prev = strings.TrimSpace(out)
 	}
 	commits, err := gitutil.LogSince(cmd.Context(), root, prev)
@@ -330,11 +341,15 @@ func (ttyPrompter) Confirm(message string) bool {
 	return ok
 }
 
-// execForgeRunner adapts os/exec to the forge.Runner seam.
-func execForgeRunner(cmd *cobra.Command) forge.Runner {
+// execForgeRunner adapts os/exec to the forge.Runner seam, running each command
+// with env as its environment (the layered .env/.env.local < ambient stack; nil
+// inherits the ambient process environment) so forge releases see the same
+// tokens as the rest of the pipeline.
+func execForgeRunner(cmd *cobra.Command, env []string) forge.Runner {
 	return func(dir, name string, args ...string) (string, error) {
 		c := exec.CommandContext(cmd.Context(), name, args...)
 		c.Dir = dir
+		c.Env = env // nil inherits the current process environment
 		out, err := c.CombinedOutput()
 		return string(out), err
 	}

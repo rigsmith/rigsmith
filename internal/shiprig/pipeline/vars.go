@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/core/envstack"
 )
 
 // varResolution is the outcome of resolving a variable: its value, or why the
@@ -117,24 +119,24 @@ func extractVarRefs(command CommandSpec) []string {
 }
 
 // interpolateCommand substitutes ${name} placeholders in command text from
-// the context map.
-func interpolateCommand(context map[string]string, command CommandSpec) CommandSpec {
+// the context map; ${env.NAME} resolves against env (see resolveKey).
+func interpolateCommand(context, env map[string]string, command CommandSpec) CommandSpec {
 	if command.IsShell() {
-		return ShellCommand(interpolate(context, command.Shell()))
+		return ShellCommand(interpolate(context, env, command.Shell()))
 	}
 	argv := make([]string, len(command.Argv()))
 	for i, token := range command.Argv() {
-		argv[i] = interpolate(context, token)
+		argv[i] = interpolate(context, env, token)
 	}
 	return ArgvCommand(argv...)
 }
 
 // interpolate substitutes ${name} placeholders from the context map.
-// ${env.NAME} reads a process environment variable (missing variables become
-// empty). Unknown placeholders are left verbatim so values resolved later
-// survive this pass untouched. The substitution is a single left-to-right
-// pass — substituted values are never re-scanned.
-func interpolate(context map[string]string, input string) string {
+// ${env.NAME} reads from env, the layered release environment (missing
+// variables become empty). Unknown placeholders are left verbatim so values
+// resolved later survive this pass untouched. The substitution is a single
+// left-to-right pass — substituted values are never re-scanned.
+func interpolate(context, env map[string]string, input string) string {
 	if !strings.Contains(input, "${") {
 		return input
 	}
@@ -161,7 +163,7 @@ func interpolate(context map[string]string, input string) string {
 		result.WriteString(input[index:start])
 
 		key := input[start+2 : end]
-		if value, ok := resolveKey(context, key); ok {
+		if value, ok := resolveKey(context, env, key); ok {
 			result.WriteString(value)
 		} else {
 			result.WriteString(input[start : end+1])
@@ -173,8 +175,17 @@ func interpolate(context map[string]string, input string) string {
 	return result.String()
 }
 
-func resolveKey(context map[string]string, key string) (string, bool) {
+// resolveKey resolves a ${...} placeholder. ${env.NAME} reads from env, the
+// layered release environment (.env/.env.local < ambient), falling back to the
+// process environment when env is nil; a missing variable resolves to the empty
+// string (still "found", so the placeholder is consumed). Other keys come from
+// the context map.
+func resolveKey(context, env map[string]string, key string) (string, bool) {
 	if name, isEnv := strings.CutPrefix(key, "env."); isEnv {
+		if env != nil {
+			value, _ := envstack.Lookup(env, name) // missing → "", still consumed
+			return value, true
+		}
 		return os.Getenv(name), true
 	}
 	value, ok := context[key]

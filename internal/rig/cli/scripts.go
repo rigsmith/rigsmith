@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
-	"github.com/rigsmith/rigsmith/internal/rig/envstack"
 	"github.com/spf13/cobra"
 )
 

@@ -6,6 +6,24 @@ import (
 	"strings"
 )
 
+// Lookup returns the value for key, honouring the platform key comparison:
+// case-insensitive on Windows (so ${env.PATH} still matches an ambient "Path",
+// the way os.Getenv would), exact elsewhere. The boolean reports presence; a
+// present-but-empty value returns ("", true).
+func Lookup(env map[string]string, key string) (string, bool) {
+	if v, ok := env[key]; ok {
+		return v, true
+	}
+	if caseInsensitiveKeys {
+		for k, v := range env {
+			if strings.EqualFold(k, key) {
+				return v, true
+			}
+		}
+	}
+	return "", false
+}
+
 // Ambient returns the current process environment as a map.
 func Ambient() map[string]string {
 	environ := os.Environ()

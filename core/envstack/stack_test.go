@@ -32,6 +32,36 @@ func TestPrecedenceIsFileThenAmbientThenConfigThenCommand(t *testing.T) {
 	}
 }
 
+func TestLookup(t *testing.T) {
+	env := envMap([2]string{"NPM_TOKEN", "x"}, [2]string{"EMPTY", ""})
+
+	if v, ok := Lookup(env, "NPM_TOKEN"); !ok || v != "x" {
+		t.Errorf("Lookup(NPM_TOKEN) = %q,%v; want \"x\",true", v, ok)
+	}
+	// Present-but-empty is found (so ${env.EMPTY} resolves to "").
+	if v, ok := Lookup(env, "EMPTY"); !ok || v != "" {
+		t.Errorf("Lookup(EMPTY) = %q,%v; want \"\",true", v, ok)
+	}
+	// Absent is not found.
+	if v, ok := Lookup(env, "ABSENT"); ok || v != "" {
+		t.Errorf("Lookup(ABSENT) = %q,%v; want \"\",false", v, ok)
+	}
+	// A nil map never panics and reports absence.
+	if v, ok := Lookup(nil, "ANYTHING"); ok || v != "" {
+		t.Errorf("Lookup(nil) = %q,%v; want \"\",false", v, ok)
+	}
+	// On case-insensitive platforms (Windows) a different-cased key still
+	// matches; elsewhere it does not. Assert the active platform's behaviour.
+	gotV, gotOK := Lookup(env, "npm_token")
+	if caseInsensitiveKeys {
+		if !gotOK || gotV != "x" {
+			t.Errorf("Lookup(npm_token) on Windows = %q,%v; want \"x\",true", gotV, gotOK)
+		}
+	} else if gotOK {
+		t.Errorf("Lookup(npm_token) = %q,%v; want a miss on a case-sensitive platform", gotV, gotOK)
+	}
+}
+
 func TestNilLayersAreIgnored(t *testing.T) {
 	merged := Merge(nil, envMap([2]string{"X", "1"}), nil, nil)
 	got, ok := merged["X"]
