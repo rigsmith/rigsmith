@@ -2,9 +2,12 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/copytree"
 	"github.com/spf13/cobra"
 )
@@ -44,37 +47,109 @@ The destination must be a new path or an empty directory; copy refuses to write
 into a populated folder.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			_, root, err := openRepo(ctx)
+			_, root, err := openRepo(cmd.Context())
 			if err != nil {
 				return err
 			}
-
-			dest, err := filepath.Abs(args[0])
+			dest, err := resolveDest(args[0])
 			if err != nil {
 				return err
 			}
 			if err := ensureWritableDest(dest); err != nil {
 				return err
 			}
-
-			out := cmd.OutOrStdout()
-			st, err := copytree.Copy(root, dest, withGit)
-			if err != nil {
-				return err
-			}
-
-			fmt.Fprintf(out, "%s\n", OkStyle.Render("✓ copied to "+dest))
-			summary := fmt.Sprintf("%d files, %d dirs, %s", st.Files, st.Dirs, humanBytes(st.Bytes))
-			if st.GitIncluded {
-				summary += " (with .git)"
-			}
-			fmt.Fprintf(out, "%s\n", DimStyle.Render(summary))
-			return nil
+			return runCopy(cmd.OutOrStdout(), root, dest, withGit)
 		},
 	}
 	cmd.Flags().BoolVar(&withGit, "git", false, "include the .git directory (copy is a full independent repository)")
 	return cmd
+}
+
+// newCopyMenuCmd is the interactive variant run from `rig ui`, where there's no
+// destination argument: it prompts for the target folder (re-prompting until the
+// path is new or empty — copy's no-clobber contract enforced inline) and whether
+// to include .git, then performs the same copy. Escape cancels.
+func newCopyMenuCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "copy",
+		Short: "Copy this repo's tree to a new folder (prompts for destination)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, root, err := openRepo(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if !interactive() {
+				return fmt.Errorf("copy from the menu needs a terminal; use `rig copy <dest>` instead")
+			}
+
+			var destInput string
+			var withGit bool
+			form := huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("Copy to").
+					Description("a new path or an empty folder").
+					Placeholder("../"+filepath.Base(root)+"-copy").
+					Value(&destInput).
+					Validate(func(s string) error {
+						dest, err := resolveDest(s)
+						if err != nil {
+							return err
+						}
+						return ensureWritableDest(dest)
+					}),
+				huh.NewConfirm().
+					Title("Include .git history?").
+					Description("off → a detached copy; on → a full independent repo").
+					Affirmative("Yes, --git").
+					Negative("No").
+					Value(&withGit),
+			)).WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme())
+
+			if err := form.Run(); err != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\n", DimStyle.Render("cancelled"))
+				return nil
+			}
+			dest, err := resolveDest(destInput)
+			if err != nil {
+				return err
+			}
+			return runCopy(cmd.OutOrStdout(), root, dest, withGit)
+		},
+	}
+}
+
+// runCopy performs the copy and prints the completion summary. The destination
+// is assumed already resolved and validated by the caller.
+func runCopy(out io.Writer, root, dest string, withGit bool) error {
+	st, err := copytree.Copy(root, dest, withGit)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s\n", OkStyle.Render("✓ copied to "+dest))
+	summary := fmt.Sprintf("%d files, %d dirs, %s", st.Files, st.Dirs, humanBytes(st.Bytes))
+	if st.GitIncluded {
+		summary += " (with .git)"
+	}
+	fmt.Fprintf(out, "%s\n", DimStyle.Render(summary))
+	return nil
+}
+
+// resolveDest expands a leading ~ and returns the absolute destination path. An
+// empty input is an error so the menu's prompt re-asks rather than copying to the
+// current directory.
+func resolveDest(in string) (string, error) {
+	in = strings.TrimSpace(in)
+	if in == "" {
+		return "", fmt.Errorf("destination is required")
+	}
+	if in == "~" || strings.HasPrefix(in, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		in = filepath.Join(home, strings.TrimPrefix(in, "~"))
+	}
+	return filepath.Abs(in)
 }
 
 // ensureWritableDest enforces copy's no-clobber contract: the destination must

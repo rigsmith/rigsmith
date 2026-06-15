@@ -235,6 +235,7 @@ func worktreeMenuItems() []menuItem {
 		{label: "unpin", desc: "clear the pinned -dev route", cmd: newWorktreeUnsetCmd()},
 		{label: "list", desc: "list this repo's worktrees", cmd: newWorktreeListCmd()},
 		{label: "prune", desc: "remove clean, merged worktrees", cmd: newWorktreePruneCmd()},
+		{label: "copy (detached)", desc: "copy this repo to a new folder (no git link)", cmd: newCopyMenuCmd()},
 	}
 }
 

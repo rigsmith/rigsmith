@@ -42,6 +42,34 @@ func TestEnsureWritableDest(t *testing.T) {
 	}
 }
 
+func TestResolveDest(t *testing.T) {
+	if _, err := resolveDest("   "); err == nil {
+		t.Error("empty/blank destination should error")
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	got, err := resolveDest("~/snapshots/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, "snapshots", "x")
+	if got != want {
+		t.Errorf("resolveDest(~/snapshots/x) = %q, want %q", got, want)
+	}
+
+	// A relative path resolves to an absolute one.
+	rel, err := resolveDest("subdir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(rel) {
+		t.Errorf("resolveDest(subdir) = %q, want absolute", rel)
+	}
+}
+
 func TestHumanBytes(t *testing.T) {
 	cases := map[int64]string{
 		0:           "0 B",
