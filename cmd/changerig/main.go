@@ -50,6 +50,7 @@ func run(ctx context.Context) error {
 		commands.NewPreCmd(),
 		commands.NewInfoCmd(),
 		commands.NewConfigCmd(),
+		commands.NewChangelogCmd(),
 		commands.NewUICmd(),
 	)
 

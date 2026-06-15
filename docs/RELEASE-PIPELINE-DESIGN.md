@@ -139,28 +139,37 @@ so goreleaser stamps the right version with no tag at HEAD.
 
 ## Part 2 — changerig manual changelog
 
-### 2a. Changelog-only changeset — `changerig add --note`
+### 2a. Changelog-only changeset — `changerig add --note` — ⬜ TODO (own slice)
 
 - `changerig add --note "<text>"` writes a changeset that **names no packages**
   (no version bump) but **renders into the changelog/release notes** at `version`
   time, under a dedicated **"Notes"** section.
 - Distinct from `--empty` (which names no packages *and* renders nowhere — kept as
   the "force a release PR / placeholder" device).
-- Rendering: the planner/changelog renderer emits `--note` changesets against the
-  release currently being cut (for single-version repos like rigsmith, that's the
-  one release; for multi-package, a repo-level Notes block). Stays fully
-  declarative — lives in `.changeset/`, flows through `version`, in git.
+- **Why this is its own slice (bigger than 2b):** it is a *format + planner +
+  renderer* change, not a localized command. It needs (1) a changeset-format
+  marker (`note:` frontmatter) + `core/changeset` parse/render; (2) the planner to
+  collect note changesets (today a no-package changeset yields no `Module`); (3)
+  the changelog generator/protocol (`ChangelogRequest`) to carry notes and render
+  a "Notes" section; (4) the `version` flow + parity goldens. **Open design fork:**
+  changelogs are *per-package* with no repo-level CHANGELOG — so where does a
+  repo-level note land? Leading option: attach the note to **every package
+  released** in the run (one package ⇒ rigsmith's case). Decide before building.
 
-### 2b. Direct CHANGELOG.md prepend — `changerig changelog add`
+### 2b. Direct CHANGELOG.md prepend — `changerig changelog add` — ✅ DONE
 
 - `changerig changelog add [package] -m "<entry>" [--type feat|fix|…] [--version X]`
   prepends a hand-authored entry straight into the package's `CHANGELOG.md` **now**,
-  outside the changeset→version cycle.
-- For: backfilling pre-tool history, corrections, or notes the generator can't
-  produce. Respects the existing changelog format (reuses `core/changelog` writer
-  + `core/mdfmt`). Idempotence is best-effort (it prepends; the human owns dedupe).
-- `--version` targets an existing release heading (default: the unreleased/top
-  section); no package arg in a single-package repo.
+  outside the changeset→version cycle. For backfilling history, corrections, or
+  notes the generator can't produce. Reuses `core/changelog.WriteEntry` (newest on
+  top, under the `# Title`).
+- Implemented as a new `changelog` command group in `internal/changerig/commands`.
+  The entry is a `## <version|Unreleased>` block + one bullet (`- msg`, or
+  `- **type:** msg` with `--type`). Package arg optional in a single-package repo.
+- **Simplification vs the original sketch:** it always *prepends a new section*
+  (it does not merge a bullet into an existing `## <version>` heading). That's the
+  honest escape-hatch behavior — the human owns dedupe/merge. Smart-merge into an
+  existing heading is a possible future nicety.
 
 ## Build slices (independent, in order)
 
