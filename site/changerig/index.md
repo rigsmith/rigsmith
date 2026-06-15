@@ -10,8 +10,13 @@ changerig init                                # create .changeset/
 changerig add -p my/pkg --bump minor -m "…"   # write a changeset (interactive without flags)
 changerig status --verbose                    # show the pending release plan
 changerig version                             # bump versions + write CHANGELOG.md
+changerig doctor                              # health-check the setup (--fix to scaffold config)
 changerig ui                                  # interactive bubbletea menu
 ```
+
+`doctor` checks git, the repo, `.changeset/config.json` (and offers to scaffold
+it when it's missing), and the packages discovered across every ecosystem — the
+same shared report/fix model the other rigs use.
 
 It works across **.NET, Node, Go, and Rust** in the same polyglot monorepo. The
 `version` step runs the [core](/core/) engine: it parses changesets, cascades

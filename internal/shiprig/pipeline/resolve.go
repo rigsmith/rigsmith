@@ -26,6 +26,20 @@ var (
 	nativeBuiltins = []string{"build", "release"}
 )
 
+// NativeStepDescription is the human label for a native step's action — it runs a
+// host-registered handler rather than a shell command, so the reporters show this
+// instead of a command line.
+func NativeStepDescription(name string) string {
+	switch name {
+	case "build":
+		return "build distributable artifacts"
+	case "release":
+		return "per-package forge release"
+	default:
+		return "native step"
+	}
+}
+
 // DefaultConfirmMessage is the default confirmation prompt when a step sets
 // confirm: true with no message.
 func DefaultConfirmMessage(step string) string {
@@ -91,6 +105,12 @@ type ResolveOptions struct {
 
 	// To skips the steps after the named one.
 	To string
+
+	// DryBuild runs only the `build` step (so the release's artifacts are built
+	// locally) and skips every other step — nothing is committed, tagged, pushed,
+	// or published. The build step itself runs in snapshot mode (set by the host
+	// handler). It is a real run, distinct from --dry-run's plan-only preview.
+	DryBuild bool
 }
 
 // Resolve merges config and built-in defaults into the concrete ordered list
@@ -251,6 +271,15 @@ func skipReasonFor(
 	opts ResolveOptions,
 	index, fromIndex, toIndex int,
 ) string {
+	// DryBuild is authoritative: build always runs, everything else is skipped —
+	// regardless of disabled/from/to/only/skip — so a dry-build can never become a
+	// no-op or surface a non-dry-build skip reason.
+	if opts.DryBuild {
+		if name == "build" {
+			return ""
+		}
+		return "dry-build: build only"
+	}
 	if stepConfig != nil && stepConfig.Enabled != nil && !*stepConfig.Enabled {
 		return "disabled"
 	}

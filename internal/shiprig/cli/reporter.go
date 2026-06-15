@@ -56,7 +56,7 @@ func (r *richReporter) Plan(steps []pipeline.ResolvedStep, dryRun bool) {
 		}
 		fmt.Fprintf(r.w, "  %-14s %s%s\n", s.Name, state, gate)
 		if s.Kind == pipeline.StepKindNative {
-			fmt.Fprintf(r.w, "      %s\n", skipStyle.Render("(per-package forge release)"))
+			fmt.Fprintf(r.w, "      %s\n", skipStyle.Render("("+pipeline.NativeStepDescription(s.Name)+")"))
 			continue
 		}
 		for _, c := range s.Action {

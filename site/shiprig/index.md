@@ -10,6 +10,7 @@ shiprig status --verbose
 shiprig version            # bump + changelog, with dependency cascade
 shiprig publish            # registries + tags (idempotent, confirm-gated on a TTY)
 shiprig release            # the configurable step pipeline
+shiprig doctor             # health-check changesets + release readiness
 shiprig info
 ```
 
@@ -29,6 +30,8 @@ The whole workflow is wired:
 - `tag` — create the git tags for the released versions
 - `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI
 - `release` — the [configurable step pipeline](./pipeline)
+- `doctor` — the changeset baseline (git/repo/config/workspace) plus a release
+  section: `gh` auth and the publish tool each detected ecosystem needs
 
 ## shipRig vs changeRig
 

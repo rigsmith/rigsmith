@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -10,6 +11,22 @@ import (
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 	"github.com/spf13/cobra"
 )
+
+// fakeExeOnPath writes a do-nothing executable named bin into a fresh dir and
+// sets PATH to just that dir, so exec.LookPath(bin) resolves but nothing else
+// does. doctor only LookPath's these, never runs them, so the body is irrelevant.
+func fakeExeOnPath(t *testing.T, bin string) {
+	t.Helper()
+	dir := t.TempDir()
+	name, body := bin, "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		name, body = bin+".bat", "@exit /b 0\r\n" // valid no-op batch, not a shell shebang
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+}
 
 // labelsOf runs each pendingCheck and returns label→level for assertions.
 func labelsOf(checks []pendingCheck) map[string]docLevel {
@@ -95,10 +112,10 @@ func TestDoctorToolFixes_OwnedToolsOnly(t *testing.T) {
 }
 
 func TestDoctorToolFixes_MissingCargoToolsOffered(t *testing.T) {
-	// Force a PATH that can't contain the cargo tools so the offer is
-	// deterministic on any host — otherwise a tool already installed locally would
-	// silently drop out and the test would assert nothing.
-	t.Setenv("PATH", t.TempDir())
+	// Fake `cargo` (the installer) onto an otherwise-empty PATH: the install
+	// command can resolve, but the cargo subcommands can't — so all three are
+	// missing and offered, deterministically on any host.
+	fakeExeOnPath(t, "cargo")
 	root := t.TempDir() // no .rig.json ⇒ auto mode
 	cmd := &cobra.Command{}
 
@@ -122,11 +139,22 @@ func TestDoctorToolFixes_MissingCargoToolsOffered(t *testing.T) {
 			}
 		}
 	}
-	// With nothing on PATH, all three install-capable cargo tools are offered.
+	// With cargo present, all three install-capable cargo tools are offered.
 	for _, want := range []string{"cargo-llvm-cov", "cargo-outdated", "cargo-watch"} {
 		if !got[want] {
 			t.Errorf("expected an install offer for %q, got %v", want, got)
 		}
+	}
+}
+
+func TestDoctorToolFixes_SuppressedWhenInstallerMissing(t *testing.T) {
+	// Empty PATH ⇒ cargo (the installer for the cargo tools) is absent, so the
+	// install couldn't succeed and nothing is offered — the toolchain row carries
+	// the real problem instead.
+	t.Setenv("PATH", t.TempDir())
+	root := t.TempDir()
+	if got := doctorToolFixes(&cobra.Command{}, map[string]bool{detect.Cargo: true}, root); got != nil {
+		t.Errorf("no cargo on PATH should suppress install offers, got %+v", got)
 	}
 }
 

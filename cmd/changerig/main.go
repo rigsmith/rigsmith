@@ -51,7 +51,8 @@ func run(ctx context.Context) error {
 		commands.NewInfoCmd(),
 		commands.NewConfigCmd(),
 		commands.NewChangelogCmd(),
-		commands.NewUICmd(),
+		commands.NewUICmd(commands.MenuItem{Label: "Doctor", Desc: "check the changeset setup", Build: commands.NewDoctorCmd}),
+		commands.NewDoctorCmd(),
 	)
 
 	// Bare, interactive `changerig` (no verb/flag) lands on the menu. Routing

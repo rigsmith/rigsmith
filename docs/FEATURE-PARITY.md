@@ -86,6 +86,7 @@ rigsmith is done.
 | `publish` | ✅ | ✅ | 🟢 | Adds `--dry-run`/`--no-push`/`--access` and a TTY confirm gate + `--yes` (CI behavior unchanged). | `--no-git-tag`; registry-aware idempotent; honors `ignore`. | |
 | `info` | ✅ | ✅ | | | Config + ecosystems + packages + changeset count. | |
 | `ui` | ✅ (Spectre) | ✅ (bubbletea) | | | Interactive menu dispatching the verbs — different toolkit, same surface. | |
+| `doctor` | ➖ | ✅ | 🟢 | rigsmith-only — net had no health check. | changerig: git / repo / `.changeset/config.json` (scaffolded on request) / workspace / pending changesets. shiprig adds a **release** group: `gh` auth + the publish tool each detected ecosystem needs (`dotnet`/`npm`/`cargo`; Go via tags). Shared `core/doctor` model + `internal/doctorui` with `rig`/`clauderig`. | |
 | `shell-init` | ✅ | ✅ | 🟢 | Obviated — net's shell fn resolved the .NET/Node tool split; rigsmith is one binary on PATH (and aliases `changeset`), so no resolve-the-binary wrapper is needed. | cobra `completion` covers tab-completion. | |
 | `release` (orchestrator) | ✅ | ✅ | 🟢 | Adds the live bubbletea run dashboard (streaming per-step status + inline confirm gates) on top of the source's interactive step picker, plus forge releases + 4-ecosystem reach. | Built (`shiprig/internal/pipeline` + `forge`) — see the orchestrator section. Interactive flow: a **plan editor** (toggle which steps run) then a **live dashboard**; `packages.versionRegex` shipped as the generic `regex` ecosystem adapter. | |
 
