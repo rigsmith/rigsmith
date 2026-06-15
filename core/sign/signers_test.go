@@ -2,6 +2,7 @@ package sign
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -30,7 +31,8 @@ func TestSignerCommandsAzure(t *testing.T) {
 		Account:     "myacct",
 		CertProfile: "myprofile",
 	}
-	cmds, err := SignerCommands(s, []string{"/out/App Setup.exe"})
+	file := filepath.Join("/out", "App Setup.exe")
+	cmds, err := SignerCommands(s, []string{file})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +42,7 @@ func TestSignerCommandsAzure(t *testing.T) {
 	got := strings.Join(cmds[0], " ")
 	for _, want := range []string{
 		"sign code trusted-signing",
-		"-b /out",
+		"-b " + filepath.Dir(file), // dir is OS-native (\out on Windows)
 		"-tse https://wus2.codesigning.azure.net",
 		"-tsa myacct",
 		"-tscp myprofile",
