@@ -54,10 +54,15 @@ func Copy(src, dst string, includeGit bool) (Stats, error) {
 	}
 	absSrc = filepath.Clean(absSrc)
 	absDst = filepath.Clean(absDst)
-	if absDst == absSrc {
+	// Compare with symlinks resolved so a dst that lexically sits outside src but
+	// actually resolves inside it (a symlinked dst, or a symlinked parent) can't
+	// slip past the guard and make the copy write back into the source tree.
+	realSrc := resolveExisting(absSrc)
+	realDst := resolveExisting(absDst)
+	if realDst == realSrc {
 		return st, fmt.Errorf("destination is the same as the source: %s", absDst)
 	}
-	if strings.HasPrefix(absDst+string(os.PathSeparator), absSrc+string(os.PathSeparator)) {
+	if strings.HasPrefix(realDst+string(os.PathSeparator), realSrc+string(os.PathSeparator)) {
 		return st, fmt.Errorf("destination %s is inside the source %s", absDst, absSrc)
 	}
 
@@ -116,12 +121,14 @@ func Copy(src, dst string, includeGit bool) (Stats, error) {
 		if ign.Ignored(relSlash, false) {
 			return nil
 		}
-		n, err := copyEntry(p, target, d)
+		copied, n, err := copyEntry(p, target, d)
 		if err != nil {
 			return err
 		}
-		st.Files++
-		st.Bytes += n
+		if copied {
+			st.Files++
+			st.Bytes += n
+		}
 		return nil
 	})
 	return st, err
@@ -137,17 +144,23 @@ func dirMode(d fs.DirEntry) fs.FileMode {
 	return info.Mode().Perm()
 }
 
-// copyEntry copies a single non-directory entry (regular file or symlink),
-// returning the number of content bytes copied (0 for a symlink).
-func copyEntry(src, dst string, d fs.DirEntry) (int64, error) {
+// copyEntry copies a single non-directory entry. Symlinks are recreated and
+// regular files are copied (returning their byte count); irregular entries —
+// named pipes, sockets, devices — are skipped, reported by copied=false, so the
+// walk never blocks on os.Open of a fifo nor miscounts a non-file.
+func copyEntry(src, dst string, d fs.DirEntry) (copied bool, n int64, err error) {
 	if d.Type()&fs.ModeSymlink != 0 {
-		return 0, copySymlink(src, dst)
+		return true, 0, copySymlink(src, dst)
+	}
+	if !d.Type().IsRegular() {
+		return false, 0, nil
 	}
 	info, err := d.Info()
 	if err != nil {
-		return 0, err
+		return false, 0, err
 	}
-	return copyFile(src, dst, info.Mode().Perm())
+	n, err = copyFile(src, dst, info.Mode().Perm())
+	return err == nil, n, err
 }
 
 // copyFile copies a regular file's contents, creating dst with the given mode.
@@ -194,7 +207,21 @@ func copyVerbatim(srcDir, dstDir string) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, dirMode(d))
 		}
-		_, err = copyEntry(p, target, d)
+		_, _, err = copyEntry(p, target, d)
 		return err
 	})
+}
+
+// resolveExisting returns path with symlinks resolved as far as the path exists,
+// re-joining any not-yet-created trailing segments. It lets the dst-inside-src
+// guard compare real locations even though dst itself usually doesn't exist yet.
+func resolveExisting(path string) string {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return path // reached the root; nothing more to resolve
+	}
+	return filepath.Join(resolveExisting(parent), filepath.Base(path))
 }

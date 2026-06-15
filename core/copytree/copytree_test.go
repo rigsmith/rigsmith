@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"syscall"
 	"testing"
 )
 
@@ -168,6 +169,41 @@ func TestCopyRejectsDestInsideSource(t *testing.T) {
 	write(t, filepath.Join(src, "main.go"), "package main")
 	if _, err := Copy(src, filepath.Join(src, "nested", "copy"), false); err == nil {
 		t.Fatal("expected error copying into a path inside the source")
+	}
+}
+
+func TestCopySkipsIrregularFiles(t *testing.T) {
+	src := t.TempDir()
+	write(t, filepath.Join(src, "real.txt"), "data")
+	// A named pipe (fifo) would block os.Open without O_NONBLOCK; copy must skip it.
+	fifo := filepath.Join(src, "pipe")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Skipf("mkfifo unsupported: %v", err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "copy")
+	st, err := Copy(src, dst, false)
+	if err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+	if has(tree(t, dst), "pipe") {
+		t.Error("fifo should be skipped, not copied")
+	}
+	if st.Files != 1 {
+		t.Errorf("Files = %d, want 1 (fifo not counted)", st.Files)
+	}
+}
+
+func TestCopyRejectsSymlinkedDestInsideSource(t *testing.T) {
+	src := t.TempDir()
+	write(t, filepath.Join(src, "main.go"), "package main")
+	// dst lives outside src lexically, but is a symlink pointing into src.
+	dst := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Join(src, "inner"), dst); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if _, err := Copy(src, dst, false); err == nil {
+		t.Error("expected rejection: dst symlink resolves inside src")
 	}
 }
 
