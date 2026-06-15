@@ -7,7 +7,10 @@ import (
 	"os/exec"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
+	"github.com/rigsmith/rigsmith/internal/clauderig/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -31,6 +34,9 @@ func NewAccountCmd() *cobra.Command {
 			"  switch  swap the machine-wide live login to another account\n\n" +
 			"Concept credit: claude-swap by realiti4 (github.com/realiti4/claude-swap, MIT).",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if Interactive() {
+				return runAccountUI(cmd)
+			}
 			return cmd.Help()
 		},
 	}
@@ -53,20 +59,12 @@ func newAccountAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			raw, err := account.ReadLive()
+			a, updated, err := captureLive(st, label)
 			if err != nil {
-				return err
-			}
-			a, err := account.AccountFromBlob(raw, label, time.Now())
-			if err != nil {
-				return err
-			}
-			existing, _ := st.Resolve(a.ID)
-			if err := st.Save(a, raw); err != nil {
 				return err
 			}
 			verb := "Added"
-			if existing.ID == a.ID {
+			if updated {
 				verb = "Updated"
 			}
 			fmt.Fprintf(out, "%s %s\n", OkStyle.Render(verb), accountTitle(a))
@@ -138,26 +136,7 @@ func newAccountRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			raw, err := st.Credential(a.ID)
-			if err != nil {
-				return fmt.Errorf("read stored credential: %w", err)
-			}
-			home, err := account.ClaudeHome()
-			if err != nil {
-				return err
-			}
-			dir, err := st.PrepareSession(a, raw, !noShare, home)
-			if err != nil {
-				return err
-			}
-			claudeBin, err := exec.LookPath("claude")
-			if err != nil {
-				return errors.New("`claude` not found on PATH")
-			}
-			fmt.Fprintf(cmd.ErrOrStderr(), "%s %s %s\n",
-				DimStyle.Render("session:"), accountTitle(a),
-				DimStyle.Render("(CLAUDE_CONFIG_DIR="+dir+")"))
-			return runClaude(cmd, claudeBin, dir, args[1:])
+			return launchSession(cmd, st, a, noShare, args[1:])
 		},
 	}
 	cmd.Flags().BoolVar(&noShare, "no-share", false, "don't share ~/.claude customizations into the session (bare profile)")
@@ -190,28 +169,16 @@ func newAccountSwitchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			raw, err := st.Credential(target.ID)
+			backup, already, err := performSwitch(st, target)
 			if err != nil {
-				return fmt.Errorf("read stored credential: %w", err)
-			}
-			// Back up the displaced live credential before overwriting.
-			if cur, lerr := account.ReadLive(); lerr == nil {
-				if account.FingerprintOf(cur) == target.ID {
-					fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already live:"), accountTitle(target))
-					return nil
-				}
-				path, berr := st.BackupLive(cur, time.Now().UTC().Format("20060102-150405"))
-				if berr != nil {
-					return fmt.Errorf("back up current credential: %w", berr)
-				}
-				if path != "" {
-					fmt.Fprintf(out, "%s %s\n", DimStyle.Render("backed up live credential →"), path)
-				}
-			} else if !errors.Is(lerr, account.ErrNoLive) {
-				return lerr
-			}
-			if err := account.WriteLive(raw); err != nil {
 				return err
+			}
+			if already {
+				fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already live:"), accountTitle(target))
+				return nil
+			}
+			if backup != "" {
+				fmt.Fprintf(out, "%s %s\n", DimStyle.Render("backed up live credential →"), backup)
 			}
 			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("Switched to"), accountTitle(target))
 			fmt.Fprintf(out, "  %s\n", DimStyle.Render("all terminals now use this account; restart running Claude Code sessions"))
@@ -219,6 +186,160 @@ func newAccountSwitchCmd() *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+// runAccountUI drives the interactive accounts screen. Like the MCP screen, the
+// model only records an intent on exit; the work (capture / swap / launch) runs
+// here, outside the event loop, then the screen re-opens with a fresh snapshot.
+// "run" is terminal — it execs claude and takes over the terminal.
+func runAccountUI(cmd *cobra.Command) error {
+	st, err := account.DefaultStore()
+	if err != nil {
+		return err
+	}
+	note := ""
+	for {
+		all, err := st.List()
+		if err != nil {
+			return err
+		}
+		res, err := tea.NewProgram(tui.NewAccount(all, liveFingerprint(), note)).Run()
+		if err != nil {
+			return err
+		}
+		final, ok := res.(tui.AccountModel)
+		if !ok {
+			return nil
+		}
+		note = ""
+		switch final.Action.Kind {
+		case "":
+			return nil
+		case "add":
+			label, err := promptLabel(cmd)
+			if errors.Is(err, huh.ErrUserAborted) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			a, updated, err := captureLive(st, label)
+			if err != nil {
+				note = errStyleNote(err)
+				continue
+			}
+			note = "added " + a.ID
+			if updated {
+				note = "updated " + a.ID
+			}
+		case "switch":
+			target, err := st.Resolve(final.Action.ID)
+			if err != nil {
+				note = errStyleNote(err)
+				continue
+			}
+			_, already, err := performSwitch(st, target)
+			if err != nil {
+				note = errStyleNote(err)
+				continue
+			}
+			note = "switched to " + accountTitle(target)
+			if already {
+				note = accountTitle(target) + " already live"
+			}
+		case "run":
+			target, err := st.Resolve(final.Action.ID)
+			if err != nil {
+				return err
+			}
+			return launchSession(cmd, st, target, false, nil)
+		}
+	}
+}
+
+// promptLabel asks for an optional friendly name when capturing an account from
+// the UI. An empty value is fine; ErrUserAborted means the user backed out.
+func promptLabel(cmd *cobra.Command) (string, error) {
+	var label string
+	err := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Label for this account (optional)").
+			Placeholder("work, personal, …").
+			Value(&label),
+	)).WithKeyMap(huhEscKeyMap()).Run()
+	return label, err
+}
+
+// errStyleNote renders an error as a transient screen note.
+func errStyleNote(err error) string { return ErrStyle.Render(err.Error()) }
+
+// captureLive reads the live credential and saves it as a tracked account,
+// reporting whether an existing account was updated rather than created.
+func captureLive(st *account.Store, label string) (account.Account, bool, error) {
+	raw, err := account.ReadLive()
+	if err != nil {
+		return account.Account{}, false, err
+	}
+	a, err := account.AccountFromBlob(raw, label, time.Now())
+	if err != nil {
+		return account.Account{}, false, err
+	}
+	_, resolveErr := st.Resolve(a.ID)
+	updated := resolveErr == nil
+	if err := st.Save(a, raw); err != nil {
+		return account.Account{}, false, err
+	}
+	return a, updated, nil
+}
+
+// performSwitch overwrites the live credential with target's, backing up the
+// displaced one first. Returns the backup path ("" if nothing was live) and
+// whether target was already live (a no-op). Shared by the CLI and the UI.
+func performSwitch(st *account.Store, target account.Account) (backup string, already bool, err error) {
+	raw, err := st.Credential(target.ID)
+	if err != nil {
+		return "", false, fmt.Errorf("read stored credential: %w", err)
+	}
+	if cur, lerr := account.ReadLive(); lerr == nil {
+		if account.FingerprintOf(cur) == target.ID {
+			return "", true, nil
+		}
+		backup, err = st.BackupLive(cur, time.Now().UTC().Format("20060102-150405"))
+		if err != nil {
+			return "", false, fmt.Errorf("back up current credential: %w", err)
+		}
+	} else if !errors.Is(lerr, account.ErrNoLive) {
+		return "", false, lerr
+	}
+	if err := account.WriteLive(raw); err != nil {
+		return "", false, err
+	}
+	return backup, false, nil
+}
+
+// launchSession prepares a's isolated profile and execs claude against it,
+// taking over this terminal. Shared by the CLI `run` and the UI.
+func launchSession(cmd *cobra.Command, st *account.Store, a account.Account, noShare bool, extra []string) error {
+	raw, err := st.Credential(a.ID)
+	if err != nil {
+		return fmt.Errorf("read stored credential: %w", err)
+	}
+	home, err := account.ClaudeHome()
+	if err != nil {
+		return err
+	}
+	dir, err := st.PrepareSession(a, raw, !noShare, home)
+	if err != nil {
+		return err
+	}
+	claudeBin, err := exec.LookPath("claude")
+	if err != nil {
+		return errors.New("`claude` not found on PATH")
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s %s %s\n",
+		DimStyle.Render("session:"), accountTitle(a),
+		DimStyle.Render("(CLAUDE_CONFIG_DIR="+dir+")"))
+	return runClaude(cmd, claudeBin, dir, extra)
 }
 
 // runClaude execs claude with an isolated CLAUDE_CONFIG_DIR, inheriting this

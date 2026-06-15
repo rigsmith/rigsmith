@@ -45,6 +45,8 @@ func NewUICmd() *cobra.Command {
 				return NewStatusCmd().RunE(cmd, nil)
 			case "mcp":
 				return runMCPUI(cmd)
+			case "account":
+				return runAccountUI(cmd)
 			}
 			return nil
 		},

@@ -84,6 +84,7 @@ func actionsFor(info status.Info) []action {
 	}
 	add("status", "t", "Status", "show sync state: remote, last sync, roots, hooks")
 	add("mcp", "m", "MCP servers", "list, add, remove, enable/disable MCP servers")
+	add("account", "a", "Accounts", "run or swap between multiple Claude Code logins")
 	return items
 }
 
@@ -182,7 +183,7 @@ func (m Model) View() string {
 		b.WriteString(fmt.Sprintf("%s%s  %s\n", cursor, row, dim.Render(a.desc)))
 	}
 
-	b.WriteString("\n" + dim.Render("↑/↓ move · enter select · i/s/r/t/m shortcut · q quit") + "\n")
+	b.WriteString("\n" + dim.Render("↑/↓ move · enter select · i/s/r/t/m/a shortcut · q quit") + "\n")
 	return b.String()
 }
 

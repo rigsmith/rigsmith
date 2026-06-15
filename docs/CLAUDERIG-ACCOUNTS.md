@@ -19,6 +19,15 @@ either fully isolated per-terminal, or by swapping the machine-wide login.
 
 `acct` is an alias for `account`.
 
+### Interactive screen
+
+Bare `clauderig account` on a terminal (or **Accounts** / hotkey `a` from the
+`clauderig` dashboard) opens an interactive screen: it lists tracked accounts
+with `→` on the live one, and from there `enter` runs the selected account as a
+session, `s` swaps the machine-wide login to it, `a` captures the current login
+(prompting for an optional label), and `q` backs out. Like the MCP screen, the
+work runs after the screen exits, so `run` cleanly hands the terminal to claude.
+
 ## Two mechanisms, deliberately separate
 
 ### Session mode (`run`) — the safe one
