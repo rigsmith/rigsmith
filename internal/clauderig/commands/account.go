@@ -31,7 +31,9 @@ func NewAccountCmd() *cobra.Command {
 			"  list    show stored accounts and which one is live\n" +
 			"  run     launch Claude Code as an account in THIS terminal only\n" +
 			"          (isolated via CLAUDE_CONFIG_DIR — others stay on the default)\n" +
-			"  switch  swap the machine-wide live login to another account\n\n" +
+			"  switch  swap the machine-wide live login to another account\n" +
+			"  remove  stop tracking an account (does not log it out)\n" +
+			"  purge   remove all of rig's account data\n\n" +
 			"Concept credit: claude-swap by realiti4 (github.com/realiti4/claude-swap, MIT).",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if Interactive() {
@@ -40,7 +42,8 @@ func NewAccountCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newAccountAddCmd(), newAccountListCmd(), newAccountRunCmd(), newAccountSwitchCmd())
+	cmd.AddCommand(newAccountAddCmd(), newAccountListCmd(), newAccountRunCmd(),
+		newAccountSwitchCmd(), newAccountRemoveCmd(), newAccountPurgeCmd())
 	return cmd
 }
 
@@ -188,6 +191,99 @@ func newAccountSwitchCmd() *cobra.Command {
 	return cmd
 }
 
+func newAccountRemoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "remove <id|label>",
+		Aliases: []string{"rm"},
+		Short:   "Stop tracking an account (does not log it out of Claude Code)",
+		Long: "Delete rig's copy of an account and any session profile for it. This does\n" +
+			"NOT touch the live Claude Code login — it just stops rig tracking the\n" +
+			"account. Requires an interactive terminal to confirm.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, err := account.DefaultStore()
+			if err != nil {
+				return err
+			}
+			a, err := st.Resolve(args[0])
+			if err != nil {
+				return err
+			}
+			if !Interactive() {
+				return errors.New("refusing to remove without a terminal to confirm")
+			}
+			ok, err := confirmDestructive(fmt.Sprintf("Remove account %s from rig's store? (does not log it out)", accountTitle(a)))
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("aborted"))
+				return nil
+			}
+			if err := st.Remove(a.ID); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", OkStyle.Render("Removed"), accountTitle(a))
+			return nil
+		},
+	}
+}
+
+func newAccountPurgeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "purge",
+		Short: "Remove all of rig's account data (does not log out of Claude Code)",
+		Long: "Delete every tracked account, session profile, and credential backup from\n" +
+			"rig's store (~/.clauderig/accounts, sessions, cred-backups). This does NOT\n" +
+			"touch the live Claude Code login. Requires an interactive terminal to confirm.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+			st, err := account.DefaultStore()
+			if err != nil {
+				return err
+			}
+			all, err := st.List()
+			if err != nil {
+				return err
+			}
+			if len(all) == 0 {
+				fmt.Fprintln(out, DimStyle.Render("nothing to purge — no accounts tracked"))
+				return nil
+			}
+			if !Interactive() {
+				return errors.New("refusing to purge without a terminal to confirm")
+			}
+			ok, err := confirmDestructive(fmt.Sprintf("Delete ALL %d tracked accounts and their session profiles? (does not log out)", len(all)))
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(out, DimStyle.Render("aborted"))
+				return nil
+			}
+			if err := st.Purge(); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "%s %d accounts\n", OkStyle.Render("Purged"), len(all))
+			return nil
+		},
+	}
+}
+
+// confirmDestructive asks a yes/no question before an irreversible store change.
+// Backing out (esc) is treated as "no", never an error.
+func confirmDestructive(title string) (bool, error) {
+	var ok bool
+	err := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().Title(title).Affirmative("Yes").Negative("No").Value(&ok),
+	)).WithKeyMap(huhEscKeyMap()).Run()
+	if errors.Is(err, huh.ErrUserAborted) {
+		return false, nil
+	}
+	return ok, err
+}
+
 // runAccountUI drives the interactive accounts screen. Like the MCP screen, the
 // model only records an intent on exit; the work (capture / swap / launch) runs
 // here, outside the event loop, then the screen re-opens with a fresh snapshot.
@@ -247,6 +343,24 @@ func runAccountUI(cmd *cobra.Command) error {
 			if already {
 				note = accountTitle(target) + " already live"
 			}
+		case "remove":
+			target, err := st.Resolve(final.Action.ID)
+			if err != nil {
+				note = errStyleNote(err)
+				continue
+			}
+			ok, err := confirmDestructive(fmt.Sprintf("Remove account %s from rig's store? (does not log it out)", accountTitle(target)))
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
+			}
+			if err := st.Remove(target.ID); err != nil {
+				note = errStyleNote(err)
+				continue
+			}
+			note = "removed " + accountTitle(target)
 		case "run":
 			target, err := st.Resolve(final.Action.ID)
 			if err != nil {

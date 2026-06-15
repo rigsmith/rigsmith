@@ -183,6 +183,51 @@ func TestPrepareSessionSharesAndIsolates(t *testing.T) {
 	}
 }
 
+func TestRemove(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	a, _ := AccountFromBlob(sampleBlob("rm-token", "max"), "gone", time.Now())
+	if err := st.Save(a, sampleBlob("rm-token", "max")); err != nil {
+		t.Fatal(err)
+	}
+	// Give it a session profile too, so we can prove that's cleaned up.
+	if _, err := st.PrepareSession(a, sampleBlob("rm-token", "max"), false, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remove(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := st.List(); len(list) != 0 {
+		t.Fatalf("after Remove, list = %v, want empty", list)
+	}
+	if _, err := os.Stat(st.SessionDir(a.ID)); !os.IsNotExist(err) {
+		t.Errorf("session profile should be gone, err=%v", err)
+	}
+}
+
+func TestPurge(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	for _, tok := range []string{"p1", "p2", "p3"} {
+		a, _ := AccountFromBlob(sampleBlob(tok, "max"), tok, time.Now())
+		if err := st.Save(a, sampleBlob(tok, "max")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.BackupLive(sampleBlob("p1", "max"), "20260615-000000"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Purge(); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := st.List(); len(list) != 0 {
+		t.Fatalf("after Purge, list = %v, want empty", list)
+	}
+	for _, d := range []string{st.accountsDir(), st.sessionsDir(), st.backupsDir()} {
+		if _, err := os.Stat(d); !os.IsNotExist(err) {
+			t.Errorf("%s should be gone after purge, err=%v", d, err)
+		}
+	}
+}
+
 func TestBackupLive(t *testing.T) {
 	st := &Store{Root: t.TempDir()}
 	path, err := st.BackupLive(sampleBlob("live", "max"), "20260615-000000")

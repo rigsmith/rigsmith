@@ -70,6 +70,11 @@ func (m AccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Action = AccountAction{Kind: "switch", ID: a.ID}
 			return m, tea.Quit
 		}
+	case "x", "delete", "backspace":
+		if a, ok := m.current(); ok {
+			m.Action = AccountAction{Kind: "remove", ID: a.ID}
+			return m, tea.Quit
+		}
 	}
 	return m, nil
 }
@@ -117,7 +122,7 @@ func (m AccountModel) View() string {
 		b.WriteString(fmt.Sprintf("%s%s%s%s\n", cursor, live, name, sub))
 	}
 
-	b.WriteString("\n" + dim.Render("↑/↓ move · enter run (this terminal) · s switch (machine-wide) · a add · q back") + "\n")
+	b.WriteString("\n" + dim.Render("↑/↓ move · enter run (this terminal) · s switch (machine-wide) · a add · x remove · q back") + "\n")
 	return b.String()
 }
 

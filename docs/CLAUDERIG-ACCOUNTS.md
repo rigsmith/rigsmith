@@ -16,6 +16,13 @@ either fully isolated per-terminal, or by swapping the machine-wide login.
 | `clauderig account list` | Show stored accounts; marks the live one with `→`. |
 | `clauderig account run <id\|label> [-- claude args…]` | **Session mode** — run Claude Code as that account in *this terminal only*. |
 | `clauderig account switch [<id\|label>]` | **Global swap** — change the machine-wide login (all terminals follow). No arg rotates to the next account. |
+| `clauderig account remove <id\|label>` (alias `rm`) | Stop tracking an account (and delete its session profile). |
+| `clauderig account purge` | Remove all of rig's account data. |
+
+`remove` and `purge` only touch rig's own store — they **never log you out of
+Claude Code**. Both require an interactive terminal to confirm and refuse to run
+non-interactively (no `--yes`/`--force` bypass). In the screen, `x` removes the
+selected account after a confirmation.
 
 `acct` is an alias for `account`.
 

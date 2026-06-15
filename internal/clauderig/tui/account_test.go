@@ -40,6 +40,13 @@ func TestAccount_SwitchTargetsCursor(t *testing.T) {
 	}
 }
 
+func TestAccount_RemoveTargetsCursor(t *testing.T) {
+	m, _ := NewAccount(sampleAccounts(), "aaaa1111", "").Update(keyMsg("x"))
+	if act := m.(AccountModel).Action; act.Kind != "remove" || act.ID != "aaaa1111" {
+		t.Fatalf("x on first row → %+v, want remove aaaa1111", act)
+	}
+}
+
 func TestAccount_AddHotkey(t *testing.T) {
 	m, _ := NewAccount(sampleAccounts(), "", "").Update(keyMsg("a"))
 	if got := m.(AccountModel).Action; got.Kind != "add" {
@@ -55,6 +62,9 @@ func TestAccount_EmptyListInertActions(t *testing.T) {
 	}
 	if m, _ := empty.Update(keyMsg("s")); m.(AccountModel).Action.Kind != "" {
 		t.Error("switch should be inert with no accounts")
+	}
+	if m, _ := empty.Update(keyMsg("x")); m.(AccountModel).Action.Kind != "" {
+		t.Error("remove should be inert with no accounts")
 	}
 	if m, _ := empty.Update(keyMsg("a")); m.(AccountModel).Action.Kind != "add" {
 		t.Error("add should still work with no accounts")

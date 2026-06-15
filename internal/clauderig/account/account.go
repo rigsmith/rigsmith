@@ -236,6 +236,27 @@ func (s *Store) Credential(id string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(s.acctDir(id), "credentials.json"))
 }
 
+// Remove deletes a tracked account — its stored credential and any session
+// profile. It deliberately does NOT touch the live Claude Code login: rig just
+// stops tracking the account.
+func (s *Store) Remove(id string) error {
+	if err := os.RemoveAll(s.acctDir(id)); err != nil {
+		return err
+	}
+	return os.RemoveAll(s.SessionDir(id))
+}
+
+// Purge removes all of rig's account data — every tracked account, session
+// profile, and credential backup. Like Remove, it never touches the live login.
+func (s *Store) Purge() error {
+	for _, d := range []string{s.accountsDir(), s.sessionsDir(), s.backupsDir()} {
+		if err := os.RemoveAll(d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Next returns the account after the live one in list order, wrapping around —
 // the rotation target for a bare `switch`. liveID may be "" (nothing live or
 // untracked), in which case the first account is returned.
