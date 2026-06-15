@@ -290,6 +290,42 @@ machines:
   linux-box: UNMAPPED ⚠  (its sessions won't translate on restore)
 ```
 
+## MCP server management
+
+`clauderig mcp` manages Claude Code's MCP servers directly — editing the canonical
+files the same way the hooks installer edits `settings.json`, so there's no
+dependency on the `claude` CLI and it plugs into clauderig's scope model. The
+three scopes map to where Claude Code actually stores servers:
+
+| Scope | File | Key |
+|---|---|---|
+| `user` | `~/.claude.json` | `mcpServers` (every project) |
+| `project` | `<repo>/.mcp.json` | `mcpServers` (committed, shared) |
+| `local` | `~/.claude.json` | `projects[<repo>].mcpServers` (this checkout) |
+
+Mutations operate on the decoded document, so untouched servers — including
+fields clauderig's struct doesn't model — survive a rewrite. **Enable/disable**
+applies only to project (`.mcp.json`) servers, which Claude Code gates behind
+approval: clauderig records that approval at local scope
+(`.claude/settings.local.json` → `enabled`/`disabledMcpjsonServers`, never
+committed) while reading the merged user→project→local view for status.
+
+```
+clauderig mcp list                                  # all scopes, with project state
+clauderig mcp add --env KEY=v ctx7 npx -y @upstash/context7-mcp
+clauderig mcp add -s project -t http docs https://example.com/mcp
+clauderig mcp enable docs        # approve a project server for this machine
+clauderig mcp remove ctx7
+```
+
+clauderig's own flags (`--scope`, `--transport`, `--env`, `--header`) come
+**before** `<name>`; everything after is the server's command/URL and its args,
+so a server's own flags (`npx -y pkg`) pass through untouched. Bare `clauderig
+mcp` (on a TTY) opens an interactive screen — list across scopes with
+add/remove/enable/disable, and a huh add form — reachable from the `ui`
+dashboard (`[m]`). Note: user-scope servers live in `~/.claude.json`, *outside*
+the synced `~/.claude/` tree, so managing them is independent of sync today.
+
 ## Prior art — what we lift, what's whitespace
 
 Reviewed the three leading community tools (2026-06-12).

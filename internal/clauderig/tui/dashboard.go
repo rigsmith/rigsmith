@@ -83,6 +83,7 @@ func actionsFor(info status.Info) []action {
 		add("restore", "r", "Restore", "restore your setup here, path-corrected for this OS")
 	}
 	add("status", "t", "Status", "show sync state: remote, last sync, roots, hooks")
+	add("mcp", "m", "MCP servers", "list, add, remove, enable/disable MCP servers")
 	return items
 }
 
@@ -181,7 +182,7 @@ func (m Model) View() string {
 		b.WriteString(fmt.Sprintf("%s%s  %s\n", cursor, row, dim.Render(a.desc)))
 	}
 
-	b.WriteString("\n" + dim.Render("↑/↓ move · enter select · i/s/r/t shortcut · q quit") + "\n")
+	b.WriteString("\n" + dim.Render("↑/↓ move · enter select · i/s/r/t/m shortcut · q quit") + "\n")
 	return b.String()
 }
 

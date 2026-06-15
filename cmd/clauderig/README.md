@@ -19,6 +19,8 @@ clauderig doctor               # health-check env + sync + worktree discipline (
 clauderig global install       # global sync hooks in ~/.claude (alias: clauderig hooks install)
 clauderig project install      # protect THIS repo: guard hook + CLAUDE.md guide (committed)
 clauderig local install        # same, but gitignored to this checkout
+clauderig mcp list             # MCP servers across user/project/local scopes
+clauderig mcp add ctx7 npx -y @upstash/context7-mcp   # add a server (flags before name)
 rig worktree new feat/x  # sibling worktree + new VS Code window; never moves this session
 clauderig ui                   # interactive dashboard
 ```
@@ -71,6 +73,7 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `prune` | One sweep: reap merged/done worktrees, then their branches and other merged (`--gone`) branches; `prune list` previews read-only; always asks at a terminal (no skip flag; fails if non-interactive; `-n` previews); alias `tidy` |
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md blocks standalone (worktree discipline + rigsmith-tools usage; e.g. `--global`). `install` previews the blocks in a scrollable UI before writing — `-y` or a non-TTY skips it |
 | `config` | `get` / `set` / `show` / `path` / `edit` |
+| `mcp` | `list` / `get` / `add` / `remove` / `enable` / `disable` Claude Code MCP servers across user/project/local scopes (`~/.claude.json`, `<repo>/.mcp.json`); bare `mcp` opens the interactive screen |
 | `doctor` | Health-check environment + sync + worktree discipline; `--fix` repairs, or pick fixes interactively |
 | `ui` | Interactive dashboard |
 
