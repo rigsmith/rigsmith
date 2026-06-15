@@ -176,7 +176,8 @@ sh("publish")
 
 func TestScriptLogFormatsNonStrings(t *testing.T) {
 	var buf strings.Builder
-	p := New((&recordingRunner{}).run, NewPlainReporter(&buf, NewSecretMasker(), ""),
+	masker := NewSecretMasker()
+	p := New((&recordingRunner{}).run, NewPlainReporter(&buf, masker, ""), masker,
 		&stubPrompter{answer: true}, t.TempDir(), nil, nil, twoPackages())
 
 	code := `log(40 + 2)` // a number, not a string
