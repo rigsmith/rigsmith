@@ -31,7 +31,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rigsmith/rigsmith/core/copytree"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 )
 
@@ -96,7 +95,9 @@ func parseBlob(raw []byte) (Account, error) {
 	}
 	sum := sha256.Sum256([]byte(fp))
 	return Account{
-		ID:               hex.EncodeToString(sum[:])[:8],
+		// 16 hex chars (64 bits) — long enough that collisions across a person's
+		// handful of accounts are vanishingly unlikely, short enough to type.
+		ID:               hex.EncodeToString(sum[:])[:16],
 		SubscriptionType: b.ClaudeAiOauth.SubscriptionType,
 		OrganizationUUID: b.OrganizationUUID,
 		ExpiresAt:        b.ClaudeAiOauth.ExpiresAt,
@@ -325,23 +326,52 @@ func linkOrCopy(src, dst string) error {
 	if err := os.Symlink(src, dst); err == nil {
 		return nil
 	}
-	si, err := os.Stat(src)
+	// Symlinks unavailable (e.g. Windows without Developer Mode): copy verbatim.
+	// A plain recursive copy — NOT copytree.Copy, which intentionally skips
+	// node_modules/vendor/build output/.gitignored paths and would silently omit
+	// files a shared customization (notably plugins/) needs.
+	return copyAll(src, dst)
+}
+
+// copyAll recursively copies src to dst, preserving every entry (files, dirs,
+// and symlinks) — no filtering.
+func copyAll(src, dst string) error {
+	fi, err := os.Lstat(src)
 	if err != nil {
 		return err
 	}
-	if si.IsDir() {
-		_, err := copytree.Copy(src, dst, false)
-		return err
+	switch {
+	case fi.Mode()&os.ModeSymlink != 0:
+		target, err := os.Readlink(src)
+		if err != nil {
+			return err
+		}
+		return os.Symlink(target, dst)
+	case fi.IsDir():
+		if err := os.MkdirAll(dst, 0o700); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if err := copyAll(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return copyFile(src, dst, fi.Mode().Perm())
 	}
-	return copyFile(src, dst)
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string, perm os.FileMode) error {
 	b, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, b, 0o600)
+	return os.WriteFile(dst, b, perm)
 }
 
 // BackupLive saves the current live credential before a global swap overwrites

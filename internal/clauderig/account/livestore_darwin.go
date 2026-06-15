@@ -22,9 +22,11 @@ func ReadLive() ([]byte, error) {
 	out, err := exec.Command("security", "find-generic-password",
 		"-s", keychainService, "-w").Output()
 	if err != nil {
-		// 44 = SecItemNotFound (no entry); treat as "not logged in".
+		// Exit 44 = SecItemNotFound (no entry); treat as "not logged in". Any
+		// other exit code is a real failure (e.g. keychain access denied) and
+		// must surface rather than masquerade as ErrNoLive.
 		var ee *exec.ExitError
-		if errors.As(err, &ee) {
+		if errors.As(err, &ee) && ee.ExitCode() == 44 {
 			return nil, ErrNoLive
 		}
 		return nil, fmt.Errorf("read keychain: %w", err)

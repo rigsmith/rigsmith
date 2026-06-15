@@ -417,7 +417,9 @@ func performSwitch(st *account.Store, target account.Account) (backup string, al
 		if account.FingerprintOf(cur) == target.ID {
 			return "", true, nil
 		}
-		backup, err = st.BackupLive(cur, time.Now().UTC().Format("20060102-150405"))
+		// Sub-second precision so rapid successive swaps don't overwrite each
+		// other's backup.
+		backup, err = st.BackupLive(cur, time.Now().UTC().Format("20060102-150405.000000000"))
 		if err != nil {
 			return "", false, fmt.Errorf("back up current credential: %w", err)
 		}

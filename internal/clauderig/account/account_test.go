@@ -228,6 +228,32 @@ func TestPurge(t *testing.T) {
 	}
 }
 
+// The symlink-fallback copy must preserve EVERY file, including names a
+// filtered copier (copytree) would skip — e.g. a plugin's bundled node_modules.
+func TestCopyAllPreservesEverything(t *testing.T) {
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, "plugins", "p", "node_modules", "dep", "index.js"), "x")
+	mustWrite(t, filepath.Join(src, "plugins", "p", "manifest.json"), "{}")
+	if err := os.Symlink("manifest.json", filepath.Join(src, "plugins", "p", "link.json")); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(t.TempDir(), "out")
+	if err := copyAll(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{
+		"plugins/p/node_modules/dep/index.js",
+		"plugins/p/manifest.json",
+	} {
+		if _, err := os.Stat(filepath.Join(dst, rel)); err != nil {
+			t.Errorf("copyAll dropped %s: %v", rel, err)
+		}
+	}
+	if fi, err := os.Lstat(filepath.Join(dst, "plugins/p/link.json")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("symlink not preserved: %v", err)
+	}
+}
+
 func TestBackupLive(t *testing.T) {
 	st := &Store{Root: t.TempDir()}
 	path, err := st.BackupLive(sampleBlob("live", "max"), "20260615-000000")

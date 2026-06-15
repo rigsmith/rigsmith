@@ -9,12 +9,13 @@ import (
 	"path/filepath"
 )
 
-// liveCredPath is where Claude Code keeps its file-based credential off macOS:
-// $CLAUDE_CONFIG_DIR/.credentials.json when set, else ~/.claude/.credentials.json.
+// liveCredPath is the machine-wide file-based credential off macOS:
+// ~/.claude/.credentials.json. It deliberately ignores CLAUDE_CONFIG_DIR —
+// `switch` is machine-wide, and honoring the env var would make it (and `list`)
+// per-terminal and, worse, overwrite a session profile when run from inside one
+// of our own `account run` sessions. Session isolation is handled separately by
+// PrepareSession writing into its own dir.
 func liveCredPath() (string, error) {
-	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
-		return filepath.Join(d, ".credentials.json"), nil
-	}
 	home, err := ClaudeHome()
 	if err != nil {
 		return "", err
