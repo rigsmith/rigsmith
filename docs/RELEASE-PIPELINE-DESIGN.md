@@ -20,8 +20,8 @@
 
 - Pipeline engine (`internal/shiprig/pipeline`): configurable steps with per-step
   `before`/`after` hooks, custom steps, vars, confirm gates. Config:
-  `.changeset/release.jsonc`. `DefaultOrder = [version, commit, publish, push, githubRelease]`.
-- `githubRelease` (native step, `forge`) creates one GitHub release per package
+  `.changeset/release.jsonc`. `DefaultOrder = [version, commit, publish, push, release]`.
+- `release` (native step, `forge`) creates one GitHub release per package
   via `gh release create` — **notes only, no binary assets**.
 - Go adapter is tag-native (version = latest matching git tag; `// rigsmith:version`
   comment is the untagged fallback). The real release op (tag create+push) is the
@@ -68,16 +68,24 @@ goreleaser special case.
 
 - **`build`** (produce `dist/`) has no dependencies and **should run early** — it
   doubles as a packaging *preflight*, so a broken build fails the release before
-  anything ships. New native step inserted **before `publish`**:
-  `[version, commit, **build**, publish, push, githubRelease]`.
+  anything ships. New native step inserted **before `publish`**.
 - **attach** (upload the `Attach:true` artifacts to the forge release) needs the
-  release to exist, so it is **folded into the `release`/`githubRelease` step** —
+  release to exist, so it is **folded into the `release` step** (the forge step) —
   not a separate trailing step.
 
-**This supersedes the trailing-`artifacts` order in this doc and in
-RELEASE-STEPS-AND-FORGES-DESIGN.md** (`… → release → artifacts`). When that doc's
-`tag` promotion + `release` rename land, the chain is
-`version → commit → build → publish → tag → push → release(+attach)`.
+**Implemented canonical order** (this supersedes the trailing-`artifacts` order in
+both this doc and RELEASE-STEPS-AND-FORGES-DESIGN.md). The forges doc's `tag`
+promotion + `githubRelease`→`release` rename (its slices 1a/1b) are **now done**,
+so the chain is:
+
+```
+version → commit → build → publish → tag → push → release(+attach)
+```
+
+- `publish` narrows to the registry push (`--no-git-tag`); the new `tag` step
+  (`<tool> tag`) creates the local tags; `push --follow-tags` puts them on the
+  remote before `release`.
+- `githubRelease` → `release` is a **clean rename, no alias** (pre-release).
 
 **Parity across ecosystems** — every ecosystem now produces its distributable in
 the *same* `build` step (no more Go-is-special):
@@ -102,7 +110,7 @@ so goreleaser stamps the right version with no tag at HEAD.
 
 ### 1b. Release ownership (no double-create)
 
-- **`release`/`githubRelease` owns the release + notes** (changelog → release body)
+- **`release`/`release` owns the release + notes** (changelog → release body)
   **and the attach** (`gh release upload <tag> <Attach:true files> --clobber`).
 - The Go builder runs `goreleaser release --skip=publish,validate` — it only
   *builds* into `dist/`; it never creates the GitHub release (shiprig owns that),
@@ -113,7 +121,7 @@ so goreleaser stamps the right version with no tag at HEAD.
 - `--dry-run` stays plan-only. Add **`shiprig release --rehearse`**: runs the
   pipeline but forces every *mutating* step into a safe variant and **publishes
   nothing**:
-  - `publish`/`push`/`githubRelease` → skipped (reported as "rehearsed").
+  - `publish`/`push`/`release` → skipped (reported as "rehearsed").
   - `artifacts` → builder runs in snapshot mode (goreleaser `release --snapshot
     --clean`): builds all binaries into `dist/`, uploads nothing.
 - Mechanism: the pipeline exports a signal to steps/hooks — env `SHIPRIG_REHEARSE=1`
@@ -161,7 +169,7 @@ so goreleaser stamps the right version with no tag at HEAD.
 2. **`build` step early + `attach` in `release` (1a-next + 1b)** — new native
    `build` step before `publish` (`resolve.go` DefaultOrder + nativeBuiltins;
    `cli/release.go` handler calls `Artifacts()` per package into `dist/`); the
-   `forge`/`githubRelease` step uploads each package's `Attach:true` files
+   `forge`/`release` step uploads each package's `Attach:true` files
    (`gh release upload --clobber`). Go builder injects `GORELEASER_CURRENT_TAG`
    so it is tag-order-independent.
 3. **shiprig `--rehearse` (1c)** — `release.go` flag + `pipeline/run.go` signal

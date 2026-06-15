@@ -147,7 +147,7 @@ wired as `shiprig release`. ✅: `tool` (defaults to shiprig itself; set
 run/args/message/confirm/forge)/`hooks`(before/after/onError)/`vars`(lazy +
 eager, cached), CommandSpec (shell string / argv array, mixed lists), `${tool}`/
 `${vars.*}`/`${env.*}` interpolation, longest-first secret masking, default
-pipeline (version→commit→publish→push→githubRelease), forge auto/github/none
+pipeline (version→commit→publish→push→release), forge auto/github/none
 with `gh` probing + CHANGELOG-section release notes, plain + rich (lipgloss)
 reporters with resume hints, confirm gates (huh on a TTY; `--yes` otherwise),
 `--dry-run/--only/--skip/--from/--to/--config/--yes/--git-only/--ui/--no-ui`,

@@ -1,7 +1,7 @@
 // Package forge creates per-package GitHub releases, idempotently.
 //
 // Ported from net-changesets Commands/Release/ForgeReleaseService.cs (the
-// githubRelease native step). For each released package it creates a release
+// release native step). For each released package it creates a release
 // tagged {package}@{version} with the notes lifted from that package's
 // CHANGELOG.md, skipping releases that already exist. In auto mode it first
 // checks that origin is a GitHub remote and gh is authenticated, degrading to
@@ -22,7 +22,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
-// Mode is whether and how the githubRelease step creates forge releases.
+// Mode is whether and how the release step creates forge releases.
 type Mode int
 
 const (
@@ -129,13 +129,13 @@ func Run(packages []plugin.Package, ecoOf map[string]string, attach map[string][
 			}
 
 			argv := []string{"gh", "release", "create", tag, "--title", releaseTitle, "--notes", notes}
-			report("githubRelease: " + strings.Join(argv, " "))
+			report("release: " + strings.Join(argv, " "))
 			out, err := run(repoRoot, argv[0], argv[1:]...)
 			if out != "" {
 				report(strings.Split(out, "\n")...)
 			}
 			if err != nil {
-				return false, fmt.Sprintf("githubRelease %s failed: %v", tag, err)
+				return false, fmt.Sprintf("release %s failed: %v", tag, err)
 			}
 		}
 
@@ -144,13 +144,13 @@ func Run(packages []plugin.Package, ecoOf map[string]string, attach map[string][
 		if files := attach[pkg.Name]; len(files) > 0 {
 			argv := append([]string{"gh", "release", "upload", tag}, files...)
 			argv = append(argv, "--clobber")
-			report("githubRelease: " + strings.Join(argv, " "))
+			report("release: " + strings.Join(argv, " "))
 			out, err := run(repoRoot, argv[0], argv[1:]...)
 			if out != "" {
 				report(strings.Split(out, "\n")...)
 			}
 			if err != nil {
-				return false, fmt.Sprintf("githubRelease upload %s failed: %v", tag, err)
+				return false, fmt.Sprintf("release upload %s failed: %v", tag, err)
 			}
 		}
 	}

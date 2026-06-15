@@ -19,10 +19,10 @@ import (
 
 // newReleaseCmd builds the `release` command: a configurable step pipeline
 // (.changeset/release.jsonc) around the built-in version/commit/build/publish/
-// push/githubRelease steps, with hooks, captured variables, confirm gates, and
+// push/release steps, with hooks, captured variables, confirm gates, and
 // secret masking. The `build` step produces each package's distributable
 // artifacts (the ecosystem Artifacts method) into dist/ before publish; the
-// githubRelease step attaches the Attach:true ones. Ported from net-changesets.
+// release step attaches the Attach:true ones. Ported from net-changesets.
 func newReleaseCmd() *cobra.Command {
 	var (
 		dryRun     bool
@@ -35,7 +35,7 @@ func newReleaseCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "release",
-		Short: "Run the release pipeline (version → commit → build → publish → push → githubRelease)",
+		Short: "Run the release pipeline (version → commit → build → publish → tag → push → release)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ws, err := commands.Open()
 			if err != nil {
@@ -69,14 +69,14 @@ func newReleaseCmd() *cobra.Command {
 
 			masker := pipeline.NewSecretMasker()
 
-			// githubRelease native handler: per-package forge releases. Output is
+			// release native handler: per-package forge releases. Output is
 			// routed through the active reporter (so the live dashboard captures it
 			// instead of writing raw to the terminal).
 			fmode := forge.ParseMode(stepForge(cfg))
 			if gitOnly {
 				fmode = forge.None
 			}
-			// built is shared between the `build` and `githubRelease` handlers in a
+			// built is shared between the `build` and `release` handlers in a
 			// single run: build produces dist/ and records each package's artifacts;
 			// the forge step attaches the Attach:true ones to the release.
 			built := map[string][]plugin.Artifact{}
@@ -129,7 +129,7 @@ func newReleaseCmd() *cobra.Command {
 				}
 
 				return pipeline.New(pipeline.ExecRunner, reporter, masker, prompter, ws.Root,
-					map[string]pipeline.NativeHandler{"build": buildHandler, "githubRelease": releaseHandler})
+					map[string]pipeline.NativeHandler{"build": buildHandler, "release": releaseHandler})
 			}
 
 			fail := func() error {
@@ -195,9 +195,9 @@ func newReleaseCmd() *cobra.Command {
 	return cmd
 }
 
-// stepForge reads the githubRelease step's forge mode from the config.
+// stepForge reads the forge mode from the `release` step config.
 func stepForge(cfg *pipeline.Config) string {
-	if s, ok := cfg.Steps["githubRelease"]; ok && s != nil {
+	if s, ok := cfg.Steps["release"]; ok && s != nil {
 		return s.Forge
 	}
 	return ""
