@@ -30,15 +30,14 @@ type MCPAction struct {
 type MCPModel struct {
 	entries []mcp.Entry
 	cursor  int
-	hasRepo bool   // project/local scopes available (we're inside a repo)
 	note    string // transient line from the last action, e.g. "removed foo"
 	Action  MCPAction
 }
 
-// NewMCP builds the screen over a server snapshot. hasRepo gates the project/local
-// scopes; note is an optional status line carried over from the previous action.
-func NewMCP(entries []mcp.Entry, hasRepo bool, note string) MCPModel {
-	return MCPModel{entries: entries, hasRepo: hasRepo, note: note}
+// NewMCP builds the screen over a server snapshot. note is an optional status line
+// carried over from the previous action.
+func NewMCP(entries []mcp.Entry, note string) MCPModel {
+	return MCPModel{entries: entries, note: note}
 }
 
 func (m MCPModel) Init() tea.Cmd { return nil }
@@ -120,10 +119,6 @@ func (m MCPModel) View() string {
 		}
 	}
 
-	b.WriteString("\n")
-	if !m.hasRepo {
-		b.WriteString("  " + dim.Render("(not in a repo — only user-scope servers shown; cd into a repo for project/local)") + "\n")
-	}
 	b.WriteString("\n" + dim.Render("↑/↓ move · a add · e enable · d disable · x remove · q back") + "\n")
 	return b.String()
 }

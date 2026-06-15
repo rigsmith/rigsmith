@@ -295,13 +295,18 @@ machines:
 `clauderig mcp` manages Claude Code's MCP servers directly — editing the canonical
 files the same way the hooks installer edits `settings.json`, so there's no
 dependency on the `claude` CLI and it plugs into clauderig's scope model. The
-three scopes map to where Claude Code actually stores servers:
+**CLI mirrors `claude mcp`** to avoid confusion: same scope names, same flags
+(`-s/-t/-e/-H`), and the same **default scope `local`**. The three scopes map to
+where Claude Code actually stores servers:
 
 | Scope | File | Key |
 |---|---|---|
-| `user` | `~/.claude.json` | `mcpServers` (every project) |
-| `project` | `<repo>/.mcp.json` | `mcpServers` (committed, shared) |
-| `local` | `~/.claude.json` | `projects[<repo>].mcpServers` (this checkout) |
+| `local` (default) | `~/.claude.json` | `projects[<dir>].mcpServers` (this project, just you) |
+| `project` | `<dir>/.mcp.json` | `mcpServers` (committed, shared) |
+| `user` | `~/.claude.json` | `mcpServers` (all your projects) |
+
+Like `claude mcp`, the project directory is the git repo root when inside one,
+else the current working directory — so `local`/`project` work outside a repo too.
 
 Mutations operate on the decoded document, so untouched servers — including
 fields clauderig's struct doesn't model — survive a rewrite. **Enable/disable**
@@ -312,7 +317,7 @@ committed) while reading the merged user→project→local view for status.
 
 ```
 clauderig mcp list                                  # all scopes, with project state
-clauderig mcp add --env KEY=v ctx7 npx -y @upstash/context7-mcp
+clauderig mcp add --env KEY=v ctx7 npx -y @upstash/context7-mcp   # → local (default)
 clauderig mcp add -s project -t http docs https://example.com/mcp
 clauderig mcp enable docs        # approve a project server for this machine
 clauderig mcp remove ctx7
