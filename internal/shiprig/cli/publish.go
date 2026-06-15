@@ -221,8 +221,8 @@ func resolvePublishCreds(ctx context.Context, cfg *config.Config, eco, npmAuthOv
 }
 
 // ecoSupportsOIDC reports whether an ecosystem can publish via OIDC trusted
-// publishing. Only npm today; NuGet/crates plug in on the same seam later.
-func ecoSupportsOIDC(eco string) bool { return eco == "node" }
+// publishing. npm and crates.io today; NuGet plugs in on the same seam.
+func ecoSupportsOIDC(eco string) bool { return eco == "node" || eco == "cargo" }
 
 // packageSourceFor resolves the publish feed for a package's ecosystem: the
 // per-ecosystem `packageSource` config block wins, falling back to the built-in
