@@ -92,6 +92,15 @@ type EcosystemInfo struct {
 	// ecosystem's commands from the same plugin shiprig uses for releases —
 	// instead of a hardcoded table. External plugins return it in their info JSON.
 	DevCommands map[string][]string `json:"devCommands,omitempty"`
+
+	// Overlays names the base ecosystem ids this adapter sits on top of. A desktop
+	// framework reuses a language's manifest but owns its release: Tauri overlays
+	// "cargo" (a Cargo.toml under a tauri.conf.json), Electron overlays "node" (an
+	// Electron package.json). When an overlay adapter discovers a package, the base
+	// adapter's package for the same directory is dropped during discovery
+	// reconciliation, so the unit is owned and released once — by the overlay. Empty
+	// for ordinary language adapters.
+	Overlays []string `json:"overlays,omitempty"`
 }
 
 // Dev-loop and maintenance verb keys for EcosystemInfo.DevCommands. The dev-loop
@@ -210,6 +219,22 @@ type ArtifactsRequest struct {
 	OutputDir  string  `json:"outputDir"` // absolute dir to place built files (dist/)
 	Snapshot   bool    `json:"snapshot,omitempty"`
 	DryRun     bool    `json:"dryRun,omitempty"`
+	// Signing carries code-signing/notarization secrets the engine resolved (via
+	// the same core/auth seam as PublishRequest.Auth) for adapters that produce
+	// signed installers — Tauri, Electron. Nil means build unsigned (the default
+	// when no signing config is set); the engine never sets it unless signing is
+	// explicitly enabled. Values are masked in any surfaced output.
+	Signing *SigningCreds `json:"signing,omitempty"`
+}
+
+// SigningCreds is a resolved set of signing secrets to expose to a build as
+// environment variables. The map is ENV_VAR -> secret value (already resolved
+// from its op://…/env:/cmd: reference). The desktop build tools read their own
+// standard variables (electron-builder's CSC_*/APPLE_*, Tauri's
+// TAURI_SIGNING_PRIVATE_KEY/APPLE_*), so the engine threads them through the
+// environment rather than the adapter hardcoding a per-platform matrix.
+type SigningCreds struct {
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // Artifact kinds, for display and for deciding what gets attached to a release.

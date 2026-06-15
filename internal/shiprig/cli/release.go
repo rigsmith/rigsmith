@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,9 +12,11 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/sign"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/rigsmith/rigsmith/internal/shiprig/forge"
 	"github.com/rigsmith/rigsmith/internal/shiprig/pipeline"
@@ -150,8 +153,16 @@ func newReleaseCmd() *cobra.Command {
 						if !ok {
 							continue
 						}
+						// Resolve optional code-signing secrets for this ecosystem (off
+						// unless a `signing` block enables it); masked and passed to the
+						// build so the tool produces signed installers.
+						signing, err := resolveSigning(cmd.Context(), ws.Config, ecoOf[pkg.Name], masker)
+						if err != nil {
+							out("build " + pkg.Name + ": " + err.Error())
+							return false
+						}
 						resp, err := eco.Artifacts(cmd.Context(), plugin.ArtifactsRequest{
-							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir, Snapshot: dryBuild,
+							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir, Snapshot: dryBuild, Signing: signing,
 						})
 						if err != nil {
 							out("build " + pkg.Name + ": " + err.Error())
@@ -511,6 +522,26 @@ func attachPaths(built map[string][]plugin.Artifact) map[string][]string {
 		}
 	}
 	return out
+}
+
+// resolveSigning returns the resolved code-signing credentials for an ecosystem's
+// build, or nil when signing is not configured/enabled (the unsigned default). A
+// failure to resolve a configured secret is returned as an error so a
+// misconfigured signing setup fails the build loudly rather than shipping an
+// unsigned installer.
+func resolveSigning(ctx context.Context, cfg *config.Config, eco string, masker *pipeline.SecretMasker) (*plugin.SigningCreds, error) {
+	sc := cfg.EcoConfig(eco).Signing
+	if sc == nil || !sc.Enabled {
+		return nil, nil
+	}
+	env, err := sign.ResolveEnv(ctx, sc.Env, masker)
+	if err != nil {
+		return nil, err
+	}
+	if len(env) == 0 {
+		return nil, nil
+	}
+	return &plugin.SigningCreds{Env: env}, nil
 }
 
 // ttyPrompter asks a confirm gate on the terminal.

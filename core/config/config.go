@@ -510,6 +510,21 @@ type EcosystemConfig struct {
 	// VersionStrategy overrides the top-level VersionStrategy for this
 	// ecosystem's packages (net's `dotnet.versionStrategy`); empty inherits it.
 	VersionStrategy VersionStrategy `json:"versionStrategy,omitempty"`
+	// Signing configures optional code-signing/notarization for ecosystems that
+	// build signed installers (tauri, electron). Absent or disabled means builds
+	// are unsigned and need no secrets — the default.
+	Signing *SigningConfig `json:"signing,omitempty"`
+}
+
+// SigningConfig is the optional `signing` block of a desktop ecosystem. It is
+// off unless Enabled is true; when enabled, Env maps the environment variables
+// the build tool reads (e.g. APPLE_ID, CSC_LINK, TAURI_SIGNING_PRIVATE_KEY) to a
+// secret reference resolved at build time ("op://…", "env:NAME", or "cmd:…") —
+// the same reference forms as the per-ecosystem `auth` key. Secrets are resolved
+// just-in-time and masked; nothing is read unless Enabled.
+type SigningConfig struct {
+	Enabled bool              `json:"enabled"`
+	Env     map[string]string `json:"env,omitempty"`
 }
 
 // EcoConfig decodes the per-ecosystem block for id into an EcosystemConfig,
