@@ -15,14 +15,14 @@ import (
 // releases) and the publish toolchain each detected ecosystem needs. The release
 // checks are report-only — shiprig can't install a system package manager, so it
 // reports presence and points at how to get it.
-func newDoctorCmd(version string) *cobra.Command {
+func newDoctorCmd() *cobra.Command {
 	var fixAll bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Health-check the release setup: changesets, forge, publish tooling",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return commands.RunDoctor(cmd, "shiprig", version, brand.AccentShip, fixAll, releaseDoctorSections)
+			return commands.RunDoctor(cmd, "shiprig", brand.AccentShip, fixAll, releaseDoctorSections)
 		},
 	}
 	cmd.Flags().BoolVar(&fixAll, "fix", false, "apply every fixable issue without prompting")

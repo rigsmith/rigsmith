@@ -14,12 +14,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version is stamped at release time via -ldflags "-X .../shiprig/cli.version=...".
-var version = "dev"
-
 // Execute builds the command tree and runs it through fang.
 func Execute(ctx context.Context) error {
-	return fang.Execute(ctx, newRootCmd(), fang.WithVersion(version), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentShip)), fang.WithBanner(brand.ShipBanner))
+	return fang.Execute(ctx, newRootCmd(), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentShip)), fang.WithBanner(brand.ShipBanner))
 }
 
 func newRootCmd() *cobra.Command {
@@ -53,7 +50,7 @@ func newRootCmd() *cobra.Command {
 		newPublishCmd(),
 		newTagCmd(),
 		newReleaseCmd(),
-		newDoctorCmd(version),
+		newDoctorCmd(),
 	)
 
 	// Bare, interactive `shiprig` (no verb/flag) lands on the menu. Routing

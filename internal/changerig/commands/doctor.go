@@ -25,14 +25,14 @@ import (
 // and layers its release-readiness checks on top, so the two tools never diverge
 // on what "a healthy changeset setup" means. The report model and the fix flow are
 // the shared core/doctor + internal/doctorui.
-func NewDoctorCmd(version string) *cobra.Command {
+func NewDoctorCmd() *cobra.Command {
 	var fixAll bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Health-check the changeset setup (--fix to scaffold a missing config)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return RunDoctor(cmd, "changerig", version, brand.AccentChange, fixAll, nil)
+			return RunDoctor(cmd, "changerig", brand.AccentChange, fixAll, nil)
 		},
 	}
 	cmd.Flags().BoolVar(&fixAll, "fix", false, "apply every fixable issue without prompting")
@@ -43,7 +43,7 @@ func NewDoctorCmd(version string) *cobra.Command {
 // tool. The changeset baseline (git/repo/config/workspace) is always included;
 // extra appends tool-specific sections (shiprig's release checks) and may be nil.
 // It exits non-zero while any failing check remains, so it's usable in scripts.
-func RunDoctor(cmd *cobra.Command, tool, version string, accent lipgloss.AdaptiveColor, fixAll bool, extra func(context.Context, *Workspace) []doctor.Section) error {
+func RunDoctor(cmd *cobra.Command, tool string, accent lipgloss.AdaptiveColor, fixAll bool, extra func(context.Context, *Workspace) []doctor.Section) error {
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
 
@@ -56,8 +56,7 @@ func RunDoctor(cmd *cobra.Command, tool, version string, accent lipgloss.Adaptiv
 		sections = append(sections, extra(ctx, ws)...)
 	}
 
-	fmt.Fprintf(out, "%s   %s\n\n", HeaderStyle.Render(tool+" doctor"),
-		DimStyle.Render(runtime.GOOS+" · "+tool+" "+version))
+	fmt.Fprintf(out, "%s   %s\n\n", HeaderStyle.Render(tool+" doctor"), DimStyle.Render(runtime.GOOS))
 	doctorui.RenderSections(out, sections)
 	doctorui.RenderSummary(out, sections)
 
@@ -87,7 +86,13 @@ func checkGit(ctx context.Context) doctor.Result {
 		return doctor.Result{Name: "git", Status: doctor.Fail, Detail: "not found",
 			Hint: "install git — changesets diff and tag against git history"}
 	}
-	v, _ := exec.CommandContext(ctx, "git", "--version").Output()
+	v, err := exec.CommandContext(ctx, "git", "--version").Output()
+	if err != nil {
+		// On PATH but won't run (broken install, permissions) — fail like "not
+		// found" rather than report OK with an empty version.
+		return doctor.Result{Name: "git", Status: doctor.Fail, Detail: "present but not runnable: " + err.Error(),
+			Hint: "git is on PATH but failed to execute — check the install/permissions"}
+	}
 	return doctor.Result{Name: "git", Status: doctor.OK,
 		Detail: strings.TrimSpace(strings.TrimPrefix(firstLine(string(v)), "git version "))}
 }
