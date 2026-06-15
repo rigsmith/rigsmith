@@ -33,8 +33,7 @@ func NewAccountCmd() *cobra.Command {
 			"          (isolated via CLAUDE_CONFIG_DIR — others stay on the default)\n" +
 			"  switch  swap the machine-wide live login to another account\n" +
 			"  remove  stop tracking an account (does not log it out)\n" +
-			"  purge   remove all of rig's account data\n\n" +
-			"Concept credit: claude-swap by realiti4 (github.com/realiti4/claude-swap, MIT).",
+			"  purge   remove all of rig's account data",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if Interactive() {
 				return runAccountUI(cmd)
