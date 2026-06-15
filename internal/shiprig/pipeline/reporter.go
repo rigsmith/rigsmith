@@ -99,7 +99,7 @@ func NewPlainReporter(w io.Writer, masker *SecretMasker, tool string) *PlainRepo
 // not run.
 func (r *PlainReporter) Plan(steps []ResolvedStep, dryRun bool) {
 	if dryRun {
-		fmt.Fprintln(r.w, "Release plan (dry run - nothing will run):")
+		fmt.Fprintln(r.w, "Release plan (dry run - only dryRun-marked commands run):")
 	} else {
 		fmt.Fprintln(r.w, "Release plan:")
 	}

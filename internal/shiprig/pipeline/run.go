@@ -144,9 +144,10 @@ func New(
 	}
 }
 
-// Run executes the resolved steps. In a dry run nothing is executed (and no
-// vars are captured) — the plan is reported and Run returns true. Returns
-// true when the whole run (including global hooks) succeeds.
+// Run executes the resolved steps. A dry run reports the interpolated plan and
+// executes only the commands a step opts into via "dryRun" (no ${vars.*} are
+// ever captured); see runDry. Returns true when the whole run (including global
+// hooks) succeeds.
 func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
 	p.baseContext = map[string]string{"tool": toolOf(config)}
 	p.vars = newVariables(config.Vars, p.runner, p.masker, p.workDir)
@@ -225,7 +226,8 @@ func (p *Pipeline) fail(hooks Hooks, message string) bool {
 // runDry renders the interpolated plan (Part A: built-in variables filled in,
 // ${vars.*} and ${releaseUrl*} shown as placeholders, nothing captured) and then
 // executes only the commands a step opted into with "dryRun" (Part B). Confirm
-// gates and native actions never fire in a dry run.
+// gates are not prompted and native handlers never fire — a native step runs in
+// a dry run only if it carries explicit "dryRun" commands.
 func (p *Pipeline) runDry(steps []ResolvedStep) bool {
 	p.reporter.Plan(p.previewSteps(steps), true)
 
@@ -241,7 +243,7 @@ func (p *Pipeline) runDry(steps []ResolvedStep) bool {
 		p.reporter.StepCompleted(step.Name)
 	}
 
-	p.reporter.RunCompleted(true, "dry run - preview only")
+	p.reporter.RunCompleted(true, "dry run - plan previewed, only dryRun-marked commands ran")
 	return true
 }
 

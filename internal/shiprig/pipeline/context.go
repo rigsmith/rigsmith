@@ -133,12 +133,23 @@ func (rv *releaseVars) scalar(key, ns, aggName string, field func(ReleasePackage
 	pkgs := rv.ctx.Packages()
 
 	if addr, ok := strings.CutPrefix(key, ns+"."); ok {
-		p, found := pkgByAddress(pkgs, addr)
-		if !found {
+		// An exact full-manifest-name match is always unambiguous and wins.
+		if p, ok := exactNameMatch(pkgs, addr); ok {
+			return field(p), true, nil
+		}
+		matches := shortKeyMatches(pkgs, addr)
+		switch len(matches) {
+		case 1:
+			return field(matches[0]), true, nil
+		case 0:
 			return "", true, fmt.Errorf("${%s} refers to unknown package %q; released packages: %s",
 				key, addr, strings.Join(packageNames(pkgs), ", "))
+		default:
+			// Two released packages share this short key: refuse rather than pick
+			// one by order. The full manifest name disambiguates.
+			return "", true, fmt.Errorf("${%s} is ambiguous: short key %q matches %s; use the full manifest name, e.g. ${%s.%s}",
+				key, addr, strings.Join(matchNames(matches), ", "), ns, matches[0].Name)
 		}
-		return field(p), true, nil
 	}
 
 	if len(pkgs) == 1 {
@@ -214,20 +225,36 @@ func (rv *releaseVars) issueBranch(key string) (string, bool, error) {
 	}
 }
 
-// pkgByAddress finds a package by its short Key or, as an exact alias, its full
-// Name.
-func pkgByAddress(pkgs []ReleasePackage, addr string) (ReleasePackage, bool) {
-	for _, p := range pkgs {
-		if p.Key == addr {
-			return p, true
-		}
-	}
+// exactNameMatch finds a package by its full manifest Name (the unambiguous
+// address alias).
+func exactNameMatch(pkgs []ReleasePackage, addr string) (ReleasePackage, bool) {
 	for _, p := range pkgs {
 		if p.Name == addr {
 			return p, true
 		}
 	}
 	return ReleasePackage{}, false
+}
+
+// shortKeyMatches returns every package whose short Key equals addr (more than
+// one means the short key is ambiguous).
+func shortKeyMatches(pkgs []ReleasePackage, addr string) []ReleasePackage {
+	var matches []ReleasePackage
+	for _, p := range pkgs {
+		if p.Key == addr {
+			matches = append(matches, p)
+		}
+	}
+	return matches
+}
+
+func matchNames(pkgs []ReleasePackage) []string {
+	names := make([]string, len(pkgs))
+	for i, p := range pkgs {
+		names[i] = p.Name
+	}
+	sort.Strings(names)
+	return names
 }
 
 // isReleaseURLKey reports whether key addresses a forge release URL, which is

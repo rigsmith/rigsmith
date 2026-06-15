@@ -1,6 +1,6 @@
 # Release pipeline: built-in variables, derived values & richer custom steps
 
-Status: **proposed** (design only — nothing implemented yet)
+Status: **implemented** (PR #94) — see the progress notes in the implementation plan below
 Scope: `internal/shiprig/pipeline` + the host wiring in `internal/shiprig/cli/release.go`
 Related: [RELEASE-PIPELINE-DESIGN.md](./RELEASE-PIPELINE-DESIGN.md), [RELEASE-STEPS-AND-FORGES-DESIGN.md](./RELEASE-STEPS-AND-FORGES-DESIGN.md), [RELEASE-NAMING-AND-MONOREPO.md](./RELEASE-NAMING-AND-MONOREPO.md), [FEATURE-PARITY.md](./FEATURE-PARITY.md)
 
@@ -179,24 +179,29 @@ accepted as an exact-name alias. This needs a decision — see Open questions.
 
 ### Timing guard
 
-`${version.*}` referenced **before** the `version` step has run would read a
-pre-bump (or empty) value. Options: (a) resolve from the *planned* bump (compute
-versions up front from changesets, independent of stamping), or (b) error if
-referenced before `version` ran. Prefer **(a)** so `before`-hooks on early steps
-can use it — it matches how the plan is already previewable in `--dry-run`. The
-host computes planned versions from the changeset set, not from re-reading
-manifests.
+`${version.*}` referenced **before** the `version` step has run reads a pre-bump
+(or empty) value. Two options were considered: (a) resolve from the *planned*
+bump (compute versions up front from changesets), or (b) read manifest state
+lazily at first reference. **As implemented, the host does (b)** —
+`hostReleaseContext` reads versions from `ws.Discover` the first time a variable
+is referenced and caches them. So the **bumped** values appear once the `version`
+step has stamped the manifests (the common case: `publish` args, the `release`
+step, and the after/onError hooks); a `${version.*}` referenced in a hook that
+runs *before* `version` shows the pre-bump value. Computing planned versions from
+changesets up front (option a) remains a possible follow-up.
 
 ## 4. `ReleasePackage.Key` (addressing) & collisions
 
 - `Key` = last path segment of the manifest name (`@scope/foo` → `foo`,
   `github.com/org/mod/v2` Go module → `mod`), matching the spelling already used
   for tags/UI where possible (see `RELEASE-NAMING-AND-MONOREPO.md`).
-- On collision (two packages share a short name across ecosystems), fall back to
-  an ecosystem-qualified key (`node:foo`, `dotnet:foo`) **for the colliding
-  packages only**, and emit one `log`-level note so the user knows the address.
-- Always accept the **full manifest name** as an exact alias, so there is an
-  unambiguous escape hatch regardless of collision logic.
+- **On collision** (two released packages share a short key), `${version.<key>}`
+  **errors** — it names the colliding packages and points at the full manifest
+  name, rather than silently picking one by order. (This is what's implemented;
+  the originally-considered ecosystem-qualified key like `node:foo` was dropped in
+  favour of the simpler "error toward the full name" rule.)
+- The **full manifest name** is always accepted as an exact alias
+  (`${version.@scope/foo}`), so collisions remain addressable.
 
 Host builds the `Key` map once per run from `ws.Discover` output; the engine
 treats `Key` as opaque.
@@ -719,8 +724,10 @@ All steps land on `feat/release-vars-and-steps`. The only deliberate non-goal is
 
 1. **Addressing key spelling (§4): short name + full alias.** `${version.foo}`
    (last path segment) is primary; the full manifest name (`${version.@scope/foo}`)
-   is accepted as an exact alias. Collisions fall back to ecosystem-qualified
-   keys (`node:foo`) for the colliding packages only, with one `log` note.
+   is accepted as an exact alias. **As implemented**, a colliding short key
+   (two packages → same key) is a hard error pointing at the full name — the
+   ecosystem-qualified-key idea (`node:foo`) was dropped as unnecessary given the
+   full-name alias.
 2. **Bare-form in multi-package: always hard error.** No opt-out flag. A bare
    `${version}`/`${changelog}`/`${releaseUrl}`/`${tag}` in a multi-package release
    fails with guidance pointing at the addressed and aggregate forms. Bare form

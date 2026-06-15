@@ -46,7 +46,7 @@ The plan is rendered with built-in variables filled in; `${vars.*}` and
 only the one `dryRun` command actually executes:
 
 ```text
-Release plan (dry run - nothing will run):
+Release plan (dry run - only dryRun-marked commands run):
   - Preflight
       echo '[preflight] preparing @acme/api@1.4.0, @acme/web@2.1.0'
   - version
@@ -88,7 +88,7 @@ Release plan (dry run - nothing will run):
     $ echo '  [publish] DRY — would publish @acme/api@1.4.0, @acme/web@2.1.0'
       [publish] DRY — would publish @acme/api@1.4.0, @acme/web@2.1.0
 ok publish
-Release complete. dry run - preview only
+Release complete. dry run - plan previewed, only dryRun-marked commands ran
 ```
 
 ## `shiprig release --yes`

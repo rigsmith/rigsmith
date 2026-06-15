@@ -111,6 +111,32 @@ func TestReleaseVarUnknownAddressIsError(t *testing.T) {
 	}
 }
 
+func TestReleaseVarAmbiguousShortKeyErrorsTowardFullName(t *testing.T) {
+	// Two packages share the short key "core".
+	rv := newReleaseVars(fakeRelCtx{pkgs: []ReleasePackage{
+		{Name: "@acme/core", Key: "core", Version: "1.0.0"},
+		{Name: "@other/core", Key: "core", Version: "2.0.0"},
+	}})
+
+	_, isRel, err := rv.resolve("version.core")
+	if !isRel {
+		t.Fatal("version.core should be a release variable")
+	}
+	if err == nil {
+		t.Fatal("an ambiguous short key must error rather than pick one")
+	}
+	for _, want := range []string{"ambiguous", "@acme/core", "@other/core", "full manifest name"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+
+	// The full manifest name disambiguates unambiguously.
+	if got := mustResolveVar(t, rv, "version.@other/core"); got != "2.0.0" {
+		t.Errorf("version.@other/core = %q, want 2.0.0", got)
+	}
+}
+
 func TestReleaseVarURLsAggregateSkipsEmpty(t *testing.T) {
 	ctx := twoPackages()
 	ctx.urls = map[string]string{"web": "https://forge/web"} // cli URL not yet known
