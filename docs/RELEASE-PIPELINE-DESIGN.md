@@ -116,18 +116,23 @@ so goreleaser stamps the right version with no tag at HEAD.
   *builds* into `dist/`; it never creates the GitHub release (shiprig owns that),
   so there is no double-create and no `release.mode: append` dance.
 
-### 1c. `--rehearse` (real local dry-build, distinct from `--dry-run`)
+### 1c. `--rehearse` (real local dry-build, distinct from `--dry-run`) — ✅ DONE
 
-- `--dry-run` stays plan-only. Add **`shiprig release --rehearse`**: runs the
-  pipeline but forces every *mutating* step into a safe variant and **publishes
-  nothing**:
-  - `publish`/`push`/`release` → skipped (reported as "rehearsed").
-  - `artifacts` → builder runs in snapshot mode (goreleaser `release --snapshot
-    --clean`): builds all binaries into `dist/`, uploads nothing.
-- Mechanism: the pipeline exports a signal to steps/hooks — env `SHIPRIG_REHEARSE=1`
-  **and** a `${rehearse}` interpolation token so a custom `run` can branch
-  (`goreleaser release ${rehearse:+--snapshot} --clean`). Built-in steps read the
-  flag directly.
+- `--dry-run` stays plan-only. **`shiprig release --rehearse`** is a *real* run that
+  **executes only the `build` step** and skips everything else — so it builds the
+  release's artifacts into `dist/` and **commits/tags/pushes/publishes nothing**.
+- Implemented as `ResolveOptions.Rehearse`: every step except `build` resolves to
+  `SkipReason: "rehearse (build only)"`; the `build` handler passes
+  `ArtifactsRequest.Snapshot: true` so the Go builder runs goreleaser
+  `release --clean --snapshot` (no tag/version needed) and other adapters pack
+  their current manifest. Routes through the sequential reporter (no plan-editor
+  TUI / confirm gates — there's nothing to gate).
+- Scope note: this builds *current-version snapshot* artifacts to verify "does it
+  build + package", not the exact next-version strings (you'd run the real
+  pipeline for that). The `${rehearse}` interpolation token / `SHIPRIG_REHEARSE`
+  env for custom non-`build` builders is **not** implemented — in rehearse only
+  the `build` step runs, so a custom command step would be skipped; revisit if
+  someone needs a custom builder under rehearse.
 
 ### 1d. `init` scaffolding + token preflight
 

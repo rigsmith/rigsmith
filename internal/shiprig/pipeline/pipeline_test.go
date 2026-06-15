@@ -101,6 +101,30 @@ func TestResolveUsesDefaultOrderWhenNoneConfigured(t *testing.T) {
 	}
 }
 
+func TestResolveRehearseRunsOnlyBuild(t *testing.T) {
+	steps := mustResolve(t, &Config{}, ResolveOptions{Rehearse: true})
+
+	sawBuild := false
+	for _, step := range steps {
+		if step.Name == "build" {
+			sawBuild = true
+			if !step.Enabled() {
+				t.Errorf("build should run under --rehearse, got skip %q", step.SkipReason)
+			}
+			continue
+		}
+		if step.Enabled() {
+			t.Errorf("step %q should be skipped under --rehearse", step.Name)
+		}
+		if step.SkipReason != "rehearse (build only)" {
+			t.Errorf("step %q skip reason = %q, want %q", step.Name, step.SkipReason, "rehearse (build only)")
+		}
+	}
+	if !sawBuild {
+		t.Fatal("no build step in the resolved plan")
+	}
+}
+
 func TestResolveBuiltinPublishUsesToolAndAppendsArgs(t *testing.T) {
 	config := &Config{
 		Tool: "npx changeset",

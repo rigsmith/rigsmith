@@ -26,6 +26,7 @@ import (
 func newReleaseCmd() *cobra.Command {
 	var (
 		dryRun     bool
+		rehearse   bool
 		only, skip []string
 		from, to   string
 		configPath string
@@ -57,7 +58,7 @@ func newReleaseCmd() *cobra.Command {
 			}
 
 			steps, err := pipeline.Resolve(cfg, pipeline.ResolveOptions{
-				Only: only, Skip: skip, From: from, To: to,
+				Only: only, Skip: skip, From: from, To: to, Rehearse: rehearse,
 			})
 			if err != nil {
 				return err
@@ -99,7 +100,7 @@ func newReleaseCmd() *cobra.Command {
 							continue
 						}
 						resp, err := eco.Artifacts(cmd.Context(), plugin.ArtifactsRequest{
-							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir,
+							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir, Snapshot: rehearse,
 						})
 						if err != nil {
 							out("build " + pkg.Name + ": " + err.Error())
@@ -140,8 +141,9 @@ func newReleaseCmd() *cobra.Command {
 
 			// Full TUI flow (interactive, rich, real run): the plan editor lets the
 			// user toggle steps, then the live dashboard drives the run with inline
-			// confirm gates. Everything else uses the sequential reporters.
-			if mode.Interactive && mode.Rich && !dryRun {
+			// confirm gates. A rehearse only builds (nothing to gate), so it takes
+			// the straight sequential path like --dry-run.
+			if mode.Interactive && mode.Rich && !dryRun && !rehearse {
 				chosen, proceed := interactiveChooser{
 					in: cmd.InOrStdin(), out: cmd.OutOrStdout(), masker: masker,
 				}.Choose(steps)
@@ -183,6 +185,7 @@ func newReleaseCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVarP(&dryRun, "dry-run", "n", false, "print the plan without executing anything")
+	f.BoolVar(&rehearse, "rehearse", false, "build the release's artifacts locally (snapshot) and publish nothing — runs only the build step")
 	f.StringSliceVar(&only, "only", nil, "run only these steps (comma-separated)")
 	f.StringSliceVar(&skip, "skip", nil, "skip these steps (comma-separated)")
 	f.StringVar(&from, "from", "", "start at this step (resume point)")
