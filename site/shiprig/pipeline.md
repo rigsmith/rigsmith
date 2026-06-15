@@ -36,8 +36,13 @@ environment is what every part of the run sees:
   reads as ✓ set rather than a false ⚠.
 
 This means a release token can live in `.env.local` (git-ignored) instead of
-being exported in every shell. Values are still scrubbed from logs by secret
-masking, and `.env` files are read, never written or printed.
+being exported in every shell. The `.env` files themselves are read, never
+written or printed.
+
+Secret masking only redacts values it has been given — the ones captured through
+`vars` — so keep secrets in a `var` if a step might echo them. A value
+interpolated straight into a command with `${env.NAME}` is **not** automatically
+masked, so avoid putting a raw secret on a command line that gets logged.
 
 Pass `--no-env` to drop the `.env`/`.env.local` layer for a run (the ambient
 shell environment still flows through) — handy when a stray local `.env` would
