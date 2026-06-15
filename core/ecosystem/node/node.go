@@ -39,7 +39,7 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		APIVersion:       plugin.APIVersion,
 		ID:               "node",
 		DisplayName:      "Node",
-		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts},
+		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts, plugin.MethodReleaseInit},
 		ManifestPatterns: []string{"package.json"},
 		// Canonical npm commands; rig applies package-manager detection
 		// (pnpm/yarn/bun) on top — see cli/internal/detect.
@@ -245,6 +245,20 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		})
 	}
 	return plugin.ArtifactsResponse{Built: true, Artifacts: arts, Message: "packed " + spec}, nil
+}
+
+// ReleaseInit declares Node's release prerequisites: an NPM_TOKEN for publishing.
+// npm produces its tarball natively (npm pack), so there is no build-config file
+// to scaffold.
+func (a *Adapter) ReleaseInit(ctx context.Context, req plugin.ReleaseInitRequest) (plugin.ReleaseInitResponse, error) {
+	return plugin.ReleaseInitResponse{
+		Tokens: []plugin.TokenSpec{{
+			EnvVar: "NPM_TOKEN",
+			For:    "npm publish",
+			URL:    "https://www.npmjs.com/settings/~/tokens",
+		}},
+		Notes: []string{"publishes to the npm registry"},
+	}, nil
 }
 
 // runCmd runs name+args in dir ("" for the current directory) and returns the

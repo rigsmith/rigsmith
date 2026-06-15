@@ -137,3 +137,20 @@ func TestInfoOmitsArtifacts(t *testing.T) {
 		}
 	}
 }
+
+// TestReleaseInitEmpty: a regex package needs no token and no build config — it
+// releases by git tag — and so does not advertise the capability.
+func TestReleaseInitEmpty(t *testing.T) {
+	for _, c := range New().Info().Capabilities {
+		if c == plugin.MethodReleaseInit {
+			t.Error("regex Info() should not advertise MethodReleaseInit")
+		}
+	}
+	resp, err := New().ReleaseInit(context.Background(), plugin.ReleaseInitRequest{RepoRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.BuildConfig != nil || len(resp.Tokens) != 0 || len(resp.Notes) != 0 {
+		t.Errorf("regex ReleaseInit should be empty, got %+v", resp)
+	}
+}

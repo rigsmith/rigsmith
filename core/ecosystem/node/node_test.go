@@ -338,3 +338,21 @@ func hasCapability(info plugin.EcosystemInfo, want string) bool {
 	}
 	return false
 }
+
+// TestReleaseInit: Node packs natively (npm pack), so it declares only the
+// NPM_TOKEN preflight and no build-config file.
+func TestReleaseInit(t *testing.T) {
+	if !hasCapability(New().Info(), plugin.MethodReleaseInit) {
+		t.Fatal("node Info() should advertise MethodReleaseInit")
+	}
+	resp, err := New().ReleaseInit(context.Background(), plugin.ReleaseInitRequest{RepoRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.BuildConfig != nil {
+		t.Error("node has a native pack — no build-config file to scaffold")
+	}
+	if len(resp.Tokens) != 1 || resp.Tokens[0].EnvVar != "NPM_TOKEN" {
+		t.Errorf("expected a single NPM_TOKEN preflight, got %+v", resp.Tokens)
+	}
+}
