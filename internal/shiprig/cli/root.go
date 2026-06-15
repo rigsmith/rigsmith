@@ -50,6 +50,7 @@ func newRootCmd() *cobra.Command {
 		newPublishCmd(),
 		newTagCmd(),
 		newReleaseCmd(),
+		newDoctorCmd(),
 	)
 
 	// Bare, interactive `shiprig` (no verb/flag) lands on the menu. Routing

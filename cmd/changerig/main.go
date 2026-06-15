@@ -51,6 +51,7 @@ func run(ctx context.Context) error {
 		commands.NewInfoCmd(),
 		commands.NewConfigCmd(),
 		commands.NewUICmd(),
+		commands.NewDoctorCmd(),
 	)
 
 	// Bare, interactive `changerig` (no verb/flag) lands on the menu. Routing
