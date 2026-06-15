@@ -300,19 +300,18 @@ skipped (needs npm ≥ 11.5.1, runner has 10.8.2)."*
    setup notes when OIDC is in play. (A live npm-version warning in the preflight
    was dropped — local npm ≠ CI npm, so it would mislead; the static "provenance
    needs npm ≥ 11.5.1" note covers it.)
-5. ⬜ **NuGet/crates OIDC adapters** — *feasibility confirmed, recommend separate
-   PRs* (the seam is ready; GitLab id-token already handled in `FetchIDToken`):
-   - **crates.io** — Trusted Publishing GA (RFC 3691). Exchange the GH/GitLab
-     OIDC JWT (audience per the RFC) at crates.io's trusted-publishing token
-     endpoint for a ~30-min token; `cargo publish` consumes it via
-     `CARGO_REGISTRY_TOKEN`. Lives in the cargo adapter; `core/auth` id-token
-     fetch is reused.
-   - **NuGet.org** — Trusted Publishing GA (GitHub Actions only today). Exchange
-     the OIDC token for a temporary ~1-hour API key; `dotnet nuget push` consumes
-     it. Lives in the dotnet adapter. Not available for private feeds / Azure
-     Artifacts.
-   Each is a distinct exchange protocol + adapter publish path, so they belong in
-   their own PRs rather than the npm-focused one (#88).
+5. ◐ **NuGet/crates OIDC adapters** — built as separate PRs on the seam (GitLab
+   id-token already handled in `FetchIDToken`):
+   - ✅ **crates.io** — PR #89. Exchange the OIDC JWT (audience `crates.io`) at
+     `POST /api/v1/trusted_publishing/tokens` → `{token}`; `cargo publish` via
+     `CARGO_REGISTRY_TOKEN`; the token is `DELETE`-revoked after publish.
+   - ✅ **NuGet.org** — PR #90. Exchange the OIDC token (audience
+     `https://www.nuget.org`, body `{username, tokenType:"ApiKey"}`) for a ~1h
+     key; `dotnet nuget push --api-key`. Requires `dotnet.user` (NuGet keys the
+     exchange to the policy creator). nuget.org only (no private feeds).
+   Both httptest-covered, not live-verified. *Merge note:* #89 and #90 each touch
+   the one-line `ecoSupportsOIDC` — whichever lands second needs a trivial rebase
+   of that line.
 
 ## Open questions
 
