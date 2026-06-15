@@ -50,6 +50,7 @@ func run(ctx context.Context) error {
 		commands.NewPreCmd(),
 		commands.NewInfoCmd(),
 		commands.NewConfigCmd(),
+		commands.NewChangelogCmd(),
 		commands.NewUICmd(commands.MenuItem{Label: "Doctor", Desc: "check the changeset setup", Build: commands.NewDoctorCmd}),
 		commands.NewDoctorCmd(),
 	)
