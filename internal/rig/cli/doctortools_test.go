@@ -3,9 +3,12 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/rigsmith/rigsmith/core/doctor"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
+	"github.com/spf13/cobra"
 )
 
 // labelsOf runs each pendingCheck and returns label→level for assertions.
@@ -63,6 +66,67 @@ func TestToolChecks_RelevantPerEcosystem(t *testing.T) {
 	}
 	if rg != 1 {
 		t.Errorf("reportgenerator listed %d times, want 1 (deduped)", rg)
+	}
+}
+
+func TestDoctorToolFixes_OwnedToolsOnly(t *testing.T) {
+	root := t.TempDir()
+	cmd := &cobra.Command{}
+
+	// .NET only → its relevant tools are dnx (ships with the SDK) and
+	// ReportGenerator (fetched on use). Neither has an install command rig owns,
+	// so doctor offers no installs regardless of what's on PATH.
+	if got := doctorToolFixes(cmd, map[string]bool{detect.DotNet: true}, root); got != nil {
+		t.Errorf(".NET should yield no install offers (owned tools only), got %+v", got)
+	}
+
+	// Cargo's tools DO have install commands. Pin all three off → report-only, no
+	// offers, independent of PATH.
+	writeFile(t, filepath.Join(root, ".rig.json"), `{
+	  "tools": {
+	    "cargo-llvm-cov": "off",
+	    "cargo-outdated": "off",
+	    "cargo-watch": "off"
+	  }
+	}`)
+	if got := doctorToolFixes(cmd, map[string]bool{detect.Cargo: true}, root); got != nil {
+		t.Errorf("tools pinned off should yield no install offers, got %+v", got)
+	}
+}
+
+func TestDoctorToolFixes_MissingCargoToolsOffered(t *testing.T) {
+	// Force a PATH that can't contain the cargo tools so the offer is
+	// deterministic on any host — otherwise a tool already installed locally would
+	// silently drop out and the test would assert nothing.
+	t.Setenv("PATH", t.TempDir())
+	root := t.TempDir() // no .rig.json ⇒ auto mode
+	cmd := &cobra.Command{}
+
+	got := map[string]bool{}
+	for _, sec := range doctorToolFixes(cmd, map[string]bool{detect.Cargo: true}, root) {
+		if sec.Title != "tools" {
+			t.Errorf("section title = %q, want tools", sec.Title)
+		}
+		// Every offered fix must be a missing, install-capable tool — never dnx or
+		// reportgenerator — and carry a runnable Fix + an "install …" label.
+		for _, r := range sec.Results {
+			got[r.Name] = true
+			if r.Status != doctor.Warn || r.Fix == nil {
+				t.Errorf("%s: got %+v, want Warn with a Fix", r.Name, r)
+			}
+			if !strings.HasPrefix(r.FixLabel, "install ") {
+				t.Errorf("%s: FixLabel = %q, want it to start with \"install \"", r.Name, r.FixLabel)
+			}
+			if r.Name == "dnx" || r.Name == "reportgenerator" {
+				t.Errorf("%s has no install command and must not be offered", r.Name)
+			}
+		}
+	}
+	// With nothing on PATH, all three install-capable cargo tools are offered.
+	for _, want := range []string{"cargo-llvm-cov", "cargo-outdated", "cargo-watch"} {
+		if !got[want] {
+			t.Errorf("expected an install offer for %q, got %v", want, got)
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -13,6 +14,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/core/doctor"
+	"github.com/rigsmith/rigsmith/internal/doctorui"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 	"github.com/spf13/cobra"
@@ -36,9 +40,12 @@ const (
 // newDoctorCmd builds `rig doctor` — environment checks for the detected
 // ecosystem(s). It prints a ✓/!/✗ checklist and exits non-zero only when an
 // error-level check fails (warnings don't fail), so it doubles as a CI / pre-push
-// gate. It mirrors the .NET/Node `rig doctor` verbs.
+// gate. It mirrors the .NET/Node `rig doctor` verbs. After the checklist it offers
+// to install the optional tools rig owns an install command for (`--fix` to
+// install them all without prompting); the core toolchains stay report-only.
 func newDoctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var fixAll bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check the environment for the detected ecosystem(s)",
 		Args:  cobra.NoArgs,
@@ -50,7 +57,7 @@ func newDoctorCmd() *cobra.Command {
 			fmt.Fprintln(out, headerStyle.Render("rig doctor")+"  "+dimStyle.Render(root))
 			fmt.Fprintln(out)
 
-			checks := gatherChecks(cmd, root)
+			checks, present := gatherChecks(cmd, root)
 			if len(checks) == 0 {
 				fmt.Fprintln(out, dimStyle.Render(
 					"no recognized projects (.NET/Node/Go/Cargo) found here — nothing to check"))
@@ -80,6 +87,16 @@ func newDoctorCmd() *cobra.Command {
 				fmt.Fprintln(out, doctorSummary(severity))
 			}
 
+			// Offer to install the missing optional tools rig can install (owned
+			// tools only — toolchains stay report-only, with the .NET page below).
+			if fixes := doctorToolFixes(cmd, present, root); len(fixes) > 0 {
+				doctorui.RunFixes(cmd, fixes, doctorui.Options{
+					Accent:      brand.AccentRig,
+					FixAll:      fixAll,
+					Interactive: !quiet && interactive(),
+				})
+			}
+
 			// On a TTY with a .NET project here but no SDK, offer the install page.
 			maybeOfferDotnetInstall(cmd, root)
 
@@ -89,6 +106,8 @@ func newDoctorCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&fixAll, "fix", false, "install every missing tool rig can install, without prompting")
+	return cmd
 }
 
 // dotnetTargetMajor is the .NET SDK major version rig standardizes on. Older
@@ -149,7 +168,7 @@ func docRowLine(glyph, label, detail, path string) string {
 // workspace: it discovers every project (the shared workspace searcher), and for
 // each ecosystem emits the toolchain rows once, then a row per project with its
 // own state (node deps / .NET TFM / go+cargo versions).
-func gatherChecks(cmd *cobra.Command, root string) []pendingCheck {
+func gatherChecks(cmd *cobra.Command, root string) ([]pendingCheck, map[string]bool) {
 	targets := discoverWorkspace(cdContext(cmd), root, excludeFor(root))
 	byEco := map[string][]target{}
 	for _, t := range targets {
@@ -197,13 +216,14 @@ func gatherChecks(cmd *cobra.Command, root string) []pendingCheck {
 	// emitted only when it has rows.
 	all = append(all, toolChecks(present, root)...)
 	all = append(all, configChecks(root, names)...)
-	return all
+	return all, present
 }
 
-// toolChecks reports the optional external tools (extTool values) relevant to
-// the present ecosystems and whether each is installed. A missing optional tool
-// is a warn — it only bites when you use the feature it powers.
-func toolChecks(present map[string]bool, root string) []pendingCheck {
+// relevantTools is the set of optional external tools (extTool values) that
+// matter for the present ecosystems, deduped (ReportGenerator is shared by
+// .NET/Node/Go coverage). Shared by toolChecks (the report rows) and
+// doctorToolFixes (the install offer) so they never drift.
+func relevantTools(present map[string]bool, root string) []extTool {
 	var tools []extTool
 	rgAdded := false
 	addRG := func() {
@@ -229,9 +249,15 @@ func toolChecks(present map[string]bool, root string) []pendingCheck {
 		tools = append(tools, toolWgo)
 		addRG()
 	}
+	return tools
+}
 
+// toolChecks reports the optional external tools relevant to the present
+// ecosystems and whether each is installed. A missing optional tool is a warn —
+// it only bites when you use the feature it powers.
+func toolChecks(present map[string]bool, root string) []pendingCheck {
 	var out []pendingCheck
-	for _, t := range tools {
+	for _, t := range relevantTools(present, root) {
 		t := t // capture
 		out = append(out, pendingCheck{eco: "tools", label: t.name, run: func() check {
 			if t.available(root) {
@@ -241,6 +267,32 @@ func toolChecks(present map[string]bool, root string) []pendingCheck {
 		}})
 	}
 	return out
+}
+
+// doctorToolFixes builds the install offer for the optional tools that are
+// missing AND rig owns an install command for — the "owned tools only" line:
+// only tools with a real `install` command appear (so fetch-on-use ReportGenerator
+// and SDK-shipped dnx don't), and a tool the user pinned `off` stays report-only.
+// Each result carries a Fix that runs the install; doctorui presents and applies.
+func doctorToolFixes(cmd *cobra.Command, present map[string]bool, root string) []doctor.Section {
+	var results []doctor.Result
+	for _, t := range relevantTools(present, root) {
+		t := t // capture
+		if t.available(root) || len(t.install) == 0 || t.mode(root) == toolOff {
+			continue
+		}
+		results = append(results, doctor.Result{
+			Name:     t.name,
+			Status:   doctor.Warn,
+			Detail:   "not installed — " + t.why,
+			Fix:      func(context.Context) error { return t.installNow(cmd, root) },
+			FixLabel: "install " + t.name + "  (" + strings.Join(t.install, " ") + ")",
+		})
+	}
+	if len(results) == 0 {
+		return nil
+	}
+	return []doctor.Section{{Title: "tools", Results: results}}
 }
 
 // toolHowto is the "how to get it" suffix for a missing tool: its install

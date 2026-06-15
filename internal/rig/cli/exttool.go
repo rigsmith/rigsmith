@@ -192,6 +192,17 @@ func (t extTool) runInstall(cmd *cobra.Command, root string) {
 	}
 }
 
+// installNow runs the tool's install command and returns its error, for the
+// `rig doctor` fix flow (which reports ✓/✗ from the returned error). Unlike
+// runInstall it surfaces the failure instead of just logging it. Only called for
+// tools that have an install command (doctorToolFixes guards on len(install) > 0).
+func (t extTool) installNow(cmd *cobra.Command, root string) error {
+	if len(t.install) == 0 {
+		return fmt.Errorf("no install command for %s", t.name)
+	}
+	return runCommand(cmd, root, t.install)
+}
+
 // unavailableErr is the guidance error require() returns when the tool can't be
 // resolved: what it's for, plus how to install it or a hint.
 func (t extTool) unavailableErr() error {
