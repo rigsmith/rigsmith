@@ -16,11 +16,26 @@ import (
 // A non-nil err means the command could not be run at all.
 type Runner func(shell bool, commandOrArgv []string, dir string) (output []string, exitCode int, err error)
 
-// ExecRunner is the production Runner, running commands with os/exec. Shell
-// commands go through /bin/sh -c (cmd.exe /c on Windows); argv commands are
-// exec'd directly. Stdout and stderr are merged, as the pipeline reports a
-// single output stream.
+// ExecRunner is the production Runner, running commands with os/exec and the
+// ambient process environment. Shell commands go through /bin/sh -c (cmd.exe /c
+// on Windows); argv commands are exec'd directly. Stdout and stderr are merged,
+// as the pipeline reports a single output stream.
 func ExecRunner(shell bool, commandOrArgv []string, dir string) ([]string, int, error) {
+	return runExec(nil, shell, commandOrArgv, dir)
+}
+
+// NewExecRunner returns a production Runner that runs each command with env as
+// its environment (in "KEY=VALUE" form; nil inherits the ambient process
+// environment). The release command wires the layered .env/.env.local < ambient
+// stack in here, so spawned release steps and variable captures see the same
+// environment as ${env.NAME} interpolation.
+func NewExecRunner(env []string) Runner {
+	return func(shell bool, commandOrArgv []string, dir string) ([]string, int, error) {
+		return runExec(env, shell, commandOrArgv, dir)
+	}
+}
+
+func runExec(env []string, shell bool, commandOrArgv []string, dir string) ([]string, int, error) {
 	var cmd *exec.Cmd
 	if shell {
 		shellExe, flag := "/bin/sh", "-c"
@@ -32,6 +47,7 @@ func ExecRunner(shell bool, commandOrArgv []string, dir string) ([]string, int, 
 		cmd = exec.Command(commandOrArgv[0], commandOrArgv[1:]...)
 	}
 	cmd.Dir = dir
+	cmd.Env = env // nil inherits the current process environment
 
 	combined, err := cmd.CombinedOutput()
 	lines := splitOutputLines(combined)
@@ -92,20 +108,24 @@ type Pipeline struct {
 	masker   *SecretMasker
 	prompter Prompter
 	workDir  string
+	env      map[string]string
 	native   map[string]NativeHandler
 
 	vars        *variables
 	baseContext map[string]string
 }
 
-// New builds a Pipeline. nativeSteps maps native step names (e.g.
-// "release") to host-registered handlers; it may be nil.
+// New builds a Pipeline. env is the layered release environment
+// (.env/.env.local < ambient) used to resolve ${env.NAME} placeholders; nil
+// falls back to the process environment. nativeSteps maps native step names
+// (e.g. "release") to host-registered handlers; it may be nil.
 func New(
 	runner Runner,
 	reporter Reporter,
 	masker *SecretMasker,
 	prompter Prompter,
 	workDir string,
+	env map[string]string,
 	nativeSteps map[string]NativeHandler,
 ) *Pipeline {
 	return &Pipeline{
@@ -114,6 +134,7 @@ func New(
 		masker:   masker,
 		prompter: prompter,
 		workDir:  workDir,
+		env:      env,
 		native:   nativeSteps,
 	}
 }
@@ -229,7 +250,7 @@ func (p *Pipeline) runCommands(label string, commands []CommandSpec) bool {
 			context["vars."+name] = resolution.value
 		}
 
-		resolved := interpolateCommand(context, command)
+		resolved := interpolateCommand(context, p.env, command)
 		p.reporter.CommandStarted(label, resolved)
 
 		output, exitCode := dispatch(p.runner, resolved, p.workDir)

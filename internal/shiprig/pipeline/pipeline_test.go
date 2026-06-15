@@ -2,6 +2,7 @@
 package pipeline
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -21,7 +22,7 @@ func newFixture(native map[string]NativeHandler) *fixture {
 		masker:   NewSecretMasker(),
 		prompter: &stubPrompter{answer: true},
 	}
-	f.pipeline = New(f.runner.run, f.reporter, f.masker, f.prompter, "/tmp/repo", native)
+	f.pipeline = New(f.runner.run, f.reporter, f.masker, f.prompter, "/tmp/repo", nil, native)
 	return f
 }
 
@@ -780,3 +781,33 @@ func TestResolveGithubReleaseOverriddenByRunBecomesCommandStep(t *testing.T) {
 }
 
 func specPtr(spec CommandSpec) *CommandSpec { return &spec }
+
+// ${env.NAME} resolves from the layered release environment map, and a missing
+// var resolves to the empty string (consuming the placeholder).
+func TestInterpolateEnvFromLayeredMap(t *testing.T) {
+	env := map[string]string{"NPM_TOKEN": "from-dotenv"}
+
+	if got := interpolate(nil, env, "publish --token ${env.NPM_TOKEN}"); got != "publish --token from-dotenv" {
+		t.Errorf("env interpolation = %q, want the .env value substituted", got)
+	}
+	if got := interpolate(nil, env, "x=${env.ABSENT}"); got != "x=" {
+		t.Errorf("missing env var = %q, want empty (placeholder consumed)", got)
+	}
+}
+
+// NewExecRunner runs each command with the provided environment, so a token
+// declared only in the layered .env reaches the spawned release command.
+func TestNewExecRunnerPassesEnvToCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses /bin/sh")
+	}
+	runner := NewExecRunner([]string{"FROM_DOTENV=yes"})
+
+	out, code, err := runner(true, []string{`printf %s "$FROM_DOTENV"`}, "")
+	if err != nil || code != 0 {
+		t.Fatalf("run failed: code=%d err=%v", code, err)
+	}
+	if len(out) != 1 || out[0] != "yes" {
+		t.Errorf("command output = %v, want the env value [yes]", out)
+	}
+}

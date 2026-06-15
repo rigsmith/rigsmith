@@ -27,6 +27,7 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
+	root.PersistentFlags().BoolVar(&noEnv, "no-env", false, "skip .env/.env.local loading for this run")
 
 	add := commands.NewAddCmd()
 	// With args/flags, or off a TTY, bare `shiprig` stays the release front door's

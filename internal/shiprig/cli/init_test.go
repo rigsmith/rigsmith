@@ -66,14 +66,16 @@ func TestScaffoldReleaseConfig(t *testing.T) {
 }
 
 func TestPrintTokenPreflight(t *testing.T) {
-	t.Setenv("RELEASE_TOKEN_SET", "x")
-	t.Setenv("RELEASE_TOKEN_MISSING", "")
+	// The env map stands in for the layered .env/.env.local < ambient view: a
+	// token present there (e.g. from a local .env) reads as set, an empty or
+	// absent one as missing.
+	env := map[string]string{"RELEASE_TOKEN_SET": "x", "RELEASE_TOKEN_MISSING": ""}
 
 	var buf bytes.Buffer
 	printTokenPreflight(&buf, []plugin.TokenSpec{
 		{EnvVar: "RELEASE_TOKEN_SET", For: "publish"},
 		{EnvVar: "RELEASE_TOKEN_MISSING", For: "upload", URL: "https://example.test"},
-	})
+	}, env)
 	out := buf.String()
 	if !strings.Contains(out, "✓ RELEASE_TOKEN_SET") {
 		t.Errorf("set token should be ticked:\n%s", out)
