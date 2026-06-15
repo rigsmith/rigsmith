@@ -14,13 +14,16 @@ const DefaultCommitMessage = "chore: release"
 
 // DefaultOrder lists the steps run when order is not configured. `build` is
 // early (before publish) so it doubles as a packaging preflight — a broken build
-// fails the release before anything ships. The forge step (`githubRelease`)
-// attaches the build's release assets after creating the release.
-var DefaultOrder = []string{"version", "commit", "build", "publish", "push", "githubRelease"}
+// fails the release before anything ships. `tag` is its own step (promoted out
+// of publish): publish narrows to the registry push, `tag` creates the local
+// tags, and `push --follow-tags` puts them on the remote before `release`. The
+// `release` step (forge) creates the release and attaches the build's assets.
+var DefaultOrder = []string{"version", "commit", "build", "publish", "tag", "push", "release"}
 
 var (
-	commandBuiltins = []string{"version", "commit", "publish", "push"}
-	nativeBuiltins  = []string{"build", "githubRelease"}
+	commandBuiltins = []string{"version", "commit", "publish", "tag", "push"}
+	// build and the forge `release` step run host-registered handlers.
+	nativeBuiltins = []string{"build", "release"}
 )
 
 // DefaultConfirmMessage is the default confirmation prompt when a step sets
@@ -182,7 +185,13 @@ func stepAction(name string, config *Config, stepConfig *StepConfig) ([]CommandS
 		}, true
 
 	case "publish":
-		return []CommandSpec{ShellCommand(joinShell(tool, "publish", extraArgs))}, true
+		// Tagging is the `tag` step's job in the pipeline, so publish narrows to
+		// the registry push (--no-git-tag). A non-default order that drops the
+		// `tag` step can re-enable tagging via the publish step's args.
+		return []CommandSpec{ShellCommand(joinShell(tool, "publish --no-git-tag", extraArgs))}, true
+
+	case "tag":
+		return []CommandSpec{ShellCommand(joinShell(tool, "tag", extraArgs))}, true
 
 	case "push":
 		push := append([]string{"git", "push", "--follow-tags"}, extraArgs...)

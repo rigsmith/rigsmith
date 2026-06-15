@@ -99,7 +99,7 @@ type Pipeline struct {
 }
 
 // New builds a Pipeline. nativeSteps maps native step names (e.g.
-// "githubRelease") to host-registered handlers; it may be nil.
+// "release") to host-registered handlers; it may be nil.
 func New(
 	runner Runner,
 	reporter Reporter,
