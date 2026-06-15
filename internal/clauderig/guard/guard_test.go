@@ -1,6 +1,9 @@
 package guard
 
-import "testing"
+import (
+	"runtime"
+	"testing"
+)
 
 const root = "/Users/john/Git/rigsmith"
 
@@ -56,6 +59,14 @@ func TestEvalWrite_OnBase(t *testing.T) {
 }
 
 func TestEvalBash_EscapingCd(t *testing.T) {
+	// The cd-escape policy is evaluated with the host's filepath semantics (it
+	// guards a live session on whatever OS it runs on). These fixtures are POSIX
+	// paths — "/tmp/foo", "/etc", "~" → "/Users/john" — which aren't absolute under
+	// Windows filepath, so the modeled escapes can't be reproduced there. clauderig
+	// runs on macOS/Linux; assert the POSIX policy on a POSIX host.
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX-path cd-escape fixtures; clauderig runs on macOS/Linux")
+	}
 	e := base(Env{})
 	cwd := root
 	tests := []struct {

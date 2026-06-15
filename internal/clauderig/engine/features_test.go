@@ -20,7 +20,7 @@ func TestSync_InvalidJSONSkippedNotRaw(t *testing.T) {
 	write(t, live, "skills/a/SKILL.md", "ok")
 	staging := t.TempDir()
 	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
-	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m})
+	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, SourceOverride: override("cli", live)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestSync_AgedDeletedProjectPrunedFromStaging(t *testing.T) {
 	m := config.Machine{Name: "j", OS: pathmap.OSMacOS, Home: "/Users/john"}
 	cfg := cliOnlyConfig(live)
 
-	if _, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, RetentionDays: 30}); err != nil {
+	if _, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, RetentionDays: 30, SourceOverride: override("cli", live)}); err != nil {
 		t.Fatal(err)
 	}
 	staged := filepath.Join(staging, "cli", "projects", "-Users-john-Git-p")
@@ -90,7 +90,7 @@ func TestSync_AgedDeletedProjectPrunedFromStaging(t *testing.T) {
 	os.Chtimes(filepath.Join(staged, "s.jsonl"), old, old)
 	os.RemoveAll(filepath.Join(live, "projects", "-Users-john-Git-p"))
 
-	rep, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, RetentionDays: 30})
+	rep, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, RetentionDays: 30, SourceOverride: override("cli", live)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestSync_RetentionDropsOldTranscripts(t *testing.T) {
 
 	staging := t.TempDir()
 	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
-	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, RetentionDays: 30})
+	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, RetentionDays: 30, SourceOverride: override("cli", live)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestSync_IncrementalSkipsUnchanged(t *testing.T) {
 	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
 	cfg := cliOnlyConfig(live)
 
-	r1, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m})
+	r1, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, SourceOverride: override("cli", live)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestSync_IncrementalSkipsUnchanged(t *testing.T) {
 		t.Errorf("first sync Unchanged = %d, want 0", r1.Roots[0].Unchanged)
 	}
 
-	r2, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m})
+	r2, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, SourceOverride: override("cli", live)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +172,7 @@ func TestRestore_PruneRemovesStaleConfigNotProjects(t *testing.T) {
 	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
 	rep, err := Restore(RestoreOptions{
 		StagingDir: staging, Config: targetRootConfig(target), Machine: m, Prune: true,
+		TargetOverride: override("cli", target),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +197,7 @@ func TestRestore_NoPruneByDefault(t *testing.T) {
 	target := t.TempDir()
 	write(t, target, "skills/stale/SKILL.md", "stale")
 	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
-	if _, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target), Machine: m}); err != nil {
+	if _, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target), Machine: m, TargetOverride: override("cli", target)}); err != nil {
 		t.Fatal(err)
 	}
 	if !fexists(filepath.Join(target, "skills", "stale", "SKILL.md")) {

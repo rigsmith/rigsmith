@@ -37,7 +37,7 @@ func TestRestore_RewritesSlugAndMergesSecret(t *testing.T) {
 
 	// restoring onto "jane" on macOS → home /Users/jane
 	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
-	rep, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target), Machine: jane, Manifest: m})
+	rep, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target), Machine: jane, Manifest: m, TargetOverride: override("cli", target)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestRestore_FreshMachineDropsPlaceholder(t *testing.T) {
 	target := t.TempDir() // no local settings.json
 
 	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
-	if _, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target), Machine: jane}); err != nil {
+	if _, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target), Machine: jane, TargetOverride: override("cli", target)}); err != nil {
 		t.Fatal(err)
 	}
 	got := read(t, filepath.Join(target, "settings.json"))
@@ -92,7 +92,7 @@ func TestRestore_UnmappedSlugKept(t *testing.T) {
 	}
 	target := t.TempDir()
 	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
-	rep, _ := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target), Machine: jane, Manifest: m})
+	rep, _ := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target), Machine: jane, Manifest: m, TargetOverride: override("cli", target)})
 	if _, err := os.Stat(filepath.Join(target, "projects", "-opt-shared", "s.jsonl")); err != nil {
 		t.Errorf("unmapped slug should be kept as-is: %v", err)
 	}

@@ -28,7 +28,7 @@ func TestSync_DesktopConfigKeepFilter(t *testing.T) {
 
 	staging := t.TempDir()
 	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}
-	rep, err := Sync(Options{StagingDir: staging, Config: twoRootConfig(liveCli, liveDesk), Machine: john})
+	rep, err := Sync(Options{StagingDir: staging, Config: twoRootConfig(liveCli, liveDesk), Machine: john, SourceOverride: override("cli", liveCli, "desktop", liveDesk)})
 	if err != nil {
 		t.Fatalf("sync: %v (findings=%v)", err, rep.Findings)
 	}
@@ -52,7 +52,7 @@ func TestDesktopValueRewrite_RoundTrip(t *testing.T) {
 
 	staging := t.TempDir()
 	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}
-	if _, err := Sync(Options{StagingDir: staging, Config: twoRootConfig(liveCli, liveDesk), Machine: john}); err != nil {
+	if _, err := Sync(Options{StagingDir: staging, Config: twoRootConfig(liveCli, liveDesk), Machine: john, SourceOverride: override("cli", liveCli, "desktop", liveDesk)}); err != nil {
 		t.Fatal(err)
 	}
 	staged := read(t, filepath.Join(staging, "desktop", "claude-code-sessions", "uuid", "local_1.json"))
@@ -62,7 +62,7 @@ func TestDesktopValueRewrite_RoundTrip(t *testing.T) {
 
 	targetCli, targetDesk := t.TempDir(), t.TempDir()
 	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
-	if _, err := Restore(RestoreOptions{StagingDir: staging, Config: twoRootConfig(targetCli, targetDesk), Machine: jane}); err != nil {
+	if _, err := Restore(RestoreOptions{StagingDir: staging, Config: twoRootConfig(targetCli, targetDesk), Machine: jane, TargetOverride: override("cli", targetCli, "desktop", targetDesk)}); err != nil {
 		t.Fatal(err)
 	}
 	restored := read(t, filepath.Join(targetDesk, "claude-code-sessions", "uuid", "local_1.json"))

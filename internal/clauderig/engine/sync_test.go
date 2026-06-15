@@ -39,6 +39,21 @@ func cliOnlyConfig(cliDir string) *config.Config {
 	return c
 }
 
+// override builds a root-id→dir map for Sync's SourceOverride / Restore's
+// TargetOverride, taking (id, dir) pairs. These tests model a macOS Machine but
+// point roots at host-native temp dirs; using the override bypasses the
+// machine's path resolver (which would mangle a Windows temp path like C:\… into
+// an invalid POSIX path), so the same fixtures exercise the real sync/restore
+// logic on every CI OS. (See TestSync_MultiMachineManifestUnion, which already
+// uses this hook.)
+func override(pairs ...string) map[string]string {
+	m := make(map[string]string, len(pairs)/2)
+	for i := 0; i+1 < len(pairs); i += 2 {
+		m[pairs[i]] = pairs[i+1]
+	}
+	return m
+}
+
 func TestSync_RedactsCopiesAndBuildsManifest(t *testing.T) {
 	live := t.TempDir()
 	write(t, live, "settings.json", `{"effortLevel":"high","apiKey":"sk-ant-abcdefgh12345678"}`)
@@ -49,7 +64,7 @@ func TestSync_RedactsCopiesAndBuildsManifest(t *testing.T) {
 
 	staging := t.TempDir()
 	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
-	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, ClaudeVersion: "2.1.175"})
+	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, ClaudeVersion: "2.1.175", SourceOverride: override("cli", live)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +106,7 @@ func TestSync_TripwireBlocksLeak(t *testing.T) {
 
 	staging := t.TempDir()
 	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
-	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m})
+	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, SourceOverride: override("cli", live)})
 	if err == nil {
 		t.Fatal("expected tripwire error")
 	}
