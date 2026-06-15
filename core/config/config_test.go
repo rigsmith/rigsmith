@@ -109,6 +109,25 @@ func TestParseSharedKeysAndEcosystemBlocks(t *testing.T) {
 	}
 }
 
+func TestParseIssuesBlock(t *testing.T) {
+	c, err := Parse([]byte(`{
+		"issues": { "enabled": true, "comment": "Released in {{version}}", "close": true }
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Issues.Enabled || !c.Issues.Close {
+		t.Errorf("issues = %+v, want enabled+close", c.Issues)
+	}
+	if c.Issues.Comment != "Released in {{version}}" {
+		t.Errorf("issues.comment = %q", c.Issues.Comment)
+	}
+	// It is a shared key, not bucketed as an ecosystem block.
+	if _, ok := c.Ecosystems["issues"]; ok {
+		t.Error("issues must not be treated as an ecosystem block")
+	}
+}
+
 func TestParseUnknownAndMissingKeysTolerated(t *testing.T) {
 	// Unknown keys are tolerated (bucketed as foreign ecosystem blocks); missing
 	// keys keep their defaults.

@@ -18,12 +18,14 @@ const DefaultCommitMessage = "chore: release"
 // of publish): publish narrows to the registry push, `tag` creates the local
 // tags, and `push --follow-tags` puts them on the remote before `release`. The
 // `release` step (forge) creates the release and attaches the build's assets.
-var DefaultOrder = []string{"version", "commit", "build", "publish", "tag", "push", "release"}
+// `issues` runs last: it comments on / closes the issues the release resolves
+// (a no-op unless the `issues` config is enabled).
+var DefaultOrder = []string{"version", "commit", "build", "publish", "tag", "push", "release", "issues"}
 
 var (
 	commandBuiltins = []string{"version", "commit", "publish", "tag", "push"}
-	// build and the forge `release` step run host-registered handlers.
-	nativeBuiltins = []string{"build", "release"}
+	// build, the forge `release` step, and `issues` run host-registered handlers.
+	nativeBuiltins = []string{"build", "release", "issues"}
 )
 
 // NativeStepDescription is the human label for a native step's action — it runs a
@@ -35,6 +37,8 @@ func NativeStepDescription(name string) string {
 		return "build distributable artifacts"
 	case "release":
 		return "per-package forge release"
+	case "issues":
+		return "comment on / close resolved issues"
 	default:
 		return "native step"
 	}

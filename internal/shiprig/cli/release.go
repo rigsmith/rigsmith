@@ -6,9 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/rigsmith/rigsmith/internal/shiprig/forge"
@@ -140,8 +143,43 @@ func newReleaseCmd() *cobra.Command {
 					return ok
 				}
 
+				issuesHandler := func() bool {
+					ic := ws.Config.Issues
+					if !ic.Enabled {
+						out("issues: disabled (set issues.enabled to comment on / close resolved issues)")
+						return true
+					}
+					pkgs, ecoOf, err := ws.Discover(cmd.Context())
+					if err != nil {
+						out("discover: " + err.Error())
+						return false
+					}
+					// Label the release (fills the comment's {{version}} and the
+					// dedupe marker) with the tags actually released.
+					tags := make([]string, 0, len(pkgs))
+					for _, p := range pkgs {
+						if ws.Config != nil && ws.Config.IsIgnored(p.Name) {
+							continue
+						}
+						tags = append(tags, gitutil.PackageTag(ecoOf[p.Name], p.Dir, p.Name, p.Version))
+					}
+					sort.Strings(tags)
+					messages, err := releasedCommitMessages(cmd, ws.Root)
+					if err != nil {
+						out("issues: " + err.Error())
+						return false
+					}
+					ok, msg := forge.RunIssues(messages, fsel,
+						forge.IssuesConfig{Comment: ic.Comment, Close: ic.Close},
+						strings.Join(tags, ", "), ws.Root, execForgeRunner(cmd), out)
+					if msg != "" {
+						out(msg)
+					}
+					return ok
+				}
+
 				return pipeline.New(pipeline.ExecRunner, reporter, masker, prompter, ws.Root,
-					map[string]pipeline.NativeHandler{"build": buildHandler, "release": releaseHandler})
+					map[string]pipeline.NativeHandler{"build": buildHandler, "release": releaseHandler, "issues": issuesHandler})
 			}
 
 			fail := func() error {
@@ -241,6 +279,28 @@ func stepForgeURL(cfg *pipeline.Config) string {
 		return s.ForgeURL
 	}
 	return ""
+}
+
+// releasedCommitMessages returns the subject+body of every commit in this
+// release — the range since the previous release tag — for issue-ref scanning.
+// The previous tag is the nearest one reachable from HEAD's parent (HEAD is the
+// release commit, so HEAD^ is pre-release and its nearest tag is the prior
+// release); when there is none (first release, shallow clone), the whole history
+// is scanned.
+func releasedCommitMessages(cmd *cobra.Command, root string) ([]string, error) {
+	prev := ""
+	if out, err := execForgeRunner(cmd)(root, "git", "describe", "--tags", "--abbrev=0", "HEAD^"); err == nil {
+		prev = strings.TrimSpace(out)
+	}
+	commits, err := gitutil.LogSince(cmd.Context(), root, prev)
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]string, 0, len(commits))
+	for _, c := range commits {
+		messages = append(messages, c.Subject+"\n"+c.Body)
+	}
+	return messages, nil
 }
 
 // attachPaths flattens the build's artifacts into per-package file paths for the

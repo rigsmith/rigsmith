@@ -216,6 +216,10 @@ type Config struct {
 	// Absent/disabled means no section (the historical behavior).
 	Contributors Contributors `json:"contributors,omitempty"`
 
+	// Issues configures the release `issues` step — commenting on / closing the
+	// issues a release resolves. Absent/disabled means the step is a no-op.
+	Issues Issues `json:"issues,omitempty"`
+
 	// Ecosystems holds per-ecosystem config blocks (dotnet/node/go/...), kept raw
 	// so each ecosystem adapter decodes its own settings. This generalizes the
 	// C# tool's single `dotnet` block.
@@ -283,7 +287,21 @@ var sharedKeys = map[string]bool{
 	"fixed": true, "linked": true, "updateInternalDependencies": true,
 	"snapshot": true, "format": true, "changelog": true, "commit": true,
 	"privatePackages": true, "changelogGroups": true, "paths": true,
-	"versioning": true, "contributors": true,
+	"versioning": true, "contributors": true, "issues": true,
+}
+
+// Issues configures the release `issues` step. A reference like `#123` in the
+// released commit range can be commented on and/or closed (when introduced with
+// a closing keyword like "fixes #123"). Forge-native for now (GitHub); Jira is a
+// planned follow-up.
+type Issues struct {
+	// Enabled turns the step on; when false the step is a no-op.
+	Enabled bool `json:"enabled,omitempty"`
+	// Comment is the comment body template posted on each referenced issue;
+	// `{{version}}` expands to the released versions. Empty ⇒ no comment.
+	Comment string `json:"comment,omitempty"`
+	// Close closes issues referenced with a closing keyword.
+	Close bool `json:"close,omitempty"`
 }
 
 // Parse decodes config bytes, applying defaults and bucketing unknown
