@@ -202,7 +202,31 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 		}, nil
 	}
 
-	if _, stderr, err := runCmd(ctx, dir, "cargo", args...); err != nil {
+	// Resolve the publish credential. With nothing supplied, cargo uses the
+	// caller's ambient token (`cargo login` / CARGO_REGISTRY_TOKEN) and we touch
+	// nothing. With a token (an engine-resolved secret ref, or one we mint via
+	// OIDC trusted publishing), pass it through CARGO_REGISTRY_TOKEN — env,
+	// never on the command line.
+	env := os.Environ()
+	authNote := ""
+	switch {
+	case req.Auth != nil && req.Auth.Token != "":
+		env = append(os.Environ(), "CARGO_REGISTRY_TOKEN="+req.Auth.Token)
+		if req.Auth.Method == "secret-ref" {
+			authNote = " (auth via secret reference)"
+		}
+
+	case req.OIDC:
+		token, revoke, err := cratesOIDCToken(ctx, req.PackageSource)
+		if err != nil {
+			return plugin.PublishResponse{}, fmt.Errorf("cargo publish: %w", err)
+		}
+		defer revoke()
+		env = append(os.Environ(), "CARGO_REGISTRY_TOKEN="+token)
+		authNote = " (auth via OIDC trusted publishing)"
+	}
+
+	if _, stderr, err := runCmdEnv(ctx, dir, env, "cargo", args...); err != nil {
 		// crates.io rejects a re-publish of an existing version; that is our
 		// idempotent skip, not a failure.
 		if strings.Contains(strings.ToLower(stderr), "already") {
@@ -213,7 +237,7 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 
 	return plugin.PublishResponse{
 		Published: true,
-		Message:   fmt.Sprintf("published %s@%s", req.Package.Name, req.Package.Version),
+		Message:   fmt.Sprintf("published %s@%s", req.Package.Name, req.Package.Version) + authNote,
 	}, nil
 }
 
@@ -246,28 +270,47 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	}, nil
 }
 
-// ReleaseInit declares Cargo's release prerequisites: a CARGO_REGISTRY_TOKEN for
-// publishing. cargo package produces the .crate natively, so there is no
-// build-config file to scaffold.
+// ReleaseInit declares Cargo's release prerequisites. With OIDC trusted
+// publishing in play (the default), no CARGO_REGISTRY_TOKEN is required —
+// instead we point the operator at the one-time Trusted Publisher setup, which
+// shiprig cannot do for them. With OIDC off, it falls back to declaring
+// CARGO_REGISTRY_TOKEN. cargo package produces the .crate natively, so there is
+// no build-config file to scaffold.
 func (a *Adapter) ReleaseInit(ctx context.Context, req plugin.ReleaseInitRequest) (plugin.ReleaseInitResponse, error) {
+	if req.OIDC {
+		return plugin.ReleaseInitResponse{
+			Notes: []string{
+				"publishes to crates.io via OIDC trusted publishing — no CARGO_REGISTRY_TOKEN needed",
+				"one-time: add your release workflow as a Trusted Publisher (crates.io → crate → Settings → Trusted Publishing)",
+				"CI must grant `id-token: write`",
+				"to use a token instead, set cargo.oidc=\"off\" and provide CARGO_REGISTRY_TOKEN (or cargo.auth)",
+			},
+		}, nil
+	}
 	return plugin.ReleaseInitResponse{
 		Tokens: []plugin.TokenSpec{{
 			EnvVar: "CARGO_REGISTRY_TOKEN",
 			For:    "cargo publish",
 			URL:    "https://crates.io/settings/tokens",
 		}},
-		Notes: []string{"publishes to crates.io"},
+		Notes: []string{"publishes to crates.io (set cargo.oidc to enable tokenless OIDC publishing)"},
 	}, nil
 }
 
-// runCmd runs name+args in dir ("" for the current directory) and returns the
-// captured stdout/stderr. On a non-zero exit the error wraps stderr for
-// diagnostics.
+// runCmd runs name+args in dir ("" for the current directory) with the ambient
+// environment and returns the captured stdout/stderr.
 func runCmd(ctx context.Context, dir, name string, args ...string) (stdout, stderr string, err error) {
+	return runCmdEnv(ctx, dir, nil, name, args...)
+}
+
+// runCmdEnv is runCmd with an explicit environment (nil = inherit the parent's).
+// On a non-zero exit the error wraps stderr for diagnostics.
+func runCmdEnv(ctx context.Context, dir string, env []string, name string, args ...string) (stdout, stderr string, err error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
+	cmd.Env = env
 	var outBuf, errBuf strings.Builder
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
