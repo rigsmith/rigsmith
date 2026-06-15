@@ -198,12 +198,20 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 // module with no goreleaser config is "published" by its git tag and has no
 // binaries to ship, so it is skipped. The produced archives + checksums are
 // release assets (Attach: true). goreleaser builds into the repo's dist/.
+//
+// The build runs *before* any tag exists (the release pipeline's `build` step is
+// early, so a broken build never reaches publish). A Go version normally comes
+// from the git tag, so we inject the already-bumped version via
+// GORELEASER_CURRENT_TAG and skip goreleaser's tag-at-HEAD validation — making
+// the build independent of tag ordering. A rehearse build (--snapshot) derives
+// its own pseudo-version and needs neither.
 func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
 	if goreleaserConfig(req.RepoRoot) == "" {
 		return plugin.ArtifactsResponse{Skipped: true, Message: "no .goreleaser.yaml; Go modules ship via git tag"}, nil
 	}
+	tag := moduleTag(req.Package.Dir, req.Package.Version)
 	if req.DryRun {
-		mode := "goreleaser release --skip=publish"
+		mode := "goreleaser release --skip=publish,validate (GORELEASER_CURRENT_TAG=" + tag + ")"
 		if req.Snapshot {
 			mode = "goreleaser release --snapshot"
 		}
@@ -212,13 +220,15 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	if _, err := exec.LookPath("goreleaser"); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("goreleaser not found on PATH (needed to build Go binaries; see https://goreleaser.com): %w", err)
 	}
-	// Build + archive into dist/ without uploading: --skip=publish for a real
-	// tagged release, --snapshot for a tagless rehearse.
-	args := []string{"release", "--clean", "--skip=publish"}
+	// Build + archive into dist/ without uploading. A real build injects the
+	// bumped version (no tag needed yet); a rehearse uses --snapshot.
+	args := []string{"release", "--clean", "--skip=publish,validate"}
+	env := append(os.Environ(), "GORELEASER_CURRENT_TAG="+tag)
 	if req.Snapshot {
 		args = []string{"release", "--clean", "--snapshot"}
+		env = os.Environ()
 	}
-	if _, _, err := runCmd(ctx, req.RepoRoot, "goreleaser", args...); err != nil {
+	if _, _, err := runCmd(ctx, req.RepoRoot, env, "goreleaser", args...); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("goreleaser: %w", err)
 	}
 	arts, err := collectDist(filepath.Join(req.RepoRoot, "dist"))
@@ -226,6 +236,15 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		return plugin.ArtifactsResponse{}, err
 	}
 	return plugin.ArtifactsResponse{Built: true, Artifacts: arts, Message: "built binaries via goreleaser"}, nil
+}
+
+// moduleTag is the version tag for a Go module: vX.Y.Z at the repo root, or
+// dir/vX.Y.Z for a sub-module (matching gitutil.PackageTag's Go convention).
+func moduleTag(dir, version string) string {
+	if dir == "" || dir == "." {
+		return "v" + version
+	}
+	return dir + "/v" + version
 }
 
 // goreleaserConfig returns the path to a goreleaser config in root, or "".
@@ -269,10 +288,15 @@ func collectDist(dist string) ([]plugin.Artifact, error) {
 }
 
 // runCmd runs name with args in dir, returning stdout/stderr for diagnostics.
-func runCmd(ctx context.Context, dir, name string, args ...string) (stdout, stderr string, err error) {
+// A non-nil env replaces the child's environment (pass os.Environ()-based slices
+// to extend it); nil inherits the parent's environment.
+func runCmd(ctx context.Context, dir string, env []string, name string, args ...string) (stdout, stderr string, err error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	if dir != "" {
 		cmd.Dir = dir
+	}
+	if env != nil {
+		cmd.Env = env
 	}
 	var outBuf, errBuf strings.Builder
 	cmd.Stdout = &outBuf

@@ -12,12 +12,15 @@ const DefaultTool = "changeset"
 // DefaultCommitMessage is the default commit message for the built-in commit step.
 const DefaultCommitMessage = "chore: release"
 
-// DefaultOrder lists the steps run when order is not configured.
-var DefaultOrder = []string{"version", "commit", "publish", "push", "githubRelease"}
+// DefaultOrder lists the steps run when order is not configured. `build` is
+// early (before publish) so it doubles as a packaging preflight — a broken build
+// fails the release before anything ships. The forge step (`githubRelease`)
+// attaches the build's release assets after creating the release.
+var DefaultOrder = []string{"version", "commit", "build", "publish", "push", "githubRelease"}
 
 var (
 	commandBuiltins = []string{"version", "commit", "publish", "push"}
-	nativeBuiltins  = []string{"githubRelease"}
+	nativeBuiltins  = []string{"build", "githubRelease"}
 )
 
 // DefaultConfirmMessage is the default confirmation prompt when a step sets

@@ -83,7 +83,7 @@ func singleShellAction(t *testing.T, step ResolvedStep) string {
 func TestResolveUsesDefaultOrderWhenNoneConfigured(t *testing.T) {
 	steps := mustResolve(t, &Config{}, ResolveOptions{})
 
-	want := []string{"version", "commit", "publish", "push", "githubRelease"}
+	want := []string{"version", "commit", "build", "publish", "push", "githubRelease"}
 	if !equalStrings(stepNames(steps), want) {
 		t.Errorf("names = %v, want %v", stepNames(steps), want)
 	}
@@ -94,6 +94,10 @@ func TestResolveUsesDefaultOrderWhenNoneConfigured(t *testing.T) {
 	}
 	if findStep(t, steps, "githubRelease").Kind != StepKindNative {
 		t.Error("githubRelease should be a native step")
+	}
+	// build runs the host's Artifacts handler — a native step, like githubRelease.
+	if findStep(t, steps, "build").Kind != StepKindNative {
+		t.Error("build should be a native step")
 	}
 }
 
@@ -289,8 +293,8 @@ func TestResolveFromToKeepsOnlyTheRange(t *testing.T) {
 			enabled = append(enabled, step.Name)
 		}
 	}
-	if !equalStrings(enabled, []string{"commit", "publish"}) {
-		t.Errorf("enabled = %v, want [commit publish]", enabled)
+	if !equalStrings(enabled, []string{"commit", "build", "publish"}) {
+		t.Errorf("enabled = %v, want [commit build publish]", enabled)
 	}
 }
 

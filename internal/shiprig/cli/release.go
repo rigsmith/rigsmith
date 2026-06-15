@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/rigsmith/rigsmith/internal/shiprig/forge"
 	"github.com/rigsmith/rigsmith/internal/shiprig/pipeline"
@@ -17,9 +18,11 @@ import (
 )
 
 // newReleaseCmd builds the `release` command: a configurable step pipeline
-// (.changeset/release.jsonc) around the built-in version/commit/publish/push/
-// githubRelease steps, with hooks, captured variables, confirm gates, and
-// secret masking. Ported from net-changesets' release orchestrator.
+// (.changeset/release.jsonc) around the built-in version/commit/build/publish/
+// push/githubRelease steps, with hooks, captured variables, confirm gates, and
+// secret masking. The `build` step produces each package's distributable
+// artifacts (the ecosystem Artifacts method) into dist/ before publish; the
+// githubRelease step attaches the Attach:true ones. Ported from net-changesets.
 func newReleaseCmd() *cobra.Command {
 	var (
 		dryRun     bool
@@ -32,7 +35,7 @@ func newReleaseCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "release",
-		Short: "Run the release pipeline (version → commit → publish → push → githubRelease)",
+		Short: "Run the release pipeline (version → commit → build → publish → push → githubRelease)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ws, err := commands.Open()
 			if err != nil {
@@ -73,23 +76,60 @@ func newReleaseCmd() *cobra.Command {
 			if gitOnly {
 				fmode = forge.None
 			}
+			// built is shared between the `build` and `githubRelease` handlers in a
+			// single run: build produces dist/ and records each package's artifacts;
+			// the forge step attaches the Attach:true ones to the release.
+			built := map[string][]plugin.Artifact{}
+			distDir := filepath.Join(ws.Root, "dist")
 			newPipeline := func(reporter pipeline.Reporter, prompter pipeline.Prompter) *pipeline.Pipeline {
-				handler := func() bool {
+				out := func(lines ...string) { reporter.CommandOutput(lines) }
+
+				buildHandler := func() bool {
 					pkgs, ecoOf, err := ws.Discover(cmd.Context())
 					if err != nil {
-						reporter.CommandOutput([]string{"discover: " + err.Error()})
+						out("discover: " + err.Error())
 						return false
 					}
-					ok, msg := forge.Run(pkgs, ecoOf, ws.Config, fmode, ws.Root, execForgeRunner(cmd), func(lines ...string) {
-						reporter.CommandOutput(lines)
-					})
+					for k := range built {
+						delete(built, k) // fresh each run
+					}
+					for _, pkg := range pkgs {
+						eco, ok := ws.Registry.Get(ecoOf[pkg.Name])
+						if !ok {
+							continue
+						}
+						resp, err := eco.Artifacts(cmd.Context(), plugin.ArtifactsRequest{
+							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir,
+						})
+						if err != nil {
+							out("build " + pkg.Name + ": " + err.Error())
+							return false
+						}
+						if resp.Built {
+							built[pkg.Name] = resp.Artifacts
+						}
+						if resp.Message != "" {
+							out("build " + pkg.Name + ": " + resp.Message)
+						}
+					}
+					return true
+				}
+
+				releaseHandler := func() bool {
+					pkgs, ecoOf, err := ws.Discover(cmd.Context())
+					if err != nil {
+						out("discover: " + err.Error())
+						return false
+					}
+					ok, msg := forge.Run(pkgs, ecoOf, attachPaths(built), ws.Config, fmode, ws.Root, execForgeRunner(cmd), out)
 					if msg != "" {
-						reporter.CommandOutput([]string{msg})
+						out(msg)
 					}
 					return ok
 				}
+
 				return pipeline.New(pipeline.ExecRunner, reporter, masker, prompter, ws.Root,
-					map[string]pipeline.NativeHandler{"githubRelease": handler})
+					map[string]pipeline.NativeHandler{"build": buildHandler, "githubRelease": releaseHandler})
 			}
 
 			fail := func() error {
@@ -161,6 +201,21 @@ func stepForge(cfg *pipeline.Config) string {
 		return s.Forge
 	}
 	return ""
+}
+
+// attachPaths flattens the build's artifacts into per-package file paths for the
+// ones marked Attach (binaries/archives), dropping registry packages (.tgz/
+// .nupkg/.crate) that ship to their registry rather than the forge release.
+func attachPaths(built map[string][]plugin.Artifact) map[string][]string {
+	out := map[string][]string{}
+	for name, arts := range built {
+		for _, a := range arts {
+			if a.Attach {
+				out[name] = append(out[name], a.Path)
+			}
+		}
+	}
+	return out
 }
 
 // ttyPrompter asks a confirm gate on the terminal.

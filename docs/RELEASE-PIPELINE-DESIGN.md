@@ -62,20 +62,51 @@ goreleaser special case.
   Since `publish` no longer needs to re-build, a follow-up can have it reuse the
   `dist/` artifacts (e.g. dotnet pushes the retained `.nupkg`).
 
-### 1a-next. The `artifacts` pipeline step (slice 2)
+### 1a-next. `build` early + `attach` at release — NOT a trailing `artifacts` step (slice 2)
 
-- New built-in step **`artifacts`** in `DefaultOrder` **after `push`** and after
-  `githubRelease`: calls `Artifacts()` for each discovered package's ecosystem,
-  collects `dist/`, then uploads the `Attach:true` artifacts to the release.
-  `[version, commit, publish, push, githubRelease, artifacts]`.
+`artifacts` is really **two concerns** with opposite ordering needs, so it splits:
+
+- **`build`** (produce `dist/`) has no dependencies and **should run early** — it
+  doubles as a packaging *preflight*, so a broken build fails the release before
+  anything ships. New native step inserted **before `publish`**:
+  `[version, commit, **build**, publish, push, githubRelease]`.
+- **attach** (upload the `Attach:true` artifacts to the forge release) needs the
+  release to exist, so it is **folded into the `release`/`githubRelease` step** —
+  not a separate trailing step.
+
+**This supersedes the trailing-`artifacts` order in this doc and in
+RELEASE-STEPS-AND-FORGES-DESIGN.md** (`… → release → artifacts`). When that doc's
+`tag` promotion + `release` rename land, the chain is
+`version → commit → build → publish → tag → push → release(+attach)`.
+
+**Parity across ecosystems** — every ecosystem now produces its distributable in
+the *same* `build` step (no more Go-is-special):
+
+| Ecosystem | `build` produces | shipped by | attached? |
+|---|---|---|---|
+| Go | goreleaser → archives + checksums | the tag (publish no-op) | yes |
+| node | `npm pack` → `.tgz` | `npm publish` | no (opt-in) |
+| .NET | `dotnet pack` → `.nupkg` | `nuget push` | no (opt-in) |
+| Rust | `cargo package` → `.crate` | `cargo publish` | no (opt-in) |
+
+**Order-independence (key):** `build` runs before any tag exists, so the builder
+must get the version without reading a git tag. Manifest-versioned ecosystems
+(npm/cargo/dotnet) already have the bumped version in their manifest; **Go** gets
+it injected via `GORELEASER_CURRENT_TAG=v<version>` + `--skip=publish,validate`,
+so goreleaser stamps the right version with no tag at HEAD.
+
+- Follow-up (Layer B): have `publish` *reuse* `build`'s `dist/` output instead of
+  re-packing (`npm publish <tgz>`, `nuget push <nupkg>`) — eliminates the double
+  build. The step model above already gives the safety + parity; Layer B is the
+  efficiency pass.
 
 ### 1b. Release ownership (no double-create)
 
-- **`githubRelease` owns the release + notes** (changelog → release body).
-- **`artifacts`/goreleaser only attaches assets** → goreleaser runs with
-  `release.mode: append` (documented + scaffolded into `.goreleaser.yaml`).
-- Escape hatch: set `steps.githubRelease.enabled = false` to let goreleaser own
-  the whole release (then it creates it). Default keeps shiprig owning notes.
+- **`release`/`githubRelease` owns the release + notes** (changelog → release body)
+  **and the attach** (`gh release upload <tag> <Attach:true files> --clobber`).
+- The Go builder runs `goreleaser release --skip=publish,validate` — it only
+  *builds* into `dist/`; it never creates the GitHub release (shiprig owns that),
+  so there is no double-create and no `release.mode: append` dance.
 
 ### 1c. `--rehearse` (real local dry-build, distinct from `--dry-run`)
 
@@ -127,10 +158,12 @@ goreleaser special case.
 
 1. **`Artifacts` plugin capability (1a)** — ✅ DONE: `plugin.Ecosystem` method +
    all five adapters (node/dotnet/cargo/go/regex) + `SubprocessEcosystem` + tests.
-2. **shiprig `artifacts` pipeline step + ownership (1a-next + 1b)** — calls
-   `Artifacts()` per package, collects `dist/`, uploads `Attach:true` assets;
-   `pipeline/resolve.go`, `run.go`, default order; goreleaser owns nothing (just
-   builds with `--skip=publish`).
+2. **`build` step early + `attach` in `release` (1a-next + 1b)** — new native
+   `build` step before `publish` (`resolve.go` DefaultOrder + nativeBuiltins;
+   `cli/release.go` handler calls `Artifacts()` per package into `dist/`); the
+   `forge`/`githubRelease` step uploads each package's `Attach:true` files
+   (`gh release upload --clobber`). Go builder injects `GORELEASER_CURRENT_TAG`
+   so it is tag-order-independent.
 3. **shiprig `--rehearse` (1c)** — `release.go` flag + `pipeline/run.go` signal
    plumbing (sets `ArtifactsRequest.Snapshot`) + built-in step branches.
 4. **changerig changelog (2a + 2b)** — `changerig add --note`, a new

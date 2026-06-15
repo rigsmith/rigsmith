@@ -207,13 +207,17 @@ func TestArtifactsDryRun(t *testing.T) {
 
 	resp, err := a.Artifacts(context.Background(), plugin.ArtifactsRequest{
 		RepoRoot: root, OutputDir: t.TempDir(), DryRun: true,
-		Package: plugin.Package{ManifestPath: "go.mod"},
+		Package: plugin.Package{ManifestPath: "go.mod", Dir: ".", Version: "1.2.3"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Built || resp.Skipped || !strings.Contains(resp.Message, "--skip=publish") {
-		t.Errorf("dry-run artifacts = %+v, want a would-run goreleaser --skip=publish message", resp)
+	// Order-independent: the bumped version is injected as GORELEASER_CURRENT_TAG
+	// (no git tag needed), and tag validation is skipped.
+	if resp.Built || resp.Skipped ||
+		!strings.Contains(resp.Message, "--skip=publish,validate") ||
+		!strings.Contains(resp.Message, "GORELEASER_CURRENT_TAG=v1.2.3") {
+		t.Errorf("dry-run artifacts = %+v, want a tag-injecting goreleaser message", resp)
 	}
 
 	snap, err := a.Artifacts(context.Background(), plugin.ArtifactsRequest{
