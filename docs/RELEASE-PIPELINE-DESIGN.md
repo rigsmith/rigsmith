@@ -134,13 +134,37 @@ so goreleaser stamps the right version with no tag at HEAD.
   the `build` step runs, so a custom command step would be skipped; revisit if
   someone needs a custom builder under --dry-build.
 
-### 1d. `init` scaffolding + token preflight
+### 1d. `init` scaffolding + token preflight — ✅ done
 
-- `shiprig init` (and `changerig init`) detect ecosystem + `.goreleaser.yaml` and
-  scaffold `.changeset/release.jsonc` with the `artifacts` step wired, and ensure
-  `.goreleaser.yaml` has `release.mode: append`.
-- The `artifacts` step preflights its builder's needs (e.g. `GITHUB_TOKEN` for
-  goreleaser) and fails early with a clear message.
+Driven by a new plugin method, `release-init` (`MethodReleaseInit`), so `init`
+holds **no** per-ecosystem knowledge — each adapter declares its own release
+prerequisites and the wizard loops over them. The contract is additive
+(`APIVersion` stays 1):
+
+```go
+ReleaseInit(ctx, ReleaseInitRequest{RepoRoot, Packages}) (ReleaseInitResponse, error)
+// ReleaseInitResponse{ Tokens []TokenSpec; BuildConfig *BuildConfigSpec; Notes []string }
+```
+
+- **`Tokens`** — env vars a real publish/attach needs (`NPM_TOKEN`,
+  `NUGET_API_KEY`, `CARGO_REGISTRY_TOKEN`, `GITHUB_TOKEN`). The wizard reports
+  set (✓) vs. missing (⚠ + what-for + where-to-get). It **never reads the value**
+  — a preflight, not a credential store.
+- **`BuildConfig`** — a config file the ecosystem needs to build artifacts. Only
+  Go returns one (`.goreleaser.yaml`): it's the lone ecosystem with no native
+  single-command artifact producer. The **gomod plugin** templates the starter
+  from the `package main` dirs it discovers (one build+archive block per binary),
+  so the goreleaser knowledge stays in the plugin, not in `init`. `Present: true`
+  when a config already exists → reported and left untouched.
+- **`Notes`** — short human lines (the publish target).
+
+`shiprig init` composes: it runs the changeset scaffold (shared with
+`changerig init`), then scaffolds `.changeset/release.jsonc` (a documented
+starter whose `order` is the engine's own `DefaultOrder`, so it can't drift),
+prompts to write any `BuildConfig` (auto-writes off a TTY), preflights the build
+`Tool` on PATH, and prints the token checklist. `changerig init` stays
+changesets-only. node/dotnet/cargo pack natively, so they return a token + note
+and no build config; regex declares nothing and doesn't advertise the capability.
 
 ## Part 2 — changerig manual changelog
 
@@ -197,7 +221,10 @@ so goreleaser stamps the right version with no tag at HEAD.
    plumbing (sets `ArtifactsRequest.Snapshot`) + built-in step branches.
 4. **changerig changelog (2a + 2b)** — `changerig add --note`, a new
    `changerig changelog` command, `core/changeset` + `core/changelog`/`planner`.
-5. **init scaffolding + preflight + install.sh/goreleaser cleanups (1d)**.
+5. **init scaffolding + preflight (1d)** — ✅ DONE: `release-init` plugin method +
+   all five adapters + `SubprocessEcosystem` + the composed `shiprig init`
+   (release.jsonc starter, goreleaser starter, token preflight) + tests. Remaining
+   under this theme: `scripts/install.sh` is missing a `changerig` target.
 
 Each slice ships as its own PR off a worktree, with tests, leaving `go test ./...`
 green.

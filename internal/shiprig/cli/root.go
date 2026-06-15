@@ -39,7 +39,7 @@ func newRootCmd() *cobra.Command {
 	root.Flags().AddFlagSet(status.Flags())
 
 	root.AddCommand(
-		commands.NewInitCmd(),
+		newInitCmd(),
 		add,
 		commands.NewStatusCmd(),
 		commands.NewVersionCmd(),

@@ -38,7 +38,7 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		APIVersion:       plugin.APIVersion,
 		ID:               "cargo",
 		DisplayName:      "Rust",
-		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts},
+		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts, plugin.MethodReleaseInit},
 		ManifestPatterns: []string{"Cargo.toml"},
 		DevCommands: map[string][]string{
 			plugin.VerbBuild:  {"cargo", "build"},
@@ -243,6 +243,20 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		Built:     true,
 		Artifacts: []plugin.Artifact{{Path: crate, Kind: plugin.ArtifactPackage, Attach: false}},
 		Message:   "packaged " + spec,
+	}, nil
+}
+
+// ReleaseInit declares Cargo's release prerequisites: a CARGO_REGISTRY_TOKEN for
+// publishing. cargo package produces the .crate natively, so there is no
+// build-config file to scaffold.
+func (a *Adapter) ReleaseInit(ctx context.Context, req plugin.ReleaseInitRequest) (plugin.ReleaseInitResponse, error) {
+	return plugin.ReleaseInitResponse{
+		Tokens: []plugin.TokenSpec{{
+			EnvVar: "CARGO_REGISTRY_TOKEN",
+			For:    "cargo publish",
+			URL:    "https://crates.io/settings/tokens",
+		}},
+		Notes: []string{"publishes to crates.io"},
 	}, nil
 }
 

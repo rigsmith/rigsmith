@@ -64,7 +64,7 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		APIVersion:       plugin.APIVersion,
 		ID:               "dotnet",
 		DisplayName:      ".NET",
-		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts},
+		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts, plugin.MethodReleaseInit},
 		ManifestPatterns: []string{"*.csproj"},
 		DevCommands: map[string][]string{
 			plugin.VerbBuild:  {"dotnet", "build"},
@@ -266,6 +266,20 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		Built:     true,
 		Artifacts: []plugin.Artifact{{Path: nupkg, Kind: plugin.ArtifactPackage, Attach: false}},
 		Message:   "packed " + spec,
+	}, nil
+}
+
+// ReleaseInit declares .NET's release prerequisites: a NUGET_API_KEY for
+// publishing. dotnet pack produces the .nupkg natively, so there is no
+// build-config file to scaffold.
+func (a *Adapter) ReleaseInit(ctx context.Context, req plugin.ReleaseInitRequest) (plugin.ReleaseInitResponse, error) {
+	return plugin.ReleaseInitResponse{
+		Tokens: []plugin.TokenSpec{{
+			EnvVar: "NUGET_API_KEY",
+			For:    "dotnet nuget push",
+			URL:    "https://www.nuget.org/account/apikeys",
+		}},
+		Notes: []string{"publishes to NuGet"},
 	}, nil
 }
 

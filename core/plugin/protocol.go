@@ -119,12 +119,13 @@ const (
 
 // Method names for the ecosystem protocol (the plugin's first argv).
 const (
-	MethodInfo       = "info"
-	MethodDetect     = "detect"
-	MethodDiscover   = "discover"
-	MethodSetVersion = "set-version"
-	MethodPublish    = "publish"
-	MethodArtifacts  = "artifacts"
+	MethodInfo        = "info"
+	MethodDetect      = "detect"
+	MethodDiscover    = "discover"
+	MethodSetVersion  = "set-version"
+	MethodPublish     = "publish"
+	MethodArtifacts   = "artifacts"
+	MethodReleaseInit = "release-init"
 )
 
 // DiscoverRequest asks an adapter to enumerate the packages it owns.
@@ -220,6 +221,57 @@ type ArtifactsResponse struct {
 	Skipped   bool       `json:"skipped"`
 	Message   string     `json:"message,omitempty"`
 	Artifacts []Artifact `json:"artifacts,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
+// Release-init protocol — what an ecosystem needs in order to release
+// ---------------------------------------------------------------------------
+
+// ReleaseInitRequest asks an adapter to declare its release prerequisites, so a
+// release `init` wizard can scaffold config and preflight the environment
+// without hardcoding per-ecosystem knowledge. It is repo-aware (unlike Info) so
+// an adapter can inspect the tree — e.g. notice a .goreleaser.yaml already
+// exists, or template a starter from the discovered binaries.
+type ReleaseInitRequest struct {
+	APIVersion int       `json:"apiVersion"`
+	RepoRoot   string    `json:"repoRoot"`
+	Packages   []Package `json:"packages,omitempty"` // this ecosystem's discovered packages
+}
+
+// ReleaseInitResponse is an adapter's declaration of its release prerequisites.
+// Everything here is advisory: the wizard scaffolds files (with consent) and
+// warns about gaps — it never collects secrets or publishes anything.
+type ReleaseInitResponse struct {
+	// Tokens are environment variables a real publish/attach will need. The
+	// wizard reports which are set vs. missing; it never reads their values.
+	Tokens []TokenSpec `json:"tokens,omitempty"`
+	// BuildConfig is a config file the ecosystem needs in order to build
+	// distributable artifacts (Go → .goreleaser.yaml). Nil when artifacts build
+	// natively (npm pack, dotnet pack, cargo package) and need no extra file.
+	BuildConfig *BuildConfigSpec `json:"buildConfig,omitempty"`
+	// Notes are short human-readable lines the wizard surfaces (e.g. the publish
+	// target), one per line.
+	Notes []string `json:"notes,omitempty"`
+}
+
+// TokenSpec names an environment variable a release will need, for a preflight
+// check. The wizard reports set/missing and points at where to get one; it
+// never reads or stores the value.
+type TokenSpec struct {
+	EnvVar string `json:"envVar"`        // "GITHUB_TOKEN", "NPM_TOKEN"
+	For    string `json:"for"`           // "upload release assets" — shown in the warning
+	URL    string `json:"url,omitempty"` // where to obtain one (optional)
+}
+
+// BuildConfigSpec describes a config file an ecosystem needs to build its
+// artifacts. The adapter generates the starter Content itself (keeping the
+// knowledge in the plugin); the wizard only writes it — with consent — when
+// Present is false.
+type BuildConfigSpec struct {
+	Path    string `json:"path"`              // ".goreleaser.yaml", relative to repo root
+	Present bool   `json:"present"`           // already exists → wizard reports and skips
+	Content string `json:"content,omitempty"` // starter to write when absent + confirmed
+	Tool    string `json:"tool,omitempty"`    // "goreleaser" — for the prompt and a PATH preflight
 }
 
 // ---------------------------------------------------------------------------

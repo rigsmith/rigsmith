@@ -286,3 +286,114 @@ func TestInfoAdvertisesArtifacts(t *testing.T) {
 		t.Error("go Info() should advertise MethodArtifacts")
 	}
 }
+
+func TestInfoAdvertisesReleaseInit(t *testing.T) {
+	found := false
+	for _, c := range New().Info().Capabilities {
+		if c == plugin.MethodReleaseInit {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("go Info() should advertise MethodReleaseInit")
+	}
+}
+
+// TestReleaseInitWithBinaries: a module with main packages under cmd/ gets a
+// goreleaser starter templated from those mains (sorted), the GITHUB_TOKEN
+// preflight, and a note listing the binaries.
+func TestReleaseInitWithBinaries(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module github.com/acme/tool\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "cmd", "rig", "main.go"), "package main\n\nfunc main() {}\n")
+	writeFile(t, filepath.Join(root, "cmd", "foo", "main.go"), "package main\n\nfunc main() {}\n")
+	// A library package and a test file must not be mistaken for binaries.
+	writeFile(t, filepath.Join(root, "internal", "lib", "lib.go"), "package lib\n")
+	writeFile(t, filepath.Join(root, "cmd", "rig", "main_test.go"), "package main\n")
+
+	resp, err := New().ReleaseInit(context.Background(), plugin.ReleaseInitRequest{
+		RepoRoot: root,
+		Packages: []plugin.Package{{Name: "tool", Dir: "."}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.BuildConfig == nil {
+		t.Fatal("expected a BuildConfig for a module with binaries")
+	}
+	bc := resp.BuildConfig
+	if bc.Present {
+		t.Error("BuildConfig.Present should be false when no .goreleaser.yaml exists")
+	}
+	if bc.Path != ".goreleaser.yaml" || bc.Tool != "goreleaser" {
+		t.Errorf("unexpected BuildConfig path/tool: %q / %q", bc.Path, bc.Tool)
+	}
+	for _, want := range []string{"project_name: " + filepath.Base(root), "main: ./cmd/foo", "main: ./cmd/rig", "binary: rig", "binary: foo"} {
+		if !strings.Contains(bc.Content, want) {
+			t.Errorf("starter goreleaser missing %q\n%s", want, bc.Content)
+		}
+	}
+	// foo sorts before rig — the build blocks should appear in that order.
+	if strings.Index(bc.Content, "id: foo") > strings.Index(bc.Content, "id: rig") {
+		t.Error("build blocks should be sorted by main path (foo before rig)")
+	}
+	if !hasToken(resp.Tokens, "GITHUB_TOKEN") {
+		t.Error("expected a GITHUB_TOKEN preflight")
+	}
+	if len(resp.Notes) == 0 || !strings.Contains(resp.Notes[0], "rig") {
+		t.Errorf("expected a note naming the binaries, got %v", resp.Notes)
+	}
+}
+
+// TestReleaseInitPresentGoreleaser: an existing config is reported, not regenerated.
+func TestReleaseInitPresentGoreleaser(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module github.com/acme/tool\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "cmd", "rig", "main.go"), "package main\n\nfunc main() {}\n")
+	writeFile(t, filepath.Join(root, ".goreleaser.yaml"), "version: 2\n")
+
+	resp, err := New().ReleaseInit(context.Background(), plugin.ReleaseInitRequest{
+		RepoRoot: root,
+		Packages: []plugin.Package{{Name: "tool", Dir: "."}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.BuildConfig == nil || !resp.BuildConfig.Present {
+		t.Fatal("expected BuildConfig.Present=true when .goreleaser.yaml exists")
+	}
+	if resp.BuildConfig.Content != "" {
+		t.Error("should not template content over an existing config")
+	}
+}
+
+// TestReleaseInitNoBinaries: a library-only module ships by tag — no build config,
+// but still the GITHUB_TOKEN preflight.
+func TestReleaseInitNoBinaries(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module github.com/acme/lib\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "lib.go"), "package lib\n")
+
+	resp, err := New().ReleaseInit(context.Background(), plugin.ReleaseInitRequest{
+		RepoRoot: root,
+		Packages: []plugin.Package{{Name: "lib", Dir: "."}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.BuildConfig != nil {
+		t.Error("a library-only module should have no BuildConfig")
+	}
+	if !hasToken(resp.Tokens, "GITHUB_TOKEN") {
+		t.Error("expected a GITHUB_TOKEN preflight even for a library module")
+	}
+}
+
+func hasToken(tokens []plugin.TokenSpec, envVar string) bool {
+	for _, t := range tokens {
+		if t.EnvVar == envVar {
+			return true
+		}
+	}
+	return false
+}

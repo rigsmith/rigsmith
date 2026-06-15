@@ -29,6 +29,10 @@ type Ecosystem interface {
 	// adapter with nothing to build (e.g. a Go module published by tag, with no
 	// goreleaser config) returns Skipped.
 	Artifacts(ctx context.Context, req ArtifactsRequest) (ArtifactsResponse, error)
+	// ReleaseInit declares the ecosystem's release prerequisites — env tokens to
+	// preflight and any build-config file to scaffold — so a release `init`
+	// wizard can set the repo up without hardcoding per-ecosystem knowledge.
+	ReleaseInit(ctx context.Context, req ReleaseInitRequest) (ReleaseInitResponse, error)
 }
 
 // Registry holds the available ecosystem adapters (built-in + discovered).
@@ -145,6 +149,13 @@ func (s *SubprocessEcosystem) Artifacts(ctx context.Context, req ArtifactsReques
 	req.APIVersion = APIVersion
 	var resp ArtifactsResponse
 	err := s.host.Call(ctx, MethodArtifacts, req, &resp)
+	return resp, err
+}
+
+func (s *SubprocessEcosystem) ReleaseInit(ctx context.Context, req ReleaseInitRequest) (ReleaseInitResponse, error) {
+	req.APIVersion = APIVersion
+	var resp ReleaseInitResponse
+	err := s.host.Call(ctx, MethodReleaseInit, req, &resp)
 	return resp, err
 }
 

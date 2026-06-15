@@ -150,6 +150,13 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	return plugin.ArtifactsResponse{Skipped: true, Message: "no build artifacts (versioned in place; released via git tag)"}, nil
 }
 
+// ReleaseInit has nothing to declare: a regex-managed package needs no registry
+// token and no build-config file — it is released by git tag. (Not advertised in
+// Capabilities.)
+func (a *Adapter) ReleaseInit(ctx context.Context, req plugin.ReleaseInitRequest) (plugin.ReleaseInitResponse, error) {
+	return plugin.ReleaseInitResponse{}, nil
+}
+
 // loadRegexPackages reads the "regex" block from the repo's .changeset config.
 // Best-effort: a missing/empty/invalid block yields no packages.
 func loadRegexPackages(root string) []regexPackage {
