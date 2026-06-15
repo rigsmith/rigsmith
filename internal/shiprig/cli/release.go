@@ -61,8 +61,23 @@ func newReleaseCmd() *cobra.Command {
 				cfg.Tool = "shiprig"
 			}
 
+			// Ecosystem targeting (steps with an "ecosystems" filter) needs to know
+			// which ecosystems this release touches and which ids are valid. Only
+			// pay for discovery when a step actually opts in; otherwise leave both
+			// sets nil so filtering and validation are no-ops.
+			var presentEcos, knownEcos []string
+			if configUsesEcosystems(cfg) {
+				knownEcos = registryEcosystemIDs(ws)
+				_, ecoOf, derr := ws.Discover(cmd.Context())
+				if derr != nil {
+					return derr
+				}
+				presentEcos = distinctEcosystems(ecoOf)
+			}
+
 			steps, err := pipeline.Resolve(cfg, pipeline.ResolveOptions{
 				Only: only, Skip: skip, From: from, To: to, DryBuild: dryBuild,
+				Ecosystems: presentEcos, KnownEcosystems: knownEcos,
 			})
 			if err != nil {
 				return err
@@ -189,8 +204,21 @@ func newReleaseCmd() *cobra.Command {
 					return ok
 				}
 
+				relctx := &hostReleaseContext{
+					discover:      func() ([]plugin.Package, map[string]string, error) { return ws.Discover(cmd.Context()) },
+					repoRoot:      ws.Root,
+					forgeSel:      fsel,
+					forgeRun:      execForgeRunner(cmd, runnerEnv),
+					issueMessages: func() ([]string, error) { return releasedCommitMessages(cmd, ws.Root) },
+					urlCache:      map[string]string{},
+				}
+				if ws.Config != nil {
+					relctx.isIgnored = ws.Config.IsIgnored
+				}
+
 				return pipeline.New(pipeline.NewExecRunner(runnerEnv), reporter, masker, prompter, ws.Root,
-					releaseEnv, map[string]pipeline.NativeHandler{"build": buildHandler, "release": releaseHandler, "issues": issuesHandler})
+					releaseEnv, map[string]pipeline.NativeHandler{"build": buildHandler, "release": releaseHandler, "issues": issuesHandler},
+					relctx)
 			}
 
 			fail := func() error {
@@ -244,7 +272,7 @@ func newReleaseCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.BoolVarP(&dryRun, "dry-run", "n", false, "print the plan without executing anything")
+	f.BoolVarP(&dryRun, "dry-run", "n", false, "preview the interpolated plan; only commands marked \"dryRun\" execute")
 	f.BoolVar(&dryBuild, "dry-build", false, "build the release's artifacts locally (snapshot) and publish nothing — runs only the build step")
 	f.StringSliceVar(&only, "only", nil, "run only these steps (comma-separated)")
 	f.StringSliceVar(&skip, "skip", nil, "skip these steps (comma-separated)")
@@ -263,6 +291,151 @@ func newReleaseCmd() *cobra.Command {
 		cmd.MarkFlagsMutuallyExclusive("dry-build", mutex)
 	}
 	return cmd
+}
+
+// configUsesEcosystems reports whether any step opts into ecosystem targeting,
+// so the release path only pays for discovery when it must.
+func configUsesEcosystems(cfg *pipeline.Config) bool {
+	for _, sc := range cfg.Steps {
+		if sc != nil && len(sc.Ecosystems) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// registryEcosystemIDs lists the valid ecosystem ids, for validating a step's
+// `ecosystems` against typos.
+func registryEcosystemIDs(ws *commands.Workspace) []string {
+	all := ws.Registry.All()
+	ids := make([]string, 0, len(all))
+	for _, eco := range all {
+		ids = append(ids, eco.Info().ID)
+	}
+	return ids
+}
+
+// distinctEcosystems returns the sorted distinct ecosystem ids present in the
+// release. The result is non-nil even when empty, so ecosystem filtering stays
+// active (every targeted step is skipped) for a release that touches nothing.
+func distinctEcosystems(ecoOf map[string]string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, id := range ecoOf {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// hostReleaseContext implements pipeline.ReleaseContext from the workspace. It
+// discovers the released packages once (lazily, on first variable reference) and
+// exposes their versions, tags, and changelog notes; forge release URLs are
+// fetched per package on demand (and cached); resolved issues come from the
+// released commit messages.
+//
+// Versions/notes reflect the manifest and CHANGELOG at first reference, so a
+// command needing the bumped value should run at/after the `version` step (the
+// common case: publish args, the release step, and the after/onError hooks).
+// ${releaseUrl} is only populated after the forge `release` step has run.
+type hostReleaseContext struct {
+	discover      func() ([]plugin.Package, map[string]string, error)
+	isIgnored     func(string) bool
+	repoRoot      string
+	forgeSel      forge.Selection
+	forgeRun      forge.Runner
+	issueMessages func() ([]string, error)
+
+	loaded bool
+	pkgs   []pipeline.ReleasePackage
+
+	urlCache map[string]string
+
+	issuesLoaded bool
+	issues       []pipeline.IssueRef
+}
+
+func (rc *hostReleaseContext) Packages() []pipeline.ReleasePackage {
+	if rc.loaded {
+		return rc.pkgs
+	}
+	rc.loaded = true
+
+	pkgs, ecoOf, err := rc.discover()
+	if err != nil {
+		return nil // discovery errors surface via the handlers; variables resolve to empty
+	}
+	for _, p := range pkgs {
+		if rc.isIgnored != nil && rc.isIgnored(p.Name) {
+			continue
+		}
+		eco := ecoOf[p.Name]
+		rc.pkgs = append(rc.pkgs, pipeline.ReleasePackage{
+			Name:      p.Name,
+			Key:       shortPackageKey(p.Name),
+			Ecosystem: eco,
+			Version:   p.Version,
+			Tag:       gitutil.PackageTag(eco, p.Dir, p.Name, p.Version),
+			Changelog: forge.Notes(p, rc.repoRoot),
+		})
+	}
+	return rc.pkgs
+}
+
+// ReleaseURL fetches the forge release URL for the addressed package's tag once,
+// caching the result. "" until the forge release step has created the release
+// (or when the forge has no URL command).
+func (rc *hostReleaseContext) ReleaseURL(key string) string {
+	if rc.forgeRun == nil {
+		return ""
+	}
+	if url, ok := rc.urlCache[key]; ok {
+		return url
+	}
+	url := ""
+	for _, p := range rc.Packages() {
+		if p.Key == key || p.Name == key {
+			url = forge.ReleaseURL(rc.forgeSel, p.Tag, rc.repoRoot, rc.forgeRun)
+			break
+		}
+	}
+	rc.urlCache[key] = url
+	return url
+}
+
+// Issues lists the forge issues the released commits reference. Branch is left
+// empty: shiprig has no issue-branch scheme in the release flow, so ${issues}
+// resolves but ${issueBranch} stays empty.
+func (rc *hostReleaseContext) Issues() []pipeline.IssueRef {
+	if rc.issuesLoaded {
+		return rc.issues
+	}
+	rc.issuesLoaded = true
+	if rc.issueMessages == nil {
+		return nil
+	}
+	messages, err := rc.issueMessages()
+	if err != nil {
+		return nil
+	}
+	for _, n := range forge.ResolvedIssueNumbers(messages) {
+		rc.issues = append(rc.issues, pipeline.IssueRef{Number: n})
+	}
+	return rc.issues
+}
+
+// shortPackageKey is the ${version.<key>} address: the last path segment of the
+// manifest name ("@acme/web" -> "web", "acme/cli" -> "cli"). The full name still
+// works as an exact alias, so collisions remain addressable.
+func shortPackageKey(name string) string {
+	if i := strings.LastIndex(name, "/"); i >= 0 && i+1 < len(name) {
+		return name[i+1:]
+	}
+	return name
 }
 
 // hasEnabledStep reports whether the resolved plan contains an enabled step with

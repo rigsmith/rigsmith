@@ -71,6 +71,19 @@ type PlainReporter struct {
 	masker      *SecretMasker
 	tool        string
 	currentStep string
+	// labels maps a step id to its display label, populated from Plan so the
+	// live progress lines (which receive only the id) can show the friendly name.
+	labels map[string]string
+}
+
+// label returns the display label for a step id, falling back to the id itself.
+func (r *PlainReporter) label(name string) string {
+	if r.labels != nil {
+		if l, ok := r.labels[name]; ok {
+			return l
+		}
+	}
+	return name
 }
 
 // NewPlainReporter builds a PlainReporter writing to w. tool names the
@@ -86,18 +99,23 @@ func NewPlainReporter(w io.Writer, masker *SecretMasker, tool string) *PlainRepo
 // not run.
 func (r *PlainReporter) Plan(steps []ResolvedStep, dryRun bool) {
 	if dryRun {
-		fmt.Fprintln(r.w, "Release plan (dry run - nothing will run):")
+		fmt.Fprintln(r.w, "Release plan (dry run - only dryRun-marked commands run):")
 	} else {
 		fmt.Fprintln(r.w, "Release plan:")
 	}
 
+	r.labels = make(map[string]string, len(steps))
+	for _, step := range steps {
+		r.labels[step.Name] = step.Label()
+	}
+
 	for _, step := range steps {
 		if !step.Enabled() {
-			fmt.Fprintf(r.w, "  - %s (%s)\n", step.Name, step.SkipReason)
+			fmt.Fprintf(r.w, "  - %s (%s)\n", step.Label(), step.SkipReason)
 			continue
 		}
 
-		fmt.Fprintf(r.w, "  - %s\n", step.Name)
+		fmt.Fprintf(r.w, "  - %s\n", step.Label())
 		r.writePlanCommands("before", step.Before)
 		if step.Confirm != nil {
 			fmt.Fprintf(r.w, "      confirm: %s\n", *step.Confirm)
@@ -106,6 +124,9 @@ func (r *PlainReporter) Plan(steps []ResolvedStep, dryRun bool) {
 		if step.Kind == StepKindNative {
 			fmt.Fprintf(r.w, "      run: (%s)\n", NativeStepDescription(step.Name))
 		} else if step.IsBuiltin {
+			if step.OverridesNative {
+				fmt.Fprintf(r.w, "      note: custom run replaces the native step (%s skipped)\n", NativeStepDescription(step.Name))
+			}
 			r.writePlanCommands("run", step.Action)
 		} else {
 			r.writePlanCommands("", step.Action)
@@ -127,15 +148,16 @@ func (r *PlainReporter) writePlanCommands(label string, commands []CommandSpec) 
 	}
 }
 
-// StepStarted prints the step heading and remembers it for the resume hint.
+// StepStarted prints the step heading and remembers the step id for the resume
+// hint (which must use the id, not the display label).
 func (r *PlainReporter) StepStarted(name string) {
 	r.currentStep = name
-	fmt.Fprintf(r.w, "==> %s\n", name)
+	fmt.Fprintf(r.w, "==> %s\n", r.label(name))
 }
 
 // StepSkipped prints the skip line with its reason.
 func (r *PlainReporter) StepSkipped(name, reason string) {
-	fmt.Fprintf(r.w, "--- %s skipped (%s)\n", name, reason)
+	fmt.Fprintf(r.w, "--- %s skipped (%s)\n", r.label(name), reason)
 }
 
 // CommandStarted prints the (masked) command line.
@@ -157,12 +179,12 @@ func (r *PlainReporter) CommandFailed(label string, exitCode int) {
 
 // StepCompleted prints the step success line.
 func (r *PlainReporter) StepCompleted(name string) {
-	fmt.Fprintf(r.w, "ok %s\n", name)
+	fmt.Fprintf(r.w, "ok %s\n", r.label(name))
 }
 
 // StepCancelled prints the cancellation line for a declined confirm gate.
 func (r *PlainReporter) StepCancelled(name string) {
-	fmt.Fprintf(r.w, "Release cancelled at the '%s' step.\n", name)
+	fmt.Fprintf(r.w, "Release cancelled at the '%s' step.\n", r.label(name))
 }
 
 // RunCompleted prints the final outcome and, on failure after a step started,

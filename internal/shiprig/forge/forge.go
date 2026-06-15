@@ -160,6 +160,37 @@ func Run(packages []plugin.Package, ecoOf map[string]string, attach map[string][
 	return true, ""
 }
 
+// Notes returns the package's CHANGELOG section for its current version (the
+// ${changelog.<pkg>} value), or "" when absent. Exported wrapper over the same
+// extraction the release step uses for release notes.
+func Notes(pkg plugin.Package, repoRoot string) string {
+	return extractNotes(pkg, repoRoot)
+}
+
+// ReleaseURL returns the web URL of the forge release for tag (the
+// ${releaseUrl.<pkg>} value), or "" when the forge is disabled/unavailable, has
+// no URL command, the release does not exist yet, or the lookup fails. The forge
+// is chosen exactly as the release step chooses it.
+func ReleaseURL(sel Selection, tag, repoRoot string, run Runner) string {
+	provider, _ := selectProvider(sel, repoRoot, run)
+	if provider == nil {
+		return ""
+	}
+	argv := provider.ReleaseURLCmd(tag)
+	if argv == nil {
+		return ""
+	}
+	out, err := run(repoRoot, argv[0], argv[1:]...)
+	if err != nil {
+		return ""
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.SplitN(out, "\n", 2)[0])
+}
+
 // runForgeCmd reports and executes one forge argv, streaming its output. It
 // returns ok=false with the error string on a non-zero exit, so the caller can
 // frame the failure with the tag.

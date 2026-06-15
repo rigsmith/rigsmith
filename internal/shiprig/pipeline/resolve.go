@@ -67,8 +67,14 @@ const (
 // plus its before/after hooks. This is what the pipeline executes and what
 // the reporter renders in the plan.
 type ResolvedStep struct {
-	// Name is the step name (built-in or custom).
+	// Name is the step id (built-in or custom): the key in Order and the target
+	// of --only/--skip/--from/--to and the resume hint.
 	Name string
+
+	// DisplayName is the human label for plans and progress output, from the
+	// step's "name" config; it falls back to Name when unset. Use Label() to
+	// read it with the fallback applied.
+	DisplayName string
 
 	// SkipReason says why the step will not run; "" when it will.
 	SkipReason string
@@ -86,15 +92,37 @@ type ResolvedStep struct {
 	// run step).
 	IsBuiltin bool
 
+	// OverridesNative is true when a custom `run` replaces a native step's
+	// action (build/release/issues). The native handler is skipped; reporters
+	// surface a note so the substitution is not silent.
+	OverridesNative bool
+
 	// Confirm, when non-nil, is the prompt shown to gate the step.
 	Confirm *string
 
 	// Kind says whether the action runs commands or a native handler.
 	Kind StepKind
+
+	// DryRunAction holds the commands to execute for this step during a
+	// `--dry-run` (the action itself, or a configured alternate). nil means the
+	// action is listed but not executed.
+	DryRunAction []CommandSpec
+
+	// DryRunHidden hides the action from the dry-run plan ("dryRun": false).
+	DryRunHidden bool
 }
 
 // Enabled reports whether the step will run.
 func (s ResolvedStep) Enabled() bool { return s.SkipReason == "" }
+
+// Label is the human-facing name for the step: DisplayName when set, else the
+// step id. Reporters render this; the engine keys everything else off Name.
+func (s ResolvedStep) Label() string {
+	if s.DisplayName != "" {
+		return s.DisplayName
+	}
+	return s.Name
+}
 
 // ResolveOptions filter the resolved plan.
 type ResolveOptions struct {
@@ -115,6 +143,17 @@ type ResolveOptions struct {
 	// or published. The build step itself runs in snapshot mode (set by the host
 	// handler). It is a real run, distinct from --dry-run's plan-only preview.
 	DryBuild bool
+
+	// Ecosystems is the set of ecosystem ids present in this release (the host
+	// fills it from discovery). A step that declares `ecosystems` matching none
+	// of these is skipped. nil disables ecosystem filtering entirely (every step
+	// runs regardless of its `ecosystems`) — used by tests and minimal pipelines.
+	Ecosystems []string
+
+	// KnownEcosystems is the set of valid ecosystem ids (the host fills it from
+	// the registry). When non-nil, a step listing an id outside this set is a
+	// config error. nil skips that validation.
+	KnownEcosystems []string
 }
 
 // Resolve merges config and built-in defaults into the concrete ordered list
@@ -142,6 +181,10 @@ func Resolve(config *Config, opts ResolveOptions) ([]ResolvedStep, error) {
 	for index, name := range order {
 		stepConfig := config.Steps[name]
 
+		if err := validateStepEcosystems(name, stepConfig, opts.KnownEcosystems); err != nil {
+			return nil, err
+		}
+
 		commandAction, hasAction := stepAction(name, config, stepConfig)
 		isNative := !hasAction && slices.Contains(nativeBuiltins, name)
 
@@ -155,20 +198,36 @@ func Resolve(config *Config, opts ResolveOptions) ([]ResolvedStep, error) {
 		}
 
 		var before, after []CommandSpec
+		var displayName string
 		if stepConfig != nil {
 			before = stepConfig.Before
 			after = stepConfig.After
+			if stepConfig.Name != nil {
+				displayName = strings.TrimSpace(*stepConfig.Name)
+			}
 		}
 
+		// A native built-in with an explicit run is no longer native (hasAction
+		// is true, so isNative is false): the custom command replaces the native
+		// handler. Flag it so reporters can note the substitution.
+		overridesNative := hasAction && stepConfig != nil && stepConfig.Run != nil &&
+			slices.Contains(nativeBuiltins, name)
+
+		dryAction, dryHidden := dryRunPlan(stepConfig, commandAction)
+
 		resolved = append(resolved, ResolvedStep{
-			Name:       name,
-			SkipReason: skipReasonFor(name, stepConfig, opts, index, fromIndex, toIndex),
-			Before:     before,
-			Action:     commandAction,
-			After:      after,
-			IsBuiltin:  slices.Contains(commandBuiltins, name) || slices.Contains(nativeBuiltins, name),
-			Confirm:    confirmMessageFor(name, stepConfig),
-			Kind:       kind,
+			Name:            name,
+			DisplayName:     displayName,
+			SkipReason:      skipReasonFor(name, stepConfig, opts, index, fromIndex, toIndex),
+			Before:          before,
+			Action:          commandAction,
+			After:           after,
+			IsBuiltin:       slices.Contains(commandBuiltins, name) || slices.Contains(nativeBuiltins, name),
+			OverridesNative: overridesNative,
+			Confirm:         confirmMessageFor(name, stepConfig),
+			Kind:            kind,
+			DryRunAction:    dryAction,
+			DryRunHidden:    dryHidden,
 		})
 	}
 
@@ -259,6 +318,57 @@ func confirmMessageFor(name string, stepConfig *StepConfig) *string {
 	return &message
 }
 
+// dryRunPlan derives a step's dry-run behaviour from its config: the commands to
+// execute during a dry run (nil = none) and whether to hide the action from the
+// plan. action is the step's resolved action, used when "dryRun": true runs the
+// action itself rather than an alternate.
+func dryRunPlan(stepConfig *StepConfig, action []CommandSpec) (dryAction []CommandSpec, hidden bool) {
+	if stepConfig == nil || stepConfig.DryRun == nil {
+		return nil, false
+	}
+	spec := stepConfig.DryRun
+	if spec.Hide {
+		return nil, true
+	}
+	if !spec.Execute {
+		return nil, false
+	}
+	if spec.Commands != nil {
+		return spec.Commands, false
+	}
+	return action, false
+}
+
+// validateStepEcosystems rejects a step that targets an ecosystem id outside the
+// known set. known == nil skips validation (tests / minimal pipelines).
+func validateStepEcosystems(name string, stepConfig *StepConfig, known []string) error {
+	if known == nil || stepConfig == nil {
+		return nil
+	}
+	for _, eco := range stepConfig.Ecosystems {
+		if !slices.Contains(known, eco) {
+			return fmt.Errorf("release step '%s' targets unknown ecosystem '%s' (known: %s)",
+				name, eco, strings.Join(known, ", "))
+		}
+	}
+	return nil
+}
+
+// ecosystemSkipReason returns a skip reason when a step targets ecosystems but
+// the release includes none of them. present == nil disables filtering (returns
+// ""); a step with no `ecosystems` always returns "".
+func ecosystemSkipReason(stepConfig *StepConfig, present []string) string {
+	if present == nil || stepConfig == nil || len(stepConfig.Ecosystems) == 0 {
+		return ""
+	}
+	for _, want := range stepConfig.Ecosystems {
+		if slices.Contains(present, want) {
+			return ""
+		}
+	}
+	return fmt.Sprintf("no %s packages in this release", strings.Join(stepConfig.Ecosystems, "/"))
+}
+
 func indexOfBound(order []string, step, option string, fallback int) (int, error) {
 	if step == "" {
 		return fallback, nil
@@ -286,6 +396,9 @@ func skipReasonFor(
 	}
 	if stepConfig != nil && stepConfig.Enabled != nil && !*stepConfig.Enabled {
 		return "disabled"
+	}
+	if reason := ecosystemSkipReason(stepConfig, opts.Ecosystems); reason != "" {
+		return reason
 	}
 	if index < fromIndex {
 		return "before --from"

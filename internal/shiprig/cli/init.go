@@ -190,6 +190,20 @@ func releaseConfigStarter() string {
     "push": { "confirm": true },
     // Forge for the GitHub release: "auto" detects from origin, "none" = tags only.
     "release": { "forge": "auto" }
+
+    // Add your own step: give it a "run" command and place its id in "order".
+    // "name" sets the label shown in the plan/progress (the id stays the key);
+    // "ecosystems" limits it to releases touching those ecosystems (else it is
+    // skipped, not an error):
+    //   "smoke": { "name": "Smoke test", "ecosystems": ["node"], "run": "npm run smoke" }
+    // A "run" on a native step (build/release/issues) replaces it — the plan
+    // notes the substitution; use "before"/"after" instead to wrap it.
+    // "dryRun" controls a step under --dry-run: true runs the action, false
+    // hides it, or give an alternate (e.g. a tool's own --dry-run), like:
+    //   "publish": { "dryRun": "changeset publish --dry-run" }
+    // Built-in variables fill in commands: ${versions}/${version.<pkg>},
+    // ${tags}/${tag.<pkg>}, ${changelog.<pkg>}, ${releaseUrl.<pkg>} (after the
+    // release step), and ${issues}. A bare ${version} works only single-package.
   }
 }
 `

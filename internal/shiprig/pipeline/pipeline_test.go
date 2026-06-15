@@ -22,7 +22,7 @@ func newFixture(native map[string]NativeHandler) *fixture {
 		masker:   NewSecretMasker(),
 		prompter: &stubPrompter{answer: true},
 	}
-	f.pipeline = New(f.runner.run, f.reporter, f.masker, f.prompter, "/tmp/repo", nil, native)
+	f.pipeline = New(f.runner.run, f.reporter, f.masker, f.prompter, "/tmp/repo", nil, native, nil)
 	return f
 }
 
@@ -283,6 +283,89 @@ func TestResolveCustomStepUsesRunCommand(t *testing.T) {
 	}
 	if got := singleShellAction(t, smoke); got != "./scripts/smoke.sh" {
 		t.Errorf("smoke action = %q", got)
+	}
+}
+
+func TestResolveDisplayNameFallsBackToStepID(t *testing.T) {
+	publish := mustResolve(t, &Config{Order: []string{"publish"}}, ResolveOptions{})[0]
+
+	if publish.DisplayName != "" {
+		t.Errorf("DisplayName = %q, want empty when unset", publish.DisplayName)
+	}
+	if got := publish.Label(); got != "publish" {
+		t.Errorf("Label() = %q, want fallback to id 'publish'", got)
+	}
+}
+
+func TestResolveDisplayNameFromConfigIsTrimmed(t *testing.T) {
+	name := "  Node smoke test  "
+	config := &Config{
+		Order: []string{"smoke"},
+		Steps: map[string]*StepConfig{
+			"smoke": {Name: &name, Run: CommandList{ShellCommand("npm run smoke")}},
+		},
+	}
+
+	smoke := mustResolve(t, config, ResolveOptions{})[0]
+
+	if smoke.Name != "smoke" {
+		t.Errorf("Name (id) = %q, want 'smoke'", smoke.Name)
+	}
+	if smoke.DisplayName != "Node smoke test" {
+		t.Errorf("DisplayName = %q, want trimmed 'Node smoke test'", smoke.DisplayName)
+	}
+	if got := smoke.Label(); got != "Node smoke test" {
+		t.Errorf("Label() = %q", got)
+	}
+}
+
+func ecoStep(targets ...string) *Config {
+	return &Config{
+		Order: []string{"smoke"},
+		Steps: map[string]*StepConfig{
+			"smoke": {Ecosystems: targets, Run: CommandList{ShellCommand("npm run smoke")}},
+		},
+	}
+}
+
+func TestResolveEcosystemTargetSkipsWhenAbsent(t *testing.T) {
+	smoke := mustResolve(t, ecoStep("node"), ResolveOptions{Ecosystems: []string{"go"}})[0]
+
+	if smoke.Enabled() {
+		t.Error("node-targeted step should be skipped in a go-only release")
+	}
+	if smoke.SkipReason != "no node packages in this release" {
+		t.Errorf("SkipReason = %q", smoke.SkipReason)
+	}
+}
+
+func TestResolveEcosystemTargetRunsWhenAnyPresent(t *testing.T) {
+	smoke := mustResolve(t, ecoStep("node", "rust"), ResolveOptions{Ecosystems: []string{"go", "node"}})[0]
+
+	if !smoke.Enabled() {
+		t.Error("step should run when one of its targeted ecosystems is present")
+	}
+}
+
+func TestResolveEcosystemFilteringDisabledWhenPresentNil(t *testing.T) {
+	// nil present set => filtering off, the step runs regardless of its targeting.
+	if !mustResolve(t, ecoStep("node"), ResolveOptions{})[0].Enabled() {
+		t.Error("a nil present set must disable ecosystem filtering")
+	}
+}
+
+func TestResolveEcosystemEmptyReleaseStillFilters(t *testing.T) {
+	// Non-nil but empty present set (the release touches nothing): keep filtering.
+	if mustResolve(t, ecoStep("node"), ResolveOptions{Ecosystems: []string{}})[0].Enabled() {
+		t.Error("a targeted step should skip when the release has no packages")
+	}
+}
+
+func TestResolveUnknownEcosystemIsAnError(t *testing.T) {
+	_, err := Resolve(ecoStep("nde"), ResolveOptions{KnownEcosystems: []string{"node", "go", "dotnet", "rust"}})
+
+	if err == nil || !strings.Contains(err.Error(), "nde") {
+		t.Errorf("err = %v, want mention of unknown ecosystem 'nde'", err)
 	}
 }
 
@@ -775,8 +858,41 @@ func TestResolveGithubReleaseOverriddenByRunBecomesCommandStep(t *testing.T) {
 	if step.Kind != StepKindCommands {
 		t.Error("release with run should be a command step")
 	}
+	if !step.OverridesNative {
+		t.Error("overriding a native step with run should set OverridesNative")
+	}
 	if got := singleShellAction(t, step); got != "./custom-release.sh" {
 		t.Errorf("action = %q", got)
+	}
+}
+
+func TestResolveCustomStepDoesNotSetOverridesNative(t *testing.T) {
+	config := &Config{
+		Order: []string{"smoke"},
+		Steps: map[string]*StepConfig{
+			"smoke": {Run: CommandList{ShellCommand("./smoke.sh")}},
+		},
+	}
+
+	if mustResolve(t, config, ResolveOptions{})[0].OverridesNative {
+		t.Error("a non-native custom step must not set OverridesNative")
+	}
+}
+
+func TestPlainReporterNotesNativeOverrideInPlan(t *testing.T) {
+	var out strings.Builder
+	reporter := NewPlainReporter(&out, NewSecretMasker(), "")
+
+	config := &Config{
+		Order: []string{"release"},
+		Steps: map[string]*StepConfig{
+			"release": {Run: CommandList{ShellCommand("./custom-release.sh")}},
+		},
+	}
+	reporter.Plan(mustResolve(t, config, ResolveOptions{}), false)
+
+	if got := out.String(); !strings.Contains(got, "custom run replaces the native step") {
+		t.Errorf("plan missing native-override note: %q", got)
 	}
 }
 

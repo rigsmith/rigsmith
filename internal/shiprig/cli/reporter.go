@@ -18,6 +18,18 @@ type richReporter struct {
 	tool   string
 
 	lastStarted string
+	// labels maps a step id to its display label, populated from Plan so live
+	// headings (which receive only the id) can show the friendly name.
+	labels map[string]string
+}
+
+func (r *richReporter) label(name string) string {
+	if r.labels != nil {
+		if l, ok := r.labels[name]; ok {
+			return l
+		}
+	}
+	return name
 }
 
 var (
@@ -45,6 +57,10 @@ func (r *richReporter) Plan(steps []pipeline.ResolvedStep, dryRun bool) {
 		title = "Release plan (dry run)"
 	}
 	fmt.Fprintln(r.w, ruleStyle.Render("── "+title+" ─────────────────────────"))
+	r.labels = make(map[string]string, len(steps))
+	for _, s := range steps {
+		r.labels[s.Name] = s.Label()
+	}
 	for _, s := range steps {
 		state := stepOkStyle.Render("run")
 		if !s.Enabled() {
@@ -54,10 +70,13 @@ func (r *richReporter) Plan(steps []pipeline.ResolvedStep, dryRun bool) {
 		if s.Confirm != nil {
 			gate = "  " + skipStyle.Render("confirm: "+*s.Confirm)
 		}
-		fmt.Fprintf(r.w, "  %-14s %s%s\n", s.Name, state, gate)
+		fmt.Fprintf(r.w, "  %-14s %s%s\n", s.Label(), state, gate)
 		if s.Kind == pipeline.StepKindNative {
 			fmt.Fprintf(r.w, "      %s\n", skipStyle.Render("("+pipeline.NativeStepDescription(s.Name)+")"))
 			continue
+		}
+		if s.OverridesNative {
+			fmt.Fprintf(r.w, "      %s\n", skipStyle.Render("note: custom run replaces the native step ("+pipeline.NativeStepDescription(s.Name)+" skipped)"))
 		}
 		for _, c := range s.Action {
 			fmt.Fprintf(r.w, "      %s\n", skipStyle.Render(r.masker.Mask(pipeline.DescribeCommand(c))))
@@ -68,19 +87,19 @@ func (r *richReporter) Plan(steps []pipeline.ResolvedStep, dryRun bool) {
 
 func (r *richReporter) StepStarted(name string) {
 	r.lastStarted = name
-	fmt.Fprintln(r.w, ruleStyle.Render("── "+name+" "+"─────────────────────────"))
+	fmt.Fprintln(r.w, ruleStyle.Render("── "+r.label(name)+" "+"─────────────────────────"))
 }
 
 func (r *richReporter) StepSkipped(name, reason string) {
-	fmt.Fprintf(r.w, "%s\n", skipStyle.Render("── "+name+" skipped ("+reason+")"))
+	fmt.Fprintf(r.w, "%s\n", skipStyle.Render("── "+r.label(name)+" skipped ("+reason+")"))
 }
 
 func (r *richReporter) StepCompleted(name string) {
-	fmt.Fprintf(r.w, "%s\n", stepOkStyle.Render("ok "+name))
+	fmt.Fprintf(r.w, "%s\n", stepOkStyle.Render("ok "+r.label(name)))
 }
 
 func (r *richReporter) StepCancelled(name string) {
-	fmt.Fprintln(r.w, cancelPanel.Render(cancelStyle.Render("Release stopped at the '"+name+"' confirm gate.")))
+	fmt.Fprintln(r.w, cancelPanel.Render(cancelStyle.Render("Release stopped at the '"+r.label(name)+"' confirm gate.")))
 }
 
 func (r *richReporter) CommandStarted(label string, command pipeline.CommandSpec) {

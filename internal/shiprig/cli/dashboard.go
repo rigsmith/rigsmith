@@ -30,7 +30,8 @@ const (
 )
 
 type dashStep struct {
-	name   string
+	name   string // step id (keys byName, used for the resume hint)
+	label  string // human display label
 	status stepStatus
 	reason string
 }
@@ -87,7 +88,7 @@ func newDashboardModel(steps []pipeline.ResolvedStep, tool string) dashboardMode
 		if !s.Enabled() {
 			st, reason = statusSkipped, s.SkipReason
 		}
-		ds[i] = dashStep{name: s.Name, status: st, reason: reason}
+		ds[i] = dashStep{name: s.Name, label: s.Label(), status: st, reason: reason}
 		byName[s.Name] = i
 	}
 	return dashboardModel{tool: tool, steps: ds, byName: byName, spin: sp, running: -1}
@@ -223,17 +224,17 @@ func (m dashboardModel) stepLine(i int, s dashStep) string {
 	var glyph, name string
 	switch s.status {
 	case statusRunning:
-		glyph, name = m.spin.View(), s.name
+		glyph, name = m.spin.View(), s.label
 	case statusOK:
-		glyph, name = stepOkStyle.Render("✓"), s.name
+		glyph, name = stepOkStyle.Render("✓"), s.label
 	case statusFailed:
-		glyph, name = failStyle.Render("✗"), failStyle.Render(s.name)
+		glyph, name = failStyle.Render("✗"), failStyle.Render(s.label)
 	case statusCancelled:
-		glyph, name = cancelStyle.Render("⊘"), s.name
+		glyph, name = cancelStyle.Render("⊘"), s.label
 	case statusSkipped:
-		glyph, name = skipStyle.Render("–"), skipStyle.Render(s.name)
+		glyph, name = skipStyle.Render("–"), skipStyle.Render(s.label)
 	default: // pending
-		glyph, name = skipStyle.Render("○"), s.name
+		glyph, name = skipStyle.Render("○"), s.label
 	}
 	line := "  " + glyph + " " + name
 	if s.status == statusSkipped && s.reason != "" {
