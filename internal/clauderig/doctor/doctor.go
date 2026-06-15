@@ -2,42 +2,39 @@
 // over the environment, the sync setup, and this repo's worktree-discipline wiring,
 // and returns a structured report. Each check reports OK/Warn/Fail with a detail
 // and, when the problem is something clauderig can repair, a Fix closure. The
-// presentation layer (commands/doctor.go) renders the report and lets the user pick
+// presentation layer (internal/doctorui) renders the report and lets the user pick
 // which fixes to apply — the package itself does no I/O to a terminal.
+//
+// The result model (Status/Result/Section + Counts/Fixable) is the shared
+// core/doctor model; the aliases below let clauderig's checks keep reading against
+// the local package while every rig speaks the same types.
 package doctor
 
 import (
 	"context"
 
+	coredoctor "github.com/rigsmith/rigsmith/core/doctor"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 )
 
-// Status is a single check's verdict.
-type Status int
-
-const (
-	OK   Status = iota // healthy
-	Warn               // degraded but usable
-	Fail               // broken
-	Info               // neutral context, never a problem
+// Shared result model — see core/doctor.
+type (
+	Status  = coredoctor.Status
+	Result  = coredoctor.Result
+	Section = coredoctor.Section
 )
 
-// Result is one check's outcome. Fix is non-nil only when clauderig can repair the
-// issue itself; FixLabel is the one-line description shown in the fix selector.
-type Result struct {
-	Name     string
-	Status   Status
-	Detail   string
-	Hint     string                      // manual remediation when Fix is nil
-	Fix      func(context.Context) error // nil ⇒ not auto-fixable
-	FixLabel string
-}
+const (
+	OK   = coredoctor.OK
+	Warn = coredoctor.Warn
+	Fail = coredoctor.Fail
+	Info = coredoctor.Info
+)
 
-// Section groups related checks under a heading.
-type Section struct {
-	Title   string
-	Results []Result
-}
+// Counts and Fixable are re-exported from core/doctor so callers that already
+// reach for doctor.Counts / doctor.Fixable keep working.
+func Counts(sections []Section) (fails, warns, fixable int) { return coredoctor.Counts(sections) }
+func Fixable(sections []Section) []Result                   { return coredoctor.Fixable(sections) }
 
 // Env is the resolved context every check runs against. The command layer fills it
 // in once (paths, config, machine) so checks stay pure of discovery logic.
@@ -93,35 +90,4 @@ func Run(ctx context.Context, env Env) []Section {
 	}
 
 	return []Section{environment, sync, wt}
-}
-
-// Counts tallies the report. fixable counts Warn/Fail results that carry a Fix.
-func Counts(sections []Section) (fails, warns, fixable int) {
-	for _, s := range sections {
-		for _, r := range s.Results {
-			switch r.Status {
-			case Fail:
-				fails++
-			case Warn:
-				warns++
-			}
-			if r.Fix != nil && (r.Status == Fail || r.Status == Warn) {
-				fixable++
-			}
-		}
-	}
-	return fails, warns, fixable
-}
-
-// Fixable returns the repairable results, in report order.
-func Fixable(sections []Section) []Result {
-	var out []Result
-	for _, s := range sections {
-		for _, r := range s.Results {
-			if r.Fix != nil && (r.Status == Fail || r.Status == Warn) {
-				out = append(out, r)
-			}
-		}
-	}
-	return out
 }
