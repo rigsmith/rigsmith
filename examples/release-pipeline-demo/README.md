@@ -30,8 +30,9 @@ repo if neither is present.
 - **Global hooks** — `hooks.before` / `after` / `onError` bracket the whole run.
 - **Built-in variables** — `${versions}`, `${version.web}`, `${tags}`,
   `${releaseUrls}`, `${issues}` interpolate into commands.
-- **Captured + masked secret** — a `lazy` `${vars.otp}` is fetched right before
-  `publish` and printed as `***`.
+- **Your own variables** — a **literal** `${vars.basePath}` (`"basePath":
+  "/opt/acme"`) is defined once and reused across steps, unmasked; a **captured**
+  `lazy` `${vars.otp}` is fetched right before `publish` and printed as `***`.
 - **Confirm gates** — `publish` and `push` gate the run (bypassed by `--yes`).
 - **Ecosystem targeting** — `node-check` runs (Node packages present);
   `dotnet-check` is **skipped with a reason** (no .NET packages).
@@ -48,7 +49,7 @@ only the one `dryRun` command actually executes:
 ```text
 Release plan (dry run - only dryRun-marked commands run):
   - Preflight
-      echo '[preflight] preparing @acme/api@1.4.0, @acme/web@2.1.0'
+      echo '[preflight] base=/opt/acme preparing @acme/api@1.4.0, @acme/web@2.1.0'
   - version
       before: echo '  [version.before] computing bumps'
       run: echo '  [version] bump → @acme/api@1.4.0, @acme/web@2.1.0'
@@ -58,7 +59,7 @@ Release plan (dry run - only dryRun-marked commands run):
   - build
       before: echo '  [build.before] lint'
       note: custom run replaces the native step (build distributable artifacts skipped)
-      run: echo '  [build] package artifacts for @acme/api@1.4.0, @acme/web@2.1.0'
+      run: echo '  [build] package @acme/api@1.4.0, @acme/web@2.1.0 → /opt/acme/dist'
       after: echo '  [build.after] artifacts ready'
   - Node check
       echo '[node-check] npm test for 2.1.0'
@@ -101,7 +102,7 @@ at `publish` and masked as `***`:
     $ echo '╭─ [hooks.before] releasing @acme/api@1.4.0, @acme/web@2.1.0'
     ╭─ [hooks.before] releasing @acme/api@1.4.0, @acme/web@2.1.0
 ==> Preflight
-    [preflight] preparing @acme/api@1.4.0, @acme/web@2.1.0
+    [preflight] base=/opt/acme preparing @acme/api@1.4.0, @acme/web@2.1.0
 ok Preflight
 ==> version
       [version.before] computing bumps

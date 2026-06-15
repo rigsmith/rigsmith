@@ -50,17 +50,28 @@ func newVariables(specs map[string]*VarSpec, runner Runner, masker *SecretMasker
 	}
 }
 
-// eagerNames lists the variables that opt out of lazy resolution and should
-// be captured up front (sorted for a deterministic capture order).
+// eagerNames lists the command-backed variables that opt out of lazy resolution
+// and should be captured up front (sorted for a deterministic capture order).
+// Literals need no capture, so they are not included.
 func (v *variables) eagerNames() []string {
 	var names []string
 	for name, spec := range v.specs {
-		if spec != nil && !spec.Lazy {
+		if spec != nil && spec.Command != nil && !spec.Lazy {
 			names = append(names, name)
 		}
 	}
 	sort.Strings(names)
 	return names
+}
+
+// literal returns the value of a literal variable (one defined with "value"),
+// or false when name is not a defined literal. Used by the dry-run preview,
+// where a literal is knowable with no side effect while a captured value is not.
+func (v *variables) literal(name string) (string, bool) {
+	if spec, ok := v.specs[name]; ok && spec != nil && spec.Value != nil {
+		return *spec.Value, true
+	}
+	return "", false
 }
 
 func (v *variables) resolve(name string) varResolution {
@@ -69,7 +80,18 @@ func (v *variables) resolve(name string) varResolution {
 	}
 
 	spec, ok := v.specs[name]
-	if !ok || spec == nil || spec.Command == nil {
+	if !ok || spec == nil {
+		return varFailure(fmt.Sprintf("variable '%s' is not defined", name), -1)
+	}
+
+	// A literal resolves with no process and is not masked (it is config, not a
+	// secret).
+	if spec.Value != nil {
+		v.cache[name] = *spec.Value
+		return varSuccess(*spec.Value)
+	}
+
+	if spec.Command == nil {
 		return varFailure(fmt.Sprintf("variable '%s' is not defined", name), -1)
 	}
 
