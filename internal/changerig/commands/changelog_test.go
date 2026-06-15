@@ -21,6 +21,7 @@ func TestChangelogEntry(t *testing.T) {
 		{"explicit version", "1.2.0", "", "Backfilled history", "## 1.2.0\n\n- Backfilled history\n"},
 		{"type label", "", "fix", "CVE-2026-0001 patched", "## Unreleased\n\n- **fix:** CVE-2026-0001 patched\n"},
 		{"trims whitespace", "  1.0.0  ", "  ", "  hi  ", "## 1.0.0\n\n- hi\n"},
+		{"flattens newlines (no injection)", "1.0\n## evil", "fi\nx", "a\n- b\n## c", "## 1.0 ## evil\n\n- **fi x:** a - b ## c\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/changelog"
@@ -139,17 +140,26 @@ func formatChangelogFile(cmd *cobra.Command, ws *Workspace, path string) {
 }
 
 // changelogEntry renders the prepended block: a `## <version|Unreleased>` heading
-// followed by a single bullet (optionally prefixed by a bold type label).
+// followed by a single bullet (optionally prefixed by a bold type label). Each
+// field is flattened to a single line so a multi-line input can't inject extra
+// headings/bullets and corrupt the changelog structure.
 func changelogEntry(version, typ, message string) string {
-	heading := strings.TrimSpace(version)
+	heading := singleLine(version)
 	if heading == "" {
 		heading = "Unreleased"
 	}
-	bullet := "- " + strings.TrimSpace(message)
-	if t := strings.TrimSpace(typ); t != "" {
-		bullet = "- **" + t + ":** " + strings.TrimSpace(message)
+	msg := singleLine(message)
+	bullet := "- " + msg
+	if t := singleLine(typ); t != "" {
+		bullet = "- **" + t + ":** " + msg
 	}
 	return fmt.Sprintf("## %s\n\n%s\n", heading, bullet)
+}
+
+// singleLine collapses all runs of whitespace (including newlines) to single
+// spaces and trims — so a field stays one line.
+func singleLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // resolveChangelogPackage picks the target package: the named one, or the sole
@@ -173,6 +183,7 @@ func resolveChangelogPackage(pkgs []plugin.Package, args []string) (plugin.Packa
 		for i, p := range pkgs {
 			names[i] = p.Name
 		}
+		sort.Strings(names) // deterministic message regardless of discovery order
 		return plugin.Package{}, fmt.Errorf("multiple packages — name one of: %s", strings.Join(names, ", "))
 	}
 }
