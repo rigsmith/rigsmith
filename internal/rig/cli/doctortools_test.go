@@ -2,7 +2,6 @@ package cli
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -96,17 +95,22 @@ func TestDoctorToolFixes_OwnedToolsOnly(t *testing.T) {
 }
 
 func TestDoctorToolFixes_MissingCargoToolsOffered(t *testing.T) {
+	// Force a PATH that can't contain the cargo tools so the offer is
+	// deterministic on any host — otherwise a tool already installed locally would
+	// silently drop out and the test would assert nothing.
+	t.Setenv("PATH", t.TempDir())
 	root := t.TempDir() // no .rig.json ⇒ auto mode
 	cmd := &cobra.Command{}
 
-	sections := doctorToolFixes(cmd, map[string]bool{detect.Cargo: true}, root)
-	// Every offered fix must be a missing, install-capable cargo tool — never dnx
-	// or reportgenerator — and carry a runnable Fix + an "install …" label.
-	for _, sec := range sections {
+	got := map[string]bool{}
+	for _, sec := range doctorToolFixes(cmd, map[string]bool{detect.Cargo: true}, root) {
 		if sec.Title != "tools" {
 			t.Errorf("section title = %q, want tools", sec.Title)
 		}
+		// Every offered fix must be a missing, install-capable tool — never dnx or
+		// reportgenerator — and carry a runnable Fix + an "install …" label.
 		for _, r := range sec.Results {
+			got[r.Name] = true
 			if r.Status != doctor.Warn || r.Fix == nil {
 				t.Errorf("%s: got %+v, want Warn with a Fix", r.Name, r)
 			}
@@ -116,10 +120,12 @@ func TestDoctorToolFixes_MissingCargoToolsOffered(t *testing.T) {
 			if r.Name == "dnx" || r.Name == "reportgenerator" {
 				t.Errorf("%s has no install command and must not be offered", r.Name)
 			}
-			// What's offered must actually be absent from PATH.
-			if _, err := exec.LookPath(r.Name); err == nil {
-				t.Errorf("%s is on PATH and should not be offered for install", r.Name)
-			}
+		}
+	}
+	// With nothing on PATH, all three install-capable cargo tools are offered.
+	for _, want := range []string{"cargo-llvm-cov", "cargo-outdated", "cargo-watch"} {
+		if !got[want] {
+			t.Errorf("expected an install offer for %q, got %v", want, got)
 		}
 	}
 }
