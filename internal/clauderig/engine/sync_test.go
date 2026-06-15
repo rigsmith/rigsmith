@@ -47,6 +47,9 @@ func cliOnlyConfig(cliDir string) *config.Config {
 // logic on every CI OS. (See TestSync_MultiMachineManifestUnion, which already
 // uses this hook.)
 func override(pairs ...string) map[string]string {
+	if len(pairs)%2 != 0 {
+		panic("override: expected even number of (id, dir) strings")
+	}
 	m := make(map[string]string, len(pairs)/2)
 	for i := 0; i+1 < len(pairs); i += 2 {
 		m[pairs[i]] = pairs[i+1]
