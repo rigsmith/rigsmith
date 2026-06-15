@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/devroute"
@@ -329,13 +331,18 @@ func pickWorktree(wts []gitrepo.Worktree) (string, error) {
 	if !pickerTTY() {
 		return "", fmt.Errorf("multiple worktrees and no terminal for the picker; pass a branch or path")
 	}
+	now := time.Now()
 	opts := make([]huh.Option[string], 0, len(wts))
-	for _, wt := range wts {
+	for _, wt := range worktreesByRecent(wts) {
 		branch := wt.Branch
 		if branch == "" {
 			branch = "(detached)"
 		}
-		label := fmt.Sprintf("%s  %s", HeaderStyle.Render(branch), DimStyle.Render(wt.Path))
+		meta := wt.Path
+		if age := humanizeAgo(wt.ModTime, now); age != "" {
+			meta = age + "  " + wt.Path
+		}
+		label := fmt.Sprintf("%s  %s", HeaderStyle.Render(branch), DimStyle.Render(meta))
 		opts = append(opts, huh.NewOption(label, wt.Path))
 	}
 	var chosen string
@@ -450,13 +457,34 @@ func newWorktreeListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			out := cmd.OutOrStdout()
-			for _, wt := range wts {
-				branch := wt.Branch
-				if branch == "" {
-					branch = "(detached)"
+			// Newest first, and pad the branch + age into columns so the dim path
+			// column lines up. The branch wears rig's blue accent like the menu.
+			wts = worktreesByRecent(wts)
+			now := time.Now()
+			branches := make([]string, len(wts))
+			ages := make([]string, len(wts))
+			width, ageWidth := 0, 0
+			for i, wt := range wts {
+				branches[i] = wt.Branch
+				if branches[i] == "" {
+					branches[i] = "(detached)"
 				}
-				fmt.Fprintf(out, "%s  %s\n", HeaderStyle.Render(branch), DimStyle.Render(wt.Path))
+				if w := lipgloss.Width(branches[i]); w > width {
+					width = w
+				}
+				ages[i] = humanizeAgo(wt.ModTime, now)
+				if w := lipgloss.Width(ages[i]); w > ageWidth {
+					ageWidth = w
+				}
+			}
+			out := cmd.OutOrStdout()
+			for i, wt := range wts {
+				pad := strings.Repeat(" ", width-lipgloss.Width(branches[i]))
+				age := ""
+				if ageWidth > 0 {
+					age = DimStyle.Render(fmt.Sprintf("%*s", ageWidth, ages[i])) + "  "
+				}
+				fmt.Fprintf(out, "%s%s  %s%s\n", wtBranchStyle.Render(branches[i]), pad, age, DimStyle.Render(wt.Path))
 			}
 			return nil
 		},

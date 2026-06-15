@@ -3,7 +3,10 @@ package gitrepo
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Toplevel returns the absolute root of the work tree containing r.Dir.
@@ -39,9 +42,10 @@ func (r *Repo) DefaultBranch(ctx context.Context) string {
 
 // Worktree is one entry of `git worktree list`.
 type Worktree struct {
-	Path   string
-	Branch string // short name, or "" when detached
-	Head   string
+	Path    string
+	Branch  string // short name, or "" when detached
+	Head    string
+	ModTime time.Time // last time git touched this worktree (commit/checkout), or its creation; zero if unknown
 }
 
 // WorktreeAdd creates a worktree at path. When create is set it makes a new
@@ -83,7 +87,39 @@ func (r *Repo) WorktreeList(ctx context.Context) ([]Worktree, error) {
 		}
 	}
 	flush()
+	for i := range list {
+		list[i].ModTime = worktreeModTime(list[i].Path)
+	}
 	return list, nil
+}
+
+// worktreeModTime reports when git last touched the worktree at path — a stand-in
+// for "created or last updated". It stats the worktree's private git admin
+// directory, where git writes HEAD/index/logs: that directory's mtime is set when
+// `git worktree add` creates it and advances on every commit, checkout, or reset
+// (each rewrites a file there via rename, which bumps the directory mtime). The
+// admin dir is resolved from the worktree's `.git` pointer — a file holding
+// `gitdir: <admindir>` for a linked worktree, or the `.git` directory itself for
+// the main checkout. A zero time is returned when nothing can be stat'd, so
+// callers sort such worktrees last rather than crashing.
+func worktreeModTime(path string) time.Time {
+	dotgit := filepath.Join(path, ".git")
+	fi, err := os.Stat(dotgit)
+	if err != nil {
+		return time.Time{}
+	}
+	admin := dotgit
+	if !fi.IsDir() {
+		if data, err := os.ReadFile(dotgit); err == nil {
+			if rest, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:"); ok {
+				admin = strings.TrimSpace(rest)
+			}
+		}
+	}
+	if ai, err := os.Stat(admin); err == nil {
+		return ai.ModTime()
+	}
+	return fi.ModTime()
 }
 
 // WorktreeRemove removes the worktree at path (force drops a dirty tree).
