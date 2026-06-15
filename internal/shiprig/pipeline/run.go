@@ -113,7 +113,12 @@ type Pipeline struct {
 
 	vars        *variables
 	release     *releaseVars
+	relctx      ReleaseContext
 	baseContext map[string]string
+
+	// scriptCtx is the `ctx` object exposed to Tengo `if` conditions and computed
+	// vars; built once per run.
+	scriptCtx map[string]interface{}
 }
 
 // New builds a Pipeline. env is the layered release environment
@@ -141,6 +146,7 @@ func New(
 		env:      env,
 		native:   nativeSteps,
 		release:  newReleaseVars(relctx),
+		relctx:   relctx,
 	}
 }
 
@@ -150,7 +156,9 @@ func New(
 // hooks) succeeds.
 func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
 	p.baseContext = map[string]string{"tool": toolOf(config)}
-	p.vars = newVariables(config.Vars, p.runner, p.masker, p.workDir)
+	p.scriptCtx = buildScriptCtx(p.relctx, p.env, dryRun)
+	scriptEval := func(expr string) (string, error) { return evalScriptString(expr, p.scriptCtx) }
+	p.vars = newVariables(config.Vars, p.runner, p.masker, p.workDir, scriptEval)
 
 	if dryRun {
 		return p.runDry(steps)
@@ -183,6 +191,15 @@ func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
 	for _, step := range steps {
 		if !step.Enabled() {
 			p.reporter.StepSkipped(step.Name, step.SkipReason)
+			continue
+		}
+
+		run, reason, ok := p.evalStepIf(step)
+		if !ok {
+			return p.fail(hooks, fmt.Sprintf("step '%s' if-condition error: %s", step.Name, reason))
+		}
+		if !run {
+			p.reporter.StepSkipped(step.Name, reason)
 			continue
 		}
 
@@ -235,6 +252,9 @@ func (p *Pipeline) runDry(steps []ResolvedStep) bool {
 		if !step.Enabled() || len(step.DryRunAction) == 0 {
 			continue
 		}
+		if run, _, ok := p.evalStepIf(step); !ok || !run {
+			continue // an if-false (or erroring) step runs no dry commands
+		}
 		p.reporter.StepStarted(step.Name)
 		if !p.runDryCommands(step.Name+" (dry-run)", step.DryRunAction) {
 			p.reporter.RunCompleted(false, fmt.Sprintf("dry run: step '%s' failed", step.Name))
@@ -247,11 +267,34 @@ func (p *Pipeline) runDry(steps []ResolvedStep) bool {
 	return true
 }
 
-// previewSteps returns copies of the steps with before/action/after commands
-// interpolated for display, and the action hidden when "dryRun": false.
+// evalStepIf evaluates a step's `if` gate against the script ctx. It returns
+// whether the step should run, a skip/error reason, and ok=false only when the
+// expression itself errored.
+func (p *Pipeline) evalStepIf(step ResolvedStep) (shouldRun bool, reason string, ok bool) {
+	if step.If == "" {
+		return true, "", true
+	}
+	result, err := evalScriptBool(step.If, p.scriptCtx)
+	if err != nil {
+		return false, err.Error(), false
+	}
+	if !result {
+		return false, "if condition is false", true
+	}
+	return true, "", true
+}
+
+// previewSteps returns copies of the steps with before/after/action commands
+// interpolated for display, the action hidden when "dryRun": false, and an
+// if-false step marked skipped so the dry-run plan is accurate.
 func (p *Pipeline) previewSteps(steps []ResolvedStep) []ResolvedStep {
 	out := make([]ResolvedStep, len(steps))
 	for i, s := range steps {
+		if s.Enabled() {
+			if run, reason, ok := p.evalStepIf(s); ok && !run {
+				s.SkipReason = reason
+			}
+		}
 		s.Before = p.previewCommands(s.Before)
 		s.After = p.previewCommands(s.After)
 		if s.DryRunHidden {
@@ -311,7 +354,7 @@ func (p *Pipeline) previewInterpolate(command CommandSpec) CommandSpec {
 			// A literal var is knowable with no side effect, so show it; a
 			// captured var would run its command, so placeholder it.
 			if p.vars != nil {
-				if value, isLiteral := p.vars.literal(name); isLiteral {
+				if value, known := p.vars.previewValue(name); known {
 					context[key] = value
 					continue
 				}

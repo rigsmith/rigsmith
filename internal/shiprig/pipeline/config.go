@@ -247,6 +247,12 @@ type StepConfig struct {
 	// default action; for a custom step this is the action.
 	Run CommandList `json:"run"`
 
+	// If is a Tengo expression that gates the step: when it evaluates to a falsy
+	// value the step is skipped (with a reason), like a runtime version of
+	// `enabled`. Evaluated against the script `ctx` (packages/versions/tags/
+	// issues/dryRun/env). Empty means "always run".
+	If *string `json:"if"`
+
 	// DryRun controls the action during `--dry-run`: execute it, hide it, or run
 	// an alternate (e.g. a tool's own --dry-run mode). nil lists it without
 	// executing. See DryRunSpec.
@@ -302,11 +308,14 @@ type Hooks struct {
 //     value. Captured values ARE masked in all output (secret-safe), and `lazy`
 //     defers the capture until first reference so a time-limited secret (an OTP)
 //     stays fresh.
+//   - a computed value — `{ "script": "<tengo expr>" }`, evaluated against the
+//     script ctx (e.g. `ctx.version` ? "next" : "latest"). Not masked.
 //
-// Exactly one of Value / Command must be set (enforced by LoadConfig).
+// Exactly one of Value / Command / Script must be set (enforced by LoadConfig).
 type VarSpec struct {
 	Value   *string      `json:"value"`
 	Command *CommandSpec `json:"command"`
+	Script  *string      `json:"script"`
 	Lazy    bool         `json:"lazy"`
 }
 
@@ -356,14 +365,21 @@ func LoadConfig(path string) (*Config, error) {
 	return config, nil
 }
 
-// validateVars enforces that every variable sets exactly one of value/command.
+// validateVars enforces that every variable sets exactly one of
+// value/command/script.
 func validateVars(vars map[string]*VarSpec) error {
 	for name, spec := range vars {
-		if spec == nil || (spec.Value == nil && spec.Command == nil) {
-			return fmt.Errorf("variable '%s' must set either 'value' or 'command'", name)
+		if spec == nil {
+			return fmt.Errorf("variable '%s' must set one of 'value', 'command', or 'script'", name)
 		}
-		if spec.Value != nil && spec.Command != nil {
-			return fmt.Errorf("variable '%s' sets both 'value' and 'command'; use one", name)
+		n := 0
+		for _, set := range []bool{spec.Value != nil, spec.Command != nil, spec.Script != nil} {
+			if set {
+				n++
+			}
+		}
+		if n != 1 {
+			return fmt.Errorf("variable '%s' must set exactly one of 'value', 'command', or 'script'", name)
 		}
 	}
 	return nil

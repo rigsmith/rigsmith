@@ -110,6 +110,10 @@ type ResolvedStep struct {
 
 	// DryRunHidden hides the action from the dry-run plan ("dryRun": false).
 	DryRunHidden bool
+
+	// If is the Tengo gate expression ("" when none); evaluated at run time —
+	// a falsy result skips the step.
+	If string
 }
 
 // Enabled reports whether the step will run.
@@ -198,12 +202,15 @@ func Resolve(config *Config, opts ResolveOptions) ([]ResolvedStep, error) {
 		}
 
 		var before, after []CommandSpec
-		var displayName string
+		var displayName, ifExpr string
 		if stepConfig != nil {
 			before = stepConfig.Before
 			after = stepConfig.After
 			if stepConfig.Name != nil {
 				displayName = strings.TrimSpace(*stepConfig.Name)
+			}
+			if stepConfig.If != nil {
+				ifExpr = strings.TrimSpace(*stepConfig.If)
 			}
 		}
 
@@ -228,6 +235,7 @@ func Resolve(config *Config, opts ResolveOptions) ([]ResolvedStep, error) {
 			Kind:            kind,
 			DryRunAction:    dryAction,
 			DryRunHidden:    dryHidden,
+			If:              ifExpr,
 		})
 	}
 
