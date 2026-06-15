@@ -100,6 +100,10 @@ func newReleaseCmd() *cobra.Command {
 			outRedirected := !term.IsTerminal(int(os.Stdout.Fd()))
 			inRedirected := !term.IsTerminal(int(os.Stdin.Fd()))
 			mode := pipeline.ResolveUIMode(ui, noUI, yes, outRedirected, inRedirected)
+			// On a real terminal, a signing-secret resolution failure degrades to an
+			// unsigned build with a warning; in CI (redirected) it's a hard error, so
+			// a release that asked to be signed never ships unsigned unnoticed.
+			interactive := !outRedirected && !inRedirected
 
 			masker := pipeline.NewSecretMasker()
 
@@ -153,13 +157,17 @@ func newReleaseCmd() *cobra.Command {
 						if !ok {
 							continue
 						}
-						// Resolve optional code-signing secrets for this ecosystem (off
-						// unless a `signing` block enables it); masked and passed to the
-						// build so the tool produces signed installers.
-						signing, err := resolveSigning(cmd.Context(), ws.Config, ecoOf[pkg.Name], masker)
-						if err != nil {
-							out("build " + pkg.Name + ": " + err.Error())
+						// Resolve optional build-time signing secrets for this ecosystem
+						// (off unless a `signing` block enables it); masked and passed to
+						// the build so the tool self-signs (macOS CSC_*/APPLE_*). Windows
+						// artifacts are signed later by the `sign` step.
+						env, ok := resolveSigningEnv(cmd.Context(), ws.Config, ecoOf[pkg.Name], masker, interactive, "build "+pkg.Name, out)
+						if !ok {
 							return false
+						}
+						var signing *plugin.SigningCreds
+						if len(env) > 0 {
+							signing = &plugin.SigningCreds{Env: env}
 						}
 						resp, err := eco.Artifacts(cmd.Context(), plugin.ArtifactsRequest{
 							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir, Snapshot: dryBuild, Signing: signing,
@@ -174,6 +182,52 @@ func newReleaseCmd() *cobra.Command {
 						if resp.Message != "" {
 							out("build " + pkg.Name + ": " + resp.Message)
 						}
+					}
+					return true
+				}
+
+				// signHandler is the post-build `sign` step: it signs each package's
+				// built Windows artifacts (.exe/.msi) via the configured signer (Azure
+				// Trusted Signing by default). A no-op unless an ecosystem's
+				// `signing.windows` is set. Signed in place, so the later `release` step
+				// attaches the signed files. In --dry-build it previews the signer
+				// commands without contacting the signing service.
+				signHandler := func() bool {
+					_, ecoOf, err := ws.Discover(cmd.Context())
+					if err != nil {
+						out("discover: " + err.Error())
+						return false
+					}
+					signedAny := false
+					for name, arts := range built {
+						sc := ws.Config.EcoConfig(ecoOf[name]).Signing
+						if sc == nil || !sc.Enabled || sc.Windows == nil {
+							continue
+						}
+						if len(sign.SignableWindows(arts)) == 0 {
+							continue
+						}
+						env, ok := resolveSigningEnv(cmd.Context(), ws.Config, ecoOf[name], masker, interactive, "sign "+name, out)
+						if !ok {
+							return false
+						}
+						files, output, serr := sign.SignWindows(cmd.Context(), arts, sc.Windows, env, runnerEnv, dryBuild)
+						for _, line := range strings.Split(strings.TrimRight(output, "\n"), "\n") {
+							if line != "" {
+								out("sign " + name + ": " + line)
+							}
+						}
+						if serr != nil {
+							out("sign " + name + ": " + serr.Error())
+							return false
+						}
+						if len(files) > 0 {
+							signedAny = true
+							out(fmt.Sprintf("sign %s: signed %d Windows artifact(s)", name, len(files)))
+						}
+					}
+					if !signedAny {
+						out("sign: no Windows signing configured (skipping)")
 					}
 					return true
 				}
@@ -239,7 +293,7 @@ func newReleaseCmd() *cobra.Command {
 				}
 
 				return pipeline.New(releaseRunner, reporter, masker, prompter, ws.Root,
-					releaseEnv, map[string]pipeline.NativeHandler{"build": buildHandler, "release": releaseHandler, "issues": issuesHandler},
+					releaseEnv, map[string]pipeline.NativeHandler{"build": buildHandler, "sign": signHandler, "release": releaseHandler, "issues": issuesHandler},
 					relctx)
 			}
 
@@ -524,24 +578,27 @@ func attachPaths(built map[string][]plugin.Artifact) map[string][]string {
 	return out
 }
 
-// resolveSigning returns the resolved code-signing credentials for an ecosystem's
-// build, or nil when signing is not configured/enabled (the unsigned default). A
-// failure to resolve a configured secret is returned as an error so a
-// misconfigured signing setup fails the build loudly rather than shipping an
-// unsigned installer.
-func resolveSigning(ctx context.Context, cfg *config.Config, eco string, masker *pipeline.SecretMasker) (*plugin.SigningCreds, error) {
+// resolveSigningEnv resolves an ecosystem's signing secret env, returning nil
+// when signing is not configured/enabled. It applies the degrade policy on a
+// resolution failure: interactive (a real terminal) warns and proceeds UNSIGNED
+// (ok=true, nil env); non-interactive (CI) reports the error and fails the step
+// (ok=false) — so a release that asked to be signed never ships unsigned
+// unnoticed. label prefixes the warning/error (e.g. "build web" / "sign web").
+func resolveSigningEnv(ctx context.Context, cfg *config.Config, eco string, masker *pipeline.SecretMasker, interactive bool, label string, out func(...string)) (map[string]string, bool) {
 	sc := cfg.EcoConfig(eco).Signing
-	if sc == nil || !sc.Enabled {
-		return nil, nil
+	if sc == nil || !sc.Enabled || len(sc.Env) == 0 {
+		return nil, true
 	}
 	env, err := sign.ResolveEnv(ctx, sc.Env, masker)
 	if err != nil {
-		return nil, err
+		if interactive {
+			out(label + ": signing secret unavailable — proceeding UNSIGNED (" + err.Error() + ")")
+			return nil, true
+		}
+		out(label + ": " + err.Error())
+		return nil, false
 	}
-	if len(env) == 0 {
-		return nil, nil
-	}
-	return &plugin.SigningCreds{Env: env}, nil
+	return env, true
 }
 
 // ttyPrompter asks a confirm gate on the terminal.

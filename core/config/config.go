@@ -525,6 +525,33 @@ type EcosystemConfig struct {
 type SigningConfig struct {
 	Enabled bool              `json:"enabled"`
 	Env     map[string]string `json:"env,omitempty"`
+	// Windows configures the post-build `sign` step's signing of this ecosystem's
+	// Windows artifacts (.exe/.msi). Nil means the sign step skips this ecosystem
+	// (macOS/Tauri signing still goes through Env at build time). Any Azure
+	// credentials the signer needs are supplied through Env (e.g. AZURE_CLIENT_ID/
+	// AZURE_TENANT_ID/AZURE_CLIENT_SECRET as op://… refs), resolved and masked.
+	Windows *WindowsSigning `json:"windows,omitempty"`
+}
+
+// WindowsSigning describes how the `sign` step signs Windows artifacts. The
+// default tool is Azure Trusted Signing via the dotnet `sign` CLI; a Command
+// escape hatch runs any other signer (AzureSignTool, signtool, …).
+type WindowsSigning struct {
+	// Tool selects the signer: "azure-trusted-signing" (default) drives the
+	// dotnet `sign` CLI; "command" runs the custom Command instead.
+	Tool string `json:"tool,omitempty"`
+	// Azure Trusted Signing coordinates (non-secret), used when Tool is
+	// azure-trusted-signing.
+	Endpoint    string `json:"endpoint,omitempty"`           // e.g. https://wus2.codesigning.azure.net
+	Account     string `json:"account,omitempty"`            // Trusted Signing account name
+	CertProfile string `json:"certificateProfile,omitempty"` // certificate profile name
+	// TimestampURL overrides the RFC-3161 timestamp server (default
+	// http://timestamp.acs.microsoft.com).
+	TimestampURL string `json:"timestampUrl,omitempty"`
+	// Command is an escape hatch: an argv run once per file with "{file}"
+	// replaced by the artifact path (for AzureSignTool/signtool/etc.). Used when
+	// Tool is "command".
+	Command []string `json:"command,omitempty"`
 }
 
 // EcoConfig decodes the per-ecosystem block for id into an EcosystemConfig,

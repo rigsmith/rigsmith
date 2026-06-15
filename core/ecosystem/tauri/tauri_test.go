@@ -106,6 +106,67 @@ func TestDiscoverSkipsConfWithoutCrate(t *testing.T) {
 	}
 }
 
+// TestDiscoverJSON5: a tauri.conf.json5 with comments parses (conf-sourced).
+func TestDiscoverJSON5(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "src-tauri")
+	writeFile(t, filepath.Join(dir, "Cargo.toml"), "[package]\nname = \"json5app\"\nversion = \"0.0.0\"\n")
+	writeFile(t, filepath.Join(dir, "tauri.conf.json5"), "{\n  // app version\n  \"version\": \"3.1.0\",\n  \"productName\": \"J5\", // trailing comma ok\n}")
+
+	resp, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Packages) != 1 || resp.Packages[0].Version != "3.1.0" {
+		t.Fatalf("json5 conf: want one pkg @3.1.0, got %+v", resp.Packages)
+	}
+
+	// SetVersion stamps the json5 conf (quoted keys) and the crate in lockstep.
+	err = New().SetVersion(context.Background(), plugin.SetVersionRequest{
+		RepoRoot:   root,
+		Package:    plugin.Package{ManifestPath: filepath.Join("src-tauri", "tauri.conf.json5")},
+		NewVersion: "3.2.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf, _ := os.ReadFile(filepath.Join(dir, "tauri.conf.json5"))
+	cargo, _ := os.ReadFile(filepath.Join(dir, "Cargo.toml"))
+	if !strings.Contains(string(conf), `"version": "3.2.0"`) || !strings.Contains(string(cargo), `version = "3.2.0"`) {
+		t.Errorf("json5 lockstep stamp failed:\nconf=%s\ncargo=%s", conf, cargo)
+	}
+}
+
+// TestDiscoverTomlConf: a Tauri.toml (top-level version) parses and stamps.
+func TestDiscoverTomlConf(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "src-tauri")
+	writeFile(t, filepath.Join(dir, "Cargo.toml"), "[package]\nname = \"tomlapp\"\nversion = \"0.0.0\"\n")
+	writeFile(t, filepath.Join(dir, "Tauri.toml"), "version = \"1.5.0\"\nproductName = \"T\"\n")
+
+	resp, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Packages) != 1 || resp.Packages[0].Version != "1.5.0" {
+		t.Fatalf("toml conf: want one pkg @1.5.0, got %+v", resp.Packages)
+	}
+
+	err = New().SetVersion(context.Background(), plugin.SetVersionRequest{
+		RepoRoot:   root,
+		Package:    plugin.Package{ManifestPath: filepath.Join("src-tauri", "Tauri.toml")},
+		NewVersion: "1.6.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf, _ := os.ReadFile(filepath.Join(dir, "Tauri.toml"))
+	cargo, _ := os.ReadFile(filepath.Join(dir, "Cargo.toml"))
+	if !strings.Contains(string(conf), `version = "1.6.0"`) || !strings.Contains(string(cargo), `version = "1.6.0"`) {
+		t.Errorf("toml lockstep stamp failed:\nconf=%s\ncargo=%s", conf, cargo)
+	}
+}
+
 // TestSetVersionConfSourcedLockstep: in conf-sourced mode both tauri.conf.json
 // and Cargo.toml are stamped to the new version (Decision #3).
 func TestSetVersionConfSourcedLockstep(t *testing.T) {

@@ -19,13 +19,16 @@ const DefaultCommitMessage = "chore: release"
 // tags, and `push --follow-tags` puts them on the remote before `release`. The
 // `release` step (forge) creates the release and attaches the build's assets.
 // `issues` runs last: it comments on / closes the issues the release resolves
-// (a no-op unless the `issues` config is enabled).
-var DefaultOrder = []string{"version", "commit", "build", "publish", "tag", "push", "release", "issues"}
+// (a no-op unless the `issues` config is enabled). `sign` sits right after
+// `build`: it is a post-build pass that signs the produced Windows artifacts
+// (e.g. Azure Trusted Signing over .exe/.msi) so `release` attaches the signed
+// files — a no-op unless an ecosystem's `signing.windows` is configured.
+var DefaultOrder = []string{"version", "commit", "build", "sign", "publish", "tag", "push", "release", "issues"}
 
 var (
 	commandBuiltins = []string{"version", "commit", "publish", "tag", "push"}
-	// build, the forge `release` step, and `issues` run host-registered handlers.
-	nativeBuiltins = []string{"build", "release", "issues"}
+	// build, sign, the forge `release` step, and `issues` run host-registered handlers.
+	nativeBuiltins = []string{"build", "sign", "release", "issues"}
 )
 
 // NativeStepDescription is the human label for a native step's action — it runs a
@@ -35,6 +38,8 @@ func NativeStepDescription(name string) string {
 	switch name {
 	case "build":
 		return "build distributable artifacts"
+	case "sign":
+		return "sign built artifacts (Windows code signing)"
 	case "release":
 		return "per-package forge release"
 	case "issues":

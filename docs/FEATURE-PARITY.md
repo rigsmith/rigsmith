@@ -284,3 +284,15 @@ changeRig config surface: the `commit` key, the generalized per-ecosystem
 config block (`sourcePath`/`packageSource`/`versionStrategy`), `exclude`
 honored across rig's pickers, the `regex` versionRegex adapter, and the shipRig
 interactive release TUI — plan editor + live dashboard.)*
+
+*(Beyond-parity, 2026-06-15: **desktop-app ecosystems**. A `tauri` adapter
+(overlays `cargo`; `tauri.conf.json`/`.json5`/`Tauri.toml` ↔ `Cargo.toml` version
+lockstep) and an `electron` adapter (overlays `node`; electron-builder/forge)
+release apps as native installers attached to the forge release, not a registry.
+They sit on a generic **ecosystem-overlay** seam (`EcosystemInfo.Overlays` +
+discovery reconciliation, which transfers the base's dependency edges to the
+overlay). A new post-build **`sign` step** signs Windows artifacts — Azure
+Trusted Signing via the dotnet `sign` CLI by default, or a custom command —
+with secrets resolved through the `core/auth` seam; macOS signing rides the
+build-time env. Signing is off by default and degrades to an unsigned build with
+a warning on a TTY (hard error in CI). Demos under `examples/desktop-demo`.)*

@@ -59,4 +59,40 @@ Both are unsigned by default. To sign, add a `signing` block to the ecosystem in
 ```
 
 shiprig resolves and masks each secret and threads it into the build environment,
-where electron-builder / Tauri pick up their standard signing variables.
+where electron-builder / Tauri pick up their standard signing variables (this is
+the macOS path — `CSC_*` / `APPLE_*`, signed during packaging).
+
+### Windows (Azure Trusted Signing)
+
+Windows installers are signed by the post-build **`sign` step** (between `build`
+and `release`), which runs over the produced `.exe`/`.msi`. Add a `windows` block;
+Azure credentials go through `env` (resolved + masked, read by the `sign` CLI's
+`DefaultAzureCredential`):
+
+```jsonc
+{
+  "baseBranch": "main",
+  "electron": {
+    "signing": {
+      "enabled": true,
+      "windows": {
+        "tool": "azure-trusted-signing",
+        "endpoint": "https://wus2.codesigning.azure.net",
+        "account": "my-signing-account",
+        "certificateProfile": "my-profile"
+      },
+      "env": {
+        "AZURE_TENANT_ID": "op://CI/azure/tenant",
+        "AZURE_CLIENT_ID": "op://CI/azure/client-id",
+        "AZURE_CLIENT_SECRET": "op://CI/azure/client-secret"
+      }
+    }
+  }
+}
+```
+
+This needs the dotnet `sign` CLI on PATH (`dotnet tool install --global sign`).
+For a different signer (AzureSignTool, signtool, …) set `"tool": "command"` and a
+`"command"` argv with `"{file}"` where the artifact path goes. Signing is off by
+default; if a secret can't be resolved, the build proceeds **unsigned with a
+warning** on a terminal but **fails** in CI.

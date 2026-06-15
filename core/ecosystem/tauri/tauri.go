@@ -19,7 +19,6 @@ package tauri
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -29,6 +28,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/jsonc"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/walkutil"
 )
@@ -41,10 +41,17 @@ func New() *Adapter { return &Adapter{} }
 
 var _ plugin.Ecosystem = (*Adapter)(nil)
 
-// confName is the Tauri config file this adapter recognizes. Tauri also supports
-// Tauri.toml / tauri.conf.json5 variants; v1 handles the canonical JSON file and
-// leaves the others to a follow-up (they parse differently).
-const confName = "tauri.conf.json"
+// confNames are the Tauri config filenames this adapter recognizes: the
+// canonical JSON, the JSON5 variant (comments / trailing commas — parsed via the
+// jsonc reader; unquoted JSON5 keys are not handled), and the TOML variant.
+var confNames = map[string]bool{
+	"tauri.conf.json":  true,
+	"tauri.conf.json5": true,
+	"Tauri.toml":       true,
+}
+
+// confPatterns is confNames as a slice for EcosystemInfo.ManifestPatterns.
+var confPatterns = []string{"tauri.conf.json", "tauri.conf.json5", "Tauri.toml"}
 
 // Info returns the Tauri adapter's identity and capabilities. It overlays cargo:
 // a crate under a tauri.conf.json is released as a desktop app, not a crate.
@@ -56,7 +63,7 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		ID:               "tauri",
 		DisplayName:      "Tauri",
 		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodArtifacts, plugin.MethodReleaseInit},
-		ManifestPatterns: []string{confName},
+		ManifestPatterns: confPatterns,
 		Overlays:         []string{"cargo"},
 		DevCommands: map[string][]string{
 			plugin.VerbBuild: {"cargo", "tauri", "build"},
@@ -89,7 +96,7 @@ func (a *Adapter) Discover(ctx context.Context, req plugin.DiscoverRequest) (plu
 
 	var resp plugin.DiscoverResponse
 	err := walkutil.Walk(scanRoot, func(path string, d fs.DirEntry) error {
-		if filepath.Base(path) != confName {
+		if !confNames[filepath.Base(path)] {
 			return nil
 		}
 		pkg, ok := a.packageAt(root, path)
@@ -342,15 +349,59 @@ func (c tauriConf) productName() string {
 	return c.Package.ProductName
 }
 
-// readConf parses a tauri.conf.json; a missing/invalid file yields a zero conf
-// (treated as cargo-sourced), which is the safe default.
+// readConf parses a Tauri config (JSON / JSON5 / TOML); a missing/invalid file
+// yields a zero conf (treated as cargo-sourced), which is the safe default.
 func readConf(path string) tauriConf {
-	var c tauriConf
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return c
+		return tauriConf{}
 	}
-	_ = json.Unmarshal(content, &c)
+	if strings.HasSuffix(path, ".toml") {
+		return readTomlConf(string(content))
+	}
+	// .json and .json5: the jsonc reader tolerates comments and trailing commas.
+	var c tauriConf
+	_ = jsonc.Unmarshal(content, &c)
+	return c
+}
+
+// readTomlConf reads version/productName from a Tauri.toml — top-level (v2) or in
+// a [package] table (v1), mirroring the JSON shapes.
+func readTomlConf(text string) tauriConf {
+	var c tauriConf
+	section := ""
+	sc := bufio.NewScanner(strings.NewReader(text))
+	for sc.Scan() {
+		line := sc.Text()
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if h := tableRe.FindStringSubmatch(trimmed); h != nil {
+			section = strings.TrimSpace(h[1])
+			continue
+		}
+		kv := keyStringRe.FindStringSubmatch(line)
+		if kv == nil {
+			continue
+		}
+		switch section {
+		case "":
+			switch kv[1] {
+			case "version":
+				c.Version = kv[2]
+			case "productName":
+				c.ProductName = kv[2]
+			}
+		case "package":
+			switch kv[1] {
+			case "version":
+				c.Package.Version = kv[2]
+			case "productName":
+				c.Package.ProductName = kv[2]
+			}
+		}
+	}
 	return c
 }
 
@@ -366,6 +417,13 @@ func rewriteConfVersion(path, newVersion string) error {
 	if err != nil {
 		return err
 	}
+	if strings.HasSuffix(path, ".toml") {
+		updated := setTomlConfVersion(string(content), newVersion)
+		if updated == string(content) {
+			return fmt.Errorf("tauri: no version field in %s", path)
+		}
+		return os.WriteFile(path, []byte(updated), 0o644)
+	}
 	loc := confVersionRe.FindSubmatchIndex(content)
 	if loc == nil {
 		return fmt.Errorf("tauri: no \"version\" field in %s", path)
@@ -373,6 +431,24 @@ func rewriteConfVersion(path, newVersion string) error {
 	// Group 2 (the value) spans [loc[4], loc[5]); splice the new value literally.
 	updated := string(content[:loc[4]]) + newVersion + string(content[loc[5]:])
 	return os.WriteFile(path, []byte(updated), 0o644)
+}
+
+// setTomlConfVersion rewrites the first `version = "..."` line (top-level or in
+// [package]), preserving the rest. Returns text unchanged when no version line
+// exists.
+func setTomlConfVersion(text, newVersion string) string {
+	newline := "\n"
+	if strings.Contains(text, "\r\n") {
+		newline = "\r\n"
+	}
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	for i, line := range lines {
+		if kv := keyStringRe.FindStringSubmatch(line); kv != nil && kv[1] == "version" {
+			lines[i] = replaceFirstQuoted(line, newVersion)
+			break
+		}
+	}
+	return strings.Join(lines, newline)
 }
 
 // isSemver reports whether v looks like a concrete version (starts with a digit),
