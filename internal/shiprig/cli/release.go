@@ -26,7 +26,7 @@ import (
 func newReleaseCmd() *cobra.Command {
 	var (
 		dryRun     bool
-		rehearse   bool
+		dryBuild   bool
 		only, skip []string
 		from, to   string
 		configPath string
@@ -58,20 +58,20 @@ func newReleaseCmd() *cobra.Command {
 			}
 
 			steps, err := pipeline.Resolve(cfg, pipeline.ResolveOptions{
-				Only: only, Skip: skip, From: from, To: to, Rehearse: rehearse,
+				Only: only, Skip: skip, From: from, To: to, DryBuild: dryBuild,
 			})
 			if err != nil {
 				return err
 			}
 
-			if rehearse {
-				// A rehearse only builds — no registry/forge side effects. Drop the
+			if dryBuild {
+				// A dry-build only builds — no registry/forge side effects. Drop the
 				// global hooks and captured vars so it can't trigger them (e.g. an OTP
 				// prompt), and require an enabled build step so it actually does work.
 				cfg.Hooks = nil
 				cfg.Vars = nil
 				if !hasEnabledStep(steps, "build") {
-					return fmt.Errorf("nothing to rehearse: no enabled 'build' step in the release order")
+					return fmt.Errorf("nothing to dry-build: no enabled 'build' step in the release order")
 				}
 			}
 
@@ -111,7 +111,7 @@ func newReleaseCmd() *cobra.Command {
 							continue
 						}
 						resp, err := eco.Artifacts(cmd.Context(), plugin.ArtifactsRequest{
-							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir, Snapshot: rehearse,
+							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir, Snapshot: dryBuild,
 						})
 						if err != nil {
 							out("build " + pkg.Name + ": " + err.Error())
@@ -152,9 +152,9 @@ func newReleaseCmd() *cobra.Command {
 
 			// Full TUI flow (interactive, rich, real run): the plan editor lets the
 			// user toggle steps, then the live dashboard drives the run with inline
-			// confirm gates. A rehearse only builds (nothing to gate), so it takes
+			// confirm gates. A dry-build only builds (nothing to gate), so it takes
 			// the straight sequential path like --dry-run.
-			if mode.Interactive && mode.Rich && !dryRun && !rehearse {
+			if mode.Interactive && mode.Rich && !dryRun && !dryBuild {
 				chosen, proceed := interactiveChooser{
 					in: cmd.InOrStdin(), out: cmd.OutOrStdout(), masker: masker,
 				}.Choose(steps)
@@ -196,7 +196,7 @@ func newReleaseCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVarP(&dryRun, "dry-run", "n", false, "print the plan without executing anything")
-	f.BoolVar(&rehearse, "rehearse", false, "build the release's artifacts locally (snapshot) and publish nothing — runs only the build step")
+	f.BoolVar(&dryBuild, "dry-build", false, "build the release's artifacts locally (snapshot) and publish nothing — runs only the build step")
 	f.StringSliceVar(&only, "only", nil, "run only these steps (comma-separated)")
 	f.StringSliceVar(&skip, "skip", nil, "skip these steps (comma-separated)")
 	f.StringVar(&from, "from", "", "start at this step (resume point)")
@@ -206,11 +206,12 @@ func newReleaseCmd() *cobra.Command {
 	f.BoolVar(&gitOnly, "git-only", false, "skip forge (GitHub) releases; tags only")
 	f.BoolVar(&ui, "ui", false, "force the rich reporter even when piped")
 	f.BoolVar(&noUI, "no-ui", false, "force the plain reporter")
-	// --rehearse forces a build-only plan, so the step-selection flags don't
-	// compose with it (they'd just be ignored or confusing). --dry-run + --rehearse
-	// is allowed — it previews the rehearse plan.
-	for _, mutex := range []string{"only", "skip", "from", "to"} {
-		cmd.MarkFlagsMutuallyExclusive("rehearse", mutex)
+	// --dry-build, --dry-run, and the step-selection flags are three distinct
+	// modes that don't compose: dry-run is plan-only, dry-build forces a build-only
+	// plan, and --only/--skip/--from/--to hand-pick steps. Keep them exclusive so a
+	// combination can't produce a confusing or no-op run.
+	for _, mutex := range []string{"dry-run", "only", "skip", "from", "to"} {
+		cmd.MarkFlagsMutuallyExclusive("dry-build", mutex)
 	}
 	return cmd
 }

@@ -101,23 +101,23 @@ func TestResolveUsesDefaultOrderWhenNoneConfigured(t *testing.T) {
 	}
 }
 
-func TestResolveRehearseRunsOnlyBuild(t *testing.T) {
-	steps := mustResolve(t, &Config{}, ResolveOptions{Rehearse: true})
+func TestResolveDryBuildRunsOnlyBuild(t *testing.T) {
+	steps := mustResolve(t, &Config{}, ResolveOptions{DryBuild: true})
 
 	sawBuild := false
 	for _, step := range steps {
 		if step.Name == "build" {
 			sawBuild = true
 			if !step.Enabled() {
-				t.Errorf("build should run under --rehearse, got skip %q", step.SkipReason)
+				t.Errorf("build should run under --dry-build, got skip %q", step.SkipReason)
 			}
 			continue
 		}
 		if step.Enabled() {
-			t.Errorf("step %q should be skipped under --rehearse", step.Name)
+			t.Errorf("step %q should be skipped under --dry-build", step.Name)
 		}
-		if step.SkipReason != "rehearse (build only)" {
-			t.Errorf("step %q skip reason = %q, want %q", step.Name, step.SkipReason, "rehearse (build only)")
+		if step.SkipReason != "dry-build: build only" {
+			t.Errorf("step %q skip reason = %q, want %q", step.Name, step.SkipReason, "dry-build: build only")
 		}
 	}
 	if !sawBuild {
@@ -125,12 +125,12 @@ func TestResolveRehearseRunsOnlyBuild(t *testing.T) {
 	}
 }
 
-// TestResolveRehearseTakesPrecedence: rehearse overrides the step-selection
-// filters — build always runs and every other step keeps the rehearse reason,
+// TestResolveDryBuildTakesPrecedence: dry-build overrides the step-selection
+// filters — build always runs and every other step keeps the dry-build reason,
 // even when --from/--to/--only/--skip would otherwise skip build or relabel.
-func TestResolveRehearseTakesPrecedence(t *testing.T) {
+func TestResolveDryBuildTakesPrecedence(t *testing.T) {
 	opts := ResolveOptions{
-		Rehearse: true,
+		DryBuild: true,
 		From:     "publish", // would skip build (it's before publish) without precedence
 		To:       "tag",
 		Only:     []string{"release"},
@@ -140,12 +140,12 @@ func TestResolveRehearseTakesPrecedence(t *testing.T) {
 	for _, step := range steps {
 		if step.Name == "build" {
 			if !step.Enabled() {
-				t.Errorf("build must run under --rehearse despite other filters, got skip %q", step.SkipReason)
+				t.Errorf("build must run under --dry-build despite other filters, got skip %q", step.SkipReason)
 			}
 			continue
 		}
-		if step.SkipReason != "rehearse (build only)" {
-			t.Errorf("step %q skip reason = %q, want %q", step.Name, step.SkipReason, "rehearse (build only)")
+		if step.SkipReason != "dry-build: build only" {
+			t.Errorf("step %q skip reason = %q, want %q", step.Name, step.SkipReason, "dry-build: build only")
 		}
 	}
 }

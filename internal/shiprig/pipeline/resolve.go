@@ -106,11 +106,11 @@ type ResolveOptions struct {
 	// To skips the steps after the named one.
 	To string
 
-	// Rehearse runs only the `build` step (so the release's artifacts are built
+	// DryBuild runs only the `build` step (so the release's artifacts are built
 	// locally) and skips every other step — nothing is committed, tagged, pushed,
 	// or published. The build step itself runs in snapshot mode (set by the host
 	// handler). It is a real run, distinct from --dry-run's plan-only preview.
-	Rehearse bool
+	DryBuild bool
 }
 
 // Resolve merges config and built-in defaults into the concrete ordered list
@@ -271,14 +271,14 @@ func skipReasonFor(
 	opts ResolveOptions,
 	index, fromIndex, toIndex int,
 ) string {
-	// Rehearse is authoritative: build always runs, everything else is skipped —
-	// regardless of disabled/from/to/only/skip — so a rehearse can never become a
-	// no-op or surface a non-rehearse skip reason.
-	if opts.Rehearse {
+	// DryBuild is authoritative: build always runs, everything else is skipped —
+	// regardless of disabled/from/to/only/skip — so a dry-build can never become a
+	// no-op or surface a non-dry-build skip reason.
+	if opts.DryBuild {
 		if name == "build" {
 			return ""
 		}
-		return "rehearse (build only)"
+		return "dry-build: build only"
 	}
 	if stepConfig != nil && stepConfig.Enabled != nil && !*stepConfig.Enabled {
 		return "disabled"

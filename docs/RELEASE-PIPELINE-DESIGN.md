@@ -27,7 +27,7 @@
   comment is the untagged fallback). The real release op (tag create+push) is the
   `publish`/`push` steps.
 - `shiprig release --dry-run` **prints the plan and executes nothing**
-  (`run.go:127`) — useful to preview, useless to rehearse a build.
+  (`run.go:127`) — useful to preview, useless for actually building anything.
 - `changerig add` already has `-m` (summary→entry), `--open` ($EDITOR body),
   `--empty` (names no packages — and renders nowhere today).
 - goreleaser builds the 4 binaries; `.goreleaser.yaml` validated. `scripts/install.sh`
@@ -50,7 +50,7 @@ goreleaser special case.
   Attach}`. **Decision: build to `dist/` always; attaching is opt-in** — encoded
   per-artifact by `Attach` (binaries/archives → `true`; registry packages →
   `false`). `Snapshot`/`DryRun` flags on the request (DryRun reports intent;
-  Snapshot = tagless build for rehearse).
+  Snapshot = tagless build for --dry-build).
 - Per adapter:
   - **node** → `npm pack --pack-destination <out> --json` → `.tgz` (Attach:false)
   - **dotnet** → `dotnet pack -c Release -o <out>` → `.nupkg` (Attach:false)
@@ -116,23 +116,23 @@ so goreleaser stamps the right version with no tag at HEAD.
   *builds* into `dist/`; it never creates the GitHub release (shiprig owns that),
   so there is no double-create and no `release.mode: append` dance.
 
-### 1c. `--rehearse` (real local dry-build, distinct from `--dry-run`) — ✅ DONE
+### 1c. `--dry-build` (real local dry-build, distinct from `--dry-run`) — ✅ DONE
 
-- `--dry-run` stays plan-only. **`shiprig release --rehearse`** is a *real* run that
+- `--dry-run` stays plan-only. **`shiprig release --dry-build`** is a *real* run that
   **executes only the `build` step** and skips everything else — so it builds the
   release's artifacts into `dist/` and **commits/tags/pushes/publishes nothing**.
-- Implemented as `ResolveOptions.Rehearse`: every step except `build` resolves to
-  `SkipReason: "rehearse (build only)"`; the `build` handler passes
+- Implemented as `ResolveOptions.DryBuild`: every step except `build` resolves to
+  `SkipReason: "dry-build: build only"`; the `build` handler passes
   `ArtifactsRequest.Snapshot: true` so the Go builder runs goreleaser
   `release --clean --snapshot` (no tag/version needed) and other adapters pack
   their current manifest. Routes through the sequential reporter (no plan-editor
   TUI / confirm gates — there's nothing to gate).
 - Scope note: this builds *current-version snapshot* artifacts to verify "does it
   build + package", not the exact next-version strings (you'd run the real
-  pipeline for that). The `${rehearse}` interpolation token / `SHIPRIG_REHEARSE`
-  env for custom non-`build` builders is **not** implemented — in rehearse only
+  pipeline for that). The `${dry-build}` interpolation token / `SHIPRIG_DRY_BUILD`
+  env for custom non-`build` builders is **not** implemented — under --dry-build only
   the `build` step runs, so a custom command step would be skipped; revisit if
-  someone needs a custom builder under rehearse.
+  someone needs a custom builder under --dry-build.
 
 ### 1d. `init` scaffolding + token preflight
 
@@ -177,7 +177,7 @@ so goreleaser stamps the right version with no tag at HEAD.
    `forge`/`release` step uploads each package's `Attach:true` files
    (`gh release upload --clobber`). Go builder injects `GORELEASER_CURRENT_TAG`
    so it is tag-order-independent.
-3. **shiprig `--rehearse` (1c)** — `release.go` flag + `pipeline/run.go` signal
+3. **shiprig `--dry-build` (1c)** — `release.go` flag + `pipeline/run.go` signal
    plumbing (sets `ArtifactsRequest.Snapshot`) + built-in step branches.
 4. **changerig changelog (2a + 2b)** — `changerig add --note`, a new
    `changerig changelog` command, `core/changeset` + `core/changelog`/`planner`.
@@ -192,5 +192,5 @@ green.
   this reads well in practice on the first real release.
 - **`--note` placement in multi-package repos**: repo-level "Notes" vs attaching
   to a chosen package — start repo-level; revisit if users want targeting.
-- **rehearse fidelity**: snapshot binaries are unsigned/untagged-version; good for
+- **dry-build fidelity**: snapshot binaries are unsigned/untagged-version; good for
   "does it build + package", not for verifying the published version string.
