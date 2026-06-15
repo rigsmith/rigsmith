@@ -39,6 +39,10 @@ type Provider interface {
 	// nil when this forge can't upload to an already-created release (the caller
 	// reports a skip rather than failing the run).
 	UploadAssetsCmd(tag string, files []string) []string
+	// ReleaseURLCmd is the argv that prints just the release's web URL for tag,
+	// for the ${releaseUrl} variable. nil when the forge's CLI has no stable way
+	// to print it (the caller resolves the URL to "").
+	ReleaseURLCmd(tag string) []string
 }
 
 // defaultProviders is the auto-detection order: GitHub, then GitLab, then Gitea
@@ -81,6 +85,9 @@ func (githubProvider) UploadAssetsCmd(tag string, files []string) []string {
 	argv := append([]string{"gh", "release", "upload", tag}, files...)
 	return append(argv, "--clobber") // idempotent: re-runs replace assets
 }
+func (githubProvider) ReleaseURLCmd(tag string) []string {
+	return []string{"gh", "release", "view", tag, "--json", "url", "--jq", ".url"}
+}
 
 // --- GitLab (glab) -----------------------------------------------------------
 
@@ -104,6 +111,10 @@ func (gitlabProvider) CreateReleaseCmd(r Release) []string {
 func (gitlabProvider) UploadAssetsCmd(tag string, files []string) []string {
 	return append([]string{"glab", "release", "upload", tag}, files...)
 }
+
+// ReleaseURLCmd: glab has no stable single-value URL output, so ${releaseUrl}
+// resolves to "" on GitLab (a follow-up if needed).
+func (gitlabProvider) ReleaseURLCmd(string) []string { return nil }
 
 // --- Gitea (tea) -------------------------------------------------------------
 
@@ -144,3 +155,7 @@ func (giteaProvider) CreateReleaseCmd(r Release) []string {
 // stable "upload to an existing release by tag" — so attaching to an
 // already-created release is unsupported. nil ⇒ the caller reports a skip.
 func (giteaProvider) UploadAssetsCmd(string, []string) []string { return nil }
+
+// ReleaseURLCmd: tea has no stable single-value URL output, so ${releaseUrl}
+// resolves to "" on Gitea (a follow-up if needed).
+func (giteaProvider) ReleaseURLCmd(string) []string { return nil }

@@ -119,6 +119,45 @@ func (l *CommandList) UnmarshalJSON(data []byte) error {
 	}
 }
 
+// DryRunSpec controls a step's action during `--dry-run`, read from the step's
+// "dryRun" key:
+//
+//   - absent         → the action is listed in the plan but not executed (default).
+//   - true           → the action's own commands execute during the dry run.
+//   - false          → the action is hidden from the plan and not executed.
+//   - a command/list → those commands run (instead of the action) during the dry run.
+//
+// The plan always previews commands with their variables interpolated; this only
+// decides what actually runs.
+type DryRunSpec struct {
+	// Hide is true for "dryRun": false — omit the action from the plan entirely.
+	Hide bool
+	// Execute is true when something should run during a dry run (the action, or
+	// Commands when set).
+	Execute bool
+	// Commands is the alternate to run during a dry run; nil means "run the
+	// action's own commands".
+	Commands CommandList
+}
+
+// UnmarshalJSON reads a step's dryRun value (bool, or a command / command list).
+func (d *DryRunSpec) UnmarshalJSON(data []byte) error {
+	var raw any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if b, ok := raw.(bool); ok {
+		*d = DryRunSpec{Hide: !b, Execute: b}
+		return nil
+	}
+	var list CommandList
+	if err := list.UnmarshalJSON(data); err != nil {
+		return err
+	}
+	*d = DryRunSpec{Execute: true, Commands: list}
+	return nil
+}
+
 // ConfirmValue is a step's confirmation gate, read from the step's "confirm"
 // key: true enables a default prompt, a string sets a custom prompt, and
 // false means no gate.
@@ -185,6 +224,12 @@ type StepConfig struct {
 	// (enabled).
 	Enabled *bool `json:"enabled"`
 
+	// Name is the human display label shown in plans and progress output. The
+	// step's identity (the key in Order and the target of --only/--skip/--from)
+	// stays the map key; this only changes how it is rendered. Empty falls back
+	// to the step id.
+	Name *string `json:"name"`
+
 	// Before are commands run before the step's own action.
 	Before CommandList `json:"before"`
 
@@ -194,6 +239,18 @@ type StepConfig struct {
 	// Run is the step's action. For a built-in step this overrides the
 	// default action; for a custom step this is the action.
 	Run CommandList `json:"run"`
+
+	// DryRun controls the action during `--dry-run`: execute it, hide it, or run
+	// an alternate (e.g. a tool's own --dry-run mode). nil lists it without
+	// executing. See DryRunSpec.
+	DryRun *DryRunSpec `json:"dryRun"`
+
+	// Ecosystems restricts the step to releases that include at least one
+	// package in one of the listed ecosystems ("node", "dotnet", "go", "rust").
+	// Empty/absent runs for every release. A step that matches none of the
+	// release's ecosystems is skipped (not an error), so one polyglot config
+	// stays portable across single-ecosystem releases.
+	Ecosystems []string `json:"ecosystems"`
 
 	// Args are extra arguments appended to a built-in command
 	// (e.g. ["--otp", "${vars.npmOtp}"]).

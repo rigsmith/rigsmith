@@ -112,13 +112,16 @@ type Pipeline struct {
 	native   map[string]NativeHandler
 
 	vars        *variables
+	release     *releaseVars
 	baseContext map[string]string
 }
 
 // New builds a Pipeline. env is the layered release environment
 // (.env/.env.local < ambient) used to resolve ${env.NAME} placeholders; nil
 // falls back to the process environment. nativeSteps maps native step names
-// (e.g. "release") to host-registered handlers; it may be nil.
+// (e.g. "release") to host-registered handlers; it may be nil. relctx supplies
+// the built-in release variables (${version.*}, ${versions}, ${releaseUrl.*},
+// ${issues}, …); nil leaves those placeholders unresolved (verbatim).
 func New(
 	runner Runner,
 	reporter Reporter,
@@ -127,6 +130,7 @@ func New(
 	workDir string,
 	env map[string]string,
 	nativeSteps map[string]NativeHandler,
+	relctx ReleaseContext,
 ) *Pipeline {
 	return &Pipeline{
 		runner:   runner,
@@ -136,6 +140,7 @@ func New(
 		workDir:  workDir,
 		env:      env,
 		native:   nativeSteps,
+		release:  newReleaseVars(relctx),
 	}
 }
 
@@ -143,15 +148,14 @@ func New(
 // vars are captured) — the plan is reported and Run returns true. Returns
 // true when the whole run (including global hooks) succeeds.
 func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
-	p.reporter.Plan(steps, dryRun)
-
-	if dryRun {
-		p.reporter.RunCompleted(true, "dry run - nothing executed")
-		return true
-	}
-
 	p.baseContext = map[string]string{"tool": toolOf(config)}
 	p.vars = newVariables(config.Vars, p.runner, p.masker, p.workDir)
+
+	if dryRun {
+		return p.runDry(steps)
+	}
+
+	p.reporter.Plan(steps, false)
 
 	var hooks Hooks
 	if config.Hooks != nil {
@@ -218,6 +222,104 @@ func (p *Pipeline) fail(hooks Hooks, message string) bool {
 	return false
 }
 
+// runDry renders the interpolated plan (Part A: built-in variables filled in,
+// ${vars.*} and ${releaseUrl*} shown as placeholders, nothing captured) and then
+// executes only the commands a step opted into with "dryRun" (Part B). Confirm
+// gates and native actions never fire in a dry run.
+func (p *Pipeline) runDry(steps []ResolvedStep) bool {
+	p.reporter.Plan(p.previewSteps(steps), true)
+
+	for _, step := range steps {
+		if !step.Enabled() || len(step.DryRunAction) == 0 {
+			continue
+		}
+		p.reporter.StepStarted(step.Name)
+		if !p.runDryCommands(step.Name+" (dry-run)", step.DryRunAction) {
+			p.reporter.RunCompleted(false, fmt.Sprintf("dry run: step '%s' failed", step.Name))
+			return false
+		}
+		p.reporter.StepCompleted(step.Name)
+	}
+
+	p.reporter.RunCompleted(true, "dry run - preview only")
+	return true
+}
+
+// previewSteps returns copies of the steps with before/action/after commands
+// interpolated for display, and the action hidden when "dryRun": false.
+func (p *Pipeline) previewSteps(steps []ResolvedStep) []ResolvedStep {
+	out := make([]ResolvedStep, len(steps))
+	for i, s := range steps {
+		s.Before = p.previewCommands(s.Before)
+		s.After = p.previewCommands(s.After)
+		if s.DryRunHidden {
+			s.Action = nil
+		} else {
+			s.Action = p.previewCommands(s.Action)
+		}
+		out[i] = s
+	}
+	return out
+}
+
+func (p *Pipeline) previewCommands(commands []CommandSpec) []CommandSpec {
+	if commands == nil {
+		return nil
+	}
+	out := make([]CommandSpec, len(commands))
+	for i, c := range commands {
+		out[i] = p.previewInterpolate(c)
+	}
+	return out
+}
+
+// runDryCommands runs opted-in dry-run commands. Like previewInterpolate it
+// never captures ${vars.*} (placeholdered) and never resolves forge URLs, so a
+// dry run has no side effects beyond the command the user marked safe.
+func (p *Pipeline) runDryCommands(label string, commands []CommandSpec) bool {
+	for _, command := range commands {
+		resolved := p.previewInterpolate(command)
+		p.reporter.CommandStarted(label, resolved)
+
+		output, exitCode := dispatch(p.runner, resolved, p.workDir)
+		p.reporter.CommandOutput(output)
+
+		if exitCode != 0 {
+			p.reporter.CommandFailed(label, exitCode)
+			return false
+		}
+	}
+	return true
+}
+
+// previewInterpolate fills a command's placeholders for a dry run: built-in
+// release variables (versions/tags/changelog/issues) resolve to their planned
+// values; ${vars.*} and ${releaseUrl*} become ‹…› placeholders (resolving them
+// has side effects or is impossible before the release runs); ${env.*}/${tool}
+// resolve normally. A release usage error (ambiguous bare form, unknown package)
+// is left verbatim so the unresolved reference stays visible.
+func (p *Pipeline) previewInterpolate(command CommandSpec) CommandSpec {
+	context := make(map[string]string, len(p.baseContext)+4)
+	for key, value := range p.baseContext {
+		context[key] = value
+	}
+
+	for _, key := range extractRefs(command) {
+		switch {
+		case strings.HasPrefix(key, "vars."), isReleaseURLKey(key):
+			context[key] = "‹" + key + "›"
+		default:
+			if p.release != nil {
+				if value, isRelease, err := p.release.resolve(key); isRelease && err == nil {
+					context[key] = value
+				}
+			}
+		}
+	}
+
+	return interpolateCommand(context, p.env, command)
+}
+
 func (p *Pipeline) runAction(step ResolvedStep) bool {
 	if step.Kind != StepKindNative {
 		return p.runCommands(step.Name, step.Action)
@@ -248,6 +350,25 @@ func (p *Pipeline) runCommands(label string, commands []CommandSpec) bool {
 				return false
 			}
 			context["vars."+name] = resolution.value
+		}
+
+		// Built-in release variables (${version.*}, ${versions}, ${releaseUrl.*},
+		// ${issues}, …). Resolved per command so forge URLs reflect whether the
+		// release step has run yet. A usage error (ambiguous bare form, unknown
+		// package/issue) fails the command with its guidance message.
+		if p.release != nil {
+			for _, key := range extractRefs(command) {
+				value, isRelease, err := p.release.resolve(key)
+				if !isRelease {
+					continue
+				}
+				if err != nil {
+					p.reporter.CommandOutput([]string{err.Error()})
+					p.reporter.CommandFailed(fmt.Sprintf("%s (${%s})", label, key), -1)
+					return false
+				}
+				context[key] = value
+			}
 		}
 
 		resolved := interpolateCommand(context, p.env, command)

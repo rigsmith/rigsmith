@@ -36,6 +36,30 @@ func TestPlainReporterSuccessPrintsNoResumeHint(t *testing.T) {
 	}
 }
 
+func TestPlainReporterUsesDisplayNameInPlanAndLiveLines(t *testing.T) {
+	var out strings.Builder
+	reporter := NewPlainReporter(&out, NewSecretMasker(), "")
+
+	const label = "Node smoke test"
+	steps := []ResolvedStep{{
+		Name:        "smoke",
+		DisplayName: label,
+		Action:      []CommandSpec{ShellCommand("npm run smoke")},
+	}}
+
+	reporter.Plan(steps, false) // populates the id -> label map
+	reporter.StepStarted("smoke")
+	reporter.StepCompleted("smoke")
+
+	got := out.String()
+	if !strings.Contains(got, "- "+label) {
+		t.Errorf("plan missing display name: %q", got)
+	}
+	if !strings.Contains(got, "==> "+label) {
+		t.Errorf("live heading missing display name: %q", got)
+	}
+}
+
 func TestPassthroughChooserReturnsStepsUnchanged(t *testing.T) {
 	steps := mustResolve(t, &Config{}, ResolveOptions{})
 

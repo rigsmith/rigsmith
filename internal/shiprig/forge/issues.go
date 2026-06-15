@@ -2,10 +2,27 @@ package forge
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/issuerefs"
 )
+
+// ResolvedIssueNumbers returns the distinct forge issue numbers referenced by
+// the released commit messages (the ${issues} value), in the deduplicated,
+// sorted order issuerefs.Collect produces. Jira refs are ignored.
+func ResolvedIssueNumbers(messages []string) []int {
+	var nums []int
+	for _, r := range issuerefs.Collect(messages, nil) {
+		if r.Kind != issuerefs.Forge {
+			continue
+		}
+		if n, err := strconv.Atoi(r.ID); err == nil {
+			nums = append(nums, n)
+		}
+	}
+	return nums
+}
 
 // IssuesConfig is the release `issues` step's behavior, mirrored from
 // config.Issues (kept local so the forge package doesn't import core/config).

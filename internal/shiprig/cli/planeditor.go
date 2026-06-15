@@ -134,10 +134,10 @@ func (m planEditorModel) View() string {
 			cursor = editorCur.Render("▸ ")
 		}
 		box := editorOff.Render("[ ]")
-		name := editorOff.Render(es.step.Name)
+		name := editorOff.Render(es.step.Label())
 		if es.run {
 			box = editorOn.Render("[x]")
-			name = es.step.Name
+			name = es.step.Label()
 		}
 		line := cursor + box + " " + name
 		// Annotations: a flag-based skip reason (when off and not user-disabled)
