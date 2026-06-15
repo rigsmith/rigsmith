@@ -1,0 +1,97 @@
+{
+  // ───────────────────────────────────────────────────────────────────────────
+  // shiprig release pipeline — FULLY CUSTOMIZED DEMO
+  //
+  // Every built-in step (version, commit, build, publish, tag, push, release,
+  // issues) is replaced by an `echo`, custom steps are woven in, and every
+  // lifecycle slot is exercised: global before/after/onError hooks, per-step
+  // before/run/after, captured variables, confirm gates, ecosystem targeting,
+  // display names, and dry-run variants. Nothing here touches the network or
+  // git — it just prints, so you can watch the whole pipeline fire.
+  //
+  // Run it:  ./run.sh        (see README.md)
+  // ───────────────────────────────────────────────────────────────────────────
+
+  // Base tool for built-in actions. Unused here because every step is overridden
+  // — proof that even the engine's defaults are yours to replace.
+  "tool": "echo",
+
+  // The pipeline, in order. Built-ins are reordered/overridden freely and three
+  // custom steps (preflight, checks, announce) are inserted around them.
+  "order": [
+    "preflight",
+    "version", "commit", "build",
+    "node-check", "dotnet-check",
+    "publish", "tag", "push", "release", "issues",
+    "announce"
+  ],
+
+  // Global hooks bracket the entire run. onError only fires on a failure.
+  "hooks": {
+    "before":  "echo '╭─ [hooks.before] releasing ${versions}'",
+    "after":   "echo '╰─ [hooks.after]  done: ${versions}'",
+    "onError": "echo '✗  [hooks.onError] rollback would run here'"
+  },
+
+  // A variable captured from a command (here an echo; in real life `op item get
+  // … --otp`). `lazy` defers capture until first referenced — so an OTP is fetched
+  // right before publish, not at the top of the run. Captured values are MASKED
+  // in all output (you'll see ***), so secrets never leak.
+  "vars": {
+    "otp": { "command": "echo 123456", "lazy": true }
+  },
+
+  "steps": {
+    // ── custom step: a preflight gate ───────────────────────────────────────
+    "preflight": {
+      "name": "Preflight",
+      "run": "echo '[preflight] preparing ${versions}'"
+    },
+
+    // ── built-ins, each fully replaced and wrapped with before/after ────────
+    "version": {
+      "before": "echo '  [version.before] computing bumps'",
+      "run":    "echo '  [version] bump → ${versions}'",
+      "after":  "echo '  [version.after] CHANGELOG written'"
+    },
+    "commit": {
+      "run": "echo '  [commit] git commit -m \"release ${versions}\"'"
+    },
+    // build is a NATIVE step; a run replaces it (the plan notes the override).
+    "build": {
+      "before": "echo '  [build.before] lint'",
+      "run":    "echo '  [build] package artifacts for ${tags}'",
+      "after":  "echo '  [build.after] artifacts ready'"
+    },
+
+    // ── ecosystem targeting: runs only when the release has such packages ────
+    "node-check":   { "name": "Node check",   "ecosystems": ["node"],   "run": "echo '[node-check] npm test for ${version.web}'" },
+    "dotnet-check": { "name": ".NET check",    "ecosystems": ["dotnet"], "run": "echo '[dotnet-check] dotnet test'" },
+
+    // ── publish: confirm gate + a real dry-run variant ─────────────────────
+    "publish": {
+      "confirm": "Publish ${versions}?",
+      "before":  "echo '  [publish.before] auth'",
+      "run":     "echo '  [publish] publish ${versions} --otp ${vars.otp}'",
+      "after":   "echo '  [publish.after] published'",
+      "dryRun":  "echo '  [publish] DRY — would publish ${versions}'"
+    },
+
+    "tag":  { "run": "echo '  [tag] git tag ${tags}'" },
+    "push": { "confirm": true, "run": "echo '  [push] git push --follow-tags'" },
+
+    // release + issues are NATIVE steps, both replaced here.
+    "release": {
+      "before": "echo '  [release.before]'",
+      "run":    "echo '  [release] forge release for ${tags}'",
+      "after":  "echo '  [release.after] urls: ${releaseUrls}'"
+    },
+    "issues": { "run": "echo '  [issues] comment/close ${issues}'" },
+
+    // ── custom step: final announcement ─────────────────────────────────────
+    "announce": {
+      "name": "Announce",
+      "run": "echo '[announce] shipped ${versions}'"
+    }
+  }
+}
