@@ -30,13 +30,17 @@ internal package, and connects rig's installers to it.
 
 ## Scope decisions
 
-- **Owned tools only.** A `Fix` is attached only when the tool has an exact
-  install command rig owns — the `extTool`s: `cargo-llvm-cov`, `cargo-outdated`,
-  `cargo-watch`, `wgo`, ReportGenerator (fetch-on-use). The **system toolchains**
-  (`go`, `node`, `dotnet`, `cargo`) and unowned binaries (`git`, `gh`) stay
-  **report-only** with their current hint / download link — no package-manager
+- **Owned tools only.** A `Fix` is attached by one rule — the `extTool` has a
+  non-empty `install` command rig owns. Today that's `cargo-llvm-cov`,
+  `cargo-outdated`, `cargo-watch`, `wgo`, and `csharpier` (offered when the repo
+  opts into CSharpier formatting); any future `extTool` with an install command is
+  picked up automatically. Tools with **no** install command stay **report-only**:
+  fetch-on-use ReportGenerator, SDK-shipped `dnx`, the **system toolchains**
+  (`go`, `node`, `dotnet`, `cargo`) and unowned binaries (`git`, `gh`) — all keep
+  their current hint / download link, with no package-manager
   (brew/apt/winget/rustup) guessing. They naturally fall through: no installer ⇒
-  no `Fix` ⇒ report-only.
+  no `Fix` ⇒ report-only. A tool pinned `off` in `.rig.json` also stays
+  report-only (respects "never ask again").
 - **Shared `core/doctor` model.** One contract, adopted by all four CLIs so the
   install UX is written once and identical everywhere.
 
@@ -92,11 +96,13 @@ Each tool builds `[]doctor.Section` and hands it to `doctorui`:
 - **clauderig** — keeps its current checks/fixes; only its *types* move to
   `core/doctor`. Done **first**, as the proof the shared layer preserves today's
   tested behavior before rig adopts it.
-- **rig** — `toolChecks` wraps each *owned* missing `extTool` in a `Fix` that
-  calls the existing `runInstall`; attaches it only when `installable(root)`.
-  Toolchains stay report-only. rig's live spinner checklist (`doctorlive.go`)
-  stays rig-local; the fix step runs *after* it resolves, so they compose:
-  live checklist → collect results → `doctorui.RunFixes`.
+- **rig** — `doctorToolFixes` wraps each missing `extTool` in a `Fix` that runs
+  `installNow` (a `runInstall` variant that returns its error so the fix flow can
+  report ✓/✗); it attaches a `Fix` only when the tool has a non-empty `install`
+  command and isn't pinned `off`. Toolchains and fetch-on-use tools stay
+  report-only. rig's live spinner checklist (`doctorlive.go`) stays rig-local; the
+  fix step runs *after* it resolves, so they compose: live checklist → collect
+  results → `doctorui.RunFixes`.
 - **changerig / shiprig** — get a `doctor` for free later by building sections
   and calling `doctorui`.
 
@@ -106,11 +112,11 @@ Each tool builds `[]doctor.Section` and hands it to `doctorui`:
   `OK/Warn/Fail/Info`. 1:1 map (`docError→Fail`). rig's `check`/`pendingCheck`
   and live renderer reference the rig-local type, so the bulk of rig's diff is a
   mechanical adapt, not a rewrite.
-- **Config modes / "never ask again".** rig's `auto|off|install` modes and the
-  never-ask persistence still apply: a tool set `off` reports report-only in
-  doctor too (no `Fix`), and accepting an install from doctor persists `install`
-  the same way the on-use path does — doctor is just another entry point to the
-  same lifecycle.
+- **Config modes / "never ask again".** rig's `auto|off|install` modes still
+  apply: a tool set `off` is report-only in doctor too (no `Fix`). Unlike the
+  on-use prompt, a doctor install does **not** persist `install` mode — it's a
+  one-shot "install it now"; once the binary is on PATH it resolves on its own, so
+  there's no mode to remember.
 - **Idempotent re-run.** After applying fixes, the fixed checks should pass on the
   next `doctor` run; installers that fail surface inline (`✗ <label>: <err>`) and
   leave the exit code non-zero.
