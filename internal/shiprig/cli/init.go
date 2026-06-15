@@ -181,8 +181,8 @@ func releaseConfigStarter() string {
   "tool": "shiprig",
 
   // Shell commands run through a built-in cross-platform shell by default, so the
-  // same script works on macOS/Linux/Windows. Set "shell": "system" for the OS
-  // shell (/bin/sh or cmd.exe) instead.
+  // same script — including cp/mv/rm/mkdir — works on macOS/Linux/Windows. Set
+  // "shell": "system" for the OS shell (/bin/sh or cmd.exe) instead.
   // "shell": "portable",
 
   // The steps shiprig runs, in order (this is the built-in default — reorder or

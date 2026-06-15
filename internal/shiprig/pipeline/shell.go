@@ -19,11 +19,12 @@ import (
 // release environment in KEY=VALUE form; nil or empty inherits the process
 // environment.
 //
-// The interpreter normalises shell *syntax*, not the available binaries: it
-// resolves external commands (git, npm, gh) from PATH like a shell does, but
-// does not ship a Unix userland, so a script that calls e.g. `sed` still needs
-// `sed` installed on the host. That (plus a rare unsupported construct) is what
-// the "shell": "system" escape hatch is for.
+// It provides cross-platform cp/mv/rm/mkdir builtins (see portableFileOps) so the
+// common file operations a release step needs work everywhere; other external
+// commands (git, npm, gh) resolve from PATH like a shell does. It does not ship a
+// full Unix userland, so a script that calls e.g. `sed` still needs `sed` on the
+// host — that (plus a rare unsupported construct) is what the "shell": "system"
+// escape hatch is for.
 func NewPortableRunner(env []string) Runner {
 	return func(shell bool, commandOrArgv []string, dir string) ([]string, int, error) {
 		if !shell {
@@ -43,6 +44,9 @@ func runPortableShell(env []string, script, dir string) ([]string, int, error) {
 	opts := []interp.RunnerOption{
 		interp.Dir(dir),
 		interp.StdIO(nil, &out, &out),
+		// Cross-platform cp/mv/rm/mkdir in Go; everything else falls through to
+		// the default exec handler (git, npm, gh, …).
+		interp.ExecHandlers(portableFileOps),
 	}
 	// A populated env replaces the process environment exactly (the host already
 	// merged ambient into it); nil/empty falls back to the interpreter default,
