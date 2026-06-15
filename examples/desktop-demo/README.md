@@ -39,9 +39,14 @@ step needs the framework's toolchain:
 
 ## Signing (optional)
 
-Both are unsigned by default. To sign, add a `signing` block to the ecosystem in
-`.changeset/config.json` — off unless `enabled`, secrets resolved via the same
-`op://…` / `env:NAME` / `cmd:…` references as the publish `auth` key:
+Both are unsigned by default. Signing has two complementary parts in the
+ecosystem's `signing` block (off unless `enabled`); secrets in `env` resolve via
+the same `op://…` / `env:NAME` / `cmd:…` references as the publish `auth` key and
+are masked in output.
+
+**1. Build-time `env`** — for tools that sign *during* packaging, notably macOS
+(electron-builder / Tauri read `CSC_*` / `APPLE_*` and sign + notarize in
+process):
 
 ```jsonc
 {
@@ -58,16 +63,11 @@ Both are unsigned by default. To sign, add a `signing` block to the ecosystem in
 }
 ```
 
-shiprig resolves and masks each secret and threads it into the build environment,
-where electron-builder / Tauri pick up their standard signing variables (this is
-the macOS path — `CSC_*` / `APPLE_*`, signed during packaging).
-
-### Windows (Azure Trusted Signing)
-
-Windows installers are signed by the post-build **`sign` step** (between `build`
-and `release`), which runs over the produced `.exe`/`.msi`. Add a `windows` block;
-Azure credentials go through `env` (resolved + masked, read by the `sign` CLI's
-`DefaultAzureCredential`):
+**2. Post-build `signers`** — the **`sign` step** (between `build` and `release`)
+applies each signer to the produced artifacts it matches by extension, then
+`release` attaches the signed files. Platform-agnostic: a signer is either the
+`azure-trusted-signing` preset (the dotnet `sign` CLI) or a `command` (run once
+per file, `{file}` → the artifact path) — so Windows, macOS, or anything else:
 
 ```jsonc
 {
@@ -75,12 +75,19 @@ Azure credentials go through `env` (resolved + masked, read by the `sign` CLI's
   "electron": {
     "signing": {
       "enabled": true,
-      "windows": {
-        "tool": "azure-trusted-signing",
-        "endpoint": "https://wus2.codesigning.azure.net",
-        "account": "my-signing-account",
-        "certificateProfile": "my-profile"
-      },
+      "signers": [
+        {
+          "extensions": [".exe", ".msi"],
+          "tool": "azure-trusted-signing",
+          "endpoint": "https://wus2.codesigning.azure.net",
+          "account": "my-signing-account",
+          "certificateProfile": "my-profile"
+        },
+        {
+          "extensions": [".dmg", ".app"],
+          "command": ["rcodesign", "sign", "{file}"]
+        }
+      ],
       "env": {
         "AZURE_TENANT_ID": "op://CI/azure/tenant",
         "AZURE_CLIENT_ID": "op://CI/azure/client-id",
@@ -91,8 +98,7 @@ Azure credentials go through `env` (resolved + masked, read by the `sign` CLI's
 }
 ```
 
-This needs the dotnet `sign` CLI on PATH (`dotnet tool install --global sign`).
-For a different signer (AzureSignTool, signtool, …) set `"tool": "command"` and a
-`"command"` argv with `"{file}"` where the artifact path goes. Signing is off by
-default; if a secret can't be resolved, the build proceeds **unsigned with a
-warning** on a terminal but **fails** in CI.
+The Azure preset needs the dotnet `sign` CLI on PATH (`dotnet tool install
+--global sign`); `command` signers run whatever you name (signtool, AzureSignTool,
+rcodesign, codesign …). Signing is off by default; if a secret can't be resolved,
+the build proceeds **unsigned with a warning** on a terminal but **fails** in CI.

@@ -20,9 +20,10 @@ const DefaultCommitMessage = "chore: release"
 // `release` step (forge) creates the release and attaches the build's assets.
 // `issues` runs last: it comments on / closes the issues the release resolves
 // (a no-op unless the `issues` config is enabled). `sign` sits right after
-// `build`: it is a post-build pass that signs the produced Windows artifacts
-// (e.g. Azure Trusted Signing over .exe/.msi) so `release` attaches the signed
-// files — a no-op unless an ecosystem's `signing.windows` is configured.
+// `build`: it is a post-build pass that signs the produced artifacts (e.g. Azure
+// Trusted Signing over .exe/.msi, or a codesign/rcodesign command over
+// .dmg/.app) so `release` attaches the signed files — a no-op unless an
+// ecosystem's `signing.signers` is configured.
 var DefaultOrder = []string{"version", "commit", "build", "sign", "publish", "tag", "push", "release", "issues"}
 
 var (
@@ -39,7 +40,7 @@ func NativeStepDescription(name string) string {
 	case "build":
 		return "build distributable artifacts"
 	case "sign":
-		return "sign built artifacts (Windows code signing)"
+		return "sign built artifacts (post-build code signing)"
 	case "release":
 		return "per-package forge release"
 	case "issues":

@@ -186,12 +186,15 @@ func newReleaseCmd() *cobra.Command {
 					return true
 				}
 
-				// signHandler is the post-build `sign` step: it signs each package's
-				// built Windows artifacts (.exe/.msi) via the configured signer (Azure
-				// Trusted Signing by default). A no-op unless an ecosystem's
-				// `signing.windows` is set. Signed in place, so the later `release` step
-				// attaches the signed files. In --dry-build it previews the signer
-				// commands without contacting the signing service.
+				// signHandler is the post-build `sign` step: it applies each ecosystem's
+				// configured signers (signing.signers) to that package's built artifacts,
+				// matched by extension — e.g. Windows .exe/.msi via Azure Trusted Signing,
+				// macOS .dmg/.app via an rcodesign/codesign command. Signed in place, so
+				// the later `release` step attaches the signed files. Build-time signing
+				// (the macOS CSC_*/APPLE_* path electron-builder/Tauri do via signing.env)
+				// is separate. A no-op unless an ecosystem sets signing.signers; in
+				// --dry-build it previews the signer commands without contacting any
+				// signing service.
 				signHandler := func() bool {
 					_, ecoOf, err := ws.Discover(cmd.Context())
 					if err != nil {
@@ -199,19 +202,18 @@ func newReleaseCmd() *cobra.Command {
 						return false
 					}
 					signedAny := false
+					configured := false
 					for name, arts := range built {
 						sc := ws.Config.EcoConfig(ecoOf[name]).Signing
-						if sc == nil || !sc.Enabled || sc.Windows == nil {
+						if sc == nil || !sc.Enabled || len(sc.Signers) == 0 {
 							continue
 						}
-						if len(sign.SignableWindows(arts)) == 0 {
-							continue
-						}
+						configured = true
 						env, ok := resolveSigningEnv(cmd.Context(), ws.Config, ecoOf[name], masker, interactive, "sign "+name, out)
 						if !ok {
 							return false
 						}
-						files, output, serr := sign.SignWindows(cmd.Context(), arts, sc.Windows, env, runnerEnv, dryBuild)
+						files, output, serr := sign.Apply(cmd.Context(), arts, sc.Signers, env, runnerEnv, dryBuild)
 						for _, line := range strings.Split(strings.TrimRight(output, "\n"), "\n") {
 							if line != "" {
 								out("sign " + name + ": " + line)
@@ -223,11 +225,15 @@ func newReleaseCmd() *cobra.Command {
 						}
 						if len(files) > 0 {
 							signedAny = true
-							out(fmt.Sprintf("sign %s: signed %d Windows artifact(s)", name, len(files)))
+							out(fmt.Sprintf("sign %s: signed %d artifact(s)", name, len(files)))
 						}
 					}
 					if !signedAny {
-						out("sign: no Windows signing configured (skipping)")
+						if configured {
+							out("sign: signers configured but no matching artifacts")
+						} else {
+							out("sign: no signers configured (skipping; macOS build-time signing uses signing.env)")
+						}
 					}
 					return true
 				}
