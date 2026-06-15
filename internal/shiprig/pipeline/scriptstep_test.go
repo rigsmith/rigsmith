@@ -47,6 +47,32 @@ func TestScriptSpecFileForm(t *testing.T) {
 	}
 }
 
+func TestScriptFileResolvesRelativeToConfigFromAnyCwd(t *testing.T) {
+	root := t.TempDir()
+	cfgDir := filepath.Join(root, "release")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "stage.tengo"), []byte("log(`ok`)"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "release.jsonc"),
+		[]byte(`{ "steps": { "s": { "script": { "file": "stage.tengo" } } } }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Working directory is root; the config is passed as a relative path. The
+	// script "file" must still resolve next to the config, not against cwd.
+	t.Chdir(root)
+	cfg, err := LoadConfig(filepath.Join("release", "release.jsonc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Steps["s"].Script.Code; got != "log(`ok`)" {
+		t.Errorf("script code = %q, want the file contents", got)
+	}
+}
+
 func newScriptPipeline(workDir string, relctx ReleaseContext) (*Pipeline, *recordingRunner, *recordingReporter) {
 	runner := &recordingRunner{}
 	reporter := &recordingReporter{}

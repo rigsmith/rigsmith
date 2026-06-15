@@ -400,6 +400,11 @@ func (s *ScriptSpec) UnmarshalJSON(data []byte) error {
 // empty (all-defaults) config, so the command works with zero configuration;
 // a file that fails to parse is a real error.
 func LoadConfig(path string) (*Config, error) {
+	// Resolve to an absolute path so a script "file" ref resolves relative to the
+	// config's real location, independent of the working directory.
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return &Config{}, nil
