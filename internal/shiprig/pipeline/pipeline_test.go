@@ -83,7 +83,7 @@ func singleShellAction(t *testing.T, step ResolvedStep) string {
 func TestResolveUsesDefaultOrderWhenNoneConfigured(t *testing.T) {
 	steps := mustResolve(t, &Config{}, ResolveOptions{})
 
-	want := []string{"version", "commit", "build", "publish", "tag", "push", "release"}
+	want := []string{"version", "commit", "build", "publish", "tag", "push", "release", "issues"}
 	if !equalStrings(stepNames(steps), want) {
 		t.Errorf("names = %v, want %v", stepNames(steps), want)
 	}

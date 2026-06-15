@@ -175,33 +175,41 @@ This slice is pure and fully unit-testable with no side effects.
 Mirrors the forge `Provider`. `#N` refs route to the **release's forge** (reusing
 the release step's `Selection`); each provider wraps the forge's issue CLI.
 
-```go
-type IssueRef struct{ ID, URL string }
+Mutations are returned as argv so `RunIssues` stays the single execute+report
+loop (matching the release `Provider`):
 
+```go
 type IssueProvider interface {
     Name() string
-    Ready(repoRoot string, run Runner) bool
-    Comment(ref IssueRef, body, repoRoot string, run Runner) error
-    Close(ref IssueRef, repoRoot string, run Runner) error
+    HasComment(id, marker, repoRoot string, run Runner) bool // idempotency probe
+    CommentCmd(id, body string) []string
+    CloseCmd(id string) []string
 }
 ```
 
-| forge  | comment                         | close                  | mention/exists           |
-|--------|---------------------------------|------------------------|--------------------------|
-| github | `gh issue comment N --body`     | `gh issue close N`     | `gh issue view N --json comments` |
-| gitea  | `tea issue …`                   | `tea issue close N`    | `tea issue …`            |
+The forge is chosen by reusing the release step's `selectProvider`, so issues
+land on the same forge the release did (and if the release degraded to
+tags-only, issue automation is skipped too).
 
+| forge  | comment                     | close              | dedupe probe                       |
+|--------|-----------------------------|--------------------|------------------------------------|
+| github | `gh issue comment N --body` | `gh issue close N` | `gh issue view N --json comments`  |
+| gitlab/gitea | — (planned)           | —                  | —                                  |
+
+- **GitHub-first:** only `gh` issue automation is wired in this slice; other
+  forges return a clean "not yet supported" skip. GitLab/Gitea issue providers
+  fold into the Jira follow-up (their `glab`/`tea` issue surfaces need
+  verifying).
 - **Idempotent comments:** the body carries a hidden marker
-  `<!-- shiprig:released:<tag> -->`; before posting, the provider reads the
+  `<!-- shiprig-released: <versions> -->`; before posting, the provider reads the
   issue's existing comments and skips if the marker is already present. `Close`
   is naturally idempotent (closing a closed issue is a no-op).
-- **New native `issues` step**, opt-in (only when `issues.enabled`), runs **after
-  `release`**: canonical order `… → release → issues`. Registered like the
-  `build`/`release` native handlers (`nativeBuiltins` + `NativeStepDescription` +
-  the handler map in `cli/release.go`). It collects refs (3a) over the released
-  range, then comments/closes per config.
-- Degrade-to-skip if the forge CLI isn't ready (same contract as the release
-  step), never an error.
+- **New native `issues` step**, in `DefaultOrder` after `release` but a no-op
+  unless `issues.enabled`. Registered like the `build`/`release` native handlers
+  (`nativeBuiltins` + `NativeStepDescription` + the handler map in
+  `cli/release.go`). It gathers the released commit range (`git describe` for the
+  previous tag, then `gitutil.LogSince`), collects refs (3a), then comments/closes
+  per config.
 
 ### 3c. Config (`core/config.Config`)
 
@@ -236,10 +244,11 @@ and is the most code, so it ships as its own PR after 3a+3b land.
    CLI is ready. Per-forge degrade-to-tags-only. Tests cover selection, auto-
    detection, per-forge argv, and the Gitea asset-skip.
 4. **Issue tracker (Part 3)** — design agreed; forge-first, Jira deferred:
-   - **3a** `core/issuerefs` ref-collection pass (pure) — ⬜ next.
-   - **3b** `IssueProvider` seam + github/gitea + native `issues` step + config
-     (idempotent marker comments) — ⬜.
-   - **3d** Jira provider (REST/token) — ⬜ deferred follow-up.
+   - **3a** `core/issuerefs` ref-collection pass (pure) — ✅ done.
+   - **3b** `IssueProvider` seam + **GitHub** issues + native `issues` step +
+     `issues` config (idempotent marker comments) — ✅ done.
+   - **3d** Jira provider (REST/token) + GitLab/Gitea issue providers — ⬜
+     deferred follow-up.
 
 Each slice ships as its own PR off a worktree, with tests, leaving
 `go test ./...` green.
