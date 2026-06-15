@@ -401,7 +401,7 @@ func runMCPUI(cmd *cobra.Command) error {
 // local, matching `claude mcp add`.
 func mcpAddInteractive(cmd *cobra.Command, home, dir string) (string, error) {
 	scopeVal := string(settings.Local)
-	transport := mcp.TransportStdio
+	transport := mcp.TransportHTTP
 	var name, target, argsLine, envText, headerText string
 
 	scopeOpts := []huh.Option[string]{
@@ -415,8 +415,8 @@ func mcpAddInteractive(cmd *cobra.Command, home, dir string) (string, error) {
 		huh.NewGroup(
 			huh.NewSelect[string]().Title("Scope").Options(scopeOpts...).Value(&scopeVal),
 			huh.NewSelect[string]().Title("Transport").Options(
+				huh.NewOption("http (default)", mcp.TransportHTTP),
 				huh.NewOption("stdio (local command)", mcp.TransportStdio),
-				huh.NewOption("http", mcp.TransportHTTP),
 				huh.NewOption("sse", mcp.TransportSSE),
 			).Value(&transport),
 			huh.NewInput().Title("Server name").Value(&name).Validate(nonEmpty("name")),
