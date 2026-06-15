@@ -203,6 +203,8 @@ func releaseConfigStarter() string {
     //   "smoke": { "name": "Smoke test", "ecosystems": ["node"], "run": "npm run smoke" }
     // A "run" on a native step (build/release/issues) replaces it — the plan
     // notes the substitution; use "before"/"after" instead to wrap it.
+    // "if" is a Tengo expression that gates the step (skipped when falsy), e.g.
+    //   "announce": { "if": "!text.re_match(\"-(beta|rc)\", ctx.version)", "run": "…" }
     // "dryRun" controls a step under --dry-run: true runs the action, false
     // hides it, or give an alternate (e.g. a tool's own --dry-run), like:
     //   "publish": { "dryRun": "changeset publish --dry-run" }
@@ -213,9 +215,11 @@ func releaseConfigStarter() string {
 
   // Define your own variables, referenced as ${vars.NAME}. A literal (a bare
   // string, or { "value": … }) is reusable config — not masked. A { "command": … }
-  // captures the command's stdout and IS masked (use "lazy" for a fresh OTP).
+  // captures the command's stdout and IS masked (use "lazy" for a fresh OTP). A
+  // { "script": "<tengo expr>" } computes the value from ctx (see TENGO-FOR-JS-DEVS).
   // "vars": {
   //   "basePath": "/opt/acme",
+  //   "channel":  { "script": "text.re_match(\"-(beta|rc)\", ctx.version) ? \"next\" : \"latest\"" },
   //   "otp":      { "command": ["op", "item", "get", "npm", "--otp"], "lazy": true }
   // }
 }

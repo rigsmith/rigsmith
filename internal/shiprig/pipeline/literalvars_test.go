@@ -27,15 +27,15 @@ func TestVarLiteralObjectForm(t *testing.T) {
 
 func TestVarRejectsBothValueAndCommand(t *testing.T) {
 	_, err := parseConfig(t, `{ "vars": { "x": { "value": "a", "command": "echo b" } } }`)
-	if err == nil || !strings.Contains(err.Error(), "both") {
-		t.Errorf("err = %v, want a 'both' error", err)
+	if err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Errorf("err = %v, want an 'exactly one' error", err)
 	}
 }
 
 func TestVarRejectsNeitherValueNorCommand(t *testing.T) {
 	_, err := parseConfig(t, `{ "vars": { "x": { "lazy": true } } }`)
-	if err == nil || !strings.Contains(err.Error(), "either") {
-		t.Errorf("err = %v, want an 'either' error", err)
+	if err == nil || !strings.Contains(err.Error(), "one of") {
+		t.Errorf("err = %v, want a 'one of' error", err)
 	}
 }
 

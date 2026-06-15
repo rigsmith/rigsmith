@@ -38,15 +38,18 @@ type variables struct {
 	masker  *SecretMasker
 	workDir string
 	cache   map[string]string
+	// scriptEval evaluates a "script" variable's Tengo expression to a string.
+	scriptEval func(expr string) (string, error)
 }
 
-func newVariables(specs map[string]*VarSpec, runner Runner, masker *SecretMasker, workDir string) *variables {
+func newVariables(specs map[string]*VarSpec, runner Runner, masker *SecretMasker, workDir string, scriptEval func(string) (string, error)) *variables {
 	return &variables{
-		specs:   specs,
-		runner:  runner,
-		masker:  masker,
-		workDir: workDir,
-		cache:   map[string]string{},
+		specs:      specs,
+		runner:     runner,
+		masker:     masker,
+		workDir:    workDir,
+		cache:      map[string]string{},
+		scriptEval: scriptEval,
 	}
 }
 
@@ -64,12 +67,22 @@ func (v *variables) eagerNames() []string {
 	return names
 }
 
-// literal returns the value of a literal variable (one defined with "value"),
-// or false when name is not a defined literal. Used by the dry-run preview,
-// where a literal is knowable with no side effect while a captured value is not.
-func (v *variables) literal(name string) (string, bool) {
-	if spec, ok := v.specs[name]; ok && spec != nil && spec.Value != nil {
+// previewValue returns a variable's value when it can be known with no side
+// effect — a literal, or a computed "script" var — for the dry-run preview. A
+// captured (command) var returns false, so the preview placeholders it instead
+// of running its command.
+func (v *variables) previewValue(name string) (string, bool) {
+	spec, ok := v.specs[name]
+	if !ok || spec == nil {
+		return "", false
+	}
+	if spec.Value != nil {
 		return *spec.Value, true
+	}
+	if spec.Script != nil && v.scriptEval != nil {
+		if val, err := v.scriptEval(*spec.Script); err == nil {
+			return val, true
+		}
 	}
 	return "", false
 }
@@ -89,6 +102,19 @@ func (v *variables) resolve(name string) varResolution {
 	if spec.Value != nil {
 		v.cache[name] = *spec.Value
 		return varSuccess(*spec.Value)
+	}
+
+	// A computed (script) var evaluates a Tengo expression; pure, so not masked.
+	if spec.Script != nil {
+		if v.scriptEval == nil {
+			return varFailure(fmt.Sprintf("variable '%s': script evaluation unavailable", name), -1)
+		}
+		value, err := v.scriptEval(*spec.Script)
+		if err != nil {
+			return varFailure(fmt.Sprintf("variable '%s' script error: %v", name, err), -1)
+		}
+		v.cache[name] = value
+		return varSuccess(value)
 	}
 
 	if spec.Command == nil {

@@ -16,6 +16,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/charmbracelet/x/exp/charmtone v0.0.0-20260614010340-86573f9427fd
 	github.com/charmbracelet/x/term v0.2.2
+	github.com/d5/tengo/v2 v2.17.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/muesli/mango-cobra v1.3.0
 	github.com/muesli/roff v0.1.0
