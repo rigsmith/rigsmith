@@ -90,6 +90,7 @@ func Execute(ctx context.Context) error {
 		newWorktreeCmd(),
 		newBranchCmd(),
 		newPruneCmd(),
+		newCopyCmd(),
 		newRigInitCmd(),
 		newInfoCmd(),
 		newConfigCmd(),
