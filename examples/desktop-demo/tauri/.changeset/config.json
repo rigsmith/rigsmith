@@ -1,0 +1,4 @@
+{
+  "$schema": "https://rigsmith.dev/schemas/changeset-config.json",
+  "baseBranch": "main"
+}
