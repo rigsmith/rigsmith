@@ -180,6 +180,11 @@ func releaseConfigStarter() string {
   // Base tool for the built-in version/publish/tag steps.
   "tool": "shiprig",
 
+  // Shell commands run through a built-in cross-platform shell by default, so the
+  // same script works on macOS/Linux/Windows. Set "shell": "system" for the OS
+  // shell (/bin/sh or cmd.exe) instead.
+  // "shell": "portable",
+
   // The steps shiprig runs, in order (this is the built-in default — reorder or
   // drop as needed). version → commit → build → publish → tag → push → release.
   "order": [` + strings.Join(quoted, ", ") + `],

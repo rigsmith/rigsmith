@@ -203,6 +203,13 @@ type Config struct {
 	// version/publish steps (defaults to "changeset").
 	Tool string `json:"tool"`
 
+	// Shell selects how shell-string commands run: "portable" (default — an
+	// in-process, mostly-bash-compatible shell, identical on every OS) or
+	// "system" (the OS shell, /bin/sh or cmd.exe, for exact OS-shell semantics or
+	// a construct the portable shell doesn't support). Empty means "portable".
+	// argv commands are unaffected (always exec'd directly). See ShellMode.
+	Shell string `json:"shell"`
+
 	// Order is the ordered list of step names to run. When nil, DefaultOrder
 	// is used. Names may be built-ins or custom steps defined in Steps.
 	Order []string `json:"order"`
@@ -343,6 +350,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := validateVars(config.Vars); err != nil {
 		return nil, fmt.Errorf("release config '%s': %w", path, err)
 	}
+	if _, err := ShellMode(config.Shell); err != nil {
+		return nil, fmt.Errorf("release config '%s': %w", path, err)
+	}
 	return config, nil
 }
 
@@ -357,4 +367,23 @@ func validateVars(vars map[string]*VarSpec) error {
 		}
 	}
 	return nil
+}
+
+// ShellPortable and ShellSystem are the two values for Config.Shell.
+const (
+	ShellPortable = "portable"
+	ShellSystem   = "system"
+)
+
+// ShellMode normalises the configured shell mode: "" defaults to "portable".
+// Any value other than "portable"/"system" is a config error.
+func ShellMode(shell string) (string, error) {
+	switch shell {
+	case "", ShellPortable:
+		return ShellPortable, nil
+	case ShellSystem:
+		return ShellSystem, nil
+	default:
+		return "", fmt.Errorf("invalid 'shell' %q; want %q or %q", shell, ShellPortable, ShellSystem)
+	}
 }
