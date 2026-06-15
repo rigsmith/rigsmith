@@ -97,6 +97,7 @@ func newPublishCmd() *cobra.Command {
 					DryRun:        dryRun,
 					Auth:          cred,
 					OIDC:          oidc,
+					OIDCUser:      ws.Config.EcoConfig(ecoID).User,
 				})
 				if err != nil {
 					return fmt.Errorf("publish %s: %s", p.Name, redactor.Redact(err.Error()))
@@ -221,8 +222,10 @@ func resolvePublishCreds(ctx context.Context, cfg *config.Config, eco, npmAuthOv
 }
 
 // ecoSupportsOIDC reports whether an ecosystem can publish via OIDC trusted
-// publishing. npm and crates.io today; NuGet plugs in on the same seam.
-func ecoSupportsOIDC(eco string) bool { return eco == "node" || eco == "cargo" }
+// publishing. npm, crates.io, and NuGet today.
+func ecoSupportsOIDC(eco string) bool {
+	return eco == "node" || eco == "cargo" || eco == "dotnet"
+}
 
 // packageSourceFor resolves the publish feed for a package's ecosystem: the
 // per-ecosystem `packageSource` config block wins, falling back to the built-in
