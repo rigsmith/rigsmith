@@ -124,6 +124,7 @@ const (
 	MethodDiscover   = "discover"
 	MethodSetVersion = "set-version"
 	MethodPublish    = "publish"
+	MethodArtifacts  = "artifacts"
 )
 
 // DiscoverRequest asks an adapter to enumerate the packages it owns.
@@ -175,6 +176,50 @@ type PublishResponse struct {
 	Published bool   `json:"published"` // false if skipped (already present)
 	Skipped   bool   `json:"skipped"`
 	Message   string `json:"message,omitempty"`
+}
+
+// ArtifactsRequest asks an adapter to build a package's distributable artifacts
+// into OutputDir and return them. This is the "produce the thing you'd ship"
+// operation, kept separate from Publish (which pushes to a registry): npm pack,
+// dotnet pack, cargo package, or a binary build (goreleaser). An adapter with
+// nothing to build returns Skipped. Snapshot asks for an unversioned/tagless
+// build (used by the rehearse flow); DryRun reports intent without building.
+type ArtifactsRequest struct {
+	APIVersion int     `json:"apiVersion"`
+	RepoRoot   string  `json:"repoRoot"`
+	Package    Package `json:"package"`
+	OutputDir  string  `json:"outputDir"` // absolute dir to place built files (dist/)
+	Snapshot   bool    `json:"snapshot,omitempty"`
+	DryRun     bool    `json:"dryRun,omitempty"`
+}
+
+// Artifact kinds, for display and for deciding what gets attached to a release.
+const (
+	ArtifactArchive  = "archive"  // a packaged tarball/zip of binaries
+	ArtifactPackage  = "package"  // a registry package file (.tgz, .nupkg, .crate)
+	ArtifactBinary   = "binary"   // a bare executable
+	ArtifactChecksum = "checksum" // a checksums file
+)
+
+// Artifact is one produced distributable file.
+type Artifact struct {
+	// Path is the absolute path to the produced file (built adapters join it onto
+	// the absolute OutputDir, so it lives under OutputDir). Consumers should use it
+	// as-is, not re-join it against OutputDir.
+	Path string `json:"path"`
+	Kind string `json:"kind,omitempty"` // archive | package | binary | checksum
+	// Attach marks an artifact that is a sensible GitHub release asset by default
+	// (binaries/archives). Registry package files (.tgz/.nupkg/.crate) default to
+	// false — they ship to the registry, not the release — but config may opt in.
+	Attach bool `json:"attach,omitempty"`
+}
+
+// ArtifactsResponse reports the produced artifacts.
+type ArtifactsResponse struct {
+	Built     bool       `json:"built"` // false if skipped (nothing to build)
+	Skipped   bool       `json:"skipped"`
+	Message   string     `json:"message,omitempty"`
+	Artifacts []Artifact `json:"artifacts,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

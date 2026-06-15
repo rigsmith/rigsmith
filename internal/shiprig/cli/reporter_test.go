@@ -16,7 +16,7 @@ func planSteps() []pipeline.ResolvedStep {
 		{Name: "version", IsBuiltin: true, Action: []pipeline.CommandSpec{pipeline.ShellCommand("shiprig version")}},
 		{Name: "publish", IsBuiltin: true, Confirm: confirmText("Publish to registries?"),
 			Action: []pipeline.CommandSpec{pipeline.ShellCommand("shiprig publish")}},
-		{Name: "githubRelease", Kind: pipeline.StepKindNative},
+		{Name: "release", Kind: pipeline.StepKindNative},
 		{Name: "docs", SkipReason: "--skip"},
 	}
 }

@@ -64,7 +64,7 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		APIVersion:       plugin.APIVersion,
 		ID:               "dotnet",
 		DisplayName:      ".NET",
-		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish},
+		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts},
 		ManifestPatterns: []string{"*.csproj"},
 		DevCommands: map[string][]string{
 			plugin.VerbBuild:  {"dotnet", "build"},
@@ -238,6 +238,34 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	return plugin.PublishResponse{
 		Published: true,
 		Message:   fmt.Sprintf("pushed %s@%s to %s", req.Package.Name, req.Package.Version, source),
+	}, nil
+}
+
+// Artifacts builds the NuGet package (`dotnet pack`) into req.OutputDir. The
+// .nupkg is a registry artifact, so it is not attached to the GitHub release by
+// default (Attach: false) — it ships to NuGet via Publish.
+func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
+	if req.Package.Private {
+		return plugin.ArtifactsResponse{Skipped: true, Message: "private"}, nil
+	}
+	spec := req.Package.Name + "@" + req.Package.Version
+	if req.DryRun {
+		return plugin.ArtifactsResponse{Message: fmt.Sprintf("dry-run: would dotnet pack %s", spec)}, nil
+	}
+	if err := os.MkdirAll(req.OutputDir, 0o755); err != nil {
+		return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet pack: mkdir %s: %w", req.OutputDir, err)
+	}
+	manifest := filepath.Join(req.RepoRoot, req.Package.ManifestPath)
+	if _, _, err := runCmd(ctx, req.RepoRoot, "dotnet", "pack", manifest, "-c", "Release", "-o", req.OutputDir); err != nil {
+		return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet pack: %w", err)
+	}
+	// dotnet pack names the package <PackageId>.<version>.nupkg; PackageId is the
+	// adapter's Name and the version is Version, so the path is deterministic.
+	nupkg := filepath.Join(req.OutputDir, req.Package.Name+"."+req.Package.Version+".nupkg")
+	return plugin.ArtifactsResponse{
+		Built:     true,
+		Artifacts: []plugin.Artifact{{Path: nupkg, Kind: plugin.ArtifactPackage, Attach: false}},
+		Message:   "packed " + spec,
 	}, nil
 }
 

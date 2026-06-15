@@ -24,6 +24,11 @@ type Ecosystem interface {
 	// Publish publishes a package via its native package manager. Implementations
 	// should be idempotent (skip already-published versions).
 	Publish(ctx context.Context, req PublishRequest) (PublishResponse, error)
+	// Artifacts builds the package's distributable files into req.OutputDir and
+	// returns them. Separate from Publish: it produces, it does not ship. An
+	// adapter with nothing to build (e.g. a Go module published by tag, with no
+	// goreleaser config) returns Skipped.
+	Artifacts(ctx context.Context, req ArtifactsRequest) (ArtifactsResponse, error)
 }
 
 // Registry holds the available ecosystem adapters (built-in + discovered).
@@ -133,6 +138,13 @@ func (s *SubprocessEcosystem) Publish(ctx context.Context, req PublishRequest) (
 	req.APIVersion = APIVersion
 	var resp PublishResponse
 	err := s.host.Call(ctx, MethodPublish, req, &resp)
+	return resp, err
+}
+
+func (s *SubprocessEcosystem) Artifacts(ctx context.Context, req ArtifactsRequest) (ArtifactsResponse, error) {
+	req.APIVersion = APIVersion
+	var resp ArtifactsResponse
+	err := s.host.Call(ctx, MethodArtifacts, req, &resp)
 	return resp, err
 }
 

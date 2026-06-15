@@ -287,3 +287,54 @@ func TestPublishPrivateSkipped(t *testing.T) {
 		t.Errorf("private publish = %+v, want {Skipped private}", resp)
 	}
 }
+
+// TestArtifactsPrivateSkipped checks a private package is skipped before any
+// `npm pack` invocation (hermetic — no toolchain required).
+func TestArtifactsPrivateSkipped(t *testing.T) {
+	a := New()
+	resp, err := a.Artifacts(context.Background(), plugin.ArtifactsRequest{
+		RepoRoot:  t.TempDir(),
+		OutputDir: t.TempDir(),
+		Package:   plugin.Package{Name: "@acme/lib", Version: "1.0.0", Dir: ".", Private: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Built || !resp.Skipped || resp.Message != "private" {
+		t.Errorf("private artifacts = %+v, want {Skipped private}", resp)
+	}
+}
+
+// TestArtifactsDryRun reports intent without running npm (hermetic).
+func TestArtifactsDryRun(t *testing.T) {
+	a := New()
+	resp, err := a.Artifacts(context.Background(), plugin.ArtifactsRequest{
+		RepoRoot:  t.TempDir(),
+		OutputDir: t.TempDir(),
+		DryRun:    true,
+		Package:   plugin.Package{Name: "@acme/lib", Version: "1.0.0", Dir: "."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Built || resp.Skipped || resp.Message != "dry-run: would npm pack @acme/lib@1.0.0" {
+		t.Errorf("dry-run artifacts = %+v, want a would-npm-pack message", resp)
+	}
+}
+
+// TestInfoAdvertisesArtifacts locks that the Node adapter declares the artifacts
+// capability.
+func TestInfoAdvertisesArtifacts(t *testing.T) {
+	if !hasCapability(New().Info(), plugin.MethodArtifacts) {
+		t.Error("node Info() should advertise MethodArtifacts")
+	}
+}
+
+func hasCapability(info plugin.EcosystemInfo, want string) bool {
+	for _, c := range info.Capabilities {
+		if c == want {
+			return true
+		}
+	}
+	return false
+}

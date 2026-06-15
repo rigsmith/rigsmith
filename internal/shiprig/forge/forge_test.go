@@ -55,7 +55,7 @@ func pkg(name, version string) plugin.Package {
 
 func runService(t *testing.T, packages []plugin.Package, mode Mode, repoRoot string, runner *recordingRunner) (bool, string) {
 	t.Helper()
-	ok, message := Run(packages, nil, config.Default(), mode, repoRoot, runner.run, nil)
+	ok, message := Run(packages, nil, nil, config.Default(), mode, repoRoot, runner.run, nil)
 	return ok, message
 }
 
@@ -99,6 +99,63 @@ func TestGithubMode_CreatesReleaseForMissingTag(t *testing.T) {
 	}
 	if creates != 1 {
 		t.Fatalf("gh create calls for pkg-a@1.2.0 = %d, want 1 (calls: %v)", creates, runner.calls)
+	}
+}
+
+func TestGithubMode_AttachesBuildAssets(t *testing.T) {
+	runner := &recordingRunner{}
+	runner.responder = func(call recordedCall) (string, error) {
+		if isReleaseView(call) {
+			return "", errors.New("exit status 1") // release does not exist yet
+		}
+		return "", nil
+	}
+	packages := []plugin.Package{{Name: "core", Version: "1.2.0", Dir: "core"}}
+	ecoOf := map[string]string{"core": "go"}
+	attach := map[string][]string{"core": {"/dist/core_1.2.0_darwin_arm64.tar.gz", "/dist/checksums.txt"}}
+
+	ok, message := Run(packages, ecoOf, attach, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	if !ok {
+		t.Fatalf("Run ok = false, want true (message: %q)", message)
+	}
+
+	var upload *recordedCall
+	for i := range runner.calls {
+		if c := runner.calls[i]; c.name == "gh" && c.has("upload") {
+			upload = &runner.calls[i]
+		}
+	}
+	if upload == nil {
+		t.Fatalf("no gh release upload call; calls: %v", runner.calls)
+	}
+	// Uploads to the package's real tag, with each asset and --clobber (idempotent).
+	for _, want := range []string{"core/v1.2.0", "/dist/core_1.2.0_darwin_arm64.tar.gz", "/dist/checksums.txt", "--clobber"} {
+		if !upload.has(want) {
+			t.Errorf("upload call missing %q; got %v", want, upload.args)
+		}
+	}
+}
+
+// TestGithubMode_NoAttachables_NoUpload: a package with no Attach:true artifacts
+// (e.g. a registry package) gets a release but no upload call.
+func TestGithubMode_NoAttachables_NoUpload(t *testing.T) {
+	runner := &recordingRunner{}
+	runner.responder = func(call recordedCall) (string, error) {
+		if isReleaseView(call) {
+			return "", errors.New("exit status 1")
+		}
+		return "", nil
+	}
+	packages := []plugin.Package{pkg("pkg-a", "1.2.0")}
+
+	ok, _ := Run(packages, nil, nil, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	if !ok {
+		t.Fatal("Run ok = false, want true")
+	}
+	for _, call := range runner.calls {
+		if call.has("upload") {
+			t.Fatalf("unexpected upload call: %v", call)
+		}
 	}
 }
 
@@ -223,7 +280,7 @@ func TestGithubMode_GoPackage_TagsWithModulePathTag(t *testing.T) {
 	packages := []plugin.Package{{Name: "core", Version: "1.2.0", Dir: "core"}}
 	ecoOf := map[string]string{"core": "go"}
 
-	ok, message := Run(packages, ecoOf, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	ok, message := Run(packages, ecoOf, nil, config.Default(), GitHub, t.TempDir(), runner.run, nil)
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
 	}
@@ -246,7 +303,7 @@ func TestGithubMode_NonGoPackage_TagsWithNameAtVersion(t *testing.T) {
 	packages := []plugin.Package{{Name: "widgets", Version: "1.2.0", Dir: "packages/widgets"}}
 	ecoOf := map[string]string{"widgets": "node"}
 
-	ok, message := Run(packages, ecoOf, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	ok, message := Run(packages, ecoOf, nil, config.Default(), GitHub, t.TempDir(), runner.run, nil)
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
 	}
@@ -268,7 +325,7 @@ func TestGithubMode_PackageAbsentFromEcoMap_TagsWithNameAtVersion(t *testing.T) 
 	// A package missing from ecoOf falls back to the name@version convention.
 	packages := []plugin.Package{{Name: "widgets", Version: "1.2.0", Dir: "packages/widgets"}}
 
-	ok, message := Run(packages, map[string]string{}, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	ok, message := Run(packages, map[string]string{}, nil, config.Default(), GitHub, t.TempDir(), runner.run, nil)
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
 	}

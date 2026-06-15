@@ -143,6 +143,13 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	return plugin.PublishResponse{Skipped: true, Message: "versioned in place; released via git tag"}, nil
 }
 
+// Artifacts has nothing to build: a regex-managed package carries its version in
+// arbitrary files and is distributed by git tag, so there are no distributable
+// files to produce. (Not advertised in Capabilities.)
+func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
+	return plugin.ArtifactsResponse{Skipped: true, Message: "no build artifacts (versioned in place; released via git tag)"}, nil
+}
+
 // loadRegexPackages reads the "regex" block from the repo's .changeset config.
 // Best-effort: a missing/empty/invalid block yields no packages.
 func loadRegexPackages(root string) []regexPackage {

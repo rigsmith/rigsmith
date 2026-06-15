@@ -206,7 +206,7 @@ type StepConfig struct {
 	// runs. Bypassed by --yes.
 	Confirm *ConfirmValue `json:"confirm"`
 
-	// Forge, for the githubRelease step: "auto" (detect GitHub from origin),
+	// Forge, for the release step: "auto" (detect GitHub from origin),
 	// "github" (force on), or "none" (tags only). Defaults to "auto".
 	Forge string `json:"forge"`
 }

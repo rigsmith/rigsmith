@@ -39,7 +39,7 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		APIVersion:       plugin.APIVersion,
 		ID:               "node",
 		DisplayName:      "Node",
-		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish},
+		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts},
 		ManifestPatterns: []string{"package.json"},
 		// Canonical npm commands; rig applies package-manager detection
 		// (pnpm/yarn/bun) on top — see cli/internal/detect.
@@ -207,6 +207,44 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	}
 
 	return plugin.PublishResponse{Published: true, Message: "published " + spec}, nil
+}
+
+// Artifacts builds the npm package tarball (`npm pack`) into req.OutputDir. The
+// .tgz is a registry artifact, so it is not attached to the GitHub release by
+// default (Attach: false) — it ships to npm via Publish.
+func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
+	if req.Package.Private {
+		return plugin.ArtifactsResponse{Skipped: true, Message: "private"}, nil
+	}
+	spec := req.Package.Name + "@" + req.Package.Version
+	if req.DryRun {
+		return plugin.ArtifactsResponse{Message: fmt.Sprintf("dry-run: would npm pack %s", spec)}, nil
+	}
+	if err := os.MkdirAll(req.OutputDir, 0o755); err != nil {
+		return plugin.ArtifactsResponse{}, fmt.Errorf("npm pack: mkdir %s: %w", req.OutputDir, err)
+	}
+	dir := filepath.Join(req.RepoRoot, req.Package.Dir)
+	// --json prints the produced tarball's filename on stdout; --pack-destination
+	// places it in OutputDir rather than the package directory.
+	out, _, err := runCmd(ctx, dir, "npm", "pack", "--pack-destination", req.OutputDir, "--json")
+	if err != nil {
+		return plugin.ArtifactsResponse{}, fmt.Errorf("npm pack: %w", err)
+	}
+	var packed []struct {
+		Filename string `json:"filename"`
+	}
+	if err := json.Unmarshal([]byte(out), &packed); err != nil {
+		return plugin.ArtifactsResponse{}, fmt.Errorf("npm pack: parse --json output: %w", err)
+	}
+	arts := make([]plugin.Artifact, 0, len(packed))
+	for _, p := range packed {
+		arts = append(arts, plugin.Artifact{
+			Path:   filepath.Join(req.OutputDir, p.Filename),
+			Kind:   plugin.ArtifactPackage,
+			Attach: false,
+		})
+	}
+	return plugin.ArtifactsResponse{Built: true, Artifacts: arts, Message: "packed " + spec}, nil
 }
 
 // runCmd runs name+args in dir ("" for the current directory) and returns the

@@ -83,7 +83,7 @@ func singleShellAction(t *testing.T, step ResolvedStep) string {
 func TestResolveUsesDefaultOrderWhenNoneConfigured(t *testing.T) {
 	steps := mustResolve(t, &Config{}, ResolveOptions{})
 
-	want := []string{"version", "commit", "publish", "push", "githubRelease"}
+	want := []string{"version", "commit", "build", "publish", "tag", "push", "release"}
 	if !equalStrings(stepNames(steps), want) {
 		t.Errorf("names = %v, want %v", stepNames(steps), want)
 	}
@@ -92,8 +92,12 @@ func TestResolveUsesDefaultOrderWhenNoneConfigured(t *testing.T) {
 			t.Errorf("step %q: enabled=%v builtin=%v, want both true", step.Name, step.Enabled(), step.IsBuiltin)
 		}
 	}
-	if findStep(t, steps, "githubRelease").Kind != StepKindNative {
-		t.Error("githubRelease should be a native step")
+	if findStep(t, steps, "release").Kind != StepKindNative {
+		t.Error("release should be a native step")
+	}
+	// build runs the host's Artifacts handler — a native step, like release.
+	if findStep(t, steps, "build").Kind != StepKindNative {
+		t.Error("build should be a native step")
 	}
 }
 
@@ -107,8 +111,21 @@ func TestResolveBuiltinPublishUsesToolAndAppendsArgs(t *testing.T) {
 
 	publish := findStep(t, mustResolve(t, config, ResolveOptions{}), "publish")
 
-	if got := singleShellAction(t, publish); got != "npx changeset publish --otp ${vars.npmOtp}" {
+	// In the pipeline, tagging is the `tag` step's job, so publish carries
+	// --no-git-tag (before any user args).
+	if got := singleShellAction(t, publish); got != "npx changeset publish --no-git-tag --otp ${vars.npmOtp}" {
 		t.Errorf("publish action = %q", got)
+	}
+}
+
+func TestResolveBuiltinTagUsesTool(t *testing.T) {
+	config := &Config{Tool: "npx changeset"}
+	tag := findStep(t, mustResolve(t, config, ResolveOptions{}), "tag")
+	if got := singleShellAction(t, tag); got != "npx changeset tag" {
+		t.Errorf("tag action = %q, want %q", got, "npx changeset tag")
+	}
+	if tag.Kind != StepKindCommands {
+		t.Error("tag should be a command step")
 	}
 }
 
@@ -261,8 +278,8 @@ func TestResolveFromSkipsEarlierSteps(t *testing.T) {
 	if !findStep(t, steps, "publish").Enabled() {
 		t.Error("publish should be enabled")
 	}
-	if !findStep(t, steps, "githubRelease").Enabled() {
-		t.Error("githubRelease should be enabled")
+	if !findStep(t, steps, "release").Enabled() {
+		t.Error("release should be enabled")
 	}
 }
 
@@ -275,8 +292,8 @@ func TestResolveToSkipsLaterSteps(t *testing.T) {
 	if got := findStep(t, steps, "publish").SkipReason; got != "after --to" {
 		t.Errorf("publish skip reason = %q", got)
 	}
-	if got := findStep(t, steps, "githubRelease").SkipReason; got != "after --to" {
-		t.Errorf("githubRelease skip reason = %q", got)
+	if got := findStep(t, steps, "release").SkipReason; got != "after --to" {
+		t.Errorf("release skip reason = %q", got)
 	}
 }
 
@@ -289,8 +306,8 @@ func TestResolveFromToKeepsOnlyTheRange(t *testing.T) {
 			enabled = append(enabled, step.Name)
 		}
 	}
-	if !equalStrings(enabled, []string{"commit", "publish"}) {
-		t.Errorf("enabled = %v, want [commit publish]", enabled)
+	if !equalStrings(enabled, []string{"commit", "build", "publish"}) {
+		t.Errorf("enabled = %v, want [commit build publish]", enabled)
 	}
 }
 
@@ -316,7 +333,7 @@ func TestRunDelegatesBuiltinsToConfiguredTool(t *testing.T) {
 			shellCommands = append(shellCommands, call.args[0])
 		}
 	}
-	want := []string{"npx changeset version", "npx changeset publish"}
+	want := []string{"npx changeset version", "npx changeset publish --no-git-tag"}
 	if !equalStrings(shellCommands, want) {
 		t.Errorf("shell commands = %v, want %v", shellCommands, want)
 	}
@@ -495,8 +512,8 @@ func TestRunResolvesLazyVarOnReferenceInterpolatesAndMasks(t *testing.T) {
 	if !captured {
 		t.Error("the op capture command never ran")
 	}
-	if shellCalls != 1 || shellCommand != "changeset publish --otp 123456" {
-		t.Errorf("shell calls = %d (%q), want one 'changeset publish --otp 123456'", shellCalls, shellCommand)
+	if shellCalls != 1 || shellCommand != "changeset publish --no-git-tag --otp 123456" {
+		t.Errorf("shell calls = %d (%q), want one 'changeset publish --no-git-tag --otp 123456'", shellCalls, shellCommand)
 	}
 
 	// The captured value is registered as a secret to redact.
@@ -643,9 +660,9 @@ func TestRunConfirmGateDeclinedStopsBeforeActionWithoutFailing(t *testing.T) {
 func TestRunNativeStepInvokesRegisteredHandler(t *testing.T) {
 	invoked := false
 	f := newFixture(map[string]NativeHandler{
-		"githubRelease": func() bool { invoked = true; return true },
+		"release": func() bool { invoked = true; return true },
 	})
-	config := &Config{Order: []string{"githubRelease"}}
+	config := &Config{Order: []string{"release"}}
 
 	success := f.pipeline.Run(mustResolve(t, config, ResolveOptions{}), config, false)
 
@@ -655,16 +672,16 @@ func TestRunNativeStepInvokesRegisteredHandler(t *testing.T) {
 	if !invoked {
 		t.Error("the native handler was not invoked")
 	}
-	if !equalStrings(f.reporter.completed, []string{"githubRelease"}) {
-		t.Errorf("completed = %v, want [githubRelease]", f.reporter.completed)
+	if !equalStrings(f.reporter.completed, []string{"release"}) {
+		t.Errorf("completed = %v, want [release]", f.reporter.completed)
 	}
 }
 
 func TestRunNativeStepHandlerFailureFailsRelease(t *testing.T) {
 	f := newFixture(map[string]NativeHandler{
-		"githubRelease": func() bool { return false },
+		"release": func() bool { return false },
 	})
-	config := &Config{Order: []string{"githubRelease"}}
+	config := &Config{Order: []string{"release"}}
 
 	success := f.pipeline.Run(mustResolve(t, config, ResolveOptions{}), config, false)
 
@@ -679,23 +696,23 @@ func TestRunNativeStepHandlerFailureFailsRelease(t *testing.T) {
 func TestRunNativeStepNoHandlerSkipsGracefully(t *testing.T) {
 	// The fixture has no native handlers registered.
 	f := newFixture(nil)
-	config := &Config{Order: []string{"githubRelease"}}
+	config := &Config{Order: []string{"release"}}
 
 	success := f.pipeline.Run(mustResolve(t, config, ResolveOptions{}), config, false)
 
 	if !success {
 		t.Error("run should succeed")
 	}
-	if len(f.reporter.skippedSteps) != 1 || f.reporter.skippedSteps[0].name != "githubRelease" {
-		t.Errorf("skipped = %v, want only githubRelease", f.reporter.skippedSteps)
+	if len(f.reporter.skippedSteps) != 1 || f.reporter.skippedSteps[0].name != "release" {
+		t.Errorf("skipped = %v, want only release", f.reporter.skippedSteps)
 	}
 }
 
 func TestResolveGithubReleaseOverriddenByRunBecomesCommandStep(t *testing.T) {
 	config := &Config{
-		Order: []string{"githubRelease"},
+		Order: []string{"release"},
 		Steps: map[string]*StepConfig{
-			"githubRelease": {Run: CommandList{ShellCommand("./custom-release.sh")}},
+			"release": {Run: CommandList{ShellCommand("./custom-release.sh")}},
 		},
 	}
 
@@ -706,7 +723,7 @@ func TestResolveGithubReleaseOverriddenByRunBecomesCommandStep(t *testing.T) {
 	step := steps[0]
 
 	if step.Kind != StepKindCommands {
-		t.Error("githubRelease with run should be a command step")
+		t.Error("release with run should be a command step")
 	}
 	if got := singleShellAction(t, step); got != "./custom-release.sh" {
 		t.Errorf("action = %q", got)
