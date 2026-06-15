@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -202,11 +203,121 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	if strings.HasPrefix(req.PackageSource, "http") {
 		args = append(args, "--registry", req.PackageSource)
 	}
-	if _, _, err := runCmd(ctx, dir, "npm", args...); err != nil {
+
+	// Resolve the publish credential. With nothing supplied, npm uses the
+	// caller's ambient auth (~/.npmrc / NPM_TOKEN) and we touch nothing. With a
+	// token (an engine-resolved secret ref, or one we mint via OIDC), write it
+	// to a temp npmrc seeded from the existing one (so scopes/registries
+	// survive) and point npm at it via NPM_CONFIG_USERCONFIG — env config layers
+	// above project/user .npmrc without putting the token on the command line.
+	env := os.Environ()
+	authNote := ""
+	switch {
+	case req.Auth != nil && req.Auth.Token != "":
+		authEnv, cleanup, err := npmAuthConfig(req.Auth.Token, req.PackageSource)
+		if err != nil {
+			return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
+		}
+		defer cleanup()
+		env = authEnv
+		if req.Auth.Method == "secret-ref" {
+			authNote = " (auth via secret reference)"
+		}
+
+	case req.OIDC:
+		token, err := oidcPublishToken(ctx, req.Package.Name, req.PackageSource)
+		if err != nil {
+			return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
+		}
+		authEnv, cleanup, err := npmAuthConfig(token, req.PackageSource)
+		if err != nil {
+			return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
+		}
+		defer cleanup()
+		env = authEnv
+
+		// Provenance attestation rides on top of OIDC auth, but needs the npm
+		// CLI's attestation machinery (npm ≥ 11.5.1). When the runner is too old
+		// we still publish — auth never depends on the npm version, only the
+		// attestation does.
+		if npmSupportsProvenance(ctx) {
+			args = append(args, "--provenance")
+			authNote = " (auth via OIDC trusted publishing, provenance attested)"
+		} else {
+			authNote = " (auth via OIDC trusted publishing; provenance skipped — needs npm ≥ 11.5.1)"
+		}
+	}
+
+	if _, _, err := runCmdEnv(ctx, dir, env, "npm", args...); err != nil {
 		return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
 	}
 
-	return plugin.PublishResponse{Published: true, Message: "published " + spec}, nil
+	return plugin.PublishResponse{Published: true, Message: "published " + spec + authNote}, nil
+}
+
+// npmAuthConfig writes a temporary npmrc carrying the auth token for the target
+// registry and returns the environment (NPM_CONFIG_USERCONFIG pointed at it)
+// plus a cleanup func. The temp file is seeded from the caller's existing user
+// npmrc so their scope/registry settings are preserved, then the token line is
+// appended (last key wins) — so we add auth without discarding configuration.
+func npmAuthConfig(token, packageSource string) (env []string, cleanup func(), err error) {
+	dir, err := os.MkdirTemp("", "shiprig-npmrc-")
+	if err != nil {
+		return nil, nil, fmt.Errorf("npm auth: temp dir: %w", err)
+	}
+	cleanup = func() { _ = os.RemoveAll(dir) }
+
+	var b strings.Builder
+	if existing := existingNpmrc(); existing != "" {
+		if data, rerr := os.ReadFile(existing); rerr == nil && len(data) > 0 {
+			b.Write(data)
+			if data[len(data)-1] != '\n' {
+				b.WriteByte('\n')
+			}
+		}
+	}
+	b.WriteString(npmrcAuthKey(packageSource))
+	b.WriteString(token)
+	b.WriteByte('\n')
+
+	npmrc := filepath.Join(dir, ".npmrc")
+	if err := os.WriteFile(npmrc, []byte(b.String()), 0o600); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("npm auth: write npmrc: %w", err)
+	}
+	return append(os.Environ(), "NPM_CONFIG_USERCONFIG="+npmrc), cleanup, nil
+}
+
+// existingNpmrc returns the path npm would read as the user config, so we can
+// seed our temp file from it: an explicit NPM_CONFIG_USERCONFIG wins, else
+// ~/.npmrc. Empty when neither is determinable.
+func existingNpmrc() string {
+	if p := os.Getenv("NPM_CONFIG_USERCONFIG"); p != "" {
+		return p
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".npmrc")
+	}
+	return ""
+}
+
+// npmrcAuthKey returns the registry-scoped _authToken key prefix for an npmrc,
+// e.g. "//registry.npmjs.org/:_authToken=". A URL packageSource is keyed by its
+// host+path; anything else (feed name / empty) targets the default registry.
+func npmrcAuthKey(packageSource string) string {
+	host, path := "registry.npmjs.org", "/"
+	if strings.HasPrefix(packageSource, "http") {
+		if u, err := url.Parse(packageSource); err == nil && u.Host != "" {
+			host = u.Host
+			if path = u.Path; path == "" {
+				path = "/"
+			}
+			if !strings.HasSuffix(path, "/") {
+				path += "/"
+			}
+		}
+	}
+	return "//" + host + path + ":_authToken="
 }
 
 // Artifacts builds the npm package tarball (`npm pack`) into req.OutputDir. The
@@ -261,14 +372,20 @@ func (a *Adapter) ReleaseInit(ctx context.Context, req plugin.ReleaseInitRequest
 	}, nil
 }
 
-// runCmd runs name+args in dir ("" for the current directory) and returns the
-// captured stdout/stderr. On a non-zero exit the error wraps stderr for
-// diagnostics.
+// runCmd runs name+args in dir ("" for the current directory) with the ambient
+// environment and returns the captured stdout/stderr.
 func runCmd(ctx context.Context, dir, name string, args ...string) (stdout, stderr string, err error) {
+	return runCmdEnv(ctx, dir, nil, name, args...)
+}
+
+// runCmdEnv is runCmd with an explicit environment (nil = inherit the parent's).
+// On a non-zero exit the error wraps stderr for diagnostics.
+func runCmdEnv(ctx context.Context, dir string, env []string, name string, args ...string) (stdout, stderr string, err error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
+	cmd.Env = env
 	var outBuf, errBuf strings.Builder
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf

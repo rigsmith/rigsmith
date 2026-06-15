@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/rigsmith/rigsmith/core/auth"
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
@@ -23,6 +26,7 @@ func newPublishCmd() *cobra.Command {
 		noPush   bool
 		access   string
 		yes      bool
+		npmAuth  string
 	)
 	cmd := &cobra.Command{
 		Use:   "publish",
@@ -59,6 +63,12 @@ func newPublishCmd() *cobra.Command {
 				}
 			}
 
+			// Registry credentials are resolved just-in-time and redacted from any
+			// surfaced output. Cache per ecosystem so a secret-manager command
+			// (e.g. `op read`) runs at most once per run.
+			redactor := auth.NewRedactor()
+			authCache := map[string]*plugin.AuthCredential{}
+
 			// 1. Registry publish per package (ignored packages are never published).
 			for _, p := range pkgs {
 				if ws.Config.IsIgnored(p.Name) {
@@ -68,15 +78,28 @@ func newPublishCmd() *cobra.Command {
 				if !ok {
 					continue
 				}
+				ecoID := ecoOf[p.Name]
+				// Resolve auth only for real publishes; --dry-run must stay free of
+				// side effects (no secret fetch / prompt / token mint).
+				var cred *plugin.AuthCredential
+				var oidc bool
+				if !dryRun {
+					cred, oidc, err = resolvePublishCreds(cmd.Context(), ws.Config, ecoID, npmAuth, authCache, redactor)
+					if err != nil {
+						return fmt.Errorf("auth for %s: %s", p.Name, redactor.Redact(err.Error()))
+					}
+				}
 				resp, err := eco.Publish(cmd.Context(), plugin.PublishRequest{
 					RepoRoot:      ws.Root,
 					Package:       p,
-					PackageSource: packageSourceFor(ws.Config, ecoOf[p.Name]),
+					PackageSource: packageSourceFor(ws.Config, ecoID),
 					Access:        acc,
 					DryRun:        dryRun,
+					Auth:          cred,
+					OIDC:          oidc,
 				})
 				if err != nil {
-					return fmt.Errorf("publish %s: %w", p.Name, err)
+					return fmt.Errorf("publish %s: %s", p.Name, redactor.Redact(err.Error()))
 				}
 				switch {
 				case resp.Published:
@@ -150,8 +173,56 @@ func newPublishCmd() *cobra.Command {
 	f.BoolVar(&noGitTag, "no-git-tag", false, "skip creating git tags")
 	f.BoolVar(&noPush, "no-push", false, "create tags locally but do not push them")
 	f.StringVar(&access, "access", "", "npm access (public|restricted); defaults to config")
+	f.StringVar(&npmAuth, "npm-auth", "", "npm auth secret ref (op://… | env:NAME | cmd:…); overrides node config")
 	return cmd
 }
+
+// resolvePublishCreds decides how an ecosystem's publish authenticates:
+//
+//   - An explicit secret ref (the `auth` config block, or --npm-auth for node)
+//     wins — resolve it to a credential, cached so a secret-manager command runs
+//     at most once per run.
+//   - Otherwise, for an ecosystem that supports OIDC trusted publishing, when it
+//     is not turned off and a CI OIDC context is present, signal OIDC — the
+//     adapter mints and exchanges the token itself.
+//   - Otherwise return nothing: the adapter uses its ambient credential
+//     (~/.npmrc / NPM_TOKEN), i.e. pre-auth-seam behaviour.
+func resolvePublishCreds(ctx context.Context, cfg *config.Config, eco, npmAuthOverride string, cache map[string]*plugin.AuthCredential, redactor auth.Masker) (*plugin.AuthCredential, bool, error) {
+	ref := cfg.EcoConfig(eco).Auth
+	if eco == "node" && npmAuthOverride != "" {
+		ref = npmAuthOverride
+	}
+	if ref != "" {
+		if cached, ok := cache[ref]; ok {
+			return cached, false, nil
+		}
+		cred, err := auth.Resolve(ctx, auth.Request{Ref: ref, Masker: redactor})
+		if err != nil {
+			return nil, false, err
+		}
+		var ac *plugin.AuthCredential
+		if cred.Resolved() {
+			ac = &plugin.AuthCredential{
+				Token:      cred.Token,
+				Method:     string(cred.Method),
+				Provenance: cred.Provenance,
+			}
+		}
+		cache[ref] = ac
+		return ac, false, nil
+	}
+
+	if ecoSupportsOIDC(eco) &&
+		!strings.EqualFold(cfg.EcoConfig(eco).OIDC, "off") &&
+		auth.HasOIDCContext() {
+		return nil, true, nil
+	}
+	return nil, false, nil
+}
+
+// ecoSupportsOIDC reports whether an ecosystem can publish via OIDC trusted
+// publishing. Only npm today; NuGet/crates plug in on the same seam later.
+func ecoSupportsOIDC(eco string) bool { return eco == "node" }
 
 // packageSourceFor resolves the publish feed for a package's ecosystem: the
 // per-ecosystem `packageSource` config block wins, falling back to the built-in
