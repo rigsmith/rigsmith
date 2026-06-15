@@ -214,7 +214,10 @@ func TestArtifactsDryRun(t *testing.T) {
 	}
 	// Order-independent: the bumped version is injected as GORELEASER_CURRENT_TAG
 	// (no git tag needed), and tag validation is skipped.
+	// The dry-run message mirrors the real command exactly: --clean,
+	// --skip=publish,validate, and the injected version tag.
 	if resp.Built || resp.Skipped ||
+		!strings.Contains(resp.Message, "--clean") ||
 		!strings.Contains(resp.Message, "--skip=publish,validate") ||
 		!strings.Contains(resp.Message, "GORELEASER_CURRENT_TAG=v1.2.3") {
 		t.Errorf("dry-run artifacts = %+v, want a tag-injecting goreleaser message", resp)

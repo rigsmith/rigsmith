@@ -210,28 +210,30 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		return plugin.ArtifactsResponse{Skipped: true, Message: "no .goreleaser.yaml; Go modules ship via git tag"}, nil
 	}
 	tag := moduleTag(req.Package.Dir, req.Package.Version)
+	// A real build injects the bumped version (no tag needed yet) and skips
+	// goreleaser's tag-at-HEAD validation; a rehearse uses --snapshot (its own
+	// pseudo-version). The dry-run message is derived from the very args run
+	// below, so intent and execution can't drift.
+	args := []string{"release", "--clean", "--skip=publish,validate"}
+	env := append(os.Environ(), "GORELEASER_CURRENT_TAG="+tag)
+	note := " (GORELEASER_CURRENT_TAG=" + tag + ")"
+	if req.Snapshot {
+		args = []string{"release", "--clean", "--snapshot"}
+		env = os.Environ()
+		note = ""
+	}
 	if req.DryRun {
-		mode := "goreleaser release --skip=publish,validate (GORELEASER_CURRENT_TAG=" + tag + ")"
-		if req.Snapshot {
-			mode = "goreleaser release --snapshot"
-		}
-		return plugin.ArtifactsResponse{Message: "dry-run: would run " + mode}, nil
+		return plugin.ArtifactsResponse{Message: "dry-run: would run goreleaser " + strings.Join(args, " ") + note}, nil
 	}
 	if _, err := exec.LookPath("goreleaser"); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("goreleaser not found on PATH (needed to build Go binaries; see https://goreleaser.com): %w", err)
 	}
-	// Build + archive into dist/ without uploading. A real build injects the
-	// bumped version (no tag needed yet); a rehearse uses --snapshot.
-	args := []string{"release", "--clean", "--skip=publish,validate"}
-	env := append(os.Environ(), "GORELEASER_CURRENT_TAG="+tag)
-	if req.Snapshot {
-		args = []string{"release", "--clean", "--snapshot"}
-		env = os.Environ()
-	}
 	if _, _, err := runCmd(ctx, req.RepoRoot, env, "goreleaser", args...); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("goreleaser: %w", err)
 	}
-	arts, err := collectDist(filepath.Join(req.RepoRoot, "dist"))
+	// goreleaser writes to its configured dist dir (default <repo>/dist); the
+	// release pipeline passes that as OutputDir, so collect from there.
+	arts, err := collectDist(req.OutputDir)
 	if err != nil {
 		return plugin.ArtifactsResponse{}, err
 	}

@@ -203,7 +203,10 @@ const (
 
 // Artifact is one produced distributable file.
 type Artifact struct {
-	Path string `json:"path"`           // path to the file, under OutputDir
+	// Path is the absolute path to the produced file (built adapters join it onto
+	// the absolute OutputDir, so it lives under OutputDir). Consumers should use it
+	// as-is, not re-join it against OutputDir.
+	Path string `json:"path"`
 	Kind string `json:"kind,omitempty"` // archive | package | binary | checksum
 	// Attach marks an artifact that is a sensible GitHub release asset by default
 	// (binaries/archives). Registry package files (.tgz/.nupkg/.crate) default to
