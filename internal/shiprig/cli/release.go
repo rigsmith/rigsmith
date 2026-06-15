@@ -84,9 +84,9 @@ func newReleaseCmd() *cobra.Command {
 			// release native handler: per-package forge releases. Output is
 			// routed through the active reporter (so the live dashboard captures it
 			// instead of writing raw to the terminal).
-			fmode := forge.ParseMode(stepForge(cfg))
+			fsel := forge.Selection{Forge: stepForge(cfg), URL: stepForgeURL(cfg)}
 			if gitOnly {
-				fmode = forge.None
+				fsel.Forge = "none"
 			}
 			// built is shared between the `build` and `release` handlers in a
 			// single run: build produces dist/ and records each package's artifacts;
@@ -133,7 +133,7 @@ func newReleaseCmd() *cobra.Command {
 						out("discover: " + err.Error())
 						return false
 					}
-					ok, msg := forge.Run(pkgs, ecoOf, attachPaths(built), ws.Config, fmode, ws.Root, execForgeRunner(cmd), out)
+					ok, msg := forge.Run(pkgs, ecoOf, attachPaths(built), ws.Config, fsel, ws.Root, execForgeRunner(cmd), out)
 					if msg != "" {
 						out(msg)
 					}
@@ -227,10 +227,18 @@ func hasEnabledStep(steps []pipeline.ResolvedStep, name string) bool {
 	return false
 }
 
-// stepForge reads the forge mode from the `release` step config.
+// stepForge reads the forge selection from the `release` step config.
 func stepForge(cfg *pipeline.Config) string {
 	if s, ok := cfg.Steps["release"]; ok && s != nil {
 		return s.Forge
+	}
+	return ""
+}
+
+// stepForgeURL reads the self-hosted forge URL from the `release` step config.
+func stepForgeURL(cfg *pipeline.Config) string {
+	if s, ok := cfg.Steps["release"]; ok && s != nil {
+		return s.ForgeURL
 	}
 	return ""
 }

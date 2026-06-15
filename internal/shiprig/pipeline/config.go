@@ -206,9 +206,15 @@ type StepConfig struct {
 	// runs. Bypassed by --yes.
 	Confirm *ConfirmValue `json:"confirm"`
 
-	// Forge, for the release step: "auto" (detect GitHub from origin),
-	// "github" (force on), or "none" (tags only). Defaults to "auto".
+	// Forge, for the release step: "auto" (detect the forge from origin —
+	// github.com/gitlab.com), an explicit "github" | "gitlab" | "gitea", or
+	// "none" (tags only). Defaults to "auto".
 	Forge string `json:"forge"`
+
+	// ForgeURL is the self-hosted forge base URL, for an explicit gitlab/gitea on
+	// a non-SaaS host (which can't be sniffed from origin). Empty for the SaaS
+	// hosts. e.g. "https://git.example.com".
+	ForgeURL string `json:"forgeURL"`
 }
 
 // Hooks are global hooks that bracket the entire release run.

@@ -53,16 +53,23 @@ func pkg(name, version string) plugin.Package {
 	return plugin.Package{Name: name, Version: version, Dir: name}
 }
 
-func runService(t *testing.T, packages []plugin.Package, mode Mode, repoRoot string, runner *recordingRunner) (bool, string) {
+func runService(t *testing.T, packages []plugin.Package, sel Selection, repoRoot string, runner *recordingRunner) (bool, string) {
 	t.Helper()
-	ok, message := Run(packages, nil, nil, config.Default(), mode, repoRoot, runner.run, nil)
+	ok, message := Run(packages, nil, nil, config.Default(), sel, repoRoot, runner.run, nil)
 	return ok, message
 }
+
+// Selection shorthands for the tests.
+var (
+	selNone   = Selection{Forge: "none"}
+	selAuto   = Selection{Forge: "auto"}
+	selGitHub = Selection{Forge: "github"}
+)
 
 func TestNoneMode_DoesNothing(t *testing.T) {
 	runner := &recordingRunner{}
 
-	ok, message := runService(t, []plugin.Package{pkg("pkg-a", "1.0.0")}, None, t.TempDir(), runner)
+	ok, message := runService(t, []plugin.Package{pkg("pkg-a", "1.0.0")}, selNone, t.TempDir(), runner)
 
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
@@ -86,7 +93,7 @@ func TestGithubMode_CreatesReleaseForMissingTag(t *testing.T) {
 		return "", nil
 	}
 
-	ok, message := runService(t, []plugin.Package{pkg("pkg-a", "1.2.0")}, GitHub, t.TempDir(), runner)
+	ok, message := runService(t, []plugin.Package{pkg("pkg-a", "1.2.0")}, selGitHub, t.TempDir(), runner)
 
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
@@ -114,7 +121,7 @@ func TestGithubMode_AttachesBuildAssets(t *testing.T) {
 	ecoOf := map[string]string{"core": "go"}
 	attach := map[string][]string{"core": {"/dist/core_1.2.0_darwin_arm64.tar.gz", "/dist/checksums.txt"}}
 
-	ok, message := Run(packages, ecoOf, attach, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	ok, message := Run(packages, ecoOf, attach, config.Default(), selGitHub, t.TempDir(), runner.run, nil)
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
 	}
@@ -148,7 +155,7 @@ func TestGithubMode_NoAttachables_NoUpload(t *testing.T) {
 	}
 	packages := []plugin.Package{pkg("pkg-a", "1.2.0")}
 
-	ok, _ := Run(packages, nil, nil, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	ok, _ := Run(packages, nil, nil, config.Default(), selGitHub, t.TempDir(), runner.run, nil)
 	if !ok {
 		t.Fatal("Run ok = false, want true")
 	}
@@ -163,7 +170,7 @@ func TestGithubMode_SkipsExistingRelease(t *testing.T) {
 	runner := &recordingRunner{}
 	// `release view` succeeds -> the release already exists.
 
-	ok, message := runService(t, []plugin.Package{pkg("pkg-a", "1.2.0")}, GitHub, t.TempDir(), runner)
+	ok, message := runService(t, []plugin.Package{pkg("pkg-a", "1.2.0")}, selGitHub, t.TempDir(), runner)
 
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
@@ -175,16 +182,18 @@ func TestGithubMode_SkipsExistingRelease(t *testing.T) {
 	}
 }
 
-func TestAutoMode_NonGithubOrigin_SkipsReleases(t *testing.T) {
+func TestAutoMode_UnsupportedOrigin_SkipsReleases(t *testing.T) {
 	runner := &recordingRunner{}
+	// An origin on no supported forge host (not github.com/gitlab.com, and Gitea
+	// never auto-matches) ⇒ nothing selected ⇒ tags-only.
 	runner.responder = func(call recordedCall) (string, error) {
 		if isGitRemote(call) {
-			return "https://gitlab.com/owner/repo.git", nil
+			return "https://bitbucket.org/owner/repo.git", nil
 		}
 		return "", nil
 	}
 
-	ok, message := runService(t, []plugin.Package{pkg("pkg-a", "1.2.0")}, Auto, t.TempDir(), runner)
+	ok, message := runService(t, []plugin.Package{pkg("pkg-a", "1.2.0")}, selAuto, t.TempDir(), runner)
 
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
@@ -194,7 +203,7 @@ func TestAutoMode_NonGithubOrigin_SkipsReleases(t *testing.T) {
 			t.Fatalf("unexpected create call: %v", call)
 		}
 	}
-	want := "No GitHub remote or gh unavailable; skipped GitHub releases (tags only)."
+	want := "No supported forge remote or its CLI is unavailable; skipped releases (tags only)."
 	if message != want {
 		t.Fatalf("message = %q, want %q", message, want)
 	}
@@ -212,7 +221,7 @@ func TestAutoMode_GithubOriginAndGhReady_CreatesRelease(t *testing.T) {
 		return "", nil
 	}
 
-	ok, message := runService(t, []plugin.Package{pkg("pkg-a", "1.2.0")}, Auto, t.TempDir(), runner)
+	ok, message := runService(t, []plugin.Package{pkg("pkg-a", "1.2.0")}, selAuto, t.TempDir(), runner)
 
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
@@ -280,7 +289,7 @@ func TestGithubMode_GoPackage_TagsWithModulePathTag(t *testing.T) {
 	packages := []plugin.Package{{Name: "core", Version: "1.2.0", Dir: "core"}}
 	ecoOf := map[string]string{"core": "go"}
 
-	ok, message := Run(packages, ecoOf, nil, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	ok, message := Run(packages, ecoOf, nil, config.Default(), selGitHub, t.TempDir(), runner.run, nil)
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
 	}
@@ -303,7 +312,7 @@ func TestGithubMode_NonGoPackage_TagsWithNameAtVersion(t *testing.T) {
 	packages := []plugin.Package{{Name: "widgets", Version: "1.2.0", Dir: "packages/widgets"}}
 	ecoOf := map[string]string{"widgets": "node"}
 
-	ok, message := Run(packages, ecoOf, nil, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	ok, message := Run(packages, ecoOf, nil, config.Default(), selGitHub, t.TempDir(), runner.run, nil)
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
 	}
@@ -325,7 +334,7 @@ func TestGithubMode_PackageAbsentFromEcoMap_TagsWithNameAtVersion(t *testing.T) 
 	// A package missing from ecoOf falls back to the name@version convention.
 	packages := []plugin.Package{{Name: "widgets", Version: "1.2.0", Dir: "packages/widgets"}}
 
-	ok, message := Run(packages, map[string]string{}, nil, config.Default(), GitHub, t.TempDir(), runner.run, nil)
+	ok, message := Run(packages, map[string]string{}, nil, config.Default(), selGitHub, t.TempDir(), runner.run, nil)
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
 	}
@@ -354,7 +363,7 @@ func TestGithubMode_UsesChangelogSectionAsReleaseNotes(t *testing.T) {
 		return "", nil
 	}
 
-	ok, message := runService(t, []plugin.Package{pkg("pkg-a", "1.2.0")}, GitHub, repoRoot, runner)
+	ok, message := runService(t, []plugin.Package{pkg("pkg-a", "1.2.0")}, selGitHub, repoRoot, runner)
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
 	}

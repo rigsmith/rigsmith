@@ -1,13 +1,16 @@
-// Package forge creates per-package GitHub releases, idempotently.
+// Package forge creates per-package forge releases (GitHub / GitLab / Gitea),
+// idempotently.
 //
 // Ported from net-changesets Commands/Release/ForgeReleaseService.cs (the
-// release native step). For each released package it creates a release
-// tagged {package}@{version} with the notes lifted from that package's
-// CHANGELOG.md, skipping releases that already exist. In auto mode it first
-// checks that origin is a GitHub remote and gh is authenticated, degrading to
-// "tags only" (a no-op here) otherwise — never erroring just because gh is
-// missing. Versioning/changelog/tagging stay with the other steps; this only
-// adds the forge release, per the "orchestrate, don't reimplement" scope.
+// release native step) and generalized from GitHub-only to a Provider seam. For
+// each released package it creates a release tagged {package}@{version} with the
+// notes lifted from that package's CHANGELOG.md, skipping releases that already
+// exist, and attaches the build's assets. The forge is chosen by Selection:
+// `auto` picks the first provider whose host matches origin and whose CLI is
+// ready; an explicit `github|gitlab|gitea` forces one; `none` skips. A missing
+// or unauthenticated CLI degrades to "tags only" (a no-op here), never an
+// error. Versioning/changelog/tagging stay with the other steps; this only adds
+// the forge release, per the "orchestrate, don't reimplement" scope.
 package forge
 
 import (
@@ -22,50 +25,60 @@ import (
 	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
-// Mode is whether and how the release step creates forge releases.
-type Mode int
+// Selection is how the release step chooses a forge, from the `release` step's
+// `forge`/`forgeURL` config (and the CLI's --git-only override).
+type Selection struct {
+	// Forge is "" or "auto" (auto-detect), "none" (tags only), or an explicit
+	// "github" | "gitlab" | "gitea".
+	Forge string
+	// URL is the self-hosted forge base URL, for an explicit gitlab/gitea on a
+	// non-SaaS host. Informational for selection — the forge CLI infers the repo
+	// from its own login/remote config; github.com/gitlab.com need none.
+	URL string
+}
 
-const (
-	// Auto creates GitHub releases only when origin is GitHub and gh is
-	// available; otherwise skips.
-	Auto Mode = iota
-	// GitHub always creates GitHub releases.
-	GitHub
-	// None never creates forge releases (tags are handled by the publish/tag
-	// steps). The CLI's --git-only override forces this mode.
-	None
-)
-
-// String returns the canonical config spelling of the mode.
-func (m Mode) String() string {
-	switch m {
-	case GitHub:
-		return "github"
-	case None:
-		return "none"
+// selectProvider resolves the Selection to a concrete Provider, or returns a
+// nil provider plus the user-facing reason the release step is being skipped
+// (tags-only). Selection never errors: a missing CLI or unsupported remote is a
+// skip, matching the original gh "degrade to tags only" contract, now per-forge.
+func selectProvider(sel Selection, repoRoot string, run Runner) (Provider, string) {
+	switch strings.ToLower(strings.TrimSpace(sel.Forge)) {
+	case "none":
+		return nil, "Forge releases disabled; tags are handled by the publish/tag steps."
+	case "", "auto":
+		origin := originURL(repoRoot, run)
+		for _, p := range defaultProviders() {
+			if p.Matches(origin) && p.Ready(repoRoot, run) {
+				return p, ""
+			}
+		}
+		return nil, "No supported forge remote or its CLI is unavailable; skipped releases (tags only)."
 	default:
-		return "auto"
+		p := providerByName(sel.Forge)
+		if p == nil {
+			return nil, fmt.Sprintf("Unknown forge %q; skipped releases (tags only).", sel.Forge)
+		}
+		if !p.Ready(repoRoot, run) {
+			return nil, fmt.Sprintf("%s CLI unavailable or not authenticated; skipped releases (tags only).", p.Name())
+		}
+		return p, ""
 	}
 }
 
-// ParseMode interprets a config string case-insensitively; anything
-// unrecognized (including the empty string) defaults to Auto. An explicit
-// --git-only override should bypass this and pass None directly.
-func ParseMode(s string) Mode {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "none":
-		return None
-	case "github":
-		return GitHub
-	default:
-		return Auto
+// originURL returns the trimmed `git remote get-url origin`, or "" on failure
+// (treated as "no recognizable remote", never an error).
+func originURL(repoRoot string, run Runner) string {
+	out, err := run(repoRoot, "git", "remote", "get-url", "origin")
+	if err != nil {
+		return ""
 	}
+	return strings.TrimSpace(out)
 }
 
 // Runner executes a command in dir and returns its combined output. A spawn
 // failure or non-zero exit must be reported as a non-nil error (the same shape
-// as core/changelog.Runner). Probe failures (git remote lookup, gh auth
-// status, gh release view) are degraded to "unavailable"/"missing", never
+// as core/changelog.Runner). Probe failures (git remote lookup, CLI auth
+// status, release lookup) are degraded to "unavailable"/"missing", never
 // surfaced as errors.
 type Runner func(dir, name string, args ...string) (string, error)
 
@@ -84,8 +97,8 @@ const changelogFileName = "CHANGELOG.md"
 // from the map falls back to the name@version convention.
 // attach maps a package name to the artifact file paths to upload to its release
 // (the `build` step's Attach:true outputs); nil/empty for packages with nothing
-// to attach. Uploads are idempotent (`--clobber`), so a re-run replaces assets.
-func Run(packages []plugin.Package, ecoOf map[string]string, attach map[string][]string, cfg *config.Config, mode Mode, repoRoot string, run Runner, report func(lines ...string)) (ok bool, message string) {
+// to attach. Uploads are idempotent on forges that support it (gh --clobber).
+func Run(packages []plugin.Package, ecoOf map[string]string, attach map[string][]string, cfg *config.Config, sel Selection, repoRoot string, run Runner, report func(lines ...string)) (ok bool, message string) {
 	if report == nil {
 		report = func(...string) {}
 	}
@@ -105,56 +118,60 @@ func Run(packages []plugin.Package, ecoOf map[string]string, attach map[string][
 		return true, "No packages found; nothing to release."
 	}
 
-	if !shouldCreateReleases(mode, repoRoot, run) {
-		if mode == None {
-			return true, "Forge releases disabled; tags are handled by the publish/tag steps."
-		}
-		return true, "No GitHub remote or gh unavailable; skipped GitHub releases (tags only)."
+	provider, skip := selectProvider(sel, repoRoot, run)
+	if provider == nil {
+		return true, skip
 	}
 
 	for _, pkg := range released {
-		// The positional arg must be the tag the tag/publish steps actually pushed
-		// (Go: dir/vX.Y.Z), so gh attaches the release to it instead of creating a
-		// new, divergent tag at HEAD. The human-facing title keeps the friendly
-		// DisplayName@version form.
+		// The positional tag must be the one the tag/publish steps actually pushed
+		// (Go: dir/vX.Y.Z), so the forge attaches the release to it instead of
+		// creating a new, divergent tag at HEAD. The human-facing title keeps the
+		// friendly DisplayName@version form.
 		tag := gitutil.PackageTag(ecoOf[pkg.Name], pkg.Dir, pkg.Name, pkg.Version)
 		releaseTitle := title(pkg) + "@" + pkg.Version
 
-		if releaseExists(tag, repoRoot, run) {
+		if provider.ReleaseExists(tag, repoRoot, run) {
 			report(tag + ": release already exists, skipped create.")
 		} else {
 			notes := extractNotes(pkg, repoRoot)
 			if notes == "" {
 				notes = releaseTitle
 			}
-
-			argv := []string{"gh", "release", "create", tag, "--title", releaseTitle, "--notes", notes}
-			report("release: " + strings.Join(argv, " "))
-			out, err := run(repoRoot, argv[0], argv[1:]...)
-			if out != "" {
-				report(strings.Split(out, "\n")...)
-			}
-			if err != nil {
-				return false, fmt.Sprintf("release %s failed: %v", tag, err)
+			if ok, msg := runForgeCmd(provider.CreateReleaseCmd(Release{Tag: tag, Title: releaseTitle, Notes: notes}), repoRoot, run, report); !ok {
+				return false, fmt.Sprintf("release %s failed: %s", tag, msg)
 			}
 		}
 
-		// Attach the build's assets (binaries/archives). Idempotent via --clobber,
-		// so this also back-fills assets onto an already-existing release.
+		// Attach the build's assets (binaries/archives). On a forge that can't
+		// upload to an existing release (Gitea), report a skip rather than fail.
 		if files := attach[pkg.Name]; len(files) > 0 {
-			argv := append([]string{"gh", "release", "upload", tag}, files...)
-			argv = append(argv, "--clobber")
-			report("release: " + strings.Join(argv, " "))
-			out, err := run(repoRoot, argv[0], argv[1:]...)
-			if out != "" {
-				report(strings.Split(out, "\n")...)
+			argv := provider.UploadAssetsCmd(tag, files)
+			if argv == nil {
+				report(fmt.Sprintf("%s: %s cannot attach assets to an existing release; skipped %d asset(s).", tag, provider.Name(), len(files)))
+				continue
 			}
-			if err != nil {
-				return false, fmt.Sprintf("release upload %s failed: %v", tag, err)
+			if ok, msg := runForgeCmd(argv, repoRoot, run, report); !ok {
+				return false, fmt.Sprintf("release upload %s failed: %s", tag, msg)
 			}
 		}
 	}
 
+	return true, ""
+}
+
+// runForgeCmd reports and executes one forge argv, streaming its output. It
+// returns ok=false with the error string on a non-zero exit, so the caller can
+// frame the failure with the tag.
+func runForgeCmd(argv []string, repoRoot string, run Runner, report func(...string)) (ok bool, msg string) {
+	report("release: " + strings.Join(argv, " "))
+	out, err := run(repoRoot, argv[0], argv[1:]...)
+	if out != "" {
+		report(strings.Split(out, "\n")...)
+	}
+	if err != nil {
+		return false, err.Error()
+	}
 	return true, ""
 }
 
@@ -164,40 +181,6 @@ func title(pkg plugin.Package) string {
 		return pkg.DisplayName
 	}
 	return pkg.Name
-}
-
-func shouldCreateReleases(mode Mode, repoRoot string, run Runner) bool {
-	switch mode {
-	case None:
-		return false
-	case GitHub:
-		return true
-	case Auto:
-		return isGithubRemote(repoRoot, run) && isGhReady(repoRoot, run)
-	default:
-		return false
-	}
-}
-
-// isGithubRemote reports whether `git remote get-url origin` succeeds and its
-// output mentions github.com (case-insensitive). Spawn failures and non-zero
-// exits are treated as "not GitHub", never an error.
-func isGithubRemote(repoRoot string, run Runner) bool {
-	out, err := run(repoRoot, "git", "remote", "get-url", "origin")
-	return err == nil && strings.Contains(strings.ToLower(out), "github.com")
-}
-
-// isGhReady reports whether `gh auth status` exits 0. A missing gh binary or
-// unauthenticated state is treated as unavailable, never an error.
-func isGhReady(repoRoot string, run Runner) bool {
-	_, err := run(repoRoot, "gh", "auth", "status")
-	return err == nil
-}
-
-// releaseExists reports whether `gh release view <tag>` exits 0.
-func releaseExists(tag, repoRoot string, run Runner) bool {
-	_, err := run(repoRoot, "gh", "release", "view", tag)
-	return err == nil
 }
 
 // extractNotes lifts the `## {version}` section out of the package's
