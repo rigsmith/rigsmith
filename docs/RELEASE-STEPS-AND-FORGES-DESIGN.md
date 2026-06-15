@@ -170,15 +170,18 @@ code. Defer to this part's own doc expansion.
 
 ## Build slices (independent, in order)
 
-1. **Promote the `tag` step (1a)** — `DefaultOrder` in `pipeline/resolve.go`; move
-   the tagging phase out of `cli/publish.go` (always `--no-git-tag` in-pipeline);
-   wire the existing `shiprig tag` logic as the built-in. Tests for Go (tag-native)
-   and node (registry-then-tag) ordering.
-2. **Rename `githubRelease` → `release` + alias (1b)** — `resolve.go` name
-   handling, config docs, README; the alias keeps old `release.jsonc` working.
-3. **Multi-forge `Provider` refactor (2a–2d)** — `forge.go` → provider interface +
-   github/gitlab/gitea; `Forge`/`ForgeURL` config; auto-detection.
-4. **Issue tracker (Part 3)** — its own design pass first, then planner
+1. **Promote the `tag` step (1a)** — ✅ DONE. `DefaultOrder` in
+   `pipeline/resolve.go`; tagging moved out of `cli/publish.go` (always
+   `--no-git-tag` in-pipeline); the `tag` built-in wires the `shiprig tag` logic.
+2. **Rename `githubRelease` → `release` (1b)** — ✅ DONE. No alias kept (prerelease,
+   no back-compat).
+3. **Multi-forge `Provider` refactor (2a–2d)** — ✅ DONE. `forge.go` →
+   `Provider` interface (`provider.go`) + github/gitlab/gitea wrapping
+   `gh`/`glab`/`tea`; `Selection` replaces the `Mode` enum; `forge`/`forgeURL`
+   config; `auto` picks the first provider whose host matches origin and whose
+   CLI is ready. Per-forge degrade-to-tags-only. Tests cover selection, auto-
+   detection, per-forge argv, and the Gitea asset-skip.
+4. **Issue tracker (Part 3)** — ⬜ TODO. Its own design pass first, then planner
    ref-collection + `issues` step + providers.
 
 Each slice ships as its own PR off a worktree, with tests, leaving
@@ -186,12 +189,16 @@ Each slice ships as its own PR off a worktree, with tests, leaving
 
 ## Open questions / risks
 
-- **Self-hosted detection** — require explicit `forge:` + `forgeURL`, or attempt a
-  heuristic (Gitea API ping / `.gitlab-ci.yml`)? Start explicit.
-- **`glab` / `tea` as hard deps** — match the `gh` "degrade to tags-only if the CLI
-  is missing" contract per-forge; in `auto` a missing CLI is just "not ready".
-- **Gitea idempotency** — no `release view <tag>`; use `tea release list` + match.
-  Confirm the shape.
+- **Self-hosted detection** — ✅ resolved: explicit `forge:` + `forgeURL`. Only
+  `github.com`/`gitlab.com` auto-match; Gitea is explicit-only (`Matches` returns
+  false).
+- **`glab` / `tea` as hard deps** — ✅ resolved: per-forge `Ready()` probe; a
+  missing/unauthenticated CLI degrades to tags-only (in `auto` it's "not ready" ⇒
+  skip; explicit forge reports a named skip).
+- **Gitea idempotency** — ✅ resolved: no `release view <tag>`, so `ReleaseExists`
+  runs `tea release list` and matches the tag as a field. Asset upload to an
+  *existing* release is unsupported by `tea` (assets attach only at create), so
+  it's reported as a skip rather than failing the run.
 - **Splitting `tag` out** changes partial-run semantics (nothing on the remote
   until `push`). I think that's *more* correct and pairs with `--rehearse` —
   confirm.
