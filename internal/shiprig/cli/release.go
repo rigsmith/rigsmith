@@ -122,6 +122,17 @@ func newReleaseCmd() *cobra.Command {
 			// the forge step attaches the Attach:true ones to the release.
 			built := map[string][]plugin.Artifact{}
 			distDir := filepath.Join(ws.Root, "dist")
+
+			// Shell strings run through the in-process portable shell by default
+			// (cross-platform); "shell": "system" opts into the OS shell. argv
+			// commands are unaffected either way. cfg.Shell was validated by
+			// LoadConfig, so the error here cannot fire.
+			shellMode, _ := pipeline.ShellMode(cfg.Shell)
+			releaseRunner := pipeline.NewPortableRunner(runnerEnv)
+			if shellMode == pipeline.ShellSystem {
+				releaseRunner = pipeline.NewExecRunner(runnerEnv)
+			}
+
 			newPipeline := func(reporter pipeline.Reporter, prompter pipeline.Prompter) *pipeline.Pipeline {
 				out := func(lines ...string) { reporter.CommandOutput(lines) }
 
@@ -216,7 +227,7 @@ func newReleaseCmd() *cobra.Command {
 					relctx.isIgnored = ws.Config.IsIgnored
 				}
 
-				return pipeline.New(pipeline.NewExecRunner(runnerEnv), reporter, masker, prompter, ws.Root,
+				return pipeline.New(releaseRunner, reporter, masker, prompter, ws.Root,
 					releaseEnv, map[string]pipeline.NativeHandler{"build": buildHandler, "release": releaseHandler, "issues": issuesHandler},
 					relctx)
 			}
