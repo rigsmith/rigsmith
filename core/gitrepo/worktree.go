@@ -113,6 +113,12 @@ func worktreeModTime(path string) time.Time {
 		if data, err := os.ReadFile(dotgit); err == nil {
 			if rest, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:"); ok {
 				admin = strings.TrimSpace(rest)
+				// The pointer is relative to the worktree dir when git wrote it in
+				// relative-paths mode (git 2.48+ --relative-paths /
+				// worktree.useRelativePaths); resolve it so the stat doesn't miss.
+				if !filepath.IsAbs(admin) {
+					admin = filepath.Join(path, admin)
+				}
 			}
 		}
 	}

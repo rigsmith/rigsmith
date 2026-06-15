@@ -28,7 +28,7 @@ func worktreesByRecent(wts []gitrepo.Worktree) []gitrepo.Worktree {
 }
 
 // humanizeAgo renders a worktree's age as a short relative string ("just now",
-// "5m", "3h", "2d", "6w", "1y") for the dim date column. An empty string is
+// "5m ago", "3h ago", "2d ago", "6w ago", "1y ago") for the dim date column. An empty string is
 // returned for a zero time so callers can omit the column when git gave us no
 // date. now is passed in to keep the function pure and unit-testable.
 func humanizeAgo(t, now time.Time) string {
