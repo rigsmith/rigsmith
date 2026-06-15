@@ -174,6 +174,21 @@ sh("publish")
 	}
 }
 
+func TestScriptLogFormatsNonStrings(t *testing.T) {
+	var buf strings.Builder
+	p := New((&recordingRunner{}).run, NewPlainReporter(&buf, NewSecretMasker(), ""),
+		&stubPrompter{answer: true}, t.TempDir(), nil, nil, twoPackages())
+
+	code := `log(40 + 2)` // a number, not a string
+	config := &Config{Order: []string{"s"}, Steps: map[string]*StepConfig{"s": {Script: &ScriptSpec{Code: code}}}}
+	if !p.Run(mustResolve(t, config, ResolveOptions{}), config, false) {
+		t.Fatal("script step should succeed")
+	}
+	if !strings.Contains(buf.String(), "42") {
+		t.Errorf("log(42) should print 42, got %q", buf.String())
+	}
+}
+
 func TestScriptOverridesNativeStep(t *testing.T) {
 	code := `log("custom release")`
 	config := &Config{

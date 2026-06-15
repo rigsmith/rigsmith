@@ -14,17 +14,35 @@ import (
 // script gets the same `ctx` as if/computed-vars plus side-effecting helpers —
 // sh, cp/mv/rm/mkdir, log, fail. In a dry run those side effects are previewed
 // (reported, not executed) while the script's own logic still runs.
+//
+// scriptTimeout bounds the Tengo VM's execution; it does NOT interrupt an
+// external command started by sh() (the Runner seam takes no context), so a
+// hung subprocess is not cancelled by the timeout.
 func (p *Pipeline) runScriptStep(step ResolvedStep) bool {
 	s := tengo.NewScript([]byte(step.Script))
 	s.SetImports(stdlib.GetModuleMap(scriptModules...))
-	for _, name := range scriptGlobals {
-		if mod, ok := stdlib.BuiltinModules[name]; ok {
-			_ = s.Add(name, &tengo.ImmutableMap{Value: mod})
+
+	// Bind ctx, the stdlib globals, and the helper funcs. A failed Add would
+	// leave the script missing an expected binding, so surface it up front.
+	var addErr error
+	add := func(name string, value interface{}) {
+		if addErr == nil {
+			addErr = s.Add(name, value)
 		}
 	}
-	_ = s.Add("ctx", p.scriptCtx)
+	add("ctx", p.scriptCtx)
+	for _, name := range scriptGlobals {
+		if mod, ok := stdlib.BuiltinModules[name]; ok {
+			add(name, &tengo.ImmutableMap{Value: mod})
+		}
+	}
 	for name, fn := range p.scriptFuncs() {
-		_ = s.Add(name, fn)
+		add(name, fn)
+	}
+	if addErr != nil {
+		p.reporter.CommandOutput([]string{"script setup error: " + addErr.Error()})
+		p.reporter.CommandFailed(step.Name+" (script)", -1)
+		return false
 	}
 
 	runCtx, cancel := context.WithTimeout(context.Background(), scriptTimeout)
@@ -93,11 +111,16 @@ func (p *Pipeline) scriptFileOp(name string, op func(dir string, args []string) 
 	}
 }
 
-// scriptLog writes a line to the release output.
+// scriptLog writes a line to the release output. Non-string arguments are
+// formatted via their Tengo representation rather than silently dropped.
 func (p *Pipeline) scriptLog(args ...tengo.Object) (tengo.Object, error) {
 	parts := make([]string, len(args))
 	for i, a := range args {
-		parts[i], _ = tengo.ToString(a)
+		if s, ok := tengo.ToString(a); ok {
+			parts[i] = s
+		} else {
+			parts[i] = a.String()
+		}
 	}
 	p.reporter.CommandOutput([]string{strings.Join(parts, " ")})
 	return tengo.UndefinedValue, nil
