@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -41,10 +42,11 @@ type wtMenuModel struct {
 	chosen string // selected worktree path (for run/pin)
 }
 
-// newWtMenu builds the menu with the cursor parked on the pinned worktree, if any.
+// newWtMenu builds the menu with the worktrees ordered newest-first and the
+// cursor parked on the pinned worktree, if any.
 func newWtMenu(wts []gitrepo.Worktree, pinned string) wtMenuModel {
-	m := wtMenuModel{wts: wts, pinned: pinned}
-	for i, wt := range wts {
+	m := wtMenuModel{wts: worktreesByRecent(wts), pinned: pinned}
+	for i, wt := range m.wts {
 		if pinned != "" && sameDir(wt.Path, pinned) {
 			m.cursor = i
 			break
@@ -94,10 +96,12 @@ func (m wtMenuModel) View() string {
 	b.WriteString(HeaderStyle.Render("worktrees") + "  " +
 		DimStyle.Render("run one, or pin it as the -dev route") + "\n\n")
 
-	// Pad the branch into a fixed-width column so the dim path column lines up —
-	// matching the label + detail layout the other rig menus use.
+	// Pad the branch and age into fixed-width columns so the dim path column lines
+	// up — matching the label + detail layout the other rig menus use.
+	now := time.Now()
 	branches := make([]string, len(m.wts))
-	width := 0
+	ages := make([]string, len(m.wts))
+	width, ageWidth := 0, 0
 	for i, wt := range m.wts {
 		branches[i] = wt.Branch
 		if branches[i] == "" {
@@ -105,6 +109,10 @@ func (m wtMenuModel) View() string {
 		}
 		if w := lipgloss.Width(branches[i]); w > width {
 			width = w
+		}
+		ages[i] = humanizeAgo(wt.ModTime, now)
+		if w := lipgloss.Width(ages[i]); w > ageWidth {
+			ageWidth = w
 		}
 	}
 
@@ -119,12 +127,19 @@ func (m wtMenuModel) View() string {
 			label = wtSelectedStyle.Render(label) // cyan, like the other menus' cursor row
 		case pinned:
 			label = wtPinStyle.Render(label) // green marks the active route at a glance
+		default:
+			label = wtBranchStyle.Render(label) // rig-blue accent for the rest
+		}
+		// The age column is right-aligned and dim, then the path, then the pin mark.
+		age := ""
+		if ageWidth > 0 {
+			age = DimStyle.Render(fmt.Sprintf("%*s", ageWidth, ages[i])) + "  "
 		}
 		mark := ""
 		if pinned {
 			mark = "  " + wtPinStyle.Render("● pinned")
 		}
-		b.WriteString(fmt.Sprintf("%s%s%s  %s%s\n", cursor, label, pad, DimStyle.Render(wt.Path), mark))
+		b.WriteString(fmt.Sprintf("%s%s%s  %s%s%s\n", cursor, label, pad, age, DimStyle.Render(wt.Path), mark))
 	}
 	b.WriteString("\n" + DimStyle.Render("↑/↓ move · enter run · p pin · u unpin · q quit") + "\n")
 	return b.String()
