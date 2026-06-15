@@ -168,6 +168,9 @@ func (m planEditorModel) View() string {
 
 // planActionLines renders a step's action as human-readable lines for the editor.
 func planActionLines(s pipeline.ResolvedStep, masker *pipeline.SecretMasker) []string {
+	if s.Kind == pipeline.StepKindScript {
+		return []string{"(tengo script)"}
+	}
 	if s.Kind == pipeline.StepKindNative {
 		return []string{"(" + pipeline.NativeStepDescription(s.Name) + ")"}
 	}

@@ -121,14 +121,17 @@ func (r *PlainReporter) Plan(steps []ResolvedStep, dryRun bool) {
 			fmt.Fprintf(r.w, "      confirm: %s\n", *step.Confirm)
 		}
 
-		if step.Kind == StepKindNative {
+		if step.OverridesNative {
+			fmt.Fprintf(r.w, "      note: custom action replaces the native step (%s skipped)\n", NativeStepDescription(step.Name))
+		}
+		switch {
+		case step.Kind == StepKindScript:
+			fmt.Fprintf(r.w, "      run: (tengo script)\n")
+		case step.Kind == StepKindNative:
 			fmt.Fprintf(r.w, "      run: (%s)\n", NativeStepDescription(step.Name))
-		} else if step.IsBuiltin {
-			if step.OverridesNative {
-				fmt.Fprintf(r.w, "      note: custom run replaces the native step (%s skipped)\n", NativeStepDescription(step.Name))
-			}
+		case step.IsBuiltin:
 			r.writePlanCommands("run", step.Action)
-		} else {
+		default:
 			r.writePlanCommands("", step.Action)
 		}
 

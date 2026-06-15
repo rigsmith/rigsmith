@@ -247,6 +247,11 @@ type StepConfig struct {
 	// default action; for a custom step this is the action.
 	Run CommandList `json:"run"`
 
+	// Script is the step's action as Tengo code (instead of Run): it runs with
+	// the script ctx plus side-effecting helpers (sh, cp/mv/rm/mkdir, log, fail).
+	// A step sets at most one of Run / Script.
+	Script *string `json:"script"`
+
 	// If is a Tengo expression that gates the step: when it evaluates to a falsy
 	// value the step is skipped (with a reason), like a runtime version of
 	// `enabled`. Evaluated against the script `ctx` (packages/versions/tags/

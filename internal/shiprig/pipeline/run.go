@@ -119,6 +119,9 @@ type Pipeline struct {
 	// scriptCtx is the `ctx` object exposed to Tengo `if` conditions and computed
 	// vars; built once per run.
 	scriptCtx map[string]interface{}
+	// scriptDryRun previews a script step's side effects (sh/cp/…) instead of
+	// executing them.
+	scriptDryRun bool
 }
 
 // New builds a Pipeline. env is the layered release environment
@@ -157,6 +160,7 @@ func New(
 func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
 	p.baseContext = map[string]string{"tool": toolOf(config)}
 	p.scriptCtx = buildScriptCtx(p.relctx, p.env, dryRun)
+	p.scriptDryRun = dryRun
 	scriptEval := func(expr string) (string, error) { return evalScriptString(expr, p.scriptCtx) }
 	p.vars = newVariables(config.Vars, p.runner, p.masker, p.workDir, scriptEval)
 
@@ -249,18 +253,36 @@ func (p *Pipeline) runDry(steps []ResolvedStep) bool {
 	p.reporter.Plan(p.previewSteps(steps), true)
 
 	for _, step := range steps {
-		if !step.Enabled() || len(step.DryRunAction) == 0 {
+		if !step.Enabled() {
 			continue
 		}
 		if run, _, ok := p.evalStepIf(step); !ok || !run {
-			continue // an if-false (or erroring) step runs no dry commands
+			continue // an if-false (or erroring) step runs nothing
 		}
-		p.reporter.StepStarted(step.Name)
-		if !p.runDryCommands(step.Name+" (dry-run)", step.DryRunAction) {
-			p.reporter.RunCompleted(false, fmt.Sprintf("dry run: step '%s' failed", step.Name))
-			return false
+
+		// A script step runs in a dry run (its logic executes; sh/cp/… are
+		// previewed). A command step runs only the commands it opted in via
+		// "dryRun". Everything else is preview-only.
+		var ran bool
+		switch {
+		case step.Kind == StepKindScript:
+			ran = true
+			p.reporter.StepStarted(step.Name)
+			if !p.runScriptStep(step) {
+				p.reporter.RunCompleted(false, fmt.Sprintf("dry run: step '%s' failed", step.Name))
+				return false
+			}
+		case len(step.DryRunAction) > 0:
+			ran = true
+			p.reporter.StepStarted(step.Name)
+			if !p.runDryCommands(step.Name+" (dry-run)", step.DryRunAction) {
+				p.reporter.RunCompleted(false, fmt.Sprintf("dry run: step '%s' failed", step.Name))
+				return false
+			}
 		}
-		p.reporter.StepCompleted(step.Name)
+		if ran {
+			p.reporter.StepCompleted(step.Name)
+		}
 	}
 
 	p.reporter.RunCompleted(true, "dry run - plan previewed, only dryRun-marked commands ran")
@@ -377,7 +399,10 @@ func (p *Pipeline) previewInterpolate(command CommandSpec) CommandSpec {
 }
 
 func (p *Pipeline) runAction(step ResolvedStep) bool {
-	if step.Kind != StepKindNative {
+	switch step.Kind {
+	case StepKindScript:
+		return p.runScriptStep(step)
+	case StepKindCommands:
 		return p.runCommands(step.Name, step.Action)
 	}
 

@@ -71,12 +71,16 @@ func (r *richReporter) Plan(steps []pipeline.ResolvedStep, dryRun bool) {
 			gate = "  " + skipStyle.Render("confirm: "+*s.Confirm)
 		}
 		fmt.Fprintf(r.w, "  %-14s %s%s\n", s.Label(), state, gate)
+		if s.OverridesNative {
+			fmt.Fprintf(r.w, "      %s\n", skipStyle.Render("note: custom action replaces the native step ("+pipeline.NativeStepDescription(s.Name)+" skipped)"))
+		}
+		if s.Kind == pipeline.StepKindScript {
+			fmt.Fprintf(r.w, "      %s\n", skipStyle.Render("(tengo script)"))
+			continue
+		}
 		if s.Kind == pipeline.StepKindNative {
 			fmt.Fprintf(r.w, "      %s\n", skipStyle.Render("("+pipeline.NativeStepDescription(s.Name)+")"))
 			continue
-		}
-		if s.OverridesNative {
-			fmt.Fprintf(r.w, "      %s\n", skipStyle.Render("note: custom run replaces the native step ("+pipeline.NativeStepDescription(s.Name)+" skipped)"))
 		}
 		for _, c := range s.Action {
 			fmt.Fprintf(r.w, "      %s\n", skipStyle.Render(r.masker.Mask(pipeline.DescribeCommand(c))))
