@@ -170,6 +170,13 @@ so goreleaser stamps the right version with no tag at HEAD.
   (it does not merge a bullet into an existing `## <version>` heading). That's the
   honest escape-hatch behavior — the human owns dedupe/merge. Smart-merge into an
   existing heading is a possible future nicety.
+- **Stays formatted:** `add` runs the changelog through the formatter after
+  writing, and `changerig changelog format [package]` re-tidies a hand-edited
+  `CHANGELOG.md`. Both use the configured `format` formatter (the same one the
+  `version` step applies to released entries) and fall back to the built-in native
+  markdown formatter when none is configured — so the file stays clean whether you
+  use the command or edit by hand. (This was John's actual goal: easily add info +
+  keep it formatted; the declarative 2a route wasn't needed.)
 
 ## Build slices (independent, in order)
 

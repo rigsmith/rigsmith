@@ -1,9 +1,14 @@
 package commands
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/spf13/cobra"
 )
 
 func TestChangelogEntry(t *testing.T) {
@@ -23,6 +28,28 @@ func TestChangelogEntry(t *testing.T) {
 				t.Errorf("changelogEntry(%q,%q,%q) =\n%q\nwant\n%q", tc.version, tc.typ, tc.msg, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFormatChangelogFileNativeFallback(t *testing.T) {
+	// With no `format` configured, the native markdown formatter still tidies the
+	// file (the "stays formatted" guarantee for hand-edits).
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CHANGELOG.md")
+	if err := os.WriteFile(path, []byte("# demo\n\n\n##   1.0.0\n*  a\n+ b\n\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws := &Workspace{Root: dir, Config: config.Default()}
+
+	formatChangelogFile(&cobra.Command{}, ws, path)
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	if strings.Contains(s, "##   1.0.0") || strings.Contains(s, "*  a") || strings.Contains(s, "+ b") {
+		t.Errorf("changelog not normalized by native formatter:\n%s", s)
 	}
 }
 
