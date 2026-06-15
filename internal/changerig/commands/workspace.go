@@ -86,14 +86,27 @@ func (w *Workspace) Initialized() bool {
 	return err == nil
 }
 
+// discovered is one package paired with the id of the ecosystem that found it,
+// kept during discovery so overlay reconciliation can drop a base package by its
+// (ecosystem, directory) identity before the name-keyed ecoOf map is built.
+type discovered struct {
+	pkg   plugin.Package
+	ecoID string
+}
+
 // Discover enumerates packages across every ecosystem that applies to the repo,
 // returning the packages and a name→ecosystem-id map. Discovery is narrowed to
 // the top-level config.Paths roots; a per-ecosystem `sourcePath` block overrides
 // those for that ecosystem only. With neither, the whole repo is scanned (minus
 // the usual ignores and .gitignored files).
+//
+// Overlay ecosystems (EcosystemInfo.Overlays — e.g. Tauri over cargo, Electron
+// over node) reuse a base ecosystem's manifest but own the release. After every
+// adapter has run, reconcileOverlays drops each base package whose directory an
+// overlay also claimed, so a desktop app is owned and released once — by the
+// overlay — rather than appearing twice.
 func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]string, error) {
-	var all []plugin.Package
-	ecoOf := map[string]string{}
+	var found []discovered
 	seen := map[string]bool{} // dedupe a package discovered via overlapping roots
 
 	for _, eco := range w.Registry.All() {
@@ -124,12 +137,70 @@ func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]
 					continue
 				}
 				seen[key] = true
-				all = append(all, p)
-				ecoOf[p.Name] = eco.Info().ID
+				found = append(found, discovered{pkg: p, ecoID: eco.Info().ID})
 			}
 		}
 	}
+
+	found = w.reconcileOverlays(found)
+
+	all := make([]plugin.Package, 0, len(found))
+	ecoOf := map[string]string{}
+	for _, d := range found {
+		all = append(all, d.pkg)
+		ecoOf[d.pkg.Name] = d.ecoID
+	}
 	return all, ecoOf, nil
+}
+
+// reconcileOverlays drops base-ecosystem packages that an overlay ecosystem has
+// claimed by directory. For every discovered package whose ecosystem declares
+// Overlays, the (baseID, dir) pairs it covers are recorded; any package from one
+// of those base ecosystems sharing the directory is then removed and the overlay
+// survives, so the unit is released once.
+//
+// Before dropping a base package, its intra-repo dependency edges are handed to
+// the claiming overlay (when the overlay computed none of its own). The overlay
+// is the same unit the base discovered — same dir, same name — so those edges are
+// genuinely its dependencies; transferring them keeps the version cascade intact
+// (a workspace-lib bump still patch-bumps the desktop app the overlay owns).
+// Adapters without overlay relationships leave the set untouched.
+func (w *Workspace) reconcileOverlays(found []discovered) []discovered {
+	type claim struct{ baseID, dir string }
+	// Map each claimed (baseID, dir) to the index of the overlay package claiming
+	// it, so a dropped base can pass its dependency edges to that overlay.
+	claimedBy := map[claim]int{}
+	for i, d := range found {
+		eco, ok := w.Registry.Get(d.ecoID)
+		if !ok {
+			continue
+		}
+		for _, baseID := range eco.Info().Overlays {
+			claimedBy[claim{baseID: baseID, dir: d.pkg.Dir}] = i
+		}
+	}
+	if len(claimedBy) == 0 {
+		return found
+	}
+
+	// Transfer dependency edges from each claimed base to its overlay first
+	// (separate pass, so the result is independent of registration order).
+	for _, d := range found {
+		if oi, taken := claimedBy[claim{baseID: d.ecoID, dir: d.pkg.Dir}]; taken {
+			if len(found[oi].pkg.Dependencies) == 0 {
+				found[oi].pkg.Dependencies = d.pkg.Dependencies
+			}
+		}
+	}
+
+	kept := make([]discovered, 0, len(found))
+	for _, d := range found {
+		if _, taken := claimedBy[claim{baseID: d.ecoID, dir: d.pkg.Dir}]; taken {
+			continue // a base package an overlay took over
+		}
+		kept = append(kept, d)
+	}
+	return kept
 }
 
 // EcosystemFor returns the adapter with the given id.

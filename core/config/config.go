@@ -510,6 +510,53 @@ type EcosystemConfig struct {
 	// VersionStrategy overrides the top-level VersionStrategy for this
 	// ecosystem's packages (net's `dotnet.versionStrategy`); empty inherits it.
 	VersionStrategy VersionStrategy `json:"versionStrategy,omitempty"`
+	// Signing configures optional code-signing/notarization for ecosystems that
+	// build signed installers (tauri, electron). Absent or disabled means builds
+	// are unsigned and need no secrets — the default.
+	Signing *SigningConfig `json:"signing,omitempty"`
+}
+
+// SigningConfig is the optional `signing` block of a desktop ecosystem. It is
+// off unless Enabled is true; when enabled, Env maps the environment variables
+// the build tool reads (e.g. APPLE_ID, CSC_LINK, TAURI_SIGNING_PRIVATE_KEY) to a
+// secret reference resolved at build time ("op://…", "env:NAME", or "cmd:…") —
+// the same reference forms as the per-ecosystem `auth` key. Secrets are resolved
+// just-in-time and masked; nothing is read unless Enabled.
+type SigningConfig struct {
+	Enabled bool              `json:"enabled"`
+	Env     map[string]string `json:"env,omitempty"`
+	// Signers are the post-build signing rules the `sign` step applies to this
+	// ecosystem's produced artifacts, matched by file extension — platform-
+	// agnostic: a .exe/.msi rule for Windows, a .dmg/.app rule for macOS, etc.
+	// Empty means the sign step skips this ecosystem. (Build-time signing — the
+	// macOS CSC_*/APPLE_* path electron-builder/Tauri do during packaging — still
+	// rides Env; Signers are the separate post-build pass.) Any credentials a
+	// signer needs are supplied through Env (e.g. AZURE_* as op://… refs),
+	// resolved and masked.
+	Signers []Signer `json:"signers,omitempty"`
+}
+
+// Signer is one post-build signing rule: it runs over the produced artifacts
+// whose extension is in Extensions. The default Tool is "command" (run Command
+// once per file, "{file}" → the artifact path), which drives any signer —
+// signtool, AzureSignTool, rcodesign, codesign, etc. Tool "azure-trusted-signing"
+// is a built-in preset for the dotnet `sign` CLI.
+type Signer struct {
+	// Extensions this signer matches (case-insensitive, leading dot), e.g.
+	// [".exe", ".msi"] or [".dmg", ".app"]. Empty matches nothing.
+	Extensions []string `json:"extensions"`
+	// Tool selects the signer: "command" (default) runs Command; "azure-trusted-signing"
+	// drives the dotnet `sign` CLI from the Azure coordinates below.
+	Tool string `json:"tool,omitempty"`
+	// Command is an argv run once per matching file with "{file}" replaced by the
+	// artifact path. Required (and only used) when Tool is "command".
+	Command []string `json:"command,omitempty"`
+	// Azure Trusted Signing coordinates (non-secret), used when Tool is
+	// azure-trusted-signing.
+	Endpoint     string `json:"endpoint,omitempty"`           // e.g. https://wus2.codesigning.azure.net
+	Account      string `json:"account,omitempty"`            // Trusted Signing account name
+	CertProfile  string `json:"certificateProfile,omitempty"` // certificate profile name
+	TimestampURL string `json:"timestampUrl,omitempty"`       // default http://timestamp.acs.microsoft.com
 }
 
 // EcoConfig decodes the per-ecosystem block for id into an EcosystemConfig,

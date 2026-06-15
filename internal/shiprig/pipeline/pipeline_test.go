@@ -84,7 +84,7 @@ func singleShellAction(t *testing.T, step ResolvedStep) string {
 func TestResolveUsesDefaultOrderWhenNoneConfigured(t *testing.T) {
 	steps := mustResolve(t, &Config{}, ResolveOptions{})
 
-	want := []string{"version", "commit", "build", "publish", "tag", "push", "release", "issues"}
+	want := []string{"version", "commit", "build", "sign", "publish", "tag", "push", "release", "issues"}
 	if !equalStrings(stepNames(steps), want) {
 		t.Errorf("names = %v, want %v", stepNames(steps), want)
 	}
@@ -439,8 +439,8 @@ func TestResolveFromToKeepsOnlyTheRange(t *testing.T) {
 			enabled = append(enabled, step.Name)
 		}
 	}
-	if !equalStrings(enabled, []string{"commit", "build", "publish"}) {
-		t.Errorf("enabled = %v, want [commit build publish]", enabled)
+	if !equalStrings(enabled, []string{"commit", "build", "sign", "publish"}) {
+		t.Errorf("enabled = %v, want [commit build sign publish]", enabled)
 	}
 }
 

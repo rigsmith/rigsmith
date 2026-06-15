@@ -56,6 +56,16 @@ var publishBinaries = map[string]string{
 	"cargo":  "cargo",
 }
 
+// desktopArtifactTools names the toolchain each desktop ecosystem builds its
+// installers with. Like Go they need no registry publish tool — they release by
+// git tag + forge artifacts — so they're reported as info rows (a PATH check
+// would be unreliable: the Tauri CLI is a cargo subcommand and electron's builder
+// is usually run via npx from node_modules).
+var desktopArtifactTools = map[string]string{
+	"tauri":    "cargo tauri build",
+	"electron": "electron-builder / electron-forge",
+}
+
 // publishToolChecks reports, per detected ecosystem, whether the tool shiprig
 // would publish it with is installed. Missing is a warn — it only bites at
 // `shiprig publish` time — and stays report-only (no install command shiprig owns).
@@ -74,9 +84,13 @@ func publishResults(ecos []string) []doctor.Result {
 	for _, id := range ecos {
 		bin, ok := publishBinaries[id]
 		if !ok {
-			if id == "go" {
+			switch {
+			case id == "go":
 				rs = append(rs, doctor.Result{Name: "go", Status: doctor.Info,
 					Detail: "publishes via git tags — no tool needed"})
+			case desktopArtifactTools[id] != "":
+				rs = append(rs, doctor.Result{Name: id, Status: doctor.Info,
+					Detail: "released as forge artifacts — built with " + desktopArtifactTools[id]})
 			}
 			continue
 		}

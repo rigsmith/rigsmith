@@ -11,8 +11,15 @@ func TestPublishResults_MapsEcosystems(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // nothing installed ⇒ deterministic warns
 
 	byName := map[string]doctor.Result{}
-	for _, r := range publishResults([]string{"dotnet", "node", "cargo", "go", "regex"}) {
+	for _, r := range publishResults([]string{"dotnet", "node", "cargo", "go", "regex", "tauri", "electron"}) {
 		byName[r.Name] = r
+	}
+
+	// Desktop ecosystems release as forge artifacts — info rows, never a tool warn.
+	for _, id := range []string{"tauri", "electron"} {
+		if r, ok := byName[id]; !ok || r.Status != doctor.Info {
+			t.Errorf("%s: got %+v, want an Info row", id, r)
+		}
 	}
 
 	// dotnet/npm/cargo are publish tools; missing ⇒ warn.

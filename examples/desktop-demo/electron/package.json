@@ -1,0 +1,23 @@
+{
+  "name": "shiprig-electron-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal Electron app (an empty window) released by shiprig",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "dev.rigsmith.electrondemo",
+    "productName": "Shiprig Electron Demo",
+    "directories": { "output": "dist" },
+    "mac": { "target": "dmg" },
+    "linux": { "target": "AppImage" },
+    "win": { "target": "nsis" }
+  }
+}
