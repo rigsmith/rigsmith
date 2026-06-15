@@ -44,6 +44,7 @@ shiprig release                             # the configurable step pipeline (.c
 rig info                                    # what rig discovered
 rig build / test / run / format             # the right native command for the detected ecosystem
 rig coverage --min 80 / kill / doctor / cd  # the dev-loop verbs (see cli/README.md for all)
+rig copy ../snapshot [--git]                 # detached copy of the tree (skips node_modules/.git; --git keeps history)
 ```
 
 The release engine — changeset parsing, the dependency **cascade** (a dependent
