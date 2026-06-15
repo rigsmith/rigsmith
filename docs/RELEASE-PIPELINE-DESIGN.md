@@ -168,22 +168,15 @@ and no build config; regex declares nothing and doesn't advertise the capability
 
 ## Part 2 — changerig manual changelog
 
-### 2a. Changelog-only changeset — `changerig add --note` — ⬜ TODO (own slice)
+### 2a. Changelog-only changeset — `changerig add --note` — ❌ WON'T DO
 
-- `changerig add --note "<text>"` writes a changeset that **names no packages**
-  (no version bump) but **renders into the changelog/release notes** at `version`
-  time, under a dedicated **"Notes"** section.
-- Distinct from `--empty` (which names no packages *and* renders nowhere — kept as
-  the "force a release PR / placeholder" device).
-- **Why this is its own slice (bigger than 2b):** it is a *format + planner +
-  renderer* change, not a localized command. It needs (1) a changeset-format
-  marker (`note:` frontmatter) + `core/changeset` parse/render; (2) the planner to
-  collect note changesets (today a no-package changeset yields no `Module`); (3)
-  the changelog generator/protocol (`ChangelogRequest`) to carry notes and render
-  a "Notes" section; (4) the `version` flow + parity goldens. **Open design fork:**
-  changelogs are *per-package* with no repo-level CHANGELOG — so where does a
-  repo-level note land? Leading option: attach the note to **every package
-  released** in the run (one package ⇒ rigsmith's case). Decide before building.
+Dropped (2026-06-14). The need it chased — "easily add info to the changelog and
+keep it formatted" — is already met by **2b** (`changerig changelog add/format`),
+which prepends a hand-authored entry directly and re-tidies on demand. The
+declarative `--note` route (a `note:` frontmatter marker, planner collection of
+no-package changesets, a "Notes" renderer in the changelog protocol, plus the
+repo-level-placement design fork) is a large format+planner+renderer change for
+marginal benefit over the manual command. Not building it.
 
 ### 2b. Direct CHANGELOG.md prepend — `changerig changelog add` — ✅ DONE
 
@@ -219,12 +212,12 @@ and no build config; regex declares nothing and doesn't advertise the capability
    so it is tag-order-independent.
 3. **shiprig `--dry-build` (1c)** — `release.go` flag + `pipeline/run.go` signal
    plumbing (sets `ArtifactsRequest.Snapshot`) + built-in step branches.
-4. **changerig changelog (2a + 2b)** — `changerig add --note`, a new
-   `changerig changelog` command, `core/changeset` + `core/changelog`/`planner`.
+4. **changerig changelog (2b)** — ✅ DONE: a new `changerig changelog add/format`
+   command (`core/changelog` prepend + formatter). 2a (`--note`) was dropped.
 5. **init scaffolding + preflight (1d)** — ✅ DONE: `release-init` plugin method +
    all five adapters + `SubprocessEcosystem` + the composed `shiprig init`
-   (release.jsonc starter, goreleaser starter, token preflight) + tests. Remaining
-   under this theme: `scripts/install.sh` is missing a `changerig` target.
+   (release.jsonc starter, goreleaser starter, token preflight) + tests.
+   `scripts/install.sh` changerig target — ✅ DONE (#83).
 
 Each slice ships as its own PR off a worktree, with tests, leaving `go test ./...`
 green.
@@ -233,7 +226,5 @@ green.
 
 - **goreleaser append vs own**: default is append (shiprig owns notes). Confirm
   this reads well in practice on the first real release.
-- **`--note` placement in multi-package repos**: repo-level "Notes" vs attaching
-  to a chosen package — start repo-level; revisit if users want targeting.
 - **dry-build fidelity**: snapshot binaries are unsigned/untagged-version; good for
   "does it build + package", not for verifying the published version string.
