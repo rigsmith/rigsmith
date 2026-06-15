@@ -161,7 +161,7 @@ func newMCPAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <name> <command|url> [args...]",
 		Short: "Add (or replace) an MCP server",
-		Long: "Add an MCP server. clauderig's own flags (--scope, --transport, --env,\n" +
+		Long: "Add an MCP server. claudeRig's own flags (--scope, --transport, --env,\n" +
 			"--header) come before <name>; everything after is the server's command/url\n" +
 			"and its args, so a server's own flags (e.g. `npx -y pkg`) pass through.\n\n" +
 			"stdio (the default) — give the command and its args:\n" +

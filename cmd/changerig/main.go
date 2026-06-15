@@ -29,7 +29,7 @@ func run(ctx context.Context) error {
 		Use:           "changerig",
 		Aliases:       []string{"changeset"},
 		Short:         "Changesets: capture intent, then version across every ecosystem",
-		Long:          "changerig manages changeset files and turns them into version bumps and\nchangelogs. One engine decides bumps, cascade, and changelog for .NET, Node,\nGo, and Rust alike.",
+		Long:          "changeRig manages changeset files and turns them into version bumps and\nchangelogs. One engine decides bumps, cascade, and changelog for .NET, Node,\nGo, and Rust alike.",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}

@@ -35,7 +35,7 @@ var configKeys = []string{"remote", "alwaysPrune", "autoRestore"}
 func NewConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "View or change clauderig configuration",
+		Short: "View or change claudeRig configuration",
 	}
 	cmd.AddCommand(
 		newConfigShowCmd(),
@@ -109,7 +109,7 @@ func newConfigSetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Set one setting: " + strings.Join(configKeys, ", "),
-		Long: "Set a clauderig setting. Known keys:\n" +
+		Long: "Set a claudeRig setting. Known keys:\n" +
 			"  remote             sync remote URL (verified private via gh/glab)\n" +
 			"  alwaysPrune        prune stale config on `restore` by default (bool)\n" +
 			"  autoRestore        auto-restore on a fresh machine via SessionStart (bool)",
