@@ -15,7 +15,7 @@ var noEnv bool
 // `init`'s token preflight: .env/.env.local from root, layered under the
 // ambient process environment (file < ambient — a real export always wins).
 // When noEnv is set the file layer is skipped, leaving just the ambient env. A
-// read error on a present .env is fatal; a missing file is not an error.
+// read error on a present .env or .env.local is fatal; missing files are not.
 func loadReleaseEnv(root string, noEnv bool) (map[string]string, error) {
 	var fileEnv map[string]string
 	if !noEnv {
