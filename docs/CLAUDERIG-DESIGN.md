@@ -312,8 +312,8 @@ Mutations operate on the decoded document, so untouched servers — including
 fields clauderig's struct doesn't model — survive a rewrite. **Enable/disable**
 applies only to project (`.mcp.json`) servers, which Claude Code gates behind
 approval: clauderig records that approval at local scope
-(`.claude/settings.local.json` → `enabled`/`disabledMcpjsonServers`, never
-committed) while reading the merged user→project→local view for status.
+(`.claude/settings.local.json` → `enabledMcpjsonServers`/`disabledMcpjsonServers`,
+never committed) while reading the merged user→project→local view for status.
 
 ```
 clauderig mcp list                                  # all scopes, with project state

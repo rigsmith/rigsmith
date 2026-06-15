@@ -168,7 +168,7 @@ func newMCPAddCmd() *cobra.Command {
 			"  clauderig mcp add --env KEY=val ctx7 npx -y @upstash/context7-mcp\n" +
 			"http/sse — give the URL:\n" +
 			"  clauderig mcp add -t http -H Authorization=Bearer... docs https://example.com/mcp",
-		Args: cobra.MinimumNArgs(1),
+		Args: cobra.MinimumNArgs(2), // <name> plus a command (stdio) or URL (http/sse)
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scope, err := resolve()
 			if err != nil {
@@ -280,6 +280,12 @@ func buildServer(transport string, rest, env, headers []string) (mcp.Server, err
 	case mcp.TransportHTTP, mcp.TransportSSE:
 		if len(rest) == 0 {
 			return srv, fmt.Errorf("%s server needs a URL", transport)
+		}
+		if len(rest) > 1 {
+			// A header passed as a positional (forgetting -H) would otherwise be
+			// silently dropped — reject it instead of hiding the mistake.
+			return srv, fmt.Errorf("%s server takes a single URL; use -H for headers (unexpected: %s)",
+				transport, strings.Join(rest[1:], " "))
 		}
 		srv.URL = rest[0]
 		hdrs, err := parseKV(headers)
