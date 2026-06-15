@@ -286,12 +286,42 @@ type Hooks struct {
 	OnError CommandList `json:"onError"`
 }
 
-// VarSpec is a variable captured by running a command and taking its trimmed
-// stdout. Lazy defers the capture until first referenced, so time-limited
-// secrets (e.g. an OTP) stay fresh.
+// VarSpec is a user-defined variable referenced as ${vars.NAME}. It is one of:
+//
+//   - a literal value — `{ "value": "x" }`, or the shorthand `"x"` (a bare
+//     string). Literals resolve with no process and are NOT masked, so they suit
+//     reusable config like a base path or a channel name.
+//   - a captured value — `{ "command": … }`, whose trimmed stdout becomes the
+//     value. Captured values ARE masked in all output (secret-safe), and `lazy`
+//     defers the capture until first reference so a time-limited secret (an OTP)
+//     stays fresh.
+//
+// Exactly one of Value / Command must be set (enforced by LoadConfig).
 type VarSpec struct {
+	Value   *string      `json:"value"`
 	Command *CommandSpec `json:"command"`
 	Lazy    bool         `json:"lazy"`
+}
+
+// UnmarshalJSON accepts the bare-string shorthand ("x" ⇒ a literal value) as
+// well as the object form ({ "value": … } or { "command": …, "lazy": … }).
+func (s *VarSpec) UnmarshalJSON(data []byte) error {
+	var raw any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if str, ok := raw.(string); ok {
+		*s = VarSpec{Value: &str}
+		return nil
+	}
+	// Object form — alias to avoid recursing into this method.
+	type varSpecObject VarSpec
+	var obj varSpecObject
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	*s = VarSpec(obj)
+	return nil
 }
 
 // LoadConfig reads the release config at path. A missing file yields an
@@ -310,5 +340,21 @@ func LoadConfig(path string) (*Config, error) {
 	if err := jsonc.Unmarshal(data, config); err != nil {
 		return nil, fmt.Errorf("could not parse release config '%s': %w", path, err)
 	}
+	if err := validateVars(config.Vars); err != nil {
+		return nil, fmt.Errorf("release config '%s': %w", path, err)
+	}
 	return config, nil
+}
+
+// validateVars enforces that every variable sets exactly one of value/command.
+func validateVars(vars map[string]*VarSpec) error {
+	for name, spec := range vars {
+		if spec == nil || (spec.Value == nil && spec.Command == nil) {
+			return fmt.Errorf("variable '%s' must set either 'value' or 'command'", name)
+		}
+		if spec.Value != nil && spec.Command != nil {
+			return fmt.Errorf("variable '%s' sets both 'value' and 'command'; use one", name)
+		}
+	}
+	return nil
 }

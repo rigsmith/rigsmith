@@ -204,7 +204,15 @@ func releaseConfigStarter() string {
     // Built-in variables fill in commands: ${versions}/${version.<pkg>},
     // ${tags}/${tag.<pkg>}, ${changelog.<pkg>}, ${releaseUrl.<pkg>} (after the
     // release step), and ${issues}. A bare ${version} works only single-package.
-  }
+  },
+
+  // Define your own variables, referenced as ${vars.NAME}. A literal (a bare
+  // string, or { "value": … }) is reusable config — not masked. A { "command": … }
+  // captures the command's stdout and IS masked (use "lazy" for a fresh OTP).
+  // "vars": {
+  //   "basePath": "/opt/acme",
+  //   "otp":      { "command": ["op", "item", "get", "npm", "--otp"], "lazy": true }
+  // }
 }
 `
 }

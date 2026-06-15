@@ -307,14 +307,25 @@ func (p *Pipeline) previewInterpolate(command CommandSpec) CommandSpec {
 	}
 
 	for _, key := range extractRefs(command) {
-		switch {
-		case strings.HasPrefix(key, "vars."), isReleaseURLKey(key):
-			context[key] = "‹" + key + "›"
-		default:
-			if p.release != nil {
-				if value, isRelease, err := p.release.resolve(key); isRelease && err == nil {
+		if name, ok := strings.CutPrefix(key, "vars."); ok {
+			// A literal var is knowable with no side effect, so show it; a
+			// captured var would run its command, so placeholder it.
+			if p.vars != nil {
+				if value, isLiteral := p.vars.literal(name); isLiteral {
 					context[key] = value
+					continue
 				}
+			}
+			context[key] = "‹" + key + "›"
+			continue
+		}
+		if isReleaseURLKey(key) {
+			context[key] = "‹" + key + "›"
+			continue
+		}
+		if p.release != nil {
+			if value, isRelease, err := p.release.resolve(key); isRelease && err == nil {
+				context[key] = value
 			}
 		}
 	}

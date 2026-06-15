@@ -33,19 +33,22 @@
     "onError": "echo '✗  [hooks.onError] rollback would run here'"
   },
 
-  // A variable captured from a command (here an echo; in real life `op item get
-  // … --otp`). `lazy` defers capture until first referenced — so an OTP is fetched
-  // right before publish, not at the top of the run. Captured values are MASKED
-  // in all output (you'll see ***), so secrets never leak.
+  // Your own variables, referenced as ${vars.NAME}:
+  //  • a LITERAL (a bare string, or { "value": … }) is reusable config — define
+  //    once, use anywhere; not masked.
+  //  • a { "command": … } captures the command's stdout and IS masked (you'll
+  //    see ***). `lazy` defers capture until first referenced — so an OTP is
+  //    fetched right before publish, not at the top of the run.
   "vars": {
-    "otp": { "command": "echo 123456", "lazy": true }
+    "basePath": "/opt/acme",
+    "otp":      { "command": "echo 123456", "lazy": true }
   },
 
   "steps": {
     // ── custom step: a preflight gate ───────────────────────────────────────
     "preflight": {
       "name": "Preflight",
-      "run": "echo '[preflight] preparing ${versions}'"
+      "run": "echo '[preflight] base=${vars.basePath} preparing ${versions}'"
     },
 
     // ── built-ins, each fully replaced and wrapped with before/after ────────
@@ -60,7 +63,7 @@
     // build is a NATIVE step; a run replaces it (the plan notes the override).
     "build": {
       "before": "echo '  [build.before] lint'",
-      "run":    "echo '  [build] package artifacts for ${tags}'",
+      "run":    "echo '  [build] package ${tags} → ${vars.basePath}/dist'",
       "after":  "echo '  [build.after] artifacts ready'"
     },
 
