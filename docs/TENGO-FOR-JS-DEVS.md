@@ -118,7 +118,7 @@ by accident):
 
 | Injected | What it does |
 | --- | --- |
-| `ctx` | the release: `ctx.packages` (`{name, key, ecosystem, version, tag, changelog}`), `ctx.versions`, `ctx.tags`, `ctx.issues`, `ctx.dryRun`, `ctx.env`, `ctx.vars` |
+| `ctx` | the release: `ctx.packages` (`{name, key, ecosystem, version, tag, changelog}`), `ctx.versions`, `ctx.tags`, `ctx.issues`, `ctx.dryRun`, `ctx.env`, plus scalar `ctx.version`/`ctx.tag`/`ctx.changelog` for single-package releases |
 | `sh(cmd)` | run a shell command (through the portable cross-platform shell); returns stdout, fails the step on non-zero |
 | `cp` / `mv` / `rm` / `mkdir` | cross-platform file ops (same Go implementation as the portable shell builtins) |
 | `log(msg)` | write a line to the release output |
@@ -128,9 +128,26 @@ In `--dry-run`, `sh`/`cp`/`mv`/`rm` are previewed (reported, not executed) while
 the rest of the script still runs, so conditionals evaluate against the real
 `ctx`.
 
-> Heads up: the `script` / `if` / computed-`vars` integration is the upcoming
-> Tengo step — this section describes the API it will expose. The language facts
-> above are accurate today.
+## Writing scripts in JSONC
+
+A multi-line script crammed into one JSON string is painful — every Tengo `"`
+needs `\"` and every line break a `\n`. Two things fix that:
+
+1. **Use backtick string literals.** Tengo raw strings use backticks, which don't
+   collide with JSON's `"` — so no escaping:
+   ```jsonc
+   "channel": { "script": "text.re_match(`-(beta|rc)`, ctx.version) ? `next` : `latest`" }
+   ```
+2. **`script` accepts three shapes** — a string, an **array of lines** (joined
+   with newlines), or a **file reference** (path relative to the config):
+   ```jsonc
+   "stage": { "script": ["mkdir(`-p`, `dist`)", "cp(`-r`, `build`, `dist`)", "sh(`npm publish`)"] }
+   "stage": { "script": { "file": "stage.tengo" } }
+   ```
+
+For anything beyond a couple of lines, a `.tengo` **file** is easiest — no
+escaping at all, plus editor syntax highlighting. (`if` and computed `vars` are
+single expressions, so they stay inline strings.)
 
 ## Going deeper
 
