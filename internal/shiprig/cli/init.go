@@ -202,7 +202,11 @@ func releaseConfigStarter() string {
     // "ecosystems" limits it to releases touching those ecosystems (else it is
     // skipped, not an error):
     //   "smoke": { "name": "Smoke test", "ecosystems": ["node"], "run": "npm run smoke" }
-    //   "stage": { "script": "mkdir(\"-p\", \"dist\"); sh(\"build -o dist\")" }
+    // A "script" is Tengo and may be a string, an array of lines, or a file ref
+    // (path relative to this config). Tip: write Tengo strings with backtick
+    // (raw) literals so you don't escape JSON quotes; for anything non-trivial a
+    // file is easiest:
+    //   "stage": { "script": { "file": "stage.tengo" } }
     // A "run" on a native step (build/release/issues) replaces it — the plan
     // notes the substitution; use "before"/"after" instead to wrap it.
     // "if" is a Tengo expression that gates the step (skipped when falsy), e.g.

@@ -233,7 +233,7 @@ func Resolve(config *Config, opts ResolveOptions) ([]ResolvedStep, error) {
 				ifExpr = strings.TrimSpace(*stepConfig.If)
 			}
 			if stepConfig.Script != nil {
-				script = *stepConfig.Script
+				script = stepConfig.Script.Code
 			}
 		}
 
