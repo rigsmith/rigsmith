@@ -30,9 +30,10 @@ func newDoctorCmd() *cobra.Command {
 }
 
 // releaseDoctorSections is the extra section shiprig appends to the changeset
-// baseline: the forge CLI plus the per-ecosystem publish tools.
-func releaseDoctorSections(ctx context.Context, ws *commands.Workspace) []doctor.Section {
-	results := append([]doctor.Result{checkGh(ctx)}, publishToolChecks(ctx, ws)...)
+// baseline: the forge CLI plus the per-ecosystem publish tools. It reuses the
+// baseline's Discovery, so the workspace is scanned once.
+func releaseDoctorSections(ctx context.Context, _ *commands.Workspace, disc commands.Discovery) []doctor.Section {
+	results := append([]doctor.Result{checkGh(ctx)}, publishToolChecks(disc)...)
 	return []doctor.Section{{Title: "release", Results: results}}
 }
 
@@ -58,12 +59,11 @@ var publishBinaries = map[string]string{
 // publishToolChecks reports, per detected ecosystem, whether the tool shiprig
 // would publish it with is installed. Missing is a warn — it only bites at
 // `shiprig publish` time — and stays report-only (no install command shiprig owns).
-func publishToolChecks(ctx context.Context, ws *commands.Workspace) []doctor.Result {
-	_, ecoOf, err := ws.Discover(ctx)
-	if err != nil {
+func publishToolChecks(disc commands.Discovery) []doctor.Result {
+	if disc.Err != nil {
 		return nil
 	}
-	return publishResults(commands.UniqueEcosystems(ecoOf))
+	return publishResults(commands.UniqueEcosystems(disc.Ecosystems))
 }
 
 // publishResults is the pure ecosystem→tool mapping, split out so it's testable
