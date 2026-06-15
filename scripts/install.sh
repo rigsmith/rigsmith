@@ -15,7 +15,7 @@
 #     curl -fsSL https://rigsmith.sh | sh -s shiprig # just shiprig
 #
 # Usage:
-#     install.sh [rig|shiprig|clauderig|all]   (default: all)
+#     install.sh [rig|shiprig|clauderig|changerig|all]   (default: all)
 #
 # Env:
 #     RIGSMITH_INSTALL   install prefix (default: $HOME/.local) -> bin/ underneath
@@ -71,7 +71,7 @@ resolve_version() {
 }
 
 # --- install a single binary -------------------------------------------------
-# $1 = binary name (rig|shiprig|clauderig), $2 = tag, $3 = os, $4 = arch
+# $1 = binary name (rig|shiprig|clauderig|changerig), $2 = tag, $3 = os, $4 = arch
 install_binary() {
   bin="$1"
   tag="$2"
@@ -129,8 +129,8 @@ main() {
 
   target="${1:-all}"
   case "$target" in
-    rig | shiprig | clauderig | all) ;;
-    *) error "unknown binary '$target' (expected: rig, shiprig, clauderig, or omit for all)" ;;
+    rig | shiprig | clauderig | changerig | all) ;;
+    *) error "unknown binary '$target' (expected: rig, shiprig, clauderig, changerig, or omit for all)" ;;
   esac
 
   os="$(detect_os)"
@@ -141,10 +141,12 @@ main() {
     rig)       install_binary rig       "$tag" "$os" "$arch" ;;
     shiprig)   install_binary shiprig   "$tag" "$os" "$arch" ;;
     clauderig) install_binary clauderig "$tag" "$os" "$arch" ;;
+    changerig) install_binary changerig "$tag" "$os" "$arch" ;;
     all)
       install_binary rig       "$tag" "$os" "$arch"
       install_binary shiprig   "$tag" "$os" "$arch"
       install_binary clauderig "$tag" "$os" "$arch"
+      install_binary changerig "$tag" "$os" "$arch"
       ;;
   esac
 
