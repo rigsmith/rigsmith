@@ -64,6 +64,17 @@ func newReleaseCmd() *cobra.Command {
 				return err
 			}
 
+			if rehearse {
+				// A rehearse only builds — no registry/forge side effects. Drop the
+				// global hooks and captured vars so it can't trigger them (e.g. an OTP
+				// prompt), and require an enabled build step so it actually does work.
+				cfg.Hooks = nil
+				cfg.Vars = nil
+				if !hasEnabledStep(steps, "build") {
+					return fmt.Errorf("nothing to rehearse: no enabled 'build' step in the release order")
+				}
+			}
+
 			outRedirected := !term.IsTerminal(int(os.Stdout.Fd()))
 			inRedirected := !term.IsTerminal(int(os.Stdin.Fd()))
 			mode := pipeline.ResolveUIMode(ui, noUI, yes, outRedirected, inRedirected)
@@ -195,7 +206,24 @@ func newReleaseCmd() *cobra.Command {
 	f.BoolVar(&gitOnly, "git-only", false, "skip forge (GitHub) releases; tags only")
 	f.BoolVar(&ui, "ui", false, "force the rich reporter even when piped")
 	f.BoolVar(&noUI, "no-ui", false, "force the plain reporter")
+	// --rehearse forces a build-only plan, so the step-selection flags don't
+	// compose with it (they'd just be ignored or confusing). --dry-run + --rehearse
+	// is allowed — it previews the rehearse plan.
+	for _, mutex := range []string{"only", "skip", "from", "to"} {
+		cmd.MarkFlagsMutuallyExclusive("rehearse", mutex)
+	}
 	return cmd
+}
+
+// hasEnabledStep reports whether the resolved plan contains an enabled step with
+// the given name.
+func hasEnabledStep(steps []pipeline.ResolvedStep, name string) bool {
+	for _, s := range steps {
+		if s.Name == name && s.Enabled() {
+			return true
+		}
+	}
+	return false
 }
 
 // stepForge reads the forge mode from the `release` step config.

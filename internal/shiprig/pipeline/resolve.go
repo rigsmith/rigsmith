@@ -271,6 +271,15 @@ func skipReasonFor(
 	opts ResolveOptions,
 	index, fromIndex, toIndex int,
 ) string {
+	// Rehearse is authoritative: build always runs, everything else is skipped —
+	// regardless of disabled/from/to/only/skip — so a rehearse can never become a
+	// no-op or surface a non-rehearse skip reason.
+	if opts.Rehearse {
+		if name == "build" {
+			return ""
+		}
+		return "rehearse (build only)"
+	}
 	if stepConfig != nil && stepConfig.Enabled != nil && !*stepConfig.Enabled {
 		return "disabled"
 	}
@@ -279,9 +288,6 @@ func skipReasonFor(
 	}
 	if index > toIndex {
 		return "after --to"
-	}
-	if opts.Rehearse && name != "build" {
-		return "rehearse (build only)"
 	}
 	if len(opts.Only) > 0 && !slices.Contains(opts.Only, name) {
 		return "not in --only"

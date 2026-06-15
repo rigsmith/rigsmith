@@ -125,6 +125,31 @@ func TestResolveRehearseRunsOnlyBuild(t *testing.T) {
 	}
 }
 
+// TestResolveRehearseTakesPrecedence: rehearse overrides the step-selection
+// filters — build always runs and every other step keeps the rehearse reason,
+// even when --from/--to/--only/--skip would otherwise skip build or relabel.
+func TestResolveRehearseTakesPrecedence(t *testing.T) {
+	opts := ResolveOptions{
+		Rehearse: true,
+		From:     "publish", // would skip build (it's before publish) without precedence
+		To:       "tag",
+		Only:     []string{"release"},
+		Skip:     []string{"build"},
+	}
+	steps := mustResolve(t, &Config{}, opts)
+	for _, step := range steps {
+		if step.Name == "build" {
+			if !step.Enabled() {
+				t.Errorf("build must run under --rehearse despite other filters, got skip %q", step.SkipReason)
+			}
+			continue
+		}
+		if step.SkipReason != "rehearse (build only)" {
+			t.Errorf("step %q skip reason = %q, want %q", step.Name, step.SkipReason, "rehearse (build only)")
+		}
+	}
+}
+
 func TestResolveBuiltinPublishUsesToolAndAppendsArgs(t *testing.T) {
 	config := &Config{
 		Tool: "npx changeset",
