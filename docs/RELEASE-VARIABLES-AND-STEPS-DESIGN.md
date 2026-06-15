@@ -598,6 +598,45 @@ Key takeaways a user can see at a glance:
 - A Go-only release of the same config would show `smoke-node` as
   `‹skipped: no node packages in this release›`.
 
+### 10.4 Verified — real `shiprig release --dry-run`
+
+The traces above are illustrative. Below is **actual captured output** from the
+built binary against a two-package Node fixture (`@acme/web@2.1.0`,
+`@acme/api@1.4.0`) with this config:
+
+```jsonc
+"order": ["version", "smoke", "publish"],
+"steps": {
+  "smoke":   { "name": "Smoke test", "run": "echo smoke ${versions}", "dryRun": true },
+  "publish": { "run": "echo would publish ${version.web}", "dryRun": "echo DRY-PUBLISH ${versions}" }
+}
+```
+
+```text
+Release plan (dry run - nothing will run):
+  - version
+      run: shiprig version
+  - Smoke test
+      echo smoke @acme/api@1.4.0, @acme/web@2.1.0
+  - publish
+      run: echo would publish 2.1.0
+
+==> Smoke test
+    $ echo smoke @acme/api@1.4.0, @acme/web@2.1.0
+    smoke @acme/api@1.4.0, @acme/web@2.1.0
+ok Smoke test
+==> publish
+    $ echo DRY-PUBLISH @acme/api@1.4.0, @acme/web@2.1.0
+    DRY-PUBLISH @acme/api@1.4.0, @acme/web@2.1.0
+ok publish
+Release complete. dry run - preview only
+```
+
+Confirms, against the real engine: the `"smoke"` key renders as **Smoke test**;
+`${versions}` interpolates (sorted); `${version.web}` → `2.1.0`; `version`
+(built-in, no `dryRun`) is listed but not executed; `Smoke test` (`dryRun: true`)
+runs; `publish` runs its **alternate** (`DRY-PUBLISH …`, not `would publish`).
+
 ## Implementation plan (ordered, each independently shippable)
 
 > **Progress: all steps implemented** on branch `feat/release-vars-and-steps`
