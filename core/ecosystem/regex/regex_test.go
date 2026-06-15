@@ -111,3 +111,29 @@ func TestGoStyleNamedGroupAlsoWorks(t *testing.T) {
 		t.Fatalf("Go-style (?P<version>) pattern: %+v", resp.Packages)
 	}
 }
+
+// TestArtifactsSkipped: a regex-managed package carries its version in arbitrary
+// files and ships by tag, so there is nothing to build.
+func TestArtifactsSkipped(t *testing.T) {
+	resp, err := New().Artifacts(context.Background(), plugin.ArtifactsRequest{
+		RepoRoot:  t.TempDir(),
+		OutputDir: t.TempDir(),
+		Package:   plugin.Package{Name: "app", Version: "1.0.0", Dir: "."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Built || !resp.Skipped {
+		t.Errorf("regex artifacts = %+v, want skipped", resp)
+	}
+}
+
+// TestInfoOmitsArtifacts: regex has nothing to build, so it must not advertise
+// the artifacts capability.
+func TestInfoOmitsArtifacts(t *testing.T) {
+	for _, c := range New().Info().Capabilities {
+		if c == plugin.MethodArtifacts {
+			t.Error("regex Info() should not advertise MethodArtifacts")
+		}
+	}
+}

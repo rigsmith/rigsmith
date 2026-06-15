@@ -259,3 +259,48 @@ func TestPublishPrivateSkipped(t *testing.T) {
 		t.Errorf("private publish = %+v, want {Skipped private}", resp)
 	}
 }
+
+// TestArtifactsPrivateSkipped checks a private project is skipped before any
+// `dotnet pack` (hermetic — no toolchain required).
+func TestArtifactsPrivateSkipped(t *testing.T) {
+	resp, err := New().Artifacts(context.Background(), plugin.ArtifactsRequest{
+		RepoRoot:  t.TempDir(),
+		OutputDir: t.TempDir(),
+		Package:   plugin.Package{Name: "Acme.Lib", Version: "1.0.0", Dir: ".", ManifestPath: "Acme.Lib.csproj", Private: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Built || !resp.Skipped || resp.Message != "private" {
+		t.Errorf("private artifacts = %+v, want {Skipped private}", resp)
+	}
+}
+
+// TestArtifactsDryRun reports intent without running dotnet (hermetic).
+func TestArtifactsDryRun(t *testing.T) {
+	resp, err := New().Artifacts(context.Background(), plugin.ArtifactsRequest{
+		RepoRoot:  t.TempDir(),
+		OutputDir: t.TempDir(),
+		DryRun:    true,
+		Package:   plugin.Package{Name: "Acme.Lib", Version: "1.0.0", Dir: ".", ManifestPath: "Acme.Lib.csproj"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Built || resp.Skipped || resp.Message != "dry-run: would dotnet pack Acme.Lib@1.0.0" {
+		t.Errorf("dry-run artifacts = %+v, want a would-dotnet-pack message", resp)
+	}
+}
+
+// TestInfoAdvertisesArtifacts locks the .NET adapter's artifacts capability.
+func TestInfoAdvertisesArtifacts(t *testing.T) {
+	found := false
+	for _, c := range New().Info().Capabilities {
+		if c == plugin.MethodArtifacts {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("dotnet Info() should advertise MethodArtifacts")
+	}
+}

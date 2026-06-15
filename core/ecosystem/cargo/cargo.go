@@ -38,7 +38,7 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		APIVersion:       plugin.APIVersion,
 		ID:               "cargo",
 		DisplayName:      "Rust",
-		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish},
+		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts},
 		ManifestPatterns: []string{"Cargo.toml"},
 		DevCommands: map[string][]string{
 			plugin.VerbBuild:  {"cargo", "build"},
@@ -214,6 +214,35 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	return plugin.PublishResponse{
 		Published: true,
 		Message:   fmt.Sprintf("published %s@%s", req.Package.Name, req.Package.Version),
+	}, nil
+}
+
+// Artifacts builds the crate tarball (`cargo package`) under req.OutputDir. The
+// .crate is a registry artifact, so it is not attached to the GitHub release by
+// default (Attach: false) — it ships to the registry via Publish.
+func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
+	if req.Package.Private {
+		return plugin.ArtifactsResponse{Skipped: true, Message: "private"}, nil
+	}
+	spec := req.Package.Name + "@" + req.Package.Version
+	if req.DryRun {
+		return plugin.ArtifactsResponse{Message: fmt.Sprintf("dry-run: would cargo package %s", spec)}, nil
+	}
+	if err := os.MkdirAll(req.OutputDir, 0o755); err != nil {
+		return plugin.ArtifactsResponse{}, fmt.Errorf("cargo package: mkdir %s: %w", req.OutputDir, err)
+	}
+	dir := filepath.Join(req.RepoRoot, req.Package.Dir)
+	// --no-verify keeps it fast (skips the compile-the-packaged-crate check);
+	// --allow-dirty tolerates the uncommitted version bump made earlier in the
+	// release; --target-dir lands the .crate under OutputDir/package/.
+	if _, _, err := runCmd(ctx, dir, "cargo", "package", "--no-verify", "--allow-dirty", "--target-dir", req.OutputDir); err != nil {
+		return plugin.ArtifactsResponse{}, fmt.Errorf("cargo package: %w", err)
+	}
+	crate := filepath.Join(req.OutputDir, "package", req.Package.Name+"-"+req.Package.Version+".crate")
+	return plugin.ArtifactsResponse{
+		Built:     true,
+		Artifacts: []plugin.Artifact{{Path: crate, Kind: plugin.ArtifactPackage, Attach: false}},
+		Message:   "packaged " + spec,
 	}, nil
 }
 
