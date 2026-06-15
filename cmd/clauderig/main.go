@@ -50,6 +50,7 @@ func run(ctx context.Context) error {
 		commands.NewGuideCmd(),
 		commands.NewDoctorCmd(version),
 		commands.NewConfigCmd(),
+		commands.NewMCPCmd(),
 		commands.NewUICmd(),
 	)
 	root.AddCommand(commands.ScopeCommands()...) // global (alias: hooks) / project / local
