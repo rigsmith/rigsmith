@@ -26,6 +26,12 @@ import (
 // host — that (plus a rare unsupported construct) is what the "shell": "system"
 // escape hatch is for.
 func NewPortableRunner(env []string) Runner {
+	// Normalise an empty (non-nil) env to nil so "empty inherits the process
+	// environment" holds for argv commands too — otherwise exec.Cmd would run
+	// them with a cleared environment (no PATH).
+	if len(env) == 0 {
+		env = nil
+	}
 	return func(shell bool, commandOrArgv []string, dir string) ([]string, int, error) {
 		if !shell {
 			return runExec(env, false, commandOrArgv, dir)

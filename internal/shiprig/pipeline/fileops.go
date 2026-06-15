@@ -109,9 +109,16 @@ func fileOpRm(dir string, args []string) error {
 	}
 	for _, p := range ops {
 		path := resolve(dir, p)
+		// os.RemoveAll is a no-op on a missing path, which would make a typo'd
+		// `rm -r missing` succeed silently. Without -f, require the path to exist.
+		if recursive && !force {
+			if _, err := os.Lstat(path); err != nil {
+				return err
+			}
+		}
 		var err error
 		if recursive {
-			err = os.RemoveAll(path) // already a no-op on a missing path
+			err = os.RemoveAll(path)
 		} else {
 			err = os.Remove(path)
 		}
@@ -193,8 +200,10 @@ func sourcesAndDest(dir string, ops []string) (srcs []string, dst string, dstIsD
 	return srcs, dst, dstIsDir, nil
 }
 
-// movePath renames src to dst, falling back to copy+remove for a cross-device
-// move (where os.Rename fails).
+// movePath renames src to dst. If os.Rename fails for any reason — most usefully
+// a cross-device move, where rename is not possible — it falls back to
+// copy+remove; a genuine error (e.g. a missing destination parent) then
+// resurfaces from the copy.
 func movePath(src, dst string) error {
 	if err := os.Rename(src, dst); err == nil {
 		return nil
@@ -216,7 +225,13 @@ func copyPath(src, dst string) error {
 	return copyFile(src, dst, info.Mode())
 }
 
+// copyTree copies the directory src to dst. Like coreutils, it creates dst
+// itself but NOT a missing destination *parent* — so `cp -r src missing/dst`
+// fails loudly instead of materializing directories.
 func copyTree(src, dst string) error {
+	if !isDir(filepath.Dir(dst)) {
+		return fmt.Errorf("cannot create directory %q: parent does not exist", dst)
+	}
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

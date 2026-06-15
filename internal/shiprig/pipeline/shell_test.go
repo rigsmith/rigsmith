@@ -40,6 +40,28 @@ func TestPortableShellPosixSyntaxAndExitCodes(t *testing.T) {
 	}
 }
 
+func TestPortableShellControlFlowAndRedirection(t *testing.T) {
+	// A for-loop with arithmetic — pure interpreter, identical on every OS.
+	if lines, _, _ := runPortable(t, nil, "total=0; for x in 1 2 3; do total=$((total+x)); done; echo $total", t.TempDir()); strings.Join(lines, "") != "6" {
+		t.Errorf("for-loop sum = %v, want 6", lines)
+	}
+
+	// An if/else taking the else branch.
+	if lines, _, _ := runPortable(t, nil, `if [ 1 -gt 2 ]; then echo a; else echo b; fi`, t.TempDir()); strings.Join(lines, "") != "b" {
+		t.Errorf("if/else = %v, want b", lines)
+	}
+
+	// Redirection writes a real file (a shell feature handled in-process); read
+	// it back with Go so the test needs no external `cat`.
+	dir := t.TempDir()
+	if _, code, err := runPortable(t, nil, "echo hello > out.txt", dir); err != nil || code != 0 {
+		t.Fatalf("redirection code=%d err=%v", code, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "out.txt")); strings.TrimSpace(string(b)) != "hello" {
+		t.Errorf("redirected file = %q, want hello", b)
+	}
+}
+
 func TestPortableShellUsesEnvAndDir(t *testing.T) {
 	// Env is honoured ($FOO expands via the interpreter).
 	if lines, _, _ := runPortable(t, []string{"FOO=bar"}, "echo $FOO", t.TempDir()); strings.Join(lines, "") != "bar" {
@@ -68,13 +90,12 @@ func TestPortableShellParseErrorSurfaces(t *testing.T) {
 
 func TestPortableRunnerArgvExecsDirectly(t *testing.T) {
 	// argv commands have no shell syntax; the portable runner exec's them like
-	// the system runner. (echo is on PATH via the inherited env.)
-	lines, code, err := NewPortableRunner(nil)(false, []string{"echo", "hello"}, t.TempDir())
+	// the system runner. Use the test binary itself as the target so this works
+	// on every OS (rather than relying on `echo` being a standalone executable,
+	// which it is not on Windows).
+	_, code, err := NewPortableRunner(nil)(false, []string{os.Args[0], "-test.run=^NoSuchTest$"}, t.TempDir())
 	if err != nil || code != 0 {
-		t.Fatalf("argv code=%d err=%v", code, err)
-	}
-	if strings.Join(lines, "") != "hello" {
-		t.Errorf("argv output = %v, want hello", lines)
+		t.Fatalf("argv exec of the test binary failed: code=%d err=%v", code, err)
 	}
 }
 
