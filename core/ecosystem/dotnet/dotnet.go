@@ -227,18 +227,58 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	// the produced artifact is deterministically named.
 	nupkg := filepath.Join(tmpDir, req.Package.Name+"."+req.Package.Version+".nupkg")
 
+	// Resolve the API key. An engine-resolved secret ref or an OIDC-minted key
+	// wins; otherwise fall back to NUGET_API_KEY (and, if that is empty, to
+	// dotnet's stored feed credentials — the pre-auth-seam behaviour).
+	key, authNote, err := nugetAPIKey(ctx, req)
+	if err != nil {
+		return plugin.PublishResponse{}, fmt.Errorf("dotnet nuget push: %w", err)
+	}
+
 	args := []string{"nuget", "push", nupkg, "--source", source, "--skip-duplicate"}
-	if key := os.Getenv("NUGET_API_KEY"); key != "" {
+	if key != "" {
 		args = append(args, "--api-key", key)
 	}
 	if _, _, err := runCmd(ctx, "", "dotnet", args...); err != nil {
-		return plugin.PublishResponse{}, fmt.Errorf("dotnet nuget push: %w", err)
+		// dotnet nuget push takes the key on argv, so redact it from the error
+		// (which echoes the command) before surfacing.
+		return plugin.PublishResponse{}, fmt.Errorf("dotnet nuget push: %s", redact(err.Error(), key))
 	}
 
 	return plugin.PublishResponse{
 		Published: true,
-		Message:   fmt.Sprintf("pushed %s@%s to %s", req.Package.Name, req.Package.Version, source),
+		Message:   fmt.Sprintf("pushed %s@%s to %s", req.Package.Name, req.Package.Version, source) + authNote,
 	}, nil
+}
+
+// nugetAPIKey resolves the API key for a push and a short note describing how it
+// was obtained. Precedence: an engine-resolved secret ref → an OIDC-minted key
+// → NUGET_API_KEY → "" (let dotnet use stored feed credentials).
+func nugetAPIKey(ctx context.Context, req plugin.PublishRequest) (key, note string, err error) {
+	switch {
+	case req.Auth != nil && req.Auth.Token != "":
+		note = ""
+		if req.Auth.Method == "secret-ref" {
+			note = " (auth via secret reference)"
+		}
+		return req.Auth.Token, note, nil
+	case req.OIDC:
+		key, err = nugetOIDCKey(ctx, req.OIDCUser)
+		if err != nil {
+			return "", "", err
+		}
+		return key, " (auth via OIDC trusted publishing)", nil
+	default:
+		return os.Getenv("NUGET_API_KEY"), "", nil
+	}
+}
+
+// redact replaces secret in text with a placeholder (no-op for empty secrets).
+func redact(text, secret string) string {
+	if strings.TrimSpace(secret) == "" {
+		return text
+	}
+	return strings.ReplaceAll(text, secret, "***")
 }
 
 // Artifacts builds the NuGet package (`dotnet pack`) into req.OutputDir. The
@@ -269,17 +309,30 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	}, nil
 }
 
-// ReleaseInit declares .NET's release prerequisites: a NUGET_API_KEY for
-// publishing. dotnet pack produces the .nupkg natively, so there is no
-// build-config file to scaffold.
+// ReleaseInit declares .NET's release prerequisites. With OIDC trusted
+// publishing in play (the default), no NUGET_API_KEY is required — instead we
+// point the operator at the one-time Trusted Publisher setup, which shiprig
+// cannot do for them, and remind them OIDC needs a username. With OIDC off, it
+// falls back to declaring NUGET_API_KEY. dotnet pack produces the .nupkg
+// natively, so there is no build-config file to scaffold.
 func (a *Adapter) ReleaseInit(ctx context.Context, req plugin.ReleaseInitRequest) (plugin.ReleaseInitResponse, error) {
+	if req.OIDC {
+		return plugin.ReleaseInitResponse{
+			Notes: []string{
+				"publishes to NuGet.org via OIDC trusted publishing — no NUGET_API_KEY needed",
+				"one-time: create a Trusted Publishing policy (nuget.org → account → Trusted Publishing) and set `dotnet.user` to its creator's username",
+				"CI must grant `id-token: write`",
+				"to use a key instead, set dotnet.oidc=\"off\" and provide NUGET_API_KEY (or dotnet.auth)",
+			},
+		}, nil
+	}
 	return plugin.ReleaseInitResponse{
 		Tokens: []plugin.TokenSpec{{
 			EnvVar: "NUGET_API_KEY",
 			For:    "dotnet nuget push",
 			URL:    "https://www.nuget.org/account/apikeys",
 		}},
-		Notes: []string{"publishes to NuGet"},
+		Notes: []string{"publishes to NuGet (set dotnet.oidc + dotnet.user to enable tokenless OIDC publishing)"},
 	}, nil
 }
 

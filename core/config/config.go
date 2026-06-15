@@ -500,9 +500,13 @@ type EcosystemConfig struct {
 	Auth string `json:"auth,omitempty"`
 	// OIDC controls trusted publishing via the CI's OIDC identity: "auto"
 	// (default — use OIDC when a CI OIDC context is present and no explicit Auth
-	// ref is set, else fall back) or "off" (never). Only the npm ecosystem
-	// honors it today.
+	// ref is set, else fall back) or "off" (never). Honored by the npm, cargo,
+	// and dotnet ecosystems.
 	OIDC string `json:"oidc,omitempty"`
+	// User is the registry account/subject an OIDC exchange requires for some
+	// registries — NuGet keys its trusted-publishing token to the policy
+	// creator's username. Unused by npm/crates.
+	User string `json:"user,omitempty"`
 	// VersionStrategy overrides the top-level VersionStrategy for this
 	// ecosystem's packages (net's `dotnet.versionStrategy`); empty inherits it.
 	VersionStrategy VersionStrategy `json:"versionStrategy,omitempty"`

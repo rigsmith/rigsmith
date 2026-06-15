@@ -170,8 +170,9 @@ type PublishRequest struct {
 	PackageSource string          `json:"packageSource"` // feed name or URL; "nuget", "npm", ...
 	Access        string          `json:"access"`        // "public" | "restricted"
 	DryRun        bool            `json:"dryRun"`
-	Auth          *AuthCredential `json:"auth,omitempty"` // resolved by the engine; nil = use the ambient credential
-	OIDC          bool            `json:"oidc,omitempty"` // attempt OIDC trusted publishing (the adapter mints + exchanges the token)
+	Auth          *AuthCredential `json:"auth,omitempty"`     // resolved by the engine; nil = use the ambient credential
+	OIDC          bool            `json:"oidc,omitempty"`     // attempt OIDC trusted publishing (the adapter mints + exchanges the token)
+	OIDCUser      string          `json:"oidcUser,omitempty"` // account/subject some registries' OIDC exchange requires (NuGet)
 }
 
 // AuthCredential is a registry credential the engine resolved (OIDC exchange,
