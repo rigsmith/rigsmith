@@ -169,7 +169,7 @@ func (m planEditorModel) View() string {
 // planActionLines renders a step's action as human-readable lines for the editor.
 func planActionLines(s pipeline.ResolvedStep, masker *pipeline.SecretMasker) []string {
 	if s.Kind == pipeline.StepKindNative {
-		return []string{"(per-package forge release)"}
+		return []string{"(" + pipeline.NativeStepDescription(s.Name) + ")"}
 	}
 	var out []string
 	for _, c := range s.Action {

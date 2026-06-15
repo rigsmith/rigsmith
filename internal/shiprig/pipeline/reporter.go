@@ -104,7 +104,7 @@ func (r *PlainReporter) Plan(steps []ResolvedStep, dryRun bool) {
 		}
 
 		if step.Kind == StepKindNative {
-			fmt.Fprintln(r.w, "      run: (per-package forge release)")
+			fmt.Fprintf(r.w, "      run: (%s)\n", NativeStepDescription(step.Name))
 		} else if step.IsBuiltin {
 			r.writePlanCommands("run", step.Action)
 		} else {
