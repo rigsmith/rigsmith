@@ -9,8 +9,8 @@ import (
 
 func sampleAccounts() []account.Account {
 	return []account.Account{
-		{ID: "aaaa1111", Label: "work", SubscriptionType: "max"},
-		{ID: "bbbb2222", Label: "personal", SubscriptionType: "pro"},
+		{ID: "aaaa1111", Email: "work@acme.com", SubscriptionType: "max"},
+		{ID: "bbbb2222", Email: "me@personal.com", SubscriptionType: "pro"},
 	}
 }
 
@@ -83,7 +83,7 @@ func TestAccount_QuitBacksOut(t *testing.T) {
 
 func TestAccount_ViewRendersAccountsAndLiveMarker(t *testing.T) {
 	view := NewAccount(sampleAccounts(), "bbbb2222", nil, "switched to personal").View()
-	for _, want := range []string{"accounts", "work", "personal", "max", "switched to personal", "→"} {
+	for _, want := range []string{"accounts", "work@acme.com", "me@personal.com", "max", "switched to personal", "→"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view missing %q\n%s", want, view)
 		}

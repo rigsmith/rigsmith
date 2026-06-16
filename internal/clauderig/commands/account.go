@@ -52,13 +52,13 @@ func NewAccountCmd() *cobra.Command {
 }
 
 func newAccountAddCmd() *cobra.Command {
-	var label string
-	cmd := &cobra.Command{
-		Use:   "add [--label name]",
+	return &cobra.Command{
+		Use:   "add",
 		Short: "Capture the currently logged-in account into claudeRig's store",
-		Long: "Reads the live Claude Code credential and saves a copy under\n" +
-			"~/.clauderig/accounts so claudeRig can run or swap to it later. The captured\n" +
-			"account becomes the tracked 'live' one. Log into the account first.",
+		Long: "Reads the live Claude Code credential and the account profile from\n" +
+			"~/.claude.json (email + plan) and saves them under ~/.clauderig/accounts so\n" +
+			"claudeRig can run or swap to this account later. Accounts are keyed by email;\n" +
+			"the captured account becomes the tracked 'live' one. Log in first.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
@@ -66,11 +66,7 @@ func newAccountAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			raw, err := account.ReadLive()
-			if err != nil {
-				return err
-			}
-			a, updated, err := st.CaptureLive(raw, label)
+			a, updated, err := captureCurrent(st)
 			if err != nil {
 				return err
 			}
@@ -82,17 +78,21 @@ func newAccountAddCmd() *cobra.Command {
 				verb = "Updated"
 			}
 			fmt.Fprintf(out, "%s %s\n", OkStyle.Render(verb), accountTitle(a))
-			if !labelGiven(cmd) {
-				fmt.Fprintf(out, "  %s\n", DimStyle.Render("tip: --label <name> gives it a friendly handle"))
-			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&label, "label", "", "friendly name for the account (e.g. work, personal)")
-	return cmd
 }
 
-func labelGiven(cmd *cobra.Command) bool { return cmd.Flags().Changed("label") }
+// captureCurrent reads the live credential + oauthAccount and stores them as an
+// account (keyed by email). Shared by the CLI `add` and the UI.
+func captureCurrent(st *account.Store) (account.Account, bool, error) {
+	cred, err := account.ReadLive()
+	if err != nil {
+		return account.Account{}, false, err
+	}
+	oauth, _ := account.ReadOAuthAccount()
+	return st.CaptureLive(cred, oauth)
+}
 
 func newAccountListCmd() *cobra.Command {
 	return &cobra.Command{
@@ -332,27 +332,15 @@ func runAccountUI(cmd *cobra.Command) error {
 		case "":
 			return nil
 		case "add":
-			label, perr := promptLabel(cmd)
-			if errors.Is(perr, huh.ErrUserAborted) {
-				continue
-			}
-			if perr != nil {
-				return perr
-			}
-			raw, rerr := account.ReadLive()
-			if rerr != nil {
-				note = ErrStyle.Render(rerr.Error())
-				continue
-			}
-			a, updated, cerr := st.CaptureLive(raw, label)
+			a, updated, cerr := captureCurrent(st)
 			if cerr != nil {
 				note = ErrStyle.Render(cerr.Error())
 				continue
 			}
 			_ = st.SetActive(a.ID)
-			note = "added " + a.ID
+			note = "added " + a.Email
 			if updated {
-				note = "updated " + a.ID
+				note = "updated " + a.Email
 			}
 		case "switch":
 			target, rerr := st.Resolve(final.Action.ID)
@@ -457,23 +445,12 @@ func resolveBlockedSwitch(st *account.Store, target account.Account, blocked []a
 func warnIfActive(cmd *cobra.Command, st *account.Store, a account.Account) {
 	if active, _ := st.Active(); active == a.ID {
 		fmt.Fprintln(cmd.ErrOrStderr(), WarnStyle.Render(
-			"note: "+a.Label+" is your current live account — a separate session of it shares a"))
+			"note: "+a.Email+" is your current live account — a separate session of it shares a"))
 		fmt.Fprintln(cmd.ErrOrStderr(), WarnStyle.Render(
 			"      rotating token and may ask you to log in. Prefer running a different account;"))
 		fmt.Fprintln(cmd.ErrOrStderr(), DimStyle.Render(
 			"      if it does prompt, re-run `account add` for it while it's your live login."))
 	}
-}
-
-// promptLabel asks for an optional friendly name when capturing from the UI.
-func promptLabel(cmd *cobra.Command) (string, error) {
-	var label string
-	return label, huh.NewForm(huh.NewGroup(
-		huh.NewInput().
-			Title("Label for this account (optional)").
-			Placeholder("work, personal, …").
-			Value(&label),
-	)).WithKeyMap(huhEscKeyMap()).Run()
 }
 
 // runSwitch performs (or, with dryRun, previews) a guarded global swap.
@@ -586,8 +563,22 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 	} else if !errors.Is(lerr, account.ErrNoLive) {
 		return "", nil, lerr
 	}
+	// Round-trip the displaced account's oauthAccount block (identity + plan) so
+	// its stored copy stays current too.
+	if active != "" && active != target.ID {
+		if curOAuth, _ := account.ReadOAuthAccount(); len(curOAuth) > 0 {
+			_ = st.SaveOAuth(active, curOAuth)
+		}
+	}
 	if err := account.WriteLive(targetCred); err != nil {
 		return "", nil, err
+	}
+	// Swap the plan/identity block too, so Claude Code shows the right plan
+	// immediately instead of the previous account's tier until a login refresh.
+	if tgtOAuth, _ := st.OAuth(target.ID); len(tgtOAuth) > 0 {
+		if werr := account.WriteOAuthAccount(tgtOAuth); werr != nil {
+			return "", nil, fmt.Errorf("swap account profile: %w", werr)
+		}
 	}
 	if err := st.SetActive(target.ID); err != nil {
 		return "", nil, err
@@ -654,11 +645,9 @@ func runClaude(cmd *cobra.Command, bin, configDir string, extra []string) error 
 }
 
 func accountTitle(a account.Account) string {
-	name := a.Label
+	name := a.Email
 	if name == "" {
 		name = a.ID
-	} else if a.Label != a.ID {
-		name = fmt.Sprintf("%s (%s)", a.Label, a.ID)
 	}
 	if a.SubscriptionType != "" {
 		name += DimStyle.Render(" · " + a.SubscriptionType)

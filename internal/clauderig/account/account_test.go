@@ -4,8 +4,43 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestOAuthAccountReadWritePreservesFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), ".claude.json")
+	mustWrite(t, p, `{
+  "numStartups": 5,
+  "oauthAccount": {"emailAddress":"old@x.com","seatTier":"pro"},
+  "projects": {"keep":true}
+}`)
+	raw, err := readOAuthAccountFrom(p)
+	if err != nil || parseOAuthMeta(raw).EmailAddress != "old@x.com" {
+		t.Fatalf("read: %s, %v", raw, err)
+	}
+	if err := writeOAuthAccountTo(p, []byte(`{"emailAddress":"new@y.com","seatTier":"max"}`)); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(p)
+	for _, keep := range []string{`"numStartups"`, `"keep"`} {
+		if !strings.Contains(string(after), keep) {
+			t.Errorf("write dropped %s:\n%s", keep, after)
+		}
+	}
+	raw2, _ := readOAuthAccountFrom(p)
+	if m := parseOAuthMeta(raw2); m.EmailAddress != "new@y.com" || m.SeatTier != "max" {
+		t.Errorf("oauthAccount not replaced: %+v", m)
+	}
+	// Missing file → (nil, nil), and writing to it is a harmless no-op.
+	missing := filepath.Join(t.TempDir(), "nope.json")
+	if r, err := readOAuthAccountFrom(missing); err != nil || r != nil {
+		t.Errorf("missing read = %v, %v", r, err)
+	}
+	if err := writeOAuthAccountTo(missing, []byte(`{}`)); err != nil {
+		t.Errorf("missing write should be no-op, got %v", err)
+	}
+}
 
 // sampleBlob builds a credential blob with a given access token and subscription.
 func sampleBlob(tok, sub string) []byte {
@@ -18,6 +53,15 @@ func sampleBlob(tok, sub string) []byte {
 		"organizationUuid": "org-" + tok,
 	}
 	b, _ := json.Marshal(m)
+	return b
+}
+
+// sampleOAuth builds an oauthAccount block; the org is derived from the email so
+// re-capturing the same email maps to the same account.
+func sampleOAuth(email string) []byte { return sampleOAuthOrg(email, "org:"+email) }
+
+func sampleOAuthOrg(email, org string) []byte {
+	b, _ := json.Marshal(map[string]any{"emailAddress": email, "organizationUuid": org, "seatTier": "max"})
 	return b
 }
 
@@ -52,40 +96,90 @@ func TestMetaFromBlob(t *testing.T) {
 
 func TestCaptureLiveResolveAndUpdate(t *testing.T) {
 	st := &Store{Root: t.TempDir()}
-	a, existed, err := st.CaptureLive(sampleBlob("w", "max"), "Work Laptop")
+	a, existed, err := st.CaptureLive(sampleBlob("w", "max"), sampleOAuth("work@acme.com"))
 	if err != nil || existed {
 		t.Fatalf("first capture: existed=%v err=%v", existed, err)
 	}
-	if a.ID != "work-laptop" || a.Label != "Work Laptop" || a.SubscriptionType != "max" {
+	if a.ID != "work-acme-com" || a.Email != "work@acme.com" || a.SubscriptionType != "max" {
 		t.Fatalf("account = %+v", a)
 	}
-	// Re-capture same label → update, not duplicate.
-	_, existed, err = st.CaptureLive(sampleBlob("w2", "max"), "Work Laptop")
+	// Re-capture same email → update, not duplicate.
+	_, existed, err = st.CaptureLive(sampleBlob("w2", "max"), sampleOAuth("work@acme.com"))
 	if err != nil || !existed {
 		t.Fatalf("re-capture: existed=%v err=%v", existed, err)
 	}
 	if list, _ := st.List(); len(list) != 1 {
 		t.Fatalf("expected 1 account after re-capture, got %d", len(list))
 	}
-	// Resolve by id, label, and slug-of-label.
-	for _, ref := range []string{"work-laptop", "Work Laptop", "work-lap"} {
-		if got, err := st.Resolve(ref); err != nil || got.ID != "work-laptop" {
+	// Resolve by id, full email, and email/id prefix.
+	for _, ref := range []string{"work-acme-com", "work@acme.com", "work@"} {
+		if got, err := st.Resolve(ref); err != nil || got.ID != "work-acme-com" {
 			t.Errorf("Resolve(%q) = %+v, %v", ref, got, err)
 		}
 	}
-	// Credential perms 0600.
 	fi, _ := os.Stat(st.credPath(a.ID))
 	if fi.Mode().Perm() != 0o600 {
 		t.Errorf("credential perms = %v, want 0600", fi.Mode().Perm())
 	}
 }
 
-func TestCaptureLiveAutoLabel(t *testing.T) {
+func TestCaptureLiveSameEmailDifferentOrg(t *testing.T) {
 	st := &Store{Root: t.TempDir()}
-	a1, _, _ := st.CaptureLive(sampleBlob("a", "max"), "")
-	a2, _, _ := st.CaptureLive(sampleBlob("b", "max"), "")
-	if a1.ID != "account-1" || a2.ID != "account-2" {
-		t.Fatalf("auto ids = %q, %q, want account-1/account-2", a1.ID, a2.ID)
+	a1, existed, _ := st.CaptureLive(sampleBlob("x", "pro"), sampleOAuthOrg("john@x.com", "orgA"))
+	if existed || a1.ID != "john-x-com" {
+		t.Fatalf("first = %+v existed=%v", a1, existed)
+	}
+	// Same email, DIFFERENT org → a distinct account with a numeric suffix.
+	a2, existed, _ := st.CaptureLive(sampleBlob("y", "max"), sampleOAuthOrg("john@x.com", "orgB"))
+	if existed || a2.ID != "john-x-com-2" {
+		t.Fatalf("second = %+v existed=%v, want new id john-x-com-2", a2, existed)
+	}
+	if list, _ := st.List(); len(list) != 2 {
+		t.Fatalf("want 2 accounts, got %d", len(list))
+	}
+	// Re-capturing orgA updates the first, no third account.
+	a3, existed, _ := st.CaptureLive(sampleBlob("z", "pro"), sampleOAuthOrg("john@x.com", "orgA"))
+	if !existed || a3.ID != "john-x-com" {
+		t.Fatalf("re-capture orgA = %+v existed=%v", a3, existed)
+	}
+}
+
+func TestResolveFuzzy(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	st.CaptureLive(sampleBlob("r", "max"), sampleOAuth("john@relatecpa.com"))
+	st.CaptureLive(sampleBlob("b", "pro"), sampleOAuth("john@brightshore.io"))
+
+	for ref, wantEmail := range map[string]string{
+		"relate":              "john@relatecpa.com",
+		"rel":                 "john@relatecpa.com",
+		"bright":              "john@brightshore.io",
+		"bri":                 "john@brightshore.io",
+		"BRIGHT":              "john@brightshore.io", // case-insensitive
+		"john@relatecpa.com":  "john@relatecpa.com",  // exact email
+		"john-brightshore-io": "john@brightshore.io", // exact id
+	} {
+		got, err := st.Resolve(ref)
+		if err != nil || got.Email != wantEmail {
+			t.Errorf("Resolve(%q) = %q, %v; want %q", ref, got.Email, err, wantEmail)
+		}
+	}
+	// A shared substring is ambiguous and lists the candidates.
+	if _, err := st.Resolve("john"); err == nil {
+		t.Error("'john' should be ambiguous across both accounts")
+	}
+	if _, err := st.Resolve("nope"); err == nil {
+		t.Error("'nope' should match nothing")
+	}
+}
+
+func TestCaptureLiveRequiresEmail(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	// No oauthAccount → no email → can't key the account.
+	if _, _, err := st.CaptureLive(sampleBlob("a", "max"), nil); err == nil {
+		t.Error("capture without an email should error")
+	}
+	if list, _ := st.List(); len(list) != 0 {
+		t.Error("a failed capture should not create an account")
 	}
 }
 
@@ -94,15 +188,15 @@ func TestActivePointer(t *testing.T) {
 	if id, _ := st.Active(); id != "" {
 		t.Fatalf("fresh store active = %q, want empty", id)
 	}
-	st.CaptureLive(sampleBlob("w", "max"), "work")
-	if err := st.SetActive("work"); err != nil {
+	a, _, _ := st.CaptureLive(sampleBlob("w", "max"), sampleOAuth("w@x.com"))
+	if err := st.SetActive(a.ID); err != nil {
 		t.Fatal(err)
 	}
-	if id, _ := st.Active(); id != "work" {
-		t.Fatalf("active = %q, want work", id)
+	if id, _ := st.Active(); id != a.ID {
+		t.Fatalf("active = %q, want %q", id, a.ID)
 	}
 	// Removing the active account clears the pointer.
-	if err := st.Remove("work"); err != nil {
+	if err := st.Remove(a.ID); err != nil {
 		t.Fatal(err)
 	}
 	if id, _ := st.Active(); id != "" {
@@ -116,7 +210,7 @@ func TestEnsureSessionSeedShareAndStale(t *testing.T) {
 	mustWrite(t, filepath.Join(home, "settings.json"), `{"theme":"dark"}`)
 	mustWrite(t, filepath.Join(home, "skills", "x.md"), "skill")
 
-	a, _, _ := st.CaptureLive(sampleBlob("w", "max"), "work")
+	a, _, _ := st.CaptureLive(sampleBlob("w", "max"), sampleOAuth("w@x.com"))
 	dir, err := st.EnsureSession(a, true, home)
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +238,7 @@ func TestEnsureSessionSeedShareAndStale(t *testing.T) {
 	}
 
 	// Updating the stored credential marks the profile stale → next run re-seeds.
-	if _, _, err := st.CaptureLive(sampleBlob("w3", "max"), "work"); err != nil {
+	if _, _, err := st.CaptureLive(sampleBlob("w3", "max"), sampleOAuth("w@x.com")); err != nil {
 		t.Fatal(err)
 	}
 	if !fileExists(st.stalePath(a.ID)) {
@@ -164,7 +258,7 @@ func TestEnsureSessionSeedShareAndStale(t *testing.T) {
 
 func TestRemovePurge(t *testing.T) {
 	st := &Store{Root: t.TempDir()}
-	a, _, _ := st.CaptureLive(sampleBlob("w", "max"), "work")
+	a, _, _ := st.CaptureLive(sampleBlob("w", "max"), sampleOAuth("w@x.com"))
 	st.EnsureSession(a, false, t.TempDir())
 	if err := st.Remove(a.ID); err != nil {
 		t.Fatal(err)
@@ -173,8 +267,8 @@ func TestRemovePurge(t *testing.T) {
 		t.Fatalf("after Remove, %d accounts left", len(list))
 	}
 
-	st.CaptureLive(sampleBlob("a", "max"), "a")
-	st.CaptureLive(sampleBlob("b", "max"), "b")
+	st.CaptureLive(sampleBlob("a", "max"), sampleOAuth("a@x.com"))
+	st.CaptureLive(sampleBlob("b", "max"), sampleOAuth("b@x.com"))
 	st.BackupLive(sampleBlob("a", "max"), "20260615-000000")
 	if err := st.Purge(); err != nil {
 		t.Fatal(err)

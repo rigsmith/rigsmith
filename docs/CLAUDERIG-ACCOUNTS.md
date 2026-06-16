@@ -13,12 +13,12 @@ the machine-wide login.
 
 | Command | What it does |
 | --- | --- |
-| `clauderig account add [--label work]` | Capture the currently logged-in account into claudeRig's store (and mark it the live one). |
+| `clauderig account add` | Capture the currently logged-in account into claudeRig's store (and mark it the live one). |
 | `clauderig account list` | Show stored accounts; `→` marks the live one. |
-| `clauderig account run <id\|label> [-- claude args…]` | **Session mode** — run as that account in *this terminal only*. |
-| `clauderig account switch [<id\|label>]` | **Global swap** — change the machine-wide login. Guarded; no arg rotates. `--dry-run` previews; `--force` swaps despite live sessions; `--kill` ends them first. |
+| `clauderig account run <id\|email> [-- claude args…]` | **Session mode** — run as that account in *this terminal only*. |
+| `clauderig account switch [<id\|email>]` | **Global swap** — change the machine-wide login. Guarded; no arg rotates. `--dry-run` previews; `--force` swaps despite live sessions; `--kill` ends them first. |
 | `clauderig account sessions` (alias `ps`) | List running Claude Code instances — what blocks a switch. |
-| `clauderig account remove <id\|label>` (alias `rm`) | Stop tracking an account (and delete its session profile). |
+| `clauderig account remove <id\|email>` (alias `rm`) | Stop tracking an account (and delete its session profile). |
 | `clauderig account purge` | Remove all of claudeRig's account data. |
 
 `acct` is an alias for `account`. Bare `clauderig account` on a terminal (or
@@ -33,8 +33,11 @@ Two facts about Claude Code shape the whole design:
 
 1. **Refresh tokens rotate on every refresh.** A captured credential is not a
    stable identity, and a snapshot of an *actively-used* account goes stale fast.
-   So accounts are keyed by a **stable label**, and which one is live is tracked
-   by an **explicit pointer** — never inferred from a token.
+   So accounts are keyed by the **account email** (from `~/.claude.json`), and which one is live is tracked
+   by an **explicit pointer** — never inferred from a token. Reference an account
+   by any **unique substring** of its email (`relate`, `bri`), its full email, or
+   its id. If the same email belongs to two orgs, the second gets a numeric
+   suffix (`john-relatecpa-com-2`).
 2. **Mutating the live credential under a running Claude Code instance forces a
    re-login.** So `switch` is **guarded** by live-session detection, and session
    mode never touches the live credential at all.
@@ -56,8 +59,9 @@ stay on your default.
   credentials and history stay isolated. `--no-share` gives a bare profile.
 
 ```sh
-clauderig account run work                 # interactive, as "work"
-clauderig account run personal -- -p "…"   # one-shot; args after -- go to claude
+clauderig account run you@work.com           # interactive, as that account
+clauderig account run you@home.com -- -p "…"  # one-shot; args after -- go to claude
+clauderig account run relate                  # any unique substring of the email works (relate, rel, …)
 ```
 
 ## Global swap (`switch`) — machine-wide, guarded
@@ -71,9 +75,14 @@ Code instance follows. Because that logs out anything currently running, it is
   `~/.claude/ide/{port}.lock` (verify with `clauderig account sessions`). The
   detection catches more than Claude Code windows — e.g. desktop apps that embed
   the Claude agent SDK also hold the credential.
-- It **round-trips** the displaced account's current credential back into its
-  store (keeping that snapshot fresh) and writes a timestamped backup under
-  `~/.clauderig/cred-backups/`.
+- It swaps **both** the credential *and* the account's `oauthAccount` block in
+  `~/.claude.json` (email, org, and the plan/`seatTier`/rate-limit tier). The
+  plan display lives in that block, separate from the credential — swapping only
+  the credential would leave Claude Code showing the previous account's plan
+  until a login refresh.
+- It **round-trips** the displaced account's current credential *and*
+  `oauthAccount` back into its store (keeping those snapshots fresh) and writes a
+  timestamped credential backup under `~/.clauderig/cred-backups/`.
 
 When sessions are live you have three ways through:
 
@@ -84,12 +93,12 @@ When sessions are live you have three ways through:
   in again on their next refresh.
 
 ```sh
-clauderig account sessions                # what's live right now
-clauderig account switch --dry-run work   # preview + guard check, no mutation
-clauderig account switch work             # swap (refuses if Claude is running)
-clauderig account switch --kill work      # end running Claude first, then swap
-clauderig account switch --force work     # swap despite live sessions
-clauderig account switch                  # rotate to the next account
+clauderig account sessions                       # what's live right now
+clauderig account switch --dry-run you@work.com  # preview + guard check, no mutation
+clauderig account switch you@work.com            # swap (refuses if Claude is running)
+clauderig account switch --kill you@work.com     # end running Claude first, then swap
+clauderig account switch --force you@work.com    # swap despite live sessions
+clauderig account switch                         # rotate to the next account
 ```
 
 Prefer `run` for parallel accounts; reach for `switch` only when you genuinely

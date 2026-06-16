@@ -155,10 +155,10 @@ func toggleWord(showing bool) string {
 	return "list"
 }
 
-// accountName renders "label (id)" or just the id when unlabeled.
+// accountName renders the account email (the identity), falling back to the id.
 func accountName(a account.Account) string {
-	if a.Label == "" {
+	if a.Email == "" {
 		return a.ID
 	}
-	return fmt.Sprintf("%-14s %s", a.Label, dim.Render(a.ID))
+	return a.Email
 }
