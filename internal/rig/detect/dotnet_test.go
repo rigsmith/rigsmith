@@ -90,6 +90,23 @@ func TestDiscoverDotNet_DiscoversAndClassifiesFromAnSlnx(t *testing.T) {
 	}
 }
 
+func TestLoadProject_ParsesProjectReferenceDeps(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "App", "App.csproj")
+	writeFile(t, path, `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Lib\Lib.csproj" />
+    <ProjectReference Include="../Core/Core.csproj" />
+  </ItemGroup>
+</Project>`)
+
+	app := LoadProject(path, tmp)
+	if len(app.Deps) != 2 || app.Deps[0] != "Lib" || app.Deps[1] != "Core" {
+		t.Fatalf("Deps = %v, want [Lib Core] (base names, backslashes normalized)", app.Deps)
+	}
+}
+
 func TestDiscoverDotNet_ExcludeGlobsDropMatchingProjectsByNameOrPath(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "App", "App.csproj"), exeCsproj("net8.0"))
