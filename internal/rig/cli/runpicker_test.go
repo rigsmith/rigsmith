@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,6 +160,98 @@ func TestOfferWorkspaceChoice_NonRunnableRootSurfacesScripts(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("err = %v, want it to mention %q", err, want)
 		}
+	}
+}
+
+// countExcluded counts the visible rows the picker marks excluded.
+func countExcluded(m runPickerModel) int {
+	n := 0
+	for _, r := range m.flat {
+		if r.excluded {
+			n++
+		}
+	}
+	return n
+}
+
+// The live run picker excludes a crowded directory via the whole-dir prompt,
+// hides those rows, reveals them under show-all, and re-includes them — each
+// writing the repo .rig.json.
+func TestRunPickerLive_ExcludeWholeDirShowAllAndInclude(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"),
+		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeGoPkg(t, root, "cmd/api", "main")
+	writeGoPkg(t, root, "cmd/worker", "main")
+	for i := 0; i < 6; i++ {
+		writeGoPkg(t, root, "examples/e"+string(rune('0'+i)), "main")
+	}
+
+	m := newRunPickerLive(context.Background(), root, nil)
+	if len(m.flat) != 8 { // 2 cmd + 6 examples, none excluded yet
+		t.Fatalf("initial rows = %d, want 8: %v", len(m.flat), m.flat)
+	}
+
+	// Cursor 0=api,1=worker,2=examples/e0 (goMainDirs sorts the dirs).
+	m = rp(rp(m, wtKeyMsg("down")), wtKeyMsg("down"))
+	if got := m.flat[m.cursor].path; got != "examples/e0" {
+		t.Fatalf("cursor on %q, want examples/e0", got)
+	}
+
+	// x on a crowded dir opens the just/dir prompt; d excludes the whole dir.
+	m = rp(m, wtKeyMsg("x"))
+	if m.pending == nil || m.pending.dirGlob != "examples/*" {
+		t.Fatalf("expected the whole-dir prompt for examples/*, got %+v", m.pending)
+	}
+	m = rp(m, wtKeyMsg("d"))
+	if m.pending != nil {
+		t.Fatal("prompt should clear after choosing")
+	}
+	if len(m.flat) != 2 { // examples hidden
+		t.Fatalf("after exclude, rows = %d, want 2", len(m.flat))
+	}
+	if cfg, _ := config.LoadMerged(root); len(cfg.Exclude) != 1 || cfg.Exclude[0] != "examples/*" {
+		t.Fatalf(".rig.json exclude = %v, want [examples/*]", excludeFor(root))
+	}
+
+	// show-all reveals the 6 excluded rows (struck through).
+	m = rp(m, wtKeyMsg("a"))
+	if len(m.flat) != 8 || countExcluded(m) != 6 {
+		t.Fatalf("show-all rows = %d (excluded %d), want 8 (6)", len(m.flat), countExcluded(m))
+	}
+
+	// Re-include from an excluded row drops the directory glob.
+	for m.flat[m.cursor].path != "examples/e0" {
+		m = rp(m, wtKeyMsg("down"))
+	}
+	m = rp(m, wtKeyMsg("i"))
+	if cfg := excludeFor(root); len(cfg) != 0 {
+		t.Fatalf("after include, exclude = %v, want empty", cfg)
+	}
+	if countExcluded(m) != 0 {
+		t.Fatalf("after include, %d rows still marked excluded", countExcluded(m))
+	}
+}
+
+// Enter in the live picker resolves the highlighted project to a runnable task.
+func TestRunPickerLive_EnterSelectsProject(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"),
+		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeGoPkg(t, root, "cmd/api", "main")
+	writeGoPkg(t, root, "cmd/worker", "main")
+
+	m := newRunPickerLive(context.Background(), root, nil)
+	m = rp(m, wtKeyMsg("enter")) // cursor 0 = cmd/api
+	if m.chosen == nil || m.chosen.task == nil || m.chosen.task.name != "api" {
+		t.Fatalf("enter should choose api, got %+v", m.chosen)
+	}
+	if argv := strings.Join(m.chosen.task.argv, " "); !strings.Contains(argv, "go run") {
+		t.Fatalf("api argv = %q, want a `go run`", argv)
 	}
 }
 

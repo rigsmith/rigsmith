@@ -7,12 +7,19 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
+
+func mu(m menuModel, msg tea.Msg) menuModel {
+	nm, _ := m.Update(msg)
+	return nm.(menuModel)
+}
 
 // scriptedMenu is a two-level menu with deterministic items (newMenu probes
 // the cwd's ecosystems, which a unit test must not depend on).
@@ -86,12 +93,78 @@ func TestMenu_EscapePopsASubmenuBeforeCancelling(t *testing.T) {
 // mirroring newMenu's layout in a multi-project repo.
 func scriptedFocusMenu() menuModel {
 	return menuModel{
-		projects: []string{"App", "Worker"},
+		projects: []projectRow{{name: "App", rel: "App"}, {name: "Worker", rel: "Worker"}},
 		stack: []frame{{items: []menuItem{
 			{pickFocus: true},
 			{label: "build", verb: "build"},
 			{label: "test", verb: "test"},
 		}}},
+	}
+}
+
+// The menu's project picker excludes a crowded directory (prompting just/dir),
+// hides those rows, reveals them under show-all, and re-includes them — each
+// writing the repo .rig.json. Uses node packages (discovered per-package).
+func TestMenu_ProjectPickerExcludeShowAllInclude(t *testing.T) {
+	root := t.TempDir()
+	writePkg := func(rel, name string) {
+		dir := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "package.json"),
+			[]byte(`{"name":"`+name+`","version":"1.0.0"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writePkg("core", "core")
+	for i := 0; i < 6; i++ {
+		writePkg("examples/e"+string(rune('0'+i)), "ex"+string(rune('0'+i)))
+	}
+
+	m := menuModel{root: root, projects: menuProjectEntries(root)}
+	m.stack = []frame{
+		{items: []menuItem{{pickFocus: true}}},
+		{title: "▸ Project", items: focusPickerItems(m.projects, false), projects: true},
+	}
+	// Items: (whole repo), core, ex0..ex5 → 8.
+	if got := len(m.top().items); got != 8 {
+		t.Fatalf("picker items = %d, want 8", got)
+	}
+
+	// Cursor to ex0 (index 2), exclude → crowded prompt → whole dir.
+	m = mu(mu(m, key(tea.KeyDown)), key(tea.KeyDown))
+	if m.top().items[m.top().cursor].focusName != "ex0" {
+		t.Fatalf("cursor on %q, want ex0", m.top().items[m.top().cursor].focusName)
+	}
+	m = mu(m, wtKeyMsg("x"))
+	if m.pending == nil || m.pending.dirGlob != "examples/*" {
+		t.Fatalf("expected examples/* whole-dir prompt, got %+v", m.pending)
+	}
+	m = mu(m, wtKeyMsg("d"))
+	if m.pending != nil {
+		t.Fatal("prompt should clear")
+	}
+	if got := len(m.top().items); got != 2 { // (whole repo), core
+		t.Fatalf("after exclude, items = %d, want 2", got)
+	}
+	if cfg := excludeFor(root); len(cfg) != 1 || cfg[0] != "examples/*" {
+		t.Fatalf("exclude = %v, want [examples/*]", cfg)
+	}
+
+	// show-all reveals the excluded rows.
+	m = mu(m, wtKeyMsg("a"))
+	if got := len(m.top().items); got != 8 {
+		t.Fatalf("show-all items = %d, want 8", got)
+	}
+
+	// Include from an excluded row drops the dir glob.
+	for m.top().items[m.top().cursor].focusName != "ex0" {
+		m = mu(m, key(tea.KeyDown))
+	}
+	m = mu(m, wtKeyMsg("i"))
+	if cfg := excludeFor(root); len(cfg) != 0 {
+		t.Fatalf("after include, exclude = %v, want empty", cfg)
 	}
 }
 

@@ -6,7 +6,9 @@
 package config
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"sort"
 
 	"github.com/rigsmith/rigsmith/core/confkit"
 )
@@ -26,6 +28,57 @@ func SetRepoString(root, property, value string) (path string, ok bool) {
 	path = filepath.Join(root, FileName)
 	ok = SetString(path, []string{property}, value)
 	return path, ok
+}
+
+// AddRepoExclude adds glob to the repo .rig.json `exclude` array (deduped,
+// sorted) and returns the config path and whether the write landed. A no-op
+// (glob already present) still reports ok=true with the unchanged file. current
+// is the already-merged exclude list so the caller need not re-read.
+func AddRepoExclude(root string, current []string, glob string) (path string, ok bool) {
+	for _, g := range current {
+		if g == glob {
+			return filepath.Join(root, FileName), true
+		}
+	}
+	return setRepoExclude(root, append(append([]string{}, current...), glob))
+}
+
+// RemoveRepoExclude drops every entry equal to glob from the repo .rig.json
+// `exclude` array. A no-op (glob absent) reports ok=true.
+func RemoveRepoExclude(root string, current []string, glob string) (path string, ok bool) {
+	var next []string
+	removed := false
+	for _, g := range current {
+		if g == glob {
+			removed = true
+			continue
+		}
+		next = append(next, g)
+	}
+	if !removed {
+		return filepath.Join(root, FileName), true
+	}
+	return setRepoExclude(root, next)
+}
+
+// setRepoExclude writes the repo .rig.json `exclude` array (deduped + sorted for
+// a stable diff), splicing into an existing file or creating a fresh one.
+func setRepoExclude(root string, globs []string) (path string, ok bool) {
+	path = filepath.Join(root, FileName)
+	seen := map[string]bool{}
+	var uniq []string
+	for _, g := range globs {
+		if g != "" && !seen[g] {
+			seen[g] = true
+			uniq = append(uniq, g)
+		}
+	}
+	sort.Strings(uniq)
+	raw, err := json.Marshal(uniq)
+	if err != nil {
+		return path, false
+	}
+	return path, Set(path, []string{"exclude"}, string(raw))
 }
 
 // SetString sets path (depth 1–2) to a JSON string in the file at filePath.

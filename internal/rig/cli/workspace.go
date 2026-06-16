@@ -67,7 +67,7 @@ func discoverWorkspace(ctx context.Context, root string, exclude []string) []tar
 				deps = append(deps, d.Name)
 			}
 			t := target{Name: p.Name, Eco: id, Dir: filepath.Join(root, p.Dir), Version: p.Version, Deps: deps, Runnable: true}
-			if excluded(t.Name, exclude) || excluded(t.shortName(), exclude) {
+			if projectExcluded(t.Name, t.shortName(), relSlash(root, t.Dir), exclude) {
 				continue
 			}
 			out = append(out, t)
@@ -76,20 +76,29 @@ func discoverWorkspace(ctx context.Context, root string, exclude []string) []tar
 	return out
 }
 
-// runTargets is the workspace's set of runnable targets for `rig run` (the picker
-// and `rig run <name>`). Non-Go targets pass through from discoverWorkspace, but
-// each Go module is expanded into one target per `package main` directory it
-// holds — so a multi-binary Go repo offers cmd/rig, cmd/clauderig, … instead of
-// the module root (which is not itself runnable when the mains live under cmd/).
-// A Go module with no main contributes nothing. Each expanded main is re-checked
-// against the `exclude` globs by its binary name, so a .rig.json exclude can hide
-// an individual binary (e.g. "changerig"), not just a whole module.
-func runTargets(ctx context.Context, root string) []target {
+// runEntry is one run target plus whether the current .rig.json `exclude` globs
+// hide it. The pickers use the excluded flag to optionally show excluded rows
+// (dimmed) so a user can re-include them; runTargets is the plain filtered view.
+type runEntry struct {
+	t        target
+	excluded bool
+}
+
+// runTargetEntries is the workspace's full set of run targets for `rig run`,
+// each marked excluded-or-not — UNFILTERED, so the picker can reveal excluded
+// rows. Non-Go targets pass through from discovery; each Go module is expanded
+// into one target per `package main` directory it holds, so a multi-binary Go
+// repo offers cmd/rig, cmd/clauderig, … instead of the module root (which is
+// not itself runnable when the mains live under cmd/). A Go module with no main
+// contributes nothing. Exclusion is matched by binary name, short name, and
+// repo-relative path, so a glob can hide one binary or a whole directory.
+func runTargetEntries(ctx context.Context, root string) []runEntry {
 	exclude := excludeFor(root)
-	var out []target
-	for _, t := range discoverWorkspace(ctx, root, exclude) {
+	var out []runEntry
+	for _, t := range discoverWorkspace(ctx, root, nil) {
 		if t.Eco != detect.Go {
-			out = append(out, t)
+			rel := relSlash(root, t.Dir)
+			out = append(out, runEntry{t: t, excluded: projectExcluded(t.Name, t.shortName(), rel, exclude)})
 			continue
 		}
 		for _, rel := range goMainDirs(t.Dir, root) {
@@ -97,18 +106,33 @@ func runTargets(ctx context.Context, root string) []target {
 			if rel == "." {
 				name = t.shortName()
 			}
-			if excluded(name, exclude) {
-				continue
-			}
-			out = append(out, target{
-				Name:     name,
-				Eco:      detect.Go,
-				Dir:      filepath.Join(root, filepath.FromSlash(rel)),
-				Runnable: true,
-			})
+			mt := target{Name: name, Eco: detect.Go, Dir: filepath.Join(root, filepath.FromSlash(rel)), Runnable: true}
+			out = append(out, runEntry{t: mt, excluded: projectExcluded(name, "", rel, exclude)})
 		}
 	}
 	return out
+}
+
+// runTargets is the filtered run-target list (excluded entries dropped) for
+// `rig run <name>` and the default run path.
+func runTargets(ctx context.Context, root string) []target {
+	var out []target
+	for _, e := range runTargetEntries(ctx, root) {
+		if !e.excluded {
+			out = append(out, e.t)
+		}
+	}
+	return out
+}
+
+// relSlash returns dir relative to root as a '/'-separated path ("." at the
+// root). Falls back to the absolute dir if it can't be made relative.
+func relSlash(root, dir string) string {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return dir
+	}
+	return filepath.ToSlash(rel)
 }
 
 // goMainDirs returns the repo-relative slash directories of every `package main`

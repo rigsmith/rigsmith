@@ -36,6 +36,52 @@ func parseT(t *testing.T, src string) Config {
 	return cfg
 }
 
+func TestAddRepoExclude_CreatesFileAndAppends(t *testing.T) {
+	root := t.TempDir()
+
+	// No .rig.json yet: a fresh file is written with the schema + exclude.
+	path, ok := AddRepoExclude(root, nil, "testdata/*")
+	if !ok {
+		t.Fatal("AddRepoExclude on a fresh repo should write")
+	}
+	if cfg := parseT(t, readFileT(t, path)); len(cfg.Exclude) != 1 || cfg.Exclude[0] != "testdata/*" {
+		t.Fatalf("exclude = %v, want [testdata/*]", cfg.Exclude)
+	}
+
+	// Adding a second glob keeps the first (deduped + sorted).
+	if _, ok := AddRepoExclude(root, []string{"testdata/*"}, "changerig"); !ok {
+		t.Fatal("second AddRepoExclude should write")
+	}
+	cfg := parseT(t, readFileT(t, path))
+	if got := strings.Join(cfg.Exclude, ","); got != "changerig,testdata/*" {
+		t.Fatalf("exclude = %q, want sorted [changerig,testdata/*]", got)
+	}
+
+	// Re-adding an existing glob is a no-op success.
+	if _, ok := AddRepoExclude(root, cfg.Exclude, "changerig"); !ok {
+		t.Fatal("re-adding an existing glob should report ok")
+	}
+	if cfg2 := parseT(t, readFileT(t, path)); len(cfg2.Exclude) != 2 {
+		t.Fatalf("re-add changed the list: %v", cfg2.Exclude)
+	}
+}
+
+func TestRemoveRepoExclude_DropsAGlobAndPreservesComments(t *testing.T) {
+	root := t.TempDir()
+	path := writeRigJSON(t, root, "{\n  // keep me\n  \"exclude\": [\"a\", \"b\"]\n}\n")
+
+	if _, ok := RemoveRepoExclude(root, []string{"a", "b"}, "a"); !ok {
+		t.Fatal("RemoveRepoExclude should write")
+	}
+	out := readFileT(t, path)
+	if cfg := parseT(t, out); len(cfg.Exclude) != 1 || cfg.Exclude[0] != "b" {
+		t.Fatalf("exclude = %v, want [b]", cfg.Exclude)
+	}
+	if !strings.Contains(out, "// keep me") {
+		t.Errorf("the comment-preserving writer dropped a comment:\n%s", out)
+	}
+}
+
 // ---- ConfigWriterTests ----
 
 func TestConfigWriter_FreshFileIsWrittenWithSchemaAndANestedValue(t *testing.T) {
