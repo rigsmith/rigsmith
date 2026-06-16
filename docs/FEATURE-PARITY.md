@@ -52,7 +52,10 @@ rigsmith is done.
   step-chooser is now built too — a bubbletea **plan editor** (toggle steps
   pre-run) plus a **live run dashboard** (streaming status + inline confirm
   gates) — and `packages.versionRegex` landed as a generic `regex` ecosystem
-  adapter, so the release surface is complete.
+  adapter, so the release surface is complete. Beyond net's changeset-only model,
+  shipRig also adds **commit-based versioning** (`versioning.source` =
+  changesets / commits / both — knope-style conventional-commit inference as a
+  source adapter feeding the same planner).
 - **`rig` (dev launcher): high (Phase 6, 2026-06-12).** Dev loop + full package
   management + `coverage` (incl. .NET `--min` gate + in-process cobertura HTML)
   + `kill` (C#-aligned semantics) + `doctor`/`cd`/`init`/`rebuild`/`publish`/
@@ -96,6 +99,7 @@ rigsmith is done.
 |---|---|---|---|---|---|---|
 | Frontmatter `"Name": bump` | ✅ | ✅ | | | Multi-bump-per-line read; empty changeset; id. | |
 | Conventional `type:` + bumpless line | ➖ | ✅ | 🟢 | rigsmith-only feature — net has no equivalent; `type: feat[!]` + bare `"Name"` with bump derived from type. Not @changesets-readable (no compat needed). | | |
+| Commit-based versioning (`versioning.source`) | ➖ | ✅ | 🟢 | rigsmith-only (knope-style) — net had no commit inference. Top-level `versioning.source` = `changesets` (default) / `commits` / `both`: `commits` **synthesizes** changesets from the conventional commits since the last release (gitmoji + `BREAKING CHANGE` aware), attributing each to a package via the `versioning.scopes` map then path fallback; `both` unions them with on-disk changesets. | A source adapter only — synthetic changesets feed the same `planner.Plan()`, so cascade / grouping / prerelease / snapshot / changelog are all shared (`core/commitsource`). Design: [../docs-archive/COMMIT-VERSIONING.md](../docs-archive/COMMIT-VERSIONING.md). | |
 | `.net.mkd` interop extension | ✅ | ✅ | 🟡 | Dropped — rigsmith changesets aren't @changesets/`.net.mkd` dual-readable (no Node-interop bridge; deliberate). | | |
 | Semver bump rules + graduation | ✅ | ✅ | | | Faithful port, unit-tested (prerelease graduation, precedence). | |
 | Dependency cascade | ✅ rangeless (always-patch) | ✅ | 🟢 | net is rangeless (always-patch); rigsmith adds range-aware gating — npm `^`/`~`/`workspace:` out-of-range, peer→major, dev = range-only (no release), manifest range rewrites. | Rangeless case + `updateInternalDependencies` threshold both honored. | |
@@ -148,8 +152,12 @@ wired as `shiprig release`. ✅: `tool` (defaults to shiprig itself; set
 run/args/message/confirm/forge)/`hooks`(before/after/onError)/`vars`(lazy +
 eager, cached), CommandSpec (shell string / argv array, mixed lists), `${tool}`/
 `${vars.*}`/`${env.*}` interpolation, longest-first secret masking, default
-pipeline (version→commit→publish→push→release), forge auto/github/none
-with `gh` probing + CHANGELOG-section release notes, plain + rich (lipgloss)
+pipeline (version→commit→build→publish→tag→push→release→issues), multi-forge
+releases via a Provider seam (forge auto/github/gitlab/gitea/none — `gh`/`glab`/
+`tea` probing; github/gitlab auto-detect from the remote URL, gitea explicit) +
+CHANGELOG-section release notes, plus an `issues` step that parses forge/Jira
+refs from the released commits and comments on / closes the resolved issues
+(GitHub today), plain + rich (lipgloss)
 reporters with resume hints, confirm gates (huh on a TTY; `--yes` otherwise),
 `--dry-run/--only/--skip/--from/--to/--config/--yes/--git-only/--ui/--no-ui`,
 JSONC config via `core/jsonc`. `packages.versionRegex` is implemented as the
@@ -172,6 +180,7 @@ sequential plain/rich reporters. See [UI.md](UI.md).
 | `regex` adapter (arbitrary files, `versionRegex`) | ✅ (`packages.versionRegex`) | ✅ | 🟢 | net's per-package `versionRegex` lives here as a first-class `regex` ecosystem adapter (`core/ecosystem/regex`): a `.changeset/config.json` `regex` block names files + named-capture patterns (`(?<version>…)`, also accepts Go's `(?P<version>…)`); discover/SetVersion go through the normal plugin contract, released tag-only (`name@version`). | | |
 | NuGet publish (pack + push --skip-duplicate, registry-aware) | ✅ | ✅ | | | | |
 | npm / cargo publish | ➖ | ✅ | 🟢 | rigsmith-only — net had no npm/cargo publish. | `npm publish` (idempotent via `npm view`), `cargo publish` (already-detect). | |
+| Publish auth (OIDC + secret refs) | ➖ | ✅ | 🟢 | rigsmith-only — net relied on ambient credentials only. A shared `core/auth` seam resolves each ecosystem's registry credential by precedence: **OIDC trusted publishing** (npm / crates.io / NuGet, `oidc: auto`/`off`) → **secret reference** (`op://…` 1Password via `op read`, `env:NAME`, `cmd:…`) → fallback env → ambient. Resolved just-in-time and masked. | Per-ecosystem `auth` + `oidc` config keys; tokens never logged. | |
 | Git tagging (`name@version`) | ✅ | ✅ | 🟢 | Adds the Go module-path tag form beyond net's `name@version`. | | |
 | Node interop / autoRunNode delegation | ✅ | ✅ | 🟢 | Replaced by the native node adapter — no JS-interop delegation needed (more self-contained). | | |
 
@@ -274,6 +283,12 @@ source tools; **rigsmith** is the Go `cli/` module.
 2. **shipRig tail**: NuGet feed-protocol unit tests if a native feed client
    lands. (The interactive step-chooser TUI — plan editor + live dashboard — and
    `packages.versionRegex` are now built.)
+3. **Ecosystem-format breadth (beyond-parity)**: a native **Tauri** adapter
+   (`tauri.conf.json` / `Cargo.toml` version pair) is the next candidate — it's a
+   format knope ships out of the box that shipRig reaches only via the generic
+   `regex` adapter today. The same gap covers `pyproject.toml`, `pom.xml`,
+   `pubspec.yaml`, Deno, and Gleam; Tauri is the one called out first. Not a
+   net-changesets parity item (net had none of these) — pure breadth.
 
 *(Done since the original audit: status `--since`/`--output`/pre-mode
 reflection, add `--since`, changelog git/github enrichment, the `format:`
