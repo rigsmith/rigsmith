@@ -13,9 +13,9 @@ import (
 
 // excludeDirThreshold is how many sibling projects a top-level directory must
 // hold before excluding one of them also offers to exclude the whole directory.
-// Tuned so a crowded fixtures dir (examples/, testdata/) prompts the bulk option
-// while a handful of binaries under cmd/ stays per-project.
-const excludeDirThreshold = 5
+// At 3, any directory grouping a few projects (examples/, testdata/, cmd/)
+// offers the bulk option; the user can still pick "just this one".
+const excludeDirThreshold = 3
 
 // crowdedExcludeDir returns a "<dir>/*" glob (plus the directory and how many
 // projects it holds) when rel lives under a top-level directory crowded with
