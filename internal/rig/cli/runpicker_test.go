@@ -255,6 +255,61 @@ func TestRunPickerLive_EnterSelectsProject(t *testing.T) {
 	}
 }
 
+func rowPaths(m runPickerModel) []string {
+	out := make([]string, len(m.flat))
+	for i, r := range m.flat {
+		out[i] = r.path
+	}
+	return out
+}
+
+// The live picker sorts by path by default, toggles to ecosystem grouping on
+// `e`, and narrows by name under `/`.
+func TestRunPickerLive_SortAndFilter(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"),
+		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeGoPkg(t, root, "cmd/alpha", "main")
+	writeGoPkg(t, root, "cmd/zebra", "main")
+	// A node package whose path sorts before the Go binaries.
+	if err := os.MkdirAll(filepath.Join(root, "aweb"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "aweb", "package.json"),
+		[]byte(`{"name":"aweb","version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newRunPickerLive(context.Background(), root, nil)
+	// Default: by path → aweb, cmd/alpha, cmd/zebra.
+	if got := rowPaths(m); strings.Join(got, ",") != "aweb,cmd/alpha,cmd/zebra" {
+		t.Fatalf("default order = %v, want aweb,cmd/alpha,cmd/zebra", got)
+	}
+
+	// e → by ecosystem (go before node), path as tiebreak.
+	m = rp(m, wtKeyMsg("e"))
+	if got := rowPaths(m); strings.Join(got, ",") != "cmd/alpha,cmd/zebra,aweb" {
+		t.Fatalf("eco order = %v, want cmd/alpha,cmd/zebra,aweb", got)
+	}
+
+	// / then "alp" narrows to the one match.
+	m = rp(m, wtKeyMsg("/"))
+	if !m.filtering {
+		t.Fatal("/ should enter filter mode")
+	}
+	m = rp(m, wtKeyMsg("alp"))
+	if len(m.flat) != 1 || m.flat[0].name != "alpha" {
+		t.Fatalf("filter 'alp' = %v, want only alpha", rowPaths(m))
+	}
+	// esc clears the filter.
+	m = rp(m, key(tea.KeyEsc))
+	if m.filtering || m.query != "" || len(m.flat) != 3 {
+		t.Fatalf("esc should clear the filter; rows=%v filtering=%v", rowPaths(m), m.filtering)
+	}
+}
+
 func TestDiscoverScripts_AggregatesSourcesWithPrecedence(t *testing.T) {
 	root := t.TempDir()
 	// A package.json script and a Go scripts/ verb.

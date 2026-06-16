@@ -125,7 +125,7 @@ func TestMenu_ProjectPickerExcludeShowAllInclude(t *testing.T) {
 	m := menuModel{root: root, projects: menuProjectEntries(root)}
 	m.stack = []frame{
 		{items: []menuItem{{pickFocus: true}}},
-		{title: "▸ Project", items: focusPickerItems(m.projects, false), projects: true},
+		{title: "▸ Project", items: m.projectFrameItems(), projects: true},
 	}
 	// Items: (whole repo), core, ex0..ex5 → 8.
 	if got := len(m.top().items); got != 8 {
@@ -165,6 +165,65 @@ func TestMenu_ProjectPickerExcludeShowAllInclude(t *testing.T) {
 	m = mu(m, wtKeyMsg("i"))
 	if cfg := excludeFor(root); len(cfg) != 0 {
 		t.Fatalf("after include, exclude = %v, want empty", cfg)
+	}
+}
+
+func projFocusNames(m menuModel) []string {
+	var out []string
+	for _, it := range m.top().items {
+		if it.focusName != "" {
+			out = append(out, it.focusName)
+		}
+	}
+	return out
+}
+
+// The menu's project picker sorts by path by default, groups by ecosystem on
+// `e`, and narrows by name under `/`.
+func TestMenu_ProjectPickerSortAndFilter(t *testing.T) {
+	root := t.TempDir()
+	writePkg := func(rel, name string) {
+		dir := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "package.json"),
+			[]byte(`{"name":"`+name+`","version":"1.0.0"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writePkg("aweb", "aweb") // node
+	writePkg("zlib", "zlib") // node
+	writeGoMod(t, filepath.Join(root, "core"), "core")
+
+	m := menuModel{root: root, projects: menuProjectEntries(root)}
+	m.stack = []frame{
+		{items: []menuItem{{pickFocus: true}}},
+		{title: "▸ Project", items: m.projectFrameItems(), projects: true},
+	}
+
+	// Default: by path.
+	if got := strings.Join(projFocusNames(m), ","); got != "aweb,core,zlib" {
+		t.Fatalf("default order = %q, want aweb,core,zlib", got)
+	}
+	// e → by ecosystem (go before node).
+	m = mu(m, wtKeyMsg("e"))
+	if got := strings.Join(projFocusNames(m), ","); got != "core,aweb,zlib" {
+		t.Fatalf("eco order = %q, want core,aweb,zlib", got)
+	}
+	// / then "we" narrows to aweb.
+	m = mu(m, wtKeyMsg("/"))
+	if !m.filtering {
+		t.Fatal("/ should enter filter mode")
+	}
+	m = mu(m, wtKeyMsg("we"))
+	if got := strings.Join(projFocusNames(m), ","); got != "aweb" {
+		t.Fatalf("filter 'we' = %q, want aweb", got)
+	}
+	// esc clears the filter.
+	m = mu(m, key(tea.KeyEsc))
+	if m.filtering || m.query != "" {
+		t.Fatalf("esc should clear the filter (filtering=%v query=%q)", m.filtering, m.query)
 	}
 }
 

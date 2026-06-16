@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -74,6 +75,9 @@ type runPickerModel struct {
 	scripts      []scriptEntry
 	entries      []runEntry
 	showExcluded bool
+	sort         sortMode
+	filtering    bool
+	query        string
 	status       string
 	pending      *pendingExclude
 	chosen       *runChoice
@@ -143,6 +147,9 @@ func (m *runPickerModel) rebuild() {
 		if e.excluded && !m.showExcluded {
 			continue
 		}
+		if !nameMatches(m.query, e.t.Name) {
+			continue
+		}
 		task, ok := runEntryTask(e, m.root)
 		if !ok {
 			continue
@@ -154,12 +161,18 @@ func (m *runPickerModel) rebuild() {
 	var scriptRows []runPickRow
 	for i := range m.scripts {
 		s := &m.scripts[i]
+		if !nameMatches(m.query, s.name) {
+			continue
+		}
 		path := s.loc
 		if path == "" {
 			path = "."
 		}
 		scriptRows = append(scriptRows, runPickRow{name: s.name, eco: s.eco, path: path, script: true, scr: s})
 	}
+
+	m.sortRows(proj)
+	m.sortRows(scriptRows)
 
 	var sections []runPickSection
 	if len(proj) > 0 {
@@ -170,6 +183,14 @@ func (m *runPickerModel) rebuild() {
 	}
 	m.sections = sections
 	m.reflow()
+}
+
+// sortRows orders rows by the current sort mode (path by default, ecosystem on
+// toggle).
+func (m *runPickerModel) sortRows(rows []runPickRow) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		return rowLess(m.sort, rows[i].eco, rows[i].path, rows[i].name, rows[j].eco, rows[j].path, rows[j].name)
+	})
 }
 
 // refresh re-discovers entries after a config change so excluded markers update.
@@ -188,6 +209,9 @@ func (m runPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.pending != nil {
 		return m.updatePending(key)
 	}
+	if m.filtering {
+		return m.updateFilter(key)
+	}
 	switch key.String() {
 	case "ctrl+c", "q", "esc":
 		m.cancelled = true
@@ -199,6 +223,17 @@ func (m runPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		if m.cursor < len(m.flat)-1 {
 			m.cursor++
+		}
+	case "/":
+		if m.live() {
+			m.filtering = true
+			m.status = ""
+		}
+	case "e":
+		if m.live() {
+			m.sort = m.sort.toggle()
+			m.rebuild()
+			m.status = "sorted by " + m.sort.String()
 		}
 	case "a":
 		if m.live() {
@@ -218,6 +253,47 @@ func (m runPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.choose()
 		}
 		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// updateFilter handles keys while the `/` name filter is focused: runes edit the
+// query (the list narrows live), arrows still move, enter runs the highlighted
+// row, esc clears and leaves filtering.
+func (m runPickerModel) updateFilter(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyEsc:
+		m.filtering, m.query = false, ""
+		m.rebuild()
+	case tea.KeyEnter:
+		m.filtering = false
+		m.choose()
+		return m, tea.Quit
+	case tea.KeyCtrlC:
+		m.cancelled = true
+		return m, tea.Quit
+	case tea.KeyUp:
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case tea.KeyDown:
+		if m.cursor < len(m.flat)-1 {
+			m.cursor++
+		}
+	case tea.KeyBackspace, tea.KeyDelete:
+		if m.query != "" {
+			m.query = m.query[:len(m.query)-1]
+			m.cursor = 0
+			m.rebuild()
+		}
+	case tea.KeySpace:
+		m.query += " "
+		m.cursor = 0
+		m.rebuild()
+	case tea.KeyRunes:
+		m.query += string(key.Runes)
+		m.cursor = 0
+		m.rebuild()
 	}
 	return m, nil
 }
@@ -331,7 +407,23 @@ var (
 
 func (m runPickerModel) View() string {
 	var b strings.Builder
-	b.WriteString(menuTitle.Render("Run which?") + "\n\n")
+
+	// Title line carries the live sort / filter state.
+	b.WriteString(menuTitle.Render("Run which?"))
+	switch {
+	case m.filtering:
+		b.WriteString("   " + menuSelected.Render("/"+m.query+"▏"))
+	case m.query != "":
+		b.WriteString("   " + dimStyle.Render("filter: "+m.query))
+	case m.live():
+		b.WriteString("   " + dimStyle.Render("sort: "+m.sort.String()))
+	}
+	b.WriteString("\n\n")
+
+	if len(m.flat) == 0 {
+		b.WriteString(dimStyle.Render("  (no matching projects)") + "\n")
+	}
+
 	idx := 0
 	for si, s := range m.sections {
 		if si > 0 {
@@ -339,20 +431,7 @@ func (m runPickerModel) View() string {
 		}
 		b.WriteString("  " + runPickHeader.Render(s.title) + "\n")
 		for range s.rows {
-			r := m.flat[idx]
-			cursor, name := "    ", padRight(r.name, m.nameW)
-			switch {
-			case idx == m.cursor:
-				cursor = "  " + menuCursor.Render("▸ ")
-				name = menuSelected.Render(padRight(r.name, m.nameW))
-			case r.excluded:
-				name = runPickExcl.Render(padRight(r.name, m.nameW))
-			}
-			meta := dimStyle.Render(padRight(r.eco, m.ecoW) + "  " + r.path)
-			if r.excluded {
-				meta += dimStyle.Render("  ·excluded")
-			}
-			b.WriteString(cursor + name + "  " + meta + "\n")
+			b.WriteString(m.renderRow(m.flat[idx], idx == m.cursor) + "\n")
 			idx++
 		}
 	}
@@ -365,12 +444,34 @@ func (m runPickerModel) View() string {
 		b.WriteString("\n" + dimStyle.Render("  "+m.status) + "\n")
 	}
 
-	hint := "↑/↓ move · enter select · q quit"
-	if m.live() {
-		hint = "↑/↓ move · enter run · x exclude · i include · a show/hide excluded · q quit"
-	}
-	b.WriteString("\n" + dimStyle.Render(hint) + "\n")
+	b.WriteString("\n" + dimStyle.Render(m.hint()) + "\n")
 	return b.String()
+}
+
+// renderRow lays one row out as aligned name · eco · path columns, with the
+// cursor marker and the excluded styling.
+func (m runPickerModel) renderRow(r runPickRow, selected bool) string {
+	gutter, name := "    ", padRight(r.name, m.nameW)
+	switch {
+	case selected:
+		gutter = "  " + menuCursor.Render("▸ ")
+		name = menuSelected.Render(name)
+	case r.excluded:
+		name = runPickExcl.Render(name)
+	}
+	meta := dimStyle.Render(padRight(r.eco, m.ecoW) + "  " + r.path)
+	return gutter + name + "  " + meta
+}
+
+func (m runPickerModel) hint() string {
+	switch {
+	case !m.live():
+		return "↑/↓ move · enter select · q quit"
+	case m.filtering:
+		return "type to filter · ↑/↓ move · enter run · esc clear"
+	default:
+		return "enter run · / filter · e sort · x/i exclude/include · a show/hide excluded · q quit"
+	}
 }
 
 // runEntryTask resolves a run entry to a runnable task (its `run` argv + display

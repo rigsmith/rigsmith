@@ -125,6 +125,9 @@ type menuModel struct {
 	root         string          // repo root, for live exclude/include writes
 	projects     []projectRow    // every project (incl. excluded), the picker source
 	showExcluded bool            // reveal excluded projects in the picker
+	sort         sortMode        // project picker order (path default, ecosystem on toggle)
+	filtering    bool            // the `/` name filter is focused
+	query        string          // the active name filter
 	status       string          // one-line feedback after an exclude/include
 	pending      *pendingExclude // the "just this / whole dir?" prompt
 }
@@ -313,23 +316,33 @@ func projectCommandItems(root string) []menuItem {
 	return items
 }
 
-// focusPickerItems builds the project-picker frame: "(whole repo)" to clear the
-// focus, then every project (its path as the description). Excluded projects are
-// shown only under show-excluded, tagged so they read as hidden.
-func focusPickerItems(projects []projectRow, showExcluded bool) []menuItem {
-	items := []menuItem{{label: "(whole repo)", desc: "all projects", clearFocus: true}}
-	for _, p := range projects {
-		if p.excluded && !showExcluded {
+// projectFrameItems builds the project-picker frame: "(whole repo)" to clear the
+// focus, then every project that passes the show-excluded toggle and name
+// filter, in the current sort order. Names are padded to a shared width so the
+// ecosystem/path columns line up; excluded rows are tagged.
+func (m menuModel) projectFrameItems() []menuItem {
+	rows := make([]projectRow, 0, len(m.projects))
+	width := 0
+	for _, p := range m.projects {
+		if (p.excluded && !m.showExcluded) || !nameMatches(m.query, p.name) {
 			continue
 		}
-		desc := p.rel
-		if p.eco != "" {
-			desc = p.eco + "  " + p.rel
+		rows = append(rows, p)
+		if n := len(p.name); n > width {
+			width = n
 		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return rowLess(m.sort, rows[i].eco, rows[i].rel, rows[i].name, rows[j].eco, rows[j].rel, rows[j].name)
+	})
+
+	items := []menuItem{{label: "(whole repo)", desc: "all projects", clearFocus: true}}
+	for _, p := range rows {
+		desc := padRight(p.eco, 4) + "  " + p.rel
 		if p.excluded {
 			desc += "  ·excluded"
 		}
-		items = append(items, menuItem{label: p.name, desc: desc, focusName: p.name, rel: p.rel, excluded: p.excluded})
+		items = append(items, menuItem{label: padRight(p.name, width), desc: desc, focusName: p.name, rel: p.rel, excluded: p.excluded})
 	}
 	return items
 }
@@ -372,7 +385,7 @@ func (m *menuModel) rebuildProjectFrame() {
 	if !f.projects {
 		return
 	}
-	f.items = focusPickerItems(m.projects, m.showExcluded)
+	f.items = m.projectFrameItems()
 	if f.cursor >= len(f.items) {
 		f.cursor = len(f.items) - 1
 	}
@@ -431,6 +444,52 @@ func (m *menuModel) includeCurrent() {
 	m.status = status
 }
 
+// updateMenuFilter handles keys while the `/` name filter is focused in the
+// project frame: runes edit the query (the list narrows live), arrows move,
+// enter focuses the highlighted project, esc clears and leaves filtering.
+func (m menuModel) updateMenuFilter(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyEsc:
+		m.filtering, m.query = false, ""
+		m.rebuildProjectFrame()
+	case tea.KeyCtrlC:
+		return m, tea.Quit
+	case tea.KeyEnter:
+		m.filtering = false
+		it := m.top().items[m.top().cursor]
+		switch {
+		case it.clearFocus:
+			m.focus = ""
+		case it.focusName != "":
+			m.focus = it.focusName
+		}
+		m.stack = m.stack[:len(m.stack)-1] // back out of the picker
+	case tea.KeyUp:
+		if f := m.top(); f.cursor > 0 {
+			f.cursor--
+		}
+	case tea.KeyDown:
+		if f := m.top(); f.cursor < len(f.items)-1 {
+			f.cursor++
+		}
+	case tea.KeyBackspace, tea.KeyDelete:
+		if m.query != "" {
+			m.query = m.query[:len(m.query)-1]
+			m.top().cursor = 0
+			m.rebuildProjectFrame()
+		}
+	case tea.KeySpace:
+		m.query += " "
+		m.top().cursor = 0
+		m.rebuildProjectFrame()
+	case tea.KeyRunes:
+		m.query += string(key.Runes)
+		m.top().cursor = 0
+		m.rebuildProjectFrame()
+	}
+	return m, nil
+}
+
 func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -454,6 +513,10 @@ func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	// While the name filter is focused, keys edit the query (project frame only).
+	if m.filtering && cur.projects {
+		return m.updateMenuFilter(key)
+	}
 	switch key.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
@@ -470,6 +533,17 @@ func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		if cur.cursor < len(cur.items)-1 {
 			cur.cursor++
+		}
+	case "/":
+		if cur.projects {
+			m.filtering = true
+			m.status = ""
+		}
+	case "e":
+		if cur.projects {
+			m.sort = m.sort.toggle()
+			m.rebuildProjectFrame()
+			m.status = "sorted by " + m.sort.String()
 		}
 	case "a":
 		if cur.projects {
@@ -488,7 +562,7 @@ func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		it := cur.items[cur.cursor]
 		switch {
 		case it.pickFocus:
-			m.stack = append(m.stack, frame{title: "▸ Project", items: focusPickerItems(m.projects, m.showExcluded), projects: true})
+			m.stack = append(m.stack, frame{title: "▸ Project", items: m.projectFrameItems(), projects: true})
 			return m, nil
 		case it.focusName != "":
 			m.focus = it.focusName
@@ -540,7 +614,19 @@ func (m menuModel) View() string {
 	if cur.title != "" {
 		crumb += dimStyle.Render(" / ") + strings.TrimPrefix(cur.title, "▸ ")
 	}
-	b.WriteString(menuTitle.Render(crumb) + "  " + dimStyle.Render(m.header) + "\n")
+	header := menuTitle.Render(crumb) + "  " + dimStyle.Render(m.header)
+	// The project frame carries its live sort / filter state.
+	if cur.projects {
+		switch {
+		case m.filtering:
+			header += "  " + menuSelected.Render("/"+m.query+"▏")
+		case m.query != "":
+			header += "  " + dimStyle.Render("filter: "+m.query)
+		default:
+			header += "  " + dimStyle.Render("sort: "+m.sort.String())
+		}
+	}
+	b.WriteString(header + "\n")
 	// The next-step line only belongs on the top level (it's about the repo, not
 	// a submenu); deeper frames keep the bare header.
 	if m.nextStep != "" && len(m.stack) == 1 {
@@ -573,8 +659,10 @@ func (m menuModel) View() string {
 
 	hint := "↑/↓ move · enter select · q quit"
 	switch {
+	case cur.projects && m.filtering:
+		hint = "type to filter · ↑/↓ move · enter focus · esc clear"
 	case cur.projects:
-		hint = "↑/↓ move · enter focus · x exclude · i include · a show/hide excluded · esc back"
+		hint = "enter focus · / filter · e sort · x/i exclude/include · a show/hide excluded · esc back"
 	case len(m.stack) > 1:
 		hint = "↑/↓ move · enter select · esc back · q quit"
 	}
