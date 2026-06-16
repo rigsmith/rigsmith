@@ -23,7 +23,7 @@ func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "shiprig",
 		Short:         "Uniform changeset → version → publish, across every ecosystem",
-		Long:          "shiprig manages the whole release: it captures changesets, versions packages\nwith the shared engine (the same one changerig uses), and publishes via the\nnative package managers. One front door for .NET, Node, Go, and Rust.",
+		Long:          "shipRig manages the whole release: it captures changesets, versions packages\nwith the shared engine (the same one changeRig uses), and publishes via the\nnative package managers. One front door for .NET, Node, Go, and Rust.",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}

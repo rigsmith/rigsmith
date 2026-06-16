@@ -23,7 +23,7 @@ import (
 func NewGuideCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "guide",
-		Short: "Install/remove clauderig's managed blocks in CLAUDE.md",
+		Short: "Install/remove claudeRig's managed blocks in CLAUDE.md",
 		Long: "Manage marker-delimited blocks in CLAUDE.md: the worktree/PR rules\n" +
 			"`clauderig guard` enforces, and how to use the rigsmith tools (rig /\n" +
 			"changerig / shiprig). Defaults to the repo's CLAUDE.md; use --global for\n" +
@@ -40,7 +40,7 @@ func NewGuideCmd() *cobra.Command {
 
 	install := &cobra.Command{
 		Use:   "install",
-		Short: "Add (or update) clauderig's blocks in CLAUDE.md",
+		Short: "Add (or update) claudeRig's blocks in CLAUDE.md",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p, err := resolve()
@@ -75,7 +75,7 @@ func NewGuideCmd() *cobra.Command {
 	install.Flags().BoolVarP(&yes, "yes", "y", false, "skip the interactive preview and write immediately")
 	uninstall := &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove clauderig's blocks from CLAUDE.md",
+		Short: "Remove claudeRig's blocks from CLAUDE.md",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p, err := resolve()
@@ -149,7 +149,7 @@ func allBlocks() string {
 // and returns the user's decision. It's only called on a TTY.
 func previewBlocks(path string) (bool, error) {
 	m := tui.NewPreview(
-		"clauderig will add these blocks to CLAUDE.md",
+		"claudeRig will add these blocks to CLAUDE.md",
 		"→ "+path,
 		allBlocks(),
 	)

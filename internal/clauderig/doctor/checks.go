@@ -68,7 +68,7 @@ func checkRemote(ctx context.Context, env Env) Result {
 	}
 	if !ghrepo.Available() {
 		return Result{Name: "remote", Status: Warn, Detail: "reachable; privacy unverified",
-			Hint: "install gh so clauderig can confirm the remote is private"}
+			Hint: "install gh so claudeRig can confirm the remote is private"}
 	}
 	if err := ghrepo.EnsurePrivate(ctx, remote); err != nil {
 		return Result{Name: "remote", Status: Fail, Detail: "NOT private (or unverifiable): " + remote,

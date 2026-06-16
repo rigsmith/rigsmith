@@ -38,7 +38,7 @@ type scopeSpec struct {
 func scopeSpecs() []scopeSpec {
 	return []scopeSpec{
 		{settings.User, "global", []string{"hooks"},
-			"Install/remove clauderig's global sync hooks (~/.claude/settings.json)",
+			"Install/remove claudeRig's global sync hooks (~/.claude/settings.json)",
 			hooks.SyncPlans(), false},
 		{settings.Project, "project", nil,
 			"Set up worktree discipline for this repo — guard + CLAUDE.md, committed",
@@ -66,7 +66,7 @@ func newScopeCmd(sp scopeSpec) *cobra.Command {
 			RunE: func(c *cobra.Command, _ []string) error { return scopeInstall(c, sp) },
 		},
 		&cobra.Command{
-			Use: "uninstall", Short: "Remove clauderig's " + sp.use + "-scope setup", Args: cobra.NoArgs,
+			Use: "uninstall", Short: "Remove claudeRig's " + sp.use + "-scope setup", Args: cobra.NoArgs,
 			RunE: func(c *cobra.Command, _ []string) error { return scopeUninstall(c, sp) },
 		},
 		&cobra.Command{
