@@ -56,7 +56,10 @@ func runWatchVerb(cmd *cobra.Command, verb string, rest []string) error {
 	// `dotnet watch run` in one project's dir instead of at the repo root).
 	if !matched && len(rest) == 0 && verb == "run" {
 		cfg, _ := config.LoadMerged(root)
-		if t, ok := matchTarget(discoverWorkspace(cdContext(cmd), root, excludeFor(root)), cfg.DefaultProject); ok {
+		// Exact full/slash-short/dot-short match (no substring) so a default like
+		// "Desktop" scopes to Acme.Desktop without ambiguity against
+		// Acme.Desktop.Tests — matching the `rig run` default-resolution path.
+		if t, ok := matchDefaultProject(discoverWorkspace(cdContext(cmd), root, excludeFor(root)), cfg.DefaultProject); ok {
 			dir, eco = t.Dir, t.Eco
 		}
 	}

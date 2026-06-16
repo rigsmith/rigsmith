@@ -195,6 +195,27 @@ func matchTarget(targets []target, query string) (target, bool) {
 	return target{}, false
 }
 
+// matchDefaultProject resolves a configured defaultProject to a single target by
+// EXACT (case-insensitive) match on full name, slash-short, or dot-short — and
+// deliberately NOT by substring. A value like "Desktop" must scope to
+// "Acme.Desktop" without going ambiguous against "Acme.Desktop.Tests" (which
+// matchTarget's substring fallback would). Mirrors preferredRunTask, so the
+// `rig watch run` default scoping agrees with the `rig run` path.
+func matchDefaultProject(targets []target, defaultProject string) (target, bool) {
+	q := strings.ToLower(strings.TrimSpace(defaultProject))
+	if q == "" {
+		return target{}, false
+	}
+	for _, t := range targets {
+		if strings.ToLower(t.Name) == q ||
+			strings.ToLower(t.shortName()) == q ||
+			strings.ToLower(dotShortName(t.Name)) == q {
+			return t, true
+		}
+	}
+	return target{}, false
+}
+
 // devCommandFor resolves verb's argv for a target's ecosystem (node pm-detection
 // keys off root).
 func devCommandFor(t target, verb, root string) ([]string, bool) {

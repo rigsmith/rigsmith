@@ -50,6 +50,28 @@ func TestMatchTarget(t *testing.T) {
 	}
 }
 
+func TestMatchDefaultProject(t *testing.T) {
+	// The .NET case that matchTarget's substring fallback gets wrong: a dot-short
+	// default must scope to the app, not go ambiguous against its .Tests sibling.
+	targets := []target{
+		{Name: "Acme.Desktop", Dir: "/r/Acme.Desktop"},
+		{Name: "Acme.Desktop.Tests", Dir: "/r/Acme.Desktop.Tests"},
+	}
+	if m, ok := matchDefaultProject(targets, "Desktop"); !ok || m.Name != "Acme.Desktop" {
+		t.Errorf("dot-short default = %+v ok=%v, want Acme.Desktop", m, ok)
+	}
+	if m, ok := matchDefaultProject(targets, "acme.desktop"); !ok || m.Name != "Acme.Desktop" {
+		t.Errorf("full-name (case-insensitive) default = %+v ok=%v", m, ok)
+	}
+	// Substring-only would match both — matchDefaultProject must NOT.
+	if _, ok := matchDefaultProject([]target{{Name: "Acme.DesktopApp"}, {Name: "Acme.DesktopTools"}}, "desktop"); ok {
+		t.Error("bare substring should not resolve a default (no exact full/short/dot-short)")
+	}
+	if _, ok := matchDefaultProject(targets, ""); ok {
+		t.Error("empty default should not match")
+	}
+}
+
 func names(ts []target) []string {
 	out := make([]string, len(ts))
 	for i, t := range ts {

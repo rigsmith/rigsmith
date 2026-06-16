@@ -335,9 +335,25 @@ func offerRunChoice(cmd *cobra.Command, tasks []allTask, scripts []scriptEntry, 
 		}
 	}
 	if !interactive() {
-		return true, fmt.Errorf(
-			"no single run target here — this is a workspace root with %s and %s; run `rig run <project>` or `rig <script>`",
-			pluralN(len(tasks), "package"), pluralN(len(scripts), "script"))
+		// Off a TTY there's no picker. Point at defaultProject when it's the
+		// relevant lever: with --pick it's what a plain `rig run` would use; without
+		// it, a configured-but-unmatched default is why we're here.
+		switch {
+		case forcePick && defaultProject != "":
+			return true, fmt.Errorf(
+				"--pick needs an interactive terminal; without it `rig run` uses the configured defaultProject %q, or name one: `rig run <project>`",
+				defaultProject)
+		case forcePick:
+			return true, fmt.Errorf("--pick needs an interactive terminal; run `rig run <project>` instead")
+		case defaultProject != "":
+			return true, fmt.Errorf(
+				"configured defaultProject %q doesn't match a runnable project here — run `rig run <project>` or update the default",
+				defaultProject)
+		default:
+			return true, fmt.Errorf(
+				"no single run target here — this is a workspace root with %s and %s; run `rig run <project>` or `rig <script>`",
+				pluralN(len(tasks), "package"), pluralN(len(scripts), "script"))
+		}
 	}
 	switch sel := pickRunTarget(tasks, scripts); {
 	case sel.cancel:
