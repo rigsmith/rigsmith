@@ -120,6 +120,63 @@ func TestCustomCommandWithNoSpecForThisOS_ErrorsCleanly(t *testing.T) {
 	}
 }
 
+// A multi-binary Go repo (mains under cmd/) must expand into one run target per
+// binary, never the unrunnable module root. Library packages are not run targets;
+// scripts/ mains stay in the set (runnable by name) and are deduped into the
+// Scripts group by the picker, not here.
+func TestRunTargets_ExpandsGoModuleIntoBinaries(t *testing.T) {
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"),
+		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeGoPkg(t, root, "cmd/api", "main")
+	writeGoPkg(t, root, "cmd/worker", "main")
+	writeGoPkg(t, root, "internal/lib", "lib") // a library — not runnable
+	writeGoPkg(t, root, "scripts/gen", "main") // a main, but a script verb
+
+	got := map[string]string{} // binary name -> rel dir
+	for _, tg := range runTargets(context.Background(), root) {
+		rel, _ := filepath.Rel(root, tg.Dir)
+		got[tg.Name] = filepath.ToSlash(rel)
+	}
+	if got["api"] != "cmd/api" || got["worker"] != "cmd/worker" {
+		t.Errorf("runTargets = %v, want api→cmd/api and worker→cmd/worker", got)
+	}
+	if _, ok := got["lib"]; ok {
+		t.Errorf("a library package must not be a run target: %v", got)
+	}
+	if got["gen"] != "scripts/gen" {
+		t.Errorf("runTargets should include the scripts/gen main (the picker dedups it): %v", got)
+	}
+}
+
+// A .rig.json `exclude` glob hides an individual binary by name, not just a whole
+// module — the user's lever for trimming the run picker.
+func TestRunTargets_ExcludeHidesABinary(t *testing.T) {
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"),
+		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".rig.json"),
+		[]byte(`{"exclude":["worker"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeGoPkg(t, root, "cmd/api", "main")
+	writeGoPkg(t, root, "cmd/worker", "main")
+
+	names := map[string]bool{}
+	for _, tg := range runTargets(context.Background(), root) {
+		names[tg.Name] = true
+	}
+	if !names["api"] || names["worker"] {
+		t.Errorf("runTargets names = %v, want api kept and worker excluded", names)
+	}
+}
+
 // writeGoPkg creates root/rel with a single .go file declaring `package pkg`.
 func writeGoPkg(t *testing.T, root, rel, pkg string) {
 	t.Helper()

@@ -1,12 +1,38 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 )
+
+// `rig run` completion suggests the expanded run targets (cmd/* binaries),
+// matching how `rig run <name>` resolves — not the Go module name.
+func TestRunTargetCompletion_SuggestsBinaries(t *testing.T) {
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"),
+		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeGoPkg(t, root, "cmd/api", "main")
+	writeGoPkg(t, root, "cmd/worker", "main")
+	t.Chdir(root)
+
+	cmd := devVerbCmd("run", "", false)
+	cmd.SetContext(context.Background())
+	names, _ := runTargetCompletion(cmd, nil, "")
+	if !slices.Contains(names, "api") || !slices.Contains(names, "worker") {
+		t.Fatalf("run completion = %v, want the cmd/* binaries api & worker", names)
+	}
+	if slices.Contains(names, "example.com/app") {
+		t.Errorf("run completion should suggest binaries, not the module name: %v", names)
+	}
+}
 
 func TestFileDeclaresMainPackage(t *testing.T) {
 	dir := t.TempDir()

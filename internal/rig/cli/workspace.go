@@ -2,12 +2,15 @@ package cli
 
 import (
 	"context"
+	"io/fs"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/walkutil"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 )
@@ -71,6 +74,68 @@ func discoverWorkspace(ctx context.Context, root string, exclude []string) []tar
 		}
 	}
 	return out
+}
+
+// runTargets is the workspace's set of runnable targets for `rig run` (the picker
+// and `rig run <name>`). Non-Go targets pass through from discoverWorkspace, but
+// each Go module is expanded into one target per `package main` directory it
+// holds — so a multi-binary Go repo offers cmd/rig, cmd/clauderig, … instead of
+// the module root (which is not itself runnable when the mains live under cmd/).
+// A Go module with no main contributes nothing. Each expanded main is re-checked
+// against the `exclude` globs by its binary name, so a .rig.json exclude can hide
+// an individual binary (e.g. "changerig"), not just a whole module.
+func runTargets(ctx context.Context, root string) []target {
+	exclude := excludeFor(root)
+	var out []target
+	for _, t := range discoverWorkspace(ctx, root, exclude) {
+		if t.Eco != detect.Go {
+			out = append(out, t)
+			continue
+		}
+		for _, rel := range goMainDirs(t.Dir, root) {
+			name := path.Base(rel)
+			if rel == "." {
+				name = t.shortName()
+			}
+			if excluded(name, exclude) {
+				continue
+			}
+			out = append(out, target{
+				Name:     name,
+				Eco:      detect.Go,
+				Dir:      filepath.Join(root, filepath.FromSlash(rel)),
+				Runnable: true,
+			})
+		}
+	}
+	return out
+}
+
+// goMainDirs returns the repo-relative slash directories of every `package main`
+// under moduleDir, via the shared gitignore-aware walk (build output, vendor, and
+// dependency trees are skipped). It is the per-binary expansion behind runTargets.
+func goMainDirs(moduleDir, root string) []string {
+	seen := map[string]bool{}
+	var dirs []string
+	_ = walkutil.Walk(moduleDir, func(p string, d fs.DirEntry) error {
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		if !fileDeclaresMainPackage(p) {
+			return nil
+		}
+		rel, err := filepath.Rel(root, filepath.Dir(p))
+		if err != nil {
+			return nil
+		}
+		if rel = filepath.ToSlash(rel); !seen[rel] {
+			seen[rel] = true
+			dirs = append(dirs, rel)
+		}
+		return nil
+	})
+	sort.Strings(dirs)
+	return dirs
 }
 
 // dotnetTargets discovers the repo's .NET projects via the convention-first dev
