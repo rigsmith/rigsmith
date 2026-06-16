@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Instance is a running Claude Code process detected from ~/.claude state. The
@@ -89,6 +90,44 @@ func RunningInstances(claudeHome string) []Instance {
 	}
 	sortByPID(out)
 	return out
+}
+
+// KillInstances ends the given processes: SIGTERM first (graceful — lets editors
+// save), and after the grace period SIGKILLs any straggler. It returns the
+// instances that were still alive at the end (couldn't be killed, e.g. owned by
+// another user). Cross-platform: TerminateProcess on Windows.
+func KillInstances(insts []Instance, grace time.Duration) (failed []Instance) {
+	for _, in := range insts {
+		_ = terminate(in.PID)
+	}
+	deadline := time.Now().Add(grace)
+	for time.Now().Before(deadline) && anyAlive(insts) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	for _, in := range insts {
+		if pidAlive(in.PID) {
+			_ = forceKill(in.PID)
+		}
+	}
+	// brief settle for SIGKILL to take effect before reporting survivors
+	for i := 0; i < 20 && anyAlive(insts); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	for _, in := range insts {
+		if pidAlive(in.PID) {
+			failed = append(failed, in)
+		}
+	}
+	return failed
+}
+
+func anyAlive(insts []Instance) bool {
+	for _, in := range insts {
+		if pidAlive(in.PID) {
+			return true
+		}
+	}
+	return false
 }
 
 func readJSON(path string, v any) error {

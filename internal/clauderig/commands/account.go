@@ -46,7 +46,7 @@ func NewAccountCmd() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newAccountAddCmd(), newAccountListCmd(), newAccountRunCmd(),
-		newAccountSwitchCmd(), newAccountRemoveCmd(), newAccountPurgeCmd())
+		newAccountSwitchCmd(), newAccountSessionsCmd(), newAccountRemoveCmd(), newAccountPurgeCmd())
 	return cmd
 }
 
@@ -174,7 +174,7 @@ func newAccountRunCmd() *cobra.Command {
 }
 
 func newAccountSwitchCmd() *cobra.Command {
-	var dryRun bool
+	var dryRun, force, kill bool
 	cmd := &cobra.Command{
 		Use:   "switch [<id|label>]",
 		Short: "Change the machine-wide login (guarded against live sessions)",
@@ -186,14 +186,43 @@ func newAccountSwitchCmd() *cobra.Command {
 			"Claude windows first, or use `run` for parallel accounts instead. The\n" +
 			"displaced account's current credential is saved back to its store, and a\n" +
 			"timestamped backup is kept under ~/.clauderig/cred-backups.\n\n" +
-			"--dry-run shows the plan (and any blocking sessions) without changing a thing.",
+			"--dry-run shows the plan (and any blocking sessions) without changing a thing.\n" +
+			"--force overrides the guard and swaps anyway — the running sessions it lists\n" +
+			"will have to log in again. --kill terminates those sessions first (SIGTERM,\n" +
+			"then SIGKILL), then swaps.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSwitch(cmd, args, dryRun)
+			return runSwitch(cmd, args, dryRun, force, kill)
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what switch would do without changing anything")
+	cmd.Flags().BoolVar(&force, "force", false, "swap even while Claude Code is running (those sessions will need to re-login)")
+	cmd.Flags().BoolVar(&kill, "kill", false, "terminate running Claude Code processes first, then swap")
 	return cmd
+}
+
+func newAccountSessionsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "sessions",
+		Aliases: []string{"ps"},
+		Short:   "List running Claude Code instances (what blocks a switch)",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+			home, err := account.ClaudeHome()
+			if err != nil {
+				return err
+			}
+			live := account.RunningInstances(home)
+			if len(live) == 0 {
+				fmt.Fprintln(out, DimStyle.Render("no Claude Code instances running"))
+				return nil
+			}
+			fmt.Fprintln(out, HeaderStyle.Render(fmt.Sprintf("%d Claude Code instance(s) running", len(live))))
+			printInstances(out, live)
+			return nil
+		},
+	}
 }
 
 func newAccountRemoveCmd() *cobra.Command {
@@ -284,7 +313,11 @@ func runAccountUI(cmd *cobra.Command) error {
 			return err
 		}
 		active, _ := st.Active()
-		res, err := tea.NewProgram(tui.NewAccount(all, active, note)).Run()
+		var procs []account.Instance
+		if home, herr := account.ClaudeHome(); herr == nil {
+			procs = account.RunningInstances(home)
+		}
+		res, err := tea.NewProgram(tui.NewAccount(all, active, procs, note)).Run()
 		if err != nil {
 			return err
 		}
@@ -325,13 +358,13 @@ func runAccountUI(cmd *cobra.Command) error {
 				note = ErrStyle.Render(rerr.Error())
 				continue
 			}
-			_, blocked, serr := doSwitch(st, target)
+			_, blocked, serr := doSwitch(st, target, false)
 			if serr != nil {
 				note = ErrStyle.Render(serr.Error())
 				continue
 			}
 			if len(blocked) > 0 {
-				note = WarnStyle.Render(fmt.Sprintf("can't switch — %d Claude session(s) running; close them first", len(blocked)))
+				note = resolveBlockedSwitch(st, target, blocked)
 				continue
 			}
 			note = "switched to " + accountTitle(target)
@@ -376,6 +409,39 @@ func runAccountUI(cmd *cobra.Command) error {
 	}
 }
 
+// resolveBlockedSwitch is the menu's response when `switch` hits live sessions:
+// it asks whether to force the swap, kill the sessions first, or cancel, then
+// performs the choice and returns a status note for the screen.
+func resolveBlockedSwitch(st *account.Store, target account.Account, blocked []account.Instance) string {
+	var choice string
+	err := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title(fmt.Sprintf("%d Claude Code session(s) are live — switching will disrupt them", len(blocked))).
+			Options(
+				huh.NewOption("Cancel — leave them alone", "cancel"),
+				huh.NewOption("Kill them, then switch", "kill"),
+				huh.NewOption("Force switch (they'll need to re-login)", "force"),
+			).
+			Value(&choice),
+	)).WithKeyMap(huhEscKeyMap()).Run()
+	if err != nil || choice == "cancel" || choice == "" {
+		return DimStyle.Render("switch cancelled")
+	}
+	if choice == "kill" {
+		if failed := account.KillInstances(blocked, 5*time.Second); len(failed) > 0 {
+			// fall through to a forced swap past any straggler
+			_ = failed
+		}
+	}
+	if _, _, serr := doSwitch(st, target, true); serr != nil {
+		return ErrStyle.Render(serr.Error())
+	}
+	if choice == "kill" {
+		return "killed live sessions, switched to " + accountTitle(target)
+	}
+	return "force-switched to " + accountTitle(target)
+}
+
 // promptLabel asks for an optional friendly name when capturing from the UI.
 func promptLabel(cmd *cobra.Command) (string, error) {
 	var label string
@@ -388,7 +454,7 @@ func promptLabel(cmd *cobra.Command) (string, error) {
 }
 
 // runSwitch performs (or, with dryRun, previews) a guarded global swap.
-func runSwitch(cmd *cobra.Command, args []string, dryRun bool) error {
+func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill bool) error {
 	out := cmd.OutOrStdout()
 	st, err := account.DefaultStore()
 	if err != nil {
@@ -424,7 +490,14 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun bool) error {
 		}
 		fmt.Fprintf(out, "  would set live login → %s\n", accountTitle(target))
 		if len(live) > 0 {
-			fmt.Fprintf(out, "  %s\n", WarnStyle.Render(fmt.Sprintf("BLOCKED: %d Claude Code instance(s) running — switch would refuse", len(live))))
+			verb := "switch would refuse (use --force or --kill)"
+			switch {
+			case kill:
+				verb = "--kill would terminate these, then swap"
+			case force:
+				verb = "--force would override and log these out"
+			}
+			fmt.Fprintf(out, "  %s\n", WarnStyle.Render(fmt.Sprintf("%d Claude Code instance(s) running — %s", len(live), verb)))
 			printInstances(out, live)
 		} else {
 			fmt.Fprintf(out, "  %s\n", OkStyle.Render("no live sessions — switch would proceed"))
@@ -433,11 +506,25 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun bool) error {
 	}
 
 	if len(live) > 0 {
-		printSwitchRefused(out, live)
-		return errors.New("live Claude Code sessions detected")
+		switch {
+		case kill:
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf("killing %d Claude Code process(es)…", len(live))))
+			printInstances(out, live)
+			if failed := account.KillInstances(live, 5*time.Second); len(failed) > 0 {
+				fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf("  %d could not be killed; forcing the swap anyway:", len(failed))))
+				printInstances(out, failed)
+			}
+			force = true // path cleared (or forced past stragglers)
+		case force:
+			fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf("--force: swapping despite %d live Claude Code session(s) — they will need to log in again:", len(live))))
+			printInstances(out, live)
+		default:
+			printSwitchRefused(out, live)
+			return errors.New("live Claude Code sessions detected")
+		}
 	}
 
-	backup, _, err := doSwitch(st, target)
+	backup, _, err := doSwitch(st, target, force)
 	if err != nil {
 		return err
 	}
@@ -453,14 +540,16 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun bool) error {
 // mutation) if any are running — so every caller, CLI or UI, is guarded. On
 // success it round-trips the displaced account's current credential back into
 // its store and returns the safety-backup path.
-func doSwitch(st *account.Store, target account.Account) (backup string, blocked []account.Instance, err error) {
+func doSwitch(st *account.Store, target account.Account, force bool) (backup string, blocked []account.Instance, err error) {
 	active, _ := st.Active()
 	home, err := account.ClaudeHome()
 	if err != nil {
 		return "", nil, err
 	}
-	if live := account.RunningInstances(home); len(live) > 0 {
-		return "", live, nil
+	if !force {
+		if live := account.RunningInstances(home); len(live) > 0 {
+			return "", live, nil
+		}
 	}
 	targetCred, err := st.Credential(target.ID)
 	if err != nil {
@@ -485,8 +574,8 @@ func doSwitch(st *account.Store, target account.Account) (backup string, blocked
 
 func printSwitchRefused(out interface{ Write([]byte) (int, error) }, live []account.Instance) {
 	fmt.Fprintf(out, "%s\n", ErrStyle.Render("Refusing to switch: Claude Code is running."))
-	fmt.Fprintln(out, DimStyle.Render("  swapping the live credential now would log those sessions out. Close them"))
-	fmt.Fprintln(out, DimStyle.Render("  first, or use `clauderig account run` for parallel accounts."))
+	fmt.Fprintln(out, DimStyle.Render("  swapping the live credential now would log those sessions out. Options:"))
+	fmt.Fprintln(out, DimStyle.Render("  close them · `--kill` to end them first · `--force` to swap anyway · or `run`"))
 	printInstances(out, live)
 }
 

@@ -23,18 +23,21 @@ type AccountAction struct {
 
 // AccountModel is the accounts management screen.
 type AccountModel struct {
-	accounts []account.Account
-	activeID string
-	cursor   int
-	note     string // transient line from the last action
-	Action   AccountAction
+	accounts  []account.Account
+	activeID  string
+	procs     []account.Instance // live Claude Code processes (block a switch)
+	showProcs bool               // toggled with `p`
+	cursor    int
+	note      string // transient line from the last action
+	Action    AccountAction
 }
 
 // NewAccount builds the screen over a snapshot of tracked accounts. activeID is
-// the account clauderig tracks as the live login (""=none); note is carried from
-// the prior action.
-func NewAccount(accounts []account.Account, activeID, note string) AccountModel {
-	return AccountModel{accounts: accounts, activeID: activeID, note: note}
+// the account clauderig tracks as the live login (""=none); procs are the live
+// Claude Code processes a switch must contend with; note is carried from the
+// prior action.
+func NewAccount(accounts []account.Account, activeID string, procs []account.Instance, note string) AccountModel {
+	return AccountModel{accounts: accounts, activeID: activeID, procs: procs, note: note}
 }
 
 func (m AccountModel) Init() tea.Cmd { return nil }
@@ -75,6 +78,10 @@ func (m AccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a, ok := m.current(); ok {
 			m.Action = AccountAction{Kind: "remove", ID: a.ID}
 			return m, tea.Quit
+		}
+	case "p":
+		if len(m.procs) > 0 {
+			m.showProcs = !m.showProcs // toggle the live-process list inline
 		}
 	}
 	return m, nil
@@ -123,8 +130,29 @@ func (m AccountModel) View() string {
 		b.WriteString(fmt.Sprintf("%s%s%s%s\n", cursor, live, name, sub))
 	}
 
-	b.WriteString("\n" + dim.Render("↑/↓ move · enter run (this terminal) · s switch (machine-wide) · a add · x remove · q back") + "\n")
+	if n := len(m.procs); n > 0 {
+		b.WriteString("\n  " + warnC.Render(fmt.Sprintf("⚠ %d Claude Code process(es) live", n)) +
+			dim.Render(" — switch will offer force/kill (p to "+toggleWord(m.showProcs)+")") + "\n")
+		if m.showProcs {
+			for _, p := range m.procs {
+				b.WriteString("    " + dim.Render(fmt.Sprintf("pid %d  %s", p.PID, p.Kind)) + "\n")
+			}
+		}
+	}
+
+	keys := "↑/↓ move · enter run · s switch · a add · x remove · q back"
+	if len(m.procs) > 0 {
+		keys = "↑/↓ move · enter run · s switch · a add · x remove · p procs · q back"
+	}
+	b.WriteString("\n" + dim.Render(keys) + "\n")
 	return b.String()
+}
+
+func toggleWord(showing bool) string {
+	if showing {
+		return "hide"
+	}
+	return "list"
 }
 
 // accountName renders "label (id)" or just the id when unlabeled.

@@ -3,8 +3,11 @@ package account
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 func TestRunningInstances(t *testing.T) {
@@ -35,6 +38,27 @@ func TestRunningInstances_EmptyAndMissing(t *testing.T) {
 	// Missing ~/.claude entirely → no instances, no error.
 	if got := RunningInstances(filepath.Join(t.TempDir(), "nope")); len(got) != 0 {
 		t.Errorf("missing claude home → %v, want none", got)
+	}
+}
+
+func TestKillInstances(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses `sleep`")
+	}
+	c := exec.Command("sleep", "60")
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := c.Process.Pid
+	go func() { _ = c.Wait() }() // reap so the killed child doesn't linger as a zombie
+	if !pidAlive(pid) {
+		t.Fatal("spawned process should be alive")
+	}
+	if failed := KillInstances([]Instance{{PID: pid, Kind: "test"}}, 2*time.Second); len(failed) != 0 {
+		t.Fatalf("KillInstances reported failures: %+v", failed)
+	}
+	if pidAlive(pid) {
+		t.Error("process still alive after KillInstances")
 	}
 }
 

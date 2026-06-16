@@ -16,12 +16,16 @@ the machine-wide login.
 | `clauderig account add [--label work]` | Capture the currently logged-in account into claudeRig's store (and mark it the live one). |
 | `clauderig account list` | Show stored accounts; `→` marks the live one. |
 | `clauderig account run <id\|label> [-- claude args…]` | **Session mode** — run as that account in *this terminal only*. |
-| `clauderig account switch [<id\|label>]` | **Global swap** — change the machine-wide login. Guarded; no arg rotates. |
+| `clauderig account switch [<id\|label>]` | **Global swap** — change the machine-wide login. Guarded; no arg rotates. `--dry-run` previews; `--force` swaps despite live sessions; `--kill` ends them first. |
+| `clauderig account sessions` (alias `ps`) | List running Claude Code instances — what blocks a switch. |
 | `clauderig account remove <id\|label>` (alias `rm`) | Stop tracking an account (and delete its session profile). |
 | `clauderig account purge` | Remove all of claudeRig's account data. |
 
 `acct` is an alias for `account`. Bare `clauderig account` on a terminal (or
-**Accounts** / hotkey `a` from the dashboard) opens an interactive screen.
+**Accounts** / hotkey `a` from the dashboard) opens an interactive screen — it
+shows a ⚠ banner when Claude Code processes are live (`p` lists them), and when
+you switch into a blocked state it prompts: **cancel · kill them, then switch ·
+force switch**.
 
 ## What live testing taught us
 
@@ -64,15 +68,27 @@ Code instance follows. Because that logs out anything currently running, it is
 
 - It **refuses** (non-zero exit, listing the offending processes) if any Claude
   Code instance is live — detected from `~/.claude/sessions/{pid}.json` and
-  `~/.claude/ide/{port}.lock`. Close your Claude windows first, or use `run`.
+  `~/.claude/ide/{port}.lock` (verify with `clauderig account sessions`). The
+  detection catches more than Claude Code windows — e.g. desktop apps that embed
+  the Claude agent SDK also hold the credential.
 - It **round-trips** the displaced account's current credential back into its
   store (keeping that snapshot fresh) and writes a timestamped backup under
   `~/.clauderig/cred-backups/`.
-- `--dry-run` prints the plan and any blocking sessions without changing a thing.
+
+When sessions are live you have three ways through:
+
+- `--dry-run` — print the plan and any blockers, change nothing.
+- `--kill` — terminate the live processes first (SIGTERM, then SIGKILL for
+  stragglers; `TerminateProcess` on Windows), then swap.
+- `--force` — swap anyway; the listed sessions keep running but will need to log
+  in again on their next refresh.
 
 ```sh
+clauderig account sessions                # what's live right now
 clauderig account switch --dry-run work   # preview + guard check, no mutation
-clauderig account switch work             # everything becomes "work" (Claude must be closed)
+clauderig account switch work             # swap (refuses if Claude is running)
+clauderig account switch --kill work      # end running Claude first, then swap
+clauderig account switch --force work     # swap despite live sessions
 clauderig account switch                  # rotate to the next account
 ```
 

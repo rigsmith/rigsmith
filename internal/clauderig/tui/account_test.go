@@ -16,7 +16,7 @@ func sampleAccounts() []account.Account {
 
 func TestAccount_RunTargetsCursor(t *testing.T) {
 	// enter runs the selected (first) account as a session.
-	m, cmd := NewAccount(sampleAccounts(), "aaaa1111", "").Update(keyMsg("enter"))
+	m, cmd := NewAccount(sampleAccounts(), "aaaa1111", nil, "").Update(keyMsg("enter"))
 	act := m.(AccountModel).Action
 	if act.Kind != "run" || act.ID != "aaaa1111" {
 		t.Fatalf("enter on first row → %+v, want run aaaa1111", act)
@@ -25,14 +25,14 @@ func TestAccount_RunTargetsCursor(t *testing.T) {
 		t.Error("enter should return tea.Quit")
 	}
 	// r is an accelerator for the same.
-	r, _ := NewAccount(sampleAccounts(), "", "").Update(keyMsg("r"))
+	r, _ := NewAccount(sampleAccounts(), "", nil, "").Update(keyMsg("r"))
 	if r.(AccountModel).Action.Kind != "run" {
 		t.Error("r should also run the selected account")
 	}
 }
 
 func TestAccount_SwitchTargetsCursor(t *testing.T) {
-	base := NewAccount(sampleAccounts(), "aaaa1111", "")
+	base := NewAccount(sampleAccounts(), "aaaa1111", nil, "")
 	down, _ := base.Update(keyMsg("j"))
 	sw, _ := down.(AccountModel).Update(keyMsg("s"))
 	if act := sw.(AccountModel).Action; act.Kind != "switch" || act.ID != "bbbb2222" {
@@ -41,14 +41,14 @@ func TestAccount_SwitchTargetsCursor(t *testing.T) {
 }
 
 func TestAccount_RemoveTargetsCursor(t *testing.T) {
-	m, _ := NewAccount(sampleAccounts(), "aaaa1111", "").Update(keyMsg("x"))
+	m, _ := NewAccount(sampleAccounts(), "aaaa1111", nil, "").Update(keyMsg("x"))
 	if act := m.(AccountModel).Action; act.Kind != "remove" || act.ID != "aaaa1111" {
 		t.Fatalf("x on first row → %+v, want remove aaaa1111", act)
 	}
 }
 
 func TestAccount_AddHotkey(t *testing.T) {
-	m, _ := NewAccount(sampleAccounts(), "", "").Update(keyMsg("a"))
+	m, _ := NewAccount(sampleAccounts(), "", nil, "").Update(keyMsg("a"))
 	if got := m.(AccountModel).Action; got.Kind != "add" {
 		t.Fatalf("a → %+v, want Kind add", got)
 	}
@@ -56,7 +56,7 @@ func TestAccount_AddHotkey(t *testing.T) {
 
 // run/switch are inert on an empty list; add and quit still work.
 func TestAccount_EmptyListInertActions(t *testing.T) {
-	empty := NewAccount(nil, "", "")
+	empty := NewAccount(nil, "", nil, "")
 	if m, _ := empty.Update(keyMsg("enter")); m.(AccountModel).Action.Kind != "" {
 		t.Error("run should be inert with no accounts")
 	}
@@ -72,7 +72,7 @@ func TestAccount_EmptyListInertActions(t *testing.T) {
 }
 
 func TestAccount_QuitBacksOut(t *testing.T) {
-	m, cmd := NewAccount(sampleAccounts(), "", "").Update(keyMsg("q"))
+	m, cmd := NewAccount(sampleAccounts(), "", nil, "").Update(keyMsg("q"))
 	if m.(AccountModel).Action.Kind != "" {
 		t.Error("q should record no action")
 	}
@@ -82,7 +82,7 @@ func TestAccount_QuitBacksOut(t *testing.T) {
 }
 
 func TestAccount_ViewRendersAccountsAndLiveMarker(t *testing.T) {
-	view := NewAccount(sampleAccounts(), "bbbb2222", "switched to personal").View()
+	view := NewAccount(sampleAccounts(), "bbbb2222", nil, "switched to personal").View()
 	for _, want := range []string{"accounts", "work", "personal", "max", "switched to personal", "→"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view missing %q\n%s", want, view)
@@ -91,13 +91,29 @@ func TestAccount_ViewRendersAccountsAndLiveMarker(t *testing.T) {
 }
 
 func TestAccount_ViewEmptyState(t *testing.T) {
-	if v := NewAccount(nil, "", "").View(); !strings.Contains(v, "no accounts yet") {
+	if v := NewAccount(nil, "", nil, "").View(); !strings.Contains(v, "no accounts yet") {
 		t.Errorf("empty view should prompt to add\n%s", v)
 	}
 }
 
+func TestAccount_LiveProcsBannerAndToggle(t *testing.T) {
+	procs := []account.Instance{{PID: 123, Kind: "claude-vscode"}}
+	m := NewAccount(sampleAccounts(), "aaaa1111", procs, "")
+	v := m.View()
+	if !strings.Contains(v, "1 Claude Code process") {
+		t.Errorf("view should warn about live processes\n%s", v)
+	}
+	if strings.Contains(v, "pid 123") {
+		t.Error("process list should be hidden until toggled")
+	}
+	tog, _ := m.Update(keyMsg("p"))
+	if !strings.Contains(tog.(AccountModel).View(), "pid 123") {
+		t.Error("p should reveal the process list")
+	}
+}
+
 func TestAccount_ClearsOnAction(t *testing.T) {
-	m, _ := NewAccount(sampleAccounts(), "", "").Update(keyMsg("a"))
+	m, _ := NewAccount(sampleAccounts(), "", nil, "").Update(keyMsg("a"))
 	if m.(AccountModel).View() != "" {
 		t.Error("screen should render empty after an action is chosen")
 	}
