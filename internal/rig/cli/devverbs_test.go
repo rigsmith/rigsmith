@@ -41,6 +41,7 @@ func TestRunTargetCompletion_SuggestsBinaries(t *testing.T) {
 // than aborting with "no recognized ecosystem" — the picker runs before the
 // primary is required.
 func TestRunVerb_NoPrimaryStillOffersSubprojects(t *testing.T) {
+	isolateGlobalConfig(t)
 	root := t.TempDir()
 	csproj := `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>`
 	for _, n := range []string{"App", "Tool"} { // two, so it can't auto-run a lone target
