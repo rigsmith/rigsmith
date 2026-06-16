@@ -27,6 +27,9 @@ type ProjectInfo struct {
 	// AssemblyName is the csproj <AssemblyName> when set and literal.
 	AssemblyName string
 	IsTest       bool
+	// Deps are the names of intra-repo projects this one references (the base
+	// name of each <ProjectReference Include="…"/>), for dependency ordering.
+	Deps []string
 }
 
 // OutputName is the process/output name (AssemblyName when set, else Name).
@@ -235,13 +238,33 @@ func LoadProject(csprojFullPath, root string) ProjectInfo {
 		Tfm:          tfm,
 		AssemblyName: assemblyName,
 		IsTest:       isTest,
+		Deps:         projectRefNames(props.projectRefs),
 	}
+}
+
+// projectRefNames maps each <ProjectReference Include="…"/> path to the
+// referenced project's name (its csproj base name without extension), the
+// identity DiscoverDotNet uses for ProjectInfo.Name — so dependency edges line
+// up by name. Backslashes are normalized so Windows-style paths resolve too.
+func projectRefNames(includes []string) []string {
+	if len(includes) == 0 {
+		return nil
+	}
+	var deps []string
+	for _, inc := range includes {
+		base := filepath.Base(strings.ReplaceAll(inc, `\`, "/"))
+		if name := strings.TrimSuffix(base, filepath.Ext(base)); name != "" {
+			deps = append(deps, name)
+		}
+	}
+	return deps
 }
 
 type csprojProps struct {
 	outputType, tfm, tfms, assemblyName string
 	isTestProject, enableMSTest         string
 	refsTestSdk                         bool
+	projectRefs                         []string // <ProjectReference Include="…"/>
 }
 
 // readCsproj walks the csproj XML, recording the first non-empty value of each
@@ -289,6 +312,12 @@ func readCsproj(path string) csprojProps {
 			for _, a := range se.Attr {
 				if a.Name.Local == "Include" && strings.EqualFold(a.Value, "Microsoft.NET.Test.Sdk") {
 					props.refsTestSdk = true
+				}
+			}
+		case "ProjectReference":
+			for _, a := range se.Attr {
+				if a.Name.Local == "Include" && a.Value != "" {
+					props.projectRefs = append(props.projectRefs, a.Value)
 				}
 			}
 		}

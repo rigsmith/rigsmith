@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
@@ -74,29 +73,13 @@ func newInfoCmd() *cobra.Command {
 				fmt.Fprintln(out)
 			}
 
-			reg := ecosystem.Default()
 			fmt.Fprintln(out, headerStyle.Render("Projects"))
-			var all []plugin.Package
-			for _, eco := range reg.All() {
-				if ok, _ := eco.Detect(cmd.Context(), root); !ok {
-					continue
-				}
-				resp, err := eco.Discover(cmd.Context(), plugin.DiscoverRequest{RepoRoot: root, SourcePath: "."})
-				if err != nil {
-					continue
-				}
-				all = append(all, resp.Packages...)
-			}
+			all := discoverWorkspace(cmd.Context(), root, cfg.Exclude)
 			sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
-			shown := 0
 			for _, p := range all {
-				if excluded(p.Name, cfg.Exclude) {
-					continue
-				}
 				fmt.Fprintf(out, "  %s %s\n", p.Name, dimStyle.Render(p.Version))
-				shown++
 			}
-			if shown == 0 {
+			if len(all) == 0 {
 				fmt.Fprintln(out, dimStyle.Render("  (none discovered)"))
 			}
 			return nil

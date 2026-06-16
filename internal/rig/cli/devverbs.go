@@ -245,11 +245,15 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 
 	// `run` additionally offers the repo's surfaced scripts (package.json
 	// scripts, .rig.json commands, Go scripts//cmd verbs) as a second group —
-	// the same scripts `rig <name>` runs. Other verbs don't map to scripts.
+	// the same scripts `rig <name>` runs. Other verbs don't map to scripts. The
+	// configured defaultProject (when it names a runnable target) is the
+	// preferred run target, short-circuiting the picker.
 	var scripts []scriptEntry
+	var defaultProject string
 	if verb == "run" && (forcePick || !rootHasPackage) {
 		cfg, _ := config.LoadMerged(root)
 		scripts = discoverScripts(root, cfg)
+		defaultProject = cfg.DefaultProject
 	}
 
 	if forcePick {
@@ -258,7 +262,7 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 			if len(tasks)+len(scripts) == 0 {
 				return true, fmt.Errorf("nothing runnable here to pick from")
 			}
-			return offerRunChoice(cmd, tasks, scripts, true)
+			return offerRunChoice(cmd, tasks, scripts, defaultProject, true)
 		}
 		if len(tasks) == 0 {
 			return true, fmt.Errorf("no %s targets here to pick from", verb)
@@ -276,7 +280,7 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 	}
 
 	if verb == "run" {
-		return offerRunChoice(cmd, tasks, scripts, false)
+		return offerRunChoice(cmd, tasks, scripts, defaultProject, false)
 	}
 
 	// --all-capable verbs (build/test/…): a lone subpackage falls through to the
@@ -312,16 +316,23 @@ func dispatchVerbPick(cmd *cobra.Command, verb string, tasks []allTask, offerAll
 }
 
 // offerRunChoice resolves a bare `rig run` at a workspace root over the runnable
-// packages and surfaced scripts. A single target runs directly; several open the
-// grouped picker (Projects, then Scripts). Off a TTY it returns a helpful error.
-// With forcePick set (`--pick`) the picker always opens, even for one candidate.
-func offerRunChoice(cmd *cobra.Command, tasks []allTask, scripts []scriptEntry, forcePick bool) (handled bool, err error) {
-	if !forcePick && len(tasks)+len(scripts) == 1 {
-		if len(tasks) == 1 {
-			t := tasks[0]
+// packages and surfaced scripts. A configured defaultProject naming a runnable
+// package wins outright; otherwise a single target runs directly and several
+// open the grouped picker (Projects, then Scripts). Off a TTY it returns a
+// helpful error. With forcePick set (`--pick`) the picker always opens, even
+// when a default or a lone candidate would otherwise run.
+func offerRunChoice(cmd *cobra.Command, tasks []allTask, scripts []scriptEntry, defaultProject string, forcePick bool) (handled bool, err error) {
+	if !forcePick {
+		if t, ok := preferredRunTask(tasks, defaultProject); ok {
 			return true, runCommand(cmd, t.dir, t.argv)
 		}
-		return true, scripts[0].run(cmd, nil)
+		if len(tasks)+len(scripts) == 1 {
+			if len(tasks) == 1 {
+				t := tasks[0]
+				return true, runCommand(cmd, t.dir, t.argv)
+			}
+			return true, scripts[0].run(cmd, nil)
+		}
 	}
 	if !interactive() {
 		return true, fmt.Errorf(
@@ -339,13 +350,46 @@ func offerRunChoice(cmd *cobra.Command, tasks []allTask, scripts []scriptEntry, 
 	}
 }
 
+// preferredRunTask finds the task matching the configured defaultProject by
+// full name or short name (case-insensitive). The short name is matched both
+// slash-segmented (node scopes) and dot-segmented (.NET project names like
+// "Acme.Desktop" → "Desktop"). ok=false when no default is set or it names no
+// runnable task — callers then fall back to the picker.
+func preferredRunTask(tasks []allTask, defaultProject string) (allTask, bool) {
+	q := strings.TrimSpace(defaultProject)
+	if q == "" {
+		return allTask{}, false
+	}
+	for _, t := range tasks {
+		if strings.EqualFold(t.name, q) ||
+			strings.EqualFold(shortName(t.name), q) ||
+			strings.EqualFold(dotShortName(t.name), q) {
+			return t, true
+		}
+	}
+	return allTask{}, false
+}
+
+// dotShortName is the segment after the last '.' (a .NET project's short name).
+func dotShortName(name string) string {
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
 // isRunnable reports whether a workspace target can actually be run — it filters
 // the `run` picker so libraries don't appear. Precise for Go (looks for a
 // `package main`); other ecosystems pass through (their `run` mapping is the
 // gate).
 func isRunnable(t target) bool {
-	if t.Eco == detect.Go {
+	switch t.Eco {
+	case detect.Go:
 		return goDirHasMain(t.Dir)
+	case detect.DotNet:
+		// Discovery classified it from the csproj <OutputType> (Exe/WinExe and
+		// not a test project) — libraries and test projects aren't run targets.
+		return t.Runnable
 	}
 	return true
 }

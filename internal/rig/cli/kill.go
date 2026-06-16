@@ -14,8 +14,6 @@ import (
 	"unicode/utf16"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/rigsmith/rigsmith/core/ecosystem"
-	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 	"github.com/spf13/cobra"
@@ -233,27 +231,17 @@ func matchProjectNames(names []string, query string) []string {
 	return sub
 }
 
-// discoveredPackageNames asks the ecosystem registry which packages live at
-// root and returns their Names (sorted, deduped), dropping any matching the
-// `exclude` globs. Best-effort: discovery errors yield no names, and the caller
-// falls back to the repo directory name.
+// discoveredPackageNames asks the shared workspace discovery which packages
+// live at root and returns their Names (sorted, deduped), dropping any matching
+// the `exclude` globs. Best-effort: discovery errors yield no names, and the
+// caller falls back to the repo directory name.
 func discoveredPackageNames(root string, exclude []string) []string {
-	ctx := context.Background()
 	seen := map[string]bool{}
-	for _, eco := range ecosystem.Default().All() {
-		if ok, _ := eco.Detect(ctx, root); !ok {
+	for _, t := range discoverWorkspace(context.Background(), root, exclude) {
+		if t.Name == "" {
 			continue
 		}
-		resp, err := eco.Discover(ctx, plugin.DiscoverRequest{RepoRoot: root, SourcePath: "."})
-		if err != nil {
-			continue
-		}
-		for _, p := range resp.Packages {
-			if p.Name == "" || excluded(p.Name, exclude) || excluded(shortName(p.Name), exclude) {
-				continue
-			}
-			seen[p.Name] = true
-		}
+		seen[t.Name] = true
 	}
 	names := make([]string, 0, len(seen))
 	for n := range seen {

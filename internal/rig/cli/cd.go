@@ -10,9 +10,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
-	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/match"
-	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/spf13/cobra"
 )
 
@@ -148,30 +146,16 @@ func buildCdTargets(ctx context.Context, root string, exclude []string) []cdTarg
 	var targets []cdTarget
 	seen := map[string]bool{}
 
-	for _, eco := range ecosystem.Default().All() {
-		ok, err := eco.Detect(ctx, root)
-		if err != nil || !ok {
+	for _, t := range discoverWorkspace(ctx, root, exclude) {
+		if seen[t.Dir] {
 			continue
 		}
-		resp, err := eco.Discover(ctx, plugin.DiscoverRequest{RepoRoot: root, SourcePath: "."})
+		seen[t.Dir] = true
+		rel, err := filepath.Rel(root, t.Dir)
 		if err != nil {
-			continue
+			rel = t.Dir
 		}
-		for _, pkg := range resp.Packages {
-			if excluded(pkg.Name, exclude) || excluded(match.ShortName(pkg.Name), exclude) {
-				continue
-			}
-			dir := filepath.Join(root, pkg.Dir)
-			if seen[dir] {
-				continue
-			}
-			seen[dir] = true
-			rel, err := filepath.Rel(root, dir)
-			if err != nil {
-				rel = pkg.Dir
-			}
-			targets = append(targets, cdTarget{Name: pkg.Name, Dir: dir, Rel: rel})
-		}
+		targets = append(targets, cdTarget{Name: t.Name, Dir: t.Dir, Rel: rel})
 	}
 	// Offer "(root)" only when no discovered package already lives at the repo
 	// root — otherwise a root-level package would be shadowed and unreachable.

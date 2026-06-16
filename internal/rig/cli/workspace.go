@@ -8,16 +8,22 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 )
 
 // target is a discovered workspace package: its name, owning ecosystem, absolute
-// directory, and intra-repo dependency names (for topological ordering).
+// directory, intra-repo dependency names (for topological ordering), and — for
+// ecosystems that distinguish them — whether it is a runnable executable and/or
+// a test project.
 type target struct {
-	Name string
-	Eco  string
-	Dir  string // absolute
-	Deps []string
+	Name     string
+	Eco      string
+	Dir      string // absolute
+	Version  string // current version when the ecosystem tracks one ("" otherwise)
+	Deps     []string
+	Runnable bool // produces an executable (consulted by isRunnable for .NET)
+	IsTest   bool // a test project
 }
 
 // shortName is the last '/'-segment of a (possibly slashy) package name.
@@ -30,6 +36,12 @@ func (t target) shortName() string {
 // `exclude` globs (by full or short name) are dropped, keeping discovery and the
 // pickers consistent with `info`. Best-effort: discovery errors for one
 // ecosystem are skipped.
+//
+// .NET is sourced from the convention-first project model (detect.DiscoverDotNet)
+// rather than the ecosystem adapter's Discover: the adapter is release-oriented
+// and only reports version-bearing projects (a NuGet concern), which hides app
+// and test projects from the dev verbs and pickers. The dev model is
+// solution-aware, version-independent, and carries runnable/test classification.
 func discoverWorkspace(ctx context.Context, root string, exclude []string) []target {
 	var out []target
 	for _, eco := range ecosystem.Default().All() {
@@ -37,22 +49,46 @@ func discoverWorkspace(ctx context.Context, root string, exclude []string) []tar
 		if err != nil || !ok {
 			continue
 		}
+		id := eco.Info().ID
+		if id == detect.DotNet {
+			out = append(out, dotnetTargets(root, exclude)...)
+			continue
+		}
 		resp, err := eco.Discover(ctx, plugin.DiscoverRequest{RepoRoot: root, SourcePath: "."})
 		if err != nil {
 			continue
 		}
-		id := eco.Info().ID
 		for _, p := range resp.Packages {
 			deps := make([]string, 0, len(p.Dependencies))
 			for _, d := range p.Dependencies {
 				deps = append(deps, d.Name)
 			}
-			t := target{Name: p.Name, Eco: id, Dir: filepath.Join(root, p.Dir), Deps: deps}
+			t := target{Name: p.Name, Eco: id, Dir: filepath.Join(root, p.Dir), Version: p.Version, Deps: deps, Runnable: true}
 			if excluded(t.Name, exclude) || excluded(t.shortName(), exclude) {
 				continue
 			}
 			out = append(out, t)
 		}
+	}
+	return out
+}
+
+// dotnetTargets discovers the repo's .NET projects via the convention-first dev
+// model (solution-aware, version-independent), carrying each project's runnable
+// and test classification and its intra-repo project-reference dependencies.
+// detect.DiscoverDotNet applies the exclude globs itself.
+func dotnetTargets(root string, exclude []string) []target {
+	cfg, _ := config.LoadMerged(root)
+	var out []target
+	for _, p := range detect.DiscoverDotNet(root, cfg.Solution, exclude) {
+		out = append(out, target{
+			Name:     p.Name,
+			Eco:      detect.DotNet,
+			Dir:      filepath.Dir(p.FullPath),
+			Deps:     p.Deps,
+			Runnable: p.IsRunnable(),
+			IsTest:   p.IsTest,
+		})
 	}
 	return out
 }

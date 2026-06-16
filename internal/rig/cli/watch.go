@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 	"github.com/spf13/cobra"
 )
@@ -47,6 +48,17 @@ func runWatchVerb(cmd *cobra.Command, verb string, rest []string) error {
 			return err
 		}
 		eco = resolved
+	}
+
+	// Bare `rig watch run` / `rig run --watch`: scope to the configured
+	// defaultProject (the preferred run target) when one is set, so the watch
+	// targets a single project rather than an ambiguous solution root (e.g.
+	// `dotnet watch run` in one project's dir instead of at the repo root).
+	if !matched && len(rest) == 0 && verb == "run" {
+		cfg, _ := config.LoadMerged(root)
+		if t, ok := matchTarget(discoverWorkspace(cdContext(cmd), root, excludeFor(root)), cfg.DefaultProject); ok {
+			dir, eco = t.Dir, t.Eco
+		}
 	}
 
 	if len(rest) > 0 && !matched {
