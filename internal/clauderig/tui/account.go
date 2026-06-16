@@ -24,16 +24,17 @@ type AccountAction struct {
 // AccountModel is the accounts management screen.
 type AccountModel struct {
 	accounts []account.Account
-	liveID   string
+	activeID string
 	cursor   int
 	note     string // transient line from the last action
 	Action   AccountAction
 }
 
-// NewAccount builds the screen over a snapshot of tracked accounts. liveID marks
-// the currently-live login (""=none/untracked); note is carried from the prior action.
-func NewAccount(accounts []account.Account, liveID, note string) AccountModel {
-	return AccountModel{accounts: accounts, liveID: liveID, note: note}
+// NewAccount builds the screen over a snapshot of tracked accounts. activeID is
+// the account clauderig tracks as the live login (""=none); note is carried from
+// the prior action.
+func NewAccount(accounts []account.Account, activeID, note string) AccountModel {
+	return AccountModel{accounts: accounts, activeID: activeID, note: note}
 }
 
 func (m AccountModel) Init() tea.Cmd { return nil }
@@ -107,7 +108,7 @@ func (m AccountModel) View() string {
 	for i, a := range m.accounts {
 		cursor := "  "
 		live := "  "
-		if a.ID == m.liveID {
+		if a.ID == m.activeID {
 			live = okC.Render("→ ")
 		}
 		name := accountName(a)
