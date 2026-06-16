@@ -27,6 +27,10 @@ func TestNearestEcosystem_SingleEcosystem(t *testing.T) {
 		{"package.json", Node},
 		{"Cargo.toml", Cargo},
 		{"app.csproj", DotNet},
+		{"Directory.Build.props", DotNet},
+		{"Directory.Packages.props", DotNet},
+		{"global.json", DotNet},
+		{"NuGet.Config", DotNet}, // case-insensitive marker match
 	}
 	for _, tc := range cases {
 		t.Run(tc.manifest, func(t *testing.T) {
@@ -43,6 +47,34 @@ func TestNearestEcosystem_SingleEcosystem(t *testing.T) {
 				t.Fatalf("got id %q, want %q", id, tc.want)
 			}
 		})
+	}
+}
+
+// A .NET repo whose solutions/projects all live in subdirectories (Source/,
+// Build/, …) with only Directory.Build.props at the root still resolves to
+// .NET — the root marker is the signal, since nothing matches at the root and
+// NearestEcosystem doesn't recurse. Without the marker it'd resolve to none.
+func TestNearestEcosystem_DotNetRootMarkerWithNestedProjects(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, ".git"))
+	write(t, filepath.Join(root, "Directory.Build.props"))
+	write(t, filepath.Join(root, "Source", "Lib", "Lib.csproj"))
+
+	id, candidates := NearestEcosystem(root)
+	if candidates != nil {
+		t.Fatalf("unexpected ambiguity: %v", candidates)
+	}
+	if id != DotNet {
+		t.Fatalf("got id %q, want %q (root marker should signal .NET)", id, DotNet)
+	}
+
+	// Sanity: a bare nested csproj with no root marker resolves to none from the
+	// root (the regression this guards against).
+	bare := t.TempDir()
+	write(t, filepath.Join(bare, ".git"))
+	write(t, filepath.Join(bare, "Source", "Lib", "Lib.csproj"))
+	if id, _ := NearestEcosystem(bare); id != "" {
+		t.Fatalf("nested-only csproj at the root = %q, want none", id)
 	}
 }
 

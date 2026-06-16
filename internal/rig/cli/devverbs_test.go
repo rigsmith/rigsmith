@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
@@ -31,6 +33,42 @@ func TestRunTargetCompletion_SuggestsBinaries(t *testing.T) {
 	}
 	if slices.Contains(names, "example.com/app") {
 		t.Errorf("run completion should suggest binaries, not the module name: %v", names)
+	}
+}
+
+// A repo with runnable projects only in subdirectories and no resolvable primary
+// (no root marker) must still offer those projects on a bare `rig run` rather
+// than aborting with "no recognized ecosystem" — the picker runs before the
+// primary is required.
+func TestRunVerb_NoPrimaryStillOffersSubprojects(t *testing.T) {
+	root := t.TempDir()
+	csproj := `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>`
+	for _, n := range []string{"App", "Tool"} { // two, so it can't auto-run a lone target
+		dir := filepath.Join(root, "src", n)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, n+".csproj"), []byte(csproj), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(root)
+
+	cmd := devVerbCmd("run", "", false)
+	cmd.SetContext(context.Background())
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatalf("want the workspace picker's guidance, got nil (output: %q)", buf.String())
+	}
+	if strings.Contains(err.Error(), "no recognized ecosystem") {
+		t.Fatalf("bare run aborted on the missing primary instead of offering subprojects: %v", err)
+	}
+	if !strings.Contains(err.Error(), "run target") {
+		t.Fatalf("err = %v, want the multi-project run guidance", err)
 	}
 }
 
