@@ -58,8 +58,15 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 				}
 			}
 			// A first arg that names a package scopes the verb to that package.
+			// `run` matches against the per-binary expansion so `rig run rig`
+			// resolves a cmd/rig main, not just a module.
 			if len(args) > 0 {
-				ts := discoverWorkspace(cdContext(cmd), root, excludeFor(root))
+				var ts []target
+				if verb == "run" {
+					ts = runTargets(cdContext(cmd), root)
+				} else {
+					ts = discoverWorkspace(cdContext(cmd), root, excludeFor(root))
+				}
 				if t, ok := matchTarget(ts, args[0]); ok {
 					argv, has := devCommandFor(t, verb, root)
 					if !has {
@@ -220,7 +227,36 @@ func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) err
 // for `run`, the surfaced scripts) is included even when one obvious target
 // exists, and a single candidate still opens the picker rather than running.
 func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, forcePick bool) (handled bool, err error) {
-	targets := topoSort(filterTargets(discoverWorkspace(cdContext(cmd), root, excludeFor(root)), ""))
+	// `run` expands each Go module into its individual binaries (cmd/rig, …) so a
+	// multi-binary repo offers each one; other verbs operate at the module level.
+	var raw []target
+	if verb == "run" {
+		raw = runTargets(cdContext(cmd), root)
+	} else {
+		raw = discoverWorkspace(cdContext(cmd), root, excludeFor(root))
+	}
+	targets := topoSort(filterTargets(raw, ""))
+
+	// `run` additionally offers the repo's surfaced scripts (package.json
+	// scripts, .rig.json commands, Go scripts//cmd verbs) as a second group — the
+	// same scripts `rig <name>` runs. Those Go script verbs (scripts/…, go.work
+	// cmd entries) are also main packages, so they'd appear in the expanded run
+	// targets too; their directories are collected here to dedup them out of the
+	// Projects group, keeping each binary in exactly one group.
+	var scripts []scriptEntry
+	var defaultProject string
+	scriptDirs := map[string]bool{}
+	if verb == "run" {
+		cfg, _ := config.LoadMerged(root)
+		defaultProject = cfg.DefaultProject
+		scripts = discoverScripts(root, cfg)
+		for _, e := range scripts {
+			if e.eco == "go" {
+				scriptDirs[e.loc] = true
+			}
+		}
+	}
+
 	var tasks []allTask
 	rootHasPackage := false
 	for _, t := range targets {
@@ -228,32 +264,39 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 		if rerr != nil {
 			rel = t.Dir
 		}
-		if rel == "." {
-			rootHasPackage = true
-		}
+		rel = filepath.ToSlash(rel)
 		argv, ok := devCommandFor(t, verb, root)
 		if !ok {
 			continue
 		}
-		// For `run`, list only packages that are actually runnable (a Go module
-		// with a main package, etc.) so libraries don't clutter the picker.
-		if verb == "run" && !isRunnable(t) {
-			continue
+		if verb == "run" {
+			// For `run`, list only packages that are actually runnable (a Go dir
+			// with a main package, etc.) so libraries don't clutter the picker.
+			if !isRunnable(t) {
+				continue
+			}
+			// A binary already surfaced as a script verb belongs to the Scripts
+			// group; don't also list it under Projects.
+			if t.Eco == detect.Go && scriptDirs[rel] {
+				continue
+			}
+		}
+		// A target at the repo root only counts as "the root package" once it
+		// has cleared the same filters that admit it to tasks. A Go module whose
+		// mains live under cmd/ (no `package main` at the root) is not runnable,
+		// so for `run` it must not suppress the picker + scripts by masquerading
+		// as a runnable root — otherwise rig falls through to a doomed `go run .`.
+		if rel == "." {
+			rootHasPackage = true
 		}
 		tasks = append(tasks, allTask{name: t.Name, eco: t.Eco, dir: t.Dir, rel: rel, argv: argv})
 	}
 
-	// `run` additionally offers the repo's surfaced scripts (package.json
-	// scripts, .rig.json commands, Go scripts//cmd verbs) as a second group —
-	// the same scripts `rig <name>` runs. Other verbs don't map to scripts. The
-	// configured defaultProject (when it names a runnable target) is the
-	// preferred run target, short-circuiting the picker.
-	var scripts []scriptEntry
-	var defaultProject string
-	if verb == "run" && (forcePick || !rootHasPackage) {
-		cfg, _ := config.LoadMerged(root)
-		scripts = discoverScripts(root, cfg)
-		defaultProject = cfg.DefaultProject
+	// A directly-runnable root (a Go module with a `package main` at its root, or
+	// a single-package app) runs on a plain `rig run` — only show the surfaced
+	// scripts alongside it when the user explicitly opens the picker.
+	if verb == "run" && rootHasPackage && !forcePick {
+		scripts = nil
 	}
 
 	if forcePick {

@@ -122,6 +122,45 @@ func TestOfferWorkspaceChoice_ForcePickEmptyVerb(t *testing.T) {
 	}
 }
 
+// A Go module whose mains live under cmd/ has no `package main` at the module
+// root, so the root target is not runnable. `rig run` there must not treat it
+// as a runnable root package — doing so suppressed the picker + surfaced
+// scripts and fell through to a doomed `go run .` ("no Go files in <root>").
+func TestOfferWorkspaceChoice_NonRunnableRootSurfacesScripts(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"),
+		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The real binary lives under cmd/ (not a run target on its own), and there
+	// is no package main at the module root.
+	writeGoPkg(t, root, "cmd/app", "main")
+	// Two on-disk scripts so the resolution lands on the picker path rather than
+	// auto-running a lone target.
+	writeGoPkg(t, root, "scripts/gen", "main")
+	writeGoPkg(t, root, "scripts/seed", "main")
+
+	host, _ := newRunHost()
+	handled, err := offerWorkspaceChoice(host, root, "run", false, false)
+
+	// The fix: rig handles the run (offers the scripts) instead of returning
+	// handled=false and letting the doomed `go run .` root command run.
+	if !handled {
+		t.Fatal("a non-runnable Go root must not fall through to the root `go run .` command")
+	}
+	// Off a TTY there's no picker, but the error enumerates what was surfaced:
+	// cmd/app is the one Project; gen and seed are the two scripts — deduped out
+	// of the Projects group, so it's "1 package", not "3 packages".
+	if err == nil {
+		t.Fatal("want a no-single-target error, got nil")
+	}
+	for _, want := range []string{"1 package", "2 scripts"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want it to mention %q", err, want)
+		}
+	}
+}
+
 func TestDiscoverScripts_AggregatesSourcesWithPrecedence(t *testing.T) {
 	root := t.TempDir()
 	// A package.json script and a Go scripts/ verb.
