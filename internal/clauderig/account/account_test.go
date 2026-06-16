@@ -5,278 +5,213 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
-// sampleBlob builds a credential blob with a given refresh token and subscription.
-func sampleBlob(refresh, sub string) []byte {
+// sampleBlob builds a credential blob with a given access token and subscription.
+func sampleBlob(tok, sub string) []byte {
 	m := map[string]any{
 		"claudeAiOauth": map[string]any{
-			"accessToken":      "acc-" + refresh,
-			"refreshToken":     refresh,
-			"expiresAt":        int64(1781560281239),
+			"accessToken":      "acc-" + tok,
+			"refreshToken":     "ref-" + tok,
 			"subscriptionType": sub,
 		},
-		"organizationUuid": "org-" + refresh,
+		"organizationUuid": "org-" + tok,
 	}
 	b, _ := json.Marshal(m)
 	return b
 }
 
-func TestParseBlobFingerprintStable(t *testing.T) {
-	a1, err := parseBlob(sampleBlob("tokenA", "max"))
-	if err != nil {
-		t.Fatal(err)
+func TestSlugify(t *testing.T) {
+	cases := map[string]string{
+		"work":          "work",
+		"Work Laptop":   "work-laptop",
+		"john@acme.com": "john-acme-com",
+		"  spaced  ":    "spaced",
+		"!!!":           "",
+		"a--b":          "a-b",
 	}
-	a2, _ := parseBlob(sampleBlob("tokenA", "max"))
-	if a1.ID != a2.ID {
-		t.Fatalf("same token -> different id: %s vs %s", a1.ID, a2.ID)
-	}
-	b, _ := parseBlob(sampleBlob("tokenB", "max"))
-	if a1.ID == b.ID {
-		t.Fatal("different tokens collided to same id")
-	}
-	if a1.SubscriptionType != "max" || a1.OrganizationUUID != "org-tokenA" {
-		t.Fatalf("metadata not parsed: %+v", a1)
-	}
-}
-
-func TestParseBlobNoToken(t *testing.T) {
-	if _, err := parseBlob([]byte(`{"claudeAiOauth":{}}`)); err == nil {
-		t.Fatal("expected error for tokenless blob")
-	}
-	if _, err := parseBlob([]byte(`not json`)); err == nil {
-		t.Fatal("expected error for invalid json")
-	}
-}
-
-func TestSaveListResolve(t *testing.T) {
-	st := &Store{Root: t.TempDir()}
-	a, err := AccountFromBlob(sampleBlob("work-token", "max"), "work", time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.AddedAt == "" {
-		t.Fatal("AddedAt not stamped")
-	}
-	if err := st.Save(a, sampleBlob("work-token", "max")); err != nil {
-		t.Fatal(err)
-	}
-
-	list, err := st.List()
-	if err != nil || len(list) != 1 {
-		t.Fatalf("list = %v, %v", list, err)
-	}
-
-	// Resolve by exact id, label, and unambiguous prefix.
-	for _, ref := range []string{a.ID, "work", a.ID[:4]} {
-		got, err := st.Resolve(ref)
-		if err != nil || got.ID != a.ID {
-			t.Fatalf("Resolve(%q) = %+v, %v", ref, got, err)
+	for in, want := range cases {
+		if got := Slugify(in); got != want {
+			t.Errorf("Slugify(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if _, err := st.Resolve("nope"); err == nil {
-		t.Fatal("expected miss for unknown ref")
-	}
+}
 
-	// Credential round-trips and is 0600.
-	raw, err := st.Credential(a.ID)
-	if err != nil || len(raw) == 0 {
-		t.Fatalf("Credential = %v, %v", raw, err)
+func TestMetaFromBlob(t *testing.T) {
+	sub, org, err := metaFromBlob(sampleBlob("t", "max"))
+	if err != nil || sub != "max" || org != "org-t" {
+		t.Fatalf("metaFromBlob = %q,%q,%v", sub, org, err)
 	}
-	fi, _ := os.Stat(filepath.Join(st.acctDir(a.ID), "credentials.json"))
+	if _, _, err := metaFromBlob([]byte(`{"claudeAiOauth":{}}`)); err == nil {
+		t.Error("tokenless blob should error")
+	}
+	if _, _, err := metaFromBlob([]byte("nope")); err == nil {
+		t.Error("invalid json should error")
+	}
+}
+
+func TestCaptureLiveResolveAndUpdate(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	a, existed, err := st.CaptureLive(sampleBlob("w", "max"), "Work Laptop")
+	if err != nil || existed {
+		t.Fatalf("first capture: existed=%v err=%v", existed, err)
+	}
+	if a.ID != "work-laptop" || a.Label != "Work Laptop" || a.SubscriptionType != "max" {
+		t.Fatalf("account = %+v", a)
+	}
+	// Re-capture same label → update, not duplicate.
+	_, existed, err = st.CaptureLive(sampleBlob("w2", "max"), "Work Laptop")
+	if err != nil || !existed {
+		t.Fatalf("re-capture: existed=%v err=%v", existed, err)
+	}
+	if list, _ := st.List(); len(list) != 1 {
+		t.Fatalf("expected 1 account after re-capture, got %d", len(list))
+	}
+	// Resolve by id, label, and slug-of-label.
+	for _, ref := range []string{"work-laptop", "Work Laptop", "work-lap"} {
+		if got, err := st.Resolve(ref); err != nil || got.ID != "work-laptop" {
+			t.Errorf("Resolve(%q) = %+v, %v", ref, got, err)
+		}
+	}
+	// Credential perms 0600.
+	fi, _ := os.Stat(st.credPath(a.ID))
 	if fi.Mode().Perm() != 0o600 {
-		t.Fatalf("credential perms = %v, want 0600", fi.Mode().Perm())
+		t.Errorf("credential perms = %v, want 0600", fi.Mode().Perm())
 	}
 }
 
-func TestResolveEmptyStore(t *testing.T) {
+func TestCaptureLiveAutoLabel(t *testing.T) {
 	st := &Store{Root: t.TempDir()}
-	if _, err := st.Resolve("anything"); err == nil {
-		t.Fatal("expected error when no accounts exist")
+	a1, _, _ := st.CaptureLive(sampleBlob("a", "max"), "")
+	a2, _, _ := st.CaptureLive(sampleBlob("b", "max"), "")
+	if a1.ID != "account-1" || a2.ID != "account-2" {
+		t.Fatalf("auto ids = %q, %q, want account-1/account-2", a1.ID, a2.ID)
 	}
 }
 
-func TestNextRotation(t *testing.T) {
+func TestActivePointer(t *testing.T) {
 	st := &Store{Root: t.TempDir()}
-	mk := func(tok, label string) Account {
-		a, _ := AccountFromBlob(sampleBlob(tok, "max"), label, time.Now())
-		if err := st.Save(a, sampleBlob(tok, "max")); err != nil {
-			t.Fatal(err)
-		}
-		return a
+	if id, _ := st.Active(); id != "" {
+		t.Fatalf("fresh store active = %q, want empty", id)
 	}
-	mk("t1", "aaa")
-	mk("t2", "bbb")
-	mk("t3", "ccc")
-
-	list, _ := st.List() // sorted by label: aaa, bbb, ccc
-	first, second := list[0], list[1]
-
-	next, err := st.Next(first.ID)
-	if err != nil || next.ID != second.ID {
-		t.Fatalf("Next after first = %+v, want %s", next, second.ID)
+	st.CaptureLive(sampleBlob("w", "max"), "work")
+	if err := st.SetActive("work"); err != nil {
+		t.Fatal(err)
 	}
-	// Wrap-around from last.
-	last := list[len(list)-1]
-	wrap, _ := st.Next(last.ID)
-	if wrap.ID != first.ID {
-		t.Fatalf("Next after last = %s, want wrap to %s", wrap.ID, first.ID)
+	if id, _ := st.Active(); id != "work" {
+		t.Fatalf("active = %q, want work", id)
 	}
-	// Untracked live id -> first.
-	none, _ := st.Next("ffffffff")
-	if none.ID != first.ID {
-		t.Fatalf("Next(untracked) = %s, want %s", none.ID, first.ID)
+	// Removing the active account clears the pointer.
+	if err := st.Remove("work"); err != nil {
+		t.Fatal(err)
+	}
+	if id, _ := st.Active(); id != "" {
+		t.Errorf("after removing active, pointer = %q, want empty", id)
 	}
 }
 
-func TestPrepareSessionSharesAndIsolates(t *testing.T) {
+func TestEnsureSessionSeedShareAndStale(t *testing.T) {
 	st := &Store{Root: t.TempDir()}
-	home := t.TempDir() // stand-in for ~/.claude
-	// Default profile has some customizations and a credential + history that
-	// must NOT leak into the session.
+	home := t.TempDir()
 	mustWrite(t, filepath.Join(home, "settings.json"), `{"theme":"dark"}`)
-	mustWrite(t, filepath.Join(home, "CLAUDE.md"), "rules")
-	if err := os.MkdirAll(filepath.Join(home, "skills"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	mustWrite(t, filepath.Join(home, "skills", "x.md"), "skill")
-	mustWrite(t, filepath.Join(home, ".credentials.json"), `{"DEFAULT":true}`)
 
-	a, _ := AccountFromBlob(sampleBlob("sess-token", "max"), "work", time.Now())
-	raw := sampleBlob("sess-token", "max")
-
-	dir, err := st.PrepareSession(a, raw, true, home)
+	a, _, _ := st.CaptureLive(sampleBlob("w", "max"), "work")
+	dir, err := st.EnsureSession(a, true, home)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// The session credential is the account's, not the default profile's.
-	got, _ := os.ReadFile(filepath.Join(dir, ".credentials.json"))
-	if string(got) != string(raw) {
-		t.Fatalf("session credential not the account's; got %s", got)
+	// Seeded its own credential + shared customizations (not credentials/history).
+	if !fileExists(filepath.Join(dir, ".credentials.json")) {
+		t.Error("session credential not seeded")
 	}
-
-	// Shared entries are present (via symlink or copy).
-	for _, name := range []string{"settings.json", "CLAUDE.md", "skills"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
-			t.Errorf("expected shared %s in session: %v", name, err)
+	for _, n := range []string{"settings.json", "skills"} {
+		if _, err := os.Stat(filepath.Join(dir, n)); err != nil {
+			t.Errorf("shared %s missing: %v", n, err)
 		}
 	}
-	// settings.json content reachable through the link.
-	sj, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
-	if string(sj) != `{"theme":"dark"}` {
-		t.Errorf("shared settings.json content = %s", sj)
-	}
 
-	// --no-share gives a bare profile (no customizations, still its own cred).
-	st2 := &Store{Root: t.TempDir()}
-	bare, err := st2.PrepareSession(a, raw, false, home)
-	if err != nil {
+	// Simulate the session self-refreshing its token, then a NON-stale re-run:
+	// the refreshed credential must be preserved, not clobbered from the store.
+	refreshed := []byte(`{"claudeAiOauth":{"accessToken":"REFRESHED"}}`)
+	mustWrite(t, filepath.Join(dir, ".credentials.json"), string(refreshed))
+	if _, err := st.EnsureSession(a, false, home); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(bare, "settings.json")); !os.IsNotExist(err) {
-		t.Errorf("bare profile should not have settings.json, err=%v", err)
+	got, _ := os.ReadFile(filepath.Join(dir, ".credentials.json"))
+	if string(got) != string(refreshed) {
+		t.Error("EnsureSession clobbered a self-refreshed session credential")
 	}
-	if _, err := os.Stat(filepath.Join(bare, ".credentials.json")); err != nil {
-		t.Errorf("bare profile still needs its credential: %v", err)
+
+	// Updating the stored credential marks the profile stale → next run re-seeds.
+	if _, _, err := st.CaptureLive(sampleBlob("w3", "max"), "work"); err != nil {
+		t.Fatal(err)
+	}
+	if !fileExists(st.stalePath(a.ID)) {
+		t.Fatal("re-capture should mark the existing session stale")
+	}
+	if _, err := st.EnsureSession(a, false, home); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(filepath.Join(dir, ".credentials.json"))
+	if string(got) == string(refreshed) {
+		t.Error("stale session should have been re-seeded from the updated store credential")
+	}
+	if fileExists(st.stalePath(a.ID)) {
+		t.Error("stale marker should be cleared after re-seed")
 	}
 }
 
-func TestRemove(t *testing.T) {
+func TestRemovePurge(t *testing.T) {
 	st := &Store{Root: t.TempDir()}
-	a, _ := AccountFromBlob(sampleBlob("rm-token", "max"), "gone", time.Now())
-	if err := st.Save(a, sampleBlob("rm-token", "max")); err != nil {
-		t.Fatal(err)
-	}
-	// Give it a session profile too, so we can prove that's cleaned up.
-	if _, err := st.PrepareSession(a, sampleBlob("rm-token", "max"), false, t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
+	a, _, _ := st.CaptureLive(sampleBlob("w", "max"), "work")
+	st.EnsureSession(a, false, t.TempDir())
 	if err := st.Remove(a.ID); err != nil {
 		t.Fatal(err)
 	}
 	if list, _ := st.List(); len(list) != 0 {
-		t.Fatalf("after Remove, list = %v, want empty", list)
+		t.Fatalf("after Remove, %d accounts left", len(list))
 	}
-	if _, err := os.Stat(st.SessionDir(a.ID)); !os.IsNotExist(err) {
-		t.Errorf("session profile should be gone, err=%v", err)
-	}
-}
 
-func TestPurge(t *testing.T) {
-	st := &Store{Root: t.TempDir()}
-	for _, tok := range []string{"p1", "p2", "p3"} {
-		a, _ := AccountFromBlob(sampleBlob(tok, "max"), tok, time.Now())
-		if err := st.Save(a, sampleBlob(tok, "max")); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := st.BackupLive(sampleBlob("p1", "max"), "20260615-000000"); err != nil {
-		t.Fatal(err)
-	}
+	st.CaptureLive(sampleBlob("a", "max"), "a")
+	st.CaptureLive(sampleBlob("b", "max"), "b")
+	st.BackupLive(sampleBlob("a", "max"), "20260615-000000")
 	if err := st.Purge(); err != nil {
 		t.Fatal(err)
 	}
 	if list, _ := st.List(); len(list) != 0 {
-		t.Fatalf("after Purge, list = %v, want empty", list)
+		t.Fatalf("after Purge, %d accounts left", len(list))
 	}
-	for _, d := range []string{st.accountsDir(), st.sessionsDir(), st.backupsDir()} {
-		if _, err := os.Stat(d); !os.IsNotExist(err) {
-			t.Errorf("%s should be gone after purge, err=%v", d, err)
-		}
-	}
-}
-
-// The symlink-fallback copy must preserve EVERY file, including names a
-// filtered copier (copytree) would skip — e.g. a plugin's bundled node_modules.
-func TestCopyAllPreservesEverything(t *testing.T) {
-	src := t.TempDir()
-	mustWrite(t, filepath.Join(src, "plugins", "p", "node_modules", "dep", "index.js"), "x")
-	mustWrite(t, filepath.Join(src, "plugins", "p", "manifest.json"), "{}")
-	if err := os.Symlink("manifest.json", filepath.Join(src, "plugins", "p", "link.json")); err != nil {
-		t.Fatal(err)
-	}
-	dst := filepath.Join(t.TempDir(), "out")
-	if err := copyAll(src, dst); err != nil {
-		t.Fatal(err)
-	}
-	for _, rel := range []string{
-		"plugins/p/node_modules/dep/index.js",
-		"plugins/p/manifest.json",
-	} {
-		if _, err := os.Stat(filepath.Join(dst, rel)); err != nil {
-			t.Errorf("copyAll dropped %s: %v", rel, err)
-		}
-	}
-	if fi, err := os.Lstat(filepath.Join(dst, "plugins/p/link.json")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
-		t.Errorf("symlink not preserved: %v", err)
+	if dirExists(st.backupsDir()) {
+		t.Error("purge should remove cred-backups")
 	}
 }
 
 func TestBackupLive(t *testing.T) {
 	st := &Store{Root: t.TempDir()}
-	path, err := st.BackupLive(sampleBlob("live", "max"), "20260615-000000")
-	if err != nil || path == "" {
+	path, err := st.BackupLive(sampleBlob("x", "max"), "20260615-000000")
+	if err != nil || path == "" || !fileExists(path) {
 		t.Fatalf("BackupLive = %q, %v", path, err)
 	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("backup not written: %v", err)
-	}
-	// Empty blob is a no-op.
-	p2, err := st.BackupLive(nil, "x")
-	if err != nil || p2 != "" {
-		t.Fatalf("BackupLive(nil) = %q, %v; want no-op", p2, err)
+	if p, err := st.BackupLive(nil, "x"); err != nil || p != "" {
+		t.Fatalf("BackupLive(nil) = %q, %v; want no-op", p, err)
 	}
 }
 
-func TestFingerprintOf(t *testing.T) {
-	if FingerprintOf([]byte("garbage")) != "" {
-		t.Fatal("garbage should yield empty fingerprint")
+// The symlink-fallback copy must preserve EVERY file, including names a filtered
+// copier would skip — e.g. a plugin's bundled node_modules.
+func TestCopyAllPreservesEverything(t *testing.T) {
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, "plugins", "p", "node_modules", "dep", "index.js"), "x")
+	mustWrite(t, filepath.Join(src, "plugins", "p", "manifest.json"), "{}")
+	dst := filepath.Join(t.TempDir(), "out")
+	if err := copyAll(src, dst); err != nil {
+		t.Fatal(err)
 	}
-	a, _ := parseBlob(sampleBlob("fp", "max"))
-	if FingerprintOf(sampleBlob("fp", "max")) != a.ID {
-		t.Fatal("FingerprintOf disagrees with parseBlob id")
+	for _, rel := range []string{"plugins/p/node_modules/dep/index.js", "plugins/p/manifest.json"} {
+		if _, err := os.Stat(filepath.Join(dst, rel)); err != nil {
+			t.Errorf("copyAll dropped %s: %v", rel, err)
+		}
 	}
 }
 

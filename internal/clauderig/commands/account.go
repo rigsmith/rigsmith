@@ -17,21 +17,25 @@ import (
 // NewAccountCmd builds the `account` command group (alias `acct`): manage
 // multiple Claude Code logins from one machine.
 //
-// The concept — and the file-fallback trick that lets one terminal run a
-// different account without disturbing the rest — is credited to claude-swap by
-// realiti4 (https://github.com/realiti4/claude-swap, MIT). This is a clean-room
-// Go reimplementation living inside clauderig.
+// Two mechanisms, deliberately separated. Session mode (`run`) gives each
+// account an isolated, self-refreshing config dir and never touches the live
+// login — the safe, primary path. Global `switch` changes the machine-wide
+// login and is guarded by live-session detection (mutating the credential under
+// a running Claude Code instance forces a re-login).
+//
+// Concept and safety mechanisms credited to claude-swap by realiti4
+// (github.com/realiti4/claude-swap, MIT); clean-room Go reimplementation.
 func NewAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "account",
 		Aliases: []string{"acct"},
-		Short:   "Manage multiple Claude Code logins (session-isolate or swap)",
+		Short:   "Manage multiple Claude Code logins (isolated sessions or machine-wide swap)",
 		Long: "Run several Claude Code accounts from one machine.\n\n" +
 			"  add     capture the currently logged-in account into claudeRig's store\n" +
 			"  list    show stored accounts and which one is live\n" +
 			"  run     launch Claude Code as an account in THIS terminal only\n" +
-			"          (isolated via CLAUDE_CONFIG_DIR — others stay on the default)\n" +
-			"  switch  swap the machine-wide live login to another account\n" +
+			"          (isolated, self-refreshing — never touches your live login)\n" +
+			"  switch  change the machine-wide login (guarded: refuses while Claude runs)\n" +
 			"  remove  stop tracking an account (does not log it out)\n" +
 			"  purge   remove all of claudeRig's account data",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -49,11 +53,11 @@ func NewAccountCmd() *cobra.Command {
 func newAccountAddCmd() *cobra.Command {
 	var label string
 	cmd := &cobra.Command{
-		Use:   "add",
+		Use:   "add [--label name]",
 		Short: "Capture the currently logged-in account into claudeRig's store",
-		Long: "Reads the live Claude Code credential (macOS Keychain, or .credentials.json\n" +
-			"elsewhere) and saves a copy under ~/.clauderig/accounts so claudeRig can run or\n" +
-			"swap to it later. Log into the account in Claude Code first.",
+		Long: "Reads the live Claude Code credential and saves a copy under\n" +
+			"~/.clauderig/accounts so claudeRig can run or swap to it later. The captured\n" +
+			"account becomes the tracked 'live' one. Log into the account first.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
@@ -61,8 +65,15 @@ func newAccountAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			a, updated, err := captureLive(st, label)
+			raw, err := account.ReadLive()
 			if err != nil {
+				return err
+			}
+			a, updated, err := st.CaptureLive(raw, label)
+			if err != nil {
+				return err
+			}
+			if err := st.SetActive(a.ID); err != nil {
 				return err
 			}
 			verb := "Added"
@@ -70,8 +81,8 @@ func newAccountAddCmd() *cobra.Command {
 				verb = "Updated"
 			}
 			fmt.Fprintf(out, "%s %s\n", OkStyle.Render(verb), accountTitle(a))
-			if a.Label == "" {
-				fmt.Fprintf(out, "  %s\n", DimStyle.Render("tip: re-run with --label <name> for a friendly handle"))
+			if !labelGiven(cmd) {
+				fmt.Fprintf(out, "  %s\n", DimStyle.Render("tip: --label <name> gives it a friendly handle"))
 			}
 			return nil
 		},
@@ -79,6 +90,8 @@ func newAccountAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&label, "label", "", "friendly name for the account (e.g. work, personal)")
 	return cmd
 }
+
+func labelGiven(cmd *cobra.Command) bool { return cmd.Flags().Changed("label") }
 
 func newAccountListCmd() *cobra.Command {
 	return &cobra.Command{
@@ -100,17 +113,17 @@ func newAccountListCmd() *cobra.Command {
 				fmt.Fprintf(out, "%s\n", DimStyle.Render("no accounts yet — run `clauderig account add` while logged in"))
 				return nil
 			}
-			liveID := liveFingerprint()
+			active, _ := st.Active()
 			fmt.Fprintln(out, HeaderStyle.Render("Claude Code accounts"))
 			for _, a := range all {
 				marker := "  "
-				if a.ID == liveID {
+				if a.ID == active {
 					marker = OkStyle.Render("→ ")
 				}
 				fmt.Fprintf(out, "%s%s\n", marker, accountTitle(a))
 			}
-			if liveID == "" {
-				fmt.Fprintf(out, "\n%s\n", DimStyle.Render("(live credential is untracked — `account add` to capture it)"))
+			if active == "" {
+				fmt.Fprintf(out, "\n%s\n", DimStyle.Render("(no account marked live — `account add` or `switch` sets it)"))
 			}
 			return nil
 		},
@@ -122,12 +135,12 @@ func newAccountRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run <id|label> [-- claude args...]",
 		Short: "Launch Claude Code as an account in THIS terminal only",
-		Long: "Session mode: writes the account's credential into a private\n" +
-			"CLAUDE_CONFIG_DIR and execs `claude` against it, so this terminal runs as\n" +
-			"the chosen account while every other terminal and the VS Code extension\n" +
-			"stay on your default. Your ~/.claude customizations (settings, CLAUDE.md,\n" +
-			"skills, commands, agents) are shared in by default; --no-share for a bare\n" +
-			"profile. Args after `--` are passed through to claude.",
+		Long: "Session mode: runs `claude` against the account's own persistent\n" +
+			"CLAUDE_CONFIG_DIR, so this terminal is that account while every other\n" +
+			"terminal and the VS Code extension stay on your default. The profile\n" +
+			"self-refreshes its own token in isolation and never touches your live\n" +
+			"login. ~/.claude customizations are shared in by default (--no-share for a\n" +
+			"bare profile). Args after `--` pass through to claude.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := account.DefaultStore()
@@ -138,7 +151,22 @@ func newAccountRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return launchSession(cmd, st, a, noShare, args[1:])
+			home, err := account.ClaudeHome()
+			if err != nil {
+				return err
+			}
+			dir, err := st.EnsureSession(a, !noShare, home)
+			if err != nil {
+				return err
+			}
+			claudeBin, err := exec.LookPath("claude")
+			if err != nil {
+				return errors.New("`claude` not found on PATH")
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s %s %s\n",
+				DimStyle.Render("session:"), accountTitle(a),
+				DimStyle.Render("(CLAUDE_CONFIG_DIR="+dir+")"))
+			return runClaude(cmd, claudeBin, dir, args[1:])
 		},
 	}
 	cmd.Flags().BoolVar(&noShare, "no-share", false, "don't share ~/.claude customizations into the session (bare profile)")
@@ -146,47 +174,25 @@ func newAccountRunCmd() *cobra.Command {
 }
 
 func newAccountSwitchCmd() *cobra.Command {
+	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "switch [<id|label>]",
-		Short: "Swap the machine-wide live login to another account",
-		Long: "Global swap: overwrites the live credential the whole machine reads\n" +
-			"(macOS Keychain / .credentials.json), so every Claude Code instance follows.\n" +
-			"With no argument, rotates to the next stored account. The displaced\n" +
-			"credential is backed up first under ~/.clauderig/cred-backups.\n\n" +
-			"Note: this affects ALL terminals at once. For parallel accounts, prefer\n" +
-			"`account run`.",
+		Short: "Change the machine-wide login (guarded against live sessions)",
+		Long: "Global swap: overwrites the live credential the whole machine reads, so\n" +
+			"every Claude Code instance follows. With no argument, rotates to the next\n" +
+			"stored account.\n\n" +
+			"GUARDED: refuses while any Claude Code instance is running, because\n" +
+			"swapping the credential under a live session forces a re-login. Close your\n" +
+			"Claude windows first, or use `run` for parallel accounts instead. The\n" +
+			"displaced account's current credential is saved back to its store, and a\n" +
+			"timestamped backup is kept under ~/.clauderig/cred-backups.\n\n" +
+			"--dry-run shows the plan (and any blocking sessions) without changing a thing.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			out := cmd.OutOrStdout()
-			st, err := account.DefaultStore()
-			if err != nil {
-				return err
-			}
-			var target account.Account
-			if len(args) == 1 {
-				target, err = st.Resolve(args[0])
-			} else {
-				target, err = st.Next(liveFingerprint())
-			}
-			if err != nil {
-				return err
-			}
-			backup, already, err := performSwitch(st, target)
-			if err != nil {
-				return err
-			}
-			if already {
-				fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already live:"), accountTitle(target))
-				return nil
-			}
-			if backup != "" {
-				fmt.Fprintf(out, "%s %s\n", DimStyle.Render("backed up live credential →"), backup)
-			}
-			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("Switched to"), accountTitle(target))
-			fmt.Fprintf(out, "  %s\n", DimStyle.Render("all terminals now use this account; restart running Claude Code sessions"))
-			return nil
+			return runSwitch(cmd, args, dryRun)
 		},
 	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what switch would do without changing anything")
 	return cmd
 }
 
@@ -195,9 +201,8 @@ func newAccountRemoveCmd() *cobra.Command {
 		Use:     "remove <id|label>",
 		Aliases: []string{"rm"},
 		Short:   "Stop tracking an account (does not log it out of Claude Code)",
-		Long: "Delete claudeRig's copy of an account and any session profile for it. This does\n" +
-			"NOT touch the live Claude Code login — it just stops claudeRig tracking the\n" +
-			"account. Requires an interactive terminal to confirm.",
+		Long: "Delete claudeRig's copy of an account and its session profile. This does\n" +
+			"NOT touch the live Claude Code login. Requires an interactive terminal.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := account.DefaultStore()
@@ -212,12 +217,9 @@ func newAccountRemoveCmd() *cobra.Command {
 				return errors.New("refusing to remove without a terminal to confirm")
 			}
 			ok, err := confirmDestructive(fmt.Sprintf("Remove account %s from claudeRig's store? (does not log it out)", accountTitle(a)))
-			if err != nil {
-				return err
-			}
-			if !ok {
+			if err != nil || !ok {
 				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("aborted"))
-				return nil
+				return err
 			}
 			if err := st.Remove(a.ID); err != nil {
 				return err
@@ -233,8 +235,8 @@ func newAccountPurgeCmd() *cobra.Command {
 		Use:   "purge",
 		Short: "Remove all of claudeRig's account data (does not log out of Claude Code)",
 		Long: "Delete every tracked account, session profile, and credential backup from\n" +
-			"claudeRig's store (~/.clauderig/accounts, sessions, cred-backups). This does NOT\n" +
-			"touch the live Claude Code login. Requires an interactive terminal to confirm.",
+			"claudeRig's store. Does NOT touch the live Claude Code login. Requires an\n" +
+			"interactive terminal.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
@@ -254,12 +256,9 @@ func newAccountPurgeCmd() *cobra.Command {
 				return errors.New("refusing to purge without a terminal to confirm")
 			}
 			ok, err := confirmDestructive(fmt.Sprintf("Delete ALL %d tracked accounts and their session profiles? (does not log out)", len(all)))
-			if err != nil {
-				return err
-			}
-			if !ok {
+			if err != nil || !ok {
 				fmt.Fprintln(out, DimStyle.Render("aborted"))
-				return nil
+				return err
 			}
 			if err := st.Purge(); err != nil {
 				return err
@@ -267,6 +266,251 @@ func newAccountPurgeCmd() *cobra.Command {
 			fmt.Fprintf(out, "%s %d accounts\n", OkStyle.Render("Purged"), len(all))
 			return nil
 		},
+	}
+}
+
+// runAccountUI drives the interactive accounts screen. The model records an
+// intent on exit; the work (capture / swap / launch / remove) runs here, outside
+// the event loop, then the screen re-opens — except `run`, which is terminal.
+func runAccountUI(cmd *cobra.Command) error {
+	st, err := account.DefaultStore()
+	if err != nil {
+		return err
+	}
+	note := ""
+	for {
+		all, err := st.List()
+		if err != nil {
+			return err
+		}
+		active, _ := st.Active()
+		res, err := tea.NewProgram(tui.NewAccount(all, active, note)).Run()
+		if err != nil {
+			return err
+		}
+		final, ok := res.(tui.AccountModel)
+		if !ok {
+			return nil
+		}
+		note = ""
+		switch final.Action.Kind {
+		case "":
+			return nil
+		case "add":
+			label, perr := promptLabel(cmd)
+			if errors.Is(perr, huh.ErrUserAborted) {
+				continue
+			}
+			if perr != nil {
+				return perr
+			}
+			raw, rerr := account.ReadLive()
+			if rerr != nil {
+				note = ErrStyle.Render(rerr.Error())
+				continue
+			}
+			a, updated, cerr := st.CaptureLive(raw, label)
+			if cerr != nil {
+				note = ErrStyle.Render(cerr.Error())
+				continue
+			}
+			_ = st.SetActive(a.ID)
+			note = "added " + a.ID
+			if updated {
+				note = "updated " + a.ID
+			}
+		case "switch":
+			target, rerr := st.Resolve(final.Action.ID)
+			if rerr != nil {
+				note = ErrStyle.Render(rerr.Error())
+				continue
+			}
+			_, blocked, serr := doSwitch(st, target)
+			if serr != nil {
+				note = ErrStyle.Render(serr.Error())
+				continue
+			}
+			if len(blocked) > 0 {
+				note = WarnStyle.Render(fmt.Sprintf("can't switch — %d Claude session(s) running; close them first", len(blocked)))
+				continue
+			}
+			note = "switched to " + accountTitle(target)
+		case "remove":
+			target, rerr := st.Resolve(final.Action.ID)
+			if rerr != nil {
+				note = ErrStyle.Render(rerr.Error())
+				continue
+			}
+			ok, cerr := confirmDestructive(fmt.Sprintf("Remove account %s? (does not log it out)", accountTitle(target)))
+			if cerr != nil {
+				return cerr
+			}
+			if !ok {
+				continue
+			}
+			if err := st.Remove(target.ID); err != nil {
+				note = ErrStyle.Render(err.Error())
+				continue
+			}
+			note = "removed " + accountTitle(target)
+		case "run":
+			target, rerr := st.Resolve(final.Action.ID)
+			if rerr != nil {
+				return rerr
+			}
+			home, herr := account.ClaudeHome()
+			if herr != nil {
+				return herr
+			}
+			dir, derr := st.EnsureSession(target, true, home)
+			if derr != nil {
+				return derr
+			}
+			claudeBin, lerr := exec.LookPath("claude")
+			if lerr != nil {
+				return errors.New("`claude` not found on PATH")
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s %s\n", DimStyle.Render("session:"), accountTitle(target))
+			return runClaude(cmd, claudeBin, dir, nil)
+		}
+	}
+}
+
+// promptLabel asks for an optional friendly name when capturing from the UI.
+func promptLabel(cmd *cobra.Command) (string, error) {
+	var label string
+	return label, huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Label for this account (optional)").
+			Placeholder("work, personal, …").
+			Value(&label),
+	)).WithKeyMap(huhEscKeyMap()).Run()
+}
+
+// runSwitch performs (or, with dryRun, previews) a guarded global swap.
+func runSwitch(cmd *cobra.Command, args []string, dryRun bool) error {
+	out := cmd.OutOrStdout()
+	st, err := account.DefaultStore()
+	if err != nil {
+		return err
+	}
+	active, _ := st.Active()
+
+	var target account.Account
+	if len(args) == 1 {
+		target, err = st.Resolve(args[0])
+	} else {
+		target, err = nextAccount(st, active)
+	}
+	if err != nil {
+		return err
+	}
+	if active == target.ID {
+		fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already live:"), accountTitle(target))
+		return nil
+	}
+
+	// The guard: never swap the credential under a running Claude Code instance.
+	home, err := account.ClaudeHome()
+	if err != nil {
+		return err
+	}
+	live := account.RunningInstances(home)
+
+	if dryRun {
+		fmt.Fprintln(out, HeaderStyle.Render("switch --dry-run"))
+		if active != "" {
+			fmt.Fprintf(out, "  would save displaced %s back to its store\n", DimStyle.Render(active))
+		}
+		fmt.Fprintf(out, "  would set live login → %s\n", accountTitle(target))
+		if len(live) > 0 {
+			fmt.Fprintf(out, "  %s\n", WarnStyle.Render(fmt.Sprintf("BLOCKED: %d Claude Code instance(s) running — switch would refuse", len(live))))
+			printInstances(out, live)
+		} else {
+			fmt.Fprintf(out, "  %s\n", OkStyle.Render("no live sessions — switch would proceed"))
+		}
+		return nil
+	}
+
+	if len(live) > 0 {
+		printSwitchRefused(out, live)
+		return errors.New("live Claude Code sessions detected")
+	}
+
+	backup, _, err := doSwitch(st, target)
+	if err != nil {
+		return err
+	}
+	if backup != "" {
+		fmt.Fprintf(out, "%s %s\n", DimStyle.Render("backed up live credential →"), backup)
+	}
+	fmt.Fprintf(out, "%s %s\n", OkStyle.Render("Switched to"), accountTitle(target))
+	return nil
+}
+
+// doSwitch performs the guarded global swap to target (no dry-run, no printing).
+// It re-checks for live sessions and returns them as `blocked` (with no
+// mutation) if any are running — so every caller, CLI or UI, is guarded. On
+// success it round-trips the displaced account's current credential back into
+// its store and returns the safety-backup path.
+func doSwitch(st *account.Store, target account.Account) (backup string, blocked []account.Instance, err error) {
+	active, _ := st.Active()
+	home, err := account.ClaudeHome()
+	if err != nil {
+		return "", nil, err
+	}
+	if live := account.RunningInstances(home); len(live) > 0 {
+		return "", live, nil
+	}
+	targetCred, err := st.Credential(target.ID)
+	if err != nil {
+		return "", nil, fmt.Errorf("read stored credential: %w", err)
+	}
+	if cur, lerr := account.ReadLive(); lerr == nil {
+		backup, _ = st.BackupLive(cur, time.Now().UTC().Format("20060102-150405.000000000"))
+		if active != "" && active != target.ID {
+			_ = st.SaveCredential(active, cur) // best-effort: keep displaced snapshot fresh
+		}
+	} else if !errors.Is(lerr, account.ErrNoLive) {
+		return "", nil, lerr
+	}
+	if err := account.WriteLive(targetCred); err != nil {
+		return "", nil, err
+	}
+	if err := st.SetActive(target.ID); err != nil {
+		return "", nil, err
+	}
+	return backup, nil, nil
+}
+
+func printSwitchRefused(out interface{ Write([]byte) (int, error) }, live []account.Instance) {
+	fmt.Fprintf(out, "%s\n", ErrStyle.Render("Refusing to switch: Claude Code is running."))
+	fmt.Fprintln(out, DimStyle.Render("  swapping the live credential now would log those sessions out. Close them"))
+	fmt.Fprintln(out, DimStyle.Render("  first, or use `clauderig account run` for parallel accounts."))
+	printInstances(out, live)
+}
+
+// nextAccount returns the account after the active one in list order (wrapping),
+// for a bare `switch`.
+func nextAccount(st *account.Store, active string) (account.Account, error) {
+	all, err := st.List()
+	if err != nil {
+		return account.Account{}, err
+	}
+	if len(all) == 0 {
+		return account.Account{}, errors.New("no accounts to rotate between")
+	}
+	for i, a := range all {
+		if a.ID == active {
+			return all[(i+1)%len(all)], nil
+		}
+	}
+	return all[0], nil
+}
+
+func printInstances(w interface{ Write([]byte) (int, error) }, live []account.Instance) {
+	for _, inst := range live {
+		fmt.Fprintf(w, "  %s\n", DimStyle.Render(fmt.Sprintf("• pid %d  %s", inst.PID, inst.Kind)))
 	}
 }
 
@@ -283,180 +527,6 @@ func confirmDestructive(title string) (bool, error) {
 	return ok, err
 }
 
-// runAccountUI drives the interactive accounts screen. Like the MCP screen, the
-// model only records an intent on exit; the work (capture / swap / launch) runs
-// here, outside the event loop, then the screen re-opens with a fresh snapshot.
-// "run" is terminal — it execs claude and takes over the terminal.
-func runAccountUI(cmd *cobra.Command) error {
-	st, err := account.DefaultStore()
-	if err != nil {
-		return err
-	}
-	note := ""
-	for {
-		all, err := st.List()
-		if err != nil {
-			return err
-		}
-		res, err := tea.NewProgram(tui.NewAccount(all, liveFingerprint(), note)).Run()
-		if err != nil {
-			return err
-		}
-		final, ok := res.(tui.AccountModel)
-		if !ok {
-			return nil
-		}
-		note = ""
-		switch final.Action.Kind {
-		case "":
-			return nil
-		case "add":
-			label, err := promptLabel(cmd)
-			if errors.Is(err, huh.ErrUserAborted) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			a, updated, err := captureLive(st, label)
-			if err != nil {
-				note = errStyleNote(err)
-				continue
-			}
-			note = "added " + a.ID
-			if updated {
-				note = "updated " + a.ID
-			}
-		case "switch":
-			target, err := st.Resolve(final.Action.ID)
-			if err != nil {
-				note = errStyleNote(err)
-				continue
-			}
-			_, already, err := performSwitch(st, target)
-			if err != nil {
-				note = errStyleNote(err)
-				continue
-			}
-			note = "switched to " + accountTitle(target)
-			if already {
-				note = accountTitle(target) + " already live"
-			}
-		case "remove":
-			target, err := st.Resolve(final.Action.ID)
-			if err != nil {
-				note = errStyleNote(err)
-				continue
-			}
-			ok, err := confirmDestructive(fmt.Sprintf("Remove account %s from claudeRig's store? (does not log it out)", accountTitle(target)))
-			if err != nil {
-				return err
-			}
-			if !ok {
-				continue
-			}
-			if err := st.Remove(target.ID); err != nil {
-				note = errStyleNote(err)
-				continue
-			}
-			note = "removed " + accountTitle(target)
-		case "run":
-			target, err := st.Resolve(final.Action.ID)
-			if err != nil {
-				return err
-			}
-			return launchSession(cmd, st, target, false, nil)
-		}
-	}
-}
-
-// promptLabel asks for an optional friendly name when capturing an account from
-// the UI. An empty value is fine; ErrUserAborted means the user backed out.
-func promptLabel(cmd *cobra.Command) (string, error) {
-	var label string
-	err := huh.NewForm(huh.NewGroup(
-		huh.NewInput().
-			Title("Label for this account (optional)").
-			Placeholder("work, personal, …").
-			Value(&label),
-	)).WithKeyMap(huhEscKeyMap()).Run()
-	return label, err
-}
-
-// errStyleNote renders an error as a transient screen note.
-func errStyleNote(err error) string { return ErrStyle.Render(err.Error()) }
-
-// captureLive reads the live credential and saves it as a tracked account,
-// reporting whether an existing account was updated rather than created.
-func captureLive(st *account.Store, label string) (account.Account, bool, error) {
-	raw, err := account.ReadLive()
-	if err != nil {
-		return account.Account{}, false, err
-	}
-	a, err := account.AccountFromBlob(raw, label, time.Now())
-	if err != nil {
-		return account.Account{}, false, err
-	}
-	_, resolveErr := st.Resolve(a.ID)
-	updated := resolveErr == nil
-	if err := st.Save(a, raw); err != nil {
-		return account.Account{}, false, err
-	}
-	return a, updated, nil
-}
-
-// performSwitch overwrites the live credential with target's, backing up the
-// displaced one first. Returns the backup path ("" if nothing was live) and
-// whether target was already live (a no-op). Shared by the CLI and the UI.
-func performSwitch(st *account.Store, target account.Account) (backup string, already bool, err error) {
-	raw, err := st.Credential(target.ID)
-	if err != nil {
-		return "", false, fmt.Errorf("read stored credential: %w", err)
-	}
-	if cur, lerr := account.ReadLive(); lerr == nil {
-		if account.FingerprintOf(cur) == target.ID {
-			return "", true, nil
-		}
-		// Sub-second precision so rapid successive swaps don't overwrite each
-		// other's backup.
-		backup, err = st.BackupLive(cur, time.Now().UTC().Format("20060102-150405.000000000"))
-		if err != nil {
-			return "", false, fmt.Errorf("back up current credential: %w", err)
-		}
-	} else if !errors.Is(lerr, account.ErrNoLive) {
-		return "", false, lerr
-	}
-	if err := account.WriteLive(raw); err != nil {
-		return "", false, err
-	}
-	return backup, false, nil
-}
-
-// launchSession prepares a's isolated profile and execs claude against it,
-// taking over this terminal. Shared by the CLI `run` and the UI.
-func launchSession(cmd *cobra.Command, st *account.Store, a account.Account, noShare bool, extra []string) error {
-	raw, err := st.Credential(a.ID)
-	if err != nil {
-		return fmt.Errorf("read stored credential: %w", err)
-	}
-	home, err := account.ClaudeHome()
-	if err != nil {
-		return err
-	}
-	dir, err := st.PrepareSession(a, raw, !noShare, home)
-	if err != nil {
-		return err
-	}
-	claudeBin, err := exec.LookPath("claude")
-	if err != nil {
-		return errors.New("`claude` not found on PATH")
-	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "%s %s %s\n",
-		DimStyle.Render("session:"), accountTitle(a),
-		DimStyle.Render("(CLAUDE_CONFIG_DIR="+dir+")"))
-	return runClaude(cmd, claudeBin, dir, extra)
-}
-
 // runClaude execs claude with an isolated CLAUDE_CONFIG_DIR, inheriting this
 // terminal's stdio and propagating the exit code.
 func runClaude(cmd *cobra.Command, bin, configDir string, extra []string) error {
@@ -471,21 +541,11 @@ func runClaude(cmd *cobra.Command, bin, configDir string, extra []string) error 
 	return err
 }
 
-// liveFingerprint returns the rig id of the currently-live credential, or "" if
-// none / untracked / unreadable.
-func liveFingerprint() string {
-	raw, err := account.ReadLive()
-	if err != nil {
-		return ""
-	}
-	return account.FingerprintOf(raw)
-}
-
 func accountTitle(a account.Account) string {
 	name := a.Label
 	if name == "" {
 		name = a.ID
-	} else {
+	} else if a.Label != a.ID {
 		name = fmt.Sprintf("%s (%s)", a.Label, a.ID)
 	}
 	if a.SubscriptionType != "" {

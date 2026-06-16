@@ -1,27 +1,29 @@
 // Package account manages multiple Claude Code logins from one machine.
 //
-// Two mechanisms, deliberately separated:
+// The model is built around what live testing proved about Claude Code:
 //
-//   - Session mode (the safe one): write a file-based credential into a
-//     per-account CLAUDE_CONFIG_DIR and exec `claude` against it, so one
-//     terminal runs as a chosen account while every other terminal and the VS
-//     Code extension stay on the default. Claude Code reads
-//     $CLAUDE_CONFIG_DIR/.credentials.json in preference to the OS keychain, so
-//     this never touches the live store and can't clobber a working login.
+//   - Refresh tokens ROTATE on every refresh, so a credential can't be a stable
+//     identity and a captured snapshot of an actively-used account goes stale.
+//     Accounts are therefore keyed by a stable user-assigned label, and which
+//     account is live is tracked by an explicit pointer — never inferred from a
+//     rotating token.
 //
-//   - Global swap: overwrite the live credential the whole machine reads
-//     (macOS Keychain, or ~/.claude/.credentials.json elsewhere). Convenient
-//     but machine-wide, so every running instance follows it. The displaced
-//     credential is always backed up first.
+//   - Mutating the live credential (the macOS Keychain / ~/.claude file) out
+//     from under a running Claude Code instance forces a re-login. So `switch`
+//     is guarded by process detection (see livesession.go) and round-trips the
+//     displaced account's current credential back into its store.
 //
-// The idea is a clean-room Go reimplementation of claude-swap by realiti4
-// (https://github.com/realiti4/claude-swap, MIT) — credit for the concept and
-// the file-fallback session trick goes to that project.
+//   - Session mode (`run`) never touches the live store: each account gets a
+//     persistent CLAUDE_CONFIG_DIR that self-refreshes its own tokens in
+//     isolation. That's the safe, primary path.
+//
+// The idea — and the safety mechanisms (process detection, security -i writes,
+// round-trip backup) — are credited to claude-swap by realiti4
+// (https://github.com/realiti4/claude-swap, MIT). This is a clean-room Go
+// reimplementation inside clauderig.
 package account
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,10 +40,9 @@ import (
 // logged in (no Keychain entry / no .credentials.json).
 var ErrNoLive = errors.New("no live Claude Code credential found (run `claude` and log in first)")
 
-// SharedEntries are the ~/.claude customizations flowed into a session profile
-// when sharing is on (the default). Credentials, history, and global state
-// (.credentials.json, projects/, sessions/, .claude.json) are deliberately
-// absent so sessions stay isolated where it matters.
+// SharedEntries are the ~/.claude customizations linked into a session profile
+// when sharing is on (the default). Credentials, history, and global state are
+// deliberately absent so sessions stay isolated where it matters.
 var SharedEntries = []string{
 	"settings.json",
 	"settings.local.json",
@@ -54,79 +55,63 @@ var SharedEntries = []string{
 	"plugins",
 }
 
-// Account is the metadata rig tracks for one login. The credential blob itself
-// lives next to it on disk, never in this struct.
+// Account is the metadata clauderig tracks for one login. The credential itself
+// lives next to it on disk, never in this struct. ID is a stable slug derived
+// from the label — not from any token.
 type Account struct {
 	ID               string `json:"id"`
-	Label            string `json:"label,omitempty"`
+	Label            string `json:"label"`
+	Email            string `json:"email,omitempty"`
 	SubscriptionType string `json:"subscriptionType,omitempty"`
 	OrganizationUUID string `json:"organizationUuid,omitempty"`
-	ExpiresAt        int64  `json:"expiresAt,omitempty"` // epoch ms
-	AddedAt          string `json:"addedAt,omitempty"`   // RFC3339, stamped by caller
+	AddedAt          string `json:"addedAt,omitempty"` // RFC3339
 }
 
-// blob mirrors the shape Claude Code persists (Keychain blob on macOS,
-// .credentials.json elsewhere). Only the fields rig reads are modeled; unknown
-// fields survive because rig stores and writes the raw bytes, never a
-// re-marshaled struct.
+// blob mirrors the shape Claude Code persists. Only display metadata is modeled;
+// the raw bytes are stored verbatim so unknown fields survive.
 type blob struct {
 	ClaudeAiOauth struct {
 		AccessToken      string `json:"accessToken"`
 		RefreshToken     string `json:"refreshToken"`
-		ExpiresAt        int64  `json:"expiresAt"`
 		SubscriptionType string `json:"subscriptionType"`
 	} `json:"claudeAiOauth"`
 	OrganizationUUID string `json:"organizationUuid"`
 }
 
-// parseBlob extracts the metadata rig cares about and the stable fingerprint
-// used as the account id.
-func parseBlob(raw []byte) (Account, error) {
+// metaFromBlob pulls display-only metadata (subscription, org) from a credential.
+// It never derives identity from the token. A blob with no OAuth token is an
+// error — that's not a logged-in credential.
+func metaFromBlob(raw []byte) (subscription, org string, err error) {
 	var b blob
 	if err := json.Unmarshal(raw, &b); err != nil {
-		return Account{}, fmt.Errorf("parse credential: %w", err)
+		return "", "", fmt.Errorf("parse credential: %w", err)
 	}
-	fp := b.ClaudeAiOauth.RefreshToken
-	if fp == "" {
-		fp = b.ClaudeAiOauth.AccessToken
+	if b.ClaudeAiOauth.AccessToken == "" && b.ClaudeAiOauth.RefreshToken == "" {
+		return "", "", errors.New("credential has no OAuth token (is Claude Code logged in?)")
 	}
-	if fp == "" {
-		return Account{}, errors.New("credential has no OAuth token (is Claude Code logged in?)")
-	}
-	sum := sha256.Sum256([]byte(fp))
-	return Account{
-		// 16 hex chars (64 bits) — long enough that collisions across a person's
-		// handful of accounts are vanishingly unlikely, short enough to type.
-		ID:               hex.EncodeToString(sum[:])[:16],
-		SubscriptionType: b.ClaudeAiOauth.SubscriptionType,
-		OrganizationUUID: b.OrganizationUUID,
-		ExpiresAt:        b.ClaudeAiOauth.ExpiresAt,
-	}, nil
+	return b.ClaudeAiOauth.SubscriptionType, b.OrganizationUUID, nil
 }
 
-// AccountFromBlob builds a tracked Account from a raw credential blob, attaching
-// a friendly label and stamping the add time (RFC3339).
-func AccountFromBlob(raw []byte, label string, now time.Time) (Account, error) {
-	a, err := parseBlob(raw)
-	if err != nil {
-		return Account{}, err
+// Slugify turns a label into a filesystem-safe, stable account id.
+func Slugify(label string) string {
+	var b strings.Builder
+	prevDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(label)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
 	}
-	a.Label = label
-	a.AddedAt = now.UTC().Format(time.RFC3339)
-	return a, nil
+	return strings.Trim(b.String(), "-")
 }
 
-// FingerprintOf returns the rig account id for a raw credential blob, or "" if
-// it can't be parsed. Used to mark which stored account is currently live.
-func FingerprintOf(raw []byte) string {
-	a, err := parseBlob(raw)
-	if err != nil {
-		return ""
-	}
-	return a.ID
-}
-
-// Store is rig's on-disk account registry, rooted at ~/.clauderig.
+// Store is clauderig's on-disk account registry, rooted at ~/.clauderig.
 type Store struct{ Root string }
 
 // DefaultStore roots the registry at clauderig's config dir (~/.clauderig).
@@ -138,17 +123,60 @@ func DefaultStore() (*Store, error) {
 	return &Store{Root: d}, nil
 }
 
-func (s *Store) accountsDir() string { return filepath.Join(s.Root, "accounts") }
-func (s *Store) sessionsDir() string { return filepath.Join(s.Root, "sessions") }
-func (s *Store) backupsDir() string  { return filepath.Join(s.Root, "cred-backups") }
-func (s *Store) acctDir(id string) string {
-	return filepath.Join(s.accountsDir(), id)
+func (s *Store) accountsDir() string      { return filepath.Join(s.Root, "accounts") }
+func (s *Store) backupsDir() string       { return filepath.Join(s.Root, "cred-backups") }
+func (s *Store) acctDir(id string) string { return filepath.Join(s.accountsDir(), id) }
+func (s *Store) activePath() string       { return filepath.Join(s.accountsDir(), "active.json") }
+
+// ConfigDir is the persistent CLAUDE_CONFIG_DIR for an account's sessions.
+func (s *Store) ConfigDir(id string) string { return filepath.Join(s.acctDir(id), "config") }
+
+func (s *Store) credPath(id string) string  { return filepath.Join(s.acctDir(id), "credential.json") }
+func (s *Store) metaPath(id string) string  { return filepath.Join(s.acctDir(id), "meta.json") }
+func (s *Store) stalePath(id string) string { return filepath.Join(s.ConfigDir(id), ".rig-stale") }
+
+// CaptureLive builds (or updates) an account from the current live credential.
+// The label is required for a new account; passing an existing label/id updates
+// it. Returns the account and whether an existing one was updated.
+func (s *Store) CaptureLive(raw []byte, label string) (Account, bool, error) {
+	sub, org, err := metaFromBlob(raw)
+	if err != nil {
+		return Account{}, false, err
+	}
+	id := Slugify(label)
+	if id == "" {
+		id = s.nextAutoID()
+		label = id
+	}
+	_, existed := s.read(id)
+	a := Account{
+		ID:               id,
+		Label:            label,
+		SubscriptionType: sub,
+		OrganizationUUID: org,
+		AddedAt:          time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := s.save(a, raw); err != nil {
+		return Account{}, false, err
+	}
+	return a, existed, nil
 }
 
-// Save writes (or updates) an account's metadata and credential blob. The blob
-// file is 0600; rig never logs or prints it.
-func (s *Store) Save(a Account, raw []byte) error {
+// nextAutoID returns the first free "account-N" id.
+func (s *Store) nextAutoID() string {
+	for n := 1; ; n++ {
+		id := fmt.Sprintf("account-%d", n)
+		if _, ok := s.read(id); !ok {
+			return id
+		}
+	}
+}
+
+// save writes an account's metadata and credential (0600), marking any existing
+// session profile stale so the next `run` re-seeds from the fresh credential.
+func (s *Store) save(a Account, raw []byte) error {
 	dir := s.acctDir(a.ID)
+	hadConfig := dirExists(s.ConfigDir(a.ID))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -156,13 +184,19 @@ func (s *Store) Save(a Account, raw []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "meta.json"), meta, 0o600); err != nil {
+	if err := os.WriteFile(s.metaPath(a.ID), meta, 0o600); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "credentials.json"), raw, 0o600)
+	if err := os.WriteFile(s.credPath(a.ID), raw, 0o600); err != nil {
+		return err
+	}
+	if hadConfig {
+		_ = os.WriteFile(s.stalePath(a.ID), []byte("credential updated\n"), 0o600)
+	}
+	return nil
 }
 
-// List returns all tracked accounts, sorted by label then id for stable output.
+// List returns all tracked accounts, sorted by label then id.
 func (s *Store) List() ([]Account, error) {
 	entries, err := os.ReadDir(s.accountsDir())
 	if errors.Is(err, os.ErrNotExist) {
@@ -176,11 +210,9 @@ func (s *Store) List() ([]Account, error) {
 		if !e.IsDir() {
 			continue
 		}
-		a, err := s.readMeta(e.Name())
-		if err != nil {
-			continue // skip half-written / foreign dirs rather than fail the whole list
+		if a, ok := s.read(e.Name()); ok {
+			out = append(out, a)
 		}
-		out = append(out, a)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Label != out[j].Label {
@@ -191,20 +223,19 @@ func (s *Store) List() ([]Account, error) {
 	return out, nil
 }
 
-func (s *Store) readMeta(id string) (Account, error) {
-	raw, err := os.ReadFile(filepath.Join(s.acctDir(id), "meta.json"))
+func (s *Store) read(id string) (Account, bool) {
+	raw, err := os.ReadFile(s.metaPath(id))
 	if err != nil {
-		return Account{}, err
+		return Account{}, false
 	}
 	var a Account
-	if err := json.Unmarshal(raw, &a); err != nil {
-		return Account{}, err
+	if json.Unmarshal(raw, &a) != nil {
+		return Account{}, false
 	}
-	return a, nil
+	return a, true
 }
 
 // Resolve finds an account by exact id, exact label, or unambiguous id prefix.
-// An ambiguous prefix is an error rather than a silent pick.
 func (s *Store) Resolve(ref string) (Account, error) {
 	all, err := s.List()
 	if err != nil {
@@ -215,7 +246,7 @@ func (s *Store) Resolve(ref string) (Account, error) {
 	}
 	var prefix []Account
 	for _, a := range all {
-		if a.ID == ref || (ref != "" && a.Label == ref) {
+		if a.ID == ref || a.Label == ref || Slugify(ref) == a.ID {
 			return a, nil
 		}
 		if ref != "" && strings.HasPrefix(a.ID, ref) {
@@ -234,23 +265,33 @@ func (s *Store) Resolve(ref string) (Account, error) {
 
 // Credential reads a stored account's raw credential blob.
 func (s *Store) Credential(id string) ([]byte, error) {
-	return os.ReadFile(filepath.Join(s.acctDir(id), "credentials.json"))
+	return os.ReadFile(s.credPath(id))
 }
 
-// Remove deletes a tracked account — its stored credential and any session
-// profile. It deliberately does NOT touch the live Claude Code login: rig just
-// stops tracking the account.
-func (s *Store) Remove(id string) error {
-	if err := os.RemoveAll(s.acctDir(id)); err != nil {
-		return err
+// SaveCredential overwrites a stored account's credential (used by `switch` to
+// round-trip the displaced account's fresh credential back into its store).
+func (s *Store) SaveCredential(id string, raw []byte) error {
+	if _, ok := s.read(id); !ok {
+		return fmt.Errorf("no account %q to update", id)
 	}
-	return os.RemoveAll(s.SessionDir(id))
+	a, _ := s.read(id)
+	return s.save(a, raw)
 }
 
-// Purge removes all of rig's account data — every tracked account, session
-// profile, and credential backup. Like Remove, it never touches the live login.
+// Remove deletes a tracked account — credential, metadata, and session profile.
+// It never touches the live login. If the removed account was active, the active
+// pointer is cleared.
+func (s *Store) Remove(id string) error {
+	if active, _ := s.Active(); active == id {
+		_ = os.Remove(s.activePath())
+	}
+	return os.RemoveAll(s.acctDir(id))
+}
+
+// Purge removes all account data (accounts + credential backups). Never touches
+// the live login.
 func (s *Store) Purge() error {
-	for _, d := range []string{s.accountsDir(), s.sessionsDir(), s.backupsDir()} {
+	for _, d := range []string{s.accountsDir(), s.backupsDir()} {
 		if err := os.RemoveAll(d); err != nil {
 			return err
 		}
@@ -258,66 +299,95 @@ func (s *Store) Purge() error {
 	return nil
 }
 
-// Next returns the account after the live one in list order, wrapping around —
-// the rotation target for a bare `switch`. liveID may be "" (nothing live or
-// untracked), in which case the first account is returned.
-func (s *Store) Next(liveID string) (Account, error) {
-	all, err := s.List()
+// Active returns the id of the account clauderig last set as the live login, or
+// "" if none is tracked. It's an explicit pointer, not inferred from the token.
+func (s *Store) Active() (string, error) {
+	raw, err := os.ReadFile(s.activePath())
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
 	if err != nil {
-		return Account{}, err
+		return "", err
 	}
-	if len(all) == 0 {
-		return Account{}, errors.New("no accounts to rotate between")
+	var v struct {
+		ID string `json:"id"`
 	}
-	for i, a := range all {
-		if a.ID == liveID {
-			return all[(i+1)%len(all)], nil
-		}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return "", err
 	}
-	return all[0], nil
+	return v.ID, nil
 }
 
-// SessionDir is the per-account profile directory used as CLAUDE_CONFIG_DIR.
-func (s *Store) SessionDir(id string) string {
-	return filepath.Join(s.sessionsDir(), id)
+// SetActive records which account is now the live login.
+func (s *Store) SetActive(id string) error {
+	if err := os.MkdirAll(s.accountsDir(), 0o700); err != nil {
+		return err
+	}
+	raw, _ := json.Marshal(struct {
+		ID string `json:"id"`
+	}{id})
+	return os.WriteFile(s.activePath(), raw, 0o600)
 }
 
-// PrepareSession materializes a session profile for acct and returns the
-// directory to use as CLAUDE_CONFIG_DIR. The credential is refreshed from the
-// store every call. When share is true, SharedEntries from claudeHome are linked
-// in (symlink, falling back to a copy where symlinks aren't permitted).
-func (s *Store) PrepareSession(a Account, raw []byte, share bool, claudeHome string) (string, error) {
-	dir := s.SessionDir(a.ID)
+// BackupLive saves a credential before a swap overwrites the live store, so a
+// bad swap is recoverable. Returns the backup path; an empty blob is a no-op.
+func (s *Store) BackupLive(raw []byte, stamp string) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	if err := os.MkdirAll(s.backupsDir(), 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(s.backupsDir(), "live-"+stamp+".json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// EnsureSession makes the account's persistent CLAUDE_CONFIG_DIR ready to run and
+// returns it. The credential is (re)seeded only when the profile is new or marked
+// stale — otherwise the session's own self-refreshed token is left intact (it
+// rotates independently of the store). When share is true, SharedEntries from
+// claudeHome are linked in (idempotent).
+func (s *Store) EnsureSession(a Account, share bool, claudeHome string) (string, error) {
+	dir := s.ConfigDir(a.ID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), raw, 0o600); err != nil {
-		return "", err
-	}
-	if !share {
-		return dir, nil
-	}
-	for _, name := range SharedEntries {
-		src := filepath.Join(claudeHome, name)
-		if _, err := os.Lstat(src); err != nil {
-			continue // not present in the default profile; nothing to share
+	credFile := filepath.Join(dir, ".credentials.json")
+	_, haveCred := statOK(credFile)
+	stale := fileExists(s.stalePath(a.ID))
+	if !haveCred || stale {
+		raw, err := s.Credential(a.ID)
+		if err != nil {
+			return "", fmt.Errorf("read stored credential: %w", err)
 		}
-		if err := linkOrCopy(src, filepath.Join(dir, name)); err != nil {
-			return "", fmt.Errorf("share %s: %w", name, err)
+		if err := os.WriteFile(credFile, raw, 0o600); err != nil {
+			return "", err
+		}
+		_ = os.Remove(s.stalePath(a.ID))
+	}
+	if share {
+		for _, name := range SharedEntries {
+			src := filepath.Join(claudeHome, name)
+			if _, err := os.Lstat(src); err != nil {
+				continue
+			}
+			if err := linkOrCopy(src, filepath.Join(dir, name)); err != nil {
+				return "", fmt.Errorf("share %s: %w", name, err)
+			}
 		}
 	}
 	return dir, nil
 }
 
-// linkOrCopy points dst at src via symlink, replacing any existing link/file.
-// Where symlinks aren't permitted (notably Windows without Developer Mode), it
-// falls back to a recursive copy so sharing still works, just statically.
+// linkOrCopy points dst at src via symlink, replacing any existing link.
+// Where symlinks aren't permitted (Windows without Developer Mode) it copies.
 func linkOrCopy(src, dst string) error {
-	// Replace an existing symlink (refresh) but never clobber a real file/dir the
-	// user may have customized inside the session.
 	if fi, err := os.Lstat(dst); err == nil {
 		if fi.Mode()&os.ModeSymlink == 0 {
-			return nil
+			return nil // a real file/dir the user customized inside the session — keep it
 		}
 		if err := os.Remove(dst); err != nil {
 			return err
@@ -326,15 +396,11 @@ func linkOrCopy(src, dst string) error {
 	if err := os.Symlink(src, dst); err == nil {
 		return nil
 	}
-	// Symlinks unavailable (e.g. Windows without Developer Mode): copy verbatim.
-	// A plain recursive copy — NOT copytree.Copy, which intentionally skips
-	// node_modules/vendor/build output/.gitignored paths and would silently omit
-	// files a shared customization (notably plugins/) needs.
+	// A plain recursive copy — NOT a filtered one — so a shared customization
+	// (notably plugins/ with bundled node_modules) is never silently truncated.
 	return copyAll(src, dst)
 }
 
-// copyAll recursively copies src to dst, preserving every entry (files, dirs,
-// and symlinks) — no filtering.
 func copyAll(src, dst string) error {
 	fi, err := os.Lstat(src)
 	if err != nil {
@@ -374,29 +440,19 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	return os.WriteFile(dst, b, perm)
 }
 
-// BackupLive saves the current live credential before a global swap overwrites
-// it, so a bad swap is recoverable. Returns the backup path. A nil/empty blob
-// (no live login) is a no-op returning "".
-func (s *Store) BackupLive(raw []byte, stamp string) (string, error) {
-	if len(raw) == 0 {
-		return "", nil
-	}
-	if err := os.MkdirAll(s.backupsDir(), 0o700); err != nil {
-		return "", err
-	}
-	path := filepath.Join(s.backupsDir(), "live-"+stamp+".json")
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		return "", err
-	}
-	return path, nil
-}
-
 // ClaudeHome is the default Claude Code config dir (~/.claude) that sessions
-// share customizations from.
+// share customizations from and that process detection reads.
 func ClaudeHome() (string, error) {
 	h, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(h, ".claude"), nil
+}
+
+func dirExists(p string) bool  { fi, err := os.Stat(p); return err == nil && fi.IsDir() }
+func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
+func statOK(p string) (os.FileInfo, bool) {
+	fi, err := os.Stat(p)
+	return fi, err == nil
 }
