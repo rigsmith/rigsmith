@@ -342,7 +342,7 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 			if len(tasks)+len(scripts) == 0 {
 				return true, fmt.Errorf("nothing runnable here to pick from")
 			}
-			return offerRunChoice(cmd, tasks, scripts, defaultProject, true)
+			return offerRunChoice(cmd, root, tasks, scripts, defaultProject, true)
 		}
 		if len(tasks) == 0 {
 			return true, fmt.Errorf("no %s targets here to pick from", verb)
@@ -360,7 +360,7 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 	}
 
 	if verb == "run" {
-		return offerRunChoice(cmd, tasks, scripts, defaultProject, false)
+		return offerRunChoice(cmd, root, tasks, scripts, defaultProject, false)
 	}
 
 	// --all-capable verbs (build/test/…): a lone subpackage falls through to the
@@ -401,7 +401,7 @@ func dispatchVerbPick(cmd *cobra.Command, verb string, tasks []allTask, offerAll
 // open the grouped picker (Projects, then Scripts). Off a TTY it returns a
 // helpful error. With forcePick set (`--pick`) the picker always opens, even
 // when a default or a lone candidate would otherwise run.
-func offerRunChoice(cmd *cobra.Command, tasks []allTask, scripts []scriptEntry, defaultProject string, forcePick bool) (handled bool, err error) {
+func offerRunChoice(cmd *cobra.Command, root string, tasks []allTask, scripts []scriptEntry, defaultProject string, forcePick bool) (handled bool, err error) {
 	if !forcePick {
 		if t, ok := preferredRunTask(tasks, defaultProject); ok {
 			return true, runCommand(cmd, t.dir, t.argv)
@@ -435,14 +435,15 @@ func offerRunChoice(cmd *cobra.Command, tasks []allTask, scripts []scriptEntry, 
 				pluralN(len(tasks), "package"), pluralN(len(scripts), "script"))
 		}
 	}
-	switch sel := pickRunTarget(tasks, scripts); {
+	switch sel := pickRunTarget(cdContext(cmd), root, scripts); {
 	case sel.cancel:
 		return true, nil
-	case sel.script:
-		return true, scripts[sel.index].run(cmd, nil)
+	case sel.script != nil:
+		return true, sel.script.run(cmd, nil)
+	case sel.task != nil:
+		return true, runCommand(cmd, sel.task.dir, sel.task.argv)
 	default:
-		t := tasks[sel.index]
-		return true, runCommand(cmd, t.dir, t.argv)
+		return true, nil
 	}
 }
 

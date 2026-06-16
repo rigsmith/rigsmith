@@ -15,6 +15,17 @@ func excluded(name string, patterns []string) bool {
 	return false
 }
 
+// projectExcluded reports whether a project is hidden by the `exclude` globs,
+// matching on its full name, its short name, or its repo-relative path. Path
+// matching lets a glob like "testdata/*" hide a whole directory of projects
+// (the '*' in globMatch spans '/'), complementing plain name globs.
+func projectExcluded(name, short, relPath string, patterns []string) bool {
+	if excluded(name, patterns) || (short != "" && short != name && excluded(short, patterns)) {
+		return true
+	}
+	return relPath != "" && relPath != "." && excluded(relPath, patterns)
+}
+
 // excludeFor returns the merged .rig.json `exclude` globs for root (best-effort;
 // nil when there is no config). Used to keep the interactive pickers and
 // cross-ecosystem discovery consistent with `info`, which already filters.

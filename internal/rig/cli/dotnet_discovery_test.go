@@ -105,13 +105,13 @@ func TestOfferRunChoice_DefaultProjectShortCircuitsThePicker(t *testing.T) {
 
 	// No default → ambiguous, returns guidance rather than running.
 	cmd, buf := newRunHost()
-	if _, err := offerRunChoice(cmd, tasks, nil, "", false); err == nil || !strings.Contains(err.Error(), "run target") {
+	if _, err := offerRunChoice(cmd, t.TempDir(), tasks, nil, "", false); err == nil || !strings.Contains(err.Error(), "run target") {
 		t.Fatalf("no default: err = %v, want the ambiguous-target guidance", err)
 	}
 
 	// Default names Tool → runs it directly, no picker.
 	cmd, buf = newRunHost()
-	if _, err := offerRunChoice(cmd, tasks, nil, "Tool", false); err != nil {
+	if _, err := offerRunChoice(cmd, t.TempDir(), tasks, nil, "Tool", false); err != nil {
 		t.Fatalf("with default: %v", err)
 	}
 	if got := buf.String(); !strings.Contains(got, "dotnet run --project Tool") {
