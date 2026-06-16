@@ -127,6 +127,7 @@ func TestOfferWorkspaceChoice_ForcePickEmptyVerb(t *testing.T) {
 // as a runnable root package — doing so suppressed the picker + surfaced
 // scripts and fell through to a doomed `go run .` ("no Go files in <root>").
 func TestOfferWorkspaceChoice_NonRunnableRootSurfacesScripts(t *testing.T) {
+	isolateGlobalConfig(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"),
 		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {

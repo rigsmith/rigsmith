@@ -28,7 +28,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 		Use:               verb + " [project]",
 		Short:             short,
 		Aliases:           aliases,
-		ValidArgsFunction: workspaceNameCompletion,
+		ValidArgsFunction: verbCompletion(verb),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
 			root := resolveRoot(cwd)
@@ -130,6 +130,36 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 	}
 	presets = registerPresetFlags(cmd)
 	return cmd
+}
+
+// verbCompletion picks the [project] completion source for a verb. `run`
+// resolves its arg against the per-binary run targets (runTargets), so its
+// completion must too — otherwise `rig run <TAB>` would suggest Go module names
+// while `rig run <name>` only matches the expanded cmd/* binaries. Every other
+// verb completes against the module-level workspace names.
+func verbCompletion(verb string) func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+	if verb == "run" {
+		return runTargetCompletion
+	}
+	return workspaceNameCompletion
+}
+
+// runTargetCompletion completes `rig run`'s [project] arg with the expanded run
+// targets (cmd/rig, cmd/clauderig, … for a multi-binary Go repo), matching how
+// the arg is resolved. Never errors: completion must never break the shell.
+func runTargetCompletion(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	cwd, _ := os.Getwd()
+	root := resolveRoot(cwd)
+	ts := runTargets(cdContext(cmd), root)
+	names := make([]string, 0, len(ts))
+	for _, t := range ts {
+		names = append(names, t.Name)
+	}
+	sort.Strings(names)
+	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
 // workspaceNameCompletion completes a [project] arg with the discovered

@@ -125,6 +125,7 @@ func TestCustomCommandWithNoSpecForThisOS_ErrorsCleanly(t *testing.T) {
 // scripts/ mains stay in the set (runnable by name) and are deduped into the
 // Scripts group by the picker, not here.
 func TestRunTargets_ExpandsGoModuleIntoBinaries(t *testing.T) {
+	isolateGlobalConfig(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"),
 		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
@@ -154,6 +155,7 @@ func TestRunTargets_ExpandsGoModuleIntoBinaries(t *testing.T) {
 // A .rig.json `exclude` glob hides an individual binary by name, not just a whole
 // module — the user's lever for trimming the run picker.
 func TestRunTargets_ExcludeHidesABinary(t *testing.T) {
+	isolateGlobalConfig(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"),
 		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
