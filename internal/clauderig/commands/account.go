@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -151,6 +152,7 @@ func newAccountRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			warnIfActive(cmd, st, a)
 			home, err := account.ClaudeHome()
 			if err != nil {
 				return err
@@ -391,6 +393,7 @@ func runAccountUI(cmd *cobra.Command) error {
 			if rerr != nil {
 				return rerr
 			}
+			warnIfActive(cmd, st, target)
 			home, herr := account.ClaudeHome()
 			if herr != nil {
 				return herr
@@ -413,10 +416,15 @@ func runAccountUI(cmd *cobra.Command) error {
 // it asks whether to force the swap, kill the sessions first, or cancel, then
 // performs the choice and returns a status note for the screen.
 func resolveBlockedSwitch(st *account.Store, target account.Account, blocked []account.Instance) string {
+	var lines []string
+	for _, in := range blocked {
+		lines = append(lines, fmt.Sprintf("• pid %d  %s", in.PID, in.Kind))
+	}
 	var choice string
 	err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().
 			Title(fmt.Sprintf("%d Claude Code session(s) are live — switching will disrupt them", len(blocked))).
+			Description(strings.Join(lines, "\n")).
 			Options(
 				huh.NewOption("Cancel — leave them alone", "cancel"),
 				huh.NewOption("Kill them, then switch", "kill"),
@@ -440,6 +448,21 @@ func resolveBlockedSwitch(st *account.Store, target account.Account, blocked []a
 		return "killed live sessions, switched to " + accountTitle(target)
 	}
 	return "force-switched to " + accountTitle(target)
+}
+
+// warnIfActive cautions against running your current live account as a separate
+// session: it shares a rotating refresh token with the live session, so the
+// stored snapshot may be stale and prompt for login. `run` is meant for a
+// different, dormant account.
+func warnIfActive(cmd *cobra.Command, st *account.Store, a account.Account) {
+	if active, _ := st.Active(); active == a.ID {
+		fmt.Fprintln(cmd.ErrOrStderr(), WarnStyle.Render(
+			"note: "+a.Label+" is your current live account — a separate session of it shares a"))
+		fmt.Fprintln(cmd.ErrOrStderr(), WarnStyle.Render(
+			"      rotating token and may ask you to log in. Prefer running a different account;"))
+		fmt.Fprintln(cmd.ErrOrStderr(), DimStyle.Render(
+			"      if it does prompt, re-run `account add` for it while it's your live login."))
+	}
 }
 
 // promptLabel asks for an optional friendly name when capturing from the UI.
