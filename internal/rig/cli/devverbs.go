@@ -80,27 +80,34 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 					return runCommand(cmd, t.Dir, append(argv, args[1:]...))
 				}
 			}
-			// Default: the primary ecosystem at the repo root.
-			eco, err := resolvePrimary(cwd, root)
-			if err != nil {
-				return err
-			}
-			if verb == "rebuild" {
+			// Default: the primary ecosystem at the repo root. Resolve it, but
+			// defer a failure — a repo can have no single primary (e.g. .NET
+			// solutions nested in subdirs with nothing at the root) yet still have
+			// runnable subprojects the picker below can offer.
+			eco, ecoErr := resolvePrimary(cwd, root)
+			if ecoErr == nil && verb == "rebuild" {
 				return runRebuild(cmd, eco, root, args)
 			}
 			// `rig test <class|~filter>` in a .NET repo: an arg that names no
 			// package is a test-class query / filter shorthand (TestVerb).
-			if verb == "test" && eco == detect.DotNet && len(args) > 0 {
+			if ecoErr == nil && verb == "test" && eco == detect.DotNet && len(args) > 0 {
 				return runDotnetTest(cmd, root, args, false)
 			}
 			// A bare verb at a workspace root (packages only in subdirs) has no
 			// single target — offer a picker instead of running a doomed root
 			// command. For --all-capable verbs the picker leads with "All
-			// packages"; `run` gets a single-select of the runnable packages.
+			// packages"; `run` gets a single-select of the runnable packages. This
+			// runs before the primary is required, so it works even when no
+			// primary resolves (the picker scopes the verb to a chosen package).
 			if len(args) == 0 && (supportsAll || verb == "run") {
 				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll, false); handled {
 					return herr
 				}
+			}
+			// The picker didn't handle it — the root command needs the primary, so
+			// surface the unresolved-ecosystem error now.
+			if ecoErr != nil {
+				return ecoErr
 			}
 			argv, ok := resolveVerbCommand(eco, verb, root)
 			if !ok {

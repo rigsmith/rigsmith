@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/plugin"
@@ -99,6 +100,19 @@ var manifestEcosystem = map[string]string{
 	"Cargo.toml":   Cargo,
 }
 
+// dotnetRootMarkers are repo-root files that signal a .NET repo whose solutions
+// and projects live in subdirectories (Source/, src/, …) with no .sln/.csproj at
+// the root itself. Each is an MSBuild / .NET-SDK / NuGet file — an unambiguous
+// .NET signal. Matched case-insensitively, since .NET filenames vary in case
+// across tools (NuGet.Config vs nuget.config).
+var dotnetRootMarkers = map[string]bool{
+	"directory.build.props":    true,
+	"directory.build.targets":  true,
+	"directory.packages.props": true,
+	"global.json":              true,
+	"nuget.config":             true,
+}
+
 // ecosystemsInDir reports the distinct ecosystem ids whose manifest lives
 // directly in dir (sorted, deduped). It does not recurse.
 func ecosystemsInDir(dir string) []string {
@@ -114,6 +128,18 @@ func ecosystemsInDir(dir string) []string {
 		if matches, _ := filepath.Glob(filepath.Join(dir, pat)); len(matches) > 0 {
 			seen[DotNet] = true
 			break
+		}
+	}
+	// …and so are the conventional repo-root markers (Directory.Build.props,
+	// global.json, …) for a .NET repo whose projects all live in subdirectories.
+	if !seen[DotNet] {
+		if entries, err := os.ReadDir(dir); err == nil {
+			for _, e := range entries {
+				if !e.IsDir() && dotnetRootMarkers[strings.ToLower(e.Name())] {
+					seen[DotNet] = true
+					break
+				}
+			}
 		}
 	}
 	ids := make([]string, 0, len(seen))
