@@ -106,6 +106,7 @@ func scriptedFocusMenu() menuModel {
 // hides those rows, reveals them under show-all, and re-includes them — each
 // writing the repo .rig.json. Uses node packages (discovered per-package).
 func TestMenu_ProjectPickerExcludeShowAllInclude(t *testing.T) {
+	isolateGlobalConfig(t)
 	root := t.TempDir()
 	writePkg := func(rel, name string) {
 		dir := filepath.Join(root, filepath.FromSlash(rel))
@@ -181,6 +182,7 @@ func projFocusNames(m menuModel) []string {
 // The menu's project picker sorts by path by default, groups by ecosystem on
 // `e`, and narrows by name under `/`.
 func TestMenu_ProjectPickerSortAndFilter(t *testing.T) {
+	isolateGlobalConfig(t)
 	root := t.TempDir()
 	writePkg := func(rel, name string) {
 		dir := filepath.Join(root, filepath.FromSlash(rel))

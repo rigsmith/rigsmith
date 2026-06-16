@@ -178,6 +178,7 @@ func countExcluded(m runPickerModel) int {
 // hides those rows, reveals them under show-all, and re-includes them — each
 // writing the repo .rig.json.
 func TestRunPickerLive_ExcludeWholeDirShowAllAndInclude(t *testing.T) {
+	isolateGlobalConfig(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"),
 		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
@@ -237,6 +238,7 @@ func TestRunPickerLive_ExcludeWholeDirShowAllAndInclude(t *testing.T) {
 
 // Enter in the live picker resolves the highlighted project to a runnable task.
 func TestRunPickerLive_EnterSelectsProject(t *testing.T) {
+	isolateGlobalConfig(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"),
 		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
@@ -266,6 +268,7 @@ func rowPaths(m runPickerModel) []string {
 // The live picker sorts by path by default, toggles to ecosystem grouping on
 // `e`, and narrows by name under `/`.
 func TestRunPickerLive_SortAndFilter(t *testing.T) {
+	isolateGlobalConfig(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"),
 		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
