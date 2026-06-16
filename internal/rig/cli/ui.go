@@ -322,15 +322,14 @@ func projectCommandItems(root string) []menuItem {
 // ecosystem/path columns line up; excluded rows are tagged.
 func (m menuModel) projectFrameItems() []menuItem {
 	rows := make([]projectRow, 0, len(m.projects))
-	width := 0
+	nameW, ecoW := 0, 0
 	for _, p := range m.projects {
 		if (p.excluded && !m.showExcluded) || !nameMatches(m.query, p.name) {
 			continue
 		}
 		rows = append(rows, p)
-		if n := len(p.name); n > width {
-			width = n
-		}
+		nameW = max(nameW, runeLen(p.name))
+		ecoW = max(ecoW, runeLen(p.eco))
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		return rowLess(m.sort, rows[i].eco, rows[i].rel, rows[i].name, rows[j].eco, rows[j].rel, rows[j].name)
@@ -338,11 +337,11 @@ func (m menuModel) projectFrameItems() []menuItem {
 
 	items := []menuItem{{label: "(whole repo)", desc: "all projects", clearFocus: true}}
 	for _, p := range rows {
-		desc := padRight(p.eco, 4) + "  " + p.rel
+		desc := padRight(p.eco, ecoW) + "  " + p.rel
 		if p.excluded {
 			desc += "  ·excluded"
 		}
-		items = append(items, menuItem{label: padRight(p.name, width), desc: desc, focusName: p.name, rel: p.rel, excluded: p.excluded})
+		items = append(items, menuItem{label: padRight(p.name, nameW), desc: desc, focusName: p.name, rel: p.rel, excluded: p.excluded})
 	}
 	return items
 }
