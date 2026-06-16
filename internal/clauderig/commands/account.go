@@ -134,7 +134,7 @@ func newAccountListCmd() *cobra.Command {
 func newAccountRunCmd() *cobra.Command {
 	var noShare bool
 	cmd := &cobra.Command{
-		Use:   "run <id|label> [-- claude args...]",
+		Use:   "run <id|email> [-- claude args...]",
 		Short: "Launch Claude Code as an account in THIS terminal only",
 		Long: "Session mode: runs `claude` against the account's own persistent\n" +
 			"CLAUDE_CONFIG_DIR, so this terminal is that account while every other\n" +
@@ -178,7 +178,7 @@ func newAccountRunCmd() *cobra.Command {
 func newAccountSwitchCmd() *cobra.Command {
 	var dryRun, force, kill bool
 	cmd := &cobra.Command{
-		Use:   "switch [<id|label>]",
+		Use:   "switch [<id|email>]",
 		Short: "Change the machine-wide login (guarded against live sessions)",
 		Long: "Global swap: overwrites the live credential the whole machine reads, so\n" +
 			"every Claude Code instance follows. With no argument, rotates to the next\n" +
@@ -229,7 +229,7 @@ func newAccountSessionsCmd() *cobra.Command {
 
 func newAccountRemoveCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "remove <id|label>",
+		Use:     "remove <id|email>",
 		Aliases: []string{"rm"},
 		Short:   "Stop tracking an account (does not log it out of Claude Code)",
 		Long: "Delete claudeRig's copy of an account and its session profile. This does\n" +
@@ -337,7 +337,10 @@ func runAccountUI(cmd *cobra.Command) error {
 				note = ErrStyle.Render(cerr.Error())
 				continue
 			}
-			_ = st.SetActive(a.ID)
+			if serr := st.SetActive(a.ID); serr != nil {
+				note = ErrStyle.Render(serr.Error())
+				continue
+			}
 			note = "added " + a.Email
 			if updated {
 				note = "updated " + a.Email
@@ -423,17 +426,20 @@ func resolveBlockedSwitch(st *account.Store, target account.Account, blocked []a
 	if err != nil || choice == "cancel" || choice == "" {
 		return DimStyle.Render("switch cancelled")
 	}
+	killNote := ""
 	if choice == "kill" {
-		if failed := account.KillInstances(blocked, 5*time.Second); len(failed) > 0 {
-			// fall through to a forced swap past any straggler
-			_ = failed
+		failed := account.KillInstances(blocked, 5*time.Second)
+		if n := len(failed); n > 0 {
+			killNote = fmt.Sprintf("killed %d/%d (%d wouldn't die, forced past), ", len(blocked)-n, len(blocked), n)
+		} else {
+			killNote = "killed live sessions, "
 		}
 	}
 	if _, _, serr := doSwitch(st, target, true); serr != nil {
 		return ErrStyle.Render(serr.Error())
 	}
 	if choice == "kill" {
-		return "killed live sessions, switched to " + accountTitle(target)
+		return killNote + "switched to " + accountTitle(target)
 	}
 	return "force-switched to " + accountTitle(target)
 }
@@ -556,7 +562,12 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 		return "", nil, fmt.Errorf("read stored credential: %w", err)
 	}
 	if cur, lerr := account.ReadLive(); lerr == nil {
-		backup, _ = st.BackupLive(cur, time.Now().UTC().Format("20060102-150405.000000000"))
+		var berr error
+		// The backup is the safety net before we overwrite the live credential —
+		// abort the switch if we can't write it rather than mutate unprotected.
+		if backup, berr = st.BackupLive(cur, time.Now().UTC().Format("20060102-150405.000000000")); berr != nil {
+			return "", nil, fmt.Errorf("back up live credential before switch: %w", berr)
+		}
 		if active != "" && active != target.ID {
 			_ = st.SaveCredential(active, cur) // best-effort: keep displaced snapshot fresh
 		}

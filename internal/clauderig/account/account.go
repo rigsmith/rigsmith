@@ -4,9 +4,10 @@
 //
 //   - Refresh tokens ROTATE on every refresh, so a credential can't be a stable
 //     identity and a captured snapshot of an actively-used account goes stale.
-//     Accounts are therefore keyed by a stable user-assigned label, and which
+//     Accounts are therefore keyed by the account EMAIL (from ~/.claude.json's
+//     oauthAccount; same email in two orgs gets a numeric suffix), and which
 //     account is live is tracked by an explicit pointer — never inferred from a
-//     rotating token.
+//     rotating token. Accounts resolve by a unique substring of email/id.
 //
 //   - Mutating the live credential (the macOS Keychain / ~/.claude file) out
 //     from under a running Claude Code instance forces a re-login. So `switch`
@@ -243,7 +244,7 @@ func (s *Store) save(a Account, raw []byte) error {
 	return nil
 }
 
-// List returns all tracked accounts, sorted by label then id.
+// List returns all tracked accounts, sorted by email.
 func (s *Store) List() ([]Account, error) {
 	entries, err := os.ReadDir(s.accountsDir())
 	if errors.Is(err, os.ErrNotExist) {
@@ -277,7 +278,8 @@ func (s *Store) read(id string) (Account, bool) {
 	return a, true
 }
 
-// Resolve finds an account by exact id, exact label, or unambiguous id prefix.
+// Resolve finds an account by exact id or email, otherwise by a unique
+// case-insensitive substring of the email or id. Ambiguous matches error.
 func (s *Store) Resolve(ref string) (Account, error) {
 	all, err := s.List()
 	if err != nil {

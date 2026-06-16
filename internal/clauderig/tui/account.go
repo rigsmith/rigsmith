@@ -1,8 +1,9 @@
 // The accounts screen lists the Claude Code logins clauderig tracks and marks
 // the live one. Following the dashboard/MCP pattern, the model only records the
-// chosen intent (add/run/switch) on exit; the command layer performs it outside
-// the event loop — execing claude, swapping the live credential, or capturing
-// the current login — then re-opens the screen (except `run`, which is terminal).
+// chosen intent (add/run/switch/remove) on exit; the command layer performs it
+// outside the event loop — execing claude, swapping the live credential,
+// capturing the current login, or removing an account — then re-opens the screen
+// (except `run`, which is terminal).
 package tui
 
 import (
@@ -15,9 +16,9 @@ import (
 )
 
 // AccountAction is the intent the accounts screen records on exit. Kind "" means
-// the user backed out. ID identifies the target for run/switch.
+// the user backed out. ID identifies the target for run/switch/remove.
 type AccountAction struct {
-	Kind string // "" · "add" · "run" · "switch"
+	Kind string // "" · "add" · "run" · "switch" · "remove"
 	ID   string
 }
 
