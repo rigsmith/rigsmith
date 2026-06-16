@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -117,9 +118,12 @@ func TestCaptureLiveResolveAndUpdate(t *testing.T) {
 			t.Errorf("Resolve(%q) = %+v, %v", ref, got, err)
 		}
 	}
-	fi, _ := os.Stat(st.credPath(a.ID))
-	if fi.Mode().Perm() != 0o600 {
-		t.Errorf("credential perms = %v, want 0600", fi.Mode().Perm())
+	// Unix-only: Windows doesn't map Go's 0600 to POSIX perms.
+	if runtime.GOOS != "windows" {
+		fi, _ := os.Stat(st.credPath(a.ID))
+		if fi.Mode().Perm() != 0o600 {
+			t.Errorf("credential perms = %v, want 0600", fi.Mode().Perm())
+		}
 	}
 }
 
