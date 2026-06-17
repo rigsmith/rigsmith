@@ -624,9 +624,10 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 			}
 		}
 	}
+	var rows []pruneRow
 	skip := func(label, reason string) {
 		kept++
-		fmt.Fprintf(out, "%s %s  %s\n", DimStyle.Render("•"), HeaderStyle.Render(label), DimStyle.Render(reason))
+		rows = append(rows, pruneRow{name: label, kind: pruneSkip, state: "skip", why: reason})
 	}
 	for _, wt := range wts {
 		// Never the primary checkout, the base-branch worktree, or the one we're
@@ -635,22 +636,22 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 			continue
 		}
 		if wt.Branch == "" {
-			skip("(detached)", "detached HEAD — skipped")
+			skip("(detached)", "detached HEAD")
 			continue
 		}
 		label := wt.Branch
 		clean, err := repo.WorktreeClean(ctx, wt.Path)
 		if err != nil {
-			skip(label, "couldn't read status — skipped")
+			skip(label, "couldn't read status")
 			continue
 		}
 		if !clean {
-			skip(label, "uncommitted changes — skipped")
+			skip(label, "uncommitted changes")
 			continue
 		}
 		merged, err := repo.IsMerged(ctx, wt.Branch, base)
 		if err != nil {
-			skip(label, "couldn't check merge state — skipped")
+			skip(label, "couldn't check merge state")
 			continue
 		}
 		reason := "merged"
@@ -659,13 +660,13 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 		case goneSet[wt.Branch]:
 			reason = "upstream gone"
 		default:
-			skip(label, fmt.Sprintf("not merged into %s — skipped", base))
+			skip(label, "not merged into "+base)
 			continue
 		}
 		if dryRun {
 			removed++
 			freed = append(freed, wt.Branch)
-			fmt.Fprintf(out, "%s %s  %s\n", WarnStyle.Render("⤳"), HeaderStyle.Render(label), DimStyle.Render("would remove "+wt.Path+" ("+reason+")"))
+			rows = append(rows, pruneRow{name: label, kind: prunePlan, state: "will remove", why: reason})
 			continue
 		}
 		if err := repo.WorktreeRemove(ctx, wt.Path, false); err != nil {
@@ -674,15 +675,17 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 		}
 		removed++
 		freed = append(freed, wt.Branch)
-		fmt.Fprintf(out, "%s %s  %s\n", OkStyle.Render("✓"), HeaderStyle.Render(label), DimStyle.Render("removed "+wt.Path+" ("+reason+")"))
+		why := reason
 		if deleteBranches {
 			if err := repo.DeleteBranch(ctx, wt.Branch, false); err != nil {
-				fmt.Fprintf(out, "  %s\n", WarnStyle.Render("kept branch "+wt.Branch+": "+err.Error()))
+				why += " · kept branch: " + err.Error()
 			} else {
-				fmt.Fprintf(out, "  %s\n", DimStyle.Render("deleted branch "+wt.Branch))
+				why += " · branch deleted"
 			}
 		}
+		rows = append(rows, pruneRow{name: label, kind: pruneDone, state: "removed", why: why})
 	}
+	renderPruneTable(out, rows)
 	return removed, kept, freed, nil
 }
 

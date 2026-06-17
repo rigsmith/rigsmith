@@ -240,9 +240,10 @@ func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base 
 		delete(inWorktree, name)
 	}
 
+	var rows []pruneRow
 	skip := func(label, reason string) {
 		kept++
-		fmt.Fprintf(out, "%s %s  %s\n", DimStyle.Render("•"), HeaderStyle.Render(label), DimStyle.Render(reason))
+		rows = append(rows, pruneRow{name: label, kind: pruneSkip, state: "skip", why: reason})
 	}
 	for _, b := range branches {
 		if b.Current || b.Name == base {
@@ -254,7 +255,7 @@ func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base 
 		}
 		merged, err := repo.IsMerged(ctx, b.Name, base)
 		if err != nil {
-			skip(b.Name, "couldn't check merge state — skipped")
+			skip(b.Name, "couldn't check merge state")
 			continue
 		}
 		reason := ""
@@ -264,15 +265,15 @@ func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base 
 		case b.Gone && gone:
 			reason = "upstream gone"
 		case b.Gone:
-			skip(b.Name, "upstream gone but not provably merged — skipped (use --gone)")
+			skip(b.Name, "upstream gone but not provably merged (use --gone)")
 			continue
 		default:
-			skip(b.Name, fmt.Sprintf("not merged into %s — skipped", base))
+			skip(b.Name, "not merged into "+base)
 			continue
 		}
 		if dryRun {
 			removed++
-			fmt.Fprintf(out, "%s %s  %s\n", WarnStyle.Render("⤳"), HeaderStyle.Render(b.Name), DimStyle.Render("would delete ("+reason+")"))
+			rows = append(rows, pruneRow{name: b.Name, kind: prunePlan, state: "will delete", why: reason})
 			continue
 		}
 		// Force-delete: we've established the branch is done with, but a
@@ -282,7 +283,8 @@ func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base 
 			continue
 		}
 		removed++
-		fmt.Fprintf(out, "%s %s  %s\n", OkStyle.Render("✓"), HeaderStyle.Render(b.Name), DimStyle.Render("deleted ("+reason+")"))
+		rows = append(rows, pruneRow{name: b.Name, kind: pruneDone, state: "deleted", why: reason})
 	}
+	renderPruneTable(out, rows)
 	return removed, kept, nil
 }

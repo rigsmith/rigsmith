@@ -4,10 +4,39 @@ import (
 	"bytes"
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 )
+
+// renderPruneTable lays rows out as a name | state | why table with a header.
+func TestRenderPruneTable(t *testing.T) {
+	var buf bytes.Buffer
+	renderPruneTable(&buf, []pruneRow{
+		{name: "feat/a", kind: prunePlan, state: "will remove", why: "merged"},
+		{name: "feat/longer-name", kind: pruneSkip, state: "skip", why: "uncommitted changes"},
+	})
+	out := buf.String()
+	for _, want := range []string{"name", "state", "why", "feat/a", "will remove", "uncommitted changes"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("table missing %q\n%s", want, out)
+		}
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 3 { // header + 2 rows
+		t.Fatalf("got %d lines, want 3 (header + 2 rows):\n%s", len(lines), out)
+	}
+}
+
+// An empty plan renders a "(none)" line rather than a bare header.
+func TestRenderPruneTableEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	renderPruneTable(&buf, nil)
+	if !strings.Contains(buf.String(), "none") {
+		t.Errorf("empty table should say (none), got %q", buf.String())
+	}
+}
 
 // A worktree on a merged branch and the branch itself are cleared by the two
 // phases run in order: worktrees first, then branches.
