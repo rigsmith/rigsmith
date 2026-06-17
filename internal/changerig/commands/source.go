@@ -58,6 +58,8 @@ func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package)
 		pkgsByRef[ref] = append(pkgsByRef[ref], p.Name)
 	}
 
+	collapseInitial := w.Config.Versioning.InitialRelease.Collapse
+
 	var out []*changeset.Changeset
 	for ref, names := range pkgsByRef {
 		commits, err := gitutil.LogSince(ctx, w.Root, ref)
@@ -71,6 +73,7 @@ func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package)
 		for _, n := range names {
 			want[n] = true
 		}
+		var refSets []*changeset.Changeset
 		for _, cs := range commitsource.Synthesize(commits, pkgs, w.Root, w.Config) {
 			var kept []changeset.Release
 			for _, r := range cs.Releases {
@@ -83,8 +86,45 @@ func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package)
 			}
 			clone := *cs
 			clone.Releases = kept
-			out = append(out, &clone)
+			refSets = append(refSets, &clone)
 		}
+		// First release (empty since-ref → no prior tag) with collapse enabled:
+		// condense the whole history into one "Initial release" line per package
+		// so the changelog isn't a dump of every commit. Tagged refs are
+		// unaffected and keep their per-commit changesets.
+		if collapseInitial && ref == "" {
+			refSets = collapseInitialRelease(refSets, w.Config)
+		}
+		out = append(out, refSets...)
 	}
 	return out, nil
+}
+
+// collapseInitialRelease replaces a first release's per-commit changesets with a
+// single synthetic changeset per package — one configured summary line at a
+// fixed bump — so a package's debut changelog is a headline, not its full
+// history. Packages are emitted in first-seen order for a stable changelog.
+func collapseInitialRelease(sets []*changeset.Changeset, cfg *config.Config) []*changeset.Changeset {
+	bump := cfg.InitialReleaseBump()
+	summary := cfg.InitialReleaseSummary()
+
+	var order []string
+	seen := map[string]bool{}
+	for _, cs := range sets {
+		for _, r := range cs.Releases {
+			if !seen[r.Name] {
+				seen[r.Name] = true
+				order = append(order, r.Name)
+			}
+		}
+	}
+	out := make([]*changeset.Changeset, 0, len(order))
+	for _, name := range order {
+		out = append(out, &changeset.Changeset{
+			Releases: []changeset.Release{{Name: name, Bump: bump}},
+			Summary:  summary,
+			ID:       "initial-" + name,
+		})
+	}
+	return out
 }

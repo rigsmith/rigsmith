@@ -28,6 +28,7 @@ func NewVersionCmd() *cobra.Command {
 		snapshotTag      string
 		snapshotTemplate string
 		independent      bool
+		yes              bool
 	)
 	cmd := &cobra.Command{
 		Use:   "version",
@@ -166,6 +167,22 @@ func NewVersionCmd() *cobra.Command {
 			if dryRun {
 				fmt.Fprintln(out, DimStyle.Render("\n(dry run — no files written)"))
 				return nil
+			}
+
+			// Interactive version override (release-it style): offer each releasing
+			// package's computed next version and let the user accept or override it.
+			// Only for a normal release on a real terminal — snapshot/prerelease set
+			// their own version suffixes, and --yes / non-interactive runs accept the
+			// computed plan as-is.
+			if !yes && mode == planner.ModeNormal && Interactive() {
+				changed, err := promptVersionOverrides(out, plan)
+				if err != nil {
+					return err
+				}
+				if changed {
+					fmt.Fprintln(out)
+					PrintPlan(out, plan, false)
+				}
 			}
 
 			// Contributors section: resolve each changeset's author (from its
@@ -307,6 +324,7 @@ func NewVersionCmd() *cobra.Command {
 	f.Lookup("snapshot").NoOptDefVal = " " // allow bare --snapshot (no tag)
 	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")
 	f.BoolVar(&independent, "independent", false, "version each package on its own changesets, writing inline (overrides a shared version file)")
+	f.BoolVarP(&yes, "yes", "y", false, "accept the computed versions; skip the interactive version-override prompt")
 	return cmd
 }
 

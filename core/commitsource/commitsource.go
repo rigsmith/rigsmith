@@ -36,6 +36,31 @@ var trailingRefRe = regexp.MustCompile(`\([ a-z]*#\d+\s*\)`)
 // at the start of a body line, per the Conventional Commits spec (uppercase).
 var breakingFooterRe = regexp.MustCompile(`(?m)^BREAKING[ -]CHANGE:`)
 
+// canonicalTypes are the Conventional Commits types that carry no default
+// changelog group of their own (so DefaultChangelogGroups omits them) but are
+// still recognized conventional types — a `ci:`/`style:`/`revert:` commit is a
+// real release, not freeform. They join the configured groups when deciding
+// whether a commit's type is recognized; see recognizedTypes.
+var canonicalTypes = []string{"ci", "style", "revert"}
+
+// recognizedTypes is the set of conventional-commit types that drive a release:
+// the configured changelog groups plus the canonical extras above. headerRe is
+// deliberately permissive — it parses any `word:` prefix — so a subject like
+// `rig: …` or `Bump: …` looks conventional with `rig`/`bump` as its "type".
+// Filtering against this set is what makes such off-spec prefixes count as
+// non-conventional (ignored), the way @unjs/changelogen restricts to its known
+// `types`. An unrecognized type is dropped, not patch-bumped.
+func recognizedTypes(cfg *config.Config) map[string]bool {
+	set := make(map[string]bool)
+	for _, g := range cfg.Groups() {
+		set[strings.ToLower(g.Type)] = true
+	}
+	for _, t := range canonicalTypes {
+		set[t] = true
+	}
+	return set
+}
+
 // header is the parsed conventional-commit header of a commit subject.
 type header struct {
 	typ      string
@@ -74,17 +99,22 @@ func parseHeader(subject string) (header, bool) {
 // least one of its changed files (most-specific dir wins). When the config maps
 // the commit's scope to a known package, that scope wins and the commit
 // attributes to that single package instead.
+//
+// A commit whose type is not a recognized conventional type (see
+// recognizedTypes) is treated as non-conventional and produces nothing — so a
+// `Merge:`/`Bump:`/`rig:` subject no longer slips in as a phantom patch release.
 func Synthesize(commits []gitutil.Commit, packages []plugin.Package, repoRoot string, cfg *config.Config) []*changeset.Changeset {
 	known := make(map[string]bool, len(packages))
 	for _, p := range packages {
 		known[p.Name] = true
 	}
 	scopes := cfg.Versioning.Scopes
+	recognized := recognizedTypes(cfg)
 
 	var out []*changeset.Changeset
 	for _, c := range commits {
 		h, ok := parseHeader(c.Subject)
-		if !ok {
+		if !ok || !recognized[h.typ] {
 			continue
 		}
 		breaking := h.breaking || breakingFooterRe.MatchString(c.Body)

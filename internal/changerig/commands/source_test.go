@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rigsmith/rigsmith/core/changeset"
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/ecosystem"
 )
@@ -98,6 +99,58 @@ func TestLoadChangesetsCommitMode(t *testing.T) {
 	}
 	if cs.Summary != "add a feature" {
 		t.Errorf("summary = %q, want %q", cs.Summary, "add a feature")
+	}
+}
+
+// TestLoadChangesetsInitialReleaseCollapse: a package with no prior release tag
+// and initialRelease.collapse enabled gets one "Initial release" changeset at
+// the configured bump instead of one changeset per historical commit.
+func TestLoadChangesetsInitialReleaseCollapse(t *testing.T) {
+	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "commit.gpgsign", "false")
+	writeF(t, filepath.Join(dir, "go.mod"), "module example.com/a\n\ngo 1.26\n")
+	writeF(t, filepath.Join(dir, "main.go"), "package main\n")
+	gitCmd(t, dir, "add", "-A")
+	gitCmd(t, dir, "commit", "-m", "feat: first")
+	// Several more conventional commits — all history, no release tag yet.
+	for _, msg := range []string{"feat: second", "fix: third", "docs: fourth"} {
+		writeF(t, filepath.Join(dir, "f_"+msg[len(msg)-2:]+".go"), "package main\n")
+		gitCmd(t, dir, "add", "-A")
+		gitCmd(t, dir, "commit", "-m", msg)
+	}
+
+	cfg, err := config.Parse([]byte(`{"versioning":{"source":"commits","initialRelease":{"collapse":true}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := &Workspace{Root: dir, ChangesetDir: filepath.Join(dir, ".changeset"), Config: cfg, Registry: ecosystem.Default()}
+	pkgs, _, err := ws.Discover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sets, _, err := ws.LoadChangesets(context.Background(), pkgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sets) != 1 {
+		t.Fatalf("got %d changesets, want 1 (collapsed initial release): %+v", len(sets), sets)
+	}
+	cs := sets[0]
+	if cs.Summary != "Initial release" {
+		t.Errorf("summary = %q, want %q", cs.Summary, "Initial release")
+	}
+	if len(cs.Releases) != 1 || cs.Releases[0].Name != "example.com/a" {
+		t.Fatalf("releases = %+v, want one for example.com/a", cs.Releases)
+	}
+	if cs.Releases[0].Bump != changeset.BumpMinor {
+		t.Errorf("bump = %v, want minor (default)", cs.Releases[0].Bump)
 	}
 }
 
