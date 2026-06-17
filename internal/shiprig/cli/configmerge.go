@@ -36,15 +36,24 @@ func configLayoutCheck(ws *commands.Workspace) doctor.Result {
 	// Two distinct dedicated files (Path set on both) → offer the merge. A keyed
 	// source (Path == "") is already unified or lives in .rig.json.
 	if csSrc != nil && relSrc != nil && csSrc.Path != "" && relSrc.Path != "" && csSrc.Path != relSrc.Path {
+		// Write the unified file in the release config's own directory, so a
+		// pipeline's relative step-script (`file`) refs — resolved against the
+		// config's BaseDir — keep working (a root release.jsonc → root
+		// shiprig.jsonc, not relocated under .changeset/).
+		target := filepath.Join(filepath.Dir(relSrc.Path), "shiprig.jsonc")
+		rel := target
+		if r, err := filepath.Rel(ws.Root, target); err == nil {
+			rel = r
+		}
 		return doctor.Result{
 			Name:   "config layout",
 			Status: doctor.Warn,
 			Detail: fmt.Sprintf("changeset and release config live in two files (%s, %s)",
 				filepath.Base(csSrc.Path), filepath.Base(relSrc.Path)),
 			Hint:     "shiprig can read both from one file — a `changeset` key in shiprig.jsonc, or a `release` key in config.json",
-			FixLabel: "merge both into one .changeset/shiprig.jsonc",
+			FixLabel: "merge both into one " + rel,
 			Fix: func(context.Context) error {
-				return mergeIntoShiprig(ws.ChangesetDir, csSrc, relSrc)
+				return mergeIntoShiprig(target, csSrc, relSrc)
 			},
 		}
 	}
@@ -56,16 +65,16 @@ func configLayoutCheck(ws *commands.Workspace) doctor.Result {
 	return doctor.Result{Name: "config layout", Status: doctor.OK, Detail: detail}
 }
 
-// mergeIntoShiprig writes a single `.changeset/shiprig.jsonc` carrying the
-// release pipeline at the top level and the changeset config under a `changeset`
-// key, then removes the two original files. Comments are not preserved (the
-// scaffold header is regenerated) — a one-time migration trade-off.
-func mergeIntoShiprig(changesetDir string, csSrc, relSrc *cfgfind.Source) error {
+// mergeIntoShiprig writes a single unified `shiprig.jsonc` at target — the
+// release pipeline at the top level, the changeset config under a `changeset`
+// key — then removes the two original files. target sits in the release config's
+// directory so relative step-script refs survive. Comments are not preserved
+// (the scaffold header is regenerated) — a one-time migration trade-off.
+func mergeIntoShiprig(target string, csSrc, relSrc *cfgfind.Source) error {
 	merged, err := mergeUnified(csSrc.Data, relSrc.Data)
 	if err != nil {
 		return err
 	}
-	target := filepath.Join(changesetDir, "shiprig.jsonc")
 	if err := os.WriteFile(target, merged, 0o644); err != nil {
 		return err
 	}
