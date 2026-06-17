@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cfgfind"
+	"github.com/rigsmith/rigsmith/core/changeset"
 	"github.com/rigsmith/rigsmith/core/jsonc"
 )
 
@@ -77,6 +78,43 @@ type Versioning struct {
 	// which files it touched. A commit whose scope is absent from this map falls
 	// back to path-based attribution.
 	Scopes map[string]string `json:"scopes,omitempty"`
+	// InitialRelease controls the changelog for a package's FIRST release — the
+	// one with no prior release tag, where commit mode would otherwise log the
+	// entire history. The zero value preserves that full-history behavior.
+	InitialRelease InitialRelease `json:"initialRelease,omitempty"`
+}
+
+// InitialRelease tunes how a package's first release (no prior tag) renders
+// under commit-based versioning. Enabling Collapse replaces the full history
+// with a single Summary line at a fixed Bump, so a first release isn't a dump
+// of every commit ever made.
+type InitialRelease struct {
+	// Collapse, when true, condenses a first release's whole history into one
+	// changelog line instead of one line per commit.
+	Collapse bool `json:"collapse,omitempty"`
+	// Summary is that single line's text (default "Initial release").
+	Summary string `json:"summary,omitempty"`
+	// Bump is the version bump for the collapsed first release: "major",
+	// "minor" (default), or "patch".
+	Bump string `json:"bump,omitempty"`
+}
+
+// InitialReleaseSummary is the configured collapsed-first-release line, or the
+// default when unset.
+func (c *Config) InitialReleaseSummary() string {
+	if s := strings.TrimSpace(c.Versioning.InitialRelease.Summary); s != "" {
+		return s
+	}
+	return "Initial release"
+}
+
+// InitialReleaseBump is the configured first-release bump, defaulting to minor
+// (and falling back to minor for an unrecognized value).
+func (c *Config) InitialReleaseBump() changeset.Bump {
+	if b, ok := changeset.ParseBump(c.Versioning.InitialRelease.Bump); ok {
+		return b
+	}
+	return changeset.BumpMinor
 }
 
 // CommitSource returns the normalized versioning source, defaulting an empty

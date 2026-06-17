@@ -64,6 +64,52 @@ func TestSynthesizeSkipsNonConventional(t *testing.T) {
 	}
 }
 
+func TestSynthesizeSkipsUnrecognizedType(t *testing.T) {
+	// headerRe parses any `word:` prefix, so these look conventional with
+	// `rig`/`bump`/`merge` as the type — but none is a recognized conventional
+	// type, so they must be dropped rather than slipping in as patch releases.
+	commits := []gitutil.Commit{
+		{Hash: "a1", Subject: "rig: live dashboard", Files: []string{abs("packages/pkg-a/x.go")}},
+		{Hash: "a2", Subject: "Bump: deps", Files: []string{abs("packages/pkg-a/x.go")}},
+		{Hash: "a3", Subject: "changerig: add flag", Files: []string{abs("packages/pkg-a/x.go")}},
+	}
+	if got := Synthesize(commits, pkgs(), root, config.Default()); len(got) != 0 {
+		t.Errorf("got %d changesets, want 0 (unrecognized types)", len(got))
+	}
+}
+
+func TestSynthesizeKeepsCanonicalTypesWithoutGroup(t *testing.T) {
+	// ci/style/revert have no default changelog group but are recognized
+	// conventional types — they should still produce releases.
+	for _, typ := range []string{"ci", "style", "revert"} {
+		commits := []gitutil.Commit{
+			{Hash: "z", Subject: typ + ": something", Files: []string{abs("packages/pkg-a/x.go")}},
+		}
+		got := Synthesize(commits, pkgs(), root, config.Default())
+		if len(got) != 1 {
+			t.Errorf("type %q: got %d changesets, want 1", typ, len(got))
+			continue
+		}
+		if got[0].Type != typ {
+			t.Errorf("type %q: cs.Type = %q", typ, got[0].Type)
+		}
+	}
+}
+
+func TestSynthesizeRecognizesConfiguredGroupType(t *testing.T) {
+	// A custom changelog group makes its type recognized even though it isn't a
+	// canonical conventional type.
+	cfg := config.Default()
+	cfg.ChangelogGroups = append(config.DefaultChangelogGroups,
+		config.ChangelogGroup{Type: "deps", Section: "Dependencies", Bump: "patch"})
+	commits := []gitutil.Commit{
+		{Hash: "d1", Subject: "deps: bump x", Files: []string{abs("packages/pkg-a/x.go")}},
+	}
+	if got := Synthesize(commits, pkgs(), root, cfg); len(got) != 1 {
+		t.Errorf("got %d changesets, want 1 (configured group type recognized)", len(got))
+	}
+}
+
 func TestSynthesizeSkipsCommitUnderNoPackage(t *testing.T) {
 	commits := []gitutil.Commit{
 		{Hash: "d", Subject: "docs: readme", Files: []string{abs("README.md"), abs(".github/ci.yml")}},
