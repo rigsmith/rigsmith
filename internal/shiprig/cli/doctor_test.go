@@ -47,6 +47,17 @@ func TestPackageResults(t *testing.T) {
 	if _, ok := findResult(rs, "release plan"); !ok {
 		t.Error("summary should still be present when paths is configured")
 	}
+
+	// Non-interactive (no fix): the warning is still reported, but report-only —
+	// no Fix, so `doctor --fix` can't launch the picker and hang.
+	rs = packageResults(rps, false, nil)
+	warn, ok = findResult(rs, "publish scope")
+	if !ok || warn.Status != doctor.Warn {
+		t.Fatalf("scope warning should still report without a fix: %+v", warn)
+	}
+	if warn.Fix != nil || warn.FixLabel != "" {
+		t.Error("warning must be report-only when no interactive fix is provided")
+	}
 }
 
 func TestPublishResults_MapsEcosystems(t *testing.T) {

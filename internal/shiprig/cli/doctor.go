@@ -53,8 +53,15 @@ func packageChecks(ctx context.Context, ws *commands.Workspace) []doctor.Result 
 		return []doctor.Result{{Name: "release plan", Status: doctor.Warn,
 			Detail: "could not compute the release plan: " + err.Error()}}
 	}
-	return packageResults(rps, len(ws.Config.Paths) > 0,
-		func(ctx context.Context) error { return RunPackagePicker(ctx, ws) })
+	// Only offer the picker as a fix on an interactive terminal: under
+	// `shiprig doctor --fix` in CI/piped output the fix flow would otherwise try
+	// to launch the bubbletea picker and hang. Non-interactively the warning is
+	// report-only (its hint points at `shiprig packages`).
+	var fix func(context.Context) error
+	if commands.Interactive() {
+		fix = func(ctx context.Context) error { return RunPackagePicker(ctx, ws) }
+	}
+	return packageResults(rps, len(ws.Config.Paths) > 0, fix)
 }
 
 // packageResults builds the packages-section results from the disposition list:
@@ -85,14 +92,19 @@ func packageResults(rps []commands.ReleasePkg, pathsScoped bool, fix func(contex
 
 	if len(unplanned) > 0 && !pathsScoped {
 		sort.Strings(unplanned)
-		rs = append(rs, doctor.Result{
-			Name:     "publish scope",
-			Status:   doctor.Warn,
-			Detail:   fmt.Sprintf("%d package(s) would publish with no planned version bump: %s", len(unplanned), previewList(unplanned, 4)),
-			Hint:     "scope discovery with `paths`, or exclude them — `shiprig packages` toggles the ignore list",
-			FixLabel: "review which packages to build (opens the include/exclude picker)",
-			Fix:      fix,
-		})
+		res := doctor.Result{
+			Name:   "publish scope",
+			Status: doctor.Warn,
+			Detail: fmt.Sprintf("%d package(s) would publish with no planned version bump: %s", len(unplanned), previewList(unplanned, 4)),
+			Hint:   "scope discovery with `paths`, or exclude them — `shiprig packages` toggles the ignore list",
+		}
+		// Only attach the interactive picker fix when one was provided (a TTY);
+		// otherwise the warning stays report-only so `--fix` can't launch it.
+		if fix != nil {
+			res.FixLabel = "review which packages to build (opens the include/exclude picker)"
+			res.Fix = fix
+		}
+		rs = append(rs, res)
 	}
 	return rs
 }

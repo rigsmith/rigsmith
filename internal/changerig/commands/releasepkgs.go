@@ -32,11 +32,18 @@ func (p ReleasePkg) Releasing() bool { return p.Next != "" }
 // Ignored packages are still listed (so a caller can re-include them) — the
 // Ignored flag, not omission, marks them.
 func ReleasePackages(ctx context.Context, ws *Workspace) ([]ReleasePkg, error) {
+	// Discover once and build the plan from the discovered packages, rather than
+	// calling BuildPlan (which would scan the workspace a second time).
 	pkgs, ecoOf, err := ws.Discover(ctx)
 	if err != nil {
 		return nil, err
 	}
-	plan, err := BuildPlan(ctx, ws)
+	changesets, _, err := ws.LoadChangesets(ctx, pkgs)
+	if err != nil {
+		return nil, err
+	}
+	ws.Config.PerPackageStrategy = ws.Config.StrategyByPackage(ecoOf)
+	plan, err := assemblePlan(ctx, ws, changesets, pkgs)
 	if err != nil {
 		return nil, err
 	}

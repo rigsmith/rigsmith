@@ -238,6 +238,9 @@ func (m pkgPickerModel) statusCol(r pkgPickRow) string {
 // include/exclude picker, persisting choices to the changeset config `ignore`
 // list. It draws on stderr (keeping stdout clean) like the other rig pickers.
 func RunPackagePicker(ctx context.Context, ws *commands.Workspace) error {
+	if !commands.Interactive() {
+		return nil // never block on a bubbletea program without a terminal
+	}
 	rps, err := commands.ReleasePackages(ctx, ws)
 	if err != nil {
 		return err
