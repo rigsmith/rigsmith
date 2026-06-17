@@ -5,7 +5,60 @@ import (
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/doctor"
+	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 )
+
+func findResult(rs []doctor.Result, name string) (doctor.Result, bool) {
+	for _, r := range rs {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return doctor.Result{}, false
+}
+
+// TestPackageResults: the summary is always present; the scope warning fires for
+// unplanned (would-publish, no bump) packages only when discovery is unscoped.
+func TestPackageResults(t *testing.T) {
+	rps := []commands.ReleasePkg{
+		{Name: "core", Next: "1.1.0", Bump: "minor"}, // releasing
+		{Name: "demo", Private: true},                // private
+		{Name: "old", Ignored: true},                 // ignored
+		{Name: "fixture-a"},                          // unplanned (drift)
+		{Name: "fixture-b"},                          // unplanned (drift)
+	}
+	noop := func(context.Context) error { return nil }
+
+	// Unscoped (no paths): warning present and fixable.
+	rs := packageResults(rps, false, noop)
+	if summary, ok := findResult(rs, "release plan"); !ok || summary.Status != doctor.Info {
+		t.Fatalf("summary = %+v, want an Info row", summary)
+	}
+	warn, ok := findResult(rs, "publish scope")
+	if !ok || warn.Status != doctor.Warn || warn.Fix == nil {
+		t.Fatalf("scope warning = %+v, want a fixable Warn", warn)
+	}
+
+	// Scoped (paths set): the user curated discovery, so no drift warning.
+	rs = packageResults(rps, true, noop)
+	if _, ok := findResult(rs, "publish scope"); ok {
+		t.Error("scope warning should be suppressed when paths is configured")
+	}
+	if _, ok := findResult(rs, "release plan"); !ok {
+		t.Error("summary should still be present when paths is configured")
+	}
+
+	// Non-interactive (no fix): the warning is still reported, but report-only —
+	// no Fix, so `doctor --fix` can't launch the picker and hang.
+	rs = packageResults(rps, false, nil)
+	warn, ok = findResult(rs, "publish scope")
+	if !ok || warn.Status != doctor.Warn {
+		t.Fatalf("scope warning should still report without a fix: %+v", warn)
+	}
+	if warn.Fix != nil || warn.FixLabel != "" {
+		t.Error("warning must be report-only when no interactive fix is provided")
+	}
+}
 
 func TestPublishResults_MapsEcosystems(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // nothing installed ⇒ deterministic warns

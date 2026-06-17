@@ -2,7 +2,10 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
+	"sort"
+	"strings"
 
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/doctor"
@@ -32,9 +35,86 @@ func newDoctorCmd() *cobra.Command {
 // releaseDoctorSections is the extra section shiprig appends to the changeset
 // baseline: the forge CLI plus the per-ecosystem publish tools. It reuses the
 // baseline's Discovery, so the workspace is scanned once.
-func releaseDoctorSections(ctx context.Context, _ *commands.Workspace, disc commands.Discovery) []doctor.Section {
+func releaseDoctorSections(ctx context.Context, ws *commands.Workspace, disc commands.Discovery) []doctor.Section {
 	results := append([]doctor.Result{checkGh(ctx)}, publishToolChecks(disc)...)
-	return []doctor.Section{{Title: "release", Results: results}}
+	return []doctor.Section{
+		{Title: "release", Results: results},
+		{Title: "packages", Results: packageChecks(ctx, ws)},
+	}
+}
+
+// packageChecks reports the packages a release will build: a summary line
+// (releasing / private / ignored), and a fixable scope warning whose fix opens
+// the include/exclude picker. It computes the disposition, then defers the
+// result shaping to the pure packageResults.
+func packageChecks(ctx context.Context, ws *commands.Workspace) []doctor.Result {
+	rps, err := commands.ReleasePackages(ctx, ws)
+	if err != nil {
+		return []doctor.Result{{Name: "release plan", Status: doctor.Warn,
+			Detail: "could not compute the release plan: " + err.Error()}}
+	}
+	// Only offer the picker as a fix on an interactive terminal: under
+	// `shiprig doctor --fix` in CI/piped output the fix flow would otherwise try
+	// to launch the bubbletea picker and hang. Non-interactively the warning is
+	// report-only (its hint points at `shiprig packages`).
+	var fix func(context.Context) error
+	if commands.Interactive() {
+		fix = func(ctx context.Context) error { return RunPackagePicker(ctx, ws) }
+	}
+	return packageResults(rps, len(ws.Config.Paths) > 0, fix)
+}
+
+// packageResults builds the packages-section results from the disposition list:
+// always a summary, plus a scope warning when packages would publish with no
+// planned version bump (the drift demos and test fixtures cause). The warning is
+// gated on pathsScoped: a configured `paths` already curates which roots are
+// scanned, so an unplanned package within it is just one with no changes this
+// run — not drift worth nagging about. Pure (no discovery) so it's unit-testable.
+func packageResults(rps []commands.ReleasePkg, pathsScoped bool, fix func(context.Context) error) []doctor.Result {
+	var releasing, private, ignored int
+	var unplanned []string // would publish (not ignored, not private) but no planned bump
+	for _, p := range rps {
+		switch {
+		case p.Ignored:
+			ignored++
+		case p.Private:
+			private++
+		case p.Releasing():
+			releasing++
+		default:
+			unplanned = append(unplanned, p.Name)
+		}
+	}
+
+	rs := []doctor.Result{{Name: "release plan", Status: doctor.Info,
+		Detail: fmt.Sprintf("%d releasing · %d private · %d ignored (of %d discovered)",
+			releasing, private, ignored, len(rps))}}
+
+	if len(unplanned) > 0 && !pathsScoped {
+		sort.Strings(unplanned)
+		res := doctor.Result{
+			Name:   "publish scope",
+			Status: doctor.Warn,
+			Detail: fmt.Sprintf("%d package(s) would publish with no planned version bump: %s", len(unplanned), previewList(unplanned, 4)),
+			Hint:   "scope discovery with `paths`, or exclude them — `shiprig packages` toggles the ignore list",
+		}
+		// Only attach the interactive picker fix when one was provided (a TTY);
+		// otherwise the warning stays report-only so `--fix` can't launch it.
+		if fix != nil {
+			res.FixLabel = "review which packages to build (opens the include/exclude picker)"
+			res.Fix = fix
+		}
+		rs = append(rs, res)
+	}
+	return rs
+}
+
+// previewList joins up to n names, summarizing the remainder as "+K more".
+func previewList(names []string, n int) string {
+	if len(names) <= n {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s, +%d more", strings.Join(names[:n], ", "), len(names)-n)
 }
 
 func checkGh(ctx context.Context) doctor.Result {
