@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
@@ -94,5 +95,19 @@ func TestSaveLoad(t *testing.T) {
 	// the per-OS desktop cascade survives the round-trip
 	if got.Roots[1].Location.PerOS[pathmap.OSWindows] != `$HOME/AppData/Roaming/Claude` {
 		t.Errorf("desktop cascade lost: %+v", got.Roots[1].Location)
+	}
+
+	// Save now emits a schema-stamped JSONC document (leading comment + $schema),
+	// and the comment round-trips through the JSONC loader.
+	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if !strings.HasPrefix(body, "//") {
+		t.Errorf("config.json should open with a // JSONC header:\n%s", body)
+	}
+	if !strings.Contains(body, `"$schema": "`+SchemaURL+`"`) {
+		t.Errorf("config.json missing the $schema stamp:\n%s", body)
 	}
 }
