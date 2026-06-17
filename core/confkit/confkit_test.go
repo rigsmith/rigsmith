@@ -81,6 +81,13 @@ func TestWriterDocument(t *testing.T) {
 	if strings.Contains(string(plain), "//") || strings.Contains(string(plain), "$schema") {
 		t.Errorf("empty header + no schema should be bare JSON:\n%s", plain)
 	}
+
+	// A value that merely equals "$schema" must not suppress the real top-level
+	// $schema stamp (regression: substring detection would skip it).
+	val, _ := w.Document("", cfg{Name: "$schema"})
+	if !strings.Contains(string(val), `"$schema": "https://example.test/schema.json"`) {
+		t.Errorf("a value of \"$schema\" wrongly suppressed the stamp:\n%s", val)
+	}
 }
 
 func TestWriterPreservesComments(t *testing.T) {

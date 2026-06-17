@@ -67,7 +67,7 @@ func (w Writer) Document(header string, v any) ([]byte, error) {
 		}
 	}
 	s := string(body)
-	if w.SchemaURL != "" && !strings.Contains(s, `"$schema"`) {
+	if w.SchemaURL != "" && !hasTopLevelKey(body, "$schema") {
 		schema := "  " + quoteJSON("$schema") + ": " + quoteJSON(w.SchemaURL)
 		switch {
 		case strings.HasPrefix(s, "{\n"):
@@ -79,6 +79,18 @@ func (w Writer) Document(header string, v any) ([]byte, error) {
 	b.WriteString(s)
 	b.WriteByte('\n')
 	return []byte(b.String()), nil
+}
+
+// hasTopLevelKey reports whether the JSON object in body has key at the top
+// level — checked structurally (not by substring), so a value that merely equals
+// the key string doesn't count. Non-objects report false.
+func hasTopLevelKey(body []byte, key string) bool {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(body, &obj) != nil {
+		return false
+	}
+	_, ok := obj[key]
+	return ok
 }
 
 // Set splices path = rawValue (a raw JSON literal) into the file, preserving
