@@ -10,10 +10,11 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/cfgfind"
 	"github.com/rigsmith/rigsmith/core/jsonc"
 )
 
@@ -332,13 +333,36 @@ func Parse(data []byte) (*Config, error) {
 	return cfg, nil
 }
 
-// Load reads and parses .changeset/config.json under the given changeset dir.
+// Load resolves and parses the changeset config for the repo whose changeset
+// dir is changesetDir. The config may live at .changeset/{config,changerig}.{jsonc,json},
+// ./changerig.{jsonc,json}, or a "changerig"/"changeset" key in .rig.json — at
+// most one. None returns fs.ErrNotExist (callers fall back to defaults); more
+// than one is an error naming each, so a misconfiguration is loud, not guessed.
 func Load(changesetDir string) (*Config, error) {
-	data, err := os.ReadFile(filepath.Join(changesetDir, "config.json"))
+	src, err := cfgfind.Find(Spec(changesetDir))
 	if err != nil {
 		return nil, err
 	}
-	return Parse(data)
+	if src == nil {
+		return nil, fs.ErrNotExist
+	}
+	return Parse(src.Data)
+}
+
+// Spec is the changeset config's allowed locations — for the resolver and the
+// `config` command (which targets the resolved file). root is the parent of
+// changesetDir (always <root>/.changeset).
+func Spec(changesetDir string) cfgfind.Spec {
+	root := filepath.Dir(changesetDir)
+	return cfgfind.Spec{
+		Label: "changeset config",
+		Probe: []cfgfind.DirNames{
+			{Dir: changesetDir, Names: []string{"config", "changerig"}},
+			{Dir: root, Names: []string{"changerig"}},
+		},
+		RigPath: filepath.Join(root, ".rig.json"),
+		RigKeys: []string{"changerig", "changeset"},
+	}
 }
 
 // ChangelogSpec interprets the polymorphic `changelog` config value and returns

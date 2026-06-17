@@ -38,3 +38,15 @@ unknown keys get a did-you-mean warning.
 Custom commands honor `--dry-run`; extra args are forwarded. A custom name that
 collides with a built-in verb is ignored. Config writes (e.g. the
 default-setter) preserve comments via the JSONC editor.
+
+## Embedding shiprig / changerig config {#embedded}
+
+`.rig.json` can also carry a sibling tool's config as a top-level key, so a repo
+that prefers one file can keep everything here instead of in `.changeset/`:
+
+- `"shiprig"` (or `"release"`) — the [release pipeline](/shiprig/pipeline) config
+- `"changerig"` (or `"changeset"`) — the [changeset](/changerig/lifecycle) config
+
+Each tool also still reads its standalone files; provide the config in **exactly
+one** place — if a tool finds it both here and in a standalone file, it stops and
+lists the conflict rather than guessing.

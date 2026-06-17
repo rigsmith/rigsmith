@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/cfgfind"
+	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/confkit"
 	"github.com/spf13/cobra"
 )
@@ -61,35 +63,59 @@ func NewConfigCmd() *cobra.Command {
 	return cmd
 }
 
-// configFile resolves the path to .changeset/config.json for the current repo.
-func configFile() (string, error) {
+// resolveConfigSource resolves the repo's single changeset config across its
+// allowed locations (a file or an inline .rig.json key). changesetDir is the
+// canonical .changeset path; src is nil when no config exists yet.
+func resolveConfigSource() (src *cfgfind.Source, changesetDir string, err error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	root, err := FindRoot(cwd)
 	if err != nil {
+		return nil, "", err
+	}
+	changesetDir = filepath.Join(root, ".changeset")
+	src, err = cfgfind.Find(config.Spec(changesetDir))
+	return src, changesetDir, err
+}
+
+// configFile resolves the config FILE for read/write operations. It targets the
+// single existing config file; when the config lives in a .rig.json key it
+// returns an error (set/edit must point at a file); with none it defaults to the
+// canonical .changeset/config.json so `config set` scaffolds the conventional
+// spot.
+func configFile() (string, error) {
+	src, changesetDir, err := resolveConfigSource()
+	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, ".changeset", "config.json"), nil
+	switch {
+	case src == nil:
+		return filepath.Join(changesetDir, "config.json"), nil // canonical default
+	case src.Path == "":
+		return "", fmt.Errorf("changeset config lives in %s — edit it there", src.Origin)
+	default:
+		return src.Path, nil
+	}
 }
 
 func newConfigShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
-		Short: "Print the whole config file",
+		Short: "Print the whole config",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := configFile()
+			src, _, err := resolveConfigSource()
 			if err != nil {
 				return err
 			}
-			b, err := os.ReadFile(path)
-			if err != nil {
+			if src == nil {
 				fmt.Fprintln(cmd.OutOrStdout(), "no config yet — run `changerig init`")
 				return nil
 			}
-			fmt.Fprint(cmd.OutOrStdout(), string(b))
+			out := strings.TrimRight(string(src.Data), "\n")
+			fmt.Fprintln(cmd.OutOrStdout(), out) // works for a file or an inline .rig.json key
 			return nil
 		},
 	}
@@ -152,14 +178,19 @@ func newConfigSetCmd() *cobra.Command {
 func newConfigPathCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "path",
-		Short: "Print the path to the config file",
+		Short: "Print where the config is resolved from",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := configFile()
+			src, changesetDir, err := resolveConfigSource()
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), path)
+			if src == nil {
+				// None yet — name the canonical spot `set`/`init` would create.
+				fmt.Fprintln(cmd.OutOrStdout(), filepath.Join(changesetDir, "config.json"))
+				return nil
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), src.Origin) // a file path, or `.rig.json ("changerig" key)`
 			return nil
 		},
 	}

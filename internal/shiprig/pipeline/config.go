@@ -412,19 +412,26 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ParseConfig(data, filepath.Dir(path), path)
+}
 
+// ParseConfig parses release config bytes — from a dedicated file or an inline
+// .rig.json key. baseDir resolves relative step-script "file" refs; origin
+// labels errors. Used by the multi-location resolver, which has already read the
+// bytes (so it can detect "more than one config" before any single read).
+func ParseConfig(data []byte, baseDir, origin string) (*Config, error) {
 	config := &Config{}
 	if err := jsonc.Unmarshal(data, config); err != nil {
-		return nil, fmt.Errorf("could not parse release config '%s': %w", path, err)
+		return nil, fmt.Errorf("could not parse release config '%s': %w", origin, err)
 	}
 	if err := validateVars(config.Vars); err != nil {
-		return nil, fmt.Errorf("release config '%s': %w", path, err)
+		return nil, fmt.Errorf("release config '%s': %w", origin, err)
 	}
 	if _, err := ShellMode(config.Shell); err != nil {
-		return nil, fmt.Errorf("release config '%s': %w", path, err)
+		return nil, fmt.Errorf("release config '%s': %w", origin, err)
 	}
-	if err := loadStepScripts(config, filepath.Dir(path)); err != nil {
-		return nil, fmt.Errorf("release config '%s': %w", path, err)
+	if err := loadStepScripts(config, baseDir); err != nil {
+		return nil, fmt.Errorf("release config '%s': %w", origin, err)
 	}
 	return config, nil
 }

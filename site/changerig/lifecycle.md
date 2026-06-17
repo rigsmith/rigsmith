@@ -13,6 +13,22 @@ changerig init
 Creates the `.changeset/` directory with a `config.json`. The config schema
 (`.changeset/config.json`) covers changelog/format specs and ignore globs.
 
+### Where the config lives
+
+`init` writes the canonical `.changeset/config.json`, but the config is
+**resolved** from one of these locations (at most one — more than one is an
+error that lists them; a `.json` + `.jsonc` pair counts as two):
+
+- `.changeset/config.jsonc` · `.changeset/config.json`
+- `.changeset/changerig.jsonc` · `.changeset/changerig.json`
+- `changerig.jsonc` · `changerig.json` (repo root)
+- a `"changerig"` (or `"changeset"`) key inside `.rig.json`
+
+`.changeset/config.json` keeps the @changesets layout so the JS tool reads it
+too; the alternate names and the `.rig.json` key are rigsmith conveniences.
+`changerig config set` edits whichever single file is in use (when the config
+lives in a `.rig.json` key, edit it there).
+
 ## `add`
 
 ```sh

@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/core/cfgfind"
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/core/gitutil"
@@ -50,11 +51,12 @@ func newReleaseCmd() *cobra.Command {
 				return err
 			}
 
-			path := configPath
-			if path == "" {
-				path = filepath.Join(ws.ChangesetDir, "release.jsonc")
+			var cfg *pipeline.Config
+			if configPath != "" {
+				cfg, err = pipeline.LoadConfig(configPath)
+			} else {
+				cfg, err = resolveReleaseConfig(ws.Root, ws.ChangesetDir)
 			}
-			cfg, err := pipeline.LoadConfig(path)
 			if err != nil {
 				return err
 			}
@@ -360,7 +362,7 @@ func newReleaseCmd() *cobra.Command {
 	f.StringSliceVar(&skip, "skip", nil, "skip these steps (comma-separated)")
 	f.StringVar(&from, "from", "", "start at this step (resume point)")
 	f.StringVar(&to, "to", "", "stop after this step")
-	f.StringVar(&configPath, "config", "", "release config file (default .changeset/release.jsonc)")
+	f.StringVar(&configPath, "config", "", "release config file (default: auto-detected, e.g. .changeset/release.jsonc)")
 	f.BoolVarP(&yes, "yes", "y", false, "approve all confirm gates (non-interactive)")
 	f.BoolVar(&gitOnly, "git-only", false, "skip forge (GitHub) releases; tags only")
 	f.BoolVar(&ui, "ui", false, "force the rich reporter even when piped")
@@ -373,6 +375,30 @@ func newReleaseCmd() *cobra.Command {
 		cmd.MarkFlagsMutuallyExclusive("dry-build", mutex)
 	}
 	return cmd
+}
+
+// resolveReleaseConfig finds the release config across its allowed locations —
+// .changeset/{release,shiprig}.{jsonc,json}, ./{release,shiprig}.{jsonc,json},
+// or a "shiprig"/"release" key in .rig.json — using the empty (defaults) config
+// when none exists and erroring when more than one does (cfgfind never guesses).
+func resolveReleaseConfig(root, changesetDir string) (*pipeline.Config, error) {
+	src, err := cfgfind.Find(cfgfind.Spec{
+		Label: "release config",
+		Probe: []cfgfind.DirNames{
+			{Dir: changesetDir, Names: []string{"release", "shiprig"}},
+			{Dir: root, Names: []string{"release", "shiprig"}},
+		},
+		RigPath:  filepath.Join(root, ".rig.json"),
+		RigKeys:  []string{"shiprig", "release"},
+		FlagHint: "--config",
+	})
+	if err != nil {
+		return nil, err
+	}
+	if src == nil {
+		return &pipeline.Config{}, nil
+	}
+	return pipeline.ParseConfig(src.Data, src.BaseDir, src.Origin)
 }
 
 // configUsesEcosystems reports whether any step opts into ecosystem targeting,

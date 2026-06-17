@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/rigsmith/rigsmith/core/cfgfind"
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/plugin"
@@ -80,10 +81,13 @@ func Open() (*Workspace, error) {
 	}, nil
 }
 
-// Initialized reports whether .changeset/config.json exists.
+// Initialized reports whether the repo has a changeset config in any of its
+// allowed locations (a .changeset file, a root file, or a .rig.json key) — not
+// just the canonical .changeset/config.json. An ambiguous setup counts as
+// initialized (the next command surfaces the conflict).
 func (w *Workspace) Initialized() bool {
-	_, err := os.Stat(filepath.Join(w.ChangesetDir, "config.json"))
-	return err == nil
+	src, err := cfgfind.Find(config.Spec(w.ChangesetDir))
+	return err != nil || src != nil
 }
 
 // discovered is one package paired with the id of the ecosystem that found it,
