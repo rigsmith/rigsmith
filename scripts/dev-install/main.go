@@ -128,7 +128,8 @@ src="${RIGSMITH_DEV_SRC:-}"
 if [ -z "$src" ] && [ -f "{{ROUTE}}" ]; then
 	src="$(cat "{{ROUTE}}")"
 	if [ -n "$src" ] && [ ! -d "$src" ]; then
-		echo "{{NAME}}-dev: pinned route $src is gone — using repo" >&2
+		echo "{{NAME}}-dev: pinned route $src is gone — cleared it, using repo" >&2
+		rm -f "{{ROUTE}}"
 		src=""
 	fi
 fi
@@ -179,6 +180,19 @@ case "${1:-}" in
 		exit 0
 		;;
 esac
+
+# Commands win over worktree queries: when the first arg is a real {{NAME}}
+# subcommand, run it from the pinned route / repo (like -dev) instead of
+# fuzzy-matching a worktree — so "{{NAME}}-wt prune list" runs "{{NAME}} prune
+# list", not "{{NAME}} list" in a worktree that happened to match "prune". A
+# worktree you really want to pick by such a name is still reachable via the
+# menu, a path, or --use. (The picker build is shared/cached with the pick below.)
+if [ "$#" -gt 0 ] && [ "$1" != "--" ] && [ "${1#-}" = "$1" ]; then
+	for c in $("{{PICKER}}" __complete "" 2>/dev/null | awk 'NF && $1 !~ /^:/ { print $1 }'); do
+		[ "$c" = "$1" ] && exec "{{DEV}}" "$@"
+	done
+fi
+
 query=""
 if [ "${1:-}" = "--" ]; then
 	shift
@@ -213,7 +227,8 @@ if not exist "{{ROUTE}}" goto :userepo
 set /p SRC=<"{{ROUTE}}"
 if not defined SRC goto :userepo
 if exist "%SRC%\" goto :gotsrc
-echo {{NAME}}-dev: pinned route %SRC% is gone — using repo>&2
+echo {{NAME}}-dev: pinned route %SRC% is gone — cleared it, using repo>&2
+del /q "{{ROUTE}}" >nul 2>&1
 :userepo
 set "SRC={{REPO}}"
 :gotsrc
@@ -262,6 +277,9 @@ if exist "{{ROUTE}}" (
 exit /b 0
 
 :run
+rem NOTE: the sh launcher also routes a first arg that's a real {{NAME}} command
+rem straight to -dev ("commands win over worktree queries"). That isn't ported
+rem here yet, so on Windows a command-named worktree query is still matched.
 set "QUERY="
 set "REST=%*"
 if "%~1"=="--" (
