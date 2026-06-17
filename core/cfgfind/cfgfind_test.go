@@ -111,6 +111,43 @@ func TestFind_AmbiguousJsonAndJsonc(t *testing.T) {
 	}
 }
 
+func TestFind_UnreadableFileSurfacesError(t *testing.T) {
+	root := t.TempDir()
+	// A directory where a config file is expected: os.ReadFile fails with a
+	// non-NotExist error, which must surface rather than be skipped.
+	if err := os.MkdirAll(filepath.Join(root, ".changeset", "release.jsonc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Find(spec(root)); err == nil {
+		t.Fatal("an unreadable config path should surface an error, not fall back to defaults")
+	}
+}
+
+func TestFind_MalformedRigJSONSurfacesError(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, ".rig.json", `{ not: valid json `)
+	_, err := Find(spec(root))
+	if err == nil || !strings.Contains(err.Error(), ".rig.json") {
+		t.Fatalf("a malformed .rig.json should surface a parse error naming it: %v", err)
+	}
+}
+
+func TestFind_AmbiguityHintIsOptional(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, ".changeset"), "release.jsonc", `{}`)
+	write(t, root, "shiprig.json", `{}`)
+
+	s := spec(root)
+	s.FlagHint = "--config"
+	if _, err := Find(s); err == nil || !strings.Contains(err.Error(), "--config") {
+		t.Fatalf("FlagHint should appear in the message: %v", err)
+	}
+	s.FlagHint = ""
+	if _, err := Find(s); err == nil || strings.Contains(err.Error(), "--config") {
+		t.Fatalf("no FlagHint → no --config in the message: %v", err)
+	}
+}
+
 func TestFind_AmbiguousFileAndRigKey(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, ".changeset"), "release.jsonc", `{}`)

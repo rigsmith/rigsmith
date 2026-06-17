@@ -388,8 +388,9 @@ func resolveReleaseConfig(root, changesetDir string) (*pipeline.Config, error) {
 			{Dir: changesetDir, Names: []string{"release", "shiprig"}},
 			{Dir: root, Names: []string{"release", "shiprig"}},
 		},
-		RigPath: filepath.Join(root, ".rig.json"),
-		RigKeys: []string{"shiprig", "release"},
+		RigPath:  filepath.Join(root, ".rig.json"),
+		RigKeys:  []string{"shiprig", "release"},
+		FlagHint: "--config",
 	})
 	if err != nil {
 		return nil, err

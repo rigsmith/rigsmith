@@ -7,7 +7,9 @@ package cfgfind
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,10 +28,11 @@ type DirNames struct {
 // Spec describes where a tool's config may live, in no particular precedence —
 // at most one may exist.
 type Spec struct {
-	Label   string     // for messages, e.g. "release config"
-	Probe   []DirNames // dedicated config files to look for
-	RigPath string     // path to the repo .rig.json (or "" to skip)
-	RigKeys []string   // keys in .rig.json that may carry the inline config
+	Label    string     // for messages, e.g. "release config"
+	Probe    []DirNames // dedicated config files to look for
+	RigPath  string     // path to the repo .rig.json (or "" to skip)
+	RigKeys  []string   // keys in .rig.json that may carry the inline config
+	FlagHint string     // a CLI flag that forces an explicit file (e.g. "--config"); "" omits the hint
 }
 
 // Source is the single resolved config.
@@ -55,8 +58,11 @@ func Find(spec Spec) (*Source, error) {
 			for _, ext := range []string{".jsonc", ".json"} {
 				p := filepath.Join(dn.Dir, name+ext)
 				data, err := os.ReadFile(p)
+				if errors.Is(err, fs.ErrNotExist) {
+					continue // simply not present
+				}
 				if err != nil {
-					continue // missing/unreadable — not a candidate
+					return nil, fmt.Errorf("reading %s: %w", p, err) // exists but unreadable — be loud
 				}
 				found = append(found, candidate{Source{Data: data, Path: p, BaseDir: dn.Dir, Origin: p}})
 			}
@@ -64,21 +70,28 @@ func Find(spec Spec) (*Source, error) {
 	}
 
 	if spec.RigPath != "" && len(spec.RigKeys) > 0 {
-		if data, err := os.ReadFile(spec.RigPath); err == nil {
+		data, err := os.ReadFile(spec.RigPath)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			// no .rig.json — nothing to embed
+		case err != nil:
+			return nil, fmt.Errorf("reading %s: %w", spec.RigPath, err)
+		default:
 			var keyed map[string]json.RawMessage
-			if jsonc.Unmarshal(data, &keyed) == nil {
-				root := filepath.Dir(spec.RigPath)
-				for _, key := range spec.RigKeys {
-					raw, ok := keyed[key]
-					if !ok || isJSONNull(raw) {
-						continue
-					}
-					found = append(found, candidate{Source{
-						Data:    raw,
-						BaseDir: root,
-						Origin:  spec.RigPath + " (\"" + key + "\" key)",
-					}})
+			if err := jsonc.Unmarshal(data, &keyed); err != nil {
+				return nil, fmt.Errorf("parsing %s: %w", spec.RigPath, err)
+			}
+			root := filepath.Dir(spec.RigPath)
+			for _, key := range spec.RigKeys {
+				raw, ok := keyed[key]
+				if !ok || isJSONNull(raw) {
+					continue
 				}
+				found = append(found, candidate{Source{
+					Data:    raw,
+					BaseDir: root,
+					Origin:  spec.RigPath + " (\"" + key + "\" key)",
+				}})
 			}
 		}
 	}
@@ -90,11 +103,11 @@ func Find(spec Spec) (*Source, error) {
 		s := found[0].source
 		return &s, nil
 	default:
-		return nil, ambiguous(spec.Label, found)
+		return nil, ambiguous(spec.Label, spec.FlagHint, found)
 	}
 }
 
-func ambiguous(label string, found []candidate) error {
+func ambiguous(label, flagHint string, found []candidate) error {
 	origins := make([]string, len(found))
 	for i, c := range found {
 		origins[i] = c.source.Origin
@@ -103,9 +116,13 @@ func ambiguous(label string, found []candidate) error {
 	if label == "" {
 		label = "config"
 	}
+	hint := "keep exactly one"
+	if flagHint != "" {
+		hint += " (or pass " + flagHint + ")"
+	}
 	return fmt.Errorf(
-		"multiple %s sources found — keep exactly one (or pass --config):\n  - %s",
-		label, strings.Join(origins, "\n  - "))
+		"multiple %s sources found — %s:\n  - %s",
+		label, hint, strings.Join(origins, "\n  - "))
 }
 
 // isJSONNull reports whether raw is the JSON literal null (or empty).
