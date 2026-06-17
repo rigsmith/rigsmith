@@ -5,17 +5,25 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 
+	"github.com/rigsmith/rigsmith/core/confkit"
 	"github.com/rigsmith/rigsmith/core/jsonc"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 )
 
 const schemaVersion = 1
+
+// SchemaURL is stamped onto written config.json files, matching the other
+// rigsmith configs (.rig.json, .changeset/config.json).
+const SchemaURL = "https://rigsmith.dev/schemas/clauderig.json"
+
+// writer renders config.json as a schema-stamped JSONC document — consistent
+// with rig/changerig/shiprig, which all write (and read) JSONC.
+var writer = confkit.Writer{SchemaURL: SchemaURL}
 
 // Machine is one computer's path identity: its OS, home directory, and any extra
 // known-folder tokens (e.g. a custom $DROPBOX) that paths may be expressed in.
@@ -133,13 +141,16 @@ func OSToken() string {
 	}
 }
 
-// Save writes the config as indented JSON to dir/config.json.
+// Save writes the config to dir/config.json as a schema-stamped JSONC document
+// (a leading comment + $schema), consistent with the other rigsmith tools. The
+// loader reads JSONC, so hand-added comments survive a round-trip parse (a
+// full-struct rewrite here doesn't preserve them — config.json is tool-managed).
 func Save(c *Config, dir string) error {
-	b, err := json.MarshalIndent(c, "", "  ")
+	b, err := writer.Document("clauderig config — JSONC: comments and trailing commas are allowed.", c)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "config.json"), append(b, '\n'), 0o644)
+	return os.WriteFile(filepath.Join(dir, "config.json"), b, 0o644)
 }
 
 // Load reads dir/config.json.
@@ -150,7 +161,7 @@ func Load(dir string) (*Config, error) {
 	}
 	var c Config
 	// JSONC: tolerate comments/trailing commas, consistent with the other
-	// rigsmith config files. Save still emits plain indented JSON.
+	// rigsmith config files (and with what Save now emits).
 	if err := jsonc.Unmarshal(b, &c); err != nil {
 		return nil, err
 	}

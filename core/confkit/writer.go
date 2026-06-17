@@ -45,6 +45,54 @@ func (w Writer) SetNumber(filePath string, path []string, value float64) bool {
 	return w.Set(filePath, path, strconv.FormatFloat(value, 'f', -1, 64))
 }
 
+// Document renders v as a complete JSONC config document for a whole-file write
+// (a full-struct Save, or an init scaffold): an optional leading header comment
+// (each line prefixed with //), the $schema key injected first, then v's fields.
+// The result reads back through jsonc.Unmarshal, so the file is schema-stamped
+// and comment-friendly — consistent with what the in-place Set editor preserves.
+// header may be empty (no comment block); a multi-line header splits on "\n".
+func (w Writer) Document(header string, v any) ([]byte, error) {
+	body, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	var b strings.Builder
+	if header != "" {
+		for _, line := range strings.Split(strings.TrimRight(header, "\n"), "\n") {
+			if line == "" {
+				b.WriteString("//\n")
+			} else {
+				b.WriteString("// " + line + "\n")
+			}
+		}
+	}
+	s := string(body)
+	if w.SchemaURL != "" && !hasTopLevelKey(body, "$schema") {
+		schema := "  " + quoteJSON("$schema") + ": " + quoteJSON(w.SchemaURL)
+		switch {
+		case strings.HasPrefix(s, "{\n"):
+			s = "{\n" + schema + ",\n" + s[len("{\n"):]
+		case s == "{}":
+			s = "{\n" + schema + "\n}"
+		}
+	}
+	b.WriteString(s)
+	b.WriteByte('\n')
+	return []byte(b.String()), nil
+}
+
+// hasTopLevelKey reports whether the JSON object in body has key at the top
+// level — checked structurally (not by substring), so a value that merely equals
+// the key string doesn't count. Non-objects report false.
+func hasTopLevelKey(body []byte, key string) bool {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(body, &obj) != nil {
+		return false
+	}
+	_, ok := obj[key]
+	return ok
+}
+
 // Set splices path = rawValue (a raw JSON literal) into the file, preserving
 // comments where possible. Returns false (writing nothing) when an existing,
 // non-empty file can't be edited in place — it never overwrites a file that has

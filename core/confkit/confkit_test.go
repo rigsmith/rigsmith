@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rigsmith/rigsmith/core/jsonc"
 )
 
 func TestTruthy(t *testing.T) {
@@ -40,6 +42,51 @@ func TestWriterFreshDocumentStampsSchema(t *testing.T) {
 	}
 	if !strings.Contains(got, `"name": "rig"`) {
 		t.Errorf("fresh document missing key:\n%s", got)
+	}
+}
+
+func TestWriterDocument(t *testing.T) {
+	w := Writer{SchemaURL: "https://example.test/schema.json"}
+	type cfg struct {
+		Name string   `json:"name"`
+		Tags []string `json:"tags"`
+	}
+	out, err := w.Document("example config — comments allowed.", cfg{Name: "rig", Tags: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+
+	if !strings.HasPrefix(got, "// example config — comments allowed.\n") {
+		t.Errorf("missing leading // header:\n%s", got)
+	}
+	if !strings.Contains(got, `"$schema": "https://example.test/schema.json"`) {
+		t.Errorf("missing $schema (injected first):\n%s", got)
+	}
+	// $schema precedes the struct's own fields.
+	if i, j := strings.Index(got, "$schema"), strings.Index(got, `"name"`); !(i >= 0 && i < j) {
+		t.Errorf("$schema should come before name:\n%s", got)
+	}
+	// The document parses back through the JSONC reader (comment stripped).
+	var back cfg
+	if err := jsonc.Unmarshal(out, &back); err != nil {
+		t.Fatalf("Document output not JSONC-parseable: %v\n%s", err, got)
+	}
+	if back.Name != "rig" || len(back.Tags) != 1 {
+		t.Errorf("round-trip mismatch: %+v", back)
+	}
+
+	// No header → no comment block; no schema URL → no $schema.
+	plain, _ := (Writer{}).Document("", cfg{Name: "x"})
+	if strings.Contains(string(plain), "//") || strings.Contains(string(plain), "$schema") {
+		t.Errorf("empty header + no schema should be bare JSON:\n%s", plain)
+	}
+
+	// A value that merely equals "$schema" must not suppress the real top-level
+	// $schema stamp (regression: substring detection would skip it).
+	val, _ := w.Document("", cfg{Name: "$schema"})
+	if !strings.Contains(string(val), `"$schema": "https://example.test/schema.json"`) {
+		t.Errorf("a value of \"$schema\" wrongly suppressed the stamp:\n%s", val)
 	}
 }
 
