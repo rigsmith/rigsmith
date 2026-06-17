@@ -11,8 +11,10 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
+	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/changeset"
 	"github.com/spf13/cobra"
 )
@@ -104,10 +106,14 @@ type browseModel struct {
 	cursor  int
 	detail  bool // false = list, true = body view
 	confirm bool // a delete confirmation is pending
-	vp      viewport.Model
-	ready   bool
-	w, h    int
-	status  string // transient note (e.g. "deleted X")
+	// confirmForm is the embedded yes/no gate shown while confirm is set;
+	// confirmVal is its bound choice (a pointer so model copies share it).
+	confirmForm *huh.Form
+	confirmVal  *bool
+	vp          viewport.Model
+	ready       bool
+	w, h        int
+	status      string // transient note (e.g. "deleted X")
 }
 
 func newBrowseModel(dir string, items []*changeset.Changeset) browseModel {
@@ -120,6 +126,28 @@ func (m browseModel) Init() tea.Cmd { return nil }
 type editDoneMsg struct{ err error }
 
 func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// A delete confirmation is pending → drive the embedded yes/no form. It
+	// gets every message (not just keys) so its internal commands run; watch
+	// for the terminal states and never propagate the form's nil/quit command.
+	if m.confirm && m.confirmForm != nil {
+		f, cmd := m.confirmForm.Update(msg)
+		if ff, ok := f.(*huh.Form); ok {
+			m.confirmForm = ff
+		}
+		switch m.confirmForm.State {
+		case huh.StateCompleted:
+			if m.confirmVal != nil && *m.confirmVal {
+				m.deleteCurrent()
+			}
+			m.confirm, m.confirmForm = false, nil
+			return m, nil
+		case huh.StateAborted: // esc / n / ctrl+c → keep the changeset
+			m.confirm, m.confirmForm = false, nil
+			return m, nil
+		}
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
@@ -141,9 +169,6 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		m.status = ""
-		if m.confirm {
-			return m.updateConfirm(msg)
-		}
 		if m.detail {
 			return m.updateDetail(msg)
 		}
@@ -152,15 +177,15 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m browseModel) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "y", "Y", "enter":
-		m.deleteCurrent()
-		m.confirm = false
-	default: // n / esc / anything else cancels
-		m.confirm = false
-	}
-	return m, nil
+// armDelete builds the embedded yes/no confirm for the selected changeset and
+// returns its Init command. Callers must hold len(m.items) > 0.
+func (m *browseModel) armDelete() tea.Cmd {
+	v := new(bool)
+	m.confirmVal = v
+	m.confirmForm = brand.ConfirmForm(brand.AccentChange,
+		"Delete "+m.items[m.cursor].ID+"?", "Delete", "Cancel", v)
+	m.confirm = true
+	return m.confirmForm.Init()
 }
 
 func (m browseModel) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -172,7 +197,8 @@ func (m browseModel) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "d":
 		if len(m.items) > 0 {
-			m.confirm = true
+			cmd := m.armDelete() // mutates m before m is returned
+			return m, cmd
 		}
 		return m, nil
 	case "e":
@@ -205,7 +231,8 @@ func (m browseModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "d":
 		if len(m.items) > 0 {
-			m.confirm = true
+			cmd := m.armDelete() // mutates m before m is returned
+			return m, cmd
 		}
 	case "e":
 		if len(m.items) > 0 {
@@ -276,10 +303,16 @@ func (m browseModel) View() string {
 			DimStyle.Render("No pending changesets — `changerig add` to create one.") + "\n\n" +
 			DimStyle.Render("q quit")
 	}
+	view := m.listView()
 	if m.detail {
-		return m.detailView()
+		view = m.detailView()
 	}
-	return m.listView()
+	// The pending-delete confirm renders as an embedded yes/no form beneath
+	// whichever view is up (the list footer gives no room of its own).
+	if m.confirm && m.confirmForm != nil {
+		view += "\n" + m.confirmForm.View()
+	}
+	return view
 }
 
 func (m browseModel) listView() string {
@@ -312,9 +345,6 @@ func (m browseModel) detailView() string {
 	badge, style := changesetBadge(cs)
 	header := style.Render(badge) + "  " + menuTitle.Render(cs.ID)
 	footer := "↑/↓ scroll · e edit · d delete · esc back · q quit"
-	if m.confirm {
-		footer = MajorStyle.Render("delete " + cs.ID + "? (y/n)")
-	}
 	return header + "\n" + m.vp.View() + "\n" + DimStyle.Render(footer)
 }
 

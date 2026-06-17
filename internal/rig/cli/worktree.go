@@ -12,7 +12,6 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
-	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/devroute"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/match"
@@ -348,7 +347,7 @@ func pickWorktree(wts []gitrepo.Worktree) (string, error) {
 	var chosen string
 	err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().Title("Run from which worktree?").Options(opts...).Filtering(true).Value(&chosen),
-	)).WithTheme(brand.Theme(brand.AccentRig)).Run()
+	)).WithTheme(rigTheme()).Run()
 	if err != nil {
 		return "", err
 	}

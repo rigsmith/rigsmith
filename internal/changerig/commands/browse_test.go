@@ -58,6 +58,32 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
+// pumpForm drives an embedded huh form to its terminal state the way the
+// Bubble Tea event loop would: it runs the command returned by Update, feeds the
+// resulting message(s) back through Update, and repeats. huh's confirm doesn't
+// complete on the keypress itself — accepting schedules a NextField command that
+// submits on the next cycle — so a test must run those commands to see the
+// effect. tea.BatchMsg is flattened; the loop is bounded as a safety net.
+func pumpForm(m tea.Model, cmd tea.Cmd) tea.Model {
+	queue := []tea.Cmd{cmd}
+	for steps := 0; len(queue) > 0 && steps < 100; steps++ {
+		c := queue[0]
+		queue = queue[1:]
+		if c == nil {
+			continue
+		}
+		switch msg := c().(type) {
+		case tea.BatchMsg:
+			queue = append(queue, msg...)
+		default:
+			var next tea.Cmd
+			m, next = m.Update(msg)
+			queue = append(queue, next)
+		}
+	}
+	return m
+}
+
 func writeChangeset(t *testing.T, dir, id, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, id+".md"), []byte(body), 0o644); err != nil {
@@ -76,9 +102,11 @@ func TestBrowseModel_DeleteRemovesFileAndReloads(t *testing.T) {
 
 	var m tea.Model = newBrowseModel(dir, items)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	// cursor on "aaa"; delete it (d then y).
+	// cursor on "aaa"; delete it: `d` arms the embedded confirm, `y` accepts.
+	// huh's confirm submits via a follow-up command, so pump it to completion.
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = pumpForm(m, cmd)
 
 	if _, err := os.Stat(filepath.Join(dir, "aaa.md")); !os.IsNotExist(err) {
 		t.Fatal("aaa.md should have been deleted")

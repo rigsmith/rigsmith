@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/internal/shiprig/pipeline"
@@ -67,7 +68,8 @@ type dashboardModel struct {
 	output  []string
 
 	confirming  bool
-	confirmMsg  string
+	confirmForm *huh.Form // the embedded yes/no gate while confirming
+	confirmVal  *bool     // bound choice — pointer so model copies share it
 	confirmResp chan bool
 
 	done    bool
@@ -107,6 +109,32 @@ func (m *dashboardModel) set(name string, status stepStatus, reason string) {
 }
 
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// While a confirm gate is up the pipeline goroutine is blocked on the
+	// response, so no step events arrive — drive the embedded confirm form.
+	// Spinner ticks still flow; keep animating the paused step beneath it.
+	if m.confirming && m.confirmForm != nil {
+		if tick, ok := msg.(spinner.TickMsg); ok {
+			var cmd tea.Cmd
+			m.spin, cmd = m.spin.Update(tick)
+			return m, cmd
+		}
+		f, cmd := m.confirmForm.Update(msg)
+		if ff, ok := f.(*huh.Form); ok {
+			m.confirmForm = ff
+		}
+		switch m.confirmForm.State {
+		case huh.StateCompleted:
+			m.answer(*m.confirmVal)
+			m.confirmForm = nil
+			return m, nil
+		case huh.StateAborted: // esc / ctrl+c → decline the gate
+			m.answer(false)
+			m.confirmForm = nil
+			return m, nil
+		}
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -141,9 +169,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case dashConfirm:
 		m.confirming = true
-		m.confirmMsg = msg.message
 		m.confirmResp = msg.resp
-		return m, nil
+		v := new(bool)
+		m.confirmVal = v
+		m.confirmForm = brand.ConfirmForm(brand.AccentShip, msg.message, "Yes", "No", v)
+		return m, m.confirmForm.Init()
 	case dashRunCompleted:
 		m.done = true
 		m.success = msg.success
@@ -158,15 +188,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m dashboardModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.confirming {
-		switch key.String() {
-		case "y", "Y", "enter":
-			m.answer(true)
-		case "n", "N", "esc", "ctrl+c":
-			m.answer(false)
-		}
-		return m, nil
-	}
+	// Confirm gates are handled by the embedded form (see Update); they never
+	// reach here. This only fires during execution or on the final screen.
 	if m.done {
 		return m, tea.Quit
 	}
@@ -210,9 +233,8 @@ func (m dashboardModel) View() string {
 	}
 
 	b = append(b, '\n')
-	if m.confirming {
-		b = append(b, cancelStyle.Render("⏸ "+m.confirmMsg+"  ")...)
-		b = append(b, editorDim.Render("[y/N]")...)
+	if m.confirming && m.confirmForm != nil {
+		b = append(b, m.confirmForm.View()...)
 	} else {
 		b = append(b, editorDim.Render("release running… (ctrl+c to abort only at a confirm gate)")...)
 	}

@@ -108,7 +108,7 @@ func runInitWizard(cmd *cobra.Command, root string) (content string, ok bool, er
 		Description("Suppress the `→ command` echo on every run.").
 		Value(&quiet))
 
-	form := huh.NewForm(huh.NewGroup(fields...)).WithKeyMap(huhEscKeyMap())
+	form := huh.NewForm(huh.NewGroup(fields...)).WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme())
 	if err := form.Run(); err != nil {
 		return "", false, nil // esc / ctrl+c → cancelled
 	}
