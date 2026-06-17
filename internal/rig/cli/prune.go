@@ -8,9 +8,76 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/spf13/cobra"
 )
+
+// pruneKind is a row's disposition, driving its glyph and color.
+type pruneKind int
+
+const (
+	prunePlan pruneKind = iota // ⤳ would remove/delete (dry preview)
+	pruneDone                  // ✓ removed/deleted (acted)
+	pruneSkip                  // • left alone, with a reason
+)
+
+func (k pruneKind) glyph() string {
+	switch k {
+	case prunePlan:
+		return WarnStyle.Render("⤳")
+	case pruneDone:
+		return OkStyle.Render("✓")
+	default:
+		return DimStyle.Render("•")
+	}
+}
+
+func (k pruneKind) style() lipgloss.Style {
+	switch k {
+	case prunePlan:
+		return WarnStyle
+	case pruneDone:
+		return OkStyle
+	default:
+		return DimStyle
+	}
+}
+
+// pruneRow is one worktree/branch line for the aligned name | state | why table.
+type pruneRow struct {
+	name  string
+	kind  pruneKind
+	state string // "will remove", "removed", "will delete", "deleted", "skip"
+	why   string // reason — "merged", "not merged into main", "uncommitted changes", …
+}
+
+// renderPruneTable prints rows as three aligned columns (name · state · why)
+// under a dim header. Cells are padded as plain text before styling so the ANSI
+// colors don't throw off the widths.
+func renderPruneTable(out io.Writer, rows []pruneRow) {
+	if len(rows) == 0 {
+		fmt.Fprintln(out, "  "+DimStyle.Render("(none)"))
+		return
+	}
+	nameW, stateW := runeLen("name"), runeLen("state")
+	for _, r := range rows {
+		nameW = max(nameW, runeLen(r.name))
+		stateW = max(stateW, runeLen(r.state))
+	}
+	// Header aligns under the "  <glyph> " gutter (two spaces + glyph + space).
+	fmt.Fprintf(out, "    %s  %s  %s\n",
+		DimStyle.Render(padRight("name", nameW)),
+		DimStyle.Render(padRight("state", stateW)),
+		DimStyle.Render("why"))
+	for _, r := range rows {
+		fmt.Fprintf(out, "  %s %s  %s  %s\n",
+			r.kind.glyph(),
+			HeaderStyle.Render(padRight(r.name, nameW)),
+			r.kind.style().Render(padRight(r.state, stateW)),
+			DimStyle.Render(r.why))
+	}
+}
 
 // newPruneCmd builds the top-level `prune` (alias `tidy`): one sweep that clears
 // both halves of a finished branch. It runs the worktree sweep first — git won't
