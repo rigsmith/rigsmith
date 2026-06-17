@@ -37,6 +37,7 @@ func newDoctorCmd() *cobra.Command {
 // baseline's Discovery, so the workspace is scanned once.
 func releaseDoctorSections(ctx context.Context, ws *commands.Workspace, disc commands.Discovery) []doctor.Section {
 	results := append([]doctor.Result{checkGh(ctx)}, publishToolChecks(disc)...)
+	results = append(results, configLayoutCheck(ws))
 	return []doctor.Section{
 		{Title: "release", Results: results},
 		{Title: "packages", Results: packageChecks(ctx, ws)},

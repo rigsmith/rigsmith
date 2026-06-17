@@ -75,6 +75,69 @@ func TestFind_RigKeyInline(t *testing.T) {
 	}
 }
 
+// keyedSpec resolves the release config either as a whole file or as a `release`
+// key inside config.{jsonc,json} — the unified-file scenario.
+func keyedSpec(root string) Spec {
+	cs := filepath.Join(root, ".changeset")
+	s := spec(root)
+	s.Keyed = []KeyedProbe{
+		{Dir: cs, Names: []string{"config", "changerig"}, Keys: []string{"release"}},
+	}
+	return s
+}
+
+func TestFind_KeyedInsideOtherFile(t *testing.T) {
+	root := t.TempDir()
+	cs := filepath.Join(root, ".changeset")
+	write(t, cs, "config.json", `{
+		"versioning": { "source": "commits" },
+		"release": { "tool": "shiprig" }
+	}`)
+
+	src, err := Find(keyedSpec(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src == nil || !strings.Contains(string(src.Data), `"tool"`) {
+		t.Fatalf("want the embedded release key, got %+v", src)
+	}
+	if src.Path != "" {
+		t.Errorf("Path = %q, want empty for a keyed source", src.Path)
+	}
+	if src.File != filepath.Join(cs, "config.json") {
+		t.Errorf("File = %q, want the containing config.json", src.File)
+	}
+}
+
+func TestFind_KeyedAbsentLeavesWholeFile(t *testing.T) {
+	// A config.json with no `release` key must not produce a release candidate,
+	// so a standalone release.jsonc resolves cleanly (existing two-file setup).
+	root := t.TempDir()
+	cs := filepath.Join(root, ".changeset")
+	write(t, cs, "config.json", `{ "versioning": { "source": "commits" } }`)
+	write(t, cs, "release.jsonc", `{ "tool": "shiprig" }`)
+
+	src, err := Find(keyedSpec(root))
+	if err != nil {
+		t.Fatalf("two-file setup should resolve cleanly: %v", err)
+	}
+	if src == nil || src.Path != filepath.Join(cs, "release.jsonc") {
+		t.Fatalf("want the standalone release.jsonc, got %+v", src)
+	}
+}
+
+func TestFind_KeyedAndWholeFileIsAmbiguous(t *testing.T) {
+	root := t.TempDir()
+	cs := filepath.Join(root, ".changeset")
+	write(t, cs, "config.json", `{ "release": { "tool": "a" } }`)
+	write(t, cs, "release.jsonc", `{ "tool": "b" }`)
+
+	_, err := Find(keyedSpec(root))
+	if err == nil || !strings.Contains(err.Error(), "multiple") {
+		t.Fatalf("defining release twice should be a loud error, got %v", err)
+	}
+}
+
 func TestFind_RigKeyNullSkipped(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, ".rig.json", `{"shiprig": null, "release": null}`)

@@ -110,6 +110,50 @@ func TestParseSharedKeysAndEcosystemBlocks(t *testing.T) {
 	}
 }
 
+// TestParseIgnoresReleaseKey: a top-level `release` key (the embedded shiprig
+// pipeline, in a unified config.json) is ignored by changerig — not mis-bucketed
+// as an ecosystem block.
+func TestParseIgnoresReleaseKey(t *testing.T) {
+	c, err := Parse([]byte(`{
+		"versioning": { "source": "commits" },
+		"release": { "tool": "shiprig", "order": ["version", "publish"] }
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Ecosystems["release"]; ok {
+		t.Error("`release` must not be bucketed as an ecosystem block")
+	}
+	if c.Versioning.Source != SourceCommits {
+		t.Errorf("versioning.source = %q, want commits", c.Versioning.Source)
+	}
+}
+
+// TestLoadChangesetKeyInShiprigFile: changerig resolves its config from a
+// `changeset` key inside a shiprig.jsonc (the release-primary unified file).
+func TestLoadChangesetKeyInShiprigFile(t *testing.T) {
+	dir := t.TempDir()
+	cs := filepath.Join(dir, ".changeset")
+	if err := os.MkdirAll(cs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{
+		"tool": "shiprig",
+		"order": ["version", "publish"],
+		"changeset": { "baseBranch": "trunk", "versioning": { "source": "commits" } }
+	}`
+	if err := os.WriteFile(filepath.Join(cs, "shiprig.jsonc"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(cs)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.BaseBranch != "trunk" || c.Versioning.Source != SourceCommits {
+		t.Errorf("got baseBranch=%q source=%q, want trunk/commits (from the changeset key)", c.BaseBranch, c.Versioning.Source)
+	}
+}
+
 func TestParseIssuesBlock(t *testing.T) {
 	c, err := Parse([]byte(`{
 		"issues": { "enabled": true, "comment": "Released in {{version}}", "close": true }
