@@ -21,6 +21,8 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -239,13 +241,74 @@ func buildVersion(opts settings) string {
 			version = info.Main.Version
 			commit = getKey(info, "vcs.revision")
 		} else {
-			version = "unknown (built from source)"
+			// No released version (a `go build` / `-dev` launcher build). Instead
+			// of a bare "unknown", describe the build so it's identifiable: when it
+			// was built, and where from — the worktree the -dev/-wt launchers set in
+			// RIGSMITH_DEV_SRC, else the binary's own path.
+			return sourceBuildVersion(infoOrNil())
 		}
 	}
 	if len(commit) >= shaLen {
 		version += " (" + commit[:shaLen] + ")"
 	}
 	return version
+}
+
+func infoOrNil() *debug.BuildInfo {
+	info, _ := debug.ReadBuildInfo()
+	return info
+}
+
+// sourceBuildVersion describes a from-source build that carries no released
+// version: its build time and source location (plus a short VCS commit when the
+// build stamped one), e.g.
+//
+//	source build · 2026-06-17 14:30 · /Users/me/rigsmith-worktrees/feat-x · a1b2c3d
+func sourceBuildVersion(info *debug.BuildInfo) string {
+	parts := []string{"source build"}
+	if t := buildTime(info); t != "" {
+		parts = append(parts, t)
+	}
+	if src := sourceLocation(); src != "" {
+		parts = append(parts, src)
+	}
+	if rev := getKey(info, "vcs.revision"); len(rev) >= shaLen {
+		sha := rev[:shaLen]
+		if getKey(info, "vcs.modified") == "true" {
+			sha += "+" // uncommitted changes at build time
+		}
+		parts = append(parts, sha)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// buildTime is when the binary was built — its own modification time, falling
+// back to the VCS commit time the build stamped. Empty when neither is readable.
+func buildTime(info *debug.BuildInfo) string {
+	if exe, err := os.Executable(); err == nil {
+		if st, err := os.Stat(exe); err == nil {
+			return st.ModTime().Format("2006-01-02 15:04")
+		}
+	}
+	if t := getKey(info, "vcs.time"); t != "" {
+		if parsed, err := time.Parse(time.RFC3339, t); err == nil {
+			return parsed.Local().Format("2006-01-02 15:04")
+		}
+	}
+	return ""
+}
+
+// sourceLocation is where the binary was built from: the worktree the -dev/-wt
+// launchers pass in RIGSMITH_DEV_SRC, else the binary's own path so there's
+// always something to point at. Empty only if the executable can't be resolved.
+func sourceLocation() string {
+	if src := strings.TrimSpace(os.Getenv("RIGSMITH_DEV_SRC")); src != "" {
+		return src
+	}
+	if exe, err := os.Executable(); err == nil {
+		return exe
+	}
+	return ""
 }
 
 func getKey(info *debug.BuildInfo, key string) string {
