@@ -16,7 +16,7 @@ documented here because it's where the release logic actually lives.
 | `mdfmt` | native prettier-equivalent markdown formatter + `format:` dispatch |
 | `jsonc` | tolerant JSONC parse + comment-preserving editor |
 | `plugin` | the extension contract (ecosystem adapters + changelog generators) |
-| `ecosystem/{dotnet,node,gomod,cargo}` | built-in language adapters (reference impls of `plugin.Ecosystem`) |
+| `ecosystem/{dotnet,node,gomod,cargo,electron,tauri,regex}` | built-in adapters (reference impls of `plugin.Ecosystem`): four language adapters, two desktop ecosystems, and a generic regex adapter |
 | `gitutil` / `prestate` / `since` / `walkutil` | git tags + merge-base diffs, pre.json, changed-files mapping, ignore-aware walking |
 | `pathmap` | cross-OS path resolution (used by claudeRig) |
 

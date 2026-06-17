@@ -8,6 +8,7 @@ no Node. Install the whole family or just one tool.
 ```sh
 curl -fsSL https://rigsmith.sh | sh            # the whole family
 curl -fsSL https://rigsmith.sh/rig | sh        # just rig
+curl -fsSL https://rigsmith.sh/changerig | sh  # just changerig
 curl -fsSL https://rigsmith.sh/shiprig | sh    # just shiprig
 curl -fsSL https://rigsmith.sh/clauderig | sh  # just clauderig
 ```
@@ -36,13 +37,15 @@ scoop install rig
 
 ## From source
 
-The repo is a `go.work` workspace; build any module from its directory:
+The repo is a single Go module (`github.com/rigsmith/rigsmith`) — the four
+binaries live under `cmd/`, the shared engine under `core/`. Build any binary
+from the repo root:
 
 ```sh
-go build -o bin/rig       ./cli
-go build -o bin/changerig ./changerig
-go build -o bin/shiprig   ./shiprig
-go build -o bin/clauderig ./clauderig
+go build -o bin/rig       ./cmd/rig
+go build -o bin/changerig ./cmd/changerig
+go build -o bin/shiprig   ./cmd/shiprig
+go build -o bin/clauderig ./cmd/clauderig
 ```
 
 `clauderig` additionally needs `git` and an authenticated GitHub CLI (`gh`) for

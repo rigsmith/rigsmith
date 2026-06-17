@@ -6,21 +6,189 @@
 
 ```sh
 shiprig release
+shiprig release --dry-run        # preview the interpolated plan; nothing ships
+shiprig release --dry-build      # build artifacts locally, publish nothing
+shiprig release --only build,publish   # run just these steps
+shiprig release --from publish   # resume at a step after a failure
+shiprig release --yes            # approve every confirm gate (CI)
 ```
+
+## Built-in steps
+
+With no `order` configured, the pipeline runs these steps in order. Any step can
+be reordered, disabled, replaced, or have custom steps slotted between them.
+
+| Step | What it does |
+|------|--------------|
+| `version` | Bump versions + write `CHANGELOG.md` (the shared engine) |
+| `commit` | Commit the version/changelog changes (message via `message`) |
+| `build` | Build release artifacts — runs early as a packaging preflight so a broken build fails before anything ships |
+| `sign` | Code-sign built artifacts in place (desktop ecosystems) |
+| `publish` | Push to the native registries (idempotent, registry-aware) |
+| `tag` | Create the git tags for the released versions |
+| `push` | Push commits + tags to the remote |
+| `release` | Create the forge (GitHub/GitLab/Gitea) release + upload assets (idempotent) |
+| `issues` | Comment on / close issues referenced by released commits (GitHub today) |
+
+`version`, `commit`, `publish`, `tag`, and `push` are command-based (they shell
+out to `tool`, default `shiprig`); `build`, `sign`, `release`, and `issues` are
+native handlers.
 
 ## `.changeset/release.jsonc`
 
-The pipeline file describes:
+The pipeline file is JSONC (comments + trailing commas welcome). Top-level keys:
 
-- **steps** — the ordered units of work the release runs through;
-- **hooks** — commands to run around steps;
-- **vars** — values interpolated into steps;
-- **confirm gates** — interactive confirmation points (bypass with `--yes` in CI);
-- **secret masking** — values scrubbed from logs;
-- **forge releases** — GitHub releases created as part of the run.
+```jsonc
+{
+  "tool": "shiprig",        // command backing the built-in steps (e.g. "npx changeset")
+  "shell": "portable",      // "portable" (default, in-process, cross-OS) or "system"
+  "order": ["version", "build", "publish", "tag", "push", "release"],
+  "vars": { /* … */ },      // reusable / captured / computed values
+  "hooks": { /* … */ },     // before / after / onError around the whole run
+  "steps": { /* … */ },     // per-step overrides keyed by step name
+}
+```
 
-Because each step is explicit, the same pipeline runs the same way locally and
-in CI — the only difference is the confirm gates, which `--yes` skips.
+### Per-step configuration
+
+Each entry under `steps` overrides one step:
+
+| Key | Meaning |
+|-----|---------|
+| `enabled` | `true` / `false` / omit (use default) |
+| `if` | A Tengo expression gating the step at runtime — falsy skips it (with a reason) |
+| `ecosystems` | Restrict the step to these ecosystems (`node`, `dotnet`, `go`, `rust`, `tauri`, `electron`); skipped if the release has none of them |
+| `name` | Display name shown in the plan + output |
+| `run` | Custom command(s) — a shell string, an argv array, or a mix |
+| `script` | A [Tengo script](#tengo-scripting) action (instead of `run`) |
+| `args` | Extra args appended to a built-in step's command (e.g. `["--otp", "${vars.otp}"]`) |
+| `message` | Commit message for the `commit` step (default `chore: release`) |
+| `confirm` | `true` (default prompt), a custom prompt string, or `false` (no gate) |
+| `dryRun` | Per-step dry-run behavior: `true` executes in dry-run, `false` hides it, or a command/array to run instead |
+| `before` / `after` | Command(s) to run around the step's action |
+| `forge` / `forgeURL` | Forge selection for the `release` step ([see below](#forge-releases)) |
+
+A step name that isn't a built-in becomes a **custom step** — add it to `order`
+and give it a `run` or `script`.
+
+## Variables
+
+`${...}` placeholders interpolate into commands, hooks, and other vars. Two
+families:
+
+**Built-in release variables** (populated from the release plan):
+
+| Variable | Value |
+|----------|-------|
+| `${version}` / `${tag}` / `${changelog}` | Single-package shortcuts |
+| `${version.<key>}` / `${tag.<key>}` / `${changelog.<key>}` | Per-package, keyed by short package address |
+| `${versions}` | Comma-separated `name@version` list |
+| `${tags}` | Array of tags |
+| `${releaseUrl.<key>}` / `${releaseUrls}` | Forge release URLs (filled by the `release` step) |
+| `${issues}` | Resolved issue numbers from released commits |
+| `${env.NAME}` | The merged environment ([see `.env`](#environment-env)) |
+
+**User-defined `vars`** come in three forms:
+
+```jsonc
+"vars": {
+  "basePath": "dist/pkg",                 // literal: reusable config, not masked
+  "basePath2": { "value": "dist/pkg" },   // explicit literal form
+  "otp": { "command": "op item get npm --otp", "lazy": true },  // captured: stdout, masked, lazy
+  "channel": { "script": "ctx.version ? 'next' : 'latest'" },   // computed: Tengo expr
+}
+```
+
+- **Literal** — a bare string or `{ "value": "…" }`. No side effects, not masked
+  (it's config, not a secret) — ideal for paths reused across steps.
+- **Captured** — `{ "command": "…" }`. The command's trimmed stdout becomes the
+  value and is **masked** from logs. Add `"lazy": true` to defer it until first
+  use (fresh, time-limited secrets like an OTP).
+- **Computed** — `{ "script": "<tengo-expr>" }` evaluated over the script
+  context. Not masked.
+
+## Tengo scripting
+
+A step's action (or a computed var, or an `if` gate) can be a
+[Tengo](https://github.com/d5/tengo) script instead of a shell command — a small
+embedded language that runs identically on every OS. Steps gate on `if`:
+
+```jsonc
+"steps": {
+  "publish": { "if": "ctx.version" },     // skip when there's nothing to publish
+  "notify": {
+    "script": "sh(`echo released ` + ctx.tag); log('done')"
+  }
+}
+```
+
+Available modules/globals: `text`, `fmt`, `math`, `times`, `rand`, `json`,
+`base64`, `hex`. Side-effecting helpers: `sh(cmd)`, `cp(...)`, `mv(...)`,
+`rm(...)`, `mkdir(...)`, `log(msg)`, `fail(msg)`.
+
+The script context `ctx` exposes `dryRun`, `env`, `packages`, `versions`,
+`tags`, `issues`, and — for single-package releases — the scalars `ctx.version`,
+`ctx.tag`, `ctx.changelog`.
+
+## Cross-platform shell & file ops
+
+`"shell": "portable"` (the default) runs shell-string commands through an
+in-process interpreter, so `release.jsonc` behaves the same on Linux, macOS, and
+Windows. `"shell": "system"` uses the OS shell instead. Either way, argv-array
+commands run directly. The portable shell ships cross-platform builtins —
+`cp` (`-r`/`-R`), `mv`, `rm` (`-r`/`-f`), `mkdir` (`-p`) — also reachable from
+Tengo as `cp(...)` / `mv(...)` / `rm(...)` / `mkdir(...)`.
+
+## Forge releases
+
+The `release` step creates a release on your forge and uploads built assets.
+Forge selection lives on that step:
+
+```jsonc
+"steps": {
+  "release": {
+    "forge": "auto",       // auto (detect from origin) | github | gitlab | gitea | none
+    "forgeURL": ""         // base URL for self-hosted GitLab/Gitea
+  }
+}
+```
+
+`auto` detects GitHub.com → `github`, GitLab.com → `gitlab`, others need an
+explicit value. `none` (or `--git-only`) degrades to tags only — the `issues`
+step and forge URLs are skipped. Release creation and asset upload are
+idempotent.
+
+## Publish authentication
+
+Per-ecosystem auth and OIDC trusted publishing are configured under each
+ecosystem block in the release config:
+
+```jsonc
+"npm":    { "auth": "op://CI/npm/token" },          // 1Password secret reference
+"cargo":  { "auth": "env:CARGO_REGISTRY_TOKEN" },   // an environment variable
+"dotnet": { "auth": "cmd:op item get nuget --fields apikey", "oidc": "auto" }
+```
+
+- **`auth`** takes a secret reference: `op://vault/item/field` (1Password, via
+  `op read`), `env:NAME`, or `cmd:…` (a command's stdout). Resolved secrets are
+  masked from logs.
+- **`oidc`** is `"auto"` (use OIDC trusted publishing when a CI OIDC context is
+  present) or `"off"` (force a token). Supported for npm, crates.io, and
+  NuGet.org.
+
+Precedence per registry: an explicit `auth` ref wins; otherwise OIDC when a CI
+context is present and not turned off; otherwise the ambient environment. See the
+[publish-auth guide](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/PUBLISH-AUTH-GUIDE.md)
+for the full matrix.
+
+## Signing (desktop ecosystems)
+
+Tauri and Electron releases can be code-signed via a `signing` block: build-time
+signing through `signing.env` (e.g. macOS `CSC_*` / `APPLE_*` for
+electron-builder / Tauri) and post-build signers under `signing.signers` (Azure
+Trusted Signing for `.exe`/`.msi`, `rcodesign`/`codesign` for `.dmg`/`.app`).
+Artifacts are signed in place by the `sign` step before `release` attaches them.
+`--dry-build` previews the signer commands without contacting a signing service.
 
 ### Where the release config lives
 
@@ -54,7 +222,7 @@ environment is what every part of the run sees:
 
 - `${env.NAME}` placeholders in steps, hooks, and vars resolve from it;
 - the commands each step runs (publish, tag, push) inherit it;
-- forge (GitHub) releases run with it, so `gh` finds its token;
+- forge releases run with it, so `gh` finds its token;
 - `shiprig init`'s token preflight checks it, so a token kept in a local `.env`
   reads as ✓ set rather than a false ⚠.
 
@@ -63,16 +231,25 @@ being exported in every shell. The `.env` files themselves are read, never
 written or printed.
 
 Secret masking only redacts values it has been given — the ones captured through
-`vars` — so keep secrets in a `var` if a step might echo them. A value
-interpolated straight into a command with `${env.NAME}` is **not** automatically
-masked, so avoid putting a raw secret on a command line that gets logged.
+`vars` or resolved from `auth` references. A value interpolated straight into a
+command with `${env.NAME}` is **not** automatically masked, so avoid putting a
+raw secret on a command line that gets logged.
 
 Pass `--no-env` to drop the `.env`/`.env.local` layer for a run (the ambient
 shell environment still flows through) — handy when a stray local `.env` would
 otherwise shadow what you've exported.
 
+## Dry-run vs dry-build
+
+- `--dry-run` interpolates and prints the full plan but executes nothing, except
+  steps explicitly marked `"dryRun": true` (or given a dry-run command).
+- `--dry-build` runs **only** the `build` step to produce artifacts locally (a
+  snapshot), then stops — it publishes, tags, and pushes nothing. Global hooks
+  and captured vars are dropped so it can't trigger OTP prompts. Requires an
+  enabled `build` step.
+
 ::: tip Implementation
-The pipeline lives in `shiprig/internal/pipeline` + `forge`; see the
-[feature-parity audit](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/FEATURE-PARITY.md)
+The pipeline lives in `internal/shiprig/pipeline` + `internal/shiprig/forge`;
+see the [feature-parity audit](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/FEATURE-PARITY.md)
 for the delivered surface.
 :::

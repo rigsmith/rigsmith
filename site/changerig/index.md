@@ -6,10 +6,15 @@ powers [shipRig](/shiprig/), without the publish/tag machinery. Aliased
 `changeset`.
 
 ```sh
-changerig init                                # create .changeset/
+changerig init                                # create .changeset/ (--source changesets|commits|both)
 changerig add -p my/pkg --bump minor -m "…"   # write a changeset (interactive without flags)
 changerig status --verbose                    # show the pending release plan
+changerig browse                              # browse/manage pending changesets (alias: ls / list)
 changerig version                             # bump versions + write CHANGELOG.md
+changerig pre enter next                       # enter prerelease mode (changerig pre exit to leave)
+changerig changelog add -m "…" -t fix          # hand-author a CHANGELOG entry (also: changelog format)
+changerig info                                # resolved config + discovered packages
+changerig config show                          # view/edit .changeset/config.json
 changerig doctor                              # health-check the setup (--fix to scaffold config)
 changerig ui                                  # interactive bubbletea menu
 ```

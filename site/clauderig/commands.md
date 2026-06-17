@@ -11,13 +11,16 @@
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
 | `guard` | PreToolUse hook enforcing worktree/PR discipline (wired by `project`/`local`) |
-| `worktree` | `new` / `list` / `open` / `rm` / `prune` sibling worktrees in their own review window (alias `wt`) |
-| `branch` | `list` / `rm` / `prune` local branches; prune reaps merged (or, with `--gone`, gone-upstream) ones; alias `br` |
-| `prune` | One sweep: reap merged/done worktrees, then their branches and other merged (`--gone`) branches; `prune list` previews read-only; always asks at a terminal (no skip flag; fails if non-interactive; `-n` previews); alias `tidy` |
-| `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md block standalone |
-| `config` | `get` / `set` / `show` / `path` / `edit` |
+| `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md guide block standalone (`--global` targets `~/.claude/CLAUDE.md`, `--path` overrides; `install` previews in a scrollable UI, skipped with `-y` or off a TTY) |
+| `mcp` | `list` / `get` / `add` / `remove` / `enable` / `disable` MCP servers (`--scope user｜project｜local`, `--transport stdio｜http｜sse`, `--env`, `--header`); bare `mcp` on a TTY opens an interactive screen (mirrors `claude mcp`) |
+| `account` | Manage multiple Claude Code logins: `add` / `list` (alias `ls`/`status`) / `run <id｜email> [-- claude args]` / `switch` / `sessions` (alias `ps`) / `remove` (alias `rm`) / `purge`. `run --no-share` isolates a session; `switch` takes `--dry-run` / `--force` / `--kill` |
+| `config` | `get` / `set` / `show` / `path` / `edit` (`~/.clauderig/config.json`) |
 | `doctor` | Health-check environment + sync + worktree discipline (`--fix` repairs) |
 | `ui` | Interactive dashboard |
+
+The worktree / branch / prune verbs (`rig worktree`, `rig branch`, `rig prune`)
+live in [`rig`](/rig/verbs) — claudeRig wires the *guard* that makes them the
+default path. See [Worktree discipline](#worktree-discipline) below.
 
 ## The sync → restore loop
 

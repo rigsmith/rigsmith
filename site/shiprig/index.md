@@ -1,15 +1,17 @@
 # shipRig
 
 RigSmith's release tool — the Go successor to net-changesets. One uniform
-`add changeset → version → publish` workflow across .NET, Node, and Go.
+`add changeset → version → publish` workflow across .NET, Node, Go, and Rust,
+plus Tauri and Electron desktop apps.
 
 ```sh
-shiprig init
+shiprig init               # release-init wizard: pipeline, forge, publish auth
 shiprig add -p my/pkg --bump minor -m "Add a feature"   # interactive without flags
 shiprig status --verbose
 shiprig version            # bump + changelog, with dependency cascade
-shiprig publish            # registries + tags (idempotent, confirm-gated on a TTY)
+shiprig publish            # registries (idempotent, confirm-gated on a TTY)
 shiprig release            # the configurable step pipeline
+shiprig release --dry-build # build artifacts locally, publish nothing
 shiprig doctor             # health-check changesets + release readiness
 shiprig info
 ```
@@ -29,9 +31,17 @@ The whole workflow is wired:
 - `info`, `ui`
 - `tag` — create the git tags for the released versions
 - `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI
-- `release` — the [configurable step pipeline](./pipeline)
+- `release` — the [configurable step pipeline](./pipeline) with step filtering
+  (`--only` / `--skip` / `--from` / `--to`), `--dry-run`, and `--dry-build`
 - `doctor` — the changeset baseline (git/repo/config/workspace) plus a release
-  section: `gh` auth and the publish tool each detected ecosystem needs
+  section: `gh` auth and the publish/build tool each detected ecosystem needs
+
+Beyond the basics, the `release` pipeline adds multi-forge releases
+(GitHub / GitLab / Gitea), OIDC trusted publishing + 1Password/secret-manager
+auth for npm / crates.io / NuGet, Tengo scripting (`if` gates, computed `vars`,
+`script` steps), a cross-platform portable shell, an `issues` step that
+comments on and closes resolved issues, and code-signing for Tauri / Electron
+artifacts. See [the release pipeline](./pipeline).
 
 ## shipRig vs changeRig
 

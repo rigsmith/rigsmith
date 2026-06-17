@@ -24,8 +24,10 @@ The dev verbs map through each ecosystem's `DevCommands` (shared with shipRig),
 so an ecosystem declares its own commands. Ecosystems that don't define
 `lint`/`typecheck` report "no mapping" cleanly.
 
-Global flags: `--dry-run`/`-n` (print what would run, don't run it) and
-`--quiet`/`-q` (suppress the `→ command` echo).
+Global flags: `--dry-run`/`-n` (print what would run, don't run it),
+`--quiet`/`-q` (suppress the `→ command` echo), `--no-env` (skip
+`.env`/`.env.local` loading for this run), and `--root <dir>` (override the
+working root, skipping walk-up discovery).
 
 - [All verbs →](./verbs)
 - [Configuration (`.rig.json`) →](./configuration)

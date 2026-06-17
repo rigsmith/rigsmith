@@ -15,7 +15,10 @@ clauderig restore              # pull → rewrite slugs for this OS → merge (k
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)
 clauderig status               # remote reachability, last sync, per-root counts, hooks
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
-rig worktree new feat/x  # sibling worktree + review window; never moves this session
+clauderig account list         # show stored Claude Code logins (alias: ls / status)
+clauderig account run me@x.com # launch Claude Code as another account, isolated session
+clauderig mcp add ctx7 npx -y @upstash/context7-mcp   # manage MCP servers (list/add/remove/enable)
+rig worktree new feat/x        # sibling worktree + review window; never moves this session
 clauderig doctor               # health-check env + sync + worktree discipline (--fix repairs)
 clauderig hooks install        # SessionStart→pull, Stop→sync (portable, idempotent)
 clauderig ui                   # interactive dashboard
@@ -39,13 +42,19 @@ clauderig ui                   # interactive dashboard
 - **Worktree discipline.** A guard hook plus `rig worktree` make branches +
   PRs the default for Claude Code and keep a session from scrambling its chat
   history by moving the working directory. See [Commands](./commands#worktree-discipline).
+- **Multiple accounts.** `clauderig account` captures, lists, and switches
+  between Claude Code logins, and can `run` a session as another account in an
+  isolated environment without touching your machine-wide login.
+- **MCP server management.** `clauderig mcp` adds, removes, lists, and toggles
+  MCP servers across user / project / local scopes — args-driven or via an
+  interactive screen (mirrors `claude mcp`).
 
 ## Install
 
 ```sh
 curl -fsSL https://rigsmith.sh/clauderig | sh    # once the release exists
-# or build from source (go.work workspace):
-go build -o clauderig ./clauderig
+# or build from source (single Go module):
+go build -o clauderig ./cmd/clauderig
 ```
 
 Requires `git` and the GitHub CLI (`gh`, authenticated) for the private-repo gate.
