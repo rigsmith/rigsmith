@@ -130,6 +130,11 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// gets every message (not just keys) so its internal commands run; watch
 	// for the terminal states and never propagate the form's nil/quit command.
 	if m.confirm && m.confirmForm != nil {
+		// A terminal resize still has to re-flow the layout (the form gets the
+		// message too, so it re-wraps to the new width).
+		if ws, ok := msg.(tea.WindowSizeMsg); ok {
+			m.applySize(ws)
+		}
 		f, cmd := m.confirmForm.Update(msg)
 		if ff, ok := f.(*huh.Form); ok {
 			m.confirmForm = ff
@@ -150,17 +155,7 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.w, m.h = msg.Width, msg.Height
-		vpH := msg.Height - 2
-		if vpH < 3 {
-			vpH = 3
-		}
-		if !m.ready {
-			m.vp = viewport.New(msg.Width, vpH)
-			m.ready = true
-		} else {
-			m.vp.Width, m.vp.Height = msg.Width, vpH
-		}
+		m.applySize(msg)
 		return m, nil
 
 	case editDoneMsg:
@@ -175,6 +170,23 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateList(msg)
 	}
 	return m, nil
+}
+
+// applySize re-flows the layout for a new terminal size: tracks w/h and sizes
+// (or first-time creates) the detail viewport, leaving two rows for the
+// header/footer chrome.
+func (m *browseModel) applySize(msg tea.WindowSizeMsg) {
+	m.w, m.h = msg.Width, msg.Height
+	vpH := msg.Height - 2
+	if vpH < 3 {
+		vpH = 3
+	}
+	if !m.ready {
+		m.vp = viewport.New(msg.Width, vpH)
+		m.ready = true
+	} else {
+		m.vp.Width, m.vp.Height = msg.Width, vpH
+	}
 }
 
 // armDelete builds the embedded yes/no confirm for the selected changeset and
