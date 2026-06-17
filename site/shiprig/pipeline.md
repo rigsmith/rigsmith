@@ -22,6 +22,29 @@ The pipeline file describes:
 Because each step is explicit, the same pipeline runs the same way locally and
 in CI — the only difference is the confirm gates, which `--yes` skips.
 
+### Where the release config lives
+
+shiprig resolves the pipeline file from **one** of these locations. If more than
+one exists it stops and lists them rather than guessing (a `.json` + `.jsonc`
+pair counts as two); with none, the built-in defaults run.
+
+- `.changeset/release.jsonc` · `.changeset/release.json`
+- `.changeset/shiprig.jsonc` · `.changeset/shiprig.json`
+- `release.jsonc` · `release.json` · `shiprig.jsonc` · `shiprig.json` (repo root)
+- a `"shiprig"` (or `"release"`) key inside `.rig.json`:
+
+```jsonc
+// .rig.json
+{
+  "shiprig": {
+    "order": ["version", "build", "publish", "tag", "push", "release"]
+    // …the same keys as a standalone release config
+  }
+}
+```
+
+`shiprig release --config <file>` overrides discovery with an explicit path.
+
 ## Environment & `.env`
 
 Before running, `shiprig release` loads `.env` and `.env.local` from the repo
