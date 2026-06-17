@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/rigsmith/rigsmith/core/changeset"
 	"github.com/rigsmith/rigsmith/core/commitsource"
@@ -123,7 +124,10 @@ func collapseInitialRelease(sets []*changeset.Changeset, cfg *config.Config) []*
 		out = append(out, &changeset.Changeset{
 			Releases: []changeset.Release{{Name: name, Bump: bump}},
 			Summary:  summary,
-			ID:       "initial-" + name,
+			// Package names carry path separators (e.g. "example.com/a"); flatten
+			// them so the synthetic ID stays a single-segment file-name stem and
+			// can't turn an ID+".md" join into a nested path.
+			ID: "initial-" + strings.ReplaceAll(name, "/", "-"),
 		})
 	}
 	return out
