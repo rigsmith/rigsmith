@@ -327,6 +327,11 @@ var sharedKeys = map[string]bool{
 	"snapshot": true, "format": true, "changelog": true, "commit": true,
 	"privatePackages": true, "changelogGroups": true, "paths": true,
 	"versioning": true, "contributors": true, "issues": true,
+	// Cross-tool keys, ignored by changerig: a `release` key carries the shiprig
+	// pipeline in a unified file; a `changeset` key carries this config in a
+	// release-primary file. Listed here so they're not mis-read as ecosystem
+	// blocks.
+	"release": true, "changeset": true,
 }
 
 // Issues configures the release `issues` step. A reference like `#123` in the
@@ -397,6 +402,14 @@ func Spec(changesetDir string) cfgfind.Spec {
 		Probe: []cfgfind.DirNames{
 			{Dir: changesetDir, Names: []string{"config", "changerig"}},
 			{Dir: root, Names: []string{"changerig"}},
+		},
+		// Or as a `changeset` key inside the release/shiprig file, so one
+		// shiprig.jsonc can carry both configs (pipeline at top level, changeset
+		// nested) — the mirror of the release resolver reading a `release` key
+		// from the changeset file.
+		Keyed: []cfgfind.KeyedProbe{
+			{Dir: changesetDir, Names: []string{"shiprig", "release"}, Keys: []string{"changeset"}},
+			{Dir: root, Names: []string{"shiprig", "release"}, Keys: []string{"changeset"}},
 		},
 		RigPath: filepath.Join(root, ".rig.json"),
 		RigKeys: []string{"changerig", "changeset"},

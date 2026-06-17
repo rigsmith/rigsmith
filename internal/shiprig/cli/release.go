@@ -382,16 +382,7 @@ func newReleaseCmd() *cobra.Command {
 // or a "shiprig"/"release" key in .rig.json — using the empty (defaults) config
 // when none exists and erroring when more than one does (cfgfind never guesses).
 func resolveReleaseConfig(root, changesetDir string) (*pipeline.Config, error) {
-	src, err := cfgfind.Find(cfgfind.Spec{
-		Label: "release config",
-		Probe: []cfgfind.DirNames{
-			{Dir: changesetDir, Names: []string{"release", "shiprig"}},
-			{Dir: root, Names: []string{"release", "shiprig"}},
-		},
-		RigPath:  filepath.Join(root, ".rig.json"),
-		RigKeys:  []string{"shiprig", "release"},
-		FlagHint: "--config",
-	})
+	src, err := cfgfind.Find(releaseConfigSpec(root, changesetDir))
 	if err != nil {
 		return nil, err
 	}
@@ -399,6 +390,29 @@ func resolveReleaseConfig(root, changesetDir string) (*pipeline.Config, error) {
 		return &pipeline.Config{}, nil
 	}
 	return pipeline.ParseConfig(src.Data, src.BaseDir, src.Origin)
+}
+
+// releaseConfigSpec is the cfgfind spec for the release/pipeline config, shared
+// with doctor's config-layout check so both speak the same set of locations.
+func releaseConfigSpec(root, changesetDir string) cfgfind.Spec {
+	return cfgfind.Spec{
+		Label: "release config",
+		Probe: []cfgfind.DirNames{
+			{Dir: changesetDir, Names: []string{"release", "shiprig"}},
+			{Dir: root, Names: []string{"release", "shiprig"}},
+		},
+		// Or as a `release` key inside the changeset config file, so one
+		// config.json can carry both configs (changeset at top level, pipeline
+		// nested) — the mirror of the changeset resolver reading a `changeset`
+		// key from the shiprig file.
+		Keyed: []cfgfind.KeyedProbe{
+			{Dir: changesetDir, Names: []string{"config", "changerig"}, Keys: []string{"release"}},
+			{Dir: root, Names: []string{"changerig"}, Keys: []string{"release"}},
+		},
+		RigPath:  filepath.Join(root, ".rig.json"),
+		RigKeys:  []string{"shiprig", "release"},
+		FlagHint: "--config",
+	}
 }
 
 // configUsesEcosystems reports whether any step opts into ecosystem targeting,

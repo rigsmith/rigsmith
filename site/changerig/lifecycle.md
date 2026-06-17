@@ -26,6 +26,9 @@ error that lists them; a `.json` + `.jsonc` pair counts as two):
 - `.changeset/changerig.jsonc` · `.changeset/changerig.json`
 - `changerig.jsonc` · `changerig.json` (repo root)
 - a `"changerig"` (or `"changeset"`) key inside `.rig.json`
+- a `"changeset"` key inside a `shiprig.jsonc` / `release.jsonc` — so a single
+  shiprig config file can carry the changeset config too (see
+  [the release pipeline](/shiprig/pipeline#one-file-for-both-tools))
 
 `.changeset/config.json` keeps the @changesets layout so the JS tool reads it
 too; the alternate names and the `.rig.json` key are rigsmith conveniences.

@@ -211,7 +211,46 @@ pair counts as two); with none, the built-in defaults run.
 }
 ```
 
+- a `"release"` key inside the **changeset config** file
+  (`.changeset/config.json` / `changerig.jsonc`):
+
+```jsonc
+// .changeset/config.json — one file for both tools
+{
+  "versioning": { "source": "commits" },
+  "ignore": [],
+  "release": {
+    "order": ["version", "publish", "tag", "release"]
+    // …the pipeline; changerig ignores this key
+  }
+}
+```
+
 `shiprig release --config <file>` overrides discovery with an explicit path.
+
+### One file for both tools
+
+shiprig is a superset of changerig, so you can keep **both** configs in a single
+file instead of two — it's optional, and existing two-file setups keep working
+unchanged. It goes both ways:
+
+- changeset config at the top level **+ a `release` key** (a `config.json`, as
+  above), or
+- the pipeline at the top level **+ a `changeset` key** (a `shiprig.jsonc`):
+
+```jsonc
+// .changeset/shiprig.jsonc
+{
+  "$schema": "https://rigsmith.dev/schemas/shiprig.json",
+  "order": ["version", "publish", "tag", "release"],
+  "changeset": { "versioning": { "source": "commits" }, "ignore": [] }
+}
+```
+
+Both tools read whichever file you choose. If you end up with two files,
+`shiprig doctor` flags it and offers to **merge them into one
+`.changeset/shiprig.jsonc`**. Defining the *same* config in two places is a loud
+error (shiprig never guesses).
 
 ## Environment & `.env`
 
