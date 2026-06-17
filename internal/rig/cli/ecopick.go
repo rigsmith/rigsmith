@@ -36,7 +36,7 @@ func pickPrimaryEcosystem(root string, candidates []string) (string, bool) {
 		huh.NewConfirm().
 			Title("Remember this in "+config.FileName+"?").
 			Value(&remember),
-	)).WithKeyMap(huhEscKeyMap())
+	)).WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme())
 	if err := form.Run(); err != nil {
 		return "", false // esc / ctrl+c → cancelled
 	}

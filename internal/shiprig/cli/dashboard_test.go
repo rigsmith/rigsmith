@@ -17,6 +17,32 @@ func dash(m dashboardModel, msg tea.Msg) dashboardModel {
 	return nm
 }
 
+// pumpForm drives the embedded huh confirm to its terminal state the way the
+// Bubble Tea event loop would: run the command Update returned, feed the
+// resulting message(s) back through Update, repeat. Accepting a huh confirm
+// doesn't complete on the keypress — it schedules a NextField command that
+// submits on the next cycle — so the test must run those commands. tea.BatchMsg
+// is flattened; the loop is bounded as a safety net.
+func pumpForm(m dashboardModel, cmd tea.Cmd) dashboardModel {
+	queue := []tea.Cmd{cmd}
+	for steps := 0; len(queue) > 0 && steps < 100; steps++ {
+		c := queue[0]
+		queue = queue[1:]
+		if c == nil {
+			continue
+		}
+		switch msg := c().(type) {
+		case tea.BatchMsg:
+			queue = append(queue, msg...)
+		default:
+			var next tea.Cmd
+			m, next = dashUpdate(m, msg)
+			queue = append(queue, next)
+		}
+	}
+	return m
+}
+
 func TestDashboardStepLifecycle(t *testing.T) {
 	m := newDashboardModel(editorSteps(), "shiprig")
 	if m.steps[2].status != statusSkipped {
@@ -60,7 +86,8 @@ func TestDashboardConfirmFlow(t *testing.T) {
 	if !m.confirming {
 		t.Fatal("should be awaiting confirmation")
 	}
-	m = dash(m, rkey("y"))
+	m, cmd := dashUpdate(m, rkey("y"))
+	m = pumpForm(m, cmd)
 	if m.confirming {
 		t.Error("answering should clear the confirm state")
 	}

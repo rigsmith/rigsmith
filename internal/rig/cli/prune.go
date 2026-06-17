@@ -103,7 +103,7 @@ branch, so keep it current (e.g. pull main).`,
 					Affirmative("Yes, prune").
 					Negative("Cancel").
 					Value(&proceed),
-			)).Run(); err != nil || !proceed {
+			)).WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme()).Run(); err != nil || !proceed {
 				fmt.Fprintf(out, "%s\n", DimStyle.Render("aborted"))
 				return nil
 			}

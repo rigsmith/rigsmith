@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/tui"
 	"github.com/spf13/cobra"
@@ -422,7 +423,7 @@ func resolveBlockedSwitch(st *account.Store, target account.Account, blocked []a
 				huh.NewOption("Force switch (they'll need to re-login)", "force"),
 			).
 			Value(&choice),
-	)).WithKeyMap(huhEscKeyMap()).Run()
+	)).WithKeyMap(huhEscKeyMap()).WithTheme(brand.Theme(brand.AccentClaude)).Run()
 	if err != nil || choice == "cancel" || choice == "" {
 		return DimStyle.Render("switch cancelled")
 	}
@@ -634,7 +635,7 @@ func confirmDestructive(title string) (bool, error) {
 	var ok bool
 	err := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().Title(title).Affirmative("Yes").Negative("No").Value(&ok),
-	)).WithKeyMap(huhEscKeyMap()).Run()
+	)).WithKeyMap(huhEscKeyMap()).WithTheme(brand.Theme(brand.AccentClaude)).Run()
 	if errors.Is(err, huh.ErrUserAborted) {
 		return false, nil
 	}
