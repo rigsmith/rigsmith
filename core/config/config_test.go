@@ -7,6 +7,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -343,5 +344,49 @@ func TestStrategyByPackage(t *testing.T) {
 	none, _ := Parse([]byte(`{"versionStrategy":"independent"}`))
 	if m := none.StrategyByPackage(ecoOf); m != nil {
 		t.Errorf("StrategyByPackage with no eco overrides = %+v, want nil", m)
+	}
+}
+
+// Load resolves the config across its allowed alternate locations and refuses
+// to guess when more than one exists.
+func TestLoad_ResolvesAlternateLocationsAndAmbiguity(t *testing.T) {
+	mkChangeset := func(t *testing.T) (root, cs string) {
+		root = t.TempDir()
+		cs = filepath.Join(root, ".changeset")
+		if err := os.MkdirAll(cs, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return root, cs
+	}
+
+	// .changeset/changerig.jsonc (alternate name).
+	root, cs := mkChangeset(t)
+	if err := os.WriteFile(filepath.Join(cs, "changerig.jsonc"), []byte(`{"baseBranch":"trunk"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Load(cs); err != nil || c.BaseBranch != "trunk" {
+		t.Fatalf("alternate name: c=%+v err=%v", c, err)
+	}
+
+	// A "changerig" key in .rig.json.
+	root, cs = mkChangeset(t)
+	if err := os.WriteFile(filepath.Join(root, ".rig.json"), []byte(`{"changerig":{"baseBranch":"dev"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Load(cs); err != nil || c.BaseBranch != "dev" {
+		t.Fatalf(".rig.json key: c=%+v err=%v", c, err)
+	}
+
+	// Two sources → ambiguous error naming both.
+	root, cs = mkChangeset(t)
+	if err := os.WriteFile(filepath.Join(cs, "config.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "changerig.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(cs)
+	if err == nil || !strings.Contains(err.Error(), "multiple changeset config") {
+		t.Fatalf("two configs should be ambiguous, got %v", err)
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/cfgfind"
+	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/confkit"
 	"github.com/spf13/cobra"
 )
@@ -61,7 +63,11 @@ func NewConfigCmd() *cobra.Command {
 	return cmd
 }
 
-// configFile resolves the path to .changeset/config.json for the current repo.
+// configFile resolves the config file the `config` command should read/write.
+// It targets the repo's single existing config file across the allowed
+// locations; when the config lives in a .rig.json key it returns an error
+// (edit it there), and when none exists yet it defaults to the canonical
+// .changeset/config.json so `config set` scaffolds the conventional spot.
 func configFile() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -71,7 +77,19 @@ func configFile() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, ".changeset", "config.json"), nil
+	changesetDir := filepath.Join(root, ".changeset")
+	src, err := cfgfind.Find(config.Spec(changesetDir))
+	if err != nil {
+		return "", err // ambiguous — names every candidate
+	}
+	switch {
+	case src == nil:
+		return filepath.Join(changesetDir, "config.json"), nil // canonical default
+	case src.Path == "":
+		return "", fmt.Errorf("changeset config lives in %s — edit it there", src.Origin)
+	default:
+		return src.Path, nil
+	}
 }
 
 func newConfigShowCmd() *cobra.Command {
