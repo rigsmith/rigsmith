@@ -87,7 +87,7 @@ func TestPickColumns_AlignsNameAndEco(t *testing.T) {
 	}
 }
 
-func TestDevVerbCmd_PickFlagScope(t *testing.T) {
+func TestDevVerbCmd_InteractiveFlagScope(t *testing.T) {
 	// run and the --all-capable verbs expose -i/--interactive…
 	if devVerbCmd("run", "", false).Flags().Lookup("interactive") == nil {
 		t.Error("`rig run` should expose an --interactive flag")

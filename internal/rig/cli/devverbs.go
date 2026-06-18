@@ -18,11 +18,11 @@ import (
 // workspace package in dependency order, narrowable with `--filter`.
 func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.Command {
 	var (
-		all         bool
-		filter      string
-		watch       bool
-		interactive bool
-		presets     []presetFlag
+		all       bool
+		filter    string
+		watch     bool
+		forcePick bool
+		presets   []presetFlag
 	)
 	cmd := &cobra.Command{
 		Use:               verb + " [project]",
@@ -53,7 +53,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// runnable package and surfaced script; the --all verbs list every
 			// package (with "All packages"). With an explicit project arg the arg
 			// wins (below).
-			if interactive && len(args) == 0 && (supportsAll || verb == "run") {
+			if forcePick && len(args) == 0 && (supportsAll || verb == "run") {
 				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll, true); handled {
 					return herr
 				}
@@ -134,7 +134,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 		if verb == "run" {
 			usage = "always open the picker (choose a package or script to run)"
 		}
-		cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, usage)
+		cmd.Flags().BoolVarP(&forcePick, "interactive", "i", false, usage)
 	}
 	presets = registerPresetFlags(cmd)
 	return cmd
@@ -383,7 +383,7 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 
 // dispatchVerbPick shows the package picker for an --all-capable verb and runs
 // the choice: "All packages" → the --all dashboard, a package → its command,
-// cancel → nothing. Shared by the implicit multi-package case and `--pick`.
+// cancel → nothing. Shared by the implicit multi-package case and `-i`/`--interactive`.
 func dispatchVerbPick(cmd *cobra.Command, verb string, tasks []allTask, offerAll bool) (handled bool, err error) {
 	switch choice := pickWorkspaceVerbTarget(verb, tasks, offerAll); choice {
 	case pickCancel:

@@ -64,9 +64,10 @@ falling through to a doomed `go run .`.
 ## Opening the picker (`-i` / `--interactive`)
 
 At a workspace root where targets live only in subdirectories, a bare `rig run`
-(or `build`/`test`/`format`/`lint`/`typecheck`/`clean`) opens a picker of the
-runnable packages and surfaced scripts — no flag needed. When one obvious target
-*would* run directly, pass `-i`/`--interactive` to force the picker anyway:
+(or `build`/`test`/`format`/`lint`/`typecheck`/`clean`) opens a picker — no flag
+needed. `run` lists the runnable packages **and** the repo's surfaced scripts;
+the other verbs list packages only. When one obvious target *would* run directly,
+pass `-i`/`--interactive` to force the picker anyway:
 
 ```sh
 rig run                  # picker only when there's no single target
