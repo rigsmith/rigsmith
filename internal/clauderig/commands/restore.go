@@ -146,7 +146,7 @@ func NewRestoreCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&backup, "backup", false, "copy an existing ~/.claude to ~/.claude.bak before restoring")
-	cmd.Flags().BoolVar(&force, "force", false, "restore over an existing ~/.claude without prompting")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "restore over an existing ~/.claude without prompting")
 	cmd.Flags().StringVar(&dir, "dir", "", "restore the CLI payload into this folder instead of ~/.claude (test/inspect)")
 	cmd.Flags().BoolVar(&prune, "prune", false, "remove config files (skills/commands/agents/plans) deleted upstream; never touches projects")
 	return cmd
