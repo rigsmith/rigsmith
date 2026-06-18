@@ -29,9 +29,10 @@ The whole workflow is wired:
 - `version` (normal / pre / snapshot, changelog enrichment + `format:`)
 - `pre` — enter/exit prerelease mode
 - `info`, `ui`
-- `packages` — show the packages a release will build (their release / private /
-  ignored disposition) and include/exclude them via a picker that persists the
-  choice to the changeset `ignore` list; `packages list` prints and exits
+- `packages` — show every discovered package and what the release does with each
+  (its bump, or no change / private / ignored) and include/exclude them via a
+  picker that persists the choice to the changeset `ignore` list; `packages list`
+  prints and exits
 - `tag` — create the git tags for the released versions
 - `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI
 - `release` — the [configurable step pipeline](./pipeline) with step filtering

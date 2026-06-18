@@ -34,7 +34,7 @@ failing:
 
 - **.NET** has no separate `typecheck` (it would just be `build`).
 - **Cargo** has no `dlx` one-shot runner, and `deps` falls back to the plain
-  `cargo` outdated list (no rich table yet).
+  `cargo outdated` output rather than the rich table.
 - **Node** `clean` runs only when the package defines a `clean` script.
 
 The full per-ecosystem matrix lives in [`docs/ECOSYSTEM-MATRIX.md`](https://github.com/rigsmith/rigsmith/blob/main/docs/ECOSYSTEM-MATRIX.md).
