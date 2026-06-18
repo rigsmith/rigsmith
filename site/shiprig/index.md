@@ -29,6 +29,9 @@ The whole workflow is wired:
 - `version` (normal / pre / snapshot, changelog enrichment + `format:`)
 - `pre` — enter/exit prerelease mode
 - `info`, `ui`
+- `packages` — show the packages a release will build (their release / private /
+  ignored disposition) and include/exclude them via a picker that persists the
+  choice to the changeset `ignore` list; `packages list` prints and exits
 - `tag` — create the git tags for the released versions
 - `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI
 - `release` — the [configurable step pipeline](./pipeline) with step filtering
@@ -40,8 +43,9 @@ Beyond the basics, the `release` pipeline adds multi-forge releases
 (GitHub / GitLab / Gitea), OIDC trusted publishing + 1Password/secret-manager
 auth for npm / crates.io / NuGet, Tengo scripting (`if` gates, computed `vars`,
 `script` steps), a cross-platform portable shell, an `issues` step that
-comments on and closes resolved issues, and code-signing for Tauri / Electron
-artifacts. See [the release pipeline](./pipeline).
+comments on and closes resolved issues (GitHub today; GitLab/Gitea are planned),
+and code-signing for Tauri / Electron artifacts. See
+[the release pipeline](./pipeline).
 
 ## shipRig vs changeRig
 

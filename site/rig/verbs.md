@@ -26,6 +26,19 @@
 | *custom* | Any `commands` entry in `.rig.json` becomes a subcommand |
 | *scripts* | In a Node repo, every `package.json` script becomes a verb |
 
+## Ecosystem coverage
+
+The same verb runs the native tool for your stack. A few combinations have no
+native equivalent and degrade gracefully — with a clear message — rather than
+failing:
+
+- **.NET** has no separate `typecheck` (it would just be `build`).
+- **Cargo** has no `dlx` one-shot runner, and `deps` falls back to the plain
+  `cargo` outdated list (no rich table yet).
+- **Node** `clean` runs only when the package defines a `clean` script.
+
+The full per-ecosystem matrix lives in [`docs/ECOSYSTEM-MATRIX.md`](https://github.com/rigsmith/rigsmith/blob/main/docs/ECOSYSTEM-MATRIX.md).
+
 ## Git & worktree verbs
 
 | Verb | What |
