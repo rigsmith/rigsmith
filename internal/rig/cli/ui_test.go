@@ -44,6 +44,33 @@ func isQuit(cmd tea.Cmd) bool {
 	return ok
 }
 
+func runes(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
+
+// `w` toggles watch at the top level; the flag rides into dispatch so the next
+// dev verb runs in watch mode.
+func TestMenu_WTogglesWatch(t *testing.T) {
+	m := scriptedMenu()
+	if m.watch {
+		t.Fatal("watch should start off")
+	}
+	if m = mu(m, runes("w")); !m.watch {
+		t.Error("w should turn watch on")
+	}
+	if m = mu(m, runes("w")); m.watch {
+		t.Error("w again should turn watch off")
+	}
+}
+
+// The coverage "browse" menu pick pre-sets the interactive flag (coverage -i).
+func TestCoverageMenuCmd_BrowseSetsInteractive(t *testing.T) {
+	if got := coverageMenuCmd(false).Flags().Lookup("interactive").Value.String(); got != "false" {
+		t.Errorf("summary interactive = %q, want false", got)
+	}
+	if got := coverageMenuCmd(true).Flags().Lookup("interactive").Value.String(); got != "true" {
+		t.Errorf("browse interactive = %q, want true", got)
+	}
+}
+
 func TestMenu_EscapeCancelsThePrompt(t *testing.T) {
 	model, cmd := scriptedMenu().Update(key(tea.KeyEscape))
 	if !isQuit(cmd) {
