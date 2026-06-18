@@ -39,6 +39,18 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # jsign signs the Windows .exe with Azure Trusted Signing during the build
+      # (see scripts/sign-windows.sh); it's a Java jar and needs a JRE.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Fetch jsign
+        run: |
+          curl -fsSL -o /tmp/jsign.jar \
+            https://github.com/ebourg/jsign/releases/download/7.4/jsign-7.4.jar
+          echo "JSIGN_JAR=/tmp/jsign.jar" >> "$GITHUB_ENV"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
@@ -46,3 +58,22 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Cross-repo token so GoReleaser can commit the casks to
+          # rigsmith/homebrew-tap (the default GITHUB_TOKEN can't reach it).
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # macOS sign + notarize (Apple Developer ID). Notarization auto-enables
+          # once MACOS_SIGN_P12 is set; absent these, releases are unsigned.
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          # Windows Authenticode via Azure Trusted Signing (jsign). Signing
+          # auto-enables once TRUSTED_SIGNING_ACCOUNT is set; absent these, the
+          # Windows binaries ship unsigned.
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          TRUSTED_SIGNING_PROFILE: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
