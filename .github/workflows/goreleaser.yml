@@ -9,12 +9,17 @@
 # scripts/install.sh (the `curl | sh` installer) downloads exactly the archives
 # GoReleaser produces here (rig_<version>_<os>_<arch>.tar.gz). Uses the built-in
 # GITHUB_TOKEN — no extra secret needed.
+#
+# Run it manually (Actions → Release binaries → Run workflow) for a dry run: it
+# builds + signs everything with the real secrets but publishes nothing (no
+# GitHub release, no tap push), and uploads the signed artifacts to inspect.
 name: Release binaries
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch: {} # manual dry run — build + sign, publish nothing
 
 permissions:
   contents: write # create the GitHub Release and upload assets
@@ -55,7 +60,12 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          # A manual run is a snapshot: it builds + signs but skips every publish
+          # (no GitHub release, tap push, or npm). A tag does the real release.
+          args: >-
+            ${{ github.event_name == 'workflow_dispatch'
+                && 'release --snapshot --clean'
+                || 'release --clean' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Cross-repo token so GoReleaser can commit the casks to
@@ -77,3 +87,17 @@ jobs:
           TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
           TRUSTED_SIGNING_ACCOUNT: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
           TRUSTED_SIGNING_PROFILE: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+
+      # Dry run only: hand back the built + signed artifacts to inspect locally
+      # (codesign --verify / spctl on the mac binaries, the casks, checksums).
+      # Nothing was published.
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: dryrun-dist
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+            dist/homebrew/Casks/*.rb
+          retention-days: 7
