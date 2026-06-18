@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cfgfind"
+	"github.com/rigsmith/rigsmith/core/climenu"
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/confkit"
 	"github.com/spf13/cobra"
@@ -52,6 +53,14 @@ func NewConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "View or change .changeset/config.json",
+		// Bare `config` on a TTY opens the subcommand menu; with a verb or off a
+		// TTY the subcommands stand (and `config -h` still prints help).
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if Interactive() {
+				return climenu.Run(cmd)
+			}
+			return cmd.Help()
+		},
 	}
 	cmd.AddCommand(
 		newConfigShowCmd(),
