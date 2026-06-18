@@ -1,0 +1,4 @@
+{
+  "$schema": "https://rigsmith.dev/schemas/rig.json",
+  "exclude": ["*testdata*", "examples/*"]
+}
