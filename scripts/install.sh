@@ -23,7 +23,6 @@
 #
 set -e
 
-# TODO: replace with the real public repo slug once it exists.
 REPO="rigsmith/rigsmith"
 
 INSTALL_PREFIX="${RIGSMITH_INSTALL:-$HOME/.local}"

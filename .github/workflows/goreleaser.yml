@@ -1,0 +1,40 @@
+# Build and publish the four CLI binaries on a version tag.
+#
+# The release flow is two moments:
+#   1. `shiprig version` bumps versions + writes changelogs; you commit, push, and
+#      push a `vX.Y.Z` tag.
+#   2. This workflow fires on that tag, runs GoReleaser, and creates the GitHub
+#      Release with the cross-platform archives + checksums.
+#
+# scripts/install.sh (the `curl | sh` installer) downloads exactly the archives
+# GoReleaser produces here (rig_<version>_<os>_<arch>.tar.gz). Uses the built-in
+# GITHUB_TOKEN — no extra secret needed.
+name: Release binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the GitHub Release and upload assets
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so GoReleaser's git changelog is complete
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
