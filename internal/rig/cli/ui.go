@@ -44,7 +44,7 @@ func newUICmd() *cobra.Command {
 			if final.chosen == "" {
 				return nil
 			}
-			return dispatch(cmd, final.chosen, final.focus)
+			return dispatch(cmd, final.chosen, final.focus, final.watch)
 		},
 	}
 }
@@ -59,8 +59,10 @@ var devLoopVerbs = map[string]bool{
 // dispatch runs the verb chosen in the menu, routing to the standalone commands
 // where one exists, otherwise to the generic ecosystem verb. A non-empty focus
 // (the menu's project picker) scopes project-aware verbs to that package, the
-// .NET rig Menu's project submenu / the Node menu's focus.
-func dispatch(cmd *cobra.Command, verb, focus string) error {
+// .NET rig Menu's project submenu / the Node menu's focus. When watch is set, a
+// watch-capable dev verb runs in the ecosystem's watch mode (the menu's `w`
+// toggle).
+func dispatch(cmd *cobra.Command, verb, focus string, watch bool) error {
 	var sub *cobra.Command
 	var args []string
 	switch {
@@ -82,6 +84,11 @@ func dispatch(cmd *cobra.Command, verb, focus string) error {
 		if focus != "" {
 			args = []string{focus}
 		}
+		if watch {
+			if sub.Flags().Lookup("watch") != nil {
+				_ = sub.Flags().Set("watch", "true")
+			}
+		}
 	default:
 		sub = verbCmd(verb, "")
 	}
@@ -89,6 +96,16 @@ func dispatch(cmd *cobra.Command, verb, focus string) error {
 	sub.SetOut(cmd.OutOrStdout())
 	sub.SetErr(cmd.ErrOrStderr())
 	return sub.RunE(sub, args)
+}
+
+// coverageMenuCmd builds the coverage command for a menu pick, pre-setting the
+// interactive browser flag for the "browse" choice so it runs as `coverage -i`.
+func coverageMenuCmd(browse bool) *cobra.Command {
+	c := newCoverageCmd()
+	if browse {
+		_ = c.Flags().Set("interactive", "true")
+	}
+	return c
 }
 
 // menuItem is an action (verb set), a group (children set), or a focus
@@ -122,6 +139,7 @@ type menuModel struct {
 	chosen       string          // the verb selected on exit
 	chosenCmd    *cobra.Command  // a prebuilt command selected on exit (custom/script verb)
 	focus        string          // the focused project ("" = whole repo); scopes verbs
+	watch        bool            // `w` toggle — run the chosen dev verb in watch mode
 	root         string          // repo root, for live exclude/include writes
 	projects     []projectRow    // every project (incl. excluded), the picker source
 	showExcluded bool            // reveal excluded projects in the picker
@@ -227,9 +245,6 @@ func newMenu() menuModel {
 		{label: "upgrade", desc: "upgrade deps", verb: "upgrade"},
 	})
 	maint := keepMapped(maps, []menuItem{{label: "clean", desc: "remove build outputs", verb: "clean"}})
-	if caps.Unavailable("coverage") == "" {
-		maint = append(maint, menuItem{label: "coverage", desc: "tests + coverage", verb: "coverage"})
-	}
 	maint = append(maint,
 		menuItem{label: "kill", desc: "terminate app processes", verb: "kill"},
 		menuItem{label: "doctor", desc: "check the environment", verb: "doctor"},
@@ -252,6 +267,15 @@ func newMenu() menuModel {
 		top = append(top, menuItem{pickFocus: true, desc: "scope verbs to one project · exclude/include"})
 	}
 	top = append(top, dev...)
+	// Coverage sits right beside the build verbs (not buried in Maintenance): a
+	// peer of `test`, with a sub-choice of the summary table or the interactive
+	// browser (`coverage -i`).
+	if caps.Unavailable("coverage") == "" {
+		top = append(top, menuItem{label: "▸ coverage", desc: "tests + coverage", children: []menuItem{
+			{label: "summary", desc: "run coverage, per-file table", cmd: coverageMenuCmd(false)},
+			{label: "browse", desc: "run coverage + interactive browser", cmd: coverageMenuCmd(true)},
+		}})
+	}
 	// Worktrees are first-class in the build loop: the parallel-dev checkouts and
 	// the -dev route you pin sit right alongside the build verbs.
 	top = append(top, menuItem{label: "▸ Worktrees", desc: "parallel-dev checkouts + the pinned -dev route", children: worktreeMenuItems()})
@@ -264,7 +288,7 @@ func newMenu() menuModel {
 	if proj := projectCommandItems(root); len(proj) > 0 {
 		top = append(top, menuItem{label: "▸ Project commands", desc: "custom commands + scripts from this repo", children: proj})
 	}
-	top = append(top, menuItem{label: "▸ Maintenance", desc: "clean / coverage / kill / doctor", children: maint})
+	top = append(top, menuItem{label: "▸ Maintenance", desc: "clean / kill / doctor", children: maint})
 
 	return menuModel{
 		header:   fmt.Sprintf("%s  ·  %s", root, primary),
@@ -557,6 +581,12 @@ func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cur.projects {
 			m.includeCurrent()
 		}
+	case "w":
+		// Toggle watch: the next dev verb you pick runs in the ecosystem's watch
+		// mode. (Not in the project picker, where keys edit the selection.)
+		if !cur.projects {
+			m.watch = !m.watch
+		}
 	case "enter", "right", "l":
 		it := cur.items[cur.cursor]
 		switch {
@@ -613,6 +643,9 @@ func (m menuModel) View() string {
 	if cur.title != "" {
 		crumb += dimStyle.Render(" / ") + strings.TrimPrefix(cur.title, "▸ ")
 	}
+	if m.watch {
+		crumb += "  " + menuNext.Render("⟳ watch")
+	}
 	header := menuTitle.Render(crumb) + "  " + dimStyle.Render(m.header)
 	// The project frame carries its live sort / filter state.
 	if cur.projects {
@@ -656,14 +689,14 @@ func (m menuModel) View() string {
 		b.WriteString("\n" + dimStyle.Render("  "+m.status) + "\n")
 	}
 
-	hint := "↑/↓ move · enter select · q quit"
+	hint := "↑/↓ move · enter select · w watch · q quit"
 	switch {
 	case cur.projects && m.filtering:
 		hint = "type to filter · ↑/↓ move · enter focus · esc clear"
 	case cur.projects:
 		hint = "enter focus · / filter · e sort · x/i exclude/include · a show/hide excluded · esc back"
 	case len(m.stack) > 1:
-		hint = "↑/↓ move · enter select · esc back · q quit"
+		hint = "↑/↓ move · enter select · w watch · esc back · q quit"
 	}
 	b.WriteString("\n" + dimStyle.Render(hint) + "\n")
 	return b.String()
