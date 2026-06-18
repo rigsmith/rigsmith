@@ -101,3 +101,20 @@ func TestRunnableDotnetNames_EmptyRepo(t *testing.T) {
 		t.Fatalf("a non-.NET repo should yield no runnable names, got %v", names)
 	}
 }
+
+// The init wizard's default-project picker must offer the full project name
+// `rig run` shows (e.g. "Acme.App"), not the short name ("App") — the wizard, the
+// run picker, and the stored defaultProject all have to agree.
+func TestRunnableDotnetNames_MatchesRunFullName(t *testing.T) {
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	writeDotnetWorkspace(t, root, "Acme.App") // an Exe project at src/Acme.App
+	got := runnableDotnetNames(root)
+	if len(got) != 1 || got[0] != "Acme.App" {
+		t.Fatalf("runnableDotnetNames = %v, want [Acme.App] (full name, not short \"App\")", got)
+	}
+	rt := runTargets(context.Background(), root)
+	if len(rt) != 1 || rt[0].Name != got[0] {
+		t.Fatalf("init name %q must match the run target name %v", got[0], rt)
+	}
+}

@@ -205,14 +205,17 @@ func excludeCandidates(ctx context.Context, root string) []string {
 	return out
 }
 
-// runnableDotnetNames lists the repo's runnable .NET project short names (the
-// default-project candidates), sorted. Empty for non-.NET repos.
+// runnableDotnetNames lists the repo's runnable .NET project names (the
+// default-project candidates), sorted. Empty for non-.NET repos. Uses the full
+// project name (the same name `rig run` and `rig default` show and store), not
+// the short name — so the init wizard, run picker, and stored defaultProject all
+// agree, and projects that share a short name don't collapse into one option.
 func runnableDotnetNames(root string) []string {
 	cfg, _ := config.LoadMerged(root)
 	var names []string
 	for _, p := range detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude) {
 		if p.IsRunnable() {
-			names = append(names, p.ShortName())
+			names = append(names, p.Name)
 		}
 	}
 	sort.Strings(names)
