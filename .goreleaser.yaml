@@ -20,7 +20,6 @@ project_name: rigsmith
 builds:
   - id: rig
     main: ./cmd/rig
-    binary: rig
     env:
       - CGO_ENABLED=0
     goos:
@@ -35,7 +34,6 @@ builds:
 
   - id: shiprig
     main: ./cmd/shiprig
-    binary: shiprig
     env:
       - CGO_ENABLED=0
     goos:
@@ -50,7 +48,6 @@ builds:
 
   - id: clauderig
     main: ./cmd/clauderig
-    binary: clauderig
     env:
       - CGO_ENABLED=0
     goos:
@@ -65,7 +62,6 @@ builds:
 
   - id: changerig
     main: ./cmd/changerig
-    binary: changerig
     env:
       - CGO_ENABLED=0
     goos:
@@ -77,6 +73,29 @@ builds:
       - arm64
     ldflags:
       - -s -w  # no self-version var: changerig's `version` acts on the user's packages
+
+# Sign + notarize the macOS binaries with the Apple Developer ID, so they install
+# and run with no Gatekeeper warning. quill (bundled with GoReleaser) does this on
+# the Linux runner — no macOS runner needed. Auto-enables once MACOS_SIGN_P12 is
+# present, so the config is safe to ship before the secrets are added; until then
+# releases are unsigned (the cask's quarantine-strip keeps them runnable).
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids:
+        - rig
+        - shiprig
+        - changerig
+        - clauderig
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}" # base64 of the Developer ID Application .p12
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}" # base64 of the App Store Connect API .p8
+        wait: true
+        timeout: 20m
 
 archives:
   - id: rig
@@ -147,32 +166,74 @@ changelog:
       - Merge pull request
       - Merge branch
 
-# TODO: enable once a Homebrew tap repo (e.g. rigsmith/homebrew-tap) exists.
-# This skeleton publishes both binaries as formulae. Cask form is also an
-# option for GUI-style installs, but these are CLIs so `brews` is the fit.
-# brews:
-#   - name: rig
-#     ids:
-#       - rig
-#     repository:
-#       owner: rigsmith
-#       name: homebrew-tap
-#     homepage: "https://rigsmith.dev"
-#     description: "rigsmith's convention-first dev launcher"
-#     license: "MIT"
-#     install: |
-#       bin.install "rig"
-#   - name: shiprig
-#     ids:
-#       - shiprig
-#     repository:
-#       owner: rigsmith
-#       name: homebrew-tap
-#     homepage: "https://rigsmith.dev"
-#     description: "rigsmith's uniform changeset -> version -> publish release tool"
-#     license: "MIT"
-#     install: |
-#       bin.install "shiprig"
+# Publish one Homebrew cask per tool to rigsmith/homebrew-tap, so
+# `brew install --cask rigsmith/tap/<tool>` installs the prebuilt binary (no
+# compile). GoReleaser v2 deprecated formulae (`brews`) in favour of casks; the
+# cask also strips the macOS quarantine xattr so the unsigned binary runs without
+# a Gatekeeper prompt. The default GITHUB_TOKEN can't push to another repo, so
+# each cask authenticates with the HOMEBREW_TAP_TOKEN the release workflow passes.
+homebrew_casks:
+  - name: rig
+    ids: [rig]
+    repository:
+      owner: rigsmith
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://rigsmith.dev"
+    description: "Convention-first dev launcher across .NET, Node, Go, and Rust"
+    # The binaries are unsigned, so strip the quarantine xattr Homebrew sets on a
+    # cask download — otherwise macOS Gatekeeper blocks the first run.
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/rig"]
+          end
+
+  - name: shiprig
+    ids: [shiprig]
+    repository:
+      owner: rigsmith
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://rigsmith.dev"
+    description: "Uniform changeset -> version -> publish, across every ecosystem"
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/shiprig"]
+          end
+
+  - name: changerig
+    ids: [changerig]
+    repository:
+      owner: rigsmith
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://rigsmith.dev"
+    description: "Changesets: capture intent, then version across every ecosystem"
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/changerig"]
+          end
+
+  - name: clauderig
+    ids: [clauderig]
+    repository:
+      owner: rigsmith
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://rigsmith.dev"
+    description: "Sync your Claude Code setup across machines, path-correct on restore"
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/clauderig"]
+          end
 
 release:
   github:
