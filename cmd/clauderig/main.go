@@ -16,7 +16,6 @@ import (
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/fang"
 	"github.com/rigsmith/rigsmith/internal/clauderig/commands"
-	"github.com/spf13/cobra"
 )
 
 // version is stamped at release time via -ldflags "-X main.version=...".
@@ -29,32 +28,7 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	root := &cobra.Command{
-		Use:     "clauderig",
-		Version: version,
-		Short:   "Sync your Claude Code setup across machines, path-correct on restore",
-		Long: "claudeRig syncs your Claude Code config, skills, and session history to your\n" +
-			"own git remote and restores it on any machine — rewriting paths across OSes\n" +
-			"and never leaking secrets. Pick up where you left off on a different computer.",
-		SilenceUsage:  true,
-		SilenceErrors: false,
-	}
-
-	root.AddCommand(
-		commands.NewInitCmd(),
-		commands.NewSyncCmd(),
-		commands.NewPullCmd(),
-		commands.NewRestoreCmd(),
-		commands.NewStatusCmd(),
-		commands.NewGuardCmd(),
-		commands.NewGuideCmd(),
-		commands.NewDoctorCmd(version),
-		commands.NewConfigCmd(),
-		commands.NewMCPCmd(),
-		commands.NewAccountCmd(),
-		commands.NewUICmd(),
-	)
-	root.AddCommand(commands.ScopeCommands()...) // global (alias: hooks) / project / local
+	root := commands.NewRootCmd(version)
 
 	// Bare, interactive `clauderig` lands on the dashboard — a discoverable hub
 	// with the next step in view. Off a TTY (or with any verb/flag) the normal

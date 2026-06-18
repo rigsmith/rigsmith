@@ -15,7 +15,6 @@ import (
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/fang"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
-	"github.com/spf13/cobra"
 )
 
 func main() {
@@ -25,35 +24,7 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	root := &cobra.Command{
-		Use:           "changerig",
-		Aliases:       []string{"changeset"},
-		Short:         "Changesets: capture intent, then version across every ecosystem",
-		Long:          "changeRig manages changeset files and turns them into version bumps and\nchangelogs. One engine decides bumps, cascade, and changelog for .NET, Node,\nGo, and Rust alike.",
-		SilenceUsage:  true,
-		SilenceErrors: false,
-	}
-
-	add := commands.NewAddCmd()
-	// With args/flags (e.g. `changerig -m "…"`), or off a TTY, bare `changerig`
-	// behaves like `changerig add` — scripted/flag-driven use is unchanged.
-	root.RunE = add.RunE
-	root.Args = add.Args
-	root.Flags().AddFlagSet(add.Flags())
-
-	root.AddCommand(
-		commands.NewInitCmd(),
-		add,
-		commands.NewStatusCmd(),
-		commands.NewBrowseCmd(),
-		commands.NewVersionCmd(),
-		commands.NewPreCmd(),
-		commands.NewInfoCmd(),
-		commands.NewConfigCmd(),
-		commands.NewChangelogCmd(),
-		commands.NewUICmd(commands.MenuItem{Label: "Doctor", Desc: "check the changeset setup", Build: commands.NewDoctorCmd}),
-		commands.NewDoctorCmd(),
-	)
+	root := commands.NewRootCmd()
 
 	// Bare, interactive `changerig` (no verb/flag) lands on the menu. Routing
 	// through the registered `ui` subcommand — rather than running a standalone

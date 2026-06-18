@@ -43,61 +43,7 @@ func Execute(ctx context.Context) error {
 	// Unambiguous verb prefixes resolve (e.g. `rig cove` → coverage, `rig reb` → rebuild).
 	cobra.EnablePrefixMatching = true
 
-	root := &cobra.Command{
-		Use:           "rig",
-		Short:         "Convention-first dev launcher across .NET, Node, and Go",
-		Long:          "rig wraps the everyday dev loop — run, build, test, format, lint, typecheck —\nwith project discovery, so the same command works in any ecosystem.",
-		SilenceUsage:  true,
-		SilenceErrors: false,
-		// Fold .rig.json's quiet (global ~/.rig.json layered under the repo's)
-		// into the flag before any verb runs, so the config sets the default
-		// and an explicit --quiet always wins.
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			cwd, _ := os.Getwd()
-			if cfg, err := config.LoadMerged(resolveRoot(cwd)); err == nil && cfg.IsQuiet() {
-				quiet = true
-			}
-			return nil
-		},
-	}
-	root.PersistentFlags().BoolVarP(&dryRun, "dry-run", "n", false, "print the command instead of running it")
-	root.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "suppress the → command echo")
-	root.PersistentFlags().BoolVar(&noEnv, "no-env", false, "skip .env/.env.local loading for this run")
-	root.PersistentFlags().StringVar(&rootFlag, "root", "", "override the working root (skip walk-up discovery)")
-
-	root.AddCommand(
-		// Dev loop (workspace-aware: [project] scopes; --all runs across the
-		// workspace in dependency order, with --filter).
-		devVerbCmd("build", "Build the project", true),
-		devVerbCmd("test", "Run the tests", true),
-		devVerbCmd("run", "Run the project", false, "dev"),
-		devVerbCmd("format", "Format the code", true, "fmt"),
-		devVerbCmd("lint", "Lint the code", true),
-		devVerbCmd("typecheck", "Type-check the code", true, "check"),
-		devVerbCmd("clean", "Remove build outputs", true),
-		devVerbCmd("rebuild", "Clean then build", false, "rb"),
-		// Dependencies & maintenance.
-		verbCmd("install", "Install/restore dependencies", "restore"),
-		verbCmd("ci", "Frozen/clean install"),
-		verbCmd("add", "Add a dependency"),
-		newUninstallCmd(),
-		newOutdatedCmd(),
-		newDepsCmd(),
-		newUpgradeCmd(),
-		verbCmd("global", "Install a global tool", "g"),
-		newDlxCmd(),
-		newWatchCmd(),
-		newWorktreeCmd(),
-		newBranchCmd(),
-		newPruneCmd(),
-		newCopyCmd(),
-		newRigInitCmd(),
-		newInfoCmd(),
-		newConfigCmd(),
-		newUICmd(),
-		newSelfUpdateCmd(),
-	)
-	root.AddCommand(extraCmds()...)
+	root := newRootCmd()
 
 	cwd, _ := os.Getwd()
 	repoRoot := detect.Root(cwd)
@@ -161,6 +107,72 @@ func Execute(ctx context.Context) error {
 		opts = append(opts, fang.WithVersion(version))
 	}
 	return fang.Execute(ctx, root, opts...)
+}
+
+// NewRootCmd returns rig's static built-in command tree — the verbs and flags
+// rig ships with, without the repo-specific custom/script commands that Execute
+// layers on per working directory, and without the arg pre-parse. It's the tree
+// consistency checks (core/cliguard) and tests assert against.
+func NewRootCmd() *cobra.Command { return newRootCmd() }
+
+// newRootCmd builds the static built-in command tree and persistent flags.
+func newRootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:           "rig",
+		Short:         "Convention-first dev launcher across .NET, Node, and Go",
+		Long:          "rig wraps the everyday dev loop — run, build, test, format, lint, typecheck —\nwith project discovery, so the same command works in any ecosystem.",
+		SilenceUsage:  true,
+		SilenceErrors: false,
+		// Fold .rig.json's quiet (global ~/.rig.json layered under the repo's)
+		// into the flag before any verb runs, so the config sets the default
+		// and an explicit --quiet always wins.
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			if cfg, err := config.LoadMerged(resolveRoot(cwd)); err == nil && cfg.IsQuiet() {
+				quiet = true
+			}
+			return nil
+		},
+	}
+	root.PersistentFlags().BoolVarP(&dryRun, "dry-run", "n", false, "print the command instead of running it")
+	root.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "suppress the → command echo")
+	root.PersistentFlags().BoolVar(&noEnv, "no-env", false, "skip .env/.env.local loading for this run")
+	root.PersistentFlags().StringVar(&rootFlag, "root", "", "override the working root (skip walk-up discovery)")
+
+	root.AddCommand(
+		// Dev loop (workspace-aware: [project] scopes; --all runs across the
+		// workspace in dependency order, with --filter).
+		devVerbCmd("build", "Build the project", true),
+		devVerbCmd("test", "Run the tests", true),
+		devVerbCmd("run", "Run the project", false, "dev"),
+		devVerbCmd("format", "Format the code", true, "fmt"),
+		devVerbCmd("lint", "Lint the code", true),
+		devVerbCmd("typecheck", "Type-check the code", true, "check"),
+		devVerbCmd("clean", "Remove build outputs", true),
+		devVerbCmd("rebuild", "Clean then build", false, "rb"),
+		// Dependencies & maintenance.
+		verbCmd("install", "Install/restore dependencies", "restore"),
+		verbCmd("ci", "Frozen/clean install"),
+		verbCmd("add", "Add a dependency"),
+		newUninstallCmd(),
+		newOutdatedCmd(),
+		newDepsCmd(),
+		newUpgradeCmd(),
+		verbCmd("global", "Install a global tool", "g"),
+		newDlxCmd(),
+		newWatchCmd(),
+		newWorktreeCmd(),
+		newBranchCmd(),
+		newPruneCmd(),
+		newCopyCmd(),
+		newRigInitCmd(),
+		newInfoCmd(),
+		newConfigCmd(),
+		newUICmd(),
+		newSelfUpdateCmd(),
+	)
+	root.AddCommand(extraCmds()...)
+	return root
 }
 
 // resolvePrefix rewrites an unambiguous *prefix* of a verb name to the full
