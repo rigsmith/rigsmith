@@ -18,11 +18,11 @@ import (
 // workspace package in dependency order, narrowable with `--filter`.
 func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.Command {
 	var (
-		all     bool
-		filter  string
-		watch   bool
-		pick    bool
-		presets []presetFlag
+		all         bool
+		filter      string
+		watch       bool
+		interactive bool
+		presets     []presetFlag
 	)
 	cmd := &cobra.Command{
 		Use:               verb + " [project]",
@@ -48,11 +48,12 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			if watch {
 				return runWatchVerb(cmd, verb, args)
 			}
-			// `--pick` (no project arg) always opens the picker — even when a single
-			// target would otherwise run directly. `run` lists every runnable
-			// package and surfaced script; the --all verbs list every package (with
-			// "All packages"). With an explicit project arg the arg wins (below).
-			if pick && len(args) == 0 && (supportsAll || verb == "run") {
+			// `-i`/`--interactive` (no project arg) always opens the picker — even
+			// when a single target would otherwise run directly. `run` lists every
+			// runnable package and surfaced script; the --all verbs list every
+			// package (with "All packages"). With an explicit project arg the arg
+			// wins (below).
+			if interactive && len(args) == 0 && (supportsAll || verb == "run") {
 				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll, true); handled {
 					return herr
 				}
@@ -133,7 +134,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 		if verb == "run" {
 			usage = "always open the picker (choose a package or script to run)"
 		}
-		cmd.Flags().BoolVarP(&pick, "pick", "p", false, usage)
+		cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, usage)
 	}
 	presets = registerPresetFlags(cmd)
 	return cmd
@@ -260,7 +261,7 @@ func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) err
 // handled=false lets the normal root command run (single-package repos, or a
 // package at the root).
 //
-// forcePick (`--pick`) always shows the picker: a runnable root package (and,
+// forcePick (`-i`/`--interactive`) always shows the picker: a runnable root package (and,
 // for `run`, the surfaced scripts) is included even when one obvious target
 // exists, and a single candidate still opens the picker rather than running.
 func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, forcePick bool) (handled bool, err error) {
@@ -337,7 +338,7 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 	}
 
 	if forcePick {
-		// `--pick`: always the picker, including a runnable root package.
+		// `-i`/`--interactive`: always the picker, including a runnable root package.
 		if verb == "run" {
 			if len(tasks)+len(scripts) == 0 {
 				return true, fmt.Errorf("nothing runnable here to pick from")
@@ -348,7 +349,7 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 			return true, fmt.Errorf("no %s targets here to pick from", verb)
 		}
 		if !interactive() {
-			return true, fmt.Errorf("--pick needs an interactive terminal; run `rig %s <project>`", verb)
+			return true, fmt.Errorf("-i/--interactive needs an interactive terminal; run `rig %s <project>`", verb)
 		}
 		return dispatchVerbPick(cmd, verb, tasks, offerAll)
 	}
@@ -399,7 +400,7 @@ func dispatchVerbPick(cmd *cobra.Command, verb string, tasks []allTask, offerAll
 // packages and surfaced scripts. A configured defaultProject naming a runnable
 // package wins outright; otherwise a single target runs directly and several
 // open the grouped picker (Projects, then Scripts). Off a TTY it returns a
-// helpful error. With forcePick set (`--pick`) the picker always opens, even
+// helpful error. With forcePick set (`-i`/`--interactive`) the picker always opens, even
 // when a default or a lone candidate would otherwise run.
 func offerRunChoice(cmd *cobra.Command, root string, tasks []allTask, scripts []scriptEntry, defaultProject string, forcePick bool) (handled bool, err error) {
 	if !forcePick {
@@ -416,15 +417,15 @@ func offerRunChoice(cmd *cobra.Command, root string, tasks []allTask, scripts []
 	}
 	if !interactive() {
 		// Off a TTY there's no picker. Point at defaultProject when it's the
-		// relevant lever: with --pick it's what a plain `rig run` would use; without
+		// relevant lever: with -i it's what a plain `rig run` would use; without
 		// it, a configured-but-unmatched default is why we're here.
 		switch {
 		case forcePick && defaultProject != "":
 			return true, fmt.Errorf(
-				"--pick needs an interactive terminal; without it `rig run` uses the configured defaultProject %q, or name one: `rig run <project>`",
+				"-i/--interactive needs an interactive terminal; without it `rig run` uses the configured defaultProject %q, or name one: `rig run <project>`",
 				defaultProject)
 		case forcePick:
-			return true, fmt.Errorf("--pick needs an interactive terminal; run `rig run <project>` instead")
+			return true, fmt.Errorf("-i/--interactive needs an interactive terminal; run `rig run <project>` instead")
 		case defaultProject != "":
 			return true, fmt.Errorf(
 				"configured defaultProject %q doesn't match a runnable project here — run `rig run <project>` or update the default",

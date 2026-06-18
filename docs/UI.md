@@ -267,7 +267,7 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
 - **Trigger:** a bare dev verb at a workspace root where packages live only in
   subdirs (e.g. a `go.work` root) and there's no single target. Covers the
   `--all`-capable verbs (`build`/`test`/`format`/`lint`/`typecheck`/`clean`) and
-  `run`. `--pick`/`-p` forces the picker even when one obvious target exists.
+  `run`. `-i`/`--interactive` forces the picker even when one obvious target exists.
 - **`--all`-capable verbs — huh single-select:** titled `Build which?`, with
   **`All packages`** first (→ the `--all` dashboard) then each package
   (`name  (path · ecosystem)`). A lone subpackage just runs (no prompt).
@@ -527,7 +527,7 @@ flow below.
 | `doctor` live checklist | rig | bubbletea + bubbles | `rig doctor` (TTY) | static checklist |
 | `kill` review-and-select | rig | huh multi-select | `rig kill` (TTY, not `--yes`) | kill all matches |
 | `outdated -i` upgrade | rig | huh multi-select | `rig outdated -i` (TTY) | plain list |
-| workspace-root picker | rig | huh select (`run`: bubbletea, grouped projects+scripts) | bare verb / `--pick` at a multi-pkg root (TTY) | helpful error |
+| workspace-root picker | rig | huh select (`run`: bubbletea, grouped projects+scripts) | bare verb / `-i`/`--interactive` at a multi-pkg root (TTY) | helpful error |
 | primary-ecosystem picker | rig | huh select + confirm | ambiguous ecosystem, no pin (TTY) | "set ecosystem" error |
 | `--list-tests` spinner | rig | lipgloss anim | `rig test <q>` (.NET) | `…` line / silent |
 | `<verb> --all` dashboard | rig | bubbletea + bubbles | `rig build/test --all` (TTY) | plain sequential |

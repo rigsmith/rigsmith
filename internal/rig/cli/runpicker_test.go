@@ -88,16 +88,16 @@ func TestPickColumns_AlignsNameAndEco(t *testing.T) {
 }
 
 func TestDevVerbCmd_PickFlagScope(t *testing.T) {
-	// run and the --all-capable verbs expose --pick…
-	if devVerbCmd("run", "", false).Flags().Lookup("pick") == nil {
-		t.Error("`rig run` should expose a --pick flag")
+	// run and the --all-capable verbs expose -i/--interactive…
+	if devVerbCmd("run", "", false).Flags().Lookup("interactive") == nil {
+		t.Error("`rig run` should expose an --interactive flag")
 	}
-	if devVerbCmd("build", "", true).Flags().Lookup("pick") == nil {
-		t.Error("`rig build` (an --all verb) should expose a --pick flag")
+	if devVerbCmd("build", "", true).Flags().Lookup("interactive") == nil {
+		t.Error("`rig build` (an --all verb) should expose an --interactive flag")
 	}
 	// …but a single-target verb like rebuild (no --all, not run) does not.
-	if f := devVerbCmd("rebuild", "", false).Flags().Lookup("pick"); f != nil {
-		t.Error("rebuild has no workspace picker, so no --pick")
+	if f := devVerbCmd("rebuild", "", false).Flags().Lookup("interactive"); f != nil {
+		t.Error("rebuild has no workspace picker, so no --interactive")
 	}
 }
 
@@ -105,10 +105,10 @@ func TestOfferWorkspaceChoice_ForcePickEmptyErrors(t *testing.T) {
 	host, _ := newRunHost()
 	handled, err := offerWorkspaceChoice(host, t.TempDir(), "run", false, true)
 	if !handled {
-		t.Fatal("--pick must handle the run (it never falls through to a root command)")
+		t.Fatal("-i/--interactive must handle the run (it never falls through to a root command)")
 	}
 	if err == nil || !strings.Contains(err.Error(), "nothing runnable") {
-		t.Fatalf("--pick on an empty root err = %v, want a nothing-runnable error", err)
+		t.Fatalf("-i/--interactive on an empty root err = %v, want a nothing-runnable error", err)
 	}
 }
 
@@ -116,10 +116,10 @@ func TestOfferWorkspaceChoice_ForcePickEmptyVerb(t *testing.T) {
 	host, _ := newRunHost()
 	handled, err := offerWorkspaceChoice(host, t.TempDir(), "build", true, true)
 	if !handled {
-		t.Fatal("--pick must handle the verb (never falls through to a root command)")
+		t.Fatal("-i/--interactive must handle the verb (never falls through to a root command)")
 	}
 	if err == nil || !strings.Contains(err.Error(), "no build targets") {
-		t.Fatalf("`build --pick` on an empty root err = %v, want a no-targets error", err)
+		t.Fatalf("`build -i` on an empty root err = %v, want a no-targets error", err)
 	}
 }
 
