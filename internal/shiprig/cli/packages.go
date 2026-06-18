@@ -13,34 +13,56 @@ import (
 // newPackagesCmd builds `shiprig packages` — it shows the packages a release
 // will build (release / private / ignored disposition) and, on a terminal, opens
 // the include/exclude picker that persists choices to the changeset config
-// `ignore` list. `--list` prints and exits without the picker.
+// `ignore` list. The `list` subcommand prints and exits without the picker.
 func newPackagesCmd() *cobra.Command {
-	var list bool
 	cmd := &cobra.Command{
 		Use:   "packages",
 		Short: "Show the packages a release will build; include/exclude them",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			ws, err := commands.Open()
+			ws, err := showPackages(cmd)
 			if err != nil {
 				return err
 			}
-			rps, err := commands.ReleasePackages(cmd.Context(), ws)
-			if err != nil {
-				return err
-			}
-			printPackages(cmd.OutOrStdout(), rps)
-
-			interactive := !list &&
-				term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
-			if interactive {
+			if term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
 				return RunPackagePicker(cmd.Context(), ws)
 			}
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&list, "list", false, "print the packages and exit (no interactive picker)")
+	cmd.AddCommand(newPackagesListCmd())
 	return cmd
+}
+
+// newPackagesListCmd is the read-only companion: print the release packages and
+// exit, never opening the picker (the `… list` convention shared with worktree /
+// branch / mcp / account).
+func newPackagesListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "Print the release packages and exit (no interactive picker)",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := showPackages(cmd)
+			return err
+		},
+	}
+}
+
+// showPackages discovers the release packages and prints the disposition table,
+// returning the workspace so the caller can open the picker.
+func showPackages(cmd *cobra.Command) (*commands.Workspace, error) {
+	ws, err := commands.Open()
+	if err != nil {
+		return nil, err
+	}
+	rps, err := commands.ReleasePackages(cmd.Context(), ws)
+	if err != nil {
+		return nil, err
+	}
+	printPackages(cmd.OutOrStdout(), rps)
+	return ws, nil
 }
 
 // printPackages renders the release disposition table to stdout (kept clean so
