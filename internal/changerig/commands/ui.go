@@ -37,7 +37,10 @@ func NewUICmd(extra ...MenuItem) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			final := res.(menuModel)
+			final, ok := res.(menuModel)
+			if !ok {
+				return nil // unexpected final model → treat as nothing chosen
+			}
 			if final.chosen == nil {
 				return nil
 			}

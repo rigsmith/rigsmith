@@ -126,13 +126,23 @@ func runDoctorLive(cmd *cobra.Command, checks []pendingCheck) docLevel {
 	final, err := tea.NewProgram(newDoctorModel(checks),
 		tea.WithInput(cmd.InOrStdin()), tea.WithOutput(cmd.OutOrStdout())).Run()
 	if err != nil {
-		severity := docOK
-		for _, pc := range checks {
-			if c := pc.run(); c.level > severity {
-				severity = c.level
-			}
-		}
-		return severity
+		return severityByRunning(checks)
 	}
-	return final.(doctorModel).severity
+	if dm, ok := final.(doctorModel); ok {
+		return dm.severity
+	}
+	// Unexpected final model — fall back to running the checks directly.
+	return severityByRunning(checks)
+}
+
+// severityByRunning runs the checks without the live UI and returns the highest
+// severity — the fallback when the bubbletea program can't produce its model.
+func severityByRunning(checks []pendingCheck) docLevel {
+	severity := docOK
+	for _, pc := range checks {
+		if c := pc.run(); c.level > severity {
+			severity = c.level
+		}
+	}
+	return severity
 }

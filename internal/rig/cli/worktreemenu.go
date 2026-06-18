@@ -181,7 +181,10 @@ func newWorktreeMenuCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			final := res.(wtMenuModel)
+			final, ok := res.(wtMenuModel)
+			if !ok {
+				return nil // unexpected final model → cancel (launcher sees empty stdout)
+			}
 			errOut := cmd.ErrOrStderr()
 			switch final.action {
 			case wtRun:
