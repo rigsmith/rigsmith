@@ -53,8 +53,8 @@ func pickRunTarget(ctx context.Context, root string, scripts []scriptEntry) runC
 	if err != nil {
 		return runChoice{cancel: true}
 	}
-	fm := res.(runPickerModel)
-	if fm.cancelled || fm.chosen == nil {
+	fm, ok := res.(runPickerModel)
+	if !ok || fm.cancelled || fm.chosen == nil {
 		return runChoice{cancel: true}
 	}
 	return *fm.chosen

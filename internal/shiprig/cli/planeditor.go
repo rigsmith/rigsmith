@@ -32,7 +32,10 @@ func (c interactiveChooser) Choose(steps []pipeline.ResolvedStep) ([]pipeline.Re
 	if err != nil {
 		return steps, true
 	}
-	final := res.(planEditorModel)
+	final, ok := res.(planEditorModel)
+	if !ok {
+		return steps, true // unexpected final model → proceed with the plan unchanged
+	}
 	if !final.proceed {
 		return nil, false
 	}

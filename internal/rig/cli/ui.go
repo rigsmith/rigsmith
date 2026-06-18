@@ -32,7 +32,10 @@ func newUICmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			final := res.(menuModel)
+			final, ok := res.(menuModel)
+			if !ok {
+				return nil // unexpected final model → treat as nothing chosen
+			}
 			// A custom/script verb carries its own prebuilt command; run it directly.
 			if final.chosenCmd != nil {
 				sub := final.chosenCmd

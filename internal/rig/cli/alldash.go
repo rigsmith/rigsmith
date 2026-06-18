@@ -306,7 +306,10 @@ func runAcrossDashboard(cmd *cobra.Command, tasks []allTask, verb string) error 
 	if err != nil {
 		return err
 	}
-	fm := final.(allModel)
+	fm, ok := final.(allModel)
+	if !ok {
+		return nil // unexpected final model → nothing to report
+	}
 	if fm.failCount > 0 {
 		return fmt.Errorf("%s failed in %s", verb, pluralN(fm.failCount, "package"))
 	}
