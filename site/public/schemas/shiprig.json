@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigsmith.dev/schemas/shiprig.json",
+  "title": "shiprig release config",
+  "description": "Release-pipeline configuration for shiprig (release.jsonc / shiprig.json); all keys optional, defaults run the built-in steps.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "tool": {
+      "type": "string",
+      "description": "Base command used to invoke changesets for the built-in version/publish steps (default \"changeset\")."
+    },
+    "shell": {
+      "type": "string",
+      "enum": ["portable", "system"],
+      "description": "How shell-string commands run: \"portable\" (default in-process shell) or \"system\" (the OS shell)."
+    },
+    "order": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Ordered list of step names to run; nil uses the default order."
+    },
+    "steps": {
+      "type": "object",
+      "description": "Per-step configuration, keyed by step name.",
+      "additionalProperties": { "$ref": "#/$defs/step" }
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Global hooks that bracket the entire release run.",
+      "properties": {
+        "before": { "$ref": "#/$defs/commandList", "description": "Commands run once before any step." },
+        "after": { "$ref": "#/$defs/commandList", "description": "Commands run once after all steps succeed." },
+        "onError": { "$ref": "#/$defs/commandList", "description": "Commands run when any step fails." }
+      }
+    },
+    "vars": {
+      "type": "object",
+      "description": "Named variables captured/computed and injected into step args via ${vars.name}.",
+      "additionalProperties": { "$ref": "#/$defs/varSpec" }
+    },
+    "changeset": {
+      "$ref": "https://rigsmith.dev/schemas/changeset-config.json",
+      "description": "Nested changeset config when one file carries both (pipeline at top level, changeset config here)."
+    }
+  },
+  "$defs": {
+    "commandList": {
+      "description": "A single command (shell string or argv array) or a list of them.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": ["string", "array"] } }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Configures a single step in the pipeline.",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Whether the step runs; absent means default (enabled)." },
+        "name": { "type": "string", "description": "Human display label shown in plans and progress output." },
+        "before": { "$ref": "#/$defs/commandList", "description": "Commands run before the step's action." },
+        "after": { "$ref": "#/$defs/commandList", "description": "Commands run after the step's action." },
+        "run": { "$ref": "#/$defs/commandList", "description": "The step's action (overrides a built-in's default; the action for a custom step)." },
+        "script": {
+          "description": "The step's action as Tengo code: a string, an array of lines, or { \"file\": \"path.tengo\" }.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } },
+            { "type": "object", "additionalProperties": true, "properties": { "file": { "type": "string" } } }
+          ]
+        },
+        "if": { "type": "string", "description": "Tengo expression gating the step; falsy skips it." },
+        "dryRun": {
+          "description": "Controls the action during --dry-run: true executes, false hides, a command/list runs an alternate.",
+          "type": ["boolean", "string", "array"]
+        },
+        "ecosystems": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["node", "dotnet", "go", "rust"] },
+          "description": "Restricts the step to releases including a package in one of these ecosystems."
+        },
+        "args": { "type": "array", "items": { "type": "string" }, "description": "Extra arguments appended to a built-in command." },
+        "message": { "type": "string", "description": "Commit message template, for the built-in commit step." },
+        "confirm": {
+          "description": "Confirmation gate: true (default prompt), a custom prompt string, or false (no gate).",
+          "type": ["boolean", "string"]
+        },
+        "forge": { "type": "string", "enum": ["auto", "github", "gitlab", "gitea", "none"], "description": "Forge for the release step (default \"auto\")." },
+        "forgeURL": { "type": "string", "description": "Self-hosted forge base URL for an explicit gitlab/gitea." }
+      }
+    },
+    "varSpec": {
+      "description": "A variable: a bare string literal, or an object setting exactly one of value/command/script.",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "value": { "type": "string", "description": "A literal value (not masked)." },
+            "command": { "description": "A command whose trimmed stdout becomes the value (masked).", "type": ["string", "array"] },
+            "script": { "type": "string", "description": "A Tengo expression evaluated against the script ctx." },
+            "lazy": { "type": "boolean", "description": "Defer capture until first reference (keeps a time-limited secret fresh)." }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigsmith.dev/schemas/rig.json",
+  "title": "rig config",
+  "description": "Optional .rig.json for the rig dev launcher; convention-first, so every key is optional.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "solution": {
+      "type": "string",
+      "description": "Pins the .sln/.slnx the .NET verbs operate on."
+    },
+    "defaultProject": {
+      "type": "string",
+      "description": "Names the project to act on when several are runnable."
+    },
+    "ecosystem": {
+      "type": "string",
+      "enum": ["dotnet", "node", "go", "cargo"],
+      "description": "Pins the primary ecosystem for the dev verbs and `ui`, overriding nearest-manifest resolution."
+    },
+    "quiet": {
+      "type": "boolean",
+      "description": "Suppresses the `→ command` echo before running a verb."
+    },
+    "exclude": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Globs hiding projects from discovery/pickers."
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Extra environment applied to spawned commands."
+    },
+    "envPresets": {
+      "type": "object",
+      "additionalProperties": { "type": "object", "additionalProperties": { "type": "string" } },
+      "description": "Named env bundles applied by a matching flag (e.g. `rig test --log`)."
+    },
+    "aliases": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Maps verb name to a curated short alias."
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "enum": ["auto", "off", "install"] },
+      "description": "How rig handles an optional external tool when missing: \"auto\" (default), \"off\", or \"install\"."
+    },
+    "test": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Configures the test verb.",
+      "properties": {
+        "project": { "type": "string", "description": "Pins the test project to run." },
+        "envPresets": { "type": "object", "additionalProperties": { "type": "object", "additionalProperties": { "type": "string" } }, "description": "Named env bundles applied by a matching flag." }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Configures the coverage verb.",
+      "properties": {
+        "settings": { "type": "string" },
+        "collector": { "type": "string", "enum": ["auto", "mtp", "xplat"] },
+        "license": { "type": "string", "description": "ReportGenerator Pro key." },
+        "open": { "type": "boolean", "description": "Open the report (default true)." },
+        "full": { "type": "boolean", "description": "Full multi-file report (default true)." },
+        "min": { "type": "number", "description": "Line-coverage gate." },
+        "reportGenerator": { "type": "string", "enum": ["auto", "off", "install"], "description": "How the rich HTML report is produced." },
+        "reportTypes": { "type": "string", "description": "Overrides ReportGenerator's -reporttypes (default \"Html\")." }
+      }
+    },
+    "kill": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Configures `rig kill`'s default sweep.",
+      "properties": {
+        "match": { "type": "array", "items": { "type": "string" }, "description": "Command-line substrings to kill on a bare `rig kill`." }
+      }
+    },
+    "rebuild": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Configures the rebuild verb.",
+      "properties": {
+        "skip": { "type": "array", "items": { "type": "string" }, "description": "Directory names rebuild leaves alone." }
+      }
+    },
+    "publish": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Configures the publish verb's defaults.",
+      "properties": {
+        "rid": { "type": "string" },
+        "selfContained": { "type": "boolean" },
+        "singleFile": { "type": "boolean" },
+        "output": { "type": "string" },
+        "configuration": { "type": "string" }
+      }
+    },
+    "worktree": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Configures `rig worktree`.",
+      "properties": {
+        "autoOpen": { "type": "boolean", "description": "Open the new sibling checkout in a separate review window (default false)." },
+        "openCmd": { "type": "string", "description": "Command used to open a worktree for review; path is appended (default \"code -n\")." }
+      }
+    },
+    "dotnet": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The `dotnet` namespace for .NET-specific settings; folded onto the canonical top-level fields after parse.",
+      "properties": {
+        "solution": { "type": "string" },
+        "defaultProject": { "type": "string" },
+        "formatter": { "type": "string", "enum": ["csharpier", "dotnet", "auto"], "description": "The .NET formatter `rig format` uses." },
+        "test": { "type": "object", "additionalProperties": true },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "settings": { "type": "string" },
+            "collector": { "type": "string" },
+            "license": { "type": "string" }
+          }
+        },
+        "rebuild": { "type": "object", "additionalProperties": true },
+        "publish": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "description": "Custom verbs: name → shell string, argv array, or an object.",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string", "description": "A shell command." },
+          { "type": "array", "items": { "type": "string" }, "description": "An argv command." },
+          {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "description": { "type": "string", "description": "Help line for the generated subcommand." },
+              "command": { "description": "Shell string or argv array.", "type": ["string", "array"] },
+              "os": { "type": "object", "additionalProperties": true, "description": "Per-OS (macos|windows|linux) spec override." },
+              "env": { "type": "object", "additionalProperties": { "type": "string" } },
+              "cwd": { "type": "string", "description": "Working directory, relative to the repo root." }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

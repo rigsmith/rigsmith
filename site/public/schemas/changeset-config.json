@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigsmith.dev/schemas/changeset-config.json",
+  "title": "Changeset config",
+  "description": "Configuration for changerig / @changesets, read from .changeset/config.json (or a \"changeset\" key in a release/shiprig file).",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "baseBranch": {
+      "type": "string",
+      "description": "The branch releases are cut from (default \"main\")."
+    },
+    "access": {
+      "type": "string",
+      "enum": ["public", "restricted"],
+      "description": "Default publish access for packages (default \"restricted\")."
+    },
+    "ignore": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Package names (exact or '*' globs) never released, tagged, or published."
+    },
+    "fixed": {
+      "type": "array",
+      "items": { "type": "array", "items": { "type": "string" } },
+      "description": "Groups of packages that always version together at the same number."
+    },
+    "linked": {
+      "type": "array",
+      "items": { "type": "array", "items": { "type": "string" } },
+      "description": "Groups of packages whose versions are linked but bump independently."
+    },
+    "updateInternalDependencies": {
+      "type": "string",
+      "enum": ["patch", "minor"],
+      "description": "How far dependents of a changed package are bumped (default \"patch\")."
+    },
+    "versionStrategy": {
+      "type": "string",
+      "enum": ["lockstep", "independent"],
+      "description": "How a shared version is written: \"lockstep\" (default) moves every inheritor together; \"independent\" writes an inline version per package."
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Snapshot-release settings.",
+      "properties": {
+        "useCalculatedVersion": { "type": "boolean" },
+        "prereleaseTemplate": { "type": "string" }
+      }
+    },
+    "format": {
+      "description": "Changelog formatter: false | a name string (e.g. \"native\", \"prettier\") | an argv array for a custom formatter command.",
+      "type": ["boolean", "string", "array"]
+    },
+    "changelog": {
+      "description": "Changelog generator: false, a string name, or a [name, options] tuple.",
+      "type": ["boolean", "string", "array"]
+    },
+    "commit": {
+      "description": "Whether to auto-commit: false, true, or a [resolver, options] tuple.",
+      "type": ["boolean", "array"]
+    },
+    "changelogGroups": {
+      "type": "array",
+      "description": "Maps conventional-commit types to a changelog section and implied bump; empty falls back to built-in defaults.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "type": { "type": "string", "description": "Conventional-commit type, e.g. \"feat\", \"fix\", \"perf\"." },
+          "section": { "type": "string", "description": "Changelog section heading, e.g. \"🚀 Enhancements\"." },
+          "bump": { "type": "string", "enum": ["major", "minor", "patch"], "description": "Version bump this type implies." }
+        }
+      }
+    },
+    "paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Repo-relative roots (globs allowed) to narrow package discovery; empty scans the whole repo."
+    },
+    "versioning": { "$ref": "#/$defs/versioning" },
+    "contributors": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Configures the trailing \"❤️ Contributors\" changelog section.",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Turns the section on (off by default)." },
+        "excludeBots": { "type": "boolean", "description": "Drops authors whose login/name looks like a bot (default true)." },
+        "exclude": { "type": "array", "items": { "type": "string" }, "description": "Author logins, names, or emails to omit (glob '*' supported)." },
+        "section": { "type": "string", "description": "Overrides the section heading." }
+      }
+    },
+    "issues": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Configures the release `issues` step (commenting on / closing resolved issues).",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Turns the step on; false is a no-op." },
+        "comment": { "type": "string", "description": "Comment body template; {{version}} expands to released versions." },
+        "close": { "type": "boolean", "description": "Closes issues referenced with a closing keyword." }
+      }
+    },
+    "release": {
+      "description": "Cross-tool key carrying the shiprig pipeline config in a unified file (see shiprig.json)."
+    },
+    "dotnet": { "$ref": "#/$defs/ecosystem" },
+    "node": { "$ref": "#/$defs/ecosystem" },
+    "go": { "$ref": "#/$defs/ecosystem" },
+    "cargo": { "$ref": "#/$defs/ecosystem" }
+  },
+  "$defs": {
+    "versioning": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Selects where release intent comes from (changesets, commits, or both).",
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": ["changesets", "commits", "both"],
+          "description": "\"changesets\" (default) reads on-disk changeset files; \"commits\" synthesizes from conventional commits; \"both\" unions them."
+        },
+        "scopes": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Maps a conventional-commit scope to a package name for attribution."
+        },
+        "initialRelease": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Tunes a package's first release (no prior tag) under commit-based versioning.",
+          "properties": {
+            "collapse": { "type": "boolean", "description": "Condenses the whole history into one changelog line." },
+            "summary": { "type": "string", "description": "The single line's text (default \"Initial release\")." },
+            "bump": { "type": "string", "enum": ["major", "minor", "patch"], "description": "Bump for the collapsed first release (default \"minor\")." }
+          }
+        }
+      }
+    },
+    "ecosystem": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Per-ecosystem config block (dotnet/node/go/cargo).",
+      "properties": {
+        "sourcePath": { "type": "string", "description": "Narrows this ecosystem's discovery to a repo-relative root." },
+        "packageSource": { "type": "string", "description": "Overrides the publish feed/registry for this ecosystem." },
+        "auth": { "type": "string", "description": "Registry credential as a secret ref: \"op://…\", \"env:NAME\", or \"cmd:…\"." },
+        "oidc": { "type": "string", "enum": ["auto", "off"], "description": "Trusted publishing via CI OIDC identity: \"auto\" (default) or \"off\"." },
+        "user": { "type": "string", "description": "Registry account/subject some OIDC exchanges require (e.g. NuGet)." },
+        "versionStrategy": { "type": "string", "enum": ["lockstep", "independent"], "description": "Overrides the top-level versionStrategy for this ecosystem." },
+        "signing": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Optional code-signing/notarization for desktop ecosystems.",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Maps build-tool env vars to secret refs." },
+            "signers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "extensions": { "type": "array", "items": { "type": "string" } },
+                  "tool": { "type": "string", "enum": ["command", "azure-trusted-signing"] },
+                  "command": { "type": "array", "items": { "type": "string" } },
+                  "endpoint": { "type": "string" },
+                  "account": { "type": "string" },
+                  "certificateProfile": { "type": "string" },
+                  "timestampUrl": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
