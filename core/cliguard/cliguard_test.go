@@ -55,6 +55,36 @@ func TestCheck_FlagConventions(t *testing.T) {
 	}
 }
 
+// Flag rules must cover a command's OWN persistent flags (many reserved flags —
+// rig's root `--dry-run -n`/`--quiet -q` — are persistent on the root), and must
+// check an inherited persistent flag once at its declaring command, not again on
+// every descendant. cobra's LocalFlags() draws exactly this line; this locks it in.
+func TestCheck_CoversOwnPersistentFlagsOnce(t *testing.T) {
+	root := &cobra.Command{Use: "tool", Run: func(*cobra.Command, []string) {}}
+	root.PersistentFlags().BoolP("dry-run", "d", false, "") // wrong: -n is reserved for dry-run
+	child := &cobra.Command{Use: "child", Run: func(*cobra.Command, []string) {}}
+	root.AddCommand(child)
+
+	vs := Check(root)
+	if r := rulesAt(vs, "tool"); !r["reserved-shorthand"] {
+		t.Errorf("own persistent flag not checked at root: %v", r)
+	}
+	// The inherited flag must not be re-reported on the child.
+	if r := rulesAt(vs, "tool child"); r["reserved-shorthand"] {
+		t.Errorf("inherited persistent flag double-counted on child: %v", r)
+	}
+	// Exactly one reserved-shorthand violation in total (root only).
+	n := 0
+	for _, v := range vs {
+		if v.Rule == "reserved-shorthand" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("got %d reserved-shorthand violations, want 1 (root only): %v", n, vs)
+	}
+}
+
 func TestCheck_DoctorNeedsFix(t *testing.T) {
 	root := &cobra.Command{Use: "tool", Run: func(*cobra.Command, []string) {}}
 	bare := &cobra.Command{Use: "doctor", Run: func(*cobra.Command, []string) {}}
