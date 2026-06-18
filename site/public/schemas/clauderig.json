@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigsmith.dev/schemas/clauderig.json",
+  "title": "clauderig config",
+  "description": "Configuration for clauderig (~/.clauderig/config.json): the sync remote, per-machine path maps, sync roots, and retention.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "description": "Config schema version."
+    },
+    "remote": {
+      "type": "string",
+      "description": "The git remote sync pushes to / pulls from."
+    },
+    "machines": {
+      "type": "object",
+      "description": "Per-machine path identities, keyed by machine id.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "name": { "type": "string" },
+          "os": { "type": "string", "enum": ["macos", "windows", "linux"], "description": "pathmap OS token." },
+          "home": { "type": "string", "description": "The machine's home directory." },
+          "tokens": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Extra known-folder tokens (e.g. a custom $DROPBOX)." }
+        }
+      }
+    },
+    "roots": {
+      "type": "array",
+      "description": "Sync roots and their per-OS locations.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": { "type": "string", "description": "Root id (e.g. \"cli\", \"desktop\")." },
+          "enabled": { "type": "boolean" },
+          "location": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "A cascade of portable templates resolved against a machine's home/OS.",
+            "properties": {
+              "perOS": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Maps an OS token (macos/windows/linux) to a literal path." },
+              "portable": { "type": "string", "description": "A token-bearing path used when no per-OS literal exists." }
+            }
+          }
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Project-history window and history-branch squash policy.",
+      "properties": {
+        "historyDays": { "type": "integer", "description": "Project-history retention window in days." },
+        "squashFactor": { "type": "number", "description": "Squash the history branch when its footprint exceeds this × the retained working-tree size." },
+        "floorBytes": { "type": "integer", "description": "Never squash below this byte floor." }
+      }
+    },
+    "alwaysPrune": {
+      "type": "boolean",
+      "description": "Makes `restore` prune stale config files (deleted upstream) by default."
+    },
+    "autoRestore": {
+      "type": "boolean",
+      "description": "Makes the SessionStart hook also restore on a fresh machine (auto-wiring a new computer)."
+    }
+  }
+}
