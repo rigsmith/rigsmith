@@ -16,8 +16,20 @@ import (
 
 // Execute builds the command tree and runs it through fang.
 func Execute(ctx context.Context) error {
-	return fang.Execute(ctx, newRootCmd(), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentShip)), fang.WithBanner(brand.ShipBanner))
+	root := newRootCmd()
+	// Bare, interactive `shiprig` (no verb/flag) lands on the menu. Routing
+	// through the registered `ui` subcommand — which already carries the release
+	// menu items — keeps the menu title resolving to "shiprig" (via
+	// cmd.Root().Name()) and preserves cobra's unknown-command errors.
+	if len(os.Args) == 1 && commands.Interactive() {
+		root.SetArgs([]string{"ui"})
+	}
+	return fang.Execute(ctx, root, fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentShip)), fang.WithBanner(brand.ShipBanner))
 }
+
+// NewRootCmd returns shiprig's full command tree without the bare-TTY menu
+// routing, for consistency checks (core/cliguard) and tests.
+func NewRootCmd() *cobra.Command { return newRootCmd() }
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
@@ -54,14 +66,6 @@ func newRootCmd() *cobra.Command {
 		newReleaseCmd(),
 		newDoctorCmd(),
 	)
-
-	// Bare, interactive `shiprig` (no verb/flag) lands on the menu. Routing
-	// through the registered `ui` subcommand — which already carries the release
-	// menu items — keeps the menu title resolving to "shiprig" (via
-	// cmd.Root().Name()) and preserves cobra's unknown-command errors.
-	if len(os.Args) == 1 && commands.Interactive() {
-		root.SetArgs([]string{"ui"})
-	}
 	return root
 }
 

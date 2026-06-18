@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/changelog"
+	"github.com/rigsmith/rigsmith/core/climenu"
 	"github.com/rigsmith/rigsmith/core/mdfmt"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/spf13/cobra"
@@ -20,6 +21,14 @@ func NewChangelogCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "changelog",
 		Short: "Manually edit a package's CHANGELOG.md (outside the changeset flow)",
+		// Bare `changelog` on a TTY opens the subcommand menu; with a verb or off a
+		// TTY the subcommands stand (and `changelog -h` still prints help).
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if Interactive() {
+				return climenu.Run(cmd)
+			}
+			return cmd.Help()
+		},
 	}
 	cmd.AddCommand(newChangelogAddCmd(), newChangelogFormatCmd())
 	return cmd

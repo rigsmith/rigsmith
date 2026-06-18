@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/climenu"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/claudemd"
 	"github.com/rigsmith/rigsmith/internal/clauderig/gitignore"
@@ -59,7 +60,19 @@ func ScopeCommands() []*cobra.Command {
 }
 
 func newScopeCmd(sp scopeSpec) *cobra.Command {
-	cmd := &cobra.Command{Use: sp.use, Aliases: sp.aliases, Short: sp.short}
+	cmd := &cobra.Command{
+		Use:     sp.use,
+		Aliases: sp.aliases,
+		Short:   sp.short,
+		// Bare `clauderig <scope>` on a TTY opens the install/uninstall/status menu;
+		// with a verb or off a TTY the subcommands stand (and `-h` still prints help).
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if Interactive() {
+				return climenu.Run(cmd)
+			}
+			return cmd.Help()
+		},
+	}
 	cmd.AddCommand(
 		&cobra.Command{
 			Use: "install", Short: "Install " + sp.use + "-scope setup (idempotent)", Args: cobra.NoArgs,

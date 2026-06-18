@@ -55,6 +55,23 @@ var (
 	AccentClaude = Amber  // claudeRig
 )
 
+// AccentFor returns a tool's accent by its binary name, defaulting to rig's blue
+// for an unknown name. It lets a builder shared between tools — changerig and
+// shiprig reuse the same command builders — resolve the right accent at runtime
+// from cmd.Root().Name() instead of hard-coding one tool's color.
+func AccentFor(tool string) lipgloss.AdaptiveColor {
+	switch tool {
+	case "changerig", "changeset":
+		return AccentChange
+	case "shiprig":
+		return AccentShip
+	case "clauderig":
+		return AccentClaude
+	default:
+		return AccentRig
+	}
+}
+
 // Theme builds the brand huh theme for a tool's interactive pickers, painted
 // with the given accent. It starts from huh's ThemeBase (structure only, no
 // colors) and applies the brand palette over the fields that show in a select /

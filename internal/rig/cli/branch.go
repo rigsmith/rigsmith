@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/rigsmith/rigsmith/core/climenu"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/spf13/cobra"
 )
@@ -18,6 +19,15 @@ func newBranchCmd() *cobra.Command {
 		Use:     "branch",
 		Aliases: []string{"br"},
 		Short:   "List/remove/prune local branches",
+		// Bare `rig branch` on a TTY opens the subcommand menu; with a verb or off a
+		// TTY the subcommands stand (and `branch -h` still prints help). `rm <branch>`
+		// stays command-line.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if stdinStdoutTTY() {
+				return climenu.Run(cmd)
+			}
+			return cmd.Help()
+		},
 	}
 	cmd.AddCommand(newBranchListCmd(), newBranchRemoveCmd(), newBranchPruneCmd())
 	return cmd

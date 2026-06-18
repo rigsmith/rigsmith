@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/climenu"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ghrepo"
 	"github.com/spf13/cobra"
@@ -36,6 +37,14 @@ func NewConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "View or change claudeRig configuration",
+		// Bare `config` on a TTY opens the subcommand menu; with a verb or off a
+		// TTY the subcommands stand (and `config -h` still prints help).
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if Interactive() {
+				return climenu.Run(cmd)
+			}
+			return cmd.Help()
+		},
 	}
 	cmd.AddCommand(
 		newConfigShowCmd(),
