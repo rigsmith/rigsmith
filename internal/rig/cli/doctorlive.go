@@ -121,7 +121,8 @@ func (m doctorModel) View() string {
 }
 
 // runDoctorLive runs the checklist program and returns the worst severity seen.
-// On a program error it falls back to running the checks synchronously.
+// If the program errors or returns an unexpected final model, it falls back to
+// running the checks synchronously.
 func runDoctorLive(cmd *cobra.Command, checks []pendingCheck) docLevel {
 	final, err := tea.NewProgram(newDoctorModel(checks),
 		tea.WithInput(cmd.InOrStdin()), tea.WithOutput(cmd.OutOrStdout())).Run()
