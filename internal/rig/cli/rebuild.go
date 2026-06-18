@@ -11,12 +11,93 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newRebuildCmd is not a single native command, so it sequences clean → build.
-// (rebuild is registered via verbCmd in root.go for the help listing; this is
-// the actual runner, dispatched from there when verb == "rebuild".)
-//
-// Implemented as a special case in verbCmd rather than a DevCommands entry
-// because "rebuild" has no single argv across ecosystems.
+// runRebuildVerb dispatches `rig rebuild`. Because rebuild sequences clean →
+// build (no single argv), it can't ride the generic project picker the other dev
+// verbs share, so it carries its own: an explicit [project] scopes the rebuild to
+// that package; a bare rebuild runs the root primary when there is one, and
+// otherwise — a workspace root whose packages live only in subdirs, or with
+// -i/--interactive — opens a package picker whose "All packages" rebuilds each in
+// dependency order.
+func runRebuildVerb(cmd *cobra.Command, root string, args []string, forcePick bool) error {
+	// An explicit project arg scopes the rebuild to that package's dir + ecosystem.
+	if len(args) > 0 {
+		ts := discoverWorkspace(cdContext(cmd), root, excludeFor(root))
+		t, ok := matchTarget(ts, args[0])
+		if !ok {
+			return fmt.Errorf("no workspace package %q to rebuild", args[0])
+		}
+		return runRebuild(cmd, t.Eco, t.Dir, args[1:])
+	}
+
+	cwd, _ := os.Getwd()
+	eco, ecoErr := resolvePrimary(cwd, root)
+	// A resolvable root primary rebuilds in place — unless -i forces the picker.
+	if ecoErr == nil && !forcePick {
+		return runRebuild(cmd, eco, root, nil)
+	}
+
+	// No single primary (or -i): offer the workspace packages as rebuild targets.
+	tasks := rebuildTasks(cmd, root)
+	switch {
+	case len(tasks) == 0:
+		if ecoErr != nil {
+			return ecoErr // nothing at the root and no subpackages — surface why
+		}
+		return runRebuild(cmd, eco, root, nil)
+	case !forcePick && len(tasks) == 1:
+		t := tasks[0]
+		return runRebuild(cmd, t.eco, t.dir, nil)
+	case !interactive():
+		if forcePick {
+			return fmt.Errorf("-i/--interactive needs an interactive terminal; run `rig rebuild <project>`")
+		}
+		return fmt.Errorf("no single rebuild target here — this is a workspace root with %d packages; run `rig rebuild <project>`", len(tasks))
+	}
+
+	switch choice := pickWorkspaceVerbTarget("rebuild", tasks, true); choice {
+	case pickCancel:
+		return nil
+	case pickAll:
+		return rebuildAll(cmd, tasks)
+	default:
+		t := tasks[choice]
+		return runRebuild(cmd, t.eco, t.dir, nil)
+	}
+}
+
+// rebuildTasks lists every workspace package as a rebuild target in dependency
+// order. Unlike the dev verbs, a rebuild task carries no argv — runRebuild needs
+// only the ecosystem + dir.
+func rebuildTasks(cmd *cobra.Command, root string) []allTask {
+	targets := topoSort(filterTargets(discoverWorkspace(cdContext(cmd), root, excludeFor(root)), ""))
+	tasks := make([]allTask, 0, len(targets))
+	for _, t := range targets {
+		rel, err := filepath.Rel(root, t.Dir)
+		if err != nil {
+			rel = t.Dir
+		}
+		tasks = append(tasks, allTask{name: t.Name, eco: t.Eco, dir: t.Dir, rel: filepath.ToSlash(rel)})
+	}
+	return tasks
+}
+
+// rebuildAll rebuilds every task in turn, aborting on the first failure — the
+// "All packages" choice. rebuild's clean → build doesn't fit the --all dashboard
+// (which streams a single command per package), so it runs sequentially.
+func rebuildAll(cmd *cobra.Command, tasks []allTask) error {
+	out := cmd.OutOrStdout()
+	for _, t := range tasks {
+		fmt.Fprintln(out, dimStyle.Render(fmt.Sprintf("· %s (%s)", t.name, t.eco)))
+		if err := runRebuild(cmd, t.eco, t.dir, nil); err != nil {
+			return fmt.Errorf("rebuild in %s: %w", t.name, err)
+		}
+	}
+	return nil
+}
+
+// runRebuild rebuilds one target by sequencing clean → build (rebuild is not a
+// single native command). Implemented as a special case rather than a
+// DevCommands entry because "rebuild" has no single argv across ecosystems.
 func runRebuild(cmd *cobra.Command, eco, root string, args []string) error {
 	// .NET parity: the .NET rig's rebuild deletes every discovered project's
 	// bin/obj before building (`dotnet clean` leaves NuGet/analyzer droppings

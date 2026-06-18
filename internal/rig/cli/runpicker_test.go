@@ -88,16 +88,19 @@ func TestPickColumns_AlignsNameAndEco(t *testing.T) {
 }
 
 func TestDevVerbCmd_InteractiveFlagScope(t *testing.T) {
-	// run and the --all-capable verbs expose -i/--interactive…
-	if devVerbCmd("run", "", false).Flags().Lookup("interactive") == nil {
-		t.Error("`rig run` should expose an --interactive flag")
+	// run, the --all-capable verbs, and rebuild expose -i/--interactive — each has
+	// a workspace picker (rebuild carries its own, since it has no single argv).
+	for _, v := range []struct {
+		verb        string
+		supportsAll bool
+	}{{"run", false}, {"build", true}, {"rebuild", false}} {
+		if devVerbCmd(v.verb, "", v.supportsAll).Flags().Lookup("interactive") == nil {
+			t.Errorf("`rig %s` should expose an --interactive flag", v.verb)
+		}
 	}
-	if devVerbCmd("build", "", true).Flags().Lookup("interactive") == nil {
-		t.Error("`rig build` (an --all verb) should expose an --interactive flag")
-	}
-	// …but a single-target verb like rebuild (no --all, not run) does not.
-	if f := devVerbCmd("rebuild", "", false).Flags().Lookup("interactive"); f != nil {
-		t.Error("rebuild has no workspace picker, so no --interactive")
+	// …but a plain single-target verb (no --all, not run/rebuild) does not.
+	if f := devVerbCmd("clean", "", false).Flags().Lookup("interactive"); f != nil {
+		t.Error("a single-target verb has no workspace picker, so no --interactive")
 	}
 }
 
