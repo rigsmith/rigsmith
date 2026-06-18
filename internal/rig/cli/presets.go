@@ -23,7 +23,7 @@ type presetFlag struct {
 // reserved meaning must win).
 var presetFlagReserved = map[string]bool{
 	"dry-run": true, "quiet": true, "no-env": true, "root": true,
-	"help": true, "all": true, "filter": true, "watch": true, "pick": true,
+	"help": true, "all": true, "filter": true, "watch": true, "interactive": true,
 }
 
 // registerPresetFlags adds one boolean flag per `.rig.json` env preset to cmd,
