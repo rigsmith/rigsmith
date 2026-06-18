@@ -18,7 +18,7 @@
     "order": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Ordered list of step names to run; nil uses the default order."
+      "description": "Ordered list of step names to run; when omitted, the default order is used."
     },
     "steps": {
       "type": "object",
@@ -47,7 +47,7 @@
   },
   "$defs": {
     "commandList": {
-      "description": "A single command (shell string or argv array) or a list of them.",
+      "description": "Either one shell command (a string), or a list of commands (an array): each string element is a shell command and each nested array element is an argv command. Note an array is always a list, never a single argv command.",
       "oneOf": [
         { "type": "string" },
         { "type": "array", "items": { "type": ["string", "array"] } }

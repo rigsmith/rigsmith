@@ -131,6 +131,14 @@
         "publish": { "type": "object", "additionalProperties": true }
       }
     },
+    "release": {
+      "$ref": "https://rigsmith.dev/schemas/shiprig.json",
+      "description": "Embedded shiprig pipeline config — shiprig also reads its release config from a \"release\" key here, so one .rig.json can drive both tools."
+    },
+    "shiprig": {
+      "$ref": "https://rigsmith.dev/schemas/shiprig.json",
+      "description": "Alias of the \"release\" key — shiprig probes both for its embedded pipeline config."
+    },
     "commands": {
       "type": "object",
       "description": "Custom verbs: name → shell string, argv array, or an object.",

@@ -50,16 +50,16 @@
       }
     },
     "format": {
-      "description": "Changelog formatter: false | a name string (e.g. \"native\", \"prettier\") | an argv array for a custom formatter command.",
-      "type": ["boolean", "string", "array"]
+      "description": "Changelog formatter: null/false (off) | a name string (e.g. \"native\", \"prettier\") | an argv array for a custom formatter command.",
+      "type": ["boolean", "string", "array", "null"]
     },
     "changelog": {
-      "description": "Changelog generator: false, a string name, or a [name, options] tuple.",
-      "type": ["boolean", "string", "array"]
+      "description": "Changelog generator: null/false (off), a string name, or a [name, options] tuple.",
+      "type": ["boolean", "string", "array", "null"]
     },
     "commit": {
-      "description": "Whether to auto-commit: false, true, or a [resolver, options] tuple.",
-      "type": ["boolean", "array"]
+      "description": "Whether to auto-commit: null/false (off), true, or a [resolver, options] tuple.",
+      "type": ["boolean", "array", "null"]
     },
     "changelogGroups": {
       "type": "array",
@@ -102,7 +102,8 @@
       }
     },
     "release": {
-      "description": "Cross-tool key carrying the shiprig pipeline config in a unified file (see shiprig.json)."
+      "$ref": "https://rigsmith.dev/schemas/shiprig.json",
+      "description": "Cross-tool key carrying the shiprig pipeline config in a unified file."
     },
     "dotnet": { "$ref": "#/$defs/ecosystem" },
     "node": { "$ref": "#/$defs/ecosystem" },
