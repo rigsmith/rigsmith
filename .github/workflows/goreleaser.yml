@@ -31,6 +31,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # CI runs on main/PRs but not on tags, so gate the release on the tests
+      # passing at the exact tagged commit — never publish binaries that fail.
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
