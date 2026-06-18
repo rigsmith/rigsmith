@@ -64,19 +64,24 @@ falling through to a doomed `go run .`.
 ## Opening the picker (`-i` / `--interactive`)
 
 At a workspace root where targets live only in subdirectories, a bare `rig run`
-(or `build`/`test`/`format`/`lint`/`typecheck`/`clean`) opens a picker — no flag
-needed. `run` lists the runnable packages **and** the repo's surfaced scripts;
-the other verbs list packages only. When one obvious target *would* run directly,
-pass `-i`/`--interactive` to force the picker anyway:
+(or `build`/`test`/`format`/`lint`/`typecheck`/`clean`/`rebuild`) opens a picker —
+no flag needed. `run` lists the runnable packages **and** the repo's surfaced
+scripts; the other verbs list packages only. When one obvious target *would* run
+directly, pass `-i`/`--interactive` to force the picker anyway:
 
 ```sh
 rig run                  # picker only when there's no single target
 rig run -i               # always pick, even with one obvious target
 rig build --interactive  # same, for the --all-capable verbs
+rig rebuild -i           # rebuild a chosen package, or "All packages"
 ```
 
+`rebuild` carries its own picker (it sequences clean → build, so it has no single
+command to ride the shared one): `rig rebuild <project>` scopes the rebuild to one
+package, and the picker's **All packages** rebuilds each in dependency order.
+
 Off a TTY there's no picker, so `-i` reports a helpful error and points you at
-`rig run <project>`.
+`rig <verb> <project>`.
 
 ## Picker controls (exclude / include)
 

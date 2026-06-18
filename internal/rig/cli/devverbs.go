@@ -48,6 +48,12 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			if watch {
 				return runWatchVerb(cmd, verb, args)
 			}
+			// rebuild sequences clean → build, so it has no single argv to ride the
+			// generic project picker (which keys off each package's one command); it
+			// gets its own arg-scoping + package picker.
+			if verb == "rebuild" {
+				return runRebuildVerb(cmd, root, args, forcePick)
+			}
 			// `-i`/`--interactive` (no project arg) always opens the picker — even
 			// when a single target would otherwise run directly. `run` lists every
 			// runnable package and surfaced script; the --all verbs list every
@@ -86,9 +92,6 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// solutions nested in subdirs with nothing at the root) yet still have
 			// runnable subprojects the picker below can offer.
 			eco, ecoErr := resolvePrimary(cwd, root)
-			if ecoErr == nil && verb == "rebuild" {
-				return runRebuild(cmd, eco, root, args)
-			}
 			// `rig test <class|~filter>` in a .NET repo: an arg that names no
 			// package is a test-class query / filter shorthand (TestVerb).
 			if ecoErr == nil && verb == "test" && eco == detect.DotNet && len(args) > 0 {
@@ -129,7 +132,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 	if watchableVerb(verb) {
 		cmd.Flags().BoolVarP(&watch, "watch", "w", false, "run in the ecosystem's watch mode (re-run on change)")
 	}
-	if supportsAll || verb == "run" {
+	if supportsAll || verb == "run" || verb == "rebuild" {
 		usage := "always open the picker (choose a package)"
 		if verb == "run" {
 			usage = "always open the picker (choose a package or script to run)"
