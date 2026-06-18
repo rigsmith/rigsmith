@@ -20,6 +20,7 @@ project_name: rigsmith
 builds:
   - id: rig
     main: ./cmd/rig
+    binary: rig
     env:
       - CGO_ENABLED=0
     goos:
@@ -31,9 +32,15 @@ builds:
       - arm64
     ldflags:
       - -s -w -X github.com/rigsmith/rigsmith/internal/rig/cli.version={{.Version}}
+    hooks:
+      post:
+        # Authenticode-sign the Windows .exe with Azure Trusted Signing
+        # (no-op off Windows / until the signing secrets exist).
+        - cmd: sh ./scripts/sign-windows.sh "{{ .Path }}" "{{ .Os }}"
 
   - id: shiprig
     main: ./cmd/shiprig
+    binary: shiprig
     env:
       - CGO_ENABLED=0
     goos:
@@ -45,9 +52,13 @@ builds:
       - arm64
     ldflags:
       - -s -w  # add a version seam in shiprig/main when shiprig needs self-update
+    hooks:
+      post:
+        - cmd: sh ./scripts/sign-windows.sh "{{ .Path }}" "{{ .Os }}"
 
   - id: clauderig
     main: ./cmd/clauderig
+    binary: clauderig
     env:
       - CGO_ENABLED=0
     goos:
@@ -59,9 +70,13 @@ builds:
       - arm64
     ldflags:
       - -s -w -X main.version={{.Version}}
+    hooks:
+      post:
+        - cmd: sh ./scripts/sign-windows.sh "{{ .Path }}" "{{ .Os }}"
 
   - id: changerig
     main: ./cmd/changerig
+    binary: changerig
     env:
       - CGO_ENABLED=0
     goos:
@@ -73,6 +88,9 @@ builds:
       - arm64
     ldflags:
       - -s -w  # no self-version var: changerig's `version` acts on the user's packages
+    hooks:
+      post:
+        - cmd: sh ./scripts/sign-windows.sh "{{ .Path }}" "{{ .Os }}"
 
 # Sign + notarize the macOS binaries with the Apple Developer ID, so they install
 # and run with no Gatekeeper warning. quill (bundled with GoReleaser) does this on
