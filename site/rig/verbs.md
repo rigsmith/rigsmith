@@ -32,8 +32,8 @@
 |------|------|
 | `copy` / `cp` | Detached copy of the repo tree to a new folder; `--git` keeps `.git` history |
 | `worktree` / `wt` | Parallel-dev sibling worktrees: `new` / `list` / `open` / `rm` / `prune` (the menu/list show age, newest-first) |
-| `branch` / `br` | Manage local branches: `list` / `rm` / `prune` (`--gone` reaps gone-upstream) |
-| `prune` / `tidy` | One interactive sweep: reap merged worktrees, then their branches; `-n` previews, always confirms at a terminal |
+| `branch` / `br` | Manage local branches: `list` / `rm` / `prune` (reaps merged **and** gone-upstream branches; `--keep-gone` keeps the latter) |
+| `prune` / `tidy` | One interactive sweep: reap merged + gone-upstream worktrees, then their branches; `-n` previews, always confirms at a terminal |
 
 ```sh
 rig worktree new feat/x          # sibling checkout off mainline (prints the path)

@@ -96,7 +96,7 @@ func newBranchListCmd() *cobra.Command {
   • current   the checked-out branch (never pruned)
   • worktree  checked out in a worktree (clean with ` + "`worktree prune`" + `)
   • merged    contained in the base branch (pruned by default)
-  • gone      its upstream was deleted on the remote (pruned with --gone)
+  • gone      its upstream was deleted on the remote (pruned by default)
   • unmerged  not contained in base and no gone upstream (kept)`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -170,24 +170,24 @@ func newBranchRemoveCmd() *cobra.Command {
 }
 
 // newBranchPruneCmd removes local branches that are done with: merged into the
-// base, or — with --gone — whose upstream the remote has deleted. The current
-// branch, the base, and any branch checked out in a worktree are never touched,
-// and a deleted branch is recoverable from the reflog for a while, so the cost
-// of a false positive is low. It mirrors `worktree prune`: merged branches go by
-// default; the less-certain gone-but-unprovably-merged case is opt-in.
+// base, or whose upstream the remote has deleted. The current branch, the base,
+// and any branch checked out in a worktree are never touched, and a deleted
+// branch is recoverable from the reflog for a while, so the cost of a false
+// positive is low. It mirrors `worktree prune`: both merged and gone-upstream
+// branches go by default; --keep-gone keeps the gone-but-unprovably-merged ones.
 func newBranchPruneCmd() *cobra.Command {
-	var dryRun, gone bool
+	var dryRun, keepGone bool
 	var base string
 	cmd := &cobra.Command{
 		Use:   "prune",
-		Short: "Delete local branches that are merged (and, with --gone, whose upstream was deleted)",
+		Short: "Delete local branches that are merged or whose upstream was deleted",
 		Long: `Delete local branches that are done with. A branch is removed when it is:
 
   • merged  its changes are contained in the base branch
             (detects squash-merges as well as ordinary merges); or
-  • gone    (with --gone) its upstream branch was deleted on the remote —
-            the practical sign a PR merged once the mainline has moved on
-            far enough that a merge can no longer be proven locally.
+  • gone    its upstream branch was deleted on the remote — the practical sign
+            a PR merged once the mainline has moved on far enough that a merge
+            can no longer be proven locally. Pass --keep-gone to keep these.
 
 The current branch, the base branch, and any branch checked out in a worktree
 are always skipped (clean those with ` + "`worktree prune`" + `). Merge state is
@@ -204,7 +204,7 @@ Deleted branches keep no worktree but are recoverable from the reflog.`,
 				base = repo.DefaultBranch(ctx)
 			}
 			out := cmd.OutOrStdout()
-			removed, kept, err := pruneBranches(ctx, out, repo, base, dryRun, gone, nil)
+			removed, kept, err := pruneBranches(ctx, out, repo, base, dryRun, !keepGone, nil)
 			if err != nil {
 				return err
 			}
@@ -217,7 +217,7 @@ Deleted branches keep no worktree but are recoverable from the reflog.`,
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what would be deleted without deleting anything")
-	cmd.Flags().BoolVar(&gone, "gone", false, "also delete branches whose upstream was deleted on the remote, even if a merge can't be proven")
+	cmd.Flags().BoolVar(&keepGone, "keep-gone", false, keepGoneUsage)
 	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
 	return cmd
 }
@@ -265,7 +265,7 @@ func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base 
 		case b.Gone && gone:
 			reason = "upstream gone"
 		case b.Gone:
-			skip(b.Name, "upstream gone but not provably merged (use --gone)")
+			skip(b.Name, "upstream gone — kept (--keep-gone)")
 			continue
 		default:
 			skip(b.Name, "not merged into "+base)
