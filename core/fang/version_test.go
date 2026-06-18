@@ -23,6 +23,14 @@ func TestSourceLocationFallsBackToExe(t *testing.T) {
 	}
 }
 
+// The "dev" ldflags sentinel is treated as unversioned, so a tool passing it
+// (clauderig does) gets the from-source description, not a bare "dev".
+func TestBuildVersionTreatsDevAsUnversioned(t *testing.T) {
+	if got := buildVersion(settings{version: "dev"}); !strings.HasPrefix(got, "source build") {
+		t.Errorf("buildVersion(dev) = %q, want the from-source description", got)
+	}
+}
+
 // A versionless build is described, not left as a bare "unknown": it names the
 // build and its source location (here, the dev worktree).
 func TestSourceBuildVersionDescribesTheBuild(t *testing.T) {

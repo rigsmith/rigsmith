@@ -236,7 +236,10 @@ func Execute(ctx context.Context, root *cobra.Command, options ...Option) error 
 func buildVersion(opts settings) string {
 	commit := opts.commit
 	version := opts.version
-	if version == "" {
+	// "dev" is the ldflags default every tool ships with — treat it as
+	// unversioned so the from-source description below applies whether a tool
+	// passes "" or "dev" (clauderig passes "dev" verbatim; the others gate on it).
+	if version == "" || version == "dev" {
 		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Sum != "" {
 			version = info.Main.Version
 			commit = getKey(info, "vcs.revision")
