@@ -87,19 +87,18 @@ func renderPruneTable(out io.Writer, rows []pruneRow) {
 // together, this is the single "tidy up after a merged PR" command;
 // `worktree prune` and `branch prune` remain for one side at a time.
 //
-// Unlike those targeted commands, prune deletes branches, so it ALWAYS requires
-// an interactive confirmation: it previews the plan, then asks at a real
-// terminal before touching anything. There is deliberately no flag to skip the
-// prompt — in a non-interactive context (a script, hook, or piped run) prune
-// fails outright rather than delete unattended. Use -n to preview anywhere, or
-// the unattended `worktree prune` / `branch prune` for automation.
+// Because prune deletes branches, it previews the plan and confirms by default;
+// -y/--yes skips the prompt (the standard idiom, shared with version/publish/
+// release) and -n previews without removing. Without -y a non-interactive run
+// (script, hook, or piped) refuses rather than delete unattended. Use the
+// unattended `worktree prune` / `branch prune` for one-side automation.
 func newPruneCmd() *cobra.Command {
-	var dryRun, keepGone bool
+	var dryRun, keepGone, yes bool
 	var base string
 	cmd := &cobra.Command{
 		Use:     "prune",
 		Aliases: []string{"tidy"},
-		Short:   "Remove merged/done worktrees and their branches in one sweep (interactive)",
+		Short:   "Remove merged/done worktrees and their branches in one sweep",
 		Long: `Tidy up after merged PRs: remove finished worktrees and branches together.
 
 Two phases run in order (worktrees first, since a checked-out branch can't be
@@ -113,13 +112,13 @@ deleted):
 A deleted upstream is the strongest "done" signal — it also catches squash-merges
 that the local patch-id check can't prove — so gone-upstream items are removed by
 default; pass --keep-gone to keep them. The current branch/worktree, the base, and
-dirty or unmerged checkouts are never
-touched. Because prune deletes branches it ALWAYS asks for confirmation at a
-terminal — there is no flag to skip the prompt, and a non-interactive run fails
-instead of deleting unattended. Use -n to preview (works anywhere), or the
-unattended worktree prune / branch prune for automation. Deleted branches are
-recoverable from the reflog. Merge state is tested against the local base
-branch, so keep it current (e.g. pull main).`,
+dirty or unmerged checkouts are never touched.
+
+Because prune deletes branches it shows the plan and asks for confirmation by
+default; pass -y/--yes to skip the prompt (CI / scripted runs), or -n to preview
+without removing. Without -y a non-interactive run refuses rather than delete
+unattended. Deleted branches are recoverable from the reflog. Merge state is
+tested against the local base branch, so keep it current (e.g. pull main).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -142,10 +141,26 @@ branch, so keep it current (e.g. pull main).`,
 				return nil
 			}
 
-			// Destructive path: never proceed without a human at the keyboard.
-			// Fail before doing any work in a non-interactive context.
+			// --yes: skip the confirm dialog and act, printing the table of what
+			// was removed for the record. The standard "skip the prompt" idiom,
+			// shared with version / publish / release.
+			if yes {
+				w, b, err := pruneSweep(ctx, out, repo, root, base, false, gone)
+				if err != nil {
+					return err
+				}
+				if w+b == 0 {
+					fmt.Fprintf(out, "%s\n", DimStyle.Render("nothing to prune"))
+					return nil
+				}
+				fmt.Fprintf(out, "%s\n", OkStyle.Render(fmt.Sprintf("✓ %d worktrees, %d branches removed", w, b)))
+				return nil
+			}
+
+			// Destructive path: without -y, never proceed without a human at the
+			// keyboard. Fail before doing any work in a non-interactive context.
 			if !interactive() {
-				return fmt.Errorf("prune deletes branches and must be confirmed at a terminal — it won't run non-interactively; use -n (or prune list) to preview, or worktree prune / branch prune for unattended cleanup")
+				return fmt.Errorf("prune deletes branches — confirm at a terminal or pass -y/--yes; use -n to preview, or the unattended `worktree prune` / `branch prune` for automation")
 			}
 
 			// Capture the plan into a buffer and show it *inside* the confirm dialog,
@@ -195,9 +210,9 @@ branch, so keep it current (e.g. pull main).`,
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what would be removed without removing anything")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt (CI / scripted runs)")
 	cmd.Flags().BoolVar(&keepGone, "keep-gone", false, keepGoneUsage)
 	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
-	cmd.AddCommand(newPruneListCmd())
 	return cmd
 }
 
@@ -223,39 +238,3 @@ func pruneSweep(ctx context.Context, w io.Writer, repo *gitrepo.Repo, root, base
 
 // keepGoneUsage describes the --keep-gone opt-out, shared by every prune command.
 const keepGoneUsage = "keep items whose upstream the remote deleted but whose merge can't be proven (they're removed by default)"
-
-// newPruneListCmd is the read-only companion to prune: it shows the same plan —
-// the worktrees and branches that would be removed (including gone-upstream ones,
-// unless --keep-gone) and what's skipped and why — without touching anything.
-// Equivalent to `prune -n`, surfaced as a subcommand for parity with
-// `worktree list` / `branch list`.
-func newPruneListCmd() *cobra.Command {
-	var keepGone bool
-	var base string
-	cmd := &cobra.Command{
-		Use:     "list",
-		Aliases: []string{"ls"},
-		Short:   "Show what prune would remove (worktrees + branches), without removing",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			ctx := cmd.Context()
-			repo, root, err := openRepo(ctx)
-			if err != nil {
-				return err
-			}
-			if base == "" {
-				base = repo.DefaultBranch(ctx)
-			}
-			out := cmd.OutOrStdout()
-			w, b, err := pruneSweep(ctx, out, repo, root, base, true, !keepGone)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf("%d worktrees, %d branches to remove", w, b)))
-			return nil
-		},
-	}
-	cmd.Flags().BoolVar(&keepGone, "keep-gone", false, keepGoneUsage)
-	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
-	return cmd
-}
