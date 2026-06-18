@@ -59,10 +59,10 @@ func newCoverageCmd() *cobra.Command {
 			"  rig coverage <name>       narrow to a project/filter (node/.NET)\n" +
 			"  rig coverage --open       open the produced HTML report\n" +
 			"  rig coverage --min 80     fail if line coverage is below 80%\n" +
-			"  rig coverage --browse     explore per-file, per-line coverage in the terminal\n\n" +
+			"  rig coverage -i           explore per-file, per-line coverage in the terminal\n\n" +
 			"On an interactive terminal it prints a per-file summary table after the " +
-			"run (worst-covered first); pass --no-summary to suppress it, or --browse " +
-			"to open an interactive browser that drills into each file's source.",
+			"run (worst-covered first); pass --no-summary to suppress it, or -i / " +
+			"--interactive to open a browser that drills into each file's source.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
@@ -149,7 +149,7 @@ func newCoverageCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&open, "open", false, "open the produced HTML report")
 	cmd.Flags().Float64Var(&min, "min", 0, "fail if line coverage is below this percent")
 	cmd.Flags().BoolVar(&noSummary, "no-summary", false, "don't print the per-file coverage table")
-	cmd.Flags().BoolVarP(&browse, "browse", "b", false, "open an interactive per-file/per-line coverage browser")
+	cmd.Flags().BoolVarP(&browse, "interactive", "i", false, "open an interactive per-file/per-line coverage browser")
 	return cmd
 }
 
