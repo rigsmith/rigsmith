@@ -176,6 +176,5 @@ changelog:
 
 release:
   github:
-    # TODO: replace with the real repo slug once the public repo is created.
     owner: rigsmith
     name: rigsmith
