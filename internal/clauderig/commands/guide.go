@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/rigsmith/rigsmith/core/climenu"
 	"github.com/rigsmith/rigsmith/internal/clauderig/claudemd"
 	"github.com/rigsmith/rigsmith/internal/clauderig/tui"
 	"github.com/spf13/cobra"
@@ -28,6 +29,14 @@ func NewGuideCmd() *cobra.Command {
 			"`clauderig guard` enforces, and how to use the rigsmith tools (rig /\n" +
 			"changerig / shiprig). Defaults to the repo's CLAUDE.md; use --global for\n" +
 			"~/.claude/CLAUDE.md (applies to every project).",
+		// Bare `guide` on a TTY opens the subcommand menu; with a verb or off a
+		// TTY the subcommands stand (and `guide -h` still prints help).
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if Interactive() {
+				return climenu.Run(cmd)
+			}
+			return cmd.Help()
+		},
 	}
 	var global bool
 	var path string
