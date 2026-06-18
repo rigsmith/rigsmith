@@ -20,10 +20,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// enforce flips the guard from report-only (t.Log) to hard-fail (t.Error). Keep
-// it false until the reported violations reach zero, then set it true so any new
-// command that breaks a convention fails CI.
-const enforce = false
+// enforce flips the guard from report-only (t.Log) to hard-fail (t.Error). Now
+// that the surface is clean, it's true: any new command that breaks a convention
+// (a canonical flag with the wrong shorthand, a --list flag, a doctor without
+// --fix, a bare command group that won't open a menu) fails CI.
+const enforce = true
 
 func roots() []*cobra.Command {
 	return []*cobra.Command{
