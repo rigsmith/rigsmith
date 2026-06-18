@@ -549,7 +549,7 @@ func newWorktreeRemoveCmd() *cobra.Command {
 // prompt), which is what lets a SessionStart hook call it to reap the orphans
 // left when a session ends without a clean exit.
 func newWorktreePruneCmd() *cobra.Command {
-	var dryRun, deleteBranches, gone bool
+	var dryRun, deleteBranches, keepGone bool
 	var base string
 	cmd := &cobra.Command{
 		Use:   "prune",
@@ -560,9 +560,11 @@ func newWorktreePruneCmd() *cobra.Command {
   • merged  its branch is fully contained in the base branch
             (detects squash-merges as well as ordinary merges)
 
-With --gone a clean worktree is also removed when its branch's upstream was
-deleted on the remote. The primary checkout and the worktree you're running from
-are never touched, and dirty or unmerged worktrees are skipped with a reason.
+A clean worktree whose branch's upstream the remote deleted is also removed —
+that's the strongest "done" signal (and catches squash-merges the local check
+can't prove); pass --keep-gone to keep those. The primary checkout and the
+worktree you're running from are never touched, and dirty or unmerged worktrees
+are skipped with a reason.
 Removing a worktree keeps its branch unless --delete-branches is given. Merge
 state is tested against the local base branch, so keep it current (e.g. pull
 main) for accurate results.`,
@@ -577,7 +579,7 @@ main) for accurate results.`,
 				base = repo.DefaultBranch(ctx)
 			}
 			out := cmd.OutOrStdout()
-			removed, kept, _, err := pruneWorktrees(ctx, out, repo, root, base, dryRun, gone, deleteBranches)
+			removed, kept, _, err := pruneWorktrees(ctx, out, repo, root, base, dryRun, !keepGone, deleteBranches)
 			if err != nil {
 				return err
 			}
@@ -591,7 +593,7 @@ main) for accurate results.`,
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what would be removed without removing anything")
 	cmd.Flags().BoolVarP(&deleteBranches, "delete-branches", "b", false, "also delete the local branch of each removed worktree")
-	cmd.Flags().BoolVar(&gone, "gone", false, "also remove clean worktrees whose branch's upstream was deleted on the remote")
+	cmd.Flags().BoolVar(&keepGone, "keep-gone", false, keepGoneUsage)
 	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
 	return cmd
 }
@@ -614,12 +616,10 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 		_ = repo.WorktreePruneMeta(ctx)
 	}
 	goneSet := map[string]bool{}
-	if gone {
-		if brs, err := repo.LocalBranches(ctx); err == nil {
-			for _, b := range brs {
-				if b.Gone {
-					goneSet[b.Name] = true
-				}
+	if brs, err := repo.LocalBranches(ctx); err == nil {
+		for _, b := range brs {
+			if b.Gone {
+				goneSet[b.Name] = true
 			}
 		}
 	}
@@ -656,8 +656,11 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 		reason := "merged"
 		switch {
 		case merged:
-		case goneSet[wt.Branch]:
+		case goneSet[wt.Branch] && gone:
 			reason = "upstream gone"
+		case goneSet[wt.Branch]:
+			skip(label, "upstream gone — kept (--keep-gone)")
+			continue
 		default:
 			skip(label, "not merged into "+base)
 			continue

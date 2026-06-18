@@ -82,8 +82,8 @@ func renderPruneTable(out io.Writer, rows []pruneRow) {
 // newPruneCmd builds the top-level `prune` (alias `tidy`): one sweep that clears
 // both halves of a finished branch. It runs the worktree sweep first — git won't
 // delete a branch that's checked out — then the branch sweep, which picks up the
-// branches just freed along with any others that are merged (or, with --gone,
-// whose upstream the remote deleted). For a worktree+branch pair that landed
+// branches just freed along with any others that are merged or whose upstream
+// the remote deleted. For a worktree+branch pair that landed
 // together, this is the single "tidy up after a merged PR" command;
 // `worktree prune` and `branch prune` remain for one side at a time.
 //
@@ -94,7 +94,7 @@ func renderPruneTable(out io.Writer, rows []pruneRow) {
 // fails outright rather than delete unattended. Use -n to preview anywhere, or
 // the unattended `worktree prune` / `branch prune` for automation.
 func newPruneCmd() *cobra.Command {
-	var dryRun, gone bool
+	var dryRun, keepGone bool
 	var base string
 	cmd := &cobra.Command{
 		Use:     "prune",
@@ -106,11 +106,14 @@ Two phases run in order (worktrees first, since a checked-out branch can't be
 deleted):
 
   1. worktrees — remove each clean worktree whose branch is merged into base
-                 (or, with --gone, whose upstream the remote deleted)
-  2. branches  — delete each branch that is merged (or, with --gone, gone),
+                 or whose upstream the remote deleted (--keep-gone to keep those)
+  2. branches  — delete each branch that is merged or whose upstream is gone,
                  including the ones whose worktree phase 1 just removed
 
-The current branch/worktree, the base, and dirty or unmerged checkouts are never
+A deleted upstream is the strongest "done" signal — it also catches squash-merges
+that the local patch-id check can't prove — so gone-upstream items are removed by
+default; pass --keep-gone to keep them. The current branch/worktree, the base, and
+dirty or unmerged checkouts are never
 touched. Because prune deletes branches it ALWAYS asks for confirmation at a
 terminal — there is no flag to skip the prompt, and a non-interactive run fails
 instead of deleting unattended. Use -n to preview (works anywhere), or the
@@ -128,6 +131,7 @@ branch, so keep it current (e.g. pull main).`,
 				base = repo.DefaultBranch(ctx)
 			}
 			out := cmd.OutOrStdout()
+			gone := !keepGone // gone-upstream items are swept unless --keep-gone
 
 			if dryRun {
 				w, b, err := pruneSweep(ctx, out, repo, root, base, true, gone)
@@ -191,7 +195,7 @@ branch, so keep it current (e.g. pull main).`,
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what would be removed without removing anything")
-	cmd.Flags().BoolVar(&gone, "gone", false, "also act on items whose upstream was deleted on the remote, even if a merge can't be proven")
+	cmd.Flags().BoolVar(&keepGone, "keep-gone", false, keepGoneUsage)
 	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
 	cmd.AddCommand(newPruneListCmd())
 	return cmd
@@ -217,13 +221,16 @@ func pruneSweep(ctx context.Context, w io.Writer, repo *gitrepo.Repo, root, base
 	return wRemoved, bRemoved, err
 }
 
+// keepGoneUsage describes the --keep-gone opt-out, shared by every prune command.
+const keepGoneUsage = "keep items whose upstream the remote deleted but whose merge can't be proven (they're removed by default)"
+
 // newPruneListCmd is the read-only companion to prune: it shows the same plan —
-// the worktrees and branches that would be removed (with --gone, also
-// gone-upstream ones) and what's skipped and why — without touching anything.
+// the worktrees and branches that would be removed (including gone-upstream ones,
+// unless --keep-gone) and what's skipped and why — without touching anything.
 // Equivalent to `prune -n`, surfaced as a subcommand for parity with
 // `worktree list` / `branch list`.
 func newPruneListCmd() *cobra.Command {
-	var gone bool
+	var keepGone bool
 	var base string
 	cmd := &cobra.Command{
 		Use:     "list",
@@ -240,7 +247,7 @@ func newPruneListCmd() *cobra.Command {
 				base = repo.DefaultBranch(ctx)
 			}
 			out := cmd.OutOrStdout()
-			w, b, err := pruneSweep(ctx, out, repo, root, base, true, gone)
+			w, b, err := pruneSweep(ctx, out, repo, root, base, true, !keepGone)
 			if err != nil {
 				return err
 			}
@@ -248,7 +255,7 @@ func newPruneListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&gone, "gone", false, "also include items whose upstream was deleted on the remote")
+	cmd.Flags().BoolVar(&keepGone, "keep-gone", false, keepGoneUsage)
 	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
 	return cmd
 }
