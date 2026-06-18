@@ -36,10 +36,19 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The gitrepo tests need a git identity + a `main` default branch, same as
+      # ci.yml. Without this the temp repos default to `master` and the
+      # main-based fetch/merge tests fail.
+      - name: Configure git for tests
+        run: |
+          git config --global user.email ci@rigsmith.test
+          git config --global user.name rigsmith-ci
+          git config --global init.defaultBranch main
+
       # CI runs on main/PRs but not on tags, so gate the release on the tests
       # passing at the exact tagged commit — never publish binaries that fail.
       - name: Test
-        run: go test ./...
+        run: go test ./... -count=1
 
       - name: Vet
         run: go vet ./...
