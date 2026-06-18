@@ -109,8 +109,8 @@ func TestPruneDryRunDetachesFreed(t *testing.T) {
 	}
 }
 
-// pruneSweep (shared by the prune action and `prune list`) counts both phases
-// together; in dry mode it touches nothing — this is what `prune list` runs.
+// pruneSweep counts both phases together; in dry mode it touches nothing — this
+// is what `prune -n` runs.
 func TestPruneSweepDryRun(t *testing.T) {
 	ctx := context.Background()
 	r, err := gitrepo.Init(ctx, t.TempDir())

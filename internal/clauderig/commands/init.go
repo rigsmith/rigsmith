@@ -120,7 +120,7 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&installHooks, "hooks", true, "install Claude Code hooks")
 	cmd.Flags().BoolVar(&syncDesktop, "desktop", true, "sync the Desktop/Cowork root")
 	cmd.Flags().BoolVar(&alwaysPrune, "prune", false, "prune stale config files on every restore by default")
-	cmd.Flags().BoolVar(&yes, "yes", false, "non-interactive: use flags/defaults, no prompts")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "non-interactive: use flags/defaults, no prompts")
 	return cmd
 }
 

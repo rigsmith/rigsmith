@@ -175,7 +175,7 @@ func NewSyncCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "stage and scan, but don't commit or push")
+	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "stage and scan, but don't commit or push")
 	return cmd
 }
 

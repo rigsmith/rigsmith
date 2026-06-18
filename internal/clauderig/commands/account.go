@@ -198,9 +198,9 @@ func newAccountSwitchCmd() *cobra.Command {
 			return runSwitch(cmd, args, dryRun, force, kill)
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what switch would do without changing anything")
-	cmd.Flags().BoolVar(&force, "force", false, "swap even while Claude Code is running (those sessions will need to re-login)")
-	cmd.Flags().BoolVar(&kill, "kill", false, "terminate running Claude Code processes first, then swap")
+	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what switch would do without changing anything")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "swap even while Claude Code is running (those sessions will need to re-login)")
+	cmd.Flags().BoolVarP(&kill, "kill", "k", false, "terminate running Claude Code processes first, then swap")
 	return cmd
 }
 

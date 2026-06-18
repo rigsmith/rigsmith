@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,12 +27,35 @@ func newConfigCmd() *cobra.Command {
 		Short: "View or change .rig.json",
 	}
 	cmd.AddCommand(
+		newConfigShowCmd(),
 		newConfigGetCmd(),
 		newConfigSetCmd(),
 		newConfigPathCmd(),
 		newConfigEditCmd(),
 	)
 	return cmd
+}
+
+// newConfigShowCmd prints the repo's whole .rig.json, matching changerig/
+// clauderig `config show`.
+func newConfigShowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Print the whole .rig.json",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			data, err := os.ReadFile(repoConfigPath())
+			if errors.Is(err, fs.ErrNotExist) {
+				fmt.Fprintln(cmd.OutOrStdout(), "no .rig.json yet — run `rig init`")
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), strings.TrimRight(string(data), "\n"))
+			return nil
+		},
+	}
 }
 
 // repoConfigPath returns the repo's .rig.json path for the current root.
