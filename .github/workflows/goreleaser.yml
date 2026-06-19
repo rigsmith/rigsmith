@@ -105,13 +105,13 @@ jobs:
 
       # Build the npm binary-wrapper packages from dist/ (the prebuilt — and on a
       # tag, signed — binaries). A tag publishes them to npm; a manual dry run
-      # only builds (they ride along in the artifact for inspection).
+      # validates packaging with `npm publish --dry-run` (packs each, no upload).
       - name: npm wrapper packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            node scripts/npm/build-packages.mjs
+            node scripts/npm/build-packages.mjs --dry-publish
           else
             node scripts/npm/build-packages.mjs --publish
           fi
