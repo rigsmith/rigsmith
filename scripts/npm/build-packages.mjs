@@ -28,6 +28,7 @@ const ROOT = process.cwd()
 const DIST = path.join(ROOT, 'dist')
 const OUT = path.join(ROOT, 'npm', 'dist')
 const PUBLISH = process.argv.includes('--publish')
+const DRY_PUBLISH = process.argv.includes('--dry-publish') // npm publish --dry-run: pack + validate, no upload
 
 const SCOPE = '@rigsmith'
 const HOMEPAGE = 'https://rigsmith.dev'
@@ -170,14 +171,20 @@ const platformDirs = Object.values(platformPkgs).flat().map((n) => n.slice(SCOPE
 const order = [...platformDirs, ...Object.keys(TOOLS), 'rigsmith']
 
 console.log(`Built ${order.length} package(s) at v${version} under npm/dist/`)
-if (!PUBLISH) {
-  console.log('(dry build — pass --publish to publish)')
+if (!PUBLISH && !DRY_PUBLISH) {
+  console.log('(dry build — pass --publish to publish, or --dry-publish to validate packaging)')
 } else {
+  const dryRun = DRY_PUBLISH ? ['--dry-run'] : []
+  const verb = DRY_PUBLISH ? 'validating' : 'publishing'
+  // A prerelease version (anything with a `-`, e.g. a snapshot or `1.0.0-rc.1`)
+  // must be published under a dist-tag so it doesn't move `latest`; a stable
+  // version publishes as `latest` (npm's default).
+  const tag = version.includes('-') ? ['--tag', 'next'] : []
   for (const d of order) {
     const dir = path.join(OUT, d)
     const name = readJson(path.join(dir, 'package.json')).name
     const access = name.startsWith('@') ? ['--access', 'public'] : []
-    console.log(`publishing ${name}@${version}`)
-    execFileSync('npm', ['publish', ...access], { cwd: dir, stdio: 'inherit' })
+    console.log(`${verb} ${name}@${version}`)
+    execFileSync('npm', ['publish', ...dryRun, ...tag, ...access], { cwd: dir, stdio: 'inherit' })
   }
 }
