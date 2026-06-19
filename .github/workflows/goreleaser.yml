@@ -65,6 +65,12 @@ jobs:
             https://github.com/ebourg/jsign/releases/download/7.4/jsign-7.4.jar
           echo "JSIGN_JAR=/tmp/jsign.jar" >> "$GITHUB_ENV"
 
+      # Node builds the npm binary-wrapper packages; registry-url wires npm auth.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
@@ -97,6 +103,19 @@ jobs:
           TRUSTED_SIGNING_ACCOUNT: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
           TRUSTED_SIGNING_PROFILE: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
 
+      # Build the npm binary-wrapper packages from dist/ (the prebuilt — and on a
+      # tag, signed — binaries). A tag publishes them to npm; a manual dry run
+      # only builds (they ride along in the artifact for inspection).
+      - name: npm wrapper packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            node scripts/npm/build-packages.mjs
+          else
+            node scripts/npm/build-packages.mjs --publish
+          fi
+
       # Dry run only: hand back the built + signed artifacts to inspect locally
       # (codesign --verify / spctl on the mac binaries, the casks, checksums).
       # Nothing was published.
@@ -109,4 +128,5 @@ jobs:
             dist/*.zip
             dist/checksums.txt
             dist/homebrew/Casks/*.rb
+            npm/dist/**/package.json
           retention-days: 7

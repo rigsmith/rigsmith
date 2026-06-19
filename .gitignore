@@ -1,6 +1,8 @@
 # Go
 /bin/
 /dist/
+# Generated npm binary-wrapper packages (scripts/npm/build-packages.mjs)
+/npm/dist/
 *.test
 *.out
 # Coverage output (reports/profiles), but never the `rig coverage` source.
