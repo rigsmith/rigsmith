@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 	"github.com/spf13/cobra"
 )
@@ -89,7 +90,13 @@ func discoverDeps(cmd *cobra.Command, eco, root string) (deps []outdatedDep, sup
 		return parseGoListAll(out), true
 
 	case detect.DotNet:
-		out, err := captureOutdated(cmd, root, "dotnet", "list", "package", "--format", "json")
+		cfg, _ := config.LoadMerged(root)
+		target, terr := dotnetListTarget(root, cfg)
+		if terr != nil {
+			return nil, false // no target — caller falls back to the guided list
+		}
+		argv := []string{"dotnet", "list", target, "package", "--format", "json"}
+		out, err := captureOutdated(cmd, root, argv...)
 		if err != nil && out == "" {
 			return nil, false
 		}

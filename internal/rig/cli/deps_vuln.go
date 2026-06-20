@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 	"github.com/spf13/cobra"
 )
@@ -183,9 +184,14 @@ func parseYarnClassicAudit(text string) map[string]string {
 func auditSeverities(cmd *cobra.Command, eco, root string) (sev map[string]string, supported bool) {
 	switch eco {
 	case detect.DotNet:
+		cfg, _ := config.LoadMerged(root)
+		target, terr := dotnetListTarget(root, cfg)
+		if terr != nil {
+			return nil, false // no target — audit column omitted, like other unwired toolchains
+		}
 		// Audit commands report findings and exit non-zero by design; the JSON on
 		// stdout is still valid, so the error is ignored when there's output.
-		out, err := captureOutdated(cmd, root, "dotnet", "list", "package", "--vulnerable", "--format", "json")
+		out, err := captureOutdated(cmd, root, "dotnet", "list", target, "package", "--vulnerable", "--format", "json")
 		if err != nil && out == "" {
 			return nil, false
 		}
