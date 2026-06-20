@@ -361,17 +361,30 @@ func pickWorktree(wts []gitrepo.Worktree) (string, error) {
 		return "", fmt.Errorf("multiple worktrees and no terminal for the picker; pass a branch or path")
 	}
 	now := time.Now()
-	opts := make([]huh.Option[string], 0, len(wts))
-	for _, wt := range worktreesByRecent(wts) {
-		branch := wt.Branch
-		if branch == "" {
-			branch = "(detached)"
+	recent := worktreesByRecent(wts)
+	// Build plain, column-aligned labels and let the huh theme color them. Pre-
+	// styling the label with our own ANSI (HeaderStyle/DimStyle) breaks huh's
+	// selected-row highlight: its green foreground only survives up to the first
+	// embedded reset, so just the first character stays green.
+	branches := make([]string, len(recent))
+	ages := make([]string, len(recent))
+	branchW, ageW := 0, 0
+	for i, wt := range recent {
+		branches[i] = wt.Branch
+		if branches[i] == "" {
+			branches[i] = "(detached)"
 		}
-		meta := wt.Path
-		if age := humanizeAgo(wt.ModTime, now); age != "" {
-			meta = age + "  " + wt.Path
+		if w := lipgloss.Width(branches[i]); w > branchW {
+			branchW = w
 		}
-		label := fmt.Sprintf("%s  %s", HeaderStyle.Render(branch), DimStyle.Render(meta))
+		ages[i] = humanizeAgo(wt.ModTime, now)
+		if w := lipgloss.Width(ages[i]); w > ageW {
+			ageW = w
+		}
+	}
+	opts := make([]huh.Option[string], 0, len(recent))
+	for i, wt := range recent {
+		label := pickColumns(branches[i], ages[i], wt.Path, branchW, ageW)
 		opts = append(opts, huh.NewOption(label, wt.Path))
 	}
 	var chosen string
