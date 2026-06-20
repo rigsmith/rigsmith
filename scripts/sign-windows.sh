@@ -42,10 +42,14 @@ token=$(curl -fsS -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/
 }
 
 echo "windows signing: $bin -> Trusted Signing (${TRUSTED_SIGNING_ACCOUNT}/${TRUSTED_SIGNING_PROFILE})" >&2
+# --tsmode RFC3161 is required: the Trusted Signing TSA (timestamp.acs.microsoft.com)
+# is an RFC 3161 server. jsign defaults to legacy Authenticode timestamping, which
+# misparses the RFC3161 response ("Malformed content" / DLSequence ClassCastException).
 java -jar "$JSIGN_JAR" \
   --storetype TRUSTEDSIGNING \
   --keystore "$TRUSTED_SIGNING_ENDPOINT" \
   --storepass "$token" \
   --alias "${TRUSTED_SIGNING_ACCOUNT}/${TRUSTED_SIGNING_PROFILE}" \
+  --tsmode RFC3161 \
   --tsaurl "http://timestamp.acs.microsoft.com" \
   "$bin"
