@@ -639,6 +639,20 @@ func pickWorktreeForMenu(cmd *cobra.Command) string {
 	return chosen
 }
 
+// pruneFreshness is how recently a worktree must have been touched to be spared
+// from pruning — a grace period so a just-created checkout isn't reaped before
+// you've worked in it. A package var so tests can disable it (set to 0).
+var pruneFreshness = 10 * time.Minute
+
+// isRecentWorktree reports whether a worktree was touched within the grace
+// window. A zero mtime (unknown) or a non-positive grace disables the check.
+func isRecentWorktree(modTime, now time.Time, grace time.Duration) bool {
+	if modTime.IsZero() || grace <= 0 {
+		return false
+	}
+	return now.Sub(modTime) < grace
+}
+
 // pruneWorktrees removes the repo's linked worktrees that are clean and either
 // merged into base or (with gone) whose branch's upstream the remote deleted. It
 // prints one line per worktree and returns the removed/kept counts plus freed —
@@ -664,6 +678,11 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 			}
 		}
 	}
+	// baseSHA lets us spot a branch that's even with base — created but never
+	// committed to. Such a branch is trivially "merged" (an ancestor of base), so
+	// without this guard a brand-new worktree gets reaped before any work lands.
+	baseSHA, _ := repo.RevParse(ctx, base)
+	now := time.Now()
 	var rows []pruneRow
 	skip := func(label, reason string) {
 		kept++
@@ -687,6 +706,19 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 		}
 		if !clean {
 			skip(label, "uncommitted changes")
+			continue
+		}
+		// A branch even with base hasn't started — it's "merged" only because it
+		// has no commits of its own. Never reap it (the brand-new-worktree case).
+		if baseSHA != "" && wt.Head == baseSHA {
+			skip(label, "even with base — nothing to prune")
+			continue
+		}
+		// Grace period: leave very fresh checkouts alone, even an already-merged
+		// one you just made to inspect — you're likely mid-task. mtime bumps on
+		// commit/checkout, so an idle merged worktree ages out and is prunable.
+		if isRecentWorktree(wt.ModTime, now, pruneFreshness) {
+			skip(label, "created recently — left for now")
 			continue
 		}
 		merged, err := repo.IsMerged(ctx, wt.Branch, base)

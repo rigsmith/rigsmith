@@ -125,6 +125,12 @@ func (r *Repo) Head(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// RevParse resolves a ref (branch, tag, HEAD, SHA) to its full commit hash.
+func (r *Repo) RevParse(ctx context.Context, ref string) (string, error) {
+	out, err := runGit(ctx, r.Dir, "rev-parse", ref)
+	return strings.TrimSpace(out), err
+}
+
 // Checkout switches to branch, creating/resetting it when create is set.
 func (r *Repo) Checkout(ctx context.Context, branch string, create bool) error {
 	args := []string{"checkout"}

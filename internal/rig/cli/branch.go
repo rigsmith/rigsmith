@@ -69,6 +69,10 @@ func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base 
 		delete(inWorktree, name)
 	}
 
+	// A branch even with base has no commits of its own — it's "merged" only
+	// trivially, so never reap it (the brand-new-branch counterpart to the
+	// worktree guard).
+	baseSHA, _ := repo.RevParse(ctx, base)
 	var rows []pruneRow
 	skip := func(label, reason string) {
 		kept++
@@ -81,6 +85,12 @@ func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base 
 		if inWorktree[b.Name] {
 			skip(b.Name, "checked out in a worktree")
 			continue
+		}
+		if baseSHA != "" {
+			if sha, err := repo.RevParse(ctx, b.Name); err == nil && sha == baseSHA {
+				skip(b.Name, "even with base — nothing to prune")
+				continue
+			}
 		}
 		merged, err := repo.IsMerged(ctx, b.Name, base)
 		if err != nil {
