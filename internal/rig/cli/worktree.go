@@ -52,7 +52,7 @@ func newWorktreeCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd(), newWorktreePruneCmd(), newWorktreePickCmd(), newWorktreeMenuCmd(), newWorktreeUseCmd(), newWorktreeActiveCmd(), newWorktreeUnsetCmd())
+	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd(), newWorktreePickCmd(), newWorktreeMenuCmd(), newWorktreeUseCmd(), newWorktreeActiveCmd(), newWorktreeUnsetCmd())
 	return cmd
 }
 
@@ -151,8 +151,9 @@ func newWorktreePickCmd() *cobra.Command {
 func newWorktreeUseCmd() *cobra.Command {
 	var repoDir string
 	cmd := &cobra.Command{
-		Use:   "use [query]",
-		Short: "Pin a worktree as the active route for the -dev launchers",
+		Use:    "use [query]",
+		Hidden: true, // -dev route plumbing: kept for the *-wt launchers, off the shipped surface
+		Short:  "Pin a worktree as the active route for the -dev launchers",
 		Long: `Pin a worktree so a bare <tool>-dev builds from it without repeating the
 selection. With [query] it's the best fuzzy match; with no query it auto-selects
 the lone worktree or shows a picker. Clear it with ` + "`worktree unset`" + `. An
@@ -193,6 +194,7 @@ func newWorktreeActiveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "active",
 		Aliases: []string{"route"},
+		Hidden:  true, // -dev route plumbing, off the shipped surface
 		Short:   "Show the pinned -dev route, if any",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -228,6 +230,7 @@ func newWorktreeUnsetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "unset",
 		Aliases: []string{"clear", "off"},
+		Hidden:  true, // -dev route plumbing, off the shipped surface
 		Short:   "Clear the pinned -dev route (build from the repo again)",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -552,61 +555,102 @@ func newWorktreeRemoveCmd() *cobra.Command {
 	return cmd
 }
 
-// newWorktreePruneCmd sweeps the repo's linked worktrees and removes each one
-// that is safe to drop: clean (no uncommitted changes) AND merged (its branch
-// is fully contained in the base). Removing a worktree keeps the branch and its
-// commits, so a false positive costs only a `worktree new` to recreate — the
-// genuinely destructive --delete-branches is opt-in. It acts unattended (no
-// prompt), which is what lets a SessionStart hook call it to reap the orphans
-// left when a session ends without a clean exit.
-func newWorktreePruneCmd() *cobra.Command {
-	var dryRun, deleteBranches, keepGone bool
-	var base string
-	cmd := &cobra.Command{
-		Use:   "prune",
-		Short: "Remove worktrees whose branch is clean and already merged",
-		Long: `Sweep this repo's linked worktrees and remove each one that is both:
+// The worktree menu can't run the arg-taking new/open/rm directly, so these
+// no-arg wrappers drive the interactive step (a branch-name prompt, or the
+// picker) and then do the work. Hidden — they exist only for the menu.
 
-  • clean   no uncommitted or untracked changes
-  • merged  its branch is fully contained in the base branch
-            (detects squash-merges as well as ordinary merges)
-
-A clean worktree whose branch's upstream the remote deleted is also removed —
-that's the strongest "done" signal (and catches squash-merges the local check
-can't prove); pass --keep-gone to keep those. The primary checkout and the
-worktree you're running from are never touched, and dirty or unmerged worktrees
-are skipped with a reason.
-Removing a worktree keeps its branch unless --delete-branches is given. Merge
-state is tested against the local base branch, so keep it current (e.g. pull
-main) for accurate results.`,
-		Args: cobra.NoArgs,
+func newWorktreeNewMenuCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "new",
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			ctx := cmd.Context()
-			repo, root, err := openRepo(ctx)
-			if err != nil {
-				return err
+			var branch string
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewInput().Title("New worktree").
+					Description("Branch name (created off mainline if it doesn't exist)").
+					Value(&branch),
+			)).WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme()).Run(); err != nil {
+				return nil // cancelled
 			}
-			if base == "" {
-				base = repo.DefaultBranch(ctx)
+			if branch = strings.TrimSpace(branch); branch == "" {
+				return nil
 			}
-			out := cmd.OutOrStdout()
-			removed, kept, _, err := pruneWorktrees(ctx, out, repo, root, base, dryRun, !keepGone, deleteBranches)
-			if err != nil {
-				return err
+			sub := newWorktreeNewCmd()
+			sub.SetContext(cmd.Context())
+			sub.SetOut(cmd.OutOrStdout())
+			sub.SetErr(cmd.ErrOrStderr())
+			return sub.RunE(sub, []string{branch})
+		},
+	}
+}
+
+func newWorktreeOpenMenuCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "open",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if path := pickWorktreeForMenu(cmd); path != "" {
+				openReview(cmd, path, false)
 			}
-			verb := "removed"
-			if dryRun {
-				verb = "to remove"
-			}
-			fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf("%d %s, %d kept", removed, verb, kept)))
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what would be removed without removing anything")
-	cmd.Flags().BoolVarP(&deleteBranches, "delete-branches", "b", false, "also delete the local branch of each removed worktree")
-	cmd.Flags().BoolVar(&keepGone, "keep-gone", false, keepGoneUsage)
-	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
-	return cmd
+}
+
+func newWorktreeRemoveMenuCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "rm",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			path := pickWorktreeForMenu(cmd)
+			if path == "" {
+				return nil
+			}
+			repo, _, err := openRepo(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if err := repo.WorktreeRemove(cmd.Context(), path, false); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s removed %s\n", OkStyle.Render("✓"), path)
+			return nil
+		},
+	}
+}
+
+// pickWorktreeForMenu chooses one of this repo's *linked* worktrees for a menu
+// action — auto-selecting a lone one. Returns "" (with a note) when there are
+// none, or "" when the picker is cancelled, so the caller just does nothing.
+func pickWorktreeForMenu(cmd *cobra.Command) string {
+	_, wts, err := worktreesFor(cmd.Context(), "")
+	if err != nil || len(wts) <= 1 {
+		fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("no linked worktrees"))
+		return ""
+	}
+	linked := wts[1:] // git lists the main checkout first; never act on it
+	if len(linked) == 1 {
+		return linked[0].Path
+	}
+	chosen, err := pickWorktree(linked)
+	if err != nil {
+		return "" // cancelled / no TTY
+	}
+	return chosen
+}
+
+// pruneFreshness is how recently a worktree must have been touched to be spared
+// from pruning — a grace period so a just-created checkout isn't reaped before
+// you've worked in it. A package var so tests can disable it (set to 0).
+var pruneFreshness = 10 * time.Minute
+
+// isRecentWorktree reports whether a worktree was touched within the grace
+// window. A zero mtime (unknown) or a non-positive grace disables the check.
+func isRecentWorktree(modTime, now time.Time, grace time.Duration) bool {
+	if modTime.IsZero() || grace <= 0 {
+		return false
+	}
+	return now.Sub(modTime) < grace
 }
 
 // pruneWorktrees removes the repo's linked worktrees that are clean and either
@@ -634,6 +678,11 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 			}
 		}
 	}
+	// baseSHA lets us spot a branch that's even with base — created but never
+	// committed to. Such a branch is trivially "merged" (an ancestor of base), so
+	// without this guard a brand-new worktree gets reaped before any work lands.
+	baseSHA, _ := repo.RevParse(ctx, base)
+	now := time.Now()
 	var rows []pruneRow
 	skip := func(label, reason string) {
 		kept++
@@ -657,6 +706,19 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 		}
 		if !clean {
 			skip(label, "uncommitted changes")
+			continue
+		}
+		// A branch even with base hasn't started — it's "merged" only because it
+		// has no commits of its own. Never reap it (the brand-new-worktree case).
+		if baseSHA != "" && wt.Head == baseSHA {
+			skip(label, "even with base — nothing to prune")
+			continue
+		}
+		// Grace period: leave very fresh checkouts alone, even an already-merged
+		// one you just made to inspect — you're likely mid-task. mtime bumps on
+		// commit/checkout, so an idle merged worktree ages out and is prunable.
+		if isRecentWorktree(wt.ModTime, now, pruneFreshness) {
+			skip(label, "created recently — left for now")
 			continue
 		}
 		merged, err := repo.IsMerged(ctx, wt.Branch, base)

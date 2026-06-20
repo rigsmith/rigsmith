@@ -45,9 +45,8 @@ The full per-ecosystem matrix lives in [`docs/ECOSYSTEM-MATRIX.md`](https://gith
 | Verb | What |
 |------|------|
 | `copy` / `cp` | Detached copy of the repo tree to a new folder; `--git` keeps `.git` history |
-| `worktree` / `wt` | Parallel-dev sibling worktrees: `new` / `list` / `open` / `rm` / `prune`, plus `use` / `active` / `unset` to pin which worktree the `-dev` tools build from (the menu/list show age, newest-first) |
-| `branch` / `br` | Manage local branches: `list` / `rm` / `prune` (reaps merged **and** gone-upstream branches; `--keep-gone` keeps the latter) |
-| `prune` / `tidy` | One interactive sweep: reap merged + gone-upstream worktrees, then their branches; `-n` previews, always confirms at a terminal |
+| `worktree` / `wt` | Parallel-dev sibling worktrees: `new` / `list` / `open` / `rm` (the menu/list show age, newest-first). Direct branch management is left to `git`/`gh` |
+| `prune` / `tidy` | One sweep that reaps merged + gone-upstream **worktrees and branches** (worktrees first). `--worktrees` / `--branches` scope it; at the confirm prompt `w`/`b`/`a` retarget in place. `-n` previews, `-y` skips the prompt; off a terminal it refuses without `-y`. `--keep-gone` keeps gone-upstream items |
 
 ```sh
 rig worktree new feat/x          # sibling checkout off mainline (prints the path)

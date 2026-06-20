@@ -153,26 +153,27 @@ func TestWorktreeUseActiveUnset(t *testing.T) {
 	}
 }
 
-// The rig menu's Worktrees group carries the real worktree subcommands and
-// surfaces the -dev route pinning.
+// The rig menu's Worktrees group carries the worktree lifecycle commands and no
+// longer surfaces the retired -dev route pinning.
 func TestWorktreeMenuItems(t *testing.T) {
 	items := worktreeMenuItems()
 	if len(items) == 0 {
 		t.Fatal("expected worktree menu items")
 	}
+	labels := map[string]bool{}
 	for _, it := range items {
 		if it.cmd == nil {
 			t.Errorf("worktree item %q should carry a prebuilt command", it.label)
 		}
-	}
-	var pinning bool
-	for _, it := range items {
+		labels[it.label] = true
 		if strings.Contains(it.desc, "-dev") || it.label == "route" {
-			pinning = true
+			t.Errorf("worktree menu must not surface the -dev route anymore, got %q", it.label)
 		}
 	}
-	if !pinning {
-		t.Errorf("worktree menu should surface the -dev route pinning, got %+v", items)
+	for _, want := range []string{"new", "list", "open", "rm"} {
+		if !labels[want] {
+			t.Errorf("worktree menu missing lifecycle item %q, got %+v", want, items)
+		}
 	}
 }
 

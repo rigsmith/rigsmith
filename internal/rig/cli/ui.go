@@ -253,6 +253,7 @@ func newMenu() menuModel {
 	maint = append(maint,
 		menuItem{label: "kill", desc: "terminate app processes", verb: "kill"},
 		menuItem{label: "doctor", desc: "check the environment", verb: "doctor"},
+		menuItem{label: "prune", desc: "remove merged worktrees + branches (confirms)", cmd: newPruneCmd()},
 	)
 
 	maint = append(maint, menuItem{label: "self-update", desc: "update rig itself", verb: "self-update"})
@@ -304,17 +305,16 @@ func newMenu() menuModel {
 	}
 }
 
-// worktreeMenuItems are the worktree / -dev-route actions shown under the menu's
-// Worktrees group — the pinning loop made first-class alongside the build verbs.
-// Each carries the real subcommand (run natively after the menu exits). `new` is
-// omitted — it needs a branch name, so it stays `rig wt new <branch>`.
+// worktreeMenuItems are the worktree lifecycle actions under the menu's
+// Worktrees group: create / list / open / remove. The new/open/rm wrappers drive
+// the branch-name prompt or worktree picker the arg-taking commands don't, so
+// each runs natively after the menu exits. (Pruning lives under Maintenance.)
 func worktreeMenuItems() []menuItem {
 	return []menuItem{
-		{label: "set -dev route", desc: "pin which worktree -dev builds from", cmd: newWorktreeUseCmd()},
-		{label: "route", desc: "show the pinned -dev route", cmd: newWorktreeActiveCmd()},
-		{label: "unpin", desc: "clear the pinned -dev route", cmd: newWorktreeUnsetCmd()},
+		{label: "new", desc: "create a worktree (prompts for a branch)", cmd: newWorktreeNewMenuCmd()},
 		{label: "list", desc: "list this repo's worktrees", cmd: newWorktreeListCmd()},
-		{label: "prune", desc: "remove clean, merged worktrees", cmd: newWorktreePruneCmd()},
+		{label: "open", desc: "open a worktree in a new window (pick)", cmd: newWorktreeOpenMenuCmd()},
+		{label: "rm", desc: "remove a worktree (pick; branch kept)", cmd: newWorktreeRemoveMenuCmd()},
 		{label: "copy (detached)", desc: "copy this repo to a new folder (no git link)", cmd: newCopyMenuCmd()},
 	}
 }

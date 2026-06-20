@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 )
@@ -47,11 +48,14 @@ func TestPruneWorktreeThenBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	commit(t, r, "a", "1", "init")
-	// A worktree branched at main's tip is an ancestor of main → merged + clean.
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	if err := r.WorktreeAdd(ctx, wtPath, "feature", "main", true); err != nil {
 		t.Fatal(err)
 	}
+	// Advance main past feature so feature is a *merged, diverged* ancestor (not
+	// merely even with base, which is now kept), and drop the fresh-checkout grace.
+	commit(t, r, "b", "2", "advance main past feature")
+	noPruneGrace(t)
 
 	var buf bytes.Buffer
 	wRemoved, _, freed, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", false, false, false)
@@ -84,6 +88,8 @@ func TestPruneDryRunDetachesFreed(t *testing.T) {
 	if err := r.WorktreeAdd(ctx, wtPath, "feature", "main", true); err != nil {
 		t.Fatal(err)
 	}
+	commit(t, r, "b", "2", "advance main past feature")
+	noPruneGrace(t)
 
 	var buf bytes.Buffer
 	_, _, freed, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", true /*dryRun*/, false, false)
@@ -109,6 +115,90 @@ func TestPruneDryRunDetachesFreed(t *testing.T) {
 	}
 }
 
+// noPruneGrace disables the fresh-checkout grace for a test (the worktrees a test
+// creates are seconds old, so the default 10-minute grace would skip them all).
+func noPruneGrace(t *testing.T) {
+	t.Helper()
+	old := pruneFreshness
+	pruneFreshness = 0
+	t.Cleanup(func() { pruneFreshness = old })
+}
+
+// Regression: a brand-new worktree whose branch is even with base (created, never
+// committed) must NOT be pruned — it's "merged" only because it has no commits.
+func TestPruneWorktrees_KeepsBranchEvenWithBase(t *testing.T) {
+	ctx := context.Background()
+	r, err := gitrepo.Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "a", "1", "init")
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	if err := r.WorktreeAdd(ctx, wtPath, "feature", "main", true); err != nil {
+		t.Fatal(err)
+	}
+	noPruneGrace(t) // isolate the even-with-base guard from the freshness grace
+
+	var buf bytes.Buffer
+	removed, _, _, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", true, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 0 {
+		t.Errorf("removed=%d, want 0 — an even-with-base worktree must be kept", removed)
+	}
+	if !strings.Contains(buf.String(), "even with base") {
+		t.Errorf("expected an 'even with base' skip reason, got:\n%s", buf.String())
+	}
+}
+
+// The grace period keeps a freshly-created worktree even when its branch is a
+// genuine, merged prune candidate.
+func TestPruneWorktrees_GracePeriodKeepsFresh(t *testing.T) {
+	ctx := context.Background()
+	r, err := gitrepo.Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "a", "1", "init")
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	if err := r.WorktreeAdd(ctx, wtPath, "feature", "main", true); err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "b", "2", "advance main past feature") // feature now merged + diverged
+
+	// Default grace in force: the worktree is seconds old, so it's spared.
+	var buf bytes.Buffer
+	if removed, _, _, _ := pruneWorktrees(ctx, &buf, r, r.Dir, "main", true, false, false); removed != 0 {
+		t.Errorf("removed=%d, want 0 — a fresh worktree should be within the grace period", removed)
+	}
+	if !strings.Contains(buf.String(), "created recently") {
+		t.Errorf("expected a 'created recently' skip reason, got:\n%s", buf.String())
+	}
+	// With the grace off, the same merged worktree is prunable.
+	noPruneGrace(t)
+	var buf2 bytes.Buffer
+	if removed, _, _, _ := pruneWorktrees(ctx, &buf2, r, r.Dir, "main", true, false, false); removed != 1 {
+		t.Errorf("removed=%d, want 1 once the grace is lifted", removed)
+	}
+}
+
+func TestIsRecentWorktree(t *testing.T) {
+	now := time.Now()
+	if isRecentWorktree(time.Time{}, now, 10*time.Minute) {
+		t.Error("zero mtime should never count as recent")
+	}
+	if isRecentWorktree(now.Add(-time.Minute), now, 0) {
+		t.Error("a zero grace disables the check")
+	}
+	if !isRecentWorktree(now.Add(-time.Minute), now, 10*time.Minute) {
+		t.Error("1 minute old within a 10-minute grace should be recent")
+	}
+	if isRecentWorktree(now.Add(-20*time.Minute), now, 10*time.Minute) {
+		t.Error("20 minutes old is past a 10-minute grace")
+	}
+}
+
 // pruneSweep counts both phases together; in dry mode it touches nothing — this
 // is what `prune -n` runs.
 func TestPruneSweepDryRun(t *testing.T) {
@@ -122,9 +212,11 @@ func TestPruneSweepDryRun(t *testing.T) {
 	if err := r.WorktreeAdd(ctx, wtPath, "feature", "main", true); err != nil {
 		t.Fatal(err)
 	}
+	commit(t, r, "b", "2", "advance main past feature")
+	noPruneGrace(t)
 
 	var buf bytes.Buffer
-	w, b, err := pruneSweep(ctx, &buf, r, r.Dir, "main", true /*dry*/, false)
+	w, b, err := pruneSweep(ctx, &buf, r, r.Dir, "main", true /*dry*/, false, true /*doWT*/, true /*doBR*/)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,5 +226,17 @@ func TestPruneSweepDryRun(t *testing.T) {
 	}
 	if !r.BranchExists(ctx, "feature") {
 		t.Error("dry sweep must not delete anything")
+	}
+
+	// Selectors scope the sweep to one phase.
+	var wbuf bytes.Buffer
+	if w, b, _ := pruneSweep(ctx, &wbuf, r, r.Dir, "main", true, false, true, false); w != 1 || b != 0 {
+		t.Errorf("--worktrees sweep = %d/%d; want 1 worktree, 0 branches", w, b)
+	}
+	var bbuf bytes.Buffer
+	// Branches-only: the worktree-attached "feature" is skipped (not freed by a
+	// worktree phase), so no branch is counted.
+	if w, b, _ := pruneSweep(ctx, &bbuf, r, r.Dir, "main", true, false, false, true); w != 0 || b != 0 {
+		t.Errorf("--branches sweep = %d/%d; want 0 worktrees, 0 branches (feature still attached)", w, b)
 	}
 }
