@@ -162,7 +162,6 @@ func newRootCmd() *cobra.Command {
 		newDlxCmd(),
 		newWatchCmd(),
 		newWorktreeCmd(),
-		newBranchCmd(),
 		newPruneCmd(),
 		newCopyCmd(),
 		newRigInitCmd(),

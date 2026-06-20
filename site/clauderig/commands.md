@@ -18,9 +18,9 @@
 | `doctor` | Health-check environment + sync + worktree discipline (`--fix` repairs) |
 | `ui` | Interactive dashboard |
 
-The worktree / branch / prune verbs (`rig worktree`, `rig branch`, `rig prune`)
-live in [`rig`](/rig/verbs) — claudeRig wires the *guard* that makes them the
-default path. See [Worktree discipline](#worktree-discipline) below.
+The worktree and prune verbs (`rig worktree`, `rig prune`) live in
+[`rig`](/rig/verbs) — claudeRig wires the *guard* that makes them the default
+path. See [Worktree discipline](#worktree-discipline) below.
 
 ## The sync → restore loop
 

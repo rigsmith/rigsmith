@@ -124,7 +124,7 @@ func TestPruneSweepDryRun(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	w, b, err := pruneSweep(ctx, &buf, r, r.Dir, "main", true /*dry*/, false)
+	w, b, err := pruneSweep(ctx, &buf, r, r.Dir, "main", true /*dry*/, false, true /*doWT*/, true /*doBR*/)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,5 +134,17 @@ func TestPruneSweepDryRun(t *testing.T) {
 	}
 	if !r.BranchExists(ctx, "feature") {
 		t.Error("dry sweep must not delete anything")
+	}
+
+	// Selectors scope the sweep to one phase.
+	var wbuf bytes.Buffer
+	if w, b, _ := pruneSweep(ctx, &wbuf, r, r.Dir, "main", true, false, true, false); w != 1 || b != 0 {
+		t.Errorf("--worktrees sweep = %d/%d; want 1 worktree, 0 branches", w, b)
+	}
+	var bbuf bytes.Buffer
+	// Branches-only: the worktree-attached "feature" is skipped (not freed by a
+	// worktree phase), so no branch is counted.
+	if w, b, _ := pruneSweep(ctx, &bbuf, r, r.Dir, "main", true, false, false, true); w != 0 || b != 0 {
+		t.Errorf("--branches sweep = %d/%d; want 0 worktrees, 0 branches (feature still attached)", w, b)
 	}
 }
