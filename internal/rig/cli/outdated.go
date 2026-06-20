@@ -23,11 +23,15 @@ import (
 func newOutdatedCmd() *cobra.Command {
 	var pick bool
 	cmd := &cobra.Command{
-		Use:     "outdated [args]",
+		Use:     "outdated [project]",
 		Short:   "List outdated dependencies",
 		Aliases: []string{"od"},
 		Long: "List outdated dependencies for the detected ecosystem.\n\n" +
-			"  rig outdated              list outdated dependencies\n" +
+			"For .NET this reviews every project in the repo (respecting \"exclude\"),\n" +
+			"so a stale package in any in-repo project surfaces; name a project to\n" +
+			"scope it, like `rig run <project>`.\n\n" +
+			"  rig outdated              review the whole repo\n" +
+			"  rig outdated <project>    scope to one project\n" +
 			"  rig outdated -i           pick from the list and upgrade interactively",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
@@ -59,18 +63,13 @@ func runPlainOutdated(cmd *cobra.Command, eco, root string, args []string) error
 			return err
 		}
 	}
-	// `dotnet list package` needs a solution or project; run at a workspace root
-	// with neither at the top, it fails with a bare "could not find a project or
-	// solution". Resolve the target rig already knows about (or guide the user)
-	// instead of relaying that.
+	// .NET reports per project (or per solution), so a single `dotnet list` at a
+	// workspace root sees only one project's direct packages — a stale package in
+	// an in-repo dependency would be missed. Review every project instead (scoped
+	// to one when named), and render the aggregated table so you can see which
+	// project each outdated package lives in.
 	if eco == detect.DotNet {
-		cfg, _ := config.LoadMerged(root)
-		target, err := dotnetListTarget(root, cfg)
-		if err != nil {
-			return err
-		}
-		argv := append([]string{"dotnet"}, buildOutdatedArgs(target, false, false, false, false, args)...)
-		return runCommand(cmd, root, argv)
+		return runDotnetOutdated(cmd, root, args)
 	}
 	argv, ok := detect.CommandFor(eco, "outdated", root)
 	if !ok {
@@ -79,50 +78,71 @@ func runPlainOutdated(cmd *cobra.Command, eco, root string, args []string) error
 	return runCommand(cmd, root, append(argv, args...))
 }
 
-// dotnetListTarget resolves the solution or project that `dotnet list package`
-// should inspect from a workspace root, mirroring rig's own discovery so
-// `rig outdated`/`rig deps` work without cd-ing into a project directory.
-// Precedence: the configured (or root) solution, then the configured
-// defaultProject, then a lone discovered project. When nothing resolves it
-// returns an actionable error naming the .rig.json levers and what rig found —
-// rig's job is to answer "how do I fix this?", not relay dotnet's bare failure.
-func dotnetListTarget(root string, cfg config.Config) (string, error) {
-	if sol := detect.FindSolution(root, cfg.Solution); sol != "" {
-		return sol, nil
+// runDotnetOutdated reviews the repo's .NET projects (every one respecting
+// "exclude", or the single project named in args) and prints the outdated
+// packages as one aggregated table — the project column shows where each lives.
+func runDotnetOutdated(cmd *cobra.Command, root string, args []string) error {
+	cfg, _ := config.LoadMerged(root)
+	projectArg := ""
+	if len(args) > 0 {
+		projectArg = args[0]
 	}
-	projects := detect.DiscoverDotNet(root, "", cfg.Exclude)
-	if dp := strings.TrimSpace(cfg.DefaultProject); dp != "" {
-		for _, p := range projects {
-			if strings.EqualFold(p.Name, dp) || strings.EqualFold(p.ShortName(), dp) {
-				return p.FullPath, nil
-			}
-		}
+	projects, err := dotnetReviewProjects(root, cfg, projectArg)
+	if err != nil {
+		return err
 	}
-	if len(projects) == 1 {
-		return projects[0].FullPath, nil
+	deps := dotnetOutdatedAcross(cmd, root, projects)
+	if len(deps) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), okStyle.Render("All dependencies are up to date 🎉"))
+		return nil
 	}
-	return "", dotnetNoTargetError(root, projects, cfg)
+	renderDepsTable(cmd, deps, false)
+	return nil
 }
 
-// dotnetNoTargetError explains why `dotnet list package` has nothing to inspect
-// and exactly how to fix it in .rig.json.
-func dotnetNoTargetError(root string, projects []detect.ProjectInfo, cfg config.Config) error {
-	var b strings.Builder
-	fmt.Fprintf(&b, "no .NET solution or project to inspect at %s", root)
+// dotnetReviewProjects is the set of .NET projects a dep command reviews: the
+// whole repo (every project from discovery, respecting "solution"/"exclude"),
+// or the single project named by projectArg — the `rig run <project>` model.
+// An unmatched name or an empty repo returns an actionable error rather than a
+// bare dotnet failure.
+func dotnetReviewProjects(root string, cfg config.Config, projectArg string) ([]detect.ProjectInfo, error) {
+	projects := detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude)
 	if len(projects) == 0 {
-		fmt.Fprintf(&b, " (no .csproj found under it).\n")
-		fmt.Fprintf(&b, "Run rig from a directory with a .NET project, or set \"solution\" in %s.", config.FileName)
-		return errors.New(b.String())
+		return nil, dotnetNoProjectsError(root, cfg)
 	}
-	if dp := strings.TrimSpace(cfg.DefaultProject); dp != "" {
-		fmt.Fprintf(&b, " — \"defaultProject\": %q in %s matches no project here.\n", dp, config.FileName)
-	} else {
-		fmt.Fprintf(&b, ": %d projects live in subdirectories with no root solution tying them together.\n", len(projects))
+	if q := strings.TrimSpace(projectArg); q != "" {
+		for _, p := range projects {
+			if strings.EqualFold(p.Name, q) || strings.EqualFold(p.ShortName(), q) {
+				return []detect.ProjectInfo{p}, nil
+			}
+		}
+		return nil, fmt.Errorf("no .NET project named %q here. Projects rig sees: %s", q, projectNameSample(projects, 12))
 	}
-	fmt.Fprintf(&b, "Point rig at one in %s:\n", config.FileName)
-	fmt.Fprintf(&b, "  • \"solution\": \"path/to.slnx\"  — inspect a whole solution\n")
-	fmt.Fprintf(&b, "  • \"defaultProject\": \"<name>\"   — inspect one project\n")
-	fmt.Fprintf(&b, "Projects rig sees: %s", projectNameSample(projects, 8))
+	return projects, nil
+}
+
+// dotnetOutdatedAcross runs the outdated report for each project and concatenates
+// the rows; each row carries its project (from the dotnet JSON) so duplicates
+// across projects stay distinct in the table.
+func dotnetOutdatedAcross(cmd *cobra.Command, root string, projects []detect.ProjectInfo) []outdatedDep {
+	var all []outdatedDep
+	for _, p := range projects {
+		out, _ := captureOutdated(cmd, root, "dotnet", "list", p.FullPath, "package", "--outdated", "--format", "json")
+		all = append(all, parseDotnetOutdated(out)...)
+	}
+	return all
+}
+
+// dotnetNoProjectsError explains why a .NET dep review found nothing and how to
+// fix it — rig's job is to answer "how do I fix this?", not relay dotnet's error.
+func dotnetNoProjectsError(root string, cfg config.Config) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "no .NET projects to review under %s", root)
+	if len(cfg.Exclude) > 0 {
+		fmt.Fprintf(&b, " (after %d \"exclude\" pattern(s))", len(cfg.Exclude))
+	}
+	b.WriteString(".\n")
+	fmt.Fprintf(&b, "Run rig from a directory with a .NET project, or check \"exclude\"/\"solution\" in %s.", config.FileName)
 	return errors.New(b.String())
 }
 
@@ -220,22 +240,11 @@ func discoverOutdated(cmd *cobra.Command, eco, root string) (deps []outdatedDep,
 		}
 	case detect.DotNet:
 		cfg, _ := config.LoadMerged(root)
-		target, terr := dotnetListTarget(root, cfg)
-		if terr != nil {
-			return nil, false // no target — caller falls back to the guided list
+		projects, perr := dotnetReviewProjects(root, cfg, "")
+		if perr != nil {
+			return nil, false // no projects — caller falls back to the guided list
 		}
-		argv := append([]string{"dotnet"}, buildOutdatedArgs(target, false, false, false, false, []string{"--format", "json"})...)
-		out, err := captureOutdated(cmd, root, argv...)
-		if err != nil && out == "" {
-			return nil, false
-		}
-		deps := parseDotnetOutdated(out)
-		// An SDK too old for `--format json` prints nothing parseable; treat an
-		// empty parse with non-empty output as unsupported so we fall back.
-		if deps == nil && strings.TrimSpace(out) != "" && !strings.HasPrefix(strings.TrimSpace(out), "{") {
-			return nil, false
-		}
-		return deps, true
+		return dotnetOutdatedAcross(cmd, root, projects), true
 	default:
 		return nil, false
 	}

@@ -91,18 +91,18 @@ func discoverDeps(cmd *cobra.Command, eco, root string) (deps []outdatedDep, sup
 
 	case detect.DotNet:
 		cfg, _ := config.LoadMerged(root)
-		target, terr := dotnetListTarget(root, cfg)
-		if terr != nil {
-			return nil, false // no target — caller falls back to the guided list
+		projects, perr := dotnetReviewProjects(root, cfg, "")
+		if perr != nil {
+			return nil, false // no projects — caller falls back to the guided list
 		}
-		argv := []string{"dotnet", "list", target, "package", "--format", "json"}
-		out, err := captureOutdated(cmd, root, argv...)
-		if err != nil && out == "" {
-			return nil, false
-		}
-		all := parseDotnetList(out)
-		if all == nil && strings.TrimSpace(out) != "" && !strings.HasPrefix(strings.TrimSpace(out), "{") {
-			return nil, false // SDK too old for --format json
+		var all []outdatedDep
+		for _, p := range projects {
+			out, _ := captureOutdated(cmd, root, "dotnet", "list", p.FullPath, "package", "--format", "json")
+			if parseDotnetList(out) == nil &&
+				strings.TrimSpace(out) != "" && !strings.HasPrefix(strings.TrimSpace(out), "{") {
+				return nil, false // SDK too old for --format json
+			}
+			all = append(all, parseDotnetList(out)...)
 		}
 		outdated, _ := discoverOutdated(cmd, eco, root)
 		return mergeLatest(all, outdated, true), true

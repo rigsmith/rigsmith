@@ -370,26 +370,3 @@ func TestUpdate_SiblingArgsAlwaysCarrySelfOnly(t *testing.T) {
 		t.Fatalf("siblingSelfUpdateArgs(true) = %v", got)
 	}
 }
-
-// ---- buildOutdatedArgs (OutdatedVerb.BuildArgs) ----
-
-func TestOutdatedArgs_DefaultToOutdatedLensWithSolution(t *testing.T) {
-	args := buildOutdatedArgs("/r/App.slnx", false, false, false, false, nil)
-	wantConsecutive(t, args, "list", "/r/App.slnx", "package", "--outdated")
-}
-
-func TestOutdatedLenses_AreMutuallyExclusiveAndPrereleaseIsOutdatedOnly(t *testing.T) {
-	// vulnerable wins over the default outdated; prerelease is dropped (not valid there)
-	vuln := buildOutdatedArgs("", true, false, true, true, nil)
-	if indexOfArg(vuln, "--vulnerable") < 0 || indexOfArg(vuln, "--include-transitive") < 0 {
-		t.Fatalf("args = %v, want --vulnerable and --include-transitive", vuln)
-	}
-	if indexOfArg(vuln, "--outdated") >= 0 || indexOfArg(vuln, "--include-prerelease") >= 0 {
-		t.Fatalf("args = %v must not contain --outdated / --include-prerelease", vuln)
-	}
-
-	// prerelease applies on the default outdated lens
-	if args := buildOutdatedArgs("", false, false, false, true, nil); indexOfArg(args, "--include-prerelease") < 0 {
-		t.Fatalf("args = %v, want --include-prerelease", args)
-	}
-}
