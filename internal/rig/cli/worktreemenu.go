@@ -31,7 +31,7 @@ var (
 )
 
 // wtMenuModel is the navigable worktree menu a bare `<tool>-wt` shows: pick a
-// worktree and run it now (enter), or pin it as the active -dev route (p) / clear
+// worktree and run it now (enter), or pin it as the active route (p) / clear
 // the pin (u). Following the dashboard pattern, it only records the decision; the
 // command acts after tea exits, so no work runs inside the event loop.
 type wtMenuModel struct {
@@ -94,7 +94,7 @@ func (m wtMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m wtMenuModel) View() string {
 	var b strings.Builder
 	b.WriteString(HeaderStyle.Render("worktrees") + "  " +
-		DimStyle.Render("run one, or pin it as the -dev route") + "\n\n")
+		DimStyle.Render("run one, or pin it") + "\n\n")
 
 	// Pad the branch and age into fixed-width columns so the dim path column lines
 	// up — matching the label + detail layout the other rig menus use.
@@ -155,7 +155,7 @@ func newWorktreeMenuCmd() *cobra.Command {
 	var repoDir string
 	cmd := &cobra.Command{
 		Use:    "menu",
-		Short:  "Interactive worktree menu: run one or pin it as the -dev route (used by <tool>-wt)",
+		Short:  "Interactive worktree menu: run or pin a worktree",
 		Args:   cobra.NoArgs,
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -193,13 +193,13 @@ func newWorktreeMenuCmd() *cobra.Command {
 				if err := devroute.Write(routeKey, final.chosen); err != nil {
 					return err
 				}
-				fmt.Fprintf(errOut, "%s pinned -dev route → %s\n", OkStyle.Render("✓"), HeaderStyle.Render(branchAt(wts, final.chosen)))
+				fmt.Fprintf(errOut, "%s pinned %s\n", OkStyle.Render("✓"), HeaderStyle.Render(branchAt(wts, final.chosen)))
 				fmt.Fprintf(errOut, "  %s\n", DimStyle.Render(final.chosen))
 			case wtUnpin:
 				if err := devroute.Unset(routeKey); err != nil {
 					return err
 				}
-				fmt.Fprintf(errOut, "%s cleared the pinned -dev route\n", OkStyle.Render("✓"))
+				fmt.Fprintf(errOut, "%s cleared the pin\n", OkStyle.Render("✓"))
 			case wtCancel:
 				// Nothing chosen — the launcher sees empty stdout and exits.
 			}
