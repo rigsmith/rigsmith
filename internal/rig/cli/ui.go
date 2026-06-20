@@ -24,10 +24,12 @@ func newUICmd() *cobra.Command {
 		Use:   "ui",
 		Short: "Interactive menu",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, _ := os.Getwd()
-			if _, err := resolvePrimary(cwd, resolveRoot(cwd)); err != nil {
-				return err
-			}
+			// Open the menu unconditionally — newMenu absorbs an unresolved
+			// primary into its header and still offers every verb plus the project
+			// picker, so a repo with no single primary ecosystem (a workspace root,
+			// or a tree where several ecosystems coexist) lands on the launcher
+			// rather than a bare error. Verbs that need a primary surface their own
+			// error when chosen.
 			res, err := tea.NewProgram(newMenu()).Run()
 			if err != nil {
 				return err

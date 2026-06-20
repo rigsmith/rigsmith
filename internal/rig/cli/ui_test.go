@@ -61,6 +61,36 @@ func TestMenu_WTogglesWatch(t *testing.T) {
 	}
 }
 
+// A repo with no recognized ecosystem (no manifest at the resolved root) must
+// still open the menu: newMenu folds the unresolved-primary error into its
+// header and offers every verb, so bare `rig` lands on the launcher instead of
+// erroring out. Guards the removal of the old resolvePrimary gate in newUICmd.
+func TestMenu_OpensWithoutAnEcosystem(t *testing.T) {
+	isolateGlobalConfig(t)
+	t.Chdir(t.TempDir())
+
+	m := newMenu()
+	if !strings.Contains(m.header, "no recognized ecosystem") {
+		t.Errorf("header = %q, want it to surface the unresolved primary", m.header)
+	}
+	if len(m.stack) == 0 || len(m.top().items) == 0 {
+		t.Fatalf("menu opened empty: %+v", m.stack)
+	}
+	if !menuHasVerb(m.top().items, "run") {
+		t.Errorf("top menu = %v, want a run verb offered even without an ecosystem", m.top().items)
+	}
+}
+
+// menuHasVerb reports whether items (or any group's children) offers verb.
+func menuHasVerb(items []menuItem, verb string) bool {
+	for _, it := range items {
+		if it.verb == verb || menuHasVerb(it.children, verb) {
+			return true
+		}
+	}
+	return false
+}
+
 // The coverage "browse" menu pick pre-sets the interactive flag (coverage -i).
 func TestCoverageMenuCmd_BrowseSetsInteractive(t *testing.T) {
 	if got := coverageMenuCmd(false).Flags().Lookup("interactive").Value.String(); got != "false" {
