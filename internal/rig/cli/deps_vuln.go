@@ -185,17 +185,21 @@ func auditSeverities(cmd *cobra.Command, eco, root string) (sev map[string]strin
 	switch eco {
 	case detect.DotNet:
 		cfg, _ := config.LoadMerged(root)
-		target, terr := dotnetListTarget(root, cfg)
-		if terr != nil {
-			return nil, false // no target — audit column omitted, like other unwired toolchains
+		projects, perr := dotnetReviewProjects(root, cfg, "")
+		if perr != nil {
+			return nil, false // no projects — audit column omitted, like other unwired toolchains
 		}
 		// Audit commands report findings and exit non-zero by design; the JSON on
-		// stdout is still valid, so the error is ignored when there's output.
-		out, err := captureOutdated(cmd, root, "dotnet", "list", target, "package", "--vulnerable", "--format", "json")
-		if err != nil && out == "" {
-			return nil, false
+		// stdout is still valid, so the error is ignored when there's output. Keys
+		// include the project, so merging across projects never collides.
+		sev := map[string]string{}
+		for _, p := range projects {
+			out, _ := captureOutdated(cmd, root, "dotnet", "list", p.FullPath, "package", "--vulnerable", "--format", "json")
+			for k, v := range parseDotnetVulnerable(out) {
+				sev[k] = v
+			}
 		}
-		return parseDotnetVulnerable(out), true
+		return sev, true
 	case detect.Node:
 		switch pm := detect.DetectNodePM(root); pm {
 		case detect.NPM:

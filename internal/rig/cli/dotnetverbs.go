@@ -506,34 +506,3 @@ func siblingSelfUpdateArgs(check bool) []string {
 	}
 	return []string{"self-update", "--self-only"}
 }
-
-// ---- outdated (OutdatedVerb) ----
-
-// buildOutdatedArgs is the `dotnet list [solution] package …` argument list.
-// The three report lenses are mutually exclusive (vulnerable > deprecated >
-// outdated); --include-prerelease only applies to the default outdated lens.
-// Pure.
-func buildOutdatedArgs(solution string, vulnerable, deprecated, transitive, prerelease bool, forwarded []string) []string {
-	args := []string{"list"}
-	if solution != "" {
-		args = append(args, solution)
-	}
-	args = append(args, "package")
-
-	switch {
-	case vulnerable:
-		args = append(args, "--vulnerable")
-	case deprecated:
-		args = append(args, "--deprecated")
-	default:
-		args = append(args, "--outdated")
-	}
-
-	if transitive {
-		args = append(args, "--include-transitive")
-	}
-	if prerelease && !vulnerable && !deprecated {
-		args = append(args, "--include-prerelease")
-	}
-	return append(args, forwarded...)
-}
