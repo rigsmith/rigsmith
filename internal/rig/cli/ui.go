@@ -249,11 +249,12 @@ func newMenu() menuModel {
 		{label: "outdated", desc: "list outdated deps", verb: "outdated"},
 		{label: "upgrade", desc: "upgrade deps", verb: "upgrade"},
 	})
-	maint := keepMapped(maps, []menuItem{{label: "clean", desc: "remove build outputs", verb: "clean"}})
+	// prune leads Maintenance — the everyday tidy-up. clean is capability-gated.
+	maint := []menuItem{{label: "prune", desc: "remove merged worktrees + branches (confirms)", cmd: newPruneCmd()}}
+	maint = append(maint, keepMapped(maps, []menuItem{{label: "clean", desc: "remove build outputs", verb: "clean"}})...)
 	maint = append(maint,
 		menuItem{label: "kill", desc: "terminate app processes", verb: "kill"},
 		menuItem{label: "doctor", desc: "check the environment", verb: "doctor"},
-		menuItem{label: "prune", desc: "remove merged worktrees + branches (confirms)", cmd: newPruneCmd()},
 	)
 
 	maint = append(maint, menuItem{label: "self-update", desc: "update rig itself", verb: "self-update"})
@@ -294,7 +295,7 @@ func newMenu() menuModel {
 	if proj := projectCommandItems(root); len(proj) > 0 {
 		top = append(top, menuItem{label: "▸ Project commands", desc: "custom commands + scripts from this repo", children: proj})
 	}
-	top = append(top, menuItem{label: "▸ Maintenance", desc: "clean / kill / doctor", children: maint})
+	top = append(top, menuItem{label: "▸ Maintenance", desc: "prune / clean / kill / doctor", children: maint})
 
 	return menuModel{
 		header:   fmt.Sprintf("%s  ·  %s", root, primary),
