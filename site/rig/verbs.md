@@ -10,8 +10,8 @@
 | `typecheck` | Type-check the code |
 | `coverage` | Run tests with coverage; `--min` gate; `--open` report (in-process cobertura→HTML for .NET) |
 | `kill` | Kill dev processes by project/pattern/`--port` (config `kill.match` wins) |
-| `add` / `uninstall` (`remove`, `rm`) / `outdated` (`od`) / `upgrade` | Package management, native per ecosystem |
-| `deps` / `dependencies` | List dependencies with current + latest versions (`-u` updates only, `--vulnerable`, `--json`) |
+| `add` / `uninstall` (`remove`, `rm`) / `outdated` (`od`) `[project]` / `upgrade` | Package management, native per ecosystem. On .NET, `outdated` reviews **every** project in the repo (respecting `exclude`), grouped by project, so a stale package in any in-repo dependency surfaces; name a `[project]` to scope it, like `run` |
+| `deps` / `dependencies` | List dependencies with current + latest versions (`-u` updates only, `--vulnerable`, `--json`); whole-repo (per-project) on .NET |
 | `install` (`restore`) / `ci` / `clean` / `rebuild` (`rb`) | Restore/clean/rebuild (rebuild scopes bin/obj removal on .NET) |
 | `global` / `dlx` / `x` | Global tool install / one-shot tool run (`dnx`, `pnpm dlx`, …) |
 | `publish` | `dotnet publish` with rid/output/self-contained from flags or `.rig.json publish.*` |

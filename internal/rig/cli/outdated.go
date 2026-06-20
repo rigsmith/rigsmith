@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -33,6 +34,7 @@ func newOutdatedCmd() *cobra.Command {
 			"  rig outdated              review the whole repo\n" +
 			"  rig outdated <project>    scope to one project\n" +
 			"  rig outdated -i           pick from the list and upgrade interactively",
+		ValidArgsFunction: outdatedProjectCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
 			root := resolveRoot(cwd)
@@ -53,6 +55,25 @@ func newOutdatedCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&pick, "interactive", "i", false,
 		"pick outdated deps from a checklist and upgrade them")
 	return cmd
+}
+
+// outdatedProjectCompletion completes `rig outdated`'s [project] arg with the
+// repo's .NET project names. The arg is .NET-only — other ecosystems review the
+// whole module in one call — and it resolves through dotnetReviewProjects, which
+// matches a project's name or short name, so completing the full names suffices.
+func outdatedProjectCompletion(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	cwd, _ := os.Getwd()
+	root := resolveRoot(cwd)
+	cfg, _ := config.LoadMerged(root)
+	var names []string
+	for _, p := range detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude) {
+		names = append(names, p.Name)
+	}
+	sort.Strings(names)
+	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
 // runPlainOutdated runs the ecosystem's outdated command and streams it — the
