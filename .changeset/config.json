@@ -7,7 +7,7 @@
   "baseBranch": "main",
   "access": "restricted",
   "updateInternalDependencies": "patch",
-  "ignore": ["@acme/cli","@acme/core","@acme/utils","@demo/app","@demo/core","Demo.App","Demo.Core","Net10","Net8","app","changesets-fixture","crate-a","crate-b","demo-app","demo-core","demo.example/app","demo.example/core","example.com/poly/a","example.com/poly/b","lib","shiprig-electron-demo","shiprig-tauri-demo"],
+  "ignore": ["@acme/cli","@acme/core","@acme/utils","@demo/app","@demo/core","Demo.App","Demo.Core","Net10","Net8","app","changesets-fixture","crate-a","crate-b","demo-app","demo-core","demo.example/app","demo.example/core","example.com/poly/a","example.com/poly/b","lib","rigsmith-site","shiprig-electron-demo","shiprig-tauri-demo"],
   "linked": [],
   "fixed": []
 }
