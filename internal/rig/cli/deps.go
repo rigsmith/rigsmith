@@ -97,10 +97,9 @@ func discoverDeps(cmd *cobra.Command, eco, root string) (deps []outdatedDep, sup
 		}
 		var all []outdatedDep
 		for _, out := range dotnetListAcross(cmd, root, projects, "--format", "json") {
-			if parseDotnetList(out) == nil &&
-				strings.TrimSpace(out) != "" && !strings.HasPrefix(strings.TrimSpace(out), "{") {
-				return nil, false // SDK too old for --format json
-			}
+			// A project that didn't produce a JSON report (broken restore, or an
+			// SDK too old for --format json) is skipped — dotnetListAcross already
+			// warned — so one bad project doesn't sink the whole report.
 			all = append(all, parseDotnetList(out)...)
 		}
 		outdated, _ := discoverOutdated(cmd, eco, root)
