@@ -182,7 +182,24 @@ func dotnetListAcross(cmd *cobra.Command, root string, projects []detect.Project
 	}
 	wg.Wait()
 	stop()
+	// Surface scans that failed (e.g. a project whose restore is broken) rather
+	// than letting an empty result masquerade as "nothing outdated" — that's how
+	// a still-stale project silently dropped out of the report.
+	for i, out := range outs {
+		if dotnetListFailed(out) {
+			fmt.Fprintln(cmd.ErrOrStderr(), warnStyle.Render(
+				fmt.Sprintf("couldn't read %s — skipped (try `rig build` to restore it)", projects[i].Name)))
+		}
+	}
 	return outs
+}
+
+// dotnetListFailed reports whether a `dotnet list … --format json` run didn't
+// produce a JSON report — the scan failed (e.g. a broken restore), as opposed to
+// a valid report that simply lists nothing. Such a project must be surfaced, not
+// silently treated as up to date.
+func dotnetListFailed(out string) bool {
+	return !strings.HasPrefix(strings.TrimSpace(out), "{")
 }
 
 // startReviewProgress shows that a whole-repo .NET review is underway and how far
@@ -297,13 +314,7 @@ func runOutdatedInteractive(cmd *cobra.Command, eco, root string) error {
 		fmt.Fprintln(cmd.ErrOrStderr(), dimStyle.Render("no upgrade command for this ecosystem"))
 		return nil
 	}
-	for _, argv := range cmds {
-		if err := runCommand(cmd, root, argv); err != nil {
-			return err
-		}
-	}
-	fmt.Fprintln(cmd.OutOrStdout(), okStyle.Render(fmt.Sprintf("upgraded %d package(s)", len(chosen))))
-	return nil
+	return applyUpgrades(cmd, eco, root, cmds, len(chosen))
 }
 
 // discoverOutdated runs the ecosystem's machine-readable outdated report and

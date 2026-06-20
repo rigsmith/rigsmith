@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -152,13 +153,85 @@ func runBulkUpgrade(cmd *cobra.Command, eco, root string, deps []outdatedDep, ye
 			return nil
 		}
 	}
+	return applyUpgrades(cmd, eco, root, cmds, len(deps))
+}
+
+// applyUpgrades runs the upgrade commands and reports the outcome. For .NET the
+// commands are independent per-package `dotnet add`s, so one that can't be
+// applied — a version pinned in an imported .props or Directory.Packages.props —
+// is skipped and reported rather than aborting every later project. Other
+// ecosystems run interdependent or single bulk commands, where the first failure
+// should stop the run. pkgCount is the package total for the non-.NET summary.
+func applyUpgrades(cmd *cobra.Command, eco, root string, cmds [][]string, pkgCount int) error {
+	if eco == detect.DotNet {
+		done, failed := runUpgradeCommands(func(argv []string) error { return runCommand(cmd, root, argv) }, cmds)
+		if len(failed) > 0 {
+			errw := cmd.ErrOrStderr()
+			fmt.Fprintln(errw, warnStyle.Render(fmt.Sprintf("%d package(s) couldn't be upgraded — skipped:", len(failed))))
+			for _, argv := range failed {
+				fmt.Fprintln(errw, "  "+dimStyle.Render(dotnetAddLabel(argv)))
+			}
+			fmt.Fprintln(errw, dimStyle.Render("(a version set in an imported .props or Directory.Packages.props can't be changed with `dotnet add`)"))
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), okStyle.Render(fmt.Sprintf("upgraded %d package(s)", done)))
+		return nil
+	}
 	for _, argv := range cmds {
 		if err := runCommand(cmd, root, argv); err != nil {
 			return err
 		}
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), okStyle.Render(fmt.Sprintf("upgraded %d package(s)", len(deps))))
+	fmt.Fprintln(cmd.OutOrStdout(), okStyle.Render(fmt.Sprintf("upgraded %d package(s)", pkgCount)))
 	return nil
+}
+
+// runUpgradeCommands runs each command via run, continuing past failures so one
+// un-upgradable package doesn't abort the rest. Returns how many succeeded and
+// the commands that failed (each already streamed its own error). run is a seam
+// for testing; production passes a runCommand closure.
+func runUpgradeCommands(run func(argv []string) error, cmds [][]string) (done int, failed [][]string) {
+	for _, argv := range cmds {
+		if err := run(argv); err != nil {
+			failed = append(failed, argv)
+			continue
+		}
+		done++
+	}
+	return done, failed
+}
+
+// dotnetAddLabel renders a `dotnet add <proj> package <id> --version <ver>` argv
+// as "id → ver  (project)" for the skipped-upgrades report. Falls back to the
+// joined argv if it doesn't match that shape. Pure.
+func dotnetAddLabel(argv []string) string {
+	var id, ver, proj string
+	for i, a := range argv {
+		switch a {
+		case "package":
+			if i+1 < len(argv) {
+				id = argv[i+1]
+			}
+		case "--version":
+			if i+1 < len(argv) {
+				ver = argv[i+1]
+			}
+		case "add":
+			if i+1 < len(argv) && argv[i+1] != "package" {
+				proj = filepath.Base(argv[i+1])
+			}
+		}
+	}
+	if id == "" {
+		return strings.Join(argv, " ")
+	}
+	label := id
+	if ver != "" {
+		label += " → " + ver
+	}
+	if proj != "" {
+		label += "  (" + proj + ")"
+	}
+	return label
 }
 
 // bulkUpgradeCommands builds the commands a range-respecting `rig upgrade` runs:
