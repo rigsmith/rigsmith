@@ -25,9 +25,10 @@ grouping, stamps the new versions into each ecosystem's manifest, and writes
 
 The whole workflow is wired:
 
-- `init`, `add`, `status` (incl. `--since` and `--output`)
+- `init`, `add` (`--since`), `status` (`--since`, `--output`)
 - `version` (normal / pre / snapshot, changelog enrichment + `format:`)
 - `pre` — enter/exit prerelease mode
+- `config` — `show` / `get` / `set` / `path` / `edit` the `.changeset/config.json`
 - `info`, `ui`
 - `packages` — show every discovered package and what the release does with each
   (its bump, or no change / private / ignored) and include/exclude them via a

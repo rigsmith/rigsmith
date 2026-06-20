@@ -28,6 +28,7 @@ unknown keys get a did-you-mean warning.
 |-----|------|---------|
 | `defaultProject` | string | Project to act on when several are runnable (settable via the default-setter) |
 | `solution` / `test.project` | string | Pin the .NET solution / test project |
+| `ecosystem` | string | Pin the primary ecosystem (`dotnet`/`node`/`go`/`cargo`) when detection is ambiguous |
 | `quiet` | bool | Suppress the `→ command` echo (same as `--quiet`) |
 | `exclude` | []string (globs) | Hide projects from discovery/pickers (also written by the picker's `x` key) |
 | `env` | map | Extra environment; layered file (`.env`/`.env.local`) < ambient < config < command |

@@ -4,14 +4,15 @@
 |------|------|
 | `build` | Build the project |
 | `test` | Run the tests |
-| `run` | Run the project |
+| `run` / `dev` | Run the project |
 | `format` | Format the code |
 | `lint` | Lint the code |
 | `typecheck` | Type-check the code |
 | `coverage` | Run tests with coverage; `--min` gate; `--open` report (in-process cobertura→HTML for .NET) |
 | `kill` | Kill dev processes by project/pattern/`--port` (config `kill.match` wins) |
-| `add` / `remove` / `outdated` / `upgrade` | Package management, native per ecosystem |
-| `install` / `ci` / `clean` / `rebuild` | Restore/clean/rebuild (rebuild scopes bin/obj removal on .NET) |
+| `add` / `uninstall` (`remove`, `rm`) / `outdated` (`od`) / `upgrade` | Package management, native per ecosystem |
+| `deps` / `dependencies` | List dependencies with current + latest versions (`-u` updates only, `--vulnerable`, `--json`) |
+| `install` (`restore`) / `ci` / `clean` / `rebuild` (`rb`) | Restore/clean/rebuild (rebuild scopes bin/obj removal on .NET) |
 | `global` / `dlx` / `x` | Global tool install / one-shot tool run (`dnx`, `pnpm dlx`, …) |
 | `publish` | `dotnet publish` with rid/output/self-contained from flags or `.rig.json publish.*` |
 | `doctor` | Environment checklist (SDK pins via nearest `global.json`) |
@@ -44,7 +45,7 @@ The full per-ecosystem matrix lives in [`docs/ECOSYSTEM-MATRIX.md`](https://gith
 | Verb | What |
 |------|------|
 | `copy` / `cp` | Detached copy of the repo tree to a new folder; `--git` keeps `.git` history |
-| `worktree` / `wt` | Parallel-dev sibling worktrees: `new` / `list` / `open` / `rm` / `prune` (the menu/list show age, newest-first) |
+| `worktree` / `wt` | Parallel-dev sibling worktrees: `new` / `list` / `open` / `rm` / `prune`, plus `use` / `active` / `unset` to pin which worktree the `-dev` tools build from (the menu/list show age, newest-first) |
 | `branch` / `br` | Manage local branches: `list` / `rm` / `prune` (reaps merged **and** gone-upstream branches; `--keep-gone` keeps the latter) |
 | `prune` / `tidy` | One interactive sweep: reap merged + gone-upstream worktrees, then their branches; `-n` previews, always confirms at a terminal |
 

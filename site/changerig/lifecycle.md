@@ -87,9 +87,10 @@ Consumes the pending changesets and:
 5. writes `CHANGELOG.md`.
 
 Flags: `-n, --dry-run` (plan only), `--snapshot [tag]` and `--snapshot-template`
-(`{tag}`/`{commit}`/`{datetime}`/`{timestamp}` suffix) for snapshot releases, and
+(`{tag}`/`{commit}`/`{datetime}`/`{timestamp}` suffix) for snapshot releases,
 `--independent` to version each package separately instead of via a shared
-version file.
+version file, and `-y, --yes` to accept the computed versions without the
+interactive override prompt.
 
 Changelog generators are **pluggable** — the built-in renderer dogfoods the same
 JSON contract external plugins speak. Set `"changelog": "<plugin>"` in config to

@@ -10,9 +10,9 @@
 | `global` | `install` / `uninstall` / `status` the global sync hooks in `~/.claude` (alias `hooks`) |
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
-| `guard` | PreToolUse hook enforcing worktree/PR discipline (wired by `project`/`local`) |
+| `guard` | The PreToolUse hook that enforces worktree/PR discipline — invoked by Claude Code, not run by hand (wired in by `project`/`local`) |
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md guide block standalone (`--global` targets `~/.claude/CLAUDE.md`, `--path` overrides; `install` previews in a scrollable UI, skipped with `-y` or off a TTY) |
-| `mcp` | `list` / `get` / `add` / `remove` / `enable` / `disable` MCP servers (`--scope user｜project｜local`, `--transport stdio｜http｜sse`, `--env`, `--header`); bare `mcp` on a TTY opens an interactive screen (mirrors `claude mcp`) |
+| `mcp` | `list` (alias `ls`) / `get` / `add` / `remove` (alias `rm`) / `enable` / `disable` MCP servers (`--scope user｜project｜local`, `--transport stdio｜http｜sse`, `--env`, `--header`); bare `mcp` on a TTY opens an interactive screen (mirrors `claude mcp`) |
 | `account` | Manage multiple Claude Code logins: `add` / `list` (alias `ls`/`status`) / `run <id｜email> [-- claude args]` / `switch` / `sessions` (alias `ps`) / `remove` (alias `rm`) / `purge`. `run --no-share` isolates a session; `switch` takes `--dry-run` / `--force` / `--kill` |
 | `config` | `get` / `set` / `show` / `path` / `edit` (`~/.clauderig/config.json`) |
 | `doctor` | Health-check environment + sync + worktree discipline (`--fix` repairs) |
@@ -64,31 +64,24 @@ and, when opted in, opens a separate window.
 
 ### Configuring the review window
 
-By default `new` does **not** open a window — opt in per run with `--open`, or
-always with the `worktree.autoOpen` config. Both *whether* it opens and *what* it
-opens are configurable:
+Because `worktree` is a [`rig`](/rig/verbs#git-worktree-verbs) command, the
+review-window behavior is configured in **`.rig.json`** via `rig config set`, not
+in claudeRig. By default `new` does **not** open a window — opt in per run with
+`--open`, or always with the `worktree.autoOpen` key:
 
 ```sh
-clauderig config set worktree.autoOpen true       # always auto-open (like --open)
-clauderig config set worktree.openCmd "cursor -n"  # open Cursor instead of VS Code
-clauderig config set worktree.openCmd ""           # reset to the default (code -n)
+rig config set worktree.autoOpen true       # always auto-open (like --open)
+rig config set worktree.openCmd "cursor -n"  # open Cursor instead of VS Code
 ```
 
-This writes a `worktree` block to `~/.clauderig/config.json`:
-
-```json
-"worktree": { "autoOpen": true, "openCmd": "cursor -n" }
-```
-
-- **`autoOpen`** (default `false`) — whether `new` opens a window at all. Off by
-  default; `--open`/`--no-open` override it per run. `worktree open` is an
-  explicit request and always opens regardless.
+- **`autoOpen`** (default `false`) — whether `new` opens a window at all.
+  `--open`/`--no-open` override it per run; `worktree open` always opens.
 - **`openCmd`** (default `code -n`) — the program plus any flags; the worktree
   path is appended as the final argument and run directly (no shell). Examples:
   `code -n`, `cursor -n`, `code-insiders -n`, `subl -n`, `idea`.
 
-When the opener isn't on `PATH`, `new`/`open` print the command to run instead,
-and `clauderig doctor` flags it.
+See [rig → Configuration](/rig/configuration#worktree) for the full details.
+When the opener isn't on `PATH`, `new`/`open` print the command to run instead.
 
 ::: tip
 See the [worktree-discipline doc](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/WORKTREE-DISCIPLINE.md)
