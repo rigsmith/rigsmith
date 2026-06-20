@@ -32,28 +32,44 @@ func newWorktreeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "worktree",
 		Aliases: []string{"wt"},
-		Short:   "Parallel-dev worktrees — and pin which one the -dev tools build from",
-		Long: "Sibling checkouts at <repo>-worktrees/<branch> you build/run independently\n" +
-			"with the -dev/-wt launchers, plus an active route you pin so a bare\n" +
-			"`rig-dev` builds from a chosen tree.\n\n" +
-			"  rig wt new feat/x     create a worktree (+ branch)\n" +
-			"  rig wt use [query]    pin a worktree as the -dev route\n" +
-			"  rig wt active         show the pinned route\n" +
-			"  rig wt unset          clear the pin\n" +
-			"  rig wt list | prune   list / sweep clean, merged worktrees",
-		// Bare `rig worktree` on a TTY opens the subcommand menu; with a verb or off
-		// a TTY the subcommands stand (and `worktree -h` still prints help). The
-		// arg-taking verbs (new/open/rm) stay command-line; `worktree menu` remains
-		// the worktree *selector* the -wt launchers drive.
+		Short:   "Parallel worktrees — sibling checkouts for working on branches side by side",
+		Long: "Sibling checkouts at <repo>-worktrees/<branch>, each built and run on its\n" +
+			"own so you can work several branches at once. Opened in their own window,\n" +
+			"this checkout (and its shell + chat history) never moves.\n\n" +
+			"  rig wt new feat/x     create a worktree (and branch) at a sibling path\n" +
+			"  rig wt list           list this repo's worktrees\n" +
+			"  rig wt open <branch>  open a worktree in a new window (review/diff)\n" +
+			"  rig wt rm <branch>    remove a worktree (its branch is kept)\n\n" +
+			"Sweep merged worktrees with `rig prune`.",
+		// Bare `rig worktree` on a TTY opens the lifecycle menu — the same actions as
+		// the `rig ui` Worktrees group; with a verb or off a TTY the subcommands stand
+		// (and `worktree -h` still prints help). The menu is explicit (RunMenu), not
+		// climenu.Run's subcommand introspection, because the useful verbs
+		// (new/open/rm) take a branch arg — the no-arg wrappers prompt for it, so a
+		// bare `climenu.Run` would only ever offer `list`.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
-				return climenu.Run(cmd)
+				return climenu.RunMenu(cmd, cmd.CommandPath(), cmd.Short, worktreeMenuEntries())
 			}
 			return cmd.Help()
 		},
 	}
 	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd(), newWorktreePickCmd(), newWorktreeMenuCmd(), newWorktreeUseCmd(), newWorktreeActiveCmd(), newWorktreeUnsetCmd())
 	return cmd
+}
+
+// worktreeMenuEntries adapts the worktree lifecycle items (shared with the
+// `rig ui` Worktrees group) into climenu entries, so bare `rig wt` on a TTY
+// shows the same menu. Unlike climenu.Run's subcommand introspection, these
+// surface the arg-taking verbs (new/open/rm) via their no-arg prompting
+// wrappers — so the menu isn't reduced to just `list`.
+func worktreeMenuEntries() []climenu.Entry {
+	items := worktreeMenuItems()
+	entries := make([]climenu.Entry, 0, len(items))
+	for _, it := range items {
+		entries = append(entries, climenu.Entry{Label: it.label, Desc: it.desc, Cmd: it.cmd})
+	}
+	return entries
 }
 
 // worktreesFor opens the repo to act on (the --repo flag, or the current
