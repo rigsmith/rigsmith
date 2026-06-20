@@ -225,9 +225,10 @@ func startReviewProgress(cmd *cobra.Command, total int, done *int64) func() {
 
 // dotnetReviewConcurrency caps how many `dotnet list` calls run at once. dotnet
 // is itself multi-threaded, so oversubscribing the cores hurts; 8 matched the
-// best wall-time in practice without thrashing.
+// best wall-time in practice without thrashing. GOMAXPROCS (not NumCPU) is the
+// floor so a container CPU quota or an explicit GOMAXPROCS isn't oversubscribed.
 func dotnetReviewConcurrency() int {
-	if n := runtime.NumCPU(); n < 8 {
+	if n := runtime.GOMAXPROCS(0); n < 8 {
 		return n
 	}
 	return 8
