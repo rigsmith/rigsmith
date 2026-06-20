@@ -28,6 +28,37 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
+      # Fail fast on half-configured Windows signing. scripts/sign-windows.sh
+      # auto-enables once TRUSTED_SIGNING_ACCOUNT is set, then hard-requires the
+      # rest — but only at the post-build hook, ~1.5 min in. This catches an
+      # empty/typo'd Trusted Signing secret in seconds, naming exactly which one,
+      # before any build runs. With none set, signing is intentionally skipped
+      # (unsigned release) and this no-ops.
+      - name: Preflight — Windows signing secrets
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          TRUSTED_SIGNING_PROFILE: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+        run: |
+          if [ -z "${TRUSTED_SIGNING_ACCOUNT:-}" ]; then
+            echo "Windows signing not configured (TRUSTED_SIGNING_ACCOUNT unset) — releases will be unsigned."
+            exit 0
+          fi
+          missing=
+          for v in AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET \
+                   TRUSTED_SIGNING_ENDPOINT TRUSTED_SIGNING_ACCOUNT TRUSTED_SIGNING_PROFILE; do
+            eval "val=\${$v:-}"
+            [ -n "$val" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Windows signing is enabled (TRUSTED_SIGNING_ACCOUNT set) but these secrets are empty or unset:$missing"
+            exit 1
+          fi
+          echo "All Trusted Signing secrets present and non-empty."
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # full history so GoReleaser's git changelog is complete
