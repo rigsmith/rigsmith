@@ -96,8 +96,7 @@ func discoverDeps(cmd *cobra.Command, eco, root string) (deps []outdatedDep, sup
 			return nil, false // no projects — caller falls back to the guided list
 		}
 		var all []outdatedDep
-		for _, p := range projects {
-			out, _ := captureOutdated(cmd, root, "dotnet", "list", p.FullPath, "package", "--format", "json")
+		for _, out := range dotnetListAcross(cmd, root, projects, "--format", "json") {
 			if parseDotnetList(out) == nil &&
 				strings.TrimSpace(out) != "" && !strings.HasPrefix(strings.TrimSpace(out), "{") {
 				return nil, false // SDK too old for --format json

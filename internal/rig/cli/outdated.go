@@ -6,9 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
@@ -147,11 +151,87 @@ func dotnetReviewProjects(root string, cfg config.Config, projectArg string) ([]
 // across projects stay distinct in the table.
 func dotnetOutdatedAcross(cmd *cobra.Command, root string, projects []detect.ProjectInfo) []outdatedDep {
 	var all []outdatedDep
-	for _, p := range projects {
-		out, _ := captureOutdated(cmd, root, "dotnet", "list", p.FullPath, "package", "--outdated", "--format", "json")
+	for _, out := range dotnetListAcross(cmd, root, projects, "--outdated", "--format", "json") {
 		all = append(all, parseDotnetOutdated(out)...)
 	}
 	return all
+}
+
+// dotnetListAcross runs `dotnet list <project> package <listArgs...>` for every
+// project and returns each one's stdout in project order. A repo can hold dozens
+// of .NET projects (vendored copies, samples, tests), and each `dotnet list`
+// takes ~1s, so doing them one at a time turns a whole-repo review into a 30s+
+// wait that reads as a hang. Fan the calls out (bounded) and show a live
+// project counter so the wait is visibly progress, not a stall.
+func dotnetListAcross(cmd *cobra.Command, root string, projects []detect.ProjectInfo, listArgs ...string) []string {
+	outs := make([]string, len(projects))
+	var done int64
+	stop := startReviewProgress(cmd, len(projects), &done)
+	sem := make(chan struct{}, dotnetReviewConcurrency())
+	var wg sync.WaitGroup
+	for i, p := range projects {
+		wg.Add(1)
+		go func(i int, p detect.ProjectInfo) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			argv := append([]string{"dotnet", "list", p.FullPath, "package"}, listArgs...)
+			outs[i], _ = captureOutdated(cmd, root, argv...)
+			atomic.AddInt64(&done, 1)
+		}(i, p)
+	}
+	wg.Wait()
+	stop()
+	return outs
+}
+
+// startReviewProgress shows that a whole-repo .NET review is underway and how far
+// along it is, then returns a stop func to call once the work is done. On a TTY
+// it animates a spinner with a live "k/N projects" counter (read from done);
+// piped or under --quiet it degrades to one static line (or silence), matching
+// captureWithSpinner. A single project isn't worth announcing.
+func startReviewProgress(cmd *cobra.Command, total int, done *int64) func() {
+	if total <= 1 {
+		return func() {}
+	}
+	w := cmd.ErrOrStderr()
+	if quiet || !writerIsTerminal(w) {
+		if !quiet {
+			fmt.Fprintln(w, dimStyle.Render(
+				fmt.Sprintf("Reviewing %d .NET projects…", total)))
+		}
+		return func() {}
+	}
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	ticker := time.NewTicker(80 * time.Millisecond)
+	stopped := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		defer ticker.Stop()
+		for i := 0; ; i++ {
+			select {
+			case <-stopped:
+				fmt.Fprint(w, "\r\033[K")
+				return
+			case <-ticker.C:
+				label := fmt.Sprintf("reviewing .NET projects… %d/%d", atomic.LoadInt64(done), total)
+				fmt.Fprintf(w, "\r\033[K%s %s", spinnerStyle.Render(frames[i%len(frames)]), dimStyle.Render(label))
+			}
+		}
+	}()
+	return func() { close(stopped); <-finished }
+}
+
+// dotnetReviewConcurrency caps how many `dotnet list` calls run at once. dotnet
+// is itself multi-threaded, so oversubscribing the cores hurts; 8 matched the
+// best wall-time in practice without thrashing. GOMAXPROCS (not NumCPU) is the
+// floor so a container CPU quota or an explicit GOMAXPROCS isn't oversubscribed.
+func dotnetReviewConcurrency() int {
+	if n := runtime.GOMAXPROCS(0); n < 8 {
+		return n
+	}
+	return 8
 }
 
 // dotnetNoProjectsError explains why a .NET dep review found nothing and how to
