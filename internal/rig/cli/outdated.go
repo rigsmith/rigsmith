@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 	"github.com/spf13/cobra"
 )
@@ -57,11 +59,83 @@ func runPlainOutdated(cmd *cobra.Command, eco, root string, args []string) error
 			return err
 		}
 	}
+	// `dotnet list package` needs a solution or project; run at a workspace root
+	// with neither at the top, it fails with a bare "could not find a project or
+	// solution". Resolve the target rig already knows about (or guide the user)
+	// instead of relaying that.
+	if eco == detect.DotNet {
+		cfg, _ := config.LoadMerged(root)
+		target, err := dotnetListTarget(root, cfg)
+		if err != nil {
+			return err
+		}
+		argv := append([]string{"dotnet"}, buildOutdatedArgs(target, false, false, false, false, args)...)
+		return runCommand(cmd, root, argv)
+	}
 	argv, ok := detect.CommandFor(eco, "outdated", root)
 	if !ok {
 		return fmt.Errorf("verb %q has no mapping for ecosystem %q yet", "outdated", eco)
 	}
 	return runCommand(cmd, root, append(argv, args...))
+}
+
+// dotnetListTarget resolves the solution or project that `dotnet list package`
+// should inspect from a workspace root, mirroring rig's own discovery so
+// `rig outdated`/`rig deps` work without cd-ing into a project directory.
+// Precedence: the configured (or root) solution, then the configured
+// defaultProject, then a lone discovered project. When nothing resolves it
+// returns an actionable error naming the .rig.json levers and what rig found —
+// rig's job is to answer "how do I fix this?", not relay dotnet's bare failure.
+func dotnetListTarget(root string, cfg config.Config) (string, error) {
+	if sol := detect.FindSolution(root, cfg.Solution); sol != "" {
+		return sol, nil
+	}
+	projects := detect.DiscoverDotNet(root, "", cfg.Exclude)
+	if dp := strings.TrimSpace(cfg.DefaultProject); dp != "" {
+		for _, p := range projects {
+			if strings.EqualFold(p.Name, dp) || strings.EqualFold(p.ShortName(), dp) {
+				return p.FullPath, nil
+			}
+		}
+	}
+	if len(projects) == 1 {
+		return projects[0].FullPath, nil
+	}
+	return "", dotnetNoTargetError(root, projects, cfg)
+}
+
+// dotnetNoTargetError explains why `dotnet list package` has nothing to inspect
+// and exactly how to fix it in .rig.json.
+func dotnetNoTargetError(root string, projects []detect.ProjectInfo, cfg config.Config) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "no .NET solution or project to inspect at %s", root)
+	if len(projects) == 0 {
+		fmt.Fprintf(&b, " (no .csproj found under it).\n")
+		fmt.Fprintf(&b, "Run rig from a directory with a .NET project, or set \"solution\" in %s.", config.FileName)
+		return errors.New(b.String())
+	}
+	if dp := strings.TrimSpace(cfg.DefaultProject); dp != "" {
+		fmt.Fprintf(&b, " — \"defaultProject\": %q in %s matches no project here.\n", dp, config.FileName)
+	} else {
+		fmt.Fprintf(&b, ": %d projects live in subdirectories with no root solution tying them together.\n", len(projects))
+	}
+	fmt.Fprintf(&b, "Point rig at one in %s:\n", config.FileName)
+	fmt.Fprintf(&b, "  • \"solution\": \"path/to.slnx\"  — inspect a whole solution\n")
+	fmt.Fprintf(&b, "  • \"defaultProject\": \"<name>\"   — inspect one project\n")
+	fmt.Fprintf(&b, "Projects rig sees: %s", projectNameSample(projects, 8))
+	return errors.New(b.String())
+}
+
+// projectNameSample joins up to max project names, summarizing any remainder.
+func projectNameSample(projects []detect.ProjectInfo, max int) string {
+	names := make([]string, 0, len(projects))
+	for _, p := range projects {
+		names = append(names, p.Name)
+	}
+	if len(names) <= max {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s (+%d more)", strings.Join(names[:max], ", "), len(names)-max)
 }
 
 // runOutdatedInteractive discovers outdated deps, lets the user pick which to
@@ -145,7 +219,13 @@ func discoverOutdated(cmd *cobra.Command, eco, root string) (deps []outdatedDep,
 			return nil, false
 		}
 	case detect.DotNet:
-		out, err := captureOutdated(cmd, root, "dotnet", "list", "package", "--outdated", "--format", "json")
+		cfg, _ := config.LoadMerged(root)
+		target, terr := dotnetListTarget(root, cfg)
+		if terr != nil {
+			return nil, false // no target — caller falls back to the guided list
+		}
+		argv := append([]string{"dotnet"}, buildOutdatedArgs(target, false, false, false, false, []string{"--format", "json"})...)
+		out, err := captureOutdated(cmd, root, argv...)
 		if err != nil && out == "" {
 			return nil, false
 		}
