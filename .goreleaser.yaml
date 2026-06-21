@@ -17,6 +17,13 @@ version: 2
 
 project_name: rigsmith
 
+# Embed the per-tool Windows icon + version-info into each .exe before building.
+# Pure Go (go-winres); emits cmd/<tool>/rsrc_windows_*.syso, which the linker
+# picks up for Windows targets only. See scripts/winres.sh.
+before:
+  hooks:
+    - sh ./scripts/winres.sh
+
 builds:
   - id: rig
     main: ./cmd/rig

@@ -30,3 +30,7 @@ go.work.sum
 # .NET build output (e.g. the examples/demo dotnet fixture)
 [Bb]in/
 [Oo]bj/
+
+# Generated Windows resource files (icon + version info); emitted by
+# scripts/winres.sh into each cmd/<tool>/ during the goreleaser before hook.
+cmd/*/*.syso
