@@ -102,6 +102,39 @@ func TestIsMergedSquashThenMoreWork(t *testing.T) {
 	}
 }
 
+// BranchAdvanced tells a brand-new branch (only its creation reflog entry) from
+// one that has committed — the signal prune uses to keep the former but reap the
+// latter once it's fast-forwarded into base.
+func TestBranchAdvanced(t *testing.T) {
+	ctx := context.Background()
+	r, _ := Init(ctx, t.TempDir())
+	commitFile(t, r, "a", "1", "init")
+
+	// Brand-new branch: created, never committed → not advanced.
+	if err := r.Checkout(ctx, "fresh", true); err != nil {
+		t.Fatal(err)
+	}
+	if adv, err := r.BranchAdvanced(ctx, "fresh"); err != nil || adv {
+		t.Fatalf("fresh branch: advanced=%v err=%v, want false", adv, err)
+	}
+
+	// One commit moves the tip → advanced, and stays so even after the work
+	// fast-forwards into main (the case that bit prune).
+	commitFile(t, r, "b", "2", "work")
+	if adv, err := r.BranchAdvanced(ctx, "fresh"); err != nil || !adv {
+		t.Fatalf("committed branch: advanced=%v err=%v, want true", adv, err)
+	}
+	if err := r.Checkout(ctx, "main", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(ctx, r.Dir, "merge", "--ff-only", "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if adv, err := r.BranchAdvanced(ctx, "fresh"); err != nil || !adv {
+		t.Fatalf("ff-merged branch: advanced=%v err=%v, want true", adv, err)
+	}
+}
+
 func TestLocalBranches(t *testing.T) {
 	ctx := context.Background()
 	r, _ := Init(ctx, t.TempDir())

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -21,6 +22,15 @@ func commit(t *testing.T, r *gitrepo.Repo, rel, content, msg string) {
 	}
 	if _, err := r.Commit(ctx, msg); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// ffMerge fast-forwards the current branch onto branch — modelling work that
+// landed in base with no merge commit, leaving base's tip even with branch's.
+func ffMerge(t *testing.T, r *gitrepo.Repo, branch string) {
+	t.Helper()
+	if out, err := exec.Command("git", "-C", r.Dir, "merge", "--ff-only", branch).CombinedOutput(); err != nil {
+		t.Fatalf("ff merge %s: %v\n%s", branch, err, out)
 	}
 }
 
