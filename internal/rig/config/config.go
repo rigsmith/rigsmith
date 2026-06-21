@@ -295,6 +295,7 @@ func loadFile(path string) (Config, error) {
 		}, nil
 	}
 	c.Path = path
+	c.loadCommandScripts(filepath.Dir(path))
 	for _, u := range UnknownKeys(src) {
 		w := fmt.Sprintf("%s: unknown key %q", path, u.Key)
 		if u.Suggestion != "" {
@@ -303,6 +304,30 @@ func loadFile(path string) (Config, error) {
 		c.Warnings = append(c.Warnings, w)
 	}
 	return c, nil
+}
+
+// loadCommandScripts inlines any custom-command script given as { "file": … } by
+// reading the file relative to baseDir (this config's directory, so a global and
+// a repo config each resolve their own refs correctly before the merge). A read
+// failure degrades to a Warning and leaves File set, so the command surfaces a
+// clean "could not be loaded" error when run rather than silently running empty.
+func (c *Config) loadCommandScripts(baseDir string) {
+	for name, cmd := range c.Commands {
+		if cmd == nil || cmd.Script == nil || cmd.Script.File == "" {
+			continue
+		}
+		p := cmd.Script.File
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(baseDir, p)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			c.Warnings = append(c.Warnings, fmt.Sprintf("command %q script file %q: %v", name, cmd.Script.File, err))
+			continue
+		}
+		cmd.Script.Code = string(data)
+		cmd.Script.File = "" // resolved — the loaded code is the source of truth
+	}
 }
 
 // Parse parses JSONC source into a normalized Config. Empty or whitespace-only

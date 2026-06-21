@@ -464,6 +464,28 @@ func TestShellModeParsesAndMerges(t *testing.T) {
 	}
 }
 
+// A command's script form parses from a string (inline) and an array (lines
+// joined with newlines); the file form records the path for load-time inlining.
+func TestScriptSpecForms(t *testing.T) {
+	cfg := mustParse(t, `
+		{
+		  "commands": {
+		    "a": { "script": "log(42)" },
+		    "b": { "script": ["one()", "two()"] },
+		    "c": { "script": { "file": "clean.tengo" } }
+		  }
+		}`)
+	if got := cfg.Commands["a"].Script.Code; got != "log(42)" {
+		t.Errorf("inline string Code = %q, want log(42)", got)
+	}
+	if got := cfg.Commands["b"].Script.Code; got != "one()\ntwo()" {
+		t.Errorf("array Code = %q, want the two lines joined", got)
+	}
+	if got := cfg.Commands["c"].Script.File; got != "clean.tengo" {
+		t.Errorf("file ref = %q, want clean.tengo", got)
+	}
+}
+
 // ---- GlobalPath / LoadMerged (the wired global+repo view) ----
 
 // RIG_GLOBAL_CONFIG overrides the ~/.rig.json location — the injection seam

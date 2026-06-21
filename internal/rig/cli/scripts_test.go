@@ -191,6 +191,139 @@ func TestCustomShellCommand_InvalidShellErrors(t *testing.T) {
 	}
 }
 
+// ---- Tengo script form ----
+
+// A script command runs through the shared runtime: ctx.args is exposed and
+// log() reaches the command output.
+func TestCustomScript_RunsWithCtxArgsAndLog(t *testing.T) {
+	def := &config.Command{Script: &config.ScriptSpec{Code: `log("hello " + ctx.args[0])`}}
+
+	host, buf := newRunHost()
+	if err := runCustom(host, config.Config{}, t.TempDir(), "greet", def, []string{"world"}); err != nil {
+		t.Fatalf("run: %v\n%s", err, buf.String())
+	}
+	if !strings.Contains(buf.String(), "hello world") {
+		t.Fatalf("output = %q, want it to contain 'hello world'", buf.String())
+	}
+}
+
+// sh() runs through the portable shell (POSIX arithmetic works on every OS) and
+// the file-op builtins touch the disk — a script command is cross-platform.
+func TestCustomScript_CrossPlatformShAndFileOps(t *testing.T) {
+	dir := t.TempDir()
+	def := &config.Command{Script: &config.ScriptSpec{Code: "mkdir(\"-p\", \"built\")\nlog(sh(\"echo $((3 + 4))\"))"}}
+
+	host, buf := newRunHost()
+	if err := runCustom(host, config.Config{}, dir, "b", def, nil); err != nil {
+		t.Fatalf("run: %v\n%s", err, buf.String())
+	}
+	if info, err := os.Stat(filepath.Join(dir, "built")); err != nil || !info.IsDir() {
+		t.Fatalf("mkdir() did not create the dir: %v", err)
+	}
+	if !strings.Contains(buf.String(), "7") {
+		t.Fatalf("sh() arithmetic output missing: %q", buf.String())
+	}
+}
+
+// ctx exposes the environment, repo root, OS, and resolved ecosystem.
+func TestCustomScript_CtxExposesEnvRootOsEcosystem(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code := "log(ctx.os)\nlog(ctx.root)\nlog(ctx.ecosystem)\nlog(ctx.env.RIG_TC)"
+	def := &config.Command{Script: &config.ScriptSpec{Code: code}, Env: map[string]string{"RIG_TC": "yes"}}
+
+	host, buf := newRunHost()
+	if err := runCustom(host, config.Config{}, dir, "ctx", def, nil); err != nil {
+		t.Fatalf("run: %v\n%s", err, buf.String())
+	}
+	out := buf.String()
+	for _, want := range []string{runtime.GOOS, dir, "go", "yes"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ctx output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// fail() aborts the script and fails the command.
+func TestCustomScript_FailAborts(t *testing.T) {
+	def := &config.Command{Script: &config.ScriptSpec{Code: `fail("nope")`}}
+
+	host, _ := newRunHost()
+	err := runCustom(host, config.Config{}, t.TempDir(), "x", def, nil)
+	if err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("err = %v, want the fail message", err)
+	}
+}
+
+// A command can't set both a command/argv form and a script form.
+func TestCustomScript_RejectsCommandAndScriptTogether(t *testing.T) {
+	def := &config.Command{
+		Spec:   &config.CommandSpec{Shell: "echo hi"},
+		Script: &config.ScriptSpec{Code: `log("x")`},
+	}
+
+	host, _ := newRunHost()
+	err := runCustom(host, config.Config{}, t.TempDir(), "x", def, nil)
+	if err == nil || !strings.Contains(err.Error(), "both") {
+		t.Fatalf("err = %v, want a both-forms error", err)
+	}
+}
+
+// A dry run previews sh()/file ops (logic still runs, disk untouched).
+func TestCustomScript_DryRunPreviewsSideEffects(t *testing.T) {
+	dir := t.TempDir()
+	def := &config.Command{Script: &config.ScriptSpec{Code: "mkdir(\"-p\", \"dist\")\nsh(\"echo build\")"}}
+
+	prev := dryRun
+	dryRun = true
+	defer func() { dryRun = prev }()
+
+	host, buf := newRunHost()
+	if err := runCustom(host, config.Config{}, dir, "x", def, nil); err != nil {
+		t.Fatalf("run: %v\n%s", err, buf.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dist")); !os.IsNotExist(err) {
+		t.Fatal("mkdir() must not touch the disk in a dry run")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "would mkdir -p dist") || !strings.Contains(out, "would run: echo build") {
+		t.Fatalf("dry-run previews missing:\n%s", out)
+	}
+}
+
+// The { "file": … } form loads the .tengo file relative to the config and runs
+// it; a missing file fails cleanly when the command runs.
+func TestCustomScript_FileForm(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "cmd.tengo"), []byte(`log("from file")`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".rig.json"),
+		[]byte(`{ "commands": { "fromfile": { "script": { "file": "cmd.tengo" } }, "missing": { "script": { "file": "nope.tengo" } } } }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	host, buf := newRunHost()
+	if err := runCustom(host, cfg, dir, "fromfile", cfg.Commands["fromfile"], nil); err != nil {
+		t.Fatalf("file-form run: %v\n%s", err, buf.String())
+	}
+	if !strings.Contains(buf.String(), "from file") {
+		t.Fatalf("file-form script did not run: %q", buf.String())
+	}
+
+	host2, _ := newRunHost()
+	err = runCustom(host2, cfg, dir, "missing", cfg.Commands["missing"], nil)
+	if err == nil || !strings.Contains(err.Error(), "could not be loaded") {
+		t.Fatalf("missing-file err = %v, want a clean load error", err)
+	}
+}
+
 // A multi-binary Go repo (mains under cmd/) must expand into one run target per
 // binary, never the unrunnable module root. Library packages are not run targets;
 // scripts/ mains stay in the set (runnable by name) and are deduped into the
