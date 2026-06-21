@@ -57,7 +57,13 @@ func (p *Plan) Apply(projectsDir string, dryRun bool) (Report, error) {
 				}
 			}
 		}
-		n, err := rebaseTranscriptCwds(newDir, mv.OldCwd, mv.NewCwd, dryRun)
+		// In a dry run the rename is skipped, so the transcripts are still under
+		// the old slug — count them there so dry-run counts match a real apply.
+		scanDir := newDir
+		if dryRun {
+			scanDir = filepath.Join(projectsDir, mv.OldSlug)
+		}
+		n, err := rebaseTranscriptCwds(scanDir, mv.OldCwd, mv.NewCwd, dryRun)
 		if err != nil {
 			return rep, err
 		}
@@ -154,6 +160,9 @@ func rebaseOneTranscript(path, oldCwd, newCwd string, dryRun bool) (int, error) 
 	}
 
 	if dryRun || changed == 0 {
+		if tmp != nil {
+			_ = tmp.Close() // nothing to write — close so the deferred Remove succeeds on Windows
+		}
 		return changed, nil
 	}
 	if err := out.Flush(); err != nil {

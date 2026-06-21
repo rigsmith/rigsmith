@@ -78,21 +78,31 @@ func Resolve(src, dst string) (absSrc, absDst string, moveDir bool, err error) {
 	}
 
 	srcInfo, srcErr := os.Stat(absSrc)
+	if srcErr != nil && !os.IsNotExist(srcErr) {
+		return "", "", false, fmt.Errorf("stat source %s: %w", absSrc, srcErr)
+	}
 	dstInfo, dstErr := os.Stat(absDst)
+	if dstErr != nil && !os.IsNotExist(dstErr) {
+		return "", "", false, fmt.Errorf("stat destination %s: %w", absDst, dstErr)
+	}
+	srcExists, dstExists := srcErr == nil, dstErr == nil
 
 	switch {
-	case srcErr == nil && !srcInfo.IsDir():
+	case srcExists && !srcInfo.IsDir():
 		return "", "", false, fmt.Errorf("source is not a directory: %s", absSrc)
-	case srcErr == nil && dstErr == nil:
+	case dstExists && !dstInfo.IsDir():
+		return "", "", false, fmt.Errorf("destination exists and is not a directory: %s", absDst)
+	case srcExists && dstExists:
 		return "", "", false, fmt.Errorf("both source and destination exist: %s and %s", absSrc, absDst)
-	case srcErr == nil && dstErr != nil:
+	case srcExists && !dstExists:
 		// Normal move: src present, dst free. Its parent must exist.
 		if _, perr := os.Stat(filepath.Dir(absDst)); perr != nil {
 			return "", "", false, fmt.Errorf("destination parent does not exist: %s", filepath.Dir(absDst))
 		}
 		moveDir = true
-	case srcErr != nil && dstErr == nil && dstInfo.IsDir():
-		// Relink only: the directory was already moved by hand; just fix history.
+	case !srcExists && dstExists:
+		// Relink only: the directory (a dir, checked above) was already moved by
+		// hand; just fix the history.
 		moveDir = false
 	default:
 		return "", "", false, fmt.Errorf("source does not exist: %s", absSrc)

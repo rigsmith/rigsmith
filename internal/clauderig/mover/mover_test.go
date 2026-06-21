@@ -177,17 +177,32 @@ func TestApply_MovesDirAndRelinksHistory(t *testing.T) {
 func TestApply_DryRunChangesNothing(t *testing.T) {
 	s := setup(t)
 	p := planFor(t, s, nil)
-	before, _ := os.ReadFile(filepath.Join(s.claudeHome, "projects", project.Flatten(s.src), "a.jsonl"))
+	projectsDir := filepath.Join(s.claudeHome, "projects")
+	before, _ := os.ReadFile(filepath.Join(projectsDir, project.Flatten(s.src), "a.jsonl"))
 
-	if _, err := p.Apply(filepath.Join(s.claudeHome, "projects"), true); err != nil {
+	dry, err := p.Apply(projectsDir, true)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(s.src); err != nil {
 		t.Fatal("dry run must not move the directory")
 	}
-	after, _ := os.ReadFile(filepath.Join(s.claudeHome, "projects", project.Flatten(s.src), "a.jsonl"))
+	after, _ := os.ReadFile(filepath.Join(projectsDir, project.Flatten(s.src), "a.jsonl"))
 	if string(before) != string(after) {
 		t.Fatal("dry run must not rewrite transcripts")
+	}
+
+	// Dry-run counts must match a real apply (regression: dry-run scanned the
+	// not-yet-renamed slug dir and reported zero transcript rewrites).
+	real, err := p.Apply(projectsDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dry.Transcripts != real.Transcripts || dry.SlugsRenamed != real.SlugsRenamed {
+		t.Fatalf("dry-run counts diverge from real apply: dry=%+v real=%+v", dry, real)
+	}
+	if dry.Transcripts == 0 {
+		t.Fatal("expected dry run to report transcript rewrites")
 	}
 }
 

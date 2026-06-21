@@ -49,8 +49,8 @@ func NewMoveCmd() *cobra.Command {
 			if st != pathmap.StatusResolved {
 				return fmt.Errorf("could not resolve ~/.claude location for this machine")
 			}
-			desktopRoot, dst := cfg.RootLocation("desktop", me)
-			if dst != pathmap.StatusResolved {
+			desktopRoot, desktopStatus := cfg.RootLocation("desktop", me)
+			if desktopStatus != pathmap.StatusResolved {
 				desktopRoot = "" // Desktop not present/configured — skip it
 			}
 
