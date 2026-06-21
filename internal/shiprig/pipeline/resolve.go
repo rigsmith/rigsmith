@@ -250,6 +250,9 @@ func Resolve(config *Config, opts ResolveOptions) ([]ResolvedStep, error) {
 			(stepConfig.Run != nil || stepConfig.Script != nil)
 
 		dryAction, dryHidden := dryRunPlan(stepConfig, commandAction)
+		if dryAction == nil && !dryHidden {
+			dryAction = defaultDryAction(name, config, stepConfig)
+		}
 
 		resolved = append(resolved, ResolvedStep{
 			Name:            name,
@@ -375,6 +378,38 @@ func dryRunPlan(stepConfig *StepConfig, action []CommandSpec) (dryAction []Comma
 		return spec.Commands, false
 	}
 	return action, false
+}
+
+// changelogTools are the CLIs whose `version` understands `--changelog` (the
+// preview flag rigsmith added). An external backing tool — e.g. "npx changeset"
+// for the Node @changesets/cli — does not, so it's excluded below.
+var changelogTools = []string{"shiprig", "changerig", "changeset"}
+
+// defaultDryAction supplies a built-in step's dry-run preview when the user
+// configured none. Only `version` has a side-effect-free preview worth running:
+// `<tool> version --changelog` renders the bump plan and the exact changelog
+// notes the step would write, while writing nothing itself — so a dry-run
+// release surfaces what will be versioned instead of a bare `version` plan line.
+// A step whose action a custom `run`/`script` replaced isn't the built-in
+// `version` anymore, so its flags can't be assumed; return nil there. Likewise
+// for a backing tool that doesn't support `--changelog` — the preview would just
+// fail the dry run, so fall back to the bare plan line.
+func defaultDryAction(name string, config *Config, stepConfig *StepConfig) []CommandSpec {
+	if name != "version" {
+		return nil
+	}
+	if stepConfig != nil && (stepConfig.Run != nil || stepConfig.Script != nil) {
+		return nil
+	}
+	tool := toolOf(config)
+	if !slices.Contains(changelogTools, tool) {
+		return nil
+	}
+	var extraArgs []string
+	if stepConfig != nil {
+		extraArgs = stepConfig.Args
+	}
+	return []CommandSpec{ShellCommand(joinShell(tool, "version --changelog", extraArgs))}
 }
 
 // validateStepEcosystems rejects a step that targets an ecosystem id outside the

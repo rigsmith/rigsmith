@@ -485,9 +485,13 @@ func TestResolveDisabledStepSetsSkipReason(t *testing.T) {
 
 func TestRunDryRunDoesNotExecuteAndReportsPlan(t *testing.T) {
 	f := newFixture(nil)
-	steps := mustResolve(t, &Config{}, ResolveOptions{})
+	// Steps with no default dry-run action: the `version` builtin previews its
+	// changelog during a dry run (see defaultDryAction), so exclude it here to
+	// assert the generic "nothing opts in → nothing executes" contract.
+	config := &Config{Order: []string{"commit", "tag", "push"}}
+	steps := mustResolve(t, config, ResolveOptions{})
 
-	success := f.pipeline.Run(steps, &Config{}, true)
+	success := f.pipeline.Run(steps, config, true)
 
 	if !success {
 		t.Error("dry run should succeed")
@@ -706,6 +710,10 @@ func TestRunEagerVarCaptureFailureAbortsBeforeAnySteps(t *testing.T) {
 func TestRunDryRunDoesNotCaptureVars(t *testing.T) {
 	f := newFixture(nil)
 	config := &Config{
+		// Exclude the `version` builtin: its dry-run changelog preview would
+		// execute (see defaultDryAction), and this test is about var capture, not
+		// the version preview.
+		Order: []string{"commit", "push"},
 		Vars: map[string]*VarSpec{
 			"eager": {Command: specPtr(ArgvCommand("op", "otp")), Lazy: false},
 		},
