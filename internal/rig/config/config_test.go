@@ -486,6 +486,39 @@ func TestScriptSpecForms(t *testing.T) {
 	}
 }
 
+// A script file without a .tengo extension still loads, but is flagged (usually
+// a typo'd path or the wrong file).
+func TestScriptFileNonTengoExtensionWarns(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "clean.txt"), []byte(`log("hi")`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, FileName),
+		[]byte(`{ "commands": { "clean": { "script": { "file": "clean.txt" } } } }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Commands["clean"].Script.Code != `log("hi")` { // still loaded
+		t.Errorf("Code = %q, want it loaded despite the extension", cfg.Commands["clean"].Script.Code)
+	}
+	if !hasWarning(cfg.Warnings, ".tengo extension") {
+		t.Errorf("warnings = %v, want a .tengo-extension hint", cfg.Warnings)
+	}
+}
+
+func hasWarning(warnings []string, substr string) bool {
+	for _, w := range warnings {
+		if strings.Contains(w, substr) {
+			return true
+		}
+	}
+	return false
+}
+
 // ---- GlobalPath / LoadMerged (the wired global+repo view) ----
 
 // RIG_GLOBAL_CONFIG overrides the ~/.rig.json location — the injection seam

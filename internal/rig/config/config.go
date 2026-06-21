@@ -316,6 +316,11 @@ func (c *Config) loadCommandScripts(baseDir string) {
 		if cmd == nil || cmd.Script == nil || cmd.Script.File == "" {
 			continue
 		}
+		// .tengo is the convention; a different extension still loads but is
+		// flagged, since it's usually a typo'd path (".tengp") or the wrong file.
+		if !strings.EqualFold(filepath.Ext(cmd.Script.File), ".tengo") {
+			c.Warnings = append(c.Warnings, fmt.Sprintf("command %q script file %q should have a .tengo extension", name, cmd.Script.File))
+		}
 		p := cmd.Script.File
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(baseDir, p)
