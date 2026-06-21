@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -149,4 +150,45 @@ func runPortableShell(env []string, script, dir string) ([]string, int, error) {
 		return lines, -1, runErr
 	}
 	return lines, 0, nil
+}
+
+// RunPortable runs a shell command line through the in-process portable shell,
+// streaming stdin/stdout/stderr live like an interactive OS shell instead of
+// capturing output. It is the entry point for commands run on a user's behalf
+// (e.g. rig custom commands), where live output, stdin, and ctx cancellation
+// matter — unlike NewPortableRunner, which buffers output for after-the-fact
+// reporting. The same cross-platform cp/mv/rm/mkdir builtins apply.
+//
+// dir is the working directory; env is the command environment in KEY=VALUE
+// form (nil/empty inherits the process environment). Returns the command's exit
+// code; a non-nil error means the script could not be parsed or run at all
+// (a non-zero exit is reported as the code, not an error).
+func RunPortable(ctx context.Context, line, dir string, env []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	file, err := syntax.NewParser().Parse(strings.NewReader(line), "")
+	if err != nil {
+		return -1, err
+	}
+
+	opts := []interp.RunnerOption{
+		interp.Dir(dir),
+		interp.StdIO(stdin, stdout, stderr),
+		interp.ExecHandlers(portableFileOps),
+	}
+	if len(env) > 0 {
+		opts = append(opts, interp.Env(expand.ListEnviron(env...)))
+	}
+
+	runner, err := interp.New(opts...)
+	if err != nil {
+		return -1, err
+	}
+
+	runErr := runner.Run(ctx, file)
+	if runErr != nil {
+		if status, ok := interp.IsExitStatus(runErr); ok {
+			return int(status), nil
+		}
+		return -1, runErr
+	}
+	return 0, nil
 }

@@ -441,6 +441,29 @@ func TestCommandObjectResolvesPerOSOverride(t *testing.T) {
 	}
 }
 
+// The config-level `shell` and a per-command `shell` override both parse, and
+// the repo's config-level value wins over the global one in a merge.
+func TestShellModeParsesAndMerges(t *testing.T) {
+	cfg := mustParse(t, `
+		{
+		  "shell": "system",
+		  "commands": {
+		    "clean": { "command": "rm -rf dist", "shell": "portable" }
+		  }
+		}`)
+	if cfg.Shell != "system" {
+		t.Errorf("config Shell = %q, want system", cfg.Shell)
+	}
+	if cmd := cfg.Commands["clean"]; cmd == nil || cmd.Shell != "portable" {
+		t.Errorf("command Shell = %v, want portable", cfg.Commands["clean"])
+	}
+
+	merged := Merge(mustParse(t, `{ "shell": "portable" }`), mustParse(t, `{ "shell": "system" }`))
+	if merged.Shell != "system" { // repo (overlay) wins
+		t.Errorf("merged Shell = %q, want system", merged.Shell)
+	}
+}
+
 // ---- GlobalPath / LoadMerged (the wired global+repo view) ----
 
 // RIG_GLOBAL_CONFIG overrides the ~/.rig.json location — the injection seam

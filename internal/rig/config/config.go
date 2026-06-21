@@ -65,8 +65,14 @@ type Config struct {
 	// time a verb reads the config.
 	Dotnet *Dotnet `json:"dotnet,omitempty"`
 	// Commands are custom verbs: name → shell string, argv array, or an
-	// object with description/command/os/env/cwd.
+	// object with description/command/os/env/cwd/shell.
 	Commands map[string]*Command `json:"commands,omitempty"`
+	// Shell selects how a custom command's shell-string form is executed:
+	// "portable" (default — the in-process cross-platform shell, so one command
+	// line runs on every OS) or "system" (the OS shell, for scripts needing a
+	// real userland or OS-specific syntax). A command's own `shell` overrides
+	// this. Argv-form commands are unaffected. Validated when a command runs.
+	Shell string `json:"shell,omitempty"`
 	// Exclude is a list of globs hiding projects from discovery/pickers.
 	Exclude []string `json:"exclude,omitempty"`
 	// Quiet suppresses the `→ command` echo before running a verb. A pointer
@@ -399,6 +405,7 @@ func Merge(base, overlay Config) Config {
 		DefaultProject:  coalesce(overlay.DefaultProject, base.DefaultProject),
 		DotnetFormatter: coalesce(overlay.DotnetFormatter, base.DotnetFormatter),
 		Ecosystem:       coalesce(overlay.Ecosystem, base.Ecosystem),
+		Shell:           coalesce(overlay.Shell, base.Shell),
 		Test:            mergeTest(base.Test, overlay.Test),
 		Coverage:        mergeCoverage(base.Coverage, overlay.Coverage),
 		Kill:            kill,
@@ -538,7 +545,7 @@ func mergePublish(base, overlay *Publish) *Publish {
 var knownKeys = []string{
 	"$schema", "solution", "defaultProject", "ecosystem", "test", "coverage",
 	"kill", "rebuild", "publish", "env", "envPresets", "commands", "aliases",
-	"tools", "exclude", "quiet", "dotnet", "node", "worktree",
+	"tools", "exclude", "quiet", "dotnet", "node", "worktree", "shell",
 }
 
 // UnknownKey is a top-level key rig doesn't recognize, with the closest known
