@@ -70,6 +70,27 @@ func NewAddCmd() *cobra.Command {
 			}
 			sort.Strings(names)
 
+			// Validate any --package names against the workspace up front. Without
+			// this a typo (or a wrong short name like "rigsmith" for the module
+			// "github.com/rigsmith/rigsmith") is written verbatim, and only
+			// `version` later rejects the changeset as naming an unknown package.
+			if len(packages) > 0 {
+				known := make(map[string]bool, len(names))
+				for _, n := range names {
+					known[n] = true
+				}
+				var unknown []string
+				for _, p := range packages {
+					if !known[p] {
+						unknown = append(unknown, p)
+					}
+				}
+				if len(unknown) > 0 {
+					return fmt.Errorf("unknown package(s): %s\nworkspace packages: %s",
+						strings.Join(unknown, ", "), strings.Join(names, ", "))
+				}
+			}
+
 			selected := packages
 			bump := bumpStr
 			typ := strings.TrimSpace(typeStr)

@@ -201,6 +201,22 @@ func TestAddMessageAndPackageWritesPatchChangeset(t *testing.T) {
 	}
 }
 
+// A --package naming something outside the workspace fails up front (rather
+// than writing a changeset `version` would later reject), and the error names
+// both the bad package and the available ones.
+func TestAddUnknownPackageFails(t *testing.T) {
+	dir := newWorkspace(t)
+
+	code, out := runChangerig(t, dir, "add", "-m", "x", "-p", "ghost")
+
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "unknown package(s): ghost")
+	assertContains(t, out, "pkg-a")
+	if files := changesetFiles(t, dir); len(files) != 0 {
+		t.Fatalf("no changeset should be written on an invalid package; got %d", len(files))
+	}
+}
+
 // --bump overrides the default patch bump.
 func TestAddBumpOverride(t *testing.T) {
 	dir := newWorkspace(t)
