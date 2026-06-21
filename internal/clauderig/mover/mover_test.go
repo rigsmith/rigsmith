@@ -152,7 +152,11 @@ func TestApply_MovesDirAndRelinksHistory(t *testing.T) {
 	if header["cwd"] != s.dst {
 		t.Fatalf("cwd not rebased: %v", header["cwd"])
 	}
-	if !strings.Contains(lines[1], s.src+"/main.go") {
+	var body map[string]any
+	json.Unmarshal([]byte(lines[1]), &body)
+	// Compare against the decoded text, not the raw line: on Windows the path's
+	// backslashes are JSON-escaped, so a raw substring match would spuriously fail.
+	if !strings.Contains(body["text"].(string), s.src) {
 		t.Fatalf("tool-output path should be untouched, body: %s", lines[1])
 	}
 
