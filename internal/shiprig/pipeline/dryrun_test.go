@@ -118,6 +118,73 @@ func TestDryRunAlternateRunsInsteadOfAction(t *testing.T) {
 	}
 }
 
+func TestDryRunVersionPreviewsChangelogByDefault(t *testing.T) {
+	p, runner, _ := dryFixture(nil)
+	config := &Config{Order: []string{"version"}}
+
+	if !p.Run(mustResolve(t, config, ResolveOptions{}), config, true) {
+		t.Fatal("dry run should succeed")
+	}
+
+	if len(runner.calls) != 1 {
+		t.Fatalf("version step should preview its changelog once; calls=%v", runner.lines())
+	}
+	if got := runner.calls[0].args[0]; !strings.Contains(got, "changeset version --changelog") {
+		t.Errorf("version dry action = %q, want a `version --changelog` preview", got)
+	}
+}
+
+func TestDryRunVersionPreviewHonorsToolAndArgs(t *testing.T) {
+	p, runner, _ := dryFixture(nil)
+	config := &Config{
+		Tool:  "shiprig",
+		Order: []string{"version"},
+		Steps: map[string]*StepConfig{"version": {Args: []string{"--snapshot"}}},
+	}
+
+	if !p.Run(mustResolve(t, config, ResolveOptions{}), config, true) {
+		t.Fatal("dry run should succeed")
+	}
+
+	if got := runner.calls[0].args[0]; !strings.Contains(got, "shiprig version --changelog --snapshot") {
+		t.Errorf("version dry action = %q, want the configured tool and args", got)
+	}
+}
+
+func TestDryRunVersionCustomRunSuppressesDefaultPreview(t *testing.T) {
+	p, runner, _ := dryFixture(nil)
+	config := &Config{
+		Order: []string{"version"},
+		// A custom run replaces the built-in version action, so its changelog
+		// preview no longer applies; a plain dry run must execute nothing.
+		Steps: map[string]*StepConfig{"version": {Run: CommandList{ShellCommand("./my-version.sh")}}},
+	}
+
+	if !p.Run(mustResolve(t, config, ResolveOptions{}), config, true) {
+		t.Fatal("dry run should succeed")
+	}
+
+	if len(runner.calls) != 0 {
+		t.Errorf("custom-run version must not auto-preview; calls=%v", runner.lines())
+	}
+}
+
+func TestDryRunVersionExplicitDryRunOverridesDefaultPreview(t *testing.T) {
+	p, runner, _ := dryFixture(nil)
+	config := &Config{
+		Order: []string{"version"},
+		Steps: map[string]*StepConfig{"version": {DryRun: &DryRunSpec{Hide: true}}},
+	}
+
+	if !p.Run(mustResolve(t, config, ResolveOptions{}), config, true) {
+		t.Fatal("dry run should succeed")
+	}
+
+	if len(runner.calls) != 0 {
+		t.Errorf(`"dryRun": false should suppress the default preview; calls=%v`, runner.lines())
+	}
+}
+
 func TestDryRunFalseHidesActionAndRunsNothing(t *testing.T) {
 	p, runner, reporter := dryFixture(nil)
 	config := &Config{
