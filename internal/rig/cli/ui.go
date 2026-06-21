@@ -266,7 +266,9 @@ func newMenu() menuModel {
 	// No `.rig.json` yet → lead with init: it pins the ecosystem (so a polyglot
 	// repo stops asking) and is where custom verbs live. The next step in view.
 	var nextStep string
-	if _, err := os.Stat(filepath.Join(root, config.FileName)); os.IsNotExist(err) {
+	_, statErr := os.Stat(filepath.Join(root, config.FileName))
+	hasConfig := statErr == nil
+	if os.IsNotExist(statErr) {
 		top = append(top, menuItem{label: "init", desc: "scaffold .rig.json (pin conventions, add verbs)", verb: "init", recommended: true})
 		nextStep = "No " + config.FileName + " yet — init pins conventions and adds custom verbs."
 	}
@@ -274,6 +276,12 @@ func newMenu() menuModel {
 		top = append(top, menuItem{pickFocus: true, desc: "scope verbs to one project · exclude/include"})
 	}
 	top = append(top, dev...)
+	// Symmetric with init above: once .rig.json exists, surface config to view or
+	// change it. Selecting it exits the menu and opens config's own
+	// show/get/set/path/edit submenu (newUICmd runs the carried command).
+	if hasConfig {
+		top = append(top, menuItem{label: "config", desc: "view or change .rig.json", cmd: newConfigCmd()})
+	}
 	// Coverage sits right beside the build verbs (not buried in Maintenance): a
 	// peer of `test`, with a sub-choice of the summary table or the interactive
 	// browser (`coverage -i`).

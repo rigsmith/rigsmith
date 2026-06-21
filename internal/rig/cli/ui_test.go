@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/spf13/cobra"
 )
 
@@ -79,6 +80,52 @@ func TestMenu_OpensWithoutAnEcosystem(t *testing.T) {
 	if !menuHasVerb(m.top().items, "run") {
 		t.Errorf("top menu = %v, want a run verb offered even without an ecosystem", m.top().items)
 	}
+}
+
+// init and config are symmetric top-level entries: init shows only when there's
+// no .rig.json, config only once one exists. Selecting config carries the config
+// command (its show/get/set/path/edit submenu) rather than a verb.
+func TestMenu_ConfigEntryMirrorsInit(t *testing.T) {
+	isolateGlobalConfig(t)
+
+	// No .rig.json yet → init present, config absent.
+	t.Chdir(t.TempDir())
+	m := newMenu()
+	if !menuHasVerb(m.top().items, "init") {
+		t.Error("want init offered when no .rig.json exists")
+	}
+	if findItem(m.top().items, "config") != nil {
+		t.Error("config should not appear before .rig.json exists")
+	}
+
+	// .rig.json present → config present (carrying a command), init gone.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, config.FileName), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	m = newMenu()
+	it := findItem(m.top().items, "config")
+	if it == nil {
+		t.Fatal("want a top-level config entry once .rig.json exists")
+	}
+	if it.cmd == nil {
+		t.Error("config entry should carry the config command to open its submenu")
+	}
+	if menuHasVerb(m.top().items, "init") {
+		t.Error("init should drop once .rig.json exists")
+	}
+}
+
+// findItem returns the first item with the given label at this level (not nested),
+// or nil.
+func findItem(items []menuItem, label string) *menuItem {
+	for i := range items {
+		if items[i].label == label {
+			return &items[i]
+		}
+	}
+	return nil
 }
 
 // menuHasVerb reports whether items (or any group's children) offers verb.
