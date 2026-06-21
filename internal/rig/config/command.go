@@ -38,7 +38,7 @@ func (s *CommandSpec) UnmarshalJSON(data []byte) error {
 
 // Command is a custom command entry under "commands". Accepts three JSON
 // shapes: a bare string (shell command), a string array (argv), or an object
-// with description/command/os/env/cwd.
+// with description/command/os/env/cwd/shell.
 type Command struct {
 	// Description is the help line for the generated subcommand.
 	Description string
@@ -51,6 +51,10 @@ type Command struct {
 	Env map[string]string
 	// Cwd is the working directory, relative to the repo root.
 	Cwd string
+	// Shell overrides the config-level shell for this command's shell-string
+	// form ("portable" | "system"); "" inherits the config default. Ignored for
+	// the argv form.
+	Shell string
 }
 
 // Resolve returns the command for the current OS: an `os` entry if present,
@@ -100,6 +104,7 @@ func (c *Command) UnmarshalJSON(data []byte) error {
 			OS          map[string]*CommandSpec `json:"os"`
 			Env         map[string]string       `json:"env"`
 			Cwd         string                  `json:"cwd"`
+			Shell       string                  `json:"shell"`
 		}
 		if err := json.Unmarshal(data, &obj); err != nil {
 			return err
@@ -109,6 +114,7 @@ func (c *Command) UnmarshalJSON(data []byte) error {
 		c.OS = obj.OS
 		c.Env = obj.Env
 		c.Cwd = obj.Cwd
+		c.Shell = obj.Shell
 		return nil
 	default:
 		return fmt.Errorf("a command entry must be a string, array, or object")

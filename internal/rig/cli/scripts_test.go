@@ -4,8 +4,9 @@
 // the clean missing-OS-spec error. The .NET suite's real-`dotnet`-build E2E is
 // intentionally not ported: Go's build verb is the ecosystem-generic runner
 // (covered by unit tests) and spawning the SDK would dominate the suite's
-// runtime. The shell form is OS-native (sh -c / cmd.exe /c), so these run on
-// Windows too, with cmd-flavored fixtures where syntax differs.
+// runtime. The shell form now defaults to the in-process portable shell, so it
+// runs identically on Windows; argv fixtures still spawn the OS shell directly,
+// with cmd-flavored variants where syntax differs.
 package cli
 
 import (
@@ -13,7 +14,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -35,16 +35,19 @@ func newRunHost() (*cobra.Command, *bytes.Buffer) {
 }
 
 // exitCode extracts the child's exit code from runCustom's error (0 on nil).
+// Both shell paths expose ExitCode() — *exec.ExitError from the OS-shell/argv
+// form, *exitError from the portable shell — so assert on the interface, not a
+// concrete type.
 func exitCode(t *testing.T, err error) int {
 	t.Helper()
 	if err == nil {
 		return 0
 	}
-	var ee *exec.ExitError
-	if !errors.As(err, &ee) {
-		t.Fatalf("want an *exec.ExitError, got %T: %v", err, err)
+	var coder interface{ ExitCode() int }
+	if !errors.As(err, &coder) {
+		t.Fatalf("want an error exposing ExitCode(), got %T: %v", err, err)
 	}
-	return ee.ExitCode()
+	return coder.ExitCode()
 }
 
 // shArgv builds an argv-form fixture that exits with code via the OS shell.
@@ -117,6 +120,74 @@ func TestCustomCommandWithNoSpecForThisOS_ErrorsCleanly(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "no command defined for this OS") {
 		t.Fatalf("err = %v, want a clean no-spec-for-this-OS error", err)
+	}
+}
+
+// By default a shell-string command runs through the in-process portable shell,
+// so POSIX syntax that cmd.exe can't parse (here $((…)) arithmetic) works on
+// every OS with no per-OS variant — the whole point of portable-by-default.
+func TestCustomShellCommand_PortableByDefault(t *testing.T) {
+	def := &config.Command{Spec: &config.CommandSpec{Shell: "echo sum=$((2 + 3))"}}
+
+	host, buf := newRunHost()
+	if err := runCustom(host, config.Config{}, t.TempDir(), "calc", def, nil); err != nil {
+		t.Fatalf("run failed: %v\n%s", err, buf.String())
+	}
+	if !strings.Contains(buf.String(), "sum=5") {
+		t.Fatalf("portable shell did not evaluate POSIX arithmetic:\n%s", buf.String())
+	}
+}
+
+// The portable shell ships cp/mv/rm/mkdir, so a custom command's file ops work
+// cross-platform without a Unix userland.
+func TestCustomShellCommand_PortableFileOps(t *testing.T) {
+	dir := t.TempDir()
+	def := &config.Command{Spec: &config.CommandSpec{Shell: "mkdir -p made/here"}}
+
+	host, buf := newRunHost()
+	if err := runCustom(host, config.Config{}, dir, "mk", def, nil); err != nil {
+		t.Fatalf("run failed: %v\n%s", err, buf.String())
+	}
+	if info, err := os.Stat(filepath.Join(dir, "made", "here")); err != nil || !info.IsDir() {
+		t.Fatalf("portable mkdir -p did not create the nested dir: %v", err)
+	}
+}
+
+// "shell": "system" opts a command back into the OS shell; the exit code still
+// propagates (exercising the non-portable branch).
+func TestCustomShellCommand_SystemModePropagatesExitCode(t *testing.T) {
+	def := &config.Command{Spec: &config.CommandSpec{Shell: "exit 4"}, Shell: "system"}
+
+	host, _ := newRunHost()
+	err := runCustom(host, config.Config{}, t.TempDir(), "boom", def, nil)
+	if got := exitCode(t, err); got != 4 {
+		t.Fatalf("exit code = %d, want 4 (system-mode shell still propagates)", got)
+	}
+}
+
+// A command's own `shell` overrides the config-level default: here the config
+// says system but the command says portable, so POSIX arithmetic runs.
+func TestCustomShellCommand_PerCommandShellOverridesConfig(t *testing.T) {
+	def := &config.Command{Spec: &config.CommandSpec{Shell: "echo p=$((6 * 7))"}, Shell: "portable"}
+
+	host, buf := newRunHost()
+	if err := runCustom(host, config.Config{Shell: "system"}, t.TempDir(), "calc", def, nil); err != nil {
+		t.Fatalf("run failed: %v\n%s", err, buf.String())
+	}
+	if !strings.Contains(buf.String(), "p=42") {
+		t.Fatalf("per-command portable override did not take effect:\n%s", buf.String())
+	}
+}
+
+// An unknown shell value fails the command with a clear error rather than
+// silently changing behavior.
+func TestCustomShellCommand_InvalidShellErrors(t *testing.T) {
+	def := &config.Command{Spec: &config.CommandSpec{Shell: "echo hi"}}
+
+	host, _ := newRunHost()
+	err := runCustom(host, config.Config{Shell: "fish"}, t.TempDir(), "x", def, nil)
+	if err == nil || !strings.Contains(err.Error(), "shell") {
+		t.Fatalf("err = %v, want an unknown-shell error", err)
 	}
 }
 

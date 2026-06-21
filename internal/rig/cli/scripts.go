@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/envstack"
+	"github.com/rigsmith/rigsmith/core/shellrun"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 	"github.com/spf13/cobra"
@@ -168,6 +169,17 @@ func runCustom(cmd *cobra.Command, cfg config.Config, root, name string, def *co
 	env := customEnv(cfg, def.Env)
 
 	if spec.IsShell() {
+		// A shell-string command runs cross-platform by default: through the
+		// in-process portable shell, so one command line works on every OS. The
+		// "system" mode (config-level or per-command) opts back into the OS
+		// shell for scripts that need a real userland or OS-specific syntax.
+		mode, err := shellrun.ShellMode(coalesceShell(def.Shell, cfg.Shell))
+		if err != nil {
+			return fmt.Errorf("command %q: %w", name, err)
+		}
+		if mode == shellrun.ShellPortable {
+			return runPortableIn(cmd, dir, env, portableLine(spec.Shell, args))
+		}
 		display, argv := shellInvocation(spec.Shell, args)
 		return runIn(cmd, dir, env, display, argv...)
 	}
@@ -177,6 +189,56 @@ func runCustom(cmd *cobra.Command, cfg config.Config, root, name string, def *co
 	}
 	argv := append(append([]string{}, spec.Argv...), args...)
 	return runIn(cmd, dir, env, strings.Join(argv, " "), argv...)
+}
+
+// coalesceShell picks the command's own shell override, falling back to the
+// config-level default (and ultimately "", which ShellMode resolves to
+// portable).
+func coalesceShell(cmdShell, cfgShell string) string {
+	if strings.TrimSpace(cmdShell) != "" {
+		return cmdShell
+	}
+	return cfgShell
+}
+
+// portableLine appends the forwarded args to a custom shell-string command,
+// POSIX-quoted because the portable shell is POSIX on every OS.
+func portableLine(line string, args []string) string {
+	if len(args) == 0 {
+		return line
+	}
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = shellArg(a)
+	}
+	return line + " " + strings.Join(quoted, " ")
+}
+
+// exitError carries a non-zero exit code from a command run through the
+// in-process portable shell. It mirrors *exec.ExitError's ExitCode() so a
+// caller extracts the child's code uniformly whichever shell ran it.
+type exitError struct{ code int }
+
+func (e *exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+func (e *exitError) ExitCode() int { return e.code }
+
+// runPortableIn echoes line, then runs it through the in-process portable shell
+// streaming live (so interactive and long-running commands behave like a real
+// shell), honoring --dry-run. A non-zero exit surfaces as an *exitError, the
+// ExitCode()-bearing parallel to the OS-shell path's *exec.ExitError.
+func runPortableIn(cmd *cobra.Command, dir string, env []string, line string) error {
+	echo(cmd, line)
+	if dryRun {
+		return nil
+	}
+	code, err := shellrun.RunPortable(cmd.Context(), line, dir, env, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return &exitError{code: code}
+	}
+	return nil
 }
 
 // runIn echoes display, then runs argv in dir with env (nil = inherit),
