@@ -464,6 +464,61 @@ func TestShellModeParsesAndMerges(t *testing.T) {
 	}
 }
 
+// A command's script form parses from a string (inline) and an array (lines
+// joined with newlines); the file form records the path for load-time inlining.
+func TestScriptSpecForms(t *testing.T) {
+	cfg := mustParse(t, `
+		{
+		  "commands": {
+		    "a": { "script": "log(42)" },
+		    "b": { "script": ["one()", "two()"] },
+		    "c": { "script": { "file": "clean.tengo" } }
+		  }
+		}`)
+	if got := cfg.Commands["a"].Script.Code; got != "log(42)" {
+		t.Errorf("inline string Code = %q, want log(42)", got)
+	}
+	if got := cfg.Commands["b"].Script.Code; got != "one()\ntwo()" {
+		t.Errorf("array Code = %q, want the two lines joined", got)
+	}
+	if got := cfg.Commands["c"].Script.File; got != "clean.tengo" {
+		t.Errorf("file ref = %q, want clean.tengo", got)
+	}
+}
+
+// A script file without a .tengo extension still loads, but is flagged (usually
+// a typo'd path or the wrong file).
+func TestScriptFileNonTengoExtensionWarns(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "clean.txt"), []byte(`log("hi")`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, FileName),
+		[]byte(`{ "commands": { "clean": { "script": { "file": "clean.txt" } } } }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Commands["clean"].Script.Code != `log("hi")` { // still loaded
+		t.Errorf("Code = %q, want it loaded despite the extension", cfg.Commands["clean"].Script.Code)
+	}
+	if !hasWarning(cfg.Warnings, ".tengo extension") {
+		t.Errorf("warnings = %v, want a .tengo-extension hint", cfg.Warnings)
+	}
+}
+
+func hasWarning(warnings []string, substr string) bool {
+	for _, w := range warnings {
+		if strings.Contains(w, substr) {
+			return true
+		}
+	}
+	return false
+}
+
 // ---- GlobalPath / LoadMerged (the wired global+repo view) ----
 
 // RIG_GLOBAL_CONFIG overrides the ~/.rig.json location — the injection seam

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/envstack"
+	"github.com/rigsmith/rigsmith/core/script"
 	"github.com/rigsmith/rigsmith/core/shellrun"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
@@ -137,10 +138,14 @@ func customScripts(cfg config.Config) []scriptEntry {
 }
 
 // customShort picks the help line for a custom command: its description if it
-// has one, otherwise the shell string (legacy behavior), otherwise the argv.
+// has one, then a tengo-script marker, otherwise the shell string (legacy
+// behavior), otherwise the argv.
 func customShort(name string, def *config.Command) string {
 	if def.Description != "" {
 		return def.Description
+	}
+	if def.Script != nil {
+		return "Custom command: (tengo script)"
 	}
 	if spec := def.Resolve(); spec != nil {
 		if spec.IsShell() {
@@ -151,20 +156,28 @@ func customShort(name string, def *config.Command) string {
 	return "Custom command: " + name
 }
 
-// runCustom executes one custom command: resolves the spec for the current OS
-// (a clean error when none applies), applies the command's cwd (relative to
-// the repo root) and env (layered over .rig.json `env` and the ambient
-// environment), then shells out or execs per the spec's form. Extra CLI args
-// are appended.
+// runCustom executes one custom command: the Tengo script form (cross-platform
+// builtins), or — resolving the spec for the current OS — the shell-string or
+// argv form. It applies the command's cwd (relative to the repo root) and env
+// (layered over .rig.json `env` and the ambient environment). Extra CLI args
+// are appended (shell/argv) or exposed as ctx.args (script).
 func runCustom(cmd *cobra.Command, cfg config.Config, root, name string, def *config.Command, args []string) error {
-	spec := def.Resolve()
-	if spec == nil {
-		return fmt.Errorf("command %q has no command defined for this OS", name)
-	}
-
 	dir := root
 	if def.Cwd != "" {
 		dir = filepath.Join(root, def.Cwd)
+	}
+
+	// The Tengo script form is mutually exclusive with the command/argv/os forms.
+	if def.Script != nil {
+		if def.Spec != nil || def.OS != nil {
+			return fmt.Errorf("command %q sets both %q and %q — use one", name, "command", "script")
+		}
+		return runScript(cmd, cfg, root, dir, name, def, args)
+	}
+
+	spec := def.Resolve()
+	if spec == nil {
+		return fmt.Errorf("command %q has no command defined for this OS", name)
 	}
 	env := customEnv(cfg, def.Env)
 
@@ -189,6 +202,84 @@ func runCustom(cmd *cobra.Command, cfg config.Config, root, name string, def *co
 	}
 	argv := append(append([]string{}, spec.Argv...), args...)
 	return runIn(cmd, dir, env, strings.Join(argv, " "), argv...)
+}
+
+// runScript runs a custom command's Tengo script through the shared core/script
+// runtime: a rig ctx (args, env, root, cwd, ecosystem, os) plus the
+// side-effecting sh()/cp()/mv()/rm()/mkdir()/log()/fail() builtins. sh() and the
+// file ops go through the portable shell by default (system mode via the
+// command/config `shell`), so the script is cross-platform; in a dry run the
+// side effects are previewed, not performed.
+func runScript(cmd *cobra.Command, cfg config.Config, root, dir, name string, def *config.Command, args []string) error {
+	if def.Script.File != "" {
+		// loadCommandScripts left File set, so the read failed (a Warning says why).
+		return fmt.Errorf("command %q: script file %q could not be loaded (see `rig info`)", name, def.Script.File)
+	}
+
+	mode, err := shellrun.ShellMode(coalesceShell(def.Shell, cfg.Shell))
+	if err != nil {
+		return fmt.Errorf("command %q: %w", name, err)
+	}
+
+	envMap := customEnvMap(cfg, def.Env)
+	runnerEnv := envstack.Environ(envMap)
+	runner := shellrun.NewPortableRunner(runnerEnv)
+	if mode == shellrun.ShellSystem {
+		runner = shellrun.NewExecRunner(runnerEnv)
+	}
+
+	echo(cmd, "(tengo script)")
+	// In a dry run RunnerHost previews sh()/file ops while the script's own logic
+	// still runs, so the command is exercised without side effects.
+	report := func(line string) { fmt.Fprintln(cmd.OutOrStdout(), line) }
+	host := script.RunnerHost(runner, dir, dryRun, report)
+	if err := script.Run(def.Script.Code, scriptContext(cfg, root, dir, args, envMap), host); err != nil {
+		return fmt.Errorf("command %q: %w", name, err)
+	}
+	return nil
+}
+
+// scriptContext builds the ctx object a custom command's Tengo script sees: the
+// passthrough args, the layered environment, the repo root, the working dir, the
+// resolved ecosystem, and the OS.
+func scriptContext(cfg config.Config, root, dir string, args []string, envMap map[string]string) map[string]interface{} {
+	argList := make([]interface{}, len(args))
+	for i, a := range args {
+		argList[i] = a
+	}
+	env := make(map[string]interface{}, len(envMap))
+	for k, v := range envMap {
+		env[k] = v
+	}
+	return map[string]interface{}{
+		"args":      argList,
+		"env":       env,
+		"root":      root,
+		"cwd":       dir,
+		"ecosystem": scriptEcosystem(cfg, dir),
+		"os":        runtime.GOOS,
+	}
+}
+
+// scriptEcosystem resolves ctx.ecosystem: the pinned .rig.json value if set,
+// else the nearest-manifest detection from dir (id "" when none).
+func scriptEcosystem(cfg config.Config, dir string) string {
+	if cfg.Ecosystem != "" {
+		return cfg.Ecosystem
+	}
+	id, _ := detect.NearestEcosystem(dir)
+	return id
+}
+
+// customEnvMap returns the merged environment for a custom command as a map
+// (low→high: .env/.env.local, ambient, config env, command env), the shared
+// source for both a script's ctx.env and its runner environment.
+func customEnvMap(cfg config.Config, extra map[string]string) map[string]string {
+	var fileEnv map[string]string
+	if cfg.Path != "" {
+		fileEnv, _ = envstack.Load(filepath.Dir(cfg.Path))
+	}
+	return envstack.Merge(fileEnv, envstack.Ambient(), cfg.Env, extra)
 }
 
 // coalesceShell picks the command's own shell override, falling back to the
