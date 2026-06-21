@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/climenu"
+	"github.com/rigsmith/rigsmith/core/editor"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ghrepo"
 	"github.com/spf13/cobra"
@@ -234,17 +235,11 @@ func parseBoolArg(s string) (bool, error) {
 	return false, fmt.Errorf("expected a boolean (true/false), got %q", s)
 }
 
-// openInEditor opens path in $VISUAL, then $EDITOR, inheriting the terminal.
+// openInEditor opens path in the resolved editor (see core/editor), inheriting
+// the terminal so the edit is interactive.
 func openInEditor(cmd *cobra.Command, path string) error {
-	editor := strings.TrimSpace(os.Getenv("VISUAL"))
-	if editor == "" {
-		editor = strings.TrimSpace(os.Getenv("EDITOR"))
-	}
-	if editor == "" {
-		return fmt.Errorf("no editor set — export $VISUAL or $EDITOR (file: %s)", path)
-	}
-	fields := strings.Fields(editor)
-	ed := exec.CommandContext(cmd.Context(), fields[0], append(fields[1:], path)...)
+	argv := editor.Argv(path)
+	ed := exec.CommandContext(cmd.Context(), argv[0], argv[1:]...)
 	ed.Stdin, ed.Stdout, ed.Stderr = os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr()
 	return ed.Run()
 }

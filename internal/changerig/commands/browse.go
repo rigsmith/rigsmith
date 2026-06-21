@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/changeset"
+	"github.com/rigsmith/rigsmith/core/editor"
 	"github.com/spf13/cobra"
 )
 
@@ -265,16 +266,11 @@ func (m browseModel) currentPath() string {
 	return filepath.Join(m.dir, m.items[m.cursor].ID+".md")
 }
 
-// editCurrent opens the selected changeset in $EDITOR, suspending the UI.
+// editCurrent opens the selected changeset in the resolved editor (see
+// core/editor), suspending the UI.
 func (m browseModel) editCurrent() tea.Cmd {
-	editor := os.Getenv("VISUAL")
-	if editor == "" {
-		editor = os.Getenv("EDITOR")
-	}
-	if editor == "" {
-		editor = "vi"
-	}
-	c := exec.Command(editor, m.currentPath()) //nolint:gosec // editor from env, path from disk
+	argv := editor.Argv(m.currentPath())
+	c := exec.Command(argv[0], argv[1:]...) //nolint:gosec // editor from env/PATH, path from disk
 	return tea.ExecProcess(c, func(err error) tea.Msg { return editDoneMsg{err} })
 }
 
