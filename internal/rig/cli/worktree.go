@@ -38,6 +38,7 @@ func newWorktreeCmd() *cobra.Command {
 			"this checkout (and its shell + chat history) never moves.\n\n" +
 			"  rig wt new feat/x     create a worktree (and branch) at a sibling path\n" +
 			"  rig wt list           list this repo's worktrees\n" +
+			"  rig wt cd [query]     cd into a worktree (needs the rig shell wrapper)\n" +
 			"  rig wt open <branch>  open a worktree in a new window (review/diff)\n" +
 			"  rig wt rm <branch>    remove a worktree (its branch is kept)\n\n" +
 			"Sweep merged worktrees with `rig prune`.",
@@ -54,7 +55,7 @@ func newWorktreeCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd(), newWorktreePickCmd(), newWorktreeMenuCmd(), newWorktreeUseCmd(), newWorktreeActiveCmd(), newWorktreeUnsetCmd())
+	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeCdCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd(), newWorktreePickCmd(), newWorktreeMenuCmd(), newWorktreeUseCmd(), newWorktreeActiveCmd(), newWorktreeUnsetCmd())
 	return cmd
 }
 
@@ -290,19 +291,25 @@ func resolveWorktree(wts []gitrepo.Worktree, query string) (string, error) {
 	if fi, err := os.Stat(query); err == nil && fi.IsDir() {
 		return filepath.Abs(query)
 	}
-	ranked := match.Rank(wts, query, func(w gitrepo.Worktree) match.Fields {
-		return match.Fields{
-			Name: []string{w.Branch, match.ShortName(w.Branch)},
-			Path: []string{filepath.Base(w.Path)},
-			// No depth preference for worktrees; ties go to the shortest
-			// (closest) branch name.
-			Tie: len(w.Branch),
-		}
-	})
+	ranked := rankWorktrees(wts, query)
 	if len(ranked) == 0 {
 		return "", fmt.Errorf("no worktree matching %q", query)
 	}
 	return ranked[0].Path, nil
+}
+
+// rankWorktrees returns the worktrees matching query, best first — branch name
+// (and its short name) beat the path basename, exact > prefix > substring >
+// subsequence. No depth preference; ties go to the shortest (closest) branch
+// name. Pure; shared by resolveWorktree and `wt cd`.
+func rankWorktrees(wts []gitrepo.Worktree, query string) []gitrepo.Worktree {
+	return match.Rank(wts, query, func(w gitrepo.Worktree) match.Fields {
+		return match.Fields{
+			Name: []string{w.Branch, match.ShortName(w.Branch)},
+			Path: []string{filepath.Base(w.Path)},
+			Tie:  len(w.Branch),
+		}
+	})
 }
 
 // worktreeCompletion builds a Cobra ValidArgsFunction that completes the first
@@ -357,6 +364,13 @@ func worktreeCompletions(wts []gitrepo.Worktree) []string {
 // pickWorktree shows the filterable huh worktree picker and returns the chosen
 // path. Requires a TTY on stderr (stdout carries the result).
 func pickWorktree(wts []gitrepo.Worktree) (string, error) {
+	return pickWorktreeTitled(wts, "Run from which worktree?")
+}
+
+// pickWorktreeTitled is pickWorktree with a caller-supplied prompt, so `wt cd`
+// can ask "cd to which worktree?" while the `<tool>-wt` launchers ask which to
+// run. Requires a TTY on stderr (stdout carries the result).
+func pickWorktreeTitled(wts []gitrepo.Worktree, title string) (string, error) {
 	if !pickerTTY() {
 		return "", fmt.Errorf("multiple worktrees and no terminal for the picker; pass a branch or path")
 	}
@@ -389,7 +403,7 @@ func pickWorktree(wts []gitrepo.Worktree) (string, error) {
 	}
 	var chosen string
 	err := huh.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().Title("Run from which worktree?").Options(opts...).Filtering(true).Value(&chosen),
+		huh.NewSelect[string]().Title(title).Options(opts...).Filtering(true).Value(&chosen),
 	)).WithTheme(rigTheme()).Run()
 	if err != nil {
 		return "", err
