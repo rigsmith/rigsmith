@@ -24,7 +24,7 @@
 | `default` | Show or set the default project for `run`/`publish` (interactive picker) |
 | `setup` | Install shell integration — `cd` wrapper + tab completion (zsh/bash/fish/PowerShell) |
 | `ui` | Interactive bubbletea menu over the dev verbs (capability-gated) |
-| *custom* | Any `commands` entry in `.rig.json` becomes a subcommand |
+| *custom* | Any `commands` entry in `.rig.json` becomes a subcommand — shell string, argv, or a cross-platform Tengo [`script`](/rig/configuration#commands) |
 | *scripts* | In a Node repo, every `package.json` script becomes a verb |
 
 ## Ecosystem coverage
