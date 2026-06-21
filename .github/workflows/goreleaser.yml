@@ -59,11 +59,11 @@ jobs:
           fi
           echo "All Trusted Signing secrets present and non-empty."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0 # full history so GoReleaser's git changelog is complete
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -86,7 +86,7 @@ jobs:
 
       # jsign signs the Windows .exe with Azure Trusted Signing during the build
       # (see scripts/sign-windows.sh); it's a Java jar and needs a JRE.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -97,12 +97,12 @@ jobs:
           echo "JSIGN_JAR=/tmp/jsign.jar" >> "$GITHUB_ENV"
 
       # Node builds the npm binary-wrapper packages; registry-url wires npm auth.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
 
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -150,7 +150,7 @@ jobs:
       # Dry run only: hand back the built + signed artifacts to inspect locally
       # (codesign --verify / spctl on the mac binaries, the casks, checksums).
       # Nothing was published.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: github.event_name == 'workflow_dispatch'
         with:
           name: dryrun-dist
