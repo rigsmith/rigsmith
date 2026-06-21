@@ -1,4 +1,9 @@
-package pipeline
+// Package shellrun provides cross-platform command execution: a direct exec
+// runner, an in-process portable shell (mvdan.cc/sh) so the same shell script
+// runs identically on Linux, macOS, and Windows, and the pure-Go cp/mv/rm/mkdir
+// file operations both of those (and the Tengo script builtins in core/script)
+// share.
+package shellrun
 
 import (
 	"context"
@@ -17,14 +22,14 @@ import (
 // else falls through to the default exec handler (git, npm, gh, …).
 //
 // Supported flags: cp -r/-R, rm -r/-R/-f, mkdir -p. Unknown flags are accepted
-// and ignored (so e.g. `cp -p` copies without preserving timestamps); a release
-// that needs exact coreutils semantics can opt into "shell": "system".
+// and ignored (so e.g. `cp -p` copies without preserving timestamps); a caller
+// that needs exact coreutils semantics can opt into the system shell.
 func portableFileOps(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	ops := map[string]func(string, []string) error{
-		"cp":    fileOpCp,
-		"mv":    fileOpMv,
-		"rm":    fileOpRm,
-		"mkdir": fileOpMkdir,
+		"cp":    Cp,
+		"mv":    Mv,
+		"rm":    Rm,
+		"mkdir": Mkdir,
 	}
 	return func(ctx context.Context, args []string) error {
 		if len(args) > 0 {
@@ -77,7 +82,9 @@ func isDir(p string) bool {
 	return err == nil && info.IsDir()
 }
 
-func fileOpMkdir(dir string, args []string) error {
+// Mkdir creates directories under dir (mkdir -p creates parents). args is the
+// coreutils-style operand list (flags then paths).
+func Mkdir(dir string, args []string) error {
 	flags, ops := parseFlags(args)
 	if len(ops) == 0 {
 		return fmt.Errorf("missing operand")
@@ -97,7 +104,8 @@ func fileOpMkdir(dir string, args []string) error {
 	return nil
 }
 
-func fileOpRm(dir string, args []string) error {
+// Rm removes paths under dir (rm -r recurses, rm -f ignores missing).
+func Rm(dir string, args []string) error {
 	flags, ops := parseFlags(args)
 	recursive := flags['r'] || flags['R']
 	force := flags['f']
@@ -132,7 +140,9 @@ func fileOpRm(dir string, args []string) error {
 	return nil
 }
 
-func fileOpMv(dir string, args []string) error {
+// Mv moves sources to a destination under dir. A cross-device rename falls back
+// to copy+remove.
+func Mv(dir string, args []string) error {
 	_, ops := parseFlags(args)
 	if len(ops) < 2 {
 		return fmt.Errorf("need a source and a destination")
@@ -153,7 +163,9 @@ func fileOpMv(dir string, args []string) error {
 	return nil
 }
 
-func fileOpCp(dir string, args []string) error {
+// Cp copies sources to a destination under dir (cp -r/-R recurses into
+// directories).
+func Cp(dir string, args []string) error {
 	flags, ops := parseFlags(args)
 	recursive := flags['r'] || flags['R']
 	if len(ops) < 2 {
