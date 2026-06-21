@@ -29,9 +29,9 @@ var Globals = []string{"text", "fmt", "math", "times", "rand", "json", "base64",
 // the host.
 const Timeout = 10 * time.Second
 
-// Host provides the side-effecting capabilities the script builtins need. The
-// host owns dry-run for sh (it decides whether to preview or execute and how to
-// report), while file operations consult DryRun directly.
+// Host provides the side-effecting capabilities the script builtins need. Every
+// side effect flows through the host, which owns the single dry-run policy:
+// whether to preview or perform, and how to report. The runtime stays pure.
 type Host interface {
 	// Sh runs (or, in a dry run, previews) a shell command line in the host's
 	// working directory and returns its stdout. The host announces the command
@@ -39,24 +39,22 @@ type Host interface {
 	// as a non-nil error so the script aborts (Tengo has no try/catch, so this
 	// is the safe `set -e`-like default).
 	Sh(cmd string) (stdout string, err error)
-	// Report emits one line to the host's output (used by log() and dry-run
-	// file-op previews).
+	// FileOp runs (or, in a dry run, previews) a cross-platform file command
+	// (name is cp/mv/rm/mkdir) with coreutils-style args in the host's working
+	// directory. shellrun.FileOp is the standard execute path.
+	FileOp(name string, args []string) error
+	// Report emits one line to the host's output (used by log()).
 	Report(line string)
-	// Dir is the working directory for cp/mv/rm/mkdir.
-	Dir() string
-	// DryRun reports whether file operations should be previewed instead of
-	// performed.
-	DryRun() bool
 }
 
 // Builtins is the side-effecting API injected into a script run.
 func Builtins(h Host) map[string]*tengo.UserFunction {
 	return map[string]*tengo.UserFunction{
 		"sh":    {Name: "sh", Value: shFunc(h)},
-		"cp":    {Name: "cp", Value: fileOpFunc(h, "cp", shellrun.Cp)},
-		"mv":    {Name: "mv", Value: fileOpFunc(h, "mv", shellrun.Mv)},
-		"rm":    {Name: "rm", Value: fileOpFunc(h, "rm", shellrun.Rm)},
-		"mkdir": {Name: "mkdir", Value: fileOpFunc(h, "mkdir", shellrun.Mkdir)},
+		"cp":    {Name: "cp", Value: fileOpFunc(h, "cp")},
+		"mv":    {Name: "mv", Value: fileOpFunc(h, "mv")},
+		"rm":    {Name: "rm", Value: fileOpFunc(h, "rm")},
+		"mkdir": {Name: "mkdir", Value: fileOpFunc(h, "mkdir")},
 		"log":   {Name: "log", Value: logFunc(h)},
 		"fail":  {Name: "fail", Value: failFunc},
 	}
@@ -81,19 +79,15 @@ func shFunc(h Host) tengo.CallableFunc {
 }
 
 // fileOpFunc adapts a cross-platform file op (cp/mv/rm/mkdir) to a Tengo
-// function. In a dry run it reports what it would do without touching the disk.
-func fileOpFunc(h Host, name string, op func(dir string, args []string) error) tengo.CallableFunc {
+// function, delegating to the host so dry-run and reporting stay in one place.
+func fileOpFunc(h Host, name string) tengo.CallableFunc {
 	return func(args ...tengo.Object) (tengo.Object, error) {
 		strs, err := stringArgs(args)
 		if err != nil {
 			return nil, err
 		}
-		if h.DryRun() {
-			h.Report("would " + name + " " + strings.Join(strs, " "))
-			return tengo.UndefinedValue, nil
-		}
-		if err := op(h.Dir(), strs); err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
+		if err := h.FileOp(name, strs); err != nil {
+			return nil, err
 		}
 		return tengo.UndefinedValue, nil
 	}
@@ -172,6 +166,57 @@ func Run(code string, ctx map[string]interface{}, h Host) error {
 	_, err := s.RunContext(runCtx)
 	return err
 }
+
+// RunnerHost returns a ready-made Host backed by a shellrun.Runner, so a caller
+// with no special reporting needs (e.g. rig custom commands) gets the standard
+// behavior without writing an adapter: sh() runs the command line through the
+// runner, cp/mv/rm/mkdir use the in-process file ops, and in a dry run every
+// side effect is previewed via report instead of performed. dir is the working
+// directory; report receives command output, log() lines, and dry-run previews.
+//
+// A host that needs to hook each command (announce lines, secret masking) — as
+// shiprig's release pipeline does — should implement Host directly instead.
+func RunnerHost(r shellrun.Runner, dir string, dryRun bool, report func(line string)) Host {
+	return &runnerHost{r: r, dir: dir, dryRun: dryRun, report: report}
+}
+
+type runnerHost struct {
+	r      shellrun.Runner
+	dir    string
+	dryRun bool
+	report func(string)
+}
+
+func (h *runnerHost) Sh(cmd string) (string, error) {
+	if h.dryRun {
+		h.report("would run: " + cmd)
+		return "", nil
+	}
+	output, code, err := h.r(true, []string{cmd}, h.dir)
+	if err != nil {
+		output = append(output, err.Error())
+		if code == 0 {
+			code = -1
+		}
+	}
+	for _, line := range output {
+		h.report(line)
+	}
+	if code != 0 {
+		return "", fmt.Errorf("sh: command exited %d: %s", code, cmd)
+	}
+	return strings.Join(output, "\n"), nil
+}
+
+func (h *runnerHost) FileOp(name string, args []string) error {
+	if h.dryRun {
+		h.report("would " + name + " " + strings.Join(args, " "))
+		return nil
+	}
+	return shellrun.FileOp(name, h.dir, args)
+}
+
+func (h *runnerHost) Report(line string) { h.report(line) }
 
 // Eval evaluates a Tengo expression against ctx and returns the resulting
 // variable. The expression is wrapped in an assignment so a bare expression

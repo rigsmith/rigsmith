@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/script"
+	"github.com/rigsmith/rigsmith/core/shellrun"
 )
 
 // runScriptStep executes a step's "script" (Tengo code) as its action through
@@ -47,14 +48,17 @@ func (h *pipelineScriptHost) Sh(cmd string) (string, error) {
 	return strings.Join(output, "\n"), nil
 }
 
-// Report writes a line to the release output (used by log() and dry-run file-op
-// previews).
+// FileOp performs a cp/mv/rm/mkdir in the step's working directory. In a dry
+// run it is previewed (reported, not executed).
+func (h *pipelineScriptHost) FileOp(name string, args []string) error {
+	if h.p.scriptDryRun {
+		h.p.reporter.CommandOutput([]string{"would " + name + " " + strings.Join(args, " ")})
+		return nil
+	}
+	return shellrun.FileOp(name, h.p.workDir, args)
+}
+
+// Report writes a line to the release output (used by log()).
 func (h *pipelineScriptHost) Report(line string) {
 	h.p.reporter.CommandOutput([]string{line})
 }
-
-// Dir is the step's working directory for cp/mv/rm/mkdir.
-func (h *pipelineScriptHost) Dir() string { return h.p.workDir }
-
-// DryRun previews a script step's side effects instead of executing them.
-func (h *pipelineScriptHost) DryRun() bool { return h.p.scriptDryRun }
