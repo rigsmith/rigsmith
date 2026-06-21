@@ -210,6 +210,33 @@ func (r *Repo) IsMerged(ctx context.Context, branch, base string) (bool, error) 
 	return strings.HasPrefix(strings.TrimSpace(cherry), "-"), nil
 }
 
+// BranchAdvanced reports whether branch has moved since it was created — whether
+// its tip ever advanced past the initial "branch: Created from …" reflog entry.
+// It's what tells a brand-new branch (tip still at its base, never committed)
+// apart from one whose work fast-forwarded into base (tip now equals base, yet it
+// did real work and should be reaped). Both look identical by SHA; only the
+// history distinguishes them.
+//
+// It counts the branch's own reflog: creation leaves exactly one entry, and any
+// commit, merge, or reset adds more. The reflog is local and may be disabled or
+// expired — or absent for a branch fetched rather than created here — so a read
+// failure or a lone entry reports false and callers keep the worktree. That's the
+// conservative direction: at worst a genuinely-merged branch is kept a little
+// longer, never a live one wrongly reaped.
+func (r *Repo) BranchAdvanced(ctx context.Context, branch string) (bool, error) {
+	out, err := runGit(ctx, r.Dir, "reflog", "show", branch)
+	if err != nil {
+		return false, nil // no reflog → can't prove it advanced; keep it
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n > 1, nil
+}
+
 // DeleteBranch deletes a local branch. Without force it uses `branch -d`, which
 // refuses to drop a branch git still considers unmerged.
 func (r *Repo) DeleteBranch(ctx context.Context, branch string, force bool) error {

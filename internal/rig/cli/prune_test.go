@@ -139,6 +139,46 @@ func TestPruneWorktrees_KeepsBranchEvenWithBase(t *testing.T) {
 	}
 }
 
+// Counterpart to the brand-new-keep guard: a worktree whose branch did real work
+// that then fast-forwarded into base — so its tip is now even with base — must be
+// reaped, not mistaken for a never-committed checkout. The reflog distinguishes
+// them. This is the regression for `rig prune` silently skipping a freshly
+// ff-merged branch.
+func TestPruneWorktrees_ReapsFastForwardMerged(t *testing.T) {
+	ctx := context.Background()
+	r, err := gitrepo.Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "a", "1", "init")
+	// feature does work while main stays put...
+	if err := r.Checkout(ctx, "feature", true); err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "b", "2", "feature work")
+	if err := r.Checkout(ctx, "main", false); err != nil {
+		t.Fatal(err)
+	}
+	// ...then main fast-forwards onto it: feature's tip now equals main's.
+	ffMerge(t, r, "feature")
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	if err := r.WorktreeAdd(ctx, wtPath, "feature", "main", false); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	removed, _, _, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", true /*dryRun*/, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Errorf("removed=%d, want 1 — a fast-forward-merged worktree must be reaped\n%s", removed, buf.String())
+	}
+	if !strings.Contains(buf.String(), "fast-forward") {
+		t.Errorf("expected a 'merged (fast-forward)' reason, got:\n%s", buf.String())
+	}
+}
+
 // pruneSweep counts both phases together; in dry mode it touches nothing — this
 // is what `prune -n` runs.
 func TestPruneSweepDryRun(t *testing.T) {

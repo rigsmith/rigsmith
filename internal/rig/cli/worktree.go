@@ -736,13 +736,24 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 			skip(label, "uncommitted changes")
 			continue
 		}
-		// A branch even with base hasn't started — it's "merged" only because it
-		// has no commits of its own. Never reap it (the brand-new-worktree case).
-		// (Genuinely-merged fresh checkouts still show in the plan; the confirm
-		// screen is the safety net, not a time window.)
-		if baseSHA != "" && wt.Head == baseSHA {
-			skip(label, "even with base — nothing to prune")
-			continue
+		// A branch whose tip equals base is ambiguous: either brand-new (created
+		// but never committed — keep it), or its work fast-forwarded into base
+		// (tip now matches, but it did real work — reap it). Tell them apart by
+		// whether the branch ever advanced past its creation. Only the never-
+		// advanced case is the brand-new worktree we protect; the fast-forward
+		// case is genuinely merged and shows in the plan (the confirm screen is
+		// the safety net, not a silent skip).
+		ffEqual := baseSHA != "" && wt.Head == baseSHA
+		if ffEqual {
+			advanced, err := repo.BranchAdvanced(ctx, wt.Branch)
+			if err != nil {
+				skip(label, "couldn't read branch history")
+				continue
+			}
+			if !advanced {
+				skip(label, "even with base — nothing to prune")
+				continue
+			}
 		}
 		merged, err := repo.IsMerged(ctx, wt.Branch, base)
 		if err != nil {
@@ -751,6 +762,8 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 		}
 		reason := "merged"
 		switch {
+		case ffEqual && merged:
+			reason = "merged (fast-forward)"
 		case merged:
 		case goneSet[wt.Branch] && gone:
 			reason = "upstream gone"

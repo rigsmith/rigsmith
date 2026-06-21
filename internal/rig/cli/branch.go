@@ -86,10 +86,22 @@ func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base 
 			skip(b.Name, "checked out in a worktree")
 			continue
 		}
+		// A branch even with base is ambiguous: brand-new (never committed — keep
+		// it) or fast-forwarded into base (did real work — reap it). The reflog
+		// tells them apart; only the never-advanced case is the brand-new branch.
+		ffEqual := false
 		if baseSHA != "" {
 			if sha, err := repo.RevParse(ctx, b.Name); err == nil && sha == baseSHA {
-				skip(b.Name, "even with base — nothing to prune")
-				continue
+				advanced, err := repo.BranchAdvanced(ctx, b.Name)
+				if err != nil {
+					skip(b.Name, "couldn't read branch history")
+					continue
+				}
+				if !advanced {
+					skip(b.Name, "even with base — nothing to prune")
+					continue
+				}
+				ffEqual = true
 			}
 		}
 		merged, err := repo.IsMerged(ctx, b.Name, base)
@@ -99,6 +111,8 @@ func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base 
 		}
 		reason := ""
 		switch {
+		case ffEqual && merged:
+			reason = "merged (fast-forward) into " + base
 		case merged:
 			reason = "merged into " + base
 		case b.Gone && gone:
