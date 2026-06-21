@@ -14,6 +14,7 @@ clauderig sync                 # snapshot → redact secrets → rewrite paths �
 clauderig restore              # pull → rewrite slugs for this OS → merge (keeps local secrets)
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)
 clauderig status               # remote reachability, last sync, per-root counts, hooks
+clauderig mv old/path new/path # move/rename a dir AND relink its Claude history (-n to preview)
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
 clauderig doctor               # health-check env + sync + worktree discipline (--fix to repair)
 clauderig global install       # global sync hooks in ~/.claude (alias: clauderig hooks install)
@@ -64,6 +65,7 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
 | `status` | Sync state: remote, last sync, roots, hooks |
+| `mv` | Move/rename a directory and relink its Claude history (slug dirs + transcript cwds + Desktop/settings paths); guards live sessions; `-n`/`--dry-run` previews |
 | `global` | `install` / `uninstall` / `status` the global sync hooks in ~/.claude (alias: `hooks`) |
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
