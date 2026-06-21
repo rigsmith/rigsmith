@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -214,17 +215,78 @@ func parseConfigBool(s string) (bool, error) {
 	return false, fmt.Errorf("expected a boolean (true/false), got %q", s)
 }
 
-// editFileInEditor opens path in $VISUAL, then $EDITOR, inheriting the terminal.
+// editFileInEditor opens path in the resolved editor, inheriting the terminal so
+// the edit is interactive (or, for a GUI editor, so we block until it closes).
 func editFileInEditor(cmd *cobra.Command, path string) error {
-	editor := strings.TrimSpace(os.Getenv("VISUAL"))
-	if editor == "" {
-		editor = strings.TrimSpace(os.Getenv("EDITOR"))
-	}
-	if editor == "" {
-		return fmt.Errorf("no editor set — export $VISUAL or $EDITOR (file: %s)", path)
-	}
-	fields := strings.Fields(editor)
-	ed := exec.CommandContext(cmd.Context(), fields[0], append(fields[1:], path)...)
+	argv := resolveEditorArgv(os.Getenv("VISUAL"), os.Getenv("EDITOR"), runtime.GOOS, exec.LookPath, bundleExists, path)
+	ed := exec.CommandContext(cmd.Context(), argv[0], argv[1:]...)
 	ed.Stdin, ed.Stdout, ed.Stderr = os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr()
 	return ed.Run()
+}
+
+// guiEditors are GUI editors auto-launched when neither $VISUAL nor $EDITOR is
+// set, in preference order. Each is launched blocking (--wait) so the edit
+// completes before we re-read the file.
+var guiEditors = []struct {
+	cmd  string
+	args []string
+}{
+	{"code", []string{"--wait"}},          // VS Code
+	{"code-insiders", []string{"--wait"}}, // VS Code Insiders
+	{"cursor", []string{"--wait"}},        // Cursor
+}
+
+// macAppBundles are the macOS .app fallbacks probed when a GUI editor's CLI
+// isn't on PATH. They're opened via `open -W -a <app>`, which blocks until the
+// app's window for the file is closed.
+var macAppBundles = []struct {
+	appName    string
+	bundlePath string
+}{
+	{"Visual Studio Code", "/Applications/Visual Studio Code.app"},
+	{"Cursor", "/Applications/Cursor.app"},
+}
+
+// resolveEditorArgv decides how to open path. Precedence: $VISUAL, then $EDITOR
+// (splitting on spaces honors forms like "code --wait"); else the first detected
+// GUI editor — by PATH command, then macOS .app bundle — launched blocking; else
+// a per-OS terminal default (notepad on Windows, vi elsewhere). Always returns a
+// runnable argv. Pure given lookPath and bundleExists.
+func resolveEditorArgv(visual, editorEnv, goos string, lookPath func(string) (string, error), bundleExists func(string) bool, path string) []string {
+	if editor := firstNonEmpty(visual, editorEnv); editor != "" {
+		return append(strings.Fields(editor), path)
+	}
+	for _, e := range guiEditors {
+		if _, err := lookPath(e.cmd); err == nil {
+			return append(append([]string{e.cmd}, e.args...), path)
+		}
+	}
+	if goos == "darwin" {
+		for _, b := range macAppBundles {
+			if bundleExists(b.bundlePath) {
+				return []string{"open", "-W", "-a", b.appName, path}
+			}
+		}
+	}
+	if goos == "windows" {
+		return []string{"notepad", path}
+	}
+	return []string{"vi", path}
+}
+
+// firstNonEmpty returns the first argument that isn't blank (after trimming),
+// else "".
+func firstNonEmpty(xs ...string) string {
+	for _, x := range xs {
+		if s := strings.TrimSpace(x); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// bundleExists reports whether p is an existing directory (a macOS .app bundle).
+func bundleExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
 }
