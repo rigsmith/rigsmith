@@ -151,6 +151,21 @@ func TestDryRunVersionPreviewHonorsToolAndArgs(t *testing.T) {
 	}
 }
 
+func TestDryRunVersionExternalToolSkipsPreview(t *testing.T) {
+	p, runner, _ := dryFixture(nil)
+	// "npx changeset" backs the built-in steps with the Node @changesets/cli,
+	// whose `version` has no `--changelog`; the preview would fail, so skip it.
+	config := &Config{Tool: "npx changeset", Order: []string{"version"}}
+
+	if !p.Run(mustResolve(t, config, ResolveOptions{}), config, true) {
+		t.Fatal("dry run should succeed")
+	}
+
+	if len(runner.calls) != 0 {
+		t.Errorf("external tool must not auto-preview --changelog; calls=%v", runner.lines())
+	}
+}
+
 func TestDryRunVersionCustomRunSuppressesDefaultPreview(t *testing.T) {
 	p, runner, _ := dryFixture(nil)
 	config := &Config{
@@ -171,10 +186,9 @@ func TestDryRunVersionCustomRunSuppressesDefaultPreview(t *testing.T) {
 
 func TestDryRunVersionExplicitDryRunOverridesDefaultPreview(t *testing.T) {
 	p, runner, _ := dryFixture(nil)
-	config := &Config{
-		Order: []string{"version"},
-		Steps: map[string]*StepConfig{"version": {DryRun: &DryRunSpec{Hide: true}}},
-	}
+	// An explicit "dryRun": false on the step hides its action; the default
+	// changelog preview must not slip back in.
+	config := mustParseConfig(t, `{"order": ["version"], "steps": {"version": {"dryRun": false}}}`)
 
 	if !p.Run(mustResolve(t, config, ResolveOptions{}), config, true) {
 		t.Fatal("dry run should succeed")
