@@ -527,6 +527,58 @@ func TestVersionDryRunWritesNothing(t *testing.T) {
 	}
 }
 
+// --dry-run alone prints only the bump table — no rendered changelog notes.
+func TestVersionDryRunOmitsChangelogByDefault(t *testing.T) {
+	dir := newWorkspace(t)
+	writeChangeset(t, dir, "cs1", "pkg-a", "minor", "a shiny new feature")
+
+	code, out := runChangerig(t, dir, "version", "--dry-run")
+
+	assertExitZero(t, code, out)
+	assertContains(t, out, "1.1.0")
+	assertNotContains(t, out, "a shiny new feature")
+	assertNotContains(t, out, "## 1.1.0")
+}
+
+// --dry-run --changelog appends each releasing package's rendered notes (the
+// "## <version>" heading + grouped sections) and still writes nothing.
+func TestVersionDryRunChangelogRendersNotes(t *testing.T) {
+	dir := newWorkspace(t)
+	csPath := writeChangeset(t, dir, "cs1", "pkg-a", "minor", "a shiny new feature")
+
+	code, out := runChangerig(t, dir, "version", "--dry-run", "--changelog")
+
+	assertExitZero(t, code, out)
+	assertContains(t, out, "dry run")
+	assertContains(t, out, "## 1.1.0")          // the rendered heading
+	assertContains(t, out, "### Minor Changes") // the grouped section
+	assertContains(t, out, "a shiny new feature")
+	if !fileExists(csPath) {
+		t.Error("changeset was consumed on a --changelog preview")
+	}
+	if fileExists(filepath.Join(dir, "packages", "pkg-a", "CHANGELOG.md")) {
+		t.Error("CHANGELOG.md was written on a --changelog preview")
+	}
+}
+
+// --changelog on its own implies the dry-run preview: it renders the notes and
+// writes nothing, no explicit --dry-run needed.
+func TestVersionChangelogImpliesDryRun(t *testing.T) {
+	dir := newWorkspace(t)
+	csPath := writeChangeset(t, dir, "cs1", "pkg-a", "minor", "a shiny new feature")
+
+	code, out := runChangerig(t, dir, "version", "--changelog")
+
+	assertExitZero(t, code, out)
+	assertContains(t, out, "## 1.1.0")
+	if got := readFile(t, filepath.Join(dir, "packages", "pkg-a", "package.json")); !strings.Contains(got, `"version": "1.0.0"`) {
+		t.Errorf("manifest was modified on a --changelog preview:\n%s", got)
+	}
+	if !fileExists(csPath) {
+		t.Error("changeset was consumed on a --changelog preview")
+	}
+}
+
 // version with no changesets is a friendly no-op, exit 0.
 func TestVersionNoChangesetsIsANoOp(t *testing.T) {
 	dir := newWorkspace(t)

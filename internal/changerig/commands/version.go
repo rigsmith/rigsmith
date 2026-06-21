@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +27,7 @@ import (
 func NewVersionCmd() *cobra.Command {
 	var (
 		dryRun           bool
+		showChangelog    bool
 		snapshotTag      string
 		snapshotTemplate string
 		independent      bool
@@ -39,6 +42,10 @@ func NewVersionCmd() *cobra.Command {
 			// @changesets spelling `--snapshot tag` too (the tag lands in args).
 			if cmd.Flags().Changed("snapshot") && strings.TrimSpace(snapshotTag) == "" && len(args) > 0 {
 				snapshotTag = args[0]
+			}
+			// --changelog is a preview: render the notes to stdout, write nothing.
+			if showChangelog {
+				dryRun = true
 			}
 			ws, err := Open()
 			if err != nil {
@@ -164,7 +171,33 @@ func NewVersionCmd() *cobra.Command {
 			}
 
 			PrintPlan(out, plan, false)
+
+			// Resolve the changelog generator once: both the --changelog dry-run
+			// preview and the real write below render through it, so the preview is
+			// byte-identical to the file content. The three @changesets generators
+			// (default, changelog-git, changelog-github) all render the default
+			// layout — git/github only decorate the release lines (done above).
+			// Anything else resolves as an external plugin.
+			genSpec := ws.Config.ChangelogSpec()
+			if setting.Kind != changelog.KindDefault {
+				genSpec = "default"
+			}
+			gen, _ := plugin.ResolveChangelogGenerator(genSpec, ws.Root, planner.Builtins(ws.Config.Groups()))
+
+			// Contributors section: resolve each changeset's author (from its
+			// source commit in commit mode, or the commit that added the file in
+			// changeset mode), then attach the per-package list — de-duplicated,
+			// run through the exclude/bot filter, sorted — to its module. Resolving
+			// authors touches git, so only do it when a changelog will be rendered:
+			// a real run, or a --changelog preview.
+			if (showChangelog || !dryRun) && ws.Config.Contributors.Enabled {
+				attachContributors(cmd, ws, plan, active, setting)
+			}
+
 			if dryRun {
+				if showChangelog {
+					printChangelogPreview(out, cmd.Context(), gen, plan)
+				}
 				fmt.Fprintln(out, DimStyle.Render("\n(dry run — no files written)"))
 				return nil
 			}
@@ -184,26 +217,6 @@ func NewVersionCmd() *cobra.Command {
 					PrintPlan(out, plan, false)
 				}
 			}
-
-			// Contributors section: resolve each changeset's author (from its
-			// source commit in commit mode, or the commit that added the file in
-			// changeset mode), then attach the per-package list — de-duplicated,
-			// run through the exclude/bot filter, sorted — to its module. Works
-			// for both versioning sources. Skipped on dry runs (above) since no
-			// changelog is written.
-			if ws.Config.Contributors.Enabled {
-				attachContributors(cmd, ws, plan, active, setting)
-			}
-
-			// The three @changesets generators (default, changelog-git,
-			// changelog-github) all render the default layout — git/github only
-			// decorate the release lines (done above). Anything else resolves as
-			// an external plugin.
-			genSpec := ws.Config.ChangelogSpec()
-			if setting.Kind != changelog.KindDefault {
-				genSpec = "default"
-			}
-			gen, _ := plugin.ResolveChangelogGenerator(genSpec, ws.Root, planner.Builtins(ws.Config.Groups()))
 
 			// Apply every manifest and changelog write under a file transaction:
 			// if any package fails partway, roll the already-written files back to
@@ -320,12 +333,35 @@ func NewVersionCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVarP(&dryRun, "dry-run", "n", false, "print the plan without writing files")
+	f.BoolVar(&showChangelog, "changelog", false, "preview each releasing package's rendered changelog notes (implies --dry-run; writes nothing)")
 	f.StringVar(&snapshotTag, "snapshot", "", "create a snapshot release (optional tag)")
 	f.Lookup("snapshot").NoOptDefVal = " " // allow bare --snapshot (no tag)
 	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")
 	f.BoolVar(&independent, "independent", false, "version each package on its own changesets, writing inline (overrides a shared version file)")
 	f.BoolVarP(&yes, "yes", "y", false, "accept the computed versions; skip the interactive version-override prompt")
 	return cmd
+}
+
+// printChangelogPreview renders each releasing package's changelog entry — the
+// exact markdown `version` would prepend to its CHANGELOG.md — to out, writing
+// nothing. It routes through the same generator the real run uses, so the
+// preview is byte-identical to the written entry (honoring changelog groups,
+// lockstep grouping baked into the plan, and the contributors section attached
+// above). "none" releases (RangeOnly) get no changelog, so they are skipped.
+func printChangelogPreview(out io.Writer, ctx context.Context, gen plugin.ChangelogGenerator, plan []*planner.Module) {
+	for _, m := range plan {
+		if m.RangeOnly {
+			continue
+		}
+		entry, err := gen.Render(ctx, planner.ModuleToRequest(m))
+		if err != nil {
+			fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("\n  (changelog render failed for %s: %v)", m.Name, err)))
+			continue
+		}
+		// Mirror WriteEntry's file layout: the "# DisplayName" title above the
+		// rendered entry, the same heading a fresh CHANGELOG.md receives.
+		fmt.Fprintf(out, "\n%s\n\n%s", HeaderStyle.Render("# "+m.DisplayName), entry)
+	}
 }
 
 // attachContributors resolves the author behind each active changeset and sets
