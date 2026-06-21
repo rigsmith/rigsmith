@@ -171,6 +171,11 @@ func rebaseOneTranscript(path, oldCwd, newCwd string, dryRun bool) (int, error) 
 	if err := tmp.Close(); err != nil {
 		return changed, err
 	}
+	// Close the input before replacing it: Windows refuses to rename over a file
+	// that is still open (the deferred in.Close would otherwise run too late).
+	if err := in.Close(); err != nil {
+		return changed, err
+	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		return changed, err
 	}
