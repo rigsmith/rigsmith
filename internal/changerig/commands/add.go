@@ -64,10 +64,19 @@ func NewAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// allNames validates explicit --package values; names is the releasable
+			// subset the picker offers and we suggest on a typo. Ignored packages
+			// stay nameable (version deliberately keeps changesets that name only
+			// ignored packages) — they're just not offered or suggested.
+			allNames := make([]string, 0, len(pkgs))
 			names := make([]string, 0, len(pkgs))
 			for _, p := range pkgs {
-				names = append(names, p.Name)
+				allNames = append(allNames, p.Name)
+				if !ws.Config.IsIgnored(p.Name) {
+					names = append(names, p.Name)
+				}
 			}
+			sort.Strings(allNames)
 			sort.Strings(names)
 
 			// Validate any --package names against the workspace up front. Without
@@ -75,8 +84,8 @@ func NewAddCmd() *cobra.Command {
 			// "github.com/rigsmith/rigsmith") is written verbatim, and only
 			// `version` later rejects the changeset as naming an unknown package.
 			if len(packages) > 0 {
-				known := make(map[string]bool, len(names))
-				for _, n := range names {
+				known := make(map[string]bool, len(allNames))
+				for _, n := range allNames {
 					known[n] = true
 				}
 				var unknown []string

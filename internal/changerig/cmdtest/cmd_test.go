@@ -217,6 +217,33 @@ func TestAddUnknownPackageFails(t *testing.T) {
 	}
 }
 
+// Ignored packages are dropped from the suggestion list (and the picker), but
+// can still be named explicitly — version keeps changesets that name only
+// ignored packages, so add must not reject them.
+func TestAddIgnoredPackageNotSuggestedButNameable(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0", "pkg-b": "1.0.0"})
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "updateInternalDependencies": "patch", "ignore": ["pkg-b"] }`)
+
+	// A typo lists the releasable package, never the ignored one.
+	code, out := runChangerig(t, dir, "add", "-m", "x", "-p", "ghost")
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "pkg-a")
+	if strings.Contains(out, "pkg-b") {
+		t.Errorf("ignored pkg-b should not be suggested; out=%q", out)
+	}
+
+	// The ignored package is still nameable explicitly.
+	code, out = runChangerig(t, dir, "add", "-m", "for ignored", "-p", "pkg-b")
+	assertExitZero(t, code, out)
+	files := changesetFiles(t, dir)
+	if len(files) != 1 {
+		t.Fatalf("changeset files = %d, want 1", len(files))
+	}
+	assertContains(t, readFile(t, files[0]), `"pkg-b": patch`)
+}
+
 // --bump overrides the default patch bump.
 func TestAddBumpOverride(t *testing.T) {
 	dir := newWorkspace(t)
