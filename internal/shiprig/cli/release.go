@@ -17,6 +17,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/shellrun"
 	"github.com/rigsmith/rigsmith/core/sign"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/rigsmith/rigsmith/internal/shiprig/forge"
@@ -137,9 +138,9 @@ func newReleaseCmd() *cobra.Command {
 			// commands are unaffected either way. cfg.Shell was validated by
 			// LoadConfig, so the error here cannot fire.
 			shellMode, _ := pipeline.ShellMode(cfg.Shell)
-			releaseRunner := pipeline.NewPortableRunner(runnerEnv)
+			releaseRunner := shellrun.NewPortableRunner(runnerEnv)
 			if shellMode == pipeline.ShellSystem {
-				releaseRunner = pipeline.NewExecRunner(runnerEnv)
+				releaseRunner = shellrun.NewExecRunner(runnerEnv)
 			}
 
 			newPipeline := func(reporter pipeline.Reporter, prompter pipeline.Prompter) *pipeline.Pipeline {

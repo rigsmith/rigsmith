@@ -2,7 +2,6 @@
 package pipeline
 
 import (
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -916,22 +915,5 @@ func TestInterpolateEnvFromLayeredMap(t *testing.T) {
 	}
 	if got := interpolate(nil, env, "x=${env.ABSENT}"); got != "x=" {
 		t.Errorf("missing env var = %q, want empty (placeholder consumed)", got)
-	}
-}
-
-// NewExecRunner runs each command with the provided environment, so a token
-// declared only in the layered .env reaches the spawned release command.
-func TestNewExecRunnerPassesEnvToCommand(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses /bin/sh")
-	}
-	runner := NewExecRunner([]string{"FROM_DOTENV=yes"})
-
-	out, code, err := runner(true, []string{`printf %s "$FROM_DOTENV"`}, "")
-	if err != nil || code != 0 {
-		t.Fatalf("run failed: code=%d err=%v", code, err)
-	}
-	if len(out) != 1 || out[0] != "yes" {
-		t.Errorf("command output = %v, want the env value [yes]", out)
 	}
 }

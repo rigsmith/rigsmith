@@ -1,80 +1,19 @@
 package pipeline
 
 import (
-	"errors"
 	"fmt"
-	"os/exec"
-	"runtime"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/core/shellrun"
 )
 
-// Runner is the exec seam: it runs one external command and returns its
-// combined output lines and exit code. When shell is true, commandOrArgv has
-// exactly one element — the shell command line, to be dispatched through the
-// OS shell (sh -c / cmd.exe /c); otherwise commandOrArgv is the argv, with
-// commandOrArgv[0] the executable, each token passed verbatim with no shell.
-// A non-nil err means the command could not be run at all.
-type Runner func(shell bool, commandOrArgv []string, dir string) (output []string, exitCode int, err error)
-
-// ExecRunner is the production Runner, running commands with os/exec and the
-// ambient process environment. Shell commands go through /bin/sh -c (cmd.exe /c
-// on Windows); argv commands are exec'd directly. Stdout and stderr are merged,
-// as the pipeline reports a single output stream.
-func ExecRunner(shell bool, commandOrArgv []string, dir string) ([]string, int, error) {
-	return runExec(nil, shell, commandOrArgv, dir)
-}
-
-// NewExecRunner returns a production Runner that runs each command with env as
-// its environment (in "KEY=VALUE" form; nil inherits the ambient process
-// environment). The release command wires the layered .env/.env.local < ambient
-// stack in here, so spawned release steps and variable captures see the same
-// environment as ${env.NAME} interpolation.
-func NewExecRunner(env []string) Runner {
-	return func(shell bool, commandOrArgv []string, dir string) ([]string, int, error) {
-		return runExec(env, shell, commandOrArgv, dir)
-	}
-}
-
-func runExec(env []string, shell bool, commandOrArgv []string, dir string) ([]string, int, error) {
-	var cmd *exec.Cmd
-	if shell {
-		shellExe, flag := "/bin/sh", "-c"
-		if runtime.GOOS == "windows" {
-			shellExe, flag = "cmd.exe", "/c"
-		}
-		cmd = exec.Command(shellExe, flag, commandOrArgv[0])
-	} else {
-		cmd = exec.Command(commandOrArgv[0], commandOrArgv[1:]...)
-	}
-	cmd.Dir = dir
-	cmd.Env = env // nil inherits the current process environment
-
-	combined, err := cmd.CombinedOutput()
-	lines := splitOutputLines(combined)
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return lines, exitErr.ExitCode(), nil
-		}
-		return lines, -1, err
-	}
-	return lines, 0, nil
-}
-
-func splitOutputLines(output []byte) []string {
-	text := strings.TrimRight(string(output), "\n")
-	if text == "" {
-		return nil
-	}
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		lines[i] = strings.TrimSuffix(line, "\r")
-	}
-	return lines
-}
+// Runner is the exec seam, re-exported from core/shellrun so the pipeline and
+// its dispatch helper keep their existing signatures. The release command picks
+// the concrete runner (portable or system) via shellrun.New*Runner.
+type Runner = shellrun.Runner
 
 // dispatch launches a CommandSpec through the runner: shell commands via the
-// OS shell, argv commands exec'd directly. Shared by the pipeline and by
+// shell, argv commands exec'd directly. Shared by the pipeline and by
 // variable capture so both dispatch identically. A runner error is folded
 // into the output and a non-zero exit code.
 func dispatch(runner Runner, command CommandSpec, dir string) ([]string, int) {
