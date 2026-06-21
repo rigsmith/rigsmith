@@ -1,9 +1,11 @@
 # Tengo in 5 minutes (for JS/TS developers)
 
-shiprig uses [Tengo](https://github.com/d5/tengo) for release-script logic
-(`script` steps, `if` conditions, computed `vars`). It's a small, embeddable,
-Go-flavoured scripting language — and the good news for JS folks is it's **closer
-to JavaScript than to Go**: it has ternaries, truthy/falsy conditions,
+rigsmith uses [Tengo](https://github.com/d5/tengo) for cross-platform scripting:
+shiprig's release logic (`script` steps, `if` conditions, computed `vars`) and
+rig's custom `script` commands ([rig configuration](../site/rig/configuration.md#script)).
+It's a small, embeddable, Go-flavoured scripting language — and the good news for
+JS folks is it's **closer to JavaScript than to Go**: it has ternaries,
+truthy/falsy conditions,
 `for x in list`, closures, and JSON-style object literals. You'll be productive
 in a few minutes.
 

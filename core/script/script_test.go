@@ -83,6 +83,13 @@ func TestRunFileOpsDelegateToHost(t *testing.T) {
 	}
 }
 
+func TestRunNilHostErrors(t *testing.T) {
+	// A nil Host would panic the moment a builtin runs; Run must reject it.
+	if err := Run(`log("hi")`, map[string]interface{}{}, nil); err == nil {
+		t.Error("Run with a nil Host should return an error, not panic")
+	}
+}
+
 func TestRunFailAborts(t *testing.T) {
 	err := Run(`fail("nope")`, map[string]interface{}{}, &stubHost{})
 	if err == nil || !strings.Contains(err.Error(), "nope") {

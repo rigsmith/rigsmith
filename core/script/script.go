@@ -136,7 +136,14 @@ func stringArgs(args []tengo.Object) ([]string, error) {
 // Run executes a full Tengo script with the ctx object, the stdlib globals, and
 // the side-effecting Builtins bound. A returned error (setup or runtime) is the
 // caller's to report and means the script failed.
+//
+// A nil Host is a programming error (the sh/cp/…/log builtins would panic the
+// moment the script calls one); fail fast with a clear message instead, since
+// this package is shared.
 func Run(code string, ctx map[string]interface{}, h Host) error {
+	if h == nil {
+		return errors.New("script.Run: nil Host")
+	}
 	s := tengo.NewScript([]byte(code))
 	s.SetImports(stdlib.GetModuleMap(Modules...))
 

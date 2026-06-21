@@ -11,7 +11,7 @@ mean in .NET, Node, Go, and Rust, so there's nothing to write to get started.
 | Zero-config start | No — empty repo does nothing | Yes — `rig build` works immediately |
 | Cross-ecosystem | You write per-project recipes | Same verb, right native command everywhere |
 | Discovery | — | `rig info` shows what it found; Node scripts become verbs |
-| Custom commands | The whole point | `commands` in `.rig.json` (shell / argv / per-OS) |
+| Custom commands | The whole point | `commands` in `.rig.json` (shell / argv / cross-platform Tengo script) |
 | Coverage / kill / doctor | Hand-rolled | First-class verbs |
 
 ## Not actually rivals
@@ -23,7 +23,8 @@ incantations that have no convention. `rig` handles the conventional dev loop
 things every project already does the same way.
 
 In practice they compose: let `rig` own the standard verbs, and put genuinely
-bespoke tasks in `.rig.json`'s `commands` (which gives you per-OS variants,
-`env`, and `cwd`) — or keep a `justfile` alongside if you prefer. `rig` doesn't
+bespoke tasks in `.rig.json`'s `commands` (which run cross-platform by default —
+portable shell or a Tengo `script` — with `env` and `cwd`) — or keep a `justfile`
+alongside if you prefer. `rig` doesn't
 try to be your whole automation layer; it tries to make the 90% case need no
 configuration at all.
