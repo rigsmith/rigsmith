@@ -106,6 +106,24 @@ func TestNewExecRunnerPassesEnvToCommand(t *testing.T) {
 	}
 }
 
+// An empty (non-nil) env must inherit the process environment, not clear it —
+// matching NewPortableRunner. envstack.Environ of an empty map yields exactly
+// this, so a cleared PATH here would be a nasty surprise.
+func TestNewExecRunnerEmptyEnvInherits(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses /bin/sh")
+	}
+	// `echo` resolves only if PATH was inherited (it's a /bin/sh builtin here,
+	// but the shell itself still needs to be found via the inherited environment).
+	out, code, err := NewExecRunner([]string{})(true, []string{"echo inherited"}, t.TempDir())
+	if err != nil || code != 0 {
+		t.Fatalf("empty env should inherit and run: code=%d err=%v", code, err)
+	}
+	if len(out) != 1 || out[0] != "inherited" {
+		t.Errorf("output = %v, want [inherited]", out)
+	}
+}
+
 func TestPortableRunnerArgvExecsDirectly(t *testing.T) {
 	// argv commands have no shell syntax; the portable runner exec's them like
 	// the system runner. Use the test binary itself as the target so this works

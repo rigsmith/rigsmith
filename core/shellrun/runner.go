@@ -30,11 +30,18 @@ func ExecRunner(shell bool, commandOrArgv []string, dir string) ([]string, int, 
 }
 
 // NewExecRunner returns a production Runner that runs each command with env as
-// its environment (in "KEY=VALUE" form; nil inherits the ambient process
-// environment). The caller wires its layered .env/.env.local < ambient stack in
-// here, so spawned commands and variable captures see the same environment as
-// the host.
+// its environment (in "KEY=VALUE" form; nil or empty inherits the ambient
+// process environment). The caller wires its layered .env/.env.local < ambient
+// stack in here, so spawned commands and variable captures see the same
+// environment as the host.
 func NewExecRunner(env []string) Runner {
+	// Normalise empty (non-nil) to nil so "empty inherits" holds, matching
+	// NewPortableRunner — otherwise exec.Cmd would run with a cleared
+	// environment (no PATH). envstack.Environ of an empty map yields exactly
+	// this empty (non-nil) slice, which is the easy way to trip over it.
+	if len(env) == 0 {
+		env = nil
+	}
 	return func(shell bool, commandOrArgv []string, dir string) ([]string, int, error) {
 		return runExec(env, shell, commandOrArgv, dir)
 	}
