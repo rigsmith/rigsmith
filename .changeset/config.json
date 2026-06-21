@@ -1,7 +1,7 @@
 {
   "$schema": "https://rigsmith.dev/schemas/changeset-config.json",
   "versioning": {
-    "source": "commits",
+    "source": "changesets",
     "initialRelease": { "collapse": true, "summary": "Initial release", "bump": "major" }
   },
   "baseBranch": "main",
