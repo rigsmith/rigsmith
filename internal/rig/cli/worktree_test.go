@@ -177,6 +177,42 @@ func TestWorktreeMenuItems(t *testing.T) {
 	}
 }
 
+// Bare `rig wt` on a TTY drives an explicit climenu over these entries (not
+// climenu.Run's subcommand introspection, which would offer only `list`), so
+// new/open/rm must come through — each carrying its prompting wrapper command.
+func TestWorktreeMenuEntries(t *testing.T) {
+	entries := worktreeMenuEntries()
+	labels := map[string]bool{}
+	for _, e := range entries {
+		if e.Cmd == nil {
+			t.Errorf("worktree entry %q should carry a command", e.Label)
+		}
+		if strings.Contains(e.Desc, "-dev") {
+			t.Errorf("worktree entry %q must not mention the -dev route, got %q", e.Label, e.Desc)
+		}
+		labels[e.Label] = true
+	}
+	for _, want := range []string{"new", "list", "open", "rm"} {
+		if !labels[want] {
+			t.Errorf("bare `rig wt` menu missing lifecycle entry %q, got %+v", want, entries)
+		}
+	}
+}
+
+// The worktree group's help (the climenu header is its Short) no longer
+// advertises the retired -dev route or the moved-out `wt prune`.
+func TestWorktreeCmdHelpHasNoDevRoute(t *testing.T) {
+	cmd := newWorktreeCmd()
+	for _, text := range []string{cmd.Short, cmd.Long} {
+		if strings.Contains(text, "-dev") {
+			t.Errorf("worktree help must not mention the -dev route:\n%s", text)
+		}
+		if strings.Contains(text, "wt prune") || strings.Contains(text, "list | prune") {
+			t.Errorf("worktree help points at the moved-out `wt prune` (now `rig prune`):\n%s", text)
+		}
+	}
+}
+
 func assertEqual(t *testing.T, got, want []string) {
 	t.Helper()
 	if len(got) != len(want) {

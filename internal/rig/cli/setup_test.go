@@ -34,6 +34,8 @@ func TestSetupSnippet_ZshCarriesCompletionAndTheCdWrapper(t *testing.T) {
 		`__rig_dir="$(command rig "$@")"`,
 		`builtin cd -- "$__rig_dir"`,
 		`command rig "$@"`,
+		// `wt cd` / `worktree cd` print a dir too, so the wrapper captures them.
+		`{ [ "$1" = wt ] || [ "$1" = worktree ]; } && [ "$2" = cd ]`,
 		markerEnd("rig"),
 	} {
 		if !strings.Contains(s, want) {
@@ -142,6 +144,8 @@ func TestSetupSnippet_FishUsesFishSyntax(t *testing.T) {
 		"function rig",
 		"set -l __rig_dir (command rig $argv)",
 		"builtin cd -- $__rig_dir",
+		// `wt cd` / `worktree cd` are captured for the cd too.
+		`begin; test "$argv[1]" = wt; or test "$argv[1]" = worktree; end; and test "$argv[2]" = cd`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("fish snippet missing %q:\n%s", want, s)
@@ -325,6 +329,8 @@ func TestSetupPowershellSnippet(t *testing.T) {
 		"function rig {",
 		"Set-Location -LiteralPath $dir",
 		"Get-Command -Name rig -CommandType Application",
+		// `wt cd` / `worktree cd` print a dir too, so the wrapper captures them.
+		"($args[0] -eq 'wt' -or $args[0] -eq 'worktree') -and $args[1] -eq 'cd'",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("powershell snippet missing %q:\n%s", want, got)

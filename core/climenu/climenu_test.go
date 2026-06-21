@@ -1,6 +1,8 @@
 package climenu
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -51,6 +53,22 @@ func TestOptions_FiltersToNoArgRunnable(t *testing.T) {
 				t.Errorf("%q should not be offered, got %v", unwanted, got)
 			}
 		}
+	}
+}
+
+// RunMenu with no entries falls back to the parent's help rather than showing
+// an empty menu (mirrors Run's empty-options fallback).
+func TestRunMenu_EmptyFallsBackToHelp(t *testing.T) {
+	var buf bytes.Buffer
+	parent := &cobra.Command{Use: "worktree", Short: "Parallel worktrees"}
+	parent.SetOut(&buf)
+	parent.SetErr(&buf)
+
+	if err := RunMenu(parent, "rig worktree", parent.Short, nil); err != nil {
+		t.Fatalf("RunMenu with no entries returned error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Parallel worktrees") {
+		t.Errorf("expected the group's help, got:\n%s", buf.String())
 	}
 }
 

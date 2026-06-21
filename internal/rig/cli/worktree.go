@@ -32,28 +32,45 @@ func newWorktreeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "worktree",
 		Aliases: []string{"wt"},
-		Short:   "Parallel-dev worktrees — and pin which one the -dev tools build from",
-		Long: "Sibling checkouts at <repo>-worktrees/<branch> you build/run independently\n" +
-			"with the -dev/-wt launchers, plus an active route you pin so a bare\n" +
-			"`rig-dev` builds from a chosen tree.\n\n" +
-			"  rig wt new feat/x     create a worktree (+ branch)\n" +
-			"  rig wt use [query]    pin a worktree as the -dev route\n" +
-			"  rig wt active         show the pinned route\n" +
-			"  rig wt unset          clear the pin\n" +
-			"  rig wt list | prune   list / sweep clean, merged worktrees",
-		// Bare `rig worktree` on a TTY opens the subcommand menu; with a verb or off
-		// a TTY the subcommands stand (and `worktree -h` still prints help). The
-		// arg-taking verbs (new/open/rm) stay command-line; `worktree menu` remains
-		// the worktree *selector* the -wt launchers drive.
+		Short:   "Parallel worktrees — sibling checkouts for working on branches side by side",
+		Long: "Sibling checkouts at <repo>-worktrees/<branch>, each built and run on its\n" +
+			"own so you can work several branches at once. Opened in their own window,\n" +
+			"this checkout (and its shell + chat history) never moves.\n\n" +
+			"  rig wt new feat/x     create a worktree (and branch) at a sibling path\n" +
+			"  rig wt list           list this repo's worktrees\n" +
+			"  rig wt cd [query]     cd into a worktree (needs the rig shell wrapper)\n" +
+			"  rig wt open <branch>  open a worktree in a new window (review/diff)\n" +
+			"  rig wt rm <branch>    remove a worktree (its branch is kept)\n\n" +
+			"Sweep merged worktrees with `rig prune`.",
+		// Bare `rig worktree` on a TTY opens the lifecycle menu — the same actions as
+		// the `rig ui` Worktrees group; with a verb or off a TTY the subcommands stand
+		// (and `worktree -h` still prints help). The menu is explicit (RunMenu), not
+		// climenu.Run's subcommand introspection, because the useful verbs
+		// (new/open/rm) take a branch arg — the no-arg wrappers prompt for it, so a
+		// bare `climenu.Run` would only ever offer `list`.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
-				return climenu.Run(cmd)
+				return climenu.RunMenu(cmd, cmd.CommandPath(), cmd.Short, worktreeMenuEntries())
 			}
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd(), newWorktreePickCmd(), newWorktreeMenuCmd(), newWorktreeUseCmd(), newWorktreeActiveCmd(), newWorktreeUnsetCmd())
+	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeCdCmd(), newWorktreeOpenCmd(), newWorktreeRemoveCmd(), newWorktreePickCmd(), newWorktreeMenuCmd(), newWorktreeUseCmd(), newWorktreeActiveCmd(), newWorktreeUnsetCmd())
 	return cmd
+}
+
+// worktreeMenuEntries adapts the worktree lifecycle items (shared with the
+// `rig ui` Worktrees group) into climenu entries, so bare `rig wt` on a TTY
+// shows the same menu. Unlike climenu.Run's subcommand introspection, these
+// surface the arg-taking verbs (new/open/rm) via their no-arg prompting
+// wrappers — so the menu isn't reduced to just `list`.
+func worktreeMenuEntries() []climenu.Entry {
+	items := worktreeMenuItems()
+	entries := make([]climenu.Entry, 0, len(items))
+	for _, it := range items {
+		entries = append(entries, climenu.Entry{Label: it.label, Desc: it.desc, Cmd: it.cmd})
+	}
+	return entries
 }
 
 // worktreesFor opens the repo to act on (the --repo flag, or the current
@@ -274,19 +291,25 @@ func resolveWorktree(wts []gitrepo.Worktree, query string) (string, error) {
 	if fi, err := os.Stat(query); err == nil && fi.IsDir() {
 		return filepath.Abs(query)
 	}
-	ranked := match.Rank(wts, query, func(w gitrepo.Worktree) match.Fields {
-		return match.Fields{
-			Name: []string{w.Branch, match.ShortName(w.Branch)},
-			Path: []string{filepath.Base(w.Path)},
-			// No depth preference for worktrees; ties go to the shortest
-			// (closest) branch name.
-			Tie: len(w.Branch),
-		}
-	})
+	ranked := rankWorktrees(wts, query)
 	if len(ranked) == 0 {
 		return "", fmt.Errorf("no worktree matching %q", query)
 	}
 	return ranked[0].Path, nil
+}
+
+// rankWorktrees returns the worktrees matching query, best first — branch name
+// (and its short name) beat the path basename, exact > prefix > substring >
+// subsequence. No depth preference; ties go to the shortest (closest) branch
+// name. Pure; shared by resolveWorktree and `wt cd`.
+func rankWorktrees(wts []gitrepo.Worktree, query string) []gitrepo.Worktree {
+	return match.Rank(wts, query, func(w gitrepo.Worktree) match.Fields {
+		return match.Fields{
+			Name: []string{w.Branch, match.ShortName(w.Branch)},
+			Path: []string{filepath.Base(w.Path)},
+			Tie:  len(w.Branch),
+		}
+	})
 }
 
 // worktreeCompletion builds a Cobra ValidArgsFunction that completes the first
@@ -341,26 +364,46 @@ func worktreeCompletions(wts []gitrepo.Worktree) []string {
 // pickWorktree shows the filterable huh worktree picker and returns the chosen
 // path. Requires a TTY on stderr (stdout carries the result).
 func pickWorktree(wts []gitrepo.Worktree) (string, error) {
+	return pickWorktreeTitled(wts, "Run from which worktree?")
+}
+
+// pickWorktreeTitled is pickWorktree with a caller-supplied prompt, so `wt cd`
+// can ask "cd to which worktree?" while the `<tool>-wt` launchers ask which to
+// run. Requires a TTY on stderr (stdout carries the result).
+func pickWorktreeTitled(wts []gitrepo.Worktree, title string) (string, error) {
 	if !pickerTTY() {
 		return "", fmt.Errorf("multiple worktrees and no terminal for the picker; pass a branch or path")
 	}
 	now := time.Now()
-	opts := make([]huh.Option[string], 0, len(wts))
-	for _, wt := range worktreesByRecent(wts) {
-		branch := wt.Branch
-		if branch == "" {
-			branch = "(detached)"
+	recent := worktreesByRecent(wts)
+	// Build plain, column-aligned labels and let the huh theme color them. Pre-
+	// styling the label with our own ANSI (HeaderStyle/DimStyle) breaks huh's
+	// selected-row highlight: its green foreground only survives up to the first
+	// embedded reset, so just the first character stays green.
+	branches := make([]string, len(recent))
+	ages := make([]string, len(recent))
+	branchW, ageW := 0, 0
+	for i, wt := range recent {
+		branches[i] = wt.Branch
+		if branches[i] == "" {
+			branches[i] = "(detached)"
 		}
-		meta := wt.Path
-		if age := humanizeAgo(wt.ModTime, now); age != "" {
-			meta = age + "  " + wt.Path
+		if w := lipgloss.Width(branches[i]); w > branchW {
+			branchW = w
 		}
-		label := fmt.Sprintf("%s  %s", HeaderStyle.Render(branch), DimStyle.Render(meta))
+		ages[i] = humanizeAgo(wt.ModTime, now)
+		if w := lipgloss.Width(ages[i]); w > ageW {
+			ageW = w
+		}
+	}
+	opts := make([]huh.Option[string], 0, len(recent))
+	for i, wt := range recent {
+		label := pickColumns(branches[i], ages[i], wt.Path, branchW, ageW)
 		opts = append(opts, huh.NewOption(label, wt.Path))
 	}
 	var chosen string
 	err := huh.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().Title("Run from which worktree?").Options(opts...).Filtering(true).Value(&chosen),
+		huh.NewSelect[string]().Title(title).Options(opts...).Filtering(true).Value(&chosen),
 	)).WithTheme(rigTheme()).Run()
 	if err != nil {
 		return "", err

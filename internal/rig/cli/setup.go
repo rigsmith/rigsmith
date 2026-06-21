@@ -350,10 +350,13 @@ func posixHeader(prog string) string {
 # straight through to the binary.`, prog, prog, prog)
 }
 
-// posixWrapper is the prog() function for zsh and bash (POSIX-compatible).
+// posixWrapper is the prog() function for zsh and bash (POSIX-compatible). It
+// captures stdout for the directory-printing commands — `cd`, `wt cd`, and
+// `worktree cd` — and cds the shell there; everything else streams straight
+// through.
 func posixWrapper(prog string) string {
 	return fmt.Sprintf(`%s() {
-  if [ "$1" = cd ]; then
+  if [ "$1" = cd ] || { { [ "$1" = wt ] || [ "$1" = worktree ]; } && [ "$2" = cd ]; }; then
     local __rig_dir
     __rig_dir="$(command %s "$@")" && [ -n "$__rig_dir" ] && builtin cd -- "$__rig_dir"
   else
@@ -382,7 +385,9 @@ if ($__rigBin) {
     & $__rigBin completion powershell | Out-String | Invoke-Expression%s
     function %s {
         $bin = (Get-Command -Name %s -CommandType Application | Select-Object -First 1).Source
-        if ($args.Count -ge 1 -and $args[0] -eq 'cd') {
+        $isCd = ($args.Count -ge 1 -and $args[0] -eq 'cd') -or `+"`"+`
+                ($args.Count -ge 2 -and ($args[0] -eq 'wt' -or $args[0] -eq 'worktree') -and $args[1] -eq 'cd')
+        if ($isCd) {
             $dir = & $bin @args | Select-Object -Last 1
             if ($LASTEXITCODE -eq 0 -and $dir) { Set-Location -LiteralPath $dir }
         } else {
@@ -409,7 +414,13 @@ func fishIntegration(prog string) string {
 # straight through to the binary.
 %s
 function %s
-    if test (count $argv) -gt 0; and test "$argv[1]" = cd
+    set -l __rig_cd 0
+    if test (count $argv) -ge 1; and test "$argv[1]" = cd
+        set __rig_cd 1
+    else if test (count $argv) -ge 2; and begin; test "$argv[1]" = wt; or test "$argv[1]" = worktree; end; and test "$argv[2]" = cd
+        set __rig_cd 1
+    end
+    if test $__rig_cd -eq 1
         set -l __rig_dir (command %s $argv)
         and test -n "$__rig_dir"
         and builtin cd -- $__rig_dir

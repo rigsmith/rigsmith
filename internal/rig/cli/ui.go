@@ -283,9 +283,9 @@ func newMenu() menuModel {
 			{label: "browse", desc: "run coverage + interactive browser", cmd: coverageMenuCmd(true)},
 		}})
 	}
-	// Worktrees are first-class in the build loop: the parallel-dev checkouts and
-	// the -dev route you pin sit right alongside the build verbs.
-	top = append(top, menuItem{label: "▸ Worktrees", desc: "parallel-dev checkouts + the pinned -dev route", children: worktreeMenuItems()})
+	// Worktrees are first-class in the build loop: the parallel-dev checkouts sit
+	// right alongside the build verbs.
+	top = append(top, menuItem{label: "▸ Worktrees", desc: "parallel checkouts for working on branches side by side", children: worktreeMenuItems()})
 	if len(deps) > 0 {
 		top = append(top, menuItem{label: "▸ Dependencies", desc: "install / outdated / upgrade …", children: deps})
 	}
