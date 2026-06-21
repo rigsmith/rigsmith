@@ -13,14 +13,15 @@ func sendPrune(m pruneConfirmModel, msg tea.Msg) (pruneConfirmModel, tea.Cmd) {
 
 func newConfirmModel(toggles bool) (pruneConfirmModel, *[]pruneScope) {
 	previewed := &[]pruneScope{}
-	preview := func(s pruneScope) (string, pruneCounts) {
+	preview := func(s pruneScope, _ map[string]bool) (string, pruneCounts, []pruneRow) {
 		*previewed = append(*previewed, s)
-		return "plan", pruneCounts{worktrees: 1, branches: 2}
+		return "plan", pruneCounts{worktrees: 1, branches: 2}, nil
 	}
 	return pruneConfirmModel{
 		scope:   scopeBoth,
 		toggles: toggles,
 		preview: preview,
+		force:   map[string]bool{},
 		text:    "plan",
 		counts:  pruneCounts{worktrees: 1, branches: 2},
 	}, previewed

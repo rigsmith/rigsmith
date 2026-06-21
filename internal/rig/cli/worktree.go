@@ -684,15 +684,20 @@ func pickWorktreeForMenu(cmd *cobra.Command) string {
 
 // pruneWorktrees removes the repo's linked worktrees that are clean and either
 // merged into base or (with gone) whose branch's upstream the remote deleted. It
-// prints one line per worktree and returns the removed/kept counts plus freed —
-// the branch names whose worktrees were removed (or, in dry-run, would be), which
-// the combined sweep uses so the branch phase no longer treats them as attached.
+// prints one line per worktree and returns the removed/kept counts, freed — the
+// branch names whose worktrees were removed (or, in dry-run, would be), which the
+// combined sweep uses so the branch phase no longer treats them as attached — and
+// the rows it rendered (so the confirm screen can offer to force kept ones).
 // The caller prints the summary line. root is this session's worktree, which —
 // like the primary checkout and the base — is never touched.
-func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root, base string, dryRun, gone, deleteBranches bool) (removed, kept int, freed []string, err error) {
+//
+// only (when non-nil) restricts the sweep to worktrees whose branch is named in
+// it; force names worktrees to remove despite a soft skip reason (not merged,
+// dirty, even-with-base, …) — the hard rails (current/base/primary) still hold.
+func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root, base string, dryRun, gone, deleteBranches bool, only, force map[string]bool) (removed, kept int, freed []string, rows []pruneRow, err error) {
 	wts, err := repo.WorktreeList(ctx)
 	if err != nil {
-		return 0, 0, nil, err
+		return 0, 0, nil, nil, err
 	}
 	// Clear stale records for worktree dirs removed by hand, so the list we act
 	// on reflects reality. Harmless on existing checkouts.
@@ -711,67 +716,91 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 	// committed to. Such a branch is trivially "merged" (an ancestor of base), so
 	// without this guard a brand-new worktree gets reaped before any work lands.
 	baseSHA, _ := repo.RevParse(ctx, base)
-	var rows []pruneRow
-	skip := func(label, reason string) {
+	// The primary checkout is git's first-listed worktree; it's never prunable
+	// even when this session runs from a linked worktree (root) on some other
+	// branch, so guard it by path rather than relying on root or the base name.
+	primary := ""
+	if len(wts) > 0 {
+		primary = wts[0].Path
+	}
+	// skip records a kept worktree; forceable marks ones the user could override
+	// (the confirm screen's [f]) — a hard rail is never forceable.
+	skip := func(label, reason string, forceable bool) {
 		kept++
-		rows = append(rows, pruneRow{name: label, kind: pruneSkip, state: "skip", why: reason})
+		rows = append(rows, pruneRow{name: label, kind: pruneSkip, state: "skip", why: reason, forceable: forceable})
 	}
 	for _, wt := range wts {
-		// Never the primary checkout, the base-branch worktree, or the one we're
-		// standing in (root is this session's worktree).
-		if sameDir(wt.Path, root) || wt.Branch == base {
+		rail := sameDir(wt.Path, root) || sameDir(wt.Path, primary) || wt.Branch == base
+		if wt.Branch == "" {
+			// Detached worktrees have no branch name to target or delete; only
+			// surface them in a full (unfiltered) sweep.
+			if only == nil {
+				skip("(detached)", "detached HEAD", false)
+			}
 			continue
 		}
-		if wt.Branch == "" {
-			skip("(detached)", "detached HEAD")
+		if only != nil && !only[wt.Branch] {
+			continue // not one of the named targets
+		}
+		if rail {
+			// Naming the current, base, or primary checkout is a mistake worth
+			// showing; in a full sweep it's silently left out as before.
+			if only != nil {
+				skip(wt.Branch, "current, base, or primary checkout — can't prune", false)
+			}
 			continue
 		}
 		label := wt.Branch
-		clean, err := repo.WorktreeClean(ctx, wt.Path)
-		if err != nil {
-			skip(label, "couldn't read status")
-			continue
-		}
-		if !clean {
-			skip(label, "uncommitted changes")
-			continue
-		}
-		// A branch whose tip equals base is ambiguous: either brand-new (created
-		// but never committed — keep it), or its work fast-forwarded into base
-		// (tip now matches, but it did real work — reap it). Tell them apart by
-		// whether the branch ever advanced past its creation. Only the never-
-		// advanced case is the brand-new worktree we protect; the fast-forward
-		// case is genuinely merged and shows in the plan (the confirm screen is
-		// the safety net, not a silent skip).
-		ffEqual := baseSHA != "" && wt.Head == baseSHA
-		if ffEqual {
-			advanced, err := repo.BranchAdvanced(ctx, wt.Branch)
+		forced := force[wt.Branch]
+
+		// decide classifies the worktree: remove now, or skip with a reason and
+		// whether force could override it.
+		remove, reason, forceable := func() (bool, string, bool) {
+			clean, err := repo.WorktreeClean(ctx, wt.Path)
 			if err != nil {
-				skip(label, "couldn't read branch history")
-				continue
+				return false, "couldn't read status", true
 			}
-			if !advanced {
-				skip(label, "even with base — nothing to prune")
-				continue
+			if !clean {
+				return false, "uncommitted changes", true
 			}
+			// A branch whose tip equals base is ambiguous: brand-new (created but
+			// never committed — keep it), or its work fast-forwarded into base (tip
+			// now matches, but it did real work — reap it). The reflog tells them
+			// apart; only the never-advanced case is the brand-new worktree we
+			// protect on its own (the confirm screen is the safety net, not a time
+			// window).
+			ffEqual := baseSHA != "" && wt.Head == baseSHA
+			if ffEqual {
+				advanced, err := repo.BranchAdvanced(ctx, wt.Branch)
+				if err != nil {
+					return false, "couldn't read branch history", true
+				}
+				if !advanced {
+					return false, "even with base — nothing to prune", true
+				}
+			}
+			merged, err := repo.IsMerged(ctx, wt.Branch, base)
+			if err != nil {
+				return false, "couldn't check merge state", true
+			}
+			switch {
+			case ffEqual && merged:
+				return true, "merged (fast-forward)", false
+			case merged:
+				return true, "merged", false
+			case goneSet[wt.Branch] && gone:
+				return true, "upstream gone", false
+			case goneSet[wt.Branch]:
+				return false, "upstream gone — kept (--keep-gone)", true
+			default:
+				return false, "not merged into " + base, true
+			}
+		}()
+		if !remove && forced && forceable {
+			remove, reason = true, reason+" — forced"
 		}
-		merged, err := repo.IsMerged(ctx, wt.Branch, base)
-		if err != nil {
-			skip(label, "couldn't check merge state")
-			continue
-		}
-		reason := "merged"
-		switch {
-		case ffEqual && merged:
-			reason = "merged (fast-forward)"
-		case merged:
-		case goneSet[wt.Branch] && gone:
-			reason = "upstream gone"
-		case goneSet[wt.Branch]:
-			skip(label, "upstream gone — kept (--keep-gone)")
-			continue
-		default:
-			skip(label, "not merged into "+base)
+		if !remove {
+			skip(label, reason, forceable)
 			continue
 		}
 		if dryRun {
@@ -780,8 +809,10 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 			rows = append(rows, pruneRow{name: label, kind: prunePlan, state: "will remove", why: reason})
 			continue
 		}
-		if err := repo.WorktreeRemove(ctx, wt.Path, false); err != nil {
-			skip(label, "remove failed: "+err.Error())
+		// Force discards uncommitted changes (git worktree remove --force) for the
+		// items the user explicitly named.
+		if err := repo.WorktreeRemove(ctx, wt.Path, forced); err != nil {
+			skip(label, "remove failed: "+err.Error(), false)
 			continue
 		}
 		removed++
@@ -797,7 +828,7 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 		rows = append(rows, pruneRow{name: label, kind: pruneDone, state: "removed", why: why})
 	}
 	renderPruneTable(out, rows)
-	return removed, kept, freed, nil
+	return removed, kept, freed, rows, nil
 }
 
 // sameDir reports whether two paths point at the same directory, resolving both
