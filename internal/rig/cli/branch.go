@@ -53,14 +53,17 @@ func worktreeBranches(ctx context.Context, repo *gitrepo.Repo) map[string]bool {
 
 // pruneBranches deletes local branches that are merged into base or (with gone)
 // whose upstream the remote deleted. It prints one line per branch and returns
-// the removed/kept counts; the caller prints the summary. The current branch,
-// the base, and branches still checked out in a worktree are skipped — except
-// any in detached, whose worktrees a combined sweep just removed (or, in
-// dry-run, would remove), so they're now deletable.
-func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base string, dryRun, gone bool, detached map[string]bool) (removed, kept int, err error) {
+// the removed/kept counts plus the rows it rendered; the caller prints the
+// summary. The current branch, the base, and branches still checked out in a
+// worktree are skipped — except any in detached, whose worktrees a combined
+// sweep just removed (or, in dry-run, would remove), so they're now deletable.
+//
+// only (when non-nil) restricts the sweep to branches named in it; force names
+// branches to delete despite a soft skip reason (not merged, even-with-base, …).
+func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base string, dryRun, gone bool, detached, only, force map[string]bool) (removed, kept int, rows []pruneRow, err error) {
 	branches, err := repo.LocalBranches(ctx)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 	// Branches checked out in a worktree can't be deleted (git refuses); skip
 	// them unless their worktree was just freed by a combined sweep.
@@ -73,55 +76,69 @@ func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base 
 	// trivially, so never reap it (the brand-new-branch counterpart to the
 	// worktree guard).
 	baseSHA, _ := repo.RevParse(ctx, base)
-	var rows []pruneRow
-	skip := func(label, reason string) {
+	skip := func(label, reason string, forceable bool) {
 		kept++
-		rows = append(rows, pruneRow{name: label, kind: pruneSkip, state: "skip", why: reason})
+		rows = append(rows, pruneRow{name: label, kind: pruneSkip, state: "skip", why: reason, forceable: forceable})
 	}
 	for _, b := range branches {
 		if b.Current || b.Name == base {
-			continue
-		}
-		if inWorktree[b.Name] {
-			skip(b.Name, "checked out in a worktree")
-			continue
-		}
-		// A branch even with base is ambiguous: brand-new (never committed — keep
-		// it) or fast-forwarded into base (did real work — reap it). The reflog
-		// tells them apart; only the never-advanced case is the brand-new branch.
-		ffEqual := false
-		if baseSHA != "" {
-			if sha, err := repo.RevParse(ctx, b.Name); err == nil && sha == baseSHA {
-				advanced, err := repo.BranchAdvanced(ctx, b.Name)
-				if err != nil {
-					skip(b.Name, "couldn't read branch history")
-					continue
-				}
-				if !advanced {
-					skip(b.Name, "even with base — nothing to prune")
-					continue
-				}
-				ffEqual = true
+			if only != nil && only[b.Name] {
+				skip(b.Name, "current or base branch — can't prune", false)
 			}
-		}
-		merged, err := repo.IsMerged(ctx, b.Name, base)
-		if err != nil {
-			skip(b.Name, "couldn't check merge state")
 			continue
 		}
-		reason := ""
-		switch {
-		case ffEqual && merged:
-			reason = "merged (fast-forward) into " + base
-		case merged:
-			reason = "merged into " + base
-		case b.Gone && gone:
-			reason = "upstream gone"
-		case b.Gone:
-			skip(b.Name, "upstream gone — kept (--keep-gone)")
+		if only != nil && !only[b.Name] {
+			continue // not one of the named targets
+		}
+		forced := force[b.Name]
+
+		// A branch checked out in a worktree can't be deleted on its own; force
+		// can't override it here (the worktree must go first — that's the combined
+		// sweep's job), so it's not forceable in the branch phase.
+		if inWorktree[b.Name] {
+			skip(b.Name, "checked out in a worktree", false)
 			continue
-		default:
-			skip(b.Name, "not merged into "+base)
+		}
+
+		remove, reason, forceable := func() (bool, string, bool) {
+			// A branch even with base is ambiguous: brand-new (never committed —
+			// keep it) or fast-forwarded into base (did real work — reap it). The
+			// reflog tells them apart; only the never-advanced case is brand-new.
+			ffEqual := false
+			if baseSHA != "" {
+				if sha, err := repo.RevParse(ctx, b.Name); err == nil && sha == baseSHA {
+					advanced, err := repo.BranchAdvanced(ctx, b.Name)
+					if err != nil {
+						return false, "couldn't read branch history", true
+					}
+					if !advanced {
+						return false, "even with base — nothing to prune", true
+					}
+					ffEqual = true
+				}
+			}
+			merged, err := repo.IsMerged(ctx, b.Name, base)
+			if err != nil {
+				return false, "couldn't check merge state", true
+			}
+			switch {
+			case ffEqual && merged:
+				return true, "merged (fast-forward) into " + base, false
+			case merged:
+				return true, "merged into " + base, false
+			case b.Gone && gone:
+				return true, "upstream gone", false
+			case b.Gone:
+				return false, "upstream gone — kept (--keep-gone)", true
+			default:
+				return false, "not merged into " + base, true
+			}
+		}()
+		if !remove && forced && forceable {
+			remove, reason = true, reason+" — forced"
+		}
+		if !remove {
+			skip(b.Name, reason, forceable)
 			continue
 		}
 		if dryRun {
@@ -132,12 +149,12 @@ func pruneBranches(ctx context.Context, out io.Writer, repo *gitrepo.Repo, base 
 		// Force-delete: we've established the branch is done with, but a
 		// squash-merge or gone upstream isn't something `branch -d` recognises.
 		if err := repo.DeleteBranch(ctx, b.Name, true); err != nil {
-			skip(b.Name, "delete failed: "+err.Error())
+			skip(b.Name, "delete failed: "+err.Error(), false)
 			continue
 		}
 		removed++
 		rows = append(rows, pruneRow{name: b.Name, kind: pruneDone, state: "deleted", why: reason})
 	}
 	renderPruneTable(out, rows)
-	return removed, kept, nil
+	return removed, kept, rows, nil
 }

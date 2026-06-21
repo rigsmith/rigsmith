@@ -45,10 +45,37 @@ func (k pruneKind) style() lipgloss.Style {
 
 // pruneRow is one worktree/branch line for the aligned name | state | why table.
 type pruneRow struct {
-	name  string
-	kind  pruneKind
-	state string // "will remove", "removed", "will delete", "deleted", "skip"
-	why   string // reason — "merged", "not merged into main", "uncommitted changes", …
+	name      string
+	kind      pruneKind
+	state     string // "will remove", "removed", "will delete", "deleted", "skip"
+	why       string // reason — "merged", "not merged into main", "uncommitted changes", …
+	forceable bool   // a skip the user could override with [f] / --force (set on pruneSkip rows)
+}
+
+// countActed counts the rows that act (planned or done) rather than skip — the
+// removed/would-remove total for a phase.
+func countActed(rows []pruneRow) int {
+	n := 0
+	for _, r := range rows {
+		if r.kind != pruneSkip {
+			n++
+		}
+	}
+	return n
+}
+
+// forceableSkips returns the names of kept rows the user could force-remove, in
+// table order and de-duplicated — what the confirm screen's [f] offers.
+func forceableSkips(rows []pruneRow) []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, r := range rows {
+		if r.kind == pruneSkip && r.forceable && !seen[r.name] {
+			seen[r.name] = true
+			names = append(names, r.name)
+		}
+	}
+	return names
 }
 
 // renderPruneTable prints rows as three aligned columns (name · state · why)
@@ -135,10 +162,10 @@ func (c pruneCounts) summary(scope pruneScope, dry bool) string {
 // -n previews without removing. Without -y a non-interactive run (script, hook,
 // or pipe) refuses rather than delete unattended.
 func newPruneCmd() *cobra.Command {
-	var dryRun, keepGone, yes, wtOnly, brOnly bool
+	var dryRun, keepGone, yes, wtOnly, brOnly, force bool
 	var base string
 	cmd := &cobra.Command{
-		Use:     "prune",
+		Use:     "prune [name...]",
 		Aliases: []string{"tidy"},
 		Short:   "Remove merged/done worktrees and their branches in one sweep",
 		Long: `Tidy up after merged PRs: remove finished worktrees and branches together.
@@ -157,17 +184,48 @@ patch-id check can't prove — so gone-upstream items are removed by default; pa
 --keep-gone to keep them. The current branch/worktree, the base, and dirty or
 unmerged checkouts are never touched.
 
+Name one or more worktrees/branches to restrict the sweep to just those. When
+there's nothing to prune, prune still lists what it found and why each item is
+kept, so you can see what's holding it back.
+
+To remove something prune won't touch on its own (not merged, dirty, …), force
+it: pass --force with the name(s) — e.g. "rig prune my-branch --force" — or, at
+the confirm screen, press f to pick a kept item to force-include. Force also
+discards uncommitted changes in a worktree, which the reflog can't recover; the
+hard rails (current/base/primary checkout) still hold.
+
 Because prune deletes things it shows the plan and asks for confirmation by
 default; at the prompt, with no scope flag, w/b narrow to worktrees/branches and
 a returns to all. Pass -y/--yes to skip the prompt (CI / scripted runs), or -n to
 preview without removing. Without -y a non-interactive run refuses rather than
 delete unattended. Deletions are recoverable from the reflog. Merge state is
 tested against the local base branch, so keep it current (e.g. pull main).`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if wtOnly && brOnly {
 				return fmt.Errorf("pass only one of --worktrees / --branches (omit both to prune everything)")
 			}
+			// Named targets restrict the sweep; with --force they're removed even
+			// when a soft guard would keep them.
+			var only map[string]bool
+			for _, a := range args {
+				if a = strings.TrimSpace(a); a != "" {
+					if only == nil {
+						only = map[string]bool{}
+					}
+					only[a] = true
+				}
+			}
+			if force && only == nil {
+				return fmt.Errorf("name the worktree(s)/branch(es) to force, e.g. `rig prune my-branch --force`")
+			}
+			// --force targets exactly the named items; without --force nothing is
+			// pre-forced (the confirm screen's [f] can still force interactively).
+			var cliForce map[string]bool
+			if force {
+				cliForce = only
+			}
+
 			ctx := cmd.Context()
 			repo, root, err := openRepo(ctx)
 			if err != nil {
@@ -187,16 +245,19 @@ tested against the local base branch, so keep it current (e.g. pull main).`,
 				scope = scopeBranches
 			}
 
-			run := func(w io.Writer, s pruneScope, dry bool) (pruneCounts, error) {
+			// run merges the CLI force set with any interactive force selection
+			// before sweeping; both override soft skips for the named items.
+			run := func(w io.Writer, s pruneScope, dry bool, extraForce map[string]bool) (pruneCounts, []pruneRow, error) {
 				doWT, doBR := s.phases()
-				a, b, err := pruneSweep(ctx, w, repo, root, base, dry, gone, doWT, doBR)
-				return pruneCounts{a, b}, err
+				a, b, rows, err := pruneSweep(ctx, w, repo, root, base, dry, gone, doWT, doBR, only, unionSets(cliForce, extraForce))
+				return pruneCounts{a, b}, rows, err
 			}
 			return runPruneFlow(cmd, dryRun, yes, scope, scopeFixed, run)
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what would be removed without removing anything")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt (CI / scripted runs)")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "remove the named worktree(s)/branch(es) even if prune would keep them (discards uncommitted changes)")
 	cmd.Flags().BoolVar(&wtOnly, "worktrees", false, "prune only worktrees")
 	cmd.Flags().BoolVar(&brOnly, "branches", false, "prune only branches")
 	cmd.Flags().BoolVar(&keepGone, "keep-gone", false, keepGoneUsage)
@@ -204,18 +265,36 @@ tested against the local base branch, so keep it current (e.g. pull main).`,
 	return cmd
 }
 
+// unionSets merges two name sets into one (nil when both are empty), so the run
+// closure can combine the CLI --force targets with an interactive selection.
+func unionSets(a, b map[string]bool) map[string]bool {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	out := map[string]bool{}
+	for k := range a {
+		out[k] = true
+	}
+	for k := range b {
+		out[k] = true
+	}
+	return out
+}
+
 // runPruneFlow is the shared behavior for `prune`: -n previews, -y acts and
 // prints the per-item table, and the default shows the plan in a confirm screen
 // and acts only on approval — refusing in a non-interactive context rather than
 // deleting unattended. With no scope flag the confirm screen's w/b/a keys retarget
-// the sweep in place. run writes one line per item to w and returns the counts.
+// the sweep in place, and f force-includes a kept item. run writes one line per
+// item to w and returns the counts plus the rows (for the confirm screen's [f]).
+// extraForce names items to force this call beyond the CLI --force set.
 func runPruneFlow(cmd *cobra.Command, dryRun, yes bool, scope pruneScope, scopeFixed bool,
-	run func(w io.Writer, s pruneScope, dry bool) (pruneCounts, error)) error {
+	run func(w io.Writer, s pruneScope, dry bool, extraForce map[string]bool) (pruneCounts, []pruneRow, error)) error {
 
 	out := cmd.OutOrStdout()
 
 	if dryRun {
-		c, err := run(out, scope, true)
+		c, _, err := run(out, scope, true, nil)
 		if err != nil {
 			return err
 		}
@@ -224,7 +303,7 @@ func runPruneFlow(cmd *cobra.Command, dryRun, yes bool, scope pruneScope, scopeF
 	}
 
 	if yes {
-		c, err := run(out, scope, false)
+		c, _, err := run(out, scope, false, nil)
 		if err != nil {
 			return err
 		}
@@ -241,58 +320,69 @@ func runPruneFlow(cmd *cobra.Command, dryRun, yes bool, scope pruneScope, scopeF
 		return fmt.Errorf("prune deletes worktrees and branches — confirm at a terminal or pass -y/--yes; use -n to preview")
 	}
 
-	// Nothing to do for the starting scope (and, when toggling is allowed, the
-	// other scopes are subsets of "both") — say so instead of an empty dialog.
-	if c, err := run(io.Discard, scope, true); err != nil {
+	// Probe the plan once: if there's nothing to remove and nothing the user
+	// could force, show the table (so they see why each item is kept) and stop —
+	// no empty dialog. If something is forceable, fall through to the confirm
+	// screen so [f] is reachable even when the plan itself is empty.
+	var probe bytes.Buffer
+	c, rows, err := run(&probe, scope, true, nil)
+	if err != nil {
 		return err
-	} else if c.total() == 0 {
+	}
+	if c.total() == 0 && len(forceableSkips(rows)) == 0 {
+		io.Copy(out, &probe)
 		fmt.Fprintf(out, "%s\n", DimStyle.Render("nothing to prune"))
 		return nil
 	}
 
-	// preview renders the plan for a scope into text + counts, for the dialog.
-	preview := func(s pruneScope) (string, pruneCounts) {
+	// preview renders the plan for a scope (with the given force set applied) into
+	// text + counts + rows, for the dialog.
+	preview := func(s pruneScope, force map[string]bool) (string, pruneCounts, []pruneRow) {
 		var buf bytes.Buffer
-		c, _ := run(&buf, s, true)
+		cc, rr, _ := run(&buf, s, true, force)
 		text := strings.TrimRight(buf.String(), "\n")
 		if text == "" {
 			text = DimStyle.Render("(nothing in this scope)")
 		}
-		return text, c
+		return text, cc, rr
 	}
 
-	chosen, proceed := confirmPrune(scope, !scopeFixed, preview)
+	chosen, forced, proceed := confirmPrune(scope, !scopeFixed, preview)
 	if !proceed {
 		fmt.Fprintf(out, "%s\n", DimStyle.Render("aborted"))
 		return nil
 	}
 
 	var real bytes.Buffer
-	c, err := run(&real, chosen, false)
+	rc, _, err := run(&real, chosen, false, forced)
 	if err != nil {
 		return err
 	}
-	if c.total() == 0 {
+	if rc.total() == 0 {
 		fmt.Fprintf(out, "%s\n", DimStyle.Render("nothing to prune"))
 		return nil
 	}
 	io.Copy(out, &real)
-	fmt.Fprintf(out, "%s\n", OkStyle.Render("✓ "+c.summary(chosen, false)))
+	fmt.Fprintf(out, "%s\n", OkStyle.Render("✓ "+rc.summary(chosen, false)))
 	return nil
 }
 
 // pruneSweep runs the requested phases — worktrees first, then branches — writing
 // one line per item to w and returning the removed (or, in dry mode, would-remove)
-// counts. The freed branches from the worktree phase are carried into the branch
-// phase so they're no longer treated as worktree-attached.
-func pruneSweep(ctx context.Context, w io.Writer, repo *gitrepo.Repo, root, base string, dry, gone, doWT, doBR bool) (worktrees, branches int, err error) {
+// counts plus the rows it rendered (so the caller can offer to force kept ones).
+// The freed branches from the worktree phase are carried into the branch phase so
+// they're no longer treated as worktree-attached. only/force are passed to both
+// phases: only restricts the targets, force overrides soft skips for named items.
+func pruneSweep(ctx context.Context, w io.Writer, repo *gitrepo.Repo, root, base string, dry, gone, doWT, doBR bool, only, force map[string]bool) (worktrees, branches int, rows []pruneRow, err error) {
 	var freed []string
 	if doWT {
 		fmt.Fprintln(w, HeaderStyle.Render("worktrees"))
-		worktrees, _, freed, err = pruneWorktrees(ctx, w, repo, root, base, dry, gone, false)
+		var wtRows []pruneRow
+		worktrees, _, freed, wtRows, err = pruneWorktrees(ctx, w, repo, root, base, dry, gone, false, only, force)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, nil, err
 		}
+		rows = append(rows, wtRows...)
 	}
 	if doBR {
 		detached := map[string]bool{}
@@ -300,12 +390,14 @@ func pruneSweep(ctx context.Context, w io.Writer, repo *gitrepo.Repo, root, base
 			detached[b] = true
 		}
 		fmt.Fprintln(w, HeaderStyle.Render("branches"))
-		branches, _, err = pruneBranches(ctx, w, repo, base, dry, gone, detached)
+		var brRows []pruneRow
+		branches, _, brRows, err = pruneBranches(ctx, w, repo, base, dry, gone, detached, only, force)
 		if err != nil {
-			return worktrees, 0, err
+			return worktrees, 0, nil, err
 		}
+		rows = append(rows, brRows...)
 	}
-	return worktrees, branches, nil
+	return worktrees, branches, rows, nil
 }
 
 // keepGoneUsage describes the --keep-gone opt-out, shared by every prune command.

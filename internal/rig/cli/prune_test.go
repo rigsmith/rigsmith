@@ -56,7 +56,7 @@ func TestPruneWorktreeThenBranch(t *testing.T) {
 	commit(t, r, "b", "2", "advance main past feature")
 
 	var buf bytes.Buffer
-	wRemoved, _, freed, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", false, false, false)
+	wRemoved, _, freed, _, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", false, false, false, nil, nil)
 	if err != nil || wRemoved != 1 {
 		t.Fatalf("worktree phase: removed=%d err=%v", wRemoved, err)
 	}
@@ -64,7 +64,7 @@ func TestPruneWorktreeThenBranch(t *testing.T) {
 	for _, b := range freed {
 		detached[b] = true
 	}
-	bRemoved, _, err := pruneBranches(ctx, &buf, r, "main", false, false, detached)
+	bRemoved, _, _, err := pruneBranches(ctx, &buf, r, "main", false, false, detached, nil, nil)
 	if err != nil || bRemoved != 1 {
 		t.Fatalf("branch phase: removed=%d err=%v", bRemoved, err)
 	}
@@ -89,7 +89,7 @@ func TestPruneDryRunDetachesFreed(t *testing.T) {
 	commit(t, r, "b", "2", "advance main past feature")
 
 	var buf bytes.Buffer
-	_, _, freed, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", true /*dryRun*/, false, false)
+	_, _, freed, _, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", true /*dryRun*/, false, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,11 +99,11 @@ func TestPruneDryRunDetachesFreed(t *testing.T) {
 	}
 
 	// Without the handoff the branch reads as worktree-attached and is skipped.
-	if n, _, _ := pruneBranches(ctx, &buf, r, "main", true, false, nil); n != 0 {
+	if n, _, _, _ := pruneBranches(ctx, &buf, r, "main", true, false, nil, nil, nil); n != 0 {
 		t.Errorf("without detached: removed=%d, want 0 (still attached)", n)
 	}
 	// With it, the branch phase previews the delete.
-	if n, _, _ := pruneBranches(ctx, &buf, r, "main", true, false, detached); n != 1 {
+	if n, _, _, _ := pruneBranches(ctx, &buf, r, "main", true, false, detached, nil, nil); n != 1 {
 		t.Errorf("with detached: removed=%d, want 1", n)
 	}
 	// Dry-run must not have actually touched anything.
@@ -127,7 +127,7 @@ func TestPruneWorktrees_KeepsBranchEvenWithBase(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	removed, _, _, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", true, false, false)
+	removed, _, _, _, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", true, false, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestPruneWorktrees_ReapsFastForwardMerged(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	removed, _, _, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", true /*dryRun*/, false, false)
+	removed, _, _, _, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", true /*dryRun*/, false, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestPruneSweepDryRun(t *testing.T) {
 	commit(t, r, "b", "2", "advance main past feature")
 
 	var buf bytes.Buffer
-	w, b, err := pruneSweep(ctx, &buf, r, r.Dir, "main", true /*dry*/, false, true /*doWT*/, true /*doBR*/)
+	w, b, _, err := pruneSweep(ctx, &buf, r, r.Dir, "main", true /*dry*/, false, true /*doWT*/, true /*doBR*/, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,13 +209,13 @@ func TestPruneSweepDryRun(t *testing.T) {
 
 	// Selectors scope the sweep to one phase.
 	var wbuf bytes.Buffer
-	if w, b, _ := pruneSweep(ctx, &wbuf, r, r.Dir, "main", true, false, true, false); w != 1 || b != 0 {
+	if w, b, _, _ := pruneSweep(ctx, &wbuf, r, r.Dir, "main", true, false, true, false, nil, nil); w != 1 || b != 0 {
 		t.Errorf("--worktrees sweep = %d/%d; want 1 worktree, 0 branches", w, b)
 	}
 	var bbuf bytes.Buffer
 	// Branches-only: the worktree-attached "feature" is skipped (not freed by a
 	// worktree phase), so no branch is counted.
-	if w, b, _ := pruneSweep(ctx, &bbuf, r, r.Dir, "main", true, false, false, true); w != 0 || b != 0 {
+	if w, b, _, _ := pruneSweep(ctx, &bbuf, r, r.Dir, "main", true, false, false, true, nil, nil); w != 0 || b != 0 {
 		t.Errorf("--branches sweep = %d/%d; want 0 worktrees, 0 branches (feature still attached)", w, b)
 	}
 }
