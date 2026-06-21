@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/changeset"
 	"github.com/rigsmith/rigsmith/core/config"
+	"github.com/rigsmith/rigsmith/core/editor"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/since"
 	"github.com/spf13/cobra"
@@ -161,38 +161,13 @@ func NewAddCmd() *cobra.Command {
 	return cmd
 }
 
-// openInEditor opens path in the user's editor, inheriting the terminal so the
-// edit is interactive.
+// openInEditor opens path in the resolved editor (see core/editor), inheriting
+// the terminal so the edit is interactive.
 func openInEditor(cmd *cobra.Command, path string) error {
-	argv := append(resolveEditor(os.Getenv("VISUAL"), os.Getenv("EDITOR"), runtime.GOOS), path)
+	argv := editor.Argv(path)
 	c := exec.CommandContext(cmd.Context(), argv[0], argv[1:]...)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr()
 	return c.Run()
-}
-
-// resolveEditor returns the editor command (program + any args) to launch:
-// $VISUAL, then $EDITOR, else a per-OS default. Splitting on spaces honors
-// forms like EDITOR="code -w". Pure.
-func resolveEditor(visual, editorEnv, goos string) []string {
-	editor := firstNonEmpty(visual, editorEnv)
-	if editor == "" {
-		if goos == "windows" {
-			editor = "notepad"
-		} else {
-			editor = "vi"
-		}
-	}
-	return strings.Fields(editor)
-}
-
-// firstNonEmpty returns the first argument that isn't blank, else "".
-func firstNonEmpty(xs ...string) string {
-	for _, x := range xs {
-		if strings.TrimSpace(x) != "" {
-			return x
-		}
-	}
-	return ""
 }
 
 // offerSetup handles a bare command in a workspace with no .changeset folder. On

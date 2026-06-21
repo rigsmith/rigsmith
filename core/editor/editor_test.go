@@ -1,4 +1,4 @@
-package cli
+package editor
 
 import (
 	"os/exec"
@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestResolveEditorArgv(t *testing.T) {
+func TestResolveArgv(t *testing.T) {
 	notFound := func(string) (string, error) { return "", exec.ErrNotFound }
 	noBundle := func(string) bool { return false }
 	// found makes lookPath succeed only for the named commands.
@@ -46,6 +46,12 @@ func TestResolveEditorArgv(t *testing.T) {
 			visual:   "code --wait",
 			lookPath: notFound, bundleExists: noBundle, goos: "darwin",
 			want: []string{"code", "--wait", path},
+		},
+		{
+			name:     "VISUAL with args is split",
+			visual:   "code -w",
+			lookPath: found("code"), bundleExists: noBundle, goos: "darwin",
+			want: []string{"code", "-w", path}, // honored verbatim, no auto-detect
 		},
 		{
 			name:      "EDITOR fallback when VISUAL blank",
@@ -93,9 +99,9 @@ func TestResolveEditorArgv(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := resolveEditorArgv(tc.visual, tc.editorEnv, tc.goos, tc.lookPath, tc.bundleExists, path)
+			got := resolveArgv(tc.visual, tc.editorEnv, tc.goos, tc.lookPath, tc.bundleExists, path)
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("resolveEditorArgv() = %v, want %v", got, tc.want)
+				t.Errorf("resolveArgv() = %v, want %v", got, tc.want)
 			}
 		})
 	}
