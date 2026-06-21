@@ -17,13 +17,15 @@ set -e
 # Pin go-winres; bump deliberately. https://github.com/tc-hib/go-winres
 WINRES="github.com/tc-hib/go-winres@v0.3.3"
 
-ROOT=$(pwd)
+# Resolve the repo root from this script's own location, so it works from any
+# cwd — goreleaser runs hooks at the repo root, but a manual run may not.
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 for tool in rig shiprig changerig clauderig; do
   # Run from build/winres so the JSON's relative icon path (../icons/<tool>.png)
   # resolves identically regardless of go-winres's path-base; --out is absolute.
   (
-    cd build/winres
+    cd "$ROOT/build/winres"
     go run "$WINRES" make \
       --in "$tool.json" \
       --out "$ROOT/cmd/$tool/rsrc" \
