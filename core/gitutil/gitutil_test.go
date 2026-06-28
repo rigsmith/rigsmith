@@ -145,6 +145,29 @@ func TestPackageTag(t *testing.T) {
 	}
 }
 
+// TestRenderTag pins that an empty template falls back to the canonical
+// PackageTag, while a template expands ${version}/${name} — the single-app
+// v-prefix convention being the motivating case.
+func TestRenderTag(t *testing.T) {
+	cases := []struct {
+		template, eco, dirRel, name, version, want string
+	}{
+		// Empty template => canonical per-ecosystem tag.
+		{"", "node", "", "my-pkg", "1.2.0", "my-pkg@1.2.0"},
+		{"", "go", "core", "core", "1.2.0", "core/v1.2.0"},
+		// Single-app v-prefix.
+		{"v${version}", "dotnet", "", "Halyards.Desktop", "1.0.0", "v1.0.0"},
+		// ${name} placeholder, and whitespace is trimmed.
+		{"  ${name}-${version}  ", "node", "", "web", "2.1.0", "web-2.1.0"},
+	}
+	for _, c := range cases {
+		if got := RenderTag(c.template, c.eco, c.dirRel, c.name, c.version); got != c.want {
+			t.Errorf("RenderTag(%q,%q,%q,%q,%q) = %q, want %q",
+				c.template, c.eco, c.dirRel, c.name, c.version, got, c.want)
+		}
+	}
+}
+
 // TestRemoteTagExists pins that RemoteTagExists distinguishes a tag that was
 // pushed to the remote from one that is absent there — the signal a re-run uses
 // to recover a locally-tagged-but-unpushed release.

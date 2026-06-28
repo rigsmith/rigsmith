@@ -125,7 +125,7 @@ func newPublishCmd() *cobra.Command {
 				if ws.Config.IsIgnored(p.Name) {
 					continue
 				}
-				tag := tagName(ecoOf[p.Name], p.Dir, p.Name, p.Version)
+				tag := gitutil.RenderTag(ws.Config.TagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version)
 				localExists := gitutil.TagExists(cmd.Context(), ws.Root, tag)
 				// Without a remote, a local tag is the terminal state. With one, the
 				// tag is only "done" once it's actually on the remote — a previous run

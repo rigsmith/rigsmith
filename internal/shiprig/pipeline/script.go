@@ -35,7 +35,8 @@ func buildScriptCtx(rc ReleaseContext, env map[string]string, dryRun bool) map[s
 	for _, p := range pkgs {
 		pkgList = append(pkgList, map[string]interface{}{
 			"name": p.Name, "key": p.Key, "ecosystem": p.Ecosystem,
-			"version": p.Version, "tag": p.Tag, "changelog": p.Changelog,
+			"version": p.Version, "nextVersion": p.Version, "lastVersion": p.LastVersion,
+			"tag": p.Tag, "changelog": p.Changelog,
 		})
 		tags = append(tags, p.Tag)
 		agg = append(agg, p.Name+"@"+p.Version)
@@ -54,6 +55,8 @@ func buildScriptCtx(rc ReleaseContext, env map[string]string, dryRun bool) map[s
 
 	if len(pkgs) == 1 {
 		ctx["version"] = pkgs[0].Version
+		ctx["nextVersion"] = pkgs[0].Version
+		ctx["lastVersion"] = pkgs[0].LastVersion
 		ctx["tag"] = pkgs[0].Tag
 		ctx["changelog"] = pkgs[0].Changelog
 	}

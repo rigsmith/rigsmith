@@ -69,6 +69,21 @@ func PackageTag(eco, dirRel, name, version string) string {
 	return name + "@" + version
 }
 
+// RenderTag returns the git tag for a package release, honoring a configured
+// tag template. An empty template falls back to PackageTag (the canonical
+// per-ecosystem name). A non-empty template is expanded with the ${version} and
+// ${name} placeholders — e.g. "v${version}" yields "v1.2.3" for the single-app
+// vX.Y.Z convention. The same template is applied wherever a release tag is
+// built (creation, the forge release, and the ${tag} variable) so they agree.
+func RenderTag(template, eco, dirRel, name, version string) string {
+	template = strings.TrimSpace(template)
+	if template == "" {
+		return PackageTag(eco, dirRel, name, version)
+	}
+	r := strings.NewReplacer("${version}", version, "${name}", name)
+	return r.Replace(template)
+}
+
 func tagPrefix(dirRel string) string {
 	dirRel = strings.TrimPrefix(filepathToSlash(dirRel), "./")
 	if dirRel == "" || dirRel == "." {

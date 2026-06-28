@@ -125,10 +125,14 @@ func Run(packages []plugin.Package, ecoOf map[string]string, attach map[string][
 
 	for _, pkg := range released {
 		// The positional tag must be the one the tag/publish steps actually pushed
-		// (Go: dir/vX.Y.Z), so the forge attaches the release to it instead of
-		// creating a new, divergent tag at HEAD. The human-facing title keeps the
-		// friendly DisplayName@version form.
-		tag := gitutil.PackageTag(ecoOf[pkg.Name], pkg.Dir, pkg.Name, pkg.Version)
+		// (Go: dir/vX.Y.Z; or a configured tagTemplate), so the forge attaches the
+		// release to it instead of creating a new, divergent tag at HEAD. The
+		// human-facing title keeps the friendly DisplayName@version form.
+		tagTemplate := ""
+		if cfg != nil {
+			tagTemplate = cfg.TagTemplate
+		}
+		tag := gitutil.RenderTag(tagTemplate, ecoOf[pkg.Name], pkg.Dir, pkg.Name, pkg.Version)
 		releaseTitle := title(pkg) + "@" + pkg.Version
 
 		if provider.ReleaseExists(tag, repoRoot, run) {

@@ -298,13 +298,20 @@ func stepAction(name string, config *Config, stepConfig *StepConfig) ([]CommandS
 		if stepConfig != nil && stepConfig.Message != nil {
 			message = *stepConfig.Message
 		}
-		// Commit only when `git add -A` actually staged something. The `version`
+		// Stage everything by default; when `paths` is set, scope the commit to
+		// exactly those paths so unrelated WIP in the tree stays out of the
+		// release commit.
+		add := []string{"git", "add", "-A"}
+		if stepConfig != nil && len(stepConfig.Paths) > 0 {
+			add = append([]string{"git", "add", "--"}, stepConfig.Paths...)
+		}
+		// Commit only when staging actually produced something. The `version`
 		// step (and changerig's `commit` config key) may have already committed,
 		// leaving an empty index — a bare `git commit` then exits non-zero with
 		// "nothing to commit" and fails the whole release. `git diff --cached
 		// --quiet` exits 0 when the index is clean, short-circuiting the commit.
 		return []CommandSpec{
-			ArgvCommand("git", "add", "-A"),
+			ArgvCommand(add...),
 			ShellCommand("git diff --cached --quiet || git commit -m " + shellSingleQuote(message)),
 		}, true
 
