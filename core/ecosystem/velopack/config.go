@@ -98,6 +98,23 @@ type Macos struct {
 	// Dmg wraps the notarized .app in a distributable .dmg (the first-install
 	// medium, separate from the update feed). Defaults to true.
 	Dmg *bool `json:"dmg,omitempty"`
+	// DmgBackground is a repo-root-relative path to a background image for the
+	// install-DMG window — a branded backdrop, typically with a "drag to
+	// Applications" arrow. When set, the window is sized to DmgWindow (or, for a
+	// PNG, the image's own pixel size) and the app + Applications icons are
+	// centered in the left and right halves over it. Supply a HiDPI TIFF (1×+2×
+	// reps) or a 2× PNG with DmgWindow set for a crisp result on Retina displays.
+	DmgBackground string `json:"dmgBackground,omitempty"`
+	// DmgWindow overrides the install-window content size, in logical points.
+	// Required for a TIFF/2× background (its pixel size isn't the logical size);
+	// for a 1× PNG it defaults to the image's pixel dimensions.
+	DmgWindow *DmgWindow `json:"dmgWindow,omitempty"`
+}
+
+// DmgWindow is the install-DMG window's content size in logical points.
+type DmgWindow struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
 }
 
 // WrapDmg reports whether the macOS .app should be wrapped in a .dmg (default true).

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image/png"
 	"io"
 	"net/http"
 	"net/url"
@@ -117,6 +118,16 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 				return plugin.ArtifactsResponse{}, err
 			}
 			packCfg.Windows.SignTemplate = tmpl
+		}
+
+		// Re-packing the same version is idempotent: drop this version's existing
+		// nupkg(s) for the channel first, or vpk rejects the pack ("a release equal
+		// or greater already exists"). Only this version+channel is cleared — prior
+		// versions stay (their nupkgs feed delta generation, and vpk rebuilds the
+		// channel manifest from what remains), so `--from build` resumes cleanly
+		// after a partial failure and a local build can re-run the same version.
+		if err := clearChannelVersion(filepath.Join(req.RepoRoot, releasesRel), cfg.PackId, ver, ch); err != nil {
+			return plugin.ArtifactsResponse{}, err
 		}
 
 		packArgs := buildPackArgs(packCfg, ch, pubRel, releasesRel, ver, req.Snapshot, host, azureFile)
@@ -514,7 +525,7 @@ func (a *Adapter) wrapDmg(ctx context.Context, repoRoot string, env []string, cf
 	}
 
 	dmg := filepath.Join(outAbs, fmt.Sprintf("%s-%s.dmg", cfg.PackId, ch))
-	if err := buildDmg(ctx, repoRoot, env, cfg.PackTitle, cfg.MainExe, stage, dmg); err != nil {
+	if err := buildDmg(ctx, repoRoot, env, cfg.PackTitle, cfg.MainExe, stage, dmg, dmgLayoutFor(repoRoot, cfg.Macos)); err != nil {
 		return err
 	}
 	if !snapshot && cfg.Macos.SignIdentity != "" {
@@ -526,14 +537,50 @@ func (a *Adapter) wrapDmg(ctx context.Context, repoRoot string, env []string, cf
 	return nil
 }
 
+// dmgLayout describes the install-window: its content size (logical points) and
+// a background image, supplied either as a file path (a config override) or as
+// embedded bytes (the built-in default).
+type dmgLayout struct {
+	bgAbs         string // override image path from macos.dmgBackground
+	bgBytes       []byte // embedded default, used when there is no override
+	bgExt         string // extension of the chosen image (".tiff"/".png")
+	width, height int
+}
+
+// dmgLayoutFor resolves the window size + background from the macOS config. An
+// explicit macos.dmgBackground overrides the built-in default; its window size
+// comes from DmgWindow, else the image's own pixel size (PNG only). With no
+// override, the embedded default backdrop is used at its native 640×400.
+func dmgLayoutFor(repoRoot string, m Macos) dmgLayout {
+	if m.DmgBackground == "" {
+		return dmgLayout{bgBytes: defaultDmgBackground, bgExt: ".tiff", width: defaultDmgWidth, height: defaultDmgHeight}
+	}
+	lay := dmgLayout{
+		bgAbs:  filepath.Join(repoRoot, m.DmgBackground),
+		bgExt:  filepath.Ext(m.DmgBackground),
+		width:  defaultDmgWidth,
+		height: defaultDmgHeight,
+	}
+	switch {
+	case m.DmgWindow != nil && m.DmgWindow.Width > 0 && m.DmgWindow.Height > 0:
+		lay.width, lay.height = m.DmgWindow.Width, m.DmgWindow.Height
+	default:
+		if w, h, err := pngSize(lay.bgAbs); err == nil {
+			lay.width, lay.height = w, h
+		}
+	}
+	return lay
+}
+
 // buildDmg packs the staging folder (the .app + an Applications symlink) into a
 // compressed DMG at dmg. It first tries to lay the window out in icon view — the
-// app on the left, the Applications folder on the right — so the "drag to install"
-// gesture is obvious. That layout uses Finder scripting (needs a GUI session), so
-// it is best-effort: any failure falls back to a plain compressed DMG that still
-// carries the app and the Applications drop target, just in the default view.
-func buildDmg(ctx context.Context, repoRoot string, env []string, volName, mainExe, stage, dmg string) error {
-	if err := layoutDmg(ctx, repoRoot, env, volName, mainExe, stage, dmg); err == nil {
+// app on the left, the Applications folder on the right, over the optional
+// background — so the "drag to install" gesture is obvious. That layout uses
+// Finder scripting (needs a GUI session), so it is best-effort: any failure falls
+// back to a plain compressed DMG that still carries the app and the Applications
+// drop target, just in the default view.
+func buildDmg(ctx context.Context, repoRoot string, env []string, volName, mainExe, stage, dmg string, lay dmgLayout) error {
+	if err := layoutDmg(ctx, repoRoot, env, volName, mainExe, stage, dmg, lay); err == nil {
 		return nil
 	}
 	if _, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "create",
@@ -544,10 +591,11 @@ func buildDmg(ctx context.Context, repoRoot string, env []string, volName, mainE
 }
 
 // layoutDmg builds a DMG with an icon-view window arranged for drag-to-install:
-// create a read-write image from the staging folder, mount it, position the .app
-// and the Applications symlink via Finder, detach, then convert to a compressed
-// read-only image. Any step failing returns an error so buildDmg can fall back.
-func layoutDmg(ctx context.Context, repoRoot string, env []string, volName, mainExe, stage, dmg string) error {
+// create a read-write image, mount it, (optionally) install a background picture,
+// position the .app and the Applications symlink via Finder, then flush + detach
+// cleanly and convert to a compressed read-only image. Any step failing returns
+// an error so buildDmg can fall back to a plain DMG.
+func layoutDmg(ctx context.Context, repoRoot string, env []string, volName, mainExe, stage, dmg string, lay dmgLayout) error {
 	rw := dmg + ".rw.dmg"
 	defer os.Remove(rw)
 	if _, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "create",
@@ -562,41 +610,143 @@ func layoutDmg(ctx context.Context, repoRoot string, env []string, volName, main
 	if mount == "" {
 		return fmt.Errorf("velopack: could not parse DMG mount point from hdiutil output")
 	}
+	// Target the volume by the name it ACTUALLY mounted under: if "Halyards" was
+	// already taken (a prior copy of the dmg still open), macOS mounts this one as
+	// "Halyards 1" etc., and a hardcoded name would script the wrong window — or
+	// none — leaving the build's dmg unarranged. This was the cause of the layout
+	// "reverting" to a default icon view.
+	disk := filepath.Base(mount)
 	detached := false
-	detach := func() {
+	defer func() {
 		if !detached {
 			_, _, _ = runCmdEnv(ctx, repoRoot, env, "hdiutil", "detach", mount, "-force")
-			detached = true
 		}
-	}
-	defer detach()
+	}()
 
-	script := fmt.Sprintf(`
-tell application "Finder"
+	bgClause := ""
+	if lay.bgAbs != "" || len(lay.bgBytes) > 0 {
+		bgDir := filepath.Join(mount, ".background")
+		if err := os.MkdirAll(bgDir, 0o755); err != nil {
+			return err
+		}
+		ext := lay.bgExt
+		if ext == "" {
+			ext = ".png"
+		}
+		bgName := "background" + ext
+		dst := filepath.Join(bgDir, bgName)
+		if lay.bgAbs != "" {
+			if err := copyFile(lay.bgAbs, dst); err != nil {
+				return err
+			}
+		} else if err := os.WriteFile(dst, lay.bgBytes, 0o644); err != nil {
+			return err
+		}
+		// Hide the .background folder: Finder gives .DS_Store the hidden flag
+		// automatically but not a folder we create, so without this it shows up in
+		// the install window (a dotfile alone isn't hidden on recent Finder).
+		_, _, _ = runCmdEnv(ctx, repoRoot, env, "chflags", "hidden", bgDir)
+		bgClause = "\n    set background picture of vo to file \".background:" + bgName + "\""
+	}
+
+	w, h := lay.width, lay.height
+	if w <= 0 || h <= 0 {
+		w, h = 600, 400
+	}
+	appX, appsX, iconY := w/4, w-w/4, h/2
+
+	// `activate` (bring Finder to the front) is required for icon positions to
+	// actually commit to .DS_Store under automation — without it the layout renders
+	// but the positions are dropped, so the window reverts to a default grid.
+	script := fmt.Sprintf(`tell application "Finder"
+  activate
   tell disk %q
     open
+    delay 1
     set current view of container window to icon view
     set toolbar visible of container window to false
     set statusbar visible of container window to false
-    set the bounds of container window to {200, 120, 740, 480}
-    set viewOptions to the icon view options of container window
-    set arrangement of viewOptions to not arranged
-    set icon size of viewOptions to 112
-    set position of item "%s" of container window to {140, 175}
-    set position of item "Applications" of container window to {400, 175}
+    set the bounds of container window to {200, 120, %d, %d}
+    set vo to the icon view options of container window
+    set arrangement of vo to not arranged
+    set icon size of vo to 128%s
+    set position of item %q of container window to {%d, %d}
+    set position of item "Applications" of container window to {%d, %d}
     update without registering applications
-    delay 1
+    delay 2
     close
   end tell
-end tell`, volName, mainExe+".app")
+end tell`, disk, 200+w, 120+h, bgClause, mainExe+".app", appX, iconY, appsX, iconY)
 	if _, _, err := runCmdEnv(ctx, repoRoot, env, "osascript", "-e", script); err != nil {
 		return err
 	}
-	detach()
+
+	// Finder writes .DS_Store asynchronously after closing the window — wait for it
+	// to land, then flush and unmount CLEANLY (a forced detach can skip the flush,
+	// dropping the layout from the converted image). Only then convert.
+	time.Sleep(2 * time.Second)
+	_, _, _ = runCmdEnv(ctx, repoRoot, env, "sync")
+	if err := detachVolume(ctx, repoRoot, env, mount); err != nil {
+		return err
+	}
+	detached = true
 	if _, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "convert", rw, "-format", "UDZO", "-ov", "-o", dmg); err != nil {
 		return err
 	}
 	return nil
+}
+
+// detachVolume unmounts a DMG, retrying while the volume is briefly busy (Finder
+// may still hold it just after writing .DS_Store) before falling back to a forced
+// detach — so the clean unmount that flushes the layout is tried first.
+func detachVolume(ctx context.Context, repoRoot string, env []string, mount string) error {
+	var last error
+	for i := 0; i < 6; i++ {
+		if _, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "detach", mount); err == nil {
+			return nil
+		} else {
+			last = err
+		}
+		time.Sleep(700 * time.Millisecond)
+	}
+	if _, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "detach", mount, "-force"); err == nil {
+		return nil
+	}
+	return last
+}
+
+// copyFile copies src to dst (truncating dst).
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+// pngSize returns a PNG's pixel dimensions (used to size the DMG window when no
+// explicit DmgWindow is given). Non-PNG images return an error so the caller
+// falls back to the configured/default size.
+func pngSize(path string) (int, int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer f.Close()
+	cfg, err := png.DecodeConfig(f)
+	if err != nil {
+		return 0, 0, err
+	}
+	return cfg.Width, cfg.Height, nil
 }
 
 // dmgMountPoint pulls the /Volumes/... mount path out of `hdiutil attach` output
@@ -608,6 +758,26 @@ func dmgMountPoint(hdiutilOut string) string {
 		}
 	}
 	return ""
+}
+
+// clearChannelVersion removes any existing nupkg for exactly this
+// packId+version+channel from outDir, so re-packing that version succeeds — vpk
+// refuses to pack when a release equal-or-greater is already present. Only this
+// version's files are removed; prior versions stay for delta generation and vpk
+// regenerates the channel manifest from what remains. A missing dir or missing
+// files are not errors (nothing to clear on a first build).
+func clearChannelVersion(outDir, packId, ver, ch string) error {
+	pattern := filepath.Join(outDir, fmt.Sprintf("%s-%s-%s-*.nupkg", packId, ver, ch))
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return err
+	}
+	for _, m := range matches {
+		if err := os.Remove(m); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("velopack: clearing prior pack %s: %w", filepath.Base(m), err)
+		}
+	}
+	return nil
 }
 
 // writeTrustedSigningFile writes vpk's Azure Trusted Signing descriptor (the

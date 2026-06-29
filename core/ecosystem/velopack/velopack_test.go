@@ -163,6 +163,44 @@ func TestSetVersionWithoutDir(t *testing.T) {
 	}
 }
 
+// TestClearChannelVersion verifies an idempotent re-pack clears only the exact
+// version+channel, leaving prior versions (delta history) and other channels.
+func TestClearChannelVersion(t *testing.T) {
+	dir := t.TempDir()
+	keep := []string{
+		"App-1.0.0-win-x64-full.nupkg",   // prior version, same channel — must stay
+		"App-1.0.0-win-x64-delta.nupkg",  // prior version delta — must stay
+		"App-1.1.0-osx-arm64-full.nupkg", // same version, other channel — must stay
+		"App-1.1.0-win-x64-Setup.exe",    // not a nupkg — must stay
+	}
+	remove := []string{
+		"App-1.1.0-win-x64-full.nupkg",  // this version+channel — must go
+		"App-1.1.0-win-x64-delta.nupkg", // this version+channel delta — must go
+	}
+	for _, f := range append(append([]string{}, keep...), remove...) {
+		writeFile(t, filepath.Join(dir, f), "x")
+	}
+
+	if err := clearChannelVersion(dir, "App", "1.1.0", "win-x64"); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range keep {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Errorf("clearChannelVersion removed %s but should have kept it", f)
+		}
+	}
+	for _, f := range remove {
+		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+			t.Errorf("clearChannelVersion left %s but should have removed it", f)
+		}
+	}
+
+	// A missing output dir (first build) is not an error.
+	if err := clearChannelVersion(filepath.Join(dir, "nope"), "App", "1.1.0", "win-x64"); err != nil {
+		t.Errorf("clearChannelVersion on a missing dir should be a no-op, got: %v", err)
+	}
+}
+
 // TestRidTargets pins the RID → Go/Rust target mapping a build.command relies on.
 func TestRidTargets(t *testing.T) {
 	for _, c := range []struct{ rid, goos, goarch, rust string }{
