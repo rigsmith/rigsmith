@@ -38,6 +38,43 @@ func TestRenderPruneTableEmpty(t *testing.T) {
 	}
 }
 
+// pruneContextLine banners the current checkout: its branch and whether it is the
+// repo's primary checkout or a linked worktree (the checkout prune always protects).
+func TestPruneContextLine(t *testing.T) {
+	ctx := context.Background()
+	r, err := gitrepo.Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "a", "1", "init")
+	branch, _ := r.CurrentBranch(ctx)
+
+	primary := pruneContextLine(ctx, r, r.Dir)
+	if !strings.Contains(primary, "primary checkout") || !strings.Contains(primary, "protected") {
+		t.Errorf("primary checkout banner missing its label: %s", primary)
+	}
+	if branch != "" && !strings.Contains(primary, branch) {
+		t.Errorf("banner should name the current branch %q: %s", branch, primary)
+	}
+
+	// A linked worktree is labeled "worktree", not "primary".
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	if err := r.WorktreeAdd(ctx, wtPath, "feature", branch, true); err != nil {
+		t.Fatal(err)
+	}
+	wtRepo, err := gitrepo.Open(ctx, wtPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := pruneContextLine(ctx, wtRepo, wtPath)
+	if !strings.Contains(wt, "worktree") || strings.Contains(wt, "primary") {
+		t.Errorf("worktree banner should say worktree, not primary: %s", wt)
+	}
+	if !strings.Contains(wt, "feature") {
+		t.Errorf("worktree banner should name the 'feature' branch: %s", wt)
+	}
+}
+
 // A worktree on a merged branch and the branch itself are cleared by the two
 // phases run in order: worktrees first, then branches.
 func TestPruneWorktreeThenBranch(t *testing.T) {
