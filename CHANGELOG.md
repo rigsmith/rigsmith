@@ -1,5 +1,37 @@
 # github.com/rigsmith/rigsmith
 
+## 1.2.0
+### Minor Changes
+
+- Add `shiprig release --local`: run the full release pipeline for real but skip every network step (`publish`/`push`/`release`/`issues`), producing real local artifacts. Composes with `--only`/`--skip`/`--from`/`--to`; mutually exclusive with `--dry-run`/`--dry-build`.
+  
+- Velopack packaging is no longer .NET-only — the adapter now overlays **dotnet, cargo, node, and go**, releasing a `velopack.json`/`.jsonc` beside any of their manifests as a self-updating desktop app. `base` pins the ecosystem (else auto-detected); `build.command` builds the pack directory for non-dotnet bases (dotnet still auto-runs `dotnet publish`). Existing dotnet configs are unchanged.
+  
+
+### Patch Changes
+
+- The release `build` step now inherits the run's resolved environment (`.env`/`.env.local` + ambient), so a desktop signer (Velopack/Tauri/Electron) gets secrets like `AZURE_*` straight from `.env.local` — no separate `source` or `signing.env` entry needed.
+  
+- `rig`'s dev-verb discovery no longer double-counts a project that has a Velopack (or Electron/Tauri) overlay file beside it. Overlay ecosystems re-emit their base-language project for the release path; surfacing them as dev targets produced a duplicate that, because `topoSort` keys by name, shadowed the real base target with an overlay copy that maps no `run`/`build`/`test` verb. The visible symptom: a configured `defaultProject` naming such an app "didn't match a runnable project", so a bare `rig run` opened the picker instead of launching it. Dev verbs now act only on the base ecosystem.
+  
+- `rig prune` now opens with a one-line banner — working directory, current branch, and primary-checkout-vs-worktree — so it's clear which repo you're tidying and that the current checkout is protected.
+  
+- The interactive `rig run` picker gains a `d` key that sets the highlighted project as the repo's `defaultProject` (so a bare `rig run` launches it without the picker), or clears it when pressed on the project that already is the default. The current default is marked with a green "★ default" tag in the list.
+  
+- Fix Velopack Windows packaging when cross-compiling from macOS/Linux: the adapter now prepends vpk's `[win]` directive and signs via a new host-aware `windows.signTemplate` (native Windows still uses `windows.trustedSigning`). `$VAR`s in the template expand from the build env, and `--storepass` tokens are redacted from echoed commands.
+  
+
+### Velopack
+
+- Velopack: host-agnostic Windows signing, a real install DMG, and legible failures.
+  
+  - **Azure Trusted Signing now works from any host with no hand-written `signTemplate`.** When cross-compiling a Windows build from macOS/Linux, the adapter mints a Trusted Signing token from the `AZURE_*` service-principal creds in the build env and synthesizes the `jsign` command itself (RFC3161 timestamp + `--signExclude '\.dll$'` baked in). On Windows it still uses vpk's native `--azureTrustedSignFile`. A pre-set `AZURE_CODESIGN_TOKEN` is honored, and an explicit `signTemplate` still overrides. Missing creds now fail fast naming exactly which `AZURE_*` variable is absent, instead of an opaque signer error.
+  - **macOS DMG is now a proper installer window** — the `.app` staged next to an `/Applications` symlink, arranged in icon view (drag-to-install), with a plain-symlink DMG fallback when Finder scripting is unavailable.
+  - **The `version` step no longer fails for a project in a subdirectory.** The changerig version writer now populates `Package.Dir`, and the Velopack overlay falls back to the manifest's directory when `Dir` is empty — previously it resolved the base ecosystem at the repo root and errored.
+  - **`0.0.0` no longer breaks `--dry-build`/`--only build`:** a skipped `version` step packs a valid `0.0.1` snapshot; a real build at `0.0.0` errors with guidance.
+  - **Failures are legible.** Command errors now include the tool's stdout (not just stderr) — vpk writes its fatal line to stdout, so errors that read `exit status 255:` now carry the real reason. The release TUI's failure panel surfaces the failing command's output instead of only `step 'X' failed`.
+  
+
 ## 1.1.0
 ### 🩹 Fixes
 
