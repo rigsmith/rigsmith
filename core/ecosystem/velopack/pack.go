@@ -602,6 +602,11 @@ func layoutDmg(ctx context.Context, repoRoot string, env []string, volName, main
 		"-volname", volName, "-srcfolder", stage, "-fs", "HFS+", "-format", "UDRW", "-ov", rw); err != nil {
 		return err
 	}
+	// Free the canonical /Volumes/<volName> first so this image mounts under it
+	// rather than a "<volName> 1" duplicate. The background-picture alias Finder
+	// writes is tied to the build-time mount name, so a duplicate name here would
+	// produce a dmg whose background fails to render on a user's clean mount.
+	detachStaleVolumes(ctx, repoRoot, env, volName)
 	out, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "attach", rw, "-nobrowse", "-readwrite", "-noverify")
 	if err != nil {
 		return err
@@ -694,6 +699,23 @@ end tell`, disk, 200+w, 120+h, bgClause, mainExe+".app", appX, iconY, appsX, ico
 		return err
 	}
 	return nil
+}
+
+// detachStaleVolumes unmounts any volume already mounted under name (including
+// numbered duplicates like "name 1"), so the image about to be attached takes the
+// canonical /Volumes/name. Best-effort — a volume that won't detach just means
+// this build mounts as a duplicate, the same as before.
+func detachStaleVolumes(ctx context.Context, repoRoot string, env []string, name string) {
+	base := filepath.Join("/Volumes", name)
+	candidates := []string{base}
+	for i := 1; i <= 9; i++ {
+		candidates = append(candidates, fmt.Sprintf("%s %d", base, i))
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			_, _, _ = runCmdEnv(ctx, repoRoot, env, "hdiutil", "detach", p, "-force")
+		}
+	}
 }
 
 // detachVolume unmounts a DMG, retrying while the volume is briefly busy (Finder
