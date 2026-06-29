@@ -110,14 +110,15 @@ func (a *Adapter) Discover(ctx context.Context, req plugin.DiscoverRequest) (plu
 			return plugin.DiscoverResponse{}, err
 		}
 		for _, pkg := range bresp.Packages {
-			if seen[pkg.Dir] || !hasVelopackConfig(filepath.Join(req.RepoRoot, pkg.Dir)) {
+			dir := filepath.Join(req.RepoRoot, pkg.Dir)
+			if seen[pkg.Dir] || !hasVelopackConfig(dir) {
 				continue
 			}
-			cfg, err := loadConfig(filepath.Join(req.RepoRoot, pkg.Dir))
-			if err != nil {
-				return plugin.DiscoverResponse{}, err
-			}
-			if cfg.Base != "" && cfg.Base != baseID {
+			// Consult only the `base` pin, tolerant of a malformed/invalid config:
+			// a broken velopack file must not fail workspace-wide discovery — it is
+			// still claimed here and the parse/validate error surfaces later in
+			// Artifacts (loadConfig), scoped to that one app.
+			if pin := configBase(dir); pin != "" && pin != baseID {
 				continue // velopack file pins a different base for this directory
 			}
 			seen[pkg.Dir] = true

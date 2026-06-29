@@ -166,6 +166,30 @@ func loadConfig(dir string) (Config, error) {
 	return cfg.withDefaults(), cfg.validate()
 }
 
+// configBase reads only the `base` pin from the velopack file in dir, tolerant of
+// a missing, malformed, or invalid config (returns ""). Discovery uses this rather
+// than loadConfig so a broken velopack file never fails workspace-wide discovery;
+// the full parse/validate happens later in Artifacts, where the error is scoped to
+// the one app being built.
+func configBase(dir string) string {
+	for name := range configNames {
+		p := filepath.Join(dir, name)
+		if !fileExists(p) {
+			continue
+		}
+		content, err := os.ReadFile(p)
+		if err != nil {
+			return ""
+		}
+		var c struct {
+			Base string `json:"base"`
+		}
+		_ = jsonc.Unmarshal(content, &c) // tolerate parse errors: base stays ""
+		return c.Base
+	}
+	return ""
+}
+
 // withDefaults fills the optional fields that have sensible defaults.
 func (c Config) withDefaults() Config {
 	if c.PackTitle == "" {

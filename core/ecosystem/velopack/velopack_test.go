@@ -98,6 +98,24 @@ func TestDiscoverAcrossBases(t *testing.T) {
 	}
 }
 
+// TestDiscoverToleratesMalformedConfig pins that a broken velopack file does not
+// fail workspace-wide discovery — the app is still claimed (the error surfaces
+// later in Artifacts, scoped to that one app), matching the old dotnet-only flow
+// that never parsed the config during discovery.
+func TestDiscoverToleratesMalformedConfig(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "App.csproj"), csprojWithVelopack)
+	writeFile(t, filepath.Join(root, "app", "velopack.json"), `{ not valid json `)
+
+	resp, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root, SourcePath: "."})
+	if err != nil {
+		t.Fatalf("a malformed velopack.json must not fail workspace discovery: %v", err)
+	}
+	if len(resp.Packages) != 1 || resp.Packages[0].Dir != "app" {
+		t.Fatalf("malformed-config app should still be claimed: %+v", resp.Packages)
+	}
+}
+
 // TestSetVersionDelegatesToBase confirms a bump on a non-dotnet velopack app is
 // written into the base manifest (here a Cargo.toml) by the base adapter.
 func TestSetVersionDelegatesToBase(t *testing.T) {
