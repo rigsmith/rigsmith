@@ -74,6 +74,7 @@ type runPickerModel struct {
 	root         string
 	scripts      []scriptEntry
 	entries      []runEntry
+	defaultName  string // configured defaultProject, marked in the list and toggled with `d`
 	showExcluded bool
 	sort         sortMode
 	filtering    bool
@@ -103,7 +104,7 @@ func newRunPickerModel(sections []runPickSection) runPickerModel {
 // targets itself (so it can show excluded ones) and dedups the passed scripts
 // out of Projects.
 func newRunPickerLive(ctx context.Context, root string, scripts []scriptEntry) runPickerModel {
-	m := runPickerModel{ctx: ctx, root: root, scripts: scripts}
+	m := runPickerModel{ctx: ctx, root: root, scripts: scripts, defaultName: defaultProjectFor(root)}
 	m.entries = runTargetEntries(ctx, root)
 	m.rebuild()
 	return m
@@ -248,6 +249,10 @@ func (m runPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.live() {
 			return m.includeAtCursor()
 		}
+	case "d":
+		if m.live() {
+			return m.setDefaultAtCursor()
+		}
 	case "enter", "right", "l":
 		if m.live() {
 			m.choose()
@@ -373,6 +378,32 @@ func (m runPickerModel) includeAtCursor() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// setDefaultAtCursor makes the highlighted project the run default — writing
+// `defaultProject` to .rig.json so a bare `rig run` launches it without the
+// picker — or clears the default when the highlighted project already is it
+// (a toggle). Scripts can't be a default project, so it no-ops with a status.
+func (m runPickerModel) setDefaultAtCursor() (tea.Model, tea.Cmd) {
+	r, ok := m.projectAtCursor()
+	if !ok {
+		m.status = "default applies to projects, not scripts"
+		return m, nil
+	}
+	if defaultMatches(m.defaultName, r.name) {
+		status, ok := clearRunDefault(m.root)
+		if ok {
+			m.defaultName = ""
+		}
+		m.status = status
+		return m, nil
+	}
+	status, ok := setRunDefault(m.root, r.name)
+	if ok {
+		m.defaultName = r.name
+	}
+	m.status = status
+	return m, nil
+}
+
 func (m runPickerModel) projectAtCursor() (runPickRow, bool) {
 	if m.cursor < 0 || m.cursor >= len(m.flat) {
 		return runPickRow{}, false
@@ -401,8 +432,9 @@ func (m runPickerModel) projectNames() []string {
 }
 
 var (
-	runPickHeader = lipgloss.NewStyle().Bold(true).Foreground(brandMuted)
-	runPickExcl   = lipgloss.NewStyle().Strikethrough(true).Foreground(brandMuted)
+	runPickHeader  = lipgloss.NewStyle().Bold(true).Foreground(brandMuted)
+	runPickExcl    = lipgloss.NewStyle().Strikethrough(true).Foreground(brandMuted)
+	runPickDefault = lipgloss.NewStyle().Foreground(brandGreen)
 )
 
 func (m runPickerModel) View() string {
@@ -460,7 +492,11 @@ func (m runPickerModel) renderRow(r runPickRow, selected bool) string {
 		name = runPickExcl.Render(name)
 	}
 	meta := dimStyle.Render(padRight(r.eco, m.ecoW) + "  " + r.path)
-	return gutter + name + "  " + meta
+	row := gutter + name + "  " + meta
+	if !r.script && defaultMatches(m.defaultName, r.name) {
+		row += "  " + runPickDefault.Render("★ default")
+	}
+	return row
 }
 
 func (m runPickerModel) hint() string {
@@ -470,7 +506,7 @@ func (m runPickerModel) hint() string {
 	case m.filtering:
 		return "type to filter · ↑/↓ move · enter run · esc clear"
 	default:
-		return "enter run · / filter · e sort · x/i exclude/include · a show/hide excluded · q quit"
+		return "enter run · / filter · d set default · e sort · x/i exclude/include · a show/hide excluded · q quit"
 	}
 }
 

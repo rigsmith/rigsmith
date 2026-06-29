@@ -457,18 +457,29 @@ func offerRunChoice(cmd *cobra.Command, root string, tasks []allTask, scripts []
 // "Acme.Desktop" → "Desktop"). ok=false when no default is set or it names no
 // runnable task — callers then fall back to the picker.
 func preferredRunTask(tasks []allTask, defaultProject string) (allTask, bool) {
-	q := strings.TrimSpace(defaultProject)
-	if q == "" {
+	if strings.TrimSpace(defaultProject) == "" {
 		return allTask{}, false
 	}
 	for _, t := range tasks {
-		if strings.EqualFold(t.name, q) ||
-			strings.EqualFold(shortName(t.name), q) ||
-			strings.EqualFold(dotShortName(t.name), q) {
+		if defaultMatches(defaultProject, t.name) {
 			return t, true
 		}
 	}
 	return allTask{}, false
+}
+
+// defaultMatches reports whether stored (a configured defaultProject) names the
+// project called name — the full / slash-short / dot-short, case-insensitive
+// match preferredRunTask uses, so the run picker marks exactly the row a bare
+// `rig run` would launch.
+func defaultMatches(stored, name string) bool {
+	q := strings.TrimSpace(stored)
+	if q == "" {
+		return false
+	}
+	return strings.EqualFold(name, q) ||
+		strings.EqualFold(shortName(name), q) ||
+		strings.EqualFold(dotShortName(name), q)
 }
 
 // dotShortName is the segment after the last '.' (a .NET project's short name).
