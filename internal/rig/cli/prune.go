@@ -283,7 +283,9 @@ func pruneContextLine(ctx context.Context, repo *gitrepo.Repo, root string) stri
 		cwd = root
 	}
 	branch, _ := repo.CurrentBranch(ctx)
-	if branch == "" {
+	// `git rev-parse --abbrev-ref HEAD` yields the literal "HEAD" (not "") when
+	// detached, so treat both as detached.
+	if branch == "" || branch == "HEAD" {
 		branch = "(detached HEAD)"
 	}
 	// The primary checkout is the first entry of `git worktree list`; anything else

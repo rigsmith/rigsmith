@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -72,6 +73,15 @@ func TestPruneContextLine(t *testing.T) {
 	}
 	if !strings.Contains(wt, "feature") {
 		t.Errorf("worktree banner should name the 'feature' branch: %s", wt)
+	}
+
+	// Detached HEAD: `git rev-parse --abbrev-ref HEAD` returns the literal "HEAD",
+	// which the banner relabels rather than showing as a branch name.
+	if out, err := exec.Command("git", "-C", r.Dir, "checkout", "--detach", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("detach HEAD: %v: %s", err, out)
+	}
+	if det := pruneContextLine(ctx, r, r.Dir); !strings.Contains(det, "detached HEAD") {
+		t.Errorf("detached checkout should be labeled detached, not 'HEAD': %s", det)
 	}
 }
 
