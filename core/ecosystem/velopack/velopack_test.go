@@ -179,12 +179,19 @@ func fullCfg() Config {
 		Icon:     Icon{Macos: "app/halyards.icns", Windows: "app/halyards.ico"},
 		Output:   "dist/releases",
 		Macos:    Macos{BundleId: "com.acme.halyards", SignIdentity: "Developer ID Application: Acme", NotaryProfile: "halyards-notary"},
-		Windows:  Windows{TrustedSigning: &TrustedSigning{Endpoint: "https://eus.codesigning.azure.net", Account: "Acme", Profile: "Acme"}},
+		Windows: Windows{
+			SignTemplate:   "jsign --storetype TRUSTEDSIGNING --keystore https://eus.codesigning.azure.net --storepass TOKEN --alias Acme/Acme {{file}}",
+			TrustedSigning: &TrustedSigning{Endpoint: "https://eus.codesigning.azure.net", Account: "Acme", Profile: "Acme"},
+		},
 	}
 }
 
 func TestBuildPackArgsMacSigned(t *testing.T) {
-	got := buildPackArgs(fullCfg(), "osx-arm64", "dist/publish/osx-arm64", "dist/releases", "1.0.0", false, "")
+	// macOS channel on a macOS host: native, no directive.
+	got := buildPackArgs(fullCfg(), "osx-arm64", "dist/publish/osx-arm64", "dist/releases", "1.0.0", false, osMac, "")
+	if got[0] != "pack" {
+		t.Errorf("native macOS build must not carry a cross directive, got %q", got[0])
+	}
 	assertHas(t, got, "--packId", "Halyards")
 	assertHas(t, got, "--mainExe", "Halyards") // no .exe on macOS
 	assertHas(t, got, "--bundleId", "com.acme.halyards")
@@ -192,13 +199,13 @@ func TestBuildPackArgsMacSigned(t *testing.T) {
 	assertHas(t, got, "--notaryProfile", "halyards-notary")
 	assertHas(t, got, "--channel", "osx-arm64")
 	assertHas(t, got, "--icon", "app/halyards.icns")
-	if contains(got, "--azureTrustedSignFile") {
-		t.Error("macOS pack must not carry the Azure signing flag")
+	if contains(got, "--azureTrustedSignFile") || contains(got, "--signTemplate") {
+		t.Error("macOS pack must not carry a Windows signing flag")
 	}
 }
 
 func TestBuildPackArgsMacSnapshotIsUnsigned(t *testing.T) {
-	got := buildPackArgs(fullCfg(), "osx-arm64", "p", "o", "1.0.0", true, "")
+	got := buildPackArgs(fullCfg(), "osx-arm64", "p", "o", "1.0.0", true, osMac, "")
 	if contains(got, "--signAppIdentity") || contains(got, "--notaryProfile") {
 		t.Errorf("snapshot pack must be unsigned, got %v", got)
 	}
@@ -206,26 +213,97 @@ func TestBuildPackArgsMacSnapshotIsUnsigned(t *testing.T) {
 	assertHas(t, got, "--bundleId", "com.acme.halyards")
 }
 
-func TestBuildPackArgsWindowsAzure(t *testing.T) {
-	got := buildPackArgs(fullCfg(), "win-x64", "dist/publish/win-x64", "dist/releases", "1.0.0", false, "dist/trustedsigning.json")
+// TestBuildPackArgsWindowsNativeAzure: a Windows channel built ON Windows uses
+// vpk's native Azure Trusted Signing and no cross directive.
+func TestBuildPackArgsWindowsNativeAzure(t *testing.T) {
+	got := buildPackArgs(fullCfg(), "win-x64", "dist/publish/win-x64", "dist/releases", "1.0.0", false, osWindows, "dist/trustedsigning.json")
+	if got[0] != "pack" {
+		t.Errorf("native Windows build must not carry a cross directive, got %q", got[0])
+	}
 	assertHas(t, got, "--mainExe", "Halyards.exe") // .exe appended on Windows
 	assertHas(t, got, "--icon", "app/halyards.ico")
 	assertHas(t, got, "--azureTrustedSignFile", "dist/trustedsigning.json")
+	if contains(got, "--signTemplate") {
+		t.Error("native Windows must use --azureTrustedSignFile, not --signTemplate")
+	}
 	if contains(got, "--bundleId") || contains(got, "--signAppIdentity") {
 		t.Error("Windows pack must not carry macOS flags")
 	}
 }
 
-func TestBuildPackArgsWindowsSnapshotNoAzure(t *testing.T) {
-	got := buildPackArgs(fullCfg(), "win-x64", "p", "o", "1.0.0", true, "")
+// TestBuildPackArgsWindowsCrossSignTemplate: a Windows channel cross-compiled from
+// macOS gets the [win] directive and signs via --signTemplate (jsign) — vpk's
+// --azureTrustedSignFile isn't available there.
+func TestBuildPackArgsWindowsCrossSignTemplate(t *testing.T) {
+	got := buildPackArgs(fullCfg(), "win-x64", "dist/publish/win-x64", "dist/releases", "1.0.0", false, osMac, "")
+	if got[0] != "[win]" {
+		t.Errorf("cross-compiled Windows build must start with the [win] directive, got %q", got[0])
+	}
+	assertHas(t, got, "--mainExe", "Halyards.exe")
+	assertHas(t, got, "--signTemplate", fullCfg().Windows.SignTemplate)
+	assertHas(t, got, "--signExclude", `\.dll$`)
 	if contains(got, "--azureTrustedSignFile") {
+		t.Error("cross-compiled Windows must not use the Windows-host-only --azureTrustedSignFile")
+	}
+	// vpk's {{file}} placeholder survives untouched.
+	if !contains(got, fullCfg().Windows.SignTemplate) || !strings.Contains(fullCfg().Windows.SignTemplate, "{{file}}") {
+		t.Error("--signTemplate must pass through verbatim, including {{file}}")
+	}
+}
+
+func TestBuildPackArgsWindowsSnapshotNoSigning(t *testing.T) {
+	got := buildPackArgs(fullCfg(), "win-x64", "p", "o", "1.0.0", true, osMac, "")
+	if contains(got, "--azureTrustedSignFile") || contains(got, "--signTemplate") {
 		t.Errorf("snapshot Windows pack must be unsigned, got %v", got)
+	}
+	// But the cross directive is about target platform, not signing — still present.
+	if got[0] != "[win]" {
+		t.Errorf("cross snapshot still needs the [win] directive, got %q", got[0])
+	}
+}
+
+func TestCrossDirective(t *testing.T) {
+	cases := []struct {
+		ch   string
+		host targetOS
+		want string
+	}{
+		{"win-x64", osMac, "[win]"},   // cross from macOS
+		{"win-x64", osLinux, "[win]"}, // cross from Linux
+		{"win-x64", osWindows, ""},    // native Windows
+		{"osx-arm64", osMac, ""},      // native macOS
+		{"osx-arm64", osWindows, "[osx]"},
+		{"linux-x64", osMac, "[linux]"}, // cross from macOS
+		{"linux-x64", osLinux, ""},      // native Linux
+	}
+	for _, c := range cases {
+		if got := crossDirective(c.ch, c.host); got != c.want {
+			t.Errorf("crossDirective(%q, %v) = %q, want %q", c.ch, c.host, got, c.want)
+		}
+	}
+}
+
+func TestRedactCommandStorepass(t *testing.T) {
+	args := []string{"[win]", "pack", "--signTemplate", "jsign --storepass SUPERSECRET --alias a/b {{file}}", "--signExclude", `\.dll$`}
+	got := redactCommand(args)
+	if strings.Contains(got, "SUPERSECRET") {
+		t.Errorf("storepass token leaked in echoed command: %s", got)
+	}
+	if !strings.Contains(got, "--storepass ***") {
+		t.Errorf("storepass not redacted to ***: %s", got)
+	}
+	if !strings.Contains(got, "{{file}}") {
+		t.Errorf("redaction must not touch {{file}}: %s", got)
+	}
+	// `--storepass=VALUE` form is redacted too.
+	if g := redactCommand([]string{"x --storepass=abc123 y"}); strings.Contains(g, "abc123") {
+		t.Errorf("--storepass=VALUE not redacted: %s", g)
 	}
 }
 
 func TestBuildPackArgsOmitsEmptyOptionalFlags(t *testing.T) {
 	min := Config{PackId: "App", PackTitle: "App", MainExe: "App", Channels: []string{"osx-arm64"}, Output: "out"}
-	got := buildPackArgs(min, "osx-arm64", "p", "out", "1.0.0", false, "")
+	got := buildPackArgs(min, "osx-arm64", "p", "out", "1.0.0", false, osMac, "")
 	for _, f := range []string{"--packAuthors", "--icon", "--bundleId", "--signAppIdentity", "--notaryProfile"} {
 		if contains(got, f) {
 			t.Errorf("unset optional flag %s should be omitted, got %v", f, got)

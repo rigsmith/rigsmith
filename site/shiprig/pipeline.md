@@ -307,19 +307,30 @@ work exactly as for any .NET project.)
   "macos":   { "bundleId": "com.acme.myapp",
                "signIdentity": "Developer ID Application: …",
                "notaryProfile": "myapp-notary" },      // xcrun notarytool profile
-  "windows": { "trustedSigning": { "endpoint": "…", "account": "…", "profile": "…" } }
+  "windows": {
+    // cross-compiling from macOS/Linux: a custom signer (jsign), {{file}} per binary
+    "signTemplate": "jsign --storetype TRUSTEDSIGNING --keystore … --storepass $TOKEN --alias acct/profile {{file}}",
+    // building natively on Windows: vpk's native Azure Trusted Signing
+    "trustedSigning": { "endpoint": "…", "account": "…", "profile": "…" }
+  }
 }
 ```
 
 - **Channels are RIDs.** Each is a per-architecture self-update feed the app
   subscribes to. macOS channels build only on a macOS host; Windows/Linux
-  cross-build anywhere. `--dry-build` packs everything **unsigned** for a fast
-  local rehearsal.
+  cross-build anywhere — vpk gets the `[win]` / `[linux]` cross directive
+  automatically. `--dry-build` packs everything **unsigned** for a fast local
+  rehearsal.
 - **Signing is build-time**, inside `vpk pack` (not the `sign` step). The
   non-secret identifiers live in `velopack.json`; the secrets (the macOS `.p12`
-  password, `AZURE_CLIENT_SECRET`) come from the [signing
+  password, the signing token) come from the [signing
   env](#signing-desktop-ecosystems) (masked) or simply from `.env.local` — the
-  build step inherits the run's [environment](#environment-env).
+  build step inherits the run's [environment](#environment-env). **Windows signing
+  is host-aware**: cross-compiling from macOS/Linux uses `windows.signTemplate`
+  (e.g. jsign), while a native Windows build uses `windows.trustedSigning` (vpk's
+  Azure Trusted Signing) — set whichever matches where you build, the adapter
+  picks by host. A `--storepass` token in a `signTemplate` is redacted from any
+  echoed command.
 - **Updates need no `vpk upload`.** Velopack's in-app updater finds updates by
   listing a release's assets over the GitHub API — the `releases.<channel>.json`
   index `vpk pack` produces plus the `.nupkg` payloads — so attaching those to the

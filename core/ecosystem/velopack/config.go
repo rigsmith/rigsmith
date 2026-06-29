@@ -70,10 +70,27 @@ type Macos struct {
 // WrapDmg reports whether the macOS .app should be wrapped in a .dmg (default true).
 func (m Macos) WrapDmg() bool { return m.Dmg == nil || *m.Dmg }
 
-// Windows holds Windows packaging settings.
+// Windows holds Windows packaging settings. Code signing is host-dependent
+// because vpk exposes different flags on each side:
+//
+//   - Building ON Windows (e.g. a CI runner): vpk's native Azure Trusted Signing
+//     (--azureTrustedSignFile) — configured by TrustedSigning.
+//   - Cross-compiling FROM macOS/Linux (the local-first path): that flag isn't
+//     available, so a custom --signTemplate command (jsign) is used — SignTemplate.
+//
+// Set whichever matches where you build (or both, to be correct everywhere); the
+// adapter picks by host.
 type Windows struct {
-	// TrustedSigning configures Azure Trusted Signing for the Setup.exe. Empty
-	// means build unsigned.
+	// SignTemplate is a custom signing command for a Windows build cross-compiled
+	// from a non-Windows host, passed verbatim to `vpk [win] pack --signTemplate`.
+	// vpk runs it once per binary, substituting `{{file}}` for the path — e.g. a
+	// jsign + Azure Trusted Signing invocation. The adapter also passes
+	// `--signExclude '\.dll$'` so only the .exe / Setup.exe are signed. Empty
+	// leaves a cross-compiled build unsigned.
+	SignTemplate string `json:"signTemplate,omitempty"`
+	// TrustedSigning configures vpk's native Azure Trusted Signing
+	// (--azureTrustedSignFile), used only when building on a Windows host. Empty
+	// leaves a native Windows build unsigned.
 	TrustedSigning *TrustedSigning `json:"trustedSigning,omitempty"`
 }
 
