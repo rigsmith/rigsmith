@@ -9,8 +9,8 @@ import (
 )
 
 // ReleasePackage is one package in the release, carrying the values that back
-// the built-in ${version.*} / ${changelog.*} / ${tag.*} / ${releaseUrl.*}
-// interpolation variables.
+// the built-in ${version.*} / ${lastVersion.*} / ${nextVersion.*} /
+// ${changelog.*} / ${tag.*} / ${releaseUrl.*} interpolation variables.
 type ReleasePackage struct {
 	// Name is the full manifest name, e.g. "@acme/web". Used in the ${versions}
 	// aggregate and accepted as an exact address alias.
@@ -19,9 +19,15 @@ type ReleasePackage struct {
 	Key string
 	// Ecosystem is the ecosystem id ("node" | "dotnet" | "go" | "rust").
 	Ecosystem string
-	// Version is the package's new version for this release.
+	// Version is the package's new (bumped) version for this release — the one
+	// the version step writes. It backs ${version} and its alias ${nextVersion}.
 	Version string
-	// Tag is the package's git tag (e.g. "@acme/web@2.1.0").
+	// LastVersion is the version being released *from* — the manifest value
+	// before the bump. It backs ${lastVersion}, for steps that need the prior
+	// version (e.g. a "v${lastVersion}...v${version}" compare URL).
+	LastVersion string
+	// Tag is the package's git tag (e.g. "@acme/web@2.1.0"), built from the new
+	// version.
 	Tag string
 	// Changelog is the release-notes body for this version, if any.
 	Changelog string
@@ -102,6 +108,10 @@ func (rv *releaseVars) resolve(key string) (string, bool, error) {
 	switch {
 	case key == "versions":
 		return rv.aggregate(func(p ReleasePackage) string { return p.Name + "@" + p.Version }), true, nil
+	case key == "nextVersions":
+		return rv.aggregate(func(p ReleasePackage) string { return p.Name + "@" + p.Version }), true, nil
+	case key == "lastVersions":
+		return rv.aggregate(func(p ReleasePackage) string { return p.Name + "@" + p.LastVersion }), true, nil
 	case key == "tags":
 		return rv.aggregate(func(p ReleasePackage) string { return p.Tag }), true, nil
 	case key == "releaseUrls":
@@ -111,6 +121,12 @@ func (rv *releaseVars) resolve(key string) (string, bool, error) {
 
 	case key == "version" || strings.HasPrefix(key, "version."):
 		return rv.scalar(key, "version", "versions", func(p ReleasePackage) string { return p.Version })
+	case key == "nextVersion" || strings.HasPrefix(key, "nextVersion."):
+		// Alias of ${version} — the new version, named for clarity in steps that
+		// also reference ${lastVersion}.
+		return rv.scalar(key, "nextVersion", "nextVersions", func(p ReleasePackage) string { return p.Version })
+	case key == "lastVersion" || strings.HasPrefix(key, "lastVersion."):
+		return rv.scalar(key, "lastVersion", "lastVersions", func(p ReleasePackage) string { return p.LastVersion })
 	case key == "changelog" || strings.HasPrefix(key, "changelog."):
 		return rv.scalar(key, "changelog", "", func(p ReleasePackage) string { return p.Changelog })
 	case key == "tag" || strings.HasPrefix(key, "tag."):

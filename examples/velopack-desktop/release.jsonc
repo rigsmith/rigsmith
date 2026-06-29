@@ -1,0 +1,73 @@
+{
+  // shiprig release pipeline for a Velopack desktop app released entirely
+  // LOCALLY (no NuGet/registry publish, no CI handoff). One command cuts a
+  // release:  shiprig release   (preview first with: shiprig release --dry-run)
+  //
+  //   version  bump csproj <Version> from .changeset entries + write CHANGELOG
+  //   commit   commit ONLY the version-managed files (scoped via `paths`)
+  //   build    ./pack.sh all — Velopack builds the SIGNED, self-updating artifacts:
+  //              • macOS arm64 + x64: notarized .app wrapped in a .dmg + update feed
+  //              • Windows x64: Azure-signed Setup.exe + update feed
+  //   tag      native step — creates the vX.Y.Z tag (config `tagTemplate`)
+  //   push     push the commit + tag (confirm-gated — point of no return)
+  //   release  ./release-github.sh — create the GitHub Release (notes = this
+  //            version's changelog), push each channel's Velopack feed + the
+  //            Windows Setup.exe (vpk upload github), and attach the macOS dmgs
+  //
+  // Dropped vs the scaffold: `sign` (signing happens inside pack.sh), `publish`
+  // (no registry), `issues`.
+  //
+  // ${version} is the NEW (bumped) version — resolved from the pending changesets
+  // at plan time, so it is correct in --dry-run and in every step (no more reading
+  // it back out of the csproj with grep/cut). ${lastVersion} carries the prior
+  // version if a step needs it (e.g. a compare URL).
+
+  "tool": "shiprig",
+
+  // pack.sh is a bash script and the gh upload uses shell globs, so run through
+  // the OS shell, not the portable one. (The version-reading awk/grep/cut that
+  // used to force this is gone — only the external scripts need system shell now.)
+  "shell": "system",
+
+  "order": ["version", "commit", "build", "tag", "push", "release"],
+
+  "steps": {
+    // Scope the release commit to the version-managed files. Without `paths` the
+    // native commit does `git add -A`, which in this repo (usually carrying
+    // unrelated WIP) would sweep everything into the release commit.
+    "commit": {
+      "paths": [
+        "Halyards.Desktop/Halyards.Desktop.csproj",
+        "Halyards.Desktop/CHANGELOG.md",
+        ".changeset"
+      ],
+      "message": "chore: release v${version}"
+    },
+
+    // Replace the native .NET build (dotnet pack → .nupkg) with Velopack
+    // packaging. pack.sh sources Halyards.Desktop/.env and sets up Java itself.
+    // Slow (per-arch publish + notarization + Windows signing) — preview with
+    // --dry-run. Produces dist/releases/ (dmgs + Setup.exe + update feeds).
+    "build": {
+      "name": "Package (Velopack: notarized dmgs + Azure-signed Setup.exe + update feeds)",
+      "run": "./pack.sh all"
+    },
+
+    // The tag step is now the NATIVE step: a single-app repo defaults to the
+    // annotated vX.Y.Z tag (instead of Halyards.Desktop@X.Y.Z), so no custom
+    // `run` and no config are needed. (To override, set tagTemplate in
+    // .changeset/config.jsonc.)
+
+    // The tag push is the point of no return — pause before it leaves the machine.
+    "push": { "confirm": true },
+
+    // Custom GitHub Release at the v tag. release-github.sh creates the release
+    // with the changelog notes, pushes each Velopack channel feed + the Windows
+    // Setup.exe (vpk upload github), and attaches the macOS dmgs. ${version} is
+    // the bumped version, so the script can take it as an argument instead of
+    // re-deriving it from the csproj.
+    "release": {
+      "run": "./release-github.sh ${version}"
+    }
+  }
+}

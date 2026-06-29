@@ -231,6 +231,16 @@ type Config struct {
 	// "use VersionStrategy for every package". Runtime-only, never serialized.
 	PerPackageStrategy map[string]VersionStrategy `json:"-"`
 
+	// TagTemplate overrides the git tag name for a release. Empty (the default)
+	// uses the canonical tag: `<name>@<version>` for a multi-package repo, the
+	// module-path `dir/vX.Y.Z` for Go, and — for a single-app repo (exactly one
+	// discovered package, non-Go) — the bare `vX.Y.Z`, since there is no sibling
+	// name to disambiguate. Set it to e.g. "v${version}" to force that convention
+	// anywhere, or to any other shape. Supported placeholders: ${version} and
+	// ${name}. Honored consistently by the tag, publish, forge-release, and ${tag}
+	// variable paths so the release attaches to the tag that was pushed.
+	TagTemplate string `json:"tagTemplate,omitempty"`
+
 	// Format, Changelog, and Commit are raw because their JSON shape is polymorphic.
 	Format    json.RawMessage `json:"format,omitempty"`
 	Changelog json.RawMessage `json:"changelog,omitempty"`

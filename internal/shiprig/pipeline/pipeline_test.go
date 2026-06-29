@@ -80,6 +80,29 @@ func singleShellAction(t *testing.T, step ResolvedStep) string {
 	return step.Action[0].Shell()
 }
 
+func TestResolveCommitStagesAllByDefault(t *testing.T) {
+	steps := mustResolve(t, &Config{}, ResolveOptions{})
+	commit := findStep(t, steps, "commit")
+	if len(commit.Action) < 1 || commit.Action[0].IsShell() {
+		t.Fatalf("commit action[0] should be an argv command, got %+v", commit.Action)
+	}
+	if got := commit.Action[0].Argv(); !equalStrings(got, []string{"git", "add", "-A"}) {
+		t.Errorf("default commit staging = %v, want [git add -A]", got)
+	}
+}
+
+func TestResolveCommitScopedToPaths(t *testing.T) {
+	cfg := &Config{Steps: map[string]*StepConfig{
+		"commit": {Paths: []string{"Halyards.Desktop/Halyards.Desktop.csproj", ".changeset"}},
+	}}
+	steps := mustResolve(t, cfg, ResolveOptions{})
+	commit := findStep(t, steps, "commit")
+	want := []string{"git", "add", "--", "Halyards.Desktop/Halyards.Desktop.csproj", ".changeset"}
+	if got := commit.Action[0].Argv(); !equalStrings(got, want) {
+		t.Errorf("scoped commit staging = %v, want %v", got, want)
+	}
+}
+
 func TestResolveUsesDefaultOrderWhenNoneConfigured(t *testing.T) {
 	steps := mustResolve(t, &Config{}, ResolveOptions{})
 

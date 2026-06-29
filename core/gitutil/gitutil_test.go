@@ -145,6 +145,40 @@ func TestPackageTag(t *testing.T) {
 	}
 }
 
+// TestRenderTag pins the tag resolution: an explicit template wins and expands
+// ${version}/${name}; otherwise a single-app repo defaults to vX.Y.Z (except Go,
+// whose module-path tags are required), and a multi-package repo keeps the
+// canonical PackageTag.
+func TestRenderTag(t *testing.T) {
+	cases := []struct {
+		name                  string
+		template, eco, dirRel string
+		pkg, version          string
+		singleApp             bool
+		want                  string
+	}{
+		// Multi-package, no template => canonical per-ecosystem tag.
+		{"multi node", "", "node", "", "my-pkg", "1.2.0", false, "my-pkg@1.2.0"},
+		{"multi go", "", "go", "core", "core", "1.2.0", false, "core/v1.2.0"},
+		// Single-app, no template => vX.Y.Z default for non-Go ecosystems.
+		{"single dotnet auto", "", "dotnet", "", "Halyards.Desktop", "1.0.0", true, "v1.0.0"},
+		{"single node auto", "", "node", "", "my-app", "2.1.0", true, "v2.1.0"},
+		// Go is excluded from the single-app default — module-path tag stands.
+		{"single go submodule keeps prefix", "", "go", "core", "core", "1.2.0", true, "core/v1.2.0"},
+		// A root Go module already tags vX.Y.Z, single-app or not.
+		{"single go root", "", "go", ".", "root", "1.2.0", true, "v1.2.0"},
+		// Explicit template wins regardless of single-app/ecosystem.
+		{"explicit over multi", "v${version}", "node", "", "my-pkg", "1.2.0", false, "v1.2.0"},
+		{"explicit name placeholder, trimmed", "  ${name}-${version}  ", "node", "", "web", "2.1.0", true, "web-2.1.0"},
+	}
+	for _, c := range cases {
+		if got := RenderTag(c.template, c.eco, c.dirRel, c.pkg, c.version, c.singleApp); got != c.want {
+			t.Errorf("%s: RenderTag(%q,%q,%q,%q,%q,%v) = %q, want %q",
+				c.name, c.template, c.eco, c.dirRel, c.pkg, c.version, c.singleApp, got, c.want)
+		}
+	}
+}
+
 // TestRemoteTagExists pins that RemoteTagExists distinguishes a tag that was
 // pushed to the remote from one that is absent there — the signal a re-run uses
 // to recover a locally-tagged-but-unpushed release.

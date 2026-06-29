@@ -69,6 +69,28 @@ func PackageTag(eco, dirRel, name, version string) string {
 	return name + "@" + version
 }
 
+// RenderTag returns the git tag for a package release, honoring a configured
+// tag template. An empty template falls back to PackageTag (the canonical
+// per-ecosystem name), except that a single-app repo (singleApp) defaults to
+// the vX.Y.Z convention — there is no package name to disambiguate, so the
+// bare `<name>@<version>` form earns nothing. Go is excluded from that default:
+// its `dir/vX.Y.Z` module-path tags are required for `go get`, and a root Go
+// module already tags `vX.Y.Z`. An explicit template always wins and is
+// expanded with the ${version} and ${name} placeholders — e.g. "v${version}".
+// The same logic is applied wherever a release tag is built (creation, the
+// forge release, and the ${tag} variable) so they agree.
+func RenderTag(template, eco, dirRel, name, version string, singleApp bool) string {
+	template = strings.TrimSpace(template)
+	if template == "" && singleApp && eco != "go" {
+		template = "v${version}"
+	}
+	if template == "" {
+		return PackageTag(eco, dirRel, name, version)
+	}
+	r := strings.NewReplacer("${version}", version, "${name}", name)
+	return r.Replace(template)
+}
+
 func tagPrefix(dirRel string) string {
 	dirRel = strings.TrimPrefix(filepathToSlash(dirRel), "./")
 	if dirRel == "" || dirRel == "." {

@@ -4,14 +4,28 @@ import (
 	"fmt"
 
 	"github.com/rigsmith/rigsmith/core/gitutil"
+	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/spf13/cobra"
 )
 
+// singleApp reports whether the repo is a single-app repo — exactly one
+// discovered package — the signal for defaulting to the vX.Y.Z tag convention
+// (see gitutil.RenderTag). It counts every discovered package, including any in
+// the `ignore` list: a repo with a second (even ignored) package is a monorepo
+// where `<name>@<version>` still earns its disambiguation, so the conservative
+// default leaves those tags unchanged. Every tag site computes it from the same
+// discovery so the created tag, the forge release, and the ${tag} variable agree.
+func singleApp(pkgs []plugin.Package) bool {
+	return len(pkgs) == 1
+}
+
 // newTagCmd creates git tags for each discovered package at its current version.
-// Go modules use the module-path convention (`dir/vX.Y.Z` or `vX.Y.Z`); other
-// ecosystems use `<name>@<version>` (the @changesets/net-changesets convention).
-// Existing tags are skipped.
+// Go modules use the module-path convention (`dir/vX.Y.Z` or `vX.Y.Z`); a
+// single-app repo defaults to `vX.Y.Z`; other (multi-package) ecosystems use
+// `<name>@<version>` (the @changesets/net-changesets convention). A config
+// `tagTemplate` (e.g. "v${version}") overrides this for every package. Existing
+// tags are skipped.
 func newTagCmd() *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
@@ -27,12 +41,13 @@ func newTagCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
+			solo := singleApp(pkgs)
 			created, skipped := 0, 0
 			for _, p := range pkgs {
 				if ws.Config.IsIgnored(p.Name) {
 					continue // ignored packages are never tagged
 				}
-				tag := tagName(ecoOf[p.Name], p.Dir, p.Name, p.Version)
+				tag := gitutil.RenderTag(ws.Config.TagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version, solo)
 				if gitutil.TagExists(cmd.Context(), ws.Root, tag) {
 					skipped++
 					continue
@@ -54,11 +69,4 @@ func newTagCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "print the tags without creating them")
 	return cmd
-}
-
-// tagName builds the tag for a package. Go uses the module-path convention; all
-// others use name@version. Delegates to gitutil.PackageTag so the tag/publish
-// steps and the forge release step agree on the tag name.
-func tagName(eco, dir, name, version string) string {
-	return gitutil.PackageTag(eco, dir, name, version)
 }

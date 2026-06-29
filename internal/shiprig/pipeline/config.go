@@ -280,6 +280,13 @@ type StepConfig struct {
 	// Message is the commit message template, for the built-in commit step.
 	Message *string `json:"message"`
 
+	// Paths, for the built-in commit step, scopes the release commit to these
+	// repo-relative paths (staged with `git add -- <paths>`) instead of the
+	// default `git add -A`. Use it when the working tree carries unrelated WIP
+	// that must not land in the release commit — list the version-managed files
+	// (manifests, CHANGELOGs, .changeset). Empty keeps the `git add -A` default.
+	Paths []string `json:"paths"`
+
 	// Confirm pauses and asks the user to proceed before this step's action
 	// runs. Bypassed by --yes.
 	Confirm *ConfirmValue `json:"confirm"`

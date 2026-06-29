@@ -18,8 +18,8 @@ func (f fakeRelCtx) Issues() []IssueRef           { return f.issues }
 func twoPackages() fakeRelCtx {
 	return fakeRelCtx{
 		pkgs: []ReleasePackage{
-			{Name: "@acme/web", Key: "web", Ecosystem: "node", Version: "2.1.0", Tag: "@acme/web@2.1.0", Changelog: "web notes"},
-			{Name: "acme/cli", Key: "cli", Ecosystem: "go", Version: "1.4.0", Tag: "cli/v1.4.0", Changelog: "cli notes"},
+			{Name: "@acme/web", Key: "web", Ecosystem: "node", Version: "2.1.0", LastVersion: "2.0.0", Tag: "@acme/web@2.1.0", Changelog: "web notes"},
+			{Name: "acme/cli", Key: "cli", Ecosystem: "go", Version: "1.4.0", LastVersion: "1.3.2", Tag: "cli/v1.4.0", Changelog: "cli notes"},
 		},
 		urls: map[string]string{"web": "https://forge/web", "cli": "https://forge/cli"},
 	}
@@ -50,6 +50,42 @@ func TestReleaseVarAddressedAndAlias(t *testing.T) {
 	// The full manifest name works as an exact alias.
 	if got := mustResolveVar(t, rv, "version.@acme/web"); got != "2.1.0" {
 		t.Errorf("version.@acme/web (alias) = %q", got)
+	}
+}
+
+func TestReleaseVarLastAndNextVersion(t *testing.T) {
+	rv := newReleaseVars(twoPackages())
+
+	// ${nextVersion} aliases ${version} (the new version); ${lastVersion} is the
+	// pre-bump value.
+	if got := mustResolveVar(t, rv, "nextVersion.web"); got != "2.1.0" {
+		t.Errorf("nextVersion.web = %q, want 2.1.0", got)
+	}
+	if got := mustResolveVar(t, rv, "lastVersion.web"); got != "2.0.0" {
+		t.Errorf("lastVersion.web = %q, want 2.0.0", got)
+	}
+	if got := mustResolveVar(t, rv, "lastVersion.cli"); got != "1.3.2" {
+		t.Errorf("lastVersion.cli = %q, want 1.3.2", got)
+	}
+	// Aggregates carry the same shape as ${versions}.
+	if got := mustResolveVar(t, rv, "lastVersions"); got != "@acme/web@2.0.0, acme/cli@1.3.2" {
+		t.Errorf("lastVersions = %q", got)
+	}
+	if got := mustResolveVar(t, rv, "nextVersions"); got != "@acme/web@2.1.0, acme/cli@1.4.0" {
+		t.Errorf("nextVersions = %q", got)
+	}
+}
+
+func TestReleaseVarLastNextBareSinglePackage(t *testing.T) {
+	rv := newReleaseVars(fakeRelCtx{pkgs: []ReleasePackage{
+		{Name: "Halyards.Desktop", Key: "Halyards.Desktop", Version: "1.0.0", LastVersion: "0.9.0", Tag: "v1.0.0"},
+	}})
+
+	if got := mustResolveVar(t, rv, "nextVersion"); got != "1.0.0" {
+		t.Errorf("bare nextVersion = %q, want 1.0.0", got)
+	}
+	if got := mustResolveVar(t, rv, "lastVersion"); got != "0.9.0" {
+		t.Errorf("bare lastVersion = %q, want 0.9.0", got)
 	}
 }
 

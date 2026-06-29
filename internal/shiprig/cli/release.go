@@ -268,11 +268,18 @@ func newReleaseCmd() *cobra.Command {
 					// Label the release (fills the comment's {{version}} and the
 					// dedupe marker) with the tags actually released.
 					tags := make([]string, 0, len(pkgs))
+					tagTemplate := ""
+					var isIgnored func(string) bool
+					if ws.Config != nil {
+						tagTemplate = ws.Config.TagTemplate
+						isIgnored = ws.Config.IsIgnored
+					}
+					solo := singleApp(pkgs)
 					for _, p := range pkgs {
-						if ws.Config != nil && ws.Config.IsIgnored(p.Name) {
+						if isIgnored != nil && isIgnored(p.Name) {
 							continue
 						}
-						tags = append(tags, gitutil.PackageTag(ecoOf[p.Name], p.Dir, p.Name, p.Version))
+						tags = append(tags, gitutil.RenderTag(tagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version, solo))
 					}
 					sort.Strings(tags)
 					messages, err := releasedCommitMessages(cmd, ws.Root)
@@ -291,6 +298,7 @@ func newReleaseCmd() *cobra.Command {
 
 				relctx := &hostReleaseContext{
 					discover:      func() ([]plugin.Package, map[string]string, error) { return ws.Discover(cmd.Context()) },
+					nextVersions:  func() (map[string]string, error) { return plannedVersions(cmd.Context(), ws) },
 					repoRoot:      ws.Root,
 					forgeSel:      fsel,
 					forgeRun:      execForgeRunner(cmd, runnerEnv),
@@ -299,6 +307,7 @@ func newReleaseCmd() *cobra.Command {
 				}
 				if ws.Config != nil {
 					relctx.isIgnored = ws.Config.IsIgnored
+					relctx.tagTemplate = ws.Config.TagTemplate
 				}
 
 				return pipeline.New(releaseRunner, reporter, masker, prompter, ws.Root,
@@ -455,18 +464,40 @@ func distinctEcosystems(ecoOf map[string]string) []string {
 	return out
 }
 
+// plannedVersions returns each releasing package's bumped version (name ->
+// version), computed from the pending changesets — the same plan `shiprig
+// status` renders. Packages with no change are absent. It is the source for
+// ${version}/${tag}, so those reflect the version the release is moving *to*
+// even before the version step writes it (and in --dry-run).
+func plannedVersions(ctx context.Context, ws *commands.Workspace) (map[string]string, error) {
+	rps, err := commands.ReleasePackages(ctx, ws)
+	if err != nil {
+		return nil, err
+	}
+	next := make(map[string]string, len(rps))
+	for _, rp := range rps {
+		if rp.Next != "" {
+			next[rp.Name] = rp.Next
+		}
+	}
+	return next, nil
+}
+
 // hostReleaseContext implements pipeline.ReleaseContext from the workspace. It
 // discovers the released packages once (lazily, on first variable reference) and
 // exposes their versions, tags, and changelog notes; forge release URLs are
 // fetched per package on demand (and cached); resolved issues come from the
 // released commit messages.
 //
-// Versions/notes reflect the manifest and CHANGELOG at first reference, so a
-// command needing the bumped value should run at/after the `version` step (the
-// common case: publish args, the release step, and the after/onError hooks).
+// ${version}/${tag} reflect the *new* (bumped) version: it is computed from the
+// pending changesets at first reference (the same plan `shiprig status` shows),
+// not read back from the manifest, so it is correct even before the version step
+// runs and in --dry-run. ${lastVersion} carries the pre-bump manifest value.
 // ${releaseUrl} is only populated after the forge `release` step has run.
 type hostReleaseContext struct {
 	discover      func() ([]plugin.Package, map[string]string, error)
+	nextVersions  func() (map[string]string, error) // package name -> bumped version, from the release plan
+	tagTemplate   string                            // config.TagTemplate; "" uses the default name@version / module-path tag
 	isIgnored     func(string) bool
 	repoRoot      string
 	forgeSel      forge.Selection
@@ -492,18 +523,31 @@ func (rc *hostReleaseContext) Packages() []pipeline.ReleasePackage {
 	if err != nil {
 		return nil // discovery errors surface via the handlers; variables resolve to empty
 	}
+	// Bumped versions from the release plan. Best-effort: on a planning error the
+	// map is nil and each package falls back to its current manifest version, the
+	// pre-change behavior.
+	var nexts map[string]string
+	if rc.nextVersions != nil {
+		nexts, _ = rc.nextVersions()
+	}
+	solo := singleApp(pkgs)
 	for _, p := range pkgs {
 		if rc.isIgnored != nil && rc.isIgnored(p.Name) {
 			continue
 		}
 		eco := ecoOf[p.Name]
+		version := p.Version // the new version, defaulting to current when nothing bumps it
+		if n, ok := nexts[p.Name]; ok && n != "" {
+			version = n
+		}
 		rc.pkgs = append(rc.pkgs, pipeline.ReleasePackage{
-			Name:      p.Name,
-			Key:       shortPackageKey(p.Name),
-			Ecosystem: eco,
-			Version:   p.Version,
-			Tag:       gitutil.PackageTag(eco, p.Dir, p.Name, p.Version),
-			Changelog: forge.Notes(p, rc.repoRoot),
+			Name:        p.Name,
+			Key:         shortPackageKey(p.Name),
+			Ecosystem:   eco,
+			Version:     version,
+			LastVersion: p.Version,
+			Tag:         gitutil.RenderTag(rc.tagTemplate, eco, p.Dir, p.Name, version, solo),
+			Changelog:   forge.Notes(p, rc.repoRoot),
 		})
 	}
 	return rc.pkgs
