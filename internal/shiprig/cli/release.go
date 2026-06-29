@@ -269,14 +269,17 @@ func newReleaseCmd() *cobra.Command {
 					// dedupe marker) with the tags actually released.
 					tags := make([]string, 0, len(pkgs))
 					tagTemplate := ""
+					var isIgnored func(string) bool
 					if ws.Config != nil {
 						tagTemplate = ws.Config.TagTemplate
+						isIgnored = ws.Config.IsIgnored
 					}
+					solo := singleApp(pkgs)
 					for _, p := range pkgs {
-						if ws.Config != nil && ws.Config.IsIgnored(p.Name) {
+						if isIgnored != nil && isIgnored(p.Name) {
 							continue
 						}
-						tags = append(tags, gitutil.RenderTag(tagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version))
+						tags = append(tags, gitutil.RenderTag(tagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version, solo))
 					}
 					sort.Strings(tags)
 					messages, err := releasedCommitMessages(cmd, ws.Root)
@@ -527,6 +530,7 @@ func (rc *hostReleaseContext) Packages() []pipeline.ReleasePackage {
 	if rc.nextVersions != nil {
 		nexts, _ = rc.nextVersions()
 	}
+	solo := singleApp(pkgs)
 	for _, p := range pkgs {
 		if rc.isIgnored != nil && rc.isIgnored(p.Name) {
 			continue
@@ -542,7 +546,7 @@ func (rc *hostReleaseContext) Packages() []pipeline.ReleasePackage {
 			Ecosystem:   eco,
 			Version:     version,
 			LastVersion: p.Version,
-			Tag:         gitutil.RenderTag(rc.tagTemplate, eco, p.Dir, p.Name, version),
+			Tag:         gitutil.RenderTag(rc.tagTemplate, eco, p.Dir, p.Name, version, solo),
 			Changelog:   forge.Notes(p, rc.repoRoot),
 		})
 	}

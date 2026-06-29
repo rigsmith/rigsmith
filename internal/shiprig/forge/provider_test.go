@@ -106,8 +106,9 @@ func TestGiteaReleaseExists_FromList_SkipsCreate(t *testing.T) {
 	runner := &recordingRunner{
 		responder: func(call recordedCall) (string, error) {
 			if call.name == "tea" && call.has("release") && call.has("list") {
-				// tea release list output: the tag appears as a field.
-				return "12  pkg-a@1.2.0  Some release\n", nil
+				// tea release list output: the tag appears as a field. A single-app
+				// repo tags vX.Y.Z, so that is the tag the skip logic must match.
+				return "12  v1.2.0  Some release\n", nil
 			}
 			return "", nil
 		},
@@ -160,7 +161,8 @@ func TestGitLabExplicit_AttachesAssets(t *testing.T) {
 	if !ok {
 		t.Fatal("Run ok = false, want true")
 	}
-	upload := findCall(runner, "glab", "upload", "core@1.2.0", "/dist/core_1.2.0_linux_amd64.tar.gz")
+	// Single-app repo => the upload targets the vX.Y.Z tag.
+	upload := findCall(runner, "glab", "upload", "v1.2.0", "/dist/core_1.2.0_linux_amd64.tar.gz")
 	if upload == nil {
 		t.Fatalf("no glab release upload call; calls: %v", runner.calls)
 	}

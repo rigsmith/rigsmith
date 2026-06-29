@@ -1,10 +1,13 @@
 {
   // Changeset config for a single-app desktop repo (e.g. Halyards).
   //
-  // tagTemplate switches the git tag from the default `<name>@<version>`
-  // (e.g. Halyards.Desktop@1.0.0) to the single-app `vX.Y.Z` convention.
-  // It is honored consistently by the `tag` step, the `publish` step's
-  // remote-tag check, and the forge `release` step — so the GitHub release
-  // attaches to the exact tag that was pushed. Placeholders: ${version}, ${name}.
+  // tagTemplate is OPTIONAL here: a single-app repo (one discovered, non-Go
+  // package) already defaults to the `vX.Y.Z` tag — there is no sibling name to
+  // disambiguate, so the bare `<name>@<version>` form earns nothing. This line
+  // just makes that explicit; delete it and the tags are identical. Set it to a
+  // different shape to override. It is honored consistently by the `tag` step,
+  // the `publish` step's remote-tag check, and the forge `release` step — so the
+  // GitHub release attaches to the exact tag that was pushed. Placeholders:
+  // ${version}, ${name}.
   "tagTemplate": "v${version}"
 }

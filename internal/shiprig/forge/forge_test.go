@@ -299,7 +299,7 @@ func TestGithubMode_GoPackage_TagsWithModulePathTag(t *testing.T) {
 	}
 }
 
-func TestGithubMode_NonGoPackage_TagsWithNameAtVersion(t *testing.T) {
+func TestGithubMode_MultiPackageNonGo_TagsWithNameAtVersion(t *testing.T) {
 	runner := &recordingRunner{}
 	runner.responder = func(call recordedCall) (string, error) {
 		if isReleaseView(call) {
@@ -308,17 +308,46 @@ func TestGithubMode_NonGoPackage_TagsWithNameAtVersion(t *testing.T) {
 		return "", nil
 	}
 
-	// A non-Go package (here node) keeps the name@version tag convention.
-	packages := []plugin.Package{{Name: "widgets", Version: "1.2.0", Dir: "packages/widgets"}}
-	ecoOf := map[string]string{"widgets": "node"}
+	// With more than one package there is a name to disambiguate, so each keeps
+	// the name@version convention (the single-app vX.Y.Z default does not apply).
+	packages := []plugin.Package{
+		{Name: "widgets", Version: "1.2.0", Dir: "packages/widgets"},
+		{Name: "gadgets", Version: "2.0.0", Dir: "packages/gadgets"},
+	}
+	ecoOf := map[string]string{"widgets": "node", "gadgets": "node"}
 
 	ok, message := Run(packages, ecoOf, nil, config.Default(), selGitHub, t.TempDir(), runner.run, nil)
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
 	}
+	if findCall(runner, "gh", "create", "widgets@1.2.0") == nil {
+		t.Errorf("no gh create with widgets@1.2.0; calls: %v", runner.calls)
+	}
+	if findCall(runner, "gh", "create", "gadgets@2.0.0") == nil {
+		t.Errorf("no gh create with gadgets@2.0.0; calls: %v", runner.calls)
+	}
+}
 
-	if got := createTag(t, runner); got != "widgets@1.2.0" {
-		t.Fatalf("release create tag = %q, want %q", got, "widgets@1.2.0")
+func TestGithubMode_SingleApp_TagsWithVPrefix(t *testing.T) {
+	runner := &recordingRunner{}
+	runner.responder = func(call recordedCall) (string, error) {
+		if isReleaseView(call) {
+			return "", errors.New("exit status 1")
+		}
+		return "", nil
+	}
+
+	// A single non-Go package is a single-app repo: there is no name to
+	// disambiguate, so the tag defaults to the vX.Y.Z convention.
+	packages := []plugin.Package{{Name: "Halyards.Desktop", Version: "1.0.0", Dir: "."}}
+	ecoOf := map[string]string{"Halyards.Desktop": "dotnet"}
+
+	ok, message := Run(packages, ecoOf, nil, config.Default(), selGitHub, t.TempDir(), runner.run, nil)
+	if !ok {
+		t.Fatalf("Run ok = false, want true (message: %q)", message)
+	}
+	if got := createTag(t, runner); got != "v1.0.0" {
+		t.Fatalf("release create tag = %q, want %q", got, "v1.0.0")
 	}
 }
 
@@ -331,16 +360,19 @@ func TestGithubMode_PackageAbsentFromEcoMap_TagsWithNameAtVersion(t *testing.T) 
 		return "", nil
 	}
 
-	// A package missing from ecoOf falls back to the name@version convention.
-	packages := []plugin.Package{{Name: "widgets", Version: "1.2.0", Dir: "packages/widgets"}}
+	// Two packages (so the name@version convention applies); one is missing from
+	// ecoOf and must still fall back to name@version, not crash.
+	packages := []plugin.Package{
+		{Name: "widgets", Version: "1.2.0", Dir: "packages/widgets"},
+		{Name: "gadgets", Version: "2.0.0", Dir: "packages/gadgets"},
+	}
 
 	ok, message := Run(packages, map[string]string{}, nil, config.Default(), selGitHub, t.TempDir(), runner.run, nil)
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
 	}
-
-	if got := createTag(t, runner); got != "widgets@1.2.0" {
-		t.Fatalf("release create tag = %q, want %q", got, "widgets@1.2.0")
+	if findCall(runner, "gh", "create", "widgets@1.2.0") == nil {
+		t.Errorf("no gh create with widgets@1.2.0; calls: %v", runner.calls)
 	}
 }
 
