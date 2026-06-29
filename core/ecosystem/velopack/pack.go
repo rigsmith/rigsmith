@@ -61,7 +61,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		return plugin.ArtifactsResponse{}, err
 	}
 
-	env := mergeSigningEnv(os.Environ(), req.Signing)
+	env := mergeSigningEnv(req.BaseEnv(), req.Signing)
 	csproj := req.Package.ManifestPath // repo-relative; commands run with cwd = RepoRoot
 
 	for _, ch := range planned {

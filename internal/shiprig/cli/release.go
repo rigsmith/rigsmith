@@ -173,7 +173,8 @@ func newReleaseCmd() *cobra.Command {
 							signing = &plugin.SigningCreds{Env: env}
 						}
 						resp, err := eco.Artifacts(cmd.Context(), plugin.ArtifactsRequest{
-							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir, Snapshot: dryBuild, Signing: signing,
+							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir, Snapshot: dryBuild,
+							Env: runnerEnv, Signing: signing,
 						})
 						if err != nil {
 							out("build " + pkg.Name + ": " + err.Error())

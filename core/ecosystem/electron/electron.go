@@ -148,7 +148,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 
 	// Signing secrets (when enabled) ride in via the environment — electron-builder
 	// and electron-forge read the standard CSC_*/APPLE_* variables.
-	env := mergeSigningEnv(os.Environ(), req.Signing)
+	env := mergeSigningEnv(req.BaseEnv(), req.Signing)
 	var outDir string
 	if forge {
 		if _, _, err := runCmdEnv(ctx, dir, env, "npx", "electron-forge", "make"); err != nil {
