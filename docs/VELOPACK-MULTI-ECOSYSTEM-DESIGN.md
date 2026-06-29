@@ -81,9 +81,8 @@ That collapses the risk. The work is entirely inside the velopack package.
     "packDir": "out/$CHANNEL"
   },
 
-  // NEW — version source for base=="none" only (read + stamped here). Ignored
-  // when a base manifest exists (the base owns the version).
-  "version": "0.1.0",
+  // DEFERRED (not yet implemented) — version source for base=="none" only.
+  // "version": "0.1.0",
 
   // unchanged: icon, output, macos{}, windows{ signTemplate, trustedSigning }
 }
@@ -95,21 +94,25 @@ from the `.csproj`).
 
 ## Adapter changes (`core/ecosystem/velopack/`)
 
-### Base resolution without import cycles
+### Base resolution (implemented: embed the bases — no DI needed)
 
-velopack must delegate Discover/SetVersion to the right base adapter per package,
-but it should not import every base adapter (and `dotnet` is already a heavy
-embed). Inject a resolver at construction instead:
+The design originally proposed injecting a registry resolver to avoid importing
+every base adapter. That turned out unnecessary: `cargo`, `node`, and `gomod` do
+**not** import `velopack` (and `dotnet` was already embedded), so velopack can
+import and embed all four directly with no cycle. This keeps `New()`'s signature
+unchanged, so `core/ecosystem/registry.go` needs **no** edit.
 
 ```go
-// New takes a resolver the engine wires from its registry, so velopack delegates
-// to the in-process base adapter for a given id without importing each package
-// (avoids the registry→adapter→velopack cycle).
-func New(base func(id string) (plugin.Ecosystem, bool)) *Adapter
-```
+type Adapter struct{ bases map[string]plugin.Ecosystem }
 
-`base("dotnet")` / `("cargo")` / `("node")` / `("go")` return the same in-process
-adapters the registry holds. `base("none")` → not found → velopack self-serves.
+func New() *Adapter {
+    a := &Adapter{bases: map[string]plugin.Ecosystem{}}
+    for _, e := range []plugin.Ecosystem{dotnet.New(), cargo.New(), node.New(), gomod.New()} {
+        a.bases[e.Info().ID] = e // gomod reports "go"
+    }
+    return a
+}
+```
 
 ### `Info`
 
@@ -119,26 +122,30 @@ Overlays: []string{"dotnet", "cargo", "node", "go"},
 
 (plus the existing `ManifestPatterns`, capabilities — unchanged).
 
-### `Discover`
+### `Discover` (implemented: base-driven, generalizes today's dotnet filter)
 
-For each dir under `SourcePath` containing a `velopack.json`/`.jsonc`:
+Rather than a fresh tree walk, velopack asks each embedded base (in a deterministic
+order) to discover its projects and keeps the dirs that carry a velopack file —
+exactly today's dotnet flow, generalized to four bases:
 
-1. Resolve `base` (config field, else auto-detect by sibling manifest, else
-   `none`).
-2. If a base adapter resolves: ask it to `Discover` and take the package whose
-   `Dir == thisDir` — reuse its `Name`, `Version`, `VersionFile`, `Dependencies`
-   verbatim (today's behavior, generalized past dotnet).
-3. If `none`: synthesize a `Package{Name: packId, Dir, ManifestPath: <velopack
-   file>, VersionFile: <velopack file>, Version: cfg.Version}`.
+```
+for baseID in [dotnet, cargo, node, go]:
+    for pkg in bases[baseID].Discover(req):
+        if seen[pkg.Dir] or no velopack file in pkg.Dir: continue
+        if cfg.Base != "" and cfg.Base != baseID: continue  // pin disambiguates
+        keep pkg (carries the base's Name/Version/VersionFile/Dependencies)
+```
 
-Emit under ecoID `velopack`; reconciliation drops the base's duplicate.
+Emit under ecoID `velopack`; reconciliation drops the base's duplicate. A dir has a
+single manifest type, so order only fixes the rare double-manifest case (and the
+`base` pin overrides it).
 
-### `SetVersion`
+### `SetVersion` (implemented)
 
-- base present → delegate to that base adapter (writes `.csproj`/`Cargo.toml`/
-  `package.json`/go version comment, format-preserving — all reused).
-- `none` → rewrite the `version` field in the velopack file (format-preserving,
-  via the jsonc writer).
+Resolve the base for the package's dir (`base` pin, else `detectBase`) and delegate
+— the base rewrites `.csproj`/`Directory.Build.props`, `Cargo.toml`, `package.json`,
+or the go version comment, format-preserving. (gomod delegation answers the
+open question below — a Go-backed app's version is stamped by gomod.)
 
 ### `Artifacts` (`pack.go`)
 
@@ -160,23 +167,30 @@ host-aware signing, DMG wrap, feed collection — is unchanged.
 - The plugin protocol (`core/plugin/protocol.go`) — no new fields needed.
 - The overlay reconciliation in `workspace.go` — no framework change.
 
-## Open questions / follow-ups
+## Deferred to a follow-up
 
-1. **Native publish-to-dir per base.** v1 uses the `build.command` escape hatch
-   for cargo/node/go. A later nicety: teach those base adapters a "publish
-   self-contained to dir for RID" so `build.command` becomes optional (like
-   dotnet). Out of scope for the first PR.
-2. **Go version source.** gomod versions live in a `// rigsmith:version` comment
-   / git tags, not a manifest field — confirm `SetVersion` delegation does the
-   right thing for a Go-backed velopack app, or fall back to `base:"none"` +
-   `version`.
-3. **RID coverage.** Settle the canonical RID→triple / RID→GOOS-GOARCH tables and
-   where they live (likely `config.go` next to `osOf`).
+1. **Base-less apps (`base: "none"`).** Not implemented. It needs a separate tree
+   walk to enumerate manifest-less velopack dirs plus a `version` field read/write
+   in the velopack file. The four manifest-backed bases cover the real consumers
+   (Rust/Go/Electron all ship a manifest), so `none` is deferred; an explicit
+   `base: "none"` fails config validation today (clear signal it's unsupported).
+2. **Native publish-to-dir per base.** v1 uses the `build.command` escape hatch for
+   cargo/node/go. A later nicety: teach those base adapters a "publish
+   self-contained to dir for RID" so `build.command` becomes optional (like dotnet).
 
-## Sequencing
+## Resolved during implementation
 
-1. Land #164 (Windows signing) on its own — test-gated, orthogonal.
-2. Follow-up PR implements this design (changeset: minor — new config surface,
-   no breaking change to existing dotnet `velopack.json`).
-3. Docs: extend `site/shiprig/` velopack page + `examples/` with a non-.NET
-   (Rust or Electron) sample.
+- **No DI.** Embedding the four base adapters (none import velopack) beat injecting
+  a registry resolver — `New()` and `registry.go` are unchanged.
+- **Go version source.** `SetVersion` delegates to gomod, which stamps the version
+  the Go way — no `base:"none"` fallback needed for Go.
+- **RID coverage.** `ridGo` / `ridRustTarget` (in `pack.go`) map win/osx/linux ×
+  x64/arm64/x86 to GOOS/GOARCH and Rust triples.
+
+## Status
+
+1. #164 (Windows signing) — **merged**.
+2. This design — **implemented** on `feat/velopack-multi-ecosystem` (changeset:
+   minor; no breaking change to existing dotnet `velopack.json`).
+3. Docs/examples — `site/shiprig/` velopack page + a non-.NET `examples/` sample
+   land in the same PR.
