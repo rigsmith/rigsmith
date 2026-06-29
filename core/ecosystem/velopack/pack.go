@@ -210,8 +210,11 @@ func writeTrustedSigningFile(path string, ts TrustedSigning) error {
 // checkVpkMajor verifies the `vpk` CLI is installed and, when the csproj pins a
 // Velopack <PackageReference>, that the CLI's major matches the library's — pack
 // flags differ across Velopack majors, so a mismatch fails fast with guidance.
+//
+// vpk has no `--version` flag; its version is printed in the `--help` banner
+// ("Velopack CLI X.Y.Z, for distributing applications."), so we read that.
 func (a *Adapter) checkVpkMajor(ctx context.Context, req plugin.ArtifactsRequest) error {
-	out, _, err := runCmdEnv(ctx, req.RepoRoot, nil, "vpk", "--version")
+	out, _, err := runCmdEnv(ctx, req.RepoRoot, nil, "vpk", "--help")
 	if err != nil {
 		return fmt.Errorf("velopack: `vpk` CLI not found on PATH (install with `dotnet tool install -g vpk`): %w", err)
 	}
@@ -223,30 +226,35 @@ func (a *Adapter) checkVpkMajor(ctx context.Context, req plugin.ArtifactsRequest
 	if ref == "" {
 		return nil // not pinned (or central package management) — nothing to compare
 	}
-	refMajor, vpkMajor, ok := majorMismatch(ref, out)
-	if !ok {
+	vpkVer := vpkVersion(out)
+	if !sameMajor(ref, vpkVer) {
 		return fmt.Errorf("velopack: the project references Velopack %s but the installed `vpk` CLI is %s — install a matching major (`dotnet tool update -g vpk --version %s.*`)",
-			ref, strings.TrimSpace(extractVersion(out)), refMajor)
+			ref, vpkVer, majorOf(ref))
 	}
-	_ = vpkMajor
 	return nil
 }
 
-// majorMismatch parses the referenced library version and the `vpk --version`
-// output and reports their majors and whether they match. ok is true when both
-// majors parse and are equal (or when either can't be parsed — then the check is
-// not enforced rather than guessed wrong).
-func majorMismatch(refVersion, vpkVersionOutput string) (refMajor, vpkMajor string, ok bool) {
-	refMajor = majorOf(refVersion)
-	vpkMajor = majorOf(extractVersion(vpkVersionOutput))
-	if refMajor == "" || vpkMajor == "" {
-		return refMajor, vpkMajor, true
+// vpkBannerRe captures the version from vpk's `--help` banner, e.g.
+// "Velopack CLI 1.2.0, for distributing applications.".
+var vpkBannerRe = regexp.MustCompile(`(?i)Velopack CLI\s+(\d+\.\d+(?:\.\d+)?)`)
+
+// vpkVersion extracts the CLI version from `vpk --help` output: the banner form
+// when present, else the first dotted-number version anywhere in the text.
+func vpkVersion(helpOutput string) string {
+	if m := vpkBannerRe.FindStringSubmatch(helpOutput); m != nil {
+		return m[1]
 	}
-	return refMajor, vpkMajor, refMajor == vpkMajor
+	return extractVersion(helpOutput)
 }
 
-// versionRe finds the first dotted-number version in a string (e.g. in
-// "Velopack (vpk) 0.0.1298" or a bare "1.2.0").
+// sameMajor reports whether two versions share a major — or true when either is
+// unparseable, so the compatibility check is skipped rather than guessed wrong.
+func sameMajor(a, b string) bool {
+	am, bm := majorOf(a), majorOf(b)
+	return am == "" || bm == "" || am == bm
+}
+
+// versionRe finds the first dotted-number version in a string.
 var versionRe = regexp.MustCompile(`\d+\.\d+(?:\.\d+)?`)
 
 // extractVersion returns the first dotted-number version found in s, or "".

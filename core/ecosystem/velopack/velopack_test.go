@@ -233,22 +233,34 @@ func TestBuildPackArgsOmitsEmptyOptionalFlags(t *testing.T) {
 	}
 }
 
-func TestMajorMismatch(t *testing.T) {
-	if _, _, ok := majorMismatch("1.2.0", "Velopack (vpk) 1.0.1298"); !ok {
-		t.Error("same major (1 == 1) should match")
+func TestVpkVersionFromHelpBanner(t *testing.T) {
+	// The real `vpk --help` banner (vpk has no --version flag).
+	const help = "Description:\n  Velopack CLI 1.2.0, for distributing applications.\n\nUsage:\n  vpk [command] [options]\n"
+	if got := vpkVersion(help); got != "1.2.0" {
+		t.Errorf("vpkVersion(banner) = %q, want 1.2.0", got)
 	}
-	if _, _, ok := majorMismatch("1.2.0", "vpk 2.0.5"); ok {
-		t.Error("different majors (1 vs 2) should mismatch")
+	// Fallback to the first dotted version when the banner phrasing changes.
+	if got := vpkVersion("some tool 3.4.5 build"); got != "3.4.5" {
+		t.Errorf("vpkVersion(fallback) = %q, want 3.4.5", got)
 	}
-	// Unparseable side → not enforced (ok=true) rather than a wrong guess.
-	if _, _, ok := majorMismatch("1.2.0", "no version here"); !ok {
+}
+
+func TestSameMajor(t *testing.T) {
+	if !sameMajor("1.2.0", "1.2.0") {
+		t.Error("1 == 1 should be same major")
+	}
+	if sameMajor("1.2.0", "2.0.5") {
+		t.Error("1 vs 2 should differ")
+	}
+	// Unparseable side → not enforced (true) rather than a wrong guess.
+	if !sameMajor("1.2.0", "no version here") {
 		t.Error("unparseable vpk version should not be enforced")
 	}
 }
 
 func TestExtractVersionAndMajor(t *testing.T) {
-	if v := extractVersion("Velopack (vpk) 0.0.1298, running on .NET 8"); v != "0.0.1298" {
-		t.Errorf("extractVersion = %q, want 0.0.1298", v)
+	if v := extractVersion("Velopack CLI 1.2.0, for distributing applications."); v != "1.2.0" {
+		t.Errorf("extractVersion = %q, want 1.2.0", v)
 	}
 	if m := majorOf("2.4.6"); m != "2" {
 		t.Errorf("majorOf = %q, want 2", m)
