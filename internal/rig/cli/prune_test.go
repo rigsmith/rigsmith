@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,6 +36,52 @@ func TestRenderPruneTableEmpty(t *testing.T) {
 	renderPruneTable(&buf, nil)
 	if !strings.Contains(buf.String(), "none") {
 		t.Errorf("empty table should say (none), got %q", buf.String())
+	}
+}
+
+// pruneContextLine banners the current checkout: its branch and whether it is the
+// repo's primary checkout or a linked worktree (the checkout prune always protects).
+func TestPruneContextLine(t *testing.T) {
+	ctx := context.Background()
+	r, err := gitrepo.Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "a", "1", "init")
+	branch, _ := r.CurrentBranch(ctx)
+
+	primary := pruneContextLine(ctx, r, r.Dir)
+	if !strings.Contains(primary, "primary checkout") || !strings.Contains(primary, "protected") {
+		t.Errorf("primary checkout banner missing its label: %s", primary)
+	}
+	if branch != "" && !strings.Contains(primary, branch) {
+		t.Errorf("banner should name the current branch %q: %s", branch, primary)
+	}
+
+	// A linked worktree is labeled "worktree", not "primary".
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	if err := r.WorktreeAdd(ctx, wtPath, "feature", branch, true); err != nil {
+		t.Fatal(err)
+	}
+	wtRepo, err := gitrepo.Open(ctx, wtPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := pruneContextLine(ctx, wtRepo, wtPath)
+	if !strings.Contains(wt, "worktree") || strings.Contains(wt, "primary") {
+		t.Errorf("worktree banner should say worktree, not primary: %s", wt)
+	}
+	if !strings.Contains(wt, "feature") {
+		t.Errorf("worktree banner should name the 'feature' branch: %s", wt)
+	}
+
+	// Detached HEAD: `git rev-parse --abbrev-ref HEAD` returns the literal "HEAD",
+	// which the banner relabels rather than showing as a branch name.
+	if out, err := exec.Command("git", "-C", r.Dir, "checkout", "--detach", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("detach HEAD: %v: %s", err, out)
+	}
+	if det := pruneContextLine(ctx, r, r.Dir); !strings.Contains(det, "detached HEAD") {
+		t.Errorf("detached checkout should be labeled detached, not 'HEAD': %s", det)
 	}
 }
 

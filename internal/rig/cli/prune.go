@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -188,6 +189,10 @@ Name one or more worktrees/branches to restrict the sweep to just those. When
 there's nothing to prune, prune still lists what it found and why each item is
 kept, so you can see what's holding it back.
 
+Every run opens with a one-line banner — the current working directory, the
+branch checked out there, and whether it's the primary checkout or a worktree —
+so it's obvious which repo you're tidying (and that this checkout is protected).
+
 To remove something prune won't touch on its own (not merged, dirty, …), force
 it: pass --force with the name(s) — e.g. "rig prune my-branch --force" — or, at
 the confirm screen, press f to pick a kept item to force-include. Force also
@@ -252,6 +257,9 @@ tested against the local base branch, so keep it current (e.g. pull main).`,
 				a, b, rows, err := pruneSweep(ctx, w, repo, root, base, dry, gone, doWT, doBR, only, unionSets(cliForce, extraForce))
 				return pruneCounts{a, b}, rows, err
 			}
+			// Banner the checkout the sweep runs from (and always protects), so it's
+			// obvious which repo/branch/worktree you're tidying before anything goes.
+			fmt.Fprintln(cmd.OutOrStdout(), pruneContextLine(ctx, repo, root))
 			return runPruneFlow(cmd, dryRun, yes, scope, scopeFixed, run)
 		},
 	}
@@ -263,6 +271,31 @@ tested against the local base branch, so keep it current (e.g. pull main).`,
 	cmd.Flags().BoolVar(&keepGone, "keep-gone", false, keepGoneUsage)
 	cmd.Flags().StringVar(&base, "base", "", "branch to test merges against (default: repo's mainline)")
 	return cmd
+}
+
+// pruneContextLine is the dim "where am I" banner prune prints above its plan:
+// the current working directory, the branch checked out there, and whether that
+// checkout is the repo's primary one or a linked worktree — the checkout prune
+// always protects. Best-effort: any git hiccup just drops the missing piece.
+func pruneContextLine(ctx context.Context, repo *gitrepo.Repo, root string) string {
+	cwd, err := os.Getwd()
+	if err != nil || cwd == "" {
+		cwd = root
+	}
+	branch, _ := repo.CurrentBranch(ctx)
+	// `git rev-parse --abbrev-ref HEAD` yields the literal "HEAD" (not "") when
+	// detached, so treat both as detached.
+	if branch == "" || branch == "HEAD" {
+		branch = "(detached HEAD)"
+	}
+	// The primary checkout is the first entry of `git worktree list`; anything else
+	// rooted here is a linked worktree.
+	kind := "worktree"
+	if wts, err := repo.WorktreeList(ctx); err == nil && len(wts) > 0 && sameDir(wts[0].Path, root) {
+		kind = "primary checkout"
+	}
+	return "  " + DimStyle.Render(cwd) + DimStyle.Render(" · ") + HeaderStyle.Render(branch) +
+		DimStyle.Render(fmt.Sprintf(" · %s (protected)", kind))
 }
 
 // unionSets merges two name sets into one (nil when both are empty), so the run
