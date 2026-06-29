@@ -3,7 +3,7 @@
 rigsmith has **one** extension mechanism, used for two kinds of plugin:
 
 1. **Ecosystem / language adapters** — dotnet, node, go, cargo, the desktop
-   ecosystems tauri and electron, a generic regex adapter, and future python, …
+   ecosystems tauri, electron, and velopack, a generic regex adapter, and future python, …
 2. **Changelog generators** — default, keepachangelog, emoji, JSON-for-a-website, …
 
 Both are external commands invoked over a **versioned JSON-on-stdin /
@@ -28,10 +28,11 @@ own renderer breaks*, not because a third party complains.
 plugin.Ecosystem (interface)
 ├── ecosystem/dotnet    ─┐ in-process built-ins
 ├── ecosystem/node       │  (reference implementations):
-├── ecosystem/gomod      │  language adapters, the tauri/electron
-├── ecosystem/cargo      │  desktop ecosystems, and a generic
-├── ecosystem/tauri      │  regex adapter
+├── ecosystem/gomod      │  language adapters, the tauri/electron/
+├── ecosystem/cargo      │  velopack desktop ecosystems, and a
+├── ecosystem/tauri      │  generic regex adapter
 ├── ecosystem/electron   │
+├── ecosystem/velopack   │
 ├── ecosystem/regex     ─┘
 └── plugin.SubprocessEcosystem  ── external command over JSON
 

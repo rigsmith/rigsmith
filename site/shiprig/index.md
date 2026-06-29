@@ -2,7 +2,7 @@
 
 RigSmith's release tool — the Go successor to net-changesets. One uniform
 `add changeset → version → publish` workflow across .NET, Node, Go, and Rust,
-plus Tauri and Electron desktop apps.
+plus Tauri, Electron, and Velopack desktop apps.
 
 ```sh
 shiprig init               # release-init wizard: pipeline, forge, publish auth

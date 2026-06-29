@@ -57,12 +57,13 @@ Each entry under `steps` overrides one step:
 |-----|---------|
 | `enabled` | `true` / `false` / omit (use default) |
 | `if` | A Tengo expression gating the step at runtime — falsy skips it (with a reason) |
-| `ecosystems` | Restrict the step to these ecosystems (`node`, `dotnet`, `go`, `rust`, `tauri`, `electron`); skipped if the release has none of them |
+| `ecosystems` | Restrict the step to these ecosystems (`node`, `dotnet`, `go`, `rust`, `tauri`, `electron`, `velopack`); skipped if the release has none of them |
 | `name` | Display name shown in the plan + output |
 | `run` | Custom command(s) — a shell string, an argv array, or a mix |
 | `script` | A [Tengo script](#tengo-scripting) action (instead of `run`) |
 | `args` | Extra args appended to a built-in step's command (e.g. `["--otp", "${vars.otp}"]`) |
 | `message` | Commit message for the `commit` step (default `chore: release`) |
+| `paths` | Scope the `commit` step to these paths (`git add -- <paths>`) instead of `git add -A` — keeps unrelated working-tree changes out of the release commit |
 | `confirm` | `true` (default prompt), a custom prompt string, or `false` (no gate) |
 | `dryRun` | Per-step dry-run behavior: `true` executes in dry-run, `false` hides it, or a command/array to run instead |
 | `before` / `after` | Command(s) to run around the step's action |
@@ -80,13 +81,21 @@ families:
 
 | Variable | Value |
 |----------|-------|
-| `${version}` / `${tag}` / `${changelog}` | Single-package shortcuts |
-| `${version.<key>}` / `${tag.<key>}` / `${changelog.<key>}` | Per-package, keyed by short package address |
-| `${versions}` | Comma-separated `name@version` list |
+| `${version}` / `${tag}` / `${changelog}` | Single-package shortcuts. `${version}` is the **new** (bumped) version for this release |
+| `${lastVersion}` / `${nextVersion}` | The pre-bump version, and an explicit alias of `${version}` (for steps that reference both) |
+| `${version.<key>}` / `${lastVersion.<key>}` / `${tag.<key>}` / `${changelog.<key>}` | Per-package, keyed by short package address |
+| `${versions}` / `${lastVersions}` | Comma-separated `name@version` lists — the new versions, and the previous ones |
 | `${tags}` | Array of tags |
 | `${releaseUrl.<key>}` / `${releaseUrls}` | Forge release URLs (filled by the `release` step) |
 | `${issues}` | Resolved issue numbers from released commits |
 | `${env.NAME}` | The merged environment ([see `.env`](#environment-env)) |
+
+`${version}` is the **bumped** version, computed from the pending changesets at
+plan time — so it's correct in `--dry-run` and in every step, with no need to
+read the new number back out of a manifest. `${lastVersion}` carries the version
+the release is moving off (handy for a `v${lastVersion}...v${version}` compare
+URL). These also appear on the script `ctx` (`ctx.version`, `ctx.lastVersion`,
+`ctx.nextVersion`).
 
 **User-defined `vars`** come in three forms:
 
@@ -139,6 +148,29 @@ commands run directly. The portable shell ships cross-platform builtins —
 `cp` (`-r`/`-R`), `mv`, `rm` (`-r`/`-f`), `mkdir` (`-p`) — also reachable from
 Tengo as `cp(...)` / `mv(...)` / `rm(...)` / `mkdir(...)`.
 
+## Tag naming
+
+By default the `tag` step names a tag per package:
+
+- **Single-app repo** (exactly one package, non-Go) → `vX.Y.Z` — there's no
+  sibling name to disambiguate, so the bare `v` form is used.
+- **Multi-package repo** → `<name>@<version>` (the @changesets convention).
+- **Go modules** → the module-path form `dir/vX.Y.Z` (or `vX.Y.Z` at the root),
+  required for `go get`.
+
+Override it for any repo with `tagTemplate` in the **changeset config** — honored
+consistently by the `tag`, `publish`, and forge `release` steps and the `${tag}`
+variable, so the release always attaches to the tag that was pushed:
+
+```jsonc
+// .changeset/config.json (or .changeset/shiprig.jsonc)
+{
+  "tagTemplate": "v${version}"          // or "${name}@${version}", etc.
+}
+```
+
+Placeholders: `${version}` and `${name}`.
+
 ## Forge releases
 
 The `release` step creates a release on your forge and uploads built assets.
@@ -189,6 +221,8 @@ electron-builder / Tauri) and post-build signers under `signing.signers` (Azure
 Trusted Signing for `.exe`/`.msi`, `rcodesign`/`codesign` for `.dmg`/`.app`).
 Artifacts are signed in place by the `sign` step before `release` attaches them.
 `--dry-build` previews the signer commands without contacting a signing service.
+(Velopack apps sign differently — at `vpk pack` time, configured in
+`velopack.json`; see [Desktop apps with Velopack](#desktop-apps-with-velopack).)
 
 ### Where the release config lives
 
@@ -251,6 +285,46 @@ Both tools read whichever file you choose. If you end up with two files,
 `shiprig doctor` flags it and offers to **merge them into one
 `.changeset/shiprig.jsonc`**. Defining the *same* config in two places is a loud
 error (shiprig never guesses).
+
+## Desktop apps with Velopack
+
+A .NET desktop app packaged with [Velopack](https://velopack.io) is a first-class
+release unit. Drop a `velopack.json` next to the project's `.csproj` and the
+`build` step runs `dotnet publish --self-contained` + `vpk pack` for each channel,
+wraps the notarized macOS `.app` in a `.dmg`, and the `release` step attaches the
+installers **and the self-update feed** to the forge release — no `pack.sh`, no
+`vpk upload`. (The adapter overlays `dotnet`, so version bumps and the changelog
+work exactly as for any .NET project.)
+
+```jsonc
+// velopack.json — next to the .csproj
+{
+  "packId": "MyApp",
+  "channels": ["osx-arm64", "osx-x64", "win-x64"],   // each RID = one update feed
+  "mainExe": "MyApp",                                  // ".exe" added for Windows
+  "icon": { "macos": "app/icon.icns", "windows": "app/icon.ico" },
+  "macos":   { "bundleId": "com.acme.myapp",
+               "signIdentity": "Developer ID Application: …",
+               "notaryProfile": "myapp-notary" },      // xcrun notarytool profile
+  "windows": { "trustedSigning": { "endpoint": "…", "account": "…", "profile": "…" } }
+}
+```
+
+- **Channels are RIDs.** Each is a per-architecture self-update feed the app
+  subscribes to. macOS channels build only on a macOS host; Windows/Linux
+  cross-build anywhere. `--dry-build` packs everything **unsigned** for a fast
+  local rehearsal.
+- **Signing is build-time**, inside `vpk pack` (not the `sign` step). The
+  non-secret identifiers live in `velopack.json`; the secrets (the macOS `.p12`
+  password, `AZURE_CLIENT_SECRET`) ride in through the
+  [signing env](#signing-desktop-ecosystems), masked.
+- **Updates need no `vpk upload`.** Velopack's in-app updater finds updates by
+  listing a release's assets over the GitHub API — the `releases.<channel>.json`
+  index `vpk pack` produces plus the `.nupkg` payloads — so attaching those to the
+  forge release is a complete, working feed.
+
+The result is a fully native desktop release — `version → commit → build → tag →
+push → release` with no packaging or upload scripts.
 
 ## Environment & `.env`
 
