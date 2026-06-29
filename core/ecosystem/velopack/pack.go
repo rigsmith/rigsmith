@@ -70,17 +70,26 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 			return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet publish %s: %w", ch, err)
 		}
 
-		// Windows Azure Trusted Signing wants a JSON descriptor file; write it next
-		// to the output (best effort cleanup leaves it — it carries no secrets).
+		// Native-Windows Azure Trusted Signing wants a JSON descriptor file; write it
+		// next to the output (best-effort cleanup leaves it — it carries no secrets).
+		// Cross-compiled Windows signs via --signTemplate instead, so no file there.
 		azureFile := ""
-		if osOf(ch) == osWindows && cfg.Windows.TrustedSigning != nil && !req.Snapshot {
+		if osOf(ch) == osWindows && host == osWindows && cfg.Windows.TrustedSigning != nil && !req.Snapshot {
 			azureFile = filepath.Join("dist", "trustedsigning.json")
 			if err := writeTrustedSigningFile(filepath.Join(req.RepoRoot, azureFile), *cfg.Windows.TrustedSigning); err != nil {
 				return plugin.ArtifactsResponse{}, err
 			}
 		}
 
-		packArgs := buildPackArgs(cfg, ch, pubRel, releasesRel, ver, req.Snapshot, azureFile)
+		// vpk runs --signTemplate without a shell, so expand $VAR / ${VAR} (e.g. a
+		// pre-minted $AZURE_CODESIGN_TOKEN) from the build env here — before vpk
+		// hands the command to the signer — rather than passing them literally.
+		packCfg := cfg
+		if osOf(ch) == osWindows && host != osWindows {
+			packCfg.Windows.SignTemplate = expandEnv(cfg.Windows.SignTemplate, env)
+		}
+
+		packArgs := buildPackArgs(packCfg, ch, pubRel, releasesRel, ver, req.Snapshot, host, azureFile)
 		if _, _, err := runCmdEnv(ctx, req.RepoRoot, env, "vpk", packArgs...); err != nil {
 			return plugin.ArtifactsResponse{}, fmt.Errorf("vpk pack %s: %w", ch, err)
 		}
@@ -116,24 +125,31 @@ func buildPublishArgs(csproj, rid, pubDir string) []string {
 	}
 }
 
-// buildPackArgs is the `vpk pack` argv for one channel. It dispatches per OS:
-// macOS gets --bundleId and, unless snapshot, the Developer ID identity + notary
-// profile; Windows gets the .exe mainExe and, unless snapshot, the Azure Trusted
-// Signing descriptor; Linux gets the common flags only. Empty optional values are
-// omitted so a partially-configured velopack.json still produces a valid command.
-func buildPackArgs(cfg Config, ch, pubDir, output, version string, snapshot bool, azureFile string) []string {
+// buildPackArgs is the `vpk pack` argv for one channel, built for the given host.
+// When the channel targets a different OS than the host it is prefixed with vpk's
+// cross-compile directive (`[win]` / `[osx]` / `[linux]`); a native build omits it.
+// It dispatches per OS: macOS gets --bundleId and, unless snapshot, the Developer
+// ID identity + notary profile; Windows gets the .exe mainExe and, unless snapshot,
+// the host-appropriate code-signing flags; Linux gets the common flags only. Empty
+// optional values are omitted so a partially-configured velopack.json still
+// produces a valid command.
+func buildPackArgs(cfg Config, ch, pubDir, output, version string, snapshot bool, host targetOS, azureFile string) []string {
 	mainExe := cfg.MainExe
 	if osOf(ch) == osWindows {
 		mainExe += ".exe"
 	}
-	args := []string{
+	var args []string
+	if d := crossDirective(ch, host); d != "" {
+		args = append(args, d) // cross-compile target directive, e.g. "[win]"
+	}
+	args = append(args,
 		"pack",
 		"--packId", cfg.PackId,
 		"--packVersion", version,
 		"--packDir", pubDir,
 		"--mainExe", mainExe,
 		"--packTitle", cfg.PackTitle,
-	}
+	)
 	args = appendFlag(args, "--packAuthors", cfg.PackAuthors)
 
 	switch osOf(ch) {
@@ -146,13 +162,67 @@ func buildPackArgs(cfg Config, ch, pubDir, output, version string, snapshot bool
 		}
 	case osWindows:
 		args = appendFlag(args, "--icon", cfg.Icon.Windows)
-		if !snapshot && azureFile != "" {
-			args = appendFlag(args, "--azureTrustedSignFile", azureFile)
+		if !snapshot {
+			args = appendWindowsSigning(args, cfg, host, azureFile)
 		}
 	}
 
 	args = append(args, "--channel", ch, "-r", ch, "-o", output)
 	return args
+}
+
+// crossDirective returns vpk's target-platform directive for a channel built on
+// host — "[win]" / "[osx]" / "[linux]" when cross-compiling (target OS ≠ host),
+// or "" for a native build (vpk defaults to the host platform).
+func crossDirective(ch string, host targetOS) string {
+	t := osOf(ch)
+	if t == host {
+		return ""
+	}
+	switch t {
+	case osWindows:
+		return "[win]"
+	case osMac:
+		return "[osx]"
+	case osLinux:
+		return "[linux]"
+	default:
+		return ""
+	}
+}
+
+// appendWindowsSigning adds the host-appropriate Windows code-signing flags. On a
+// Windows host it uses vpk's native Azure Trusted Signing (--azureTrustedSignFile,
+// from the metadata file the caller wrote). Cross-compiling from macOS/Linux —
+// where that flag isn't available — it uses the configured --signTemplate (jsign)
+// plus --signExclude '\.dll$' so only the .exe / Setup.exe are signed, not the
+// bundled runtime DLLs. Each is a no-op when its config is absent.
+func appendWindowsSigning(args []string, cfg Config, host targetOS, azureFile string) []string {
+	if host == osWindows {
+		return appendFlag(args, "--azureTrustedSignFile", azureFile)
+	}
+	if tmpl := strings.TrimSpace(cfg.Windows.SignTemplate); tmpl != "" {
+		args = append(args, "--signTemplate", tmpl, "--signExclude", `\.dll$`)
+	}
+	return args
+}
+
+// expandEnv expands $VAR / ${VAR} in s from the given KEY=VALUE environment. The
+// signTemplate is handed to vpk, which runs it WITHOUT a shell, so a token
+// reference like $AZURE_CODESIGN_TOKEN must be expanded here — from the build env
+// shiprig passes in (the layered .env/.env.local + ambient) — or it would reach
+// the signer as the literal string. Unset variables expand to "".
+func expandEnv(s string, env []string) string {
+	if !strings.ContainsRune(s, '$') {
+		return s
+	}
+	m := make(map[string]string, len(env))
+	for _, e := range env {
+		if i := strings.IndexByte(e, '='); i > 0 {
+			m[e[:i]] = e[i+1:] // later entries win (ambient over .env)
+		}
+	}
+	return os.Expand(s, func(k string) string { return m[k] })
 }
 
 // wrapDmg turns Velopack's portable .app (shipped in <PackId>-<ch>-Portable.zip)
@@ -352,7 +422,24 @@ func runCmdEnv(ctx context.Context, dir string, env []string, name string, args 
 	err = cmd.Run()
 	stdout, stderr = outBuf.String(), errBuf.String()
 	if err != nil {
-		err = fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(stderr))
+		// Redact a signing token (jsign's `--storepass`) before echoing the command
+		// in an error — the Windows --signTemplate carries it.
+		err = fmt.Errorf("%s %s: %w: %s", name, redactCommand(args), err, strings.TrimSpace(stderr))
 	}
 	return stdout, stderr, err
+}
+
+// storepassRe matches a jsign `--storepass <value>` (or `--storepass=<value>`)
+// inside a command argument, so the token can be redacted from echoed commands.
+var storepassRe = regexp.MustCompile(`(--storepass[=\s]+)(\S+)`)
+
+// redactCommand joins args for display with any `--storepass` token replaced by
+// `***`. The token lives inside the single --signTemplate argument, so redaction
+// is applied per-arg.
+func redactCommand(args []string) string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = storepassRe.ReplaceAllString(a, "${1}***")
+	}
+	return strings.Join(out, " ")
 }
