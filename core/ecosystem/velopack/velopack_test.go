@@ -258,14 +258,17 @@ func TestExtractVersionAndMajor(t *testing.T) {
 	}
 }
 
-// TestCollectReleases classifies a representative dist/releases layout: DMGs and
-// the Windows Setup.exe are attachable installers; the nupkg/json/RELEASES feed
-// files are returned but not attached (vpk upload owns them).
+// TestCollectReleases classifies a representative dist/releases layout. Installers
+// (DMG, Setup.exe) AND the update feed the in-app updater needs — the
+// releases.<ch>.json index plus the full/delta .nupkg payloads — are attached to
+// the release; the legacy RELEASES-<ch> and the assets.<ch>.json build manifest
+// are collected but not attached.
 func TestCollectReleases(t *testing.T) {
 	dir := t.TempDir()
 	files := []string{
 		"Halyards-osx-arm64.dmg",
 		"Halyards-1.0.0-osx-arm64-full.nupkg",
+		"Halyards-1.0.0-osx-arm64-delta.nupkg",
 		"releases.osx-arm64.json",
 		"RELEASES-osx-arm64",
 		"assets.osx-arm64.json",
@@ -288,18 +291,27 @@ func TestCollectReleases(t *testing.T) {
 		}
 	}
 
-	wantAttached := []string{"Halyards-osx-arm64.dmg", "Halyards-win-x64-Setup.exe"}
+	// Installers + the runtime update feed (index + full/delta payloads) all attach.
+	wantAttached := []string{
+		"Halyards-osx-arm64.dmg",
+		"Halyards-win-x64-Setup.exe",
+		"releases.osx-arm64.json",
+		"Halyards-1.0.0-osx-arm64-full.nupkg",
+		"Halyards-1.0.0-osx-arm64-delta.nupkg",
+		"Halyards-1.0.0-win-x64-full.nupkg",
+	}
 	for _, w := range wantAttached {
 		if !attached[w] {
-			t.Errorf("%s should be attached", w)
+			t.Errorf("%s should be attached (installer or update-feed asset)", w)
 		}
 	}
-	for _, notAttached := range []string{"Halyards-1.0.0-osx-arm64-full.nupkg", "releases.osx-arm64.json", "RELEASES-osx-arm64"} {
+	// Legacy/build-manifest files are collected but not attached.
+	for _, notAttached := range []string{"RELEASES-osx-arm64", "assets.osx-arm64.json"} {
 		if _, ok := all[notAttached]; !ok {
 			t.Errorf("%s should be collected", notAttached)
 		}
 		if attached[notAttached] {
-			t.Errorf("%s should NOT be attached (vpk upload owns the feed)", notAttached)
+			t.Errorf("%s should NOT be attached (unused by the modern updater)", notAttached)
 		}
 	}
 	if _, ok := all["trustedsigning.json"]; ok {
