@@ -45,9 +45,20 @@ func (t target) shortName() string {
 // and only reports version-bearing projects (a NuGet concern), which hides app
 // and test projects from the dev verbs and pickers. The dev model is
 // solution-aware, version-independent, and carries runnable/test classification.
+//
+// Overlay ecosystems (velopack, electron, tauri — those declaring Overlays) are
+// skipped: they don't own dev targets, they re-emit the base-language project
+// beside their packaging file (a .csproj / package.json / Cargo.toml) for the
+// release path. Surfacing them here double-counts that project — and since
+// topoSort keys by name, the overlay copy (which maps no dev verb, so `rig run`
+// can't run it) would shadow the base, dropping the real target from the run/
+// build/test lists. Dev verbs act on the base; let it own the unit.
 func discoverWorkspace(ctx context.Context, root string, exclude []string) []target {
 	var out []target
 	for _, eco := range ecosystem.Default().All() {
+		if len(eco.Info().Overlays) > 0 {
+			continue
+		}
 		ok, err := eco.Detect(ctx, root)
 		if err != nil || !ok {
 			continue
