@@ -2,7 +2,11 @@ package velopack
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,8 +14,16 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/plugin"
+)
+
+// vpk rejects a packVersion below 0.0.1; 0.0.0 is rigsmith's "nothing released
+// yet" manifest sentinel (the version step bumps it from a changeset).
+const (
+	zeroVersion   = "0.0.0"
+	minVpkVersion = "0.0.1"
 )
 
 // Artifacts builds the Velopack installers and update feeds for every configured
@@ -33,7 +45,10 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		return plugin.ArtifactsResponse{}, err
 	}
 
-	ver := req.Package.Version
+	ver, err := resolvePackVersion(req.Package.Version, req.Snapshot)
+	if err != nil {
+		return plugin.ArtifactsResponse{}, err
+	}
 	releasesRel := cfg.Output
 	releasesAbs := filepath.Join(req.RepoRoot, releasesRel)
 	host := hostOS()
@@ -90,12 +105,18 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 			}
 		}
 
-		// vpk runs --signTemplate without a shell, so expand $VAR / ${VAR} (e.g. a
-		// pre-minted $AZURE_CODESIGN_TOKEN) from the build env here — before vpk
-		// hands the command to the signer — rather than passing them literally.
+		// Cross-compiled Windows signs via --signTemplate. Resolve it now: an
+		// explicit signTemplate (with $VARs expanded from the build env), or one
+		// synthesized from windows.trustedSigning (jsign + a minted Azure token) so
+		// the same trustedSigning block works on a Mac/Linux host too. Skipped for a
+		// snapshot (unsigned rehearsal) to avoid an unnecessary token mint.
 		packCfg := cfg
-		if osOf(ch) == osWindows && host != osWindows {
-			packCfg.Windows.SignTemplate = expandEnv(cfg.Windows.SignTemplate, env)
+		if osOf(ch) == osWindows && host != osWindows && !req.Snapshot {
+			tmpl, err := resolveCrossWindowsSignTemplate(cfg.Windows, env)
+			if err != nil {
+				return plugin.ArtifactsResponse{}, err
+			}
+			packCfg.Windows.SignTemplate = tmpl
 		}
 
 		packArgs := buildPackArgs(packCfg, ch, pubRel, releasesRel, ver, req.Snapshot, host, azureFile)
@@ -340,13 +361,119 @@ func expandEnv(s string, env []string) string {
 	if !strings.ContainsRune(s, '$') {
 		return s
 	}
+	m := envMap(env)
+	return os.Expand(s, func(k string) string { return m[k] })
+}
+
+// envMap turns a KEY=VALUE slice into a map (later entries win, ambient over .env).
+func envMap(env []string) map[string]string {
 	m := make(map[string]string, len(env))
 	for _, e := range env {
 		if i := strings.IndexByte(e, '='); i > 0 {
-			m[e[:i]] = e[i+1:] // later entries win (ambient over .env)
+			m[e[:i]] = e[i+1:]
 		}
 	}
-	return os.Expand(s, func(k string) string { return m[k] })
+	return m
+}
+
+// resolveCrossWindowsSignTemplate returns the `--signTemplate` command for a
+// Windows build cross-compiled from a non-Windows host. An explicit
+// Windows.SignTemplate wins (with $VARs expanded from the build env). Otherwise,
+// when Windows.TrustedSigning is set, it synthesizes a jsign + Azure Trusted
+// Signing command — minting the access token from the build env — so the same
+// trustedSigning block that drives the native-Windows path works here too, with no
+// hand-written template or pre-exported token. Empty when neither is configured.
+func resolveCrossWindowsSignTemplate(win Windows, env []string) (string, error) {
+	if t := strings.TrimSpace(win.SignTemplate); t != "" {
+		return expandEnv(t, env), nil
+	}
+	if win.TrustedSigning == nil {
+		return "", nil
+	}
+	ts := *win.TrustedSigning
+	token, err := trustedSigningToken(envMap(env))
+	if err != nil {
+		return "", err
+	}
+	// jsign signs each PE in turn ({{file}}); --tsmode RFC3161 + the Azure TSA are
+	// required because Trusted Signing certs are short-lived (an un-timestamped
+	// signature expires within days) and jsign's default timestamp mode misparses
+	// the RFC3161 response. The adapter adds --signExclude '\.dll$' separately, and
+	// the --storepass token is redacted from any echoed command.
+	return fmt.Sprintf(
+		"jsign --storetype TRUSTEDSIGNING --keystore %s --storepass %s --alias %s/%s "+
+			"--tsmode RFC3161 --tsaurl http://timestamp.acs.microsoft.com {{file}}",
+		ts.Endpoint, token, ts.Account, ts.Profile), nil
+}
+
+// trustedSigningToken returns an Azure Trusted Signing access token: a pre-set
+// AZURE_CODESIGN_TOKEN if present (CI / explicit), otherwise one minted from the
+// service-principal creds (AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET) in the build
+// env. It names the missing creds rather than letting the signer fail opaquely on
+// an empty token.
+func trustedSigningToken(env map[string]string) (string, error) {
+	if t := strings.TrimSpace(env["AZURE_CODESIGN_TOKEN"]); t != "" {
+		return t, nil
+	}
+	tenant, clientID, secret := env["AZURE_TENANT_ID"], env["AZURE_CLIENT_ID"], env["AZURE_CLIENT_SECRET"]
+	var missing []string
+	for _, kv := range []struct{ k, v string }{
+		{"AZURE_TENANT_ID", tenant}, {"AZURE_CLIENT_ID", clientID}, {"AZURE_CLIENT_SECRET", secret},
+	} {
+		if strings.TrimSpace(kv.v) == "" {
+			missing = append(missing, kv.k)
+		}
+	}
+	if len(missing) > 0 {
+		return "", fmt.Errorf(
+			"velopack: Windows Trusted Signing needs an access token — set AZURE_CODESIGN_TOKEN, or the service-principal creds (%s) in the signing env / .env.local so it can be minted",
+			strings.Join(missing, ", "))
+	}
+	return mintAzureCodeSigningToken(tenant, clientID, secret)
+}
+
+// mintAzureCodeSigningToken exchanges service-principal client credentials for a
+// Trusted Signing access token (the codesigning.azure.net audience).
+func mintAzureCodeSigningToken(tenant, clientID, secret string) (string, error) {
+	form := url.Values{
+		"client_id":     {clientID},
+		"client_secret": {secret},
+		"grant_type":    {"client_credentials"},
+		"scope":         {"https://codesigning.azure.net/.default"},
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.PostForm("https://login.microsoftonline.com/"+tenant+"/oauth2/v2.0/token", form)
+	if err != nil {
+		return "", fmt.Errorf("velopack: minting Trusted Signing token: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("velopack: Trusted Signing token request failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil || out.AccessToken == "" {
+		return "", fmt.Errorf("velopack: Trusted Signing token response had no access_token")
+	}
+	return out.AccessToken, nil
+}
+
+// resolvePackVersion validates the version vpk will pack. vpk rejects anything
+// below 0.0.1, and 0.0.0 is rigsmith's "nothing released yet" sentinel — so a
+// snapshot (unsigned rehearsal) falls back to the minimum, while a real build
+// fails with guidance instead of vpk's terse rejection deep in the build.
+func resolvePackVersion(ver string, snapshot bool) (string, error) {
+	if ver != zeroVersion {
+		return ver, nil
+	}
+	if snapshot {
+		return minVpkVersion, nil
+	}
+	return "", fmt.Errorf(
+		"velopack: package version is %s — run the `version` step (consume a changeset) or set <Version> >= %s before building real artifacts (use --dry-build for an unsigned rehearsal)",
+		zeroVersion, minVpkVersion)
 }
 
 // wrapDmg turns Velopack's portable .app (shipped in <PackId>-<ch>-Portable.zip)
@@ -370,16 +497,25 @@ func (a *Adapter) wrapDmg(ctx context.Context, repoRoot string, env []string, cf
 	}
 	defer os.RemoveAll(tmp)
 
-	if _, _, err := runCmdEnv(ctx, repoRoot, env, "ditto", "-x", "-k", portable, tmp); err != nil {
+	// Stage the DMG window contents: the .app next to an /Applications symlink the
+	// user drags onto — the standard macOS "drag to install" target. The old layout
+	// shipped the bare .app with no drop target.
+	stage := filepath.Join(tmp, "stage")
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		return err
+	}
+	if _, _, err := runCmdEnv(ctx, repoRoot, env, "ditto", "-x", "-k", portable, stage); err != nil {
 		return fmt.Errorf("ditto extract: %w", err)
 	}
-	appPath := filepath.Join(tmp, cfg.MainExe+".app")
+	appPath := filepath.Join(stage, cfg.MainExe+".app")
 	_, _, _ = runCmdEnv(ctx, repoRoot, env, "xcrun", "stapler", "staple", appPath) // best-effort
+	if err := os.Symlink("/Applications", filepath.Join(stage, "Applications")); err != nil {
+		return fmt.Errorf("applications symlink: %w", err)
+	}
 
 	dmg := filepath.Join(outAbs, fmt.Sprintf("%s-%s.dmg", cfg.PackId, ch))
-	if _, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "create",
-		"-volname", cfg.PackTitle, "-srcfolder", appPath, "-ov", "-format", "UDZO", dmg); err != nil {
-		return fmt.Errorf("hdiutil create: %w", err)
+	if err := buildDmg(ctx, repoRoot, env, cfg.PackTitle, cfg.MainExe, stage, dmg); err != nil {
+		return err
 	}
 	if !snapshot && cfg.Macos.SignIdentity != "" {
 		_, _, _ = runCmdEnv(ctx, repoRoot, env, "codesign", "--force", "--timestamp", "--sign", cfg.Macos.SignIdentity, dmg) // best-effort
@@ -388,6 +524,90 @@ func (a *Adapter) wrapDmg(ctx context.Context, repoRoot string, env []string, cf
 	_ = os.Remove(portable)
 	_ = os.Remove(filepath.Join(outAbs, fmt.Sprintf("%s-%s-Setup.pkg", cfg.PackId, ch)))
 	return nil
+}
+
+// buildDmg packs the staging folder (the .app + an Applications symlink) into a
+// compressed DMG at dmg. It first tries to lay the window out in icon view — the
+// app on the left, the Applications folder on the right — so the "drag to install"
+// gesture is obvious. That layout uses Finder scripting (needs a GUI session), so
+// it is best-effort: any failure falls back to a plain compressed DMG that still
+// carries the app and the Applications drop target, just in the default view.
+func buildDmg(ctx context.Context, repoRoot string, env []string, volName, mainExe, stage, dmg string) error {
+	if err := layoutDmg(ctx, repoRoot, env, volName, mainExe, stage, dmg); err == nil {
+		return nil
+	}
+	if _, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "create",
+		"-volname", volName, "-srcfolder", stage, "-ov", "-format", "UDZO", dmg); err != nil {
+		return fmt.Errorf("hdiutil create: %w", err)
+	}
+	return nil
+}
+
+// layoutDmg builds a DMG with an icon-view window arranged for drag-to-install:
+// create a read-write image from the staging folder, mount it, position the .app
+// and the Applications symlink via Finder, detach, then convert to a compressed
+// read-only image. Any step failing returns an error so buildDmg can fall back.
+func layoutDmg(ctx context.Context, repoRoot string, env []string, volName, mainExe, stage, dmg string) error {
+	rw := dmg + ".rw.dmg"
+	defer os.Remove(rw)
+	if _, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "create",
+		"-volname", volName, "-srcfolder", stage, "-fs", "HFS+", "-format", "UDRW", "-ov", rw); err != nil {
+		return err
+	}
+	out, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "attach", rw, "-nobrowse", "-readwrite", "-noverify")
+	if err != nil {
+		return err
+	}
+	mount := dmgMountPoint(out)
+	if mount == "" {
+		return fmt.Errorf("velopack: could not parse DMG mount point from hdiutil output")
+	}
+	detached := false
+	detach := func() {
+		if !detached {
+			_, _, _ = runCmdEnv(ctx, repoRoot, env, "hdiutil", "detach", mount, "-force")
+			detached = true
+		}
+	}
+	defer detach()
+
+	script := fmt.Sprintf(`
+tell application "Finder"
+  tell disk %q
+    open
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set the bounds of container window to {200, 120, 740, 480}
+    set viewOptions to the icon view options of container window
+    set arrangement of viewOptions to not arranged
+    set icon size of viewOptions to 112
+    set position of item "%s" of container window to {140, 175}
+    set position of item "Applications" of container window to {400, 175}
+    update without registering applications
+    delay 1
+    close
+  end tell
+end tell`, volName, mainExe+".app")
+	if _, _, err := runCmdEnv(ctx, repoRoot, env, "osascript", "-e", script); err != nil {
+		return err
+	}
+	detach()
+	if _, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "convert", rw, "-format", "UDZO", "-ov", "-o", dmg); err != nil {
+		return err
+	}
+	return nil
+}
+
+// dmgMountPoint pulls the /Volumes/... mount path out of `hdiutil attach` output
+// (tab-separated rows; the mounted volume row ends with the path).
+func dmgMountPoint(hdiutilOut string) string {
+	for _, line := range strings.Split(hdiutilOut, "\n") {
+		if i := strings.Index(line, "/Volumes/"); i >= 0 {
+			return strings.TrimRight(line[i:], " \t\r\n")
+		}
+	}
+	return ""
 }
 
 // writeTrustedSigningFile writes vpk's Azure Trusted Signing descriptor (the
@@ -546,11 +766,37 @@ func runCmdEnv(ctx context.Context, dir string, env []string, name string, args 
 	err = cmd.Run()
 	stdout, stderr = outBuf.String(), errBuf.String()
 	if err != nil {
+		// Surface the tool's real message. Many CLIs (notably `vpk`) write their
+		// fatal/diagnostic line to stdout, not stderr — including only stderr left
+		// errors like "exit status 255:" with no reason. Prefer stderr, fall back
+		// to (or append) stdout, bounded so a noisy log can't bury the cause.
+		detail := strings.TrimSpace(stderr)
+		if tail := lastLines(strings.TrimSpace(stdout), 15); tail != "" {
+			if detail != "" {
+				detail += "\n" + tail
+			} else {
+				detail = tail
+			}
+		}
 		// Redact a signing token (jsign's `--storepass`) before echoing the command
 		// in an error — the Windows --signTemplate carries it.
-		err = fmt.Errorf("%s %s: %w: %s", name, redactCommand(args), err, strings.TrimSpace(stderr))
+		err = fmt.Errorf("%s %s: %w: %s", name, redactCommand(args), err, detail)
 	}
 	return stdout, stderr, err
+}
+
+// lastLines returns the final n non-empty-bounded lines of s (all of it when it
+// has n or fewer), so a command's error detail is surfaced without dumping a long
+// build log into the message.
+func lastLines(s string, n int) string {
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // storepassRe matches a jsign `--storepass <value>` (or `--storepass=<value>`)

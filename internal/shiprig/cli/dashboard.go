@@ -278,6 +278,15 @@ func (m dashboardModel) finalView() string {
 		if m.message != "" {
 			body = m.message
 		}
+		// Surface the failing command's captured output (the real error) instead of
+		// stopping at the generic "step 'X' failed" — otherwise the only way to see
+		// why is to re-run outside the TUI.
+		if len(m.output) > 0 {
+			body += "\n"
+			for _, line := range m.output {
+				body += "\n" + line
+			}
+		}
 		if name := m.lastTouched(); name != "" {
 			body += "\nResume with: " + m.tool + " release --from " + name
 		}

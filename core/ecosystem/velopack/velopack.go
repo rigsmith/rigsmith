@@ -132,7 +132,15 @@ func (a *Adapter) Discover(ctx context.Context, req plugin.DiscoverRequest) (plu
 // the base adapter that owns its directory (its manifest — csproj/Directory.Build.
 // props, Cargo.toml, package.json, or go.mod — is rewritten format-preservingly).
 func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) error {
-	base, err := a.resolveBase(filepath.Join(req.RepoRoot, req.Package.Dir))
+	// Prefer Dir; fall back to the manifest's directory when a caller (e.g. the
+	// changerig version writer) supplies a Package without Dir. Every base adapter
+	// keys its write off ManifestPath, so it's the reliable locator for the app —
+	// and the velopack file we need to resolve the base sits in the same directory.
+	dir := req.Package.Dir
+	if dir == "" && req.Package.ManifestPath != "" {
+		dir = filepath.Dir(req.Package.ManifestPath)
+	}
+	base, err := a.resolveBase(filepath.Join(req.RepoRoot, dir))
 	if err != nil {
 		return err
 	}

@@ -138,6 +138,31 @@ func TestSetVersionDelegatesToBase(t *testing.T) {
 	}
 }
 
+// TestSetVersionWithoutDir reproduces the changerig version writer's request,
+// which carries a ManifestPath but no Dir. The velopack overlay must still locate
+// the app (and its velopack file) from the manifest's directory rather than
+// resolving the base at the repo root — the bug that made `shiprig version` fail
+// for an app whose project lives in a subdirectory.
+func TestSetVersionWithoutDir(t *testing.T) {
+	root := t.TempDir()
+	cargoPath := filepath.Join(root, "rs", "Cargo.toml")
+	writeFile(t, cargoPath, cargoToml("rustapp", "0.3.0"))
+	writeFile(t, filepath.Join(root, "rs", "velopack.json"), `{"packId":"RustApp","channels":["win-x64"],"build":{"command":"true"}}`)
+
+	err := New().SetVersion(context.Background(), plugin.SetVersionRequest{
+		RepoRoot:   root,
+		Package:    plugin.Package{Name: "rustapp", ManifestPath: "rs/Cargo.toml", VersionFile: "rs/Cargo.toml", Version: "0.3.0"}, // no Dir
+		NewVersion: "0.4.0",
+	})
+	if err != nil {
+		t.Fatalf("SetVersion with an empty Dir should fall back to the manifest dir, got: %v", err)
+	}
+	b, _ := os.ReadFile(cargoPath)
+	if !strings.Contains(string(b), `version = "0.4.0"`) {
+		t.Errorf("SetVersion did not bump Cargo.toml:\n%s", b)
+	}
+}
+
 // TestRidTargets pins the RID → Go/Rust target mapping a build.command relies on.
 func TestRidTargets(t *testing.T) {
 	for _, c := range []struct{ rid, goos, goarch, rust string }{
@@ -404,6 +429,91 @@ func TestBuildPackArgsWindowsCrossSignTemplate(t *testing.T) {
 	// vpk's {{file}} placeholder survives untouched.
 	if !contains(got, fullCfg().Windows.SignTemplate) || !strings.Contains(fullCfg().Windows.SignTemplate, "{{file}}") {
 		t.Error("--signTemplate must pass through verbatim, including {{file}}")
+	}
+}
+
+// An explicit signTemplate is an override and is returned with $VARs expanded.
+func TestResolveCrossWindowsSignTemplateExplicitOverride(t *testing.T) {
+	win := Windows{SignTemplate: "customsign --storepass $AZURE_CODESIGN_TOKEN {{file}}"}
+	got, err := resolveCrossWindowsSignTemplate(win, []string{"AZURE_CODESIGN_TOKEN=abc123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "customsign --storepass abc123 {{file}}" {
+		t.Errorf("explicit signTemplate should expand $VARs, got %q", got)
+	}
+}
+
+// With no signTemplate, trustedSigning synthesizes the jsign command (with the
+// minted/preset token, the RFC3161 timestamp, and {{file}}) — so the same block
+// works on a non-Windows host without a hand-written template.
+func TestResolveCrossWindowsSignTemplateSynthesizesFromTrustedSigning(t *testing.T) {
+	win := Windows{TrustedSigning: &TrustedSigning{Endpoint: "https://eus.codesigning.azure.net", Account: "Acme", Profile: "Prof"}}
+	got, err := resolveCrossWindowsSignTemplate(win, []string{"AZURE_CODESIGN_TOKEN=tok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"jsign --storetype TRUSTEDSIGNING",
+		"--keystore https://eus.codesigning.azure.net",
+		"--storepass tok",
+		"--alias Acme/Prof",
+		"--tsmode RFC3161",
+		"--tsaurl http://timestamp.acs.microsoft.com",
+		"{{file}}",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("synthesized template missing %q\n got: %s", want, got)
+		}
+	}
+}
+
+// No token and no service-principal creds → a clear error naming all three, not an
+// opaque downstream signer failure.
+func TestResolveCrossWindowsSignTemplateMissingCreds(t *testing.T) {
+	win := Windows{TrustedSigning: &TrustedSigning{Endpoint: "e", Account: "a", Profile: "p"}}
+	_, err := resolveCrossWindowsSignTemplate(win, nil)
+	if err == nil {
+		t.Fatal("expected an error naming the missing creds")
+	}
+	for _, want := range []string{"AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name missing cred %q, got: %v", want, err)
+		}
+	}
+}
+
+func TestResolveCrossWindowsSignTemplateUnsignedWhenUnconfigured(t *testing.T) {
+	got, err := resolveCrossWindowsSignTemplate(Windows{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Errorf("no signTemplate and no trustedSigning should be unsigned, got %q", got)
+	}
+}
+
+func TestTrustedSigningTokenPrefersPreset(t *testing.T) {
+	tok, err := trustedSigningToken(map[string]string{
+		"AZURE_CODESIGN_TOKEN": "preset", "AZURE_TENANT_ID": "t", "AZURE_CLIENT_ID": "c", "AZURE_CLIENT_SECRET": "s",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok != "preset" {
+		t.Errorf("a pre-set token must win (no mint), got %q", tok)
+	}
+}
+
+func TestResolvePackVersion(t *testing.T) {
+	if v, err := resolvePackVersion("1.2.3", false); err != nil || v != "1.2.3" {
+		t.Errorf("real version should pass through: got %q, %v", v, err)
+	}
+	if v, err := resolvePackVersion("0.0.0", true); err != nil || v != "0.0.1" {
+		t.Errorf("snapshot at the 0.0.0 sentinel should fall back to 0.0.1: got %q, %v", v, err)
+	}
+	if _, err := resolvePackVersion("0.0.0", false); err == nil {
+		t.Error("a real build at the 0.0.0 sentinel should error with guidance")
 	}
 }
 

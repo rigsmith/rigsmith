@@ -242,7 +242,7 @@ func NewVersionCmd() *cobra.Command {
 					}
 					req := plugin.SetVersionRequest{
 						RepoRoot:          ws.Root,
-						Package:           plugin.Package{Name: m.Name, ManifestPath: m.ManifestPath, VersionFile: m.VersionFile},
+						Package:           plugin.Package{Name: m.Name, Dir: filepath.Dir(m.ManifestPath), ManifestPath: m.ManifestPath, VersionFile: m.VersionFile},
 						NewVersion:        m.ResolvedVersion(),
 						DependencyUpdates: m.DepUpdates,
 					}

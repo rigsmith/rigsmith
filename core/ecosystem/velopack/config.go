@@ -103,39 +103,35 @@ type Macos struct {
 // WrapDmg reports whether the macOS .app should be wrapped in a .dmg (default true).
 func (m Macos) WrapDmg() bool { return m.Dmg == nil || *m.Dmg }
 
-// Windows holds Windows packaging settings. Code signing is host-dependent
-// because vpk exposes different flags on each side:
-//
-//   - Building ON Windows (e.g. a CI runner): vpk's native Azure Trusted Signing
-//     (--azureTrustedSignFile) — configured by TrustedSigning.
-//   - Cross-compiling FROM macOS/Linux (the local-first path): that flag isn't
-//     available, so a custom --signTemplate command (jsign) is used — SignTemplate.
-//
-// Set whichever matches where you build (or both, to be correct everywhere); the
-// adapter picks by host.
+// Windows holds Windows packaging settings. For code signing, prefer
+// TrustedSigning — it works on every host: vpk's native Azure Trusted Signing
+// (--azureTrustedSignFile) when building ON Windows, and a jsign command the
+// adapter synthesizes (minting the token itself) when cross-compiling FROM
+// macOS/Linux, where that flag isn't exposed. SignTemplate is an escape hatch for
+// a custom signer.
 type Windows struct {
-	// SignTemplate is a custom signing command for a Windows build cross-compiled
-	// from a non-Windows host, passed to `vpk [win] pack --signTemplate`. vpk runs
-	// it once per binary, substituting `{{file}}` for the path — e.g. a jsign +
-	// Azure Trusted Signing invocation. The adapter also passes
-	// `--signExclude '\.dll$'` so only the .exe / Setup.exe are signed.
-	//
-	// $VAR / ${VAR} are expanded from the build environment first (vpk itself runs
-	// the command without a shell), so a token reference like
-	// `--storepass $AZURE_CODESIGN_TOKEN` resolves from a pre-set env var (exported
-	// or in .env.local). A `--storepass` token is redacted from any echoed command.
-	// Empty leaves a cross-compiled build unsigned.
+	// SignTemplate is an OPTIONAL custom signing command for a Windows build
+	// cross-compiled from a non-Windows host (passed to `vpk [win] pack
+	// --signTemplate`; the adapter also adds `--signExclude '\.dll$'`). vpk runs it
+	// once per binary, substituting `{{file}}`. Set this only to override the
+	// jsign command the adapter derives from TrustedSigning — e.g. a different
+	// signer. $VAR / ${VAR} are expanded from the build env (vpk runs the command
+	// without a shell); a `--storepass` token is redacted from any echoed command.
+	// When empty, the adapter uses TrustedSigning (recommended).
 	SignTemplate string `json:"signTemplate,omitempty"`
-	// TrustedSigning configures vpk's native Azure Trusted Signing
-	// (--azureTrustedSignFile), used only when building on a Windows host. Empty
-	// leaves a native Windows build unsigned.
+	// TrustedSigning configures Azure Trusted Signing for Windows on ANY host. On
+	// a Windows host the adapter passes vpk's native --azureTrustedSignFile; when
+	// cross-compiling from macOS/Linux it synthesizes a jsign command from these
+	// identifiers and a token it mints from the service-principal creds in the
+	// build env. Empty leaves a Windows build unsigned.
 	TrustedSigning *TrustedSigning `json:"trustedSigning,omitempty"`
 }
 
-// TrustedSigning holds the non-secret Azure Trusted Signing identifiers vpk
-// writes into its azureTrustedSignFile JSON. The credential itself
-// (AZURE_CLIENT_SECRET etc.) is supplied via the signing env and consumed by
-// Azure's DefaultAzureCredential chain.
+// TrustedSigning holds the non-secret Azure Trusted Signing identifiers. The
+// credentials ride in via the build/signing env: on a Windows host vpk's
+// DefaultAzureCredential chain consumes AZURE_* (or a managed identity); when
+// cross-compiling, the adapter mints a token from AZURE_TENANT_ID/CLIENT_ID/
+// CLIENT_SECRET (or uses a pre-set AZURE_CODESIGN_TOKEN).
 type TrustedSigning struct {
 	Endpoint string `json:"endpoint"`
 	Account  string `json:"account"`

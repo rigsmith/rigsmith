@@ -136,6 +136,19 @@ func TestDashboardFailureShowsResumeHint(t *testing.T) {
 	}
 }
 
+func TestDashboardFailureSurfacesCommandOutput(t *testing.T) {
+	m := newDashboardModel(editorSteps(), "shiprig")
+	m = dash(m, dashStepStarted{"build"})
+	m = dash(m, dashCmdOutput{[]string{"build App: vpk pack: exit 255: There is a release equal or greater to 1.0.0"}})
+	m, _ = dashUpdate(m, dashRunCompleted{success: false, message: "step 'build' failed"})
+	v := m.View()
+	// The real error (the captured command output) must appear in the panel, not
+	// just the generic step-failed message.
+	if !strings.Contains(v, "There is a release equal or greater to 1.0.0") {
+		t.Errorf("failure view dropped the command output (the real error):\n%s", v)
+	}
+}
+
 func TestDashboardCancelUsesCancelPanel(t *testing.T) {
 	m := newDashboardModel(editorSteps(), "shiprig")
 	m = dash(m, dashStepStarted{"publish"})
