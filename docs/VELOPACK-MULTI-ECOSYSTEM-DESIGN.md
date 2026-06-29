@@ -1,6 +1,6 @@
 # Velopack multi-ecosystem adapter — design
 
-Status: **proposed** (implement after PR #164 lands; #164 is orthogonal).
+Status: **implemented** — merged in #165 (follow-up to #164). See "Status" below.
 Author: design captured 2026-06-29.
 
 ## Problem
@@ -68,16 +68,18 @@ That collapses the risk. The work is entirely inside the velopack package.
   // (defaults to `dotnet publish`); required for cargo/node/go/none unless the
   // base grows a native publish-to-dir path later.
   "build": {
-    // Command run once per channel. Substitutions (string-replaced before exec):
-    //   $RID/$CHANNEL  the channel RID (e.g. win-x64)
-    //   $OUTPUT        the dir vpk will pack from — the command MUST fill this
-    //   $VERSION       the resolved release version
-    //   $RUST_TARGET   RID→cargo triple (win-x64→x86_64-pc-windows-msvc, ...)
-    //   $GOOS/$GOARCH  RID→Go env (win-x64→windows/amd64, ...)
-    "command": "scripts/pack-rust.sh",          // string or argv
+    // A shell command run once per channel, with these variables EXPORTED into its
+    // environment (the shell expands $VAR — no string substitution by the adapter):
+    //   RID/CHANNEL   the channel RID (e.g. win-x64)
+    //   OUTPUT        the dir vpk will pack from — the command MUST fill this
+    //   VERSION       the resolved release version
+    //   RUST_TARGET   RID→cargo triple (win-x64→x86_64-pc-windows-msvc, ...)
+    //   GOOS/GOARCH   RID→Go env (win-x64→windows/amd64, ...)
+    "command": "scripts/pack-rust.sh",          // shell command string
 
     // Optional: if the build emits to a fixed dir instead of $OUTPUT, point vpk
     // at it (electron-builder's out/MyApp-win32-x64, etc.). Defaults to $OUTPUT.
+    // Env-expanded too, so it may reference $CHANNEL/$OUTPUT/...
     "packDir": "out/$CHANNEL"
   },
 
