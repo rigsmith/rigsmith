@@ -8,6 +8,7 @@
 shiprig release
 shiprig release --dry-run        # preview the interpolated plan; nothing ships
 shiprig release --dry-build      # build artifacts locally, publish nothing
+shiprig release --local          # run the whole pipeline, but skip every network step
 shiprig release --only build,publish   # run just these steps
 shiprig release --from publish   # resume at a step after a failure
 shiprig release --yes            # approve every confirm gate (CI)
@@ -356,7 +357,10 @@ Pass `--no-env` to drop the `.env`/`.env.local` layer for a run (the ambient
 shell environment still flows through) — handy when a stray local `.env` would
 otherwise shadow what you've exported.
 
-## Dry-run vs dry-build
+## Local rehearsal: `--dry-run`, `--dry-build`, `--local`
+
+Three flags keep a release on your machine, trading off how much of the pipeline
+actually runs:
 
 - `--dry-run` interpolates and prints the full plan but executes nothing, except
   steps explicitly marked `"dryRun": true` (or given a dry-run command).
@@ -364,6 +368,22 @@ otherwise shadow what you've exported.
   snapshot), then stops — it publishes, tags, and pushes nothing. Global hooks
   and captured vars are dropped so it can't trigger OTP prompts. Requires an
   enabled `build` step.
+- `--local` runs the **whole pipeline for real** but skips every step that
+  reaches the internet — `publish`, `push`, `release`, and `issues`. The version
+  bump, commit, build, sign, and local `tag` all execute, so it exercises the
+  full release and produces real artifacts while nothing leaves the machine. Use
+  it to confirm an end-to-end release works before letting it ship.
+
+```sh
+shiprig release --local            # full pipeline, nothing pushed/published
+shiprig release --local --from build   # resume a local rehearsal at a step
+```
+
+`--local` is a real run, so it can't combine with the plan-only `--dry-run` or
+the build-only `--dry-build`. It *does* compose with `--only`/`--skip`/`--from`/
+`--to`, so a local rehearsal can be narrowed or resumed; the network steps stay
+skipped regardless. (The longhand equivalent is
+`--skip publish,push,release,issues`.)
 
 ::: tip Implementation
 The pipeline lives in `internal/shiprig/pipeline` + `internal/shiprig/forge`;

@@ -36,6 +36,7 @@ func newReleaseCmd() *cobra.Command {
 	var (
 		dryRun     bool
 		dryBuild   bool
+		local      bool
 		only, skip []string
 		from, to   string
 		configPath string
@@ -82,7 +83,7 @@ func newReleaseCmd() *cobra.Command {
 			}
 
 			steps, err := pipeline.Resolve(cfg, pipeline.ResolveOptions{
-				Only: only, Skip: skip, From: from, To: to, DryBuild: dryBuild,
+				Only: only, Skip: skip, From: from, To: to, DryBuild: dryBuild, Local: local,
 				Ecosystems: presentEcos, KnownEcosystems: knownEcos,
 			})
 			if err != nil {
@@ -369,6 +370,7 @@ func newReleaseCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVarP(&dryRun, "dry-run", "n", false, "preview the interpolated plan; only commands marked \"dryRun\" execute")
 	f.BoolVar(&dryBuild, "dry-build", false, "build the release's artifacts locally (snapshot) and publish nothing — runs only the build step")
+	f.BoolVar(&local, "local", false, "run the full release locally, skipping every network step (publish, push, release, issues) — nothing leaves the machine")
 	f.StringSliceVar(&only, "only", nil, "run only these steps (comma-separated)")
 	f.StringSliceVar(&skip, "skip", nil, "skip these steps (comma-separated)")
 	f.StringVar(&from, "from", "", "start at this step (resume point)")
@@ -385,6 +387,11 @@ func newReleaseCmd() *cobra.Command {
 	for _, mutex := range []string{"dry-run", "only", "skip", "from", "to"} {
 		cmd.MarkFlagsMutuallyExclusive("dry-build", mutex)
 	}
+	// --local is a real run, so it can't combine with the plan-only --dry-run or
+	// the build-only --dry-build. It deliberately *does* compose with
+	// --only/--skip/--from/--to so a local rehearsal can be narrowed or resumed.
+	cmd.MarkFlagsMutuallyExclusive("local", "dry-run")
+	cmd.MarkFlagsMutuallyExclusive("local", "dry-build")
 	return cmd
 }
 

@@ -26,6 +26,13 @@ const DefaultCommitMessage = "chore: release"
 // ecosystem's `signing.signers` is configured.
 var DefaultOrder = []string{"version", "commit", "build", "sign", "publish", "tag", "push", "release", "issues"}
 
+// networkSteps are the steps that reach the internet: registry publishes
+// (`publish`), the `git push` of commits and tags (`push`), the forge release
+// (`release`), and forge issue comments (`issues`). --local skips exactly these
+// so the rest of the release — version bump, commit, build, sign, and local
+// tagging — runs for real with nothing leaving the machine.
+var networkSteps = []string{"publish", "push", "release", "issues"}
+
 var (
 	commandBuiltins = []string{"version", "commit", "publish", "tag", "push"}
 	// build, sign, the forge `release` step, and `issues` run host-registered handlers.
@@ -159,6 +166,15 @@ type ResolveOptions struct {
 	// or published. The build step itself runs in snapshot mode (set by the host
 	// handler). It is a real run, distinct from --dry-run's plan-only preview.
 	DryBuild bool
+
+	// Local runs the full release locally but skips every step that reaches the
+	// internet (publish, push, release, issues — see networkSteps). The version
+	// bump, commit, build, sign, and local tagging all run for real, so it
+	// exercises the whole pipeline and produces real artifacts while nothing
+	// leaves the machine. Unlike DryBuild it is not build-only, and unlike
+	// --dry-run it is a real run rather than a plan preview. It composes with
+	// From/To/Only/Skip (e.g. resuming a local rehearsal).
+	Local bool
 
 	// Ecosystems is the set of ecosystem ids present in this release (the host
 	// fills it from discovery). A step that declares `ecosystems` matching none
@@ -473,6 +489,13 @@ func skipReasonFor(
 			return ""
 		}
 		return "dry-build: build only"
+	}
+	// --local is authoritative for the network steps (publish/push/release/issues):
+	// they are always skipped so nothing leaves the machine. Non-network steps fall
+	// through to the normal disabled/from/to/only/skip logic, so --local still
+	// composes with --from/--to for resuming a local rehearsal.
+	if opts.Local && slices.Contains(networkSteps, name) {
+		return "--local: skips network steps"
 	}
 	if stepConfig != nil && stepConfig.Enabled != nil && !*stepConfig.Enabled {
 		return "disabled"

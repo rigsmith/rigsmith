@@ -173,6 +173,51 @@ func TestResolveDryBuildTakesPrecedence(t *testing.T) {
 	}
 }
 
+// TestResolveLocalSkipsNetworkSteps: --local runs the local steps for real
+// (version/commit/build/sign/tag) and skips exactly the network steps
+// (publish/push/release/issues) so nothing leaves the machine.
+func TestResolveLocalSkipsNetworkSteps(t *testing.T) {
+	steps := mustResolve(t, &Config{}, ResolveOptions{Local: true})
+
+	network := map[string]bool{"publish": true, "push": true, "release": true, "issues": true}
+	for _, step := range steps {
+		if network[step.Name] {
+			if step.Enabled() {
+				t.Errorf("network step %q should be skipped under --local", step.Name)
+			}
+			if step.SkipReason != "--local: skips network steps" {
+				t.Errorf("step %q skip reason = %q, want %q", step.Name, step.SkipReason, "--local: skips network steps")
+			}
+			continue
+		}
+		if !step.Enabled() {
+			t.Errorf("local step %q should run under --local, got skip %q", step.Name, step.SkipReason)
+		}
+	}
+}
+
+// TestResolveLocalComposesWithFrom: --local is authoritative for network steps
+// but composes with --from for the rest, so a local rehearsal can resume from a
+// later step while still keeping every network step skipped.
+func TestResolveLocalComposesWithFrom(t *testing.T) {
+	steps := mustResolve(t, &Config{}, ResolveOptions{Local: true, From: "build"})
+
+	// Network steps stay skipped with the --local reason regardless of --from.
+	if got := findStep(t, steps, "push").SkipReason; got != "--local: skips network steps" {
+		t.Errorf("push skip reason = %q, want --local", got)
+	}
+	// Steps before --from keep the --from reason; build onward runs.
+	if got := findStep(t, steps, "commit").SkipReason; got != "before --from" {
+		t.Errorf("commit skip reason = %q, want before --from", got)
+	}
+	if !findStep(t, steps, "build").Enabled() {
+		t.Error("build should run under --local --from build")
+	}
+	if !findStep(t, steps, "tag").Enabled() {
+		t.Error("tag should run under --local --from build")
+	}
+}
+
 func TestResolveBuiltinPublishUsesToolAndAppendsArgs(t *testing.T) {
 	config := &Config{
 		Tool: "npx changeset",
