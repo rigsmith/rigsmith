@@ -24,6 +24,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/semver"
 	"github.com/rigsmith/rigsmith/core/walkutil"
 )
 
@@ -153,11 +154,15 @@ func (a *Adapter) Discover(ctx context.Context, req plugin.DiscoverRequest) (plu
 		}
 		dir := relTo(root, filepath.Dir(pr.path))
 		// Version resolution (decision Q2 → option a, git-tag native): the latest
-		// matching git tag is authoritative. The `// rigsmith:version` comment is a
-		// secondary fallback (option b) for repos without tags yet / cross-checking.
+		// matching git tag is the released version. The `// rigsmith:version` comment
+		// is a fallback for repos without tags yet — but it can also be AHEAD of the
+		// tag: the `version` step bumps the comment to the pending release before its
+		// tag exists. So take whichever is higher, so the `tag` step can advance past
+		// the last release instead of re-reading it (which would never tag a 2nd+
+		// release). The tag wins on a tie or a missing/older comment.
 		version := pr.version
 		if tagVer, ok := gitutil.LatestModuleVersion(ctx, root, dir); ok {
-			version = tagVer
+			version = higherVersion(pr.version, tagVer)
 		}
 		resp.Packages = append(resp.Packages, plugin.Package{
 			Name:         pr.module,
@@ -461,6 +466,23 @@ func parseModule(text string) (module, version string) {
 		version = m[2]
 	}
 	return m[1], version
+}
+
+// higherVersion returns the greater of the `// rigsmith:version` comment value
+// and the latest git-tag version. The git tag is the released version, but the
+// comment is bumped to the pending release before that tag exists, so the tag
+// step needs the higher of the two to advance past the last release. The tag
+// wins on a tie; an unparseable comment yields the tag (the historical behavior).
+func higherVersion(commentVer, tagVer string) string {
+	cv, cok := semver.Parse(commentVer)
+	if !cok {
+		return tagVer
+	}
+	tv, tok := semver.Parse(tagVer)
+	if !tok || semver.Compare(cv, tv) > 0 {
+		return commentVer
+	}
+	return tagVer
 }
 
 // parseRequires extracts the require edges (module path -> version) from both the

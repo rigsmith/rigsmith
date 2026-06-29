@@ -3,6 +3,7 @@ package gomod
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,6 +70,86 @@ require (
 	}
 	if mb.Dependencies[0].Name != "github.com/acme/a" || mb.Dependencies[0].Range != "v1.4.0" {
 		t.Errorf("b dep = %+v, want {github.com/acme/a v1.4.0}", mb.Dependencies[0])
+	}
+}
+
+// TestHigherVersion pins the version-resolution rule: the `// rigsmith:version`
+// comment wins when it is ahead of the latest tag (the pending release, before
+// its tag exists); the tag wins on a tie, when it is ahead, or when the comment
+// is unparseable.
+func TestHigherVersion(t *testing.T) {
+	cases := []struct{ comment, tag, want string }{
+		{"1.1.0", "1.0.0", "1.1.0"}, // comment bumped ahead → pending release wins
+		{"1.0.0", "1.0.0", "1.0.0"}, // tie → tag wins (same value)
+		{"1.0.0", "1.2.0", "1.2.0"}, // tag ahead (already released) → tag wins
+		{"0.0.0", "1.0.0", "1.0.0"}, // default (no comment) → tag wins
+		{"", "1.0.0", "1.0.0"},      // unparseable comment → tag
+	}
+	for _, c := range cases {
+		if got := higherVersion(c.comment, c.tag); got != c.want {
+			t.Errorf("higherVersion(%q, %q) = %q, want %q", c.comment, c.tag, got, c.want)
+		}
+	}
+}
+
+// TestDiscoverCommentAheadOfTag is the regression test for the release bug: with
+// a v1.0.0 tag present, a module whose comment was bumped to 1.1.0 (the pending
+// release) must Discover as 1.1.0 so the `tag` step can create v1.1.0 — not
+// re-read 1.0.0 from the existing tag and refuse to advance. A later tag ahead of
+// the comment then wins again.
+func TestDiscoverCommentAheadOfTag(t *testing.T) {
+	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(root) // macOS /var symlink → match git's view
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "go.mod"), "module github.com/acme/app // rigsmith:version 1.1.0\n\ngo 1.26\n")
+	gitInit(t, root)
+	git(t, root, "add", "-A")
+	git(t, root, "commit", "-m", "init")
+	git(t, root, "tag", "v1.0.0")
+
+	ver := discoverVersion(t, root, "github.com/acme/app")
+	if ver != "1.1.0" {
+		t.Errorf("with tag v1.0.0 and comment 1.1.0, version = %q, want 1.1.0 (pending release)", ver)
+	}
+
+	// A released tag ahead of the comment is authoritative again.
+	git(t, root, "tag", "v1.2.0")
+	if ver := discoverVersion(t, root, "github.com/acme/app"); ver != "1.2.0" {
+		t.Errorf("with tag v1.2.0 ahead of comment 1.1.0, version = %q, want 1.2.0", ver)
+	}
+}
+
+func discoverVersion(t *testing.T, root, module string) string {
+	t.Helper()
+	resp, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range resp.Packages {
+		if p.Name == module {
+			return p.Version
+		}
+	}
+	t.Fatalf("module %q not discovered", module)
+	return ""
+}
+
+func gitInit(t *testing.T, dir string) {
+	t.Helper()
+	git(t, dir, "init", "-b", "main")
+	git(t, dir, "config", "user.email", "test@example.com")
+	git(t, dir, "config", "user.name", "Test")
+	git(t, dir, "config", "commit.gpgsign", "false")
+}
+
+func git(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }
 
