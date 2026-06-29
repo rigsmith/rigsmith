@@ -260,6 +260,46 @@ func TestRunPickerLive_EnterSelectsProject(t *testing.T) {
 	}
 }
 
+// `d` in the live picker writes the highlighted project as defaultProject,
+// marks it in the list, and toggles back off (clearing the default) when
+// pressed on the project that already is the default.
+func TestRunPickerLive_SetDefaultTogglesAndPersists(t *testing.T) {
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"),
+		[]byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeGoPkg(t, root, "cmd/api", "main")
+	writeGoPkg(t, root, "cmd/worker", "main")
+
+	m := newRunPickerLive(context.Background(), root, nil)
+	if m.defaultName != "" {
+		t.Fatalf("fresh repo has no default, got %q", m.defaultName)
+	}
+
+	// d on cursor 0 (cmd/api) sets it as the default and persists to .rig.json.
+	m = rp(m, wtKeyMsg("d"))
+	if m.defaultName != "api" {
+		t.Fatalf("after d, defaultName = %q, want api", m.defaultName)
+	}
+	if cfg, _ := config.LoadMerged(root); cfg.DefaultProject != "api" {
+		t.Fatalf(".rig.json defaultProject = %q, want api", cfg.DefaultProject)
+	}
+	if v := m.View(); !strings.Contains(v, "★ default") {
+		t.Fatalf("view should mark the default row:\n%s", v)
+	}
+
+	// d again on the same project clears it (toggle off).
+	m = rp(m, wtKeyMsg("d"))
+	if m.defaultName != "" {
+		t.Fatalf("second d should clear the default, got %q", m.defaultName)
+	}
+	if cfg, _ := config.LoadMerged(root); cfg.DefaultProject != "" {
+		t.Fatalf(".rig.json defaultProject = %q, want empty after toggle off", cfg.DefaultProject)
+	}
+}
+
 func rowPaths(m runPickerModel) []string {
 	out := make([]string, len(m.flat))
 	for i, r := range m.flat {

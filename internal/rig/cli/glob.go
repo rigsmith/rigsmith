@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"strings"
+
 	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 )
@@ -32,6 +34,14 @@ func projectExcluded(name, short, relPath string, patterns []string) bool {
 func excludeFor(root string) []string {
 	cfg, _ := config.LoadMerged(root)
 	return cfg.Exclude
+}
+
+// defaultProjectFor returns the merged .rig.json `defaultProject` for root
+// (best-effort; "" when none is set) — what the run picker marks as the default
+// and what a bare `rig run` targets.
+func defaultProjectFor(root string) string {
+	cfg, _ := config.LoadMerged(root)
+	return strings.TrimSpace(cfg.DefaultProject)
 }
 
 // globMatch is minimal glob matching for config patterns (the .NET rig's Glob

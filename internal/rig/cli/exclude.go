@@ -80,6 +80,25 @@ func addExclude(root, glob string) (status string, ok bool) {
 	return "excluded " + glob, true
 }
 
+// setRunDefault writes `defaultProject = name` to root's .rig.json and returns
+// a status line for the picker. A bare `rig run` then targets that project
+// directly (ok=false leaves config untouched).
+func setRunDefault(root, name string) (status string, ok bool) {
+	if _, w := config.SetRepoString(root, "defaultProject", name); !w {
+		return "couldn't write " + config.FileName, false
+	}
+	return "default set to " + name, true
+}
+
+// clearRunDefault blanks `defaultProject` in root's .rig.json — the picker's
+// toggle-off when `d` lands on the project that already is the default.
+func clearRunDefault(root string) (status string, ok bool) {
+	if _, w := config.SetRepoString(root, "defaultProject", ""); !w {
+		return "couldn't write " + config.FileName, false
+	}
+	return "default cleared", true
+}
+
 // removeExcludes re-includes a project by dropping every exclude glob that
 // matches it (a directory glob reveals its siblings). Returns a status line and
 // whether anything was hiding it.
