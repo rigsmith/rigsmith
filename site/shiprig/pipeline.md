@@ -316,8 +316,9 @@ work exactly as for any .NET project.)
   local rehearsal.
 - **Signing is build-time**, inside `vpk pack` (not the `sign` step). The
   non-secret identifiers live in `velopack.json`; the secrets (the macOS `.p12`
-  password, `AZURE_CLIENT_SECRET`) ride in through the
-  [signing env](#signing-desktop-ecosystems), masked.
+  password, `AZURE_CLIENT_SECRET`) come from the [signing
+  env](#signing-desktop-ecosystems) (masked) or simply from `.env.local` — the
+  build step inherits the run's [environment](#environment-env).
 - **Updates need no `vpk upload`.** Velopack's in-app updater finds updates by
   listing a release's assets over the GitHub API — the `releases.<channel>.json`
   index `vpk pack` produces plus the `.nupkg` payloads — so attaching those to the
@@ -335,6 +336,9 @@ environment is what every part of the run sees:
 
 - `${env.NAME}` placeholders in steps, hooks, and vars resolve from it;
 - the commands each step runs (publish, tag, push) inherit it;
+- the native `build` and `sign` steps inherit it too, so a desktop packager
+  (Velopack / Tauri / Electron) sees your `.env` secrets — e.g. `AZURE_*` for a
+  Windows signer reaches `vpk` straight from `.env.local`, no separate sourcing;
 - forge releases run with it, so `gh` finds its token;
 - `shiprig init`'s token preflight checks it, so a token kept in a local `.env`
   reads as ✓ set rather than a false ⚠.

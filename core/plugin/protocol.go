@@ -15,7 +15,10 @@
 // stateless one-shot pure function — the ideal shape for a subprocess.
 package plugin
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"os"
+)
 
 // APIVersion is the highest protocol version this build speaks. The engine
 // sends this; a plugin that doesn't recognize it must exit non-zero rather than
@@ -219,12 +222,29 @@ type ArtifactsRequest struct {
 	OutputDir  string  `json:"outputDir"` // absolute dir to place built files (dist/)
 	Snapshot   bool    `json:"snapshot,omitempty"`
 	DryRun     bool    `json:"dryRun,omitempty"`
+	// Env is the release's resolved environment (the layered .env / .env.local
+	// under the ambient shell, the same the shell/sign/forge steps run with) as
+	// KEY=VALUE entries. An adapter that shells out to a build tool should use it
+	// as the subprocess environment — via BaseEnv() — so a secret in .env.local
+	// (e.g. AZURE_* for a desktop signer) reaches the build like it reaches every
+	// other step. Empty means "inherit the engine's own environment".
+	Env []string `json:"env,omitempty"`
 	// Signing carries code-signing/notarization secrets the engine resolved (via
 	// the same core/auth seam as PublishRequest.Auth) for adapters that produce
-	// signed installers — Tauri, Electron. Nil means build unsigned (the default
-	// when no signing config is set); the engine never sets it unless signing is
-	// explicitly enabled. Values are masked in any surfaced output.
+	// signed installers — Tauri, Electron, Velopack. Nil means build unsigned (the
+	// default when no signing config is set); the engine never sets it unless
+	// signing is explicitly enabled. Values are masked in any surfaced output.
 	Signing *SigningCreds `json:"signing,omitempty"`
+}
+
+// BaseEnv returns the environment a build subprocess should run with: the
+// release's resolved Env when the engine provided it, otherwise the adapter
+// process's own os.Environ(). Adapters merge any Signing creds on top of this.
+func (r ArtifactsRequest) BaseEnv() []string {
+	if len(r.Env) > 0 {
+		return r.Env
+	}
+	return os.Environ()
 }
 
 // SigningCreds is a resolved set of signing secrets to expose to a build as

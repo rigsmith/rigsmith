@@ -221,11 +221,13 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	// pseudo-version). The dry-run message is derived from the very args run
 	// below, so intent and execution can't drift.
 	args := []string{"release", "--clean", "--skip=publish,validate"}
-	env := append(os.Environ(), "GORELEASER_CURRENT_TAG="+tag)
+	// Copy the base env before appending: BaseEnv() may return the shared release
+	// env, reused across each package's build.
+	env := append(append([]string(nil), req.BaseEnv()...), "GORELEASER_CURRENT_TAG="+tag)
 	note := " (GORELEASER_CURRENT_TAG=" + tag + ")"
 	if req.Snapshot {
 		args = []string{"release", "--clean", "--snapshot"}
-		env = os.Environ()
+		env = req.BaseEnv()
 		note = ""
 	}
 	if req.DryRun {

@@ -210,7 +210,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 
 	// Signing secrets (when enabled) ride in via the environment — `cargo tauri
 	// build` and its bundlers read the standard APPLE_*/TAURI_SIGNING_* variables.
-	env := mergeSigningEnv(os.Environ(), req.Signing)
+	env := mergeSigningEnv(req.BaseEnv(), req.Signing)
 	if _, _, err := runCmdEnv(ctx, crateDir, env, "cargo", "tauri", "build"); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("tauri build: %w", err)
 	}
