@@ -289,13 +289,20 @@ error (shiprig never guesses).
 
 ## Desktop apps with Velopack
 
-A .NET desktop app packaged with [Velopack](https://velopack.io) is a first-class
-release unit. Drop a `velopack.json` next to the project's `.csproj` and the
-`build` step runs `dotnet publish --self-contained` + `vpk pack` for each channel,
+A desktop app packaged with [Velopack](https://velopack.io) is a first-class
+release unit. Drop a `velopack.json` (or `velopack.jsonc`) next to the project's
+manifest and the `build` step produces each channel's binaries + `vpk pack`s them,
 wraps the notarized macOS `.app` in a `.dmg`, and the `release` step attaches the
 installers **and the self-update feed** to the forge release — no `pack.sh`, no
-`vpk upload`. (The adapter overlays `dotnet`, so version bumps and the changelog
-work exactly as for any .NET project.)
+`vpk upload`.
+
+**Velopack is not .NET-only** — `vpk pack` wraps any directory of built binaries,
+so the adapter overlays **dotnet, cargo, node, and go**. The base ecosystem is
+auto-detected from the sibling manifest (`.csproj` / `Cargo.toml` / `package.json`
+/ `go.mod`); version bumps and the changelog are delegated to it, so they work
+exactly as for any project in that language. For a **dotnet** base the build runs
+`dotnet publish --self-contained` automatically; **every other base supplies a
+`build.command`** (see below).
 
 ```jsonc
 // velopack.json — next to the .csproj
@@ -321,6 +328,19 @@ work exactly as for any .NET project.)
   cross-build anywhere — vpk gets the `[win]` / `[linux]` cross directive
   automatically. `--dry-build` packs everything **unsigned** for a fast local
   rehearsal.
+- **Non-dotnet bases use `build.command`.** cargo/node/go have no built-in
+  publish-to-directory step, so describe the build. It runs once per channel
+  through the shell with `RID`/`CHANNEL`, `OUTPUT` (the absolute dir to fill, which
+  vpk then packs), `VERSION`, `RUST_TARGET`, and `GOOS`/`GOARCH` exported — so a
+  `cargo build --target $RUST_TARGET` or `go build` needs no RID parsing. Set
+  `build.packDir` when the build emits elsewhere (e.g. electron-builder's `out/`).
+  Optionally pin `base` to override auto-detection.
+
+  ```jsonc
+  // velopack.jsonc — next to a Cargo.toml (Rust app)
+  { "packId": "MyRustApp", "base": "cargo", "channels": ["win-x64", "osx-arm64"],
+    "build": { "command": "cargo build --release --target $RUST_TARGET && mkdir -p \"$OUTPUT\" && cp target/$RUST_TARGET/release/myapp* \"$OUTPUT\"/" } }
+  ```
 - **Signing is build-time**, inside `vpk pack` (not the `sign` step). The
   non-secret identifiers live in `velopack.json`; the secrets (the macOS `.p12`
   password, the signing token) come from the [signing

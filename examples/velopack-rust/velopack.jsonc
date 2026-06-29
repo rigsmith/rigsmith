@@ -1,0 +1,48 @@
+{
+  // A Velopack desktop app whose base ecosystem is Rust (cargo), not .NET.
+  // Velopack's `vpk pack` wraps any directory of built binaries, so the rigsmith
+  // velopack adapter overlays cargo here exactly as it overlays dotnet elsewhere:
+  // this file sits next to a Cargo.toml, and the adapter delegates discovery and
+  // version stamping to the cargo adapter (the [package] version stays the source
+  // of truth) while owning the installer/feed build.
+
+  "packId": "MyRustApp",
+  "packTitle": "My Rust App",
+  "packAuthors": "Acme, Inc.",
+  "mainExe": "myapp", // ".exe" is appended automatically for Windows channels
+
+  // Auto-detected from the sibling Cargo.toml; shown here for clarity. Set it
+  // explicitly only to disambiguate a dir that has more than one manifest.
+  "base": "cargo",
+
+  "channels": ["osx-arm64", "osx-x64", "win-x64", "linux-x64"],
+
+  // Non-dotnet bases have no built-in publish-to-directory step, so describe the
+  // build. The command runs once per channel through the shell with these vars set:
+  //   RID/CHANNEL  the channel (e.g. win-x64)      RUST_TARGET  the cargo triple
+  //   OUTPUT       absolute dir to fill (vpk packs it)   VERSION  the release version
+  //   GOOS/GOARCH  the Go target (for a Go base)
+  // Build for the target, then drop the binary into $OUTPUT for vpk to pack.
+  "build": {
+    "command": "cargo build --release --target $RUST_TARGET && mkdir -p \"$OUTPUT\" && cp target/$RUST_TARGET/release/myapp* \"$OUTPUT\"/"
+    // "packDir": "out/$CHANNEL"  // set when the build emits elsewhere (e.g. electron-builder)
+  },
+
+  "icon": {
+    "macos": "assets/myapp.icns",
+    "windows": "assets/myapp.ico"
+  },
+
+  "macos": {
+    "bundleId": "com.acme.myrustapp",
+    "signIdentity": "Developer ID Application: Acme, Inc. (XXXXXXXXXX)",
+    "notaryProfile": "myapp-notary"
+  },
+
+  "windows": {
+    // Same host-aware signing as the .NET example: a signTemplate (jsign + Azure
+    // Trusted Signing) when cross-compiling from macOS/Linux; trustedSigning when
+    // building natively on Windows. $VARs in signTemplate expand from the build env.
+    "signTemplate": "jsign --storetype TRUSTEDSIGNING --keystore https://eus.codesigning.azure.net --storepass $AZURE_CODESIGN_TOKEN --alias Acme/Acme {{file}}"
+  }
+}

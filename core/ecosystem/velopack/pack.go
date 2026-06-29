@@ -16,9 +16,11 @@ import (
 
 // Artifacts builds the Velopack installers and update feeds for every configured
 // channel and returns them so the release step can attach/upload them. For each
-// channel (a .NET RID) it runs `dotnet publish --self-contained` then `vpk pack`
-// with the per-OS signing flags, and on macOS wraps the notarized .app in a .dmg.
-// Outputs land in the configured output dir (default dist/releases).
+// channel (a .NET RID) it produces the directory of built binaries — a dotnet
+// `dotnet publish --self-contained`, or the configured build.command for other
+// bases — then runs `vpk pack` with the per-OS signing flags, and on macOS wraps
+// the notarized .app in a .dmg. Outputs land in the configured output dir (default
+// dist/releases).
 //
 // Snapshot builds everything unsigned (a fast local rehearsal); DryRun reports
 // the plan without building. macOS channels are skipped on a non-macOS host
@@ -62,12 +64,19 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	}
 
 	env := mergeSigningEnv(req.BaseEnv(), req.Signing)
-	csproj := req.Package.ManifestPath // repo-relative; commands run with cwd = RepoRoot
+
+	// The base ecosystem (csproj/Cargo.toml/package.json/go.mod next to the velopack
+	// file) decides how each channel's binaries are produced before vpk packs them.
+	base, err := a.resolveBase(pkgDir)
+	if err != nil {
+		return plugin.ArtifactsResponse{}, err
+	}
+	baseID := base.Info().ID
 
 	for _, ch := range planned {
-		pubRel := filepath.Join("dist", "publish", ch)
-		if _, _, err := runCmdEnv(ctx, req.RepoRoot, env, "dotnet", buildPublishArgs(csproj, ch, pubRel)...); err != nil {
-			return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet publish %s: %w", ch, err)
+		pubRel, err := a.producePackDir(ctx, req, cfg, baseID, ch, ver, env)
+		if err != nil {
+			return plugin.ArtifactsResponse{}, err
 		}
 
 		// Native-Windows Azure Trusted Signing wants a JSON descriptor file; write it
@@ -122,6 +131,121 @@ func buildPublishArgs(csproj, rid, pubDir string) []string {
 		"-p:PublishSingleFile=false",
 		"-o", pubDir,
 		"--nologo",
+	}
+}
+
+// producePackDir builds the application for one channel into a directory `vpk
+// pack` can wrap and returns that directory (repo-root-relative; commands run with
+// cwd = RepoRoot). The dotnet base builds automatically via `dotnet publish`; an
+// explicit build.command (required for cargo/node/go, optional as a dotnet
+// override) is run through the platform shell with the channel's build variables
+// set and must fill $OUTPUT — vpk then packs that (or cfg.Build.PackDir).
+func (a *Adapter) producePackDir(ctx context.Context, req plugin.ArtifactsRequest, cfg Config, baseID, ch, version string, env []string) (string, error) {
+	pubRel := filepath.Join("dist", "publish", ch)
+
+	if cfg.Build != nil && strings.TrimSpace(cfg.Build.Command) != "" {
+		outAbs := filepath.Join(req.RepoRoot, pubRel)
+		if err := os.MkdirAll(outAbs, 0o755); err != nil {
+			return "", err
+		}
+		cmdEnv := append(append([]string{}, env...), ridBuildVars(ch, version, outAbs)...)
+		shell, flag := shellFor()
+		if _, _, err := runCmdEnv(ctx, req.RepoRoot, cmdEnv, shell, flag, cfg.Build.Command); err != nil {
+			return "", fmt.Errorf("velopack: build command for %s: %w", ch, err)
+		}
+		if pd := strings.TrimSpace(cfg.Build.PackDir); pd != "" {
+			return expandEnv(pd, cmdEnv), nil // honors $CHANNEL/$OUTPUT/... in the path
+		}
+		return pubRel, nil
+	}
+
+	if baseID == baseDotnet {
+		if _, _, err := runCmdEnv(ctx, req.RepoRoot, env, "dotnet", buildPublishArgs(req.Package.ManifestPath, ch, pubRel)...); err != nil {
+			return "", fmt.Errorf("dotnet publish %s: %w", ch, err)
+		}
+		return pubRel, nil
+	}
+
+	return "", fmt.Errorf("velopack: the %q base has no built-in build — set build.command in the velopack file to produce the pack directory for %s", baseID, ch)
+}
+
+// shellFor returns the platform shell and its "run this string" flag, used to run
+// a build.command the way a user would type it (pipelines, &&, env refs).
+func shellFor() (name, flag string) {
+	if runtime.GOOS == "windows" {
+		return "cmd", "/c"
+	}
+	return "sh", "-c"
+}
+
+// ridBuildVars are the variables exported into a build.command's environment for
+// one channel: the RID, the output dir it must fill, the version, and the derived
+// Go/Rust targets so a `go build` or `cargo build --target` needs no RID parsing.
+func ridBuildVars(rid, version, outputAbs string) []string {
+	vars := []string{
+		"CHANNEL=" + rid,
+		"RID=" + rid,
+		"OUTPUT=" + outputAbs,
+		"VERSION=" + version,
+	}
+	if goos, goarch := ridGo(rid); goos != "" {
+		vars = append(vars, "GOOS="+goos, "GOARCH="+goarch)
+	}
+	if t := ridRustTarget(rid); t != "" {
+		vars = append(vars, "RUST_TARGET="+t)
+	}
+	return vars
+}
+
+// ridArch returns the architecture component of a RID ("win-x64" -> "x64").
+func ridArch(rid string) string {
+	if i := strings.IndexByte(rid, '-'); i >= 0 {
+		return rid[i+1:]
+	}
+	return ""
+}
+
+// ridGo maps a RID to its Go GOOS/GOARCH (empty when unrecognized).
+func ridGo(rid string) (goos, goarch string) {
+	switch osOf(rid) {
+	case osWindows:
+		goos = "windows"
+	case osMac:
+		goos = "darwin"
+	case osLinux:
+		goos = "linux"
+	}
+	switch ridArch(rid) {
+	case "x64":
+		goarch = "amd64"
+	case "x86":
+		goarch = "386"
+	case "arm64":
+		goarch = "arm64"
+	case "arm":
+		goarch = "arm"
+	}
+	if goos == "" || goarch == "" {
+		return "", ""
+	}
+	return goos, goarch
+}
+
+// ridRustTarget maps a RID to its Rust target triple (empty when unrecognized).
+func ridRustTarget(rid string) string {
+	arch := map[string]string{"x64": "x86_64", "arm64": "aarch64", "x86": "i686"}[ridArch(rid)]
+	if arch == "" {
+		return ""
+	}
+	switch osOf(rid) {
+	case osWindows:
+		return arch + "-pc-windows-msvc"
+	case osMac:
+		return arch + "-apple-darwin"
+	case osLinux:
+		return arch + "-unknown-linux-gnu"
+	default:
+		return ""
 	}
 }
 

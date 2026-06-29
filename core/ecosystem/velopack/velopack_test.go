@@ -10,18 +10,150 @@ import (
 	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
-func TestInfoOverlaysDotnet(t *testing.T) {
+func TestInfoOverlaysBases(t *testing.T) {
 	info := New().Info()
 	if info.ID != "velopack" {
 		t.Errorf("ID = %q, want velopack", info.ID)
 	}
-	if len(info.Overlays) != 1 || info.Overlays[0] != "dotnet" {
-		t.Errorf("Overlays = %v, want [dotnet]", info.Overlays)
+	// Velopack overlays every base language it can package, not just dotnet.
+	want := "dotnet,cargo,node,go"
+	if strings.Join(info.Overlays, ",") != want {
+		t.Errorf("Overlays = %v, want [%s]", info.Overlays, want)
 	}
 	// Publish is intentionally not advertised — a Velopack app ships via forge release.
 	for _, c := range info.Capabilities {
 		if c == plugin.MethodPublish {
 			t.Error("velopack must not advertise Publish")
+		}
+	}
+}
+
+// cargoToml is a minimal [package] manifest for the cargo base in tests.
+func cargoToml(name, version string) string {
+	return "[package]\nname = \"" + name + "\"\nversion = \"" + version + "\"\n"
+}
+
+// TestDetectBase pins the sibling-manifest auto-detection that picks a velopack
+// app's base when its config doesn't set one (and "" for a base-less dir).
+func TestDetectBase(t *testing.T) {
+	root := t.TempDir()
+	dn := filepath.Join(root, "dn")
+	writeFile(t, filepath.Join(dn, "App.csproj"), csprojPlainLib)
+	rs := filepath.Join(root, "rs")
+	writeFile(t, filepath.Join(rs, "Cargo.toml"), cargoToml("rustapp", "0.3.0"))
+	nd := filepath.Join(root, "nd")
+	writeFile(t, filepath.Join(nd, "package.json"), `{"name":"el","version":"2.1.0"}`)
+	gm := filepath.Join(root, "gm")
+	writeFile(t, filepath.Join(gm, "go.mod"), "module example.com/app\n\ngo 1.22\n")
+	none := filepath.Join(root, "none")
+	writeFile(t, filepath.Join(none, "velopack.json"), "{}")
+
+	for _, c := range []struct{ dir, want string }{
+		{dn, baseDotnet}, {rs, baseCargo}, {nd, baseNode}, {gm, baseGo}, {none, ""},
+	} {
+		if got := detectBase(c.dir); got != c.want {
+			t.Errorf("detectBase(%s) = %q, want %q", c.dir, got, c.want)
+		}
+	}
+}
+
+// TestDiscoverAcrossBases verifies velopack claims apps in more than one base
+// ecosystem, delegating each package's name/version to its base, and never claims
+// a project that lacks a velopack file.
+func TestDiscoverAcrossBases(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "dn", "App.csproj"), csprojWithVelopack)
+	writeFile(t, filepath.Join(root, "dn", "velopack.json"), `{"packId":"App","channels":["win-x64"]}`)
+	writeFile(t, filepath.Join(root, "rs", "Cargo.toml"), cargoToml("rustapp", "0.3.0"))
+	writeFile(t, filepath.Join(root, "rs", "velopack.json"), `{"packId":"RustApp","channels":["win-x64"],"build":{"command":"true"}}`)
+	writeFile(t, filepath.Join(root, "el", "package.json"), `{"name":"electronapp","version":"2.1.0"}`)
+	writeFile(t, filepath.Join(root, "el", "velopack.jsonc"), `{"packId":"Electron","channels":["win-x64"],"build":{"command":"true"}}`)
+	// A plain crate without a velopack file stays with the cargo adapter.
+	writeFile(t, filepath.Join(root, "plainlib", "Cargo.toml"), cargoToml("plainlib", "9.9.9"))
+
+	resp, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root, SourcePath: "."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ver := map[string]string{}
+	name := map[string]string{}
+	for _, p := range resp.Packages {
+		ver[p.Dir] = p.Version
+		name[p.Dir] = p.Name
+	}
+	if len(resp.Packages) != 3 {
+		t.Fatalf("discovered %d packages, want 3: %+v", len(resp.Packages), resp.Packages)
+	}
+	if ver["dn"] != "1.2.0" {
+		t.Errorf("dotnet app version = %q, want 1.2.0", ver["dn"])
+	}
+	if name["rs"] != "rustapp" || ver["rs"] != "0.3.0" {
+		t.Errorf("cargo app = %q@%q, want rustapp@0.3.0 (delegated to cargo)", name["rs"], ver["rs"])
+	}
+	if name["el"] != "electronapp" || ver["el"] != "2.1.0" {
+		t.Errorf("node app = %q@%q, want electronapp@2.1.0 (delegated to node)", name["el"], ver["el"])
+	}
+	if _, claimed := ver["plainlib"]; claimed {
+		t.Error("a crate without a velopack file must not be claimed by velopack")
+	}
+}
+
+// TestSetVersionDelegatesToBase confirms a bump on a non-dotnet velopack app is
+// written into the base manifest (here a Cargo.toml) by the base adapter.
+func TestSetVersionDelegatesToBase(t *testing.T) {
+	root := t.TempDir()
+	cargoPath := filepath.Join(root, "rs", "Cargo.toml")
+	writeFile(t, cargoPath, cargoToml("rustapp", "0.3.0"))
+	writeFile(t, filepath.Join(root, "rs", "velopack.json"), `{"packId":"RustApp","channels":["win-x64"],"build":{"command":"true"}}`)
+
+	err := New().SetVersion(context.Background(), plugin.SetVersionRequest{
+		RepoRoot:   root,
+		Package:    plugin.Package{Name: "rustapp", Dir: "rs", ManifestPath: "rs/Cargo.toml", VersionFile: "rs/Cargo.toml", Version: "0.3.0"},
+		NewVersion: "0.4.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(cargoPath)
+	if !strings.Contains(string(b), `version = "0.4.0"`) {
+		t.Errorf("delegated SetVersion did not bump Cargo.toml:\n%s", b)
+	}
+}
+
+// TestRidTargets pins the RID → Go/Rust target mapping a build.command relies on.
+func TestRidTargets(t *testing.T) {
+	for _, c := range []struct{ rid, goos, goarch, rust string }{
+		{"win-x64", "windows", "amd64", "x86_64-pc-windows-msvc"},
+		{"win-arm64", "windows", "arm64", "aarch64-pc-windows-msvc"},
+		{"osx-arm64", "darwin", "arm64", "aarch64-apple-darwin"},
+		{"osx-x64", "darwin", "amd64", "x86_64-apple-darwin"},
+		{"linux-x64", "linux", "amd64", "x86_64-unknown-linux-gnu"},
+		{"freebsd-x64", "", "", ""}, // unrecognized OS → no targets
+	} {
+		goos, goarch := ridGo(c.rid)
+		if goos != c.goos || goarch != c.goarch {
+			t.Errorf("ridGo(%q) = %q/%q, want %q/%q", c.rid, goos, goarch, c.goos, c.goarch)
+		}
+		if got := ridRustTarget(c.rid); got != c.rust {
+			t.Errorf("ridRustTarget(%q) = %q, want %q", c.rid, got, c.rust)
+		}
+	}
+}
+
+// TestRidBuildVars checks the variables exported into a build.command's env.
+func TestRidBuildVars(t *testing.T) {
+	m := map[string]string{}
+	for _, v := range ridBuildVars("win-x64", "1.2.3", "/abs/out") {
+		if i := strings.IndexByte(v, '='); i > 0 {
+			m[v[:i]] = v[i+1:]
+		}
+	}
+	for k, want := range map[string]string{
+		"CHANNEL": "win-x64", "RID": "win-x64", "OUTPUT": "/abs/out", "VERSION": "1.2.3",
+		"GOOS": "windows", "GOARCH": "amd64", "RUST_TARGET": "x86_64-pc-windows-msvc",
+	} {
+		if m[k] != want {
+			t.Errorf("ridBuildVars[%s] = %q, want %q", k, m[k], want)
 		}
 	}
 }
@@ -132,6 +264,12 @@ func TestConfigDefaultsAndValidate(t *testing.T) {
 	}
 	if err := (Config{PackId: "X", Channels: []string{"osx-arm64", "win-x64"}}).validate(); err != nil {
 		t.Errorf("valid config rejected: %v", err)
+	}
+	if err := (Config{PackId: "X", Channels: []string{"win-x64"}, Base: "cargo"}).validate(); err != nil {
+		t.Errorf("base cargo should be valid: %v", err)
+	}
+	if err := (Config{PackId: "X", Channels: []string{"win-x64"}, Base: "python"}).validate(); err == nil {
+		t.Error("unknown base should be invalid")
 	}
 }
 
