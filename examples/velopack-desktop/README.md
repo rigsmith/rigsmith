@@ -4,11 +4,12 @@ A worked `shiprig release` pipeline for a single-app .NET desktop app packaged
 with [Velopack](https://velopack.io) and released entirely from a developer
 machine — no NuGet/registry publish, no CI handoff. Modeled on the Halyards app.
 
-- [`config.jsonc`](./config.jsonc) — changeset config. A single-app repo already
-  tags `vX.Y.Z` by default; this file sets `tagTemplate` explicitly only to show
-  the knob (delete it and the tags are identical).
 - [`release.jsonc`](./release.jsonc) — the pipeline: `version → commit → build →
   tag → push → release`.
+
+No changeset `config.jsonc` is needed: a single-app repo tags `vX.Y.Z` by
+default. (To override, set `tagTemplate` in `.changeset/config.jsonc`, e.g.
+`"${name}@${version}"`.)
 
 ## What this example exercises
 

@@ -55,8 +55,8 @@
 
     // The tag step is now the NATIVE step: a single-app repo defaults to the
     // annotated vX.Y.Z tag (instead of Halyards.Desktop@X.Y.Z), so no custom
-    // `run` and no config are needed. (config.jsonc sets tagTemplate explicitly,
-    // but it is optional here — the default is already vX.Y.Z.)
+    // `run` and no config are needed. (To override, set tagTemplate in
+    // .changeset/config.jsonc.)
 
     // The tag push is the point of no return — pause before it leaves the machine.
     "push": { "confirm": true },
