@@ -1,0 +1,41 @@
+{
+  // velopack.json (or velopack.jsonc) — sits next to a .csproj to mark it a
+  // Velopack desktop app and configure `vpk pack`. Its presence is what hands the
+  // project from the dotnet adapter (which would push a NuGet package) to the
+  // velopack adapter (which builds installers + self-update feeds).
+  //
+  // Secrets are NOT stored here. Code-signing/notarization secrets (the macOS .p12
+  // password, AZURE_CLIENT_SECRET) come from the release signing config and are
+  // exposed to `vpk pack` as environment variables.
+
+  "packId": "Halyards",
+  "packTitle": "Halyards",
+  "packAuthors": "Bright Shore Technologies, Inc.",
+  "mainExe": "Halyards", // ".exe" is appended automatically for Windows channels
+
+  // Each channel is a .NET RID = one per-architecture self-update feed. macOS
+  // channels build only on a macOS host; win/linux cross-build anywhere.
+  "channels": ["osx-arm64", "osx-x64", "win-x64"],
+
+  "icon": {
+    "macos": "Halyards.Desktop/Assets/icons/halyards.icns",
+    "windows": "Halyards.Desktop/Assets/halyards.ico"
+  },
+
+  "output": "dist/releases", // default; where vpk writes installers + feeds
+
+  "macos": {
+    "bundleId": "com.halyards.desktop",
+    "signIdentity": "Developer ID Application: Bright Shore Technologies, Inc. (KBPC83WLD5)",
+    "notaryProfile": "halyards-notary", // an `xcrun notarytool store-credentials` profile
+    "dmg": true // wrap the notarized .app in a .dmg (default true)
+  },
+
+  "windows": {
+    "trustedSigning": {
+      "endpoint": "https://eus.codesigning.azure.net",
+      "account": "MarylandPPT",
+      "profile": "MarylandPPT"
+    }
+  }
+}
