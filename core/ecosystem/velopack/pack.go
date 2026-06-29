@@ -81,7 +81,15 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 			}
 		}
 
-		packArgs := buildPackArgs(cfg, ch, pubRel, releasesRel, ver, req.Snapshot, host, azureFile)
+		// vpk runs --signTemplate without a shell, so expand $VAR / ${VAR} (e.g. a
+		// pre-minted $AZURE_CODESIGN_TOKEN) from the build env here — before vpk
+		// hands the command to the signer — rather than passing them literally.
+		packCfg := cfg
+		if osOf(ch) == osWindows && host != osWindows {
+			packCfg.Windows.SignTemplate = expandEnv(cfg.Windows.SignTemplate, env)
+		}
+
+		packArgs := buildPackArgs(packCfg, ch, pubRel, releasesRel, ver, req.Snapshot, host, azureFile)
 		if _, _, err := runCmdEnv(ctx, req.RepoRoot, env, "vpk", packArgs...); err != nil {
 			return plugin.ArtifactsResponse{}, fmt.Errorf("vpk pack %s: %w", ch, err)
 		}
@@ -197,6 +205,24 @@ func appendWindowsSigning(args []string, cfg Config, host targetOS, azureFile st
 		args = append(args, "--signTemplate", tmpl, "--signExclude", `\.dll$`)
 	}
 	return args
+}
+
+// expandEnv expands $VAR / ${VAR} in s from the given KEY=VALUE environment. The
+// signTemplate is handed to vpk, which runs it WITHOUT a shell, so a token
+// reference like $AZURE_CODESIGN_TOKEN must be expanded here — from the build env
+// shiprig passes in (the layered .env/.env.local + ambient) — or it would reach
+// the signer as the literal string. Unset variables expand to "".
+func expandEnv(s string, env []string) string {
+	if !strings.ContainsRune(s, '$') {
+		return s
+	}
+	m := make(map[string]string, len(env))
+	for _, e := range env {
+		if i := strings.IndexByte(e, '='); i > 0 {
+			m[e[:i]] = e[i+1:] // later entries win (ambient over .env)
+		}
+	}
+	return os.Expand(s, func(k string) string { return m[k] })
 }
 
 // wrapDmg turns Velopack's portable .app (shipped in <PackId>-<ch>-Portable.zip)

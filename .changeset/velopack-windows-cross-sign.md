@@ -7,4 +7,4 @@ Fix Velopack Windows packaging when cross-compiling from macOS/Linux. The adapte
 - **Cross-compiling from macOS/Linux** → prepend vpk's `[win]` directive and sign via a new `windows.signTemplate` config (a custom command — e.g. jsign + Azure Trusted Signing — run per binary with `{{file}}`), plus `--signExclude '\.dll$'` so only the `.exe`/`Setup.exe` are signed.
 - **Building natively on Windows** → unchanged: `--azureTrustedSignFile` from `windows.trustedSigning`.
 
-The cross directive (`[win]`/`[osx]`/`[linux]`) is added only when the channel targets a different OS than the host, so the native macOS path is untouched. A `--storepass` token in a `signTemplate` is redacted from any echoed command.
+The cross directive (`[win]`/`[osx]`/`[linux]`) is added only when the channel targets a different OS than the host, so the native macOS path is untouched. `$VAR`/`${VAR}` in a `signTemplate` are expanded from the build environment before vpk runs it (vpk has no shell), so `--storepass $AZURE_CODESIGN_TOKEN` resolves from a pre-set env var; a `--storepass` token is redacted from any echoed command.

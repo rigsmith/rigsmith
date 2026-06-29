@@ -283,6 +283,22 @@ func TestCrossDirective(t *testing.T) {
 	}
 }
 
+func TestExpandEnv(t *testing.T) {
+	env := []string{"AZURE_CODESIGN_TOKEN=tok123", "FOO=bar", "AZURE_CODESIGN_TOKEN=tok456"} // dup → last wins
+	cases := []struct{ in, want string }{
+		{"jsign --storepass $AZURE_CODESIGN_TOKEN {{file}}", "jsign --storepass tok456 {{file}}"},
+		{"a ${FOO} b", "a bar b"},
+		{"no vars here {{file}}", "no vars here {{file}}"}, // {{file}} is vpk's, untouched
+		{"$UNSET tail", " tail"},                           // unset → empty
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := expandEnv(c.in, env); got != c.want {
+			t.Errorf("expandEnv(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestRedactCommandStorepass(t *testing.T) {
 	args := []string{"[win]", "pack", "--signTemplate", "jsign --storepass SUPERSECRET --alias a/b {{file}}", "--signExclude", `\.dll$`}
 	got := redactCommand(args)

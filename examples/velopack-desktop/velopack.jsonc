@@ -37,8 +37,10 @@
     // • signTemplate — cross-compiling FROM macOS/Linux (the local-first path).
     //   vpk runs this command per binary, substituting {{file}}; the adapter also
     //   passes `--signExclude '\.dll$'` so only the .exe / Setup.exe are signed.
-    //   Here: jsign + Azure Trusted Signing, all from your Mac. The Azure token in
-    //   `--storepass` is redacted from any echoed command.
+    //   Here: jsign + Azure Trusted Signing, all from your Mac. $VARs are expanded
+    //   from the build env (vpk runs the command without a shell), so set
+    //   AZURE_CODESIGN_TOKEN (exported or in .env.local) to a Trusted Signing token;
+    //   the `--storepass` value is redacted from any echoed command.
     "signTemplate": "jsign --storetype TRUSTEDSIGNING --keystore https://eus.codesigning.azure.net --storepass $AZURE_CODESIGN_TOKEN --alias MarylandPPT/MarylandPPT {{file}}",
 
     // • trustedSigning — building natively ON Windows (e.g. a CI runner). vpk's

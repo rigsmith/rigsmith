@@ -329,8 +329,9 @@ work exactly as for any .NET project.)
   is host-aware**: cross-compiling from macOS/Linux uses `windows.signTemplate`
   (e.g. jsign), while a native Windows build uses `windows.trustedSigning` (vpk's
   Azure Trusted Signing) — set whichever matches where you build, the adapter
-  picks by host. A `--storepass` token in a `signTemplate` is redacted from any
-  echoed command.
+  picks by host. `$VAR`/`${VAR}` in a `signTemplate` are expanded from the build
+  env (vpk runs it without a shell), so `--storepass $AZURE_CODESIGN_TOKEN` works
+  from a pre-set env var; the token is redacted from any echoed command.
 - **Updates need no `vpk upload`.** Velopack's in-app updater finds updates by
   listing a release's assets over the GitHub API — the `releases.<channel>.json`
   index `vpk pack` produces plus the `.nupkg` payloads — so attaching those to the

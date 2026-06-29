@@ -82,11 +82,16 @@ func (m Macos) WrapDmg() bool { return m.Dmg == nil || *m.Dmg }
 // adapter picks by host.
 type Windows struct {
 	// SignTemplate is a custom signing command for a Windows build cross-compiled
-	// from a non-Windows host, passed verbatim to `vpk [win] pack --signTemplate`.
-	// vpk runs it once per binary, substituting `{{file}}` for the path — e.g. a
-	// jsign + Azure Trusted Signing invocation. The adapter also passes
-	// `--signExclude '\.dll$'` so only the .exe / Setup.exe are signed. Empty
-	// leaves a cross-compiled build unsigned.
+	// from a non-Windows host, passed to `vpk [win] pack --signTemplate`. vpk runs
+	// it once per binary, substituting `{{file}}` for the path — e.g. a jsign +
+	// Azure Trusted Signing invocation. The adapter also passes
+	// `--signExclude '\.dll$'` so only the .exe / Setup.exe are signed.
+	//
+	// $VAR / ${VAR} are expanded from the build environment first (vpk itself runs
+	// the command without a shell), so a token reference like
+	// `--storepass $AZURE_CODESIGN_TOKEN` resolves from a pre-set env var (exported
+	// or in .env.local). A `--storepass` token is redacted from any echoed command.
+	// Empty leaves a cross-compiled build unsigned.
 	SignTemplate string `json:"signTemplate,omitempty"`
 	// TrustedSigning configures vpk's native Azure Trusted Signing
 	// (--azureTrustedSignFile), used only when building on a Windows host. Empty
