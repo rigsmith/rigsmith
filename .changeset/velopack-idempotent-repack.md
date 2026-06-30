@@ -2,4 +2,4 @@
 "github.com/rigsmith/rigsmith": patch
 ---
 
-Velopack: re-packing the same version is now idempotent. Before `vpk pack`, the adapter drops that exact version+channel's existing nupkg(s) from the output directory, so vpk no longer rejects the build with "a release equal or greater already exists." Only the version being packed is cleared — prior versions stay (their nupkgs feed delta generation and vpk rebuilds the channel manifest from what remains). This makes `shiprig release --from build` resume cleanly after a partial failure, and lets a local build re-run the same version without manually clearing `dist/releases`.
+Velopack: re-packing the same version is now idempotent. The adapter clears that version+channel's existing nupkg(s) before `vpk pack` (prior versions stay, so delta generation still works), so vpk no longer fails with "a release equal or greater already exists" — `shiprig release --from build` resumes cleanly after a partial failure and local re-runs no longer need a manual `dist/releases` cleanup.
