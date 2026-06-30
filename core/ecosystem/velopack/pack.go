@@ -544,8 +544,13 @@ func (a *Adapter) wrapDmg(ctx context.Context, repoRoot string, env []string, cf
 		return err
 	}
 
+	// The mounted volume's icon (cosmetic): the app's .icns, branded onto the dmg.
+	icon := ""
+	if cfg.Icon.Macos != "" {
+		icon = filepath.Join(repoRoot, cfg.Icon.Macos)
+	}
 	dmg := filepath.Join(outAbs, fmt.Sprintf("%s-%s.dmg", cfg.PackId, ch))
-	if err := buildDmg(ctx, repoRoot, env, cfg.PackTitle, cfg.MainExe, bgName, stage, dmg, lay); err != nil {
+	if err := buildDmg(ctx, repoRoot, env, cfg.PackTitle, cfg.MainExe, bgName, icon, stage, dmg, lay); err != nil {
 		return err
 	}
 	if !snapshot && cfg.Macos.SignIdentity != "" {
@@ -598,7 +603,7 @@ func dmgLayoutFor(repoRoot string, m Macos) dmgLayout {
 // left, Applications on the right, the background picture, and .background parked
 // off-screen below so it never shows — then unmount and convert to a compressed
 // read-only image. No Finder/AppleScript, so it works headless (CI).
-func buildDmg(ctx context.Context, repoRoot string, env []string, volName, mainExe, bgName, stage, dmg string, lay dmgLayout) error {
+func buildDmg(ctx context.Context, repoRoot string, env []string, volName, mainExe, bgName, iconAbs, stage, dmg string, lay dmgLayout) error {
 	rw := dmg + ".rw.dmg"
 	defer os.Remove(rw)
 	if _, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "create",
@@ -634,6 +639,15 @@ func buildDmg(ctx context.Context, repoRoot string, env []string, volName, mainE
 		HiddenY: h + 300, // park .background well below the window — hidden, and (unlike Finder) no scrollbar
 	}); err != nil {
 		return fmt.Errorf("velopack: write .DS_Store: %w", err)
+	}
+
+	// Brand the mounted volume with the app icon: a .VolumeIcon.icns at the root
+	// plus the volume's custom-icon flag, so the installer shows the app's icon in
+	// the Finder sidebar/desktop/proxy instead of the generic disk. Best-effort.
+	if iconAbs != "" {
+		if err := copyFile(iconAbs, filepath.Join(mount, ".VolumeIcon.icns")); err == nil {
+			_, _, _ = runCmdEnv(ctx, repoRoot, env, "SetFile", "-a", "C", mount)
+		}
 	}
 
 	_, _, _ = runCmdEnv(ctx, repoRoot, env, "sync")
