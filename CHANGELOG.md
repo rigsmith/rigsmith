@@ -1,5 +1,13 @@
 # github.com/rigsmith/rigsmith
 
+## 1.2.1
+### Velopack
+
+- Velopack: the macOS install DMG now opens as a proper "drag to Applications" window (backdrop + arrow, app icon beside the Applications folder), and the mounted volume carries the app icon. The layout is written deterministically by building the `.DS_Store` directly instead of driving Finder, so builds are reproducible and work headless / in CI. Apps can override the built-in backdrop via `macos.dmgBackground` (and `macos.dmgWindow` for a HiDPI image's logical size).
+  
+- Velopack: re-packing the same version is now idempotent. The adapter clears that version+channel's existing nupkg(s) before `vpk pack` (prior versions stay, so delta generation still works), so vpk no longer fails with "a release equal or greater already exists" — `shiprig release --from build` resumes cleanly after a partial failure and local re-runs no longer need a manual `dist/releases` cleanup.
+  
+
 ## 1.2.0
 ### Minor Changes
 
