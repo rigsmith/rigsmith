@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rigsmith/rigsmith/core/dsstore"
 	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
@@ -524,8 +525,27 @@ func (a *Adapter) wrapDmg(ctx context.Context, repoRoot string, env []string, cf
 		return fmt.Errorf("applications symlink: %w", err)
 	}
 
+	// Stage the install-window background (the embedded default, or an override)
+	// under .background/, where the generated .DS_Store expects it.
+	lay := dmgLayoutFor(repoRoot, cfg.Macos)
+	bgName := "background" + lay.bgExt
+	if lay.bgExt == "" {
+		bgName = "background.tiff"
+	}
+	bgDir := filepath.Join(stage, ".background")
+	if err := os.MkdirAll(bgDir, 0o755); err != nil {
+		return err
+	}
+	if lay.bgAbs != "" {
+		if err := copyFile(lay.bgAbs, filepath.Join(bgDir, bgName)); err != nil {
+			return err
+		}
+	} else if err := os.WriteFile(filepath.Join(bgDir, bgName), lay.bgBytes, 0o644); err != nil {
+		return err
+	}
+
 	dmg := filepath.Join(outAbs, fmt.Sprintf("%s-%s.dmg", cfg.PackId, ch))
-	if err := buildDmg(ctx, repoRoot, env, cfg.PackTitle, cfg.MainExe, stage, dmg, dmgLayoutFor(repoRoot, cfg.Macos)); err != nil {
+	if err := buildDmg(ctx, repoRoot, env, cfg.PackTitle, cfg.MainExe, bgName, stage, dmg, lay); err != nil {
 		return err
 	}
 	if !snapshot && cfg.Macos.SignIdentity != "" {
@@ -572,40 +592,21 @@ func dmgLayoutFor(repoRoot string, m Macos) dmgLayout {
 	return lay
 }
 
-// buildDmg packs the staging folder (the .app + an Applications symlink) into a
-// compressed DMG at dmg. It first tries to lay the window out in icon view — the
-// app on the left, the Applications folder on the right, over the optional
-// background — so the "drag to install" gesture is obvious. That layout uses
-// Finder scripting (needs a GUI session), so it is best-effort: any failure falls
-// back to a plain compressed DMG that still carries the app and the Applications
-// drop target, just in the default view.
-func buildDmg(ctx context.Context, repoRoot string, env []string, volName, mainExe, stage, dmg string, lay dmgLayout) error {
-	if err := layoutDmg(ctx, repoRoot, env, volName, mainExe, stage, dmg, lay); err == nil {
-		return nil
-	}
-	if _, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "create",
-		"-volname", volName, "-srcfolder", stage, "-ov", "-format", "UDZO", dmg); err != nil {
-		return fmt.Errorf("hdiutil create: %w", err)
-	}
-	return nil
-}
-
-// layoutDmg builds a DMG with an icon-view window arranged for drag-to-install:
-// create a read-write image, mount it, (optionally) install a background picture,
-// position the .app and the Applications symlink via Finder, then flush + detach
-// cleanly and convert to a compressed read-only image. Any step failing returns
-// an error so buildDmg can fall back to a plain DMG.
-func layoutDmg(ctx context.Context, repoRoot string, env []string, volName, mainExe, stage, dmg string, lay dmgLayout) error {
+// buildDmg packs the staging folder (the .app, an Applications symlink, and the
+// .background image) into a compressed install DMG: create a read-write image,
+// mount it, write a hand-built .DS_Store that arranges the window — app on the
+// left, Applications on the right, the background picture, and .background parked
+// off-screen below so it never shows — then unmount and convert to a compressed
+// read-only image. No Finder/AppleScript, so it works headless (CI).
+func buildDmg(ctx context.Context, repoRoot string, env []string, volName, mainExe, bgName, stage, dmg string, lay dmgLayout) error {
 	rw := dmg + ".rw.dmg"
 	defer os.Remove(rw)
 	if _, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "create",
 		"-volname", volName, "-srcfolder", stage, "-fs", "HFS+", "-format", "UDRW", "-ov", rw); err != nil {
-		return err
+		return fmt.Errorf("hdiutil create: %w", err)
 	}
-	// Free the canonical /Volumes/<volName> first so this image mounts under it
-	// rather than a "<volName> 1" duplicate. The background-picture alias Finder
-	// writes is tied to the build-time mount name, so a duplicate name here would
-	// produce a dmg whose background fails to render on a user's clean mount.
+	// Free the canonical /Volumes/<volName> so this image mounts under it (tidy
+	// stat paths); the background alias is minted for volName regardless.
 	detachStaleVolumes(ctx, repoRoot, env, volName)
 	out, _, err := runCmdEnv(ctx, repoRoot, env, "hdiutil", "attach", rw, "-nobrowse", "-readwrite", "-noverify")
 	if err != nil {
@@ -615,12 +616,6 @@ func layoutDmg(ctx context.Context, repoRoot string, env []string, volName, main
 	if mount == "" {
 		return fmt.Errorf("velopack: could not parse DMG mount point from hdiutil output")
 	}
-	// Target the volume by the name it ACTUALLY mounted under: if "Halyards" was
-	// already taken (a prior copy of the dmg still open), macOS mounts this one as
-	// "Halyards 1" etc., and a hardcoded name would script the wrong window — or
-	// none — leaving the build's dmg unarranged. This was the cause of the layout
-	// "reverting" to a default icon view.
-	disk := filepath.Base(mount)
 	detached := false
 	defer func() {
 		if !detached {
@@ -632,68 +627,15 @@ func layoutDmg(ctx context.Context, repoRoot string, env []string, volName, main
 	if w <= 0 || h <= 0 {
 		w, h = 600, 400
 	}
-	appX, appsX, iconY := w/4, w-w/4, h/2
-
-	bgClause := ""
-	if lay.bgAbs != "" || len(lay.bgBytes) > 0 {
-		bgDir := filepath.Join(mount, ".background")
-		if err := os.MkdirAll(bgDir, 0o755); err != nil {
-			return err
-		}
-		ext := lay.bgExt
-		if ext == "" {
-			ext = ".png"
-		}
-		bgName := "background" + ext
-		dst := filepath.Join(bgDir, bgName)
-		if lay.bgAbs != "" {
-			if err := copyFile(lay.bgAbs, dst); err != nil {
-				return err
-			}
-		} else if err := os.WriteFile(dst, lay.bgBytes, 0o644); err != nil {
-			return err
-		}
-		// Flag .background hidden, but that alone isn't enough: Finder draws any item
-		// that has an icon position, and its `update` always assigns .background one
-		// (neither chflags nor SetFile -a V suppress a positioned item). So also park
-		// .background directly under the Applications icon — the real icon is drawn on
-		// top, covering it — which leaves no stray folder and (unlike an off-window
-		// position) adds no scrollbar.
-		_, _, _ = runCmdEnv(ctx, repoRoot, env, "chflags", "hidden", bgDir)
-		bgClause = fmt.Sprintf("\n    set background picture of vo to file \".background:%s\""+
-			"\n    set position of item \".background\" of container window to {%d, %d}", bgName, appsX, iconY)
+	if err := dsstore.Write(mount, volName, dsstore.Layout{
+		WindowWidth: w, WindowHeight: h, IconSize: 128,
+		AppName: mainExe + ".app", BgFile: bgName,
+		AppX: w / 4, AppY: h / 2, AppsX: w - w/4, AppsY: h / 2,
+		HiddenY: h + 300, // park .background well below the window — hidden, and (unlike Finder) no scrollbar
+	}); err != nil {
+		return fmt.Errorf("velopack: write .DS_Store: %w", err)
 	}
 
-	// `activate` (bring Finder to the front) is required for icon positions to
-	// actually commit to .DS_Store under automation — without it the layout renders
-	// but the positions are dropped, so the window reverts to a default grid.
-	script := fmt.Sprintf(`tell application "Finder"
-  activate
-  tell disk %q
-    open
-    delay 1
-    set current view of container window to icon view
-    set toolbar visible of container window to false
-    set statusbar visible of container window to false
-    set the bounds of container window to {200, 120, %d, %d}
-    set vo to the icon view options of container window
-    set arrangement of vo to not arranged
-    set icon size of vo to 128%s
-    set position of item %q of container window to {%d, %d}
-    set position of item "Applications" of container window to {%d, %d}
-    update without registering applications
-    delay 2
-    close
-  end tell
-end tell`, disk, 200+w, 120+h, bgClause, mainExe+".app", appX, iconY, appsX, iconY)
-	if _, _, err := runCmdEnv(ctx, repoRoot, env, "osascript", "-e", script); err != nil {
-		return err
-	}
-
-	// Finder writes .DS_Store asynchronously after closing the window — wait for it
-	// to land, then flush and unmount CLEANLY (a forced detach can skip the flush,
-	// dropping the layout from the converted image). Only then convert.
-	time.Sleep(2 * time.Second)
 	_, _, _ = runCmdEnv(ctx, repoRoot, env, "sync")
 	if err := detachVolume(ctx, repoRoot, env, mount); err != nil {
 		return err
