@@ -628,6 +628,12 @@ func layoutDmg(ctx context.Context, repoRoot string, env []string, volName, main
 		}
 	}()
 
+	w, h := lay.width, lay.height
+	if w <= 0 || h <= 0 {
+		w, h = 600, 400
+	}
+	appX, appsX, iconY := w/4, w-w/4, h/2
+
 	bgClause := ""
 	if lay.bgAbs != "" || len(lay.bgBytes) > 0 {
 		bgDir := filepath.Join(mount, ".background")
@@ -647,18 +653,16 @@ func layoutDmg(ctx context.Context, repoRoot string, env []string, volName, main
 		} else if err := os.WriteFile(dst, lay.bgBytes, 0o644); err != nil {
 			return err
 		}
-		// Hide the .background folder: Finder gives .DS_Store the hidden flag
-		// automatically but not a folder we create, so without this it shows up in
-		// the install window (a dotfile alone isn't hidden on recent Finder).
+		// Flag .background hidden, but that alone isn't enough: Finder draws any item
+		// that has an icon position, and its `update` always assigns .background one
+		// (neither chflags nor SetFile -a V suppress a positioned item). So also park
+		// .background directly under the Applications icon — the real icon is drawn on
+		// top, covering it — which leaves no stray folder and (unlike an off-window
+		// position) adds no scrollbar.
 		_, _, _ = runCmdEnv(ctx, repoRoot, env, "chflags", "hidden", bgDir)
-		bgClause = "\n    set background picture of vo to file \".background:" + bgName + "\""
+		bgClause = fmt.Sprintf("\n    set background picture of vo to file \".background:%s\""+
+			"\n    set position of item \".background\" of container window to {%d, %d}", bgName, appsX, iconY)
 	}
-
-	w, h := lay.width, lay.height
-	if w <= 0 || h <= 0 {
-		w, h = 600, 400
-	}
-	appX, appsX, iconY := w/4, w-w/4, h/2
 
 	// `activate` (bring Finder to the front) is required for icon positions to
 	// actually commit to .DS_Store under automation — without it the layout renders
