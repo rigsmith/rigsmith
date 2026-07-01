@@ -386,14 +386,17 @@ func newReleaseCmd() *cobra.Command {
 	// modes that don't compose: dry-run is plan-only, dry-build forces a build-only
 	// plan, and --only/--skip/--from/--to hand-pick steps. Keep them exclusive so a
 	// combination can't produce a confusing or no-op run.
-	for _, mutex := range []string{"dry-run", "only", "skip", "from", "to", "rehearse"} {
+	for _, mutex := range []string{"dry-run", "only", "skip", "from", "to"} {
 		cmd.MarkFlagsMutuallyExclusive("dry-build", mutex)
 	}
-	// --local is a real run, so it can't combine with the plan-only --dry-run or
-	// the build-only --dry-build. It deliberately *does* compose with
-	// --only/--skip/--from/--to so a local rehearsal can be narrowed or resumed.
-	cmd.MarkFlagsMutuallyExclusive("local", "dry-run")
-	cmd.MarkFlagsMutuallyExclusive("local", "dry-build")
+	// --local and --rehearse are real runs, so neither can combine with the
+	// plan-only --dry-run or the build-only --dry-build. They deliberately *do*
+	// compose with --only/--skip/--from/--to so a local rehearsal can be narrowed
+	// or resumed.
+	for _, mode := range []string{"local", "rehearse"} {
+		cmd.MarkFlagsMutuallyExclusive(mode, "dry-run")
+		cmd.MarkFlagsMutuallyExclusive(mode, "dry-build")
+	}
 	return cmd
 }
 

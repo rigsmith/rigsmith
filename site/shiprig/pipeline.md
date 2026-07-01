@@ -421,8 +421,9 @@ shiprig release --rehearse         # like --local, and leave git untouched too
 the build-only `--dry-build`. It *does* compose with `--only`/`--skip`/`--from`/
 `--to`, so a local rehearsal can be narrowed or resumed; the network steps stay
 skipped regardless. (The longhand equivalent is
-`--skip publish,push,release,issues`.) `--rehearse` composes the same way and is
-likewise mutually exclusive with `--dry-build`.
+`--skip publish,push,release,issues`.) `--rehearse` is a real run
+too, so it composes the same way and is likewise mutually exclusive with both
+`--dry-run` and `--dry-build`.
 
 ::: tip Implementation
 The pipeline lives in `internal/shiprig/pipeline` + `internal/shiprig/forge`;
