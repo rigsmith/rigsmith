@@ -176,6 +176,12 @@ type ResolveOptions struct {
 	// From/To/Only/Skip (e.g. resuming a local rehearsal).
 	Local bool
 
+	// Rehearse is Local plus skipping the git commit and tag: it exercises the
+	// whole pipeline (version, build, sign) without touching git history or the
+	// network, so a release can be dry-run end to end and re-run at will. It is
+	// exactly --local with commit and tag skipped.
+	Rehearse bool
+
 	// Ecosystems is the set of ecosystem ids present in this release (the host
 	// fills it from discovery). A step that declares `ecosystems` matching none
 	// of these is skipped. nil disables ecosystem filtering entirely (every step
@@ -494,8 +500,14 @@ func skipReasonFor(
 	// they are always skipped so nothing leaves the machine. Non-network steps fall
 	// through to the normal disabled/from/to/only/skip logic, so --local still
 	// composes with --from/--to for resuming a local rehearsal.
-	if opts.Local && slices.Contains(networkSteps, name) {
+	if (opts.Local || opts.Rehearse) && slices.Contains(networkSteps, name) {
 		return "--local: skips network steps"
+	}
+	// --rehearse additionally skips the git commit and tag, so the pipeline runs
+	// end to end without touching git history. Like --local, every other step
+	// falls through to the normal from/to/only/skip logic.
+	if opts.Rehearse && (name == "commit" || name == "tag") {
+		return "--rehearse: skips the git commit and tag"
 	}
 	if stepConfig != nil && stepConfig.Enabled != nil && !*stepConfig.Enabled {
 		return "disabled"
