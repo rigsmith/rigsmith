@@ -76,8 +76,20 @@ func newInfoCmd() *cobra.Command {
 			fmt.Fprintln(out, headerStyle.Render("Projects"))
 			all := discoverWorkspace(cmd.Context(), root, cfg.Exclude)
 			sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+			// A name shared by several paths (a duplicate — often a nested worktree)
+			// is indistinguishable by name alone, so show its path to tell them apart.
+			dups := duplicateNames(all)
 			for _, p := range all {
-				fmt.Fprintf(out, "  %s %s\n", p.Name, dimStyle.Render(p.Version))
+				meta := p.Version
+				if dups[p.Name] {
+					if rel := relSlash(root, p.Dir); rel != "" && rel != "." {
+						if meta != "" {
+							meta += "  "
+						}
+						meta += rel
+					}
+				}
+				fmt.Fprintf(out, "  %s %s\n", p.Name, dimStyle.Render(meta))
 			}
 			if len(all) == 0 {
 				fmt.Fprintln(out, dimStyle.Render("  (none discovered)"))

@@ -196,27 +196,46 @@ func dotnetTargets(root string, exclude []string) []target {
 // topoSort orders targets so a package's intra-repo dependencies come before it
 // (Kahn's algorithm). It is cycle-tolerant: any targets left in a cycle are
 // appended in stable name order. Ties are broken by name for deterministic runs.
+//
+// Duplicate-named targets (the same project checked out in several paths — e.g. a
+// nested git worktree) are all kept, not collapsed to one: callers surface them
+// with their paths so discovery, the pickers, and `--all` agree on what exists.
+// The dependency graph is a node per name (all copies of a name share it and emit
+// together), which keeps ordering correct while preserving every copy.
 func topoSort(targets []target) []target {
-	byName := make(map[string]target, len(targets))
+	byName := make(map[string][]target, len(targets))
+	var nameOrder []string // first-seen order, for stable output
 	for _, t := range targets {
-		byName[t.Name] = t
+		if _, seen := byName[t.Name]; !seen {
+			nameOrder = append(nameOrder, t.Name)
+		}
+		byName[t.Name] = append(byName[t.Name], t)
 	}
-	// indegree = number of (in-repo) deps not yet emitted.
-	indeg := map[string]int{}
-	dependents := map[string][]string{} // dep -> packages that depend on it
+
+	// deps/dependents at the name level (deduped, so duplicate-named copies don't
+	// double-count an edge). indegree = number of distinct in-repo deps.
+	deps := map[string]map[string]bool{}
+	dependents := map[string][]string{} // dep -> names that depend on it
+	for _, name := range nameOrder {
+		deps[name] = map[string]bool{}
+	}
 	for _, t := range targets {
 		for _, d := range t.Deps {
-			if _, ok := byName[d]; ok && d != t.Name {
-				indeg[t.Name]++
+			if _, ok := byName[d]; ok && d != t.Name && !deps[t.Name][d] {
+				deps[t.Name][d] = true
 				dependents[d] = append(dependents[d], t.Name)
 			}
 		}
 	}
+	indeg := map[string]int{}
+	for _, name := range nameOrder {
+		indeg[name] = len(deps[name])
+	}
 
 	var ready []string
-	for _, t := range targets {
-		if indeg[t.Name] == 0 {
-			ready = append(ready, t.Name)
+	for _, name := range nameOrder {
+		if indeg[name] == 0 {
+			ready = append(ready, name)
 		}
 	}
 	sort.Strings(ready)
@@ -230,7 +249,7 @@ func topoSort(targets []target) []target {
 			continue
 		}
 		emitted[name] = true
-		order = append(order, byName[name])
+		order = append(order, byName[name]...)
 
 		var newly []string
 		for _, dep := range dependents[name] {
@@ -245,16 +264,35 @@ func topoSort(targets []target) []target {
 
 	// Append anything caught in a cycle, in stable name order.
 	if len(order) < len(targets) {
-		var rest []target
-		for _, t := range targets {
-			if !emitted[t.Name] {
-				rest = append(rest, t)
+		var restNames []string
+		for _, name := range nameOrder {
+			if !emitted[name] {
+				restNames = append(restNames, name)
 			}
 		}
-		sort.Slice(rest, func(i, j int) bool { return rest[i].Name < rest[j].Name })
-		order = append(order, rest...)
+		sort.Strings(restNames)
+		for _, name := range restNames {
+			order = append(order, byName[name]...)
+		}
 	}
 	return order
+}
+
+// duplicateNames returns the set of names shared by more than one target — the
+// projects whose path must be shown to tell them apart. A duplicate is usually
+// one project checked out in several places (e.g. a nested worktree).
+func duplicateNames(targets []target) map[string]bool {
+	count := map[string]int{}
+	for _, t := range targets {
+		count[t.Name]++
+	}
+	dup := map[string]bool{}
+	for name, n := range count {
+		if n > 1 {
+			dup[name] = true
+		}
+	}
+	return dup
 }
 
 // filterTargets keeps targets whose name or short name matches the glob.
@@ -271,26 +309,43 @@ func filterTargets(targets []target, glob string) []target {
 	return out
 }
 
-// matchTarget resolves a query to a single package: exact (case-insensitive)
-// match on name or short name wins; otherwise a unique substring match. Returns
-// ok=false when there's no match or the substring match is ambiguous.
-func matchTarget(targets []target, query string) (target, bool) {
+// matchTargets returns every target matching query, best tier only: exact
+// (case-insensitive) matches on the full name, the slash-short name, or the
+// dot-short name (a .NET project's trailing segment) if any exist, else the
+// substring matches on name or slash-short. An empty query returns nil.
+//
+// Unlike matchTarget it keeps every match — so a name shared by several paths
+// (a duplicate) surfaces as multiple results the caller can offer in a picker or
+// list, rather than being silently dropped as "ambiguous". The name semantics
+// mirror defaultMatches so arg resolution and the configured defaultProject agree.
+func matchTargets(targets []target, query string) []target {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
-		return target{}, false
+		return nil
 	}
-	var subs []target
+	var exact, subs []target
 	for _, t := range targets {
 		name, short := strings.ToLower(t.Name), strings.ToLower(t.shortName())
-		if name == q || short == q {
-			return t, true
-		}
-		if strings.Contains(name, q) || strings.Contains(short, q) {
+		dot := strings.ToLower(dotShortName(t.Name))
+		switch {
+		case name == q || short == q || dot == q:
+			exact = append(exact, t)
+		case strings.Contains(name, q) || strings.Contains(short, q):
 			subs = append(subs, t)
 		}
 	}
-	if len(subs) == 1 {
-		return subs[0], true
+	if len(exact) > 0 {
+		return exact
+	}
+	return subs
+}
+
+// matchTarget resolves a query to a single unambiguous target (see
+// matchTargets). ok is false when nothing matches or several do; callers that
+// want to offer a picker on ambiguity use matchTargets directly.
+func matchTarget(targets []target, query string) (target, bool) {
+	if m := matchTargets(targets, query); len(m) == 1 {
+		return m[0], true
 	}
 	return target{}, false
 }

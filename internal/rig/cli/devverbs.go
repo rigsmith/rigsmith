@@ -74,7 +74,16 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 				} else {
 					ts = discoverWorkspace(cdContext(cmd), root, excludeFor(root))
 				}
-				if t, ok := matchTarget(ts, args[0]); ok {
+				matches := matchTargets(ts, args[0])
+				// `rig run <name>` matching several targets is usually one project
+				// duplicated across paths (a nested worktree). Offer a picker rather
+				// than failing or silently guessing. Other verbs keep the single-match
+				// rule: an ambiguous arg falls through (e.g. `rig test <filter>`).
+				if verb == "run" && len(matches) > 1 {
+					return runAmbiguousPick(cmd, root, args[0], matches, args[1:])
+				}
+				if len(matches) == 1 {
+					t := matches[0]
 					argv, has := devCommandFor(t, verb, root)
 					if !has {
 						return fmt.Errorf("verb %q has no mapping for ecosystem %q", verb, t.Eco)
@@ -397,6 +406,55 @@ func dispatchVerbPick(cmd *cobra.Command, verb string, tasks []allTask, offerAll
 		t := tasks[choice]
 		return true, runCommand(cmd, t.dir, t.argv)
 	}
+}
+
+// runAmbiguousPick handles `rig run <name>` when the name matches several
+// runnable targets — typically one project checked out in more than one path
+// (e.g. a nested worktree). Rather than fail, it lets the user disambiguate by
+// path: on a TTY a picker (name · eco · path); off a TTY an error listing the
+// paths so the choice is still actionable (name a more precise target, or add an
+// `exclude` glob in .rig.json). Non-runnable copies are dropped, which may
+// resolve the ambiguity on its own.
+func runAmbiguousPick(cmd *cobra.Command, root, query string, matches []target, forwarded []string) error {
+	var tasks []allTask
+	for _, t := range matches {
+		if !isRunnable(t) {
+			continue
+		}
+		argv, ok := devCommandFor(t, "run", root)
+		if !ok {
+			continue
+		}
+		tasks = append(tasks, allTask{
+			name: t.Name, eco: t.Eco, dir: t.Dir,
+			rel: relSlash(root, t.Dir), argv: append(argv, forwarded...),
+		})
+	}
+	switch len(tasks) {
+	case 0:
+		return fmt.Errorf("no runnable project matches %q", query)
+	case 1:
+		return runCommand(cmd, tasks[0].dir, tasks[0].argv)
+	}
+	if !interactive() {
+		// No picker off a TTY — print the candidates as clean lines (the error box
+		// would reflow a multi-line message), then return a short, actionable error.
+		errOut := cmd.ErrOrStderr()
+		nameW := 0
+		for _, t := range tasks {
+			nameW = max(nameW, runeLen(t.name))
+		}
+		for _, t := range tasks {
+			fmt.Fprintf(errOut, "  %s  %s\n", padRight(t.name, nameW), dimStyle.Render(taskPath(t)))
+		}
+		return fmt.Errorf("%q matches %d projects (listed above) — run one by its path or narrow the name", query, len(tasks))
+	}
+	choice := pickWorkspaceVerbTarget("run", tasks, false)
+	if choice < 0 || choice >= len(tasks) { // pickCancel (or any out-of-range) → no-op
+		return nil
+	}
+	t := tasks[choice]
+	return runCommand(cmd, t.dir, t.argv)
 }
 
 // offerRunChoice resolves a bare `rig run` at a workspace root over the runnable
