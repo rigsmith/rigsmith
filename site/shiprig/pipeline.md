@@ -389,9 +389,9 @@ Pass `--no-env` to drop the `.env`/`.env.local` layer for a run (the ambient
 shell environment still flows through) — handy when a stray local `.env` would
 otherwise shadow what you've exported.
 
-## Local rehearsal: `--dry-run`, `--dry-build`, `--local`
+## Local rehearsal: `--dry-run`, `--dry-build`, `--local`, `--rehearse`
 
-Three flags keep a release on your machine, trading off how much of the pipeline
+Four flags keep a release on your machine, trading off how much of the pipeline
 actually runs:
 
 - `--dry-run` interpolates and prints the full plan but executes nothing, except
@@ -405,17 +405,24 @@ actually runs:
   bump, commit, build, sign, and local `tag` all execute, so it exercises the
   full release and produces real artifacts while nothing leaves the machine. Use
   it to confirm an end-to-end release works before letting it ship.
+- `--rehearse` is `--local` that *also* skips the git `commit` and `tag`, so
+  version, build, and sign run for real but nothing is committed, tagged,
+  pushed, or published. It touches neither git history nor the network, so a
+  release can be dry-run end to end and re-run at will. (The longhand equivalent
+  is `--local --skip commit,tag`.)
 
 ```sh
 shiprig release --local            # full pipeline, nothing pushed/published
 shiprig release --local --from build   # resume a local rehearsal at a step
+shiprig release --rehearse         # like --local, and leave git untouched too
 ```
 
 `--local` is a real run, so it can't combine with the plan-only `--dry-run` or
 the build-only `--dry-build`. It *does* compose with `--only`/`--skip`/`--from`/
 `--to`, so a local rehearsal can be narrowed or resumed; the network steps stay
 skipped regardless. (The longhand equivalent is
-`--skip publish,push,release,issues`.)
+`--skip publish,push,release,issues`.) `--rehearse` composes the same way and is
+likewise mutually exclusive with `--dry-build`.
 
 ::: tip Implementation
 The pipeline lives in `internal/shiprig/pipeline` + `internal/shiprig/forge`;

@@ -12,6 +12,7 @@ shiprig version            # bump + changelog, with dependency cascade
 shiprig publish            # registries (idempotent, confirm-gated on a TTY)
 shiprig release            # the configurable step pipeline
 shiprig release --dry-build # build artifacts locally, publish nothing
+shiprig release --rehearse  # full local dry run — no commit, tag, or network
 shiprig doctor             # health-check changesets + release readiness
 shiprig info
 ```
@@ -37,7 +38,8 @@ The whole workflow is wired:
 - `tag` — create the git tags for the released versions
 - `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI
 - `release` — the [configurable step pipeline](./pipeline) with step filtering
-  (`--only` / `--skip` / `--from` / `--to`), `--dry-run`, and `--dry-build`
+  (`--only` / `--skip` / `--from` / `--to`), `--dry-run`, `--dry-build`,
+  `--local`, and `--rehearse` (see [local rehearsal](./pipeline#local-rehearsal-dry-run-dry-build-local-rehearse))
 - `doctor` — the changeset baseline (git/repo/config/workspace) plus a release
   section: `gh` auth and the publish/build tool each detected ecosystem needs
 
