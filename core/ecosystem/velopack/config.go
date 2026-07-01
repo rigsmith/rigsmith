@@ -87,8 +87,17 @@ type Icon struct {
 // profile); the unlock/notary secrets ride in via the signing env.
 type Macos struct {
 	// BundleId is the macOS bundle identifier (vpk --bundleId), e.g.
-	// "com.acme.app". Required when building an osx-* channel.
+	// "com.acme.app". Required when building an osx-* channel — unless Plist is
+	// set, in which case the plist supplies CFBundleIdentifier (vpk forbids
+	// --bundleId together with --plist) and BundleId is ignored.
 	BundleId string `json:"bundleId,omitempty"`
+	// Plist is a repo-root-relative path to a custom Info.plist (vpk --plist).
+	// vpk uses it VERBATIM in the .app bundle — it does not inject CFBundleVersion
+	// or CFBundleIdentifier — so the file must carry all bundle keys. The token
+	// ${version} is rendered to the release version before packing (so
+	// CFBundleVersion tracks releases). Use it for bundle keys vpk can't set,
+	// e.g. NSServices / URL schemes. When set, --bundleId is dropped.
+	Plist string `json:"plist,omitempty"`
 	// SignIdentity is the Developer ID Application identity (vpk --signAppIdentity).
 	// Empty means build unsigned (rehearsal / CI without certs).
 	SignIdentity string `json:"signIdentity,omitempty"`

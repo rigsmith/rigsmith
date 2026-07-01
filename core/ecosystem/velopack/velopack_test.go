@@ -432,6 +432,45 @@ func TestBuildPackArgsMacSnapshotIsUnsigned(t *testing.T) {
 	assertHas(t, got, "--bundleId", "com.acme.halyards")
 }
 
+// TestBuildPackArgsMacPlistDropsBundleId: a custom Info.plist is passed via
+// --plist and, since vpk forbids it alongside --bundleId, --bundleId is dropped
+// while --icon stays (it still copies the .icns into Resources).
+func TestBuildPackArgsMacPlistDropsBundleId(t *testing.T) {
+	cfg := fullCfg()
+	cfg.Macos.Plist = "/tmp/rendered.plist"
+	got := buildPackArgs(cfg, "osx-arm64", "p", "o", "1.0.0", false, osMac, "")
+
+	assertHas(t, got, "--plist", "/tmp/rendered.plist")
+	assertHas(t, got, "--icon", "app/halyards.icns")
+	if contains(got, "--bundleId") {
+		t.Errorf("--bundleId must be dropped when --plist is set, got %v", got)
+	}
+}
+
+// TestRenderPlistSubstitutesVersion: ${version} is replaced with the release
+// version and the result is written to a temp file (never the source).
+func TestRenderPlistSubstitutesVersion(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "Info.plist")
+	if err := os.WriteFile(src, []byte("<string>${version}</string>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, cleanup, err := renderPlist(src, "2.3.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if out == src {
+		t.Fatal("renderPlist must not overwrite the source template")
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "<string>2.3.4</string>" {
+		t.Errorf("rendered plist = %q, want version substituted", got)
+	}
+}
+
 // TestBuildPackArgsWindowsNativeAzure: a Windows channel built ON Windows uses
 // vpk's native Azure Trusted Signing and no cross directive.
 func TestBuildPackArgsWindowsNativeAzure(t *testing.T) {

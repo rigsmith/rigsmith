@@ -313,7 +313,8 @@ exactly as for any project in that language. For a **dotnet** base the build run
   "icon": { "macos": "app/icon.icns", "windows": "app/icon.ico" },
   "macos":   { "bundleId": "com.acme.myapp",
                "signIdentity": "Developer ID Application: …",
-               "notaryProfile": "myapp-notary" },      // xcrun notarytool profile
+               "notaryProfile": "myapp-notary",        // xcrun notarytool profile
+               "plist": "app/Info.plist" },            // optional custom Info.plist (NSServices, URL schemes, …)
   "windows": {
     // cross-compiling from macOS/Linux: a custom signer (jsign), {{file}} per binary
     "signTemplate": "jsign --storetype TRUSTEDSIGNING --keystore … --storepass $TOKEN --alias acct/profile {{file}}",
@@ -341,6 +342,17 @@ exactly as for any project in that language. For a **dotnet** base the build run
   { "packId": "MyRustApp", "base": "cargo", "channels": ["win-x64", "osx-arm64"],
     "build": { "command": "cargo build --release --target $RUST_TARGET && mkdir -p \"$OUTPUT\" && cp target/$RUST_TARGET/release/myapp* \"$OUTPUT\"/" } }
   ```
+- **Custom `Info.plist` (macOS).** Set `macos.plist` to a repo-root-relative
+  `Info.plist` when you need bundle keys `vpk` doesn't generate — `NSServices`
+  (system Services entries), `CFBundleURLTypes` (URL schemes), and the like.
+  `vpk`'s `--plist` uses the file **verbatim** (it does not inject
+  `CFBundleVersion`/`CFBundleIdentifier`, and forbids `--bundleId` alongside it),
+  so the file must carry every standard key — take `vpk`'s generated
+  `Contents/Info.plist` as the starting point and add yours. The token
+  `${version}` is rendered to the release version at pack time, so
+  `CFBundleVersion` still tracks releases; the adapter drops `--bundleId`
+  automatically (your plist supplies `CFBundleIdentifier`). `--icon` still applies
+  (the `.icns` is copied into `Contents/Resources`).
 - **Signing is build-time**, inside `vpk pack` (not the `sign` step). The
   non-secret identifiers live in `velopack.json`; the secrets (the macOS `.p12`
   password, the signing token) come from the [signing

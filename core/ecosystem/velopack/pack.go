@@ -131,6 +131,18 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 			return plugin.ArtifactsResponse{}, err
 		}
 
+		// macOS: a custom Info.plist (with ${version} rendered to the release
+		// version) is fed to vpk via --plist. vpk uses it verbatim, so pass the
+		// rendered temp file — never the source template.
+		if osOf(ch) == osMac && strings.TrimSpace(cfg.Macos.Plist) != "" {
+			rendered, cleanup, err := renderPlist(filepath.Join(req.RepoRoot, cfg.Macos.Plist), ver)
+			if err != nil {
+				return plugin.ArtifactsResponse{}, fmt.Errorf("velopack: render macos plist: %w", err)
+			}
+			defer cleanup()
+			packCfg.Macos.Plist = rendered
+		}
+
 		packArgs := buildPackArgs(packCfg, ch, pubRel, releasesRel, ver, req.Snapshot, host, azureFile)
 		if _, _, err := runCmdEnv(ctx, req.RepoRoot, env, "vpk", packArgs...); err != nil {
 			return plugin.ArtifactsResponse{}, fmt.Errorf("vpk pack %s: %w", ch, err)
@@ -311,7 +323,14 @@ func buildPackArgs(cfg Config, ch, pubDir, output, version string, snapshot bool
 
 	switch osOf(ch) {
 	case osMac:
-		args = appendFlag(args, "--bundleId", cfg.Macos.BundleId)
+		// A custom --plist supplies CFBundleIdentifier itself; vpk rejects
+		// --bundleId alongside --plist, so pass one or the other. --icon is fine
+		// with --plist (it still copies the .icns into Contents/Resources).
+		if strings.TrimSpace(cfg.Macos.Plist) != "" {
+			args = appendFlag(args, "--plist", cfg.Macos.Plist)
+		} else {
+			args = appendFlag(args, "--bundleId", cfg.Macos.BundleId)
+		}
 		args = appendFlag(args, "--icon", cfg.Icon.Macos)
 		if !snapshot {
 			args = appendFlag(args, "--signAppIdentity", cfg.Macos.SignIdentity)
@@ -326,6 +345,35 @@ func buildPackArgs(cfg Config, ch, pubDir, output, version string, snapshot bool
 
 	args = append(args, "--channel", ch, "-r", ch, "-o", output)
 	return args
+}
+
+// renderPlist reads a custom Info.plist template, substitutes ${version} with
+// the release version, and writes the result to a temp file. Returns the temp
+// path (for vpk --plist) and a cleanup func. vpk uses --plist verbatim (no key
+// injection), so ${version} is what keeps CFBundleVersion tracking releases.
+func renderPlist(src, version string) (string, func(), error) {
+	noop := func() {}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return "", noop, err
+	}
+	rendered := strings.ReplaceAll(string(data), "${version}", version)
+
+	f, err := os.CreateTemp("", "velopack-plist-*.plist")
+	if err != nil {
+		return "", noop, err
+	}
+	cleanup := func() { os.Remove(f.Name()) }
+	if _, err := f.WriteString(rendered); err != nil {
+		f.Close()
+		cleanup()
+		return "", noop, err
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", noop, err
+	}
+	return f.Name(), cleanup, nil
 }
 
 // crossDirective returns vpk's target-platform directive for a channel built on
