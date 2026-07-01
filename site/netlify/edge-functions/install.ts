@@ -55,14 +55,20 @@ export default async function handler(req: Request, context: Context) {
     return Response.redirect(DOCS_ORIGIN + (DOCS_PATH[tool] || '/'), 302)
   }
 
-  // Browsers get the docs, not a wall of shell.
-  if (wantsHtml(req)) {
+  // PowerShell (`irm … | iex`) sends a UA containing "PowerShell" — and also
+  // "Mozilla", so detect it before the browser check and serve the .ps1 installer.
+  const ua = (req.headers.get('user-agent') || '').toLowerCase()
+  const isPowerShell = ua.includes('powershell')
+
+  // Browsers get the docs, not a wall of shell (PowerShell excepted — it wants it).
+  if (!isPowerShell && wantsHtml(req)) {
     return Response.redirect(DOCS_ORIGIN + (DOCS_PATH[tool] || '/guide/installation'), 302)
   }
 
-  // Fetch the canonical script (deployed to /install.sh by the build) and bake
-  // in the tool as a positional arg the script already understands ($1).
-  const scriptRes = await context.next(new Request(new URL('/install.sh', url.origin)))
+  // Fetch the canonical script for the client (both deployed by the build) and
+  // bake in the tool: sh reads $1 (`set --`), PowerShell reads $RigsmithTool.
+  const scriptPath = isPowerShell ? '/install.ps1' : '/install.sh'
+  const scriptRes = await context.next(new Request(new URL(scriptPath, url.origin)))
   if (!scriptRes.ok) {
     return new Response('# rigsmith installer is temporarily unavailable\n', {
       status: 503,
@@ -70,7 +76,8 @@ export default async function handler(req: Request, context: Context) {
     })
   }
   const script = await scriptRes.text()
-  const prelude = tool === 'all' ? '' : `set -- ${tool}\n`
+  const prelude =
+    tool === 'all' ? '' : isPowerShell ? `$RigsmithTool = '${tool}'\n` : `set -- ${tool}\n`
 
   return new Response(prelude + script, {
     status: 200,

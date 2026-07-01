@@ -1,5 +1,6 @@
 node_modules/
 .vitepress/dist/
 .vitepress/cache/
-# Copied from scripts/install.sh by the Netlify build (single source of truth).
+# Copied from scripts/install.{sh,ps1} by the Netlify build (single source of truth).
 public/install.sh
+public/install.ps1

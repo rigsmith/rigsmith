@@ -10,9 +10,10 @@
 [build]
   base = "site"
   publish = ".vitepress/dist"
-  # Keep scripts/install.sh the single source of truth — copy it into the
-  # published site so the install edge function can serve it from /install.sh.
-  command = "cp ../scripts/install.sh public/install.sh && npm run build"
+  # Keep scripts/install.{sh,ps1} the single source of truth — copy them into the
+  # published site so the install edge function can serve them from /install.sh
+  # (curl|sh) and /install.ps1 (irm|iex).
+  command = "cp ../scripts/install.sh public/install.sh && cp ../scripts/install.ps1 public/install.ps1 && npm run build"
 
 [build.environment]
   NODE_VERSION = "20"

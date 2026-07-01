@@ -1,9 +1,9 @@
 # Installation
 
 Every RigSmith tool is a single, statically-linked Go binary — no .NET runtime,
-no Node. Install the whole family or just one tool.
+no Node. Install the whole family with one command, or just one tool.
 
-## curl | sh
+## curl | sh (macOS / Linux)
 
 ```sh
 curl -fsSL https://rigsmith.sh | sh            # the whole family
@@ -21,18 +21,37 @@ Make sure that directory is on your `PATH`.
 browser to read it before piping it to a shell.
 :::
 
-## Homebrew
+## PowerShell (Windows)
+
+```powershell
+irm https://rigsmith.sh | iex            # the whole family
+irm https://rigsmith.sh/rig | iex        # just rig
+irm https://rigsmith.sh/shiprig | iex    # just shiprig
+```
+
+Binaries install to `$HOME\.local\bin` (override with `RIGSMITH_INSTALL`); the
+script adds that directory to your user `PATH` — restart the terminal to pick it
+up. Same URL as curl: PowerShell gets the `.ps1`, a shell gets the `.sh`.
+
+## Homebrew (macOS / Linux)
 
 ```sh
-brew install rigsmith/tap/rig
-brew install rigsmith/tap/shiprig
+brew install --cask rigsmith/tap/rigsmith   # all four tools
+brew install --cask rigsmith/tap/rig        # just rig
+```
+
+## winget (Windows)
+
+```powershell
+winget install RigSmith.Rigsmith   # all four tools
+winget install RigSmith.Rig        # just rig
 ```
 
 ## Scoop (Windows)
 
-```sh
+```powershell
 scoop bucket add rigsmith https://github.com/rigsmith/scoop-bucket
-scoop install rig
+scoop install rigsmith             # all four tools
 ```
 
 ## From source
@@ -52,6 +71,8 @@ go build -o bin/clauderig ./cmd/clauderig
 its private-repo gate.
 
 ::: warning Status
-The native package channels (Homebrew, Scoop, the `rigsmith.sh` installer) are
-being wired up. Until the first tagged release, build from source.
+The single-tool packages (`RigSmith.Rig`, `brew … /tap/rig`, …) ship today. The
+one-command **bundle** entries above — `RigSmith.Rigsmith`, the `rigsmith` cask,
+`scoop install rigsmith` — land with the next tagged release; the Scoop bucket
+activates once it's published.
 :::

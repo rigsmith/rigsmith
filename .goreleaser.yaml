@@ -167,6 +167,24 @@ archives:
         formats:
           - zip
 
+  # The bundle: one archive with all four binaries, so a single package-manager
+  # entry (winget RigSmith.Rigsmith, scoop rigsmith, the rigsmith cask) installs
+  # the whole toolchain in one command. The per-tool archives above still ship for
+  # anyone who wants just one.
+  - id: rigsmith
+    ids:
+      - rig
+      - shiprig
+      - clauderig
+      - changerig
+    name_template: "rigsmith_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
 checksum:
   name_template: "checksums.txt"
 
@@ -259,6 +277,73 @@ homebrew_casks:
           if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/clauderig"]
           end
+
+  # The bundle cask: `brew install --cask rigsmith/tap/rigsmith` installs all four
+  # binaries from the combined archive. `binaries:` (plural) emits one stanza per
+  # tool; the quarantine strip covers the whole staged dir. (`brews` formulae would
+  # be simpler for multi-binary but are deprecated.)
+  - name: rigsmith
+    ids: [rigsmith]
+    binaries: [rig, changerig, shiprig, clauderig]
+    repository:
+      owner: rigsmith
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://rigsmith.dev"
+    description: "The rigsmith toolchain: rig, changerig, shiprig, clauderig"
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", staged_path.to_s]
+          end
+
+# Scoop bucket (Windows): `scoop install rigsmith` drops all four binaries on PATH
+# from the combined archive. Disabled until the bucket repo + token exist, so the
+# release never fails on a missing token; set SCOOP_BUCKET_TOKEN (write access to
+# rigsmith/scoop-bucket) to activate.
+scoops:
+  - name: rigsmith
+    ids: [rigsmith]
+    skip_upload: '{{ if isEnvSet "SCOOP_BUCKET_TOKEN" }}false{{ else }}true{{ end }}'
+    repository:
+      owner: rigsmith
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
+    homepage: "https://rigsmith.dev"
+    description: "The rigsmith toolchain: rig, changerig, shiprig, clauderig"
+    license: MIT
+
+# winget (Windows): the RigSmith.Rigsmith bundle manifest — one `winget install
+# rigsmith` drops all four binaries on PATH from the combined zip (each a portable
+# nested installer). GoReleaser fills the real SHA256 at release. Disabled until a
+# fork of microsoft/winget-pkgs + token exist, so the release never fails; set
+# WINGET_TOKEN (write access to the fork) to open the submission PR automatically.
+# Until then the manifest is still generated into dist/ for manual submission.
+winget:
+  - name: rigsmith
+    package_identifier: RigSmith.Rigsmith
+    publisher: RigSmith
+    publisher_url: "https://rigsmith.dev"
+    author: John Campion Jr
+    short_description: "The rigsmith toolchain: rig, changerig, shiprig, clauderig"
+    homepage: "https://rigsmith.dev"
+    license: MIT
+    license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
+    ids: [rigsmith]
+    skip_upload: '{{ if isEnvSet "WINGET_TOKEN" }}false{{ else }}true{{ end }}'
+    repository:
+      owner: rigsmith
+      name: winget-pkgs
+      branch: "rigsmith-{{ .Version }}"
+      token: "{{ .Env.WINGET_TOKEN }}"
+      pull_request:
+        enabled: true
+        draft: false
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
 
 release:
   github:

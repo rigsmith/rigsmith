@@ -16,11 +16,24 @@ manifests/r/RigSmith/<Tool>/<version>/
   RigSmith.<Tool>.locale.en-US.yaml # publisher / description / license
 ```
 
-Packages: `RigSmith.Rig`, `RigSmith.ShipRig`, `RigSmith.ChangeRig`, `RigSmith.ClaudeRig`.
+Per-tool packages (hand-staged here): `RigSmith.Rig`, `RigSmith.ShipRig`,
+`RigSmith.ChangeRig`, `RigSmith.ClaudeRig`. Each installer is the per-tool
+`*_<version>_windows_<arch>.zip` from the GitHub release, installed as a `portable`
+nested installer exposing the `<tool>` command. `InstallerSha256` values come from
+the release's `checksums.txt`.
 
-Each installer is the per-tool `*_<version>_windows_<arch>.zip` from the GitHub
-release, installed as a `portable` nested installer exposing the `<tool>` command.
-`InstallerSha256` values come from the release's `checksums.txt`.
+## The bundle: `RigSmith.Rigsmith` (auto-generated)
+
+`RigSmith.Rigsmith` installs **all four** tools with one command
+(`winget install rigsmith`). It is **not** staged here — GoReleaser's `winget`
+publisher generates it on release from the combined `rigsmith_<version>_windows_<arch>.zip`
+archive (four `portable` nested installers, real `InstallerSha256`), so there are no
+SHAs to fill by hand. See `.goreleaser.yaml` (`winget:`).
+
+Until a fork of `microsoft/winget-pkgs` + a `WINGET_TOKEN` exist, the release
+generates the manifest into `dist/winget/…` (uploaded as a release artifact) but
+does **not** open the submission PR — submit it manually, or set `WINGET_TOKEN`
+(write access to the fork) to have GoReleaser open the PR automatically.
 
 ## Submitting a release
 
@@ -37,7 +50,7 @@ On Windows you can instead let `wingetcreate` author + submit:
 
 ## Updating for a new version
 
-Bump `PackageVersion` in all three files, point `InstallerUrl` at the new tag, and
-refresh `InstallerSha256` + `ReleaseDate`. Longer term this is a candidate for the
-GoReleaser [`winget` publisher](https://goreleaser.com/customization/winget/) so it
-happens automatically on tag, like the Homebrew casks already do.
+For the **per-tool** packages here: bump `PackageVersion` in all three files, point
+`InstallerUrl` at the new tag, and refresh `InstallerSha256` + `ReleaseDate`. (The
+**bundle** `RigSmith.Rigsmith` needs none of this — GoReleaser regenerates it on
+every tag with the correct SHAs, like the Homebrew cask and Scoop manifest.)
