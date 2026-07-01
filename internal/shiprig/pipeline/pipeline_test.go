@@ -218,6 +218,38 @@ func TestResolveLocalComposesWithFrom(t *testing.T) {
 	}
 }
 
+// TestResolveRehearseSkipsNetworkAndGit: --rehearse is --local plus skipping the
+// git commit and tag, so version/build/sign run for real but nothing touches git
+// history or the network.
+func TestResolveRehearseSkipsNetworkAndGit(t *testing.T) {
+	steps := mustResolve(t, &Config{}, ResolveOptions{Rehearse: true})
+
+	network := map[string]bool{"publish": true, "push": true, "release": true, "issues": true}
+	git := map[string]bool{"commit": true, "tag": true}
+	for _, step := range steps {
+		switch {
+		case network[step.Name]:
+			if step.Enabled() {
+				t.Errorf("network step %q should be skipped under --rehearse", step.Name)
+			}
+			if step.SkipReason != "--local: skips network steps" {
+				t.Errorf("step %q skip reason = %q, want %q", step.Name, step.SkipReason, "--local: skips network steps")
+			}
+		case git[step.Name]:
+			if step.Enabled() {
+				t.Errorf("git step %q should be skipped under --rehearse", step.Name)
+			}
+			if step.SkipReason != "--rehearse: skips the git commit and tag" {
+				t.Errorf("step %q skip reason = %q, want %q", step.Name, step.SkipReason, "--rehearse: skips the git commit and tag")
+			}
+		default:
+			if !step.Enabled() {
+				t.Errorf("step %q should run under --rehearse, got skip %q", step.Name, step.SkipReason)
+			}
+		}
+	}
+}
+
 func TestResolveBuiltinPublishUsesToolAndAppendsArgs(t *testing.T) {
 	config := &Config{
 		Tool: "npx changeset",
