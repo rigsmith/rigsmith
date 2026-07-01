@@ -50,6 +50,75 @@ func TestMatchTarget(t *testing.T) {
 	}
 }
 
+func TestMatchTargets(t *testing.T) {
+	// The same project checked out in two paths (e.g. a nested worktree): a
+	// dot-short query must surface BOTH, not silently collapse to one.
+	targets := []target{
+		{Name: "Tweed.App2", Dir: "/r/ui/src/Tweed.App2"},
+		{Name: "Tweed.App2", Dir: "/r/.claude/worktrees/x/ui/src/Tweed.App2"},
+		{Name: "Tweed.App", Dir: "/r/ui/src/Tweed.App"},
+	}
+	if m := matchTargets(targets, "App2"); len(m) != 2 {
+		t.Fatalf("dot-short duplicate = %v, want 2 matches", names(m))
+	}
+	// matchTarget stays single-or-nothing: a duplicate is ambiguous.
+	if _, ok := matchTarget(targets, "App2"); ok {
+		t.Error("matchTarget should report ambiguous (ok=false) for a duplicate name")
+	}
+	// A dot-short that resolves uniquely still matches the one target.
+	if m := matchTargets(targets, "App"); len(m) != 1 || m[0].Name != "Tweed.App" {
+		t.Errorf("dot-short unique = %v, want [Tweed.App]", names(m))
+	}
+	// Exact matches win over substring: "Tweed.App" is exact for Tweed.App even
+	// though it's a substring of both Tweed.App2 entries.
+	if m := matchTargets(targets, "Tweed.App"); len(m) != 1 || m[0].Name != "Tweed.App" {
+		t.Errorf("exact-over-substring = %v, want [Tweed.App]", names(m))
+	}
+	if m := matchTargets(targets, "nope"); len(m) != 0 {
+		t.Errorf("no match = %v, want none", names(m))
+	}
+	if m := matchTargets(targets, ""); m != nil {
+		t.Errorf("empty query = %v, want nil", names(m))
+	}
+}
+
+func TestTopoSortKeepsDuplicates(t *testing.T) {
+	// Duplicate-named targets in different paths must both survive topoSort (they
+	// used to collapse to one), while dependency order still holds.
+	targets := []target{
+		{Name: "app", Dir: "/a", Deps: []string{"core"}},
+		{Name: "app", Dir: "/b", Deps: []string{"core"}},
+		{Name: "core", Dir: "/core"},
+	}
+	order := topoSort(targets)
+	if len(order) != 3 {
+		t.Fatalf("topoSort dropped a duplicate: %v", names(order))
+	}
+	var coreAt, lastApp int
+	for i, o := range order {
+		switch o.Name {
+		case "core":
+			coreAt = i
+		case "app":
+			lastApp = i
+		}
+	}
+	if coreAt > lastApp {
+		t.Fatalf("core must precede its dependents: %v", names(order))
+	}
+}
+
+func TestDuplicateNames(t *testing.T) {
+	dup := duplicateNames([]target{
+		{Name: "app", Dir: "/a"},
+		{Name: "app", Dir: "/b"},
+		{Name: "core", Dir: "/c"},
+	})
+	if !dup["app"] || dup["core"] {
+		t.Errorf("duplicateNames = %v, want only app", dup)
+	}
+}
+
 func TestMatchDefaultProject(t *testing.T) {
 	// The .NET case that matchTarget's substring fallback gets wrong: a dot-short
 	// default must scope to the app, not go ambiguous against its .Tests sibling.
