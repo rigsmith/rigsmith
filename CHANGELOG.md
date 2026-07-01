@@ -1,5 +1,20 @@
 # github.com/rigsmith/rigsmith
 
+## 1.3.0
+### Minor Changes
+
+- Install the whole toolchain with one command via a new combined `rigsmith` archive (all four binaries): `winget install RigSmith.Rigsmith`, `scoop install rigsmith`, `brew install --cask rigsmith/tap/rigsmith`, or `irm https://rigsmith.sh | iex`. Per-tool packages still ship. Also fixes the banner mojibake on legacy Windows consoles by switching the output code page to UTF-8 at startup.
+  
+- Add `shiprig release --rehearse`: a full dry run that touches neither git history nor the network. Shorthand for `--local --skip commit,tag` — version, build, and sign run for real while nothing is committed, tagged, or pushed. Like `--local`, it's a real run, so it can't combine with `--dry-run` or `--dry-build`.
+  
+- Surface duplicate-named projects instead of silently collapsing them by name (common with nested worktrees under `.claude/worktrees/`): `rig info` and `--all`/workspace views now list every copy with its path. `rig run <name>` matching several projects opens a picker (name · ecosystem · path) on a TTY, or lists the paths and errors actionably off one, rather than falling through to a misleading "Couldn't find a project to run." Name resolution also gained .NET dot-short matching (`App2` → `Tweed.App2`).
+  
+
+### Velopack
+
+- Velopack: a new `macos.plist` config key feeds a custom `Info.plist` to `vpk pack --plist`, for bundle keys vpk doesn't generate (`NSServices`, `CFBundleURLTypes`, …). The adapter renders `${version}` to the release version before packing and drops `--bundleId` automatically (the plist supplies `CFBundleIdentifier`); `--icon` still applies. Omitting `macos.plist` keeps the current behavior.
+  
+
 ## 1.2.1
 ### Velopack
 
