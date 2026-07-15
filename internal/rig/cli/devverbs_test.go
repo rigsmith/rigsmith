@@ -112,8 +112,9 @@ func TestBuildVerb_DuplicateNameDisambiguatesByPath(t *testing.T) {
 		t.Fatalf("err = %v, want build-worded, actionable guidance", err)
 	}
 	// Both candidate paths are listed so the choice is actionable off a TTY.
-	if out := buf.String(); !strings.Contains(out, filepath.FromSlash("src/App2")) ||
-		!strings.Contains(out, filepath.FromSlash("wt/x/src/App2")) {
+	// taskPath renders slash-separated repo-relative paths on every platform.
+	if out := buf.String(); !strings.Contains(out, "src/App2") ||
+		!strings.Contains(out, "wt/x/src/App2") {
 		t.Fatalf("listing = %q, want both duplicate paths", out)
 	}
 }
