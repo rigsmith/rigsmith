@@ -73,6 +73,52 @@ func TestRunVerb_NoPrimaryStillOffersSubprojects(t *testing.T) {
 	}
 }
 
+// `rig build <name>` matching the same project checked out in two paths (a
+// nested worktree) must disambiguate by path like `rig run` does, rather than
+// silently building the root command. Off a TTY it lists the candidates and
+// returns an actionable, build-worded error.
+func TestBuildVerb_DuplicateNameDisambiguatesByPath(t *testing.T) {
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	csproj := `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>`
+	// One project (App2) present twice: once in src, once under a nested worktree.
+	for _, rel := range []string{"src/App2", "wt/x/src/App2"} {
+		dir := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "App2.csproj"), []byte(csproj), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(root)
+
+	cmd := devVerbCmd("build", "", true)
+	cmd.SetContext(context.Background())
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.RunE(cmd, []string{"App2"})
+	if err == nil {
+		t.Fatalf("want the ambiguous-build guidance, got nil (output: %q)", buf.String())
+	}
+	if !strings.Contains(err.Error(), "matches 2 projects") {
+		t.Fatalf("err = %v, want it to report the 2 matching projects", err)
+	}
+	// Build-worded, and pointing at remedies that actually resolve a true duplicate
+	// (running from the directory), not a path arg that matchTargets would ignore.
+	if !strings.Contains(err.Error(), "run `rig build` from the target directory") {
+		t.Fatalf("err = %v, want build-worded, actionable guidance", err)
+	}
+	// Both candidate paths are listed so the choice is actionable off a TTY.
+	// taskPath renders slash-separated repo-relative paths on every platform.
+	if out := buf.String(); !strings.Contains(out, "src/App2") ||
+		!strings.Contains(out, "wt/x/src/App2") {
+		t.Fatalf("listing = %q, want both duplicate paths", out)
+	}
+}
+
 func TestFileDeclaresMainPackage(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) string {
