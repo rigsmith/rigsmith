@@ -75,12 +75,13 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 					ts = discoverWorkspace(cdContext(cmd), root, excludeFor(root))
 				}
 				matches := matchTargets(ts, args[0])
-				// `rig run <name>` matching several targets is usually one project
-				// duplicated across paths (a nested worktree). Offer a picker rather
-				// than failing or silently guessing. Other verbs keep the single-match
-				// rule: an ambiguous arg falls through (e.g. `rig test <filter>`).
-				if verb == "run" && len(matches) > 1 {
-					return runAmbiguousPick(cmd, root, args[0], matches, args[1:])
+				// `rig run <name>`/`rig build <name>` matching several targets is
+				// usually one project duplicated across paths (a nested worktree).
+				// Offer a picker rather than failing or silently guessing. Other verbs
+				// keep the single-match rule: an ambiguous arg falls through (e.g.
+				// `rig test <filter>`).
+				if (verb == "run" || verb == "build") && len(matches) > 1 {
+					return verbAmbiguousPick(cmd, root, verb, args[0], matches, args[1:])
 				}
 				if len(matches) == 1 {
 					t := matches[0]
@@ -408,20 +409,20 @@ func dispatchVerbPick(cmd *cobra.Command, verb string, tasks []allTask, offerAll
 	}
 }
 
-// runAmbiguousPick handles `rig run <name>` when the name matches several
-// runnable targets — typically one project checked out in more than one path
-// (e.g. a nested worktree). Rather than fail, it lets the user disambiguate by
-// path: on a TTY a picker (name · eco · path); off a TTY an error listing the
-// paths so the choice is still actionable (name a more precise target, or add an
-// `exclude` glob in .rig.json). Non-runnable copies are dropped, which may
-// resolve the ambiguity on its own.
-func runAmbiguousPick(cmd *cobra.Command, root, query string, matches []target, forwarded []string) error {
+// verbAmbiguousPick handles `rig <verb> <name>` when the name matches several
+// targets — typically one project checked out in more than one path (e.g. a
+// nested worktree). Rather than fail, it lets the user disambiguate by path: on
+// a TTY a picker (name · eco · path); off a TTY an error listing the paths so
+// the choice is still actionable (name a more precise target, or add an
+// `exclude` glob in .rig.json). Copies the verb can't act on are dropped
+// (`run` skips non-runnable ones), which may resolve the ambiguity on its own.
+func verbAmbiguousPick(cmd *cobra.Command, root, verb, query string, matches []target, forwarded []string) error {
 	var tasks []allTask
 	for _, t := range matches {
-		if !isRunnable(t) {
+		if verb == "run" && !isRunnable(t) {
 			continue
 		}
-		argv, ok := devCommandFor(t, "run", root)
+		argv, ok := devCommandFor(t, verb, root)
 		if !ok {
 			continue
 		}
@@ -432,7 +433,7 @@ func runAmbiguousPick(cmd *cobra.Command, root, query string, matches []target, 
 	}
 	switch len(tasks) {
 	case 0:
-		return fmt.Errorf("no runnable project matches %q", query)
+		return fmt.Errorf("no project matches %q", query)
 	case 1:
 		return runCommand(cmd, tasks[0].dir, tasks[0].argv)
 	}
@@ -447,9 +448,9 @@ func runAmbiguousPick(cmd *cobra.Command, root, query string, matches []target, 
 		for _, t := range tasks {
 			fmt.Fprintf(errOut, "  %s  %s\n", padRight(t.name, nameW), dimStyle.Render(taskPath(t)))
 		}
-		return fmt.Errorf("%q matches %d projects (listed above) — run one by its path or narrow the name", query, len(tasks))
+		return fmt.Errorf("%q matches %d projects (listed above) — %s one by its path or narrow the name", query, len(tasks), verb)
 	}
-	choice := pickWorkspaceVerbTarget("run", tasks, false)
+	choice := pickWorkspaceVerbTarget(verb, tasks, false)
 	if choice < 0 || choice >= len(tasks) { // pickCancel (or any out-of-range) → no-op
 		return nil
 	}
