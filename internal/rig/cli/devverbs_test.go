@@ -106,8 +106,10 @@ func TestBuildVerb_DuplicateNameDisambiguatesByPath(t *testing.T) {
 	if !strings.Contains(err.Error(), "matches 2 projects") {
 		t.Fatalf("err = %v, want it to report the 2 matching projects", err)
 	}
-	if !strings.Contains(err.Error(), "build one by its path") {
-		t.Fatalf("err = %v, want build-worded guidance", err)
+	// Build-worded, and pointing at remedies that actually resolve a true duplicate
+	// (running from the directory), not a path arg that matchTargets would ignore.
+	if !strings.Contains(err.Error(), "run `rig build` from the target directory") {
+		t.Fatalf("err = %v, want build-worded, actionable guidance", err)
 	}
 	// Both candidate paths are listed so the choice is actionable off a TTY.
 	if out := buf.String(); !strings.Contains(out, filepath.FromSlash("src/App2")) ||

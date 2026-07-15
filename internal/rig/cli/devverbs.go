@@ -411,11 +411,13 @@ func dispatchVerbPick(cmd *cobra.Command, verb string, tasks []allTask, offerAll
 
 // verbAmbiguousPick handles `rig <verb> <name>` when the name matches several
 // targets — typically one project checked out in more than one path (e.g. a
-// nested worktree). Rather than fail, it lets the user disambiguate by path: on
-// a TTY a picker (name · eco · path); off a TTY an error listing the paths so
-// the choice is still actionable (name a more precise target, or add an
-// `exclude` glob in .rig.json). Copies the verb can't act on are dropped
-// (`run` skips non-runnable ones), which may resolve the ambiguity on its own.
+// nested worktree). Rather than fail, it lets the user disambiguate: on a TTY a
+// picker (name · eco · path); off a TTY an error listing the candidates plus the
+// remedies that actually resolve it — narrow the name (when the collision is a
+// substring, not a true duplicate), run the verb from the target directory, or
+// exclude the extra copies in .rig.json (a query arg naming a path is not a
+// selector). Copies the verb can't act on are dropped (`run` skips non-runnable
+// ones), which may resolve the ambiguity on its own.
 func verbAmbiguousPick(cmd *cobra.Command, root, verb, query string, matches []target, forwarded []string) error {
 	var tasks []allTask
 	for _, t := range matches {
@@ -433,6 +435,11 @@ func verbAmbiguousPick(cmd *cobra.Command, root, verb, query string, matches []t
 	}
 	switch len(tasks) {
 	case 0:
+		// `run` filtered to runnable copies above, so its "no match" is specifically
+		// about runnability; other verbs act on every discovered package.
+		if verb == "run" {
+			return fmt.Errorf("no runnable project matches %q", query)
+		}
 		return fmt.Errorf("no project matches %q", query)
 	case 1:
 		return runCommand(cmd, tasks[0].dir, tasks[0].argv)
@@ -448,7 +455,7 @@ func verbAmbiguousPick(cmd *cobra.Command, root, verb, query string, matches []t
 		for _, t := range tasks {
 			fmt.Fprintf(errOut, "  %s  %s\n", padRight(t.name, nameW), dimStyle.Render(taskPath(t)))
 		}
-		return fmt.Errorf("%q matches %d projects (listed above) — %s one by its path or narrow the name", query, len(tasks), verb)
+		return fmt.Errorf("%q matches %d projects (listed above) — narrow the name, run `rig %s` from the target directory, or exclude the extra copies in .rig.json", query, len(tasks), verb)
 	}
 	choice := pickWorkspaceVerbTarget(verb, tasks, false)
 	if choice < 0 || choice >= len(tasks) { // pickCancel (or any out-of-range) → no-op
