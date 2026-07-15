@@ -5,8 +5,9 @@
 | `init` | First-run wizard: remote (private), machine identity, roots, hooks |
 | `sync` | Walk → redact → manifest → tripwire → commit → push (`--dry-run`) |
 | `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
-| `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
+| `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`); nudges a Desktop restart when Code sessions come back |
 | `status` | Sync state: remote, last sync, roots, hooks |
+| `search` | Find a Claude Code session by title or content across live + synced history (alias `grep`); `--raw` grep lines, `--all` every file, `--live`/`--repo` scope, `-s` case-sensitive |
 | `global` | `install` / `uninstall` / `status` the global sync hooks in `~/.claude` (alias `hooks`) |
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
@@ -29,6 +30,54 @@ machine-specific paths into a portable form, and commits/pushes to your private
 repo. `restore` does the inverse on another machine: it pulls, rewrites the
 portable paths into this OS's slugs, and merges — keeping any local secrets in
 place so a new machine simply re-authenticates.
+
+When a restore brings back Claude **Code** sessions, it reminds you to fully quit
+and reopen Claude Desktop — Desktop only rebuilds its Code-tab list from the
+restored session sidecars on startup, so a running app won't show them until it
+restarts.
+
+## Finding a session
+
+Lost track of which chat had that work? `search` finds it by **title or
+content**:
+
+```sh
+clauderig search "auth refactor"
+```
+
+It scans your Claude Code transcripts (`projects/**.jsonl`) across this machine's
+live `~/.claude` **and** the synced staging repo — which may hold sessions from
+other machines or older ones no longer live here — then groups the hits into
+named sessions:
+
+```
+● Refactor the auth middleware
+  a1b2c3d4 · 2026-07-02 · opus-4-8 · ~/Git/acme-api · desktop+repo
+  17 match(es)   resume: cd ~/Git/acme-api && claude --resume a1b2c3d4-…
+    …split the token check out of the request handler…
+```
+
+Each result carries the session's Desktop **title**, project, last-used date, and
+a ready `claude --resume` command. Titles are matched too, so a topic word finds
+the chat even when it isn't in the body, and results rank by relevance (title
+hit, then match count, then recency). Matches inside injected skill-listing and
+system records are ignored — so a word that appears in the skill catalog (like a
+skill name) doesn't light up every session.
+
+- `--raw` — grep-style line output instead of grouped sessions
+- `--all` — search *every* file (config, skills, file-history, the Desktop dir),
+  not just transcripts (implies `--raw`)
+- `--live` / `--repo` — restrict to this machine or the synced repo
+- `-s` / `--case-sensitive`
+
+On a long search a live `scanning… N transcripts, K matches` status shows on the
+terminal (and stays out of piped output).
+
+::: tip Desktop "Chat" tab
+Desktop **Chat**-tab conversations live server-side, not on disk — they never
+appear here. `search` covers your Claude **Code** transcripts; a miss doesn't
+prove a Chat-tab conversation is gone, so check claude.ai for those.
+:::
 
 ## Hooks
 

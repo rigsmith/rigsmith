@@ -21,7 +21,30 @@ type RestoreRootResult struct {
 	Files          int
 	SlugsRewritten int
 	Pruned         int // files removed as deleted-upstream (--prune)
-	Skipped        bool
+	// DesktopSessions counts Claude Desktop Code-session sidecars written this
+	// restore (claude-code-sessions/**/local_*.json). Desktop only rebuilds its
+	// Code-tab list from these on startup, so the command layer uses this to nudge
+	// a restart when new sessions land.
+	DesktopSessions int
+	Skipped         bool
+}
+
+// DesktopSessions totals the Desktop Code-session sidecars written across all
+// roots this restore — the count behind the "restart Desktop" nudge.
+func (r *RestoreReport) DesktopSessions() int {
+	n := 0
+	for _, rr := range r.Roots {
+		n += rr.DesktopSessions
+	}
+	return n
+}
+
+// isDesktopSessionSidecar reports whether a restored (slash) rel path is a
+// Desktop Code-session sidecar: claude-code-sessions/<org>/<user>/local_<id>.json.
+func isDesktopSessionSidecar(rel string) bool {
+	return strings.HasPrefix(rel, "claude-code-sessions/") &&
+		strings.HasSuffix(rel, ".json") &&
+		strings.Contains(rel, "/local_")
 }
 
 // prunableDirs are the authoritative config dirs where "deleted upstream" means
@@ -110,6 +133,9 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			}
 			written[targetRel] = true
 			rr.Files++
+			if r.ID == "desktop" && isDesktopSessionSidecar(targetRel) {
+				rr.DesktopSessions++
+			}
 		}
 		rr.SlugsRewritten = len(rewritten)
 

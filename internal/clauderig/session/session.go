@@ -1,0 +1,209 @@
+// Package session turns Claude Code's opaque transcript UUIDs into recognisable
+// sessions. Claude Desktop writes one sidecar per Code session at
+// claude-code-sessions/<org>/<user>/local_<id>.json carrying a human title, the
+// project cwd, the model, and the cliSessionId that names the transcript file.
+// This package indexes those sidecars by cliSessionId so `search` can label the
+// raw .jsonl files it finds — and match on the title too — instead of showing
+// bare UUIDs. It also derives a fallback title (the first human prompt) for
+// CLI-only sessions that never got a Desktop sidecar.
+package session
+
+import (
+	"bufio"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// Meta is what we know about one session. Title/Cwd/Model/LastActivity come from
+// the Desktop sidecar and are empty/zero for a CLI-only session (no sidecar).
+type Meta struct {
+	ID           string    // cliSessionId — matches the transcript file stem
+	Title        string    // human title from the sidecar ("" if none)
+	Cwd          string    // sidecar cwd (may be a $HOME/… template from the synced repo)
+	Model        string    // e.g. "claude-opus-4-8"
+	LastActivity time.Time // sidecar lastActivityAt (zero if unknown)
+	Archived     bool
+	Sources      []string // sidecar source labels it was found in (e.g. "desktop", "repo")
+}
+
+// Index maps cliSessionId → Meta.
+type Index map[string]Meta
+
+// Root is a place to scan for sidecars: a Label (for provenance) and the Base dir
+// that CONTAINS a claude-code-sessions/ tree — the live Desktop dir, or
+// <staging-repo>/desktop.
+type Root struct {
+	Label string
+	Base  string
+}
+
+// sidecar is the slice of a claude-code-sessions/*.json we read.
+type sidecar struct {
+	CliSessionID   string `json:"cliSessionId"`
+	Title          string `json:"title"`
+	Cwd            string `json:"cwd"`
+	Model          string `json:"model"`
+	LastActivityAt int64  `json:"lastActivityAt"` // epoch millis
+	IsArchived     bool   `json:"isArchived"`
+}
+
+// Build scans each root's claude-code-sessions tree and returns the merged index
+// keyed by cliSessionId. When a session has sidecars in more than one root, the
+// entry with the newer LastActivity supplies the display fields and every source
+// label is recorded. Sidecars with no cliSessionId (e.g. storage placeholders)
+// are ignored. Missing/unreadable trees are skipped, not errors.
+func Build(roots []Root) Index {
+	idx := Index{}
+	for _, r := range roots {
+		dir := filepath.Join(r.Base, "claude-code-sessions")
+		filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			name := d.Name()
+			if !strings.HasPrefix(name, "local_") || !strings.HasSuffix(name, ".json") {
+				return nil
+			}
+			b, e := os.ReadFile(p)
+			if e != nil {
+				return nil
+			}
+			var sc sidecar
+			if json.Unmarshal(b, &sc) != nil || sc.CliSessionID == "" {
+				return nil
+			}
+			m := Meta{
+				ID: sc.CliSessionID, Title: sc.Title, Cwd: sc.Cwd,
+				Model: sc.Model, Archived: sc.IsArchived,
+			}
+			if sc.LastActivityAt > 0 {
+				m.LastActivity = time.UnixMilli(sc.LastActivityAt).UTC()
+			}
+			if prev, ok := idx[m.ID]; ok {
+				sources := appendUnique(prev.Sources, r.Label)
+				// Keep the fresher sidecar's display fields; union the sources.
+				if prev.LastActivity.After(m.LastActivity) {
+					m = prev
+				}
+				m.Sources = sources
+			} else {
+				m.Sources = []string{r.Label}
+			}
+			idx[m.ID] = m
+			return nil
+		})
+	}
+	return idx
+}
+
+// IDFromTranscriptRel extracts the session id from a transcript's root-relative
+// (slash) path. It handles the live layout (projects/<slug>/<id>.jsonl and the
+// sub-agent form projects/<slug>/<id>/subagents/…) and the synced-repo layout
+// (cli/projects/…). Returns "" when the path isn't a transcript under projects/.
+func IDFromTranscriptRel(rel string) string {
+	parts := strings.Split(rel, "/")
+	for i, p := range parts {
+		if p == "projects" && i+2 < len(parts) {
+			return strings.TrimSuffix(parts[i+2], ".jsonl")
+		}
+	}
+	return ""
+}
+
+// IsConversationLine reports whether a transcript JSONL record is genuine
+// conversation — a user or assistant message — as opposed to injected metadata.
+// Claude Code interleaves the transcript with skill-listing attachments, system
+// notes, tool bookkeeping, and mode/queue records; a topic word often appears
+// only in the injected skill catalog (e.g. a skill name), matching sessions that
+// have nothing to do with the topic. Restricting content matches to conversation
+// lines removes that noise. Unparseable lines are kept (never silently hide a hit).
+func IsConversationLine(line string) bool {
+	var rec struct {
+		Type       string          `json:"type"`
+		Attachment json.RawMessage `json:"attachment"`
+	}
+	if json.Unmarshal([]byte(line), &rec) != nil {
+		return true
+	}
+	if len(rec.Attachment) > 0 {
+		return false // skill listings, file dumps — injected, not written or read
+	}
+	return rec.Type == "user" || rec.Type == "assistant"
+}
+
+// maxHeaderLines bounds the fallback-title scan: the first human prompt sits at
+// the very top of a transcript, so we never read the multi-MB body.
+const maxHeaderLines = 60
+
+// FirstPrompt derives a short title from a transcript's first genuine human
+// message, for a session with no Desktop sidecar. It skips tool/DOM/system noise
+// and returns "" if nothing suitable is found in the header region.
+func FirstPrompt(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 8<<20) // headers are small; cap guards a pathological line
+	for line := 0; line < maxHeaderLines && sc.Scan(); line++ {
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(sc.Bytes(), &rec) != nil || rec.Type != "user" {
+			continue
+		}
+		text := strings.TrimSpace(textOf(rec.Message.Content))
+		if text == "" || strings.HasPrefix(text, "<") || strings.HasPrefix(text, "Caveat:") ||
+			strings.Contains(text, "DOM Probe") || strings.HasPrefix(text, "[Request interrupted") {
+			continue
+		}
+		text = strings.ReplaceAll(text, "\n", " ")
+		if len(text) > 70 {
+			text = text[:70] + "…"
+		}
+		return text
+	}
+	return ""
+}
+
+// textOf pulls the plain text out of a user message's content, which Claude Code
+// records either as a bare string or an array of typed blocks.
+func textOf(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil {
+		var b strings.Builder
+		for _, bl := range blocks {
+			if bl.Type == "text" {
+				if b.Len() > 0 {
+					b.WriteByte(' ')
+				}
+				b.WriteString(bl.Text)
+			}
+		}
+		return b.String()
+	}
+	return ""
+}
+
+func appendUnique(xs []string, x string) []string {
+	for _, e := range xs {
+		if e == x {
+			return xs
+		}
+	}
+	return append(xs, x)
+}
