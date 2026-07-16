@@ -1,11 +1,13 @@
 // Package session turns Claude Code's opaque transcript UUIDs into recognisable
-// sessions. Claude Desktop writes one sidecar per Code session at
-// claude-code-sessions/<org>/<user>/local_<id>.json carrying a human title, the
-// project cwd, the model, and the cliSessionId that names the transcript file.
-// This package indexes those sidecars by cliSessionId so `search` can label the
-// raw .jsonl files it finds — and match on the title too — instead of showing
-// bare UUIDs. It also derives a fallback title (the first human prompt) for
-// CLI-only sessions that never got a Desktop sidecar.
+// sessions. Claude Desktop writes one sidecar per session carrying a human
+// title, the project cwd, the model, and the cliSessionId that names the
+// transcript file — under claude-code-sessions/…/local_<id>.json for Code-tab
+// sessions and local-agent-mode-sessions/…/local_<id>.json for cowork/agent
+// sessions (same shape, different subtree). This package indexes those sidecars
+// by cliSessionId so `search` can label the raw .jsonl files it finds — and
+// match on the title too — instead of showing bare UUIDs. It also derives a
+// fallback title (the first human prompt) for CLI-only sessions that never got a
+// Desktop sidecar.
 package session
 
 import (
@@ -50,53 +52,75 @@ type sidecar struct {
 	IsArchived     bool   `json:"isArchived"`
 }
 
-// Build scans each root's claude-code-sessions tree and returns the merged index
-// keyed by cliSessionId. When a session has sidecars in more than one root, the
-// entry with the newer LastActivity supplies the display fields and every source
-// label is recorded. Sidecars with no cliSessionId (e.g. storage placeholders)
-// are ignored. Missing/unreadable trees are skipped, not errors.
+// sessionTrees are the Desktop sidecar directories Build scans under each root.
+// claude-code-sessions holds Code-tab sessions; local-agent-mode-sessions holds
+// cowork/agent sessions — same sidecar shape, a different subtree. Both carry the
+// human title we want to surface, so a search hit in either gets a real name.
+var sessionTrees = []string{"claude-code-sessions", "local-agent-mode-sessions"}
+
+// Build scans each root's sidecar trees and returns the merged index keyed by
+// cliSessionId. When a session has sidecars in more than one root, the entry with
+// the newer LastActivity supplies the display fields and every source label is
+// recorded. Sidecars with no cliSessionId (e.g. storage placeholders) are
+// ignored. Missing/unreadable trees are skipped, not errors.
 func Build(roots []Root) Index {
 	idx := Index{}
 	for _, r := range roots {
-		dir := filepath.Join(r.Base, "claude-code-sessions")
-		filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
-			}
-			name := d.Name()
-			if !strings.HasPrefix(name, "local_") || !strings.HasSuffix(name, ".json") {
-				return nil
-			}
-			b, e := os.ReadFile(p)
-			if e != nil {
-				return nil
-			}
-			var sc sidecar
-			if json.Unmarshal(b, &sc) != nil || sc.CliSessionID == "" {
-				return nil
-			}
-			m := Meta{
-				ID: sc.CliSessionID, Title: sc.Title, Cwd: sc.Cwd,
-				Model: sc.Model, Archived: sc.IsArchived,
-			}
-			if sc.LastActivityAt > 0 {
-				m.LastActivity = time.UnixMilli(sc.LastActivityAt).UTC()
-			}
-			if prev, ok := idx[m.ID]; ok {
-				sources := appendUnique(prev.Sources, r.Label)
-				// Keep the fresher sidecar's display fields; union the sources.
-				if prev.LastActivity.After(m.LastActivity) {
-					m = prev
-				}
-				m.Sources = sources
-			} else {
-				m.Sources = []string{r.Label}
-			}
-			idx[m.ID] = m
-			return nil
-		})
+		for _, tree := range sessionTrees {
+			scanSidecars(idx, filepath.Join(r.Base, tree), r.Label)
+		}
 	}
 	return idx
+}
+
+// scanSidecars folds every local_<id>.json under dir into idx (see Build for the
+// merge rule). It does not descend into a session's own working directory (the
+// local_<id>/ dir a cowork session keeps beside its sidecar) — that subtree holds
+// the session's outputs and a nested .claude/, which can be large and carries no
+// sidecars. The sidecar is the sibling local_<id>.json file, read separately.
+func scanSidecars(idx Index, dir, label string) {
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if p != dir && strings.HasPrefix(name, "local_") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasPrefix(name, "local_") || !strings.HasSuffix(name, ".json") {
+			return nil
+		}
+		b, e := os.ReadFile(p)
+		if e != nil {
+			return nil
+		}
+		var sc sidecar
+		if json.Unmarshal(b, &sc) != nil || sc.CliSessionID == "" {
+			return nil
+		}
+		m := Meta{
+			ID: sc.CliSessionID, Title: sc.Title, Cwd: sc.Cwd,
+			Model: sc.Model, Archived: sc.IsArchived,
+		}
+		if sc.LastActivityAt > 0 {
+			m.LastActivity = time.UnixMilli(sc.LastActivityAt).UTC()
+		}
+		if prev, ok := idx[m.ID]; ok {
+			sources := appendUnique(prev.Sources, label)
+			// Keep the fresher sidecar's display fields; union the sources.
+			if prev.LastActivity.After(m.LastActivity) {
+				m = prev
+			}
+			m.Sources = sources
+		} else {
+			m.Sources = []string{label}
+		}
+		idx[m.ID] = m
+		return nil
+	})
 }
 
 // IDFromTranscriptRel extracts the session id from a transcript's root-relative

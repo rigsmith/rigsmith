@@ -53,6 +53,43 @@ func TestBuild_IndexesByCliSessionIdAndMergesSources(t *testing.T) {
 	}
 }
 
+// Cowork/agent sessions store their sidecar in local-agent-mode-sessions, beside
+// a local_<id>/ working dir. Build must index that tree too (so the human title
+// surfaces) and must not descend into the working dir's outputs/.claude subtree.
+func TestBuild_IndexesCoworkTreeAndSkipsWorkingDir(t *testing.T) {
+	base := t.TempDir()
+	acct, org := "acct1", "org1"
+	dir := filepath.Join(base, "local-agent-mode-sessions", acct, org)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The cowork sidecar carrying the human title.
+	if err := os.WriteFile(filepath.Join(dir, "local_cow.json"),
+		[]byte(`{"cliSessionId":"cli-cow","title":"Quarterly expense report","cwd":"/x/outputs","lastActivityAt":3000}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A decoy local_*.json buried inside the session's working dir — must NOT be
+	// indexed (Build skips descending into local_<id>/).
+	work := filepath.Join(dir, "local_cow", "outputs", ".claude", "projects", "slug")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "local_decoy.json"),
+		[]byte(`{"cliSessionId":"cli-decoy","title":"should not be indexed"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := Build([]Root{{Label: "desktop", Base: base}})
+
+	m, ok := idx["cli-cow"]
+	if !ok || m.Title != "Quarterly expense report" {
+		t.Fatalf("cowork sidecar not indexed with its title: %+v", idx)
+	}
+	if _, ok := idx["cli-decoy"]; ok {
+		t.Errorf("Build descended into the session working dir and indexed a decoy sidecar")
+	}
+}
+
 func TestBuild_MissingTreeIsNoError(t *testing.T) {
 	idx := Build([]Root{{Label: "x", Base: "/no/such/base"}})
 	if len(idx) != 0 {
