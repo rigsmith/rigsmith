@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -48,8 +49,10 @@ func TestSearchSessions_DedupTitleAndResume(t *testing.T) {
 	line := `{"type":"user","message":{"content":"do the billing run"}}` + "\n"
 	writeTestFile(t, live, "projects/-slug/sess-1.jsonl", line)
 	writeTestFile(t, repo, "cli/projects/-slug/sess-1.jsonl", line) // same session, synced copy
+	// JSON-encode the cwd so a Windows path's backslashes don't corrupt the sidecar.
+	cwdJSON, _ := json.Marshal(cwd)
 	writeTestFile(t, desk, "claude-code-sessions/o/u/local_x.json",
-		`{"cliSessionId":"sess-1","title":"Billing pipeline","cwd":"`+cwd+`","lastActivityAt":2000}`)
+		`{"cliSessionId":"sess-1","title":"Billing pipeline","cwd":`+string(cwdJSON)+`,"lastActivityAt":2000}`)
 
 	targets := []search.Target{{Label: "cli", Dir: live}, {Label: "repo", Dir: repo}}
 	roots := []session.Root{{Label: "desktop", Base: desk}}
@@ -69,9 +72,12 @@ func TestSearchSessions_DedupTitleAndResume(t *testing.T) {
 	if !strings.Contains(got, "cli+repo") {
 		t.Errorf("source label should show both copies (cli+repo):\n%s", got)
 	}
-	wantResume := "resume: cd " + shQuote(cwd) + " && claude --resume sess-1"
-	if !strings.Contains(got, wantResume) {
-		t.Errorf("resume line = missing %q in:\n%s", wantResume, got)
+	if !strings.Contains(got, "claude --resume sess-1") {
+		t.Errorf("missing resume command:\n%s", got)
+	}
+	// cwd contains a space, so the cd argument must be single-quoted.
+	if !strings.Contains(got, "cd '") {
+		t.Errorf("resume cwd should be shell-quoted:\n%s", got)
 	}
 	if !strings.Contains(got, "1 session(s) match") {
 		t.Errorf("summary should report a single session:\n%s", got)
