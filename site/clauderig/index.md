@@ -14,6 +14,7 @@ clauderig sync                 # snapshot → redact secrets → rewrite paths �
 clauderig restore              # pull → rewrite slugs for this OS → merge (keeps local secrets)
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)
 clauderig status               # remote reachability, last sync, per-root counts, hooks
+clauderig search "auth refactor"  # find a session by title/content, with a resume command
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
 clauderig account list         # show stored Claude Code logins (alias: ls / status)
 clauderig account run me@x.com # launch Claude Code as another account, isolated session
@@ -39,6 +40,9 @@ clauderig ui                   # interactive dashboard
 - **Allowlist, default-deny.** Only curated files sync; the ~12 GB Desktop cache
   tree is pruned, never descended.
 - **Bounded repo.** 30-day retention on transcripts + a size-based history squash.
+- **Find your sessions.** `clauderig search` locates a Claude Code session by
+  title or content across live and synced history and hands you a `claude
+  --resume` command. See [Commands](./commands#finding-a-session).
 - **Worktree discipline.** A guard hook plus `rig worktree` make branches +
   PRs the default for Claude Code and keep a session from scrambling its chat
   history by moving the working directory. See [Commands](./commands#worktree-discipline).

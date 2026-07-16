@@ -75,9 +75,12 @@ func autoRestoreIfFresh(ctx context.Context, out io.Writer, cfg *config.Config, 
 	if err != nil {
 		return
 	}
-	if _, err := engine.Restore(engine.RestoreOptions{
+	if rep, err := engine.Restore(engine.RestoreOptions{
 		StagingDir: staging, Config: cfg, Machine: me, Manifest: man, Prune: cfg.AlwaysPrune,
 	}); err == nil {
 		fmt.Fprintln(out, "clauderig: fresh machine — auto-restored from sync")
+		if n := rep.DesktopSessions(); n > 0 {
+			printDesktopRestartNudge(out, n)
+		}
 	}
 }
