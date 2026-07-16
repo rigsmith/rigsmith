@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
@@ -107,8 +108,16 @@ type sessResult struct {
 	seen map[string]bool
 	// hitTargets is the set of search targets a content hit actually came from
 	// ("cli", "desktop", "repo") — the transcript's real provenance, used for the
-	// source label and to tell whether a live (resumable) transcript exists.
+	// source label.
 	hitTargets map[string]bool
+	// cliLive is set when a transcript for this session exists in the live CLI root
+	// (~/.claude) — the one `claude --resume` reads — whether via a content hit or a
+	// title-only session whose transcript simply didn't match. It, not mere
+	// this-machine presence, gates the resume command.
+	cliLive bool
+	// when is the recency sort key: the sidecar's lastActivity, else the transcript
+	// mtime, computed once so the sort is deterministic even for CLI-only sessions.
+	when time.Time
 }
 
 // record folds one content hit into the session, deduping the same logical line
@@ -134,24 +143,42 @@ func (r *sessResult) record(m search.Match) bool {
 	return true
 }
 
-// liveResumable reports whether a content hit came from a live (this-machine)
-// transcript rather than only the synced repo — `claude --resume` reads ~/.claude,
-// not the staging repo, so only a live hit is actually resumable here.
-func (r *sessResult) liveResumable() bool {
-	for tgt := range r.hitTargets {
-		if tgt != "repo" {
-			return true
+// sessionTime is the session's recency: the sidecar's lastActivity, else the
+// transcript's mtime, else zero. Used for both the sort key and the displayed
+// date so CLI-only sessions (no sidecar) still order by recency.
+func sessionTime(r *sessResult) time.Time {
+	if !r.meta.LastActivity.IsZero() {
+		return r.meta.LastActivity
+	}
+	if r.path != "" {
+		if info, err := os.Stat(r.path); err == nil {
+			return info.ModTime().UTC()
 		}
 	}
-	return false
+	return time.Time{}
 }
 
+// Target labels. cli is the live ~/.claude root (the only one `claude --resume`
+// reads); desktop is the Claude Desktop app-support tree (cowork transcripts);
+// repo is the synced staging copy.
+const (
+	cliTarget     = "cli"
+	desktopTarget = "desktop"
+	repoTarget    = "repo"
+)
+
 // chatHitKey identifies a transcript line independent of which copy it was found
-// in: the path from the "projects/" component onward (so live `projects/…`, repo
-// `cli/projects/…`, and Desktop `…/.claude/projects/…` collapse) plus the line.
+// in. It drops everything through "projects/<slug>/" and keys on the session id
+// (transcript stem, plus any subagent suffix) and line — so a session's live and
+// synced copies collapse even when the project slug was rewritten for another
+// machine's paths (the same reason we can't key on the slug).
 func chatHitKey(rel string, line int) string {
 	if i := strings.Index(rel, "projects/"); i >= 0 {
-		rel = rel[i:]
+		rest := rel[i+len("projects/"):]
+		if j := strings.IndexByte(rest, '/'); j >= 0 {
+			rest = rest[j+1:] // drop the <slug>/ segment, keep <id>.jsonl (+ subagents/…)
+		}
+		rel = rest
 	}
 	return rel + "\x00" + strconv.Itoa(line)
 }
@@ -212,12 +239,20 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 		}
 	}
 
+	// A session is resumable here iff a transcript for it lives in the live CLI root
+	// — even a title-only match (query not in the body) is resumable if its
+	// transcript exists there, so track presence independently of content hits.
+	liveIDs := liveCLITranscriptIDs(targets)
+
 	results := make([]*sessResult, 0, len(hits))
 	for _, r := range hits {
+		r.when = sessionTime(r)
+		r.cliLive = r.hitTargets[cliTarget] || liveIDs[r.id]
 		results = append(results, r)
 	}
 	// Rank by relevance for "find my session": a title hit is the strongest signal,
-	// then more content matches, then most-recently used as a tiebreaker.
+	// then more content matches, then most-recently used as a tiebreaker (precomputed
+	// so CLI-only sessions still order deterministically by transcript mtime).
 	sort.Slice(results, func(i, j int) bool {
 		a, b := results[i], results[j]
 		if a.titleMatch != b.titleMatch {
@@ -226,7 +261,7 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 		if a.matches != b.matches {
 			return a.matches > b.matches
 		}
-		return a.meta.LastActivity.After(b.meta.LastActivity)
+		return a.when.After(b.when)
 	})
 
 	for _, r := range results {
@@ -289,22 +324,60 @@ func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machin
 }
 
 // resumeHint renders the action for a session. `claude --resume` reads this
-// machine's ~/.claude, so it's only offered when a live transcript actually
-// exists here; a synced-only or title-only hit gets a note instead of a command
-// that would fail. The command's path and id are shell-quoted for copy/paste.
+// machine's ~/.claude (the CLI root), so a runnable command is offered only when a
+// transcript for the session exists there. A Desktop-only session (its transcript
+// lives in the app-support tree, not ~/.claude), a synced-repo-only copy, and a
+// title-only match each get a note instead of a command that would fail. The path
+// and id are shell-quoted for copy/paste.
 func resumeHint(r *sessResult, cwd string) string {
 	switch {
-	case r.liveResumable() && cwd != "":
+	case r.cliLive && cwd != "":
 		return "resume: cd " + shQuote(cwd) + " && claude --resume " + shQuote(r.id)
-	case r.liveResumable():
+	case r.cliLive:
 		return "resume: claude --resume " + shQuote(r.id)
+	case r.hitTargets[desktopTarget]:
+		// Cowork/Desktop transcript — `claude --resume` won't find it under ~/.claude.
+		return "Desktop session — open it in Claude Desktop's Code tab"
 	case r.matches > 0:
 		// The transcript was found only in the synced repo — not readable by `claude`.
 		return "synced copy only — restore on this machine to resume"
 	default:
-		// Title-only: no transcript hit to resume from here.
+		// Title-only, no transcript here to resume from.
 		return "matched by title — open it in Claude Desktop, or use --raw to search its text"
 	}
+}
+
+// liveCLITranscriptIDs collects the session ids that have a transcript in the live
+// CLI root (~/.claude) — the sessions `claude --resume` can actually open. Only the
+// cli target qualifies; Desktop and repo transcripts aren't read by resume. It
+// enumerates filenames only (no content read), so it's cheap on the small CLI
+// tree, and lets a title-only match still offer resume when its body just didn't
+// hit the query.
+func liveCLITranscriptIDs(targets []search.Target) map[string]bool {
+	ids := map[string]bool{}
+	for _, t := range targets {
+		if t.Label != cliTarget || t.Dir == "" {
+			continue
+		}
+		filepath.WalkDir(t.Dir, func(p string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			rel, rerr := filepath.Rel(t.Dir, p)
+			if rerr != nil {
+				return nil
+			}
+			rel = filepath.ToSlash(rel)
+			if !strings.HasSuffix(rel, ".jsonl") {
+				return nil
+			}
+			if id := session.IDFromTranscriptRel(rel); id != "" {
+				ids[id] = true
+			}
+			return nil
+		})
+	}
+	return ids
 }
 
 // shQuote renders s as a single POSIX shell word (bash/zsh — the mac/Linux shells
@@ -337,18 +410,13 @@ func resolveCwd(me config.Machine, r *sessResult) string {
 	return ""
 }
 
-// sessionDate is the session's last-used day: the sidecar time, or the
-// transcript's mtime as a fallback.
+// sessionDate is the session's last-used day, from the precomputed recency time
+// (sidecar lastActivity, else transcript mtime).
 func sessionDate(r *sessResult) string {
-	if !r.meta.LastActivity.IsZero() {
-		return r.meta.LastActivity.Format("2006-01-02")
+	if r.when.IsZero() {
+		return ""
 	}
-	if r.path != "" {
-		if info, err := os.Stat(r.path); err == nil {
-			return info.ModTime().UTC().Format("2006-01-02")
-		}
-	}
-	return ""
+	return r.when.Format("2006-01-02")
 }
 
 // sourceLabel reports where the query actually hit. For a content match that's

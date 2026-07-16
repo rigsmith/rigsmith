@@ -43,6 +43,32 @@ func TestSync_DesktopConfigKeepFilter(t *testing.T) {
 	}
 }
 
+// Restore must count each Desktop Code-session sidecar it writes — the number
+// behind the restart nudge — and only those: a non-sidecar json, a local_*
+// directory, and a same-named file under the CLI root must not inflate it.
+func TestRestore_CountsDesktopSidecars(t *testing.T) {
+	staging := t.TempDir()
+	deskStage := filepath.Join(staging, "desktop")
+	write(t, deskStage, "claude-code-sessions/uuid/local_a.json", `{"cliSessionId":"a"}`)
+	write(t, deskStage, "claude-code-sessions/uuid/local_b.json", `{"cliSessionId":"b"}`)
+	write(t, deskStage, "claude-code-sessions/uuid/other.json", `{"x":1}`)             // not a sidecar
+	write(t, deskStage, "claude-code-sessions/uuid/local_cache/inner.json", `{"y":2}`) // local_ is a DIR
+	write(t, filepath.Join(staging, "cli"), "projects/-slug/local_z.json", `{"z":3}`)  // CLI root, must not count
+
+	targetCli, targetDesk := t.TempDir(), t.TempDir()
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	rep, err := Restore(RestoreOptions{
+		StagingDir: staging, Config: twoRootConfig(targetCli, targetDesk),
+		Machine: jane, TargetOverride: override("cli", targetCli, "desktop", targetDesk),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rep.DesktopSessions(); got != 2 {
+		t.Errorf("DesktopSessions() = %d, want 2 (only the two local_*.json sidecars)", got)
+	}
+}
+
 // A Desktop session file's cwd must portablize on sync and resolve to the target
 // machine on restore — the Q4 value-based rewrite, end to end through the engine.
 func TestDesktopValueRewrite_RoundTrip(t *testing.T) {

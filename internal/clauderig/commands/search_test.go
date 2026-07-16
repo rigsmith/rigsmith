@@ -164,14 +164,48 @@ func TestShQuote(t *testing.T) {
 
 func TestChatHitKey_CollapsesCopies(t *testing.T) {
 	// Live, synced-repo, and Desktop layouts of the same transcript line must key
-	// the same so the hit isn't counted per copy.
-	live := chatHitKey("projects/-slug/sess.jsonl", 7)
-	repo := chatHitKey("cli/projects/-slug/sess.jsonl", 7)
+	// the same so the hit isn't counted per copy — and the key must ignore the
+	// project SLUG, since a session restored on another machine can have a rewritten
+	// slug (different slug, same session).
+	live := chatHitKey("projects/-Users-me-app/sess.jsonl", 7)
+	repo := chatHitKey("cli/projects/-Users-me-app/sess.jsonl", 7)
+	rewritten := chatHitKey("projects/-Users-other-app/sess.jsonl", 7) // slug differs
 	desk := chatHitKey("local-agent-mode-sessions/a/b/local_x/outputs/.claude/projects/-slug/sess.jsonl", 7)
-	if live != repo || live != desk {
-		t.Errorf("keys diverge across copies: %q / %q / %q", live, repo, desk)
+	if live != repo || live != rewritten || live != desk {
+		t.Errorf("keys diverge across copies/slugs: %q / %q / %q / %q", live, repo, rewritten, desk)
 	}
-	if chatHitKey("projects/-slug/sess.jsonl", 8) == live {
+	// The subagent suffix stays part of the key (distinct transcript within a session).
+	if chatHitKey("projects/-s/sess/subagents/agent-x.jsonl", 7) == live {
+		t.Error("subagent transcript must key differently from the main transcript")
+	}
+	if chatHitKey("projects/-s/sess.jsonl", 8) == live {
 		t.Error("different line numbers must key differently")
+	}
+}
+
+// A session that matches only by title but whose transcript IS present in the live
+// CLI root is resumable, so it must still get a resume command.
+func TestSearchSessions_TitleOnlyButLiveTranscriptResumable(t *testing.T) {
+	live := t.TempDir()
+	desk := t.TempDir()
+	// Live CLI transcript for sess-live exists but doesn't contain the query.
+	writeTestFile(t, live, "projects/-slug/sess-live.jsonl",
+		`{"type":"user","message":{"content":"nothing relevant here"}}`+"\n")
+	// Its sidecar title does contain the query.
+	writeTestFile(t, desk, "claude-code-sessions/o/u/local_k.json",
+		`{"cliSessionId":"sess-live","title":"Kubernetes upgrade plan","cwd":"/tmp/k","lastActivityAt":5}`)
+
+	var out, errw bytes.Buffer
+	err := searchSessions(&out, &errw, testMachine(t.TempDir()),
+		[]search.Target{{Label: "cli", Dir: live}}, []session.Root{{Label: "desktop", Base: desk}}, "kubernetes", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := stripANSI(out.String())
+	if !strings.Contains(got, "title match") {
+		t.Errorf("expected a title match:\n%s", got)
+	}
+	if !strings.Contains(got, "claude --resume sess-live") {
+		t.Errorf("title-only match with a live transcript should still offer resume:\n%s", got)
 	}
 }
