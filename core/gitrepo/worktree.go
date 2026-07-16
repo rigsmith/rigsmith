@@ -158,6 +158,29 @@ func (r *Repo) WorktreeClean(ctx context.Context, path string) (bool, error) {
 	return strings.TrimSpace(out) == "", nil
 }
 
+// WorktreeHasSubmodules reports whether the worktree at path contains a populated
+// (checked-out) submodule — the case git's `worktree remove` refuses outright
+// ("working trees containing submodules cannot be moved or removed"). It reads
+// `git submodule status`, whose lines are prefixed '-' for an *uninitialized*
+// submodule (an empty gitlink dir, which git will happily remove) and a space,
+// '+', or 'U' for a populated one. So any line not starting with '-' means a
+// submodule working tree is present. No submodules (empty output) → false.
+func (r *Repo) WorktreeHasSubmodules(ctx context.Context, path string) (bool, error) {
+	out, err := runGit(ctx, path, "submodule", "status")
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "-") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // IsMerged reports whether branch's changes are already contained in base. It
 // recognises two shapes of "merged":
 //

@@ -810,8 +810,19 @@ func pruneWorktrees(ctx context.Context, out io.Writer, repo *gitrepo.Repo, root
 			continue
 		}
 		// Force discards uncommitted changes (git worktree remove --force) for the
-		// items the user explicitly named.
-		if err := repo.WorktreeRemove(ctx, wt.Path, forced); err != nil {
+		// items the user explicitly named. git also refuses a plain remove on a
+		// worktree that contains a populated submodule ("working trees containing
+		// submodules cannot be moved or removed"); since we only reach removal for
+		// clean worktrees (dirty ones are skipped as "uncommitted changes" unless
+		// force-named, and then forced is already set), forcing that case clears
+		// git's submodule guard without discarding anything the reflog can't recover.
+		removeForce := forced
+		if !removeForce {
+			if hasSub, subErr := repo.WorktreeHasSubmodules(ctx, wt.Path); subErr == nil && hasSub {
+				removeForce = true
+			}
+		}
+		if err := repo.WorktreeRemove(ctx, wt.Path, removeForce); err != nil {
 			skip(label, "remove failed: "+err.Error(), false)
 			continue
 		}
