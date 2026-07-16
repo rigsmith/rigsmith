@@ -326,7 +326,7 @@ scoops:
 # Set WINGET_TOKEN (a classic PAT with public_repo, write access to the fork) to
 # activate; without it the manifests are still generated into dist/ for inspection.
 winget:
-  - name: rig
+  - name: Rig
     package_identifier: RigSmith.Rig
     publisher: RigSmith
     publisher_url: "https://rigsmith.dev"
@@ -350,7 +350,7 @@ winget:
           name: winget-pkgs
           branch: master
 
-  - name: changerig
+  - name: ChangeRig
     package_identifier: RigSmith.ChangeRig
     publisher: RigSmith
     publisher_url: "https://rigsmith.dev"
@@ -374,7 +374,7 @@ winget:
           name: winget-pkgs
           branch: master
 
-  - name: clauderig
+  - name: ClaudeRig
     package_identifier: RigSmith.ClaudeRig
     publisher: RigSmith
     publisher_url: "https://rigsmith.dev"
@@ -398,7 +398,7 @@ winget:
           name: winget-pkgs
           branch: master
 
-  - name: shiprig
+  - name: ShipRig
     package_identifier: RigSmith.ShipRig
     publisher: RigSmith
     publisher_url: "https://rigsmith.dev"
@@ -425,7 +425,7 @@ winget:
   # The RigSmith.Rigsmith bundle — one `winget install RigSmith.Rigsmith` drops all
   # four binaries on PATH from the combined zip. Not yet published, so its first PR
   # is a "New package" (stricter moderation) rather than a "New version".
-  - name: rigsmith
+  - name: RigSmith
     package_identifier: RigSmith.Rigsmith
     publisher: RigSmith
     publisher_url: "https://rigsmith.dev"
