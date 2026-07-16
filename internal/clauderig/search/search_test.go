@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // writeFile is a test helper that creates dir/rel (with parents) holding data.
@@ -95,6 +96,68 @@ func TestSearch_WindowsLongLines(t *testing.T) {
 	}
 	if m.Snippet[m.MatchAt:m.MatchAt+m.MatchLen] != "NEEDLE" {
 		t.Errorf("offset points at %q, want NEEDLE", m.Snippet[m.MatchAt:m.MatchAt+m.MatchLen])
+	}
+}
+
+// A case-insensitive hit on a line with multibyte text before the match must
+// point MatchAt/MatchLen at the correct bytes of the ORIGINAL line — the offset
+// is computed on the original, not a lowercased copy whose byte widths can drift.
+func TestSearch_CaseInsensitiveMultibyteOffsets(t *testing.T) {
+	dir := t.TempDir()
+	// "café" (é is 2 bytes) then the needle in mixed case.
+	writeFile(t, dir, "a.jsonl", []byte("café HELLO World data\n"))
+
+	got, _, err := collect([]Target{{Label: "x", Dir: dir}}, Options{Query: "hello world"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d matches, want 1", len(got))
+	}
+	m := got[0]
+	if s := m.Snippet[m.MatchAt : m.MatchAt+m.MatchLen]; s != "HELLO World" {
+		t.Errorf("offsets point at %q, want the original-cased %q", s, "HELLO World")
+	}
+}
+
+// Windowing a long line whose padding boundary lands inside a multibyte rune must
+// still yield valid UTF-8 (boundaries snap outward to rune starts).
+func TestSearch_WindowRuneBoundaries(t *testing.T) {
+	dir := t.TempDir()
+	// Fill padding with a 2-byte rune so byte-based padding would split one.
+	line := strings.Repeat("é", 400) + "NEEDLE" + strings.Repeat("é", 400)
+	writeFile(t, dir, "big.jsonl", []byte(line+"\n"))
+
+	got, _, err := collect([]Target{{Label: "x", Dir: dir}}, Options{Query: "NEEDLE"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d matches, want 1", len(got))
+	}
+	m := got[0]
+	if !utf8.ValidString(m.Snippet) {
+		t.Errorf("snippet is not valid UTF-8 (rune sliced): %q", m.Snippet)
+	}
+	if s := m.Snippet[m.MatchAt : m.MatchAt+m.MatchLen]; s != "NEEDLE" {
+		t.Errorf("offset points at %q, want NEEDLE", s)
+	}
+}
+
+// A chats-only walk must prune Chromium cache trees rather than scan them.
+func TestSearch_ChatsOnlyPrunesCacheDirs(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "projects/-slug/sess.jsonl", []byte(`{"content":"NEEDLE"}`+"\n"))
+	// A .jsonl that only isChat would also accept, but it sits in a cache dir that
+	// must be pruned before the file filter ever sees it.
+	writeFile(t, dir, "Cache/projects/evil.jsonl", []byte("NEEDLE in cache\n"))
+
+	got, _, err := collect([]Target{{Label: "desktop", Dir: dir}}, Options{Query: "NEEDLE", ChatsOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !strings.Contains(got[0].Rel, "-slug/sess.jsonl") {
+		t.Fatalf("cache dir not pruned: %+v", rels(got))
 	}
 }
 

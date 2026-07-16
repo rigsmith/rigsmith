@@ -8,10 +8,11 @@ func TestIsDesktopSessionSidecar(t *testing.T) {
 		"claude-code-sessions/o/u/local_abc-123.json",
 	}
 	no := []string{
-		"claude-code-sessions/org/user/other.json",  // not a local_ sidecar
-		"claude-code-sessions/org/user/local_x.txt", // not json
-		"claude_desktop_config.json",                // wrong tree
-		"projects/-slug/local_x.json",               // right name, wrong tree
+		"claude-code-sessions/org/user/other.json",             // not a local_ sidecar
+		"claude-code-sessions/org/user/local_x.txt",            // not json
+		"claude_desktop_config.json",                           // wrong tree
+		"projects/-slug/local_x.json",                          // right name, wrong tree
+		"claude-code-sessions/org/local_cache/not-a-sess.json", // local_ is a DIR, not the file
 	}
 	for _, r := range yes {
 		if !isDesktopSessionSidecar(r) {

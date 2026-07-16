@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
@@ -165,8 +166,13 @@ func nonEmptyDir(dir string) bool {
 // Desktop only rebuilds that list on startup, so without the restart the
 // restored sessions stay on disk but invisible.
 func printDesktopRestartNudge(out io.Writer, n int) {
+	// ⌘Q is macOS-only; on Windows/Linux there's no such shortcut, so drop it.
+	quit := "fully quit and reopen Claude Desktop"
+	if runtime.GOOS == "darwin" {
+		quit = "fully quit Claude Desktop (⌘Q) and reopen"
+	}
 	fmt.Fprintf(out, "  %s\n", WarnStyle.Render(fmt.Sprintf(
-		"%d Desktop Code session(s) restored — fully quit Claude Desktop (⌘Q) and reopen to see them in the Code tab.", n)))
+		"%d Desktop Code session(s) restored — %s to see them in the Code tab.", n, quit)))
 }
 
 // printRestorePreview shows where restore lands and a few sample slug rewrites for

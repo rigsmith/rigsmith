@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Meta is what we know about one session. Title/Cwd/Model/LastActivity come from
@@ -137,13 +138,22 @@ func IDFromTranscriptRel(rel string) string {
 	return ""
 }
 
-// IsConversationLine reports whether a transcript JSONL record is genuine
-// conversation — a user or assistant message — as opposed to injected metadata.
-// Claude Code interleaves the transcript with skill-listing attachments, system
-// notes, tool bookkeeping, and mode/queue records; a topic word often appears
-// only in the injected skill catalog (e.g. a skill name), matching sessions that
-// have nothing to do with the topic. Restricting content matches to conversation
-// lines removes that noise. Unparseable lines are kept (never silently hide a hit).
+// IsConversationLine reports whether a transcript JSONL record is genuine session
+// content — a user or assistant message, tool results included — as opposed to
+// records the harness injects. Claude Code interleaves the transcript with
+// skill-listing attachments, system notes, and mode/queue bookkeeping; a topic
+// word often appears only in the injected skill catalog (e.g. a skill name),
+// matching sessions that have nothing to do with the topic. Dropping those
+// records removes that noise.
+//
+// Tool results (encoded as user records, tool_use as assistant records) are
+// deliberately KEPT: a session's real substance often lives in tool output — a
+// spreadsheet dumped by a script, a file a command read — and searching it is a
+// primary reason this exists (finding a chat by a value it processed, not just by
+// what was typed). The cost is that a match solely in a record's own bookkeeping
+// fields (uuid, cwd, gitBranch) still counts; that's a rare, low-harm false
+// positive we accept to keep tool content searchable. Unparseable lines are kept
+// (never silently hide a hit).
 func IsConversationLine(line string) bool {
 	var rec struct {
 		Type       string          `json:"type"`
@@ -189,8 +199,10 @@ func FirstPrompt(path string) string {
 			continue
 		}
 		text = strings.ReplaceAll(text, "\n", " ")
-		if len(text) > 70 {
-			text = text[:70] + "…"
+		// Truncate by runes, not bytes — a byte cut can split a multibyte character
+		// and yield an invalid-UTF-8 title.
+		if utf8.RuneCountInString(text) > 70 {
+			text = string([]rune(text)[:70]) + "…"
 		}
 		return text
 	}

@@ -3,7 +3,9 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func writeSidecar(t *testing.T, base, org, user, id, body string) {
@@ -163,5 +165,18 @@ func TestFirstPrompt(t *testing.T) {
 	os.WriteFile(p3, []byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"only assistant"}]}}`+"\n"), 0o644)
 	if got := FirstPrompt(p3); got != "" {
 		t.Errorf("FirstPrompt(no user) = %q, want empty", got)
+	}
+
+	// A long multibyte prompt must truncate on a rune boundary (valid UTF-8), not
+	// mid-character.
+	p4 := filepath.Join(dir, "t4.jsonl")
+	long := strings.Repeat("é", 100) // 100 runes, 200 bytes — crosses the 70-rune cap
+	os.WriteFile(p4, []byte(`{"type":"user","message":{"content":"`+long+`"}}`+"\n"), 0o644)
+	got := FirstPrompt(p4)
+	if !utf8.ValidString(got) {
+		t.Errorf("FirstPrompt truncated mid-rune (invalid UTF-8): %q", got)
+	}
+	if r := utf8.RuneCountInString(strings.TrimSuffix(got, "…")); r != 70 {
+		t.Errorf("truncated to %d runes, want 70 + ellipsis", r)
 	}
 }

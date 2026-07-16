@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -41,10 +42,14 @@ func (r *RestoreReport) DesktopSessions() int {
 
 // isDesktopSessionSidecar reports whether a restored (slash) rel path is a
 // Desktop Code-session sidecar: claude-code-sessions/<org>/<user>/local_<id>.json.
+// The local_<id>.json shape is matched on the basename so a directory like
+// claude-code-sessions/org/local_cache/other.json isn't miscounted as a session.
 func isDesktopSessionSidecar(rel string) bool {
-	return strings.HasPrefix(rel, "claude-code-sessions/") &&
-		strings.HasSuffix(rel, ".json") &&
-		strings.Contains(rel, "/local_")
+	if !strings.HasPrefix(rel, "claude-code-sessions/") {
+		return false
+	}
+	base := path.Base(rel)
+	return strings.HasPrefix(base, "local_") && strings.HasSuffix(base, ".json")
 }
 
 // prunableDirs are the authoritative config dirs where "deleted upstream" means

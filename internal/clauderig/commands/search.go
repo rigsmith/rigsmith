@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -59,6 +60,12 @@ func NewSearchCmd() *cobra.Command {
 			if liveOnly && repoOnly {
 				return fmt.Errorf("--live and --repo are mutually exclusive")
 			}
+			// ExactArgs(1) still admits an explicitly empty/whitespace arg, which would
+			// "match" every title (contains "") and dump the whole store — reject it.
+			query := strings.TrimSpace(args[0])
+			if query == "" {
+				return fmt.Errorf("empty search term — pass text to find, e.g. `clauderig search billing`")
+			}
 			cfg, err := config.LoadOrDefault()
 			if err != nil {
 				return err
@@ -66,14 +73,14 @@ func NewSearchCmd() *cobra.Command {
 			me := config.Detect(machineName(cfg))
 			targets := buildTargets(cfg, me, liveOnly, repoOnly)
 
-			fmt.Fprintf(out, "%s %q\n", HeaderStyle.Render("clauderig search"), args[0])
+			fmt.Fprintf(out, "%s %q\n", HeaderStyle.Render("clauderig search"), query)
 
 			// --all can't be session-grouped (config/file-history aren't sessions), so
 			// it falls back to raw line output.
 			if raw || all {
-				return runRawSearch(cmd, targets, args[0], caseSensitive, all)
+				return runRawSearch(cmd, targets, query, caseSensitive, all)
 			}
-			return runSessionSearch(cmd, cfg, me, targets, args[0], caseSensitive, liveOnly, repoOnly)
+			return runSessionSearch(cmd, cfg, me, targets, query, caseSensitive, liveOnly, repoOnly)
 		},
 	}
 	cmd.Flags().BoolVarP(&caseSensitive, "case-sensitive", "s", false, "match case exactly (default: case-insensitive)")
@@ -90,18 +97,78 @@ type sessResult struct {
 	id         string
 	meta       session.Meta
 	hasMeta    bool
-	matches    int          // content-line hits
+	matches    int          // distinct content-line hits (deduped across source copies)
 	titleMatch bool         // the query is in the session title
 	first      search.Match // first content hit, for the preview snippet
 	path       string       // a transcript path, for fallback title/cwd
+	// seen dedups the same logical transcript line found in more than one copy of
+	// the session (live + synced repo), keyed by projects-relative path + line, so
+	// the hit count isn't doubled.
+	seen map[string]bool
+	// hitTargets is the set of search targets a content hit actually came from
+	// ("cli", "desktop", "repo") — the transcript's real provenance, used for the
+	// source label and to tell whether a live (resumable) transcript exists.
+	hitTargets map[string]bool
+}
+
+// record folds one content hit into the session, deduping the same logical line
+// seen in another copy. Returns false when the hit was a duplicate.
+func (r *sessResult) record(m search.Match) bool {
+	if r.seen == nil {
+		r.seen = map[string]bool{}
+		r.hitTargets = map[string]bool{}
+	}
+	// Provenance covers every copy the line was found in, even the duplicate.
+	r.hitTargets[m.Target] = true
+	key := chatHitKey(m.Rel, m.Line)
+	if r.seen[key] {
+		return false
+	}
+	r.seen[key] = true
+	r.matches++
+	// First hit wins the preview; targets are searched live-first, so this prefers a
+	// live transcript path for the resume command / cwd fallback.
+	if r.first.Snippet == "" {
+		r.first, r.path = m, m.Path
+	}
+	return true
+}
+
+// liveResumable reports whether a content hit came from a live (this-machine)
+// transcript rather than only the synced repo — `claude --resume` reads ~/.claude,
+// not the staging repo, so only a live hit is actually resumable here.
+func (r *sessResult) liveResumable() bool {
+	for tgt := range r.hitTargets {
+		if tgt != "repo" {
+			return true
+		}
+	}
+	return false
+}
+
+// chatHitKey identifies a transcript line independent of which copy it was found
+// in: the path from the "projects/" component onward (so live `projects/…`, repo
+// `cli/projects/…`, and Desktop `…/.claude/projects/…` collapse) plus the line.
+func chatHitKey(rel string, line int) string {
+	if i := strings.Index(rel, "projects/"); i >= 0 {
+		rel = rel[i:]
+	}
+	return rel + "\x00" + strconv.Itoa(line)
 }
 
 // runSessionSearch is the default mode: content + title search grouped into named
 // sessions, ranked by relevance (title hit, then match count, then recency), each
 // with a resume command.
 func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine, targets []search.Target, query string, caseSensitive, liveOnly, repoOnly bool) error {
-	out := cmd.OutOrStdout()
-	idx := session.Build(sessionRoots(cfg, me, liveOnly, repoOnly))
+	roots := sessionRoots(cfg, me, liveOnly, repoOnly)
+	return searchSessions(cmd.OutOrStdout(), cmd.ErrOrStderr(), me, targets, roots, query, caseSensitive)
+}
+
+// searchSessions is the grouped-session search, decoupled from cobra/config for
+// testing: it takes explicit search targets and sidecar roots and writes to out
+// (results) and errw (progress + warnings).
+func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, query string, caseSensitive bool) error {
+	idx := session.Build(roots)
 
 	hits := map[string]*sessResult{}
 	get := func(id string) *sessResult {
@@ -114,7 +181,7 @@ func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine,
 		return r
 	}
 
-	report, clearProgress := progressReporter(cmd.ErrOrStderr())
+	report, clearProgress := progressReporter(errw)
 	stats, serr := search.Search(targets, search.Options{
 		Query: query, CaseSensitive: caseSensitive, ChatsOnly: true,
 		// Only count hits in real conversation, not injected skill-listing/system
@@ -126,11 +193,7 @@ func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine,
 		if id == "" {
 			return
 		}
-		r := get(id)
-		r.matches++
-		if r.first.Snippet == "" {
-			r.first, r.path = m, m.Path
-		}
+		get(id).record(m)
 	})
 	clearProgress()
 
@@ -181,7 +244,7 @@ func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine,
 	fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf(
 		"scanned %d transcripts, skipped %d binary", stats.FilesScanned, stats.FilesSkipped)))
 	if serr != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s\n", WarnStyle.Render("some files could not be read: "+serr.Error()))
+		fmt.Fprintf(errw, "%s\n", WarnStyle.Render("some files could not be read: "+serr.Error()))
 	}
 	return nil
 }
@@ -219,16 +282,42 @@ func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machin
 	if r.matches > 0 {
 		why = fmt.Sprintf("%d match(es)", r.matches)
 	}
-	if cwd != "" {
-		fmt.Fprintf(out, "  %s   %s\n", DimStyle.Render(why),
-			DimStyle.Render(fmt.Sprintf("resume: cd %s && claude --resume %s", cwd, r.id)))
-	} else {
-		fmt.Fprintf(out, "  %s   %s\n", DimStyle.Render(why),
-			DimStyle.Render("resume: claude --resume "+r.id))
-	}
+	fmt.Fprintf(out, "  %s   %s\n", DimStyle.Render(why), DimStyle.Render(resumeHint(r, cwd)))
 	if r.matches > 0 {
 		fmt.Fprintf(out, "    %s\n", highlight(r.first))
 	}
+}
+
+// resumeHint renders the action for a session. `claude --resume` reads this
+// machine's ~/.claude, so it's only offered when a live transcript actually
+// exists here; a synced-only or title-only hit gets a note instead of a command
+// that would fail. The command's path and id are shell-quoted for copy/paste.
+func resumeHint(r *sessResult, cwd string) string {
+	switch {
+	case r.liveResumable() && cwd != "":
+		return "resume: cd " + shQuote(cwd) + " && claude --resume " + shQuote(r.id)
+	case r.liveResumable():
+		return "resume: claude --resume " + shQuote(r.id)
+	case r.matches > 0:
+		// The transcript was found only in the synced repo — not readable by `claude`.
+		return "synced copy only — restore on this machine to resume"
+	default:
+		// Title-only: no transcript hit to resume from here.
+		return "matched by title — open it in Claude Desktop, or use --raw to search its text"
+	}
+}
+
+// shQuote renders s as a single POSIX shell word (bash/zsh — the mac/Linux shells
+// this resume line targets), single-quoting anything with whitespace or shell
+// metacharacters so paths with spaces and any injected characters stay literal.
+func shQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(s, " \t\n\r'\"\\$`&|;<>()*?[]{}#~!=") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // resolveCwd returns a usable working directory for the session: the sidecar cwd
@@ -262,13 +351,26 @@ func sessionDate(r *sessResult) string {
 	return ""
 }
 
+// sourceLabel reports where the query actually hit. For a content match that's
+// the transcript's real provenance (the targets a hit came from); for a
+// title-only match there's no transcript hit, so it falls back to where the
+// Desktop sidecar was found. The two are distinct — a sidecar synced into the
+// repo doesn't mean the transcript is there — so content hits never borrow the
+// sidecar's label.
 func sourceLabel(r *sessResult) string {
-	if len(r.meta.Sources) > 0 {
-		s := append([]string(nil), r.meta.Sources...)
-		sort.Strings(s)
-		return strings.Join(s, "+")
+	var labels []string
+	if len(r.hitTargets) > 0 {
+		for t := range r.hitTargets {
+			labels = append(labels, t)
+		}
+	} else {
+		labels = append(labels, r.meta.Sources...)
 	}
-	return ""
+	if len(labels) == 0 {
+		return ""
+	}
+	sort.Strings(labels)
+	return strings.Join(labels, "+")
 }
 
 func shortID(id string) string {
@@ -285,8 +387,10 @@ func shortID(id string) string {
 func runRawSearch(cmd *cobra.Command, targets []search.Target, query string, caseSensitive, all bool) error {
 	out := cmd.OutOrStdout()
 	lastFile := ""
+	matchedFiles := map[string]bool{}
 	emit := func(m search.Match) {
 		fileKey := m.Target + "\x00" + m.Path
+		matchedFiles[fileKey] = true
 		if fileKey != lastFile {
 			fmt.Fprintf(out, "\n%s  %s\n", OkStyle.Render(m.Target), m.Rel)
 			lastFile = fileKey
@@ -305,8 +409,9 @@ func runRawSearch(cmd *cobra.Command, targets []search.Target, query string, cas
 		}
 		fmt.Fprintln(out, DimStyle.Render("(Desktop 'Chat' tab chats are server-side and never appear here — check claude.ai)"))
 	} else {
+		// Count files that actually contained a match, not every file scanned.
 		fmt.Fprintf(out, "%s\n", OkStyle.Render(fmt.Sprintf(
-			"%d match(es) across %d file(s)", stats.Matches, stats.FilesScanned)))
+			"%d match(es) in %d file(s)", stats.Matches, len(matchedFiles))))
 	}
 	fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf(
 		"scanned %d files, skipped %d binary", stats.FilesScanned, stats.FilesSkipped)))
