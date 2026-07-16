@@ -314,13 +314,117 @@ scoops:
     description: "The rigsmith toolchain: rig, changerig, shiprig, clauderig"
     license: MIT
 
-# winget (Windows): the RigSmith.Rigsmith bundle manifest — one `winget install
-# rigsmith` drops all four binaries on PATH from the combined zip (each a portable
-# nested installer). GoReleaser fills the real SHA256 at release. Disabled until a
-# fork of microsoft/winget-pkgs + token exist, so the release never fails; set
-# WINGET_TOKEN (write access to the fork) to open the submission PR automatically.
-# Until then the manifest is still generated into dist/ for manual submission.
+# winget (Windows): each release opens a "New version" PR to microsoft/winget-pkgs
+# for the four published per-tool packages (RigSmith.Rig / .ChangeRig / .ClaudeRig
+# / .ShipRig), plus the RigSmith.Rigsmith bundle. GoReleaser fills the real SHA256,
+# pushes a per-package branch to the rigsmith/winget-pkgs fork, and opens the PR.
+#
+# skip_upload gates on WINGET_TOKEN being NON-EMPTY (not merely set): a workflow
+# that passes `WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}` still defines the var as
+# "" when the secret is missing, and `isEnvSet` would then be true and make the
+# release fail trying to push with an empty token. `envOrDefault … ""` avoids that.
+# Set WINGET_TOKEN (a classic PAT with public_repo, write access to the fork) to
+# activate; without it the manifests are still generated into dist/ for inspection.
 winget:
+  - name: rig
+    package_identifier: RigSmith.Rig
+    publisher: RigSmith
+    publisher_url: "https://rigsmith.dev"
+    author: John Campion Jr
+    short_description: "Convention-first dev launcher across .NET, Node, Go, and Rust"
+    homepage: "https://rigsmith.dev"
+    license: MIT
+    license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
+    ids: [rig]
+    skip_upload: '{{ if eq (envOrDefault "WINGET_TOKEN" "") "" }}true{{ else }}false{{ end }}'
+    repository:
+      owner: rigsmith
+      name: winget-pkgs
+      branch: "rig-{{ .Version }}"
+      token: "{{ .Env.WINGET_TOKEN }}"
+      pull_request:
+        enabled: true
+        draft: false
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+
+  - name: changerig
+    package_identifier: RigSmith.ChangeRig
+    publisher: RigSmith
+    publisher_url: "https://rigsmith.dev"
+    author: John Campion Jr
+    short_description: "Changesets: capture intent, then version across every ecosystem"
+    homepage: "https://rigsmith.dev"
+    license: MIT
+    license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
+    ids: [changerig]
+    skip_upload: '{{ if eq (envOrDefault "WINGET_TOKEN" "") "" }}true{{ else }}false{{ end }}'
+    repository:
+      owner: rigsmith
+      name: winget-pkgs
+      branch: "changerig-{{ .Version }}"
+      token: "{{ .Env.WINGET_TOKEN }}"
+      pull_request:
+        enabled: true
+        draft: false
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+
+  - name: clauderig
+    package_identifier: RigSmith.ClaudeRig
+    publisher: RigSmith
+    publisher_url: "https://rigsmith.dev"
+    author: John Campion Jr
+    short_description: "Sync your Claude Code setup across machines, path-correct on restore"
+    homepage: "https://rigsmith.dev"
+    license: MIT
+    license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
+    ids: [clauderig]
+    skip_upload: '{{ if eq (envOrDefault "WINGET_TOKEN" "") "" }}true{{ else }}false{{ end }}'
+    repository:
+      owner: rigsmith
+      name: winget-pkgs
+      branch: "clauderig-{{ .Version }}"
+      token: "{{ .Env.WINGET_TOKEN }}"
+      pull_request:
+        enabled: true
+        draft: false
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+
+  - name: shiprig
+    package_identifier: RigSmith.ShipRig
+    publisher: RigSmith
+    publisher_url: "https://rigsmith.dev"
+    author: John Campion Jr
+    short_description: "Uniform changeset -> version -> publish, across every ecosystem"
+    homepage: "https://rigsmith.dev"
+    license: MIT
+    license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
+    ids: [shiprig]
+    skip_upload: '{{ if eq (envOrDefault "WINGET_TOKEN" "") "" }}true{{ else }}false{{ end }}'
+    repository:
+      owner: rigsmith
+      name: winget-pkgs
+      branch: "shiprig-{{ .Version }}"
+      token: "{{ .Env.WINGET_TOKEN }}"
+      pull_request:
+        enabled: true
+        draft: false
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+
+  # The RigSmith.Rigsmith bundle — one `winget install RigSmith.Rigsmith` drops all
+  # four binaries on PATH from the combined zip. Not yet published, so its first PR
+  # is a "New package" (stricter moderation) rather than a "New version".
   - name: rigsmith
     package_identifier: RigSmith.Rigsmith
     publisher: RigSmith
@@ -331,7 +435,7 @@ winget:
     license: MIT
     license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
     ids: [rigsmith]
-    skip_upload: '{{ if isEnvSet "WINGET_TOKEN" }}false{{ else }}true{{ end }}'
+    skip_upload: '{{ if eq (envOrDefault "WINGET_TOKEN" "") "" }}true{{ else }}false{{ end }}'
     repository:
       owner: rigsmith
       name: winget-pkgs

@@ -117,6 +117,11 @@ jobs:
           # Cross-repo token so GoReleaser can commit the casks to
           # rigsmith/homebrew-tap (the default GITHUB_TOKEN can't reach it).
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # Classic PAT (public_repo) with write access to the rigsmith/winget-pkgs
+          # fork; GoReleaser pushes each package's manifest branch there and opens the
+          # PR to microsoft/winget-pkgs. Absent/empty ⇒ winget entries skip (their
+          # skip_upload gates on this being non-empty), so the release never fails.
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
           # macOS sign + notarize (Apple Developer ID). Notarization auto-enables
           # once MACOS_SIGN_P12 is set; absent these, releases are unsigned.
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
