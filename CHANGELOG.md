@@ -1,5 +1,15 @@
 # github.com/rigsmith/rigsmith
 
+## 1.4.0
+### Minor Changes
+
+- `rig build <name>` now disambiguates duplicate project names, just like `rig run`. When the same project is checked out in more than one location (e.g. a nested worktree) and its name matches several targets, `build` opens a picker on a TTY; off a TTY it lists the candidate paths and returns actionable guidance (narrow the name, run `rig build` from the target directory, or exclude the extra copies in `.rig.json`) — instead of silently falling through to the repo-root build command.
+  
+
+### Clauderig
+
+- clauderig: `search` command finds Claude Code sessions by title or content across live ~/.claude and synced history, grouped into named sessions with ready `claude --resume` commands (--raw for grep lines, --all for every file); `restore`/`pull` now nudge you to restart Claude Desktop so recovered Code sessions reappear in the Code tab
+
 ## 1.3.0
 ### Minor Changes
 
