@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,16 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 )
+
+// gitT runs git in dir and fails the test on error — for setup steps (submodules)
+// the gitrepo package doesn't wrap.
+func gitT(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	full := append([]string{"-C", dir}, args...)
+	if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
 
 // renderPruneTable lays rows out as a name | state | why table with a header.
 func TestRenderPruneTable(t *testing.T) {
@@ -264,5 +275,57 @@ func TestPruneSweepDryRun(t *testing.T) {
 	// worktree phase), so no branch is counted.
 	if w, b, _, _ := pruneSweep(ctx, &bbuf, r, r.Dir, "main", true, false, false, true, nil, nil); w != 0 || b != 0 {
 		t.Errorf("--branches sweep = %d/%d; want 0 worktrees, 0 branches (feature still attached)", w, b)
+	}
+}
+
+// Regression: a merged worktree containing a submodule must still be reaped. git
+// refuses a plain `worktree remove` on a tree with submodules ("working trees
+// containing submodules cannot be moved or removed"); since prune only removes
+// clean worktrees, it retries with --force to clear that guard. Before the fix
+// every such removal failed, freed nothing, so the branch phase kept the branch
+// too and the whole run reported "nothing to prune".
+func TestPruneWorktrees_ReapsWorktreeWithSubmodule(t *testing.T) {
+	ctx := context.Background()
+	r, err := gitrepo.Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "a", "1", "init")
+
+	// A throwaway upstream to stand in as the submodule.
+	sub, err := gitrepo.Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, sub, "s", "1", "sub init")
+
+	// Add it as a submodule and commit that on main (protocol.file.allow lets git
+	// clone the local file:// submodule under modern defaults).
+	gitT(t, r.Dir, "-c", "protocol.file.allow=always", "submodule", "add", sub.Dir, "ui/src/platform")
+	gitT(t, r.Dir, "commit", "-m", "add submodule")
+
+	// A worktree on feature (at main's tip, so it carries the submodule), populated
+	// so it's a real submodule working tree; then advance main past feature so it's
+	// a merged, diverged ancestor (not merely even with base).
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	if err := r.WorktreeAdd(ctx, wtPath, "feature", "main", true); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, wtPath, "-c", "protocol.file.allow=always", "submodule", "update", "--init")
+	commit(t, r, "b", "2", "advance main past feature")
+
+	var buf bytes.Buffer
+	removed, _, freed, _, err := pruneWorktrees(ctx, &buf, r, r.Dir, "main", false /*real*/, false, false, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed=%d, want 1 — a merged worktree with a submodule must be reaped\n%s", removed, buf.String())
+	}
+	if len(freed) != 1 || freed[0] != "feature" {
+		t.Errorf("freed=%v, want [feature] so the branch phase can delete it", freed)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("worktree dir still present after prune: %v", err)
 	}
 }

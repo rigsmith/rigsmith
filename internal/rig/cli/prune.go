@@ -391,11 +391,14 @@ func runPruneFlow(cmd *cobra.Command, dryRun, yes bool, scope pruneScope, scopeF
 	if err != nil {
 		return err
 	}
+	// Always show the per-item table, even when nothing was removed: a zero total
+	// can mean a removal failed (e.g. a locked worktree), and the rows carry the
+	// reason — swallowing them leaves a bare "nothing to prune" with no explanation.
+	io.Copy(out, &real)
 	if rc.total() == 0 {
 		fmt.Fprintf(out, "%s\n", DimStyle.Render("nothing to prune"))
 		return nil
 	}
-	io.Copy(out, &real)
 	fmt.Fprintf(out, "%s\n", OkStyle.Render("✓ "+rc.summary(chosen, false)))
 	return nil
 }
