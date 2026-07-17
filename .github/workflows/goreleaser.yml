@@ -122,6 +122,11 @@ jobs:
           # PR to microsoft/winget-pkgs. Absent/empty ⇒ winget entries skip (their
           # skip_upload gates on this being non-empty), so the release never fails.
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          # Cross-repo token so GoReleaser can push the Scoop manifest to
+          # rigsmith/scoop-bucket (the default GITHUB_TOKEN can't reach it). Absent/
+          # empty ⇒ the scoop entry skips (its skip_upload gates on isEnvSet), so the
+          # release never fails on a missing bucket token.
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
           # macOS sign + notarize (Apple Developer ID). Notarization auto-enables
           # once MACOS_SIGN_P12 is set; absent these, releases are unsigned.
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
