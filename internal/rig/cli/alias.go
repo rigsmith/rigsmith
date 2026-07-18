@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"sort"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -16,10 +18,12 @@ import (
 // are managed independently: re-running `rig setup` never touches your aliases,
 // and `rig alias remove` never touches your completion/cd wrapper.
 //
-// The set is intentionally fixed and small. Aliases claim names in your shell's
-// global namespace, so they're opt-in (you run `rig alias install`, they aren't
-// part of the default `rig setup`) and deliberately non-colliding: "rrm" for
-// uninstall rather than "run", which would shadow the ubiquitous run command.
+// Aliases claim names in your shell's global namespace, so they're opt-in (you
+// run `rig alias install`, they aren't part of the default `rig setup`) and
+// deliberately non-colliding: "rrm" for uninstall rather than "run", which would
+// shadow the ubiquitous run command. The candidate set is fixed, but which of it
+// you install is your choice — a terminal gets an interactive checklist, and
+// --only / --all pick without prompting (see resolveAliasSelection).
 
 // rigAlias is one installed alias: the short name, the rig verb it expands to,
 // and a one-line description for `rig alias list`. cd marks the navigation alias
@@ -61,12 +65,12 @@ func aliasMarkerEnd() string   { return "# <<< rig aliases <<<" }
 func newAliasCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "alias",
-		Short: "Manage short shell aliases for common rig verbs (rr, ri, rup, rrm)",
+		Short: "Manage short shell aliases for common rig verbs (rr, rb, rt, rcd, …)",
 		Long: strings.TrimSpace(`
-Install short shell aliases for the rig verbs you reach for most:
-
-  rr  → rig run        ri  → rig install
-  rup → rig upgrade    rrm → rig uninstall
+Install short shell aliases for the rig verbs you reach for most — rr (run),
+rb (build), rt (test), rcd (cd), and more. On a terminal "rig alias install"
+shows a checklist so you pick exactly which ones you want; --only and --all
+choose without the prompt.
 
 They're written to your shell startup file in their own marked block (separate
 from "rig setup"), so re-running setup leaves them alone and "rig alias remove"
@@ -86,9 +90,21 @@ default "rig setup". Bare "rig alias" just lists the set without writing.`),
 
 func newAliasInstallCmd() *cobra.Command {
 	var printOnly bool
+	var all bool
+	var only []string
 	cmd := &cobra.Command{
-		Use:               "install [shell]",
-		Short:             "Add the alias block to your shell startup file",
+		Use:   "install [shell]",
+		Short: "Add the alias block to your shell startup file",
+		Long: strings.TrimSpace(`
+Add the alias block to your shell startup file.
+
+By default, on a terminal, "rig alias install" shows a checklist so you pick
+exactly which aliases you want (all pre-checked — uncheck the ones you'll skip).
+Off a terminal it installs the full set. --only names a subset directly, and
+--all installs everything without the prompt:
+
+  rig alias install --only rb,rt,rcd    # just these
+  rig alias install --all               # the whole set, no prompt`),
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: setupShellCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -97,7 +113,21 @@ func newAliasInstallCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			snippet := aliasSnippet(shell)
+
+			selection, cancelled, err := resolveAliasSelection(only, all, printOnly)
+			if err != nil {
+				return err
+			}
+			if cancelled {
+				fmt.Fprintln(out, "Cancelled — nothing written.")
+				return nil
+			}
+			if len(selection) == 0 {
+				fmt.Fprintln(out, "No aliases selected — nothing to do.")
+				return nil
+			}
+
+			snippet := aliasSnippetFor(shell, selection)
 			if printOnly {
 				fmt.Fprintln(out, snippet)
 				return nil
@@ -119,13 +149,87 @@ func newAliasInstallCmd() *cobra.Command {
 				fmt.Fprintf(out, "rig aliases already installed in %s — nothing to do.\n", rcPath)
 				return nil
 			}
-			fmt.Fprintf(out, "Installed rig aliases (%s) in %s\n", aliasNames(), rcPath)
+			fmt.Fprintf(out, "Installed rig aliases (%s) in %s\n", aliasNamesOf(selection), rcPath)
 			fmt.Fprintf(out, "Restart your shell or run: source %s\n", rcPath)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&printOnly, "print", false, "print the snippet instead of writing the rc file")
+	cmd.Flags().BoolVar(&all, "all", false, "install every alias without the interactive prompt")
+	cmd.Flags().StringSliceVar(&only, "only", nil, "install only these aliases (comma-separated, e.g. rb,rt,rcd)")
+	cmd.MarkFlagsMutuallyExclusive("all", "only")
 	return cmd
+}
+
+// resolveAliasSelection decides which aliases to install. --only names a subset
+// explicitly; --all takes everything. With neither, an interactive terminal gets
+// the checklist (unless printOnly, which never prompts), while everything else
+// — pipes, CI, `rig setup --aliases` — falls back to the full set. cancelled is
+// true when the user escapes the checklist.
+func resolveAliasSelection(only []string, all, printOnly bool) (sel []rigAlias, cancelled bool, err error) {
+	if len(only) > 0 {
+		sel, err = aliasesByName(only)
+		return sel, false, err
+	}
+	if all {
+		return rigAliases, false, nil
+	}
+	if !printOnly && stdinStdoutTTY() {
+		chosen, ok := pickAliases()
+		if !ok {
+			return nil, true, nil
+		}
+		return chosen, false, nil
+	}
+	return rigAliases, false, nil
+}
+
+// pickAliases shows the candidates pre-checked; the user unchecks any to skip,
+// then confirms. Returns the selected aliases (in canonical order), or ok=false
+// on esc/ctrl+c.
+func pickAliases() (sel []rigAlias, ok bool) {
+	var selected []string
+	opts := make([]huh.Option[string], 0, len(rigAliases))
+	for _, a := range rigAliases {
+		opts = append(opts, huh.NewOption(fmt.Sprintf("%-4s %s %s", a.name, integrationBase, a.verb), a.name).Selected(true))
+	}
+	ms := huh.NewMultiSelect[string]().
+		Title("Which aliases? (space toggles · enter confirms · esc cancels)").
+		Options(opts...).
+		Value(&selected)
+	if err := runHuhMultiSelect(ms); err != nil {
+		return nil, false
+	}
+	chosen, _ := aliasesByName(selected)
+	return chosen, true
+}
+
+// aliasesByName resolves alias names to their definitions, preserving the
+// canonical rigAliases order (not the argument order) so the rendered block is
+// stable. It errors on any unknown name.
+func aliasesByName(names []string) ([]rigAlias, error) {
+	want := map[string]bool{}
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" {
+			want[n] = true
+		}
+	}
+	var out []rigAlias
+	for _, a := range rigAliases {
+		if want[a.name] {
+			out = append(out, a)
+			delete(want, a.name)
+		}
+	}
+	if len(want) > 0 {
+		unknown := make([]string, 0, len(want))
+		for n := range want {
+			unknown = append(unknown, n)
+		}
+		sort.Strings(unknown)
+		return nil, fmt.Errorf("unknown alias %s — available: %s", strings.Join(unknown, ", "), aliasNames())
+	}
+	return out, nil
 }
 
 func newAliasRemoveCmd() *cobra.Command {
@@ -189,25 +293,34 @@ func runAliasList(cmd *cobra.Command) error {
 	return nil
 }
 
-// aliasNames renders the alias names for a one-line summary, e.g. "rr, ri, …".
-func aliasNames() string {
-	names := make([]string, len(rigAliases))
-	for i, a := range rigAliases {
+// aliasNames renders every candidate alias name for a one-line summary, e.g.
+// "rr, rb, …". aliasNamesOf does the same for a chosen subset.
+func aliasNames() string { return aliasNamesOf(rigAliases) }
+
+func aliasNamesOf(aliases []rigAlias) string {
+	names := make([]string, len(aliases))
+	for i, a := range aliases {
 		names[i] = a.name
 	}
 	return strings.Join(names, ", ")
 }
 
-// aliasSnippet renders the marked rc-file block for the shell (no trailing
-// newline — installBlock owns the framing). The header uses "#" comments, which
-// every supported shell (including PowerShell) understands.
-func aliasSnippet(shell string) string {
+// aliasSnippet renders the block for the full candidate set; aliasSnippetFor
+// renders a chosen subset. `rig setup --aliases` and the non-interactive default
+// use the full set.
+func aliasSnippet(shell string) string { return aliasSnippetFor(shell, rigAliases) }
+
+// aliasSnippetFor renders the marked rc-file block for the shell (no trailing
+// newline — installBlock owns the framing) for the given aliases. The header
+// uses "#" comments, which every supported shell (including PowerShell)
+// understands.
+func aliasSnippetFor(shell string, aliases []rigAlias) string {
 	begin, end := aliasMarkerBegin(), aliasMarkerEnd()
 	lines := []string{
 		"# Installed by 'rig alias install' — safe to re-run; replaced in place.",
 		"# Short aliases for common rig verbs. Remove with 'rig alias remove'.",
 	}
-	for _, a := range rigAliases {
+	for _, a := range aliases {
 		lines = append(lines, aliasLine(shell, a))
 	}
 	return begin + "\n" + strings.Join(lines, "\n") + "\n" + end

@@ -161,6 +161,61 @@ func TestAliasCommand_InstallIsIdempotentAndCoexistsWithSetup(t *testing.T) {
 	}
 }
 
+func TestAliasCommand_OnlyInstallsSelectedAliases(t *testing.T) {
+	home := fakeHome(t)
+	rc := filepath.Join(home, ".zshrc")
+
+	cmd := newAliasCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"install", "zsh", "--only", "rb,rt"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("alias install --only: %v", err)
+	}
+	data, _ := os.ReadFile(rc)
+	if !strings.Contains(string(data), "alias rb='rig build'") || !strings.Contains(string(data), "alias rt='rig test'") {
+		t.Fatalf("rc missing the selected aliases:\n%s", data)
+	}
+	if strings.Contains(string(data), "alias rr='rig run'") || strings.Contains(string(data), "rcd() {") {
+		t.Fatalf("rc should carry only the selected aliases:\n%s", data)
+	}
+}
+
+func TestAliasCommand_OnlyRejectsUnknownName(t *testing.T) {
+	fakeHome(t)
+	cmd := newAliasCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"install", "zsh", "--only", "rb,nope"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "unknown alias") || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("err = %v, want an unknown-alias error naming nope", err)
+	}
+}
+
+func TestAliasCommand_AllAndOnlyAreMutuallyExclusive(t *testing.T) {
+	fakeHome(t)
+	cmd := newAliasCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"install", "zsh", "--all", "--only", "rb"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("--all and --only together should be rejected")
+	}
+}
+
+// resolveAliasSelection falls back to the full set off a TTY (as in tests, CI,
+// and `rig setup --aliases`), so a plain non-interactive install is unchanged.
+func TestResolveAliasSelection_NonInteractiveTakesFullSet(t *testing.T) {
+	sel, cancelled, err := resolveAliasSelection(nil, false, false)
+	if err != nil || cancelled {
+		t.Fatalf("resolveAliasSelection = (_, %v, %v), want the full set", cancelled, err)
+	}
+	if len(sel) != len(rigAliases) {
+		t.Fatalf("got %d aliases, want the full %d", len(sel), len(rigAliases))
+	}
+}
+
 func TestAliasCommand_PrintWritesNothing(t *testing.T) {
 	home := fakeHome(t)
 	cmd := newAliasCmd()

@@ -46,6 +46,30 @@ The shell is taken from the argument, else `$SHELL`. Supported shells: `zsh`,
 rig alias install fish     # target a specific shell
 ```
 
+## Choose which ones {#choose}
+
+You don't have to take the whole set. In a terminal, `rig alias install` shows a
+checklist (everything pre-checked) so you keep just the aliases you want:
+
+```
+Which aliases? (space toggles · enter confirms · esc cancels)
+  ✓ rr   rig run
+  ✓ rb   rig build
+  ✓ rt   rig test
+    …
+```
+
+For scripts and dotfiles, skip the prompt with `--only` or `--all`:
+
+```sh
+rig alias install --only rb,rt,rcd   # just these three
+rig alias install --all              # the whole set, no prompt
+```
+
+Off a terminal (a pipe, CI, or `rig setup --aliases`), install takes the full set
+by default, so non-interactive use is unaffected. The block always renders in the
+same canonical order regardless of how you selected, so it stays diff-stable.
+
 ## How it works {#internals}
 
 The aliases are written to your shell startup file (`~/.zshrc`, `~/.bashrc`,
