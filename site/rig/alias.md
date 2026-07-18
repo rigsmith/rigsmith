@@ -70,6 +70,12 @@ Off a terminal (a pipe, CI, or `rig setup --aliases`), install takes the full se
 by default, so non-interactive use is unaffected. The block always renders in the
 same canonical order regardless of how you selected, so it stays diff-stable.
 
+**Re-running is an edit, not an append.** The checklist comes up pre-checked with
+whatever you already have installed, so unchecking an alias and confirming
+*removes* it, and checking a new one adds it — the whole block is replaced with
+your current choices. Uncheck everything and confirm to remove the block outright
+(same as `rig alias remove`).
+
 ## How it works {#internals}
 
 The aliases are written to your shell startup file (`~/.zshrc`, `~/.bashrc`,

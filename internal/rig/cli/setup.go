@@ -318,6 +318,18 @@ func removeBlock(content, mBegin, mEnd string) (updated string, changed bool) {
 	return pre + content[end:], true
 }
 
+// extractBlock returns the text of the mBegin…mEnd block (markers included),
+// and ok=false when there's no such block. Pure — lets callers inspect what a
+// previous install wrote (e.g. which aliases are currently present).
+func extractBlock(content, mBegin, mEnd string) (block string, ok bool) {
+	begin := strings.Index(content, mBegin)
+	end := strings.Index(content, mEnd)
+	if begin < 0 || end <= begin {
+		return "", false
+	}
+	return content[begin : end+len(mEnd)], true
+}
+
 // setupSnippet renders the marked rc-file block for the shell (no trailing
 // newline — the writer owns the framing). The wrapper text mirrors the .NET
 // rig's CompletionSetup scripts, adapted to cobra completion and to the Go

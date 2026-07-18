@@ -114,12 +114,54 @@ Off a terminal it installs the full set. --only names a subset directly, and
 			}
 			out := cmd.OutOrStdout()
 
-			selection, cancelled, err := resolveAliasSelection(only, all, printOnly)
+			// Read the current rc + alias block up front (not for --print, which
+			// never touches the file). The checklist pre-checks whatever is
+			// already installed, so re-running is a true edit: unchecking an
+			// alias drops it, checking a new one adds it. First install (no
+			// block) pre-checks the full set.
+			var rcPath, existing string
+			preselected := rigAliases
+			if !printOnly {
+				if rcPath, err = rcFileFor(shell); err != nil {
+					return err
+				}
+				if data, rerr := os.ReadFile(rcPath); rerr == nil {
+					existing = string(data)
+				} else if !errors.Is(rerr, fs.ErrNotExist) {
+					return rerr
+				}
+				if block, ok := extractBlock(existing, aliasMarkerBegin(), aliasMarkerEnd()); ok {
+					if inst := installedAliases(shell, block); len(inst) > 0 {
+						preselected = inst
+					}
+				}
+			}
+
+			selection, cancelled, clearAll, err := resolveAliasSelection(only, all, printOnly, preselected)
 			if err != nil {
 				return err
 			}
 			if cancelled {
 				fmt.Fprintln(out, "Cancelled — nothing written.")
+				return nil
+			}
+
+			// Deselecting everything in the checklist means "remove them all".
+			if clearAll {
+				updated, changed := removeBlock(existing, aliasMarkerBegin(), aliasMarkerEnd())
+				if !changed {
+					fmt.Fprintf(out, "no rig aliases in %s — nothing to do.\n", rcPath)
+					return nil
+				}
+				if dryRun {
+					fmt.Fprintln(out, dimStyle.Render("→ would remove the rig aliases block from "+rcPath))
+					return nil
+				}
+				if err := os.WriteFile(rcPath, []byte(updated), 0o644); err != nil {
+					return fmt.Errorf("couldn't update %s: %w", rcPath, err)
+				}
+				fmt.Fprintf(out, "Removed rig aliases from %s (all deselected)\n", rcPath)
+				fmt.Fprintln(out, "Restart your shell for it to take effect.")
 				return nil
 			}
 			if len(selection) == 0 {
@@ -131,10 +173,6 @@ Off a terminal it installs the full set. --only names a subset directly, and
 			if printOnly {
 				fmt.Fprintln(out, snippet)
 				return nil
-			}
-			rcPath, err := rcFileFor(shell)
-			if err != nil {
-				return err
 			}
 			if dryRun {
 				fmt.Fprintln(out, dimStyle.Render("→ would write "+rcPath+":"))
@@ -163,35 +201,43 @@ Off a terminal it installs the full set. --only names a subset directly, and
 
 // resolveAliasSelection decides which aliases to install. --only names a subset
 // explicitly; --all takes everything. With neither, an interactive terminal gets
-// the checklist (unless printOnly, which never prompts), while everything else
-// — pipes, CI, `rig setup --aliases` — falls back to the full set. cancelled is
-// true when the user escapes the checklist.
-func resolveAliasSelection(only []string, all, printOnly bool) (sel []rigAlias, cancelled bool, err error) {
+// the checklist (unless printOnly, which never prompts) pre-checked with
+// preselected, while everything else — pipes, CI, `rig setup --aliases` — falls
+// back to the full set. cancelled is true when the user escapes the checklist;
+// clearAll is true when they confirm it with nothing checked (remove them all).
+func resolveAliasSelection(only []string, all, printOnly bool, preselected []rigAlias) (sel []rigAlias, cancelled, clearAll bool, err error) {
 	if len(only) > 0 {
 		sel, err = aliasesByName(only)
-		return sel, false, err
+		return sel, false, false, err
 	}
 	if all {
-		return rigAliases, false, nil
+		return rigAliases, false, false, nil
 	}
 	if !printOnly && stdinStdoutTTY() {
-		chosen, ok := pickAliases()
+		chosen, ok := pickAliases(preselected)
 		if !ok {
-			return nil, true, nil
+			return nil, true, false, nil
 		}
-		return chosen, false, nil
+		if len(chosen) == 0 {
+			return nil, false, true, nil
+		}
+		return chosen, false, false, nil
 	}
-	return rigAliases, false, nil
+	return rigAliases, false, false, nil
 }
 
-// pickAliases shows the candidates pre-checked; the user unchecks any to skip,
-// then confirms. Returns the selected aliases (in canonical order), or ok=false
-// on esc/ctrl+c.
-func pickAliases() (sel []rigAlias, ok bool) {
+// pickAliases shows the candidates with preselected pre-checked; the user
+// toggles the set, then confirms. Returns the selected aliases (in canonical
+// order), or ok=false on esc/ctrl+c.
+func pickAliases(preselected []rigAlias) (sel []rigAlias, ok bool) {
+	pre := map[string]bool{}
+	for _, a := range preselected {
+		pre[a.name] = true
+	}
 	var selected []string
 	opts := make([]huh.Option[string], 0, len(rigAliases))
 	for _, a := range rigAliases {
-		opts = append(opts, huh.NewOption(fmt.Sprintf("%-4s %s %s", a.name, integrationBase, a.verb), a.name).Selected(true))
+		opts = append(opts, huh.NewOption(fmt.Sprintf("%-4s %s %s", a.name, integrationBase, a.verb), a.name).Selected(pre[a.name]))
 	}
 	ms := huh.NewMultiSelect[string]().
 		Title("Which aliases? (space toggles · enter confirms · esc cancels)").
@@ -202,6 +248,19 @@ func pickAliases() (sel []rigAlias, ok bool) {
 	}
 	chosen, _ := aliasesByName(selected)
 	return chosen, true
+}
+
+// installedAliases reports which candidate aliases the given block already
+// defines, by matching each one's rendered line — so the checklist can pre-check
+// exactly what's there. Order follows canonical rigAliases.
+func installedAliases(shell, block string) []rigAlias {
+	var out []rigAlias
+	for _, a := range rigAliases {
+		if strings.Contains(block, aliasLine(shell, a)) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // aliasesByName resolves alias names to their definitions, preserving the

@@ -207,12 +207,43 @@ func TestAliasCommand_AllAndOnlyAreMutuallyExclusive(t *testing.T) {
 // resolveAliasSelection falls back to the full set off a TTY (as in tests, CI,
 // and `rig setup --aliases`), so a plain non-interactive install is unchanged.
 func TestResolveAliasSelection_NonInteractiveTakesFullSet(t *testing.T) {
-	sel, cancelled, err := resolveAliasSelection(nil, false, false)
-	if err != nil || cancelled {
-		t.Fatalf("resolveAliasSelection = (_, %v, %v), want the full set", cancelled, err)
+	sel, cancelled, clearAll, err := resolveAliasSelection(nil, false, false, rigAliases)
+	if err != nil || cancelled || clearAll {
+		t.Fatalf("resolveAliasSelection = (_, %v, %v, %v), want the full set", cancelled, clearAll, err)
 	}
 	if len(sel) != len(rigAliases) {
 		t.Fatalf("got %d aliases, want the full %d", len(sel), len(rigAliases))
+	}
+}
+
+// installedAliases powers the checklist's pre-check state on re-run: it must
+// report exactly the aliases a prior block wrote, including the rcd function.
+func TestInstalledAliases_ReportsWhatTheBlockDefines(t *testing.T) {
+	for _, shell := range setupShells {
+		block := aliasSnippetFor(shell, []rigAlias{
+			{"rb", "build", "", false},
+			{"rcd", "cd", "", true},
+		})
+		got := installedAliases(shell, block)
+		if len(got) != 2 || got[0].name != "rb" || got[1].name != "rcd" {
+			t.Fatalf("%s: installedAliases = %v, want [rb rcd]", shell, aliasNamesOf(got))
+		}
+		// A candidate the block doesn't define must not be reported.
+		if inst := installedAliases(shell, block); aliasNamesOf(inst) == aliasNames() {
+			t.Fatalf("%s: should not report the full set for a 2-alias block", shell)
+		}
+	}
+}
+
+func TestExtractBlock_RoundTripsWithSplice(t *testing.T) {
+	snippet := aliasSnippetFor("zsh", rigAliases)
+	rc, _ := spliceBlock("# rc\n", snippet, aliasMarkerBegin(), aliasMarkerEnd())
+	block, ok := extractBlock(rc, aliasMarkerBegin(), aliasMarkerEnd())
+	if !ok || block != snippet {
+		t.Fatalf("extractBlock = (%q, %v), want the spliced snippet", block, ok)
+	}
+	if _, ok := extractBlock("# no block here\n", aliasMarkerBegin(), aliasMarkerEnd()); ok {
+		t.Fatal("extractBlock must report ok=false when there's no block")
 	}
 }
 
