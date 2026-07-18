@@ -13,5 +13,6 @@ func extraCmds() []*cobra.Command {
 		newPublishCmd(),
 		newDefaultCmd(),
 		newSetupCmd(),
+		newAliasCmd(),
 	}
 }

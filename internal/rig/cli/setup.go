@@ -209,11 +209,18 @@ func powershellProfile(home string) (string, error) {
 // existing marked block for prog when present, appending otherwise. Returns
 // false (writing nothing) when the file already carries exactly this snippet.
 func installSnippet(rcPath, snippet, prog string) (bool, error) {
+	return installBlock(rcPath, snippet, markerBegin(prog), markerEnd(prog))
+}
+
+// installBlock is installSnippet keyed by an explicit marker pair rather than a
+// program name, so callers with their own markers (e.g. `rig alias`, whose block
+// is separate from setup's) reuse the same read/splice/write path.
+func installBlock(rcPath, snippet, mBegin, mEnd string) (bool, error) {
 	data, err := os.ReadFile(rcPath)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
-	updated, changed := spliceSnippet(string(data), snippet, prog)
+	updated, changed := spliceBlock(string(data), snippet, mBegin, mEnd)
 	if !changed {
 		return false, nil
 	}
@@ -230,7 +237,14 @@ func installSnippet(rcPath, snippet, prog string) (bool, error) {
 // (e.g. a rig block when installing rig-dev) are left untouched. changed is
 // false when the existing block already equals snippet (idempotent re-run). Pure.
 func spliceSnippet(content, snippet, prog string) (updated string, changed bool) {
-	mBegin, mEnd := markerBegin(prog), markerEnd(prog)
+	return spliceBlock(content, snippet, markerBegin(prog), markerEnd(prog))
+}
+
+// spliceBlock is spliceSnippet keyed by an explicit marker pair. It returns
+// content with the mBegin…mEnd block replaced in place, or the snippet appended
+// when no such block exists; other blocks are left untouched. changed is false
+// when the existing block already equals snippet (idempotent re-run). Pure.
+func spliceBlock(content, snippet, mBegin, mEnd string) (updated string, changed bool) {
 	begin := strings.Index(content, mBegin)
 	end := strings.Index(content, mEnd)
 	if begin >= 0 && end > begin {
@@ -247,6 +261,28 @@ func spliceSnippet(content, snippet, prog string) (updated string, changed bool)
 		content += "\n"
 	}
 	return content + "\n" + snippet + "\n", true
+}
+
+// removeBlock strips the mBegin…mEnd block (and the single blank line the
+// installer left in front of it, if any) from content. changed is false when
+// there's no such block. Pure — the inverse of spliceBlock for uninstalling.
+func removeBlock(content, mBegin, mEnd string) (updated string, changed bool) {
+	begin := strings.Index(content, mBegin)
+	end := strings.Index(content, mEnd)
+	if begin < 0 || end <= begin {
+		return content, false
+	}
+	end += len(mEnd)
+	// Trim a trailing newline that belonged to the block, plus the blank
+	// separator line spliceBlock inserts when appending after existing content.
+	if end < len(content) && content[end] == '\n' {
+		end++
+	}
+	pre := content[:begin]
+	if strings.HasSuffix(pre, "\n\n") {
+		pre = pre[:len(pre)-1]
+	}
+	return pre + content[end:], true
 }
 
 // setupSnippet renders the marked rc-file block for the shell (no trailing
