@@ -49,6 +49,7 @@ func markerEnd(prog string) string   { return "# <<< " + prog + " shell integrat
 func newSetupCmd() *cobra.Command {
 	var printOnly bool
 	var dev bool
+	var aliases bool
 
 	cmd := &cobra.Command{
 		Use:   "setup [shell]",
@@ -73,24 +74,18 @@ With --dev the block targets the "rig-dev" launcher instead (its own wrapper,
 completion bound to rig-dev, and its own markers) so it coexists with a normal
 rig block in the same rc file. Run it as "rig-dev setup zsh --dev".
 
+Add --aliases to also install short verb aliases (rr, ri, rup, rrm) in the same
+run — the same thing "rig alias install" does, wired up in one command. They
+live in their own marked block, so "rig alias remove" still takes them back out.
+
 Use --print to inspect the snippet (or wire it up yourself) without writing.
 `),
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: setupShellCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			shell := ""
-			if len(args) == 1 {
-				shell = strings.ToLower(strings.TrimSpace(args[0]))
-			}
-			if shell == "pwsh" {
-				shell = "powershell"
-			}
-			if shell == "" {
-				shell = shellFromEnv()
-			}
-			if !isSetupShell(shell) {
-				return fmt.Errorf("unknown shell %q — supported: %s (rig setup <shell>)",
-					shell, strings.Join(setupShells, ", "))
+			shell, err := resolveSetupShell(args)
+			if err != nil {
+				return err
 			}
 
 			prog := integrationBase
@@ -101,6 +96,9 @@ Use --print to inspect the snippet (or wire it up yourself) without writing.
 			snippet := setupSnippet(shell, prog)
 			if printOnly {
 				fmt.Fprintln(out, snippet)
+				if aliases {
+					fmt.Fprintln(out, aliasSnippet(shell))
+				}
 				return nil
 			}
 
@@ -111,6 +109,9 @@ Use --print to inspect the snippet (or wire it up yourself) without writing.
 			if dryRun {
 				fmt.Fprintln(out, dimStyle.Render("→ would write "+rcPath+":"))
 				fmt.Fprintln(out, snippet)
+				if aliases {
+					fmt.Fprintln(out, aliasSnippet(shell))
+				}
 				return nil
 			}
 
@@ -118,17 +119,39 @@ Use --print to inspect the snippet (or wire it up yourself) without writing.
 			if err != nil {
 				return fmt.Errorf("couldn't update %s: %w", rcPath, err)
 			}
-			if !changed {
+			if changed {
+				fmt.Fprintf(out, "Installed %s shell integration (cd wrapper + completion) in %s\n", prog, rcPath)
+			} else {
 				fmt.Fprintf(out, "%s shell integration already installed in %s — nothing to do.\n", prog, rcPath)
-				return nil
 			}
-			fmt.Fprintf(out, "Installed %s shell integration (cd wrapper + completion) in %s\n", prog, rcPath)
-			fmt.Fprintf(out, "Restart your shell or run: source %s\n", rcPath)
+
+			// --aliases folds the separate `rig alias` block into the same run,
+			// so one command wires up both. It stays its own marked block (and
+			// always targets the base `rig`), so `rig alias remove` still works
+			// and a plain re-run of setup leaves it untouched.
+			if aliases {
+				aChanged, err := installBlock(rcPath, aliasSnippet(shell), aliasMarkerBegin(), aliasMarkerEnd())
+				if err != nil {
+					return fmt.Errorf("couldn't update %s: %w", rcPath, err)
+				}
+				if aChanged {
+					fmt.Fprintf(out, "Installed rig aliases (%s) in %s\n", aliasNames(), rcPath)
+				} else {
+					fmt.Fprintf(out, "rig aliases already installed in %s — nothing to do.\n", rcPath)
+				}
+			} else {
+				fmt.Fprintf(out, "%s\n", dimStyle.Render("Tip: add short aliases ("+aliasNames()+") — rerun with --aliases, or: rig alias install"))
+			}
+
+			if changed || aliases {
+				fmt.Fprintln(out, reloadHint(shell, rcPath))
+			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&printOnly, "print", false, "print the snippet instead of writing the rc file")
 	cmd.Flags().BoolVar(&dev, "dev", false, "target the rig-dev launcher (own wrapper, completion, and markers)")
+	cmd.Flags().BoolVar(&aliases, "aliases", false, "also install short verb aliases ("+aliasNames()+")")
 	return cmd
 }
 
@@ -152,6 +175,16 @@ func isSetupShell(shell string) bool {
 // shellFromEnv guesses the login shell from $SHELL ("" when unset).
 func shellFromEnv() string {
 	return strings.ToLower(filepath.Base(os.Getenv("SHELL")))
+}
+
+// reloadHint returns the "apply it now" line for the shell. zsh/bash/fish can
+// source the rc file; PowerShell has no `source` command (profiles are
+// dot-sourced), so it just gets a restart nudge.
+func reloadHint(shell, rcPath string) string {
+	if shell == "powershell" {
+		return "Restart your shell (or dot-source your profile: . $PROFILE)"
+	}
+	return "Restart your shell or run: source " + rcPath
 }
 
 // rcFileFor returns the startup file the snippet belongs in. zsh honors
@@ -209,11 +242,18 @@ func powershellProfile(home string) (string, error) {
 // existing marked block for prog when present, appending otherwise. Returns
 // false (writing nothing) when the file already carries exactly this snippet.
 func installSnippet(rcPath, snippet, prog string) (bool, error) {
+	return installBlock(rcPath, snippet, markerBegin(prog), markerEnd(prog))
+}
+
+// installBlock is installSnippet keyed by an explicit marker pair rather than a
+// program name, so callers with their own markers (e.g. `rig alias`, whose block
+// is separate from setup's) reuse the same read/splice/write path.
+func installBlock(rcPath, snippet, mBegin, mEnd string) (bool, error) {
 	data, err := os.ReadFile(rcPath)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
-	updated, changed := spliceSnippet(string(data), snippet, prog)
+	updated, changed := spliceBlock(string(data), snippet, mBegin, mEnd)
 	if !changed {
 		return false, nil
 	}
@@ -230,7 +270,14 @@ func installSnippet(rcPath, snippet, prog string) (bool, error) {
 // (e.g. a rig block when installing rig-dev) are left untouched. changed is
 // false when the existing block already equals snippet (idempotent re-run). Pure.
 func spliceSnippet(content, snippet, prog string) (updated string, changed bool) {
-	mBegin, mEnd := markerBegin(prog), markerEnd(prog)
+	return spliceBlock(content, snippet, markerBegin(prog), markerEnd(prog))
+}
+
+// spliceBlock is spliceSnippet keyed by an explicit marker pair. It returns
+// content with the mBegin…mEnd block replaced in place, or the snippet appended
+// when no such block exists; other blocks are left untouched. changed is false
+// when the existing block already equals snippet (idempotent re-run). Pure.
+func spliceBlock(content, snippet, mBegin, mEnd string) (updated string, changed bool) {
 	begin := strings.Index(content, mBegin)
 	end := strings.Index(content, mEnd)
 	if begin >= 0 && end > begin {
@@ -247,6 +294,40 @@ func spliceSnippet(content, snippet, prog string) (updated string, changed bool)
 		content += "\n"
 	}
 	return content + "\n" + snippet + "\n", true
+}
+
+// removeBlock strips the mBegin…mEnd block (and the single blank line the
+// installer left in front of it, if any) from content. changed is false when
+// there's no such block. Pure — the inverse of spliceBlock for uninstalling.
+func removeBlock(content, mBegin, mEnd string) (updated string, changed bool) {
+	begin := strings.Index(content, mBegin)
+	end := strings.Index(content, mEnd)
+	if begin < 0 || end <= begin {
+		return content, false
+	}
+	end += len(mEnd)
+	// Trim a trailing newline that belonged to the block, plus the blank
+	// separator line spliceBlock inserts when appending after existing content.
+	if end < len(content) && content[end] == '\n' {
+		end++
+	}
+	pre := content[:begin]
+	if strings.HasSuffix(pre, "\n\n") {
+		pre = pre[:len(pre)-1]
+	}
+	return pre + content[end:], true
+}
+
+// extractBlock returns the text of the mBegin…mEnd block (markers included),
+// and ok=false when there's no such block. Pure — lets callers inspect what a
+// previous install wrote (e.g. which aliases are currently present).
+func extractBlock(content, mBegin, mEnd string) (block string, ok bool) {
+	begin := strings.Index(content, mBegin)
+	end := strings.Index(content, mEnd)
+	if begin < 0 || end <= begin {
+		return "", false
+	}
+	return content[begin : end+len(mEnd)], true
 }
 
 // setupSnippet renders the marked rc-file block for the shell (no trailing
