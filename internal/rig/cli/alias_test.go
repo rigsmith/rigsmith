@@ -79,17 +79,30 @@ func TestAliasSnippet_FishAndPowershellSyntax(t *testing.T) {
 	if !strings.Contains(ps, "function rrm { rig uninstall @args }") {
 		t.Fatalf("powershell snippet should define forwarding functions:\n%s", ps)
 	}
+	// ri is a read-only built-in alias for Remove-Item; the block must clear it
+	// first or `ri` would delete instead of installing.
+	if !strings.Contains(ps, "Remove-Item Alias:ri -Force -ErrorAction SilentlyContinue; function ri {") {
+		t.Fatalf("powershell snippet must clear the built-in ri alias before defining it:\n%s", ps)
+	}
 }
 
-func TestAliasSnippet_NoUninstallAliasShadowsRun(t *testing.T) {
-	// The uninstall alias is deliberately "rrm", never "run" — a run-named
-	// alias that uninstalls would be a nasty shell footgun.
-	for _, shell := range setupShells {
-		s := aliasSnippet(shell)
-		if strings.Contains(s, " run ") && strings.Contains(s, "uninstall") &&
-			strings.Contains(s, "run=") {
-			t.Fatalf("%s snippet appears to alias 'run' to uninstall:\n%s", shell, s)
+func TestAliasSet_UninstallIsRrmAndNothingShadowsRun(t *testing.T) {
+	// Check the source of truth directly, so adding a bad entry like
+	// {name: "run", verb: "uninstall"} actually fails the test.
+	sawUninstall := false
+	for _, a := range rigAliases {
+		if a.name == "run" {
+			t.Fatalf("no alias may claim the name %q (it shadows the run command); got verb %q", a.name, a.verb)
 		}
+		if a.verb == "uninstall" {
+			sawUninstall = true
+			if a.name != "rrm" {
+				t.Fatalf("uninstall alias = %q, want rrm", a.name)
+			}
+		}
+	}
+	if !sawUninstall {
+		t.Fatal("expected an alias for the uninstall verb")
 	}
 }
 
@@ -260,8 +273,13 @@ func TestAliasCommand_PrintWritesNothing(t *testing.T) {
 	if !strings.Contains(buf.String(), "alias rr 'rig run'") {
 		t.Fatalf("output = %q, want the fish snippet", buf.String())
 	}
+	// The install target is fish, so --print must not have written fish's own
+	// startup file (nor any other).
+	if _, err := os.Stat(filepath.Join(home, ".config", "fish", "config.fish")); !os.IsNotExist(err) {
+		t.Fatal("--print must not write fish's config.fish")
+	}
 	if _, err := os.Stat(filepath.Join(home, ".zshrc")); !os.IsNotExist(err) {
-		t.Fatal("--print must not write an rc file")
+		t.Fatal("--print must not write any rc file")
 	}
 }
 

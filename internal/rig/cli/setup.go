@@ -83,19 +83,9 @@ Use --print to inspect the snippet (or wire it up yourself) without writing.
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: setupShellCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			shell := ""
-			if len(args) == 1 {
-				shell = strings.ToLower(strings.TrimSpace(args[0]))
-			}
-			if shell == "pwsh" {
-				shell = "powershell"
-			}
-			if shell == "" {
-				shell = shellFromEnv()
-			}
-			if !isSetupShell(shell) {
-				return fmt.Errorf("unknown shell %q — supported: %s (rig setup <shell>)",
-					shell, strings.Join(setupShells, ", "))
+			shell, err := resolveSetupShell(args)
+			if err != nil {
+				return err
 			}
 
 			prog := integrationBase
@@ -154,7 +144,7 @@ Use --print to inspect the snippet (or wire it up yourself) without writing.
 			}
 
 			if changed || aliases {
-				fmt.Fprintf(out, "Restart your shell or run: source %s\n", rcPath)
+				fmt.Fprintln(out, reloadHint(shell, rcPath))
 			}
 			return nil
 		},
@@ -185,6 +175,16 @@ func isSetupShell(shell string) bool {
 // shellFromEnv guesses the login shell from $SHELL ("" when unset).
 func shellFromEnv() string {
 	return strings.ToLower(filepath.Base(os.Getenv("SHELL")))
+}
+
+// reloadHint returns the "apply it now" line for the shell. zsh/bash/fish can
+// source the rc file; PowerShell has no `source` command (profiles are
+// dot-sourced), so it just gets a restart nudge.
+func reloadHint(shell, rcPath string) string {
+	if shell == "powershell" {
+		return "Restart your shell (or dot-source your profile: . $PROFILE)"
+	}
+	return "Restart your shell or run: source " + rcPath
 }
 
 // rcFileFor returns the startup file the snippet belongs in. zsh honors

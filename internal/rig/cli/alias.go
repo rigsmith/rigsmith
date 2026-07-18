@@ -188,7 +188,7 @@ Off a terminal it installs the full set. --only names a subset directly, and
 				return nil
 			}
 			fmt.Fprintf(out, "Installed rig aliases (%s) in %s\n", aliasNamesOf(selection), rcPath)
-			fmt.Fprintf(out, "Restart your shell or run: source %s\n", rcPath)
+			fmt.Fprintln(out, reloadHint(shell, rcPath))
 			return nil
 		},
 	}
@@ -397,10 +397,22 @@ func aliasLine(shell string, a rigAlias) string {
 	case "fish":
 		return fmt.Sprintf("alias %s '%s %s'", a.name, integrationBase, a.verb)
 	case "powershell":
-		return fmt.Sprintf("function %s { %s %s @args }", a.name, integrationBase, a.verb)
+		// PowerShell ships read-only aliases (e.g. ri → Remove-Item) that
+		// outrank functions in command resolution, so a bare `function ri`
+		// would be shadowed and `ri` would still delete. Drop any conflicting
+		// alias first, then define the forwarder. See psAliasClear.
+		return psAliasClear(a.name) + fmt.Sprintf("function %s { %s %s @args }", a.name, integrationBase, a.verb)
 	default: // zsh, bash
 		return fmt.Sprintf("alias %s='%s %s'", a.name, integrationBase, a.verb)
 	}
+}
+
+// psAliasClear renders the PowerShell prelude that removes a built-in alias of
+// the given name (if any) so our forwarding function wins. -Force is required
+// because the default aliases are ReadOnly; -ErrorAction SilentlyContinue makes
+// it a no-op when no such alias exists.
+func psAliasClear(name string) string {
+	return fmt.Sprintf("Remove-Item Alias:%s -Force -ErrorAction SilentlyContinue; ", name)
 }
 
 // aliasCdFunc renders rcd, a self-contained take on the `rig cd` wrapper. `rig
@@ -418,12 +430,12 @@ func aliasCdFunc(shell, name string) string {
     and builtin cd -- $__rig_dir
 end`, name, integrationBase)
 	case "powershell":
-		return fmt.Sprintf(`function %s {
+		return fmt.Sprintf(`%sfunction %s {
     $bin = (Get-Command -Name %s -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
     if (-not $bin) { return }
     $dir = & $bin cd @args | Select-Object -Last 1
     if ($LASTEXITCODE -eq 0 -and $dir) { Set-Location -LiteralPath $dir }
-}`, name, integrationBase)
+}`, psAliasClear(name), name, integrationBase)
 	default: // zsh, bash
 		return fmt.Sprintf(`%s() {
   local __rig_dir
@@ -440,11 +452,13 @@ func resolveSetupShell(args []string) (string, error) {
 	if len(args) == 1 {
 		shell = strings.ToLower(strings.TrimSpace(args[0]))
 	}
-	if shell == "pwsh" {
-		shell = "powershell"
-	}
 	if shell == "" {
 		shell = shellFromEnv()
+	}
+	// Normalize the pwsh alias after resolving from either source, so
+	// SHELL=/usr/bin/pwsh with no argument still maps to powershell.
+	if shell == "pwsh" {
+		shell = "powershell"
 	}
 	if !isSetupShell(shell) {
 		return "", fmt.Errorf("unknown shell %q — supported: %s", shell, strings.Join(setupShells, ", "))
