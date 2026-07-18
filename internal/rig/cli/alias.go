@@ -193,7 +193,7 @@ Off a terminal it installs the full set. --only names a subset directly, and
 		},
 	}
 	cmd.Flags().BoolVar(&printOnly, "print", false, "print the snippet instead of writing the rc file")
-	cmd.Flags().BoolVar(&all, "all", false, "install every alias without the interactive prompt")
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "install every alias without the interactive prompt")
 	cmd.Flags().StringSliceVar(&only, "only", nil, "install only these aliases (comma-separated, e.g. rb,rt,rcd)")
 	cmd.MarkFlagsMutuallyExclusive("all", "only")
 	return cmd
