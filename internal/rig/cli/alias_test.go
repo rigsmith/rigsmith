@@ -31,6 +31,41 @@ func TestAliasSnippet_PosixUsesAliasBuiltin(t *testing.T) {
 	}
 }
 
+func TestAliasSnippet_IncludesInnerLoopVerbs(t *testing.T) {
+	s := aliasSnippet("zsh")
+	for _, want := range []string{
+		"alias rb='rig build'",
+		"alias rt='rig test'",
+		"alias rf='rig format'",
+		"alias rl='rig lint'",
+		"alias rk='rig kill'",
+		"alias rw='rig watch'",
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("zsh snippet missing %q:\n%s", want, s)
+		}
+	}
+}
+
+func TestAliasSnippet_RcdIsSelfContainedCdFunction(t *testing.T) {
+	// rcd must be a function that captures `rig cd`'s printed dir and cds — a
+	// plain alias would only print. It calls the binary directly (command rig),
+	// so it works with or without the setup wrapper.
+	z := aliasSnippet("zsh")
+	if !strings.Contains(z, "rcd() {") || !strings.Contains(z, "command rig cd") || !strings.Contains(z, "builtin cd --") {
+		t.Fatalf("zsh rcd should be a self-contained cd function:\n%s", z)
+	}
+	if strings.Contains(z, "alias rcd=") {
+		t.Fatalf("rcd must be a function, not a plain alias:\n%s", z)
+	}
+	if f := aliasSnippet("fish"); !strings.Contains(f, "function rcd") || !strings.Contains(f, "command rig cd $argv") {
+		t.Fatalf("fish rcd missing its function:\n%s", f)
+	}
+	if p := aliasSnippet("powershell"); !strings.Contains(p, "function rcd {") || !strings.Contains(p, "Set-Location -LiteralPath") {
+		t.Fatalf("powershell rcd missing its function:\n%s", p)
+	}
+}
+
 func TestAliasSnippet_FishAndPowershellSyntax(t *testing.T) {
 	fish := aliasSnippet("fish")
 	if !strings.Contains(fish, "alias rr 'rig run'") {

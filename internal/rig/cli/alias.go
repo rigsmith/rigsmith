@@ -22,21 +22,32 @@ import (
 // uninstall rather than "run", which would shadow the ubiquitous run command.
 
 // rigAlias is one installed alias: the short name, the rig verb it expands to,
-// and a one-line description for `rig alias list`.
+// and a one-line description for `rig alias list`. cd marks the navigation alias
+// (rcd), which renders as a self-contained cd function rather than a passthrough
+// (see aliasCdFunc).
 type rigAlias struct {
 	name string
 	verb string
 	desc string
+	cd   bool
 }
 
-// rigAliases is the fixed set `rig alias` installs. All target the base `rig`
-// name (integrationBase), so when the `rig` wrapper function from `rig setup` is
-// present the alias flows through it just like a bare `rig` call.
+// rigAliases is the fixed set `rig alias` installs, ordered inner-loop first.
+// All target the base `rig` name (integrationBase); the plain passthroughs flow
+// through the `rig` wrapper function `rig setup` installs (when present), while
+// rcd calls the binary directly so it works with or without that wrapper.
 var rigAliases = []rigAlias{
-	{"rr", "run", "Run the project"},
-	{"ri", "install", "Install/restore dependencies"},
-	{"rup", "upgrade", "Upgrade dependencies"},
-	{"rrm", "uninstall", "Uninstall packages"},
+	{"rr", "run", "Run the project", false},
+	{"rb", "build", "Build the project", false},
+	{"rt", "test", "Run the tests", false},
+	{"rf", "format", "Format the code", false},
+	{"rl", "lint", "Lint the code", false},
+	{"rcd", "cd", "Jump to a project (cds the shell)", true},
+	{"ri", "install", "Install/restore dependencies", false},
+	{"rup", "upgrade", "Upgrade dependencies", false},
+	{"rrm", "uninstall", "Uninstall packages", false},
+	{"rk", "kill", "Kill dev processes", false},
+	{"rw", "watch", "Watch a verb — e.g. `rw r`", false},
 }
 
 // Markers bracketing the managed alias block. Distinct from setup's
@@ -204,8 +215,12 @@ func aliasSnippet(shell string) string {
 
 // aliasLine renders one alias for the given shell. POSIX shells and fish use
 // their alias builtins; PowerShell's Set-Alias can't carry arguments, so the
-// alias is a thin function that forwards @args.
+// alias is a thin function that forwards @args. The cd alias (rcd) is special —
+// see aliasCdFunc.
 func aliasLine(shell string, a rigAlias) string {
+	if a.cd {
+		return aliasCdFunc(shell, a.name)
+	}
 	switch shell {
 	case "fish":
 		return fmt.Sprintf("alias %s '%s %s'", a.name, integrationBase, a.verb)
@@ -213,6 +228,35 @@ func aliasLine(shell string, a rigAlias) string {
 		return fmt.Sprintf("function %s { %s %s @args }", a.name, integrationBase, a.verb)
 	default: // zsh, bash
 		return fmt.Sprintf("alias %s='%s %s'", a.name, integrationBase, a.verb)
+	}
+}
+
+// aliasCdFunc renders rcd, a self-contained take on the `rig cd` wrapper. `rig
+// cd` only prints the target dir (a subprocess can't cd its parent shell), so
+// the alias must capture that output and cd itself. It calls the rig binary
+// directly — `command rig` / Get-Command Application — not the `rig` shell
+// function `rig setup` may install, so rcd works whether or not that wrapper is
+// present, and never double-handles the cd.
+func aliasCdFunc(shell, name string) string {
+	switch shell {
+	case "fish":
+		return fmt.Sprintf(`function %s
+    set -l __rig_dir (command %s cd $argv)
+    and test -n "$__rig_dir"
+    and builtin cd -- $__rig_dir
+end`, name, integrationBase)
+	case "powershell":
+		return fmt.Sprintf(`function %s {
+    $bin = (Get-Command -Name %s -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    if (-not $bin) { return }
+    $dir = & $bin cd @args | Select-Object -Last 1
+    if ($LASTEXITCODE -eq 0 -and $dir) { Set-Location -LiteralPath $dir }
+}`, name, integrationBase)
+	default: // zsh, bash
+		return fmt.Sprintf(`%s() {
+  local __rig_dir
+  __rig_dir="$(command %s cd "$@")" && [ -n "$__rig_dir" ] && builtin cd -- "$__rig_dir"
+}`, name, integrationBase)
 	}
 }
 
