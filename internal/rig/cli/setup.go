@@ -49,6 +49,7 @@ func markerEnd(prog string) string   { return "# <<< " + prog + " shell integrat
 func newSetupCmd() *cobra.Command {
 	var printOnly bool
 	var dev bool
+	var aliases bool
 
 	cmd := &cobra.Command{
 		Use:   "setup [shell]",
@@ -72,6 +73,10 @@ and is replaced in place, so re-running is safe.
 With --dev the block targets the "rig-dev" launcher instead (its own wrapper,
 completion bound to rig-dev, and its own markers) so it coexists with a normal
 rig block in the same rc file. Run it as "rig-dev setup zsh --dev".
+
+Add --aliases to also install short verb aliases (rr, ri, rup, rrm) in the same
+run — the same thing "rig alias install" does, wired up in one command. They
+live in their own marked block, so "rig alias remove" still takes them back out.
 
 Use --print to inspect the snippet (or wire it up yourself) without writing.
 `),
@@ -101,6 +106,9 @@ Use --print to inspect the snippet (or wire it up yourself) without writing.
 			snippet := setupSnippet(shell, prog)
 			if printOnly {
 				fmt.Fprintln(out, snippet)
+				if aliases {
+					fmt.Fprintln(out, aliasSnippet(shell))
+				}
 				return nil
 			}
 
@@ -111,6 +119,9 @@ Use --print to inspect the snippet (or wire it up yourself) without writing.
 			if dryRun {
 				fmt.Fprintln(out, dimStyle.Render("→ would write "+rcPath+":"))
 				fmt.Fprintln(out, snippet)
+				if aliases {
+					fmt.Fprintln(out, aliasSnippet(shell))
+				}
 				return nil
 			}
 
@@ -118,17 +129,39 @@ Use --print to inspect the snippet (or wire it up yourself) without writing.
 			if err != nil {
 				return fmt.Errorf("couldn't update %s: %w", rcPath, err)
 			}
-			if !changed {
+			if changed {
+				fmt.Fprintf(out, "Installed %s shell integration (cd wrapper + completion) in %s\n", prog, rcPath)
+			} else {
 				fmt.Fprintf(out, "%s shell integration already installed in %s — nothing to do.\n", prog, rcPath)
-				return nil
 			}
-			fmt.Fprintf(out, "Installed %s shell integration (cd wrapper + completion) in %s\n", prog, rcPath)
-			fmt.Fprintf(out, "Restart your shell or run: source %s\n", rcPath)
+
+			// --aliases folds the separate `rig alias` block into the same run,
+			// so one command wires up both. It stays its own marked block (and
+			// always targets the base `rig`), so `rig alias remove` still works
+			// and a plain re-run of setup leaves it untouched.
+			if aliases {
+				aChanged, err := installBlock(rcPath, aliasSnippet(shell), aliasMarkerBegin(), aliasMarkerEnd())
+				if err != nil {
+					return fmt.Errorf("couldn't update %s: %w", rcPath, err)
+				}
+				if aChanged {
+					fmt.Fprintf(out, "Installed rig aliases (%s) in %s\n", aliasNames(), rcPath)
+				} else {
+					fmt.Fprintf(out, "rig aliases already installed in %s — nothing to do.\n", rcPath)
+				}
+			} else {
+				fmt.Fprintf(out, "%s\n", dimStyle.Render("Tip: add short aliases ("+aliasNames()+") — rerun with --aliases, or: rig alias install"))
+			}
+
+			if changed || aliases {
+				fmt.Fprintf(out, "Restart your shell or run: source %s\n", rcPath)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&printOnly, "print", false, "print the snippet instead of writing the rc file")
 	cmd.Flags().BoolVar(&dev, "dev", false, "target the rig-dev launcher (own wrapper, completion, and markers)")
+	cmd.Flags().BoolVar(&aliases, "aliases", false, "also install short verb aliases ("+aliasNames()+")")
 	return cmd
 }
 

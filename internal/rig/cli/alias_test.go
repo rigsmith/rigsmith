@@ -144,6 +144,58 @@ func TestAliasCommand_PrintWritesNothing(t *testing.T) {
 	}
 }
 
+func TestSetupCommand_AliasesFlagInstallsBothBlocks(t *testing.T) {
+	home := fakeHome(t)
+	rc := filepath.Join(home, ".zshrc")
+
+	cmd := newSetupCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"zsh", "--aliases"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("setup --aliases: %v", err)
+	}
+	data, _ := os.ReadFile(rc)
+	if !strings.Contains(string(data), markerBegin("rig")) {
+		t.Fatalf("rc missing the setup block:\n%s", data)
+	}
+	if !strings.Contains(string(data), aliasMarkerBegin()) || !strings.Contains(string(data), "alias rr='rig run'") {
+		t.Fatalf("rc missing the alias block:\n%s", data)
+	}
+
+	// `rig alias remove` still cleanly strips only the alias block.
+	rm := newAliasCmd()
+	rm.SetOut(&bytes.Buffer{})
+	rm.SetErr(&bytes.Buffer{})
+	rm.SetArgs([]string{"remove", "zsh"})
+	if err := rm.Execute(); err != nil {
+		t.Fatalf("alias remove: %v", err)
+	}
+	final, _ := os.ReadFile(rc)
+	if strings.Contains(string(final), aliasMarkerBegin()) {
+		t.Fatalf("alias block should be gone:\n%s", final)
+	}
+	if !strings.Contains(string(final), markerBegin("rig")) {
+		t.Fatal("setup block must survive alias remove")
+	}
+}
+
+func TestSetupCommand_PlainRunSuggestsAliases(t *testing.T) {
+	fakeHome(t)
+	cmd := newSetupCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"zsh"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if !strings.Contains(buf.String(), "--aliases") {
+		t.Fatalf("plain setup should hint at --aliases:\n%s", buf.String())
+	}
+}
+
 func TestAliasCommand_RejectsAnUnknownShell(t *testing.T) {
 	fakeHome(t)
 	t.Setenv("SHELL", "/bin/tcsh")
