@@ -102,6 +102,22 @@ jobs:
           node-version: "22"
           registry-url: https://registry.npmjs.org
 
+      # Keep the rigsmith/winget-pkgs fork's master current with upstream before
+      # GoReleaser branches off it to open the winget PRs. winget-pkgs moves
+      # thousands of commits a week; a stale fork turns each PR into a massive,
+      # conflicting diff instead of a clean single-manifest add. Needs WINGET_TOKEN
+      # (write access to the fork); no-ops without it, since the winget upload is
+      # skipped then anyway.
+      - name: Sync winget-pkgs fork with upstream
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "WINGET_TOKEN unset — winget upload is skipped, nothing to sync."
+            exit 0
+          fi
+          gh repo sync rigsmith/winget-pkgs --source microsoft/winget-pkgs --branch master
+
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
