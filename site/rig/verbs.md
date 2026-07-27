@@ -246,6 +246,33 @@ verb — these are exact-match only (excluded from prefix-matching) and never
 shadow a built-in. `rig run` offers those `cmd/*` binaries directly instead of
 falling through to a doomed `go run .`.
 
+## How a project name resolves {#project-resolution}
+
+`rig run <name>`, `rig build <name>`, `rig cd <name>` and a configured
+[`defaultProject`](./configuration) all resolve through the same rules, in this
+order:
+
+1. **Best tier wins, and it stops there** — exact, then prefix, then substring
+   (`rig cd` also accepts subsequences). One exact hit is never ambiguous just
+   because looser matches exist: `Tweed.App` is that project, not it plus
+   `Tweed.App.Tests`. Names match in full, slash-short (`@scope/pkg` → `pkg`),
+   and dot-short (`Acme.Desktop` → `Desktop`) form.
+2. **Ties break by proximity to your working directory** — the project you're
+   standing in wins, then the nearest common ancestor.
+3. **Anything still tied is ambiguous, and rig says so** — a picker on a
+   terminal; off one, the candidate paths, what each copy is (a
+   [nested worktree](./configuration#nested-worktrees), and whether `rig prune`
+   would remove it), and the exact `exclude` line to paste into `.rig.json`.
+
+A bare `rig run` obeys **the same rules** as `rig run <name>`. A
+`defaultProject` matching two checkouts fails exactly as the explicit command
+would rather than launching whichever was found first, and when it resolves
+cleanly rig echoes what it picked:
+
+```
+· defaultProject Tweed.App → ui/src/Tweed.App
+```
+
 ## Opening the picker (`-i` / `--interactive`)
 
 At a workspace root where targets live only in subdirectories, a bare `rig run`

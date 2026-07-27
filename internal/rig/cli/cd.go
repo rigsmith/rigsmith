@@ -81,7 +81,10 @@ func runCd(cmd *cobra.Command, query string) error {
 
 	query = strings.TrimSpace(query)
 	if query != "" {
-		matches := rankCdTargets(targets, query)
+		// Only the best tier can answer the query — one exact hit is never made
+		// ambiguous by the prefix and subsequence matches ranked behind it — and
+		// any remaining tie goes to the copy nearest cwd.
+		matches := nearestByDir(cwd, topCdTargets(targets, query), func(t cdTarget) string { return t.Dir })
 		if len(matches) == 1 {
 			fmt.Fprintln(out, matches[0].Dir)
 			return nil
@@ -222,14 +225,26 @@ func cdNameCompletion(cmd *cobra.Command, args []string, _ string) ([]string, co
 // > substring > subsequence). Ties break by name-match over path-match, then
 // deepest directory, then shortest name. Pure.
 func rankCdTargets(targets []cdTarget, query string) []cdTarget {
-	return match.Rank(targets, query, func(t cdTarget) match.Fields {
-		return match.Fields{
-			Name:  []string{t.Name, match.ShortName(t.Name)},
-			Path:  []string{t.Rel, filepath.Base(t.Dir)},
-			Depth: len(t.Dir),
-			Tie:   len(t.Name),
-		}
-	})
+	return match.Rank(targets, query, cdFields)
+}
+
+// topCdTargets returns only the targets in the best matching tier — every exact
+// match if any exist, else every prefix match, and so on. It is what decides
+// whether a query is answered or ambiguous; rankCdTargets stays the full,
+// every-tier listing. Pure.
+func topCdTargets(targets []cdTarget, query string) []cdTarget {
+	return match.Top(targets, query, cdFields)
+}
+
+// cdFields adapts a cdTarget to the shared matcher: name and short name are the
+// name fields, the relative path and dir basename the path fields.
+func cdFields(t cdTarget) match.Fields {
+	return match.Fields{
+		Name:  []string{t.Name, match.ShortName(t.Name)},
+		Path:  []string{t.Rel, filepath.Base(t.Dir)},
+		Depth: len(t.Dir),
+		Tie:   len(t.Name),
+	}
 }
 
 // shortName, fieldScore, and isSubsequence are package-local aliases for the
