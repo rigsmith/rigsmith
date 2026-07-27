@@ -53,7 +53,7 @@ func newPublishCmd() *cobra.Command {
 			if len(args) == 1 {
 				query = strings.TrimSpace(args[0])
 			}
-			projects := detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude)
+			projects := discoverDotnet(root, cfg.Solution, cfg.Exclude)
 			res := resolveRunProject(projects, query, cfg.DefaultProject)
 			if res.Err != "" {
 				return fmt.Errorf("%s", res.Err)

@@ -74,7 +74,8 @@ type runPickerModel struct {
 	root         string
 	scripts      []scriptEntry
 	entries      []runEntry
-	defaultName  string // configured defaultProject, marked in the list and toggled with `d`
+	defaultName  string          // configured defaultProject, marked in the list and toggled with `d`
+	defaultHits  map[string]bool // the listed names that default resolves to (rebuilt with the rows)
 	showExcluded bool
 	sort         sortMode
 	filtering    bool
@@ -171,6 +172,15 @@ func (m *runPickerModel) rebuild() {
 		}
 		scriptRows = append(scriptRows, runPickRow{name: s.name, eco: s.eco, path: path, script: true, scr: s})
 	}
+
+	// Resolve the configured default over the projects actually listed, using
+	// the same tiered matcher a bare `rig run` uses — so ★ marks the row that
+	// would launch (or every candidate, when the default is ambiguous).
+	names := make([]string, 0, len(proj))
+	for _, r := range proj {
+		names = append(names, r.name)
+	}
+	m.defaultHits = topTierNames(names, m.defaultName)
 
 	m.sortRows(proj)
 	m.sortRows(scriptRows)
@@ -388,10 +398,11 @@ func (m runPickerModel) setDefaultAtCursor() (tea.Model, tea.Cmd) {
 		m.status = "default applies to projects, not scripts"
 		return m, nil
 	}
-	if defaultMatches(m.defaultName, r.name) {
+	if m.defaultHits[r.name] {
 		status, ok := clearRunDefault(m.root)
 		if ok {
 			m.defaultName = ""
+			m.rebuild() // re-resolve so the ★ clears with it
 		}
 		m.status = status
 		return m, nil
@@ -399,6 +410,7 @@ func (m runPickerModel) setDefaultAtCursor() (tea.Model, tea.Cmd) {
 	status, ok := setRunDefault(m.root, r.name)
 	if ok {
 		m.defaultName = r.name
+		m.rebuild()
 	}
 	m.status = status
 	return m, nil
@@ -493,7 +505,7 @@ func (m runPickerModel) renderRow(r runPickRow, selected bool) string {
 	}
 	meta := dimStyle.Render(padRight(r.eco, m.ecoW) + "  " + r.path)
 	row := gutter + name + "  " + meta
-	if !r.script && defaultMatches(m.defaultName, r.name) {
+	if !r.script && m.defaultHits[r.name] {
 		row += "  " + runPickDefault.Render("★ default")
 	}
 	return row
