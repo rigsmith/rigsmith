@@ -213,7 +213,7 @@ func excludeCandidates(ctx context.Context, root string) []string {
 func runnableDotnetNames(root string) []string {
 	cfg, _ := config.LoadMerged(root)
 	var names []string
-	for _, p := range detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude) {
+	for _, p := range discoverDotnet(root, cfg.Solution, cfg.Exclude) {
 		if p.IsRunnable() {
 			names = append(names, p.Name)
 		}
@@ -253,7 +253,7 @@ func wizardRigJSON(eco, solution, defaultProject string, exclude []string, quiet
 // decides). Port of the .NET rig's DefaultVerb set path; the full verb
 // (interactive picker, current-value display) lives in defaultverb.go.
 func setDefaultProject(root string, cfg config.Config, query string) (string, error) {
-	projects := detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude)
+	projects := discoverDotnet(root, cfg.Solution, cfg.Exclude)
 	res := resolveRunProject(projects, query, "")
 	if res.Err != "" {
 		return "", errors.New(res.Err)

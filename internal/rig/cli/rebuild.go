@@ -104,7 +104,7 @@ func runRebuild(cmd *cobra.Command, eco, root string, args []string) error {
 	// behind). Scoped to solution projects — vendored trees are never touched.
 	if eco == detect.DotNet {
 		cfg, _ := config.LoadMerged(root)
-		projects := detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude)
+		projects := discoverDotnet(root, cfg.Solution, cfg.Exclude)
 		var skip []string
 		if cfg.Rebuild != nil {
 			skip = cfg.Rebuild.Skip

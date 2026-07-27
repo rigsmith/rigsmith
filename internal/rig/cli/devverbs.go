@@ -218,7 +218,7 @@ func runnableProjectCompletion(_ *cobra.Command, args []string, _ string) ([]str
 	root := resolveRoot(cwd)
 	cfg, _ := config.LoadMerged(root)
 	var names []string
-	for _, p := range detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude) {
+	for _, p := range discoverDotnet(root, cfg.Solution, cfg.Exclude) {
 		if p.IsRunnable() {
 			names = append(names, p.ShortName())
 		}
@@ -589,23 +589,28 @@ func offerRunChoice(cmd *cobra.Command, root string, tasks []allTask, scripts []
 	}
 }
 
-// preferredRunTasks finds the tasks matching the configured defaultProject by
-// full name or short name (case-insensitive). The short name is matched both
-// slash-segmented (node scopes) and dot-segmented (.NET project names like
-// "Acme.Desktop" → "Desktop"). Ties are narrowed by proximity to cwd, so
-// running from inside one copy selects that copy.
+// preferredRunTasks finds the runnable tasks a configured defaultProject names,
+// scored through nameTier and narrowed by proximity to cwd — the identical
+// pipeline `rig run <name>` puts an argument through, so a config value and a
+// typed name always mean the same project.
 //
 // It returns every remaining match rather than the first: when a default names
 // two checkouts of the same project the caller must say so, not pick whichever
 // one discovery reached first. Empty when no default is set or it names no
 // runnable task — callers then fall back to the picker.
 func preferredRunTasks(tasks []allTask, defaultProject string) []allTask {
-	if strings.TrimSpace(defaultProject) == "" {
+	q := strings.TrimSpace(defaultProject)
+	if q == "" {
 		return nil
 	}
+	best := 0
 	var hits []allTask
 	for _, t := range tasks {
-		if defaultMatches(defaultProject, t.name) {
+		switch tier := nameTier(t.name, q); {
+		case tier < minMatchTier:
+		case tier > best:
+			best, hits = tier, []allTask{t}
+		case tier == best:
 			hits = append(hits, t)
 		}
 	}
@@ -623,20 +628,6 @@ func noteResolvedDefault(cmd *cobra.Command, defaultProject string, t allTask) {
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), dimStyle.Render(
 		fmt.Sprintf("· defaultProject %s → %s", defaultProject, taskPath(t))))
-}
-
-// defaultMatches reports whether stored (a configured defaultProject) names the
-// project called name — the full / slash-short / dot-short, case-insensitive
-// match preferredRunTask uses, so the run picker marks exactly the row a bare
-// `rig run` would launch.
-func defaultMatches(stored, name string) bool {
-	q := strings.TrimSpace(stored)
-	if q == "" {
-		return false
-	}
-	return strings.EqualFold(name, q) ||
-		strings.EqualFold(shortName(name), q) ||
-		strings.EqualFold(dotShortName(name), q)
 }
 
 // dotShortName is the segment after the last '.' (a .NET project's short name).

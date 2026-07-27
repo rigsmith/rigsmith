@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
 )
 
@@ -66,6 +67,24 @@ func TestMatchTargets_ExactBeatsPrefixAndSubstring(t *testing.T) {
 	}
 }
 
+// A configured default goes through the SAME tiered matcher as a typed name —
+// otherwise `defaultProject: "Tweed.Ap"` silently selects nothing while
+// `rig run Tweed.Ap` selects Tweed.App.
+func TestPreferredRunTasks_UsesTheSameTiersAsAnArgument(t *testing.T) {
+	tasks := []allTask{
+		{name: "Tweed.App", argv: []string{"dotnet", "run"}},
+		{name: "Tweed.App.Tests", argv: []string{"dotnet", "run"}},
+	}
+	if got := preferredRunTasks(tasks, "Tweed.Ap"); len(got) != 2 {
+		t.Fatalf("prefix default = %v, want both prefix matches (ambiguous, as for an argument)", taskNames(got))
+	}
+	// An exact hit still wins its tier outright — "Desktop"-style dot-short
+	// defaults must not go ambiguous against a .Tests sibling.
+	if got := preferredRunTasks(tasks, "App"); len(got) != 1 || got[0].name != "Tweed.App" {
+		t.Fatalf("dot-short default = %v, want only Tweed.App", taskNames(got))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Proximity: the copy you are standing in wins the tie.
 // ---------------------------------------------------------------------------
@@ -88,6 +107,26 @@ func TestNearestTargets_PrefersEnclosingThenNearestAncestor(t *testing.T) {
 	// guess, which is the whole point of the ambiguity error.
 	if got = nearestTargets(filepath.FromSlash("/r"), []target{there, here}); len(got) != 2 {
 		t.Fatalf("root cwd = %v, want both (ambiguous)", dirs(got))
+	}
+}
+
+// Case-folding segments would invent proximity on a case-sensitive filesystem,
+// where /repo/UI and /repo/ui are different directories.
+func TestNearestTargets_HonorsFilesystemCaseSemantics(t *testing.T) {
+	ui := target{Name: "App", Dir: filepath.FromSlash("/r/ui/App")}
+	wt := target{Name: "App", Dir: filepath.FromSlash("/r/wt/App")}
+	cwd := filepath.FromSlash("/r/UI/Other")
+
+	prev := caseInsensitiveFS
+	t.Cleanup(func() { caseInsensitiveFS = prev })
+
+	caseInsensitiveFS = false // Linux: /r/UI shares only /r with either candidate
+	if got := nearestTargets(cwd, []target{ui, wt}); len(got) != 2 {
+		t.Fatalf("case-sensitive = %v, want both (a tie, not a guess)", dirs(got))
+	}
+	caseInsensitiveFS = true // macOS/Windows: /r/UI is /r/ui
+	if got := nearestTargets(cwd, []target{ui, wt}); len(got) != 1 || got[0].Dir != ui.Dir {
+		t.Fatalf("case-insensitive = %v, want the ui/ copy", dirs(got))
 	}
 }
 
@@ -126,15 +165,38 @@ func TestDiscoverWorkspace_SkipsNestedWorktrees(t *testing.T) {
 }
 
 // A submodule also carries a `.git` file — but it points into modules/, not
-// worktrees/, and its projects must stay discoverable.
+// worktrees/, and its projects must stay discoverable. That includes a submodule
+// OF a linked worktree, whose gitdir is `…/worktrees/<wt>/modules/<sub>`: the
+// marker is the pointer's immediate parent, not the segment appearing anywhere.
 func TestDiscoverWorkspace_KeepsSubmodules(t *testing.T) {
 	isolateGlobalConfig(t)
 	root := t.TempDir()
 	writeTreeFile(t, root, "vendored/Lib/Lib.csproj", exeCsproj)
 	writeTreeFile(t, root, "vendored/.git", "gitdir: "+filepath.ToSlash(root)+"/.git/modules/vendored\n")
+	writeTreeFile(t, root, "wtsub/Lib/Lib.csproj", exeCsproj)
+	writeTreeFile(t, root, "wtsub/.git", "gitdir: "+filepath.ToSlash(root)+"/.git/worktrees/loom/modules/wtsub\n")
 
-	if ts := discoverWorkspace(context.Background(), root, nil); len(ts) != 1 {
-		t.Fatalf("discovered %v, want the submodule's project", dirs(ts))
+	if ts := discoverWorkspace(context.Background(), root, nil); len(ts) != 2 {
+		t.Fatalf("discovered %v, want both submodules' projects", dirs(ts))
+	}
+}
+
+// The .NET scan behind publish/default/outdated/rebuild applies the same rule —
+// without a root solution it walks the whole tree, nested checkouts included.
+func TestDiscoverDotnet_SkipsNestedWorktrees(t *testing.T) {
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	writeTreeFile(t, root, "src/App/App.csproj", exeCsproj)
+	writeTreeFile(t, root, "wt/x/src/App/App.csproj", exeCsproj)
+	markLinkedWorktree(t, root, "wt/x")
+
+	got := discoverDotnet(root, "", nil)
+	if len(got) != 1 || relSlash(root, filepath.Dir(got[0].FullPath)) != "src/App" {
+		t.Fatalf("discoverDotnet = %v, want only src/App", got)
+	}
+	withIncludeWorktrees(t, true)
+	if got := discoverDotnet(root, "", nil); len(got) != 2 {
+		t.Fatalf("with --include-worktrees: %v, want both copies", got)
 	}
 }
 
@@ -216,6 +278,54 @@ func TestOfferRunChoice_DefaultEchoesResolvedPath(t *testing.T) {
 	}
 	if got := buf.String(); !strings.Contains(got, "defaultProject App → src/App") {
 		t.Fatalf("output = %q, want the resolved default and its path echoed", got)
+	}
+}
+
+// "Merged" is not the same as "prune removes it": prune keeps a worktree with
+// uncommitted changes. Promising a removal prune would decline is worse than
+// saying nothing, so the state text mirrors prune's own verdict.
+func TestNestedWorktrees_PruneStateMatchesWhatPruneWouldDo(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	repo, err := gitrepo.Init(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTreeFile(t, root, "README.md", "root\n")
+	gitT(t, root, "add", "-A")
+	gitT(t, root, "commit", "-qm", "init")
+	// A branch merged into main, checked out in a nested worktree.
+	gitT(t, root, "branch", "loom")
+	if err := repo.WorktreeAdd(ctx, filepath.Join(root, "wt", "loom"), "loom", "", false); err != nil {
+		t.Fatal(err)
+	}
+
+	wts := nestedWorktrees(ctx, root)
+	if len(wts) != 1 {
+		t.Fatalf("nested worktrees = %+v, want the one under wt/", wts)
+	}
+	// Even with main and never advanced: prune keeps it (brand-new), so the
+	// state must not claim a removal.
+	if got := wts[0].State; strings.Contains(got, "removes it") {
+		t.Fatalf("state = %q, want it not to promise a removal prune would decline", got)
+	}
+	if !wts[0].Merged {
+		t.Fatalf("worktree = %+v, want it reported as merged", wts[0])
+	}
+
+	// Advance the branch and merge it: now prune really would remove it.
+	writeTreeFile(t, filepath.Join(root, "wt", "loom"), "feature.txt", "work\n")
+	gitT(t, filepath.Join(root, "wt", "loom"), "add", "-A")
+	gitT(t, filepath.Join(root, "wt", "loom"), "commit", "-qm", "work")
+	gitT(t, root, "merge", "--no-edit", "-q", "loom")
+	if got := nestedWorktrees(ctx, root)[0].State; !strings.Contains(got, "removes it") {
+		t.Fatalf("state = %q, want the merged-and-removable verdict", got)
+	}
+
+	// Dirty it: prune keeps a worktree with uncommitted changes.
+	writeTreeFile(t, filepath.Join(root, "wt", "loom"), "feature.txt", "edited\n")
+	if got := nestedWorktrees(ctx, root)[0].State; !strings.Contains(got, "keeps it") {
+		t.Fatalf("state = %q, want prune's keep-it verdict for a dirty worktree", got)
 	}
 }
 

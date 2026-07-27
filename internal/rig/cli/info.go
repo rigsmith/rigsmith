@@ -122,6 +122,14 @@ func newInfoCmd() *cobra.Command {
 // nothing ever said the two were related. Here they are, in one place, at the
 // moment the extra copies would matter.
 func projectWarnings(ctx context.Context, root string, cfg config.Config, all []target, dups map[string]bool) []string {
+	names := make([]string, 0, len(all))
+	for _, p := range all {
+		names = append(names, p.Name)
+	}
+	// Which names the default resolves to, by the same rules `rig run` applies —
+	// so the label lands on the name that would actually launch.
+	isDefault := topTierNames(names, cfg.DefaultProject)
+
 	var out []string
 	for _, name := range sortedKeys(dups) {
 		var paths []string
@@ -131,7 +139,7 @@ func projectWarnings(ctx context.Context, root string, cfg config.Config, all []
 			}
 		}
 		label := fmt.Sprintf("%d projects named %s", len(paths), name)
-		if defaultMatches(cfg.DefaultProject, name) {
+		if isDefault[name] {
 			label += " (defaultProject)"
 		}
 		out = append(out, label+" — "+strings.Join(paths, ", "))
@@ -144,16 +152,21 @@ func projectWarnings(ctx context.Context, root string, cfg config.Config, all []
 		if w.Branch != "" {
 			what += " (" + w.Branch + ")"
 		}
-		switch {
-		case includeWorktrees && w.Merged:
-			out = append(out, what+" is included in the list above and is already merged — `rig prune` removes it")
-		case includeWorktrees:
-			out = append(out, what+" is included in the list above (--include-worktrees)")
-		case w.Merged:
-			out = append(out, what+" is hidden from discovery and is already merged — `rig prune` removes it")
-		default:
-			out = append(out, what+" is hidden from discovery (show it with --include-worktrees)")
+		if includeWorktrees {
+			what += " is included in the list above (--include-worktrees)"
+		} else {
+			what += " is hidden from discovery"
 		}
+		// w.State is prune's own verdict, so the line never promises a removal
+		// prune would decline. It's the more actionable half, so it takes the
+		// tail — the --include-worktrees hint only shows when there's no verdict.
+		switch {
+		case w.State != "":
+			what += "; it " + w.State
+		case !includeWorktrees:
+			what += " — show it with --include-worktrees"
+		}
+		out = append(out, what)
 	}
 	return out
 }

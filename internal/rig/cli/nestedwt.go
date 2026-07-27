@@ -18,6 +18,7 @@ package cli
 import (
 	"context"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -34,7 +35,11 @@ type nestedWorktree struct {
 	Dir    string // absolute
 	Rel    string // repo-relative, slash-separated
 	Branch string // short branch name, "" when detached or unknown
-	Merged bool   // branch already merged into the repo's mainline (prune would remove it)
+	Merged bool   // branch already contained in the repo's mainline
+	// State is the human clause describing what `rig prune` would do with it
+	// ("already merged — `rig prune` removes it", the reason prune would keep
+	// it anyway, or "" when it isn't merged and there is nothing to claim).
+	State string
 }
 
 // dropNestedWorktrees removes the targets that live inside a nested git
@@ -89,7 +94,7 @@ var linkedWorktreeCache sync.Map // dir -> bool
 // isLinkedWorktreeRoot reports whether dir is the root of a linked git worktree:
 // it holds a `.git` file (not a directory) whose `gitdir:` pointer names a
 // `worktrees/<name>` admin directory. A submodule's `.git` file points into
-// `modules/` instead, so it is not a worktree.
+// `modules/<name>` instead, so it is not a worktree.
 func isLinkedWorktreeRoot(dir string) bool {
 	if v, ok := linkedWorktreeCache.Load(dir); ok {
 		return v.(bool)
@@ -113,14 +118,19 @@ func readLinkedWorktreeMarker(dir string) bool {
 	if !ok {
 		return false
 	}
-	gitdir := filepath.ToSlash(strings.TrimSpace(rest))
-	return strings.Contains(gitdir, "/worktrees/") || strings.HasPrefix(gitdir, "worktrees/")
+	// The admin dir is `<common>/worktrees/<name>`, so it is the IMMEDIATE
+	// parent that must be "worktrees". Matching the segment anywhere in the
+	// pointer would misread a submodule of a linked worktree — whose gitdir is
+	// `<common>/worktrees/<wt>/modules/<sub>` — as a worktree of its own, and
+	// silently drop its projects from discovery.
+	gitdir := path.Clean(filepath.ToSlash(strings.TrimSpace(rest)))
+	return path.Base(path.Dir(gitdir)) == "worktrees"
 }
 
 // nestedWorktrees lists the repo's linked worktrees that sit inside root, in
-// `git worktree list` order. Merged is filled in against the repo's mainline so
-// callers can point at `rig prune`. Best-effort: any git hiccup yields no
-// worktrees rather than an error.
+// `git worktree list` order, each with the prune verdict for its branch (see
+// pruneState). Best-effort: any git hiccup yields no worktrees rather than an
+// error.
 func nestedWorktrees(ctx context.Context, root string) []nestedWorktree {
 	repo, err := gitrepo.Open(ctx, root)
 	if err != nil {
@@ -130,10 +140,15 @@ func nestedWorktrees(ctx context.Context, root string) []nestedWorktree {
 	if err != nil {
 		return nil
 	}
-	var base string
+	var base, baseSHA string
 	var out []nestedWorktree
+	// git reports symlink-free paths, so resolve the root the same way before
+	// asking whether a worktree is inside it — on macOS /var and temp dirs live
+	// behind /private symlinks, and a raw compare would call every worktree
+	// external.
+	realRoot := resolveDir(root)
 	for _, w := range wts {
-		rel, err := filepath.Rel(root, w.Path)
+		rel, err := filepath.Rel(realRoot, resolveDir(w.Path))
 		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
 			continue // the primary checkout, or a sibling worktree — not nested
 		}
@@ -141,12 +156,35 @@ func nestedWorktrees(ctx context.Context, root string) []nestedWorktree {
 		if n.Branch != "" {
 			if base == "" {
 				base = repo.DefaultBranch(ctx)
+				baseSHA, _ = repo.RevParse(ctx, base)
 			}
-			n.Merged, _ = repo.IsMerged(ctx, n.Branch, base)
+			n.Merged, n.State = pruneState(ctx, repo, w, base, baseSHA)
 		}
 		out = append(out, n)
 	}
 	return out
+}
+
+// pruneState answers what `rig prune` would actually do with a worktree, in the
+// clause the hints print. "Merged" alone is not the same as "prune removes it":
+// prune also keeps a worktree with uncommitted changes, and keeps one whose
+// branch sits at base having never advanced (brand-new, nothing to prune). It
+// mirrors pruneSweep's decision so the two never disagree — promising a removal
+// that prune then declines is worse than saying nothing.
+func pruneState(ctx context.Context, repo *gitrepo.Repo, w gitrepo.Worktree, base, baseSHA string) (merged bool, state string) {
+	merged, err := repo.IsMerged(ctx, w.Branch, base)
+	if err != nil || !merged {
+		return false, ""
+	}
+	if clean, err := repo.WorktreeClean(ctx, w.Path); err != nil || !clean {
+		return true, "is already merged but has uncommitted changes — `rig prune` keeps it"
+	}
+	if baseSHA != "" && w.Head == baseSHA {
+		if advanced, err := repo.BranchAdvanced(ctx, w.Branch); err != nil || !advanced {
+			return true, "is even with " + base + " — `rig prune` keeps it"
+		}
+	}
+	return true, "is already merged — `rig prune` removes it"
 }
 
 // nestedWorktreeNote is the one-line "this copy is a nested worktree" hint for
@@ -168,8 +206,8 @@ func nestedWorktreeNote(ctx context.Context, root, dir string) string {
 		if w.Branch != "" {
 			what += " (" + w.Branch + ")"
 		}
-		if w.Merged {
-			return what + " is already merged — `rig prune` removes it"
+		if w.State != "" {
+			return what + " " + w.State
 		}
 		return what
 	}

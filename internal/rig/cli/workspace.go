@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"io/fs"
+	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -181,14 +183,37 @@ func goMainDirs(moduleDir, root string) []string {
 	return dirs
 }
 
+// discoverDotnet is the single entry point for the .NET project scan: it is
+// detect.DiscoverDotNet plus rig's nested-worktree rule. Without a root solution
+// the scanner walks the whole tree, so a nested worktree hands back a second
+// copy of every project — which is how a duplicate reaches `publish`, `default`,
+// `outdated`, or `rebuild` (where it would clean bin/obj in the wrong checkout).
+// Every caller in the CLI goes through here so the rule holds everywhere, not
+// just in discoverWorkspace.
+func discoverDotnet(root, solution string, exclude []string) []detect.ProjectInfo {
+	projects := detect.DiscoverDotNet(root, solution, exclude)
+	if includeWorktrees {
+		return projects
+	}
+	out := projects[:0:0]
+	for _, p := range projects {
+		if _, nested := nestedWorktreeFor(root, filepath.Dir(p.FullPath)); nested {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // dotnetTargets discovers the repo's .NET projects via the convention-first dev
 // model (solution-aware, version-independent), carrying each project's runnable
 // and test classification and its intra-repo project-reference dependencies.
-// detect.DiscoverDotNet applies the exclude globs itself.
+// discoverDotnet applies the exclude globs (via detect) and the nested-worktree
+// rule.
 func dotnetTargets(root string, exclude []string) []target {
 	cfg, _ := config.LoadMerged(root)
 	var out []target
-	for _, p := range detect.DiscoverDotNet(root, cfg.Solution, exclude) {
+	for _, p := range discoverDotnet(root, cfg.Solution, exclude) {
 		out = append(out, target{
 			Name:     p.Name,
 			Eco:      detect.DotNet,
@@ -325,16 +350,45 @@ func filterTargets(targets []target, glob string) []target {
 // does accept subsequences.
 const minMatchTier = 60
 
-// targetTier scores a query against a target's three name forms — the full
-// name, the slash-short name (node scopes, Go module paths), and the dot-short
-// name (a .NET project's trailing segment) — taking the best. Tiers are the
-// shared exact > prefix > substring > subsequence ladder from core/match.
-func targetTier(t target, query string) int {
+// nameTier scores a query against a project name's three forms — the full name,
+// the slash-short name (node scopes, Go module paths), and the dot-short name (a
+// .NET project's trailing segment) — taking the best. Tiers are the shared
+// exact > prefix > substring > subsequence ladder from core/match. Every
+// project selector in rig scores through this one function, whether the query
+// came from an argument or from `defaultProject`.
+func nameTier(name, query string) int {
 	return max(
-		match.Tier(t.Name, query),
-		match.Tier(t.shortName(), query),
-		match.Tier(dotShortName(t.Name), query),
+		match.Tier(name, query),
+		match.Tier(shortName(name), query),
+		match.Tier(dotShortName(name), query),
 	)
+}
+
+// targetTier scores a query against a discovered target's name.
+func targetTier(t target, query string) int { return nameTier(t.Name, query) }
+
+// topTierNames resolves a query over a list of project names and returns the
+// winning tier's names. It answers "which rows would a bare `rig run` consider?"
+// for callers that hold names rather than targets — the picker's ★ default
+// marker and `rig info`'s duplicate labelling — so what they point at is what
+// would actually launch. Empty when the query names nothing.
+func topTierNames(names []string, query string) map[string]bool {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return nil
+	}
+	best := 0
+	out := map[string]bool{}
+	for _, n := range names {
+		switch tier := nameTier(n, q); {
+		case tier < minMatchTier:
+		case tier > best:
+			best, out = tier, map[string]bool{n: true}
+		case tier == best:
+			out[n] = true
+		}
+	}
+	return out
 }
 
 // matchTargets returns the targets matching query in the BEST non-empty tier
@@ -379,31 +433,20 @@ func matchTarget(targets []target, query string) (target, bool) {
 	return target{}, false
 }
 
-// matchDefaultProjects resolves a configured defaultProject to the targets it
-// names by EXACT (case-insensitive) match on full name, slash-short, or
-// dot-short — and deliberately NOT by substring. A value like "Desktop" must
-// scope to "Acme.Desktop" without going ambiguous against "Acme.Desktop.Tests"
-// (which matchTarget's looser tiers would). Mirrors defaultMatches, so the
-// `rig watch run` default scoping agrees with the `rig run` path.
-//
-// It returns EVERY match, not the first: a default naming two checkouts of the
-// same project is ambiguous, and the implicit `rig run` path has to see that and
-// say so rather than launching whichever copy discovery happened to reach first.
-func matchDefaultProjects(targets []target, defaultProject string) []target {
-	var out []target
-	for _, t := range targets {
-		if defaultMatches(defaultProject, t.Name) {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
 // matchDefaultProject resolves a configured defaultProject to a single target
-// (see matchDefaultProjects). ok is false when the default names nothing — or
-// names several copies, since an ambiguous default is not a selection.
+// through the SAME rules an explicit argument resolves through — the tiered
+// matcher, then proximity to cwd. A config value and a typed name must never
+// disagree about which project they mean; that divergence is what let a bare
+// `rig run` launch a copy an explicit `rig run <name>` refused.
+//
+// Tiering is what keeps a value like "Desktop" scoped to "Acme.Desktop" instead
+// of going ambiguous against "Acme.Desktop.Tests": the dot-short exact match
+// wins its tier outright and the substring match never enters. ok is false when
+// the default names nothing — or names several copies, since an ambiguous
+// default is not a selection.
 func matchDefaultProject(targets []target, defaultProject string) (target, bool) {
-	if m := matchDefaultProjects(targets, defaultProject); len(m) == 1 {
+	cwd, _ := os.Getwd()
+	if m := nearestTargets(cwd, matchTargets(targets, defaultProject)); len(m) == 1 {
 		return m[0], true
 	}
 	return target{}, false
@@ -481,16 +524,31 @@ func splitDirSegments(dir string) []string {
 	return out
 }
 
-// sharedDirSegments counts the leading path segments two directories share
-// (case-insensitively, like the filesystems rig most often runs on).
+// sharedDirSegments counts the leading path segments two directories share,
+// comparing the way the host filesystem does: case-insensitively on macOS and
+// Windows, exactly on Linux. Folding case everywhere would invent proximity on
+// a case-sensitive filesystem, where /repo/UI and /repo/ui are genuinely
+// different directories — and an invented tiebreak is exactly the silent guess
+// this narrowing exists to avoid.
 func sharedDirSegments(a, b string) int {
 	as, bs := splitDirSegments(a), splitDirSegments(b)
 	n := 0
-	for n < len(as) && n < len(bs) && strings.EqualFold(as[n], bs[n]) {
+	for n < len(as) && n < len(bs) && sameSegment(as[n], bs[n]) {
 		n++
 	}
 	return n
 }
+
+// sameSegment compares one path segment under the host's path semantics.
+func sameSegment(a, b string) bool {
+	if caseInsensitiveFS {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// caseInsensitiveFS is whether the platform's default filesystem folds case.
+var caseInsensitiveFS = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 
 // devCommandFor resolves verb's argv for a target's ecosystem (node pm-detection
 // keys off root).
