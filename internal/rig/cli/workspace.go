@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/ecosystem"
+	"github.com/rigsmith/rigsmith/core/match"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/walkutil"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
@@ -84,7 +85,9 @@ func discoverWorkspace(ctx context.Context, root string, exclude []string) []tar
 			out = append(out, t)
 		}
 	}
-	return out
+	// A nested git worktree holds a complete copy of the workspace; discovery
+	// skips it so its projects don't shadow the real ones (see nestedwt.go).
+	return dropNestedWorktrees(root, out)
 }
 
 // runEntry is one run target plus whether the current .rig.json `exclude` globs
@@ -113,6 +116,11 @@ func runTargetEntries(ctx context.Context, root string) []runEntry {
 			continue
 		}
 		for _, rel := range goMainDirs(t.Dir, root) {
+			// The walk descends the whole module, so a nested worktree inside it
+			// would contribute a second copy of every binary — skip those.
+			if inNestedWorktree(root, rel) {
+				continue
+			}
 			name := path.Base(rel)
 			if rel == "." {
 				name = t.shortName()
@@ -309,35 +317,56 @@ func filterTargets(targets []target, glob string) []target {
 	return out
 }
 
-// matchTargets returns every target matching query, best tier only: exact
-// (case-insensitive) matches on the full name, the slash-short name, or the
-// dot-short name (a .NET project's trailing segment) if any exist, else the
-// substring matches on name or slash-short. An empty query returns nil.
+// minMatchTier is the loosest tier a project selector may resolve through:
+// substring. Subsequence (match.Tier 40) is deliberately out of reach here —
+// verbs like `rig test <class>` pass through args that name no project, and a
+// subsequence match would hijack them (almost any short string is a
+// subsequence of some project name). `rig cd`, whose whole job is navigation,
+// does accept subsequences.
+const minMatchTier = 60
+
+// targetTier scores a query against a target's three name forms — the full
+// name, the slash-short name (node scopes, Go module paths), and the dot-short
+// name (a .NET project's trailing segment) — taking the best. Tiers are the
+// shared exact > prefix > substring > subsequence ladder from core/match.
+func targetTier(t target, query string) int {
+	return max(
+		match.Tier(t.Name, query),
+		match.Tier(t.shortName(), query),
+		match.Tier(dotShortName(t.Name), query),
+	)
+}
+
+// matchTargets returns the targets matching query in the BEST non-empty tier
+// only: every exact match if any exist, else every prefix match, else every
+// substring match (see minMatchTier). An empty query returns nil.
 //
-// Unlike matchTarget it keeps every match — so a name shared by several paths
-// (a duplicate) surfaces as multiple results the caller can offer in a picker or
-// list, rather than being silently dropped as "ambiguous". The name semantics
-// mirror defaultMatches so arg resolution and the configured defaultProject agree.
+// Tiering is what makes "one exact hit is never ambiguous" true: "Tweed.App"
+// resolves to the project of that name and stops, instead of also dragging in
+// Tweed.App.Tests (prefix) and Tweed.AcpAgent.Sample (looser still).
+//
+// Unlike matchTarget it keeps every match in that tier — so a name shared by
+// several paths (a duplicate) surfaces as multiple results the caller can offer
+// in a picker or list, rather than being silently dropped as "ambiguous". The
+// name semantics mirror defaultMatches so arg resolution and the configured
+// defaultProject agree.
 func matchTargets(targets []target, query string) []target {
-	q := strings.ToLower(strings.TrimSpace(query))
+	q := strings.TrimSpace(query)
 	if q == "" {
 		return nil
 	}
-	var exact, subs []target
+	best := 0
+	var out []target
 	for _, t := range targets {
-		name, short := strings.ToLower(t.Name), strings.ToLower(t.shortName())
-		dot := strings.ToLower(dotShortName(t.Name))
-		switch {
-		case name == q || short == q || dot == q:
-			exact = append(exact, t)
-		case strings.Contains(name, q) || strings.Contains(short, q):
-			subs = append(subs, t)
+		switch tier := targetTier(t, q); {
+		case tier < minMatchTier:
+		case tier > best:
+			best, out = tier, []target{t}
+		case tier == best:
+			out = append(out, t)
 		}
 	}
-	if len(exact) > 0 {
-		return exact
-	}
-	return subs
+	return out
 }
 
 // matchTarget resolves a query to a single unambiguous target (see
@@ -350,25 +379,117 @@ func matchTarget(targets []target, query string) (target, bool) {
 	return target{}, false
 }
 
-// matchDefaultProject resolves a configured defaultProject to a single target by
-// EXACT (case-insensitive) match on full name, slash-short, or dot-short — and
-// deliberately NOT by substring. A value like "Desktop" must scope to
-// "Acme.Desktop" without going ambiguous against "Acme.Desktop.Tests" (which
-// matchTarget's substring fallback would). Mirrors preferredRunTask, so the
+// matchDefaultProjects resolves a configured defaultProject to the targets it
+// names by EXACT (case-insensitive) match on full name, slash-short, or
+// dot-short — and deliberately NOT by substring. A value like "Desktop" must
+// scope to "Acme.Desktop" without going ambiguous against "Acme.Desktop.Tests"
+// (which matchTarget's looser tiers would). Mirrors defaultMatches, so the
 // `rig watch run` default scoping agrees with the `rig run` path.
-func matchDefaultProject(targets []target, defaultProject string) (target, bool) {
-	q := strings.ToLower(strings.TrimSpace(defaultProject))
-	if q == "" {
-		return target{}, false
-	}
+//
+// It returns EVERY match, not the first: a default naming two checkouts of the
+// same project is ambiguous, and the implicit `rig run` path has to see that and
+// say so rather than launching whichever copy discovery happened to reach first.
+func matchDefaultProjects(targets []target, defaultProject string) []target {
+	var out []target
 	for _, t := range targets {
-		if strings.ToLower(t.Name) == q ||
-			strings.ToLower(t.shortName()) == q ||
-			strings.ToLower(dotShortName(t.Name)) == q {
-			return t, true
+		if defaultMatches(defaultProject, t.Name) {
+			out = append(out, t)
 		}
 	}
+	return out
+}
+
+// matchDefaultProject resolves a configured defaultProject to a single target
+// (see matchDefaultProjects). ok is false when the default names nothing — or
+// names several copies, since an ambiguous default is not a selection.
+func matchDefaultProject(targets []target, defaultProject string) (target, bool) {
+	if m := matchDefaultProjects(targets, defaultProject); len(m) == 1 {
+		return m[0], true
+	}
 	return target{}, false
+}
+
+// nearestTargets narrows equally-good matches by proximity to cwd (see
+// nearestByDir).
+func nearestTargets(cwd string, ts []target) []target {
+	return nearestByDir(cwd, ts, func(t target) string { return t.Dir })
+}
+
+// nearestByDir narrows a set of equally-good matches by proximity to cwd — the
+// tiebreak the rest of the ecosystem applies. The nearest ENCLOSING project
+// wins outright (you are standing in it); failing that, the items sharing the
+// longest directory prefix with cwd win (the nearest common ancestor). When
+// nothing distinguishes them — the usual case at a repo root, where every copy
+// is equally far away — items comes back unchanged and the caller reports the
+// ambiguity instead of guessing.
+func nearestByDir[T any](cwd string, items []T, dirOf func(T) string) []T {
+	if len(items) < 2 || strings.TrimSpace(cwd) == "" {
+		return items
+	}
+	// An enclosing project: cwd is inside its directory. The deepest such
+	// directory is the innermost project around you.
+	var enclosing []T
+	deepest := -1
+	for _, it := range items {
+		if !dirContains(dirOf(it), cwd) {
+			continue
+		}
+		switch n := len(splitDirSegments(dirOf(it))); {
+		case n > deepest:
+			deepest, enclosing = n, []T{it}
+		case n == deepest:
+			enclosing = append(enclosing, it)
+		}
+	}
+	if len(enclosing) > 0 {
+		return enclosing
+	}
+	// Otherwise: the nearest common ancestor with cwd.
+	best := 0
+	var out []T
+	for _, it := range items {
+		switch n := sharedDirSegments(dirOf(it), cwd); {
+		case n > best:
+			best, out = n, []T{it}
+		case n == best:
+			out = append(out, it)
+		}
+	}
+	if len(out) == 0 || len(out) == len(items) {
+		return items // nothing to choose between
+	}
+	return out
+}
+
+// dirContains reports whether dir is path itself or one of its ancestors.
+func dirContains(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (!strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel))
+}
+
+// splitDirSegments splits a path into its non-empty segments.
+func splitDirSegments(dir string) []string {
+	var out []string
+	for _, s := range strings.Split(filepath.ToSlash(filepath.Clean(dir)), "/") {
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// sharedDirSegments counts the leading path segments two directories share
+// (case-insensitively, like the filesystems rig most often runs on).
+func sharedDirSegments(a, b string) int {
+	as, bs := splitDirSegments(a), splitDirSegments(b)
+	n := 0
+	for n < len(as) && n < len(bs) && strings.EqualFold(as[n], bs[n]) {
+		n++
+	}
+	return n
 }
 
 // devCommandFor resolves verb's argv for a target's ecosystem (node pm-detection

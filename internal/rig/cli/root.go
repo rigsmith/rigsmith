@@ -138,6 +138,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "suppress the → command echo")
 	root.PersistentFlags().BoolVar(&noEnv, "no-env", false, "skip .env/.env.local loading for this run")
 	root.PersistentFlags().StringVar(&rootFlag, "root", "", "override the working root (skip walk-up discovery)")
+	root.PersistentFlags().BoolVar(&includeWorktrees, "include-worktrees", false, "also discover projects inside nested git worktrees (skipped by default)")
 
 	root.AddCommand(
 		// Dev loop (workspace-aware: [project] scopes; --all runs across the

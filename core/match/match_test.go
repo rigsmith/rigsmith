@@ -90,3 +90,41 @@ func TestRank(t *testing.T) {
 		t.Errorf("no-match query should return nothing, got %v", got)
 	}
 }
+
+func TestTop(t *testing.T) {
+	type wt struct{ branch, path string }
+	items := []wt{
+		{"main", "/repo"},
+		{"feat/go-watch", "/repo-wt/feat-go-watch"},
+		{"feat/go-watcher", "/repo-wt/feat-go-watcher"},
+		{"feat/go-watch-2", "/repo-wt/feat-go-watch-2"},
+	}
+	fields := func(w wt) Fields {
+		return Fields{Name: []string{w.branch, ShortName(w.branch)}, Path: []string{w.path}, Tie: len(w.branch)}
+	}
+
+	// One exact hit answers the query — the prefix matches behind it are not
+	// competing candidates.
+	got := Top(items, "feat/go-watch", fields)
+	if len(got) != 1 || got[0].branch != "feat/go-watch" {
+		t.Fatalf("Top exact = %v, want only feat/go-watch", got)
+	}
+	// No exact match: the prefix tier answers instead.
+	if got := Top(items, "feat/go-watch-", fields); len(got) != 1 || got[0].branch != "feat/go-watch-2" {
+		t.Fatalf("Top prefix = %v, want feat/go-watch-2", got)
+	}
+	// An exact SHORT-name hit is equally decisive.
+	if got := Top(items, "go-watch", fields); len(got) != 1 || got[0].branch != "feat/go-watch" {
+		t.Fatalf("Top short-name exact = %v, want only feat/go-watch", got)
+	}
+	// A tier with several members comes back whole — that is a real ambiguity.
+	if got := Top(items, "go-w", fields); len(got) != 3 {
+		t.Fatalf("Top prefix tier = %v, want all three go-watch branches", got)
+	}
+	if got := Top(items, "zzz", fields); len(got) != 0 {
+		t.Fatalf("Top no-match = %v, want nothing", got)
+	}
+	if got := Top(items, "", fields); len(got) != 0 {
+		t.Fatalf("Top empty query = %v, want nothing", got)
+	}
+}

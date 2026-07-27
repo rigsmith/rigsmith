@@ -129,6 +129,26 @@ project's full name, short name, and repo-relative path:
 { "exclude": ["*.Bench", "*.Demo", "examples/*"] }
 ```
 
+Paths are as valid as names, and matter when two copies of a project share one
+name — a name glob would hide both, a path glob hides the copy you don't want:
+
+```jsonc
+{ "exclude": ["build/staging/MyApp"] }
+```
+
+## Nested worktrees {#nested-worktrees}
+
+A git worktree checked out *inside* the repo (`.claude/worktrees/<branch>`,
+`wt/<branch>`, a hand-made `git worktree add ./tmp`) holds a full copy of every
+project. rig skips those copies during discovery, so they can't shadow the real
+ones: without that, `rig run <name>` goes ambiguous and a `defaultProject` can
+resolve to a stale checkout that looks exactly like your app.
+
+Pass `--include-worktrees` for the rare cross-worktree sweep. `rig info` names
+any nested worktree it is holding back — and says when `rig prune` would already
+remove it, because its branch is merged. Sibling worktrees (`rig worktree new`'s
+`<repo>-worktrees/<branch>`) live outside the repo and were never discovered.
+
 ## Worktrees {#worktree}
 
 `rig worktree new` can open the new sibling checkout in a separate review window.
