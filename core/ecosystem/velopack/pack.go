@@ -39,7 +39,8 @@ const (
 // Snapshot builds everything unsigned (a fast local rehearsal); DryRun reports
 // the plan without building. macOS channels are skipped on a non-macOS host
 // (signing/notarization/DMG need macOS tooling); Windows/Linux channels build on
-// any host.
+// any host. Channels, when set, narrows the run to those configured channels —
+// one installer instead of the whole matrix.
 func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
 	pkgDir := filepath.Join(req.RepoRoot, req.Package.Dir)
 	cfg, err := loadConfig(pkgDir)
@@ -47,7 +48,10 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		return plugin.ArtifactsResponse{}, err
 	}
 
-	ver, err := resolvePackVersion(req.Package.Version, req.Snapshot)
+	// A dry run reports the plan instead of producing anything, so the 0.0.0
+	// "nothing released yet" sentinel isn't fatal there — that's what lets a UI
+	// probe the channel list before the version step has run.
+	ver, err := resolvePackVersion(req.Package.Version, req.Snapshot || req.DryRun)
 	if err != nil {
 		return plugin.ArtifactsResponse{}, err
 	}
@@ -55,9 +59,16 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	releasesAbs := filepath.Join(req.RepoRoot, releasesRel)
 	host := hostOS()
 
+	// An explicit request narrows the matrix to a subset of the configured
+	// channels (`shiprig release --channels osx-arm64`); empty means all of them.
+	requested, err := selectChannels(cfg.Channels, req.Channels)
+	if err != nil {
+		return plugin.ArtifactsResponse{}, err
+	}
+
 	// Which channels can build on this host. macOS channels need a macOS host.
 	var planned, skipped []string
-	for _, ch := range cfg.Channels {
+	for _, ch := range requested {
 		if buildableOn(osOf(ch), host) {
 			planned = append(planned, ch)
 		} else {
@@ -68,7 +79,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	if req.DryRun {
 		msg := fmt.Sprintf("dry-run: would vpk pack %s@%s for [%s]%s%s",
 			cfg.PackId, ver, strings.Join(planned, ", "), snapshotSuffix(req.Snapshot), skipNote(skipped))
-		return plugin.ArtifactsResponse{Message: msg}, nil
+		return plugin.ArtifactsResponse{Message: msg, Channels: planned}, nil
 	}
 	if len(planned) == 0 {
 		return plugin.ArtifactsResponse{Skipped: true, Message: "no Velopack channels buildable on this host" + skipNote(skipped)}, nil
@@ -159,6 +170,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	return plugin.ArtifactsResponse{
 		Built:     true,
 		Artifacts: arts,
+		Channels:  planned,
 		Message: fmt.Sprintf("packed %d artifact(s) for %s@%s across [%s]%s%s",
 			len(arts), cfg.PackId, ver, strings.Join(planned, ", "), snapshotSuffix(req.Snapshot), skipNote(skipped)),
 	}, nil
@@ -897,6 +909,43 @@ func hostOS() targetOS {
 	default:
 		return osLinux
 	}
+}
+
+// selectChannels resolves the channels to build: every configured one when the
+// request names none, otherwise just the named subset (in configured order, so
+// the build order stays stable however the flag was typed). A name the config
+// does not declare is an error listing what it does — silently building nothing,
+// or quietly packing the full matrix, would both be worse than a typo report.
+func selectChannels(configured, requested []string) ([]string, error) {
+	if len(requested) == 0 {
+		return configured, nil
+	}
+	want := make(map[string]bool, len(requested))
+	for _, ch := range requested {
+		if ch = strings.TrimSpace(ch); ch != "" {
+			want[strings.ToLower(ch)] = true
+		}
+	}
+	if len(want) == 0 {
+		return configured, nil
+	}
+	var out []string
+	for _, ch := range configured {
+		if want[strings.ToLower(ch)] {
+			out = append(out, ch)
+			delete(want, strings.ToLower(ch))
+		}
+	}
+	if len(want) > 0 {
+		unknown := make([]string, 0, len(want))
+		for ch := range want {
+			unknown = append(unknown, ch)
+		}
+		sort.Strings(unknown)
+		return nil, fmt.Errorf("velopack: channel %s is not configured (available: %s)",
+			strings.Join(unknown, ", "), strings.Join(configured, ", "))
+	}
+	return out, nil
 }
 
 // buildableOn reports whether a channel targeting channelOS can be built on host.

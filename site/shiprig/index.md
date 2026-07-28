@@ -38,8 +38,10 @@ The whole workflow is wired:
 - `tag` — create the git tags for the released versions
 - `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI
 - `release` — the [configurable step pipeline](./pipeline) with step filtering
-  (`--only` / `--skip` / `--from` / `--to`), `--dry-run`, `--dry-build`,
-  `--local`, and `--rehearse` (see [local rehearsal](./pipeline#local-rehearsal-dry-run-dry-build-local-rehearse))
+  (`--only` / `--skip` / `--from` / `--to`), `--channels` to build one target
+  channel instead of the whole [Velopack](./pipeline#desktop-apps-with-velopack)
+  matrix, `--dry-run`, `--dry-build`, `--local`, and `--rehearse`
+  (see [local rehearsal](./pipeline#local-rehearsal-dry-run-dry-build-local-rehearse))
 - `doctor` — the changeset baseline (git/repo/config/workspace) plus a release
   section: `gh` auth and the publish/build tool each detected ecosystem needs
 

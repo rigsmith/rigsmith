@@ -2,6 +2,7 @@ package cli
 
 import (
 	"io"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -18,28 +19,45 @@ type interactiveChooser struct {
 	masker *pipeline.SecretMasker
 }
 
+// channelSelection is the build-channel picker's input: every channel this
+// release could build (empty for a repo with no channelled artifacts, which
+// hides the section entirely) and which start checked — the `--channels` flag
+// when it was given, otherwise all of them.
+type channelSelection struct {
+	all    []string
+	picked []string
+}
+
 // Choose runs the editor and returns the steps with the user's toggles applied
 // (SkipReason set to editorSkipReason for steps turned off, cleared for steps
 // turned on) plus whether to proceed. On any error it falls back to the steps
 // unchanged so a broken TTY can't strand a release.
 func (c interactiveChooser) Choose(steps []pipeline.ResolvedStep) ([]pipeline.ResolvedStep, bool) {
+	chosen, _, proceed := c.ChooseWithChannels(steps, channelSelection{})
+	return chosen, proceed
+}
+
+// ChooseWithChannels is Choose plus the build-channel picker: it also returns
+// the channels left checked, or nil when they all are — which the build step
+// reads as "every channel", exactly like an omitted --channels.
+func (c interactiveChooser) ChooseWithChannels(steps []pipeline.ResolvedStep, sel channelSelection) ([]pipeline.ResolvedStep, []string, bool) {
 	if len(steps) == 0 {
-		return steps, true
+		return steps, sel.picked, true
 	}
-	m := newPlanEditor(steps, c.masker)
+	m := newPlanEditor(steps, sel, c.masker)
 	opts := []tea.ProgramOption{tea.WithInput(c.in), tea.WithOutput(c.out)}
 	res, err := tea.NewProgram(m, opts...).Run()
 	if err != nil {
-		return steps, true
+		return steps, sel.picked, true
 	}
 	final, ok := res.(planEditorModel)
 	if !ok {
-		return steps, true // unexpected final model → proceed with the plan unchanged
+		return steps, sel.picked, true // unexpected final model → proceed with the plan unchanged
 	}
 	if !final.proceed {
-		return nil, false
+		return nil, nil, false
 	}
-	return final.result(), true
+	return final.result(), final.channels(), true
 }
 
 // editorSkipReason marks a step the user turned off in the plan editor.
@@ -50,20 +68,75 @@ type editorStep struct {
 	run  bool // current toggle state
 }
 
+// editorChannel is one row of the build-channel section (a Velopack RID).
+type editorChannel struct {
+	name  string
+	build bool
+}
+
+// planEditorModel drives one screen with two sections: the pipeline steps, then
+// the build channels (absent unless this release builds a channelled artifact).
+// The cursor runs over both — indices below len(steps) address a step, the rest
+// address a channel — so one keymap serves the whole screen.
 type planEditorModel struct {
 	steps  []editorStep
+	chans  []editorChannel
 	cursor int
 	masker *pipeline.SecretMasker
 
 	proceed bool // set when the user commits the run
 }
 
-func newPlanEditor(steps []pipeline.ResolvedStep, masker *pipeline.SecretMasker) planEditorModel {
+func newPlanEditor(steps []pipeline.ResolvedStep, sel channelSelection, masker *pipeline.SecretMasker) planEditorModel {
 	es := make([]editorStep, len(steps))
 	for i, s := range steps {
 		es[i] = editorStep{step: s, run: s.Enabled()}
 	}
-	return planEditorModel{steps: es, masker: masker}
+	// No explicit pick means every channel is in play; an explicit one (the
+	// --channels flag) starts with just those checked, so the editor shows what
+	// the command line already asked for.
+	picked := map[string]bool{}
+	for _, ch := range sel.picked {
+		picked[strings.ToLower(strings.TrimSpace(ch))] = true
+	}
+	cs := make([]editorChannel, len(sel.all))
+	for i, ch := range sel.all {
+		cs[i] = editorChannel{name: ch, build: len(picked) == 0 || picked[strings.ToLower(ch)]}
+	}
+	return planEditorModel{steps: es, chans: cs, masker: masker}
+}
+
+// channels returns the checked channels, or nil when every one is checked —
+// "all channels" is the build step's default, and passing it explicitly would
+// only make the run brittle if the config gains a channel later.
+func (m planEditorModel) channels() []string {
+	var out []string
+	for _, c := range m.chans {
+		if c.build {
+			out = append(out, c.name)
+		}
+	}
+	if len(out) == len(m.chans) {
+		return nil
+	}
+	return out
+}
+
+// onChannel reports whether the cursor sits in the channel section.
+func (m planEditorModel) onChannel() bool { return m.cursor >= len(m.steps) }
+
+// rows is the total number of selectable lines across both sections.
+func (m planEditorModel) rows() int { return len(m.steps) + len(m.chans) }
+
+// checkedChannels counts the channels currently set to build.
+func (m planEditorModel) checkedChannels() int {
+	n := 0
+	for _, c := range m.chans {
+		if c.build {
+			n++
+		}
+	}
+	return n
 }
 
 // result rebuilds the ResolvedStep slice with the toggles applied.
@@ -100,16 +173,43 @@ func (m planEditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor--
 		}
 	case "down", "j":
-		if m.cursor < len(m.steps)-1 {
+		if m.cursor < m.rows()-1 {
 			m.cursor++
 		}
 	case " ", "x":
-		m.steps[m.cursor].run = !m.steps[m.cursor].run
+		if m.onChannel() {
+			i := m.cursor - len(m.steps)
+			// Unchecking the last channel would build nothing while the build step
+			// still reads as on — ignore it; `n` is how you narrow to one.
+			if m.chans[i].build && m.checkedChannels() == 1 {
+				break
+			}
+			m.chans[i].build = !m.chans[i].build
+		} else {
+			m.steps[m.cursor].run = !m.steps[m.cursor].run
+		}
+	// all/none act on the section the cursor is in, so one keymap serves both
+	// lists. In the channel section "none" means "only this one" — narrowing to a
+	// single installer is the whole point of the picker, and zero channels isn't
+	// a state worth reaching.
 	case "a":
+		if m.onChannel() {
+			for i := range m.chans {
+				m.chans[i].build = true
+			}
+			break
+		}
 		for i := range m.steps {
 			m.steps[i].run = true
 		}
 	case "n":
+		if m.onChannel() {
+			only := m.cursor - len(m.steps)
+			for i := range m.chans {
+				m.chans[i].build = i == only
+			}
+			break
+		}
 		for i := range m.steps {
 			m.steps[i].run = false
 		}
@@ -163,8 +263,32 @@ func (m planEditorModel) View() string {
 		}
 	}
 
+	// Build channels, when this release has any: the same toggle list, so a
+	// release can be narrowed to one installer without leaving the editor.
+	if len(m.chans) > 0 {
+		b = append(b, '\n')
+		b = append(b, editorTitle.Render("── Build channels ───────────────────────")...)
+		b = append(b, '\n')
+		for i, c := range m.chans {
+			cursor := "  "
+			if len(m.steps)+i == m.cursor {
+				cursor = editorCur.Render("▸ ")
+			}
+			box, name := editorOff.Render("[ ]"), editorOff.Render(c.name)
+			if c.build {
+				box, name = editorOn.Render("[x]"), c.name
+			}
+			b = append(b, cursor+box+" "+name...)
+			b = append(b, '\n')
+		}
+	}
+
 	b = append(b, '\n')
-	b = append(b, editorDim.Render("↑/↓ move · space toggle · a all · n none · enter run · q cancel")...)
+	hint := "↑/↓ move · space toggle · a all · n none · enter run · q cancel"
+	if m.onChannel() {
+		hint = "↑/↓ move · space toggle · a all · n only this · enter run · q cancel"
+	}
+	b = append(b, editorDim.Render(hint)...)
 	b = append(b, '\n')
 	return string(b)
 }

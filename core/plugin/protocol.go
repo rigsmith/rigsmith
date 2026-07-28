@@ -222,6 +222,13 @@ type ArtifactsRequest struct {
 	OutputDir  string  `json:"outputDir"` // absolute dir to place built files (dist/)
 	Snapshot   bool    `json:"snapshot,omitempty"`
 	DryRun     bool    `json:"dryRun,omitempty"`
+	// Channels narrows a multi-target build to these targets — for Velopack the
+	// RID channels from velopack.json (e.g. ["osx-arm64"] to produce just the
+	// Apple-silicon installer instead of every configured channel). Empty means
+	// "every configured target", the default. An adapter whose artifacts have no
+	// channel concept ignores it; one that does must reject a channel it is not
+	// configured for rather than silently building nothing.
+	Channels []string `json:"channels,omitempty"`
 	// Env is the release's resolved environment (the layered .env / .env.local
 	// under the ambient shell, the same the shell/sign/forge steps run with) as
 	// KEY=VALUE entries. An adapter that shells out to a build tool should use it
@@ -284,6 +291,10 @@ type ArtifactsResponse struct {
 	Skipped   bool       `json:"skipped"`
 	Message   string     `json:"message,omitempty"`
 	Artifacts []Artifact `json:"artifacts,omitempty"`
+	// Channels names the target channels this build covers (see
+	// ArtifactsRequest.Channels). Set on a DryRun so a UI can ask which of them to
+	// build before committing to a run; empty from an adapter with no channels.
+	Channels []string `json:"channels,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,7 +27,7 @@ func editorUpdate(m planEditorModel, msg tea.Msg) planEditorModel {
 }
 
 func TestPlanEditorToggleOffAndRun(t *testing.T) {
-	m := newPlanEditor(editorSteps(), pipeline.NewSecretMasker())
+	m := newPlanEditor(editorSteps(), channelSelection{}, pipeline.NewSecretMasker())
 	m = editorUpdate(m, tkey(tea.KeyDown)) // → publish
 	m = editorUpdate(m, rkey("x"))         // toggle publish off
 
@@ -52,7 +53,7 @@ func TestPlanEditorToggleOffAndRun(t *testing.T) {
 }
 
 func TestPlanEditorCancel(t *testing.T) {
-	m := newPlanEditor(editorSteps(), pipeline.NewSecretMasker())
+	m := newPlanEditor(editorSteps(), channelSelection{}, pipeline.NewSecretMasker())
 	m = editorUpdate(m, rkey("q"))
 	if m.proceed {
 		t.Error("q should cancel the release")
@@ -60,7 +61,7 @@ func TestPlanEditorCancel(t *testing.T) {
 }
 
 func TestPlanEditorReEnableSkippedStep(t *testing.T) {
-	m := newPlanEditor(editorSteps(), pipeline.NewSecretMasker())
+	m := newPlanEditor(editorSteps(), channelSelection{}, pipeline.NewSecretMasker())
 	if m.steps[2].run {
 		t.Fatal("a flag-skipped step should start toggled off")
 	}
@@ -73,8 +74,89 @@ func TestPlanEditorReEnableSkippedStep(t *testing.T) {
 	}
 }
 
+func editorChannels() channelSelection {
+	return channelSelection{all: []string{"osx-arm64", "osx-x64", "win-x64"}}
+}
+
+// editorDown moves the cursor down n rows.
+func editorDown(m planEditorModel, n int) planEditorModel {
+	for range n {
+		m = editorUpdate(m, tkey(tea.KeyDown))
+	}
+	return m
+}
+
+func TestPlanEditorChannelsDefaultToAll(t *testing.T) {
+	m := newPlanEditor(editorSteps(), editorChannels(), pipeline.NewSecretMasker())
+	if len(m.chans) != 3 || m.checkedChannels() != 3 {
+		t.Fatalf("every channel should start checked, got %+v", m.chans)
+	}
+	// All checked reads as "no restriction" — the build step's own default.
+	if got := m.channels(); got != nil {
+		t.Errorf("all channels checked should return nil, got %v", got)
+	}
+	if !strings.Contains(m.View(), "Build channels") {
+		t.Error("the channel section should render when there are channels")
+	}
+}
+
+func TestPlanEditorNoChannelSectionWithoutChannels(t *testing.T) {
+	m := newPlanEditor(editorSteps(), channelSelection{}, pipeline.NewSecretMasker())
+	if m.rows() != len(editorSteps()) {
+		t.Errorf("the cursor should span steps only, got %d rows", m.rows())
+	}
+	if strings.Contains(m.View(), "Build channels") {
+		t.Error("no channels means no channel section")
+	}
+	if m.channels() != nil {
+		t.Error("a channel-less editor should never report channels")
+	}
+}
+
+func TestPlanEditorPreselectsFlagChannels(t *testing.T) {
+	sel := editorChannels()
+	sel.picked = []string{"WIN-X64"} // --channels win-x64, however it was typed
+	m := newPlanEditor(editorSteps(), sel, pipeline.NewSecretMasker())
+	if got := m.channels(); len(got) != 1 || got[0] != "win-x64" {
+		t.Errorf("the flag's channel should start checked alone, got %v", got)
+	}
+}
+
+func TestPlanEditorNarrowsToOneChannel(t *testing.T) {
+	m := newPlanEditor(editorSteps(), editorChannels(), pipeline.NewSecretMasker())
+	m = editorDown(m, len(editorSteps())) // → first channel
+	m = editorUpdate(m, rkey("x"))        // uncheck osx-arm64
+	if got := m.channels(); len(got) != 2 || got[0] != "osx-x64" {
+		t.Errorf("unchecking should drop that channel, got %v", got)
+	}
+
+	// "none" in the channel section means "only this one" — the one-keystroke
+	// path to a single installer.
+	m = editorDown(m, 2) // → win-x64
+	m = editorUpdate(m, rkey("n"))
+	if got := m.channels(); len(got) != 1 || got[0] != "win-x64" {
+		t.Errorf("'n' should leave only the cursor's channel, got %v", got)
+	}
+	// …and the last checked channel can't be unchecked into an empty build.
+	m = editorUpdate(m, rkey("x"))
+	if got := m.channels(); len(got) != 1 || got[0] != "win-x64" {
+		t.Errorf("the last channel should stay checked, got %v", got)
+	}
+	// Editing channels leaves the steps alone.
+	for i, es := range m.steps {
+		if es.run != editorSteps()[i].Enabled() {
+			t.Errorf("step %d changed while editing channels", i)
+		}
+	}
+	// "all" brings the whole matrix back.
+	m = editorUpdate(m, rkey("a"))
+	if got := m.channels(); got != nil {
+		t.Errorf("'a' should restore every channel, got %v", got)
+	}
+}
+
 func TestPlanEditorAllNone(t *testing.T) {
-	m := newPlanEditor(editorSteps(), pipeline.NewSecretMasker())
+	m := newPlanEditor(editorSteps(), channelSelection{}, pipeline.NewSecretMasker())
 	m = editorUpdate(m, rkey("n")) // none
 	for i, es := range m.steps {
 		if es.run {

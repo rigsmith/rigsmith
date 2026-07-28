@@ -39,6 +39,7 @@ func newReleaseCmd() *cobra.Command {
 		local      bool
 		rehearse   bool
 		only, skip []string
+		channels   []string
 		from, to   string
 		configPath string
 		yes        bool
@@ -176,7 +177,7 @@ func newReleaseCmd() *cobra.Command {
 						}
 						resp, err := eco.Artifacts(cmd.Context(), plugin.ArtifactsRequest{
 							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir, Snapshot: dryBuild,
-							Env: runnerEnv, Signing: signing,
+							Channels: channels, Env: runnerEnv, Signing: signing,
 						})
 						if err != nil {
 							out("build " + pkg.Name + ": " + err.Error())
@@ -329,12 +330,21 @@ func newReleaseCmd() *cobra.Command {
 			// confirm gates. A dry-build only builds (nothing to gate), so it takes
 			// the straight sequential path like --dry-run.
 			if mode.Interactive && mode.Rich && !dryRun && !dryBuild {
-				chosen, proceed := interactiveChooser{
+				// Desktop apps build a matrix of target channels; offer them in the
+				// editor alongside the steps so a release can be narrowed to one
+				// installer without re-running with --channels.
+				sel := channelSelection{all: buildableChannels(cmd.Context(), ws, hasEnabledStep(steps, "build")), picked: channels}
+				chosen, pickedChannels, proceed := interactiveChooser{
 					in: cmd.InOrStdin(), out: cmd.OutOrStdout(), masker: masker,
-				}.Choose(steps)
+				}.ChooseWithChannels(steps, sel)
 				if !proceed {
 					fmt.Fprintln(cmd.OutOrStdout(), "Release cancelled.")
 					return nil
+				}
+				if len(sel.all) > 0 {
+					// buildHandler reads `channels` when the build step runs, so the
+					// editor's picks apply to this run (empty = every channel).
+					channels = pickedChannels
 				}
 				ok, err := runDashboard(chosen, cfg, cfg.Tool,
 					cmd.InOrStdin(), cmd.OutOrStdout(), masker, newPipeline)
@@ -375,6 +385,7 @@ func newReleaseCmd() *cobra.Command {
 	f.BoolVar(&rehearse, "rehearse", false, "like --local, and also skip the git commit and tag — a full dry run that touches neither git history nor the network")
 	f.StringSliceVar(&only, "only", nil, "run only these steps (comma-separated)")
 	f.StringSliceVar(&skip, "skip", nil, "skip these steps (comma-separated)")
+	f.StringSliceVar(&channels, "channels", nil, "build only these target channels, e.g. osx-arm64 (comma-separated; Velopack apps)")
 	f.StringVar(&from, "from", "", "start at this step (resume point)")
 	f.StringVar(&to, "to", "", "stop after this step")
 	f.StringVar(&configPath, "config", "", "release config file (default: auto-detected, e.g. .changeset/release.jsonc)")
@@ -627,6 +638,44 @@ func hasEnabledStep(steps []pipeline.ResolvedStep, name string) bool {
 		}
 	}
 	return false
+}
+
+// buildableChannels asks every discovered package which target channels its
+// build would cover — a dry-run Artifacts call, so nothing is built and no
+// version bump is required — and returns their union in discovery order. It is
+// the plan editor's channel list; adapters without channels (most of them)
+// report none, so a repo with no desktop app gets no picker at all. Any failure
+// answers "no channels": the probe is a UI affordance, and a release must never
+// die because it couldn't offer one.
+func buildableChannels(ctx context.Context, ws *commands.Workspace, building bool) []string {
+	if !building {
+		return nil // the build step isn't running — nothing to narrow
+	}
+	pkgs, ecoOf, err := ws.Discover(ctx)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, pkg := range pkgs {
+		eco, ok := ws.Registry.Get(ecoOf[pkg.Name])
+		if !ok {
+			continue
+		}
+		resp, err := eco.Artifacts(ctx, plugin.ArtifactsRequest{
+			RepoRoot: ws.Root, Package: pkg, DryRun: true,
+		})
+		if err != nil {
+			continue
+		}
+		for _, ch := range resp.Channels {
+			if !seen[ch] {
+				seen[ch] = true
+				out = append(out, ch)
+			}
+		}
+	}
+	return out
 }
 
 // stepForge reads the forge selection from the `release` step config.
