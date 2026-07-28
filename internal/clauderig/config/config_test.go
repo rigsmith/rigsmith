@@ -25,6 +25,35 @@ func TestLoad_MissingVsCorrupt(t *testing.T) {
 	}
 }
 
+func TestLoad_MaxFileBytesDefaultsWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	// A config written before the cap existed: absent must mean the default, since
+	// long-lived configs are exactly the ones carrying an oversized transcript.
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
+		[]byte(`{"schema":1,"retention":{"historyDays":30}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Retention.MaxFileBytes != DefaultMaxFileBytes {
+		t.Errorf("MaxFileBytes = %d, want default %d", c.Retention.MaxFileBytes, DefaultMaxFileBytes)
+	}
+	// Disabling stays possible, but only explicitly.
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
+		[]byte(`{"schema":1,"retention":{"maxFileBytes":-1}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err = Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Retention.MaxFileBytes != -1 {
+		t.Errorf("explicit -1 should disable the cap, got %d", c.Retention.MaxFileBytes)
+	}
+}
+
 func TestDefault(t *testing.T) {
 	c := Default()
 	if c.Retention.HistoryDays != 30 || c.Retention.SquashFactor != 2.0 || c.Retention.FloorBytes != 500<<20 {

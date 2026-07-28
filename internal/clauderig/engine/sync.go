@@ -27,9 +27,10 @@ type RootResult struct {
 	Files          int // files written this sync (new or changed)
 	Unchanged      int // files already current in staging (incremental skip)
 	Redactions     int
-	RetentionByAge int  // project transcripts dropped as older than the window
-	SkippedFiles   int  // files that vanished/were unreadable mid-sync (live churn)
-	Skipped        bool // root absent on this machine
+	RetentionByAge int      // project transcripts dropped as older than the window
+	SkippedFiles   int      // files that vanished/were unreadable mid-sync (live churn)
+	Oversize       []string // rel paths dropped for exceeding MaxFileBytes
+	Skipped        bool     // root absent on this machine
 }
 
 // Report is the outcome of a sync into the staging dir.
@@ -49,6 +50,9 @@ type Options struct {
 	// RetentionDays drops project transcripts older than this many days (0 = keep
 	// all). Now() is the reference; the cutoff is computed once per sync.
 	RetentionDays int
+	// MaxFileBytes drops any single file larger than this (<= 0 = no cap). Git
+	// hosts reject oversized blobs and take the whole push down with them.
+	MaxFileBytes int64
 	// SourceOverride maps a root id to an absolute source dir, used verbatim
 	// instead of resolving the root location via the machine. The machine still
 	// drives path translation (portablize/manifest); this only decouples WHERE the
@@ -103,6 +107,16 @@ func Sync(opts Options) (*Report, error) {
 			// Retention: drop project transcripts older than the window.
 			if !cutoff.IsZero() && strings.HasPrefix(rel, "projects/") && info.ModTime().Before(cutoff) {
 				rr.RetentionByAge++
+				continue
+			}
+
+			// Size cap: a single oversized file (a marathon transcript) is rejected by
+			// the host and fails the entire push, so drop it here. Remove any copy an
+			// earlier, uncapped sync staged — otherwise the cap can never dig a repo
+			// out of the hole it was added to fix.
+			if opts.MaxFileBytes > 0 && info.Size() > opts.MaxFileBytes {
+				rr.Oversize = append(rr.Oversize, rel)
+				_ = os.Remove(dstPath)
 				continue
 			}
 

@@ -3,6 +3,8 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
@@ -99,6 +101,36 @@ func TestSync_RedactsCopiesAndBuildsManifest(t *testing.T) {
 	}
 	if len(rep.Findings) != 0 {
 		t.Errorf("unexpected tripwire findings: %v", rep.Findings)
+	}
+}
+
+func TestSync_DropsOversizeFiles(t *testing.T) {
+	live := t.TempDir()
+	write(t, live, "projects/-p/small.jsonl", "{}\n")
+	write(t, live, "projects/-p/marathon.jsonl", strings.Repeat("x", 4096))
+
+	staging := t.TempDir()
+	// A copy staged by an earlier, uncapped sync: the cap has to clear it, or the
+	// oversized blob stays in the tree that gets committed and pushed.
+	write(t, staging, "cli/projects/-p/marathon.jsonl", strings.Repeat("x", 4096))
+
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	rep, err := Sync(Options{
+		StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
+		MaxFileBytes: 1024, SourceOverride: override("cli", live),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(staging, "cli", "projects", "-p", "marathon.jsonl")); !os.IsNotExist(err) {
+		t.Error("oversize transcript should not be staged")
+	}
+	if _, err := os.Stat(filepath.Join(staging, "cli", "projects", "-p", "small.jsonl")); err != nil {
+		t.Error("under-cap transcript should still sync")
+	}
+	want := []string{"projects/-p/marathon.jsonl"}
+	if !reflect.DeepEqual(rep.Roots[0].Oversize, want) {
+		t.Errorf("Oversize = %v, want %v", rep.Roots[0].Oversize, want)
 	}
 }
 

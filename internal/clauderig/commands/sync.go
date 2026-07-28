@@ -49,6 +49,7 @@ func NewSyncCmd() *cobra.Command {
 			rep, serr := engine.Sync(engine.Options{
 				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
 				RetentionDays: cfg.Retention.HistoryDays,
+				MaxFileBytes:  cfg.Retention.MaxFileBytes,
 			})
 			if rep != nil {
 				for _, r := range rep.Roots {
@@ -66,7 +67,15 @@ func NewSyncCmd() *cobra.Command {
 					if r.SkippedFiles > 0 {
 						extra += fmt.Sprintf(", %d skipped (churn)", r.SkippedFiles)
 					}
+					if n := len(r.Oversize); n > 0 {
+						extra += fmt.Sprintf(", %d too large", n)
+					}
 					fmt.Fprintf(out, "  %-8s %d files, %d secret field(s) redacted%s\n", r.ID, r.Files, r.Redactions, extra)
+					// Name what was dropped for size — a silent cap reads as "everything
+					// synced" when it didn't, and these are whole conversations.
+					for _, rel := range r.Oversize {
+						fmt.Fprintf(out, "    %s %s\n", DimStyle.Render("too large:"), DimStyle.Render(rel))
+					}
 				}
 				fmt.Fprintf(out, "  manifest  %d projects\n", rep.ManifestProjects)
 				if rep.RetentionPruned > 0 {

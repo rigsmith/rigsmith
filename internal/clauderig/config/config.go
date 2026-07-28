@@ -17,6 +17,11 @@ import (
 
 const schemaVersion = 1
 
+// DefaultMaxFileBytes is the per-file size cap: GitHub warns above 50 MB and
+// rejects the whole push above 100 MB, so cap under the warning rather than at
+// the cliff. Only runaway transcripts come near it.
+const DefaultMaxFileBytes = 50 << 20
+
 // SchemaURL is stamped onto written config.json files, matching the other
 // rigsmith configs (.rig.json, .changeset/config.json).
 const SchemaURL = "https://rigsmith.dev/schemas/clauderig.json"
@@ -57,6 +62,11 @@ type Retention struct {
 	HistoryDays  int     `json:"historyDays"`
 	SquashFactor float64 `json:"squashFactor"`
 	FloorBytes   int64   `json:"floorBytes"`
+	// MaxFileBytes drops any single file bigger than this (0 = no cap). A marathon
+	// transcript can reach hundreds of MB, and git hosts reject those outright —
+	// GitHub warns past 50 MB and refuses past 100 MB, which fails the whole push.
+	// One runaway session must not be able to wedge the sync.
+	MaxFileBytes int64 `json:"maxFileBytes"`
 }
 
 // Root is a sync root: an id, whether it's enabled, and its per-OS location as a
@@ -91,7 +101,7 @@ func Default() *Config {
 		Schema:    schemaVersion,
 		Machines:  map[string]Machine{},
 		Roots:     DefaultRoots(),
-		Retention: Retention{HistoryDays: 30, SquashFactor: 2.0, FloorBytes: 500 << 20},
+		Retention: Retention{HistoryDays: 30, SquashFactor: 2.0, FloorBytes: 500 << 20, MaxFileBytes: DefaultMaxFileBytes},
 	}
 }
 
@@ -164,6 +174,13 @@ func Load(dir string) (*Config, error) {
 	// rigsmith config files (and with what Save now emits).
 	if err := jsonc.Unmarshal(b, &c); err != nil {
 		return nil, err
+	}
+	// A config written before the size cap existed has no maxFileBytes; absent must
+	// mean "the default", not "no cap", or the configs that most need the cap (long
+	// history, pre-existing) are exactly the ones that never get it. Disabling is
+	// explicit: any negative value.
+	if c.Retention.MaxFileBytes == 0 {
+		c.Retention.MaxFileBytes = DefaultMaxFileBytes
 	}
 	return &c, nil
 }
