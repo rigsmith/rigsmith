@@ -25,6 +25,11 @@ func TestLooksSecret_HighEntropy(t *testing.T) {
 	if _, ok := LooksSecret("Zk9q3xR7tLmA1cD8eF0gH2iJ4kL6mN8oP0qR2sT4uV6wX8y"); !ok {
 		t.Error("expected high-entropy blob to trip")
 	}
+	// Stripping embedded UUIDs must not open a hole: what's left here is still a
+	// 47-char opaque blob.
+	if _, ok := LooksSecret("Zk9q3xR7tLmA1cD8eF0gH2iJ4kL6mN8oP0qR2sT4uV6wX8y_b59a1b5b-f0d2-4220-9d4f-236294e64887"); !ok {
+		t.Error("expected blob-plus-UUID to trip")
+	}
 }
 
 func TestLooksSecret_Negatives(t *testing.T) {
@@ -42,6 +47,16 @@ func TestLooksSecret_Negatives(t *testing.T) {
 		Placeholder,
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // long but ~0 entropy
 		"claude-fable-5[1m]",
+		// Desktop names MCP tools mcp__<server-uuid>__<tool>; the UUID is embedded,
+		// not a leading prefix, so these must survive UUID stripping.
+		"mcp__b59a1b5b-f0d2-4220-9d4f-236294e64887__search_files",
+		"mcp__b59a1b5b-f0d2-4220-9d4f-236294e64887__download_file_content",
+		// npm lockfile integrity digests: public content hashes, max entropy. Only
+		// the ones whose base64 happens to contain no "/" ever reached the entropy
+		// check, so this tripped on a random ~20% of any synced lockfile.
+		"sha512-ZQBvi1DcpJ4GDqanjucZ2Hj3wEO5pZDS89BWbkcrvdxksJorwUDDZamX9ldFkp9aw2lmBDLgkObEA4DWNJ9FYQ==",
+		"sha512-8p0AUk4XODgIewSi0l8Epjs+EVnWiK7NoDIEGU0HhE7+ZyY8D1IMY7odu5lRrFXGg71L15KG8QrPmum45RTtdA==",
+		"sha1-Gc0ZS/0+Qo6EqrMmZmKS0X7CpGw=",
 	}
 	for _, s := range negatives {
 		if kind, ok := LooksSecret(s); ok {

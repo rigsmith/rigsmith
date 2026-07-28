@@ -39,11 +39,16 @@ var knownPrefixes = []struct {
 }
 
 var (
-	uuidRe    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	uuidRe    = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
 	jwtRe     = regexp.MustCompile(`^eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}$`)
 	pemRe     = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
 	tokenChar = regexp.MustCompile(`^[A-Za-z0-9+/=_\-]+$`)
 )
+
+// sriPrefixes mark Subresource Integrity digests (npm/yarn lockfile "integrity"
+// fields). They are public content hashes of published packages — long, base64,
+// maximally high-entropy, and never a credential.
+var sriPrefixes = []string{"sha512-", "sha384-", "sha256-", "sha1-"}
 
 // LooksSecret reports whether s has the shape of a credential, and the kind. It
 // errs toward avoiding false positives: known token prefixes / JWT / PEM are
@@ -72,10 +77,19 @@ func LooksSecret(s string) (kind string, ok bool) {
 
 // highEntropySecret is the generic, conservative backstop: a long opaque token
 // with mixed letters+digits. It deliberately excludes the shapes that produced
-// false positives on real configs — hex hashes / git SHAs, UUIDs (with an
-// optional word prefix like local_<uuid>), and paths/sentences — so it flags
+// false positives on real configs — hex hashes / git SHAs, strings that are long
+// only because they embed a UUID, SRI digests, and paths/sentences — so it flags
 // prefix-less API keys without drowning in commit hashes and session ids.
 func highEntropySecret(s string) (string, bool) {
+	for _, p := range sriPrefixes { // npm lockfile integrity digests
+		if strings.HasPrefix(s, p) {
+			return "", false
+		}
+	}
+	// Judge what's left once embedded UUIDs come out. Session ids (local_<uuid>),
+	// and Desktop's mcp__<server-uuid>__<tool> approvals, are long and mixed-case
+	// only because of the UUID; the surrounding text is plain and short.
+	s = uuidRe.ReplaceAllString(s, "")
 	if len(s) < 40 {
 		return "", false
 	}
@@ -83,9 +97,6 @@ func highEntropySecret(s string) (string, bool) {
 		return "", false
 	}
 	if isHex(s) { // git SHAs, content hashes
-		return "", false
-	}
-	if isUUIDish(s) { // session ids etc.
 		return "", false
 	}
 	if !tokenChar.MatchString(s) || !hasLetter(s) || !hasDigit(s) {
@@ -105,14 +116,6 @@ func isHex(s string) bool {
 		}
 	}
 	return true
-}
-
-// isUUIDish matches a UUID, optionally with a leading word_ prefix (local_<uuid>).
-func isUUIDish(s string) bool {
-	if i := strings.IndexByte(s, '_'); i >= 0 {
-		s = s[i+1:]
-	}
-	return uuidRe.MatchString(s)
 }
 
 func hasLetter(s string) bool {
