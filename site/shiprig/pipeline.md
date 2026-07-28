@@ -10,6 +10,7 @@ shiprig release --dry-run        # preview the interpolated plan; nothing ships
 shiprig release --dry-build      # build artifacts locally, publish nothing
 shiprig release --local          # run the whole pipeline, but skip every network step
 shiprig release --only build,publish   # run just these steps
+shiprig release --channels osx-arm64   # build one target channel, not the whole matrix
 shiprig release --from publish   # resume at a step after a failure
 shiprig release --yes            # approve every confirm gate (CI)
 ```
@@ -329,6 +330,21 @@ exactly as for any project in that language. For a **dotnet** base the build run
   cross-build anywhere — vpk gets the `[win]` / `[linux]` cross directive
   automatically. `--dry-build` packs everything **unsigned** for a fast local
   rehearsal.
+- **Build one channel with `--channels`.** By default the `build` step packs
+  every configured channel the host can build (on a Mac that includes the
+  cross-compiled Windows installer). Narrow it to a subset — comma-separated,
+  order doesn't matter — when you only want one installer:
+
+  ```sh
+  shiprig release --channels osx-arm64 --dry-build   # just the Apple-silicon .dmg, unsigned
+  shiprig release --channels osx-arm64 --only build  # …signed + notarized, at the current version
+  ```
+
+  The names must be channels the `velopack.json` declares; anything else is an
+  error listing the configured ones, so a typo can't quietly build nothing. On an
+  interactive run the plan editor also shows a **Build channels** section under
+  the steps — `space` toggles one, `n` narrows to just the channel under the
+  cursor — so you can pick without re-running with the flag.
 - **Non-dotnet bases use `build.command`.** cargo/node/go have no built-in
   publish-to-directory step, so describe the build. It runs once per channel
   through the shell with `RID`/`CHANNEL`, `OUTPUT` (the absolute dir to fill, which

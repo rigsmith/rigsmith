@@ -364,6 +364,39 @@ func TestMacosWrapDmgDefault(t *testing.T) {
 	}
 }
 
+func TestSelectChannels(t *testing.T) {
+	configured := []string{"osx-arm64", "osx-x64", "win-x64"}
+
+	got, err := selectChannels(configured, nil)
+	if err != nil || strings.Join(got, ",") != "osx-arm64,osx-x64,win-x64" {
+		t.Errorf("no request should build every configured channel: got %v, %v", got, err)
+	}
+
+	// Requested subset comes back in configured order, however it was typed,
+	// and case-insensitively (RIDs are conventionally lowercase).
+	got, err = selectChannels(configured, []string{"WIN-X64", " osx-arm64 "})
+	if err != nil || strings.Join(got, ",") != "osx-arm64,win-x64" {
+		t.Errorf("subset should keep configured order: got %v, %v", got, err)
+	}
+
+	// Empty/whitespace-only values are not a request at all.
+	got, err = selectChannels(configured, []string{"", "  "})
+	if err != nil || len(got) != 3 {
+		t.Errorf("blank request should build everything: got %v, %v", got, err)
+	}
+
+	// A channel the config doesn't declare is a typo, not an empty build.
+	_, err = selectChannels(configured, []string{"osx-arm64", "linux-x64"})
+	if err == nil {
+		t.Fatal("unconfigured channel should error")
+	}
+	for _, want := range []string{"linux-x64", "osx-arm64, osx-x64, win-x64"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should mention %q", err, want)
+		}
+	}
+}
+
 func TestOsOfAndBuildableOn(t *testing.T) {
 	if osOf("osx-arm64") != osMac || osOf("win-x64") != osWindows || osOf("linux-x64") != osLinux {
 		t.Error("osOf RID mapping wrong")

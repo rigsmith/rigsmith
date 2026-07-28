@@ -483,14 +483,28 @@ flow below.
 - **What you see:** `── Release plan — choose steps ──`, then each step as
   `▸ [x] <name>` (cursor + checkbox), with the cursor step's action commands
   shown dim beneath it, a dim `(reason)` on flag-skipped steps, and a `⏸ confirm`
-  tag on gated steps. Footer: `↑/↓ move · space toggle · a all · n none · enter
-  run · q cancel`.
+  tag on gated steps. When the release builds a channelled artifact (a Velopack
+  desktop app), a second section `── Build channels ──` lists each RID as its own
+  `[x]` row. Footer: `↑/↓ move · space toggle · a all · n none · enter run · q
+  cancel`.
 - **Keys:** `↑/↓`/`k`/`j` move, `space`/`x` toggle a step, `a` enable all,
   `n` disable all, `enter`/`g` run with the current selection, `q`/`esc`/`ctrl+c`
   cancel the whole release.
+- **Channel section keys:** the cursor runs through both sections, so the keymap
+  is the same — but `a`/`n` act on the section the cursor is in, and in the
+  channel list `n` means **only this one** (narrowing to a single installer is
+  the point; an empty build isn't a state worth reaching, so the last checked
+  channel won't untoggle). The footer swaps to `n only this` there.
 - **What it does:** toggled-off steps get `SkipReason = "disabled in plan editor"`
   (toggling a flag-skipped step back on re-enables it); the result feeds the run.
-  Cancelling prints `Release cancelled.` and exits without running anything.
+  The checked channels feed the `build` step exactly as `--channels` would (all
+  checked = no restriction), and a `--channels` flag preselects them. Cancelling
+  prints `Release cancelled.` and exits without running anything.
+- **Where the channel list comes from:** a dry-run `Artifacts` probe of each
+  discovered package (`ArtifactsResponse.Channels`) — nothing is built and no
+  version bump is required. Adapters without channels report none, so most repos
+  never see the section, and a failed probe simply omits it rather than taking
+  the release down with it.
 
 ## `shiprig release` — live dashboard (bubbletea, during the run)
 - **Trigger:** the same interactive-rich-real-run path, immediately after the
