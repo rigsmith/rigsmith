@@ -40,6 +40,8 @@ clauderig ui                   # interactive dashboard
 - **Allowlist, default-deny.** Only curated files sync; the ~12 GB Desktop cache
   tree is pruned, never descended.
 - **Bounded repo.** 30-day retention on transcripts + a size-based history squash.
+  Project memory is exempt — it's durable state, not a dated record, so it never
+  ages out of the sync.
 - **Find your sessions.** `clauderig search` locates a Claude Code session by
   title or content across live and synced history and hands you a `claude
   --resume` command. See [Commands](./commands#finding-a-session).

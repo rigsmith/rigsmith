@@ -131,6 +131,75 @@ func TestSync_RetentionDropsOldTranscripts(t *testing.T) {
 	}
 }
 
+// Memory is durable state, not a dated record: an aged memory file still syncs
+// while an equally aged transcript beside it is dropped.
+func TestSync_RetentionKeepsAgedMemory(t *testing.T) {
+	live := t.TempDir()
+	write(t, live, "projects/-p/old.jsonl", "old session")
+	write(t, live, "projects/-p/memory/MEMORY.md", "- [Old fact](old-fact.md) — hook\n")
+	write(t, live, "projects/-p/memory/old-fact.md", "a fact that hasn't changed in months")
+	old := time.Now().AddDate(0, 0, -40)
+	for _, rel := range []string{"old.jsonl", "memory/MEMORY.md", "memory/old-fact.md"} {
+		if err := os.Chtimes(filepath.Join(live, "projects", "-p", filepath.FromSlash(rel)), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	staging := t.TempDir()
+	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
+	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, RetentionDays: 30, SourceOverride: override("cli", live)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"memory/MEMORY.md", "memory/old-fact.md"} {
+		if !fexists(filepath.Join(staging, "cli", "projects", "-p", filepath.FromSlash(rel))) {
+			t.Errorf("aged memory file %s should be exempt from retention", rel)
+		}
+	}
+	if fexists(filepath.Join(staging, "cli", "projects", "-p", "old.jsonl")) {
+		t.Error("aged transcript should still be dropped by retention")
+	}
+	if rep.Roots[0].RetentionByAge != 1 {
+		t.Errorf("RetentionByAge = %d, want 1 (the transcript only)", rep.Roots[0].RetentionByAge)
+	}
+}
+
+// The staging prune must not delete already-synced memory either — and a project
+// whose transcripts have all aged out keeps its slug for the sake of its memory.
+func TestSync_StagingPruneKeepsMemoryAndItsSlug(t *testing.T) {
+	staging := t.TempDir()
+	live := t.TempDir()
+	write(t, live, "projects/-Users-john-Git-p/s.jsonl",
+		`{"type":"user","cwd":"/Users/john/Git/p","isSidechain":false}`+"\n")
+	write(t, live, "projects/-Users-john-Git-p/memory/fact.md", "durable")
+	m := config.Machine{Name: "j", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	cfg := cliOnlyConfig(live)
+
+	if _, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, RetentionDays: 30, SourceOverride: override("cli", live)}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Age everything staged and drop the project locally, so only the prune decides.
+	staged := filepath.Join(staging, "cli", "projects", "-Users-john-Git-p")
+	old := time.Now().AddDate(0, 0, -40)
+	for _, rel := range []string{"s.jsonl", "memory/fact.md"} {
+		if err := os.Chtimes(filepath.Join(staged, filepath.FromSlash(rel)), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.RemoveAll(filepath.Join(live, "projects", "-Users-john-Git-p"))
+
+	if _, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, RetentionDays: 30, SourceOverride: override("cli", live)}); err != nil {
+		t.Fatal(err)
+	}
+	if !fexists(filepath.Join(staged, "memory", "fact.md")) {
+		t.Error("memory should survive the staging prune regardless of age")
+	}
+	if fexists(filepath.Join(staged, "s.jsonl")) {
+		t.Error("aged transcript should be pruned from staging")
+	}
+}
+
 func TestSync_IncrementalSkipsUnchanged(t *testing.T) {
 	live := t.TempDir()
 	write(t, live, "skills/a/SKILL.md", "body")

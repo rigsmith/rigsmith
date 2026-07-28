@@ -104,8 +104,9 @@ func Sync(opts Options) (*Report, error) {
 				continue
 			}
 
-			// Retention: drop project transcripts older than the window.
-			if !cutoff.IsZero() && strings.HasPrefix(rel, "projects/") && info.ModTime().Before(cutoff) {
+			// Retention: drop project transcripts older than the window. Memory is
+			// exempt — see isMemoryRel.
+			if !cutoff.IsZero() && strings.HasPrefix(rel, "projects/") && !isMemoryRel(rel) && info.ModTime().Before(cutoff) {
 				rr.RetentionByAge++
 				continue
 			}
@@ -286,8 +287,22 @@ func writeFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// isMemoryRel reports whether a CLI-root rel path is a project memory file
+// ("projects/<slug>/memory/…"). Memory is exempt from the retention window: a
+// transcript is a dated record and ages out, but a memory is durable state that
+// is only rewritten when the fact changes. Aging it by mtime silently stops a
+// stable memory from propagating and then deletes it from the staged tree, so a
+// fresh restore gets a MEMORY.md index pointing at files it never received.
+// They're a few KB each, so there is no size argument for expiring them either.
+func isMemoryRel(rel string) bool {
+	parts := strings.Split(rel, "/")
+	return len(parts) > 3 && parts[0] == "projects" && parts[2] == "memory"
+}
+
 // pruneAgedStagedProjects removes files under projectsDir older than cutoff and
 // the directories they empty, enforcing the rolling window on the staged tree.
+// Memory files are kept regardless of age (isMemoryRel) and count as content, so
+// a project whose transcripts have all aged out keeps its slug for its memory.
 // It returns the count removed and the set of top-level slugs that still have
 // content (so the manifest can drop the rest). A missing dir is a no-op.
 func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, remaining map[string]bool, err error) {
@@ -313,6 +328,10 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 			}
 			info, e := d.Info()
 			if e != nil {
+				return nil
+			}
+			if rel, rerr := filepath.Rel(slugDir, p); rerr == nil && isMemoryRel("projects/"+slug+"/"+filepath.ToSlash(rel)) {
+				kept++
 				return nil
 			}
 			if info.ModTime().Before(cutoff) {

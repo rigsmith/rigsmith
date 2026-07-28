@@ -54,7 +54,7 @@
       "additionalProperties": true,
       "description": "Project-history window and history-branch squash policy.",
       "properties": {
-        "historyDays": { "type": "integer", "description": "Project-history retention window in days." },
+        "historyDays": { "type": "integer", "description": "Project-history retention window in days. Applies to transcripts; project memory is exempt and never ages out." },
         "squashFactor": { "type": "number", "description": "Squash the history branch when its footprint exceeds this × the retained working-tree size." },
         "floorBytes": { "type": "integer", "description": "Never squash below this byte floor." }
       }

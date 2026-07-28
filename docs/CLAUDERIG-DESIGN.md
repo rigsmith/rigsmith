@@ -50,6 +50,7 @@ Legend: ✅ sync · 🔧 junk (machine-local/ephemeral) · 🔑 secret (never le
 | `commands/`, `agents/`, `CLAUDE.md` | ✅ | global user config, if present |
 | `plugins/{marketplaces,data}` | ✅ | config; **not** `plugins/cache` |
 | `projects/<slug>/*.jsonl` | ✅ | the **resume payload**; slug-rewrite + 30d retention (history branch) |
+| `projects/<slug>/memory/` | ✅ | durable per-project memory; slug-rewrite, **no retention window** |
 | `sessions/*.json` | 🔧 | PID-named live-process registry; stale PIDs on another machine (see Open Q1) |
 | `file-history/` | 🔧 | 92 MB rewind cache; not needed for resume — **excluded, no opt-in** (Q2) |
 | `cache/`, `*-cache.json`, `statsig/`, `telemetry/`, `debug/` | 🔧 | machine-local / device ids |
@@ -133,6 +134,13 @@ cwd mappings (Q4).
   rolling window, not just "don't add old" — and a project deleted or gone idle on
   any machine ages out globally, so stale slugs don't accumulate. Pruned slugs are
   dropped from the manifest too.
+- **`projects/<slug>/memory/` is exempt from the window**, on both paths. A
+  transcript is a dated record and ages out; a memory is durable state that's only
+  rewritten when the fact changes, so mtime is the wrong signal — aging it would
+  silently stop a stable memory from propagating and then delete it from staging,
+  leaving a restored machine with a `MEMORY.md` indexing files it never got. They're
+  a few KB each, so they cost nothing to keep. A slug with only memory left survives
+  the prune.
 - **Two branches**: `main` = config (precious, tiny, full history kept);
   `history` = **orphan branch** for `projects/`, squashed to a single root commit
   so `.git` never grows past the working tree. Transcript sync history is
