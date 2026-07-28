@@ -13,8 +13,16 @@ func For(rootID string) List {
 // + the project transcripts (retention is applied separately by mtime, not here).
 // Everything else — caches, statsig, sessions registry, shell snapshots, locks,
 // telemetry, file-history, credentials — is denied by default.
+// vendored are dependency trees that can appear anywhere inside an otherwise
+// allowed tree — a skill with npm deps, a Cowork session that ran a build in its
+// outputs dir. They're reinstallable from the lockfile, enormous, and pure churn,
+// so they're pruned by name at any depth rather than carved out per-site.
+func vendored() []Rule {
+	return []Rule{exc(anyDepth + "node_modules")}
+}
+
 func CLI() List {
-	return List{Rules: []Rule{
+	return List{Rules: append(vendored(),
 		inc("settings.json"),
 		inc("settings.local.json"),
 		inc("CLAUDE.md"),
@@ -29,14 +37,14 @@ func CLI() List {
 		// an allowed tree later (allowlist rots — fail safe, not open).
 		exc("plugins/cache"),
 		exc("projects/*/file-history"),
-	}}
+	)}
 }
 
 // Desktop is the allowlist for the app-support Claude root. Only the small config
 // and session-metadata files; the ~12 GB of Electron/Chromium cache, cookies,
 // storage, and machine-local UI state is denied by default (never descended).
 func Desktop() List {
-	return List{Rules: []Rule{
+	return List{Rules: append(vendored(),
 		inc("claude-code-sessions"),
 		inc("local-agent-mode-sessions"),
 		inc("claude_desktop_config.json"),
@@ -47,5 +55,5 @@ func Desktop() List {
 		// to its stable `preferences` — the Desktop app rewrites the rest constantly
 		// with rotating cache/token values (oauth.tokenCache, dxt.allowlistCache, …).
 		inc("config.json"),
-	}}
+	)}
 }

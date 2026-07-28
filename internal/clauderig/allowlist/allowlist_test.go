@@ -44,6 +44,28 @@ func TestLongestWins_CarveOut(t *testing.T) {
 	}
 }
 
+func TestNodeModules_PrunedAtAnyDepth(t *testing.T) {
+	// A Cowork session that ran a build, and a skill with npm deps: the vendored
+	// tree is excluded however deep it sits, and the exclude outranks the (much
+	// longer) include pattern it sits inside.
+	deep := "local-agent-mode-sessions/03d/e30/local_x/outputs/build/node_modules/xml-js/package.json"
+	if Desktop().Match(deep) {
+		t.Error("node_modules under a session should not sync")
+	}
+	if CLI().Match("skills/my-skill/node_modules/left-pad/index.js") {
+		t.Error("node_modules under a skill should not sync")
+	}
+	// Siblings of the vendored tree still sync — the prune is name-scoped, not a
+	// blanket exclude of everything below outputs/.
+	if !Desktop().Match("local-agent-mode-sessions/03d/e30/local_x/outputs/build/package.json") {
+		t.Error("lockfile beside node_modules should still sync")
+	}
+	// And the walk never enters it.
+	if Desktop().descend("local-agent-mode-sessions/03d/e30/local_x/outputs/build/node_modules") {
+		t.Error("should prune the node_modules dir, not descend it")
+	}
+}
+
 func TestDesktop_PrunesCacheTree(t *testing.T) {
 	// Build a Desktop-like tree: a giant junk dir + the allowed small files.
 	root := t.TempDir()
