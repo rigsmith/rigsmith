@@ -118,3 +118,32 @@ want the machine-wide default login to change.
   pinned against PATH hijacking.
 - **Windows** — symlink-based sharing needs Developer Mode or an elevated shell;
   otherwise claudeRig copies the customizations into the session instead.
+
+## Identity desync: Keychain vs `oauthAccount` (diagnosed 2026-08-06)
+
+The signed-in identity lives in TWO places that can disagree, and when they do,
+everything user-visible reports the wrong one:
+
+- **Keychain `Claude Code-credentials`** — the actual bearer token. The server
+  attributes every request (inference, artifact publishing, usage) to *this*
+  account. Ground truth.
+- **`~/.claude.json` → `oauthAccount`** — email/org/plan block. Purely local
+  belief; the CLI UI and anything that "shows the account" read this.
+
+Observed live: an artifact published while `oauthAccount` said one account landed
+on another — `~/.clauderig/accounts/active.json` was the side telling the truth.
+This is exactly the point-3b hazard in [CLAUDERIG-DESIGN.md](CLAUDERIG-DESIGN.md):
+`switch` must swap the `oauthAccount` block *and* the live credential together.
+
+**Detecting a desync without reading the Keychain** (often permission-blocked):
+`~/.claude.json` `groveConfigCache` is keyed by account UUID and holds
+server-returned payloads — the entry with real content (e.g. `grove_enabled`)
+belongs to the TRUE account; a timestamp-only shell is local-only belief.
+`passesEligibilityCache` referral codes also distinguish identities (same code
+across two org UUIDs = one person in two orgs). Note both accounts appear only as
+bare UUIDs — a text grep for the email misses this.
+
+**Recovery:** resync both halves — `clauderig account switch <name>` or
+`claude /login` — and never from inside a live session. The planned UI's account
+face runs this check as a health probe (see
+[CLAUDERIG-UI-PLAN.md](CLAUDERIG-UI-PLAN.md), Phase 3).
