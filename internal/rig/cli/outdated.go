@@ -73,7 +73,7 @@ func outdatedProjectCompletion(_ *cobra.Command, args []string, _ string) ([]str
 	root := resolveRoot(cwd)
 	cfg, _ := config.LoadMerged(root)
 	var names []string
-	for _, p := range detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude) {
+	for _, p := range discoverDotnet(root, cfg.Solution, cfg.Exclude) {
 		names = append(names, p.Name)
 	}
 	sort.Strings(names)
@@ -131,7 +131,7 @@ func runDotnetOutdated(cmd *cobra.Command, root string, args []string) error {
 // An unmatched name or an empty repo returns an actionable error rather than a
 // bare dotnet failure.
 func dotnetReviewProjects(root string, cfg config.Config, projectArg string) ([]detect.ProjectInfo, error) {
-	projects := detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude)
+	projects := discoverDotnet(root, cfg.Solution, cfg.Exclude)
 	if len(projects) == 0 {
 		return nil, dotnetNoProjectsError(root, cfg)
 	}

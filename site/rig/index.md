@@ -26,8 +26,10 @@ so an ecosystem declares its own commands. Ecosystems that don't define
 
 Global flags: `--dry-run`/`-n` (print what would run, don't run it),
 `--quiet`/`-q` (suppress the `→ command` echo), `--no-env` (skip
-`.env`/`.env.local` loading for this run), and `--root <dir>` (override the
-working root, skipping walk-up discovery).
+`.env`/`.env.local` loading for this run), `--root <dir>` (override the
+working root, skipping walk-up discovery), and `--include-worktrees` (also
+discover projects inside [nested git worktrees](./configuration#nested-worktrees),
+which are skipped by default).
 
 - [All verbs →](./verbs)
 - [Configuration (`.rig.json`) →](./configuration)

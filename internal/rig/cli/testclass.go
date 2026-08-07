@@ -28,7 +28,7 @@ import (
 // the remaining args are forwarded. The .NET rig's TestVerb.Execute.
 func runDotnetTest(cmd *cobra.Command, root string, args []string, watch bool) error {
 	cfg, _ := config.LoadMerged(root)
-	projects := detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude)
+	projects := discoverDotnet(root, cfg.Solution, cfg.Exclude)
 	testProject := resolveDotnetTestProject(cfg, root, projects)
 	if testProject == "" {
 		return fmt.Errorf("no test project found — add one (IsTestProject / Microsoft.NET.Test.Sdk / *Tests), or set test.project in %s", config.FileName)

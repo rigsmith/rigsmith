@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -76,12 +77,24 @@ func newInfoCmd() *cobra.Command {
 			fmt.Fprintln(out, headerStyle.Render("Projects"))
 			all := discoverWorkspace(cmd.Context(), root, cfg.Exclude)
 			sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
-			// A name shared by several paths (a duplicate — often a nested worktree)
-			// is indistinguishable by name alone, so show its path to tell them apart.
+			// A name shared by several paths (a duplicate — usually a second
+			// checkout of the same project) is indistinguishable by name alone,
+			// so show its path to tell them apart. That path column used to be
+			// the only signal, which reads as ragged formatting rather than a
+			// warning — so duplicates are now summarized up front, labelled as
+			// duplicates, and their rows are marked.
 			dups := duplicateNames(all)
+			warnings := projectWarnings(cdContext(cmd), root, cfg, all, dups)
+			for _, w := range warnings {
+				fmt.Fprintln(out, warnStyle.Render("  ⚠  ")+w)
+			}
+			if len(warnings) > 0 {
+				fmt.Fprintln(out)
+			}
 			for _, p := range all {
-				meta := p.Version
+				gutter, meta := "   ", p.Version
 				if dups[p.Name] {
+					gutter = warnStyle.Render(" ⚠ ")
 					if rel := relSlash(root, p.Dir); rel != "" && rel != "." {
 						if meta != "" {
 							meta += "  "
@@ -89,7 +102,7 @@ func newInfoCmd() *cobra.Command {
 						meta += rel
 					}
 				}
-				fmt.Fprintf(out, "  %s %s\n", p.Name, dimStyle.Render(meta))
+				fmt.Fprintf(out, " %s%s %s\n", gutter, p.Name, dimStyle.Render(meta))
 			}
 			if len(all) == 0 {
 				fmt.Fprintln(out, dimStyle.Render("  (none discovered)"))
@@ -97,6 +110,75 @@ func newInfoCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// projectWarnings builds the lines `info` leads the Projects section with: the
+// duplicate names discovery found (flagged when one of them is the configured
+// defaultProject, since that is the case where a bare `rig run` has two answers)
+// and the nested git worktrees whose copies discovery is holding back.
+//
+// The worktree line closes the loop the tools otherwise leave open: `rig wt`
+// creates the checkout, `rig prune` knows when it is merged and removable, but
+// nothing ever said the two were related. Here they are, in one place, at the
+// moment the extra copies would matter.
+func projectWarnings(ctx context.Context, root string, cfg config.Config, all []target, dups map[string]bool) []string {
+	names := make([]string, 0, len(all))
+	for _, p := range all {
+		names = append(names, p.Name)
+	}
+	// Which names the default resolves to, by the same rules `rig run` applies —
+	// so the label lands on the name that would actually launch.
+	isDefault := topTierNames(names, cfg.DefaultProject)
+
+	var out []string
+	for _, name := range sortedKeys(dups) {
+		var paths []string
+		for _, p := range all {
+			if p.Name == name {
+				paths = append(paths, relSlash(root, p.Dir))
+			}
+		}
+		label := fmt.Sprintf("%d projects named %s", len(paths), name)
+		if isDefault[name] {
+			label += " (defaultProject)"
+		}
+		out = append(out, label+" — "+strings.Join(paths, ", "))
+	}
+
+	// Nested worktrees hold a full copy of every project; discovery skips them
+	// (see nestedwt.go) unless --include-worktrees says otherwise.
+	for _, w := range nestedWorktrees(ctx, root) {
+		what := "nested worktree " + w.Rel
+		if w.Branch != "" {
+			what += " (" + w.Branch + ")"
+		}
+		if includeWorktrees {
+			what += " is included in the list above (--include-worktrees)"
+		} else {
+			what += " is hidden from discovery"
+		}
+		// w.State is prune's own verdict, so the line never promises a removal
+		// prune would decline. It's the more actionable half, so it takes the
+		// tail — the --include-worktrees hint only shows when there's no verdict.
+		switch {
+		case w.State != "":
+			what += "; it " + w.State
+		case !includeWorktrees:
+			what += " — show it with --include-worktrees"
+		}
+		out = append(out, what)
+	}
+	return out
+}
+
+// sortedKeys returns a name set's members in stable order.
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // primaryDisplay resolves the primary ecosystem for the info view. It returns a
