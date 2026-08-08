@@ -558,6 +558,17 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 	// (Plan writes those inline; see the VersionFile clearing below). The
 	// strategy is resolved per package, so a globally-independent repo simply
 	// contributes no lockstep groups.
+	//
+	// Like Fixed, and unlike Linked, this coordinates AND adds the non-releasing
+	// members. It has to: the bump is written to the one file every member reads,
+	// so they all move whether or not they carry a changeset. Reporting only the
+	// members that happen to have one understates what the release actually does —
+	// in Avalite a single changeset on Avalite.Core moved all nine packages while
+	// the plan named five, leaving four published at a version with no changelog
+	// entry and no mention in the plan.
+	//
+	// One releasing member is therefore enough to pull in the whole group, which
+	// is why the guard is "none releasing" rather than "fewer than two".
 	lockstep := map[string][]string{}
 	for _, p := range packages {
 		if p.VersionFile == "" || strategyFor(cfg, p.Name) == config.Independent {
@@ -567,13 +578,25 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 	}
 	for _, names := range lockstep {
 		releasing := releasingIn(names)
-		if len(releasing) <= 1 {
+		if len(releasing) == 0 {
 			continue
 		}
 		bump := highestBump(releasing)
 		version := highestCurrentVersion(names, byName)
-		for _, m := range releasing {
-			apply(m, version, bump)
+		for _, member := range names {
+			if cfg.IsIgnored(member) {
+				continue
+			}
+			if m, ok := rel[member]; ok {
+				apply(m, version, bump)
+				continue
+			}
+			if pkg, ok := byName[member]; ok {
+				m := newModule(pkg)
+				rel[member] = m
+				*order = append(*order, member)
+				apply(m, version, bump)
+			}
 		}
 	}
 	return changed

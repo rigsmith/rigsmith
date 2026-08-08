@@ -471,6 +471,70 @@ func TestLockstepSharedVersionFileCoordinatesToHighestBump(t *testing.T) {
 	}
 }
 
+func TestLockstepPullsInMembersWithoutChangesets(t *testing.T) {
+	// One changeset, three packages sharing a Directory.Build.props. The bump is
+	// written to that one file, so B and C move whether or not they carry a
+	// changeset — the plan has to say so. Previously it listed only A, and B and C
+	// were published at the new version with no changelog and no plan entry.
+	const props = "Directory.Build.props"
+	pkgs := []plugin.Package{
+		{Name: "A", Version: "1.0.0", ManifestPath: "A.csproj", VersionFile: props},
+		{Name: "B", Version: "1.0.0", ManifestPath: "B.csproj", VersionFile: props},
+		{Name: "C", Version: "1.0.0", ManifestPath: "C.csproj", VersionFile: props},
+	}
+	changesets := []*changeset.Changeset{
+		cs("a fix", changeset.Release{Name: "A", Bump: changeset.BumpPatch}),
+	}
+	plan := Plan(changesets, pkgs, config.Default())
+
+	for _, name := range []string{"A", "B", "C"} {
+		m := find(plan, name)
+		if m == nil {
+			t.Fatalf("%s missing from plan — the shared version file moves it too", name)
+		}
+		if got := m.NewVersion().String(); got != "1.0.1" {
+			t.Errorf("%s NewVersion = %s, want 1.0.1", name, got)
+		}
+	}
+}
+
+func TestLockstepSkipsIgnoredMembers(t *testing.T) {
+	// An ignored package sharing the version file is not released, even though the
+	// shared bump does move its number — "ignore" means "do not release this".
+	const props = "Directory.Build.props"
+	pkgs := []plugin.Package{
+		{Name: "A", Version: "1.0.0", ManifestPath: "A.csproj", VersionFile: props},
+		{Name: "Fixture", Version: "1.0.0", ManifestPath: "Fixture.csproj", VersionFile: props},
+	}
+	changesets := []*changeset.Changeset{
+		cs("a fix", changeset.Release{Name: "A", Bump: changeset.BumpPatch}),
+	}
+	cfg := config.Default()
+	cfg.Ignore = []string{"Fixture"}
+	plan := Plan(changesets, pkgs, cfg)
+
+	if find(plan, "A") == nil {
+		t.Fatal("A missing from plan")
+	}
+	if m := find(plan, "Fixture"); m != nil {
+		t.Errorf("ignored package pulled into the plan at %s", m.NewVersion())
+	}
+}
+
+func TestLockstepNoReleasingMembersStaysEmpty(t *testing.T) {
+	// No changesets at all: sharing a version file must not manufacture a release.
+	const props = "Directory.Build.props"
+	pkgs := []plugin.Package{
+		{Name: "A", Version: "1.0.0", ManifestPath: "A.csproj", VersionFile: props},
+		{Name: "B", Version: "1.0.0", ManifestPath: "B.csproj", VersionFile: props},
+	}
+	plan := Plan(nil, pkgs, config.Default())
+
+	if len(plan) != 0 {
+		t.Errorf("plan = %d modules, want 0 (nothing to release)", len(plan))
+	}
+}
+
 func TestDisplayNameKeepsIdentity(t *testing.T) {
 	// The package's identity (what changesets match against) is Name; the
 	// changelog title uses DisplayName (the .NET PackageId).
