@@ -18,6 +18,10 @@ var ErrNothingToRepair = errors.New("credential and profile block already agree"
 // truthful profile block isn't available locally to write back.
 var ErrNoStoredMatch = errors.New("no stored account matches the live credential")
 
+// ErrAmbiguousMatch means more than one stored account claims the credential's
+// organization, so a repair cannot tell which profile block is the right one.
+var ErrAmbiguousMatch = errors.New("more than one stored account matches the live credential")
+
 // Identity desync detection and an append-only observation journal.
 //
 // Claude Code's signed-in identity has TWO halves, written independently by
@@ -355,7 +359,23 @@ func (s *Store) RepairProfileBlock() (Account, error) {
 	if err != nil {
 		return Account{}, err
 	}
-	match := matchByOrg(all, o.CredOrg)
+	match, candidates := matchByOrg(all, o.CredOrg)
+	// Two logins can share an organization, and the credential carries only the
+	// org — no email, no accountUuid — so nothing here can tell them apart. Wrote
+	// blind, --fix would stamp one user's profile block over another's: the exact
+	// mislabeling this whole file exists to prevent. Refuse and name the choices.
+	if match == nil && len(candidates) > 1 {
+		emails := make([]string, 0, len(candidates))
+		for _, c := range candidates {
+			emails = append(emails, c.Email)
+		}
+		return Account{}, fmt.Errorf(
+			"%w: org %s has %d stored accounts (%s), and the credential identifies only the org — "+
+				"repairing would have to guess which profile to write.\n"+
+				"Fix: `clauderig account switch <name>` to set both halves deliberately, or log in as the "+
+				"account you want and run `clauderig account add`",
+			ErrAmbiguousMatch, o.CredOrg, len(candidates), strings.Join(emails, ", "))
+	}
 	if match == nil {
 		return Account{}, fmt.Errorf(
 			"%w: the credential belongs to org %s. Log in as that account and run "+
@@ -404,20 +424,27 @@ func GlobalConfigExists() bool {
 	return serr == nil
 }
 
-// matchByOrg finds the stored account belonging to org. An empty org never
-// matches: accounts captured before the org was recorded carry "", and treating
-// that as a wildcard would let a repair write the WRONG identity's profile block
-// — the precise failure this whole file exists to prevent.
-func matchByOrg(all []Account, org string) *Account {
+// matchByOrg finds the stored account belonging to org. It returns a match only
+// when exactly ONE account claims that org; otherwise match is nil and every
+// candidate is returned, so the caller can refuse rather than guess. Two logins
+// can legitimately share an org (see idFor), and a credential names only the org
+// — picking the first would silently write another identity's profile block.
+//
+// An empty org never matches: accounts captured before the org was recorded
+// carry "", and treating that as a wildcard would have the same effect.
+func matchByOrg(all []Account, org string) (match *Account, candidates []Account) {
 	if org == "" {
-		return nil
+		return nil, nil
 	}
 	for i := range all {
 		if all[i].OrganizationUUID == org {
-			return &all[i]
+			candidates = append(candidates, all[i])
 		}
 	}
-	return nil
+	if len(candidates) == 1 {
+		return &candidates[0], candidates
+	}
+	return nil, candidates
 }
 
 // shortUUID abbreviates a UUID for display; identity comparisons always use the

@@ -193,18 +193,40 @@ func TestMatchByOrg(t *testing.T) {
 		{ID: "b", Email: "b@x.com", OrganizationUUID: "org-b"},
 		{ID: "legacy", Email: "legacy@x.com"}, // captured before org was recorded
 	}
-	if got := matchByOrg(all, "org-b"); got == nil || got.ID != "b" {
+	if got, _ := matchByOrg(all, "org-b"); got == nil || got.ID != "b" {
 		t.Fatalf("expected account b, got %+v", got)
 	}
-	if got := matchByOrg(all, "org-missing"); got != nil {
+	if got, _ := matchByOrg(all, "org-missing"); got != nil {
 		t.Fatalf("expected no match for an unknown org, got %+v", got)
 	}
 	// An empty org must not wildcard onto the account with no org recorded.
-	if got := matchByOrg(all, ""); got != nil {
+	if got, _ := matchByOrg(all, ""); got != nil {
 		t.Fatalf("empty org must never match, got %+v", got)
 	}
-	if got := matchByOrg(nil, "org-a"); got != nil {
+	if got, _ := matchByOrg(nil, "org-a"); got != nil {
 		t.Fatalf("expected no match in an empty store, got %+v", got)
+	}
+}
+
+// Two logins can share an org, and a credential names only the org — so there is
+// nothing to disambiguate with. Returning the first would stamp one identity's
+// profile block over another's.
+func TestMatchByOrgRefusesWhenSeveralAccountsShareTheOrg(t *testing.T) {
+	all := []Account{
+		{ID: "one", Email: "one@shared.com", OrganizationUUID: "org-shared"},
+		{ID: "two", Email: "two@shared.com", OrganizationUUID: "org-shared"},
+		{ID: "solo", Email: "solo@x.com", OrganizationUUID: "org-solo"},
+	}
+	match, candidates := matchByOrg(all, "org-shared")
+	if match != nil {
+		t.Fatalf("an ambiguous org must not resolve to a single account, got %+v", match)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected both candidates returned so the caller can explain, got %d", len(candidates))
+	}
+	// The unambiguous case still resolves.
+	if m, c := matchByOrg(all, "org-solo"); m == nil || m.ID != "solo" || len(c) != 1 {
+		t.Fatalf("a single-account org should still match, got %+v / %d candidates", m, len(c))
 	}
 }
 
