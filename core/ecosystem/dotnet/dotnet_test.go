@@ -227,6 +227,108 @@ func TestSetVersionRewritesOnlyFirstVersion(t *testing.T) {
 	}
 }
 
+// itemMetadataProject mirrors the shape that exposed the bug: a custom item whose
+// metadata is spelled with the same element syntax as a property, declared BEFORE
+// the project's own version. Avalite's icon packs look exactly like this.
+const itemMetadataProject = `<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <IconPack Include="lucide">
+      <Name>Lucide</Name>
+      <Version>0.2.0</Version>
+    </IconPack>
+  </ItemGroup>
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+</Project>`
+
+func TestDiscoverIgnoresItemMetadataVersion(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "Lib.csproj"), itemMetadataProject)
+
+	a := New()
+	got, err := a.Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]plugin.Package{}
+	for _, p := range got.Packages {
+		byName[p.Name] = p
+	}
+	pkg, ok := byName["Lib"]
+	if !ok {
+		t.Fatalf("Lib not discovered: %v", keys(byName))
+	}
+	// 0.2.0 is the icon pack's version, not the project's.
+	if pkg.Version != "1.0.0" {
+		t.Errorf("version = %q, want 1.0.0 (item metadata must not be read as the project version)", pkg.Version)
+	}
+}
+
+func TestSetVersionLeavesItemMetadataAlone(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, "Lib.csproj")
+	writeFile(t, manifest, itemMetadataProject)
+
+	a := New()
+	if err := a.SetVersion(context.Background(), plugin.SetVersionRequest{
+		RepoRoot:   root,
+		Package:    plugin.Package{ManifestPath: "Lib.csproj"},
+		NewVersion: "2.0.0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := string(mustRead(t, manifest))
+	if !strings.Contains(got, "<Version>2.0.0</Version>") {
+		t.Errorf("project <Version> not bumped: %q", got)
+	}
+	// The regression: the bump used to land on the FIRST <Version> in the file,
+	// silently rewriting the icon pack's version and leaving the project at 1.0.0.
+	if !strings.Contains(got, "<Version>0.2.0</Version>") {
+		t.Errorf("icon pack metadata was rewritten: %q", got)
+	}
+	if strings.Contains(got, "<Version>1.0.0</Version>") {
+		t.Errorf("project version should no longer be 1.0.0: %q", got)
+	}
+}
+
+// A project whose only <Version> is item metadata has no project version at all;
+// the bump must be INSERTED into a PropertyGroup rather than hijacking the item.
+func TestSetVersionInsertsWhenOnlyItemMetadataVersionExists(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, "Lib.csproj")
+	writeFile(t, manifest, `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <IconPack Include="lucide">
+      <Version>0.2.0</Version>
+    </IconPack>
+  </ItemGroup>
+</Project>`)
+
+	a := New()
+	if err := a.SetVersion(context.Background(), plugin.SetVersionRequest{
+		RepoRoot:   root,
+		Package:    plugin.Package{ManifestPath: "Lib.csproj"},
+		NewVersion: "2.0.0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := string(mustRead(t, manifest))
+	if !strings.Contains(got, "<Version>2.0.0</Version>") {
+		t.Errorf("version not inserted: %q", got)
+	}
+	if !strings.Contains(got, "<Version>0.2.0</Version>") {
+		t.Errorf("icon pack metadata was rewritten: %q", got)
+	}
+	// Inserted into the PropertyGroup, not the ItemGroup.
+	if strings.Index(got, "<Version>2.0.0</Version>") > strings.Index(got, "<ItemGroup>") {
+		t.Errorf("version inserted outside the PropertyGroup: %q", got)
+	}
+}
+
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)

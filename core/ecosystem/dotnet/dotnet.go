@@ -171,8 +171,10 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 	text := string(content)
 
 	// Pick the element already present (Version wins over VersionPrefix, like MSBuild).
+	// Scoped to <PropertyGroup> for the same reason as fromText: an <ItemGroup> item's
+	// <Version> metadata is not the project's version and must not decide this.
 	elem := elemVersion
-	if !strings.Contains(text, "<Version>") && strings.Contains(text, "<VersionPrefix>") {
+	if findInPropertyGroup(text, versionRe) == nil && findInPropertyGroup(text, versionPrefixRe) != nil {
 		elem = elemVersionPrefix
 	}
 
@@ -382,18 +384,67 @@ func resolveVersion(csprojPath, csprojText string) (resolvedVersion, bool) {
 }
 
 // fromText extracts <Version> (preferred) or <VersionPrefix> from a document's text.
+//
+// Only elements inside a <PropertyGroup> count. MSBuild item metadata is written
+// with the same element syntax, so a custom item can legitimately carry its own
+// <Version> — Avalite's icon-pack items declare the pack's version that way:
+//
+//	<ItemGroup>
+//	  <IconPack Include="lucide">
+//	    <Version>0.2.0</Version>   <-- the icon pack, NOT the project
+//
+// A document-wide scan reported that as the project's version, and the matching
+// write path would then have rewritten the pack's metadata on the next bump.
 func fromText(text, filePath string, shared bool) (resolvedVersion, bool) {
-	if m := versionRe.FindStringSubmatch(text); m != nil {
-		if v := strings.TrimSpace(m[2]); v != "" {
+	if m := findInPropertyGroup(text, versionRe); m != nil {
+		if v := strings.TrimSpace(text[m[4]:m[5]]); v != "" {
 			return resolvedVersion{version: v, filePath: filePath, element: elemVersion, shared: shared}, true
 		}
 	}
-	if m := versionPrefixRe.FindStringSubmatch(text); m != nil {
-		if v := strings.TrimSpace(m[2]); v != "" {
+	if m := findInPropertyGroup(text, versionPrefixRe); m != nil {
+		if v := strings.TrimSpace(text[m[4]:m[5]]); v != "" {
 			return resolvedVersion{version: v, filePath: filePath, element: elemVersionPrefix, shared: shared}, true
 		}
 	}
 	return resolvedVersion{}, false
+}
+
+// propertyGroupSpans returns the [start,end) byte range of the INNER text of each
+// <PropertyGroup> block. PropertyGroups do not nest, so pairing each open tag with
+// the next close tag is exact.
+func propertyGroupSpans(text string) [][2]int {
+	var spans [][2]int
+	for _, open := range propertyGroupRe.FindAllStringIndex(text, -1) {
+		// A self-closing <PropertyGroup ... /> contains nothing.
+		if open[1] >= 2 && text[open[1]-2] == '/' {
+			continue
+		}
+		rest := text[open[1]:]
+		end := strings.Index(rest, "</PropertyGroup>")
+		if end < 0 {
+			// Unterminated (truncated or malformed file): treat the remainder as the
+			// group rather than dropping properties that really are inside one.
+			spans = append(spans, [2]int{open[1], len(text)})
+			break
+		}
+		spans = append(spans, [2]int{open[1], open[1] + end})
+	}
+	return spans
+}
+
+// findInPropertyGroup returns FindStringSubmatchIndex for the first match of re
+// lying inside a <PropertyGroup>, or nil when there is none. Read and write share
+// it so they always target the same element.
+func findInPropertyGroup(text string, re *regexp.Regexp) []int {
+	spans := propertyGroupSpans(text)
+	for _, m := range re.FindAllStringSubmatchIndex(text, -1) {
+		for _, s := range spans {
+			if m[0] >= s[0] && m[1] <= s[1] {
+				return m
+			}
+		}
+	}
+	return nil
 }
 
 // ancestorPropsFiles yields existing Directory.Build.props files walking up from
@@ -443,19 +494,19 @@ func projectReferences(text string) []plugin.Dependency {
 // the first <PropertyGroup> when it is absent.
 func writeVersion(text string, elem versionElement, newVersion string) (string, error) {
 	tag := elem.tag()
-	if strings.Contains(text, "<"+tag+">") {
-		re := versionRe
-		if elem == elemVersionPrefix {
-			re = versionPrefixRe
-		}
-		// Replace only the FIRST matching element — the same one fromText reads.
-		// A project can declare several <Version> elements under different
-		// <PropertyGroup Condition="..."> blocks; ReplaceAllString would rewrite
-		// every one, collapsing the per-condition versions into a single value.
-		loc := re.FindStringSubmatchIndex(text)
-		if loc == nil {
-			return text, nil
-		}
+	re := versionRe
+	if elem == elemVersionPrefix {
+		re = versionPrefixRe
+	}
+	// Replace only the FIRST matching element INSIDE A PROPERTYGROUP — the same one
+	// fromText reads. Two reasons for each half:
+	//   • First: a project can declare several <Version> elements under different
+	//     <PropertyGroup Condition="..."> blocks; rewriting every one would collapse
+	//     the per-condition versions into a single value.
+	//   • PropertyGroup-scoped: <ItemGroup> item metadata uses the same element
+	//     syntax, so an unscoped match could rewrite a custom item's <Version>
+	//     (Avalite's icon packs declare one) and leave the project untouched.
+	if loc := findInPropertyGroup(text, re); loc != nil {
 		// Group 2 (the value) spans [loc[4], loc[5]); splice literally so the new
 		// version is not subject to `$` expansion.
 		return text[:loc[4]] + newVersion + text[loc[5]:], nil
