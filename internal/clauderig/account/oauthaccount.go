@@ -82,7 +82,47 @@ func writeOAuthAccountTo(path string, raw []byte) error {
 	if fi, serr := os.Stat(path); serr == nil {
 		mode = fi.Mode().Perm()
 	}
-	return os.WriteFile(path, []byte(out), mode)
+	return atomicWriteFile(path, []byte(out), mode)
+}
+
+// atomicWriteFile replaces path in a single step: write a sibling temp file,
+// flush it, then rename over the destination.
+//
+// os.WriteFile truncates first, so a failure partway through would leave
+// ~/.claude.json truncated — and that file holds far more than the identity
+// block (project state, history, per-org caches; ~75 KB in practice). A partial
+// write is therefore real data loss, and it would also make the caller's
+// "credential rolled back, nothing changed" rollback message a lie: the
+// credential would be restored while the profile stayed corrupt. With a rename,
+// the destination is either the old file or the new one, never a fragment.
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	// No-op once the rename succeeds; cleans up every failure path before it.
+	defer func() { _ = os.Remove(tmp) }()
+
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	// Durability matters here: a crash between rename and flush could otherwise
+	// leave a correctly-named file with unwritten contents.
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	// CreateTemp makes 0600; carry over the destination's real mode.
+	if err := os.Chmod(tmp, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // oauthMeta is the identity/display slice of an oauthAccount block.
