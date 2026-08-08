@@ -36,6 +36,17 @@ func newPublishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Layer .env/.env.local under the ambient environment and export it
+			// (skipped by --no-env) before anything resolves a credential: the
+			// registry push reads its key from the process environment
+			// (NUGET_API_KEY, `env:NAME` auth refs, the OIDC probe) and the
+			// adapters spawn their package manager with an inherited one. Without
+			// this, a key that lives only in .env is invisible here — while the
+			// same publish run from `shiprig release` sees it — and the push goes
+			// out with no credential.
+			if _, err := applyReleaseEnv(ws.Root, noEnv); err != nil {
+				return err
+			}
 			pkgs, ecoOf, err := ws.Discover(cmd.Context())
 			if err != nil {
 				return err

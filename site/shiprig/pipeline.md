@@ -402,7 +402,13 @@ environment is what every part of the run sees:
   Windows signer reaches `vpk` straight from `.env.local`, no separate sourcing;
 - forge releases run with it, so `gh` finds its token;
 - `shiprig init`'s token preflight checks it, so a token kept in a local `.env`
-  reads as ✓ set rather than a false ⚠.
+  reads as ✓ set rather than a false ⚠;
+- `shiprig doctor` probes `gh auth status` with it, for the same reason.
+
+`shiprig publish` loads the same layer when run on its own (not just as a step
+of `shiprig release`) and exports it for the run, so the registry push finds a
+key that lives only in `.env` — `NUGET_API_KEY`, an `env:NAME` auth reference,
+or whatever the package manager it shells out to reads.
 
 This means a release token can live in `.env.local` (git-ignored) instead of
 being exported in every shell. The `.env` files themselves are read, never

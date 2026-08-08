@@ -40,6 +40,51 @@ func TestLoadReleaseEnv(t *testing.T) {
 	}
 }
 
+func TestApplyReleaseEnvExportsFileLayer(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env"),
+		[]byte("SHIPRIG_APPLY_TEST_TOKEN=from-dotenv\nSHIPRIG_APPLY_TEST_AMBIENT=from-dotenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// t.Setenv records the pre-test state, so the exports applyReleaseEnv makes
+	// on these keys are restored when the test ends.
+	t.Setenv("SHIPRIG_APPLY_TEST_TOKEN", "")
+	if err := os.Unsetenv("SHIPRIG_APPLY_TEST_TOKEN"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHIPRIG_APPLY_TEST_AMBIENT", "from-shell")
+
+	if _, err := applyReleaseEnv(root, false); err != nil {
+		t.Fatal(err)
+	}
+	// os.Getenv is the lookup the dotnet adapter (NUGET_API_KEY), core/auth's
+	// `env:NAME` refs, and every inherited subprocess make.
+	if got := os.Getenv("SHIPRIG_APPLY_TEST_TOKEN"); got != "from-dotenv" {
+		t.Errorf("os.Getenv after applyReleaseEnv = %q, want the .env value", got)
+	}
+	if got := os.Getenv("SHIPRIG_APPLY_TEST_AMBIENT"); got != "from-shell" {
+		t.Errorf("exported value = %q, want the ambient export to win over .env", got)
+	}
+}
+
+func TestApplyReleaseEnvNoEnv(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("SHIPRIG_APPLY_NOENV_TOKEN=from-dotenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHIPRIG_APPLY_NOENV_TOKEN", "")
+	if err := os.Unsetenv("SHIPRIG_APPLY_NOENV_TOKEN"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := applyReleaseEnv(root, true); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := os.LookupEnv("SHIPRIG_APPLY_NOENV_TOKEN"); ok {
+		t.Errorf("--no-env exported %q; the file layer must be skipped", v)
+	}
+}
+
 func TestLoadReleaseEnvAmbientWins(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("TOKEN=from-dotenv\n"), 0o644); err != nil {

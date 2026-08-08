@@ -9,6 +9,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/doctor"
+	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/spf13/cobra"
 )
@@ -36,7 +37,16 @@ func newDoctorCmd() *cobra.Command {
 // baseline: the forge CLI plus the per-ecosystem publish tools. It reuses the
 // baseline's Discovery, so the workspace is scanned once.
 func releaseDoctorSections(ctx context.Context, ws *commands.Workspace, disc commands.Discovery) []doctor.Section {
-	results := append([]doctor.Result{checkGh(ctx)}, publishToolChecks(disc)...)
+	// gh takes its token from the environment, so check it against the same
+	// layered .env/.env.local < ambient view a release runs with (honouring
+	// --no-env): otherwise a GH_TOKEN declared only in .env reports "not
+	// authenticated" here while the release this check gates authenticates fine.
+	// An unreadable .env leaves ghEnv nil — inherit, the old behaviour.
+	var ghEnv []string
+	if env, err := loadReleaseEnv(ws.Root, noEnv); err == nil {
+		ghEnv = envstack.Environ(env)
+	}
+	results := append([]doctor.Result{checkGh(ctx, ghEnv)}, publishToolChecks(disc)...)
 	results = append(results, configLayoutCheck(ws))
 	return []doctor.Section{
 		{Title: "release", Results: results},
@@ -118,12 +128,16 @@ func previewList(names []string, n int) string {
 	return fmt.Sprintf("%s, +%d more", strings.Join(names[:n], ", "), len(names)-n)
 }
 
-func checkGh(ctx context.Context) doctor.Result {
+// checkGh reports whether the GitHub CLI is installed and authenticated. env is
+// the environment to probe auth with (nil inherits this process's).
+func checkGh(ctx context.Context, env []string) doctor.Result {
 	if _, err := exec.LookPath("gh"); err != nil {
 		return doctor.Result{Name: "gh", Status: doctor.Warn, Detail: "not installed",
 			Hint: "needed to create GitHub releases and open PRs — https://cli.github.com"}
 	}
-	if err := exec.CommandContext(ctx, "gh", "auth", "status").Run(); err != nil {
+	c := exec.CommandContext(ctx, "gh", "auth", "status")
+	c.Env = env
+	if err := c.Run(); err != nil {
 		return doctor.Result{Name: "gh", Status: doctor.Warn, Detail: "not authenticated", Hint: "run `gh auth login`"}
 	}
 	return doctor.Result{Name: "gh", Status: doctor.OK, Detail: "authenticated"}

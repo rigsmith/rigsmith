@@ -93,7 +93,7 @@ func TestPublishResults_MapsEcosystems(t *testing.T) {
 
 func TestCheckGh_NotInstalled(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	if r := checkGh(context.Background()); r.Status != doctor.Warn {
+	if r := checkGh(context.Background(), nil); r.Status != doctor.Warn {
 		t.Fatalf("gh missing: got %+v, want Warn", r)
 	}
 }

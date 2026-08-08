@@ -350,10 +350,12 @@ func runIn(cmd *cobra.Command, dir string, env []string, display string, argv ..
 
 // customEnv builds the spawned process environment with the rig layering
 // (low to high): .env/.env.local files, ambient, the config's shared `env`,
-// then the command's own `env`. Returns nil (inherit) when nothing applies.
+// then the command's own `env`. `--no-env` drops the file layer, the same as it
+// does for the built-in verbs (see commandEnv). Returns nil (inherit) when
+// nothing applies.
 func customEnv(cfg config.Config, extra map[string]string) []string {
 	var fileEnv map[string]string
-	if cfg.Path != "" {
+	if cfg.Path != "" && !noEnv {
 		fileEnv, _ = envstack.Load(filepath.Dir(cfg.Path))
 	}
 	if len(fileEnv) == 0 && len(cfg.Env) == 0 && len(extra) == 0 {
