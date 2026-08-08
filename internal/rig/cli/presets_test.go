@@ -82,8 +82,10 @@ func TestCommandEnvNoEnv(t *testing.T) {
 }
 
 // TestCustomEnvNoEnv pins that --no-env reaches custom commands too: the flag is
-// persistent, so `rig <custom-command> --no-env` advertises it, and customEnv
-// used to load .env regardless.
+// persistent, so `rig <custom-command> --no-env` advertises it, and both env
+// builders used to load .env regardless. Every command form is covered:
+// customEnv is the shell/argv form, customEnvMap the script form (it feeds both
+// a Tengo script's ctx.env and the runner its sh() calls go through).
 func TestCustomEnvNoEnv(t *testing.T) {
 	isolateGlobalConfig(t)
 	root := t.TempDir()
@@ -99,11 +101,18 @@ func TestCustomEnvNoEnv(t *testing.T) {
 
 	noEnv = false
 	if !envContains(customEnv(cfg, nil), "FROM_DOTENV=yes") {
-		t.Error("expected .env to reach custom commands by default")
+		t.Error("expected .env to reach shell/argv custom commands by default")
 	}
+	if customEnvMap(cfg, nil)["FROM_DOTENV"] != "yes" {
+		t.Error("expected .env to reach script custom commands by default")
+	}
+
 	noEnv = true
 	if envContains(customEnv(cfg, nil), "FROM_DOTENV=yes") {
-		t.Error("--no-env should skip .env loading for custom commands")
+		t.Error("--no-env should skip .env loading for shell/argv custom commands")
+	}
+	if v, ok := customEnvMap(cfg, nil)["FROM_DOTENV"]; ok {
+		t.Errorf("--no-env should skip .env loading for script custom commands, got %q", v)
 	}
 }
 

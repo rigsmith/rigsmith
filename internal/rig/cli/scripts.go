@@ -275,11 +275,21 @@ func scriptEcosystem(cfg config.Config, dir string) string {
 // (low→high: .env/.env.local, ambient, config env, command env), the shared
 // source for both a script's ctx.env and its runner environment.
 func customEnvMap(cfg config.Config, extra map[string]string) map[string]string {
-	var fileEnv map[string]string
-	if cfg.Path != "" {
-		fileEnv, _ = envstack.Load(filepath.Dir(cfg.Path))
+	return envstack.Merge(customFileEnv(cfg), envstack.Ambient(), cfg.Env, extra)
+}
+
+// customFileEnv reads the .env/.env.local layer that sits under a custom
+// command's environment — from the directory of the config that declared it —
+// or nothing when --no-env drops the file layer. It is the single place the
+// flag is honoured, so every command form (shell, argv, script) gets it: the
+// script form's ctx.env and runner env come from customEnvMap, the rest from
+// customEnv. A read error degrades to no file layer, as it always has.
+func customFileEnv(cfg config.Config) map[string]string {
+	if cfg.Path == "" || noEnv {
+		return nil
 	}
-	return envstack.Merge(fileEnv, envstack.Ambient(), cfg.Env, extra)
+	fileEnv, _ := envstack.Load(filepath.Dir(cfg.Path))
+	return fileEnv
 }
 
 // coalesceShell picks the command's own shell override, falling back to the
@@ -354,10 +364,7 @@ func runIn(cmd *cobra.Command, dir string, env []string, display string, argv ..
 // does for the built-in verbs (see commandEnv). Returns nil (inherit) when
 // nothing applies.
 func customEnv(cfg config.Config, extra map[string]string) []string {
-	var fileEnv map[string]string
-	if cfg.Path != "" && !noEnv {
-		fileEnv, _ = envstack.Load(filepath.Dir(cfg.Path))
-	}
+	fileEnv := customFileEnv(cfg)
 	if len(fileEnv) == 0 && len(cfg.Env) == 0 && len(extra) == 0 {
 		return nil
 	}

@@ -11,8 +11,8 @@ Only `release` and `init` ever called the env loader. A direct `shiprig publish`
 Auditing the other holders of the persistent flag turned up two more:
 
 - `shiprig doctor` probed `gh auth status` with the ambient environment only, so a `GH_TOKEN` declared in `.env` reported "not authenticated" while the release that check gates authenticated fine. It now probes with the layered view, honouring `--no-env`.
-- `rig`'s custom commands (`.rig.json` `commands`) loaded `.env` *regardless* of `--no-env` — the same flag inert in the opposite direction. `customEnv` now drops the file layer with the flag, matching the built-in verbs.
+- `rig`'s custom commands (`.rig.json` `commands`) loaded `.env` *regardless* of `--no-env` — the same flag inert in the opposite direction. Both env builders did it: `customEnv` for the shell/argv forms, and `customEnvMap` for the script form, where it feeds a Tengo script's `ctx.env` *and* the runner its `sh()` calls go through. They now share one file-layer reader that honours the flag, matching the built-in verbs.
 
 `shiprig tag` takes the flag too but creates local tags only — no credential, nothing for the layer to feed. The remaining subcommands (`add`, `status`, `version`, `info`, `config`, `packages`, `pre`, `ui`) are inherited from changerig and do no env-dependent work.
 
-Four tests cover it: an end-to-end `publish` run against a fake `dotnet` on PATH asserts the push carries `--api-key` from a key present only in `.env` (verified to fail on the old behaviour, with the reported keyless push), a `--no-env` run asserts it does not, and unit tests pin the export precedence and the `rig` custom-command flag.
+Four tests cover it: an end-to-end `publish` run against a fake `dotnet` on PATH asserts the push carries `--api-key` from a key present only in `.env` (verified to fail on the old behaviour, with the reported keyless push), a `--no-env` run asserts it does not, and unit tests pin the export precedence and the `rig` custom-command flag across every command form.
