@@ -20,6 +20,8 @@ the machine-wide login.
 | `clauderig account sessions` (alias `ps`) | List running Claude Code instances — what blocks a switch. |
 | `clauderig account remove <id\|email>` (alias `rm`) | Stop tracking an account (and delete its session profile). |
 | `clauderig account purge` | Remove all of claudeRig's account data. |
+| `clauderig account doctor` | Check whether the live credential and `~/.claude.json` name the same account. Exits non-zero on a desync. `--json`, `--journal N`. |
+| `clauderig account watch` | Poll for an identity change and record what was running when it happened. `--every` (default 5s). |
 
 `acct` is an alias for `account`. Bare `clauderig account` on a terminal (or
 **Accounts** / hotkey `a` from the dashboard) opens an interactive screen — it
@@ -134,6 +136,48 @@ Observed live: an artifact published while `oauthAccount` said one account lande
 on another — `~/.clauderig/accounts/active.json` was the side telling the truth.
 This is exactly the point-3b hazard in [CLAUDERIG-DESIGN.md](CLAUDERIG-DESIGN.md):
 `switch` must swap the `oauthAccount` block *and* the live credential together.
+
+**clauderig was not the cause** (established by code review 2026-08-07).
+`account.WriteLive` has exactly one caller, `doSwitch`, which always writes a
+timestamped backup to `~/.clauderig/cred-backups/` *before* touching the Keychain
+and aborts if that write fails — on the affected machine that directory did not
+exist, so no switch had ever run. The store's account came from a single
+`CaptureLive` while both halves still agreed, and `active.json` records what was
+live **at capture time**, not a switch. The sync repo carries settings/skills/
+plans but never `.claude.json`. The writer that rewrote the block without moving
+the credential is still unidentified — which is what `account watch` exists to
+catch.
+
+### Diagnosing it
+
+```sh
+clauderig account doctor              # both halves side by side; exit 1 on desync
+clauderig account doctor --journal 20 # replay recorded identity changes
+clauderig account watch               # leave running; records the next flip
+```
+
+`doctor` and `watch` append to `~/.clauderig/account-journal.jsonl`, but **only
+when the identity-bearing fields change** — the file mtime and the live-process
+list are deliberately excluded from the change fingerprint, so a poll loop can't
+bury real events under noise. Each recorded flip carries `changed` (which field
+moved, and to what) and `live` (every Claude Code process alive at that instant,
+with its cwd), which is what makes attribution possible after the fact. Both are
+read-only: neither ever writes a credential.
+
+`add` and `list` run the same check and warn, since `list`'s `→` shows only
+claudeRig's *pointer* — never proof of what the server sees.
+
+Two hardening changes went in alongside:
+
+- `switch` now reads the target's stored `oauthAccount` block **before** any
+  mutation and refuses if it's missing. Previously that write was best-effort and
+  happened *after* the credential had already moved, so a target with no stored
+  block produced exactly this desync and still reported `Switched to …`.
+- The package's test fixtures generated the credential org and the block org from
+  unrelated strings, so the suite implicitly asserted they need not match — which
+  is why this class of bug was invisible to it. `diagnose_test.go` encodes the
+  real invariant: for healthy state, `credential.organizationUuid` ==
+  `oauthAccount.organizationUuid`.
 
 **Detecting a desync without reading the Keychain** (often permission-blocked):
 `~/.claude.json` `groveConfigCache` is keyed by account UUID and holds

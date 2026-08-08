@@ -86,11 +86,17 @@ func writeOAuthAccountTo(path string, raw []byte) error {
 }
 
 // oauthMeta is the identity/display slice of an oauthAccount block.
+// AccountUUID and ProfileFetchedAt are read only for diagnostics (see
+// diagnose.go): the account uuid distinguishes two logins that share an org, and
+// the fetch stamp dates the last time Claude Code rewrote this block — which is
+// how a desync gets pinned to a moment in time.
 type oauthMeta struct {
 	EmailAddress     string `json:"emailAddress"`
 	OrganizationUUID string `json:"organizationUuid"`
+	AccountUUID      string `json:"accountUuid"`
 	SeatTier         string `json:"seatTier"`
 	OrganizationName string `json:"organizationName"`
+	ProfileFetchedAt int64  `json:"profileFetchedAt"`
 }
 
 func parseOAuthMeta(raw []byte) oauthMeta {

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -48,7 +49,203 @@ func NewAccountCmd() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newAccountAddCmd(), newAccountListCmd(), newAccountRunCmd(),
-		newAccountSwitchCmd(), newAccountSessionsCmd(), newAccountRemoveCmd(), newAccountPurgeCmd())
+		newAccountSwitchCmd(), newAccountSessionsCmd(), newAccountRemoveCmd(), newAccountPurgeCmd(),
+		newAccountDoctorCmd(), newAccountWatchCmd())
+	return cmd
+}
+
+// printDiagnosis renders an observation: both halves of the identity side by
+// side, then any problems. The two-column shape is the point — the whole class of
+// bug is that these are separate writes that nothing reconciles.
+func printDiagnosis(out interface{ Write([]byte) (int, error) }, o account.Observation) {
+	fmt.Fprintln(out, HeaderStyle.Render("Claude Code identity"))
+
+	cred := "unreadable"
+	if o.CredErr == "" {
+		cred = fmt.Sprintf("org %s  %s", o.CredOrg, o.CredSubscription)
+	}
+	fmt.Fprintf(out, "  %s  %s\n", "credential      ", cred)
+	fmt.Fprintf(out, "  %s  %s\n", DimStyle.Render("                "),
+		DimStyle.Render("keychain/file — what the SERVER authenticates you as"))
+
+	block := "(absent)"
+	if o.BlockEmail != "" || o.BlockOrg != "" {
+		block = fmt.Sprintf("%s  org %s", o.BlockEmail, o.BlockOrg)
+	}
+	fmt.Fprintf(out, "  %s  %s\n", "profile block   ", block)
+	fmt.Fprintf(out, "  %s  %s\n", DimStyle.Render("                "),
+		DimStyle.Render("~/.claude.json oauthAccount — what Claude Code DISPLAYS"))
+
+	if o.ActiveID != "" {
+		fmt.Fprintf(out, "  %s  %s  (%s)\n", "clauderig active", o.ActiveEmail, o.ActiveID)
+	}
+	if o.ConfigModified != "" {
+		fmt.Fprintf(out, "  %s  %s\n", DimStyle.Render("~/.claude.json  "),
+			DimStyle.Render("last written "+o.ConfigModified))
+	}
+
+	problems := o.Problems()
+	if len(problems) == 0 {
+		fmt.Fprintf(out, "\n%s\n", OkStyle.Render("✓ both halves agree"))
+		return
+	}
+	fmt.Fprintln(out)
+	for _, p := range problems {
+		fmt.Fprintf(out, "%s %s\n", ErrStyle.Render("✗"), p)
+	}
+	fmt.Fprintf(out, "\n%s\n", DimStyle.Render(
+		"Fix: log in as the account you want (`claude` → /login), or `clauderig account switch <name>`,\n"+
+			"     so the credential and the profile block move together. Never from inside a live session."))
+}
+
+func newAccountDoctorCmd() *cobra.Command {
+	var asJSON bool
+	var showJournal int
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Check whether the live credential and ~/.claude.json name the same account",
+		Long: "Claude Code's identity is stored in two independent places: the credential\n" +
+			"(Keychain, or ~/.claude/.credentials.json) and the oauthAccount block in\n" +
+			"~/.claude.json. The server authenticates you as the credential; every screen\n" +
+			"shows you the block. Nothing reconciles them, so they can drift — and when they\n" +
+			"do, published artifacts, usage and rate limits silently land on an account the\n" +
+			"UI never names.\n\n" +
+			"Each run is recorded to ~/.clauderig/account-journal.jsonl when the identity\n" +
+			"changed since the last observation. Exits non-zero on a desync.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+			st, err := account.DefaultStore()
+			if err != nil {
+				return err
+			}
+			if showJournal != 0 {
+				entries, jerr := st.Journal(showJournal)
+				if jerr != nil {
+					return jerr
+				}
+				if len(entries) == 0 {
+					fmt.Fprintf(out, "%s\n", DimStyle.Render(
+						"no observations recorded yet — run `clauderig account doctor` or `account watch`"))
+					return nil
+				}
+				return printJournal(out, entries)
+			}
+
+			o := st.Diagnose()
+			if _, rerr := st.Record(o); rerr != nil {
+				fmt.Fprintf(out, "%s %v\n", WarnStyle.Render("could not record observation:"), rerr)
+			}
+			if asJSON {
+				enc := json.NewEncoder(out)
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(o); err != nil {
+					return err
+				}
+			} else {
+				printDiagnosis(out, o)
+			}
+			if !o.InSync {
+				// Match `clauderig doctor`: the findings are already printed, so
+				// signal failure by exit code rather than a duplicate error line.
+				os.Exit(1)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the raw observation as JSON")
+	cmd.Flags().IntVar(&showJournal, "journal", 0, "print the last N recorded observations instead of checking")
+	return cmd
+}
+
+func printJournal(out interface{ Write([]byte) (int, error) }, entries []account.Observation) error {
+	fmt.Fprintln(out, HeaderStyle.Render("Identity change journal"))
+	for _, e := range entries {
+		mark := OkStyle.Render("✓")
+		if !e.InSync {
+			mark = ErrStyle.Render("✗")
+		}
+		fmt.Fprintf(out, "\n%s %s\n", mark, e.At)
+		if e.BlockEmail != "" {
+			fmt.Fprintf(out, "    block %s (org %s)\n", e.BlockEmail, e.BlockOrg)
+		}
+		if e.CredOrg != "" {
+			fmt.Fprintf(out, "    cred  org %s\n", e.CredOrg)
+		}
+		for _, c := range e.Changed {
+			fmt.Fprintf(out, "    %s %s\n", WarnStyle.Render("changed"), c)
+		}
+		if len(e.Live) > 0 {
+			fmt.Fprintf(out, "    %s\n", DimStyle.Render("running at this moment:"))
+			for _, in := range e.Live {
+				fmt.Fprintf(out, "      %s\n", DimStyle.Render(
+					fmt.Sprintf("• pid %d  %s  %s", in.PID, in.Kind, in.Cwd)))
+			}
+		}
+	}
+	return nil
+}
+
+func newAccountWatchCmd() *cobra.Command {
+	var every time.Duration
+	cmd := &cobra.Command{
+		Use:   "watch",
+		Short: "Watch for an identity desync and record what was running when it happened",
+		Long: "Polls both halves of the Claude Code identity and appends to\n" +
+			"~/.clauderig/account-journal.jsonl whenever they change — recording the Claude\n" +
+			"Code processes alive at that moment, so a flip can be attributed to the process\n" +
+			"that caused it. Read-only: never writes a credential. Ctrl-C to stop.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+			st, err := account.DefaultStore()
+			if err != nil {
+				return err
+			}
+			if every < time.Second {
+				every = time.Second
+			}
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(
+				fmt.Sprintf("watching every %s — Ctrl-C to stop", every)))
+
+			// Always print the starting state so the log has a baseline, then
+			// report only transitions.
+			o := st.Diagnose()
+			if _, rerr := st.Record(o); rerr != nil {
+				fmt.Fprintf(out, "%s %v\n", WarnStyle.Render("could not record observation:"), rerr)
+			}
+			printDiagnosis(out, o)
+
+			ticker := time.NewTicker(every)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-cmd.Context().Done():
+					return nil
+				case <-ticker.C:
+				}
+				next := st.Diagnose()
+				recorded, rerr := st.Record(next)
+				if rerr != nil {
+					fmt.Fprintf(out, "%s %v\n", WarnStyle.Render("could not record observation:"), rerr)
+					continue
+				}
+				if !recorded {
+					continue
+				}
+				fmt.Fprintf(out, "\n%s %s\n", WarnStyle.Render("IDENTITY CHANGED"), next.At)
+				printDiagnosis(out, next)
+				if len(next.Live) > 0 {
+					fmt.Fprintf(out, "%s\n", DimStyle.Render("Claude Code running at the moment of the change:"))
+					printInstances(out, next.Live)
+				} else {
+					fmt.Fprintf(out, "%s\n", DimStyle.Render(
+						"no Claude Code process was running — the writer was something else"))
+				}
+			}
+		},
+	}
+	cmd.Flags().DurationVar(&every, "every", 5*time.Second, "poll interval")
 	return cmd
 }
 
@@ -79,6 +276,18 @@ func newAccountAddCmd() *cobra.Command {
 				verb = "Updated"
 			}
 			fmt.Fprintf(out, "%s %s\n", OkStyle.Render(verb), accountTitle(a))
+			// `add` pairs a credential (Keychain) with an email read from
+			// ~/.claude.json. If those two halves have drifted apart, what we just
+			// stored is MISLABELED — one identity's email wrapped around the
+			// other's token — and every later switch would propagate the lie. Warn
+			// here, where a human is watching, rather than fail: refusing would
+			// also block the capture-then-repair path.
+			if o := st.Diagnose(); !o.InSync {
+				fmt.Fprintln(out)
+				printDiagnosis(out, o)
+				fmt.Fprintf(out, "\n%s\n", WarnStyle.Render(
+					"The account just captured may be mislabeled. Re-login so both halves agree, then `account add` again."))
+			}
 			return nil
 		},
 	}
@@ -126,6 +335,13 @@ func newAccountListCmd() *cobra.Command {
 			}
 			if active == "" {
 				fmt.Fprintf(out, "\n%s\n", DimStyle.Render("(no account marked live — `account add` or `switch` sets it)"))
+			}
+			// The arrow above marks clauderig's POINTER, not proof of what the
+			// server sees. If the live credential disagrees with ~/.claude.json,
+			// say so here — this listing is the screen most likely to be trusted.
+			if o := st.Diagnose(); !o.InSync {
+				fmt.Fprintf(out, "\n%s %s\n", ErrStyle.Render("✗"), WarnStyle.Render(
+					"the live login is desynced — run `clauderig account doctor`"))
 			}
 			return nil
 		},
@@ -562,6 +778,25 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 	if err != nil {
 		return "", nil, fmt.Errorf("read stored credential: %w", err)
 	}
+	// The profile block must move WITH the credential, so fetch it BEFORE any
+	// mutation and refuse the switch if it's missing. Swapping the credential
+	// alone leaves ~/.claude.json naming the previous account while every request
+	// authenticates as the new one — a silent desync that is very hard to spot
+	// later, because the UI, the plan display and the per-org caches all read the
+	// block, not the token. Previously this was a best-effort write after the
+	// credential had already moved, so a target with no stored block produced
+	// exactly that state and still reported "Switched to …".
+	tgtOAuth, err := st.OAuth(target.ID)
+	if err != nil {
+		return "", nil, fmt.Errorf("read stored account profile: %w", err)
+	}
+	if len(tgtOAuth) == 0 {
+		return "", nil, fmt.Errorf(
+			"%s has no stored account profile, so switching would desync this login: "+
+				"requests would authenticate as %s while Claude Code kept displaying the current account.\n"+
+				"Fix: log in as %s, then run `clauderig account add` to capture its profile, then switch",
+			target.Email, target.Email, target.Email)
+	}
 	if cur, lerr := account.ReadLive(); lerr == nil {
 		var berr error
 		// The backup is the safety net before we overwrite the live credential —
@@ -587,10 +822,9 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 	}
 	// Swap the plan/identity block too, so Claude Code shows the right plan
 	// immediately instead of the previous account's tier until a login refresh.
-	if tgtOAuth, _ := st.OAuth(target.ID); len(tgtOAuth) > 0 {
-		if werr := account.WriteOAuthAccount(tgtOAuth); werr != nil {
-			return "", nil, fmt.Errorf("swap account profile: %w", werr)
-		}
+	// Unconditional: tgtOAuth was verified non-empty before the credential moved.
+	if werr := account.WriteOAuthAccount(tgtOAuth); werr != nil {
+		return "", nil, fmt.Errorf("swap account profile: %w", werr)
 	}
 	if err := st.SetActive(target.ID); err != nil {
 		return "", nil, err
