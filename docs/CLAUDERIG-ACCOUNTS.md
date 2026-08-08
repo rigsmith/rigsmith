@@ -20,7 +20,7 @@ the machine-wide login.
 | `clauderig account sessions` (alias `ps`) | List running Claude Code instances — what blocks a switch. |
 | `clauderig account remove <id\|email>` (alias `rm`) | Stop tracking an account (and delete its session profile). |
 | `clauderig account purge` | Remove all of claudeRig's account data. |
-| `clauderig account doctor` | Check whether the live credential and `~/.claude.json` name the same account. Exits non-zero on a desync. `--json`, `--journal N`. |
+| `clauderig account doctor` | Check whether the live credential and `~/.claude.json` name the same account. Exits non-zero on a desync. `--fix`, `--json`, `--journal N`. |
 | `clauderig account watch` | Poll for an identity change and record what was running when it happened. `--every` (default 5s). |
 
 `acct` is an alias for `account`. Bare `clauderig account` on a terminal (or
@@ -152,9 +152,21 @@ catch.
 
 ```sh
 clauderig account doctor              # both halves side by side; exit 1 on desync
+clauderig account doctor --fix        # make the display tell the truth (see below)
 clauderig account doctor --journal 20 # replay recorded identity changes
 clauderig account watch               # leave running; records the next flip
 ```
+
+`--fix` rewrites the `oauthAccount` block from the stored profile of whichever
+account matches the **live credential's** org, and repoints `active.json` at it.
+The direction is deliberate and is the only safe one: the credential is what the
+server authenticates you as, so it is the truth, and the block is merely local
+belief — repairing means making the belief honest. It therefore **never touches
+the credential**, so no running session is logged out. (Aligning the other way
+would mutate the live credential and log every session out; that is what `switch`
+does, and why it is guarded.) `--fix` makes the display honest about who you
+already are — it does not choose an account for you. Use `switch` to actually
+change account.
 
 `doctor` and `watch` append to `~/.clauderig/account-journal.jsonl`, but **only
 when the identity-bearing fields change** — the file mtime and the live-process

@@ -101,6 +101,7 @@ func printDiagnosis(out interface{ Write([]byte) (int, error) }, o account.Obser
 func newAccountDoctorCmd() *cobra.Command {
 	var asJSON bool
 	var showJournal int
+	var fix bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check whether the live credential and ~/.claude.json name the same account",
@@ -134,7 +135,10 @@ func newAccountDoctorCmd() *cobra.Command {
 
 			o := st.Diagnose()
 			if _, rerr := st.Record(o); rerr != nil {
-				fmt.Fprintf(out, "%s %v\n", WarnStyle.Render("could not record observation:"), rerr)
+				// Diagnostics go to stderr: in --json mode a styled line on stdout
+				// would leave machine consumers parsing something that is no longer
+				// a single JSON value.
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s %v\n", WarnStyle.Render("could not record observation:"), rerr)
 			}
 			if asJSON {
 				enc := json.NewEncoder(out)
@@ -145,9 +149,32 @@ func newAccountDoctorCmd() *cobra.Command {
 			} else {
 				printDiagnosis(out, o)
 			}
-			if !o.InSync {
+			if o.InSync {
+				return nil
+			}
+			if !fix {
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(
+					"     `clauderig account doctor --fix` aligns the display to the credential without logging anyone out."))
 				// Match `clauderig doctor`: the findings are already printed, so
 				// signal failure by exit code rather than a duplicate error line.
+				os.Exit(1)
+			}
+
+			repaired, ferr := st.RepairProfileBlock()
+			if ferr != nil {
+				return ferr
+			}
+			fmt.Fprintf(out, "\n%s %s\n", OkStyle.Render("Repaired — ~/.claude.json now names"), accountTitle(repaired))
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(
+				"The credential was NOT touched, so nothing was logged out. This makes the display\n"+
+					"tell the truth about who you already are; to change account, use `account switch`."))
+			after := st.Diagnose()
+			if _, rerr := st.Record(after); rerr != nil {
+				fmt.Fprintf(out, "%s %v\n", WarnStyle.Render("could not record observation:"), rerr)
+			}
+			if !after.InSync {
+				fmt.Fprintln(out)
+				printDiagnosis(out, after)
 				os.Exit(1)
 			}
 			return nil
@@ -155,6 +182,8 @@ func newAccountDoctorCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the raw observation as JSON")
 	cmd.Flags().IntVar(&showJournal, "journal", 0, "print the last N recorded observations instead of checking")
+	cmd.Flags().BoolVar(&fix, "fix", false,
+		"rewrite ~/.claude.json's profile block to match the live credential (never touches the credential, so nothing is logged out)")
 	return cmd
 }
 
@@ -174,6 +203,14 @@ func printJournal(out interface{ Write([]byte) (int, error) }, entries []account
 		}
 		for _, c := range e.Changed {
 			fmt.Fprintf(out, "    %s %s\n", WarnStyle.Render("changed"), c)
+		}
+		// Changed is empty for the baseline entry and for any entry whose failure
+		// isn't a field transition (an unreadable half, a stale active pointer), so
+		// without this a red line could render as nothing but ✗ and a timestamp.
+		if !e.InSync {
+			for _, p := range e.Problems() {
+				fmt.Fprintf(out, "    %s %s\n", ErrStyle.Render("problem"), p)
+			}
 		}
 		if len(e.Live) > 0 {
 			fmt.Fprintf(out, "    %s\n", DimStyle.Render("running at this moment:"))
@@ -235,12 +272,17 @@ func newAccountWatchCmd() *cobra.Command {
 				}
 				fmt.Fprintf(out, "\n%s %s\n", WarnStyle.Render("IDENTITY CHANGED"), next.At)
 				printDiagnosis(out, next)
+				// Sampled at observation time, not at write time: this is a poll, so
+				// the change may have happened up to one interval earlier and the
+				// writer may already have exited. Report what was seen, and don't
+				// let an empty list read as proof of anything.
 				if len(next.Live) > 0 {
-					fmt.Fprintf(out, "%s\n", DimStyle.Render("Claude Code running at the moment of the change:"))
+					fmt.Fprintf(out, "%s\n", DimStyle.Render("Claude Code running when the change was observed:"))
 					printInstances(out, next.Live)
 				} else {
 					fmt.Fprintf(out, "%s\n", DimStyle.Render(
-						"no Claude Code process was running — the writer was something else"))
+						"no Claude Code process was running when this was observed — but the change may have\n"+
+							"occurred up to one poll interval earlier, so the writer could already have exited"))
 				}
 			}
 		},
@@ -320,8 +362,19 @@ func newAccountListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// An empty store is exactly when a desync is most likely to be missed,
+			// so check BEFORE the early return: a machine that has never run
+			// `account add` can still have a live login whose two halves disagree.
+			desynced := !st.Diagnose().InSync
+			warnDesync := func() {
+				if desynced {
+					fmt.Fprintf(out, "\n%s %s\n", ErrStyle.Render("✗"), WarnStyle.Render(
+						"the live login is desynced — run `clauderig account doctor`"))
+				}
+			}
 			if len(all) == 0 {
 				fmt.Fprintf(out, "%s\n", DimStyle.Render("no accounts yet — run `clauderig account add` while logged in"))
+				warnDesync()
 				return nil
 			}
 			active, _ := st.Active()
@@ -339,10 +392,7 @@ func newAccountListCmd() *cobra.Command {
 			// The arrow above marks clauderig's POINTER, not proof of what the
 			// server sees. If the live credential disagrees with ~/.claude.json,
 			// say so here — this listing is the screen most likely to be trusted.
-			if o := st.Diagnose(); !o.InSync {
-				fmt.Fprintf(out, "\n%s %s\n", ErrStyle.Render("✗"), WarnStyle.Render(
-					"the live login is desynced — run `clauderig account doctor`"))
-			}
+			warnDesync()
 			return nil
 		},
 	}
@@ -797,7 +847,35 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 				"Fix: log in as %s, then run `clauderig account add` to capture its profile, then switch",
 			target.Email, target.Email, target.Email)
 	}
+	// Non-empty is not enough: the two stored halves must describe the SAME
+	// account. `add` deliberately allows capturing a desynced live login (it warns
+	// rather than refuses, so the capture-then-repair path stays open), which means
+	// a mislabeled pair can reach the store. Switching one in would propagate a
+	// known-bad identity machine-wide, so verify the pair here and refuse.
+	tgtCredOrg, cerr := account.CredentialOrg(targetCred)
+	if cerr != nil {
+		return "", nil, fmt.Errorf("parse stored credential for %s: %w", target.Email, cerr)
+	}
+	if tgtBlockOrg := account.ProfileOrg(tgtOAuth); tgtCredOrg != "" && tgtBlockOrg != "" && tgtCredOrg != tgtBlockOrg {
+		return "", nil, fmt.Errorf(
+			"the stored copy of %s is itself desynced: its credential belongs to org %s but its "+
+				"profile block says org %s. Switching would propagate that mismatch machine-wide.\n"+
+				"Fix: log in as %s and run `clauderig account add` to recapture a consistent pair",
+			target.Email, tgtCredOrg, tgtBlockOrg, target.Email)
+	}
+	// WriteOAuthAccount no-ops when ~/.claude.json is absent, so without this the
+	// swap would move the credential and report success having written no profile
+	// at all — the same desync, freshly manufactured.
+	if !account.GlobalConfigExists() {
+		return "", nil, errors.New(
+			"~/.claude.json does not exist, so the account profile cannot be swapped alongside the credential.\n" +
+				"Run `claude` once to create it, then switch")
+	}
+	// Held for the whole swap so the credential can be put back if the profile
+	// write fails partway — a half-applied swap is the desync itself.
+	var displacedCred []byte
 	if cur, lerr := account.ReadLive(); lerr == nil {
+		displacedCred = cur
 		var berr error
 		// The backup is the safety net before we overwrite the live credential —
 		// abort the switch if we can't write it rather than mutate unprotected.
@@ -823,8 +901,21 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 	// Swap the plan/identity block too, so Claude Code shows the right plan
 	// immediately instead of the previous account's tier until a login refresh.
 	// Unconditional: tgtOAuth was verified non-empty before the credential moved.
+	//
+	// If this fails the credential has already moved, so put it back rather than
+	// leaving the machine in the half-swapped state this whole change exists to
+	// prevent. A failed rollback is reported alongside the original error — that
+	// combination is the one case where the caller genuinely must intervene.
 	if werr := account.WriteOAuthAccount(tgtOAuth); werr != nil {
-		return "", nil, fmt.Errorf("swap account profile: %w", werr)
+		if displacedCred != nil {
+			if rerr := account.WriteLive(displacedCred); rerr != nil {
+				return "", nil, fmt.Errorf(
+					"swap account profile: %w; AND the credential could not be rolled back: %v.\n"+
+						"The login is now desynced — restore from %s and run `clauderig account doctor`",
+					werr, rerr, backup)
+			}
+		}
+		return "", nil, fmt.Errorf("swap account profile (credential rolled back, nothing changed): %w", werr)
 	}
 	if err := st.SetActive(target.ID); err != nil {
 		return "", nil, err

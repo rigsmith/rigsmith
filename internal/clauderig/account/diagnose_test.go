@@ -1,7 +1,9 @@
 package account
 
 import (
+	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -37,17 +39,31 @@ func TestProblemsSilentWhenHalvesAgree(t *testing.T) {
 	}
 }
 
-// An absent half is unknown, not a conflict — a machine that isn't logged in must
+// A machine with no credential (or nothing at all) can't be compared, so it must
 // not be reported as desynced.
-func TestProblemsIgnoresMissingHalf(t *testing.T) {
+func TestProblemsIgnoresUncomparableState(t *testing.T) {
 	for name, o := range map[string]Observation{
-		"no block":      {CredOrg: "org-a"},
 		"no credential": {BlockOrg: "org-a", BlockEmail: "j@x.com"},
 		"neither":       {},
 	} {
 		if probs := o.Problems(); len(probs) != 0 {
 			t.Errorf("%s: expected no problems, got %v", name, probs)
 		}
+	}
+}
+
+// A credential with no profile organization is NOT a clean bill of health:
+// Claude Code has no identity to display and `add` can't key an account from it,
+// so reporting "both halves agree" would be exactly the false reassurance this
+// command exists to remove.
+func TestProblemsFlagsCredentialWithNoProfileOrg(t *testing.T) {
+	o := Observation{CredOrg: "org-a"}
+	probs := o.Problems()
+	if len(probs) != 1 {
+		t.Fatalf("expected one problem for a credential with no profile org, got %v", probs)
+	}
+	if !strings.Contains(probs[0], "no oauthAccount organization") {
+		t.Errorf("problem should name the missing profile org, got %q", probs[0])
 	}
 }
 
@@ -109,6 +125,50 @@ func TestRecordOnlyAppendsOnIdentityChange(t *testing.T) {
 	}
 }
 
+// Running `doctor` while `watch` polls is ordinary. Unguarded, both read the
+// same previous entry and both append the same transition — duplicating events
+// and cross-linking PreviousAt to the wrong line.
+func TestRecordIsSerializedAcrossConcurrentWriters(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	o := Observation{At: "t1", CredOrg: "org-a", BlockOrg: "org-a", BlockEmail: "j@x.com"}
+
+	const writers = 8
+	var wg sync.WaitGroup
+	wrote := make([]bool, writers)
+	errs := make([]error, writers)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			wrote[i], errs[i] = st.Record(o)
+		}(i)
+	}
+	wg.Wait()
+
+	recorded := 0
+	for i := range wrote {
+		if errs[i] != nil {
+			t.Fatalf("writer %d errored: %v", i, errs[i])
+		}
+		if wrote[i] {
+			recorded++
+		}
+	}
+	if recorded != 1 {
+		t.Fatalf("exactly one writer should record an identical observation, got %d", recorded)
+	}
+	entries, err := st.Journal(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 journal entry, got %d", len(entries))
+	}
+	if _, serr := os.Stat(st.journalPath() + ".lock"); !os.IsNotExist(serr) {
+		t.Error("lock file should be released after Record returns")
+	}
+}
+
 func TestJournalLimitReturnsNewest(t *testing.T) {
 	st := &Store{Root: t.TempDir()}
 	for _, org := range []string{"org-1", "org-2", "org-3"} {
@@ -122,6 +182,29 @@ func TestJournalLimitReturnsNewest(t *testing.T) {
 	}
 	if len(entries) != 2 || entries[0].CredOrg != "org-2" || entries[1].CredOrg != "org-3" {
 		t.Fatalf("expected the two newest entries, got %+v", entries)
+	}
+}
+
+// The repair writes one account's profile block over another's, so picking the
+// wrong account here would deepen the exact bug it repairs.
+func TestMatchByOrg(t *testing.T) {
+	all := []Account{
+		{ID: "a", Email: "a@x.com", OrganizationUUID: "org-a"},
+		{ID: "b", Email: "b@x.com", OrganizationUUID: "org-b"},
+		{ID: "legacy", Email: "legacy@x.com"}, // captured before org was recorded
+	}
+	if got := matchByOrg(all, "org-b"); got == nil || got.ID != "b" {
+		t.Fatalf("expected account b, got %+v", got)
+	}
+	if got := matchByOrg(all, "org-missing"); got != nil {
+		t.Fatalf("expected no match for an unknown org, got %+v", got)
+	}
+	// An empty org must not wildcard onto the account with no org recorded.
+	if got := matchByOrg(all, ""); got != nil {
+		t.Fatalf("empty org must never match, got %+v", got)
+	}
+	if got := matchByOrg(nil, "org-a"); got != nil {
+		t.Fatalf("expected no match in an empty store, got %+v", got)
 	}
 }
 

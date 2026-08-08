@@ -3,12 +3,20 @@ package account
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
+
+// ErrNothingToRepair means both halves already name the same account.
+var ErrNothingToRepair = errors.New("credential and profile block already agree")
+
+// ErrNoStoredMatch means no stored account matches the live credential, so the
+// truthful profile block isn't available locally to write back.
+var ErrNoStoredMatch = errors.New("no stored account matches the live credential")
 
 // Identity desync detection and an append-only observation journal.
 //
@@ -137,6 +145,16 @@ func (o Observation) Problems() []string {
 				"        Artifacts, usage and limits are landing on the credential's account.",
 			shortUUID(o.CredOrg), o.BlockEmail, shortUUID(o.BlockOrg)))
 	}
+	// A credential with no profile organization is its own anomaly, not a clean
+	// bill of health: Claude Code has nothing to display you as, and `add` cannot
+	// key an account without it. Reporting "both halves agree" here would be the
+	// same false reassurance this command exists to remove.
+	if o.CredOrg != "" && o.BlockOrg == "" {
+		p = append(p, fmt.Sprintf(
+			"the credential names org %s, but ~/.claude.json has no oauthAccount organization.\n"+
+				"        Claude Code has no identity to display, and `account add` cannot key an account from it.",
+			shortUUID(o.CredOrg)))
+	}
 	if o.ActiveOrg != "" && o.CredOrg != "" && o.ActiveOrg != o.CredOrg {
 		p = append(p, fmt.Sprintf(
 			"clauderig's active account (%s, org %s) is not the live credential (org %s)",
@@ -166,7 +184,20 @@ func (o Observation) fingerprint() string {
 // Record appends o to the journal, but only when its identity fingerprint differs
 // from the last entry (or the journal is empty). Returns whether it wrote.
 // Fills in Changed/PreviousAt so each line explains itself.
+//
+// The read/compare/append is a transaction guarded by a lock file, because
+// running `doctor` while `watch` is polling (or two watchers at once) is an
+// ordinary thing to do: unguarded, both processes read the same previous entry
+// and both append the same transition, duplicating events and cross-linking
+// PreviousAt to the wrong line — corrupting exactly the evidence this journal
+// exists to preserve.
 func (s *Store) Record(o Observation) (bool, error) {
+	unlock, err := s.lockJournal()
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+
 	prev, had, err := s.LastObservation()
 	if err != nil {
 		return false, err
@@ -194,6 +225,43 @@ func (s *Store) Record(o Observation) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// journalLockStale is how long a lock file may sit before another process treats
+// it as abandoned. A crashed writer must not wedge the journal forever, and the
+// guarded section is a few file operations, so anything older than this is dead.
+const journalLockStale = 30 * time.Second
+
+// lockJournal takes an advisory cross-process lock via exclusive file creation —
+// portable to every OS Go builds for, unlike flock. Returns a release function
+// that is always safe to call.
+func (s *Store) lockJournal() (func(), error) {
+	if err := os.MkdirAll(s.Root, 0o700); err != nil {
+		return nil, err
+	}
+	lock := s.journalPath() + ".lock"
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			_ = f.Close()
+			return func() { _ = os.Remove(lock) }, nil
+		}
+		if !os.IsExist(err) {
+			return nil, fmt.Errorf("lock journal: %w", err)
+		}
+		if fi, serr := os.Stat(lock); serr == nil && time.Since(fi.ModTime()) > journalLockStale {
+			_ = os.Remove(lock) // abandoned by a dead writer; reclaim and retry
+			continue
+		}
+		if time.Now().After(deadline) {
+			// Never block a diagnostic forever on a lock. Proceeding unguarded
+			// risks a duplicate line; refusing risks losing the observation
+			// entirely, which is worse for a forensic log.
+			return func() {}, nil
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 func changedFields(prev, cur Observation) []string {
@@ -255,6 +323,101 @@ func (s *Store) LastObservation() (Observation, bool, error) {
 		return Observation{}, false, err
 	}
 	return all[len(all)-1], true, nil
+}
+
+// RepairProfileBlock rewrites ~/.claude.json's oauthAccount from the stored
+// profile of whichever account matches the LIVE CREDENTIAL's org, and points
+// active.json at it.
+//
+// The direction is deliberate and is the only safe one. The credential is what
+// the server authenticates you as, so it is the truth; the block is local belief.
+// Repairing means making the belief tell the truth — which never touches the
+// credential, so no running Claude Code session is logged out. (Mutating the
+// credential instead would log every live session out, which is why `switch` is
+// guarded and why --fix must never do it.)
+//
+// This makes the display honest; it does not choose an account for you. To
+// actually change which account is live, use `switch`.
+func (s *Store) RepairProfileBlock() (Account, error) {
+	o := s.Diagnose()
+	if o.CredErr != "" {
+		return Account{}, fmt.Errorf("read live credential: %s", o.CredErr)
+	}
+	if o.CredOrg == "" {
+		return Account{}, errors.New(
+			"the live credential carries no organizationUuid, so there is nothing to match a stored account against")
+	}
+	if o.InSync {
+		return Account{}, ErrNothingToRepair
+	}
+
+	all, err := s.List()
+	if err != nil {
+		return Account{}, err
+	}
+	match := matchByOrg(all, o.CredOrg)
+	if match == nil {
+		return Account{}, fmt.Errorf(
+			"%w: the credential belongs to org %s. Log in as that account and run "+
+				"`clauderig account add` to capture its profile, then retry",
+			ErrNoStoredMatch, o.CredOrg)
+	}
+
+	raw, err := s.OAuth(match.ID)
+	if err != nil {
+		return Account{}, fmt.Errorf("read stored profile for %s: %w", match.Email, err)
+	}
+	if len(raw) == 0 {
+		return Account{}, fmt.Errorf(
+			"%s matches the live credential but has no stored profile block to restore — "+
+				"run `clauderig account add` while logged in as it", match.Email)
+	}
+	if err := WriteOAuthAccount(raw); err != nil {
+		return Account{}, fmt.Errorf("write profile block: %w", err)
+	}
+	if err := s.SetActive(match.ID); err != nil {
+		return Account{}, fmt.Errorf("update active pointer: %w", err)
+	}
+	return *match, nil
+}
+
+// CredentialOrg reports the organization a credential blob belongs to ("" when
+// the blob records none).
+func CredentialOrg(raw []byte) (string, error) {
+	_, org, err := metaFromBlob(raw)
+	return org, err
+}
+
+// ProfileOrg reports the organization an oauthAccount block names.
+func ProfileOrg(raw []byte) string { return parseOAuthMeta(raw).OrganizationUUID }
+
+// GlobalConfigExists reports whether ~/.claude.json is present. Callers that are
+// about to move a credential must check this first: WriteOAuthAccount silently
+// no-ops when the file is absent, so without this a swap would move the
+// credential and leave no profile block to match it.
+func GlobalConfigExists() bool {
+	p, err := globalConfigPath()
+	if err != nil {
+		return false
+	}
+	_, serr := os.Stat(p)
+	return serr == nil
+}
+
+// matchByOrg finds the stored account belonging to org. An empty org never
+// matches: accounts captured before the org was recorded carry "", and treating
+// that as a wildcard would let a repair write the WRONG identity's profile block
+// — the precise failure this whole file exists to prevent.
+func matchByOrg(all []Account, org string) *Account {
+	if org == "" {
+		return nil
+	}
+	for i := range all {
+		if all[i].OrganizationUUID == org {
+			return &all[i]
+		}
+	}
+	return nil
 }
 
 // shortUUID abbreviates a UUID for display; identity comparisons always use the
