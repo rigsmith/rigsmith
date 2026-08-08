@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -62,11 +63,16 @@ func TestWriteOAuthAccountPreservesEverythingElse(t *testing.T) {
 	if !ok || oa["emailAddress"] != "new@x.com" || oa["organizationUuid"] != "org-new" {
 		t.Errorf("oauthAccount was not replaced, got %v", got["oauthAccount"])
 	}
-	// The mode of the destination must survive — this file holds account state.
-	if fi, serr := os.Stat(p); serr != nil {
-		t.Fatal(serr)
-	} else if fi.Mode().Perm() != 0o600 {
-		t.Errorf("expected mode 0600 to be preserved, got %v", fi.Mode().Perm())
+	// The mode of the destination must survive — this file holds account state,
+	// and a rename-based replace would otherwise hand it CreateTemp's own mode.
+	// Windows has no POSIX permission bits (Go models only the read-only flag and
+	// reports 0666), so the assertion is meaningful on Unix only.
+	if runtime.GOOS != "windows" {
+		if fi, serr := os.Stat(p); serr != nil {
+			t.Fatal(serr)
+		} else if fi.Mode().Perm() != 0o600 {
+			t.Errorf("expected mode 0600 to be preserved, got %v", fi.Mode().Perm())
+		}
 	}
 }
 
@@ -109,6 +115,15 @@ func TestWriteOAuthAccountLeavesNoTempFilesBehind(t *testing.T) {
 	}
 }
 
+// Errors must propagate rather than being swallowed — on every platform,
+// including the one where the chmod-based test below cannot run.
+func TestAtomicWriteFileReportsErrors(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "no-such-dir", "config.json")
+	if err := atomicWriteFile(missing, []byte("x"), 0o600); err == nil {
+		t.Fatal("expected an error when the destination directory does not exist")
+	}
+}
+
 // atomicWriteFile is what makes the failure path safe: on error the destination
 // must still hold its previous contents, never a fragment.
 func TestAtomicWriteFileLeavesOriginalIntactOnFailure(t *testing.T) {
@@ -119,8 +134,14 @@ func TestAtomicWriteFileLeavesOriginalIntactOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Make the directory unwritable so the temp file can't be created; the
-	// destination must be untouched. (Skipped as root, which ignores the bit.)
+	// Failure is forced by making the directory unwritable, which is a POSIX
+	// mechanism: Windows does not enforce directory permission bits this way, so
+	// the temp file would be created and there'd be no failure to observe. The
+	// behaviour under test (rename-based replace) is identical on both platforms;
+	// only this way of provoking a failure is Unix-specific.
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission bits do not gate file creation on Windows")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: directory permissions are not enforced")
 	}
