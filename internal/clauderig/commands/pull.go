@@ -11,6 +11,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 	"github.com/spf13/cobra"
 )
@@ -31,6 +32,7 @@ func NewPullCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			me := config.Detect(machineName(cfg))
 			staging, err := config.StagingDir()
 			if err != nil {
 				return err
@@ -41,15 +43,21 @@ func NewPullCmd() *cobra.Command {
 				if _, err := os.Stat(filepath.Join(staging, ".git")); err != nil {
 					if _, err := gitrepo.Clone(ctx, cfg.Remote, staging); err != nil {
 						fmt.Fprintf(out, "clauderig pull: clone skipped: %v\n", err)
+						_ = journal.Append(staging, journal.Failed(me.Name, journal.OpPull, err))
 					}
 				} else if repo, err := gitrepo.Open(ctx, staging); err == nil {
 					if err := repo.Pull(ctx, "origin", "main"); err != nil {
+						// This exact line is where the 2026-08-07 divergence hid:
+						// pull is ff-only, so a diverged remote fails here, and
+						// the message went to hook stderr and nowhere else while
+						// the machine sat 65 commits behind for a day.
 						fmt.Fprintf(out, "clauderig pull: %v\n", err)
+						_ = journal.Append(staging, journal.Failed(me.Name, journal.OpPull, err))
 					}
 				}
 			}
 
-			autoRestoreIfFresh(ctx, out, cfg, staging)
+			autoRestoreIfFresh(ctx, out, cfg, me, staging)
 			return nil
 		},
 	}
@@ -59,11 +67,10 @@ func NewPullCmd() *cobra.Command {
 // machine is fresh (no projects yet) — so a new computer wires itself up on first
 // session without ever clobbering an established one. Best-effort and silent on
 // failure (it runs from the SessionStart hook).
-func autoRestoreIfFresh(ctx context.Context, out io.Writer, cfg *config.Config, staging string) {
+func autoRestoreIfFresh(ctx context.Context, out io.Writer, cfg *config.Config, me config.Machine, staging string) {
 	if !cfg.AutoRestore {
 		return
 	}
-	me := config.Detect(machineName(cfg))
 	cliLoc, st := cfg.RootLocation("cli", me)
 	if st != pathmap.StatusResolved {
 		return
@@ -75,12 +82,19 @@ func autoRestoreIfFresh(ctx context.Context, out io.Writer, cfg *config.Config, 
 	if err != nil {
 		return
 	}
-	if rep, err := engine.Restore(engine.RestoreOptions{
+	rep, rerr := engine.Restore(engine.RestoreOptions{
 		StagingDir: staging, Config: cfg, Machine: me, Manifest: man, Prune: cfg.AlwaysPrune,
-	}); err == nil {
-		fmt.Fprintln(out, "clauderig: fresh machine — auto-restored from sync")
-		if n := rep.DesktopSessions(); n > 0 {
-			printDesktopRestartNudge(out, n)
-		}
+	})
+	// Journalled either way: this fires once in a machine's life, so it can't
+	// bloat the feed, and it's the moment a computer's whole Claude setup
+	// arrives — worth a row whether it worked or not. A silent failure here
+	// used to leave a fresh machine mysteriously empty.
+	_ = journal.Append(staging, journal.FromRestore(me.Name, rep, rerr))
+	if rerr != nil {
+		return
+	}
+	fmt.Fprintln(out, "clauderig: fresh machine — auto-restored from sync")
+	if n := rep.DesktopSessions(); n > 0 {
+		printDesktopRestartNudge(out, n)
 	}
 }

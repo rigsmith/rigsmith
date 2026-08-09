@@ -38,6 +38,7 @@ func NewSearchCmd() *cobra.Command {
 		repoOnly      bool
 		all           bool
 		raw           bool
+		asJSON        bool
 	)
 	cmd := &cobra.Command{
 		Use:     "search <text>",
@@ -74,14 +75,18 @@ func NewSearchCmd() *cobra.Command {
 			me := config.Detect(machineName(cfg))
 			targets := buildTargets(cfg, me, liveOnly, repoOnly)
 
-			fmt.Fprintf(out, "%s %q\n", HeaderStyle.Render("clauderig search"), query)
+			// Under --json, stdout carries the document and nothing else — a
+			// banner ahead of it breaks every consumer that pipes this.
+			if !asJSON {
+				fmt.Fprintf(out, "%s %q\n", HeaderStyle.Render("clauderig search"), query)
+			}
 
 			// --all can't be session-grouped (config/file-history aren't sessions), so
 			// it falls back to raw line output.
 			if raw || all {
 				return runRawSearch(cmd, targets, query, caseSensitive, all)
 			}
-			return runSessionSearch(cmd, cfg, me, targets, query, caseSensitive, liveOnly, repoOnly)
+			return runSessionSearch(cmd, cfg, me, targets, query, caseSensitive, liveOnly, repoOnly, asJSON)
 		},
 	}
 	cmd.Flags().BoolVarP(&caseSensitive, "case-sensitive", "s", false, "match case exactly (default: case-insensitive)")
@@ -89,6 +94,7 @@ func NewSearchCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "search every file, not just chat transcripts (implies --raw)")
 	cmd.Flags().BoolVar(&liveOnly, "live", false, "search only this machine's live ~/.claude and Desktop dirs")
 	cmd.Flags().BoolVar(&repoOnly, "repo", false, "search only the synced staging repo")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit matching sessions as JSON (implies grouped sessions, not --raw)")
 	return cmd
 }
 
@@ -186,15 +192,15 @@ func chatHitKey(rel string, line int) string {
 // runSessionSearch is the default mode: content + title search grouped into named
 // sessions, ranked by relevance (title hit, then match count, then recency), each
 // with a resume command.
-func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine, targets []search.Target, query string, caseSensitive, liveOnly, repoOnly bool) error {
+func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine, targets []search.Target, query string, caseSensitive, liveOnly, repoOnly, asJSON bool) error {
 	roots := sessionRoots(cfg, me, liveOnly, repoOnly)
-	return searchSessions(cmd.OutOrStdout(), cmd.ErrOrStderr(), me, targets, roots, query, caseSensitive)
+	return searchSessions(cmd.OutOrStdout(), cmd.ErrOrStderr(), me, targets, roots, query, caseSensitive, asJSON)
 }
 
 // searchSessions is the grouped-session search, decoupled from cobra/config for
 // testing: it takes explicit search targets and sidecar roots and writes to out
 // (results) and errw (progress + warnings).
-func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, query string, caseSensitive bool) error {
+func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, query string, caseSensitive, asJSON bool) error {
 	idx := session.Build(roots)
 
 	hits := map[string]*sessResult{}
@@ -263,6 +269,10 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 		}
 		return a.when.After(b.when)
 	})
+
+	if asJSON {
+		return emitSearchJSON(out, me, query, results, stats.FilesScanned, stats.FilesSkipped)
+	}
 
 	for _, r := range results {
 		renderSession(out, me, r)

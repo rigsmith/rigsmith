@@ -67,6 +67,29 @@ func (r *Registry) Save(dir string) error {
 	return os.WriteFile(filepath.Join(dir, FileName), append(b, '\n'), 0o644)
 }
 
+// Remove drops a machine from the registry, reporting whether it was there.
+//
+// The registry is synced, so a removal propagates on the next push — which is
+// the point: a ghost entry (see the "this" glitch in
+// docs/CLAUDERIG-MERGE-POLICIES.md) has to be cleanable from one machine rather
+// than edited by hand on each.
+func (r *Registry) Remove(name string) bool {
+	if r.Devices == nil {
+		return false
+	}
+	if _, ok := r.Devices[name]; !ok {
+		return false
+	}
+	delete(r.Devices, name)
+	return true
+}
+
+// Has reports whether name is registered.
+func (r *Registry) Has(name string) bool {
+	_, ok := r.Devices[name]
+	return ok
+}
+
 // List returns devices sorted by most-recent sync first.
 func (r *Registry) List() []Device {
 	out := make([]Device, 0, len(r.Devices))

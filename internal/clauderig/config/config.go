@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 
 	"github.com/rigsmith/rigsmith/core/confkit"
 	"github.com/rigsmith/rigsmith/core/jsonc"
@@ -137,6 +138,58 @@ func resolveRoot(r Root, m Machine) (string, pathmap.Status) {
 func Detect(name string) Machine {
 	home, _ := os.UserHomeDir()
 	return Machine{Name: name, OS: OSToken(), Home: home}
+}
+
+// DetectFor builds a Machine for this host, named by ResolveName — the form
+// every caller wants, and the one that keeps the CLI and the UI agreeing about
+// which registry entry is "this machine".
+func DetectFor(cfg *Config) Machine { return Detect(ResolveName(cfg)) }
+
+// UnresolvedName is the placeholder used when this machine has no stable
+// identity — no matching config entry and no usable hostname.
+//
+// It is load-bearing history: a hostname that failed to resolve once registered
+// a ghost device literally named "this", which sat in the synced registry from
+// June 2026 until it was removed by hand on 2026-08-07. Display paths still
+// need *some* name, so the placeholder stays — but anything that *writes* an
+// identity must check IdentityResolved first and decline.
+const UnresolvedName = "this"
+
+// ResolveName picks this machine's name: an existing config entry matching this
+// OS+home, else the hostname, else UnresolvedName.
+func ResolveName(cfg *Config) string {
+	name, _ := resolveName(cfg)
+	return name
+}
+
+// IdentityResolved reports whether this machine has a real, stable identity —
+// false when ResolveName fell all the way through to UnresolvedName.
+//
+// Registration is gated on this: writing a placeholder into the synced device
+// registry creates a ghost every other machine then has to look at.
+func IdentityResolved(cfg *Config) bool {
+	_, ok := resolveName(cfg)
+	return ok
+}
+
+func resolveName(cfg *Config) (string, bool) {
+	localOS := OSToken()
+	home, _ := os.UserHomeDir()
+
+	names := make([]string, 0, len(cfg.Machines))
+	for name := range cfg.Machines {
+		names = append(names, name)
+	}
+	sort.Strings(names) // deterministic order if several entries somehow match
+	for _, name := range names {
+		if m := cfg.Machines[name]; m.OS == localOS && m.Home == home {
+			return name, true
+		}
+	}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return host, true
+	}
+	return UnresolvedName, false
 }
 
 // OSToken maps runtime.GOOS to the pathmap OS token.

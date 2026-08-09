@@ -58,7 +58,7 @@ func TestSearchSessions_DedupTitleAndResume(t *testing.T) {
 	roots := []session.Root{{Label: "desktop", Base: desk}}
 
 	var out, errw bytes.Buffer
-	if err := searchSessions(&out, &errw, testMachine(t.TempDir()), targets, roots, "billing", false); err != nil {
+	if err := searchSessions(&out, &errw, testMachine(t.TempDir()), targets, roots, "billing", false, false); err != nil {
 		t.Fatal(err)
 	}
 	got := stripANSI(out.String())
@@ -97,7 +97,7 @@ func TestSearchSessions_TitleOnly(t *testing.T) {
 
 	var out, errw bytes.Buffer
 	err := searchSessions(&out, &errw, testMachine(t.TempDir()),
-		[]search.Target{{Label: "cli", Dir: live}}, []session.Root{{Label: "desktop", Base: desk}}, "rocket", false)
+		[]search.Target{{Label: "cli", Dir: live}}, []session.Root{{Label: "desktop", Base: desk}}, "rocket", false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestSearchSessions_RepoOnlyNotResumable(t *testing.T) {
 
 	var out, errw bytes.Buffer
 	err := searchSessions(&out, &errw, testMachine(t.TempDir()),
-		[]search.Target{{Label: "cli", Dir: live}, {Label: "repo", Dir: repo}}, nil, "widget", false)
+		[]search.Target{{Label: "cli", Dir: live}, {Label: "repo", Dir: repo}}, nil, "widget", false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestSearchSessions_TitleOnlyButLiveTranscriptResumable(t *testing.T) {
 
 	var out, errw bytes.Buffer
 	err := searchSessions(&out, &errw, testMachine(t.TempDir()),
-		[]search.Target{{Label: "cli", Dir: live}}, []session.Root{{Label: "desktop", Base: desk}}, "kubernetes", false)
+		[]search.Target{{Label: "cli", Dir: live}}, []session.Root{{Label: "desktop", Base: desk}}, "kubernetes", false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

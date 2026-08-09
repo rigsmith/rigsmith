@@ -13,6 +13,7 @@ package session
 import (
 	"bufio"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -181,7 +182,14 @@ func FirstPrompt(path string) string {
 		return ""
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
+	return FirstPromptFrom(f)
+}
+
+// FirstPromptFrom is FirstPrompt over an already-open transcript. `peek` reads
+// transcripts out of git blobs rather than the filesystem — they belong to
+// another machine and were never written here — so it needs the reader form.
+func FirstPromptFrom(r io.Reader) string {
+	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 8<<20) // headers are small; cap guards a pathological line
 	for line := 0; line < maxHeaderLines && sc.Scan(); line++ {
 		var rec struct {
@@ -207,6 +215,37 @@ func FirstPrompt(path string) string {
 		return text
 	}
 	return ""
+}
+
+// MessageText decodes one transcript line into its speaker and plain text.
+// ok is false for records that carry no readable message — tool plumbing,
+// harness bookkeeping, anything unparseable — so a caller rendering a
+// conversation can simply skip them.
+//
+// `peek show` uses this to print a readable conversation instead of raw JSONL.
+func MessageText(line string) (role, text string, ok bool) {
+	var rec struct {
+		Type    string `json:"type"`
+		Message struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal([]byte(line), &rec) != nil {
+		return "", "", false
+	}
+	if rec.Type != "user" && rec.Type != "assistant" {
+		return "", "", false
+	}
+	role = rec.Message.Role
+	if role == "" {
+		role = rec.Type
+	}
+	text = strings.TrimSpace(textOf(rec.Message.Content))
+	if text == "" {
+		return "", "", false
+	}
+	return role, text, true
 }
 
 // textOf pulls the plain text out of a user message's content, which Claude Code

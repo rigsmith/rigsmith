@@ -14,25 +14,31 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
+	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 )
 
 // RootInfo is one root's local state.
 type RootInfo struct {
-	ID      string
-	Files   int
-	Present bool
+	ID      string `json:"id"`
+	Files   int    `json:"files"`
+	Present bool   `json:"present"`
 }
+
+// TrackingRef is the ref the staging repo syncs against. sync and pull both
+// hardcode origin/main; divergence is measured against the same pair.
+const TrackingRef = "origin/main"
 
 // Info is the gathered snapshot.
 type Info struct {
-	Machine    config.Machine
-	Remote     string
-	HasStaging bool
-	LastSync   string // "hash when — subject", or "" when never
-	Dirty      bool
-	Roots      []RootInfo
-	Hooks      []string
-	Devices    []devices.Device
+	Machine    config.Machine     `json:"machine"`
+	Remote     string             `json:"remote"`
+	HasStaging bool               `json:"hasStaging"`
+	LastSync   string             `json:"lastSync"` // "hash when — subject", or "" when never
+	Dirty      bool               `json:"dirty"`
+	Divergence gitrepo.Divergence `json:"divergence"` // position vs TrackingRef as of the last fetch
+	Roots      []RootInfo         `json:"roots"`
+	Hooks      []string           `json:"hooks"`
+	Devices    []devices.Device   `json:"devices"`
 }
 
 // Gather collects the local snapshot. settingsPath points at ~/.claude/settings.json.
@@ -45,7 +51,17 @@ func Gather(ctx context.Context, cfg *config.Config, me config.Machine, staging,
 			if h, subj, when, err := repo.LastCommit(ctx); err == nil {
 				info.LastSync = h + " " + when + " — " + subj
 			}
-			info.Dirty, _ = repo.Dirty(ctx)
+			// The journal is excluded on purpose. Dirty means "a sync started
+			// and didn't finish" — loose synced content. A pending journal line
+			// isn't that: it's append-only bookkeeping the next sync sweeps up
+			// on its own. Counting it would leave the tray amber after every
+			// restore, which is the same species of misleading indicator this
+			// work set out to remove.
+			info.Dirty, _ = repo.DirtyExcluding(ctx, journal.DirName)
+			// Reads the object store only — no fetch — so this stays local and
+			// safe to poll. It therefore reports divergence as of the last fetch,
+			// which is exactly what a stale registry could not express.
+			info.Divergence, _ = repo.DivergenceFrom(ctx, TrackingRef)
 		}
 	}
 

@@ -2,8 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"os"
-	"sort"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -11,6 +9,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 	"github.com/spf13/cobra"
 )
 
@@ -27,7 +26,7 @@ func NewSyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Snapshot, redact, rewrite, and push your Claude Code setup",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (rerr error) {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 
@@ -40,6 +39,19 @@ func NewSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// Once the commit is made, any later failure is a git-phase one —
+			// a rejected push, a failed reconcile. Those can't ride the commit
+			// they failed to make, so they're journalled here instead and wait
+			// for the next sync to carry them. Before this point the engine
+			// record has already been written (and committed), so journalling
+			// again would double-count.
+			inGitPhase := false
+			defer func() {
+				if rerr != nil && inGitPhase {
+					_ = journal.Append(staging, journal.Failed(me.Name, journal.OpSync, rerr))
+				}
+			}()
 
 			fmt.Fprintln(out, HeaderStyle.Render("clauderig sync"))
 			claudeVer := ""
@@ -82,6 +94,16 @@ func NewSyncCmd() *cobra.Command {
 					fmt.Fprintf(out, "  retention %d aged file(s) pruned from staging\n", rep.RetentionPruned)
 				}
 			}
+			// Journal what the engine did *before* committing, so the record
+			// travels in this sync's own commit. Written afterwards it would
+			// leave the tree dirty until the next run and make `status` report
+			// uncommitted changes forever. A dry run is deliberately not
+			// recorded — it's a preview, and a feed that claims previews
+			// happened to your data is worse than no feed.
+			if !dryRun {
+				_ = journal.Append(staging, journal.FromSync(me.Name, rep, serr))
+			}
+
 			if serr != nil {
 				if rep != nil {
 					for _, f := range rep.Findings {
@@ -94,9 +116,16 @@ func NewSyncCmd() *cobra.Command {
 				fmt.Fprintln(out, DimStyle.Render("\n  dry-run: staged + scanned, not committing"))
 				return nil
 			}
+			inGitPhase = true
 
-			// Record this machine in the synced device registry.
-			if reg, err := devices.Load(staging); err == nil {
+			// Record this machine in the synced device registry — but only with a
+			// real identity. Registering the placeholder is what put a ghost
+			// device named "this" into the registry for two months; it syncs, so
+			// every other machine inherits the confusion.
+			if !config.IdentityResolved(cfg) {
+				fmt.Fprintf(out, "  %s\n", WarnStyle.Render(
+					"machine name unresolved — syncing, but not registering this device"))
+			} else if reg, err := devices.Load(staging); err == nil {
 				reg.Touch(me.Name, me.OS, claudeVer, time.Now())
 				_ = reg.Save(staging)
 			}
@@ -194,22 +223,4 @@ func NewSyncCmd() *cobra.Command {
 // machine resolves deterministically to the right one instead of flipping with
 // Go's randomized map iteration. Falls back to the OS hostname, then "this",
 // when no registered machine matches this host.
-func machineName(cfg *config.Config) string {
-	localOS := config.OSToken()
-	home, _ := os.UserHomeDir()
-
-	names := make([]string, 0, len(cfg.Machines))
-	for name := range cfg.Machines {
-		names = append(names, name)
-	}
-	sort.Strings(names) // deterministic order if several entries somehow match
-	for _, name := range names {
-		if m := cfg.Machines[name]; m.OS == localOS && m.Home == home {
-			return name
-		}
-	}
-	if host, err := os.Hostname(); err == nil && host != "" {
-		return host
-	}
-	return "this"
-}
+func machineName(cfg *config.Config) string { return config.ResolveName(cfg) }
