@@ -109,7 +109,6 @@ into the struct; `--json` becomes a thin marshal of the same thing.
 ui/
 ├── Taskfile.yml           # wails3 build entry; includes build/*/Taskfile.yml
 ├── main.go                # app + systray + window wiring
-├── health/                # Info + divergence → green/amber/red, one place
 ├── bridge/                # service structs bound to the frontend
 │   ├── status.go          #   imports internal/clauderig/status, devices
 │   ├── sessions.go        #   imports internal/clauderig/session, search
@@ -121,8 +120,11 @@ ui/
 └── build/                 # wails per-OS Taskfiles, Info.plist, icons, nsis
 ```
 
-`health/` exists as its own package so the tray colour, the window banner, and any future
-Tweed readout derive state identically from one function.
+**`health` moved down, 2026-08-08.** It was drafted as `ui/health/` and now lives at
+`internal/clauderig/health`, because the CLI wants it too: `status --json` emits the same
+`level`/`reason` the tray paints with. Anything both front ends need belongs below both —
+the same reason `journal.Record.Summary` moved out of `ui/bridge`. A CLI that depends on
+the UI package would have been backwards.
 
 ## Tray specifics
 
@@ -161,6 +163,14 @@ What breaks:
 - **Wails needs CGO on macOS and Linux** (WKWebView, GTK/WebKitGTK). The whole existing
   matrix is `CGO_ENABLED=0`. This build gets its own settings and can't cross-compile as
   freely — Linux and macOS targets need their own runners or Docker.
+- **macOS builds need an explicit deployment target** (confirmed 2026-08-08). Wails' ObjC
+  declares `-mmacosx-version-min=10.13`, which a current SDK clamps up to its own floor,
+  while Go's linker stamps 11.0 — so a bare `go build ./ui` emits a screenful of
+  `ld: warning: object file … built for newer 'macOS' version`. Setting both
+  `MACOSX_DEPLOYMENT_TARGET=12.0` and `CGO_LDFLAGS=-mmacosx-version-min=12.0` aligns them
+  (12.0 is what `wails3 init` generates). Whatever ships the UI — Taskfile, GoReleaser
+  entry, or our own packer — has to carry both. Detail in
+  [`ui/README.md`](../ui/README.md).
 - **A `.app` bundle is not a binary.** `notarize.macos` targets build *ids* and signs
   Mach-O binaries; it has no notion of a bundle. GoReleaser OSS has no `app_bundles`
   (that's Pro). So the current notarization path cannot sign the UI.
@@ -197,21 +207,40 @@ Unchanged in substance; `--json` is no longer blocking (see [Engine seam](#engin
 
 - **Divergence fields on `status.Info`**: ahead/behind vs origin, whether a merge would
   conflict, last sync outcome per root. The UI reads the struct; `--json` marshals it.
-- `--json` on `status` (and `account list`, `search`) for scripting and Tweed.
+- ~~`--json` on `status` (and `account list`, `search`) for scripting and Tweed.~~
+  **Done 2026-08-08.** `status --json` embeds `status.Info` verbatim and adds the health
+  verdict (`level`/`reason`/`summary`/`action`) plus the last journal record — the two
+  things a caller would otherwise re-derive. It skips the reachability probe, so a hung
+  remote can't hang a poller. `search --json` and `account list --json` likewise; the
+  account document carries `desynced` as a field so a script can't miss the warning the
+  styled output prints in prose.
 - **Sync journal**: every sync/pull/restore appends a JSONL record (when, machine, files
   written, redactions, aged-out, LEAK refusals, error). The activity feed reads this;
   it also makes hook-failures durable instead of stderr-only.
-- `clauderig merge`: encode the resolution policies above. Exits nonzero listing residual
-  conflicts only when a file matches no policy. This is the engine behind the UI's
-  one-click **Resolve**.
-- `clauderig peek <device> [list|show <session>|materialize <session>]`: read sessions
-  straight from `origin/main` blobs without merging; `materialize` copies one into
-  `~/.claude/projects/` (additive, never overwrites).
-- `clauderig device rm <name>` + reject registration when hostname resolution fails
-  (the `this` glitch).
-- Restore safety: `restore` copies unconditionally with no live-session guard
-  (`engine/restore.go`); give it the `account switch` sessions-guard — skip or refuse
-  files belonging to running sessions instead of rolling their transcripts back.
+- ~~`clauderig merge`: encode the resolution policies above.~~ **Done 2026-08-08.**
+  `internal/clauderig/merge` holds five pure policies (devices-union, manifest-union,
+  memory-union, transcript-superset, newest-timestamp); the command fetches, merges
+  `--no-ff`, applies them per conflicted file and prints a ledger of what each did.
+  Residual conflicts exit nonzero, named, with the repo left mid-merge for the user's
+  own mergetool (`--abort` backs it out). This is the engine behind the UI's one-click
+  **Resolve**.
+- ~~`clauderig peek <device> [list|show <session>|materialize <session>]`~~ **Done
+  2026-08-08**, as `peek list|show|materialize` with `--device` as a filter rather than a
+  positional — sessions aren't partitioned by machine in the repo, so attribution is
+  derived from each file's most recent `clauderig sync: <machine>` commit. `list` shows
+  titles (first prompt, read from the blob), `show` renders the conversation (`--raw` for
+  JSONL), `materialize` copies one in additively and refuses if the id already exists
+  locally. Slugs are rewritten for this machine via the manifest, as restore does.
+- ~~`clauderig device rm <name>` + reject registration when hostname resolution fails
+  (the `this` glitch).~~ **Done 2026-08-08.** `clauderig device list` / `remove` (alias
+  `rm`, interactive-confirm only), and `sync` now declines to register a machine whose
+  name falls through to `config.UnresolvedName`. Details in
+  [CLAUDERIG-MERGE-POLICIES.md](CLAUDERIG-MERGE-POLICIES.md#registry-hygiene).
+- ~~Restore safety: `restore` copies unconditionally with no live-session guard.~~
+  **Done 2026-08-08.** `engine/restore.go` skips the transcript of every running
+  session (`projects/<slug>/<sessionId>.jsonl`, via `account.RunningInstances`) and
+  names what it kept. Per-session rather than per-project, so unrelated sessions still
+  restore. Details in [CLAUDERIG-MERGE-POLICIES.md](CLAUDERIG-MERGE-POLICIES.md).
 
 ## Phase 1 — Tray + status window
 
@@ -248,18 +277,27 @@ Unchanged in substance; `--json` is no longer blocking (see [Engine seam](#engin
 
 Ordered by how much they'd hurt to discover late.
 
-1. **Entrypoint location — unverified.** Wails v3 docs only ever show `main.go` at the
-   project root, and there's no documented flag or config key for a different main package.
-   The Taskfiles are plain user-editable YAML and we're expected to modify them, so this
-   almost certainly works by editing the build task — but it is unconfirmed. **Spike this
-   first**; if `ui/` can't host the entrypoint, the fallback is a nested module, which
-   costs the direct `internal/clauderig/...` imports the whole seam design depends on.
+1. ~~**Entrypoint location — unverified.**~~ **Resolved 2026-08-08.** `ui/` hosts the
+   entrypoint with no special handling: `go build ./ui` produces a working binary that
+   imports `internal/clauderig/status` directly and reads the live device registry. Go
+   does not care where a `main` package lives, and `application.New` has no opinion about
+   the project root. No nested module, so the direct-import seam stands as designed.
+
+   Still unverified: the **`wails3` CLI tooling** (`wails3 build` / `dev` / `package`)
+   against a non-root entrypoint. That only matters for packaging, not development —
+   `go build ./ui` and `go run ./ui` work today — so it folds into the build-and-release
+   work in item 4 rather than blocking Phase 1.
 2. **Beta churn.** Six days into beta after a multi-year alpha. Pin the exact version, don't
    float, and expect to read changelogs on upgrade. The v2→v3 migration guide is explicit
    that v3 is a port rather than a version bump — so there is no cheap retreat to v2, and v2
    has no systray anyway.
 3. **macOS template icon vs three-state colour** — see [Tray specifics](#tray-specifics).
-   A design decision, not a bug, but it needs an answer before the icons are drawn.
+   **Answered 2026-08-08, provisionally: colour wins.** The icons are non-template, with
+   `SetDarkModeIcon` handling light/dark by hand. Ambient health signalling is the tray's
+   only job, and a template icon is monochrome by definition, so it cannot carry the
+   state. The cost is that the icon won't tint with macOS accent settings. Rationale and
+   the alternative live in [`ui/assets/README.md`](../ui/assets/README.md); revisit once
+   it has been in a real menu bar for a while.
 4. **CGO + the release pipeline.** The largest chunk of unbudgeted work; see
    [Build & release](#build--release).
 5. **Linux runtime deps are self-contradictory in the docs** — the packaging page names
@@ -271,7 +309,12 @@ Ordered by how much they'd hurt to discover late.
 
 - **Name.** Still unnamed; "the clauderig UI" until John names it. Needed before the
   binary, bundle identifier, and icons are settled.
-- Frontend framework choice (deliberately deferred to scaffold time).
+- Frontend framework choice. **Deferred again at scaffold time**: the status window is
+  plain HTML/CSS/JS on the `design/` tokens, no framework and no bundler, which keeps CI
+  Go-only (see [Build & release](#build--release)). Revisit when the window grows past the
+  status screen — the remote-session browser in Phase 2 is the likely trigger. Note the
+  frontend calls bound methods by their full Go FQN string because we skip
+  `wails3 generate bindings`; `ui/bridge/binding_test.go` fails if that drifts.
 - Whether Tweed later embeds the same status readout — it still can, over `--json`, and now
   also over the `health` package if it ever moves in-process.
 - Auto-resolve-on-pull: once `clauderig merge` is trusted, the SessionStart hook could

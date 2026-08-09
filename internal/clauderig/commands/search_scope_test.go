@@ -75,7 +75,7 @@ func TestSearchSessions_TimeWindowFilters(t *testing.T) {
 
 	var out, errw bytes.Buffer
 	sc := sessionScope{since: time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC), now: now}
-	if err := searchSessions(&out, &errw, testMachine(t.TempDir()), targets, nil, "migration", sc); err != nil {
+	if err := searchSessions(&out, &errw, testMachine(t.TempDir()), targets, nil, "migration", sc, false); err != nil {
 		t.Fatal(err)
 	}
 	got := stripANSI(out.String())
@@ -92,7 +92,7 @@ func TestSearchSessions_TimeWindowFilters(t *testing.T) {
 	// The mirror case: --until keeps only the older one.
 	out.Reset()
 	sc = sessionScope{until: time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC), now: now}
-	if err := searchSessions(&out, &errw, testMachine(t.TempDir()), targets, nil, "migration", sc); err != nil {
+	if err := searchSessions(&out, &errw, testMachine(t.TempDir()), targets, nil, "migration", sc, false); err != nil {
 		t.Fatal(err)
 	}
 	got = stripANSI(out.String())
@@ -118,7 +118,7 @@ func TestSearchSessions_UndatedDroppedAndNamed(t *testing.T) {
 	}
 	err := searchSessions(&out, &errw, testMachine(t.TempDir()),
 		[]search.Target{{Label: "cli", Dir: live}},
-		[]session.Root{{Label: "desktop", Base: desk}}, "rocket", sc)
+		[]session.Root{{Label: "desktop", Base: desk}}, "rocket", sc, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestSearchSessions_CwdFilter(t *testing.T) {
 	var out, errw bytes.Buffer
 	sc := sessionScope{cwd: "tweed", now: time.Now()}
 	if err := searchSessions(&out, &errw, testMachine(t.TempDir()),
-		[]search.Target{{Label: "cli", Dir: live}}, nil, "migration", sc); err != nil {
+		[]search.Target{{Label: "cli", Dir: live}}, nil, "migration", sc, false); err != nil {
 		t.Fatal(err)
 	}
 	got := stripANSI(out.String())
@@ -296,7 +296,7 @@ func TestSearchSessions_TitleOnlyMatchIsDatedFromItsTranscript(t *testing.T) {
 	var out, errw bytes.Buffer
 	if err := searchSessions(&out, &errw, testMachine(t.TempDir()),
 		[]search.Target{{Label: "cli", Dir: live}},
-		[]session.Root{{Label: "desktop", Base: desk}}, "rocket", sc); err != nil {
+		[]session.Root{{Label: "desktop", Base: desk}}, "rocket", sc, false); err != nil {
 		t.Fatal(err)
 	}
 	got := stripANSI(out.String())

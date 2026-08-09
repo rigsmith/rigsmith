@@ -2,9 +2,7 @@ package commands
 
 import (
 	"fmt"
-	"os"
 	"regexp"
-	"sort"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -13,6 +11,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 	"github.com/spf13/cobra"
 )
@@ -35,7 +34,7 @@ func NewSyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Snapshot, redact, rewrite, and push your Claude Code setup",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (rerr error) {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 
@@ -48,6 +47,19 @@ func NewSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// Once the commit is made, any later failure is a git-phase one —
+			// a rejected push, a failed reconcile. Those can't ride the commit
+			// they failed to make, so they're journalled here instead and wait
+			// for the next sync to carry them. Before this point the engine
+			// record has already been written (and committed), so journalling
+			// again would double-count.
+			inGitPhase := false
+			defer func() {
+				if rerr != nil && inGitPhase {
+					_ = journal.Append(staging, journal.Failed(me.Name, journal.OpSync, rerr))
+				}
+			}()
 
 			fmt.Fprintln(out, HeaderStyle.Render("clauderig sync"))
 			// Settle any merge an earlier run abandoned before the snapshot writes
@@ -143,6 +155,16 @@ func NewSyncCmd() *cobra.Command {
 					fmt.Fprintf(out, "  sidecars  %d orphaned session(s) pruned from staging\n", rep.SidecarsPruned)
 				}
 			}
+			// Journal what the engine did *before* committing, so the record
+			// travels in this sync's own commit. Written afterwards it would
+			// leave the tree dirty until the next run and make `status` report
+			// uncommitted changes forever. A dry run is deliberately not
+			// recorded — it's a preview, and a feed that claims previews
+			// happened to your data is worse than no feed.
+			if !dryRun {
+				_ = journal.Append(staging, journal.FromSync(me.Name, rep, serr))
+			}
+
 			if serr != nil {
 				if rep != nil {
 					for _, f := range rep.Findings {
@@ -155,13 +177,21 @@ func NewSyncCmd() *cobra.Command {
 				fmt.Fprintln(out, DimStyle.Render("\n  dry-run: staged + scanned, not committing"))
 				return nil
 			}
+			inGitPhase = true
 
 			// Record this machine in the synced device registry, together with the
 			// account it synced as — identity only (see devices.Account), and the
 			// only account provenance anything in the repo carries. Best-effort:
 			// an unreadable identity leaves the previous record standing and never
 			// costs anyone a sync.
-			if reg, err := devices.Load(staging); err == nil {
+			//
+			// Gated on a resolved machine name: registering the placeholder is what
+			// put a ghost device named "this" into the registry for two months; it
+			// syncs, so every other machine inherits the confusion.
+			if !config.IdentityResolved(cfg) {
+				fmt.Fprintf(out, "  %s\n", WarnStyle.Render(
+					"machine name unresolved — syncing, but not registering this device"))
+			} else if reg, err := devices.Load(staging); err == nil {
 				var acct *devices.Account
 				// Both halves required, from the ONE read above. An `||` gate
 				// built a non-nil record from any single field, so a partial
@@ -263,25 +293,7 @@ func NewSyncCmd() *cobra.Command {
 // machine resolves deterministically to the right one instead of flipping with
 // Go's randomized map iteration. Falls back to the OS hostname, then "this",
 // when no registered machine matches this host.
-func machineName(cfg *config.Config) string {
-	localOS := config.OSToken()
-	home, _ := os.UserHomeDir()
-
-	names := make([]string, 0, len(cfg.Machines))
-	for name := range cfg.Machines {
-		names = append(names, name)
-	}
-	sort.Strings(names) // deterministic order if several entries somehow match
-	for _, name := range names {
-		if m := cfg.Machines[name]; m.OS == localOS && m.Home == home {
-			return name
-		}
-	}
-	if host, err := os.Hostname(); err == nil && host != "" {
-		return host
-	}
-	return "this"
-}
+func machineName(cfg *config.Config) string { return config.ResolveName(cfg) }
 
 // emailShape is a deliberately conservative check: one @, no spaces or control
 // characters, a dot in the domain. It is not RFC-complete and does not need to

@@ -17,6 +17,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/spf13/cobra"
@@ -165,6 +166,12 @@ func NewRestoreCmd() *cobra.Command {
 			// there the profiles do not exist locally yet.
 			opts.Profiles = engine.StagedProfileNames(staging)
 			rep, err := engine.Restore(opts)
+			// --dir writes into a scratch folder rather than this machine's
+			// Claude setup, so it stays out of the feed for the same reason a
+			// dry run does: the journal records what actually changed.
+			if dir == "" {
+				_ = journal.Append(staging, journal.FromRestore(me.Name, rep, err))
+			}
 			if err != nil {
 				return err
 			}
@@ -190,7 +197,22 @@ func NewRestoreCmd() *cobra.Command {
 				if r.LinksKept > 0 {
 					extra += fmt.Sprintf(", %d kept under existing link(s)", r.LinksKept)
 				}
+				if n := len(r.LiveSkipped); n > 0 {
+					extra += fmt.Sprintf(", %d in use", n)
+				}
 				fmt.Fprintf(out, "  %-*s %d files, %d slug(s) rewritten%s\n", w, r.ID, r.Files, r.SlugsRewritten, extra)
+			}
+			// Name what was left alone. A guard that silently drops files reads
+			// as "everything restored" when it didn't — and these are whole
+			// conversations, same as the oversize reporting in sync.
+			if skipped := rep.LiveSkips(); len(skipped) > 0 {
+				fmt.Fprintf(out, "  %s\n", WarnStyle.Render(fmt.Sprintf(
+					"%d transcript(s) kept: a Claude Code session is writing to them.", len(skipped))))
+				for _, rel := range skipped {
+					fmt.Fprintf(out, "    %s %s\n", DimStyle.Render("in use:"), DimStyle.Render(rel))
+				}
+				fmt.Fprintf(out, "  %s\n", DimStyle.Render(
+					"Quit those sessions and re-run restore if you meant to overwrite them."))
 			}
 			if man.ClaudeVersion != "" {
 				fmt.Fprintf(out, "  %s\n", DimStyle.Render("synced from Claude Code "+man.ClaudeVersion))

@@ -31,7 +31,7 @@ func TestSearchSessions_LedgerOnlySessionIsFound(t *testing.T) {
 
 	var out, errw bytes.Buffer
 	if err := searchSessions(&out, &errw, testMachine(t.TempDir()),
-		[]search.Target{{Label: "cli", Dir: live}}, nil, "auth refactor", sc); err != nil {
+		[]search.Target{{Label: "cli", Dir: live}}, nil, "auth refactor", sc, false); err != nil {
 		t.Fatal(err)
 	}
 	got := stripANSI(out.String())
@@ -82,7 +82,7 @@ func TestSearchSessions_LedgerDoesNotClaimPresentSessionIsGone(t *testing.T) {
 
 	var out, errw bytes.Buffer
 	if err := searchSessions(&out, &errw, testMachine(t.TempDir()),
-		[]search.Target{{Label: "cli", Dir: live}, {Label: "repo", Dir: repo}}, nil, "auth refactor", sc); err != nil {
+		[]search.Target{{Label: "cli", Dir: live}, {Label: "repo", Dir: repo}}, nil, "auth refactor", sc, false); err != nil {
 		t.Fatal(err)
 	}
 	got := stripANSI(out.String())
@@ -117,7 +117,7 @@ func TestSearchSessions_LedgerRowsRespectFilters(t *testing.T) {
 	}
 	var out, errw bytes.Buffer
 	if err := searchSessions(&out, &errw, testMachine(t.TempDir()),
-		[]search.Target{{Label: "cli", Dir: live}}, nil, "auth refactor", sc); err != nil {
+		[]search.Target{{Label: "cli", Dir: live}}, nil, "auth refactor", sc, false); err != nil {
 		t.Fatal(err)
 	}
 	got := stripANSI(out.String())
