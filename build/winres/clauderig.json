@@ -15,7 +15,7 @@
           "0409": {
             "CompanyName": "RigSmith",
             "ProductName": "clauderig",
-            "FileDescription": "Sync your Claude Code setup across machines, path-correct on restore",
+            "FileDescription": "Sync your Claude Code configuration across machines, path-correct on restore",
             "InternalName": "clauderig",
             "OriginalFilename": "clauderig.exe",
             "LegalCopyright": "Copyright (c) 2026 John Campion Jr"
