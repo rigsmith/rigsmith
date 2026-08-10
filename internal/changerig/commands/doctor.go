@@ -132,8 +132,51 @@ func changesetChecks(ctx context.Context, ws *Workspace, disc Discovery) []docto
 	if css, err := changeset.Dir(ws.ChangesetDir, ""); err == nil {
 		rs = append(rs, doctor.Result{Name: "pending", Status: doctor.Info,
 			Detail: fmt.Sprintf("%d changeset(s)", len(css))})
+		rs = append(rs, checkStranded(ctx, ws, css))
 	}
 	return rs
+}
+
+// checkStranded reports changesets that can never release — they name no
+// package, an unknown one, or only ignored ones. Nothing else surfaces them: a
+// stranded file is counted as pending, parses cleanly, and simply never appears
+// in a plan, so it stays invisible until someone wonders why a release came out
+// empty. Sixteen accumulated in this repo across a full release cycle, carrying
+// three weeks of work that would have shipped with no changelog entry.
+func checkStranded(ctx context.Context, ws *Workspace, css []*changeset.Changeset) doctor.Result {
+	if len(css) == 0 {
+		return doctor.Result{Name: "changeset targets", Status: doctor.OK, Detail: "no pending changesets"}
+	}
+	pkgs, _, err := ws.Discover(ctx)
+	if err != nil {
+		// checkWorkspace already reports discovery failures, and without packages
+		// every changeset would look like it names an unknown one.
+		return doctor.Result{Name: "changeset targets", Status: doctor.Info,
+			Detail: "not checked — package discovery failed"}
+	}
+	stranded := FindStranded(css, pkgs, ws.Config)
+	if len(stranded) == 0 {
+		return doctor.Result{Name: "changeset targets", Status: doctor.OK,
+			Detail: "every pending changeset names a releasable package"}
+	}
+	names := make([]string, 0, len(stranded))
+	for _, s := range stranded {
+		names = append(names, s.ID)
+	}
+	return doctor.Result{
+		Name:   "changeset targets",
+		Status: doctor.Warn,
+		Detail: fmt.Sprintf("%d changeset(s) can never release: %s", len(stranded), previewNames(names, 4)),
+		Hint:   StrandedHint("changerig", pkgs, ws.Config) + " `changerig status` lists each one and why.",
+	}
+}
+
+// previewNames joins up to n names, summarizing the rest as "+K more".
+func previewNames(names []string, n int) string {
+	if len(names) <= n {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s, +%d more", strings.Join(names[:n], ", "), len(names)-n)
 }
 
 // checkChangesetConfig reports on .changeset/config.json. An absent config is a
