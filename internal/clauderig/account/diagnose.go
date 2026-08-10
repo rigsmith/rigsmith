@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -236,6 +238,24 @@ func (s *Store) Record(o Observation) (bool, error) {
 // guarded section is a few file operations, so anything older than this is dead.
 const journalLockStale = 30 * time.Second
 
+// lockNameBusy reports an exclusive-create failure that means "someone else has
+// this name right now", spelled the way Windows spells it.
+//
+// Unix answers EEXIST when the lock file is there. Windows answers
+// ERROR_ACCESS_DENIED — not EEXIST — while the name is held by a file pending
+// deletion, which is exactly the window another writer's release opens when it
+// removes the lock. Treating that as a hard error made a contended lock fail
+// instead of retrying: `clauderig` running twice at once on Windows could report
+// "lock journal: Access is denied" rather than waiting its turn, and the
+// concurrent-writer test failed on roughly half of CI's Windows runs.
+//
+// Retrying is safe even for a genuine permission problem: the loop gives up at
+// its deadline and proceeds unguarded, which is what it already does for any
+// lock it cannot take.
+func lockNameBusy(err error) bool {
+	return runtime.GOOS == "windows" && errors.Is(err, fs.ErrPermission)
+}
+
 // lockJournal takes an advisory cross-process lock via exclusive file creation —
 // portable to every OS Go builds for, unlike flock. Returns a release function
 // that is always safe to call.
@@ -251,7 +271,7 @@ func (s *Store) lockJournal() (func(), error) {
 			_ = f.Close()
 			return func() { _ = os.Remove(lock) }, nil
 		}
-		if !os.IsExist(err) {
+		if !os.IsExist(err) && !lockNameBusy(err) {
 			return nil, fmt.Errorf("lock journal: %w", err)
 		}
 		if fi, serr := os.Stat(lock); serr == nil && time.Since(fi.ModTime()) > journalLockStale {
