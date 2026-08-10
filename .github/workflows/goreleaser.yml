@@ -183,21 +183,37 @@ jobs:
             node scripts/npm/build-packages.mjs --publish
           fi
 
-      # Verify the winget manifests GoReleaser generated. A non-portable
-      # installer manifest passes every pipeline here and then fails winget's
-      # unattended-install validation days later, as a moderator question (that
-      # cost 23 days on microsoft/winget-pkgs#403084). This makes it a red step
-      # within minutes, while the PRs are still fresh enough to fix quietly.
+      # Submit to winget via komac, which updates the PUBLISHED manifest rather
+      # than writing one from config — so Commands, Tags, Copyright,
+      # PublisherSupportUrl and the release notes survive a version bump. The
+      # GoReleaser winget publisher is disabled for this reason (see
+      # .goreleaser.yaml) after it dropped all of them from the 1.5.1 manifests.
       #
-      # Runs LAST, and deliberately so. The winget PRs are already open by the
-      # time it can look at them, so it is an alarm, not a gate — it has nothing
-      # left to prevent, and everything left to break. Placed before the npm
-      # publish, its first live run (a false positive on indentation) skipped
-      # that step and left npm a version behind a release that had otherwise
-      # published fine. A reporting check must not sit upstream of a publish.
-      - name: Verify winget manifests
-        if: always()
-        run: sh ./scripts/check-winget-manifests.sh dist
+      # winget-submit.sh generates to a directory, corrects komac's `exe`
+      # misdetection of clauderig.exe, verifies, and only then submits — so the
+      # manifest check is a gate here, not the after-the-fact alarm it could only
+      # be while GoReleaser opened the PRs itself.
+      #
+      # Tag pushes only: a manual dry run publishes no release for komac to point
+      # winget at. Never fatal — the release itself is already out by now, and a
+      # winget submission can be re-run by hand.
+      - name: Submit to winget (komac)
+        if: startsWith(github.ref, 'refs/tags/v')
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          # The secrets context is not available in a step `if`, so gate here.
+          if [ -z "${GITHUB_TOKEN:-}" ]; then
+            echo "WINGET_TOKEN unset — skipping the winget submission."
+            exit 0
+          fi
+          curl -fsSL -o /tmp/komac.tar.gz \
+            https://github.com/russellbanks/Komac/releases/download/v2.16.0/komac-2.16.0-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf /tmp/komac.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/komac /usr/local/bin/komac
+          komac --version
+          sh scripts/winget-submit.sh "${GITHUB_REF_NAME#v}" --submit
 
       # Dry run only: hand back the built + signed artifacts to inspect locally
       # (codesign --verify / spctl on the mac binaries, the casks, checksums).

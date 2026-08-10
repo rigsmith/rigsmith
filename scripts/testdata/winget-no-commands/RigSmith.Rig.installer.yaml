@@ -22,7 +22,5 @@ Installers:
     InstallerUrl: https://github.com/rigsmith/rigsmith/releases/download/v1.5.0/rig_1.5.0_windows_amd64.zip
     InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
     UpgradeBehavior: uninstallPrevious
-Commands:
-  - rig
 ManifestType: installer
 ManifestVersion: 1.12.0

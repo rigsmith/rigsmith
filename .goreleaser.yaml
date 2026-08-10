@@ -314,17 +314,24 @@ scoops:
     description: "The rigsmith toolchain: rig, changerig, shiprig, clauderig"
     license: MIT
 
-# winget (Windows): each release opens a "New version" PR to microsoft/winget-pkgs
-# for the four published per-tool packages (RigSmith.Rig / .ChangeRig / .ClaudeRig
-# / .ShipRig), plus the RigSmith.Rigsmith bundle. GoReleaser fills the real SHA256,
-# pushes a per-package branch to the rigsmith/winget-pkgs fork, and opens the PR.
+# winget (Windows): DISABLED — scripts/winget-submit.sh (komac) owns this lane.
 #
-# skip_upload gates on WINGET_TOKEN being NON-EMPTY (not merely set): a workflow
-# that passes `WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}` still defines the var as
-# "" when the secret is missing, and `isEnvSet` would then be true and make the
-# release fail trying to push with an empty token. `envOrDefault … ""` avoids that.
-# Set WINGET_TOKEN (a classic PAT with public_repo, write access to the fork) to
-# activate; without it the manifests are still generated into dist/ for inspection.
+# GoReleaser writes each manifest from the config below, so every property it has
+# no field for is dropped. Submitting 1.5.1 this way drew a
+# Manifest-Metadata-Consistency complaint on all five packages:
+#
+#   Missing PublisherSupportUrl / Copyright / Tags / ReleaseNotes /
+#   ReleaseNotesUrl / Commands / NestedInstallerType / NestedInstallerFiles
+#
+# `Commands` (what `winget search` and `winget install --command` read) has no
+# GoReleaser field at all, and `Moniker` regressed from `changerig` to
+# `ChangeRig` because it is derived from `name` with no override. komac instead
+# updates the PUBLISHED manifest, keeping everything the package already declares
+# and rewriting only version, URLs and hashes.
+#
+# The blocks are kept, unused, so switching back is a one-line change per entry —
+# but note that the winget PRs would again carry only what is configured here.
+# See docs/WINGET-SUBMISSIONS.md.
 winget:
   - name: Rig
     package_identifier: RigSmith.Rig
@@ -336,7 +343,7 @@ winget:
     license: MIT
     license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
     ids: [rig]
-    skip_upload: '{{ if eq (envOrDefault "WINGET_TOKEN" "") "" }}true{{ else }}false{{ end }}'
+    skip_upload: "true" # komac owns this lane — see the note above
     repository:
       owner: rigsmith
       name: winget-pkgs
@@ -360,7 +367,7 @@ winget:
     license: MIT
     license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
     ids: [changerig]
-    skip_upload: '{{ if eq (envOrDefault "WINGET_TOKEN" "") "" }}true{{ else }}false{{ end }}'
+    skip_upload: "true" # komac owns this lane — see the note above
     repository:
       owner: rigsmith
       name: winget-pkgs
@@ -384,7 +391,7 @@ winget:
     license: MIT
     license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
     ids: [clauderig]
-    skip_upload: '{{ if eq (envOrDefault "WINGET_TOKEN" "") "" }}true{{ else }}false{{ end }}'
+    skip_upload: "true" # komac owns this lane — see the note above
     repository:
       owner: rigsmith
       name: winget-pkgs
@@ -408,7 +415,7 @@ winget:
     license: MIT
     license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
     ids: [shiprig]
-    skip_upload: '{{ if eq (envOrDefault "WINGET_TOKEN" "") "" }}true{{ else }}false{{ end }}'
+    skip_upload: "true" # komac owns this lane — see the note above
     repository:
       owner: rigsmith
       name: winget-pkgs
@@ -435,7 +442,7 @@ winget:
     license: MIT
     license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
     ids: [rigsmith]
-    skip_upload: '{{ if eq (envOrDefault "WINGET_TOKEN" "") "" }}true{{ else }}false{{ end }}'
+    skip_upload: "true" # komac owns this lane — see the note above
     repository:
       owner: rigsmith
       name: winget-pkgs

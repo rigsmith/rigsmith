@@ -21,7 +21,59 @@ This is what the difference was, measured from those PRs.
 Two merged the same hour they were opened. winget is not inherently slow for
 us; specific things are.
 
+## The lane: komac, not GoReleaser
+
+Submissions go through `scripts/winget-submit.sh <version> --submit`, which drives
+[komac]. GoReleaser's winget publisher is disabled (`skip_upload: "true"` on each
+entry) after what it cost on 1.5.1.
+
+The difference is which manifest each tool starts from. **komac updates the
+published one** — it fetches what winget-pkgs already has for the package and
+rewrites only the version, URLs, hashes and release notes. **GoReleaser writes a
+fresh manifest from its own config**, so any property it has no field for simply
+disappears. Submitting 1.5.1 that way drew `Manifest-Metadata-Consistency` on all
+five packages:
+
+| property | GoReleaser field? |
+| --- | --- |
+| `PublisherSupportUrl`, `Copyright`, `Tags`, `ReleaseNotes`, `ReleaseNotesUrl` | yes — but we hadn't set them |
+| `Commands` | **none exists** |
+| `Moniker` | derived from `name`; regressed `changerig` → `ChangeRig` |
+| `NestedInstallerType` / `Files` | written per-installer instead of at the root |
+
+`Commands` is the one with no answer at all: it's what `winget search` and
+`winget install --command` read.
+
+### The three steps, and why they're separate
+
+`winget-submit.sh` generates → corrects → verifies → submits, and the order is
+the point:
+
+1. **Generate** with `komac update --dry-run --output`, which writes the
+   manifests without submitting.
+2. **Correct** komac's `exe` misdetection. komac *analyses* each installer rather
+   than trusting the published manifest, and it reads `clauderig.exe` as an
+   installer — emitting `NestedInstallerType: exe` for that one package while
+   getting the other four right. This is the same misdetection that shipped in
+   ClaudeRig 1.4.0 and came back 23 days later as a moderator asking "Is this a
+   Portable package?". Every rigsmith package is a single static binary in a zip,
+   so `exe` is never right, and the correction is logged rather than silent.
+3. **Verify** with `check-winget-manifests.sh` — which, because komac submits a
+   *directory* as a separate step, now runs **before** anything reaches
+   winget-pkgs. Every earlier version of this check could only run after the PRs
+   were already open.
+4. **Submit** with `komac submit --all`.
+
+Two things the check has been wrong about, both fixed by testing against real
+bytes rather than assumed ones: the keys may sit at the root (komac) or inside
+each `Installers:` entry (GoReleaser), and winget-pkgs manifests are **CRLF**,
+which defeats every `$`-anchored pattern. Fixtures from both producers live in
+`scripts/testdata/`.
+
+[komac]: https://github.com/russellbanks/Komac
+
 ## What we control
+
 
 **The manifest must say portable.** ClaudeRig 1.4.0 shipped with a manifest that
 wasn't `NestedInstallerType: portable`, so winget unpacked the zip and put
@@ -29,10 +81,11 @@ nothing on PATH. Automatic validation failed as an unattended-install timeout �
 which reads like flakiness — and it took a human asking *"Is this a Portable
 package?"* to name it. That was 23 days for a one-line manifest field.
 
-`scripts/check-winget-manifests.sh` now runs in the release workflow and fails
-the job if any generated manifest isn't portable with an alias per binary. The
-PRs are still opened (GoReleaser publishes before the check can run), but the
-alarm arrives in minutes instead of weeks.
+`scripts/check-winget-manifests.sh` runs inside `winget-submit.sh` before
+anything is submitted, and fails the run if a manifest isn't portable, is missing
+a command alias for any nested binary, or has lost `Commands`. Under the komac
+lane it is a real gate rather than the after-the-fact alarm it was while
+GoReleaser opened the PRs itself.
 
 **Answer the moderator's questions first.** `scripts/winget-note.sh <version>`
 posts a short note on each open submission — portable, what lands on PATH, who

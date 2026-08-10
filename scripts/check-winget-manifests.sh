@@ -1,71 +1,112 @@
 #!/bin/sh
-# Verify the winget manifests GoReleaser generated before a moderator does.
+# Verify winget installer manifests before a moderator does.
 #
-# A winget package whose installers are not `NestedInstallerType: portable`
-# fails winget's unattended-install validation — the zip is unpacked but nothing
-# lands on PATH. That is not reported by a pipeline you can watch: it surfaces
-# days later as a moderator asking "Is this a Portable package?" (see
-# microsoft/winget-pkgs#403084, which cost 23 days for exactly this). These CLIs
-# are all portable zips, so the check is absolute.
+# A package whose installers are not `NestedInstallerType: portable` fails
+# winget's unattended-install validation — the zip is unpacked but nothing lands
+# on PATH. No pipeline we own reports that: it surfaces days later as a moderator
+# asking "Is this a Portable package?" (microsoft/winget-pkgs#403084, 23 days).
 #
-# The keys live *inside* each entry of the `Installers:` list, indented:
+# The keys appear in either of two valid places, and this check has now been
+# wrong about each of them in turn, so both are handled explicitly:
 #
-#   Installers:
-#     - Architecture: arm64
-#       NestedInstallerType: portable
-#       NestedInstallerFiles:
-#         - RelativeFilePath: rig.exe
-#           PortableCommandAlias: rig
+#   root-level (komac, inherited from the published version) — applies to every
+#   installer, and NestedInstallerFiles is declared once:
+#     NestedInstallerType: portable
+#     NestedInstallerFiles:
+#     - RelativeFilePath: changerig.exe
+#       PortableCommandAlias: changerig
+#     Installers:
+#     - Architecture: x64
 #
-# Every installer is checked, not just the first: a manifest with x64 portable
-# and arm64 not is broken for half its users and would look fine to a spot check.
+#   per-installer (GoReleaser) — repeated inside each Installers: entry:
+#     Installers:
+#       - Architecture: arm64
+#         NestedInstallerType: portable
+#         NestedInstallerFiles:
+#           - RelativeFilePath: rig.exe
+#             PortableCommandAlias: rig
 #
-#   $1  dist directory (default: dist)
+# What is actually required, independent of shape:
+#   - every installer is covered by a portable declaration;
+#   - no declaration says anything other than portable;
+#   - every nested file has a command alias, or that binary lands nowhere;
+#   - Commands is present — winget search / `--command` use it, and losing it is
+#     the metadata regression that put Manifest-Metadata-Consistency on all five
+#     1.5.1 submissions.
 #
-# Exits non-zero when a generated manifest is wrong. Finding no manifests is a
-# warning, not a failure: the winget pipe only runs on a real release (a
-# --snapshot dry run skips every publisher), so an empty scan is the normal
-# outcome everywhere else.
+#   $1  directory to scan (default: dist)
+#
+# Exits non-zero when a manifest is wrong. Finding none is a warning, not a
+# failure — most runs generate no manifests at all.
 set -eu
 
-dist="${1:-dist}"
+dir="${1:-dist}"
 
-manifests=$(find "$dist" -name '*.installer.yaml' 2>/dev/null | sort || true)
+manifests=$(find "$dir" -name '*.installer.yaml' 2>/dev/null | sort || true)
 if [ -z "$manifests" ]; then
-  echo "winget check: no installer manifests under $dist/ — nothing to verify (expected outside a real release)."
+  echo "winget check: no installer manifests under $dir/ — nothing to verify (expected outside a real release)."
   exit 0
 fi
 
 fail=0
 count=0
+norm=$(mktemp)
+trap 'rm -f "$norm"' EXIT
+
 for m in $manifests; do
   count=$((count + 1))
   name=$(basename "$m")
 
-  # Count per installer entry. Leading whitespace is expected — anchoring these
-  # to column 0 is what made this check fail every correct manifest on its first
-  # live run, blocking the rest of the release.
-  installers=$(grep -cE '^[[:space:]]*-[[:space:]]+Architecture:' "$m" || true)
-  portable=$(grep -cE '^[[:space:]]*NestedInstallerType:[[:space:]]*portable$' "$m" || true)
-  aliases=$(grep -cE '^[[:space:]]*PortableCommandAlias:' "$m" || true)
+  # winget-pkgs manifests are CRLF by convention — komac writes them that way,
+  # GoReleaser writes LF. A trailing \r defeats every `$`-anchored pattern below,
+  # which silently turned "portable" into "not portable". Match on normalized
+  # bytes rather than assuming either convention.
+  tr -d '\r' < "$m" > "$norm"
+
+  installers=$(grep -cE '^[[:space:]]*-[[:space:]]+Architecture:' "$norm" || true)
+  root_portable=$(grep -cE '^NestedInstallerType:[[:space:]]*portable$' "$norm" || true)
+  nested_portable=$(grep -cE '^[[:space:]]+NestedInstallerType:[[:space:]]*portable$' "$norm" || true)
+  wrong_type=$(grep -E '^[[:space:]]*NestedInstallerType:' "$norm" | grep -vcE ':[[:space:]]*portable$' || true)
+  files=$(grep -cE '^[[:space:]]*-?[[:space:]]*RelativeFilePath:' "$norm" || true)
+  aliases=$(grep -cE '^[[:space:]]*PortableCommandAlias:' "$norm" || true)
+  commands=$(grep -cE '^Commands:' "$norm" || true)
 
   if [ "$installers" -eq 0 ]; then
     echo "::error::$name declares no installers — nothing would be published."
     fail=1
     continue
   fi
-  if [ "$portable" -ne "$installers" ]; then
-    echo "::error::$name: $portable of $installers installer(s) are NestedInstallerType: portable — winget's unattended install will fail for the rest."
+  if [ "$wrong_type" -ne 0 ]; then
+    got=$(grep -E '^[[:space:]]*NestedInstallerType:' "$norm" | grep -vE ':[[:space:]]*portable$' | tr -d ' ' | tr '\n' ' ')
+    echo "::error::$name declares a non-portable installer type ($got) — winget's unattended install will fail."
     fail=1
     continue
   fi
-  if [ "$aliases" -lt "$installers" ]; then
-    echo "::error::$name: $aliases command alias(es) across $installers installer(s) — a command would not land on PATH."
+  # Root-level covers every installer; otherwise each installer needs its own.
+  if [ "$root_portable" -eq 0 ] && [ "$nested_portable" -ne "$installers" ]; then
+    echo "::error::$name: $nested_portable of $installers installer(s) declare NestedInstallerType: portable, and none is declared at the root."
+    fail=1
+    continue
+  fi
+  if [ "$files" -eq 0 ]; then
+    echo "::error::$name lists no NestedInstallerFiles — nothing would be extracted."
+    fail=1
+    continue
+  fi
+  if [ "$aliases" -ne "$files" ]; then
+    echo "::error::$name: $aliases command alias(es) for $files nested file(s) — a binary would not land on PATH."
+    fail=1
+    continue
+  fi
+  if [ "$commands" -eq 0 ]; then
+    echo "::error::$name has no Commands — winget search and \`--command\` lose the package's commands (metadata regression)."
     fail=1
     continue
   fi
 
-  echo "winget check: $name — $installers installer(s), all portable, $aliases alias(es)"
+  shape="root-level"
+  [ "$root_portable" -eq 0 ] && shape="per-installer"
+  echo "winget check: $name — $installers installer(s), portable ($shape), $aliases alias(es), Commands present"
 done
 
 if [ "$fail" -ne 0 ]; then
@@ -73,4 +114,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "winget check: $count manifest(s) verified portable."
+echo "winget check: $count manifest(s) verified."
