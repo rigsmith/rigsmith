@@ -1,5 +1,33 @@
 # github.com/rigsmith/rigsmith
 
+## 1.5.2
+### 🩹 Fixes
+
+- Running `changerig` or `shiprig` outside a configured repo now exits 0 with guidance, instead of exiting 1.
+  
+  Both route their bare invocation to `add` and `status`, which need a configured workspace, so merely running the binary anywhere else failed — while `rig` and `clauderig` exit 0 from the same place. Anything that probes an installed CLI sees that first: winget's validation VM runs the executable after installing a package, records the non-zero exit against the install, and labels the submission `Validation-Executable-Error`. It did so for ChangeRig in 1.4.0 (16 days to merge) and again in 1.5.1.
+  
+  Only a genuinely bare run is softened. `changerig -m "…"`, `shiprig status`, and the `add`/`status` subcommands invoked by name all still exit non-zero in an unconfigured repo — a CI gate calls `status` explicitly, and that contract is unchanged and now covered by its own test. The guidance text is identical either way; only the exit code moved.
+  
+- `clauderig`'s description no longer makes Windows tooling read the binary as an installer.
+  
+  komac decides whether a `.exe` inside a zip is an installer or a portable binary by substring-matching its PE `FileDescription` and `OriginalFilename` against `["installer", "setup", "7zs.sfx", "7zsd.sfx"]`. Nothing else about the binary is considered. clauderig's description read *"Sync your Claude Code **setup** across machines"*, so komac wrote `NestedInstallerType: exe`, winget unpacked the zip and put nothing on PATH, and the failure surfaced only as a moderator asking "Is this a Portable package?" — 23 days after the ClaudeRig 1.4.0 submission, and again on 1.5.1.
+  
+  It was never a quirk of the binary. `rig`, `shiprig` and `changerig` were always detected correctly, and `rig` actually contains *more* installer-related strings than clauderig; the only difference was one word in a description. Reworded to "configuration", and verified by rebuilding the Windows binary and re-running the analyzer: `NestedInstallerType: portable`.
+  
+  A test in `build/winres/` now fails if any tool's `FileDescription` or `OriginalFilename` picks up one of those words. It is deliberately stricter than komac, which matches case-sensitively — a capitalised "Setup" would slip past komac today, but it reads as an installer to a human and to any future tightening of that check. The correction step in `winget-submit.sh` stays as a regression detector: it now warns loudly rather than quietly fixing, because after this it should never fire.
+  
+- winget submissions go through komac again, so a version bump stops dropping half the package's metadata.
+  
+  All five 1.5.1 submissions drew `Manifest-Metadata-Consistency`: `PublisherSupportUrl`, `Copyright`, `Tags`, `ReleaseNotes`, `ReleaseNotesUrl` and `Commands` had all vanished compared to the published 1.4.0 manifests, and `Moniker` had regressed from `changerig` to `ChangeRig`. The cause is structural rather than a missing setting — GoReleaser writes each manifest from its own config, so whatever it has no field for is gone, while komac updates the *published* manifest and rewrites only the version, URLs, hashes and notes. `Commands` — what `winget search` and `winget install --command` read — has no GoReleaser field at all.
+  
+  `scripts/winget-submit.sh <version> [--submit]` now owns the lane: generate with komac, correct, verify, then submit. GoReleaser's winget publisher is disabled, its config kept so switching back is one line per package.
+  
+  The correction step is not incidental. komac analyses each installer instead of trusting the published manifest, and reads `clauderig.exe` as an installer — writing `NestedInstallerType: exe` for that one package while getting the other four right. That is the same misdetection that shipped in ClaudeRig 1.4.0 and returned 23 days later as a moderator asking "Is this a Portable package?". It is corrected and logged before submission.
+  
+  Because komac submits a directory as a separate step, `check-winget-manifests.sh` now runs **before** anything reaches winget-pkgs — a real gate, where every earlier version could only fire after the PRs were open. It also learned two things about manifests it had been assuming: the keys may sit at the root (komac) or inside each `Installers:` entry (GoReleaser), and winget-pkgs files are CRLF, which defeats `$`-anchored patterns. It now requires `Commands` too, so this regression cannot repeat silently. Fixtures captured from both producers, byte for byte, cover all four shapes.
+  
+
 ## 1.5.1
 ### 🩹 Fixes
 
