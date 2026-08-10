@@ -108,6 +108,14 @@ jobs:
       # conflicting diff instead of a clean single-manifest add. Needs WINGET_TOKEN
       # (write access to the fork); no-ops without it, since the winget upload is
       # skipped then anyway.
+      #
+      # Never fatal. This is hygiene for one of several publish targets, and it
+      # runs before the build — a failure here used to abort the entire release
+      # with nothing published at all. v1.5.0 was tagged and then shipped nothing
+      # for exactly this reason: `gh repo sync` refuses when upstream has touched
+      # its own workflow files unless the token carries the `workflow` scope, which
+      # a `public_repo` PAT does not. A stale fork costs a messier winget diff; a
+      # failed release costs the release.
       - name: Sync winget-pkgs fork with upstream
         env:
           GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
@@ -116,7 +124,9 @@ jobs:
             echo "WINGET_TOKEN unset — winget upload is skipped, nothing to sync."
             exit 0
           fi
-          gh repo sync rigsmith/winget-pkgs --source microsoft/winget-pkgs --branch master
+          if ! gh repo sync rigsmith/winget-pkgs --source microsoft/winget-pkgs --branch master; then
+            echo "::warning::Could not sync the winget-pkgs fork — the winget PRs will branch from a stale master. If this is the `workflow` scope error, add that scope to WINGET_TOKEN. Continuing; the release does not depend on this."
+          fi
 
       - uses: goreleaser/goreleaser-action@v7
         with:
