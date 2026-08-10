@@ -3,6 +3,8 @@
 package scripts
 
 import (
+	"bytes"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -29,6 +31,17 @@ func runCheck(t *testing.T, dir string) (out string, ok bool) {
 // non-portable. Both of this check's live failures have been an assumption about
 // bytes it had never actually looked at, hence fixtures from both producers.
 func TestWingetCheckAcceptsKomacManifests(t *testing.T) {
+	// Guard the guard: git normalised this fixture to LF once already, which
+	// would leave the assertion below passing against a file with no CRLF in it.
+	// .gitattributes marks it -text; this fails loudly if that ever stops working.
+	raw, err := os.ReadFile("testdata/winget-komac/RigSmith.ChangeRig.installer.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte("\r\n")) {
+		t.Fatal("fixture has lost its CRLF — it no longer tests what it exists to test (see .gitattributes)")
+	}
+
 	out, ok := runCheck(t, "testdata/winget-komac")
 	if !ok {
 		t.Fatalf("komac manifest rejected:\n%s", out)
