@@ -2,6 +2,10 @@ package cli
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/doctor"
@@ -95,5 +99,55 @@ func TestCheckGh_NotInstalled(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if r := checkGh(context.Background(), nil); r.Status != doctor.Warn {
 		t.Fatalf("gh missing: got %+v, want Warn", r)
+	}
+}
+
+// TestReleaseEnvCheckReportsAnUnreadableEnv pins that doctor surfaces the .env
+// read error instead of degrading to the ambient environment. release and
+// publish both refuse to start on it, so a doctor that hid it could report gh
+// as authenticated for a release that never gets far enough to use the token.
+func TestReleaseEnvCheckReportsAnUnreadableEnv(t *testing.T) {
+	root := t.TempDir()
+	// A directory named .env fails os.ReadFile on every platform, standing in
+	// for the unreadable file (chmod would not carry to Windows).
+	if err := os.Mkdir(filepath.Join(root, ".env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	env, failure := releaseEnvCheck(root, false)
+	if failure == nil {
+		t.Fatal("an unreadable .env must be reported, not swallowed")
+	}
+	if failure.Status != doctor.Fail {
+		t.Errorf("status = %v, want Fail (release and publish stop on this)", failure.Status)
+	}
+	if !strings.Contains(failure.Detail, ".env") {
+		t.Errorf("detail = %q, want it to name the file", failure.Detail)
+	}
+	// The gh probe still runs, on the ambient environment.
+	if env != nil {
+		t.Errorf("env = %v, want nil (inherit) when the layer could not be read", env)
+	}
+
+	// --no-env skips the file layer, so the same tree is healthy.
+	if _, failure := releaseEnvCheck(root, true); failure != nil {
+		t.Errorf("--no-env should not read .env at all, got %+v", failure)
+	}
+}
+
+// TestReleaseEnvCheckPassesTheLayeredEnv covers the healthy path: the .env value
+// reaches the environment gh is probed with.
+func TestReleaseEnvCheckPassesTheLayeredEnv(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("SHIPRIG_DOCTOR_TEST_TOKEN=from-dotenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	env, failure := releaseEnvCheck(root, false)
+	if failure != nil {
+		t.Fatalf("healthy .env reported a failure: %+v", failure)
+	}
+	if !slices.Contains(env, "SHIPRIG_DOCTOR_TEST_TOKEN=from-dotenv") {
+		t.Error("the .env value should reach the environment gh is probed with")
 	}
 }

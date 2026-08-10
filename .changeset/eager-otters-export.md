@@ -10,7 +10,7 @@ Only `release` and `init` ever called the env loader. A direct `shiprig publish`
 
 Auditing the other holders of the persistent flag turned up two more:
 
-- `shiprig doctor` probed `gh auth status` with the ambient environment only, so a `GH_TOKEN` declared in `.env` reported "not authenticated" while the release that check gates authenticated fine. It now probes with the layered view, honouring `--no-env`.
+- `shiprig doctor` probed `gh auth status` with the ambient environment only, so a `GH_TOKEN` declared in `.env` reported "not authenticated" while the release that check gates authenticated fine. It now probes with the layered view, honouring `--no-env`. It also *reports* an unreadable `.env` as a failure rather than quietly falling back to the ambient environment: `release` and `publish` both refuse to start on that error, so the one command whose job is to warn you should not be the one hiding it. The `gh` probe still runs, so a single bad file doesn't blank the rest of the report.
 - `rig`'s custom commands (`.rig.json` `commands`) loaded `.env` *regardless* of `--no-env` — the same flag inert in the opposite direction. Both env builders did it: `customEnv` for the shell/argv forms, and `customEnvMap` for the script form, where it feeds a Tengo script's `ctx.env` *and* the runner its `sh()` calls go through. They now share one file-layer reader that honours the flag, matching the built-in verbs.
 
 `shiprig tag` takes the flag too but creates local tags only — no credential, nothing for the layer to feed. The remaining subcommands (`add`, `status`, `version`, `info`, `config`, `packages`, `pre`, `ui`) are inherited from changerig and do no env-dependent work.
