@@ -1,5 +1,57 @@
 # github.com/rigsmith/rigsmith
 
+## 1.6.0
+### 🚀 Enhancements
+
+- The npm wrapper packages can now be published from an already-published release, so one channel failing no longer needs a new version to fix.
+  
+  `node scripts/npm/build-packages.mjs --from-release v1.5.0 --publish` downloads that release's per-tool archives, verifies each against the release's own `checksums.txt`, unpacks the binaries and publishes the wrappers — the same bytes every other channel already carries, signatures intact. A `npm republish` workflow runs it with the registry token, taking a tag and an optional dry run.
+  
+  This exists because v1.5.0 published its GitHub release, Homebrew cask, Scoop manifest and five winget PRs, and then skipped npm: a manifest check placed before the npm step failed on a false positive and took the rest of the job with it. Recovering from a laptop was not an option — the wrappers are built from GoReleaser's `dist/`, which holds the *signed* binaries and exists only on the runner that built them, so a local rebuild would have pushed unsigned Windows binaries to npm. The alternative, cutting a fresh version to fix one channel, drags every other channel along with it, including five more winget PRs into a queue that already takes weeks.
+  
+  Verified end to end against the real v1.5.0 release: 24 binaries unpacked into 29 packages, and the Windows binary inside the built package still carries its Authenticode signature.
+  
+
+### 🩹 Fixes
+
+- `status` and `doctor` now name the changesets that can never release, instead of reporting "nothing to release" and leaving the contradiction to a human.
+  
+  A changeset whose front matter omits the package line parses cleanly, counts as pending, and is attributed to no package — so it contributes to no bump and no changelog, forever. Nothing surfaced that: `status` printed "Changesets found, but nothing to release" while holding sixteen of them, and `doctor` cheerfully reported "16 changeset(s)" pending. In this repo they accumulated across a full release cycle; 1.5.0 nearly shipped three weeks of merged work with no changelog entry, and the oldest stranded file had been sitting there since before 1.4.0.
+  
+  The tool already knew. It has the changesets and the package list, so it can say which file is inert and why — `status` now lists each one with its cause (names no package / names unknown package(s) / names only ignored package(s)) and, when exactly one package is releasable, prints the exact command that writes it correctly:
+  
+  ```
+  Changesets found, but nothing to release.
+  
+    brave-lamps-hum      names no package
+    lonely-otters-drift  names no package
+    typo-comets-race     names unknown package(s): example.com/nope
+  
+  Name the package in the front matter — `changerig add -t <type> -p example.com/demo` writes it correctly.
+  ```
+  
+  `doctor` gains a `changeset targets` check carrying the same finding as a warning, so it surfaces without having to run `status` and read past a line that says everything is fine.
+  
+  A changeset naming at least one releasable package is never reported, including one that also names ignored packages — the empty plan is not that file's doing.
+  
+- A contended identity-journal lock no longer fails on Windows — it waits its turn, as it always did on Unix.
+  
+  `clauderig`'s journal lock is an advisory file lock taken by exclusive create. Unix reports `EEXIST` when someone else holds it, which the retry loop expects. Windows reports `ERROR_ACCESS_DENIED` instead while the name is held by a file *pending deletion* — precisely the window another writer's release opens when it removes the lock. That isn't `EEXIST`, so it fell through to the fatal branch: two `clauderig` processes running at once could report `lock journal: Access is denied` rather than serializing, and the concurrent-writer test failed on roughly half of CI's Windows runs — including on commits whose diff was nothing but markdown.
+  
+  The retry loop now treats that spelling as "someone has this name right now" and keeps waiting. It stays Windows-only, so a genuine permission fault on Unix is still fatal immediately; and even on Windows it is safe, because the loop already gives up at its deadline and proceeds unguarded rather than blocking a diagnostic forever.
+  
+- The winget manifest check now reads the manifests GoReleaser actually writes, and runs last so it can't block a publish.
+  
+  Its first live run failed all five correct manifests. The check was written against the *published* manifest shape, where winget's publish pipeline has flattened the keys to column 0; in what GoReleaser generates they sit inside each entry of the `Installers:` list, indented. The `^NestedInstallerType: portable$` anchor therefore matched nothing, anywhere, ever — the check could only pass a manifest that would never exist.
+  
+  It cost more than a red tick. The step sat before the npm publish, so v1.5.0 published its GitHub release, Homebrew cask and five winget PRs, and then skipped npm entirely, leaving that channel a version behind a release that was otherwise fine.
+  
+  Two changes:
+  
+  - **It reads the real shape**, matching the keys wherever they are indented, and counts per installer rather than per file: a manifest with x64 portable and arm64 not is broken for half its users and used to pass. Fixtures are the bytes GoReleaser produced for the RigSmith.Rig 1.5.0 submission, captured verbatim, with the half-broken variant alongside — `go test ./scripts/` runs the script against both, so the check that gates a release is itself covered.
+  - **It runs last.** The winget PRs are already open by the time it can look at them, so it is an alarm, not a gate: it has nothing left to prevent and everything left to break. A reporting check must not sit upstream of a publish.
+  
+
 ## 1.5.0
 ### 🚀 Enhancements
 
