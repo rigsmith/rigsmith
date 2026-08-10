@@ -19,7 +19,9 @@ func NewRootCmd() *cobra.Command {
 	add := NewAddCmd()
 	// With args/flags (e.g. `changerig -m "…"`), or off a TTY, bare `changerig`
 	// behaves like `changerig add` — scripted/flag-driven use is unchanged.
-	root.RunE = add.RunE
+	// BareRunE softens only the no-verb, no-flags case in an unconfigured
+	// directory: orientation and exit 0, matching `rig` and `clauderig`.
+	root.RunE = BareRunE(add.RunE)
 	root.Args = add.Args
 	root.Flags().AddFlagSet(add.Flags())
 

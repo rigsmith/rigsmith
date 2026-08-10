@@ -206,13 +206,15 @@ func openInEditor(cmd *cobra.Command, path string) error {
 // prompt away rather than a dead-end error, then scaffolds the chosen source and
 // reloads ws.Config so the caller sees it. It reports whether the workspace is
 // ready to proceed (scaffolded or already set up). Off a TTY — CI, pipes — it
-// can't ask, so it returns a clear, actionable error pointing at `<tool> init`.
+// can't ask, so it returns a clear, actionable error pointing at `<tool> init`,
+// wrapping ErrNotSetUp so a bare invocation can report it as orientation rather
+// than a failure (see BareRunE).
 // Shared by `add` (before creating a changeset) and `status` (before planning).
 func offerSetup(cmd *cobra.Command, ws *Workspace) (ready bool, err error) {
 	tool := cmd.Root().Name()
 	where := relDir(ws.Root, ws.ChangesetDir)
 	if !addInteractive() {
-		return false, fmt.Errorf("not set up here yet — run `%s init` to create %s (use --source commits for conventional-commit releases)", tool, where)
+		return false, fmt.Errorf("%w — run `%s init` to create %s (use --source commits for conventional-commit releases)", ErrNotSetUp, tool, where)
 	}
 
 	out := cmd.OutOrStdout()

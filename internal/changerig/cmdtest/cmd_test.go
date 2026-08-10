@@ -702,17 +702,61 @@ func TestShiprigBareShowsStatus(t *testing.T) {
 	}
 }
 
-// Bare `shiprig` in an uninitialized repo, off a TTY (can't offer setup), fails
-// with actionable guidance pointing at `shiprig init` rather than the raw
-// no-changesets error.
+// Bare `shiprig` in an uninitialized repo, off a TTY (can't offer setup), gives
+// actionable guidance pointing at `shiprig init` — and exits 0.
+//
+// The exit code is a deliberate change from "non-zero", not an oversight. Merely
+// running the binary is orientation, and anything that probes an installed CLI
+// does exactly this: winget's validation VM runs the exe after installing,
+// records the non-zero exit against the install, and labels the submission
+// Validation-Executable-Error — which it did for ChangeRig in both 1.4.0 and
+// 1.5.1. `rig` and `clauderig` already exit 0 here; these two were the outliers.
+//
+// The failure case that matters is preserved by the test below: a CI gate calls
+// `shiprig status` by name, and that still exits non-zero.
 func TestShiprigBareUninitializedGuidesToInit(t *testing.T) {
 	dir := tempDir(t)
 	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
 
 	code, out := runShiprig(t, dir)
 
+	assertExitZero(t, code, out)
+	assertContains(t, out, "shiprig init")
+}
+
+// `shiprig status` named explicitly is the CI gate — an unconfigured repo is a
+// failure there, and softening the bare invocation must not soften this.
+func TestShiprigStatusUninitializedStillFails(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+
+	code, out := runShiprig(t, dir, "status")
+
 	assertExitNonZero(t, code, out)
 	assertContains(t, out, "shiprig init")
+}
+
+// Bare `changerig` with a flag asked for something specific — creating a
+// changeset — so an unconfigured repo is still a failure.
+func TestChangerigBareWithFlagUninitializedStillFails(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+
+	code, out := runChangerig(t, dir, "-m", "a change")
+
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "changerig init")
+}
+
+// And bare `changerig` alone matches shiprig: orientation, exit 0.
+func TestChangerigBareUninitializedExitsZero(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+
+	code, out := runChangerig(t, dir)
+
+	assertExitZero(t, code, out)
+	assertContains(t, out, "changerig init")
 }
 
 // --- tag (TagChangesetCommandTests, shiprig binary) ---
