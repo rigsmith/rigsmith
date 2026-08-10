@@ -1,0 +1,50 @@
+# Publish the npm wrapper packages for an already-published release.
+#
+# The release workflow builds these from GoReleaser's dist/ — the signed
+# binaries — which exists only on the runner that built them. When that job dies
+# after GoReleaser but before the npm step (v1.5.0: a manifest check ran too
+# early and failed), npm is left a version behind a release that otherwise went
+# out fine, and there is no way to recover it from a laptop without shipping
+# unsigned Windows binaries.
+#
+# This republishes from the published release's own archives, checksum-verified,
+# so npm gets the same bytes as every other channel — without cutting a new
+# version to fix one channel and dragging the rest along (five more winget PRs,
+# for one).
+name: npm republish
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish to npm (e.g. v1.5.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "Validate packaging only (npm publish --dry-run)"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish npm wrappers from ${{ inputs.tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # `gh release download` reads the release assets of this repo.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            node scripts/npm/build-packages.mjs --from-release "${{ inputs.tag }}" --dry-publish
+          else
+            node scripts/npm/build-packages.mjs --from-release "${{ inputs.tag }}" --publish
+          fi
