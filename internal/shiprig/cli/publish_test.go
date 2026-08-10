@@ -1,10 +1,171 @@
 package cli
 
 import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/config"
 )
+
+// publishEnvRepo lays out a one-package .NET workspace whose NUGET_API_KEY lives
+// only in .env, with a fake `dotnet` first on PATH that logs every invocation.
+// It returns the log path. OIDC is turned off in config so the run takes the
+// API-key path deterministically (a CI runner with an OIDC context would
+// otherwise try to mint a token instead).
+func publishEnvRepo(t *testing.T) (logPath string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake `dotnet` on PATH is a shell script")
+	}
+	root := t.TempDir()
+	logPath = filepath.Join(root, "dotnet.log")
+
+	write := func(rel, content string) {
+		t.Helper()
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".changeset/config.json", `{ "dotnet": { "oidc": "off" } }`)
+	write("src/Acme.Widgets/Acme.Widgets.csproj",
+		"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <PackageId>Acme.Widgets</PackageId>\n    <Version>1.2.3</Version>\n  </PropertyGroup>\n</Project>\n")
+	write(".env", "NUGET_API_KEY=from-dotenv\n")
+
+	bin := filepath.Join(root, "fakebin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"" + logPath + "\"\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "dotnet"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// The key must not be in the ambient environment: that is the whole point of
+	// the test, and applyReleaseEnv mutates this process's env. t.Setenv records
+	// the pre-test state, so the unset below is restored when the test ends.
+	t.Setenv("NUGET_API_KEY", "")
+	if err := os.Unsetenv("NUGET_API_KEY"); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(root)
+	return logPath
+}
+
+// TestPublishReadsKeyFromDotenv pins the fix: a NUGET_API_KEY that exists only
+// in .env reaches the registry push. It used to be invisible to `publish` (only
+// `release` and `init` loaded .env), so the push went out with no --api-key.
+func TestPublishReadsKeyFromDotenv(t *testing.T) {
+	logPath := publishEnvRepo(t)
+
+	cmd := newPublishCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--yes", "--no-git-tag"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	push := dotnetPush(t, logPath)
+	if !strings.Contains(push, "--api-key from-dotenv") {
+		t.Errorf("push ran without the .env key: %q", push)
+	}
+}
+
+// TestPublishNoEnvSuppressesDotenvKey pins the other half: --no-env drops the
+// file layer, so the same key is not picked up and the push carries no key.
+func TestPublishNoEnvSuppressesDotenvKey(t *testing.T) {
+	logPath := publishEnvRepo(t)
+	noEnv = true
+	t.Cleanup(func() { noEnv = false }) // package-level flag var, shared across tests
+
+	cmd := newPublishCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--yes", "--no-git-tag"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	push := dotnetPush(t, logPath)
+	if strings.Contains(push, "--api-key") {
+		t.Errorf("--no-env should not surface the .env key: %q", push)
+	}
+	if v, ok := os.LookupEnv("NUGET_API_KEY"); ok {
+		t.Errorf("--no-env should not export NUGET_API_KEY, got %q", v)
+	}
+}
+
+// TestPublishReportsEachTagOnce pins that the tagging phase iterates distinct
+// tags, not packages. A `tagTemplate` like "v${version}" renders one tag for
+// every package in the repo, and reporting it per package printed a repo's
+// single tag once per package ("would tag v0.2.0" twelve times for twelve
+// packages, or one "tagged+pushed" then eleven "tag exists").
+func TestPublishReportsEachTagOnce(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".changeset/config.json", `{ "tagTemplate": "v${version}" }`)
+	for _, name := range []string{"Acme.A", "Acme.B", "Acme.C"} {
+		write("src/"+name+"/"+name+".csproj",
+			"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <PackageId>"+name+
+				"</PackageId>\n    <Version>1.2.3</Version>\n  </PropertyGroup>\n</Project>\n")
+	}
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Chdir(root)
+
+	var buf bytes.Buffer
+	cmd := newPublishCmd()
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	// --dry-run keeps this to the reporting path: no dotnet, no tags created.
+	cmd.SetArgs([]string{"--yes", "--dry-run"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	// The three packages share one tag, so it is reported once. (Their publish
+	// lines say "@1.2.3", never "v1.2.3", so this counts tag lines only.)
+	if n := strings.Count(buf.String(), "v1.2.3"); n != 1 {
+		t.Errorf("tag v1.2.3 reported %d times, want 1:\n%s", n, buf.String())
+	}
+}
+
+// dotnetPush returns the `nuget push` line the fake dotnet recorded.
+func dotnetPush(t *testing.T, logPath string) string {
+	t.Helper()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("fake dotnet was never invoked: %v", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "nuget push ") {
+			return line
+		}
+	}
+	t.Fatalf("no `nuget push` in the dotnet log:\n%s", data)
+	return ""
+}
 
 func TestPackageSourceFor(t *testing.T) {
 	// A per-ecosystem packageSource block overrides the built-in default.

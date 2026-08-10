@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/cmderr"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/walkutil"
 )
@@ -339,8 +340,8 @@ func (a *Adapter) ReleaseInit(ctx context.Context, req plugin.ReleaseInitRequest
 }
 
 // runCmd runs name+args (optionally in dir, "" for the current directory) and
-// returns captured stdout/stderr. On a non-zero exit the error wraps stderr for
-// diagnostics.
+// returns captured stdout/stderr. On a non-zero exit the error wraps whichever
+// stream carried the diagnosis (see failureDetail).
 func runCmd(ctx context.Context, dir, name string, args ...string) (stdout, stderr string, err error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	if dir != "" {
@@ -352,7 +353,7 @@ func runCmd(ctx context.Context, dir, name string, args ...string) (stdout, stde
 	err = cmd.Run()
 	stdout, stderr = outBuf.String(), errBuf.String()
 	if err != nil {
-		err = fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(stderr))
+		err = fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, cmderr.Detail(stdout, stderr))
 	}
 	return stdout, stderr, err
 }

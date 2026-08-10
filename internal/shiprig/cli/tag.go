@@ -43,11 +43,20 @@ func newTagCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			solo := singleApp(pkgs)
 			created, skipped := 0, 0
+			// Distinct tags, not packages: a `tagTemplate` like "v${version}"
+			// renders the same tag for every package, and one git ref should be
+			// reported (and counted) once. Same reasoning as the publish tagging
+			// phase.
+			done := map[string]bool{}
 			for _, p := range pkgs {
 				if ws.Config.IsIgnored(p.Name) {
 					continue // ignored packages are never tagged
 				}
 				tag := gitutil.RenderTag(ws.Config.TagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version, solo)
+				if done[tag] {
+					continue
+				}
+				done[tag] = true
 				if gitutil.TagExists(cmd.Context(), ws.Root, tag) {
 					skipped++
 					continue

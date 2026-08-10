@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -404,5 +405,32 @@ func TestInfoAdvertisesArtifacts(t *testing.T) {
 	}
 	if !found {
 		t.Error("dotnet Info() should advertise MethodArtifacts")
+	}
+}
+
+// TestRunCmdSurfacesStdoutOnFailure pins the wiring end-to-end: a command that
+// fails talking only to stdout still produces an error that says why.
+//
+// The sentinel is split across printf's format and its argument, so the
+// assembled text exists only in the command's stdout and never in the argv the
+// error echoes back. Asserting on a string that also appears in the command
+// line would pass whether or not the output was captured — which is precisely
+// the bug under test.
+func TestRunCmdSurfacesStdoutOnFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell to write to a chosen stream")
+	}
+	const sentinel = "error: 403 (Forbidden)."
+	const script = `printf 'err%s\n' 'or: 403 (Forbidden).'; exit 1`
+	if strings.Contains(script, sentinel) {
+		t.Fatal("the sentinel must not appear in the command, or this test proves nothing")
+	}
+
+	_, _, err := runCmd(context.Background(), "", "sh", "-c", script)
+	if err == nil {
+		t.Fatal("want an error from a non-zero exit")
+	}
+	if !strings.Contains(err.Error(), sentinel) {
+		t.Errorf("error = %q, want it to carry the stdout diagnosis %q", err, sentinel)
 	}
 }

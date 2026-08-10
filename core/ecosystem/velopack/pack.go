@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rigsmith/rigsmith/core/cmderr"
 	"github.com/rigsmith/rigsmith/core/dsstore"
 	"github.com/rigsmith/rigsmith/core/plugin"
 )
@@ -1015,37 +1016,12 @@ func runCmdEnv(ctx context.Context, dir string, env []string, name string, args 
 	err = cmd.Run()
 	stdout, stderr = outBuf.String(), errBuf.String()
 	if err != nil {
-		// Surface the tool's real message. Many CLIs (notably `vpk`) write their
-		// fatal/diagnostic line to stdout, not stderr — including only stderr left
-		// errors like "exit status 255:" with no reason. Prefer stderr, fall back
-		// to (or append) stdout, bounded so a noisy log can't bury the cause.
-		detail := strings.TrimSpace(stderr)
-		if tail := lastLines(strings.TrimSpace(stdout), 15); tail != "" {
-			if detail != "" {
-				detail += "\n" + tail
-			} else {
-				detail = tail
-			}
-		}
 		// Redact a signing token (jsign's `--storepass`) before echoing the command
-		// in an error — the Windows --signTemplate carries it.
-		err = fmt.Errorf("%s %s: %w: %s", name, redactCommand(args), err, detail)
+		// in an error — the Windows --signTemplate carries it. cmderr.Detail keeps
+		// whichever stream spoke: `vpk` writes its fatal line to stdout.
+		err = fmt.Errorf("%s %s: %w: %s", name, redactCommand(args), err, cmderr.Detail(stdout, stderr))
 	}
 	return stdout, stderr, err
-}
-
-// lastLines returns the final n non-empty-bounded lines of s (all of it when it
-// has n or fewer), so a command's error detail is surfaced without dumping a long
-// build log into the message.
-func lastLines(s string, n int) string {
-	if s == "" {
-		return ""
-	}
-	lines := strings.Split(s, "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
 }
 
 // storepassRe matches a jsign `--storepass <value>` (or `--storepass=<value>`)

@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/rigsmith/rigsmith/internal/rig/config"
 )
 
 func boolPtr(b bool) *bool { return &b }
@@ -76,6 +78,41 @@ func TestCommandEnvNoEnv(t *testing.T) {
 	noEnv = true
 	if envContains(commandEnv(root), "FROM_DOTENV=yes") {
 		t.Error("--no-env should skip .env loading")
+	}
+}
+
+// TestCustomEnvNoEnv pins that --no-env reaches custom commands too: the flag is
+// persistent, so `rig <custom-command> --no-env` advertises it, and both env
+// builders used to load .env regardless. Every command form is covered:
+// customEnv is the shell/argv form, customEnvMap the script form (it feeds both
+// a Tengo script's ctx.env and the runner its sh() calls go through).
+func TestCustomEnvNoEnv(t *testing.T) {
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("FROM_DOTENV=yes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeTreeFile(t, root, config.FileName, `{ "commands": { "hello": "echo hi" } }`)
+	cfg, err := config.LoadMerged(root)
+	if err != nil {
+		t.Fatalf("LoadMerged: %v", err)
+	}
+	defer func() { noEnv = false }()
+
+	noEnv = false
+	if !envContains(customEnv(cfg, nil), "FROM_DOTENV=yes") {
+		t.Error("expected .env to reach shell/argv custom commands by default")
+	}
+	if customEnvMap(cfg, nil)["FROM_DOTENV"] != "yes" {
+		t.Error("expected .env to reach script custom commands by default")
+	}
+
+	noEnv = true
+	if envContains(customEnv(cfg, nil), "FROM_DOTENV=yes") {
+		t.Error("--no-env should skip .env loading for shell/argv custom commands")
+	}
+	if v, ok := customEnvMap(cfg, nil)["FROM_DOTENV"]; ok {
+		t.Errorf("--no-env should skip .env loading for script custom commands, got %q", v)
 	}
 }
 

@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/cmderr"
 	"github.com/rigsmith/rigsmith/core/jsonc"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/walkutil"
@@ -621,7 +622,7 @@ func runCmdEnv(ctx context.Context, dir string, env []string, name string, args 
 	err = cmd.Run()
 	stdout, stderr = outBuf.String(), errBuf.String()
 	if err != nil {
-		err = fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(stderr))
+		err = fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, cmderr.Detail(stdout, stderr))
 	}
 	return stdout, stderr, err
 }

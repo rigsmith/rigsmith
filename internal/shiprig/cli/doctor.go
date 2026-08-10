@@ -9,6 +9,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/doctor"
+	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/spf13/cobra"
 )
@@ -36,7 +37,13 @@ func newDoctorCmd() *cobra.Command {
 // baseline: the forge CLI plus the per-ecosystem publish tools. It reuses the
 // baseline's Discovery, so the workspace is scanned once.
 func releaseDoctorSections(ctx context.Context, ws *commands.Workspace, disc commands.Discovery) []doctor.Section {
-	results := append([]doctor.Result{checkGh(ctx)}, publishToolChecks(disc)...)
+	ghEnv, envResult := releaseEnvCheck(ws.Root, noEnv)
+	var results []doctor.Result
+	if envResult != nil {
+		results = append(results, *envResult)
+	}
+	results = append(results, checkGh(ctx, ghEnv))
+	results = append(results, publishToolChecks(disc)...)
 	results = append(results, configLayoutCheck(ws))
 	return []doctor.Section{
 		{Title: "release", Results: results},
@@ -118,12 +125,41 @@ func previewList(names []string, n int) string {
 	return fmt.Sprintf("%s, +%d more", strings.Join(names[:n], ", "), len(names)-n)
 }
 
-func checkGh(ctx context.Context) doctor.Result {
+// releaseEnvCheck resolves the layered .env/.env.local < ambient environment a
+// release runs with (honouring --no-env), returning it for the checks that
+// probe a subprocess and, when the files could not be read, a result to report.
+//
+// gh takes its token from the environment, so probing it with the ambient env
+// alone made a GH_TOKEN declared only in .env read as "not authenticated" while
+// the release this check gates authenticated fine. The failure case matters as
+// much: an unreadable .env is fatal to `release` and `publish`, which refuse to
+// start, so a doctor that swallowed the error could report gh as authenticated
+// for a release that cannot get far enough to use it. It is reported as a
+// failure and the gh probe continues on the ambient environment, so one bad
+// file doesn't blank the rest of the report.
+func releaseEnvCheck(root string, noEnv bool) (env []string, failure *doctor.Result) {
+	loaded, err := loadReleaseEnv(root, noEnv)
+	if err != nil {
+		return nil, &doctor.Result{
+			Name:   "release env",
+			Status: doctor.Fail,
+			Detail: err.Error(),
+			Hint:   "`shiprig release` and `shiprig publish` stop on this before doing any work — fix the file, or pass --no-env to skip the layer",
+		}
+	}
+	return envstack.Environ(loaded), nil
+}
+
+// checkGh reports whether the GitHub CLI is installed and authenticated. env is
+// the environment to probe auth with (nil inherits this process's).
+func checkGh(ctx context.Context, env []string) doctor.Result {
 	if _, err := exec.LookPath("gh"); err != nil {
 		return doctor.Result{Name: "gh", Status: doctor.Warn, Detail: "not installed",
 			Hint: "needed to create GitHub releases and open PRs — https://cli.github.com"}
 	}
-	if err := exec.CommandContext(ctx, "gh", "auth", "status").Run(); err != nil {
+	c := exec.CommandContext(ctx, "gh", "auth", "status")
+	c.Env = env
+	if err := c.Run(); err != nil {
 		return doctor.Result{Name: "gh", Status: doctor.Warn, Detail: "not authenticated", Hint: "run `gh auth login`"}
 	}
 	return doctor.Result{Name: "gh", Status: doctor.OK, Detail: "authenticated"}
