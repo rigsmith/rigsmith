@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/cmderr"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/walkutil"
 )
@@ -352,47 +353,9 @@ func runCmd(ctx context.Context, dir, name string, args ...string) (stdout, stde
 	err = cmd.Run()
 	stdout, stderr = outBuf.String(), errBuf.String()
 	if err != nil {
-		err = fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, failureDetail(stdout, stderr))
+		err = fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, cmderr.Detail(stdout, stderr))
 	}
 	return stdout, stderr, err
-}
-
-// failureDetail builds the text attached to a failed command's error: stderr,
-// plus the tail of stdout. The dotnet CLI writes its diagnostics to *stdout* —
-// a push rejected for a missing key reports "warn : No API Key was provided"
-// and "error: … 403 (Forbidden)" there, with stderr empty — so wrapping stderr
-// alone surfaced "exit status 1:" and nothing, throwing away the one thing that
-// explained the failure. The stdout tail is bounded because `dotnet pack`
-// prints a whole build log ahead of its error summary. This mirrors what the
-// velopack adapter already does for `vpk` (see lastLines there); "(no output)"
-// keeps a silent failure from trailing off into blankness.
-func failureDetail(stdout, stderr string) string {
-	detail := strings.TrimSpace(stderr)
-	if tail := lastLines(strings.TrimSpace(stdout), 20); tail != "" {
-		if detail != "" {
-			detail += "\n" + tail
-		} else {
-			detail = tail
-		}
-	}
-	if detail == "" {
-		return "(no output)"
-	}
-	return detail
-}
-
-// lastLines returns the final n lines of s (all of it when it has n or fewer),
-// so an error carries the end of a command's output — where the failure is —
-// without dumping a long build log into the message.
-func lastLines(s string, n int) string {
-	if s == "" {
-		return ""
-	}
-	lines := strings.Split(s, "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
 }
 
 // resolvedVersion is where a project's version lives and its current value.

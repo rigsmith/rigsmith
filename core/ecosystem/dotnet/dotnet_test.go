@@ -2,7 +2,6 @@ package dotnet
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -406,51 +405,6 @@ func TestInfoAdvertisesArtifacts(t *testing.T) {
 	}
 	if !found {
 		t.Error("dotnet Info() should advertise MethodArtifacts")
-	}
-}
-
-// TestFailureDetailPrefersWhicheverStreamSpoke pins that a failing command's
-// diagnosis survives into the error. The dotnet CLI writes its errors to
-// stdout, so wrapping stderr alone reduced a rejected push to "exit status 1:"
-// with nothing after the colon — the "warn : No API Key was provided" /
-// "error: … 403 (Forbidden)" that explained it was captured and discarded.
-func TestFailureDetailPrefersWhicheverStreamSpoke(t *testing.T) {
-	const nugetErr = "warn : No API Key was provided\nerror: Response status code does not indicate success: 403 (Forbidden)."
-
-	if got := failureDetail(nugetErr, ""); got != nugetErr {
-		t.Errorf("stdout-only detail = %q, want the dotnet diagnostics", got)
-	}
-	if got := failureDetail("", "boom"); got != "boom" {
-		t.Errorf("stderr-only detail = %q, want %q", got, "boom")
-	}
-	// Both streams spoke: keep both, stderr first.
-	if got := failureDetail("from stdout", "from stderr"); got != "from stderr\nfrom stdout" {
-		t.Errorf("two-stream detail = %q, want both", got)
-	}
-	// A silent failure still reads as a sentence, not a dangling colon.
-	if got := failureDetail("  ", ""); got != "(no output)" {
-		t.Errorf("silent failure detail = %q, want (no output)", got)
-	}
-}
-
-// TestFailureDetailBoundsALongLog keeps `dotnet pack`'s whole build log out of
-// the message while retaining the tail, where the error summary lives.
-func TestFailureDetailBoundsALongLog(t *testing.T) {
-	var log strings.Builder
-	for i := range 100 {
-		fmt.Fprintf(&log, "line %d\n", i)
-	}
-	log.WriteString("error CS1002: ; expected")
-
-	got := failureDetail(log.String(), "")
-	if !strings.Contains(got, "error CS1002: ; expected") {
-		t.Errorf("detail dropped the tail, where the error is: %q", got)
-	}
-	if strings.Contains(got, "line 0\n") {
-		t.Error("detail should not carry the whole build log")
-	}
-	if n := len(strings.Split(got, "\n")); n > 20 {
-		t.Errorf("detail = %d lines, want at most 20", n)
 	}
 }
 
