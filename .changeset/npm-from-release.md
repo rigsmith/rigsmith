@@ -1,5 +1,5 @@
 ---
-type: feat
+type: fix
 "github.com/rigsmith/rigsmith"
 ---
 
