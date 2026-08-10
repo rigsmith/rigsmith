@@ -160,6 +160,17 @@ jobs:
           TRUSTED_SIGNING_ACCOUNT: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
           TRUSTED_SIGNING_PROFILE: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
 
+      # Verify the winget manifests GoReleaser just generated. A non-portable
+      # installer manifest passes every pipeline here and then fails winget's
+      # unattended-install validation days later, as a moderator question (that
+      # cost 23 days on microsoft/winget-pkgs#403084). This turns it into a red
+      # step within minutes of the release, while the PRs are still fresh.
+      # No-ops when no manifests were generated (any run that isn't a real
+      # release — the winget pipe is publish-phase only).
+      - name: Verify winget manifests
+        if: always()
+        run: sh ./scripts/check-winget-manifests.sh dist
+
       # Build the npm binary-wrapper packages from dist/ (the prebuilt — and on a
       # tag, signed — binaries). A tag publishes them to npm; a manual dry run
       # validates packaging with `npm publish --dry-run` (packs each, no upload).
