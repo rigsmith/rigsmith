@@ -55,18 +55,22 @@ for entry in $packages; do
     --dry-run >/dev/null
 done
 
-# komac ANALYSES each installer rather than trusting the published manifest, and
-# it reads clauderig.exe as an installer: it emits `NestedInstallerType: exe`
-# for that one package while getting the other four right. This is not new — the
-# same misdetection shipped in ClaudeRig 1.4.0 and took 23 days to come back as
-# a moderator asking "Is this a Portable package?".
+# A tripwire that should never fire. komac classifies a nested .exe by
+# substring-matching its PE FileDescription/OriginalFilename against
+# ["installer", "setup", "7zs.sfx", "7zsd.sfx"] — nothing else about the binary
+# matters. clauderig's description used to read "Sync your Claude Code setup
+# across machines", so komac called it an installer, winget unpacked the zip and
+# put nothing on PATH, and it surfaced 23 days later as a moderator asking "Is
+# this a Portable package?". The descriptions no longer contain any of those
+# words (build/winres/, pinned by a test there), so this correction is now a
+# regression detector: if it prints, a description has drifted back.
 #
 # Every package here is a single static Go binary in a zip, so `exe` is never
 # correct for any of them, and the correction is announced rather than silent.
 # perl, not sed: these files are CRLF and the line ending must survive.
 for m in $(find "$out" -name '*.installer.yaml' | sort); do
   if grep -qE '^NestedInstallerType:[[:space:]]*exe' "$m"; then
-    echo "  ! $(basename "$m"): komac detected \`exe\`; correcting to \`portable\` (every rigsmith package is a portable CLI)"
+    echo "::warning::$(basename "$m"): komac read this binary as an installer. Its PE FileDescription or OriginalFilename now contains one of installer/setup/7zs.sfx/7zsd.sfx — see build/winres/. Correcting to portable for this submission."
     perl -pi -e 's/^(NestedInstallerType:[ \t]*)exe([ \t]*\r?)$/${1}portable$2/' "$m"
   fi
 done

@@ -65,7 +65,7 @@ const TOOLS = {
   rig: 'Convention-first dev launcher across .NET, Node, Go, and Rust',
   shiprig: 'Uniform changeset -> version -> publish, across every ecosystem',
   changerig: 'Changesets: capture intent, then version across every ecosystem',
-  clauderig: 'Sync your Claude Code setup across machines, path-correct on restore',
+  clauderig: 'Sync your Claude Code configuration across machines, path-correct on restore',
 }
 
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'))

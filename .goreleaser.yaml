@@ -270,7 +270,7 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://rigsmith.dev"
-    description: "Sync your Claude Code setup across machines, path-correct on restore"
+    description: "Sync your Claude Code configuration across machines, path-correct on restore"
     hooks:
       post:
         install: |
@@ -386,7 +386,7 @@ winget:
     publisher: RigSmith
     publisher_url: "https://rigsmith.dev"
     author: John Campion Jr
-    short_description: "Sync your Claude Code setup across machines, path-correct on restore"
+    short_description: "Sync your Claude Code configuration across machines, path-correct on restore"
     homepage: "https://rigsmith.dev"
     license: MIT
     license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
