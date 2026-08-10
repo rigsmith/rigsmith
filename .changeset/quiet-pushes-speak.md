@@ -1,5 +1,6 @@
 ---
 type: fix
+"github.com/rigsmith/rigsmith"
 ---
 
 A failing `dotnet` command now reports what went wrong instead of `exit status 1:` and nothing.

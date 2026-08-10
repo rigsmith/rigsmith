@@ -1,5 +1,6 @@
 ---
 type: fix
+"github.com/rigsmith/rigsmith"
 ---
 
 `clauderig account`'s profile-block write is now atomic, and `doctor --fix` refuses an ambiguous repair. Both are follow-ups to the identity-desync tooling.

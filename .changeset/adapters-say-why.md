@@ -1,5 +1,6 @@
 ---
 type: fix
+"github.com/rigsmith/rigsmith"
 ---
 
 Every ecosystem adapter now reports what its tool actually said when a command fails, whichever stream the tool chose.

@@ -1,5 +1,6 @@
 ---
 type: fix
+"github.com/rigsmith/rigsmith"
 ---
 
 `shiprig publish` now loads `.env`/`.env.local`, so a registry key kept in a local `.env` reaches the push instead of the push going out with no credential.

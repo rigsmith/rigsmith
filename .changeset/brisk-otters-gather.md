@@ -1,5 +1,6 @@
 ---
 type: fix
+"github.com/rigsmith/rigsmith"
 ---
 
 A lockstep group's release plan now lists every member, not just the ones carrying a changeset — the bump was already moving all of them.

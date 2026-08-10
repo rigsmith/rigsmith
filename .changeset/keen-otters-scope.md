@@ -1,5 +1,6 @@
 ---
 type: fix
+"github.com/rigsmith/rigsmith"
 ---
 
 The .NET adapter no longer mistakes an `<ItemGroup>` item's `<Version>` metadata for the project's version — it was reading the wrong number, and the matching write path was corrupting the item.

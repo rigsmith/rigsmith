@@ -1,5 +1,6 @@
 ---
 type: fix
+"github.com/rigsmith/rigsmith"
 ---
 
 `shiprig publish` and `shiprig tag` report each git tag once, instead of once per package sharing it.

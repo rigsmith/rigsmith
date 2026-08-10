@@ -1,5 +1,6 @@
 ---
 type: fix
+"github.com/rigsmith/rigsmith"
 ---
 
 `clauderig sync` no longer ages project memories out of the sync. Memory files

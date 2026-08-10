@@ -1,5 +1,6 @@
 ---
 type: fix
+"github.com/rigsmith/rigsmith"
 ---
 
 The release workflow now verifies its own winget manifests, and a new script answers a moderator's questions before they're asked.
