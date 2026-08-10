@@ -1,7 +1,10 @@
 package account
 
 import (
+	"errors"
+	"io/fs"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -238,5 +241,26 @@ func TestJournalMissingFileIsEmpty(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("expected no entries, got %d", len(entries))
+	}
+}
+
+// TestLockNameBusyOnlyClaimsTheWindowsCase pins the predicate that decides
+// whether an exclusive-create failure is worth retrying.
+//
+// Windows answers ERROR_ACCESS_DENIED — which Go maps to fs.ErrPermission —
+// while a lock file is pending deletion, so a contended lock reported "Access is
+// denied" instead of waiting its turn. Unix never does this (it says EEXIST,
+// which os.IsExist already handles), so the predicate must stay false there or a
+// genuine permission fault would spin for the full deadline.
+func TestLockNameBusyOnlyClaimsTheWindowsCase(t *testing.T) {
+	denied := &fs.PathError{Op: "open", Path: "journal.lock", Err: fs.ErrPermission}
+	if got, want := lockNameBusy(denied), runtime.GOOS == "windows"; got != want {
+		t.Errorf("lockNameBusy(permission denied) = %v on %s, want %v", got, runtime.GOOS, want)
+	}
+	if lockNameBusy(&fs.PathError{Op: "open", Path: "journal.lock", Err: fs.ErrExist}) {
+		t.Error("ErrExist is the os.IsExist path — this predicate must not also claim it")
+	}
+	if lockNameBusy(errors.New("disk on fire")) {
+		t.Error("an unrelated error must stay fatal")
 	}
 }
