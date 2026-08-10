@@ -4,18 +4,85 @@
 behind a failed fast-forward; resolved by hand). Decisions locked with John: menu-bar-first
 app + window, CLI stays the engine, lives in this repo under `ui/`.*
 
+*Revised 2026-08-08: stack changed from Avalonia to **Wails v3**; engine seam changed from
+pure shell-out to **hybrid** (import for reads, shell out for writes). Rationale in
+[Stack](#stack). Everything in [Why](#why-what-the-incident-proved) is unchanged — the
+incident analysis drove the feature set, not the toolkit.*
+
 ## Shape
 
-An Avalonia app (Foundation platform, submodule as usual) with two faces:
+A Wails v3 app with two faces:
 
 - **Tray icon** — the ambient face. Green (synced) / amber (behind remote) / red (diverged
   or last sync failed). Menu: sync now, per-device freshness, open window.
 - **Window** — the interactive face: device board, activity feed, conflict resolution,
-  remote-session browsing, account switching.
+  remote-session browsing, account switching. Hidden at startup; the tray is the app.
 
-The UI owns no sync logic. It shells out to `clauderig` and renders; the Go CLI remains the
-single implementation of sync, redaction, path rewriting, and merging. Same seam philosophy
-as Tweed's engine split.
+## Stack
+
+**Wails v3** (`github.com/wailsapp/wails/v3`), pinned to a specific beta. Go backend,
+platform-native webview frontend (WKWebView / WebView2 / WebKitGTK).
+
+Chosen over Avalonia and Tauri because:
+
+1. **Same language and module as the engine.** `ui/` sits inside
+   `github.com/rigsmith/rigsmith`, so it can import `internal/clauderig/...` directly —
+   see [Engine seam](#engine-seam). Avalonia and Tauri are both permanently stuck on
+   subprocess + JSON for every read.
+2. **No new toolchain.** Go is already the build, test, and release language for all four
+   CLIs. Avalonia adds .NET + Velopack-for-ourselves; Tauri adds Rust *and* keeps the Go
+   subprocess boundary anyway — a third language buying nothing.
+3. **The design system is already HTML.** `design/` (brand.js, cli.js, docs.js) and the
+   VitePress site define the visual language. A webview frontend inherits it; XAML would
+   mean re-authoring it.
+4. **Weight.** ~15 MB order-of-magnitude vs a self-contained .NET bundle. Not the deciding
+   factor, but it was the objection that reopened the question.
+
+Wails v3 went **beta on 2026-08-02** (latest `v3.0.0-beta.5`, 2026-08-07) after a long
+alpha. The desktop API is declared stable and in production use; mobile is explicitly
+outside the compatibility promise and we don't want it. v2 is not an option — it has no
+built-in systray at all. See [Risks](#risks-and-open-spikes) for what this costs us.
+
+Frontend framework is deliberately unpinned here. The window is four screens of lists and
+detail panes; pick at scaffold time, keep it boring, reuse the brand tokens.
+
+## Engine seam
+
+**Import for reads. Shell out for writes.**
+
+The UI is not a second implementation of sync. But it also shouldn't spawn a subprocess
+every 30 seconds to learn something it can compute in-process from the same code the CLI
+uses.
+
+**Reads — direct import.** `ui/` is in the same module, so `internal/` is importable:
+
+| Need | Package | Entry point |
+|---|---|---|
+| Status poll, root state | `internal/clauderig/status` | `Gather(ctx, cfg, me, staging, settingsPath) Info` |
+| Device board | `internal/clauderig/devices` | `Load(dir) (*Registry, error)` |
+| Session lists, transcripts | `internal/clauderig/session` | `Build(roots) Index`, `FirstPrompt(path)` |
+| Search | `internal/clauderig/search` | package API |
+| Config, machine identity | `internal/clauderig/config` | package API |
+
+These are pure functions over plain structs with no CLI coupling — exactly the shape the
+UI wants. Polling becomes a function call, transcript rendering reads the same `session.Meta`
+the CLI does, and there is no JSON round-trip or struct duplication to keep in sync.
+
+**Writes — shell out to the `clauderig` binary.** `sync`, `pull`, `restore`, `merge`,
+`materialize`, `account switch`, `device rm`. These are the operations with side effects,
+safety guards, and streamed progress the drawer wants to render. Keeping them behind the
+binary means the CLI stays the single implementation of anything that can lose data, and
+the UI can't drift from it.
+
+**Binary resolution:** prefer a `clauderig` sitting next to the UI executable, fall back to
+`PATH`, surface a clear error if neither resolves. Never assume an install location.
+
+**Consequence for Phase 0:** `--json` is no longer on the UI's critical path. It's still
+worth building — for scripting, for Tweed, and to keep the seam honest — but the UI can
+start before it lands. What the UI *does* need from Phase 0 is the **divergence fields on
+`status.Info` itself** (it currently carries `LastSync`, `Dirty`, `Roots`, `Hooks`,
+`Devices` — no ahead/behind, no would-this-conflict, no per-root sync outcome). Build those
+into the struct; `--json` becomes a thin marshal of the same thing.
 
 ## Why (what the incident proved)
 
@@ -36,13 +103,101 @@ as Tweed's engine split.
 5. **Ghost devices** — the `this` entry (removed 08-07) came from pre-hostname-detection
    registration; there's no `device rm` and no validation.
 
+## Layout
+
+```
+ui/
+├── Taskfile.yml           # wails3 build entry; includes build/*/Taskfile.yml
+├── main.go                # app + systray + window wiring
+├── health/                # Info + divergence → green/amber/red, one place
+├── bridge/                # service structs bound to the frontend
+│   ├── status.go          #   imports internal/clauderig/status, devices
+│   ├── sessions.go        #   imports internal/clauderig/session, search
+│   └── actions.go         #   shells out; streams stdout/stderr to the drawer
+├── assets/                # tray icons: 3 states x {template, dark, light}
+├── frontend/
+│   ├── src/               # reuses design/ brand tokens
+│   └── dist/              # go:embed all:frontend/dist
+└── build/                 # wails per-OS Taskfiles, Info.plist, icons, nsis
+```
+
+`health/` exists as its own package so the tray colour, the window banner, and any future
+Tweed readout derive state identically from one function.
+
+## Tray specifics
+
+Verified against the v3 systray API (`application.SystemTray`):
+
+- **Runtime colour swap** is `SetIcon([]byte)`, callable after creation — that's the
+  green/amber/red mechanism. Each state is a separate embedded asset, not a tint.
+- **macOS** gets `SetTemplateIcon([]byte)`: black + transparent only, auto-adapts to
+  light/dark menu bars. Prefer it over `SetDarkModeIcon()`. Caveat: a template icon is
+  monochrome *by definition*, so health colour can't ride on the glyph itself on macOS —
+  either use a non-template coloured icon and handle dark mode manually via
+  `SetDarkModeIcon()`, or keep the glyph template and carry state in a badge/label.
+  **Decide this deliberately during Phase 1**; it's the one place the three-state design
+  collides with platform convention.
+- **Window attach** is `AttachWindow(win)` + `WindowOffset()` + `WindowDebounce()` for
+  click-to-toggle, plus `OnClick`/`OnRightClick` handlers if we want custom behaviour.
+- **Window lifecycle:** start hidden via `WebviewWindowOptions{Hidden: true}`; hide instead
+  of quit on close via a cancellable pre-close hook —
+  `RegisterHook(events.Common.WindowClosing, func(e){ e.Cancel(); win.Hide() })`.
+  `OnWindowEvent` fires too late to prevent the close.
+- **Windows** wants 16x16 or 32x32 PNG/ICO; tooltips cap at 127 UTF-16 chars.
+- **Linux is desktop-environment dependent** — GNOME needs an AppIndicator shell extension
+  for the tray to appear at all; KDE/XFCE are fine. This is an OS-level reality, not a
+  Wails limitation, and it would be identical under Avalonia or Tauri. Plan for a
+  "tray didn't appear" fallback: a `--window` flag that opens the window directly.
+
+## Build & release
+
+The existing pipeline builds **bare CLI binaries** — four `builds` entries, `CGO_ENABLED=0`,
+archived as tar.gz/zip, with `notarize.macos` signing the raw binaries via GoReleaser's
+bundled quill on an **ubuntu-latest** runner (deliberately: no macOS runner needed today).
+A GUI app does not fit that shape, and this is the single biggest piece of new work.
+
+What breaks:
+
+- **Wails needs CGO on macOS and Linux** (WKWebView, GTK/WebKitGTK). The whole existing
+  matrix is `CGO_ENABLED=0`. This build gets its own settings and can't cross-compile as
+  freely — Linux and macOS targets need their own runners or Docker.
+- **A `.app` bundle is not a binary.** `notarize.macos` targets build *ids* and signs
+  Mach-O binaries; it has no notion of a bundle. GoReleaser OSS has no `app_bundles`
+  (that's Pro). So the current notarization path cannot sign the UI.
+- **Wails has its own packaging** (`wails3 package`): `.app` + DMG on macOS, NSIS/MSIX on
+  Windows, AppImage/deb/rpm on Linux, with `wails3 task darwin:sign:notarize` for
+  notarization — but that path wants a macOS runner.
+
+**Preferred approach: dogfood our own packer.** `core/ecosystem/velopack/` already builds
+macOS `.app` bundles, renders a templated `Info.plist`, wraps a notarized `.app` in a DMG,
+and `core/dsstore/` generates the drag-to-install `.DS_Store` headlessly with no Finder.
+`core/sign/` already resolves signing secrets for Tauri/Electron builds. Today all of that
+packages *users'* desktop apps and is never run against rigsmith itself. The clauderig UI
+would be the first time we ship what we sell — which is both the cheapest path and the best
+possible test of that code. Velopack also brings auto-update, which a tray app that must
+stay current genuinely wants.
+
+Fallback if that proves awkward: add a macOS runner to the release workflow and use
+`wails3 task darwin:sign:notarize` directly. Decide after a spike; don't design for both.
+
+**Enumeration points that need a new entry when the UI becomes a released artifact:**
+`.goreleaser.yaml` (`builds`, `archives`, `notarize.ids`, `homebrew_casks`, `winget`, and
+the `rigsmith` bundle archive + cask `binaries:` list), `scripts/winres.sh` (hardcoded
+`for tool in …` loop), `build/winres/<tool>.json` + `build/icons/<tool>.png`,
+`scripts/npm/build-packages.mjs` (`TOOLS` map), and `scripts/install.sh` /
+`scripts/install.ps1` accepted tool names. `scripts/dev-install` and
+`scripts/source-install` auto-discover from `cmd/` and need no change — though the UI lives
+at `ui/`, not `cmd/`, so confirm what they do with it.
+
+Note also: CI (`ci.yml`) is Go-only today — no Node step. A webview frontend adds one.
+
 ## Phase 0 — CLI groundwork (Go, no UI yet)
 
-Everything the UI needs that the CLI can't say today:
+Unchanged in substance; `--json` is no longer blocking (see [Engine seam](#engine-seam)).
 
-- `--json` on `status` (and `account list`, `search`): machine-readable output including
-  **new divergence fields** — ahead/behind vs origin, whether a merge would conflict, last
-  sync outcome per root.
+- **Divergence fields on `status.Info`**: ahead/behind vs origin, whether a merge would
+  conflict, last sync outcome per root. The UI reads the struct; `--json` marshals it.
+- `--json` on `status` (and `account list`, `search`) for scripting and Tweed.
 - **Sync journal**: every sync/pull/restore appends a JSONL record (when, machine, files
   written, redactions, aged-out, LEAK refusals, error). The activity feed reads this;
   it also makes hook-failures durable instead of stderr-only.
@@ -60,13 +215,15 @@ Everything the UI needs that the CLI can't say today:
 
 ## Phase 1 — Tray + status window
 
-- TrayIcon with the three-state health color, driven by polling `status --json`
-  (30–60s; immediate refresh after any action).
+- **Spike first** (before any UI code): confirm a Wails v3 entrypoint can live at `ui/`
+  inside this module rather than at a project root. See [Risks](#risks-and-open-spikes).
+- SystemTray with the three-state health colour, driven by `health.From(status.Gather(...))`
+  in-process (30–60s; immediate refresh after any action).
 - Device board: one card per device — last sync, ahead/behind, OS, Claude version,
-  staleness coloring. (Registry data + journal.)
+  staleness colouring. (`devices.Registry` + journal.)
 - Activity feed: recent syncs across machines with outcomes; failures and secret-tripwire
   refusals rendered as first-class rows, not buried.
-- "Sync now" / "Pull" actions with streamed CLI output in a drawer.
+- "Sync now" / "Pull" actions shelling out, with streamed CLI output in a drawer.
 
 ## Phase 2 — Resolve + browse
 
@@ -75,7 +232,7 @@ Everything the UI needs that the CLI can't say today:
   picker; never a raw conflict-marker editor.
 - Remote session browser: per-device session lists via `peek`, read-only transcript
   rendering, **Bring to this Mac** → `materialize`.
-- Search across live + synced sessions (`clauderig search --json`) with the same viewer.
+- Search across live + synced sessions (`search` package in-process) with the same viewer.
 
 ## Phase 3 — Accounts
 
@@ -87,10 +244,35 @@ Everything the UI needs that the CLI can't say today:
   section of [CLAUDERIG-ACCOUNTS.md](CLAUDERIG-ACCOUNTS.md)) as a health check with a
   "resync" action — catches the artifact-went-to-wrong-account failure before it bites.
 
+## Risks and open spikes
+
+Ordered by how much they'd hurt to discover late.
+
+1. **Entrypoint location — unverified.** Wails v3 docs only ever show `main.go` at the
+   project root, and there's no documented flag or config key for a different main package.
+   The Taskfiles are plain user-editable YAML and we're expected to modify them, so this
+   almost certainly works by editing the build task — but it is unconfirmed. **Spike this
+   first**; if `ui/` can't host the entrypoint, the fallback is a nested module, which
+   costs the direct `internal/clauderig/...` imports the whole seam design depends on.
+2. **Beta churn.** Six days into beta after a multi-year alpha. Pin the exact version, don't
+   float, and expect to read changelogs on upgrade. The v2→v3 migration guide is explicit
+   that v3 is a port rather than a version bump — so there is no cheap retreat to v2, and v2
+   has no systray anyway.
+3. **macOS template icon vs three-state colour** — see [Tray specifics](#tray-specifics).
+   A design decision, not a bug, but it needs an answer before the icons are drawn.
+4. **CGO + the release pipeline.** The largest chunk of unbudgeted work; see
+   [Build & release](#build--release).
+5. **Linux runtime deps are self-contradictory in the docs** — the packaging page names
+   GTK4/WebKitGTK 6.0 as the default while listing `libwebkit2gtk-4.1-0` as the runtime
+   dependency. The GTK3 path (`-tags gtk3`) is deprecated for removal in v3.1, so target
+   GTK4 and verify the generated deb/rpm `depends:` by hand before shipping Linux packages.
+
 ## Open
 
-- **Name.** Unnamed; "the clauderig UI" until John names it.
-- Tray parity on Windows/Linux (Avalonia TrayIcon covers all three; verify behaviors).
-- Whether Tweed later embeds the same status readout (it can — same `--json` seam).
+- **Name.** Still unnamed; "the clauderig UI" until John names it. Needed before the
+  binary, bundle identifier, and icons are settled.
+- Frontend framework choice (deliberately deferred to scaffold time).
+- Whether Tweed later embeds the same status readout — it still can, over `--json`, and now
+  also over the `health` package if it ever moves in-process.
 - Auto-resolve-on-pull: once `clauderig merge` is trusted, the SessionStart hook could
   invoke it instead of failing the fast-forward. Decide after the button has mileage.
