@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -102,6 +103,51 @@ func TestPublishNoEnvSuppressesDotenvKey(t *testing.T) {
 	}
 	if v, ok := os.LookupEnv("NUGET_API_KEY"); ok {
 		t.Errorf("--no-env should not export NUGET_API_KEY, got %q", v)
+	}
+}
+
+// TestPublishReportsEachTagOnce pins that the tagging phase iterates distinct
+// tags, not packages. A `tagTemplate` like "v${version}" renders one tag for
+// every package in the repo, and reporting it per package printed a repo's
+// single tag once per package ("would tag v0.2.0" twelve times for twelve
+// packages, or one "tagged+pushed" then eleven "tag exists").
+func TestPublishReportsEachTagOnce(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".changeset/config.json", `{ "tagTemplate": "v${version}" }`)
+	for _, name := range []string{"Acme.A", "Acme.B", "Acme.C"} {
+		write("src/"+name+"/"+name+".csproj",
+			"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <PackageId>"+name+
+				"</PackageId>\n    <Version>1.2.3</Version>\n  </PropertyGroup>\n</Project>\n")
+	}
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Chdir(root)
+
+	var buf bytes.Buffer
+	cmd := newPublishCmd()
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	// --dry-run keeps this to the reporting path: no dotnet, no tags created.
+	cmd.SetArgs([]string{"--yes", "--dry-run"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	// The three packages share one tag, so it is reported once. (Their publish
+	// lines say "@1.2.3", never "v1.2.3", so this counts tag lines only.)
+	if n := strings.Count(buf.String(), "v1.2.3"); n != 1 {
+		t.Errorf("tag v1.2.3 reported %d times, want 1:\n%s", n, buf.String())
 	}
 }
 
