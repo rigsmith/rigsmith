@@ -1,12 +1,5 @@
-# Normalize everything to LF in the repository AND in working trees, so the
-# parity goldens (core/testdata/parity/**) and other byte-compared fixtures are
-# identical on Windows checkouts (git for Windows defaults core.autocrlf=true).
-* text=auto eol=lf
-
-# Binary-ish assets: never translate.
-*.png binary
-*.jpg binary
-*.gif binary
-*.ico binary
-*.zip binary
-*.gz binary
+# winget-pkgs manifests are CRLF, and the check that reads them has been broken
+# by a stray \r before. These fixtures are captured from real komac output, so
+# git must store them byte for byte — normalising them to LF would leave the
+# CRLF test passing against a file that no longer has any CRLF in it.
+scripts/testdata/winget-komac/*.yaml -text
