@@ -47,7 +47,11 @@ func newRootCmd() *cobra.Command {
 	// orients in every source mode and offers source-aware setup in an
 	// uninitialized repo rather than erroring.
 	status := commands.NewStatusCmd()
-	root.RunE = status.RunE
+	// BareRunE softens only the no-verb, no-flags case in an unconfigured
+	// directory: orientation and exit 0, matching `rig` and `clauderig`.
+	// `shiprig status` invoked by name — what a CI gate should call — is
+	// unchanged and still exits non-zero.
+	root.RunE = commands.BareRunE(status.RunE)
 	root.Args = status.Args
 	root.Flags().AddFlagSet(status.Flags())
 
