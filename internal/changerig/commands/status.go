@@ -135,7 +135,25 @@ func NewStatusCmd() *cobra.Command {
 				return writeStatusPlan(ws.Root, output, plan)
 			}
 			if len(plan) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("Changesets found, but nothing to release."))
+				out := cmd.OutOrStdout()
+				fmt.Fprintln(out, DimStyle.Render("Changesets found, but nothing to release."))
+				// Say which files and why. "Nothing to release" while holding
+				// changesets is a contradiction the tool can resolve itself — it
+				// knows each file names no package, an unknown one, or only
+				// ignored ones. Leaving that unsaid let sixteen inert changesets
+				// accumulate here across a release.
+				if stranded := FindStranded(changesets, pkgs, ws.Config); len(stranded) > 0 {
+					fmt.Fprintln(out)
+					width := 0
+					for _, s := range stranded {
+						width = max(width, len(s.ID))
+					}
+					for _, s := range stranded {
+						fmt.Fprintf(out, "  %-*s  %s\n", width, s.ID, DimStyle.Render(s.Reason))
+					}
+					fmt.Fprintln(out)
+					fmt.Fprintln(out, DimStyle.Render(StrandedHint(cmd.Root().Name(), pkgs, ws.Config)))
+				}
 				return nil
 			}
 			PrintPlan(cmd.OutOrStdout(), plan, verbose)
