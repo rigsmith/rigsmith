@@ -1,8 +1,8 @@
 // .NET project discovery, ported from the .NET rig's ProjectDiscovery:
-// convention-first, no MSBuild evaluation. Locates a solution (config override
-// → first *.slnx → first *.sln) and reads each project's OutputType, target
-// framework, and test signals straight from the csproj. When no solution
-// exists, falls back to scanning *.csproj under the root (skipping bin/obj).
+// convention-first, no MSBuild evaluation. Scans for project files under the
+// root (skipping build output), or reads the solution named by .rig.json's
+// `solution` when one is pinned, then reads each project's OutputType, target
+// framework, and test signals straight from the project file.
 package detect
 
 import (
@@ -54,15 +54,30 @@ func (p ProjectInfo) IsRunnable() bool {
 		(strings.EqualFold(p.OutputType, "Exe") || strings.EqualFold(p.OutputType, "WinExe"))
 }
 
-// DiscoverDotNet lists the .NET projects under root, from the solution when one
-// exists (configuredSolution override → first *.slnx → first *.sln), otherwise
-// by scanning for *.csproj. Projects matching an exclude glob are dropped.
-// The result is sorted by name (case-insensitive).
+// DiscoverDotNet lists the .NET projects under root: the projects of the
+// CONFIGURED solution when .rig.json pins one, otherwise every project file
+// found by scanning. Projects matching an exclude glob are dropped. The result
+// is sorted by name (case-insensitive).
+//
+// Discovery deliberately does NOT auto-pick a solution. A repo can hold several
+// (per-package solutions under subdirectories, a test-only aggregate at the
+// root, an IDE-convenience solution covering a slice), and picking one of them
+// — the old behavior took the first root-level *.slnx — silently hid every
+// project outside it: `rig info` listed a fraction of the repo and `rig run
+// <app>` couldn't see the app. Which solution "the" solution is, is a question
+// with no convention-first answer, so rig stops guessing and reports what is
+// actually on disk. A `solution` in .rig.json is an explicit answer and still
+// scopes discovery to that file; `exclude` trims whatever the scan over-reports.
 func DiscoverDotNet(root, configuredSolution string, exclude []string) []ProjectInfo {
 	var csprojs []string
-	if solution := FindSolution(root, configuredSolution); solution != "" {
-		csprojs = SolutionProjects(solution)
-	} else {
+	if configuredSolution != "" {
+		// A pin that names a missing file resolves to "" and falls through to
+		// the scan rather than reporting an empty repo (`rig doctor` flags it).
+		if solution := FindSolution(root, configuredSolution); solution != "" {
+			csprojs = SolutionProjects(solution)
+		}
+	}
+	if csprojs == nil {
 		csprojs = scanForProjects(root)
 	}
 
@@ -110,6 +125,11 @@ func SolutionCandidates(root string) []string {
 
 // FindSolution locates the solution file for root: the configured override when
 // set (must exist; "" otherwise), else the first *.slnx, else the first *.sln.
+//
+// The unconfigured fallback answers "does this repo have a solution at all"
+// (Capabilities.HasSolution) and seeds the `rig init` wizard's suggestion. It is
+// NOT what discovery lists projects from — see DiscoverDotNet for why the first
+// root-level solution is a poor stand-in for the workspace.
 func FindSolution(root, configuredSolution string) string {
 	if configuredSolution != "" {
 		full := configuredSolution
@@ -129,8 +149,8 @@ func FindSolution(root, configuredSolution string) string {
 	return ""
 }
 
-// SolutionProjects returns the absolute csproj paths referenced by a solution
-// (*.slnx XML or classic *.sln), deduped, non-csproj entries dropped.
+// SolutionProjects returns the absolute project paths referenced by a solution
+// (*.slnx XML or classic *.sln), deduped, non-project entries dropped.
 func SolutionProjects(solutionPath string) []string {
 	dir := filepath.Dir(solutionPath)
 	var rels []string
@@ -143,7 +163,7 @@ func SolutionProjects(solutionPath string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, rel := range rels {
-		if !hasSuffixFold(rel, ".csproj") {
+		if !isProjectFile(rel) {
 			continue
 		}
 		full := filepath.Clean(filepath.Join(dir, filepath.FromSlash(strings.ReplaceAll(rel, "\\", "/"))))
@@ -324,8 +344,18 @@ func readCsproj(path string) csprojProps {
 	}
 }
 
-// scanForProjects finds every *.csproj under root, skipping bin/obj output
-// directories. Used only when no solution exists.
+// ProjectFileExts are the MSBuild project files a .NET project is found by.
+var ProjectFileExts = []string{".csproj", ".fsproj", ".vbproj"}
+
+// scanSkipDirs are never descended into: build output and dependency trees,
+// which hold copies of project files. `vendor` is deliberately absent — a
+// vendored *.csproj is a first-class build input in .NET (solutions routinely
+// list them), unlike a Go or PHP vendor tree; `exclude` hides one that isn't.
+var scanSkipDirs = []string{"bin", "obj", ".git", "node_modules"}
+
+// scanForProjects finds every project file under root. This is the default
+// discovery path (see DiscoverDotNet), so it is the superset a solution would
+// otherwise carve up — anything unwanted is trimmed by the `exclude` globs.
 func scanForProjects(root string) []string {
 	var paths []string
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -333,17 +363,29 @@ func scanForProjects(root string) []string {
 			return nil // unreadable subtree — skip, discovery is best-effort
 		}
 		if d.IsDir() {
-			if name := d.Name(); strings.EqualFold(name, "bin") || strings.EqualFold(name, "obj") {
-				return filepath.SkipDir
+			for _, skip := range scanSkipDirs {
+				if strings.EqualFold(d.Name(), skip) {
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		}
-		if hasSuffixFold(d.Name(), ".csproj") {
+		if isProjectFile(d.Name()) {
 			paths = append(paths, path)
 		}
 		return nil
 	})
 	return paths
+}
+
+// isProjectFile reports whether name is an MSBuild project file.
+func isProjectFile(name string) bool {
+	for _, ext := range ProjectFileExts {
+		if hasSuffixFold(name, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 func isTrue(value string) bool { return strings.EqualFold(strings.TrimSpace(value), "true") }

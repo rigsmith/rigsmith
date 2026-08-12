@@ -319,7 +319,8 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
     `Auto-detect (don't pin)`), defaulting to the nearest one. This is the value
     `resolvePrimary` reads to disambiguate a polyglot repo.
   - **Solution** — shown only when several `.sln`/`.slnx` exist; a select (with
-    `(auto)`) of which one rig builds/discovers against.
+    `(every project)`) narrowing the .NET verbs to one solution. Unset — the
+    normal case — discovery scans the repo and never picks a solution itself.
   - **Default project** — shown only when there are several runnable .NET
     projects; a select (with `(none)`) of their short names.
   - **Exclude from discovery?** — shown only when sample/example-ish dirs

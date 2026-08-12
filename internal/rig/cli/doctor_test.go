@@ -169,7 +169,10 @@ func TestOrderedEcos(t *testing.T) {
 	}
 }
 
-func TestDiscoverDotnetProjectsFindsVersionlessProjects(t *testing.T) {
+// Doctor lists .NET projects through the shared dev model, so version-less apps
+// (no <Version>, the usual case) must survive discovery — the release-oriented
+// ecosystem adapter would drop them.
+func TestDotnetTargetsFindsVersionlessProjects(t *testing.T) {
 	root := t.TempDir()
 	// a version-less app csproj (no <Version>, no Directory.Build.props)
 	app := filepath.Join(root, "app")
@@ -185,8 +188,8 @@ func TestDiscoverDotnetProjectsFindsVersionlessProjects(t *testing.T) {
 		_ = os.MkdirAll(filepath.Join(app, d), 0o755)
 		_ = os.WriteFile(filepath.Join(app, d, "Ghost.csproj"), []byte("<Project/>"), 0o644)
 	}
-	got := discoverDotnetProjects(root)
+	got := dotnetTargets(root, nil)
 	if len(got) != 1 || got[0].Name != "App" {
-		t.Fatalf("discoverDotnetProjects = %+v, want one 'App'", got)
+		t.Fatalf("dotnetTargets = %+v, want one 'App'", got)
 	}
 }

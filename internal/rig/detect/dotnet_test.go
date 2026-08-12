@@ -50,7 +50,7 @@ func byName(t *testing.T, projects []ProjectInfo, name string) ProjectInfo {
 
 // Ported from the .NET rig's ProjectDiscoveryTests.
 
-func TestDiscoverDotNet_DiscoversAndClassifiesFromAnSlnx(t *testing.T) {
+func TestDiscoverDotNet_DiscoversAndClassifiesEveryProject(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "App", "App.csproj"), exeCsproj("net9.0"))
 	writeFile(t, filepath.Join(tmp, "Lib", "Lib.csproj"), libCsproj)
@@ -182,11 +182,12 @@ func TestDiscoverDotNet_TestProjectDetectedByNameConvention(t *testing.T) {
 	}
 }
 
-func TestDiscoverDotNet_FallsBackToScanningCsprojWhenNoSolution(t *testing.T) {
+func TestDiscoverDotNet_ScanSkipsBuildOutput(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "App", "App.csproj"), exeCsproj("net8.0"))
-	// a bin/ artifact that must be ignored
+	// bin/obj artifacts that must be ignored
 	writeFile(t, filepath.Join(tmp, "App", "bin", "Debug", "Ghost.csproj"), exeCsproj("net8.0"))
+	writeFile(t, filepath.Join(tmp, "App", "obj", "Ghost.csproj"), exeCsproj("net8.0"))
 
 	projects := DiscoverDotNet(tmp, "", nil)
 	if len(projects) != 1 || projects[0].Name != "App" {
@@ -194,16 +195,87 @@ func TestDiscoverDotNet_FallsBackToScanningCsprojWhenNoSolution(t *testing.T) {
 	}
 }
 
+func TestDiscoverDotNet_ScanFindsFsprojAndVbproj(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "Fs", "Fs.fsproj"), exeCsproj("net9.0"))
+	writeFile(t, filepath.Join(tmp, "Vb", "Vb.vbproj"), libCsproj)
+
+	projects := DiscoverDotNet(tmp, "", nil)
+	if len(projects) != 2 {
+		t.Fatalf("got %v, want Fs and Vb", projects)
+	}
+	if !byName(t, projects, "Fs").IsRunnable() {
+		t.Error("Fs should be runnable")
+	}
+}
+
 func TestDiscoverDotNet_ConfiguredSolutionOverrideIsHonoured(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "App", "App.csproj"), exeCsproj("net8.0"))
+	writeFile(t, filepath.Join(tmp, "Other", "Other.csproj"), libCsproj)
 	writeFile(t, filepath.Join(tmp, "custom.slnx"),
 		`<Solution><Project Path="App/App.csproj" /></Solution>`)
 
+	// An explicit pin still SCOPES discovery — Other is on disk but out of scope.
 	projects := DiscoverDotNet(tmp, "custom.slnx", nil)
 	if len(projects) != 1 || projects[0].Name != "App" {
 		t.Fatalf("got %v, want just App", projects)
 	}
+}
+
+func TestDiscoverDotNet_ConfiguredSolutionThatIsMissingFallsBackToTheScan(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "App", "App.csproj"), exeCsproj("net8.0"))
+
+	// A stale pin must not report an empty repo (`rig doctor` flags the pin).
+	projects := DiscoverDotNet(tmp, "gone.slnx", nil)
+	if len(projects) != 1 || projects[0].Name != "App" {
+		t.Fatalf("got %v, want just App", projects)
+	}
+}
+
+// A repo whose only ROOT-level solution is a test-only aggregate, with the real
+// build solutions nested one level down (the shape that broke: rig picked the
+// root solution and every non-test project vanished from `rig info`/`rig run`).
+func TestDiscoverDotNet_TestOnlyRootSolutionDoesNotHideTheApp(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "ui", "src", "App", "App.csproj"), exeCsproj("net10.0"))
+	writeFile(t, filepath.Join(tmp, "ui", "tests", "App.Tests", "App.Tests.csproj"), testCsproj)
+	writeFile(t, filepath.Join(tmp, "ui", "Ui.slnx"), `<Solution>
+  <Project Path="src/App/App.csproj" />
+  <Project Path="tests/App.Tests/App.Tests.csproj" />
+</Solution>`)
+	writeFile(t, filepath.Join(tmp, "Repo.Tests.slnx"), `<Solution>
+  <Project Path="ui/tests/App.Tests/App.Tests.csproj" />
+</Solution>`)
+
+	projects := DiscoverDotNet(tmp, "", nil)
+	if len(projects) != 2 {
+		t.Fatalf("got %v, want App and App.Tests", projects)
+	}
+	if !byName(t, projects, "App").IsRunnable() {
+		t.Error("App should be discovered and runnable — it is only in the nested solution")
+	}
+}
+
+// Several solutions at the root, each covering a slice: no single one is "the"
+// solution, so discovery reports the whole repo rather than the alphabetically
+// first slice.
+func TestDiscoverDotNet_MultipleRootSolutionsDoNotPartitionTheRepo(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "Api", "Api.csproj"), exeCsproj("net9.0"))
+	writeFile(t, filepath.Join(tmp, "Web", "Web.csproj"), exeCsproj("net9.0"))
+	writeFile(t, filepath.Join(tmp, "A.slnx"),
+		`<Solution><Project Path="Api/Api.csproj" /></Solution>`)
+	writeFile(t, filepath.Join(tmp, "B.slnx"),
+		`<Solution><Project Path="Web/Web.csproj" /></Solution>`)
+
+	projects := DiscoverDotNet(tmp, "", nil)
+	if len(projects) != 2 {
+		t.Fatalf("got %v, want both Api and Web", projects)
+	}
+	byName(t, projects, "Api")
+	byName(t, projects, "Web")
 }
 
 // ---- ports of the .NET rig's TestEnumerationTests (project-metadata level) ----

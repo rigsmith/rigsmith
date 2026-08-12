@@ -8,7 +8,7 @@
   "properties": {
     "solution": {
       "type": "string",
-      "description": "Pins the .sln/.slnx the .NET verbs operate on."
+      "description": "Scopes the .NET verbs to one .sln/.slnx. Unset, rig discovers every project under the root — it never auto-picks among several solutions. Set this only to deliberately narrow a repo; use `exclude` to trim individual projects."
     },
     "defaultProject": {
       "type": "string",

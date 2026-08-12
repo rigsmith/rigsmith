@@ -31,7 +31,9 @@ const FileName = ".rig.json"
 // Tolerant: unknown properties are ignored (surfaced via UnknownKeys /
 // Warnings), key matching is case-insensitive, and JSONC is accepted.
 type Config struct {
-	// Solution pins the .sln/.slnx the .NET verbs operate on.
+	// Solution scopes the .NET verbs to one .sln/.slnx. Unset, discovery scans
+	// for every project under the root rather than auto-picking a solution
+	// (see detect.DiscoverDotNet) — set this only to deliberately narrow a repo.
 	Solution string `json:"solution,omitempty"`
 	// DefaultProject names the project to act on when several are runnable.
 	DefaultProject string `json:"defaultProject,omitempty"`
