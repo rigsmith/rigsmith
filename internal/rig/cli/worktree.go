@@ -420,13 +420,32 @@ func pickerTTY() bool {
 
 // openRepo opens the git repo containing the current directory.
 func openRepo(ctx context.Context) (*gitrepo.Repo, string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, "", err
+	return openRepoAt(ctx, "")
+}
+
+// openRepoAt opens the git repo containing dir — the --repo flag's value — or
+// the current directory when dir is empty. Acting on another repo by path is
+// the sanctioned alternative to cd'ing there (which would move this session's
+// working directory), so every visible worktree verb routes through this.
+func openRepoAt(ctx context.Context, dir string) (*gitrepo.Repo, string, error) {
+	if dir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, "", err
+		}
+		repo, err := gitrepo.Open(ctx, cwd)
+		if err != nil {
+			return nil, "", fmt.Errorf("not inside a git repository")
+		}
+		root, err := repo.Toplevel(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		return repo, root, nil
 	}
-	repo, err := gitrepo.Open(ctx, cwd)
+	repo, err := gitrepo.Open(ctx, dir)
 	if err != nil {
-		return nil, "", fmt.Errorf("not inside a git repository")
+		return nil, "", fmt.Errorf("not a git repository: %s", dir)
 	}
 	root, err := repo.Toplevel(ctx)
 	if err != nil {
@@ -436,7 +455,7 @@ func openRepo(ctx context.Context) (*gitrepo.Repo, string, error) {
 }
 
 func newWorktreeNewCmd() *cobra.Command {
-	var base string
+	var base, repoDir string
 	var open, noOpen bool
 	cmd := &cobra.Command{
 		Use:   "new <branch>",
@@ -445,7 +464,7 @@ func newWorktreeNewCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			branch := args[0]
-			repo, root, err := openRepo(ctx)
+			repo, root, err := openRepoAt(ctx, repoDir)
 			if err != nil {
 				return err
 			}
@@ -491,6 +510,7 @@ func newWorktreeNewCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&base, "base", "", "branch to fork from (default: repo's mainline)")
+	cmd.Flags().StringVar(&repoDir, "repo", "", "repo to create the worktree for (default: current directory)")
 	cmd.Flags().BoolVar(&open, "open", false, "open the worktree in a new VS Code window for review")
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "don't open a window even if worktree.autoOpen is set")
 	cmd.MarkFlagsMutuallyExclusive("open", "no-open")
@@ -498,14 +518,15 @@ func newWorktreeNewCmd() *cobra.Command {
 }
 
 func newWorktreeListCmd() *cobra.Command {
-	return &cobra.Command{
+	var repoDir string
+	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List this repo's worktrees",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			repo, _, err := openRepo(ctx)
+			repo, _, err := openRepoAt(ctx, repoDir)
 			if err != nil {
 				return err
 			}
@@ -545,17 +566,20 @@ func newWorktreeListCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&repoDir, "repo", "", "repo whose worktrees to list (default: current directory)")
+	return cmd
 }
 
 func newWorktreeOpenCmd() *cobra.Command {
-	return &cobra.Command{
+	var repoDir string
+	cmd := &cobra.Command{
 		Use:               "open <branch|path>",
 		Short:             "Open a worktree in a new VS Code window (for review/diff)",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: worktreeCompletion(cobra.ShellCompDirectiveFilterDirs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			_, root, err := openRepo(ctx)
+			_, root, err := openRepoAt(ctx, repoDir)
 			if err != nil {
 				return err
 			}
@@ -570,10 +594,13 @@ func newWorktreeOpenCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&repoDir, "repo", "", "repo whose worktree to open (default: current directory)")
+	return cmd
 }
 
 func newWorktreeRemoveCmd() *cobra.Command {
 	var force bool
+	var repoDir string
 	cmd := &cobra.Command{
 		Use:               "rm <branch>",
 		Aliases:           []string{"remove"},
@@ -582,7 +609,7 @@ func newWorktreeRemoveCmd() *cobra.Command {
 		ValidArgsFunction: worktreeCompletion(cobra.ShellCompDirectiveNoFileComp),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			repo, root, err := openRepo(ctx)
+			repo, root, err := openRepoAt(ctx, repoDir)
 			if err != nil {
 				return err
 			}
@@ -595,6 +622,7 @@ func newWorktreeRemoveCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "remove even if the worktree has changes")
+	cmd.Flags().StringVar(&repoDir, "repo", "", "repo whose worktree to remove (default: current directory)")
 	return cmd
 }
 
@@ -866,14 +894,14 @@ func resolveDir(p string) string {
 // openReview opens path in a review window using the configured opener (default
 // `code -n`), or prints the command to run when skip is set or the opener isn't
 // on PATH. skip carries the caller's decision (the --no-open flag and, for
-// `new`, the worktree.autoOpen config); the opener choice comes from config.
+// `new`, the worktree.autoOpen config); the opener choice comes from the config
+// of the checkout being opened — not the cwd, which with --repo can be a
+// different repo entirely.
 func openReview(cmd *cobra.Command, path string, skip bool) {
 	out := cmd.OutOrStdout()
 	openCmd := config.DefaultWorktreeOpenCmd
-	if cwd, err := os.Getwd(); err == nil {
-		if cfg, e := config.LoadMerged(detect.Root(cwd)); e == nil {
-			openCmd = cfg.WorktreeOpenCmd()
-		}
+	if cfg, err := config.LoadMerged(detect.Root(path)); err == nil {
+		openCmd = cfg.WorktreeOpenCmd()
 	}
 	hint := worktree.QuoteCmd(openCmd, path)
 	if skip || !worktree.OpenerAvailable(openCmd) {

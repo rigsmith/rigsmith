@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -150,6 +151,50 @@ func TestWorktreeUseActiveUnset(t *testing.T) {
 	}
 	if got, _ := devroute.Read(r.Dir); got != "" {
 		t.Errorf("after unset pinned = %q; want empty", got)
+	}
+}
+
+// TestWorktreeNewListRmRepoFlag drives the visible lifecycle verbs against a
+// repo that is *not* the cwd — the --repo flag, which lets a session act on
+// another repo without cd'ing there (the clauderig guard denies moving).
+func TestWorktreeNewListRmRepoFlag(t *testing.T) {
+	ctx := context.Background()
+	r, err := gitrepo.Init(ctx, filepath.Join(t.TempDir(), "other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "a", "1", "init")
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := newWorktreeCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs(args)
+		if err := cmd.ExecuteContext(ctx); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return buf.String()
+	}
+
+	wtPath := filepath.Join(filepath.Dir(r.Dir), "other-worktrees", "feat-x")
+	if out := run("new", "feat/x", "--repo", r.Dir, "--no-open"); !strings.Contains(out, wtPath) {
+		t.Fatalf("new --repo = %q; want the sibling path %q", out, wtPath)
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Fatalf("worktree not created at %s: %v", wtPath, err)
+	}
+
+	if out := run("list", "--repo", r.Dir); !strings.Contains(out, "feat/x") {
+		t.Errorf("list --repo = %q; want feat/x", out)
+	}
+
+	if out := run("rm", "feat/x", "--repo", r.Dir); !strings.Contains(out, "removed") {
+		t.Errorf("rm --repo = %q", out)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("worktree still present after rm: %v", err)
 	}
 }
 
