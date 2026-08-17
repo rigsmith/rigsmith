@@ -244,9 +244,7 @@ func explainAll(cmd *cobra.Command, w io.Writer, root string, cfg config.Config)
 		printExplainRows(w, lines)
 	}
 
-	for _, name := range shadowedCommands(cfg) {
-		fmt.Fprintln(w, warnStyle.Render("  ! "+shadowWarning(name, cfg.Path)))
-	}
+	printConfigProblems(w, cfg, "")
 	if ecoErr != nil && len(scripts) == 0 {
 		return ecoErr
 	}

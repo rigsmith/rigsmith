@@ -55,6 +55,11 @@ func newInfoCmd() *cobra.Command {
 			}
 			fmt.Fprintln(out)
 
+			// Anything wrong with that config, inside the report about it. `info`
+			// is where you look when rig isn't doing what the config says, so the
+			// answer belongs here too, not only on the per-run stderr notice.
+			printConfigProblems(out, cfg, "Warnings")
+
 			// Verbs the resolved ecosystem maps (dev loop + maintenance).
 			if resolved != "" {
 				fmt.Fprintln(out, headerStyle.Render("Commands"))

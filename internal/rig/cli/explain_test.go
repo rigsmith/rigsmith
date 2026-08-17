@@ -253,6 +253,61 @@ func TestParseWarningsAreReported(t *testing.T) {
 	}
 }
 
+// `rig info` is the report about the config, so the problems with it belong in
+// that report — both kinds, in one section.
+func TestInfoShowsConfigWarnings(t *testing.T) {
+	explainRepo(t, `{"ecosystem":"node","commmands":{},"commands":{"build":"echo mine"}}`)
+
+	out, err := runSub(t, newInfoCmd())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Warnings",
+		`unknown key "commmands"`, // a parse warning, collected but never shown before
+		"built-in rig verb",       // …and the shadowed command
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("info output missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+// A clean config gets no section — an empty "Warnings" heading reads as a
+// finding of its own.
+func TestInfoOmitsTheWarningsSectionWhenClean(t *testing.T) {
+	explainRepo(t, `{"ecosystem":"node","commands":{"markers":"grep -r x src"}}`)
+
+	out, err := runSub(t, newInfoCmd())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Match the heading as its own line: the temp root printed above carries
+	// the test's name, which contains the word.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "Warnings" {
+			t.Errorf("clean config should print no Warnings section; got:\n%s", out)
+		}
+	}
+}
+
+// info and explain print the problems themselves, so the per-run notice stays
+// out of their way rather than saying everything twice.
+func TestCommandsThatReportProblemsThemselvesAreNotAlsoWarnedAt(t *testing.T) {
+	cfg := config.Config{Warnings: []string{"unknown key"}}
+	for _, name := range []string{"info", "explain"} {
+		cmd := &cobra.Command{Use: name}
+		var errOut bytes.Buffer
+		cmd.SetErr(&errOut)
+
+		reportConfigProblems(cmd, cfg)
+
+		if errOut.Len() != 0 {
+			t.Errorf("%s: want no duplicate notice, got %q", name, errOut.String())
+		}
+	}
+}
+
 // Completion output is parsed by a shell, so nothing is written alongside it.
 func TestCompletionRequestsAreNotWarnedAt(t *testing.T) {
 	cmd := &cobra.Command{Use: cobra.ShellCompRequestCmd}

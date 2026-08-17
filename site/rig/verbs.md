@@ -20,7 +20,7 @@
 | `cd` | Fuzzy project navigation (prints the dir; pair with a shell wrapper) |
 | `watch <verb>` / `rig w r` | Watch modifier via the pre-parse pipeline (verb prefixes work too: `rig cove`) |
 | `init` | Scaffold a `.rig.json` |
-| `info` | Show what rig discovered (root, primary ecosystem, `.rig.json`, per-ecosystem dev commands, packages) |
+| `info` | Show what rig discovered (root, primary ecosystem, `.rig.json`, per-ecosystem dev commands, packages) — plus a `Warnings` section for anything wrong with the config |
 | `explain [verb]` | Show what a verb resolves to — command, directory, environment, source — without running it ([see below](#explain)) |
 | `config` | Manage `.rig.json` (`get` / `set` / `show` / `path` / `edit`) |
 | `default` | Show or set the default project for `run`/`publish` (interactive picker) |

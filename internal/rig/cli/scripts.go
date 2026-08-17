@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -163,28 +164,53 @@ func shadowedCommands(cfg config.Config) []string {
 	return out
 }
 
-// reportConfigProblems prints, once per run, everything non-fatal that is wrong
-// with the loaded config: the parse-time warnings (a malformed file degraded to
-// defaults, an unknown top-level key, a script file that wouldn't load) and any
-// `commands` entry a built-in verb shadows.
+// configProblems is everything non-fatal that is wrong with the loaded config:
+// the parse-time warnings (a malformed file degraded to defaults, an unknown
+// top-level key, a script file that wouldn't load) followed by every `commands`
+// entry a built-in verb shadows. One list, so the per-run notice, `rig info`
+// and `rig explain` report the same problems in the same words.
+func configProblems(cfg config.Config) []string {
+	problems := append([]string(nil), cfg.Warnings...)
+	for _, name := range shadowedCommands(cfg) {
+		problems = append(problems, shadowWarning(name, cfg.Path))
+	}
+	return problems
+}
+
+// reportConfigProblems prints them once per run, ahead of whatever the command
+// was actually asked to do.
 //
 // The parse warnings were collected and never shown until now, which is the
 // worst of both worlds — the config reads as accepted while a key of it does
-// nothing. Completion requests are exempt: a shell parses that output.
+// nothing. Two commands are exempt because they report the same problems in
+// their own output, and completion is exempt because a shell parses it.
 func reportConfigProblems(cmd *cobra.Command, cfg config.Config) {
 	switch cmd.Name() {
 	case cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
 		return
-	case "explain":
-		return // explain reports them itself, next to the verb they affect
+	case "explain", "info":
+		return
 	}
 	w := cmd.ErrOrStderr()
-	for _, warning := range cfg.Warnings {
-		fmt.Fprintln(w, warnStyle.Render("rig: "+warning))
+	for _, p := range configProblems(cfg) {
+		fmt.Fprintln(w, warnStyle.Render("rig: "+p))
 	}
-	for _, name := range shadowedCommands(cfg) {
-		fmt.Fprintln(w, warnStyle.Render("rig: "+shadowWarning(name, cfg.Path)))
+}
+
+// printConfigProblems renders the problems as a section of a report (`rig info`,
+// `rig explain`), or nothing when the config is clean.
+func printConfigProblems(w io.Writer, cfg config.Config, header string) {
+	problems := configProblems(cfg)
+	if len(problems) == 0 {
+		return
 	}
+	if header != "" {
+		fmt.Fprintln(w, headerStyle.Render(header))
+	}
+	for _, p := range problems {
+		fmt.Fprintln(w, warnStyle.Render("  ! "+p))
+	}
+	fmt.Fprintln(w)
 }
 
 // shadowWarning is the sentence rig prints for a shadowed custom command. It
