@@ -64,24 +64,30 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 					return herr
 				}
 			}
+			// Tokens the user put after `--` belong to the underlying command and
+			// are never a selector: `rig test -- --logger=trx` forwards a flag, it
+			// doesn't name a test class. cobra records where the separator was, so
+			// the selector reads only what precedes it while the full args (which
+			// still carry the forwarded tokens) go on to the command.
+			selectors := argsBeforeDash(cmd, args)
 			// A first arg that names a package scopes the verb to that package.
 			// `run` matches against the per-binary expansion so `rig run rig`
 			// resolves a cmd/rig main, not just a module.
-			if len(args) > 0 {
+			if len(selectors) > 0 {
 				var ts []target
 				if verb == "run" {
 					ts = runTargets(cdContext(cmd), root)
 				} else {
 					ts = discoverWorkspace(cdContext(cmd), root, excludeFor(root))
 				}
-				matches := matchTargets(ts, args[0])
+				matches := matchTargets(ts, selectors[0])
 				// `rig run <name>`/`rig build <name>` matching several targets is
 				// usually one project duplicated across paths (a nested worktree).
 				// Offer a picker rather than failing or silently guessing. Other verbs
 				// keep the single-match rule: an ambiguous arg falls through (e.g.
 				// `rig test <filter>`).
 				if (verb == "run" || verb == "build") && len(matches) > 1 {
-					return verbAmbiguousPick(cmd, root, verb, args[0], matches, args[1:])
+					return verbAmbiguousPick(cmd, root, verb, selectors[0], matches, args[1:])
 				}
 				if len(matches) == 1 {
 					t := matches[0]
@@ -104,7 +110,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			eco, ecoErr := resolvePrimary(cwd, root)
 			// `rig test <class|~filter>` in a .NET repo: an arg that names no
 			// package is a test-class query / filter shorthand (TestVerb).
-			if ecoErr == nil && verb == "test" && eco == detect.DotNet && len(args) > 0 {
+			if ecoErr == nil && verb == "test" && eco == detect.DotNet && len(selectors) > 0 {
 				return runDotnetTest(cmd, root, args, false)
 			}
 			// A bare verb at a workspace root (packages only in subdirs) has no
@@ -150,7 +156,10 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 		cmd.Flags().BoolVarP(&forcePick, "interactive", "i", false, usage)
 	}
 	presets = registerPresetFlags(cmd)
-	return cmd
+	// Whatever the verb doesn't consume is appended to the ecosystem command's
+	// argv, so `rig <verb> -- <flags>` reaches the underlying tool — the escape
+	// hatch an unknown flag points at.
+	return markForwards(cmd, "rig "+verb+" -- --verbose")
 }
 
 // verbCompletion picks the [project] completion source for a verb. `run`

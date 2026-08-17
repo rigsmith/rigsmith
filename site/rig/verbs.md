@@ -126,6 +126,34 @@ worse than no check:
   a dev server's child processes — rather than reporting "it starts" and leaving
   one behind holding the port.
 
+## Passing flags to the underlying tool
+
+rig owns a small set of flags per verb (`--all`, `--filter`, `--watch`, `-i`, plus
+the global `--dry-run` / `--quiet` / `--no-env` / `--root`). Anything else is
+rejected rather than guessed at, so a typo like `--dry-runn` is caught instead of
+being handed to your package manager. To reach the tool underneath, put the flag
+after `--`:
+
+```sh
+rig build -- --target=host        # → pnpm run build --target=host
+rig test -- --reporter=dot        # → npm run test --reporter=dot
+rig dlx prettier -- --write .     # → pnpm dlx prettier --write .
+```
+
+Everything after `--` is forwarded verbatim and never interpreted — it is not
+read as a project name or a test-class query. Forget it and rig says so, naming
+the flag and quoting your own command line back with the `--` already in place:
+
+```
+  ERROR
+
+  Unknown flag: --target.
+
+  rig build doesn't take --target. To pass it to the underlying command, put it after --:
+
+      rig build -- --target=host
+```
+
 ## Ecosystem coverage
 
 The same verb runs the native tool for your stack. A few combinations have no
