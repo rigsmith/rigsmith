@@ -18,7 +18,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
 	"github.com/rigsmith/rigsmith/core/brand"
-	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/core/fang"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
@@ -126,12 +125,18 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: false,
 		// Fold .rig.json's quiet (global ~/.rig.json layered under the repo's)
 		// into the flag before any verb runs, so the config sets the default
-		// and an explicit --quiet always wins.
+		// and an explicit --quiet always wins — and surface anything wrong with
+		// the config while we have it in hand.
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			if cfg, err := config.LoadMerged(resolveRoot(cwd)); err == nil && cfg.IsQuiet() {
+			cfg, err := config.LoadMerged(resolveRoot(cwd))
+			if err != nil {
+				return nil
+			}
+			if cfg.IsQuiet() {
 				quiet = true
 			}
+			reportConfigProblems(cmd, cfg)
 			return nil
 		},
 	}
@@ -174,6 +179,7 @@ func newRootCmd() *cobra.Command {
 		newCopyCmd(),
 		newRigInitCmd(),
 		newInfoCmd(),
+		newExplainCmd(),
 		newConfigCmd(),
 		newUICmd(),
 		newSelfUpdateCmd(),
@@ -324,17 +330,11 @@ func resolveRoot(cwd string) string {
 // (low to high): .env/.env.local files, ambient process env, `.rig.json` env
 // (the user-wide ~/.rig.json merged under the repo's, repo winning per key),
 // and finally the active env presets. `--no-env` drops the file layer.
-// Returns nil (inherit) when no layer contributes anything.
+// Returns nil (inherit) when no layer contributes anything. The layers
+// themselves are named once in verbEnvLayers, so `rig explain` reports the same
+// environment this builds.
 func commandEnv(root string) []string {
-	var fileEnv map[string]string
-	if !noEnv {
-		fileEnv, _ = envstack.Load(root)
-	}
-	cfg, _ := config.LoadMerged(root)
-	if len(fileEnv) == 0 && len(cfg.Env) == 0 && len(presetEnv) == 0 {
-		return nil
-	}
-	return envstack.Environ(envstack.Merge(fileEnv, envstack.Ambient(), cfg.Env, presetEnv))
+	return layeredEnviron(verbEnvLayers(root))
 }
 
 // echo prints the `→ command` line unless --quiet (or .rig.json quiet) is set.

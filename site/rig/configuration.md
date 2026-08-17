@@ -42,9 +42,20 @@ unknown keys get a did-you-mean warning.
 | `aliases` / `dotnet.*` | — | Aliases; `dotnet`-namespaced keys fold over legacy top-level |
 
 Custom commands honor `--dry-run`; extra args are forwarded. A custom name that
-collides with a built-in verb is ignored. Config writes (e.g. the
-default-setter and the picker's exclude/include keys) preserve comments via the
-JSONC editor.
+collides with a built-in verb never runs — the built-in wins — and rig says so
+on load rather than ignoring it silently:
+
+```
+rig: "build" in /repo/.rig.json is a built-in rig verb, so that entry never runs
+     — rename it (e.g. "build:custom")
+```
+
+Config writes (e.g. the default-setter and the picker's exclude/include keys)
+preserve comments via the JSONC editor.
+
+Whatever a command resolves to — after OS selection, shell choice, `cwd` and the
+env layers — is printable with [`rig explain <verb>`](./verbs#explain), which
+runs nothing.
 
 ## Custom commands {#commands}
 
