@@ -132,7 +132,9 @@ func TestAliasCheckReportsNoneInstalled(t *testing.T) {
 	}
 }
 
-// fakeRig writes an executable named like rig into dir and returns its path.
+// fakeRig writes an executable named like rig into dir and returns the path as
+// the checks report it — symlinks resolved, which on Windows also expands the
+// 8.3 short form t.TempDir() hands back.
 func fakeRig(t *testing.T, dir string) string {
 	t.Helper()
 	name := integrationBase
@@ -143,7 +145,11 @@ func fakeRig(t *testing.T, dir string) string {
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 // Two rigs on PATH is the failure that hides itself: the first one answers, and
