@@ -150,6 +150,9 @@ func newRootCmd() *cobra.Command {
 		devVerbCmd("typecheck", "Type-check the code", true, "check"),
 		devVerbCmd("clean", "Remove build outputs", true),
 		devVerbCmd("rebuild", "Clean then build", false, "rb"),
+		// verify sequences the dev verbs and then checks that what they
+		// produced and consumed was actually built together.
+		newVerifyCmd(),
 		// Dependencies & maintenance.
 		verbCmd("install", "Install/restore dependencies", "restore"),
 		verbCmd("ci", "Frozen/clean install"),

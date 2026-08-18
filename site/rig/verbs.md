@@ -8,6 +8,7 @@
 | `format` | Format the code |
 | `lint` | Lint the code |
 | `typecheck` | Type-check the code |
+| `verify` | `build` → `test` → `run` in sequence, then check the artifacts were built together ([see below](#verify)) |
 | `coverage` | Run tests with coverage; `--min` gate; `--open` report (in-process cobertura→HTML for .NET) |
 | `kill` | Kill dev processes by project/pattern/`--port` (config `kill.match` wins) |
 | `add` / `uninstall` (`remove`, `rm`) / `outdated` (`od`) `[project]` / `upgrade` | Package management, native per ecosystem. On .NET, `outdated` reviews **every** project in the repo (respecting `exclude`), grouped by project, so a stale package in any in-repo dependency surfaces; name a `[project]` to scope it, like `run` |
@@ -60,6 +61,66 @@ The group runs everywhere, including a directory with no project — that is
 exactly where you stand when asking why `rcd` does nothing. Nothing here is
 touched by `rig doctor --fix`: writing to your startup file is `rig setup`'s
 job, and it asks.
+## Proving a result: `verify` {#verify}
+
+`build`, `test` and `run` each answer their own question honestly, and the
+answers can still be collectively wrong — because nothing checks that the
+artifacts in play were produced *together*. A test binary two hours older than
+the resources it loads passes its own build check and then crashes in code
+nobody touched.
+
+`rig verify` does two jobs:
+
+```sh
+rig verify                     # build → test → run, stopping at the first failure
+rig verify --stale-only        # report disagreement, run nothing
+rig verify --no-run            # build and test only
+rig verify --run-timeout 30s   # how long "it starts" is given to prove itself
+```
+
+**Sequencing** makes "I checked" mean one thing instead of three. Each step is
+the *same* command the standalone verb runs — `verify` reuses `build`/`test`/`run`
+rather than reproducing how they resolve a target, so the two can never disagree
+about what ran.
+
+**Agreement** is the valuable half. Sequencing alone doesn't solve the problem,
+it hides it, by rebuilding everything every time — fine for a Go service,
+unusable where a build takes minutes to hours, which is exactly where stale
+artifacts survive longest. So `verify` compares modification times instead:
+
+- With **no configuration**, the generic check: is anything under the source
+  tree newer than the newest build output? (Source means files a build actually
+  consumes — editing a README doesn't count.) Output locations follow the
+  ecosystem: `bin`/`dist` for Go, `dist`/`build`/`out`/`.next` for Node,
+  per-project `bin/<config>/<tfm>` for .NET, `target/<profile>` for Cargo. Node
+  also gets `node_modules` checked against its lockfile.
+- With an **`artifacts` block** in `.rig.json`, the artifacts rig cannot infer —
+  generated resources, multi-artifact builds, an `out/` tree beside the repo
+  ([configuration](./configuration#artifacts)).
+
+```
+  ✓ build output  up to date with main.go
+  ✗ browser       out/App.app/Contents/Resources/en.pak is 2h older than src/strings.grd (and 1 more file)
+  ✗ unit-tests    out/unit_tests is 2h older than src/renderer.cc
+```
+
+Notes on the guarantees, because a check that exits zero while being wrong is
+worse than no check:
+
+- **Staleness is a failure, not a warning** — `verify` exits non-zero, so it can
+  gate CI or a pre-push hook. A warning in a long log is what got missed.
+- **Checks that could not run are reported as skipped**, never counted as
+  passes; when nothing could be checked, the summary says so instead of printing
+  a green line.
+- **Nothing is rebuilt implicitly.** `--stale-only` reports and stops; the full
+  `verify` rebuilds by construction.
+- **A directory artifact is judged by its OLDEST file.** An app bundle whose
+  newest file is minutes old can still hold a resource the build never
+  refreshed — that bundle looks fresh and loads stale data.
+- **The run step passes by staying alive.** A server or a desktop app never
+  exits, so "still running after `--run-timeout`" (default 10s) is the answer to
+  "does it start". An exit with a non-zero status before then is a failure. Set
+  `verify.run: false` (or pass `--no-run`) where launching isn't wanted.
 
 ## Ecosystem coverage
 

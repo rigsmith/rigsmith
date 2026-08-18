@@ -27,6 +27,7 @@ rig build --quiet        # suppress the → command echo
 | `format` | Format the code |
 | `lint` | Lint the code |
 | `typecheck` | Type-check the code |
+| `verify` | `build` → `test` → `run` in sequence, then check the artifacts were built together (`--stale-only` checks only, `--no-run` skips the launch) |
 | `coverage` | Run tests with coverage; `--min` gate; `--open` report (in-process cobertura→HTML for .NET) |
 | `kill` | Kill dev processes by project/pattern/`--port` (config `kill.match` wins) |
 | `add` / `remove` / `outdated` / `upgrade` | Package management, native per ecosystem |
@@ -85,6 +86,7 @@ a missing file is fine; unknown keys get a did-you-mean warning.
 | `exclude` | []string (globs) | Hide projects from discovery/pickers |
 | `env` | map | Extra environment; layered file (`.env`/`.env.local`) < ambient < config < command |
 | `coverage.*` / `publish.*` / `rebuild.skip` / `kill.match` | — | Verb defaults (flags win) |
+| `artifacts` / `verify.*` | map | What this repo builds and what it's built from (for `verify`'s staleness check); whether `verify` runs the app and for how long |
 | `commands` | map | Custom verbs: shell string, argv array, or object with per-OS (`macos`/`windows`/`linux`), `env`, `cwd`, `description` |
 | `aliases` / `dotnet.*` | — | Aliases; `dotnet`-namespaced keys fold over legacy top-level |
 

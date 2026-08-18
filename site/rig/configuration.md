@@ -34,6 +34,8 @@ unknown keys get a did-you-mean warning.
 | `exclude` | []string (globs) | Hide projects from discovery/pickers (also written by the picker's `x` key) |
 | `env` | map | Extra environment; layered file (`.env`/`.env.local`) < ambient < config < command |
 | `coverage.*` / `publish.*` / `rebuild.skip` / `kill.match` | — | Verb defaults (flags win) |
+| `artifacts` | map | What this repo builds and what each thing is built from, for [`rig verify`](./verbs#verify)'s agreement check ([see below](#artifacts)) |
+| `verify.run` / `verify.runTimeout` | bool / duration | Whether `rig verify` includes the run step, and how long it must stay alive to count as started (default `10s`) |
 | `worktree.autoOpen` / `worktree.openCmd` | bool / string | Whether `rig worktree new` opens a review window, and the command to open it ([see below](#worktree)) |
 | `commands` | map | Custom verbs: shell string, argv array, Tengo `script`, or object with per-OS (`macos`/`windows`/`linux`), `env`, `cwd`, `description`, `shell` ([see below](#commands)) |
 | `shell` | string | How a shell-string command runs: `portable` (default, cross-platform) or `system` (the OS shell). A command's own `shell` overrides it |
@@ -146,6 +148,41 @@ Both *whether* it opens and *what* opens it are configurable:
 The worktree path is appended as the final argument to `openCmd` and run
 directly (no shell). When the opener isn't on `PATH`, rig prints the command to
 run instead.
+
+## Declaring artifacts {#artifacts}
+
+[`rig verify`](./verbs#verify) infers the common case with no configuration at
+all. The `artifacts` block is for what it *cannot* know: generated resources,
+multi-artifact builds, an output tree beside the repo. Each entry names
+something built and the globs it is built from — anything under `path` older
+than the newest matching input is stale.
+
+```jsonc
+{
+  "artifacts": {
+    // Anything here that is older than its newest input is stale.
+    "browser":    { "path": "../out/Component_arm64/Sheepish.app",
+                    "inputs": ["**/*.cc", "**/*.grd", "**/*.gni"] },
+    "unit-tests": { "path": "../out/Component_arm64/brave_unit_tests",
+                    "inputs": ["**/*.cc", "**/*.h"] },
+    // Shorthand: the path alone. Enough to report "never built", not enough to
+    // compare — verify says the comparison was skipped rather than passing it.
+    "installer": "dist/Setup.exe"
+  },
+  "verify": {
+    "run": true,           // default; false drops the run step from the sequence
+    "runTimeout": "30s"    // default 10s — how long "it starts" gets to prove itself
+  }
+}
+```
+
+- `path` is a file **or a directory**, relative to the repo root or absolute; it
+  may sit outside the repo (`../out/…`). A directory is judged by its oldest
+  file, which is what catches a fresh bundle holding a stale resource.
+- `inputs` are globs relative to the repo root. `*` and `?` stay inside a path
+  segment; `**` spans directories, so `**/*.cc` matches at any depth. Matching
+  is case-insensitive, and skips the usual noise (`node_modules`, `bin`, `obj`,
+  `target`, `dist`, `.git`) plus anything `.gitignore`d.
 
 ## .NET repository discovery
 

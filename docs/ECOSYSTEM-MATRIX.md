@@ -36,6 +36,7 @@ and are omitted.
 | watch / w | ✅ | ✅ | ✅ | ✅ | .NET→`dotnet watch`, cargo→cargo-watch, Go→wgo (`wgo go <verb>`); node `--watch` |
 | coverage | ✅ | ✅ | ✅ | ✅ | cargo→`cargo llvm-cov` |
 | publish (app) | ✅ | — | — | — | `dotnet publish` self-contained app packaging |
+| verify | ✅ | ✅ | ⚠️ | ✅ | Sequences build→test→run everywhere. Its staleness check needs a known build output: .NET `bin/<config>/<tfm>`, node `dist`/`build`/`out`/`.next` (+ `node_modules` vs lockfile), cargo `target/<profile>`, Go `bin`/`dist` — and `go build ./...` writes no binary, so a Go repo without an output dir gets the check reported as skipped. Declared `artifacts` work in every ecosystem |
 
 `rig upgrade` is range-respecting: a bare invocation shows the in-range plan and,
 on a TTY unless `--yes`, asks one confirm before upgrading. node/cargo run their

@@ -242,6 +242,10 @@ func newMenu() menuModel {
 		{label: "lint", desc: "lint the code", verb: "lint"},
 		{label: "typecheck", desc: "type-check the code", verb: "typecheck"},
 	})
+	// verify isn't ecosystem-mapped (it sequences the mapped verbs and then
+	// compares artifacts), so it isn't filtered by keepMapped — it belongs
+	// beside the verbs it runs.
+	dev = append(dev, menuItem{label: "verify", desc: "build + test + run, then check the artifacts agree", cmd: newVerifyCmd()})
 	deps := keepMapped(maps, []menuItem{
 		{label: "install", desc: "install/restore deps", verb: "install"},
 		{label: "ci", desc: "frozen/clean install", verb: "ci"},
