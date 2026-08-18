@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
@@ -275,8 +276,26 @@ func runCommand(cmd *cobra.Command, dir string, argv []string) error {
 	c.Stdout = cmd.OutOrStdout()
 	c.Stderr = cmd.ErrOrStderr()
 	c.Stdin = os.Stdin
+	// `rig verify`'s bounded run step sets this: put the child in its own
+	// process group and, when the context expires, kill the whole tree instead
+	// of only the direct child (see runVerifyVerb).
+	if isolateProcessTree {
+		setProcessGroup(c)
+		c.Cancel = func() error { return killProcessTree(c) }
+		c.WaitDelay = processTreeWaitDelay
+	}
 	return c.Run()
 }
+
+// isolateProcessTree makes the next spawned command own its process tree, so a
+// timeout can take down everything it started. Package-level like dryRun /
+// presetEnv, and set only around `verify`'s run step — the interactive verbs
+// deliberately stay in rig's process group so Ctrl-C reaches them.
+var isolateProcessTree bool
+
+// processTreeWaitDelay is how long Wait lingers for a killed tree's I/O before
+// giving up, so a descendant holding the pipes can't wedge verify open.
+const processTreeWaitDelay = 3 * time.Second
 
 // stdinStdoutTTY reports whether both stdin and stdout are real terminals — the
 // gate for landing bare `rig` on the interactive menu instead of printing help.

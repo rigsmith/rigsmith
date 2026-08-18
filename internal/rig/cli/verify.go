@@ -73,12 +73,16 @@ hook.`),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cwd, _ := os.Getwd()
 			root := resolveRoot(cwd)
-			cfg, _ := config.LoadMerged(root)
-
-			// A .rig.json that didn't parse means the `artifacts` block was
-			// silently dropped, and the report would then say it could check
-			// nothing without saying why. Every other verb can afford to
-			// ignore these; this one cannot.
+			// Unlike every other verb, verify does not shrug off an unreadable
+			// config: a .rig.json it could not load is an `artifacts` block it
+			// silently dropped, and "artifacts agree" would then be a claim
+			// about checks that never happened.
+			cfg, err := config.LoadMerged(root)
+			if err != nil {
+				return fmt.Errorf("could not load %s: %w", config.FileName, err)
+			}
+			// A file that loaded but didn't parse degrades to defaults with a
+			// warning — same problem, so say that out loud too.
 			reportConfigWarnings(cmd, cfg)
 
 			timeout, err := cfg.VerifyRunTimeout()
@@ -86,6 +90,12 @@ hook.`),
 				return err
 			}
 			if cmd.Flags().Changed("run-timeout") {
+				// The config path rejects a non-positive timeout; the flag has
+				// to as well, or `--run-timeout 0` would launch a server with
+				// no deadline at all and hang instead of being bounded.
+				if runTimeout <= 0 {
+					return fmt.Errorf("--run-timeout must be positive, got %s", runTimeout)
+				}
 				timeout = runTimeout
 			}
 
@@ -163,6 +173,15 @@ func runVerifyVerb(cmd *cobra.Command, verb string, timeout time.Duration) error
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
+		// Own the whole process tree for the bounded launch. Killing just the
+		// direct child leaves its descendants running — `go run .` execs the
+		// binary it compiled, `npm run dev` spawns a server — so verify would
+		// report "it starts" and walk away from a live process still holding
+		// the port. Scoped to this step: the other verbs stay in rig's own
+		// process group so terminal signals reach them as usual.
+		prev := isolateProcessTree
+		isolateProcessTree = true
+		defer func() { isolateProcessTree = prev }()
 	}
 	sub := verifyStepCmd(verb)
 	sub.SetContext(ctx)

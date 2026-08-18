@@ -84,6 +84,10 @@ type Finding struct {
 	// AlsoOld counts further out-of-date files under a directory artifact,
 	// beyond the one named in Oldest.
 	AlsoOld int
+	// Unreadable names a directory the scan could not descend into. A clean
+	// verdict requires a complete read, so an unreadable directory turns an
+	// otherwise-OK check into a Skipped one (see vouch).
+	Unreadable string
 }
 
 // Detail renders the human explanation for a finding: why it is stale, or why
@@ -99,6 +103,11 @@ func (f Finding) Detail() string {
 			d += " (and 1 more file)"
 		} else if f.AlsoOld > 1 {
 			d += fmt.Sprintf(" (and %d more files)", f.AlsoOld)
+		}
+		if f.Unreadable != "" {
+			// The staleness is proven either way; say what wasn't read so the
+			// count isn't mistaken for the whole story.
+			d += fmt.Sprintf("; could not read %s", f.Unreadable)
 		}
 		return d
 	case OK:
@@ -192,24 +201,51 @@ func CheckArtifact(root string, a Artifact) Finding {
 		return f
 	}
 
-	newest, newestAt, matched := newestInput(root, a.Inputs)
-	if matched == 0 {
+	// The artifact's own tree is never one of its inputs: a bundle full of
+	// generated files would otherwise be compared against itself and always
+	// look stale.
+	in := scanInputs(root, a.Inputs, []string{abs})
+	if in.matched == 0 {
 		f.Status, f.Reason = Skipped, fmt.Sprintf("no files match %s", strings.Join(a.Inputs, ", "))
 		return f
 	}
-	f.Newest, f.NewestAt = display(root, newest), newestAt
+	f.Newest, f.NewestAt = display(root, in.newest), in.newestAt
 
-	oldest, oldestAt, older, total, err := scanArtifact(abs, newestAt)
+	art, err := scanArtifact(abs, in.newestAt)
 	switch {
 	case err != nil:
 		f.Status, f.Reason = Skipped, fmt.Sprintf("could not read %s: %v", f.Target, err)
-	case total == 0:
+	case art.total == 0:
 		f.Status, f.Reason = Skipped, fmt.Sprintf("%s holds no files", f.Target)
-	case older > 0:
+	case art.older > 0:
 		f.Status = Stale
-		f.Oldest, f.OldestAt, f.AlsoOld = display(root, oldest), oldestAt, older-1
+		f.Oldest, f.OldestAt, f.AlsoOld = display(root, art.oldest), art.oldestAt, art.older-1
 	default:
 		f.Status = OK
+	}
+	return vouch(root, f, in.unreadable, art.unreadable)
+}
+
+// vouch downgrades an otherwise-clean verdict to Skipped when part of what the
+// comparison needed could not be read. Evidence of staleness stands either way
+// — a file that IS older than its input is older whatever else was hidden — but
+// "everything is up to date" is a claim about files we never saw, and this verb
+// exists precisely to stop such claims from exiting zero.
+func vouch(root string, f Finding, unreadable ...[]string) Finding {
+	var missed string
+	for _, list := range unreadable {
+		if len(list) > 0 {
+			missed = display(root, list[0])
+			break
+		}
+	}
+	if missed == "" {
+		return f
+	}
+	f.Unreadable = missed
+	if f.Status == OK {
+		f.Status = Skipped
+		f.Reason = fmt.Sprintf("could not read %s — cannot vouch for the comparison", missed)
 	}
 	return f
 }
@@ -241,24 +277,28 @@ func CheckOutput(root, eco string) Finding {
 	}
 	f.Target = strings.Join(displayAll(root, dirs), ", ")
 
-	out, outAt, count := newestUnder(dirs)
-	if count == 0 {
+	built := newestUnder(dirs)
+	if built.count == 0 {
 		f.Status, f.Reason = Skipped, fmt.Sprintf("%s holds no files — nothing built yet?", f.Target)
 		return f
 	}
-	src, srcAt, matched := newestInput(root, globs)
-	if matched == 0 {
+	// Build output is never source. walkutil prunes some output directories by
+	// default but not all of them (`build`, `out`, `.output`, `.svelte-kit` are
+	// not in its set), so a bundled .js or .css would otherwise count as a
+	// source newer than the output it came from — a permanent false "stale".
+	in := scanInputs(root, globs, dirs)
+	if in.matched == 0 {
 		f.Status, f.Reason = Skipped, "no source files found to compare against"
 		return f
 	}
-	f.Newest, f.NewestAt = display(root, src), srcAt
-	f.Oldest, f.OldestAt = display(root, out), outAt
-	if srcAt.After(outAt) {
+	f.Newest, f.NewestAt = display(root, in.newest), in.newestAt
+	f.Oldest, f.OldestAt = display(root, built.newest), built.newestAt
+	if in.newestAt.After(built.newestAt) {
 		f.Status = Stale
 	} else {
 		f.Status = OK
 	}
-	return f
+	return vouch(root, f, in.unreadable, built.unreadable)
 }
 
 // DepsCheckName is the dependency check's label in the report.
@@ -308,13 +348,22 @@ func CheckDeps(root, eco string) (Finding, bool) {
 	return f, true
 }
 
-// newestInput returns the newest file under root matching any glob, and how
-// many matched. The walk is gitignore-aware and skips the usual noise
-// (node_modules, bin/obj/target/dist, .git), so inputs never accidentally
-// match a build output.
-func newestInput(root string, globs []string) (path string, mod time.Time, matched int) {
+// inputScan is what a pass over the input globs found.
+type inputScan struct {
+	newest     string
+	newestAt   time.Time
+	matched    int
+	unreadable []string
+}
+
+// scanInputs finds the newest file under root matching any glob. The walk is
+// gitignore-aware and prunes the usual noise (node_modules, bin/obj/target/dist,
+// .git) plus every directory in skip, and it reports what it could not read so
+// the caller never draws a clean verdict from a partial scan.
+func scanInputs(root string, globs, skip []string) inputScan {
+	scan := inputScan{}
 	m := newMatcher(globs)
-	_ = walkutil.Walk(root, func(p string, d fs.DirEntry) error {
+	unreadable, _ := walkutil.WalkReport(root, skip, func(p string, d fs.DirEntry) error {
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
 			return nil
@@ -324,70 +373,110 @@ func newestInput(root string, globs []string) (path string, mod time.Time, match
 		}
 		info, err := d.Info()
 		if err != nil {
+			scan.unreadable = append(scan.unreadable, p)
 			return nil
 		}
-		matched++
-		if info.ModTime().After(mod) {
-			path, mod = p, info.ModTime()
+		scan.matched++
+		if info.ModTime().After(scan.newestAt) {
+			scan.newest, scan.newestAt = p, info.ModTime()
 		}
 		return nil
 	})
-	return path, mod, matched
+	scan.unreadable = append(scan.unreadable, unreadable...)
+	return scan
 }
 
-// newestUnder returns the newest file under any of dirs, and the file count.
-func newestUnder(dirs []string) (path string, mod time.Time, count int) {
+// outputScan is what a pass over the build-output directories found.
+type outputScan struct {
+	newest     string
+	newestAt   time.Time
+	count      int
+	unreadable []string
+}
+
+// newestUnder returns the newest file under any of dirs, the file count, and any
+// directory it could not descend into (which could be hiding a newer output).
+func newestUnder(dirs []string) outputScan {
+	scan := outputScan{}
 	for _, dir := range dirs {
 		_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil //nolint:nilerr // an unreadable entry skips, never aborts
+			if err != nil {
+				scan.unreadable = append(scan.unreadable, p)
+				if d != nil && d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() {
+				return nil
 			}
 			info, ierr := d.Info()
 			if ierr != nil {
+				scan.unreadable = append(scan.unreadable, p)
 				return nil
 			}
-			count++
-			if info.ModTime().After(mod) {
-				path, mod = p, info.ModTime()
+			scan.count++
+			if info.ModTime().After(scan.newestAt) {
+				scan.newest, scan.newestAt = p, info.ModTime()
 			}
 			return nil
 		})
 	}
-	return path, mod, count
+	return scan
 }
 
-// scanArtifact walks the artifact at path in one pass, returning the oldest
-// file under it, how many files are older than cutoff, and the total file
-// count. A regular file is its own single entry.
-func scanArtifact(path string, cutoff time.Time) (oldest string, oldestAt time.Time, older, total int, err error) {
+// artifactScan is what a pass over one artifact found.
+type artifactScan struct {
+	oldest     string
+	oldestAt   time.Time
+	older      int // files older than the cutoff
+	total      int
+	unreadable []string
+}
+
+// scanArtifact walks the artifact at path in one pass. A regular file is its own
+// single entry. Unreadable subdirectories are recorded rather than ignored: an
+// unreadable directory inside a bundle could hold exactly the stale resource
+// this check exists to find, so a clean verdict must not be drawn over it.
+func scanArtifact(path string, cutoff time.Time) (artifactScan, error) {
+	scan := artifactScan{}
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", time.Time{}, 0, 0, err
+		return scan, err
 	}
 	if !info.IsDir() {
 		if cutoff.After(info.ModTime()) {
-			older = 1
+			scan.older = 1
 		}
-		return path, info.ModTime(), older, 1, nil
+		scan.oldest, scan.oldestAt, scan.total = path, info.ModTime(), 1
+		return scan, nil
 	}
 	err = filepath.WalkDir(path, func(p string, d fs.DirEntry, werr error) error {
-		if werr != nil || d.IsDir() {
-			return nil //nolint:nilerr // an unreadable entry skips, never aborts
+		if werr != nil {
+			scan.unreadable = append(scan.unreadable, p)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
 		}
 		fi, ierr := d.Info()
 		if ierr != nil {
+			scan.unreadable = append(scan.unreadable, p)
 			return nil
 		}
-		total++
+		scan.total++
 		if cutoff.After(fi.ModTime()) {
-			older++
+			scan.older++
 		}
-		if oldest == "" || fi.ModTime().Before(oldestAt) {
-			oldest, oldestAt = p, fi.ModTime()
+		if scan.oldest == "" || fi.ModTime().Before(scan.oldestAt) {
+			scan.oldest, scan.oldestAt = p, fi.ModTime()
 		}
 		return nil
 	})
-	return oldest, oldestAt, older, total, err
+	return scan, err
 }
 
 // newestOf returns the newest of the named files that exist directly in dir.

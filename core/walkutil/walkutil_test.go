@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"testing"
 )
@@ -141,5 +142,80 @@ func TestNilIgnorerMatchesNothing(t *testing.T) {
 	}
 	if (&Ignorer{}).Ignored("anything", true) {
 		t.Error("empty Ignorer should match nothing")
+	}
+}
+
+// WalkReport prunes the extra directories a caller names — how `rig verify`
+// keeps generated output from being counted as source.
+func TestWalkReportSkipsNamedDirectories(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"src/a.js", "build/a.js", "out/nested/b.js"} {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var seen []string
+	unreadable, err := WalkReport(root, []string{"build", filepath.Join(root, "out")}, func(p string, _ fs.DirEntry) error {
+		rel, _ := filepath.Rel(root, p)
+		seen = append(seen, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WalkReport: %v", err)
+	}
+	if len(unreadable) != 0 {
+		t.Errorf("unreadable = %v, want none", unreadable)
+	}
+	if len(seen) != 1 || seen[0] != "src/a.js" {
+		t.Fatalf("visited %v, want only src/a.js (build/ and out/ pruned)", seen)
+	}
+}
+
+// The whole point of WalkReport over Walk: a directory it could not descend into
+// is handed back, so a caller comparing timestamps can decline to draw a
+// conclusion instead of silently reporting on a partial scan.
+func TestWalkReportNamesUnreadableDirectories(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permissions don't gate traversal the same way on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads unreadable directories anyway")
+	}
+	root := t.TempDir()
+	locked := filepath.Join(root, "locked")
+	if err := os.MkdirAll(filepath.Join(locked, "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "visible.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	var seen int
+	unreadable, err := WalkReport(root, nil, func(string, fs.DirEntry) error {
+		seen++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WalkReport: %v", err)
+	}
+	if seen != 1 {
+		t.Errorf("visited %d files, want the 1 readable one", seen)
+	}
+	if len(unreadable) != 1 || filepath.Base(unreadable[0]) != "locked" {
+		t.Fatalf("unreadable = %v, want the locked directory named", unreadable)
+	}
+
+	// Walk keeps its forgiving contract: same tree, no error, no report.
+	if err := Walk(root, func(string, fs.DirEntry) error { return nil }); err != nil {
+		t.Errorf("Walk should still prune unreadable subtrees silently: %v", err)
 	}
 }

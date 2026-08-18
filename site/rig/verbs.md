@@ -121,6 +121,10 @@ worse than no check:
   exits, so "still running after `--run-timeout`" (default 10s) is the answer to
   "does it start". An exit with a non-zero status before then is a failure. Set
   `verify.run: false` (or pass `--no-run`) where launching isn't wanted.
+- **The run step is cleaned up completely.** It runs in its own process group,
+  so the timeout takes down everything it started — `go run`'s compiled binary,
+  a dev server's child processes — rather than reporting "it starts" and leaving
+  one behind holding the port.
 
 ## Ecosystem coverage
 

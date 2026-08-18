@@ -3,7 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -334,5 +337,134 @@ func TestVerify_MalformedConfigIsReported(t *testing.T) {
 	}
 	if out := buf.String(); !strings.Contains(out, "not valid JSON") {
 		t.Errorf("want the unparseable config reported:\n%s", out)
+	}
+}
+
+// The config path rejects a non-positive runTimeout; the flag must too, or
+// `--run-timeout 0` launches a server with no deadline and hangs.
+func TestVerify_NonPositiveRunTimeoutIsRejected(t *testing.T) {
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	writeGoRepo(t, root)
+	t.Chdir(root)
+
+	for _, arg := range []string{"0", "-5s"} {
+		cmd, buf := newVerifyHost(t, "--run-timeout", arg)
+		err := cmd.Execute()
+		if err == nil || !strings.Contains(err.Error(), "must be positive") {
+			t.Errorf("--run-timeout %s: err = %v, want a positive-duration complaint (output: %s)", arg, err, buf.String())
+		}
+	}
+}
+
+// An unreadable .rig.json means the artifacts block was dropped. Every other
+// verb can shrug that off; verify cannot, or "artifacts agree" becomes a claim
+// about checks that never ran.
+func TestVerify_UnreadableConfigIsAnError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permissions don't gate reads the same way on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads unreadable files anyway")
+	}
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	writeGoRepo(t, root)
+	writeRigJSON(t, root, `{ "ecosystem": "go" }`)
+	path := filepath.Join(root, ".rig.json")
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	t.Chdir(root)
+
+	cmd, buf := newVerifyHost(t, "--stale-only")
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "could not load") {
+		t.Fatalf("err = %v, want the unreadable config surfaced (output: %s)", err, buf.String())
+	}
+}
+
+// The run step owns its process tree so a timeout takes down everything it
+// started. Before this, `go run .`'s compiled binary (and any `npm run dev`
+// server) outlived the deadline: verify reported "it starts" and walked away
+// from a live process still holding its port.
+//
+// The grandchild here is a backgrounded loop the shell does not wait for —
+// killing only the direct child leaves it running, which is exactly the shape
+// that leaked. Its heartbeat file is the evidence: if it keeps growing after
+// runCommand returns, the tree survived.
+func TestRunCommand_IsolatedTimeoutKillsTheWholeTree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX shell / process groups to exercise here")
+	}
+	dir := t.TempDir()
+	beat := filepath.Join(dir, "beat")
+	// The grandchild's output is detached: holding the parent's stdout would
+	// make Wait block until the loop finished on its own, and the test would
+	// pass whether or not the tree was killed. The loop is bounded so a
+	// regression can never leak a process past the test; ~6s is far longer
+	// than the 700ms deadline below.
+	script := fmt.Sprintf(
+		`(i=0; while [ $i -lt 60 ]; do printf . >> %q; sleep 0.1; i=$((i+1)); done) >/dev/null 2>&1 & wait`, beat)
+
+	restore := func(prev bool, target *bool) func() { return func() { *target = prev } }
+	t.Cleanup(restore(dryRun, &dryRun))
+	t.Cleanup(restore(quiet, &quiet))
+	t.Cleanup(restore(isolateProcessTree, &isolateProcessTree))
+	dryRun, quiet, isolateProcessTree = false, true, true
+
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+	host := &cobra.Command{}
+	host.SetContext(ctx)
+	var buf bytes.Buffer
+	host.SetOut(&buf)
+	host.SetErr(&buf)
+
+	_ = runCommand(host, dir, []string{"sh", "-c", script})
+
+	beats := func() int64 {
+		info, err := os.Stat(beat)
+		if err != nil {
+			return 0
+		}
+		return info.Size()
+	}
+	atReturn := beats()
+	if atReturn == 0 {
+		t.Fatal("the grandchild never wrote a heartbeat — the test proves nothing")
+	}
+	time.Sleep(600 * time.Millisecond)
+	if grown := beats(); grown != atReturn {
+		t.Fatalf("the grandchild outlived the timeout: heartbeat grew %d → %d bytes", atReturn, grown)
+	}
+}
+
+// Isolation is scoped to the bounded run step: the other verbs stay in rig's
+// own process group so terminal signals still reach them, and the flag never
+// leaks past the call that set it.
+func TestRunVerifyVerb_IsolationDoesNotLeak(t *testing.T) {
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	writeGoRepo(t, root)
+	t.Chdir(root)
+
+	prev := dryRun
+	dryRun = true
+	t.Cleanup(func() { dryRun = prev })
+
+	host, _ := newRunHost()
+	if err := runVerifyVerb(host, "build", 0); err != nil {
+		t.Fatalf("build step: %v", err)
+	}
+	if isolateProcessTree {
+		t.Error("an untimed step must not isolate the process tree")
+	}
+	if err := runVerifyVerb(host, "run", time.Second); err != nil {
+		t.Fatalf("run step: %v", err)
+	}
+	if isolateProcessTree {
+		t.Error("isolateProcessTree leaked past the run step")
 	}
 }

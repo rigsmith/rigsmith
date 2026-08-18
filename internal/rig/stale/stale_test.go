@@ -3,6 +3,7 @@ package stale
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -343,5 +344,134 @@ func TestRoughly(t *testing.T) {
 		if got := roughly(c.d); got != c.want {
 			t.Errorf("roughly(%s) = %q, want %q", c.d, got, c.want)
 		}
+	}
+}
+
+// ---- partial reads and self-comparison (the "never pass on incomplete
+// evidence" rule) ----
+
+// lockDir makes a directory unreadable for the rest of the test, or skips when
+// the platform/user makes that impossible.
+func lockDir(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permissions don't gate traversal the same way on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads unreadable directories anyway")
+	}
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+}
+
+// A bundle with an unreadable subdirectory must not come back OK: that
+// directory can hold exactly the stale resource the check exists to find, so
+// "up to date" would be a claim about files never seen.
+func TestCheckArtifact_UnreadableSubtreeCannotPass(t *testing.T) {
+	root := t.TempDir()
+	touch(t, root, "src/a.cc", 2*time.Hour)
+	touch(t, root, "out/App.app/Contents/MacOS/App", time.Minute)
+	hidden := filepath.Join(root, "out/App.app/Contents/Resources")
+	touch(t, root, "out/App.app/Contents/Resources/en.pak", time.Minute)
+	lockDir(t, hidden)
+
+	f := CheckArtifact(root, Artifact{Name: "browser", Path: "out/App.app", Inputs: []string{"**/*.cc"}})
+	if f.Status != Skipped {
+		t.Fatalf("status = %v, want Skipped — a partial read must not pass (%+v)", f.Status, f)
+	}
+	if !strings.Contains(f.Reason, "cannot vouch") {
+		t.Errorf("reason = %q, want it to say the comparison can't be vouched for", f.Reason)
+	}
+}
+
+// Evidence of staleness stands even over a partial read: a file that IS older
+// than its input is older whatever else was hidden. The report says what it
+// couldn't read so the count isn't mistaken for the whole story.
+func TestCheckArtifact_StaleVerdictSurvivesAPartialRead(t *testing.T) {
+	root := t.TempDir()
+	touch(t, root, "src/a.cc", time.Minute)
+	touch(t, root, "out/App.app/old.pak", 3*time.Hour)
+	hidden := filepath.Join(root, "out/App.app/Locked")
+	if err := os.MkdirAll(hidden, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lockDir(t, hidden)
+
+	f := CheckArtifact(root, Artifact{Name: "browser", Path: "out/App.app", Inputs: []string{"**/*.cc"}})
+	if f.Status != Stale {
+		t.Fatalf("status = %v, want Stale — the proof is still proof (%+v)", f.Status, f)
+	}
+	if f.Unreadable == "" || !strings.Contains(f.Detail(), "could not read") {
+		t.Errorf("detail = %q, want the unreadable directory disclosed", f.Detail())
+	}
+}
+
+// An artifact is never its own input. A bundle full of generated files would
+// otherwise be compared against itself and report stale forever.
+func TestCheckArtifact_OwnTreeIsNotAnInput(t *testing.T) {
+	root := t.TempDir()
+	touch(t, root, "src/app.js", 2*time.Hour)
+	touch(t, root, "out/bundle/vendor.js", time.Hour) // oldest file in the artifact
+	touch(t, root, "out/bundle/app.js", time.Minute)  // newest .js in the repo
+
+	f := CheckArtifact(root, Artifact{Name: "bundle", Path: "out/bundle", Inputs: []string{"**/*.js"}})
+	if f.Status != OK {
+		t.Fatalf("status = %v, want OK — the bundle's own files are not its inputs (%+v)", f.Status, f)
+	}
+}
+
+// walkutil prunes `dist` and `.next` by default but not `build`, `out`,
+// `.output` or `.svelte-kit`. Without pruning them explicitly, a bundled .js
+// counts as a source newer than the output it came from — a permanent false
+// stale for any Node repo that builds to one of those.
+func TestCheckOutput_NodeOutputIsNotSource(t *testing.T) {
+	for _, dir := range []string{"build", "out", ".output", ".svelte-kit", "dist"} {
+		t.Run(dir, func(t *testing.T) {
+			root := t.TempDir()
+			touch(t, root, "package.json", 3*time.Hour)
+			touch(t, root, "src/index.ts", 2*time.Hour)
+			touch(t, root, dir+"/assets/index.js", time.Minute) // generated, newest file
+
+			f := CheckOutput(root, "node")
+			if f.Status != OK {
+				t.Fatalf("status = %v, want OK — %s/ is output, not source (%+v)", f.Status, dir, f)
+			}
+		})
+	}
+}
+
+// A real source edit after the build is still caught with the pruning in place.
+func TestCheckOutput_NodeSourceEditStillCaught(t *testing.T) {
+	root := t.TempDir()
+	touch(t, root, "package.json", 3*time.Hour)
+	touch(t, root, "build/assets/index.js", time.Hour)
+	touch(t, root, "src/index.ts", time.Minute) // edited after the build
+
+	f := CheckOutput(root, "node")
+	if f.Status != Stale {
+		t.Fatalf("status = %v, want Stale (%+v)", f.Status, f)
+	}
+	if f.Newest != "src/index.ts" {
+		t.Errorf("newest = %q, want src/index.ts", f.Newest)
+	}
+}
+
+// An unreadable source subtree could hide the newest file, so a clean generic
+// verdict can't be drawn over it either.
+func TestCheckOutput_UnreadableSourceSubtreeCannotPass(t *testing.T) {
+	root := t.TempDir()
+	touch(t, root, "main.go", 2*time.Hour)
+	touch(t, root, "bin/app", time.Minute)
+	hidden := filepath.Join(root, "internal")
+	if err := os.MkdirAll(hidden, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lockDir(t, hidden)
+
+	f := CheckOutput(root, "go")
+	if f.Status != Skipped {
+		t.Fatalf("status = %v, want Skipped over a partial source read (%+v)", f.Status, f)
 	}
 }

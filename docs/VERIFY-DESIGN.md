@@ -170,6 +170,39 @@ three green results, one broken product — so it exits non-zero too. The
 "are the things I am about to trust built from the code I have?" in a second,
 against a build that takes two hours.
 
+**The run step must own its process tree** — found in review, and it was a real
+leak. `exec.CommandContext` kills only the direct child, and the things `run`
+launches are rarely leaves: `go run .` execs the binary it compiled, `npm run
+dev` spawns a server. Verify was reporting "it starts", killing the wrapper, and
+walking away from a live process still holding its port — which would then make
+the *next* run fail for a reason that had nothing to do with the code. The
+bounded launch now gets its own process group and the whole group is signalled on
+the deadline. Scoped to that one step: the interactive verbs stay in rig's
+process group so terminal signals still reach them. A test pins it with a
+backgrounded grandchild whose heartbeat file must stop growing once the step
+returns — and it was checked in both directions, since the first version of that
+test passed even with the fix disabled (the grandchild held the parent's stdout,
+so `Wait` blocked until it finished on its own).
+
+**A clean verdict requires a complete read** — also from review. Both scans
+pruned unreadable directories silently, so an inaccessible subtree inside a
+bundle, or in the source tree, could hide the very file that made the artifact
+stale while the check still reported OK. The rule now: *evidence of staleness
+always stands* (a file that is older than its input is older whatever else was
+hidden, and the report discloses what it could not read), but "everything is up
+to date" is a claim about files we never saw, so a partial read downgrades an
+otherwise-clean verdict to skipped. `walkutil.WalkReport` was added for this —
+`Walk` keeps its forgiving contract, which is right for discovery and wrong for
+a check.
+
+**Build output is never source, and an artifact is never its own input** — the
+third review finding, and a false-positive generator rather than a false
+negative. `walkutil` prunes `dist` and `.next` by default but not `build`,
+`out`, `.output` or `.svelte-kit`, so a Node repo building to one of those had
+its own bundled `.js` counted as a source newer than the output it came from:
+permanently, unfixably "stale". The input scans now prune the ecosystem's output
+directories, and a declared artifact's own tree is excluded from its inputs.
+
 **"Nothing could be checked" is its own outcome.** Absent config is not an error,
 but a summary reading "artifacts agree (0 checks)" would be exactly the
 zero-exit-while-wrong this verb exists to prevent. When every check was skipped,
