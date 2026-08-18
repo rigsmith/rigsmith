@@ -15,7 +15,7 @@
 | `install` (`restore`) / `ci` / `clean` / `rebuild` (`rb`) | Restore/clean/rebuild (rebuild scopes bin/obj removal on .NET) |
 | `global` / `dlx` / `x` | Global tool install / one-shot tool run (`dnx`, `pnpm dlx`, …) |
 | `publish` | `dotnet publish` with rid/output/self-contained from flags or `.rig.json publish.*` |
-| `doctor` | Environment checklist (SDK pins via nearest `global.json`) |
+| `doctor` | Environment checklist (SDK pins via nearest `global.json`), headed by a `Setup` group: which rig is running and from where, the family on `PATH`, and what's registered in your shell ([see below](#doctor-setup)) |
 | `cd` | Fuzzy project navigation (prints the dir; pair with a shell wrapper) |
 | `watch <verb>` / `rig w r` | Watch modifier via the pre-parse pipeline (verb prefixes work too: `rig cove`) |
 | `init` | Scaffold a `.rig.json` |
@@ -27,6 +27,39 @@
 | `ui` | Interactive bubbletea menu over the dev verbs (capability-gated) |
 | *custom* | Any `commands` entry in `.rig.json` becomes a subcommand — shell string, argv, or a cross-platform Tengo [`script`](/rig/configuration#commands) |
 | *scripts* | In a Node repo, every `package.json` script becomes a verb |
+
+## What rig itself has installed {#doctor-setup}
+
+`rig doctor` opens with a `Setup` group about rig rather than your project:
+
+```
+Setup
+  ✓ rig        1.4.2 · /Users/john/.local/bin/rig
+  ✓ family     shiprig, changerig, clauderig · /Users/john/.local/bin
+  ! shell      not installed in ~/.zshrc — `rig cd` can't change your directory
+               and tab completion is off; run `rig setup zsh`
+  ✓ aliases    4 of 11 installed: rr, rb, rt, rcd · ~/.zshrc
+```
+
+- **rig** — the running binary's version and path. Two copies on `PATH` is a
+  warning: the first one answers `rig`, and it may not be the one you upgraded.
+  Running a build by path (a source build, a `-dev` launcher) is normal, so it
+  says what typing `rig` would run instead of faulting it.
+- **family** — which sibling rigs are installed and where. Never a warning:
+  each one's completion is loaded only when present, so installing one later
+  needs a new shell, not a re-run of `rig setup`.
+- **shell** — whether the `rig setup` block is in your startup file, and whether
+  it's the one this rig would write. Absent or stale is a warning, because both
+  of the things it provides fail silently. Having only a `--dev` block is called
+  out by name: it's the state behind "I ran setup and `rig cd` still does
+  nothing".
+- **aliases** — which of `rr`, `rb`, `rt`, … are actually live, from the same
+  block `rig alias install` writes.
+
+The group runs everywhere, including a directory with no project — that is
+exactly where you stand when asking why `rcd` does nothing. Nothing here is
+touched by `rig doctor --fix`: writing to your startup file is `rig setup`'s
+job, and it asks.
 
 ## Ecosystem coverage
 
