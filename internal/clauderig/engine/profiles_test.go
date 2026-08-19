@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
@@ -162,5 +163,44 @@ func TestProfileRootIDRoundTrips(t *testing.T) {
 	}
 	if !allowlist.DesktopRoot("desktop") || allowlist.DesktopRoot("cli") {
 		t.Error("allowlist.DesktopRoot must cover the desktop root and nothing of the CLI's")
+	}
+}
+
+// A restore is the only path that materialises a profile without going through
+// the profile store, so it is the only path that can silently weaken the store's
+// containment. On a fresh machine the whole profile — chat history included —
+// would otherwise land world-readable.
+func TestRestore_ProfileFilesKeepTheStoresPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Go's Chmod on Windows only toggles read-only; containment there is the inherited ACL")
+	}
+	staging := t.TempDir()
+	write(t, filepath.Join(staging, "desktop@work"), "profile.json", `{"name":"work"}`)
+	write(t, filepath.Join(staging, "desktop@work"), "data/claude-code-sessions/acct/org/local_a.json", `{"cliSessionId":"s1"}`)
+	target := filepath.Join(t.TempDir(), "work")
+
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	if _, err := Restore(RestoreOptions{
+		StagingDir: staging, Config: desktopProfileConfig(t.TempDir(), true), Machine: m,
+		Profiles:       []string{"work"},
+		TargetOverride: override("desktop@work", target),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path string
+		want os.FileMode
+	}{
+		{filepath.Join(target, "profile.json"), 0o600},
+		{filepath.Join(target, "data", "claude-code-sessions", "acct", "org", "local_a.json"), 0o600},
+		{filepath.Join(target, "data", "claude-code-sessions", "acct"), 0o700},
+	} {
+		info, err := os.Stat(tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if got := info.Mode().Perm(); got != tc.want {
+			t.Errorf("%s mode = %o, want %o", tc.path, got, tc.want)
+		}
 	}
 }

@@ -242,13 +242,19 @@ Same walk, same allowlist, same retention window, same redaction pass, same
 sidecar pruning as the machine-wide root. No second tree format to reason about,
 and nothing new to turn on.
 
-**clauderig still never writes inside a profile.** The allowlist is
+**Sync never writes inside a profile.** It reads, and the allowlist is
 include-only, so a profile contributes nothing beyond what the unprofiled
 Desktop root already contributed — the named config and session-metadata files,
 and nothing else. Cookies, Local Storage, the token cache and the OAuth blobs
-in `config.json` are not in that set on any platform. That is why a restored
-profile comes back with its settings and its history and is still **signed
-out**: the login was never in the backup to begin with.
+in `config.json` are not in that set on any platform.
+
+`restore` does write into a profile — that is the whole point of it, and it
+happens only when you ask for it, never as a side effect of syncing. It can
+only put back what sync took, so a restored profile comes back with its
+settings and its history and is still **signed out**: the login was never in
+the backup to begin with. Restored files carry the profile store's own modes
+(0700 directories, 0600 files on Unix), so a profile recreated on a fresh
+machine is as contained as one `clauderig desktop add` made.
 
 Alongside the app's `data/` tree, a profile's own `profile.json` — clauderig's
 record of the name, label and creation time — travels too. Without it a restore

@@ -453,11 +453,13 @@ func dirExists(p string) bool {
 	return err == nil && info.IsDir()
 }
 
-func writeFile(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+func writeFile(path string, data []byte) error { return writeFileMode(path, data, defaultPerm) }
+
+func writeFileMode(path string, data []byte, pm perm) error {
+	if err := os.MkdirAll(filepath.Dir(path), pm.dir); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, pm.file)
 }
 
 // linkSlug returns the project slug a CLI-root rel path sits under, or "" when

@@ -119,6 +119,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 		}
 		rewritten := map[string]bool{}
 		written := map[string]bool{}
+		pm := permFor(r.ID)
 
 		files, err := listFiles(stageRoot)
 		if err != nil {
@@ -137,10 +138,10 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			dst := filepath.Join(target, filepath.FromSlash(targetRel))
 
 			if strings.HasSuffix(rel, ".json") {
-				if err := restoreJSON(src, dst, opts.Machine.Resolver()); err != nil {
+				if err := restoreJSON(src, dst, opts.Machine.Resolver(), pm); err != nil {
 					return nil, err
 				}
-			} else if err := copyFile(src, dst); err != nil {
+			} else if err := copyFile(src, dst, pm); err != nil {
 				return nil, err
 			}
 			written[targetRel] = true
@@ -272,28 +273,28 @@ func rewriteProjectRel(rel string, slugMap map[string]string) (newRel, srcSlug s
 // this machine and merging onto the local file so the machine's real secrets
 // survive (any synced JSON may carry redaction placeholders). Unparseable JSON
 // falls back to a raw copy.
-func restoreJSON(src, dst string, resolver *pathmap.Resolver) error {
+func restoreJSON(src, dst string, resolver *pathmap.Resolver, pm perm) error {
 	synced, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
 	var v any
 	if err := json.Unmarshal(synced, &v); err != nil {
-		return copyBytes(dst, synced) // not JSON after all — copy raw
+		return copyBytes(dst, synced, pm) // not JSON after all — copy raw
 	}
 	v, _ = pathmap.ResolveJSONValues(v, resolver)
 	resolved, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return copyBytes(dst, synced)
+		return copyBytes(dst, synced, pm)
 	}
 	resolved = append(resolved, '\n')
 
 	local, _ := os.ReadFile(dst) // absent on a fresh machine
 	merged, err := redact.MergeBytes(resolved, local)
 	if err != nil {
-		return writeFile(dst, resolved)
+		return writeFileMode(dst, resolved, pm)
 	}
-	return writeFile(dst, merged)
+	return writeFileMode(dst, merged, pm)
 }
 
 func listFiles(root string) ([]string, error) {
@@ -315,8 +316,8 @@ func listFiles(root string) ([]string, error) {
 	return out, err
 }
 
-func copyFile(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+func copyFile(src, dst string, pm perm) error {
+	if err := os.MkdirAll(filepath.Dir(dst), pm.dir); err != nil {
 		return err
 	}
 	in, err := os.Open(src)
@@ -324,7 +325,7 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, pm.file)
 	if err != nil {
 		return err
 	}
@@ -333,4 +334,4 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-func copyBytes(dst string, data []byte) error { return writeFile(dst, data) }
+func copyBytes(dst string, data []byte, pm perm) error { return writeFileMode(dst, data, pm) }
