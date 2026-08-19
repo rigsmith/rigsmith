@@ -128,7 +128,15 @@ func (s *Store) List() ([]Profile, error) {
 }
 
 // Get loads one profile by name.
+//
+// The name is validated here as well as in Create, because it arrives from the
+// command line on every path — `open`, `quit`, `rm` — and is concatenated into a
+// filesystem path. Validating only at creation would leave `rm ../something`
+// reading, and then deleting, outside the store root.
 func (s *Store) Get(name string) (Profile, error) {
+	if err := ValidName(name); err != nil {
+		return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
 	raw, err := os.ReadFile(s.metaPath(name))
 	if errors.Is(err, os.ErrNotExist) {
 		return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, name)

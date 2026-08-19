@@ -203,3 +203,26 @@ func TestWaitGoneReturnsFalseWhenTheAppStaysUp(t *testing.T) {
 		t.Fatal("waitGone reported a still-running instance as gone")
 	}
 }
+
+// Every command path takes a name from the command line, so the traversal guard
+// has to sit on the lookup, not only on creation.
+func TestLookupsRejectAnEscapingName(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.Create("work", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	// A real profile.json exists one level up from the store root's child dir;
+	// without the guard, "../work" would resolve to it.
+	for _, bad := range []string{"../work", "..", "a/b"} {
+		if _, err := s.Get(bad); !errors.Is(err, ErrNotFound) {
+			t.Errorf("Get(%q) = %v, want ErrNotFound", bad, err)
+		}
+		if err := s.Remove(bad); !errors.Is(err, ErrNotFound) {
+			t.Errorf("Remove(%q) = %v, want ErrNotFound", bad, err)
+		}
+	}
+	// The legitimate profile still resolves.
+	if _, err := s.Get("work"); err != nil {
+		t.Fatalf("Get(work): %v", err)
+	}
+}
