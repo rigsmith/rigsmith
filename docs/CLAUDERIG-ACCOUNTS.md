@@ -206,6 +206,27 @@ process holding it open, and a documented shape.
 - **Windows** — symlink-based sharing needs Developer Mode or an elevated shell;
   otherwise claudeRig copies the customizations into the session instead.
 
+## Seeing the live login at a glance
+
+`clauderig status` reports which account the machine-wide CLI is logged in as,
+beside the sync state:
+
+```console
+$ clauderig status
+  account   john@work.com · max · dev
+```
+
+The email comes from `~/.claude.json`'s profile block, the plan from the live
+credential, and the alias from clauderig's own record. Three things it will tell
+you that are otherwise invisible until something fails:
+
+- **`✗ desynced`** — the credential and the profile block name different
+  accounts, so requests authenticate as one while Claude Code displays another.
+- **a stale pointer** — clauderig's active account is not the live one, which
+  makes the `→` in `account list` describe the wrong account.
+- **`not tracked`** — a login clauderig has never captured, so `switch` has
+  nothing to return to.
+
 ## Identity desync: Keychain vs `oauthAccount` (diagnosed 2026-08-06)
 
 The signed-in identity lives in TWO places that can disagree, and when they do,

@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -65,6 +66,11 @@ func NewStatusCmd() *cobra.Command {
 				fmt.Fprintf(out, "  %-8s %d files\n", r.ID, r.Files)
 			}
 
+			// Who this machine is logged in as. On a machine tracking several
+			// accounts the live login CHANGES, and until something fails it is
+			// invisible — which is exactly the state `status` should surface.
+			printAccountLine(out, info.Account)
+
 			if len(info.Hooks) > 0 {
 				fmt.Fprintf(out, "  hooks     %v\n", info.Hooks)
 			} else {
@@ -102,5 +108,42 @@ func humanizeSince(t time.Time) string {
 		return fmt.Sprintf("%dh ago", int(d.Hours()))
 	default:
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
+// printAccountLine renders the machine-wide Claude Code login.
+func printAccountLine(out io.Writer, a status.AccountInfo) {
+	switch {
+	case a.Problem != "":
+		fmt.Fprintf(out, "  account   %s\n", WarnStyle.Render(a.Problem))
+		return
+	case a.Email == "":
+		fmt.Fprintf(out, "  account   %s\n", DimStyle.Render("not logged in"))
+		return
+	}
+	line := a.Email
+	if a.Subscription != "" {
+		line += DimStyle.Render(" · " + a.Subscription)
+	}
+	// The alias is the handle the user chose and will type; the account id is
+	// just the slugified email, so printing it would only lengthen the line.
+	if a.Alias != "" {
+		line += DimStyle.Render(" · " + a.Alias)
+	}
+	if !a.InSync {
+		// The desync `account doctor` exists to catch: requests authenticate as
+		// one account while Claude Code displays another.
+		line += "  " + ErrStyle.Render("✗ desynced — run `clauderig account doctor`")
+	}
+	fmt.Fprintf(out, "  account   %s\n", line)
+	if a.Untracked {
+		fmt.Fprintf(out, "            %s\n", DimStyle.Render(
+			"not tracked by clauderig — `clauderig account add` to capture it"))
+	}
+	if a.PointerEmail != "" {
+		// clauderig's arrow points elsewhere, so `account list` is describing a
+		// different account than the one this machine authenticates as.
+		fmt.Fprintf(out, "            %s\n", WarnStyle.Render(
+			"clauderig's active pointer says "+a.PointerEmail+" — `clauderig account doctor`"))
 	}
 }
