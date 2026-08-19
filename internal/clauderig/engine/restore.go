@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
@@ -92,7 +93,7 @@ type RestoreOptions struct {
 // placeholder. Caller handles target-non-empty safety (backup/abort) first.
 func Restore(opts RestoreOptions) (*RestoreReport, error) {
 	rep := &RestoreReport{}
-	for _, r := range effectiveRoots(opts.Config, opts.Profiles) {
+	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
 			continue
 		}
@@ -144,7 +145,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			}
 			written[targetRel] = true
 			rr.Files++
-			if isDesktopTree(r.ID) && isDesktopSessionSidecar(targetRel) {
+			if allowlist.DesktopRoot(r.ID) && isDesktopSessionSidecar(desktopRel(r.ID, targetRel)) {
 				rr.DesktopSessions++
 			}
 		}

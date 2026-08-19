@@ -58,12 +58,16 @@ func NewStatusCmd() *cobra.Command {
 			}
 
 			fmt.Fprintln(out, DimStyle.Render("  roots:"))
+			w := 0
+			for _, r := range info.Roots {
+				w = rootColumn(w, r.ID)
+			}
 			for _, r := range info.Roots {
 				if !r.Present {
-					fmt.Fprintf(out, "  %-8s %s\n", r.ID, DimStyle.Render("absent here"))
+					fmt.Fprintf(out, "  %-*s %s\n", w, r.ID, DimStyle.Render("absent here"))
 					continue
 				}
-				fmt.Fprintf(out, "  %-8s %d files\n", r.ID, r.Files)
+				fmt.Fprintf(out, "  %-*s %d files\n", w, r.ID, r.Files)
 			}
 
 			// Who this machine is logged in as. On a machine tracking several
@@ -149,4 +153,18 @@ func printAccountLine(out io.Writer, a status.AccountInfo) {
 		fmt.Fprintf(out, "            %s\n", WarnStyle.Render(
 			"clauderig's active pointer says "+a.PointerEmail+" — `clauderig account doctor`"))
 	}
+}
+
+// rootColumn widens a root-id column to fit id, starting from the 8 the fixed
+// "cli"/"desktop" layout used. A Desktop profile root is `desktop@<name>`, so a
+// fixed column would ragged out the moment a profile is named anything but the
+// shortest thing.
+func rootColumn(w int, id string) int {
+	if w < 8 {
+		w = 8
+	}
+	if len(id) > w {
+		return len(id)
+	}
+	return w
 }

@@ -69,11 +69,11 @@ func TestSyncResolvesProfilesWhereTheStoreKeepsThem(t *testing.T) {
 	if m.Home == "" {
 		t.Skip("no home directory on this machine")
 	}
-	got, status := engine.ProfileDataDir("work", m)
+	got, status := engine.ProfileDir("work", m)
 	if status != pathmap.StatusResolved {
-		t.Fatalf("ProfileDataDir status = %v, want resolved", status)
+		t.Fatalf("ProfileDir status = %v, want resolved", status)
 	}
-	want := filepath.Join(st.Root, "work", "data")
+	want := filepath.Join(st.Root, "work")
 	if filepath.Clean(got) != filepath.Clean(want) {
 		t.Fatalf("sync would read %q, but the store writes %q", got, want)
 	}

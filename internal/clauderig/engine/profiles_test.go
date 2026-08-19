@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 )
 
@@ -19,12 +20,13 @@ func desktopProfileConfig(dir string, enabled bool) *config.Config {
 
 func TestSync_StagesEachProfileUnderItsOwnRoot(t *testing.T) {
 	work, personal := t.TempDir(), t.TempDir()
-	write(t, work, "claude-code-sessions/acct/org/local_a.json", `{"cliSessionId":"s1"}`)
-	write(t, personal, "claude-code-sessions/acct/org/local_b.json", `{"cliSessionId":"s2"}`)
+	write(t, work, "profile.json", `{"name":"work","email":"a@example.com"}`)
+	write(t, work, "data/claude-code-sessions/acct/org/local_a.json", `{"cliSessionId":"s1"}`)
+	write(t, personal, "data/claude-code-sessions/acct/org/local_b.json", `{"cliSessionId":"s2"}`)
 	// Present in both, and in neither allowlist: a profile must not widen what
 	// syncs just by being walked as a root of its own.
-	write(t, work, "Cookies", "sqlite goes here")
-	write(t, personal, "Local Storage/leveldb/000003.log", "session tokens")
+	write(t, work, "data/Cookies", "sqlite goes here")
+	write(t, personal, "data/Local Storage/leveldb/000003.log", "session tokens")
 
 	staging := t.TempDir()
 	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
@@ -37,16 +39,19 @@ func TestSync_StagesEachProfileUnderItsOwnRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ root, rel string }{
-		{"desktop@work", "claude-code-sessions/acct/org/local_a.json"},
-		{"desktop@personal", "claude-code-sessions/acct/org/local_b.json"},
+		// profile.json travels too, or a restored machine would have the files
+		// without an entry `clauderig desktop open` can find.
+		{"desktop@work", "profile.json"},
+		{"desktop@work", "data/claude-code-sessions/acct/org/local_a.json"},
+		{"desktop@personal", "data/claude-code-sessions/acct/org/local_b.json"},
 	} {
 		if _, err := os.Stat(filepath.Join(staging, tc.root, filepath.FromSlash(tc.rel))); err != nil {
 			t.Errorf("%s/%s not staged: %v", tc.root, tc.rel, err)
 		}
 	}
 	for _, denied := range []string{
-		filepath.Join(staging, "desktop@work", "Cookies"),
-		filepath.Join(staging, "desktop@personal", "Local Storage", "leveldb", "000003.log"),
+		filepath.Join(staging, "desktop@work", "data", "Cookies"),
+		filepath.Join(staging, "desktop@personal", "data", "Local Storage", "leveldb", "000003.log"),
 	} {
 		if _, err := os.Stat(denied); err == nil {
 			t.Errorf("%s synced — the Desktop allowlist must govern profiles too", denied)
@@ -63,7 +68,7 @@ func TestSync_StagesEachProfileUnderItsOwnRoot(t *testing.T) {
 
 func TestSync_ProfilesFollowTheDesktopRootsEnabledFlag(t *testing.T) {
 	profile := t.TempDir()
-	write(t, profile, "claude-code-sessions/acct/org/local_a.json", `{"cliSessionId":"s1"}`)
+	write(t, profile, "data/claude-code-sessions/acct/org/local_a.json", `{"cliSessionId":"s1"}`)
 
 	staging := t.TempDir()
 	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
@@ -81,7 +86,7 @@ func TestSync_ProfilesFollowTheDesktopRootsEnabledFlag(t *testing.T) {
 
 func TestSync_KeepFilterAppliesInsideProfiles(t *testing.T) {
 	profile := t.TempDir()
-	write(t, profile, "config.json", `{"preferences":{"theme":"dark"},"oauth":{"tokenCache":"secret-blob"}}`)
+	write(t, profile, "data/config.json", `{"preferences":{"theme":"dark"},"oauth":{"tokenCache":"secret-blob"}}`)
 
 	staging := t.TempDir()
 	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
@@ -92,7 +97,7 @@ func TestSync_KeepFilterAppliesInsideProfiles(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got := read(t, filepath.Join(staging, "desktop@work", "config.json"))
+	got := read(t, filepath.Join(staging, "desktop@work", "data", "config.json"))
 	if want := "theme"; !contains(got, want) {
 		t.Errorf("staged config.json = %s, want it to keep preferences", got)
 	}
@@ -103,7 +108,8 @@ func TestSync_KeepFilterAppliesInsideProfiles(t *testing.T) {
 
 func TestRestore_WritesBackIntoTheProfileDataDir(t *testing.T) {
 	staging := t.TempDir()
-	write(t, filepath.Join(staging, "desktop@work"), "claude-code-sessions/acct/org/local_a.json", `{"cliSessionId":"s1"}`)
+	write(t, filepath.Join(staging, "desktop@work"), "profile.json", `{"name":"work"}`)
+	write(t, filepath.Join(staging, "desktop@work"), "data/claude-code-sessions/acct/org/local_a.json", `{"cliSessionId":"s1"}`)
 	target := t.TempDir()
 
 	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
@@ -115,8 +121,11 @@ func TestRestore_WritesBackIntoTheProfileDataDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(target, "claude-code-sessions", "acct", "org", "local_a.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(target, "data", "claude-code-sessions", "acct", "org", "local_a.json")); err != nil {
 		t.Fatalf("sidecar not restored: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "profile.json")); err != nil {
+		t.Fatalf("profile record not restored: %v", err)
 	}
 	if rep.DesktopSessions() == 0 {
 		t.Error("restored profile sessions not counted — the restart nudge would never fire")
@@ -144,8 +153,14 @@ func TestProfileRootIDRoundTrips(t *testing.T) {
 		if got := ProfileNameOf(id); got != "" {
 			t.Errorf("ProfileNameOf(%q) = %q, want \"\"", id, got)
 		}
-		if !isDesktopTree("desktop") || isDesktopTree("cli") {
-			t.Error("isDesktopTree must cover the desktop root and nothing of the CLI's")
-		}
+	}
+	// The engine mints the id and the allowlist package classifies it; nothing
+	// but this test stops the two spellings of "desktop@" from drifting apart,
+	// and a drift would quietly hand a profile the CLI allowlist.
+	if !allowlist.DesktopRoot(ProfileRootID("work")) {
+		t.Error("a profile root is not recognised as a Desktop tree — it would get the CLI allowlist")
+	}
+	if !allowlist.DesktopRoot("desktop") || allowlist.DesktopRoot("cli") {
+		t.Error("allowlist.DesktopRoot must cover the desktop root and nothing of the CLI's")
 	}
 }

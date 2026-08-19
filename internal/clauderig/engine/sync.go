@@ -86,7 +86,7 @@ func Sync(opts Options) (*Report, error) {
 	// memory/ to their main project); recorded in the manifest for restore.
 	var cliLinks []allowlist.Link
 
-	for _, r := range effectiveRoots(opts.Config, opts.Profiles) {
+	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
 			continue
 		}
@@ -98,7 +98,7 @@ func Sync(opts Options) (*Report, error) {
 			continue
 		}
 
-		files, links, err := allowlist.Walk(loc, allowlistFor(r.ID))
+		files, links, err := allowlist.Walk(loc, allowlist.For(r.ID))
 		if err != nil {
 			return nil, fmt.Errorf("walk %s: %w", r.ID, err)
 		}
@@ -246,7 +246,7 @@ func Sync(opts Options) (*Report, error) {
 		// Only for roots that resolved on this machine: a root we skipped tells us
 		// nothing about whether its staged files are still wanted, and pruning it
 		// would delete another machine's data.
-		disallowed, perr := reconcileStagedRoot(stageRoot, allowlistFor(r.ID))
+		disallowed, perr := reconcileStagedRoot(stageRoot, allowlist.For(r.ID))
 		if perr != nil {
 			return nil, fmt.Errorf("reconcile staged %s: %w", r.ID, perr)
 		}
@@ -401,7 +401,7 @@ func sourceLoc(opts Options, r config.Root) (string, pathmap.Status) {
 // or cache). Note Desktop's real keys are flat and colon-namespaced
 // ("oauth:tokenCache"), not nested.
 func keepOnly(rootID, rel string) []string {
-	if isDesktopTree(rootID) && rel == "config.json" {
+	if allowlist.DesktopRoot(rootID) && desktopRel(rootID, rel) == "config.json" {
 		return config.DesktopConfigKeepKeys()
 	}
 	return nil
@@ -446,13 +446,6 @@ func scanNonJSON(srcPath, rel string, size int64) *redact.Finding {
 		return &found[0]
 	}
 	return nil
-}
-
-func allowlistFor(rootID string) allowlist.List {
-	if isDesktopTree(rootID) {
-		return allowlist.Desktop()
-	}
-	return allowlist.CLI()
 }
 
 func dirExists(p string) bool {

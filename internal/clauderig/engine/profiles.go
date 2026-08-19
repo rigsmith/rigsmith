@@ -2,10 +2,12 @@ package engine
 
 import (
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 )
@@ -47,23 +49,15 @@ func ProfileNameOf(id string) string {
 	return name
 }
 
-// isDesktopTree reports whether a root holds a Claude Desktop application-support
-// tree — the machine-wide install or any profile. Everything the engine special-
-// cases for Desktop (its allowlist, the config.json keep-filter, sidecar
-// retention) keys off this rather than off the bare "desktop" id.
-func isDesktopTree(rootID string) bool {
-	return rootID == DesktopRootID || strings.HasPrefix(rootID, profileRootPrefix)
-}
-
-// profileDataTemplate is a profile's data directory as a portable path.
+// profileDirTemplate is a profile's directory as a portable path.
 //
 // Deliberately a $HOME-relative template rather than the absolute directory the
 // local profile store reports: the layout is identical on every OS, so this
 // resolves on the machine restoring as readily as on the machine that synced —
 // which is what lets `restore` recreate a profile on a computer that has never
 // seen it.
-func profileDataTemplate(name string) string {
-	return "$HOME/.clauderig/desktop/" + name + "/data"
+func profileDirTemplate(name string) string {
+	return "$HOME/.clauderig/desktop/" + name
 }
 
 // profileRoot builds the synthetic root for one profile.
@@ -71,17 +65,18 @@ func profileRoot(name string, enabled bool) config.Root {
 	return config.Root{
 		ID:       ProfileRootID(name),
 		Enabled:  enabled,
-		Location: pathmap.Cascade{Portable: profileDataTemplate(name)},
+		Location: pathmap.Cascade{Portable: profileDirTemplate(name)},
 	}
 }
 
-// ProfileDataDir resolves where the Desktop profile named name keeps its data on
-// machine m — the directory sync reads and restore writes.
+// ProfileDir resolves where the Desktop profile named name lives on machine m —
+// the directory sync reads and restore writes. Its app data is under data/, and
+// clauderig's own record of the profile sits beside that.
 //
 // Exported so the profile store and the sync engine can be checked against each
 // other: they derive the same path independently, and a silent divergence would
 // mean syncing a directory nothing writes to.
-func ProfileDataDir(name string, m config.Machine) (string, pathmap.Status) {
+func ProfileDir(name string, m config.Machine) (string, pathmap.Status) {
 	return profileRoot(name, true).ResolveOn(m)
 }
 
@@ -92,7 +87,7 @@ func ProfileDataDir(name string, m config.Machine) (string, pathmap.Status) {
 // sync off is a statement about Desktop's data, and profiles are more of it —
 // so `clauderig config` keeps meaning what it says without growing a second
 // switch nobody would think to look for.
-func effectiveRoots(cfg *config.Config, profiles []string) []config.Root {
+func EffectiveRoots(cfg *config.Config, profiles []string) []config.Root {
 	roots := cfg.Roots
 	if len(profiles) == 0 {
 		return roots
@@ -110,6 +105,28 @@ func effectiveRoots(cfg *config.Config, profiles []string) []config.Root {
 		out = append(out, profileRoot(name, enabled))
 	}
 	return out
+}
+
+// LocalProfileNames lists the Desktop profiles on this machine — the ones sync
+// walks as roots of their own.
+//
+// Best-effort: a profile store that cannot be read means this run covers the
+// configured roots and nothing else, which is what clauderig did before profiles
+// existed. Backing up profiles must never be the reason a sync fails.
+func LocalProfileNames() []string {
+	st, err := desktop.DefaultStore()
+	if err != nil {
+		return nil
+	}
+	profiles, err := st.List()
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(profiles))
+	for _, p := range profiles {
+		names = append(names, p.Name)
+	}
+	return names
 }
 
 // StagedProfileNames lists the Desktop profiles present in a staging tree.
@@ -139,16 +156,31 @@ func StagedProfileNames(stagingDir string) []string {
 	return names
 }
 
-// desktopTreesIn lists the Desktop roots this run actually walked — the ids
-// whose staged trees the sidecar pass may judge. A root that was skipped is left
-// out: its sidecars were never offered to this run, so nothing was learned about
-// whether they are orphaned.
-func desktopTreesIn(rep *Report) []string {
-	var ids []string
-	for _, r := range rep.Roots {
-		if !r.Skipped && isDesktopTree(r.ID) {
-			ids = append(ids, r.ID)
-		}
+// desktopRel strips the wrapper a profile root adds, so the engine's rules about
+// paths inside a Desktop tree ("config.json", the sidecar layout) are written
+// once and hold for the machine-wide install and a profile alike.
+func desktopRel(rootID, rel string) string {
+	if ProfileNameOf(rootID) == "" {
+		return rel
 	}
-	return ids
+	return strings.TrimPrefix(rel, "data/")
+}
+
+// desktopTreesIn lists the staged Desktop trees this run actually walked, as
+// paths relative to the staging dir. A root that was skipped is left out: its
+// sidecars were never offered to this run, so nothing was learned about whether
+// they are orphaned.
+func desktopTreesIn(rep *Report) []string {
+	var trees []string
+	for _, r := range rep.Roots {
+		if r.Skipped || !allowlist.DesktopRoot(r.ID) {
+			continue
+		}
+		if ProfileNameOf(r.ID) != "" {
+			trees = append(trees, filepath.Join(r.ID, "data"))
+			continue
+		}
+		trees = append(trees, r.ID)
+	}
+	return trees
 }

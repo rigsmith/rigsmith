@@ -132,9 +132,13 @@ func NewRestoreCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			w := 0
+			for _, r := range rep.Roots {
+				w = rootColumn(w, r.ID)
+			}
 			for _, r := range rep.Roots {
 				if r.Skipped {
-					fmt.Fprintf(out, "  %-8s %s\n", r.ID, DimStyle.Render("skipped (nothing staged)"))
+					fmt.Fprintf(out, "  %-*s %s\n", w, r.ID, DimStyle.Render("skipped (nothing staged)"))
 					continue
 				}
 				extra := ""
@@ -144,7 +148,7 @@ func NewRestoreCmd() *cobra.Command {
 				if r.Pruned > 0 {
 					extra += fmt.Sprintf(", %d pruned", r.Pruned)
 				}
-				fmt.Fprintf(out, "  %-8s %d files, %d slug(s) rewritten%s\n", r.ID, r.Files, r.SlugsRewritten, extra)
+				fmt.Fprintf(out, "  %-*s %d files, %d slug(s) rewritten%s\n", w, r.ID, r.Files, r.SlugsRewritten, extra)
 			}
 			if man.ClaudeVersion != "" {
 				fmt.Fprintf(out, "  %s\n", DimStyle.Render("synced from Claude Code "+man.ClaudeVersion))

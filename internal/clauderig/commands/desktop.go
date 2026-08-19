@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -69,13 +68,7 @@ func NewDesktopCmd() *cobra.Command {
 // desktopStore roots the profiles beside the rest of clauderig's local state.
 // Deliberately under ~/.clauderig and NOT under ~/.claude: these directories
 // hold live logged-in sessions and must never reach the sync remote.
-func desktopStore() (*desktop.Store, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	return desktop.NewStore(filepath.Join(home, ".clauderig", "desktop")), nil
-}
+func desktopStore() (*desktop.Store, error) { return desktop.DefaultStore() }
 
 func newDesktopAddCmd() *cobra.Command {
 	var email string
@@ -825,26 +818,4 @@ func promptDesktopName() (string, error) {
 		return "", nil
 	}
 	return strings.TrimSpace(name), err
-}
-
-// localProfileNames lists the Desktop profiles on this machine, for the sync
-// engine to walk as roots of their own.
-//
-// Best-effort: a profile store that cannot be read means this run syncs the
-// configured roots and nothing else, which is what clauderig did before profiles
-// existed. Backing up Desktop profiles must never be the reason a sync fails.
-func localProfileNames() []string {
-	st, err := desktopStore()
-	if err != nil {
-		return nil
-	}
-	profiles, err := st.List()
-	if err != nil {
-		return nil
-	}
-	names := make([]string, 0, len(profiles))
-	for _, p := range profiles {
-		names = append(names, p.Name)
-	}
-	return names
 }

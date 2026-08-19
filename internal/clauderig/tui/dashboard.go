@@ -211,12 +211,20 @@ func (m Model) statusPanel() string {
 	}
 
 	b.WriteString(dim.Render("  roots:") + "\n")
+	// Column sized to the ids present: a Desktop profile root is `desktop@<name>`
+	// and would otherwise run straight into its own file count.
+	rw := 8
+	for _, r := range m.info.Roots {
+		if len(r.ID) > rw {
+			rw = len(r.ID)
+		}
+	}
 	for _, r := range m.info.Roots {
 		if !r.Present {
-			b.WriteString(fmt.Sprintf("  %-8s %s\n", r.ID, dim.Render("absent here")))
+			b.WriteString(fmt.Sprintf("  %-*s %s\n", rw, r.ID, dim.Render("absent here")))
 			continue
 		}
-		b.WriteString(fmt.Sprintf("  %-8s %d files\n", r.ID, r.Files))
+		b.WriteString(fmt.Sprintf("  %-*s %d files\n", rw, r.ID, r.Files))
 	}
 
 	hk := dim.Render("not installed")

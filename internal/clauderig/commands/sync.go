@@ -50,12 +50,16 @@ func NewSyncCmd() *cobra.Command {
 				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
 				RetentionDays: cfg.Retention.HistoryDays,
 				MaxFileBytes:  cfg.Retention.MaxFileBytes,
-				Profiles:      localProfileNames(),
+				Profiles:      engine.LocalProfileNames(),
 			})
 			if rep != nil {
+				w := 0
+				for _, r := range rep.Roots {
+					w = rootColumn(w, r.ID)
+				}
 				for _, r := range rep.Roots {
 					if r.Skipped {
-						fmt.Fprintf(out, "  %-8s %s\n", r.ID, DimStyle.Render("skipped (absent here)"))
+						fmt.Fprintf(out, "  %-*s %s\n", w, r.ID, DimStyle.Render("skipped (absent here)"))
 						continue
 					}
 					extra := ""
@@ -74,7 +78,7 @@ func NewSyncCmd() *cobra.Command {
 					if n := len(r.Oversize); n > 0 {
 						extra += fmt.Sprintf(", %d too large", n)
 					}
-					fmt.Fprintf(out, "  %-8s %d files, %d secret field(s) redacted%s\n", r.ID, r.Files, r.Redactions, extra)
+					fmt.Fprintf(out, "  %-*s %d files, %d secret field(s) redacted%s\n", w, r.ID, r.Files, r.Redactions, extra)
 					// Name what was dropped for size — a silent cap reads as "everything
 					// synced" when it didn't, and these are whole conversations.
 					for _, rel := range r.Oversize {
