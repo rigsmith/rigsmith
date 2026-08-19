@@ -33,6 +33,18 @@ func NewDesktopCmd() *cobra.Command {
 		Long: "Claude Desktop holds one login at a time. This gives each account its own\n" +
 			"permanent profile, so they all stay logged in and their windows can be open\n" +
 			"together — you open the one you want.\n\n" +
+			"SETTING UP, in order:\n\n" +
+			"  1. `desktop add work`      creates a profile and opens a window\n" +
+			"  2. log in as that account  in the window that just opened\n" +
+			"  3. repeat 1–2 per account  `desktop add personal`, and so on\n" +
+			"  4. close every window      `desktop quit <name>`, or just close them\n" +
+			"  5. `desktop share --all`   OPTIONAL: one shared chat history\n\n" +
+			"You log in ONCE per profile. From then on `desktop open work` reopens it,\n" +
+			"already signed in, and any number of windows can be open together.\n\n" +
+			"Step 5 has to run with the windows CLOSED — it moves the directory Claude\n" +
+			"Desktop writes chat history into, and the app keeps writing through a\n" +
+			"directory it opened before the swap. Add a profile later? Run\n" +
+			"`desktop share --all` again; it is idempotent and only touches what changed.\n\n" +
 			"Nothing is copied, swapped or decrypted: clauderig never reads Desktop's\n" +
 			"login. Each profile is a directory Claude Desktop owns outright, and all\n" +
 			"clauderig decides is which one to launch against. That is what makes this\n" +
@@ -136,6 +148,12 @@ func newDesktopAddCmd() *cobra.Command {
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"  a fresh Claude Desktop window is opening — log into this account there.\n"+
 					"  it stays logged in; `clauderig desktop open "+name+"` reopens it."))
+			// The next step is the one people get wrong: sharing has to happen
+			// with the windows closed, so say it here rather than only in the
+			// share command's own help.
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(
+				"  next: add any other accounts the same way. To give them ONE shared chat\n"+
+					"  history, close the windows and run `clauderig desktop share --all`."))
 			return nil
 		},
 	}
@@ -242,6 +260,7 @@ func newDesktopListCmd() *cobra.Command {
 			}
 			app := desktop.New()
 			shareRoot := sharedRootOrEmpty()
+			unshared := 0
 			fmt.Fprintln(out, HeaderStyle.Render("Claude Desktop profiles"))
 			for _, p := range all {
 				marker, state := "  ", DimStyle.Render("closed")
@@ -254,6 +273,8 @@ func newDesktopListCmd() *cobra.Command {
 				line := fmt.Sprintf("%s%s  %s", marker, p.Label(), state)
 				if profileShareState(p, shareRoot) {
 					line += "  " + DimStyle.Render("shared history")
+				} else {
+					unshared++
 				}
 				if p.AccountID != "" {
 					line += "  " + DimStyle.Render("↔ "+p.AccountID)
@@ -262,6 +283,13 @@ func newDesktopListCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"each profile is its own login — opening one never signs another out"))
+			// Suggest sharing only when it would change something: more than one
+			// profile, and at least one of them still on its own history. The
+			// hint disappears once they are shared, so it never becomes noise.
+			if len(all) > 1 && unshared > 0 {
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(
+					"chat history is per profile — close the windows and `clauderig desktop share --all` to pool it"))
+			}
 			return nil
 		},
 	}

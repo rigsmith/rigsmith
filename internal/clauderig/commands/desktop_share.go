@@ -91,6 +91,14 @@ func newDesktopShareCmd() *cobra.Command {
 			"session started in any profile's window appears in all of them — and, because\n" +
 			"the shared tree is the default Desktop root that `clauderig sync` already\n" +
 			"watches, profile history starts being backed up too.\n\n" +
+			"WHEN TO RUN IT: after the profiles exist and you have logged into each, with\n" +
+			"every Claude Desktop window CLOSED. Typically once, right after setting the\n" +
+			"profiles up:\n\n" +
+			"    clauderig desktop add work        # log in, then close the window\n" +
+			"    clauderig desktop add personal    # log in, then close the window\n" +
+			"    clauderig desktop share --all\n\n" +
+			"Run it again whenever you add a profile — it is idempotent, so re-running it\n" +
+			"only links whatever is not linked yet.\n\n" +
 			"Safe by construction: these trees are partitioned by account uuid, so two\n" +
 			"profiles signed into different accounts write to different subdirectories.\n" +
 			"Existing history is migrated into the shared tree first, and migration never\n" +

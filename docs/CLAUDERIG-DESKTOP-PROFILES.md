@@ -18,6 +18,60 @@ $ clauderig desktop open work       # from now on, just open the one you want
 > only). This is an independent Go implementation that adds Windows support and
 > wires the profiles into clauderig.
 
+## Setting it up
+
+### 1. One profile per account
+
+```console
+$ clauderig desktop add work        # creates the profile, opens a window
+                                    # → log in as work in that window
+$ clauderig desktop add personal    # a second window; work stays logged in
+                                    # → log in as personal
+```
+
+That is the whole setup. You log in **once per profile** — from then on
+`clauderig desktop open work` reopens it already signed in, and both windows can
+be open at the same time.
+
+`add` seeds each new profile from your existing Claude Desktop install, so your
+MCP servers, theme and locale are already there
+([what it copies](#what-a-new-profile-inherits)). The login is the one thing it
+does not copy, and deliberately so: Desktop's OAuth refresh token is
+single-use, so two profiles holding one copy of it would work until the first
+refresh and then sign one of them out at an unpredictable moment. Logging in
+gives each profile a credential it owns.
+
+### 2. Optionally, one shared chat history
+
+By default each profile keeps its own history. To pool it — and bring it into
+`clauderig sync`, which otherwise never sees it:
+
+```console
+$ clauderig desktop quit work            # every window must be CLOSED
+$ clauderig desktop quit personal
+$ clauderig desktop share --all
+```
+
+**When to run it:** after the profiles exist and you have logged into each, with
+the windows closed. Usually once, right after setup.
+
+**Why closed:** `share` moves the directory Claude Desktop writes history into,
+and the app keeps writing through a directory handle it opened before the swap —
+so relinking a live profile would silently lose whatever it writes next. `share`
+refuses rather than risk it, and refuses on an *unknown* process state too.
+
+**Adding a profile later?** Run `clauderig desktop share --all` again. It is
+idempotent: already-linked profiles are left alone and only the new one is
+migrated.
+
+```console
+$ clauderig desktop list
+Claude Desktop profiles
+● work · john@work.com      open    shared history  ↔ john-work-com
+  personal · john@home.com  closed  shared history
+each profile is its own login — opening one never signs another out
+```
+
 ## Why this model, when the last one was withdrawn
 
 clauderig shipped Desktop *session switching* — snapshot the signed-in session,
@@ -167,6 +221,9 @@ Seeding happens before the window launches, because Desktop writes its own
 `config.json` on first run and seeding underneath a started app would race it.
 
 ## Sharing session history
+
+[Setting it up](#2-optionally-one-shared-chat-history) has the commands and the
+timing; this is what they do and why it is safe.
 
 By default each profile has its own chat history, because each is a separate
 installation as far as the app is concerned — a Claude Code session started in
