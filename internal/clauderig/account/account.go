@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -72,6 +73,22 @@ type Account struct {
 	SubscriptionType string `json:"subscriptionType,omitempty"`
 	OrganizationUUID string `json:"organizationUuid,omitempty"`
 	AddedAt          string `json:"addedAt,omitempty"` // RFC3339
+	// Alias is a short handle the user chose — usable anywhere an id or email
+	// is, so `switch dev` works. Optional and unique across the store.
+	Alias string `json:"alias,omitempty"`
+	// Disabled holds an account out of AUTOMATIC selection (bare `switch`
+	// rotation) while leaving it fully tracked and switchable by name. It is a
+	// "not this one, not right now" marker, not a soft delete: a work account
+	// nobody should land on by accident, or one being rested.
+	Disabled bool `json:"disabled,omitempty"`
+}
+
+// Title renders the account for a listing: its alias if it has one, else email.
+func (a Account) Title() string {
+	if a.Alias != "" {
+		return a.Alias + " · " + a.Email
+	}
+	return a.Email
 }
 
 // blob mirrors the shape Claude Code persists. Only display metadata is modeled;
@@ -372,9 +389,14 @@ func (s *Store) Resolve(ref string) (Account, error) {
 	if len(all) == 0 {
 		return Account{}, errors.New("no accounts yet — run `clauderig account add` while logged in")
 	}
-	// An exact id or email wins outright (even if it's a substring of another).
+	// An exact id, email or alias wins outright (even if it's a substring of
+	// another). Aliases are compared case-insensitively: they are typed by hand,
+	// and SetAlias already refuses one that would shadow another account.
 	for _, a := range all {
 		if a.ID == ref || a.Email == ref {
+			return a, nil
+		}
+		if a.Alias != "" && strings.EqualFold(a.Alias, ref) {
 			return a, nil
 		}
 	}
@@ -384,7 +406,8 @@ func (s *Store) Resolve(ref string) (Account, error) {
 	var matches []Account
 	if lc != "" {
 		for _, a := range all {
-			if strings.Contains(strings.ToLower(a.Email), lc) || strings.Contains(strings.ToLower(a.ID), lc) {
+			if strings.Contains(strings.ToLower(a.Email), lc) || strings.Contains(strings.ToLower(a.ID), lc) ||
+				(a.Alias != "" && strings.Contains(strings.ToLower(a.Alias), lc)) {
 				matches = append(matches, a)
 			}
 		}
@@ -401,6 +424,78 @@ func (s *Store) Resolve(ref string) (Account, error) {
 		}
 		return Account{}, fmt.Errorf("%q matches %d accounts (%s) — be more specific", ref, len(matches), strings.Join(emails, ", "))
 	}
+}
+
+// aliasRe keeps an alias short, typeable, and unambiguous against the ids and
+// emails it shares a namespace with.
+var aliasRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,31}$`)
+
+// SetAlias gives an account a short handle. The alias shares a namespace with
+// ids and emails — Resolve matches all three — so it is refused when it would
+// shadow another account's identity, which would silently redirect a switch.
+func (s *Store) SetAlias(id, alias string) error {
+	alias = strings.TrimSpace(alias)
+	if !aliasRe.MatchString(alias) {
+		return fmt.Errorf("invalid alias %q: use letters, digits, dot, dash or underscore (max 32, must start alphanumeric)", alias)
+	}
+	all, err := s.List()
+	if err != nil {
+		return err
+	}
+	lc := strings.ToLower(alias)
+	for _, a := range all {
+		if a.ID == id {
+			continue
+		}
+		if strings.ToLower(a.ID) == lc || strings.ToLower(a.Email) == lc || strings.ToLower(a.Alias) == lc {
+			return fmt.Errorf("alias %q already identifies %s — pick another", alias, a.Email)
+		}
+	}
+	return s.updateMeta(id, func(a *Account) { a.Alias = alias })
+}
+
+// ClearAlias removes an account's alias.
+func (s *Store) ClearAlias(id string) error {
+	return s.updateMeta(id, func(a *Account) { a.Alias = "" })
+}
+
+// SetDisabled holds an account out of automatic selection, or returns it.
+func (s *Store) SetDisabled(id string, disabled bool) error {
+	return s.updateMeta(id, func(a *Account) { a.Disabled = disabled })
+}
+
+// updateMeta rewrites ONLY an account's meta.json.
+//
+// Deliberately not routed through save(), which also writes the credential:
+// these are display/policy edits, and re-writing a credential to change a label
+// would put the account's tokens through a needless read-modify-write — the
+// exact operation that has already cost this project two logouts.
+func (s *Store) updateMeta(id string, mutate func(*Account)) error {
+	a, ok := s.read(id)
+	if !ok {
+		return fmt.Errorf("no such account: %s", id)
+	}
+	mutate(&a)
+	body, err := json.MarshalIndent(a, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.metaPath(id), body, 0o600)
+}
+
+// Enabled returns the accounts eligible for automatic selection, in List order.
+func (s *Store) Enabled() ([]Account, error) {
+	all, err := s.List()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Account, 0, len(all))
+	for _, a := range all {
+		if !a.Disabled {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 // Credential reads a stored account's raw credential blob.

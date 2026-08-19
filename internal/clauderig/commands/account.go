@@ -43,6 +43,9 @@ func NewAccountCmd() *cobra.Command {
 			"  run     launch Claude Code as an account in THIS terminal only\n" +
 			"          (isolated, self-refreshing — never touches your live login)\n" +
 			"  switch  change the machine-wide login (guarded: refuses while Claude runs)\n" +
+			"  alias   give an account a short handle (`switch dev`)\n" +
+			"  map     bind a directory to an account, for a bare `run` there\n" +
+			"  disable hold an account out of automatic rotation\n" +
 			"  remove  stop tracking an account (does not log it out)\n" +
 			"  purge   remove all of claudeRig's account data",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -54,7 +57,9 @@ func NewAccountCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newAccountAddCmd(), newAccountListCmd(), newAccountRunCmd(),
 		newAccountSwitchCmd(), newAccountSessionsCmd(), newAccountRemoveCmd(), newAccountPurgeCmd(),
-		newAccountDoctorCmd(), newAccountWatchCmd())
+		newAccountDoctorCmd(), newAccountWatchCmd(),
+		newAccountAliasCmd(), newAccountDisableCmd(), newAccountEnableCmd(),
+		newAccountMapCmd(), newAccountUnmapCmd())
 	return cmd
 }
 
@@ -483,7 +488,8 @@ func captureCurrent(st *account.Store) (account.Account, bool, error) {
 }
 
 func newAccountListCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls", "status"},
 		Short:   "Show stored accounts and which one is live",
@@ -493,6 +499,12 @@ func newAccountListCmd() *cobra.Command {
 			st, err := account.DefaultStore()
 			if err != nil {
 				return err
+			}
+			// JSON is the whole answer — accounts, health, active pointer — so it
+			// short-circuits before the human rendering and its desync warning,
+			// which belongs on stderr-shaped output, not in a parsed document.
+			if asJSON {
+				return printAccountsJSON(out, st)
 			}
 			all, err := st.List()
 			if err != nil {
@@ -529,6 +541,9 @@ func newAccountListCmd() *cobra.Command {
 					anyDead = true
 					health = "  " + ErrStyle.Render("✗ stored credential has no tokens")
 				}
+				if a.Disabled {
+					health += "  " + DimStyle.Render("(disabled)")
+				}
 				fmt.Fprintf(out, "%s%s%s\n", marker, accountTitle(a), health)
 			}
 			if anyDead {
@@ -549,28 +564,56 @@ func newAccountListCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit accounts, health and the active pointer as JSON")
+	return cmd
 }
 
 func newAccountRunCmd() *cobra.Command {
 	var noShare bool
 	cmd := &cobra.Command{
-		Use:   "run <id|email> [-- claude args...]",
+		Use:   "run [<id|email|alias>] [-- claude args...]",
 		Short: "Launch Claude Code as an account in THIS terminal only",
 		Long: "Session mode: runs `claude` against the account's own persistent\n" +
 			"CLAUDE_CONFIG_DIR, so this terminal is that account while every other\n" +
 			"terminal and the VS Code extension stay on your default. The profile\n" +
 			"self-refreshes its own token in isolation and never touches your live\n" +
 			"login. ~/.claude customizations are shared in by default (--no-share for a\n" +
-			"bare profile). Args after `--` pass through to claude.",
-		Args: cobra.MinimumNArgs(1),
+			"bare profile). Args after `--` pass through to claude.\n\n" +
+			"With no account named, uses the one mapped to this directory\n" +
+			"(`clauderig account map`), inheriting the nearest mapped ancestor.",
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := account.DefaultStore()
 			if err != nil {
 				return err
 			}
-			a, err := st.Resolve(args[0])
-			if err != nil {
-				return err
+			var a account.Account
+			if len(args) > 0 {
+				a, err = st.Resolve(args[0])
+				if err != nil {
+					return err
+				}
+				args = args[1:]
+			} else {
+				// No account named: fall back to this directory's mapping. An
+				// unmapped directory is an error rather than a silent launch of
+				// the live login — `run` promises an isolated profile, and
+				// quietly giving you the machine-wide one instead is exactly the
+				// kind of surprise this command exists to avoid.
+				cwd, cerr := os.Getwd()
+				if cerr != nil {
+					return cerr
+				}
+				mapped, ok := mappedAccount(st, cwd)
+				if !ok {
+					return errors.New(
+						"no account named, and this directory is not mapped to one.\n" +
+							"Name it (`clauderig account run <id|email|alias>`), or bind this directory " +
+							"with `clauderig account map <id|email|alias>`")
+				}
+				a = mapped
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s %s\n",
+					DimStyle.Render("mapped:"), DimStyle.Render(cwd))
 			}
 			warnIfActive(cmd, st, a)
 			home, err := account.ClaudeHome()
@@ -588,7 +631,7 @@ func newAccountRunCmd() *cobra.Command {
 			fmt.Fprintf(cmd.ErrOrStderr(), "%s %s %s\n",
 				DimStyle.Render("session:"), accountTitle(a),
 				DimStyle.Render("(CLAUDE_CONFIG_DIR="+dir+")"))
-			return runClaude(cmd, claudeBin, dir, args[1:])
+			return runClaude(cmd, claudeBin, dir, args)
 		},
 	}
 	cmd.Flags().BoolVar(&noShare, "no-share", false, "don't share ~/.claude customizations into the session (bare profile)")
@@ -596,13 +639,14 @@ func newAccountRunCmd() *cobra.Command {
 }
 
 func newAccountSwitchCmd() *cobra.Command {
-	var dryRun, force, kill bool
+	var dryRun, force, kill, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "switch [<id|email>]",
 		Short: "Change the machine-wide login (guarded against live sessions)",
 		Long: "Global swap: overwrites the live credential the whole machine reads, so\n" +
 			"every Claude Code instance follows. With no argument, rotates to the next\n" +
-			"stored account.\n\n" +
+			"stored account, skipping any that are disabled (`account disable`); a\n" +
+			"disabled account is still a valid target when named explicitly.\n\n" +
 			"SCOPE: the Claude Code CLI login only. Claude Desktop authenticates\n" +
 			"separately — its own token store and its own claude.ai session — so it\n" +
 			"stays signed in as whatever account it was, and a switch neither moves\n" +
@@ -618,12 +662,13 @@ func newAccountSwitchCmd() *cobra.Command {
 			"then SIGKILL), then swaps.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSwitch(cmd, args, dryRun, force, kill)
+			return runSwitch(cmd, args, dryRun, force, kill, asJSON)
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what switch would do without changing anything")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "swap even while Claude Code is running (those sessions will need to re-login)")
 	cmd.Flags().BoolVarP(&kill, "kill", "k", false, "terminate running Claude Code processes first, then swap")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "report the outcome as JSON (including refusals)")
 	return cmd
 }
 
@@ -679,6 +724,9 @@ func newAccountRemoveCmd() *cobra.Command {
 			if err := st.Remove(a.ID); err != nil {
 				return err
 			}
+			// A directory mapping naming a removed account would do nothing at
+			// exactly the moment it was expected to work, so it goes with it.
+			pruneMappingsForAccount(a.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", OkStyle.Render("Removed"), accountTitle(a))
 			return nil
 		},
@@ -813,6 +861,47 @@ func runAccountUI(cmd *cobra.Command) error {
 				continue
 			}
 			note = "removed " + accountTitle(target)
+		case "toggle-disable":
+			target, rerr := st.Resolve(final.Action.ID)
+			if rerr != nil {
+				note = ErrStyle.Render(rerr.Error())
+				continue
+			}
+			if derr := st.SetDisabled(target.ID, !target.Disabled); derr != nil {
+				note = ErrStyle.Render(derr.Error())
+				continue
+			}
+			if target.Disabled {
+				note = "enabled " + target.Email
+			} else {
+				note = "disabled " + target.Email + " — a bare switch will skip it"
+			}
+		case "alias":
+			target, rerr := st.Resolve(final.Action.ID)
+			if rerr != nil {
+				note = ErrStyle.Render(rerr.Error())
+				continue
+			}
+			alias, aerr := promptAlias(target)
+			if aerr != nil {
+				return aerr
+			}
+			switch {
+			case alias == target.Alias:
+				continue // unchanged (or backed out)
+			case alias == "":
+				if cerr := st.ClearAlias(target.ID); cerr != nil {
+					note = ErrStyle.Render(cerr.Error())
+					continue
+				}
+				note = "alias removed from " + target.Email
+			default:
+				if serr := st.SetAlias(target.ID, alias); serr != nil {
+					note = ErrStyle.Render(serr.Error())
+					continue
+				}
+				note = "alias " + alias + " → " + target.Email
+			}
 		case "run":
 			target, rerr := st.Resolve(final.Action.ID)
 			if rerr != nil {
@@ -894,8 +983,15 @@ func warnIfActive(cmd *cobra.Command, st *account.Store, a account.Account) {
 }
 
 // runSwitch performs (or, with dryRun, previews) a guarded global swap.
-func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill bool) error {
+func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill, asJSON bool) error {
 	out := cmd.OutOrStdout()
+	// With --json, stdout carries exactly one object and every human line moves
+	// to stderr — otherwise a caller piping to jq has to strip prose first.
+	report := func(switchJSON) {}
+	if asJSON {
+		out = cmd.ErrOrStderr()
+		report = func(r switchJSON) { _ = emitJSON(cmd.OutOrStdout(), r) }
+	}
 	st, err := account.DefaultStore()
 	if err != nil {
 		return err
@@ -913,6 +1009,7 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill bool) erro
 	}
 	if active == target.ID {
 		fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already live:"), accountTitle(target))
+		report(switchJSON{From: active, To: target.ID, ToEmail: target.Email, Reason: "already-live"})
 		return nil
 	}
 
@@ -942,6 +1039,8 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill bool) erro
 		} else {
 			fmt.Fprintf(out, "  %s\n", OkStyle.Render("no live sessions — switch would proceed"))
 		}
+		report(switchJSON{DryRun: true, From: active, To: target.ID, ToEmail: target.Email,
+			Blocking: toInstancesJSON(live)})
 		return nil
 	}
 
@@ -960,6 +1059,8 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill bool) erro
 			printInstances(out, live)
 		default:
 			printSwitchRefused(out, live)
+			report(switchJSON{From: active, To: target.ID, ToEmail: target.Email,
+				Reason: "live-sessions", Blocking: toInstancesJSON(live)})
 			return errors.New("live Claude Code sessions detected")
 		}
 	}
@@ -970,6 +1071,9 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill bool) erro
 	// happened.
 	backup, blocked, err := doSwitch(st, target, force)
 	if err != nil {
+		// A refusal is the outcome a script most needs to see, so it is reported
+		// as JSON as well as returned — the error still sets the exit code.
+		report(switchJSON{From: active, To: target.ID, ToEmail: target.Email, Reason: err.Error()})
 		return err
 	}
 	if len(blocked) > 0 {
@@ -980,6 +1084,7 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill bool) erro
 		fmt.Fprintf(out, "%s %s\n", DimStyle.Render("backed up live credential →"), backup)
 	}
 	fmt.Fprintf(out, "%s %s\n", OkStyle.Render("Switched to"), accountTitle(target))
+	report(switchJSON{Switched: true, From: active, To: target.ID, ToEmail: target.Email, Backup: backup})
 	return nil
 }
 
@@ -1174,6 +1279,13 @@ func printSwitchRefused(out interface{ Write([]byte) (int, error) }, live []acco
 
 // nextAccount returns the account after the active one in list order (wrapping),
 // for a bare `switch`.
+// nextAccount picks the rotation target for a bare `switch`.
+//
+// Rotation walks the FULL list to find where we are, then takes the next
+// ENABLED account: disabled accounts must not be landed on by accident, but the
+// active account may itself be disabled (it was disabled while live, or switched
+// to by name), and dropping it from the walk would restart rotation from the top
+// instead of moving on from where you are.
 func nextAccount(st *account.Store, active string) (account.Account, error) {
 	all, err := st.List()
 	if err != nil {
@@ -1182,12 +1294,26 @@ func nextAccount(st *account.Store, active string) (account.Account, error) {
 	if len(all) == 0 {
 		return account.Account{}, errors.New("no accounts to rotate between")
 	}
+	start := 0
 	for i, a := range all {
 		if a.ID == active {
-			return all[(i+1)%len(all)], nil
+			start = i + 1
+			break
 		}
 	}
-	return all[0], nil
+	for off := 0; off < len(all); off++ {
+		cand := all[(start+off)%len(all)]
+		if !cand.Disabled && cand.ID != active {
+			return cand, nil
+		}
+	}
+	enabled, _ := st.Enabled()
+	if len(enabled) == 0 {
+		return account.Account{}, errors.New(
+			"every account is disabled, so there is nothing to rotate to — " +
+				"`clauderig account enable <id|email>`, or `switch <id|email>` by name")
+	}
+	return account.Account{}, errors.New("no other account to rotate to")
 }
 
 func printInstances(w interface{ Write([]byte) (int, error) }, live []account.Instance) {
@@ -1209,6 +1335,23 @@ func confirmDestructive(title string) (bool, error) {
 	return ok, err
 }
 
+// promptAlias asks for an account's short handle, pre-filled with the current
+// one so the prompt doubles as "rename" and "clear" (submit it empty). Backing
+// out returns the existing alias, which the caller reads as "no change".
+func promptAlias(a account.Account) (string, error) {
+	alias := a.Alias
+	err := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Alias for " + a.Email).
+			Description("a short handle usable anywhere an id or email is (empty clears it)").
+			Value(&alias),
+	)).WithKeyMap(huhEscKeyMap()).WithTheme(brand.Theme(brand.AccentClaude)).Run()
+	if errors.Is(err, huh.ErrUserAborted) {
+		return a.Alias, nil
+	}
+	return strings.TrimSpace(alias), err
+}
+
 // runClaude execs claude with an isolated CLAUDE_CONFIG_DIR, inheriting this
 // terminal's stdio and propagating the exit code.
 func runClaude(cmd *cobra.Command, bin, configDir string, extra []string) error {
@@ -1227,6 +1370,11 @@ func accountTitle(a account.Account) string {
 	name := a.Email
 	if name == "" {
 		name = a.ID
+	}
+	// The alias leads: it is the handle the user chose and the one they will
+	// type again, and it is meaningless unless it is visible somewhere.
+	if a.Alias != "" {
+		name = a.Alias + DimStyle.Render(" · "+name)
 	}
 	if a.SubscriptionType != "" {
 		name += DimStyle.Render(" · " + a.SubscriptionType)

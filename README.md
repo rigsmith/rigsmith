@@ -111,3 +111,33 @@ verbs — the Go counterpart to how it exposes a Node repo's `package.json`
 scripts. (In a multi-module workspace it also surfaces `scripts/`- or `cmd/`-located
 mains listed in `go.work`.) These verbs are exact-match only (excluded from
 prefix-matching) and never shadow a built-in.
+
+## Credits
+
+Two projects worked out how to run several Claude accounts from one machine
+before rigsmith did. `clauderig account` and `clauderig desktop` are independent
+Go implementations, but the ideas — and several of the hard-won details — are
+theirs:
+
+- **[claude-swap](https://github.com/realiti4/claude-swap)** by
+  [realiti4](https://github.com/realiti4) (MIT) — the multi-account model for the
+  Claude Code CLI, and its safety mechanisms: process detection before a swap,
+  `security -i` writes that keep secrets out of argv, and the round-trip backup
+  of the displaced credential. Later work of theirs we adopted deliberately, and
+  credit inline at the code: cooperating with Claude Code's own OAuth refresh
+  locks (their PR #167), refusing to capture from inside an isolated session
+  profile (#190, #205), and writing *through* a symlinked `~/.claude.json`
+  rather than over it (#201). `docs/CLAUDE-SWAP-REVIEW.md` is our full review of
+  that project — what we took, what clauderig already covered, and what we
+  chose not to build.
+- **[guise](https://github.com/siddhjagani/guise)** by
+  [siddhjagani](https://github.com/siddhjagani) — the per-profile model behind
+  `clauderig desktop`: rather than move a Claude Desktop session between
+  accounts, give each account its own permanent `--user-data-dir` and launch the
+  app against it. Including the macOS launch mechanism (`open -n -a Claude.app
+  --args --user-data-dir=…`), which detaches the app from the calling terminal.
+  clauderig adds Windows support and the integration with its account store; the
+  reasoning is in `docs/CLAUDERIG-DESKTOP-PROFILES.md`.
+
+Independently: the release engine is a faithful port of **net-changesets**, which
+is itself a .NET port of [changesets](https://github.com/changesets/changesets).

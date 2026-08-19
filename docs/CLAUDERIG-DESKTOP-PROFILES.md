@@ -56,6 +56,30 @@ many windows.
 | `clauderig desktop list` (alias `ls`) | Saved profiles; `●` marks the ones open right now. |
 | `clauderig desktop quit <name\|email>` | Close that profile's window (SIGTERM, then firmly). |
 | `clauderig desktop rm <name\|email> [--force]` | Delete the profile. Signs that account out of Desktop for good. |
+| `clauderig desktop map [<name>] [dir]` / `unmap [dir]` | Bind a directory to a profile, so a bare `desktop open` there opens it. Bare `map` lists every binding. |
+
+`clauderig desktop list --json` emits one machine-readable object — the profiles,
+which are open, and whether Desktop is supported and installed on this platform.
+
+Bare `clauderig desktop` on a terminal opens an interactive screen: the profiles,
+`●` against the open ones, and keys to open, close, add and remove. It is also
+reachable from the dashboard (`clauderig ui`, hotkey `d`). Note what the screen
+does *not* have: a "current" profile. There isn't one — every profile is a
+separate login and any number can be signed in at once, so `●` means "window
+open", not "this is the active account".
+
+## Directory mapping
+
+`clauderig desktop map work ~/clients/acme` binds a directory; a bare
+`clauderig desktop open` inside it opens that window. Subdirectories inherit the
+nearest mapped ancestor.
+
+This is the **same table** `clauderig account map` writes
+(`~/.clauderig/dir-map.json`), so one directory can name both the CLI account and
+the Desktop profile it belongs to — they usually travel together, and one file
+means either command's `map` shows the whole picture rather than half of it. The
+two bindings stay independent: `desktop unmap` never drops the account binding,
+and vice versa. Mappings are per-machine and never synced.
 
 `app` is an alias for `desktop`. The group is deliberately **separate from
 `clauderig account`**, which switches the Claude Code CLI login: two different

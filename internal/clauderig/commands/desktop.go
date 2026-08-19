@@ -5,10 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
+	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
+	"github.com/rigsmith/rigsmith/internal/clauderig/dirmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -35,12 +41,18 @@ func NewDesktopCmd() *cobra.Command {
 			"  open   open (or focus) a profile's window\n" +
 			"  list   show saved profiles and which are open\n" +
 			"  quit   close a profile's window\n" +
+			"  map    bind a directory to a profile, for a bare `open` there\n" +
 			"  rm     delete a profile (logs that account out of Desktop for good)\n\n" +
 			"Separate from `clauderig account`, which switches the Claude Code CLI login.",
-		RunE: func(cmd *cobra.Command, args []string) error { return cmd.Help() },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if Interactive() {
+				return runDesktopUI(cmd)
+			}
+			return cmd.Help()
+		},
 	}
 	cmd.AddCommand(newDesktopAddCmd(), newDesktopOpenCmd(), newDesktopListCmd(),
-		newDesktopQuitCmd(), newDesktopRemoveCmd())
+		newDesktopQuitCmd(), newDesktopRemoveCmd(), newDesktopMapCmd(), newDesktopUnmapCmd())
 	return cmd
 }
 
@@ -128,9 +140,12 @@ func linkedAccount(name, email string) (id, resolvedEmail string) {
 
 func newDesktopOpenCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "open <name|email>",
+		Use:   "open [<name|email>]",
 		Short: "Open (or focus) a profile's Claude Desktop window",
-		Args:  cobra.ExactArgs(1),
+		Long: "Opens the profile's window, or focuses it if it is already open.\n\n" +
+			"With no profile named, uses the one mapped to this directory\n" +
+			"(`clauderig desktop map`), inheriting the nearest mapped ancestor.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			app := desktop.New()
@@ -141,9 +156,13 @@ func newDesktopOpenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p, err := st.Resolve(args[0])
+			ref, err := desktopRefFor(args)
 			if err != nil {
-				return desktopNotFound(err, args[0])
+				return err
+			}
+			p, err := st.Resolve(ref)
+			if err != nil {
+				return desktopNotFound(err, ref)
 			}
 			running, rerr := desktop.IsRunning(app, p.DataDir())
 			if rerr != nil {
@@ -168,7 +187,8 @@ func newDesktopOpenCmd() *cobra.Command {
 }
 
 func newDesktopListCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "Show saved Desktop profiles and which are open",
@@ -182,6 +202,9 @@ func newDesktopListCmd() *cobra.Command {
 			all, err := st.List()
 			if err != nil {
 				return err
+			}
+			if asJSON {
+				return printDesktopJSON(out, st, all)
 			}
 			if len(all) == 0 {
 				fmt.Fprintf(out, "%s\n", DimStyle.Render(
@@ -209,6 +232,8 @@ func newDesktopListCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the profiles and which are open as JSON")
+	return cmd
 }
 
 func newDesktopQuitCmd() *cobra.Command {
@@ -286,6 +311,11 @@ func newDesktopRemoveCmd() *cobra.Command {
 			if rerr := st.Remove(p.Name); rerr != nil {
 				return rerr
 			}
+			// Same reasoning as `account remove`: a mapping to a profile that no
+			// longer exists would fail at the moment it was relied on.
+			if dm, derr := dirmapStore(); derr == nil {
+				_ = dm.PruneDesktop(p.Name)
+			}
 			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ removed"), p.Label())
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"  that account is signed out of Desktop now; its Claude Code login is untouched"))
@@ -312,4 +342,286 @@ func desktopUnavailable() error {
 			"`clauderig account` (the Claude Code CLI login) works everywhere", desktop.ErrUnsupported)
 	}
 	return fmt.Errorf("%w — install it from https://claude.ai/download", desktop.ErrNotInstalled)
+}
+
+// --- JSON + directory mapping ------------------------------------------------
+
+type desktopProfileJSON struct {
+	Name       string `json:"name"`
+	Email      string `json:"email,omitempty"`
+	AccountID  string `json:"accountId,omitempty"`
+	Open       bool   `json:"open"`
+	DataDir    string `json:"dataDir"`
+	CreatedAt  string `json:"createdAt,omitempty"`
+	LastOpened string `json:"lastOpened,omitempty"`
+}
+
+type desktopListJSON struct {
+	Supported bool                 `json:"supported"`
+	Installed bool                 `json:"installed"`
+	AppPath   string               `json:"appPath,omitempty"`
+	Profiles  []desktopProfileJSON `json:"profiles"`
+}
+
+func printDesktopJSON(w interface{ Write([]byte) (int, error) }, _ *desktop.Store, all []desktop.Profile) error {
+	app := desktop.New()
+	path, installed := app.Installed()
+	out := desktopListJSON{
+		Supported: desktop.Supported(),
+		Installed: installed,
+		AppPath:   path,
+		Profiles:  make([]desktopProfileJSON, 0, len(all)),
+	}
+	for _, p := range all {
+		out.Profiles = append(out.Profiles, desktopProfileJSON{
+			Name:       p.Name,
+			Email:      p.Email,
+			AccountID:  p.AccountID,
+			Open:       desktop.IsRunning(app, p.DataDir()),
+			DataDir:    p.DataDir(),
+			CreatedAt:  p.CreatedAt,
+			LastOpened: p.LastOpened,
+		})
+	}
+	return emitJSON(w, out)
+}
+
+// desktopRefFor resolves which profile a command means: the one named, else the
+// one bound to this directory.
+func desktopRefFor(args []string) (string, error) {
+	if len(args) > 0 && args[0] != "" {
+		return args[0], nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	dm, err := dirmapStore()
+	if err != nil {
+		return "", err
+	}
+	entry, lerr := dm.Lookup(cwd)
+	if lerr != nil || entry.Desktop == "" {
+		return "", errors.New(
+			"no profile named, and this directory is not mapped to one.\n" +
+				"Name it (`clauderig desktop open <name>`), or bind this directory with " +
+				"`clauderig desktop map <name>`")
+	}
+	return entry.Desktop, nil
+}
+
+func newDesktopMapCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "map [<name|email>] [dir]",
+		Short: "Bind a directory to a Desktop profile, so a bare `desktop open` there uses it",
+		Long: "Maps a directory (the working directory by default) to a Desktop profile,\n" +
+			"so a bare `clauderig desktop open` inside it opens that window.\n\n" +
+			"Subdirectories inherit the nearest mapped ancestor. With no arguments,\n" +
+			"lists every mapping — the same table `clauderig account map` writes, so a\n" +
+			"directory can name both the CLI account and the Desktop profile it belongs\n" +
+			"to. Mappings are per-machine and never synced.",
+		Args: cobra.MaximumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
+			dm, err := dirmapStore()
+			if err != nil {
+				return err
+			}
+			if len(args) == 0 {
+				return printMappings(out, dm)
+			}
+			st, err := desktopStore()
+			if err != nil {
+				return err
+			}
+			p, err := st.Resolve(args[0])
+			if err != nil {
+				return desktopNotFound(err, args[0])
+			}
+			dir, err := resolveDirArg(args[1:])
+			if err != nil {
+				return err
+			}
+			entry, err := dm.Set(dir, func(e *dirmap.Entry) { e.Desktop = p.Name })
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "%s %s → %s\n", OkStyle.Render("✓ mapped"), entry.Dir, p.Label())
+			fmt.Fprintf(out, "%s\n", DimStyle.Render("  `clauderig desktop open` there now opens this profile"))
+			return nil
+		},
+	}
+}
+
+func newDesktopUnmapCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unmap [dir]",
+		Short: "Remove a directory's Desktop binding (defaults to the working directory)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
+			dm, err := dirmapStore()
+			if err != nil {
+				return err
+			}
+			dir, err := resolveDirArg(args)
+			if err != nil {
+				return err
+			}
+			// Clear only the Desktop binding — the directory may also name a CLI
+			// account, and `desktop unmap` has no business dropping that.
+			entry, err := dm.Set(dir, func(e *dirmap.Entry) { e.Desktop = "" })
+			if err != nil {
+				return err
+			}
+			if entry.Account != "" {
+				fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ Desktop binding removed from"), entry.Dir)
+				fmt.Fprintf(out, "%s\n", DimStyle.Render("  its account binding ("+entry.Account+") is untouched"))
+				return nil
+			}
+			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ unmapped"), entry.Dir)
+			return nil
+		},
+	}
+}
+
+// --- interactive screen ------------------------------------------------------
+
+// runDesktopUI drives the Desktop profiles screen. Same shape as the accounts
+// screen: the TUI records an intent, this loop performs it outside the event
+// loop — process work and app launching must not run under bubbletea — and
+// re-opens the screen with a note.
+func runDesktopUI(cmd *cobra.Command) error {
+	st, err := desktopStore()
+	if err != nil {
+		return err
+	}
+	app := desktop.New()
+	note := ""
+	for {
+		all, lerr := st.List()
+		if lerr != nil {
+			return lerr
+		}
+		_, installed := app.Installed()
+		rows := make([]tui.DesktopRow, 0, len(all))
+		for _, p := range all {
+			rows = append(rows, tui.DesktopRow{
+				Name:      p.Name,
+				Email:     p.Email,
+				AccountID: p.AccountID,
+				// Resolved here, not in the model: the screen must never shell
+				// out to scan processes while the event loop is running.
+				Open: installed && desktop.IsRunning(app, p.DataDir()),
+			})
+		}
+		res, rerr := tea.NewProgram(tui.NewDesktop(rows, installed, desktop.Supported(), note)).Run()
+		if rerr != nil {
+			return rerr
+		}
+		final, ok := res.(tui.DesktopModel)
+		if !ok {
+			return nil
+		}
+		note = ""
+		switch final.Action.Kind {
+		case "":
+			return nil
+		case "add":
+			name, aerr := promptDesktopName()
+			if aerr != nil {
+				return aerr
+			}
+			if name == "" {
+				continue // backed out
+			}
+			accountID, email := linkedAccount(name, "")
+			p, cerr := st.Create(name, email, accountID)
+			if cerr != nil {
+				note = ErrStyle.Render(cerr.Error())
+				continue
+			}
+			if lerr := app.Launch(p.DataDir()); lerr != nil {
+				note = ErrStyle.Render(lerr.Error())
+				continue
+			}
+			_ = st.Touch(p)
+			note = "created " + p.Label() + " — log into the window that just opened"
+		case "open":
+			p, gerr := st.Get(final.Action.Name)
+			if gerr != nil {
+				note = ErrStyle.Render(gerr.Error())
+				continue
+			}
+			if desktop.IsRunning(app, p.DataDir()) {
+				_ = app.Focus(p.DataDir())
+				note = "already open: " + p.Label()
+				continue
+			}
+			if lerr := app.Launch(p.DataDir()); lerr != nil {
+				note = ErrStyle.Render(lerr.Error())
+				continue
+			}
+			_ = st.Touch(p)
+			note = "opened " + p.Label()
+		case "quit":
+			p, gerr := st.Get(final.Action.Name)
+			if gerr != nil {
+				note = ErrStyle.Render(gerr.Error())
+				continue
+			}
+			if qerr := app.Quit(p.DataDir(), quitGrace); qerr != nil {
+				note = ErrStyle.Render(qerr.Error())
+				continue
+			}
+			note = "closed " + p.Label()
+		case "remove":
+			p, gerr := st.Get(final.Action.Name)
+			if gerr != nil {
+				note = ErrStyle.Render(gerr.Error())
+				continue
+			}
+			ok, cerr := confirmDestructive(fmt.Sprintf(
+				"Delete Desktop profile %s? This signs that account out of Desktop for good.", p.Label()))
+			if cerr != nil {
+				return cerr
+			}
+			if !ok {
+				continue
+			}
+			// Deleting a live profile leaves Electron writing into unlinked
+			// files, so close it first — the CLI refuses instead, but here the
+			// confirmation already established intent.
+			if desktop.IsRunning(app, p.DataDir()) {
+				if qerr := app.Quit(p.DataDir(), quitGrace); qerr != nil {
+					note = ErrStyle.Render(qerr.Error())
+					continue
+				}
+			}
+			if rmErr := st.Remove(p.Name); rmErr != nil {
+				note = ErrStyle.Render(rmErr.Error())
+				continue
+			}
+			if dm, derr := dirmapStore(); derr == nil {
+				_ = dm.PruneDesktop(p.Name)
+			}
+			note = "removed " + p.Label()
+		}
+	}
+}
+
+// promptDesktopName asks for a new profile's name. Empty (or backing out) means
+// "never mind" — validation of the name itself belongs to the store.
+func promptDesktopName() (string, error) {
+	var name string
+	err := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Name for the new Desktop profile").
+			Description("e.g. work, personal, client-x — a fresh window opens for you to log into").
+			Value(&name),
+	)).WithKeyMap(huhEscKeyMap()).WithTheme(brand.Theme(brand.AccentClaude)).Run()
+	if errors.Is(err, huh.ErrUserAborted) {
+		return "", nil
+	}
+	return strings.TrimSpace(name), err
 }

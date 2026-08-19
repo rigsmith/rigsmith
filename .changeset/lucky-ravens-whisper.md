@@ -1,0 +1,5 @@
+---
+"github.com/rigsmith/rigsmith": minor
+---
+
+clauderig: account and Desktop ergonomics — `--json` on `account list`/`account switch`/`desktop list` (one object on stdout, human lines on stderr, refusals included so a script can branch on them); `account alias` for a short handle usable anywhere an id or email is, refused when it would shadow another account; `account disable`/`enable` to hold an account out of a bare `switch`'s rotation while keeping it switchable by name; and `account map`/`desktop map` binding a directory to an account and/or Desktop profile so a bare `account run` or `desktop open` there picks the right one, inheriting the nearest mapped ancestor. Mappings are per-machine, never synced, and dropped when their target is removed. The accounts screen gains alias editing and a disable toggle, and Claude Desktop profiles get an interactive screen of their own (also on the dashboard). Ergonomics credit claude-swap by realiti4.

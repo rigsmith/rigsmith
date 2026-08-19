@@ -86,6 +86,7 @@ func actionsFor(info status.Info) []action {
 	add("status", "t", "Status", "show sync state: remote, last sync, roots, hooks")
 	add("mcp", "m", "MCP servers", "list, add, remove, enable/disable MCP servers")
 	add("account", "a", "Accounts", "run or swap between multiple Claude Code logins")
+	add("desktop", "d", "Desktop profiles", "run several Claude Desktop accounts side by side")
 	return items
 }
 

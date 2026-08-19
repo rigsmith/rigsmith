@@ -47,6 +47,8 @@ func NewUICmd() *cobra.Command {
 				return runMCPUI(cmd)
 			case "account":
 				return runAccountUI(cmd)
+			case "desktop":
+				return runDesktopUI(cmd)
 			}
 			return nil
 		},
