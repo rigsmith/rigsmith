@@ -213,3 +213,62 @@ func TestSync_ReconcileLeavesUnresolvedRootsAlone(t *testing.T) {
 		}
 	}
 }
+
+// A non-JSON credential file inside an allowed tree must abort the sync rather
+// than ride it to the remote — the gap that let Desktop's `.audit-key` through.
+// It is refused even though nothing about its content is inspectable: it is 51
+// bytes of binary whose entropy sits below the JSON scanner's own threshold.
+func TestSync_NonJSONCredentialFileTripsWire(t *testing.T) {
+	liveCli, liveDesk := t.TempDir(), t.TempDir()
+	write(t, liveCli, "skills/s/SKILL.md", "# a skill\nnothing secret here\n")
+	write(t, liveCli, "skills/s/.audit-key", "\x8f\x1a\xd4tK\x91\xff\x03A\x7e\xb0\x11\x9e")
+
+	staging := t.TempDir()
+	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	rep, err := Sync(Options{StagingDir: staging, Config: twoRootConfig(liveCli, liveDesk), Machine: john, SourceOverride: override("cli", liveCli, "desktop", liveDesk)})
+	if err == nil {
+		t.Fatal("sync should have been refused")
+	}
+	if len(rep.Findings) != 1 || rep.Findings[0].Kind != "key-material" {
+		t.Fatalf("findings = %+v, want one key-material finding", rep.Findings)
+	}
+	if !contains(rep.Findings[0].Path, ".audit-key") {
+		t.Errorf("finding should name the file: %s", rep.Findings[0].Path)
+	}
+	// The offending file must not have been staged on the way to failing.
+	if _, err := os.Stat(filepath.Join(staging, "cli", "skills", "s", ".audit-key")); !os.IsNotExist(err) {
+		t.Error("credential file should not have been copied into staging")
+	}
+}
+
+// The wire keeps firing on a secret an EARLIER sync already staged: the
+// incremental same-size+mtime skip must not become a way for it to go quiet.
+func TestSync_StagedCredentialKeepsTripping(t *testing.T) {
+	liveCli, liveDesk := t.TempDir(), t.TempDir()
+	// Opaque bytes, deliberately NOT a PEM: this file trips on its NAME, so
+	// giving it real key-shaped content would prove nothing and would put a
+	// credential-looking literal into the repo for the secret scanner to find.
+	const keyish = "\x9f\x2ak\x11opaque-not-a-real-key\x03\x7e"
+	write(t, liveCli, "skills/s/id_rsa", keyish)
+
+	staging := t.TempDir()
+	// Simulate a copy staged before the check existed, matching size and mtime.
+	write(t, filepath.Join(staging, "cli"), "skills/s/id_rsa", keyish)
+	src := filepath.Join(liveCli, "skills", "s", "id_rsa")
+	info, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(staging, "cli", "skills", "s", "id_rsa"), info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	rep, err := Sync(Options{StagingDir: staging, Config: twoRootConfig(liveCli, liveDesk), Machine: john, SourceOverride: override("cli", liveCli, "desktop", liveDesk)})
+	if err == nil {
+		t.Fatal("an already-staged secret must still refuse the sync")
+	}
+	if len(rep.Findings) != 1 {
+		t.Fatalf("findings = %+v, want one", rep.Findings)
+	}
+}

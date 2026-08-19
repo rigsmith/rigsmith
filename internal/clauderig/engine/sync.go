@@ -67,6 +67,9 @@ type Options struct {
 // past redaction) — that is the safety property; nothing is pushed in that case.
 func Sync(opts Options) (*Report, error) {
 	rep := &Report{}
+	// Findings from whole files, tracked apart from JSON-value findings because the
+	// two need different remedies in the error message.
+	credentialFiles := 0
 	policy := redact.DefaultPolicy()
 
 	var cutoff time.Time
@@ -132,6 +135,19 @@ func Sync(opts Options) (*Report, error) {
 			// Non-JSON (transcripts, skill files): copy verbatim, but skip if the
 			// staging copy is already current (same size+mtime) — incremental sync.
 			if !isJSON {
+				// Tripwire first, and on EVERY file rather than only the ones being
+				// copied: a secret staged by an earlier sync (or before this check
+				// existed) must keep failing until it's dealt with, and the incremental
+				// skip below would otherwise hide it forever. Non-JSON content can't be
+				// redacted in place the way a JSON value can, so the only safe answer is
+				// to refuse the sync and name the file.
+				if f := scanNonJSON(srcPath, rel, info.Size()); f != nil {
+					rep.Findings = append(rep.Findings, redact.Finding{
+						Path: r.ID + "/" + f.Path, Kind: f.Kind,
+					})
+					credentialFiles++
+					continue
+				}
 				if d, derr := os.Stat(dstPath); derr == nil && d.Size() == info.Size() && d.ModTime().Equal(info.ModTime()) {
 					rr.Unchanged++
 					continue
@@ -279,7 +295,18 @@ func Sync(opts Options) (*Report, error) {
 	}
 
 	if len(rep.Findings) > 0 {
-		return rep, fmt.Errorf("secret tripwire: %d value(s) look like credentials and were not redacted; refusing to sync", len(rep.Findings))
+		// The two halves of the wire need different remedies, so say which one
+		// fired: a JSON value means the redactor's key rules missed something, a
+		// whole file means it should never have been in the allowlist.
+		files := credentialFiles
+		switch {
+		case files == len(rep.Findings):
+			return rep, fmt.Errorf("secret tripwire: %d file(s) are credential material and cannot be redacted; refusing to sync — exclude them from the allowlist or remove them", files)
+		case files > 0:
+			return rep, fmt.Errorf("secret tripwire: %d credential file(s) and %d unredacted value(s); refusing to sync", files, len(rep.Findings)-files)
+		default:
+			return rep, fmt.Errorf("secret tripwire: %d value(s) look like credentials and were not redacted; refusing to sync", len(rep.Findings))
+		}
 	}
 	return rep, nil
 }
@@ -331,6 +358,28 @@ func applyKeepFilter(rootID, rel string, v any) any {
 		}
 	}
 	return out
+}
+
+// scanNonJSON runs the non-JSON tripwire over one file, reading only as much of
+// it as redact.ScanFile will actually look at — the name rules need no content,
+// and anything past the content limit is a transcript-sized file the scan skips
+// by design. A file that can't be read is not reported: it is the same churn case
+// the copy path already tolerates, and inventing a finding would abort the sync
+// over a file that merely vanished.
+func scanNonJSON(srcPath, rel string, size int64) *redact.Finding {
+	var data []byte
+	if size > 0 && size <= int64(redact.ScanContentLimit()) {
+		f, err := os.Open(srcPath)
+		if err != nil {
+			return nil
+		}
+		data, _ = io.ReadAll(io.LimitReader(f, int64(redact.ScanContentLimit())))
+		f.Close()
+	}
+	if found := redact.ScanFile(rel, data); len(found) > 0 {
+		return &found[0]
+	}
+	return nil
 }
 
 func allowlistFor(rootID string) allowlist.List {
