@@ -185,13 +185,105 @@ func linkedAccount(name, email string) (id, resolvedEmail string) {
 	return "", email
 }
 
+// errNoOpenProfiles means `quit` was asked to pick and nothing is open — a
+// statement of fact rather than a failure, so the caller reports it and exits 0.
+var errNoOpenProfiles = errors.New("no profile windows are open")
+
+// resolveDesktopTarget picks the profile a command acts on, in the order a user
+// would expect to be asked:
+//
+//  1. the profile they named;
+//  2. the one bound to this directory (`desktop map`);
+//  3. on a terminal, one they choose from a picker;
+//  4. otherwise an error naming both ways to say which.
+//
+// Step 3 is why neither command guesses: with several profiles, silently
+// picking one is the surprising outcome, and erroring at someone who is sitting
+// right there is the unhelpful one.
+func resolveDesktopTarget(st *desktop.Store, app desktop.App, args []string, onlyOpen bool) (desktop.Profile, error) {
+	if len(args) > 0 && args[0] != "" {
+		p, err := st.Resolve(args[0])
+		if err != nil {
+			return desktop.Profile{}, desktopNotFound(err, args[0])
+		}
+		return p, nil
+	}
+	// A directory binding is an explicit answer the user already gave.
+	if cwd, err := os.Getwd(); err == nil {
+		if dm, derr := dirmapStore(); derr == nil {
+			if entry, lerr := dm.Lookup(cwd); lerr == nil && entry.Desktop != "" {
+				if p, rerr := st.Resolve(entry.Desktop); rerr == nil {
+					return p, nil
+				}
+			}
+		}
+	}
+	if !Interactive() {
+		return desktop.Profile{}, errors.New(
+			"no profile named, and this directory is not mapped to one\n" +
+				"Name it, or bind this directory with `clauderig desktop map <name>`")
+	}
+	return pickProfile(st, app, onlyOpen)
+}
+
+// pickProfile offers the saved profiles for selection, showing which are open so
+// the choice is made on the same information the listing shows.
+func pickProfile(st *desktop.Store, app desktop.App, onlyOpen bool) (desktop.Profile, error) {
+	all, err := st.List()
+	if err != nil {
+		return desktop.Profile{}, err
+	}
+	var opts []huh.Option[string]
+	byName := map[string]desktop.Profile{}
+	for _, p := range all {
+		open, rerr := desktop.IsRunning(app, p.DataDir())
+		if onlyOpen && (rerr != nil || !open) {
+			continue // nothing to close, or we cannot tell — do not offer it
+		}
+		label := p.Label()
+		switch {
+		case rerr != nil:
+			label += "  (unknown)"
+		case open:
+			label += "  (open)"
+		default:
+			label += "  (closed)"
+		}
+		opts = append(opts, huh.NewOption(label, p.Name))
+		byName[p.Name] = p
+	}
+	if len(opts) == 0 {
+		if onlyOpen {
+			return desktop.Profile{}, errNoOpenProfiles
+		}
+		return desktop.Profile{}, errors.New("no Desktop profiles yet — `clauderig desktop add <name>` creates one")
+	}
+	title := "Open which profile?"
+	if onlyOpen {
+		title = "Close which profile?"
+	}
+	var choice string
+	ferr := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().Title(title).Options(opts...).Value(&choice),
+	)).WithKeyMap(huhEscKeyMap()).WithTheme(brand.Theme(brand.AccentClaude)).Run()
+	if ferr != nil || choice == "" {
+		return desktop.Profile{}, errCancelled
+	}
+	return byName[choice], nil
+}
+
+// errCancelled means the user backed out of the picker — not a failure.
+var errCancelled = errors.New("cancelled")
+
 func newDesktopOpenCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "open [<name|email>]",
 		Short: "Open (or focus) a profile's Claude Desktop window",
 		Long: "Opens the profile's window, or focuses it if it is already open.\n\n" +
-			"With no profile named, uses the one mapped to this directory\n" +
-			"(`clauderig desktop map`), inheriting the nearest mapped ancestor.",
+			"With no profile named: uses the one mapped to this directory\n" +
+			"(`clauderig desktop map`, nearest mapped ancestor), and otherwise asks\n" +
+			"which — a picker on a terminal, an error naming both ways to say so\n" +
+			"off one. It never picks for you.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -203,13 +295,12 @@ func newDesktopOpenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ref, err := desktopRefFor(args)
+			p, err := resolveDesktopTarget(st, app, args, false)
+			if errors.Is(err, errCancelled) {
+				return nil
+			}
 			if err != nil {
 				return err
-			}
-			p, err := st.Resolve(ref)
-			if err != nil {
-				return desktopNotFound(err, ref)
 			}
 			running, rerr := desktop.IsRunning(app, p.DataDir())
 			if rerr != nil {
@@ -299,20 +390,34 @@ func newDesktopListCmd() *cobra.Command {
 
 func newDesktopQuitCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "quit <name|email>",
+		Use:   "quit [<name|email>]",
 		Short: "Close a profile's Claude Desktop window",
-		Args:  cobra.ExactArgs(1),
+		Long: "Ends the Claude Desktop instance bound to that profile: politely first,\n" +
+			"firmly after 10 seconds, and only once it has confirmed the processes are\n" +
+			"gone. It touches nothing else — not another profile, not your plain\n" +
+			"Claude.app — and logs nothing out.\n\n" +
+			"With no profile named: uses the one mapped to this directory, and otherwise\n" +
+			"asks which — a picker listing the OPEN windows on a terminal, an error off\n" +
+			"one.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			st, err := desktopStore()
 			if err != nil {
 				return err
 			}
-			p, err := st.Resolve(args[0])
-			if err != nil {
-				return desktopNotFound(err, args[0])
-			}
 			app := desktop.New()
+			p, err := resolveDesktopTarget(st, app, args, true)
+			switch {
+			case errors.Is(err, errCancelled):
+				return nil
+			case errors.Is(err, errNoOpenProfiles):
+				// Nothing to close is an answer, not a failure.
+				fmt.Fprintf(out, "%s\n", DimStyle.Render("no profile windows are open"))
+				return nil
+			case err != nil:
+				return err
+			}
 			running, rerr := desktop.IsRunning(app, p.DataDir())
 			if rerr != nil {
 				return fmt.Errorf("could not tell whether %s is open: %w", p.Name, rerr)

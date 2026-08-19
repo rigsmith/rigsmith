@@ -106,9 +106,9 @@ many windows.
 | Command | What it does |
 | --- | --- |
 | `clauderig desktop add <name> [--email X]` | Create a profile, seed it from your existing install, and open a window to log into. `--no-seed` starts empty. |
-| `clauderig desktop open <name\|email>` | Open the profile's window, or focus it if already open. |
+| `clauderig desktop open [<name\|email>]` | Open the profile's window, or focus it if already open. |
 | `clauderig desktop list` (alias `ls`) | Saved profiles; `●` marks the ones open right now. |
-| `clauderig desktop quit <name\|email>` | Close that profile's window (SIGTERM, then firmly). |
+| `clauderig desktop quit [<name\|email>]` | Close that profile's window (SIGTERM, then firmly, then confirmed). |
 | `clauderig desktop rm <name\|email> [--force]` | Delete the profile. Signs that account out of Desktop for good. |
 | `clauderig desktop map [<name>] [dir]` / `unmap [dir]` | Bind a directory to a profile, so a bare `desktop open` there opens it. Bare `map` lists every binding. |
 | `clauderig desktop share [<name>]` / `unshare [<name>]` | Share Claude Code session history between profiles — and bring it into `clauderig sync`. `--all`, `--cowork`. |
@@ -135,6 +135,20 @@ the Desktop profile it belongs to — they usually travel together, and one file
 means either command's `map` shows the whole picture rather than half of it. The
 two bindings stay independent: `desktop unmap` never drops the account binding,
 and vice versa. Mappings are per-machine and never synced.
+
+### Which profile a command acts on
+
+`open` and `quit` both take an optional name and resolve it the same way:
+
+1. **the profile you named**;
+2. **the one bound to this directory** (`desktop map`, nearest mapped ancestor);
+3. on a terminal, **one you pick** from a list — `quit` offers only the windows
+   that are actually open;
+4. off a terminal, an **error** naming both ways to say which.
+
+Neither command ever picks for you. With several profiles, silently choosing one
+is the surprising outcome — and erroring at someone sitting at a prompt is the
+unhelpful one, which is why step 3 exists.
 
 `app` is an alias for `desktop`. The group is deliberately **separate from
 `clauderig account`**, which switches the Claude Code CLI login: two different
