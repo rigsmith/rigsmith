@@ -18,6 +18,12 @@
 //     persistent CLAUDE_CONFIG_DIR that self-refreshes its own tokens in
 //     isolation. That's the safe, primary path.
 //
+//   - On macOS, Claude Code keeps a session profile's tokens in a per-profile
+//     Keychain entry (service "Claude Code-credentials-<sha256(configDir)[:8]>")
+//     and leaves the profile's .credentials.json as a token-less stub — see
+//     sessionstore.go. All session credential reads/seeds must go through that
+//     layer; the file alone lies.
+//
 // The idea — and the safety mechanisms (process detection, security -i writes,
 // round-trip backup) — are credited to claude-swap by realiti4
 // (https://github.com/realiti4/claude-swap, MIT). This is a clean-room Go
@@ -326,11 +332,17 @@ func (s *Store) Credential(id string) ([]byte, error) {
 
 // SaveCredential overwrites a stored account's credential (used by `switch` to
 // round-trip the displaced account's fresh credential back into its store).
+// A token-less blob is refused: Claude Code blanks the live tokens when a login
+// expires or logs out, and round-tripping that stub would destroy the last good
+// stored credential (observed live 2026-08-18).
 func (s *Store) SaveCredential(id string, raw []byte) error {
-	if _, ok := s.read(id); !ok {
+	a, ok := s.read(id)
+	if !ok {
 		return fmt.Errorf("no account %q to update", id)
 	}
-	a, _ := s.read(id)
+	if !hasTokens(raw) {
+		return fmt.Errorf("refusing to overwrite the stored credential for %s with a token-less blob (expired or logged-out login)", a.Email)
+	}
 	return s.save(a, raw)
 }
 
@@ -402,25 +414,32 @@ func (s *Store) BackupLive(raw []byte, stamp string) (string, error) {
 }
 
 // EnsureSession makes the account's persistent CLAUDE_CONFIG_DIR ready to run and
-// returns it. The credential is (re)seeded only when the profile is new or marked
-// stale — otherwise the session's own self-refreshed token is left intact (it
-// rotates independently of the store). When share is true, SharedEntries from
-// claudeHome are linked in (idempotent).
+// returns it. The credential is (re)seeded only when the profile has no usable
+// credential (file or per-profile Keychain entry — see sessionstore.go) or is
+// marked stale — otherwise the session's own self-refreshed token is left intact
+// (it rotates independently of the store). A token-less STORED credential is
+// never seeded: over a healthy session it would log the session out, so it's
+// skipped there and an error anywhere else. When share is true, SharedEntries
+// from claudeHome are linked in (idempotent).
 func (s *Store) EnsureSession(a Account, share bool, claudeHome string) (string, error) {
 	dir := s.ConfigDir(a.ID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	credFile := filepath.Join(dir, ".credentials.json")
-	_, haveCred := statOK(credFile)
+	usable := sessionCredentialUsable(dir)
 	stale := fileExists(s.stalePath(a.ID))
-	if !haveCred || stale {
+	if !usable || stale {
 		raw, err := s.Credential(a.ID)
 		if err != nil {
 			return "", fmt.Errorf("read stored credential: %w", err)
 		}
-		if err := os.WriteFile(credFile, raw, 0o600); err != nil {
-			return "", err
+		switch {
+		case hasTokens(raw):
+			if err := seedSessionCredential(dir, raw); err != nil {
+				return "", err
+			}
+		case !usable:
+			return "", fmt.Errorf("the stored credential for %s has no OAuth token — log in (`claude` → /login as %s) and run `clauderig account add`", a.Email, a.Email)
 		}
 		_ = os.Remove(s.stalePath(a.ID))
 	}

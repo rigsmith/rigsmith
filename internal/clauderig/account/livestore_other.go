@@ -18,3 +18,10 @@ func ReadLive() ([]byte, error) {
 
 // WriteLive sets the machine-wide live credential (~/.claude/.credentials.json).
 func WriteLive(raw []byte) error { return writeLiveFile(raw) }
+
+// Off macOS a session profile's tokens live in its .credentials.json file —
+// there is no per-profile Keychain entry to read or update.
+func platformSessionKeychainRead(string) ([]byte, bool, error) { return nil, false, nil }
+func platformSessionKeychainWrite(string, []byte) (bool, error) {
+	return false, nil
+}

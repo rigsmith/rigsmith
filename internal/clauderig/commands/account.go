@@ -98,6 +98,43 @@ func printDiagnosis(out interface{ Write([]byte) (int, error) }, o account.Obser
 			"     so the credential and the profile block move together. Never from inside a live session."))
 }
 
+// printStoredAccounts renders each tracked account's health: whether its stored
+// credential would survive a `switch`, and whether its session profile can
+// still authenticate.
+func printStoredAccounts(out interface{ Write([]byte) (int, error) }, statuses []account.StoredStatus) {
+	if len(statuses) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "\n%s\n", HeaderStyle.Render("Stored accounts"))
+	anyDead := false
+	for _, st := range statuses {
+		marker := "  "
+		if st.Active {
+			marker = OkStyle.Render("→ ")
+		}
+		cred := OkStyle.Render("credential ✓")
+		if !st.CredentialTokens {
+			anyDead = true
+			cred = ErrStyle.Render("credential ✗ no tokens")
+		}
+		var sess string
+		switch st.Session {
+		case account.SessionOK:
+			sess = OkStyle.Render("session ✓")
+		case account.SessionNoTokens:
+			sess = ErrStyle.Render("session ✗ no tokens")
+		default:
+			sess = DimStyle.Render("session —")
+		}
+		fmt.Fprintf(out, "%s%s  %s  %s\n", marker, accountTitle(st.Account), cred, sess)
+	}
+	if anyDead {
+		fmt.Fprintf(out, "%s\n", DimStyle.Render(
+			"  a token-less stored credential can't be switched to — repair with\n"+
+				"  `clauderig account add --from-session <id>` (needs session ✓), or log in live and `account add`"))
+	}
+}
+
 func newAccountDoctorCmd() *cobra.Command {
 	var asJSON bool
 	var showJournal int
@@ -112,7 +149,9 @@ func newAccountDoctorCmd() *cobra.Command {
 			"do, published artifacts, usage and rate limits silently land on an account the\n" +
 			"UI never names.\n\n" +
 			"Each run is recorded to ~/.clauderig/account-journal.jsonl when the identity\n" +
-			"changed since the last observation. Exits non-zero on a desync.",
+			"changed since the last observation. Exits non-zero on a desync.\n\n" +
+			"Also lists every stored account with the health of its stored credential\n" +
+			"(would `switch` accept it?) and its session profile (can it authenticate?).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
@@ -140,14 +179,24 @@ func newAccountDoctorCmd() *cobra.Command {
 				// a single JSON value.
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s %v\n", WarnStyle.Render("could not record observation:"), rerr)
 			}
+			statuses, serr := st.StoredStatuses()
+			if serr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s %v\n", WarnStyle.Render("could not read stored accounts:"), serr)
+			}
 			if asJSON {
 				enc := json.NewEncoder(out)
 				enc.SetIndent("", "  ")
-				if err := enc.Encode(o); err != nil {
+				// Additive wrapper: every Observation field stays flat and
+				// unchanged for existing consumers; only "accounts" is new.
+				if err := enc.Encode(struct {
+					account.Observation
+					Accounts []account.StoredStatus `json:"accounts,omitempty"`
+				}{o, statuses}); err != nil {
 					return err
 				}
 			} else {
 				printDiagnosis(out, o)
+				printStoredAccounts(out, statuses)
 			}
 			if o.InSync {
 				return nil
@@ -292,19 +341,40 @@ func newAccountWatchCmd() *cobra.Command {
 }
 
 func newAccountAddCmd() *cobra.Command {
-	return &cobra.Command{
+	var fromSession string
+	cmd := &cobra.Command{
 		Use:   "add",
 		Short: "Capture the currently logged-in account into claudeRig's store",
 		Long: "Reads the live Claude Code credential and the account profile from\n" +
 			"~/.claude.json (email + plan) and saves them under ~/.clauderig/accounts so\n" +
 			"claudeRig can run or swap to this account later. Accounts are keyed by email;\n" +
-			"the captured account becomes the tracked 'live' one. Log in first.",
+			"the captured account becomes the tracked 'live' one. Log in first.\n\n" +
+			"--from-session <id|email> instead repairs an already-tracked account's STORED\n" +
+			"credential from its own session profile (the per-profile Keychain entry, or\n" +
+			".credentials.json off macOS) — for when the stored copy lost its tokens but\n" +
+			"the session still authenticates. It never touches the live login or the\n" +
+			"active pointer.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
 			st, err := account.DefaultStore()
 			if err != nil {
 				return err
+			}
+			if fromSession != "" {
+				a, err := st.Resolve(fromSession)
+				if err != nil {
+					return err
+				}
+				if err := st.CaptureFromSession(a); err != nil {
+					return err
+				}
+				fmt.Fprintf(out, "%s %s %s\n", OkStyle.Render("Recaptured"), accountTitle(a),
+					DimStyle.Render("from its session profile"))
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(
+					"The session keeps rotating this token, so the snapshot can go stale — if a later\n"+
+						"`switch` refuses it, re-run this capture (or log in live and `account add`)."))
+				return nil
 			}
 			a, updated, err := captureCurrent(st)
 			if err != nil {
@@ -333,6 +403,9 @@ func newAccountAddCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&fromSession, "from-session", "",
+		"repair a tracked account's stored credential from its own session profile instead of the live login")
+	return cmd
 }
 
 // captureCurrent reads the live credential + oauthAccount and stores them as an
@@ -379,12 +452,25 @@ func newAccountListCmd() *cobra.Command {
 			}
 			active, _ := st.Active()
 			fmt.Fprintln(out, HeaderStyle.Render("Claude Code accounts"))
+			anyDead := false
 			for _, a := range all {
 				marker := "  "
 				if a.ID == active {
 					marker = OkStyle.Render("→ ")
 				}
-				fmt.Fprintf(out, "%s%s\n", marker, accountTitle(a))
+				// A stored credential can silently lose its tokens (an expired
+				// login round-tripped over it); `switch` would refuse it, so
+				// surface that here rather than at switch time.
+				health := ""
+				if !st.CredentialHealthy(a.ID) {
+					anyDead = true
+					health = "  " + ErrStyle.Render("✗ stored credential has no tokens")
+				}
+				fmt.Fprintf(out, "%s%s%s\n", marker, accountTitle(a), health)
+			}
+			if anyDead {
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(
+					"  repair: `clauderig account add --from-session <id>`, or log in live and `account add`"))
 			}
 			if active == "" {
 				fmt.Fprintf(out, "\n%s\n", DimStyle.Render("(no account marked live — `account add` or `switch` sets it)"))
@@ -854,7 +940,9 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 	// known-bad identity machine-wide, so verify the pair here and refuse.
 	tgtCredOrg, cerr := account.CredentialOrg(targetCred)
 	if cerr != nil {
-		return "", nil, fmt.Errorf("parse stored credential for %s: %w", target.Email, cerr)
+		return "", nil, fmt.Errorf("parse stored credential for %s: %w\n"+
+			"Fix: `clauderig account add --from-session %s` (recapture from its session profile), "+
+			"or log in as %s and run `clauderig account add`", target.Email, cerr, target.ID, target.Email)
 	}
 	if tgtBlockOrg := account.ProfileOrg(tgtOAuth); tgtCredOrg != "" && tgtBlockOrg != "" && tgtCredOrg != tgtBlockOrg {
 		return "", nil, fmt.Errorf(
