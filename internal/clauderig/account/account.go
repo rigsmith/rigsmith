@@ -426,7 +426,13 @@ func (s *Store) EnsureSession(a Account, share bool, claudeHome string) (string,
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	usable := sessionCredentialUsable(dir)
+	usable, uerr := sessionCredentialUsable(dir)
+	if uerr != nil {
+		// Can't tell whether the session still authenticates (e.g. locked
+		// Keychain) — refuse to guess: seeding could clobber a live login, and
+		// skipping could hand out a dead profile.
+		return "", fmt.Errorf("read session credential: %w", uerr)
+	}
 	stale := fileExists(s.stalePath(a.ID))
 	if !usable || stale {
 		raw, err := s.Credential(a.ID)

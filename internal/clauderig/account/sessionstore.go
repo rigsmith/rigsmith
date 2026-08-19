@@ -21,8 +21,9 @@ import (
 // sessionKeychainRead returns the profile's Keychain credential
 // (found=false when there is no entry; off macOS always found=false).
 // sessionKeychainWrite updates an EXISTING entry only — it never creates one,
-// so a fresh profile is seeded via the file and Claude Code migrates it itself
-// (wrote=false when there was no entry to update).
+// so a fresh profile is seeded via the file and Claude Code migrates it itself.
+// (false, nil) means specifically "no entry to update"; a Keychain failure is
+// an error, never a silent no-op.
 // Package vars so tests can stub the Keychain.
 var (
 	sessionKeychainRead  = platformSessionKeychainRead
@@ -44,23 +45,34 @@ func hasTokens(raw []byte) bool {
 	return b.ClaudeAiOauth.AccessToken != "" || b.ClaudeAiOauth.RefreshToken != ""
 }
 
-// readSessionCredential returns the profile's current credential, preferring
-// the Keychain entry (what Claude Code actually reads) over the file stub.
-// found=false means the profile has no usable credential anywhere.
-func readSessionCredential(configDir string) (raw []byte, found bool) {
-	if kc, ok, err := sessionKeychainRead(configDir); err == nil && ok && hasTokens(kc) {
-		return kc, true
+// readSessionCredential returns the profile's current credential. An EXISTING
+// Keychain entry is authoritative even when its tokens are blanked — Claude
+// Code reads it in preference to the file, so once an entry exists, file tokens
+// are at best stale and must not resurrect a login the entry says is dead. The
+// file is consulted only when there is no entry at all (fresh profile, or off
+// macOS). found=false means the profile has no usable credential; a Keychain
+// read failure propagates rather than guessing.
+func readSessionCredential(configDir string) (raw []byte, found bool, err error) {
+	kc, ok, err := sessionKeychainRead(configDir)
+	if err != nil {
+		return nil, false, err
 	}
-	if f, err := os.ReadFile(sessionCredFile(configDir)); err == nil && hasTokens(f) {
-		return f, true
+	if ok {
+		if hasTokens(kc) {
+			return kc, true, nil
+		}
+		return nil, false, nil
 	}
-	return nil, false
+	if f, ferr := os.ReadFile(sessionCredFile(configDir)); ferr == nil && hasTokens(f) {
+		return f, true, nil
+	}
+	return nil, false, nil
 }
 
 // sessionCredentialUsable reports whether the profile can authenticate as-is.
-func sessionCredentialUsable(configDir string) bool {
-	_, found := readSessionCredential(configDir)
-	return found
+func sessionCredentialUsable(configDir string) (bool, error) {
+	_, found, err := readSessionCredential(configDir)
+	return found, err
 }
 
 // seedSessionCredential writes a credential into a session profile: the file
@@ -81,11 +93,27 @@ func seedSessionCredential(configDir string, raw []byte) error {
 // session still authenticates. The session keeps rotating its refresh token, so
 // the captured snapshot can go stale; capture right before you need it.
 func (s *Store) CaptureFromSession(a Account) error {
-	raw, found := readSessionCredential(s.ConfigDir(a.ID))
+	raw, found, err := readSessionCredential(s.ConfigDir(a.ID))
+	if err != nil {
+		return fmt.Errorf("read session credential: %w", err)
+	}
 	if !found {
 		return fmt.Errorf("no usable session credential for %s — run `clauderig account run %s` and log in there first", a.Email, a.ID)
 	}
-	if sub, _, err := metaFromBlob(raw); err == nil && sub != "" {
+	sub, org, merr := metaFromBlob(raw)
+	if merr != nil {
+		return fmt.Errorf("parse session credential for %s: %w", a.Email, merr)
+	}
+	// The session may have been re-logged-in as a DIFFERENT account since it was
+	// created; storing its credential under this account's label would be the
+	// mislabeled pair `switch` exists to refuse. Verify the org before saving.
+	if a.OrganizationUUID != "" && org != "" && org != a.OrganizationUUID {
+		return fmt.Errorf(
+			"the session profile for %s is logged in as a different account (org %s, expected %s) — "+
+				"not capturing. Log in as %s inside that session (`clauderig account run %s`) and retry",
+			a.Email, org, a.OrganizationUUID, a.Email, a.ID)
+	}
+	if sub != "" {
 		a.SubscriptionType = sub
 	}
 	if err := s.save(a, raw); err != nil {
@@ -109,6 +137,7 @@ const (
 	SessionNone     = "none"      // no session profile on disk
 	SessionOK       = "ok"        // profile can authenticate (Keychain entry or file)
 	SessionNoTokens = "no-tokens" // profile exists but nothing in it authenticates
+	SessionUnknown  = "unknown"   // Keychain unreadable — health can't be determined
 )
 
 // StoredStatus is one account's health as `doctor` reports it: whether the
@@ -137,9 +166,12 @@ func (s *Store) StoredStatuses() ([]StoredStatus, error) {
 			Session:          SessionNone,
 		}
 		if dir := s.ConfigDir(a.ID); dirExists(dir) {
-			if sessionCredentialUsable(dir) {
+			switch usable, uerr := sessionCredentialUsable(dir); {
+			case uerr != nil:
+				st.Session = SessionUnknown
+			case usable:
 				st.Session = SessionOK
-			} else {
+			default:
 				st.Session = SessionNoTokens
 			}
 		}

@@ -115,11 +115,15 @@ func platformSessionKeychainRead(configDir string) ([]byte, bool, error) {
 
 // platformSessionKeychainWrite updates a session profile's entry only when one
 // already exists: a fresh profile is seeded via the file (Claude Code migrates
-// it itself), and when existence can't be confirmed (e.g. a locked keychain)
-// nothing is written rather than creating a competing entry.
+// it itself). A read failure propagates — reporting it as a no-op would let the
+// caller clear the stale marker while the entry still holds the old tokens.
 func platformSessionKeychainWrite(configDir string, raw []byte) (bool, error) {
 	svc := sessionKeychainService(configDir)
-	if _, found, err := readKeychain(svc); err != nil || !found {
+	_, found, err := readKeychain(svc)
+	if err != nil {
+		return false, err
+	}
+	if !found {
 		return false, nil
 	}
 	return true, writeKeychain(svc, raw)

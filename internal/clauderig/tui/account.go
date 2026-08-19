@@ -157,6 +157,8 @@ func (m AccountModel) View() string {
 			health += dim.Render("  session ✓")
 		case account.SessionNoTokens:
 			health += warnC.Render("  session ✗")
+		case account.SessionUnknown:
+			health += warnC.Render("  session ?")
 		}
 		b.WriteString(fmt.Sprintf("%s%s%s%s%s\n", cursor, live, name, sub, health))
 	}

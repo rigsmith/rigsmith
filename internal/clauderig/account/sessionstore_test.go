@@ -1,11 +1,25 @@
 package account
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// blobOrg builds a credential blob with an explicit org, for matching (or
+// mismatching) a tracked account's OrganizationUUID.
+func blobOrg(tok, sub, org string) []byte {
+	b, _ := json.Marshal(map[string]any{
+		"claudeAiOauth": map[string]any{
+			"accessToken": "acc-" + tok, "refreshToken": "ref-" + tok, "subscriptionType": sub,
+		},
+		"organizationUuid": org,
+	})
+	return b
+}
 
 // stubSessionKeychain replaces the platform Keychain hooks with an in-memory
 // map keyed by config dir. Returns a record of seed-write targets. The write
@@ -126,16 +140,18 @@ func TestEnsureSessionTokenlessStore(t *testing.T) {
 
 func TestCaptureFromSession(t *testing.T) {
 	st := &Store{Root: t.TempDir()}
-	a, _, _ := st.CaptureLive(sampleBlob("old", "pro"), sampleOAuth("w@x.com"))
+	// sampleOAuth keys the account to org "org:w@x.com"; session blobs must match.
+	a, _, _ := st.CaptureLive(blobOrg("old", "pro", "org:w@x.com"), sampleOAuth("w@x.com"))
 	dir := st.ConfigDir(a.ID)
-	entries := map[string][]byte{dir: sampleBlob("fresh", "max")}
+	fresh := blobOrg("fresh", "max", "org:w@x.com")
+	entries := map[string][]byte{dir: fresh}
 	stubSessionKeychain(t, entries)
 	mustWrite(t, filepath.Join(dir, ".credentials.json"), `{"claudeAiOauth":{}}`)
 
 	if err := st.CaptureFromSession(a); err != nil {
 		t.Fatal(err)
 	}
-	if raw, _ := st.Credential(a.ID); string(raw) != string(sampleBlob("fresh", "max")) {
+	if raw, _ := st.Credential(a.ID); string(raw) != string(fresh) {
 		t.Error("stored credential should now be the session's Keychain tokens")
 	}
 	if fileExists(st.stalePath(a.ID)) {
@@ -147,21 +163,79 @@ func TestCaptureFromSession(t *testing.T) {
 
 	// No Keychain entry → the file is the fallback (the off-macOS layout).
 	delete(entries, dir)
-	mustWrite(t, filepath.Join(dir, ".credentials.json"), string(sampleBlob("file", "pro")))
+	fileBlob := blobOrg("file", "pro", "org:w@x.com")
+	mustWrite(t, filepath.Join(dir, ".credentials.json"), string(fileBlob))
 	if err := st.CaptureFromSession(a); err != nil {
 		t.Fatal(err)
 	}
-	if raw, _ := st.Credential(a.ID); string(raw) != string(sampleBlob("file", "pro")) {
+	if raw, _ := st.Credential(a.ID); string(raw) != string(fileBlob) {
 		t.Error("file fallback not captured")
 	}
 
+	// The session was re-logged-in as a DIFFERENT account → refuse the capture.
+	entries[dir] = sampleBlob("other", "max") // org-other ≠ org:w@x.com
+	if err := st.CaptureFromSession(a); err == nil || !strings.Contains(err.Error(), "different account") {
+		t.Errorf("want org-mismatch refusal, got %v", err)
+	}
+	if raw, _ := st.Credential(a.ID); string(raw) != string(fileBlob) {
+		t.Error("a refused capture must leave the store untouched")
+	}
+
 	// Nothing usable anywhere → a clear error, store untouched.
+	delete(entries, dir)
 	mustWrite(t, filepath.Join(dir, ".credentials.json"), `{"claudeAiOauth":{}}`)
 	if err := st.CaptureFromSession(a); err == nil || !strings.Contains(err.Error(), "no usable session credential") {
 		t.Errorf("want no-usable-session error, got %v", err)
 	}
-	if raw, _ := st.Credential(a.ID); string(raw) != string(sampleBlob("file", "pro")) {
+	if raw, _ := st.Credential(a.ID); string(raw) != string(fileBlob) {
 		t.Error("failed capture must leave the store untouched")
+	}
+}
+
+// An existing but blanked Keychain entry is authoritative: Claude Code reads it
+// in preference to the file, so leftover file tokens must not resurrect a login
+// the entry says is dead — not for health, not for capture. A reseed from a
+// healthy store revives the entry itself.
+func TestSessionBlankKeychainEntryAuthoritative(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	a, _, _ := st.CaptureLive(sampleBlob("w", "max"), sampleOAuth("w@x.com"))
+	dir := st.ConfigDir(a.ID)
+	entries := map[string][]byte{dir: []byte(`{"claudeAiOauth":{"accessToken":"","refreshToken":""}}`)}
+	writes := stubSessionKeychain(t, entries)
+	mustWrite(t, filepath.Join(dir, ".credentials.json"), string(sampleBlob("stalefile", "max")))
+
+	if err := st.CaptureFromSession(a); err == nil || !strings.Contains(err.Error(), "no usable session credential") {
+		t.Errorf("stale file tokens behind a blanked entry must not be capturable, got %v", err)
+	}
+	if _, err := st.EnsureSession(a, false, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if string(entries[dir]) != string(sampleBlob("w", "max")) || len(*writes) != 1 {
+		t.Error("reseed should revive the blanked Keychain entry from the store")
+	}
+}
+
+// A Keychain read failure must surface, not masquerade as a healthy or dead
+// profile — guessing either way risks clobbering or mislabeling a login.
+func TestSessionKeychainErrorPropagates(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	a, _, _ := st.CaptureLive(sampleBlob("w", "max"), sampleOAuth("w@x.com"))
+	dir := st.ConfigDir(a.ID)
+	stubSessionKeychain(t, map[string][]byte{})
+	sessionKeychainRead = func(string) ([]byte, bool, error) { return nil, false, errors.New("keychain locked") }
+
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnsureSession(a, false, t.TempDir()); err == nil || !strings.Contains(err.Error(), "keychain locked") {
+		t.Errorf("EnsureSession should surface the Keychain error, got %v", err)
+	}
+	if err := st.CaptureFromSession(a); err == nil || !strings.Contains(err.Error(), "keychain locked") {
+		t.Errorf("CaptureFromSession should surface the Keychain error, got %v", err)
+	}
+	got, err := st.StoredStatuses()
+	if err != nil || len(got) != 1 || got[0].Session != SessionUnknown {
+		t.Errorf("StoredStatuses = %+v, %v; want session %q", got, err, SessionUnknown)
 	}
 }
 

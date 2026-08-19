@@ -123,6 +123,8 @@ func printStoredAccounts(out interface{ Write([]byte) (int, error) }, statuses [
 			sess = OkStyle.Render("session ✓")
 		case account.SessionNoTokens:
 			sess = ErrStyle.Render("session ✗ no tokens")
+		case account.SessionUnknown:
+			sess = WarnStyle.Render("session ? (keychain unreadable)")
 		default:
 			sess = DimStyle.Render("session —")
 		}
