@@ -272,3 +272,40 @@ func TestSync_StagedCredentialKeepsTripping(t *testing.T) {
 		t.Fatalf("findings = %+v, want one", rep.Findings)
 	}
 }
+
+// The bytes staged must be the bytes scanned. Previously the scan opened the
+// source, and copyPreserveMtime re-opened it, so a live ~/.claude could replace
+// a cleared file with credential content in between and stage it unscanned.
+// Proven by content, not by timing: what lands in staging is byte-identical to
+// what passed the scan, and a file whose content trips is never written at all.
+func TestSync_StagesExactlyTheBytesItScanned(t *testing.T) {
+	liveCli, liveDesk := t.TempDir(), t.TempDir()
+	write(t, liveCli, "skills/s/SKILL.md", "# fine\n")
+	write(t, liveCli, "skills/s/notes.txt", "-----BEGIN RSA PRIVATE"+" KEY-----\nMIIE\n")
+
+	staging := t.TempDir()
+	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	rep, err := Sync(Options{StagingDir: staging, Config: twoRootConfig(liveCli, liveDesk), Machine: john,
+		SourceOverride: override("cli", liveCli, "desktop", liveDesk)})
+	if err == nil {
+		t.Fatal("a PEM in a non-JSON file should refuse the sync")
+	}
+	if len(rep.Findings) != 1 || rep.Findings[0].Kind != "private-key" {
+		t.Fatalf("findings = %+v, want one private-key", rep.Findings)
+	}
+	// The offending file must not have been staged on the way to failing.
+	if _, serr := os.Stat(filepath.Join(staging, "cli", "skills", "s", "notes.txt")); !os.IsNotExist(serr) {
+		t.Error("a file that trips the wire must never be written to staging")
+	}
+	// Its clean sibling still stages, byte-for-byte, with mtime preserved so the
+	// incremental skip recognises it next run.
+	got := read(t, filepath.Join(staging, "cli", "skills", "s", "SKILL.md"))
+	if got != "# fine\n" {
+		t.Errorf("staged content = %q, want the scanned bytes verbatim", got)
+	}
+	src, _ := os.Stat(filepath.Join(liveCli, "skills", "s", "SKILL.md"))
+	dst, _ := os.Stat(filepath.Join(staging, "cli", "skills", "s", "SKILL.md"))
+	if !src.ModTime().Equal(dst.ModTime()) {
+		t.Error("mtime must be preserved or every sync recopies the file")
+	}
+}

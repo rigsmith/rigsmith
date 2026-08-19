@@ -84,7 +84,36 @@ func splitAssign(line string) (key, val string, ok bool) {
 	return key, val, true
 }
 
-// netrcSecretRe catches the whitespace-separated netrc/pgpass shape, which has no
+// pgpassPassword returns the trailing password field of a pgpass-style line
+// (`host:port:database:user:password`), honouring the backslash escaping pgpass
+// defines for literal colons. ok=false when the line has too few fields to be
+// one, which is what keeps a plain `key: value` from being read as a password.
+func pgpassPassword(line string) (string, bool) {
+	var fields []string
+	var cur strings.Builder
+	escaped := false
+	for _, r := range line {
+		switch {
+		case escaped:
+			cur.WriteRune(r)
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case r == ':':
+			fields = append(fields, cur.String())
+			cur.Reset()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	fields = append(fields, cur.String())
+	if len(fields) < 5 {
+		return "", false
+	}
+	return fields[len(fields)-1], true
+}
+
+// netrcSecretRe catches the whitespace-separated netrc shape, which has no
 // assignment operator at all: `machine host login me password s3cret`.
 var netrcSecretRe = regexp.MustCompile(`(?i)\bpassword\s+(\S+)`)
 
@@ -102,6 +131,16 @@ func hasAuthAssignment(text string) bool {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
 			continue
+		}
+		// .pgpass has no assignment operator at all — it is
+		// `host:port:database:user:password`, so splitAssign would take `host` as
+		// the key, find it unremarkable, and let a real password through. Checked
+		// before splitAssign, and only for lines with no '=' so it cannot swallow
+		// an npmrc `//host/:_authToken=…` line.
+		if !strings.Contains(line, "=") {
+			if pw, ok := pgpassPassword(line); ok && pw != "" && !placeholderRe.MatchString(pw) {
+				return true
+			}
 		}
 		if key, val, ok := splitAssign(line); ok {
 			// An unset key is a template waiting to be filled in, not a leak.
@@ -142,8 +181,11 @@ func ClassifyName(rel string) NameVerdict {
 			return NameOrdinary
 		}
 	}
-	// A public key never trips, whatever else its name says.
-	if strings.Contains(name, "public") {
+	// A public key never trips, whatever else its name says. Matched as a WORD,
+	// not a substring: `Contains` would also exempt `notpublic.key`, and a binary
+	// file with that name would then escape both the name rule and (being binary)
+	// the content rules — a hole with nothing behind it.
+	if hasWord(name, "public") {
 		return NameOrdinary
 	}
 	if keyMaterialNames[name] {
@@ -159,6 +201,22 @@ func ClassifyName(rel string) NameVerdict {
 		return NameAuthConfig
 	}
 	return NameOrdinary
+}
+
+// hasWord reports whether a lowercased basename contains word as a whole
+// alphanumeric run — so `public.key`, `server-public.pem` and `id_rsa_public`
+// match, while `notpublic.key` does not. Prefix matching alone would be too
+// strict, exempting only names that START with the word.
+func hasWord(name, word string) bool {
+	isSep := func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	}
+	for _, f := range strings.FieldsFunc(name, isSep) {
+		if f == word {
+			return true
+		}
+	}
+	return false
 }
 
 // isBinary reports whether data looks binary — a NUL byte in the first block is

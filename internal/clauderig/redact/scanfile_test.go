@@ -158,3 +158,52 @@ func TestScanFile_BinaryIsNotEntropyScanned(t *testing.T) {
 		t.Errorf("binary asset should not trip: %+v", got)
 	}
 }
+
+// `public` defuses the name rules as a WORD, not a substring: `notpublic.key`
+// is key material and must still trip, or a binary file with that name would
+// escape both the name rule and (being binary) the content rules.
+func TestClassifyName_PublicIsAWordNotASubstring(t *testing.T) {
+	for _, rel := range []string{
+		"skills/s/public.key",
+		"skills/s/server-public.pem",
+		"skills/s/id_rsa_public",
+	} {
+		if ClassifyName(rel) != NameOrdinary {
+			t.Errorf("a public key should not trip: %s", rel)
+		}
+	}
+	for _, rel := range []string{
+		"skills/s/notpublic.key",
+		"skills/s/republic.pem",
+	} {
+		if ClassifyName(rel) != NameKeyMaterial {
+			t.Errorf("%q merely CONTAINS \"public\" — it is still key material", rel)
+		}
+	}
+}
+
+// .pgpass carries its password in a colon-delimited record with no assignment
+// operator, so the generic key=value pass never sees it.
+func TestScanFile_PgpassPassword(t *testing.T) {
+	loud := "myhost:5432:mydb:jdoe:s3cretpw\n"
+	got := ScanFile("home/.pgpass", []byte(loud))
+	if len(got) != 1 || got[0].Kind != "auth-config" {
+		t.Errorf("a pgpass password should trip: %+v", got)
+	}
+	// Escaped colons belong to the field, not the delimiter — the password here
+	// is still the last field.
+	esc := `my\:host:5432:my\:db:jdoe:pw\:withcolon` + "\n"
+	if got := ScanFile("home/.pgpass", []byte(esc)); len(got) != 1 {
+		t.Errorf("escaped colons should not defeat the parse: %+v", got)
+	}
+	for _, quiet := range []string{
+		"# comment only\n",
+		"myhost:5432:mydb:jdoe:\n",         // no password set
+		"myhost:5432:mydb:jdoe:changeme\n", // placeholder
+		"key: value\n",                     // too few fields to be pgpass
+	} {
+		if got := ScanFile("home/.pgpass", []byte(quiet)); len(got) != 0 {
+			t.Errorf("%q should not trip: %+v", quiet, got)
+		}
+	}
+}
