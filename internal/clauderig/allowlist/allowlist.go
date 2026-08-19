@@ -115,10 +115,25 @@ func (l List) descend(dir string) bool {
 	return l.decide(dir) == Include
 }
 
+// Link records a symlink to a directory whose target lives inside the same root
+// and is itself included — the shared-memory case: a worktree project slug links
+// memory/ to the main project's memory dir. Both paths are '/'-separated and
+// relative to the root. Sync records links so restore can recreate them; the
+// target's content travels under its own path, never through the link.
+type Link struct {
+	Rel    string
+	Target string
+}
+
 // Walk returns the sorted, '/'-separated relative paths of every file under root
-// that the list includes, pruning irrelevant/excluded directories.
-func Walk(root string, l List) ([]string, error) {
+// that the list includes, pruning irrelevant/excluded directories. A symlink to a
+// directory is never returned as a file — WalkDir doesn't follow it, so it
+// arrives as a non-directory entry, and emitting it would make consumers read a
+// directory as a file and abort the sync. When its target resolves inside root to
+// an included path it is reported as a Link; other directory links are dropped.
+func Walk(root string, l List) ([]string, []Link, error) {
 	var out []string
+	var links []Link
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			// A live ~/.claude churns under us; an entry that vanished between
@@ -142,13 +157,14 @@ func Walk(root string, l List) ([]string, error) {
 			}
 			return nil
 		}
-		// WalkDir doesn't follow symlinks, so a symlink to a directory arrives
-		// here as a non-directory entry; emitting it would make consumers read a
-		// directory as a file and abort the sync. Worktree project slugs link
-		// memory/ to the main project's memory dir, which already syncs under its
-		// own slug, so dropping the link loses no content.
 		if d.Type()&fs.ModeSymlink != 0 {
 			if info, serr := os.Stat(p); serr == nil && info.IsDir() {
+				// Report the link only when both ends are in the synced set: the
+				// link path itself, and its resolved target.
+				if target, ok := resolveInRoot(root, p); ok &&
+					l.decide(rel) == Include && l.decide(target) == Include {
+					links = append(links, Link{Rel: rel, Target: target})
+				}
 				return nil
 			}
 		}
@@ -158,8 +174,28 @@ func Walk(root string, l List) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sort.Strings(out)
-	return out, nil
+	sort.Slice(links, func(i, j int) bool { return links[i].Rel < links[j].Rel })
+	return out, links, nil
+}
+
+// resolveInRoot resolves symlink p and returns its target relative to root, when
+// the target lives inside root. Both sides are fully resolved first, so a root
+// that itself sits behind a symlink (/var -> /private/var) compares equal.
+func resolveInRoot(root, p string) (string, bool) {
+	target, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", false
+	}
+	rootReal, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(rootReal, target)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
 }

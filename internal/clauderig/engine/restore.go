@@ -21,6 +21,7 @@ type RestoreRootResult struct {
 	ID             string
 	Files          int
 	SlugsRewritten int
+	Links          int // shared-memory symlinks recreated from the manifest
 	Pruned         int // files removed as deleted-upstream (--prune)
 	// DesktopSessions counts Claude Desktop Code-session sidecars written this
 	// restore (claude-code-sessions/**/local_*.json). Desktop only rebuilds its
@@ -143,6 +144,9 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			}
 		}
 		rr.SlugsRewritten = len(rewritten)
+		if r.ID == "cli" && opts.Manifest != nil {
+			rr.Links = restoreLinks(target, opts.Manifest.Links, slugMap)
+		}
 
 		if opts.Prune && r.ID == "cli" {
 			pruned, err := pruneConfigDirs(target, written)
@@ -154,6 +158,35 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 		rep.Roots = append(rep.Roots, rr)
 	}
 	return rep, nil
+}
+
+// restoreLinks recreates the shared-memory symlinks the manifest records,
+// rewriting both endpoints through this machine's slug map. A link is created
+// only when its target directory exists (was restored or already lived here) and
+// nothing occupies the link path — an existing file, dir, or link is the
+// machine's own state and is left alone. A failed creation (e.g. symlinks
+// unavailable on the platform) skips that link, never the restore.
+func restoreLinks(target string, links map[string]string, slugMap map[string]string) int {
+	n := 0
+	for rel, tgtRel := range links {
+		rel, _, _ = rewriteProjectRel(rel, slugMap)
+		tgtRel, _, _ = rewriteProjectRel(tgtRel, slugMap)
+		linkPath := filepath.Join(target, filepath.FromSlash(rel))
+		tgtPath := filepath.Join(target, filepath.FromSlash(tgtRel))
+		if info, err := os.Stat(tgtPath); err != nil || !info.IsDir() {
+			continue // target absent on this machine — nothing to point at
+		}
+		if _, err := os.Lstat(linkPath); err == nil {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+			continue
+		}
+		if err := os.Symlink(tgtPath, linkPath); err == nil {
+			n++
+		}
+	}
+	return n
 }
 
 // pruneConfigDirs removes files under the authoritative config dirs that aren't in

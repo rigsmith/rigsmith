@@ -73,6 +73,10 @@ func Sync(opts Options) (*Report, error) {
 		cutoff = time.Now().AddDate(0, 0, -opts.RetentionDays)
 	}
 
+	// Shared-memory symlinks found under the CLI root (worktree slugs linking
+	// memory/ to their main project); recorded in the manifest for restore.
+	var cliLinks []allowlist.Link
+
 	for _, r := range opts.Config.Roots {
 		if !r.Enabled {
 			continue
@@ -85,9 +89,12 @@ func Sync(opts Options) (*Report, error) {
 			continue
 		}
 
-		files, err := allowlist.Walk(loc, allowlistFor(r.ID))
+		files, links, err := allowlist.Walk(loc, allowlistFor(r.ID))
 		if err != nil {
 			return nil, fmt.Errorf("walk %s: %w", r.ID, err)
+		}
+		if r.ID == "cli" {
+			cliLinks = links
 		}
 		stageRoot := filepath.Join(opts.StagingDir, r.ID)
 
@@ -198,13 +205,31 @@ func Sync(opts Options) (*Report, error) {
 			if err != nil {
 				return nil, fmt.Errorf("manifest: %w", err)
 			}
+			mySlugs := make(map[string]bool, len(m.Projects))
+			for slug := range m.Projects {
+				mySlugs[slug] = true
+			}
+			links := make(map[string]string, len(cliLinks))
+			for _, lk := range cliLinks {
+				links[lk.Rel] = lk.Target
+			}
 			// Union with the existing manifest so other machines' projects (whose
 			// files persist in staging) keep their entries — this machine's local
 			// projects are authoritative for their own slugs; others are preserved.
+			// Links union the same way: a link rooted in one of this machine's
+			// slugs is authoritative here (its absence means it was removed).
 			if existing, err := manifest.Load(opts.StagingDir); err == nil {
 				for slug, p := range existing.Projects {
 					if _, mine := m.Projects[slug]; !mine {
 						m.Projects[slug] = p
+					}
+				}
+				for rel, tgt := range existing.Links {
+					if s := linkSlug(rel); s != "" && mySlugs[s] {
+						continue
+					}
+					if _, mine := links[rel]; !mine {
+						links[rel] = tgt
 					}
 				}
 			}
@@ -215,6 +240,20 @@ func Sync(opts Options) (*Report, error) {
 						delete(m.Projects, slug)
 					}
 				}
+			}
+			// A link only makes sense while both its endpoints' projects are in the
+			// manifest — a pruned or deleted project takes its links along.
+			for rel, tgt := range links {
+				if s := linkSlug(rel); s != "" && !projectIn(m, s) {
+					delete(links, rel)
+					continue
+				}
+				if s := linkSlug(tgt); s != "" && !projectIn(m, s) {
+					delete(links, rel)
+				}
+			}
+			if len(links) > 0 {
+				m.Links = links
 			}
 			if err := m.Save(opts.StagingDir); err != nil {
 				return nil, err
@@ -285,6 +324,21 @@ func writeFile(path string, data []byte) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+// linkSlug returns the project slug a CLI-root rel path sits under, or "" when
+// the path isn't under projects/.
+func linkSlug(rel string) string {
+	parts := strings.SplitN(rel, "/", 3)
+	if len(parts) >= 2 && parts[0] == "projects" {
+		return parts[1]
+	}
+	return ""
+}
+
+func projectIn(m *manifest.Manifest, slug string) bool {
+	_, ok := m.Projects[slug]
+	return ok
 }
 
 // isMemoryRel reports whether a CLI-root rel path is a project memory file
