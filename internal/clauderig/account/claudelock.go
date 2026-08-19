@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -63,19 +64,45 @@ const (
 var ErrClaudeBusy = errors.New("Claude Code is holding its credential lock")
 
 // heldLock is one acquired lock directory and the goroutine keeping it fresh.
+//
+// info is the identity of the directory THIS process created. Everything else
+// keys off it: a lock is a pathname, and a pathname can come to mean a different
+// directory. If our lock is judged stale (a suspended laptop is enough) and
+// another holder removes and recreates it, then without an identity check our
+// toucher would go on refreshing THEIR lock, and our release would delete it —
+// silently destroying the exclusion for both of us.
 type heldLock struct {
 	dir  string
+	info os.FileInfo
 	stop chan struct{}
 	done chan struct{}
 	once sync.Once
+	lost atomic.Bool // set when the directory stopped being ours
 }
 
-// release stops the toucher and removes the lock directory. Safe to call twice.
+// stillOurs reports whether the lock directory is the one we created.
+func (h *heldLock) stillOurs() bool {
+	fi, err := os.Stat(h.dir)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(fi, h.info)
+}
+
+// compromised reports that ownership was lost while held — the caller must not
+// treat anything it did under this lock as exclusive.
+func (h *heldLock) compromised() bool { return h.lost.Load() }
+
+// release stops the toucher and removes the lock directory — but only if it is
+// still ours. Removing a lock we no longer own would strip a live holder of its
+// exclusion.
 func (h *heldLock) release() {
 	h.once.Do(func() {
 		close(h.stop)
 		<-h.done
-		_ = os.Remove(h.dir)
+		if h.stillOurs() {
+			_ = os.Remove(h.dir)
+		}
 	})
 }
 
@@ -120,7 +147,11 @@ func acquireLock(dir string, stale, timeout time.Duration) (*heldLock, error) {
 		time.Sleep(250*time.Millisecond + time.Duration(rand.Int63n(int64(250*time.Millisecond))))
 	}
 
-	h := &heldLock{dir: dir, stop: make(chan struct{}), done: make(chan struct{})}
+	info, serr := os.Stat(dir)
+	if serr != nil {
+		return nil, fmt.Errorf("take lock %s: %w", filepath.Base(dir), serr)
+	}
+	h := &heldLock{dir: dir, info: info, stop: make(chan struct{}), done: make(chan struct{})}
 	go func() {
 		defer close(h.done)
 		t := time.NewTicker(touchInterval)
@@ -130,8 +161,16 @@ func acquireLock(dir string, stale, timeout time.Duration) (*heldLock, error) {
 			case <-h.stop:
 				return
 			case <-t.C:
+				// Verify identity BEFORE touching: refreshing a directory that is
+				// no longer ours would keep another holder's lock alive on its
+				// behalf and hide the takeover from us.
+				if !h.stillOurs() {
+					h.lost.Store(true)
+					return
+				}
 				now := time.Now()
 				if err := os.Chtimes(h.dir, now, now); err != nil {
+					h.lost.Store(true)
 					return // stolen or removed; nothing left to keep alive
 				}
 			}
@@ -164,13 +203,13 @@ func legacyCredentialLockDir(claudeHome string) string {
 //
 // A caller that cannot take the locks must NOT proceed: writing the credential
 // mid-refresh is precisely the failure this prevents.
-func LockCredentials(claudeHome string, timeout time.Duration) (release func(), err error) {
+func LockCredentials(claudeHome string, timeout time.Duration) (release func(), compromised func() bool, err error) {
 	if timeout <= 0 {
 		timeout = defaultLockTimeout
 	}
 	primary, err := acquireLock(oauthRefreshLockDir(claudeHome), credentialStaleness, timeout)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	legacy, err := acquireLock(legacyCredentialLockDir(claudeHome), credentialStaleness, timeout)
 	if err != nil {
@@ -178,10 +217,12 @@ func LockCredentials(claudeHome string, timeout time.Duration) (release func(), 
 		// holding it while it waits. Do the same: holding one half while
 		// failing is how two waiters deadlock.
 		primary.release()
-		return nil, err
+		return nil, nil, err
 	}
 	return func() {
-		legacy.release()
-		primary.release()
-	}, nil
+			legacy.release()
+			primary.release()
+		}, func() bool {
+			return primary.compromised() || legacy.compromised()
+		}, nil
 }

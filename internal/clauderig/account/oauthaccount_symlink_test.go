@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
 
 // ~/.claude.json is routinely symlinked into a dotfiles repo. Replacing the link
@@ -65,5 +66,74 @@ func TestAtomicWriteFileStillWritesAPlainFile(t *testing.T) {
 	}
 	if fi.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %v, want 0600", fi.Mode().Perm())
+	}
+}
+
+// A dangling symlink — one whose target has not been created yet — is exactly
+// the case EvalSymlinks fails on, and treating that failure as "not a symlink"
+// would rename over the link and detach it.
+func TestAtomicWriteFileWritesThroughADanglingSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "not-yet.json")
+	link := filepath.Join(root, "link.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := atomicWriteFile(link, []byte(`{"a":1}`), 0o644); err != nil {
+		t.Fatalf("atomicWriteFile: %v", err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the dangling symlink was replaced by a regular file")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("the link's target was never created: %v", err)
+	}
+	if string(got) != `{"a":1}` {
+		t.Fatalf("target content = %q", got)
+	}
+}
+
+// A relative link target resolves against the directory holding the link, as
+// the OS does — not against the process's working directory.
+func TestResolveLinkTargetFollowsRelativeChains(t *testing.T) {
+	root := t.TempDir()
+	final := filepath.Join(root, "final.json")
+	if err := os.WriteFile(final, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mid := filepath.Join(root, "mid.json")
+	if err := os.Symlink("final.json", mid); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	first := filepath.Join(root, "first.json")
+	if err := os.Symlink("mid.json", first); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveLinkTarget(first); got != final {
+		t.Fatalf("resolveLinkTarget = %q, want %q", got, final)
+	}
+}
+
+// A symlink cycle must terminate rather than spin.
+func TestResolveLinkTargetSurvivesACycle(t *testing.T) {
+	root := t.TempDir()
+	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
+	if err := os.Symlink(b, a); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(a, b); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan string, 1)
+	go func() { done <- resolveLinkTarget(a) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("resolveLinkTarget did not terminate on a symlink cycle")
 	}
 }

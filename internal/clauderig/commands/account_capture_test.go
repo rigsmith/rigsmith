@@ -3,6 +3,8 @@ package commands
 import (
 	"strings"
 	"testing"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 )
 
 // `add` reads the machine-wide login. Run from a session terminal, that is a
@@ -27,20 +29,41 @@ func TestCaptureCurrentRefusesInsideASessionProfile(t *testing.T) {
 	}
 }
 
-func TestSessionProfileEnvPrefersTheStorageVar(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", "/config-dir")
-	t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", "/storage-dir")
-	// Claude Code resolves its credential store through the securestorage var
-	// first, so that is the one that decides which credential `add` would read.
-	if got := sessionProfileEnv(); got != "/storage-dir" {
-		t.Fatalf("sessionProfileEnv() = %q, want /storage-dir", got)
+// The two variables select independent surfaces, so a divergence in EITHER is
+// enough to make `add` capture a mismatched pair — one profile's credential
+// filed under another's identity.
+func TestIsolatedProfileDirCatchesEitherVariable(t *testing.T) {
+	home, err := account.ClaudeHome()
+	if err != nil {
+		t.Skip("no resolvable claude home")
 	}
+	t.Run("storage diverges, config is default", func(t *testing.T) {
+		t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", t.TempDir())
+		t.Setenv("CLAUDE_CONFIG_DIR", home)
+		if got := isolatedProfileDir(); got == "" {
+			t.Fatal("a diverging credential store was not caught")
+		}
+	})
+	t.Run("config diverges, storage is default", func(t *testing.T) {
+		t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", home)
+		t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+		if got := isolatedProfileDir(); got == "" {
+			t.Fatal("a diverging identity profile was not caught")
+		}
+	})
+	t.Run("both name the default profile", func(t *testing.T) {
+		t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", home)
+		t.Setenv("CLAUDE_CONFIG_DIR", home)
+		if got := isolatedProfileDir(); got != "" {
+			t.Fatalf("isolatedProfileDir() = %q, want empty — both name ~/.claude", got)
+		}
+	})
 }
 
-func TestSessionProfileEnvIgnoresBlankValues(t *testing.T) {
+func TestIsolatedProfileDirIgnoresBlankValues(t *testing.T) {
 	t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", "   ")
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	if got := sessionProfileEnv(); got != "" {
-		t.Fatalf("sessionProfileEnv() = %q, want empty — a blank var is not a profile", got)
+	if got := isolatedProfileDir(); got != "" {
+		t.Fatalf("isolatedProfileDir() = %q, want empty — a blank var is not a profile", got)
 	}
 }

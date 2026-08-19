@@ -416,13 +416,25 @@ func newAccountAddCmd() *cobra.Command {
 
 // captureCurrent reads the live credential + oauthAccount and stores them as an
 // account (keyed by email). Shared by the CLI `add` and the UI.
-// sessionProfileEnv reports the isolated profile directory this process is
-// pointed at, if any. Claude Code resolves its credential store through
-// CLAUDE_SECURESTORAGE_CONFIG_DIR before CLAUDE_CONFIG_DIR, so check in that
-// order and report the one that actually decides.
-func sessionProfileEnv() string {
+// isolatedProfileDir reports a profile directory this process is pointed at that
+// is NOT the default one, or "" when neither variable diverges.
+//
+// The two variables select INDEPENDENT surfaces, which is why both are checked
+// rather than the first one set: CLAUDE_SECURESTORAGE_CONFIG_DIR selects where
+// the credential lives, CLAUDE_CONFIG_DIR selects the identity and config
+// profile. Either one pointing away from ~/.claude is enough to make `add`
+// capture a mismatched pair — the credential of one profile filed under the
+// identity of another — so a divergence in either is refused.
+func isolatedProfileDir() string {
+	home, herr := account.ClaudeHome()
 	for _, k := range []string{"CLAUDE_SECURESTORAGE_CONFIG_DIR", "CLAUDE_CONFIG_DIR"} {
-		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+		v := strings.TrimSpace(os.Getenv(k))
+		if v == "" {
+			continue
+		}
+		// A home we cannot resolve means we cannot prove the profile is the
+		// default one; refuse rather than capture on an assumption.
+		if herr != nil || !sameDirPath(v, home) {
 			return v
 		}
 	}
@@ -453,16 +465,14 @@ func captureCurrent(st *account.Store) (account.Account, bool, error) {
 	// Claude Code resolves its credential store through CLAUDE_SECURESTORAGE_CONFIG_DIR
 	// first, then CLAUDE_CONFIG_DIR (verified in the 2.1.227 bundle), so both count.
 	// Credit: claude-swap #190/#205 found this failure mode first.
-	if profile := sessionProfileEnv(); profile != "" {
-		if home, herr := account.ClaudeHome(); herr != nil || !sameDirPath(profile, home) {
-			return account.Account{}, false, fmt.Errorf(
-				"refusing to capture: this terminal is running an isolated profile (%s), but `add` "+
-					"reads the machine-wide login — it would store the WRONG account's credential.\n"+
-					"Fix: run `clauderig account add` from a normal terminal to capture the live login, "+
-					"or `clauderig account add --from-session <id|email>` to repair a tracked account "+
-					"from its own session profile",
-				profile)
-		}
+	if profile := isolatedProfileDir(); profile != "" {
+		return account.Account{}, false, fmt.Errorf(
+			"refusing to capture: this terminal is running an isolated profile (%s), but `add` "+
+				"reads the machine-wide login — it would store the WRONG account's credential.\n"+
+				"Fix: run `clauderig account add` from a normal terminal to capture the live login, "+
+				"or `clauderig account add --from-session <id|email>` to repair a tracked account "+
+				"from its own session profile",
+			profile)
 	}
 	cred, err := account.ReadLive()
 	if err != nil {
@@ -979,7 +989,6 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill bool) erro
 // success it round-trips the displaced account's current credential back into
 // its store and returns the safety-backup path.
 func doSwitch(st *account.Store, target account.Account, force bool) (backup string, blocked []account.Instance, err error) {
-	active, _ := st.Active()
 	home, err := account.ClaudeHome()
 	if err != nil {
 		return "", nil, err
@@ -998,6 +1007,35 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 					"(any running session will need to log in again)", scanErr)
 		}
 	}
+	// Hold Claude Code's OWN credential locks BEFORE reading any of the state
+	// this swap depends on. Acquiring later would serialize the writes of two
+	// concurrent switches while leaving both working from a snapshot taken
+	// before the other ran: both read active=X, the first switches to Y, and the
+	// second then saves Y's live credential back into X's store. Read-then-lock
+	// is not the same as lock-then-read.
+	//
+	// The lock also closes the race with Claude Code itself. Its token refresh
+	// reads the credential, does a network round trip, and saves — all under
+	// these locks — so a swap landing inside that window is overwritten by the
+	// refreshed OLD account's token, and the backup taken a moment earlier
+	// preserves a refresh token that has already been rotated away. Under the
+	// lock, Claude Code's own double-checked re-read sees the swapped
+	// (non-expired) credential and abandons the refresh instead.
+	//
+	// This matters most in exactly the case the guard above permits: `--force`,
+	// or a session the process scan could not see. It costs nothing when nothing
+	// is running — an uncontended mkdir.
+	release, lockCompromised, lerr := account.LockCredentials(home, 0)
+	if lerr != nil {
+		return "", nil, fmt.Errorf(
+			"refusing to switch: %w.\n"+
+				"A token refresh is in flight; swapping the credential underneath it would be "+
+				"overwritten by the old account's refreshed token. Retry in a few seconds", lerr)
+	}
+	defer release()
+
+	// Everything below is read under the lock.
+	active, _ := st.Active()
 	targetCred, err := st.Credential(target.ID)
 	if err != nil {
 		return "", nil, fmt.Errorf("read stored credential: %w", err)
@@ -1065,26 +1103,6 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 			"~/.claude.json does not exist, so the account profile cannot be swapped alongside the credential.\n" +
 				"Run `claude` once to create it, then switch")
 	}
-	// Hold Claude Code's OWN credential locks across the whole read-modify-write.
-	// Its token refresh reads the credential, does a network round trip, and
-	// saves — all under these locks — so a swap landing inside that window is
-	// overwritten by the refreshed OLD account's token, and the backup taken a
-	// moment earlier preserves a refresh token that has already been rotated
-	// away. Under the lock, Claude Code's own double-checked re-read sees the
-	// swapped (non-expired) credential and abandons the refresh instead.
-	//
-	// This matters most in exactly the case the guard above permits: `--force`,
-	// or a session the process scan could not see. It costs nothing when nothing
-	// is running — an uncontended mkdir.
-	release, lerr := account.LockCredentials(home, 0)
-	if lerr != nil {
-		return "", nil, fmt.Errorf(
-			"refusing to switch: %w.\n"+
-				"A token refresh is in flight; swapping the credential underneath it would be "+
-				"overwritten by the old account's refreshed token. Retry in a few seconds", lerr)
-	}
-	defer release()
-
 	// Held for the whole swap so the credential can be put back if the profile
 	// write fails partway — a half-applied swap is the desync itself.
 	var displacedCred []byte
@@ -1108,6 +1126,16 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 		if curOAuth, _ := account.ReadOAuthAccount(); len(curOAuth) > 0 {
 			_ = st.SaveOAuth(active, curOAuth)
 		}
+	}
+	// Last check before the one write that cannot be taken back. If our lock was
+	// judged stale and taken over while we were preparing — a suspended laptop is
+	// enough — then nothing we do from here is exclusive, and Claude Code may be
+	// mid-refresh. Stop while the only casualty is a switch that did not happen.
+	if lockCompromised() {
+		return "", nil, errors.New(
+			"refusing to switch: another process took over Claude Code's credential lock while " +
+				"this swap was being prepared, so the write would not be exclusive.\n" +
+				"Nothing was changed — retry in a few seconds")
 	}
 	if err := account.WriteLive(targetCred); err != nil {
 		return "", nil, err

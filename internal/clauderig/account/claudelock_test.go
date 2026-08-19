@@ -10,7 +10,7 @@ import (
 
 func TestLockCredentialsTakesBothLocksInClaudeCodeOrder(t *testing.T) {
 	home := t.TempDir()
-	release, err := LockCredentials(home, time.Second)
+	release, _, err := LockCredentials(home, time.Second)
 	if err != nil {
 		t.Fatalf("LockCredentials: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestLockCredentialsReleasesThePrimaryWhenTheLegacyLockIsContended(t *testin
 	if err := os.Mkdir(legacyCredentialLockDir(home), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LockCredentials(home, 200*time.Millisecond); !errors.Is(err, ErrClaudeBusy) {
+	if _, _, err := LockCredentials(home, 200*time.Millisecond); !errors.Is(err, ErrClaudeBusy) {
 		t.Fatalf("want ErrClaudeBusy, got %v", err)
 	}
 	if _, err := os.Stat(oauthRefreshLockDir(home)); !os.IsNotExist(err) {
@@ -132,4 +132,53 @@ func TestLegacyLockPathResolvesSymlinks(t *testing.T) {
 		t.Fatalf("legacy lock path = %q, want %q — Claude Code realpaths the config\n"+
 			"home before appending .lock, so a symlinked ~/.claude must land on the same artifact", got, want)
 	}
+}
+
+// A lock is a pathname, and a pathname can come to mean a different directory.
+// If ours is judged stale and another holder recreates it, our toucher must not
+// keep THEIR lock alive, and our release must not delete it.
+func TestHeldLockDoesNotTouchOrRemoveALockItNoLongerOwns(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".oauth_refresh.lock")
+	h, err := acquireLock(dir, credentialStaleness, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a stale takeover: the directory is replaced by another holder's.
+	if rerr := os.Remove(dir); rerr != nil {
+		t.Fatal(rerr)
+	}
+	if merr := os.Mkdir(dir, 0o755); merr != nil {
+		t.Fatal(merr)
+	}
+	if h.stillOurs() {
+		t.Fatal("a recreated lock directory is still reported as ours")
+	}
+	h.release()
+	if _, serr := os.Stat(dir); os.IsNotExist(serr) {
+		t.Fatal("release deleted a lock owned by another holder — stripping its exclusion")
+	}
+}
+
+// The toucher must notice the takeover and report it, so the caller can stop
+// before writing anything that is no longer exclusive.
+func TestHeldLockReportsLostOwnership(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".oauth_refresh.lock")
+	h, err := acquireLock(dir, credentialStaleness, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.release()
+	if h.compromised() {
+		t.Fatal("a freshly acquired lock reports itself compromised")
+	}
+	_ = os.Remove(dir)
+	_ = os.Mkdir(dir, 0o755)
+	deadline := time.Now().Add(2*touchInterval + time.Second)
+	for time.Now().Before(deadline) {
+		if h.compromised() {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("the toucher never noticed that the lock had been taken over")
 }
