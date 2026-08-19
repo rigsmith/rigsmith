@@ -107,6 +107,13 @@ func printStoredAccounts(out interface{ Write([]byte) (int, error) }, statuses [
 	}
 	fmt.Fprintf(out, "\n%s\n", HeaderStyle.Render("Stored accounts"))
 	anyDead := false
+	anyDesktop := false
+	for _, st := range statuses {
+		if st.Desktop {
+			anyDesktop = true
+			break
+		}
+	}
 	for _, st := range statuses {
 		marker := "  "
 		if st.Active {
@@ -128,7 +135,17 @@ func printStoredAccounts(out interface{ Write([]byte) (int, error) }, statuses [
 		default:
 			sess = DimStyle.Render("session —")
 		}
-		fmt.Fprintf(out, "%s%s  %s  %s\n", marker, accountTitle(st.Account), cred, sess)
+		// Only shown when at least one account has a Desktop session, so machines
+		// that don't use Desktop keep the output they had.
+		desk := ""
+		if anyDesktop {
+			if st.Desktop {
+				desk = "  " + OkStyle.Render("desktop ✓")
+			} else {
+				desk = "  " + DimStyle.Render("desktop —")
+			}
+		}
+		fmt.Fprintf(out, "%s%s  %s  %s%s\n", marker, accountTitle(st.Account), cred, sess, desk)
 	}
 	if anyDead {
 		fmt.Fprintf(out, "%s\n", DimStyle.Render(
@@ -378,7 +395,7 @@ func newAccountAddCmd() *cobra.Command {
 						"`switch` refuses it, re-run this capture (or log in live and `account add`)."))
 				return nil
 			}
-			a, updated, err := captureCurrent(st)
+			a, updated, deskOutcome, err := captureCurrent(st)
 			if err != nil {
 				return err
 			}
@@ -390,6 +407,9 @@ func newAccountAddCmd() *cobra.Command {
 				verb = "Updated"
 			}
 			fmt.Fprintf(out, "%s %s\n", OkStyle.Render(verb), accountTitle(a))
+			if note := desktopCaptureNote(deskOutcome); note != "" {
+				fmt.Fprintf(out, "  %s\n", note)
+			}
 			// `add` pairs a credential (Keychain) with an email read from
 			// ~/.claude.json. If those two halves have drifted apart, what we just
 			// stored is MISLABELED — one identity's email wrapped around the
@@ -412,13 +432,167 @@ func newAccountAddCmd() *cobra.Command {
 
 // captureCurrent reads the live credential + oauthAccount and stores them as an
 // account (keyed by email). Shared by the CLI `add` and the UI.
-func captureCurrent(st *account.Store) (account.Account, bool, error) {
+func captureCurrent(st *account.Store) (account.Account, bool, string, error) {
 	cred, err := account.ReadLive()
 	if err != nil {
-		return account.Account{}, false, err
+		return account.Account{}, false, desktopNone, err
 	}
 	oauth, _ := account.ReadOAuthAccount()
-	return st.CaptureLive(cred, oauth)
+	a, updated, err := st.CaptureLive(cred, oauth)
+	if err != nil {
+		return a, updated, desktopNone, err
+	}
+	// Best-effort: an account is perfectly usable without a Desktop session, so a
+	// machine with no Desktop installed, or one where the user only signed in to
+	// the CLI, must still capture cleanly.
+	return a, updated, captureDesktopFor(st, a.ID, oauth), nil
+}
+
+// captureLiveDesktopIntoOwner snapshots the live Desktop session into whichever
+// stored account it ACTUALLY belongs to, and returns that account's id ("" if
+// there is nothing to save or no account matches).
+//
+// `switch` needs this rather than "capture for the outgoing account", because
+// Desktop need not be signed in as the outgoing account at all. If the CLI is on
+// A, Desktop is on C, and you switch to B, then filing under A would corrupt A's
+// snapshot with C's session — and doing nothing would let C's session be
+// overwritten and lost, since Desktop keeps only the active account's tokens.
+// Filing it under C preserves it, so switching to C later still costs no login.
+// Outcomes of preserving the live Desktop session before it is overwritten.
+const (
+	preserveNothing = "nothing"  // no Desktop session to lose
+	preserveSaved   = "saved"    // filed under its owning account
+	preserveNoOwner = "no-owner" // a live session belonging to no tracked account
+	preserveFailed  = "failed"   // it exists, and we could not store it
+)
+
+func captureLiveDesktopIntoOwner(st *account.Store) (owner string, outcome string) {
+	root, err := account.DesktopHome()
+	if err != nil {
+		return "", preserveNothing
+	}
+	snap, err := account.CaptureDesktop(root)
+	if err != nil {
+		// Nothing to lose if there is no Desktop here at all; anything else means
+		// a session may exist that we failed to read.
+		if errors.Is(err, account.ErrNoDesktop) || errors.Is(err, account.ErrDesktopUnsupported) {
+			return "", preserveNothing
+		}
+		return "", preserveFailed
+	}
+	if !snap.HasSession() {
+		return "", preserveNothing
+	}
+	all, err := st.List()
+	if err != nil {
+		return "", preserveFailed
+	}
+	for _, a := range all {
+		blk, oerr := st.OAuth(a.ID)
+		if oerr != nil {
+			continue
+		}
+		if account.MatchDesktopAccount(snap, blk) == account.DesktopSame {
+			if serr := st.SaveDesktop(a.ID, snap); serr != nil {
+				return a.ID, preserveFailed
+			}
+			return a.ID, preserveSaved
+		}
+	}
+	return "", preserveNoOwner
+}
+
+// liveDesktopOwner names the account Desktop is CURRENTLY signed in as, matched
+// by uuid rather than assumed to be the active CLI account — the two are
+// independent logins and this feature exists precisely because they differ.
+// Returns "" when it cannot be established.
+func liveDesktopOwner(st *account.Store) string {
+	root, err := account.DesktopHome()
+	if err != nil {
+		return ""
+	}
+	snap, err := account.CaptureDesktop(root)
+	if err != nil || !snap.HasSession() {
+		return ""
+	}
+	all, err := st.List()
+	if err != nil {
+		return ""
+	}
+	for _, a := range all {
+		if blk, oerr := st.OAuth(a.ID); oerr == nil &&
+			account.MatchDesktopAccount(snap, blk) == account.DesktopSame {
+			if a.Email != "" {
+				return a.Email
+			}
+			return a.ID
+		}
+	}
+	return ""
+}
+
+// desktopCaptureNote turns a capture outcome into a line worth printing, or ""
+// when there is nothing to say (no Desktop on this machine is not news).
+func desktopCaptureNote(outcome string) string {
+	switch outcome {
+	case desktopCaptured:
+		return OkStyle.Render("Desktop session captured") +
+			DimStyle.Render(" — switching to this account will move Desktop too")
+	case desktopOtherAcct:
+		return WarnStyle.Render("Claude Desktop is signed in as a different account") +
+			DimStyle.Render("\n  its session was left alone. Sign Desktop in as this account and re-run"+
+				" `clauderig account add` to capture it.")
+	case desktopUnverified:
+		return DimStyle.Render("Desktop session not captured: could not confirm which account it belongs to")
+	default:
+		return ""
+	}
+}
+
+// Outcomes of a Desktop capture attempt, reported by `add` so a skip is never
+// silent — "switch didn't move Desktop" is baffling if nothing said why.
+const (
+	desktopCaptured   = "captured"
+	desktopNone       = "none"       // no Desktop, or signed out
+	desktopOtherAcct  = "other"      // Desktop is signed in as a DIFFERENT account
+	desktopUnverified = "unverified" // can't prove whose session it is
+)
+
+// captureDesktopFor snapshots the live Desktop session into an account, but only
+// once it has confirmed the session actually BELONGS to that account.
+//
+// The CLI and Desktop are independent logins and routinely disagree — the CLI
+// signed in as one account while Desktop is signed in as another. Capturing
+// blindly would file Desktop-account-B's session under CLI-account-A, and a later
+// `switch` to A would then sign Desktop into B. That is worse than not having the
+// feature, so an unconfirmed match is treated as no match.
+//
+// The comparison is Desktop's `lastKnownAccountUuid` against the account's own
+// oauthAccount `accountUuid` — the same uuid on both sides. Failures are
+// otherwise swallowed: no Desktop problem should block a CLI credential
+// operation.
+func captureDesktopFor(st *account.Store, id string, oauthBlock []byte) string {
+	root, err := account.DesktopHome()
+	if err != nil {
+		return desktopNone
+	}
+	snap, err := account.CaptureDesktop(root)
+	if err != nil || !snap.HasSession() {
+		return desktopNone
+	}
+	if len(oauthBlock) == 0 {
+		oauthBlock, _ = st.OAuth(id)
+	}
+	switch account.MatchDesktopAccount(snap, oauthBlock) {
+	case account.DesktopUnknown:
+		return desktopUnverified
+	case account.DesktopDifferent:
+		return desktopOtherAcct
+	}
+	if err := st.SaveDesktop(id, snap); err != nil {
+		return desktopNone
+	}
+	return desktopCaptured
 }
 
 func newAccountListCmd() *cobra.Command {
@@ -686,7 +860,7 @@ func runAccountUI(cmd *cobra.Command) error {
 		case "":
 			return nil
 		case "add":
-			a, updated, cerr := captureCurrent(st)
+			a, updated, deskOutcome, cerr := captureCurrent(st)
 			if cerr != nil {
 				note = ErrStyle.Render(cerr.Error())
 				continue
@@ -698,6 +872,12 @@ func runAccountUI(cmd *cobra.Command) error {
 			note = "added " + a.Email
 			if updated {
 				note = "updated " + a.Email
+			}
+			switch deskOutcome {
+			case desktopCaptured:
+				note += " (+ desktop)"
+			case desktopOtherAcct:
+				note += " — desktop is signed in as another account, left alone"
 			}
 		case "switch":
 			target, rerr := st.Resolve(final.Action.ID)
@@ -922,6 +1102,24 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 			return "", live, nil
 		}
 	}
+	// Only involve Desktop when the target actually has a session to restore.
+	// Machines that never signed in to Desktop, or accounts captured before this
+	// existed, switch exactly as they did before and never see the guard.
+	tgtDesktop, derr := st.Desktop(target.ID)
+	if derr != nil {
+		return "", nil, derr
+	}
+	swapDesktop := tgtDesktop.HasSession()
+	// Desktop holds the Cookies DB open and rewrites config.json on exit, so a
+	// session written underneath a running app is silently lost — and the user
+	// would be left looking at the previous account with no error to explain it.
+	if swapDesktop && !force && account.DesktopRunning() {
+		return "", nil, fmt.Errorf(
+			"Refusing to switch: Claude Desktop is running.\n"+
+				"Its session would be overwritten underneath it and the swap silently lost.\n"+
+				"Fix: quit Claude Desktop and switch again, or `--force` to swap the CLI login only "+
+				"(Desktop stays signed in as %s)", currentDesktopLabel(st, active))
+	}
 	targetCred, err := st.Credential(target.ID)
 	if err != nil {
 		return "", nil, fmt.Errorf("read stored credential: %w", err)
@@ -994,6 +1192,42 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 		if curOAuth, _ := account.ReadOAuthAccount(); len(curOAuth) > 0 {
 			_ = st.SaveOAuth(active, curOAuth)
 		}
+		// Re-snapshot the outgoing Desktop session before anything overwrites it.
+		// This is not optional bookkeeping: Desktop rotates its refresh token and
+		// sessionKey, so the copy taken at `add` time goes stale, and switching
+		// back later would restore tokens the server has already rolled. Capturing
+		// on the way out is what makes repeated switching work.
+		//
+		// It is filed under whichever account it really belongs to, which matters
+		// most here: Desktop may have been signed in as some third account all
+		// along, and filing that under the outgoing account would lose a login
+		// nobody asked to give up.
+		//
+		// The outcome is checked, not discarded. Desktop keeps only the active
+		// account's tokens, so applying the target's session DESTROYS whatever is
+		// there now — if that could not be preserved first, the switch would
+		// silently cost a login that a later switch-back cannot recover.
+		if swapDesktop {
+			_, outcome := captureLiveDesktopIntoOwner(st)
+			if force {
+				outcome = preserveNothing // caller has accepted the loss
+			}
+			switch outcome {
+			case preserveFailed:
+				return "", nil, fmt.Errorf(
+					"refusing to switch: Claude Desktop has a live session that could not be " +
+						"saved first, and switching would overwrite it — costing a login that " +
+						"cannot be recovered.\n" +
+						"Fix: resolve the error above, or `--force` to switch anyway and lose it")
+			case preserveNoOwner:
+				return "", nil, fmt.Errorf(
+					"refusing to switch: Claude Desktop is signed in as an account clauderig " +
+						"does not track, so its session cannot be preserved and switching " +
+						"would discard it.\n" +
+						"Fix: run `clauderig account add` while that account is live to track " +
+						"it, or `--force` to switch anyway and lose it")
+			}
+		}
 	}
 	if err := account.WriteLive(targetCred); err != nil {
 		return "", nil, err
@@ -1020,7 +1254,47 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 	if err := st.SetActive(target.ID); err != nil {
 		return "", nil, err
 	}
+	// Desktop goes LAST, once the CLI login is fully swapped and recorded. It is a
+	// separate app with its own session, so a failure here cannot corrupt the CLI
+	// state — and rolling the CLI back over it would be a bigger change than the
+	// one that failed. Report the split state instead, precisely, so it is obvious
+	// what to do next.
+	// With --force the guard above was bypassed, so Desktop may be open. The
+	// documented promise for that case is "swaps the CLI login only", so leave
+	// Desktop entirely alone rather than attempting a write the app would clobber
+	// and then reporting it as a failure.
+	if swapDesktop && account.DesktopRunning() {
+		return backup, nil, nil
+	}
+	if swapDesktop {
+		root, rerr := account.DesktopHome()
+		if rerr == nil {
+			rerr = account.ApplyDesktop(root, tgtDesktop)
+		}
+		if rerr != nil {
+			return backup, nil, fmt.Errorf(
+				"switched the CLI login to %s, but Claude Desktop could not be swapped: %w\n"+
+					"Desktop is still signed in as the previous account. Quit Desktop and re-run "+
+					"`clauderig account switch %s` to move it too",
+				target.Email, rerr, target.ID)
+		}
+	}
 	return backup, nil, nil
+}
+
+// currentDesktopLabel names whichever account DESKTOP is signed in as, for the
+// refuse-while-running message.
+//
+// Resolved from the live Desktop session rather than from the active CLI
+// account: this whole feature exists because the two apps can be signed in as
+// different accounts, so naming the CLI's account here would confidently state
+// something false. Falls back to a neutral phrase when it cannot be established,
+// which is better than a specific wrong answer.
+func currentDesktopLabel(st *account.Store, _ string) string {
+	if owner := liveDesktopOwner(st); owner != "" {
+		return owner
+	}
+	return "whichever account it is signed in as"
 }
 
 func printSwitchRefused(out interface{ Write([]byte) (int, error) }, live []account.Instance) {
