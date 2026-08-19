@@ -21,12 +21,15 @@ the machine-wide login.
 | Command | What it does |
 | --- | --- |
 | `clauderig account add` | Capture the currently logged-in account into claudeRig's store (and mark it the live one). |
-| `clauderig account list` | Show stored accounts; `→` marks the live one. |
+| `clauderig account list` | Show stored accounts; `→` marks the live one. `--json` for one machine-readable object. |
 | `clauderig account run <id\|email> [-- claude args…]` | **Session mode** — run as that account in *this terminal only*. |
-| `clauderig account switch [<id\|email>]` | **Global swap** — change the machine-wide login. Guarded; no arg rotates. `--dry-run` previews; `--force` swaps despite live sessions; `--kill` ends them first. |
+| `clauderig account switch [<id\|email>]` | **Global swap** — change the machine-wide login. Guarded; no arg rotates. `--dry-run` previews; `--force` swaps despite live sessions; `--kill` ends them first; `--json` reports the outcome, refusals included. |
 | `clauderig account sessions` (alias `ps`) | List running Claude Code instances — what blocks a switch. |
 | `clauderig account remove <id\|email>` (alias `rm`) | Stop tracking an account (and delete its session profile). |
 | `clauderig account purge` | Remove all of claudeRig's account data. |
+| `clauderig account alias <id\|email> <alias>` | Give an account a short handle, usable anywhere an id or email is. `--unset` removes it; bare `alias` lists them. |
+| `clauderig account disable <ref>` / `enable <ref>` | Hold an account out of automatic rotation, or return it. Still switchable by name. |
+| `clauderig account map [<ref>] [dir]` / `unmap [dir]` | Bind a directory to an account, so a bare `account run` there uses it. Bare `map` lists every binding. |
 | `clauderig account doctor` | Check whether the live credential and `~/.claude.json` name the same account. Exits non-zero on a desync. `--fix`, `--json`, `--journal N`. |
 | `clauderig account watch` | Poll for an identity change and record what was running when it happened. `--every` (default 5s). |
 
@@ -112,6 +115,54 @@ clauderig account switch                         # rotate to the next account
 
 Prefer `run` for parallel accounts; reach for `switch` only when you genuinely
 want the machine-wide default login to change.
+
+
+## Ergonomics: aliases, disable, and directory mapping
+
+Three conveniences, all borrowed from claude-swap and all deliberately shallow —
+they change which account a command *picks*, never how a credential is handled.
+
+**Aliases.** `clauderig account alias john@company.example dev` makes `dev` work
+anywhere an id or email does — `switch dev`, `run dev`, `map dev`. An alias that
+would shadow another account's id, email or alias is refused: the shadowing
+would silently redirect a switch, which is the one failure this whole command
+exists to prevent.
+
+**Disable.** `clauderig account disable <ref>` holds an account out of
+*automatic* selection. A bare `clauderig account switch` rotates to the next
+account and skips it; `switch <ref>` by name still works, and the credential is
+still stored and still healthy. It is a "not by accident" marker, not a soft
+delete — `remove` is how you stop tracking an account. Disabling the last enabled
+account is allowed and says so, because rotation then has nowhere to go.
+
+**Directory mapping.** `clauderig account map dev ~/work/client-app` binds a
+directory; a bare `clauderig account run` inside it launches that account in
+session mode. Subdirectories inherit the nearest mapped ancestor, so a mapping on
+a repo root covers the tree and a mapping deeper inside still wins.
+
+An unmapped directory makes a bare `run` an error rather than a silent launch of
+the live login: `run` promises an isolated profile, and quietly handing over the
+machine-wide one instead is exactly the surprise it exists to avoid.
+
+Mappings live in `~/.clauderig/dir-map.json`, are **per-machine and never
+synced** (they name absolute paths that mean nothing elsewhere), and are dropped
+when their account is removed. The same table holds Desktop bindings — see
+[CLAUDERIG-DESKTOP-PROFILES.md](CLAUDERIG-DESKTOP-PROFILES.md) — so one directory
+can name both the CLI account and the Desktop profile it belongs to.
+
+## JSON output
+
+`list` and `switch` take `--json`: exactly one object on **stdout**, every human
+line on **stderr**, so a caller can pipe to `jq` without filtering prose out.
+
+```console
+$ clauderig account list --json | jq -r '.accounts[] | select(.disabled) | .email'
+$ clauderig account switch dev --json    # {"switched":true,"from":"…","to":"…","backup":"…"}
+```
+
+`switch --json` reports refusals too — a token-less credential, live sessions
+(with their pids), a held credential lock — because a refusal is the outcome a
+script most needs to branch on. The error still sets a non-zero exit code.
 
 ## Why not Claude Desktop
 

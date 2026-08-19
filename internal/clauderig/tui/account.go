@@ -19,7 +19,7 @@ import (
 // AccountAction is the intent the accounts screen records on exit. Kind "" means
 // the user backed out. ID identifies the target for run/switch/remove/repair.
 type AccountAction struct {
-	Kind string // "" · "add" · "run" · "switch" · "remove" · "repair"
+	Kind string // "" · "add" · "run" · "switch" · "remove" · "repair" · "toggle-disable" · "alias"
 	ID   string
 }
 
@@ -46,7 +46,8 @@ func (m AccountModel) Init() tea.Cmd { return nil }
 // Update drives the list: ↑/↓ (k/j) move; enter/r runs the selected account as a
 // session; s swaps the machine-wide login to it; a captures the current login;
 // f recaptures a dead stored credential from its session profile (inert unless
-// the row is actually repairable); q/esc back. run/switch are inert on an empty
+// the row is actually repairable); d holds it out of rotation or returns it;
+// n names it (sets an alias); q/esc back. All row actions are inert on an empty
 // list.
 func (m AccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	k, ok := msg.(tea.KeyMsg)
@@ -80,6 +81,16 @@ func (m AccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "f":
 		if a, ok := m.current(); ok && repairable(a) {
 			m.Action = AccountAction{Kind: "repair", ID: a.ID}
+			return m, tea.Quit
+		}
+	case "d":
+		if a, ok := m.current(); ok {
+			m.Action = AccountAction{Kind: "toggle-disable", ID: a.ID}
+			return m, tea.Quit
+		}
+	case "n":
+		if a, ok := m.current(); ok {
+			m.Action = AccountAction{Kind: "alias", ID: a.ID}
 			return m, tea.Quit
 		}
 	case "x", "delete", "backspace":
@@ -152,6 +163,12 @@ func (m AccountModel) View() string {
 				anyDeadStuck = true
 			}
 		}
+		if a.Disabled {
+			// Dim the whole row's meaning rather than just appending a word: a
+			// disabled account is still live-capable, just not automatically
+			// chosen, and the listing should make that obvious at a glance.
+			health += dim.Render("  (disabled)")
+		}
 		switch a.Session {
 		case account.SessionOK:
 			health += dim.Render("  session ✓")
@@ -179,7 +196,7 @@ func (m AccountModel) View() string {
 		}
 	}
 
-	keys := "↑/↓ move · enter start claude code · s switch · a add · x remove"
+	keys := "↑/↓ move · enter start claude code · s switch · a add · d " + disableWord(m) + " · n alias · x remove"
 	if anyRepairable {
 		keys += " · f repair"
 	}
@@ -191,6 +208,15 @@ func (m AccountModel) View() string {
 	return b.String()
 }
 
+// disableWord names what `d` would do to the row under the cursor, so the hint
+// is never the opposite of the effect.
+func disableWord(m AccountModel) string {
+	if a, ok := m.current(); ok && a.Disabled {
+		return "enable"
+	}
+	return "disable"
+}
+
 func toggleWord(showing bool) string {
 	if showing {
 		return "hide"
@@ -198,10 +224,15 @@ func toggleWord(showing bool) string {
 	return "list"
 }
 
-// accountName renders the account email (the identity), falling back to the id.
+// accountName renders the account: its alias first when it has one — that is the
+// handle the user chose and will type — then the email, which is the identity.
 func accountName(a account.Account) string {
-	if a.Email == "" {
-		return a.ID
+	name := a.Email
+	if name == "" {
+		name = a.ID
 	}
-	return a.Email
+	if a.Alias != "" {
+		return a.Alias + " · " + name
+	}
+	return name
 }
