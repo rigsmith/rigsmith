@@ -5,19 +5,39 @@ useDefault = true
 
 # Fabricated test fixtures: their job is to prove the sync engine STRIPS oauth
 # tokens, so they embed obviously-sequential placeholder values, not real keys.
+#
+# Allowed by VALUE only, with no `paths` entry. That is deliberate: naming a path
+# here would allow the whole file — gitleaks combines allowlist conditions with OR
+# — and a real token pasted into that test later would then go unreported.
+# Verified: with a path entry, a `ghp_…` token added to that file is not flagged.
 [[allowlists]]
 description = "Synthetic fixtures in clauderig sync tests"
-paths = ['''clauderig/internal/engine/desktop_test.go''']
 regexes = [
   '''Zk9q3xR7tLmA1cD8eF0gH2iJ4kL6mN8oP0qR2sT4uV6wX8y''',
   '''Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0Kk1Ll2Mm3Nn4''',
+  '''Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0Kk1Ll2Mm3Nn4Oo5Pp6Qq7''',
 ]
 
 # The redaction module is a secret SCANNER: its source and tests intentionally
-# contain provider token prefixes (xoxb-, AKIA…) and AWS's public example key.
+# contain provider token prefixes (xoxb-, AKIA…), PEM headers and AWS's public
+# example key, because detecting them is the module's entire job. There is no way
+# to write a credential detector whose sources do not look like credentials, so
+# these four files are allowed wholesale.
+#
+# The trade-off is real and worth stating: a genuine secret committed into one of
+# these files would not be reported. They are listed individually, and scoped to
+# this one package, so that stays a small and reviewable surface — a blanket
+# `*_test.go` rule is how a token pasted into an unrelated test slips through.
+#
+# NOTE: these paths must track the tree. They previously read
+# `clauderig/internal/redact/…` and silently matched nothing after the layout
+# moved to `internal/clauderig/…`, leaving the module unprotected by an allowlist
+# everyone assumed was in force.
 [[allowlists]]
-description = "Redaction scanner's own detection patterns"
+description = "Redaction scanner's own detection patterns and fixtures"
 paths = [
-  '''clauderig/internal/redact/scan\.go''',
-  '''clauderig/internal/redact/scan_test\.go''',
+  '''internal/clauderig/redact/scan\.go''',
+  '''internal/clauderig/redact/scan_test\.go''',
+  '''internal/clauderig/redact/scanfile\.go''',
+  '''internal/clauderig/redact/scanfile_test\.go''',
 ]
