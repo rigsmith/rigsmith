@@ -929,8 +929,17 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 		return "", nil, err
 	}
 	if !force {
-		if live := account.RunningInstances(home); len(live) > 0 {
+		live, scanErr := account.RunningInstancesScan(home)
+		if len(live) > 0 {
 			return "", live, nil
+		}
+		// "I could not look" is not "nothing is running". Proceeding here would
+		// be the guard silently permitting the one swap it exists to refuse.
+		if scanErr != nil {
+			return "", nil, fmt.Errorf(
+				"refusing to switch: %w, so whether Claude Code is running is unknown.\n"+
+					"Close your Claude Code windows and retry, or `--force` to swap anyway "+
+					"(any running session will need to log in again)", scanErr)
 		}
 	}
 	targetCred, err := st.Credential(target.ID)

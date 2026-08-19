@@ -2,6 +2,7 @@ package account
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,7 +97,8 @@ func RunningInstances(claudeHome string) []Instance {
 	//
 	// So the process table is consulted too, and it is authoritative for
 	// existence. A pid already described by a registry keeps that description.
-	for _, p := range liveClaudeProcesses(claudeHome) {
+	procs, scanOK := liveClaudeProcesses(claudeHome)
+	for _, p := range procs {
 		if _, ok := seen[p.PID]; !ok {
 			seen[p.PID] = p
 		}
@@ -106,8 +108,27 @@ func RunningInstances(claudeHome string) []Instance {
 	for _, inst := range seen {
 		out = append(out, inst)
 	}
+	_ = scanOK
 	sortByPID(out)
 	return out
+}
+
+// ErrProcessScan means the process table could not be read, so whether Claude
+// Code is running is UNKNOWN. It is deliberately not an empty result: "I could
+// not look" and "nothing is there" are different answers, and only one of them
+// makes it safe to overwrite the live credential.
+var ErrProcessScan = errors.New("could not scan for running Claude Code processes")
+
+// RunningInstancesScan is RunningInstances for callers that must not proceed on
+// a guess — the switch guard. err is ErrProcessScan when the process table could
+// not be read; the instances found by other means are still returned alongside
+// it, so a caller that overrides can still report them.
+func RunningInstancesScan(claudeHome string) ([]Instance, error) {
+	out := RunningInstances(claudeHome)
+	if _, ok := claudeProcessPIDs(); !ok {
+		return out, ErrProcessScan
+	}
+	return out, nil
 }
 
 // Indirected so tests can supply a process table instead of the machine's own —
@@ -125,9 +146,15 @@ var (
 // swapping the machine-wide credential does not touch them. Blocking on those
 // would make `switch` unusable on exactly the setup clauderig encourages —
 // several accounts running side by side.
-func liveClaudeProcesses(claudeHome string) []Instance {
-	var out []Instance
-	for _, pid := range claudeProcessPIDs() {
+func liveClaudeProcesses(claudeHome string) (out []Instance, ok bool) {
+	pids, ok := claudeProcessPIDs()
+	if !ok {
+		// The scan failed. Reporting an empty list here would be the guard
+		// silently permitting the swap — the exact fail-open this whole function
+		// was added to eliminate — so say so instead and let the caller refuse.
+		return nil, false
+	}
+	for _, pid := range pids {
 		if pid <= 1 || !pidAlive(pid) {
 			continue
 		}
@@ -142,7 +169,7 @@ func liveClaudeProcesses(claudeHome string) []Instance {
 		}
 		out = append(out, Instance{PID: pid, Kind: "cli", Source: "process"})
 	}
-	return out
+	return out, true
 }
 
 // sameDir compares two directory paths for the isolation check, tolerating a

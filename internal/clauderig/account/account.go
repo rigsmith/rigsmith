@@ -190,7 +190,7 @@ func (s *Store) CaptureLive(cred, oauth []byte) (Account, bool, error) {
 		OrganizationUUID: org,
 		AddedAt:          time.Now().UTC().Format(time.RFC3339),
 	}
-	if err := s.save(a, cred); err != nil {
+	if err := s.save(a, cred, authoritative); err != nil {
 		return Account{}, false, err
 	}
 	if err := s.SaveOAuth(id, oauth); err != nil {
@@ -231,21 +231,34 @@ func (s *Store) idFor(email, org string) (id string, existed bool) {
 // mergeCredential carries forward top-level fields the incoming blob does not
 // carry itself, so a narrower source cannot silently strip the account's record.
 //
-// The credential is not only `claudeAiOauth`. It also holds `organizationUuid`,
-// which is the ONLY thing `doctor` can compare against the profile block — lose
-// it and the desync check stops comparing and starts reporting "both halves
-// agree" unconditionally, which is a false all-clear rather than a missing one.
-// And it holds `mcpOAuth`, the MCP servers' own logins.
+// What may be carried forward depends on WHO is writing, because the two sources
+// mean different things by an absent field:
 //
-// Both were being lost in practice. `account add --from-session` repairs from
-// the profile's Keychain entry, which Claude Code writes containing just
-// `claudeAiOauth`; storing that verbatim dropped the other two, and the next
-// switch then wrote the reduced blob live. Observed on a real machine: a
-// credential that had all three fields at 20:08 had exactly one by 04:26.
+//   - partial (a session profile's Keychain entry, which Claude Code writes
+//     holding only `claudeAiOauth`): absence carries no information at all. Every
+//     missing field is filled in from the stored copy. Observed on a real
+//     machine: a credential that had all three fields at 20:08 had exactly one by
+//     04:26, because `add --from-session` stored the narrow blob verbatim and the
+//     next switch wrote the reduced version live.
+//
+//   - authoritative (the live credential itself): absence usually MEANS removed,
+//     so a capture must be able to delete. Log out of an MCP server and run
+//     `account add`, and `mcpOAuth` is legitimately gone; carrying it forward
+//     would make the removal impossible to express and let a later switch restore
+//     tokens the user revoked.
+//
+// The one exception is `organizationUuid`, which is carried forward from either
+// source. Claude Code does not always write it — verified on this machine, where
+// one account's live credential carries it and the other's does not, and the
+// identity journal recorded `credOrg: f1eab509… → (none)` across a switch. It is
+// also the only field `doctor` can compare against the profile block, so losing
+// it does not degrade the desync check, it silently turns it into an
+// unconditional all-clear. Treating its absence as a deletion would therefore
+// delete exactly the wrong thing.
 //
 // Merging is safe because this is always the SAME account's own record — a
 // repair or a round-trip of its own credential — never another account's.
-func (s *Store) mergeCredential(id string, raw []byte) []byte {
+func (s *Store) mergeCredential(id string, raw []byte, src credentialSource) []byte {
 	var incoming map[string]json.RawMessage
 	if json.Unmarshal(raw, &incoming) != nil {
 		return raw // not an object we understand; store it untouched
@@ -260,10 +273,14 @@ func (s *Store) mergeCredential(id string, raw []byte) []byte {
 	}
 	added := false
 	for k, v := range existing {
-		if _, present := incoming[k]; !present {
-			incoming[k] = v
-			added = true
+		if _, present := incoming[k]; present {
+			continue
 		}
+		if src == authoritative && k != "organizationUuid" {
+			continue // an authoritative omission is a deletion
+		}
+		incoming[k] = v
+		added = true
 	}
 	if !added {
 		return raw
@@ -275,7 +292,21 @@ func (s *Store) mergeCredential(id string, raw []byte) []byte {
 	return merged
 }
 
-func (s *Store) save(a Account, raw []byte) error {
+// credentialSource distinguishes a complete credential from the partial one the
+// session-repair path reads, because only the caller knows which it holds.
+type credentialSource bool
+
+const (
+	// authoritative: the blob is the whole credential as Claude Code has it, so
+	// what it omits is genuinely gone and must be stored as omitted.
+	authoritative credentialSource = false
+	// partial: a per-profile Keychain entry, which holds only `claudeAiOauth`.
+	// Storing it verbatim would strip `organizationUuid` and `mcpOAuth` from the
+	// account's record.
+	partial credentialSource = true
+)
+
+func (s *Store) save(a Account, raw []byte, src credentialSource) error {
 	dir := s.acctDir(a.ID)
 	hadConfig := dirExists(s.ConfigDir(a.ID))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -288,7 +319,7 @@ func (s *Store) save(a Account, raw []byte) error {
 	if err := os.WriteFile(s.metaPath(a.ID), meta, 0o600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.credPath(a.ID), s.mergeCredential(a.ID, raw), 0o600); err != nil {
+	if err := os.WriteFile(s.credPath(a.ID), s.mergeCredential(a.ID, raw, src), 0o600); err != nil {
 		return err
 	}
 	if hadConfig {
@@ -390,7 +421,7 @@ func (s *Store) SaveCredential(id string, raw []byte) error {
 	if !hasTokens(raw) {
 		return fmt.Errorf("refusing to overwrite the stored credential for %s with a token-less blob (expired or logged-out login)", a.Email)
 	}
-	return s.save(a, raw)
+	return s.save(a, raw, authoritative)
 }
 
 // Remove deletes a tracked account — credential, metadata, and session profile.

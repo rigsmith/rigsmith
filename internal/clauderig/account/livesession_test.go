@@ -1,6 +1,7 @@
 package account
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,7 +11,27 @@ import (
 	"time"
 )
 
+// stubProcessTable replaces the machine's real process table for a test.
+//
+// RunningInstances consults BOTH the session registries and the process table,
+// so without this a test asserting "these registry files produce these
+// instances" also depends on whether a real Claude Code happens to be running on
+// the developer's machine — and, since an unreadable environment is deliberately
+// treated as live, that stray process gets counted. The guard's own behaviour is
+// covered separately, with an explicit table, in the tests below.
+func stubProcessTable(t *testing.T, pids []int, dirs map[int]string) {
+	t.Helper()
+	origPIDs, origDir := claudeProcessPIDs, processConfigDir
+	claudeProcessPIDs = func() ([]int, bool) { return pids, true }
+	processConfigDir = func(pid int) (string, bool) {
+		d, ok := dirs[pid]
+		return d, ok
+	}
+	t.Cleanup(func() { claudeProcessPIDs, processConfigDir = origPIDs, origDir })
+}
+
 func TestRunningInstances(t *testing.T) {
+	stubProcessTable(t, nil, nil)
 	home := t.TempDir()
 	alive := os.Getpid()
 	dead := 0x7FFFFFF0 // implausibly high pid — not running
@@ -35,6 +56,7 @@ func TestRunningInstances(t *testing.T) {
 }
 
 func TestRunningInstances_EmptyAndMissing(t *testing.T) {
+	stubProcessTable(t, nil, nil)
 	// Missing ~/.claude entirely → no instances, no error.
 	if got := RunningInstances(filepath.Join(t.TempDir(), "nope")); len(got) != 0 {
 		t.Errorf("missing claude home → %v, want none", got)
@@ -75,7 +97,7 @@ func TestPidAlive(t *testing.T) {
 func stubProcesses(t *testing.T, pids []int, cfg map[int]string, unknown map[int]bool) {
 	t.Helper()
 	op, oc := claudeProcessPIDs, processConfigDir
-	claudeProcessPIDs = func() []int { return pids }
+	claudeProcessPIDs = func() ([]int, bool) { return pids, true }
 	processConfigDir = func(pid int) (string, bool) {
 		if unknown[pid] {
 			return "", false
@@ -153,5 +175,30 @@ func TestRunningInstances_RegistryDescriptionWins(t *testing.T) {
 	}
 	if got[0].Kind != "claude-vscode" || got[0].Cwd != "/tmp/x" {
 		t.Errorf("registry detail should survive the process scan: %+v", got[0])
+	}
+}
+
+// A failed scan must not read as "nothing is running". That is the fail-open the
+// process check was added to eliminate, and it would let a switch overwrite the
+// credential under a live session.
+func TestRunningInstancesScanReportsAFailedScan(t *testing.T) {
+	origPIDs, origDir := claudeProcessPIDs, processConfigDir
+	claudeProcessPIDs = func() ([]int, bool) { return nil, false }
+	processConfigDir = func(int) (string, bool) { return "", false }
+	t.Cleanup(func() { claudeProcessPIDs, processConfigDir = origPIDs, origDir })
+
+	got, err := RunningInstancesScan(t.TempDir())
+	if !errors.Is(err, ErrProcessScan) {
+		t.Fatalf("err = %v, want ErrProcessScan", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("instances = %+v, want none found by other means", got)
+	}
+}
+
+func TestRunningInstancesScanIsQuietWhenTheScanWorks(t *testing.T) {
+	stubProcessTable(t, nil, nil)
+	if got, err := RunningInstancesScan(t.TempDir()); err != nil || len(got) != 0 {
+		t.Fatalf("RunningInstancesScan = %+v, %v; want none and no error", got, err)
 	}
 }

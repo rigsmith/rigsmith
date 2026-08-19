@@ -35,12 +35,13 @@ func forceKill(pid int) error { return syscall.Kill(pid, syscall.SIGKILL) }
 const claudeBinaryName = "claude"
 
 // claudeProcessPIDs lists running Claude Code processes from the process table.
-func claudeProcessPIDsImpl() []int {
+// ok=false means the scan itself failed — which is NOT the same answer as "none
+// are running", and the switch guard must not read it as one.
+func claudeProcessPIDsImpl() (pids []int, ok bool) {
 	out, err := exec.Command("/bin/ps", "-A", "-o", "pid=,comm=").Output()
 	if err != nil {
-		return nil
+		return nil, false
 	}
-	var pids []int
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(strings.TrimSpace(line))
 		if len(fields) < 2 {
@@ -54,7 +55,7 @@ func claudeProcessPIDsImpl() []int {
 			pids = append(pids, pid)
 		}
 	}
-	return pids
+	return pids, true
 }
 
 // processConfigDir reports a process's CLAUDE_CONFIG_DIR. known=false means the

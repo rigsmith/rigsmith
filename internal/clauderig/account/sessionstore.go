@@ -116,7 +116,10 @@ func (s *Store) CaptureFromSession(a Account) error {
 	if sub != "" {
 		a.SubscriptionType = sub
 	}
-	if err := s.save(a, raw); err != nil {
+	// The one partial source: a session profile's Keychain entry holds only
+	// `claudeAiOauth`, so the account's other stored fields are carried forward
+	// rather than deleted by omission.
+	if err := s.save(a, raw, partial); err != nil {
 		return err
 	}
 	// The tokens came FROM this session — reseeding them back is pointless, and
