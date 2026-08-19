@@ -97,7 +97,8 @@ Linux build's layout.
   roots (`$HOME/.claude` and the Desktop application-support directory). A
   regression test asserts this, because a profile inside a sync root would push
   live sessions to the remote.
-- **Profiles are 0700**, and so is their metadata — on macOS and Linux. Windows
+- **Profile directories are 0700 and `profile.json` is 0600** — on macOS and
+  Linux. Windows
   has no Unix permission bits (Go's `Chmod` there only toggles read-only), so
   containment on Windows rests on the ACL inherited from `%USERPROFILE%`.
 - **`rm` refuses while the window is open** unless forced, then closes it first:

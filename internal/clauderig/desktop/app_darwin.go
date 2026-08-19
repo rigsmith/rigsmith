@@ -107,6 +107,12 @@ func (d darwinApp) Focus(string) error {
 	return nil
 }
 
+// Quit ends the instance and CONFIRMS it is gone before reporting success.
+//
+// `rm --force` quits and then deletes the profile directory, so a Quit that
+// returns nil without checking would let the delete race a live Electron —
+// which leaves the app writing into unlinked files. Every failure on the way
+// (the follow-up scan, the signals) has to reach the caller.
 func (d darwinApp) Quit(dataDir string, grace time.Duration) error {
 	pids, err := d.Running(dataDir)
 	if err != nil || len(pids) == 0 {
@@ -118,9 +124,18 @@ func (d darwinApp) Quit(dataDir string, grace time.Duration) error {
 	if waitGone(d, dataDir, time.Now().Add(grace)) {
 		return nil
 	}
-	remaining, _ := d.Running(dataDir)
+	remaining, rerr := d.Running(dataDir)
+	if rerr != nil {
+		return fmt.Errorf("sent SIGTERM but could not confirm shutdown: %w", rerr)
+	}
 	for _, pid := range remaining {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
+		if kerr := syscall.Kill(pid, syscall.SIGKILL); kerr != nil && !errors.Is(kerr, syscall.ESRCH) {
+			return fmt.Errorf("could not end Claude Desktop process %d: %w", pid, kerr)
+		}
+	}
+	// Signals are asynchronous: confirm rather than assume.
+	if !waitGone(d, dataDir, time.Now().Add(2*time.Second)) {
+		return fmt.Errorf("Claude Desktop is still running for this profile after SIGKILL")
 	}
 	return nil
 }

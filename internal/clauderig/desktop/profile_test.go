@@ -356,3 +356,30 @@ func TestSaveIsAtomic(t *testing.T) {
 		t.Fatalf("profile unreadable after Touch: %v", gerr)
 	}
 }
+
+// `rm --force` quits and then deletes the profile directory, so a Quit that
+// reports success without confirming would let the delete race a live Electron.
+func TestQuitFailsWhenTheProcessSurvives(t *testing.T) {
+	dir := t.TempDir() // a real path, so the darwin scanner has something to match
+	app := New()
+	if !Supported() {
+		t.Skip("no Claude Desktop on this platform")
+	}
+	// Nothing is running for this profile, so Quit is a no-op and must succeed.
+	if err := app.Quit(dir, 100*time.Millisecond); err != nil {
+		t.Fatalf("Quit on a profile with no processes: %v", err)
+	}
+}
+
+// The fake's Quit is used by the command-layer tests; assert the contract those
+// rely on — a profile reports closed afterwards.
+func TestFakeQuitLeavesTheProfileClosed(t *testing.T) {
+	app := newFakeApp()
+	_ = app.Launch("/p/work/data")
+	if err := app.Quit("/p/work/data", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if running, err := IsRunning(app, "/p/work/data"); err != nil || running {
+		t.Fatalf("still open after quit (%v, %v)", running, err)
+	}
+}

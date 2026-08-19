@@ -162,6 +162,9 @@ func stripQuotes(s string) string { return strings.ReplaceAll(s, `"`, "") }
 // already open, rather than raising the wrong window, is the honest behaviour.
 func (w windowsApp) Focus(string) error { return nil }
 
+// Quit ends the instance and CONFIRMS it is gone before reporting success —
+// `rm --force` deletes the profile directory immediately afterwards, and doing
+// that under a live Electron leaves it writing into unlinked files.
 func (w windowsApp) Quit(dataDir string, grace time.Duration) error {
 	pids, err := w.Running(dataDir)
 	if err != nil || len(pids) == 0 {
@@ -174,9 +177,19 @@ func (w windowsApp) Quit(dataDir string, grace time.Duration) error {
 	if waitGone(w, dataDir, time.Now().Add(grace)) {
 		return nil
 	}
-	remaining, _ := w.Running(dataDir)
+	remaining, rerr := w.Running(dataDir)
+	if rerr != nil {
+		return fmt.Errorf("asked Claude Desktop to close but could not confirm shutdown: %w", rerr)
+	}
 	for _, pid := range remaining {
-		_ = exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
+		if out, kerr := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").CombinedOutput(); kerr != nil {
+			// The process may simply have exited between the scan and the kill;
+			// the final check below decides whether that is what happened.
+			_ = out
+		}
+	}
+	if !waitGone(w, dataDir, time.Now().Add(2*time.Second)) {
+		return fmt.Errorf("Claude Desktop is still running for this profile after a forced taskkill")
 	}
 	return nil
 }
