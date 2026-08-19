@@ -37,14 +37,12 @@ func NewDesktopCmd() *cobra.Command {
 			"  1. `desktop add work`      creates a profile and opens a window\n" +
 			"  2. log in as that account  in the window that just opened\n" +
 			"  3. repeat 1–2 per account  `desktop add personal`, and so on\n" +
-			"  4. close every window      `desktop quit <name>`, or just close them\n" +
-			"  5. `desktop share --all`   OPTIONAL: one shared chat history\n\n" +
+			"  4. close every window      `desktop quit <name>`, or just close them\n\n" +
 			"You log in ONCE per profile. From then on `desktop open work` reopens it,\n" +
 			"already signed in, and any number of windows can be open together.\n\n" +
-			"Step 5 has to run with the windows CLOSED — it moves the directory Claude\n" +
-			"Desktop writes chat history into, and the app keeps writing through a\n" +
-			"directory it opened before the swap. Add a profile later? Run\n" +
-			"`desktop share --all` again; it is idempotent and only touches what changed.\n\n" +
+			"`clauderig sync` backs every profile up — settings and chat history, never\n" +
+			"the login. History stays separate per profile, which is the point: each one\n" +
+			"is a distinct account, and Desktop keeps their histories apart.\n\n" +
 			"Nothing is copied, swapped or decrypted: clauderig never reads Desktop's\n" +
 			"login. Each profile is a directory Claude Desktop owns outright, and all\n" +
 			"clauderig decides is which one to launch against. That is what makes this\n" +
@@ -54,7 +52,6 @@ func NewDesktopCmd() *cobra.Command {
 			"  list   show saved profiles and which are open\n" +
 			"  quit   close a profile's window\n" +
 			"  map    bind a directory to a profile, for a bare `open` there\n" +
-			"  share  share Claude Code session history between profiles (and back it up)\n" +
 			"  rm     delete a profile (logs that account out of Desktop for good)\n\n" +
 			"Separate from `clauderig account`, which switches the Claude Code CLI login.",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -65,8 +62,7 @@ func NewDesktopCmd() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newDesktopAddCmd(), newDesktopOpenCmd(), newDesktopListCmd(),
-		newDesktopQuitCmd(), newDesktopRemoveCmd(), newDesktopMapCmd(), newDesktopUnmapCmd(),
-		newDesktopShareCmd(), newDesktopUnshareCmd())
+		newDesktopQuitCmd(), newDesktopRemoveCmd(), newDesktopMapCmd(), newDesktopUnmapCmd())
 	return cmd
 }
 
@@ -122,7 +118,7 @@ func newDesktopAddCmd() *cobra.Command {
 			var seeded desktop.SeedResult
 			if !noSeed {
 				var serr error
-				if seeded, serr = desktop.Seed(p, sharedRootOrEmpty()); serr != nil {
+				if seeded, serr = desktop.Seed(p, desktopInstallDir()); serr != nil {
 					return serr
 				}
 			}
@@ -148,12 +144,9 @@ func newDesktopAddCmd() *cobra.Command {
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"  a fresh Claude Desktop window is opening — log into this account there.\n"+
 					"  it stays logged in; `clauderig desktop open "+name+"` reopens it."))
-			// The next step is the one people get wrong: sharing has to happen
-			// with the windows closed, so say it here rather than only in the
-			// share command's own help.
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
-				"  next: add any other accounts the same way. To give them ONE shared chat\n"+
-					"  history, close the windows and run `clauderig desktop share --all`."))
+				"  next: add any other accounts the same way. `clauderig sync` backs each\n"+
+					"  profile's settings and chat history up — never its login."))
 			return nil
 		},
 	}
@@ -377,8 +370,6 @@ func newDesktopListCmd() *cobra.Command {
 				return nil
 			}
 			app := desktop.New()
-			shareRoot := sharedRootOrEmpty()
-			unshared := 0
 			fmt.Fprintln(out, HeaderStyle.Render("Claude Desktop profiles"))
 			for _, p := range all {
 				marker, state := "  ", DimStyle.Render("closed")
@@ -389,11 +380,6 @@ func newDesktopListCmd() *cobra.Command {
 					marker, state = OkStyle.Render("● "), OkStyle.Render("open")
 				}
 				line := fmt.Sprintf("%s%s  %s", marker, p.Label(), state)
-				if profileShareState(p, shareRoot) {
-					line += "  " + DimStyle.Render("shared history")
-				} else {
-					unshared++
-				}
 				if p.AccountID != "" {
 					line += "  " + DimStyle.Render("↔ "+p.AccountID)
 				}
@@ -401,13 +387,8 @@ func newDesktopListCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"each profile is its own login — opening one never signs another out"))
-			// Suggest sharing only when it would change something: more than one
-			// profile, and at least one of them still on its own history. The
-			// hint disappears once they are shared, so it never becomes noise.
-			if len(all) > 1 && unshared > 0 {
-				fmt.Fprintf(out, "%s\n", DimStyle.Render(
-					"chat history is per profile — close the windows and `clauderig desktop share --all` to pool it"))
-			}
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(
+				"chat history is per profile — `clauderig sync` backs each one up separately"))
 			return nil
 		},
 	}
@@ -545,42 +526,35 @@ type desktopProfileJSON struct {
 	AccountID   string `json:"accountId,omitempty"`
 	Open        bool   `json:"open"`
 	OpenUnknown bool   `json:"openUnknown,omitempty"`
-	// SharedHistory reports whether this profile's session history is linked to
-	// the shared tree (and therefore covered by `clauderig sync`).
-	SharedHistory bool   `json:"sharedHistory"`
-	DataDir       string `json:"dataDir"`
-	CreatedAt     string `json:"createdAt,omitempty"`
-	LastOpened    string `json:"lastOpened,omitempty"`
+	DataDir     string `json:"dataDir"`
+	CreatedAt   string `json:"createdAt,omitempty"`
+	LastOpened  string `json:"lastOpened,omitempty"`
 }
 
 type desktopListJSON struct {
-	Supported  bool                 `json:"supported"`
-	Installed  bool                 `json:"installed"`
-	AppPath    string               `json:"appPath,omitempty"`
-	SharedRoot string               `json:"sharedRoot,omitempty"`
-	Profiles   []desktopProfileJSON `json:"profiles"`
+	Supported bool                 `json:"supported"`
+	Installed bool                 `json:"installed"`
+	AppPath   string               `json:"appPath,omitempty"`
+	Profiles  []desktopProfileJSON `json:"profiles"`
 }
 
 func printDesktopJSON(w interface{ Write([]byte) (int, error) }, _ *desktop.Store, all []desktop.Profile) error {
 	app := desktop.New()
 	path, installed := app.Installed()
-	shareRoot := sharedRootOrEmpty()
 	out := desktopListJSON{
-		Supported:  desktop.Supported(),
-		Installed:  installed,
-		AppPath:    path,
-		SharedRoot: shareRoot,
-		Profiles:   make([]desktopProfileJSON, 0, len(all)),
+		Supported: desktop.Supported(),
+		Installed: installed,
+		AppPath:   path,
+		Profiles:  make([]desktopProfileJSON, 0, len(all)),
 	}
 	for _, p := range all {
 		row := desktopProfileJSON{
-			Name:          p.Name,
-			Email:         p.Email,
-			AccountID:     p.AccountID,
-			DataDir:       p.DataDir(),
-			CreatedAt:     p.CreatedAt,
-			LastOpened:    p.LastOpened,
-			SharedHistory: profileShareState(p, shareRoot),
+			Name:       p.Name,
+			Email:      p.Email,
+			AccountID:  p.AccountID,
+			DataDir:    p.DataDir(),
+			CreatedAt:  p.CreatedAt,
+			LastOpened: p.LastOpened,
 		}
 		// A failed scan is reported as such rather than as `open: false`, so a
 		// script cannot mistake "could not look" for "not running".
@@ -712,7 +686,6 @@ func runDesktopUI(cmd *cobra.Command) error {
 			return lerr
 		}
 		_, installed := app.Installed()
-		shareRoot := sharedRootOrEmpty()
 		rows := make([]tui.DesktopRow, 0, len(all))
 		for _, p := range all {
 			var open, unknown bool
@@ -730,7 +703,6 @@ func runDesktopUI(cmd *cobra.Command) error {
 				// derive "open" and "unknown" from different snapshots.
 				Open:        open,
 				OpenUnknown: unknown,
-				Shared:      profileShareState(p, shareRoot),
 			})
 		}
 		res, rerr := tea.NewProgram(tui.NewDesktop(rows, installed, desktop.Supported(), note)).Run()
@@ -798,44 +770,6 @@ func runDesktopUI(cmd *cobra.Command) error {
 				continue
 			}
 			note = "closed " + p.Label()
-		case "toggle-share":
-			p, gerr := st.Get(final.Action.Name)
-			if gerr != nil {
-				note = ErrStyle.Render(gerr.Error())
-				continue
-			}
-			root, rerr := resolveSharedRoot()
-			if rerr != nil {
-				note = ErrStyle.Render(rerr.Error())
-				continue
-			}
-			// Re-check rather than trust the snapshot the screen was drawn from:
-			// the window may have been opened since.
-			if openNow, cerr := desktop.IsRunning(app, p.DataDir()); cerr != nil || openNow {
-				note = WarnStyle.Render("close " + p.Name + " first — its session directory cannot be moved while it is open")
-				continue
-			}
-			if desktop.ShareStatus(p, root.Path, desktop.SharedDirs).Shared(desktop.SharedDirs) {
-				if uerr := desktop.Unshare(p, root.Path, desktop.SharedDirs); uerr != nil {
-					note = ErrStyle.Render(uerr.Error())
-					continue
-				}
-				note = p.Name + " now has its own session history (the shared history is untouched)"
-				continue
-			}
-			results, serr := desktop.Share(p, root.Path, desktop.SharedDirs)
-			if serr != nil {
-				note = ErrStyle.Render(serr.Error())
-				continue
-			}
-			migrated := 0
-			for _, r := range results {
-				migrated += r.Migrated
-			}
-			note = fmt.Sprintf("%s now shares session history (%d migrated)", p.Name, migrated)
-			if !root.Backed() {
-				note += " — note: the desktop sync root is disabled, so it is not backed up"
-			}
 		case "remove":
 			p, gerr := st.Get(final.Action.Name)
 			if gerr != nil {
