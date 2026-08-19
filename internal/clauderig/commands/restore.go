@@ -133,11 +133,14 @@ func NewRestoreCmd() *cobra.Command {
 					fmt.Fprintf(out, "  %-8s %s\n", r.ID, DimStyle.Render("skipped (nothing staged)"))
 					continue
 				}
-				pruned := ""
-				if r.Pruned > 0 {
-					pruned = fmt.Sprintf(", %d pruned", r.Pruned)
+				extra := ""
+				if r.Links > 0 {
+					extra += fmt.Sprintf(", %d memory link(s)", r.Links)
 				}
-				fmt.Fprintf(out, "  %-8s %d files, %d slug(s) rewritten%s\n", r.ID, r.Files, r.SlugsRewritten, pruned)
+				if r.Pruned > 0 {
+					extra += fmt.Sprintf(", %d pruned", r.Pruned)
+				}
+				fmt.Fprintf(out, "  %-8s %d files, %d slug(s) rewritten%s\n", r.ID, r.Files, r.SlugsRewritten, extra)
 			}
 			if man.ClaudeVersion != "" {
 				fmt.Fprintf(out, "  %s\n", DimStyle.Render("synced from Claude Code "+man.ClaudeVersion))

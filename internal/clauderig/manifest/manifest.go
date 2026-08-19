@@ -26,6 +26,11 @@ type Manifest struct {
 	ClaudeVersion string             `json:"claudeVersion,omitempty"`
 	SourceOS      string             `json:"sourceOS"`
 	Projects      map[string]Project `json:"projects"`
+	// Links records CLI-root symlinks to directories (rel -> target, both
+	// '/'-relative to ~/.claude): worktree slugs sharing memory/ with their main
+	// project. Restore recreates them — endpoints rewritten through the slug map
+	// — when the target dir exists. Additive, so schema stays at 1.
+	Links map[string]string `json:"links,omitempty"`
 }
 
 // Project is one ~/.claude/projects/<slug> entry. Slug is the source-machine

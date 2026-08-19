@@ -57,7 +57,7 @@ func Gather(ctx context.Context, cfg *config.Config, me config.Machine, staging,
 		loc, st := cfg.RootLocation(r.ID, me)
 		if st == pathmap.StatusResolved && dirExists(loc) {
 			ri.Present = true
-			files, _ := allowlist.Walk(loc, allowlist.For(r.ID))
+			files, _, _ := allowlist.Walk(loc, allowlist.For(r.ID))
 			ri.Files = len(files)
 		}
 		info.Roots = append(info.Roots, ri)
