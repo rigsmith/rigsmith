@@ -663,16 +663,15 @@ func runAccountUI(cmd *cobra.Command) error {
 	}
 	note := ""
 	for {
-		all, err := st.List()
+		statuses, err := st.StoredStatuses()
 		if err != nil {
 			return err
 		}
-		active, _ := st.Active()
 		var procs []account.Instance
 		if home, herr := account.ClaudeHome(); herr == nil {
 			procs = account.RunningInstances(home)
 		}
-		res, err := tea.NewProgram(tui.NewAccount(all, active, procs, note)).Run()
+		res, err := tea.NewProgram(tui.NewAccount(statuses, procs, note)).Run()
 		if err != nil {
 			return err
 		}
@@ -714,6 +713,17 @@ func runAccountUI(cmd *cobra.Command) error {
 				continue
 			}
 			note = "switched to " + accountTitle(target)
+		case "repair":
+			target, rerr := st.Resolve(final.Action.ID)
+			if rerr != nil {
+				note = ErrStyle.Render(rerr.Error())
+				continue
+			}
+			if cerr := st.CaptureFromSession(target); cerr != nil {
+				note = ErrStyle.Render(cerr.Error())
+				continue
+			}
+			note = "recaptured " + accountTitle(target) + " from its session"
 		case "remove":
 			target, rerr := st.Resolve(final.Action.ID)
 			if rerr != nil {
