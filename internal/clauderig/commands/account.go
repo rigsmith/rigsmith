@@ -1093,6 +1093,10 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill, asJSON bo
 	}
 	if len(blocked) > 0 {
 		printSwitchRefused(out, blocked)
+		report(switchJSON{From: active, To: target.ID, ToEmail: target.Email,
+			Reason:   switchLiveSessions,
+			Message:  "a Claude Code session started while the swap was being prepared",
+			Blocking: toInstancesJSON(blocked)})
 		return errors.New("live Claude Code sessions detected")
 	}
 	if backup != "" {
