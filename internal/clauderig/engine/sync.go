@@ -67,6 +67,9 @@ type Options struct {
 // past redaction) — that is the safety property; nothing is pushed in that case.
 func Sync(opts Options) (*Report, error) {
 	rep := &Report{}
+	// Findings from whole files, tracked apart from JSON-value findings because the
+	// two need different remedies in the error message.
+	credentialFiles := 0
 	policy := redact.DefaultPolicy()
 
 	var cutoff time.Time
@@ -132,11 +135,58 @@ func Sync(opts Options) (*Report, error) {
 			// Non-JSON (transcripts, skill files): copy verbatim, but skip if the
 			// staging copy is already current (same size+mtime) — incremental sync.
 			if !isJSON {
+				noteFinding := func(f *redact.Finding) {
+					rep.Findings = append(rep.Findings, redact.Finding{
+						Path: r.ID + "/" + f.Path, Kind: f.Kind,
+					})
+					credentialFiles++
+				}
+				// The name rule needs no content, so it runs on EVERY file, including
+				// ones the incremental skip below won't recopy: a credential staged by
+				// an earlier sync (or before this check existed) must keep failing until
+				// it is dealt with, rather than being hidden forever by that skip.
+				if redact.ClassifyName(rel) == redact.NameKeyMaterial {
+					noteFinding(&redact.Finding{Path: rel, Kind: "key-material"})
+					continue
+				}
+
+				unchanged := false
 				if d, derr := os.Stat(dstPath); derr == nil && d.Size() == info.Size() && d.ModTime().Equal(info.ModTime()) {
+					unchanged = true
+				}
+				if unchanged {
+					// Nothing will be written, so scanning the source separately is safe
+					// here — there is no staged copy for it to disagree with.
+					if f := scanNonJSON(srcPath, rel, info.Size()); f != nil {
+						noteFinding(f)
+						continue
+					}
 					rr.Unchanged++
 					continue
 				}
-				if err := copyPreserveMtime(srcPath, dstPath, info.ModTime()); err != nil {
+
+				// Scan the EXACT bytes being staged. Reading for the scan and then
+				// re-opening to copy would leave a window in which a live ~/.claude
+				// replaces a benign file with a credential after it was cleared, staging
+				// content that was never scanned. Files past the scan limit have no
+				// content rules applied at all (see redact.ScanContentLimit), so for
+				// those there is nothing to diverge and a streaming copy is fine.
+				if info.Size() > 0 && info.Size() <= int64(redact.ScanContentLimit()) {
+					data, rerr := os.ReadFile(srcPath)
+					if rerr != nil {
+						// Unreadable is the same churn case the copy path tolerates; it
+						// stages nothing, so nothing unscanned can escape this way.
+						rr.SkippedFiles++
+						continue
+					}
+					if found := redact.ScanFile(rel, data); len(found) > 0 {
+						noteFinding(&found[0])
+						continue
+					}
+					if err := writeFileMtime(dstPath, data, info.ModTime()); err != nil {
+						return nil, err
+					}
+				} else if err := copyPreserveMtime(srcPath, dstPath, info.ModTime()); err != nil {
 					if os.IsNotExist(err) {
 						rr.SkippedFiles++
 						continue
@@ -279,7 +329,18 @@ func Sync(opts Options) (*Report, error) {
 	}
 
 	if len(rep.Findings) > 0 {
-		return rep, fmt.Errorf("secret tripwire: %d value(s) look like credentials and were not redacted; refusing to sync", len(rep.Findings))
+		// The two halves of the wire need different remedies, so say which one
+		// fired: a JSON value means the redactor's key rules missed something, a
+		// whole file means it should never have been in the allowlist.
+		files := credentialFiles
+		switch {
+		case files == len(rep.Findings):
+			return rep, fmt.Errorf("secret tripwire: %d file(s) are credential material and cannot be redacted; refusing to sync — exclude them from the allowlist or remove them", files)
+		case files > 0:
+			return rep, fmt.Errorf("secret tripwire: %d credential file(s) and %d unredacted value(s); refusing to sync", files, len(rep.Findings)-files)
+		default:
+			return rep, fmt.Errorf("secret tripwire: %d value(s) look like credentials and were not redacted; refusing to sync", len(rep.Findings))
+		}
 	}
 	return rep, nil
 }
@@ -331,6 +392,28 @@ func applyKeepFilter(rootID, rel string, v any) any {
 		}
 	}
 	return out
+}
+
+// scanNonJSON runs the non-JSON tripwire over one file, reading only as much of
+// it as redact.ScanFile will actually look at — the name rules need no content,
+// and anything past the content limit is a transcript-sized file the scan skips
+// by design. A file that can't be read is not reported: it is the same churn case
+// the copy path already tolerates, and inventing a finding would abort the sync
+// over a file that merely vanished.
+func scanNonJSON(srcPath, rel string, size int64) *redact.Finding {
+	var data []byte
+	if size > 0 && size <= int64(redact.ScanContentLimit()) {
+		f, err := os.Open(srcPath)
+		if err != nil {
+			return nil
+		}
+		data, _ = io.ReadAll(io.LimitReader(f, int64(redact.ScanContentLimit())))
+		f.Close()
+	}
+	if found := redact.ScanFile(rel, data); len(found) > 0 {
+		return &found[0]
+	}
+	return nil
 }
 
 func allowlistFor(rootID string) allowlist.List {
@@ -495,6 +578,18 @@ func removeEmptyDirs(root string) {
 
 // copyPreserveMtime streams src to dst and stamps dst with src's mtime, so the
 // next sync's size+mtime check can skip an unchanged file (incremental sync).
+// writeFileMtime stages bytes already in hand, keeping the source mtime so the
+// incremental same-size+mtime skip still recognises the copy next sync.
+func writeFileMtime(dst string, data []byte, mtime time.Time) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		return err
+	}
+	return os.Chtimes(dst, mtime, mtime)
+}
+
 func copyPreserveMtime(src, dst string, mtime time.Time) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
