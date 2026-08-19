@@ -185,8 +185,10 @@ func linkedAccount(name, email string) (id, resolvedEmail string) {
 	return "", email
 }
 
-// errNoOpenProfiles means `quit` was asked to pick and nothing is open — a
-// statement of fact rather than a failure, so the caller reports it and exits 0.
+// errNoOpenProfiles means `quit` was asked to pick and every profile was
+// determined to be closed — a statement of fact rather than a failure, so the
+// caller reports it and exits 0. A profile whose state could not be established
+// is NOT counted as closed, so this never stands in for "we could not look".
 var errNoOpenProfiles = errors.New("no profile windows are open")
 
 // resolveDesktopTarget picks the profile a command acts on, in the order a user
@@ -208,13 +210,22 @@ func resolveDesktopTarget(st *desktop.Store, app desktop.App, args []string, onl
 		}
 		return p, nil
 	}
-	// A directory binding is an explicit answer the user already gave.
+	// A directory binding is an explicit answer the user already gave, so a
+	// binding that cannot be honoured is reported rather than stepped over.
+	// Falling through would ask (or, off a terminal, claim the directory is
+	// unmapped) while the user has already said which profile they mean — and a
+	// picker would then happily act on a DIFFERENT one.
 	if cwd, err := os.Getwd(); err == nil {
 		if dm, derr := dirmapStore(); derr == nil {
 			if entry, lerr := dm.Lookup(cwd); lerr == nil && entry.Desktop != "" {
-				if p, rerr := st.Resolve(entry.Desktop); rerr == nil {
-					return p, nil
+				p, rerr := st.Resolve(entry.Desktop)
+				if rerr != nil {
+					return desktop.Profile{}, fmt.Errorf(
+						"this directory is mapped to Desktop profile %q, which could not be resolved: %w\n"+
+							"Rebind it with `clauderig desktop map <name>`, or drop the binding with `clauderig desktop unmap`",
+						entry.Desktop, rerr)
 				}
+				return p, nil
 			}
 		}
 	}
@@ -237,8 +248,13 @@ func pickProfile(st *desktop.Store, app desktop.App, onlyOpen bool) (desktop.Pro
 	byName := map[string]desktop.Profile{}
 	for _, p := range all {
 		open, rerr := desktop.IsRunning(app, p.DataDir())
-		if onlyOpen && (rerr != nil || !open) {
-			continue // nothing to close, or we cannot tell — do not offer it
+		// Hide only what is KNOWN to be closed. A failed scan is not proof of
+		// anything — treating it as closed would let `quit` print "no profile
+		// windows are open" and exit zero while the state was simply unknown,
+		// which is the opposite of what IsRunning promises and of what the
+		// named-profile path does a few lines below.
+		if onlyOpen && rerr == nil && !open {
+			continue
 		}
 		label := p.Label()
 		switch {

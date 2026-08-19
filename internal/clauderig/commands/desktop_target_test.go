@@ -2,6 +2,7 @@ package commands
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -102,5 +103,64 @@ func TestResolveDesktopTargetReportsAnUnknownName(t *testing.T) {
 	}
 	if !errors.Is(err, desktop.ErrNotFound) && !strings.Contains(err.Error(), "no Desktop profile") {
 		t.Fatalf("unhelpful error: %v", err)
+	}
+}
+
+// A binding the user set is an explicit target: if it cannot be honoured, say
+// so. Falling through would ask which profile they meant when they have already
+// said — and a picker could then act on a different one.
+func TestResolveDesktopTargetReportsABrokenDirectoryBinding(t *testing.T) {
+	st := targetStore(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	dm, err := dirmapStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, serr := dm.Set(dir, func(e *dirmap.Entry) { e.Desktop = "work" }); serr != nil {
+		t.Fatal(serr)
+	}
+	// Corrupt the bound profile's metadata.
+	if werr := os.WriteFile(filepath.Join(st.Root, "work", "profile.json"), []byte("{not json"), 0o600); werr != nil {
+		t.Fatal(werr)
+	}
+
+	_, err = resolveDesktopTarget(st, stubApp{}, nil, false)
+	if err == nil {
+		t.Fatal("a broken binding fell through instead of being reported")
+	}
+	for _, want := range []string{"mapped", "work", "unmap"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}
+
+// scanFailApp cannot determine whether anything is running.
+type scanFailApp struct{ stubApp }
+
+func (scanFailApp) Running(string) ([]int, error) { return nil, errors.New("pgrep exploded") }
+
+// "We could not look" must never be reported as "nothing is open" — that would
+// let `quit` exit zero on an unknown state, contradicting IsRunning's contract
+// and the named-profile path.
+func TestPickProfileDoesNotTreatAFailedScanAsClosed(t *testing.T) {
+	st := targetStore(t)
+	_, err := pickProfile(st, scanFailApp{}, true)
+	if errors.Is(err, errNoOpenProfiles) {
+		t.Fatal("a failed scan was reported as 'no profile windows are open'")
+	}
+}
+
+// A profile genuinely determined to be closed is still hidden from `quit`.
+func TestPickProfileHidesProfilesKnownToBeClosed(t *testing.T) {
+	st := targetStore(t)
+	_, err := pickProfile(st, stubApp{open: map[string]bool{}}, true)
+	if !errors.Is(err, errNoOpenProfiles) {
+		t.Fatalf("err = %v, want errNoOpenProfiles when every profile is known closed", err)
 	}
 }
