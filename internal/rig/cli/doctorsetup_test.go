@@ -61,14 +61,20 @@ func TestShellCheckPassesOnTheCurrentBlock(t *testing.T) {
 
 // A block from an older rig still works well enough to hide the fact that it's
 // stale — a companion added since won't be wired, for instance — so it warns.
-func TestShellCheckWarnsOnAStaleBlock(t *testing.T) {
+func TestShellCheckWarnsOnADifferingBlock(t *testing.T) {
 	rc := zshHome(t)
-	writeRC(t, rc, markerBegin(integrationBase)+"\n# from an older rig\n"+markerEnd(integrationBase))
+	writeRC(t, rc, markerBegin(integrationBase)+"\n# from another rig\n"+markerEnd(integrationBase))
 
 	c := shellIntegrationCheck(readShellState())
 
-	if c.level != docWarn || !strings.Contains(c.detail, "older block") {
-		t.Errorf("want a stale-block warning, got %v: %s", c.level, c.detail)
+	if c.level != docWarn || !strings.Contains(c.detail, "differs") {
+		t.Errorf("want a differing-block warning, got %v: %s", c.level, c.detail)
+	}
+	// A byte difference proves neither age nor authorship — the block may come
+	// from a NEWER rig — so the message must not claim it is older. (Compared
+	// with the rc path removed: temp paths under /var/folders contain "older".)
+	if strings.Contains(strings.ReplaceAll(c.detail, rc, ""), "older") {
+		t.Errorf("the warning still claims the block is older: %s", c.detail)
 	}
 }
 

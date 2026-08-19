@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,7 +27,12 @@ func setupShellName() string {
 	if shell == "pwsh" {
 		shell = "powershell"
 	}
-	if !isSetupShell(shell) && runtime.GOOS == "windows" {
+	// The Windows fallback is for the NORMAL case there: $SHELL unset. An
+	// explicitly set but unsupported shell (nu, ksh, a Git-Bash sh) is a fact
+	// about the user's setup, and overriding it with powershell would make
+	// doctor read the wrong startup file and report bogus missing/stale blocks.
+	// Reporting "not checked" is the honest answer.
+	if shell == "" && runtime.GOOS == "windows" {
 		shell = "powershell"
 	}
 	if !isSetupShell(shell) {
@@ -113,8 +119,19 @@ func pathCopies(name string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		// An EMPTY component means the current directory on POSIX, and a
+		// relative one stays relative — neither compares equal to the absolute
+		// path os.Executable reports, so skipping or leaving them unresolved
+		// reports a rig the shell can actually find as absent, or as a
+		// different copy.
 		if dir == "" {
-			continue
+			if runtime.GOOS == "windows" {
+				continue // an empty entry is not the cwd on Windows
+			}
+			dir = "."
+		}
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
 		}
 		for _, candidate := range executableNames(name) {
 			full := filepath.Join(dir, candidate)
@@ -175,10 +192,23 @@ func isExecutableFile(path string) error {
 }
 
 // onPath reports whether a command resolves on PATH, and where.
+//
+// A non-nil error does NOT mean "not found": LookPath returns a usable relative
+// path together with exec.ErrDot when the match came from `.` or another
+// relative PATH entry. Rejecting every error there reports a companion the
+// user's shell resolves perfectly well as "not installed", so the result is
+// judged on whether a path came back.
 func onPath(name string) (string, bool) {
 	p, err := exec.LookPath(name)
-	if err != nil {
+	if p == "" {
 		return "", false
+	}
+	if err != nil && !errors.Is(err, exec.ErrDot) {
+		return "", false
+	}
+	// A relative hit must be made absolute before it is compared with anything.
+	if abs, aerr := filepath.Abs(p); aerr == nil {
+		p = abs
 	}
 	if resolved, rerr := filepath.EvalSymlinks(p); rerr == nil {
 		return resolved, true

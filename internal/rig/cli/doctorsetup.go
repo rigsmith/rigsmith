@@ -131,8 +131,12 @@ func shellIntegrationCheck(state shellState) check {
 			"not installed in %s — `rig cd` can't change your directory and tab completion is off; run `rig setup %s`",
 			state.rcPath, state.shell))
 	case state.setup != setupSnippet(state.shell, integrationBase):
+		// "differs", not "older": a byte difference proves neither age nor
+		// authorship. The block may come from a NEWER rig, or carry a
+		// deliberate edit — and telling an older binary to overwrite a newer
+		// block would quietly downgrade the integration.
 		return warn("shell", fmt.Sprintf(
-			"%s has an older block than this rig writes — re-run `rig setup %s` to refresh it",
+			"%s has a block that differs from the one this rig writes — `rig setup %s` replaces it with this build's",
 			state.rcPath, state.shell))
 	default:
 		return ok("shell", state.rcPath+" · cd wrapper + completion for "+

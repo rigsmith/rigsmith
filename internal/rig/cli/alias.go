@@ -380,6 +380,10 @@ func aliasListLegend(state shellState, live int) string {
 		return "(couldn't tell which are installed — that startup file couldn't be read)"
 	case live == 0:
 		return "none installed — `rig alias install`"
+	case live >= len(rigAliases):
+		// Nothing left to add: offering to "add the rest" when there is no rest
+		// reads as though something is missing.
+		return aliasInstalledMark + " = installed in " + state.rcPath + "; all of them are in place"
 	default:
 		return aliasInstalledMark + " = installed in " + state.rcPath + "; `rig alias install` adds the rest"
 	}
