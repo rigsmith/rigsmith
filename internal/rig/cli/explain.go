@@ -38,6 +38,15 @@ var dryRunVerbs = map[string]bool{
 	"coverage": true, "rebuild": true, "publish": true, "upgrade": true,
 }
 
+// workspaceVerbs are the dev-loop verbs that consult the workspace dispatch
+// before running — the ones devVerbCmd builds. The other built-ins (install,
+// ci, add, global, dlx) are verbCmd-built and always execute the root
+// ecosystem command, so no picker can intervene.
+var workspaceVerbs = map[string]bool{
+	"build": true, "test": true, "run": true, "format": true, "lint": true,
+	"typecheck": true, "clean": true, "rebuild": true,
+}
+
 var directVerbs = map[string]bool{
 	"build": true, "test": true, "run": true, "format": true, "lint": true,
 	"typecheck": true, "clean": true, "install": true, "ci": true, "add": true,
@@ -161,18 +170,25 @@ func explainPlan(cmd *cobra.Command, cwd, root string, cfg config.Config, name s
 				"an argument to `rig %s` selects a project or a filter, which is resolved while the verb runs — explain covers the bare verb",
 				verb)
 		}
-		// ecosystemPlan describes the ROOT command, which is only what runs when
-		// the workspace dispatch would let it. In a Go module whose mains live
-		// under cmd/, a bare `rig run` opens the picker instead — printing
-		// `go run .` there describes a command the run path deliberately avoids,
-		// which is precisely the drift explain exists to prevent. Asked through
-		// the run path's own decision, so the two cannot disagree.
-		survey := surveyWorkspace(cmd, root, verb, false)
-		if !rootCommandStands(verb, survey.rootHasPackage, len(survey.tasks), len(survey.scripts)) {
-			return commandPlan{}, fmt.Errorf(
-				"`rig %s` here does not run one fixed command: this workspace has %d target(s), so it selects one (or opens a picker) while it runs.\n"+
-					"Name the project — `rig explain %s <project>` — or run `rig %s` to choose",
-				verb, len(survey.tasks), verb, verb)
+		// ecosystemPlan describes the ROOT command, which for a WORKSPACE-AWARE
+		// verb is only what runs when the dispatch would let it. In a Go module
+		// whose mains live under cmd/, a bare `rig run` opens the picker instead
+		// — printing `go run .` there describes a command the run path
+		// deliberately avoids, which is the drift explain exists to prevent.
+		// Asked through the run path's own decision, so the two cannot disagree.
+		//
+		// Only the dev-loop verbs consult that dispatch. `install`, `ci`, `add`,
+		// `global` and `dlx` are built by verbCmd and always run the root
+		// command, so applying the check to them would refuse to explain a verb
+		// that never opens a picker.
+		if workspaceVerbs[verb] {
+			survey := surveyWorkspace(cmd, root, verb, false)
+			if !rootCommandStands(verb, survey.rootHasPackage, len(survey.tasks), len(survey.scripts)) {
+				return commandPlan{}, fmt.Errorf(
+					"`rig %s` here does not run one fixed command: this workspace has %d target(s), so it selects one (or opens a picker) while it runs.\n"+
+						"Run `rig %s --dry-run` for the command a single invocation resolves to",
+					verb, len(survey.tasks), verb)
+			}
 		}
 		eco, err := resolvePrimary(cwd, root)
 		if err != nil {

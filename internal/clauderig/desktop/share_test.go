@@ -388,3 +388,87 @@ func TestCopyFileReportsWhetherItCreatedTheFile(t *testing.T) {
 		t.Fatal("a copy that hit an existing file reported itself as created")
 	}
 }
+
+// "Something was already there" is not "our copy is safe". Share deletes the
+// source once migration reports success, so a collision the winner wrote
+// DIFFERENTLY must be preserved, not counted as skipped.
+func TestShareTreatsADifferingRaceWinnerAsAConflict(t *testing.T) {
+	_, p, root := shareFixture(t)
+	// The shared tree already holds a different file at the same path — the
+	// same state a lost O_EXCL race leaves behind.
+	writeFile(t, filepath.Join(root, "claude-code-sessions", "acct-a", "s1.json"), "THEIRS")
+	writeFile(t, filepath.Join(p.DataDir(), "claude-code-sessions", "acct-a", "s1.json"), "OURS")
+
+	results, err := Share(p, root, SharedDirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Conflicts != 1 || results[0].Skipped != 0 {
+		t.Fatalf("results = %+v, want the differing collision preserved as a conflict", results)
+	}
+	if got := readFile(t, filepath.Join(results[0].ConflictDir, "acct-a", "s1.json")); got != "OURS" {
+		t.Fatalf("preserved copy = %q, want OURS", got)
+	}
+}
+
+// A conflict path that is already occupied by something DIFFERENT must not be
+// treated as "already preserved" — that would delete the source while claiming
+// to have saved it.
+func TestPreserveConflictNeverOverwritesAnEarlierBackup(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.json")
+	writeFile(t, src, "SECOND")
+	want := filepath.Join(dir, "conflicts", "src.json")
+	writeFile(t, want, "FIRST")
+
+	info, err := os.Lstat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perr := preserveConflict(src, want, info); perr != nil {
+		t.Fatal(perr)
+	}
+	if got := readFile(t, want); got != "FIRST" {
+		t.Fatalf("the earlier backup was overwritten: %q", got)
+	}
+	if got := readFile(t, want+".1"); got != "SECOND" {
+		t.Fatalf("the new copy was not preserved alongside it: %q", got)
+	}
+}
+
+// An identical backup from an earlier run is as good as ours — no numbered
+// duplicate should pile up on a retry.
+func TestPreserveConflictReusesAnIdenticalBackup(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.json")
+	writeFile(t, src, "SAME")
+	want := filepath.Join(dir, "conflicts", "src.json")
+	writeFile(t, want, "SAME")
+
+	info, _ := os.Lstat(src)
+	if err := preserveConflict(src, want, info); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(want + ".1"); !os.IsNotExist(err) {
+		t.Fatal("an identical backup was duplicated")
+	}
+}
+
+// A source symlink colliding with a regular file is a conflict to preserve, not
+// a Readlink error that aborts the whole migration.
+func TestEntriesEquivalentHandlesMismatchedKinds(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "plain")
+	writeFile(t, file, "x")
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink("plain", link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	same, err := entriesEquivalent(link, file)
+	if err != nil {
+		t.Fatalf("a symlink/file collision errored instead of reporting a difference: %v", err)
+	}
+	if same {
+		t.Fatal("a symlink and a regular file were reported as equivalent")
+	}
+}

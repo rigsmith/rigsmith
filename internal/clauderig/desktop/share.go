@@ -219,9 +219,16 @@ func Share(p Profile, sharedRoot string, dirs []string) ([]ShareResult, error) {
 			// Refuse while the source is still intact: these entries cannot be
 			// copied, and the next step deletes the directory holding them.
 			if len(unsupported) > 0 {
+				// Not "nothing was changed": the walk copies as it goes, so some
+				// files may already be in the shared tree. What matters — and
+				// what is true — is that the profile's own directory is intact
+				// and a retry cannot duplicate anything, since migration never
+				// overwrites.
 				return out, fmt.Errorf(
 					"%s holds %d entry/entries that cannot be migrated (first: %s).\n"+
-						"Nothing was changed — move or remove them, then share again",
+						"The profile's own copy is untouched and nothing was linked; anything already "+
+						"copied into the shared tree is additive, so a retry is safe. Move or remove "+
+						"them, then share again",
 					d, len(unsupported), unsupported[0])
 			}
 			res.Migrated, res.Skipped, res.Conflicts = migrated, skipped, conflicts
@@ -328,82 +335,120 @@ func mergeTree(src, dst, conflictDir string) (migrated, skipped, conflicts int, 
 		if rel == "." {
 			return nil
 		}
-		targetPath := filepath.Join(dst, rel)
 		if info.IsDir() {
-			return os.MkdirAll(targetPath, 0o700)
+			return os.MkdirAll(filepath.Join(dst, rel), 0o700)
 		}
-
-		// Symlinks are RECREATED, not skipped. Walk reports them without
-		// following (it lstats), and Share removes the source once migration
-		// reports success — so a link that is merely stepped over is destroyed
-		// rather than moved. The Cowork tree is where these turn up.
-		if info.Mode()&os.ModeSymlink != 0 {
-			if _, serr := os.Lstat(targetPath); serr == nil {
-				same, lerr := sameLink(path, targetPath)
-				if lerr != nil {
-					return lerr
-				}
-				if same {
-					skipped++
-					return nil
-				}
-				if _, perr := copyLink(path, filepath.Join(conflictDir, rel)); perr != nil {
-					return perr
-				}
-				conflicts++
-				return nil
-			}
-			created, cerr := copyLink(path, targetPath)
-			if cerr != nil {
-				return cerr
-			}
-			if created {
-				migrated++
-			} else {
-				skipped++
-			}
-			return nil
-		}
-
-		// Anything else — a socket, device or fifo — cannot be copied at all.
-		// Recording it lets Share refuse BEFORE deleting the source, which is
-		// the only way to keep the "nothing is destroyed" promise for something
-		// that cannot be moved.
-		if !info.Mode().IsRegular() {
+		// Anything that is neither a regular file nor a symlink — a socket,
+		// device or fifo — cannot be copied. Recording it lets Share refuse
+		// before deleting the source, the only way to keep the promise for
+		// something that cannot be moved.
+		if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
 			unsupported = append(unsupported, path)
 			return nil
 		}
 
-		if _, serr := os.Lstat(targetPath); serr == nil {
-			same, cerr := sameContents(path, targetPath)
-			if cerr != nil {
-				return cerr
-			}
-			if same {
-				skipped++
-				return nil
-			}
-			// Differing: keep the shared copy, preserve ours.
-			if _, perr := copyFile(path, filepath.Join(conflictDir, rel), info.Mode()); perr != nil {
-				return perr
-			}
-			conflicts++
-			return nil
-		}
-		created, cerr := copyFile(path, targetPath, info.Mode())
+		// Attempt first, compare second. Checking whether the destination
+		// exists and THEN writing leaves a race in which another writer lands
+		// between the two — and a create that loses that race says only that
+		// something is there, never that it is the same thing.
+		created, cerr := placeEntry(path, filepath.Join(dst, rel), info)
 		if cerr != nil {
 			return cerr
 		}
-		// A lost O_EXCL race means the file was already there — someone else's
-		// copy stands, and counting ours as migrated would misreport it.
 		if created {
 			migrated++
-		} else {
-			skipped++
+			return nil
 		}
+		same, eerr := entriesEquivalent(path, filepath.Join(dst, rel))
+		if eerr != nil {
+			return eerr
+		}
+		if same {
+			skipped++
+			return nil
+		}
+		// Different: the shared copy stands (it is what the app reads), and
+		// ours is preserved rather than dropped.
+		if perr := preserveConflict(path, filepath.Join(conflictDir, rel), info); perr != nil {
+			return perr
+		}
+		conflicts++
 		return nil
 	})
 	return migrated, skipped, conflicts, unsupported, err
+}
+
+// placeEntry writes src to dst without overwriting, whichever kind it is.
+func placeEntry(src, dst string, info os.FileInfo) (created bool, err error) {
+	if info.Mode()&os.ModeSymlink != 0 {
+		return copyLink(src, dst)
+	}
+	return copyFile(src, dst, info.Mode())
+}
+
+// entriesEquivalent reports whether two paths hold the same thing — the same
+// bytes, or the same link target.
+//
+// Mismatched kinds are simply "not equivalent", never an error: a source
+// symlink colliding with a regular file is a genuine conflict to preserve, and
+// reading it as a failure would abort the migration instead.
+func entriesEquivalent(a, b string) (bool, error) {
+	fa, err := os.Lstat(a)
+	if err != nil {
+		return false, err
+	}
+	fb, err := os.Lstat(b)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	aLink := fa.Mode()&os.ModeSymlink != 0
+	bLink := fb.Mode()&os.ModeSymlink != 0
+	if aLink != bLink {
+		return false, nil
+	}
+	if aLink {
+		return sameLink(a, b)
+	}
+	if !fa.Mode().IsRegular() || !fb.Mode().IsRegular() {
+		return false, nil
+	}
+	return sameContents(a, b)
+}
+
+// preserveConflict copies src somewhere under the conflict directory, and
+// GUARANTEES it lands: if the natural path is taken by something that is not
+// equivalent, a numbered sibling is used.
+//
+// Share deletes the source once migration reports success, so "preserved" has
+// to mean preserved. Writing to an occupied path and reporting success — which
+// is what ignoring the created flag amounted to — would destroy the profile's
+// only copy while claiming to have saved it.
+func preserveConflict(src, want string, info os.FileInfo) error {
+	for i := 0; i < 1000; i++ {
+		candidate := want
+		if i > 0 {
+			candidate = fmt.Sprintf("%s.%d", want, i)
+		}
+		created, err := placeEntry(src, candidate, info)
+		if err != nil {
+			return err
+		}
+		if created {
+			return nil
+		}
+		// Occupied: an identical backup from an earlier run is as good as ours.
+		same, eerr := entriesEquivalent(src, candidate)
+		if eerr != nil {
+			return eerr
+		}
+		if same {
+			return nil
+		}
+	}
+	return fmt.Errorf("could not preserve %s: too many conflicting copies alongside %s", src, want)
 }
 
 // sameContents reports whether two files hold identical bytes. Size is checked
