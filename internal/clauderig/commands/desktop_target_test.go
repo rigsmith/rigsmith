@@ -150,16 +150,24 @@ func (scanFailApp) Running(string) ([]int, error) { return nil, errors.New("pgre
 // and the named-profile path.
 func TestPickProfileDoesNotTreatAFailedScanAsClosed(t *testing.T) {
 	st := targetStore(t)
-	_, err := pickProfile(st, scanFailApp{}, true)
+	// profileOptions, not pickProfile: reaching the form would block forever
+	// waiting for input CI will never send.
+	opts, _, err := profileOptions(st, scanFailApp{}, true)
 	if errors.Is(err, errNoOpenProfiles) {
 		t.Fatal("a failed scan was reported as 'no profile windows are open'")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opts) == 0 {
+		t.Fatal("a profile whose state could not be determined was hidden from the picker")
 	}
 }
 
 // A profile genuinely determined to be closed is still hidden from `quit`.
 func TestPickProfileHidesProfilesKnownToBeClosed(t *testing.T) {
 	st := targetStore(t)
-	_, err := pickProfile(st, stubApp{open: map[string]bool{}}, true)
+	_, _, err := profileOptions(st, stubApp{open: map[string]bool{}}, true)
 	if !errors.Is(err, errNoOpenProfiles) {
 		t.Fatalf("err = %v, want errNoOpenProfiles when every profile is known closed", err)
 	}

@@ -237,22 +237,23 @@ func resolveDesktopTarget(st *desktop.Store, app desktop.App, args []string, onl
 	return pickProfile(st, app, onlyOpen)
 }
 
-// pickProfile offers the saved profiles for selection, showing which are open so
-// the choice is made on the same information the listing shows.
-func pickProfile(st *desktop.Store, app desktop.App, onlyOpen bool) (desktop.Profile, error) {
+// profileOptions builds the choices a picker would show — split out from
+// pickProfile so the decision can be tested without launching a form (a test
+// that reaches the form blocks forever waiting for input it will never get).
+func profileOptions(st *desktop.Store, app desktop.App, onlyOpen bool) ([]huh.Option[string], map[string]desktop.Profile, error) {
 	all, err := st.List()
 	if err != nil {
-		return desktop.Profile{}, err
+		return nil, nil, err
 	}
 	var opts []huh.Option[string]
 	byName := map[string]desktop.Profile{}
 	for _, p := range all {
 		open, rerr := desktop.IsRunning(app, p.DataDir())
 		// Hide only what is KNOWN to be closed. A failed scan is not proof of
-		// anything — treating it as closed would let `quit` print "no profile
+		// anything — treating it as closed would let `quit` report "no profile
 		// windows are open" and exit zero while the state was simply unknown,
 		// which is the opposite of what IsRunning promises and of what the
-		// named-profile path does a few lines below.
+		// named-profile path does.
 		if onlyOpen && rerr == nil && !open {
 			continue
 		}
@@ -270,9 +271,19 @@ func pickProfile(st *desktop.Store, app desktop.App, onlyOpen bool) (desktop.Pro
 	}
 	if len(opts) == 0 {
 		if onlyOpen {
-			return desktop.Profile{}, errNoOpenProfiles
+			return nil, nil, errNoOpenProfiles
 		}
-		return desktop.Profile{}, errors.New("no Desktop profiles yet — `clauderig desktop add <name>` creates one")
+		return nil, nil, errors.New("no Desktop profiles yet — `clauderig desktop add <name>` creates one")
+	}
+	return opts, byName, nil
+}
+
+// pickProfile offers the saved profiles for selection, showing which are open so
+// the choice is made on the same information the listing shows.
+func pickProfile(st *desktop.Store, app desktop.App, onlyOpen bool) (desktop.Profile, error) {
+	opts, byName, err := profileOptions(st, app, onlyOpen)
+	if err != nil {
+		return desktop.Profile{}, err
 	}
 	title := "Open which profile?"
 	if onlyOpen {
