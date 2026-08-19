@@ -906,9 +906,17 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill bool) erro
 		}
 	}
 
-	backup, _, err := doSwitch(st, target, force)
+	// doSwitch re-checks for live sessions and can refuse with `blocked` set and
+	// no error — a Claude Code instance that started between the check above and
+	// the swap. Discarding it reported "Switched to …" for a swap that never
+	// happened.
+	backup, blocked, err := doSwitch(st, target, force)
 	if err != nil {
 		return err
+	}
+	if len(blocked) > 0 {
+		printSwitchRefused(out, blocked)
+		return errors.New("live Claude Code sessions detected")
 	}
 	if backup != "" {
 		fmt.Fprintf(out, "%s %s\n", DimStyle.Render("backed up live credential →"), backup)
