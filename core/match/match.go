@@ -76,14 +76,48 @@ func Rank[T any](items []T, query string, fieldsOf func(T) Fields) []T {
 		copy(out, items)
 		return out
 	}
-	type scored struct {
-		item   T
-		best   int
-		byName bool
-		depth  int
-		tie    int
+	hits := score(items, query, fieldsOf)
+	out := make([]T, len(hits))
+	for i, h := range hits {
+		out[i] = h.item
 	}
-	var hits []scored
+	return out
+}
+
+// Top returns only the items in the best non-empty tier — every exact match if
+// any exist, else every prefix match, and so on. It is Rank narrowed to the
+// tier that actually answers the query, for callers that must decide "is this
+// unambiguous?" rather than "what should I list?": one exact hit is never
+// ambiguous just because looser tiers also matched. An empty query returns nil
+// (nothing is being asked for).
+func Top[T any](items []T, query string, fieldsOf func(T) Fields) []T {
+	if strings.TrimSpace(query) == "" {
+		return nil
+	}
+	hits := score(items, query, fieldsOf)
+	var out []T
+	for _, h := range hits {
+		if h.best < hits[0].best {
+			break // hits are sorted best-first, so the tier ends here
+		}
+		out = append(out, h.item)
+	}
+	return out
+}
+
+// scored is one matched item with the numbers Rank/Top order it by.
+type scored[T any] struct {
+	item   T
+	best   int
+	byName bool
+	depth  int
+	tie    int
+}
+
+// score matches every item against query and returns the hits, best first —
+// the shared body of Rank and Top.
+func score[T any](items []T, query string, fieldsOf func(T) Fields) []scored[T] {
+	var hits []scored[T]
 	for _, it := range items {
 		f := fieldsOf(it)
 		nameTier := 0
@@ -96,7 +130,7 @@ func Rank[T any](items []T, query string, fieldsOf func(T) Fields) []T {
 		}
 		best := max(nameTier, pathTier)
 		if best > 0 {
-			hits = append(hits, scored{it, best, nameTier > 0 && nameTier >= pathTier, f.Depth, f.Tie})
+			hits = append(hits, scored[T]{it, best, nameTier > 0 && nameTier >= pathTier, f.Depth, f.Tie})
 		}
 	}
 	sort.SliceStable(hits, func(i, j int) bool {
@@ -112,9 +146,5 @@ func Rank[T any](items []T, query string, fieldsOf func(T) Fields) []T {
 		}
 		return a.tie < b.tie // then the closest (shortest) name
 	})
-	out := make([]T, len(hits))
-	for i, h := range hits {
-		out[i] = h.item
-	}
-	return out
+	return hits
 }

@@ -137,7 +137,7 @@ func resolveKillPatterns(cfg config.Config, root, name string) []string {
 	// the apphost path — is the target, never the AssemblyName.
 	var dotnetProjects []detect.ProjectInfo
 	if hasDotNet(root) {
-		dotnetProjects = detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude)
+		dotnetProjects = discoverDotnet(root, cfg.Solution, cfg.Exclude)
 	}
 	if name != "" {
 		if matched := dotnetKillPatterns(dotnetProjects, name); len(matched) > 0 {

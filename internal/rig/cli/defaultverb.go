@@ -39,7 +39,7 @@ func newDefaultCmd() *cobra.Command {
 // it against a temp repo root.
 func runDefault(cmd *cobra.Command, root, query string) error {
 	cfg, _ := config.LoadMerged(root)
-	projects := detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude)
+	projects := discoverDotnet(root, cfg.Solution, cfg.Exclude)
 	var runnable []detect.ProjectInfo
 	for _, p := range projects {
 		if p.IsRunnable() {

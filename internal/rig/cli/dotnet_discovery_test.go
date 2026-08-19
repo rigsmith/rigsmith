@@ -72,23 +72,43 @@ func TestDiscoverWorkspace_DotnetVersionlessProjectsDiscoveredAndClassified(t *t
 	}
 }
 
-func TestPreferredRunTask_MatchesDefaultByFullOrShortName(t *testing.T) {
+func TestPreferredRunTasks_MatchesDefaultByFullOrShortName(t *testing.T) {
 	tasks := []allTask{
 		{name: "Halyards.Desktop", argv: []string{"dotnet", "run"}},
 		{name: "Halyards.JobTread", argv: []string{"dotnet", "run"}},
 	}
-	if got, ok := preferredRunTask(tasks, "Halyards.JobTread"); !ok || got.name != "Halyards.JobTread" {
-		t.Errorf("full-name match: got %v ok=%v", got.name, ok)
+	if got := preferredRunTasks(tasks, "Halyards.JobTread"); len(got) != 1 || got[0].name != "Halyards.JobTread" {
+		t.Errorf("full-name match: got %v", taskNames(got))
 	}
-	if got, ok := preferredRunTask(tasks, "Desktop"); !ok || got.name != "Halyards.Desktop" {
-		t.Errorf("short-name match: got %v ok=%v", got.name, ok)
+	if got := preferredRunTasks(tasks, "Desktop"); len(got) != 1 || got[0].name != "Halyards.Desktop" {
+		t.Errorf("short-name match: got %v", taskNames(got))
 	}
-	if _, ok := preferredRunTask(tasks, ""); ok {
-		t.Error("empty default should not match")
+	if got := preferredRunTasks(tasks, ""); len(got) != 0 {
+		t.Errorf("empty default should not match: %v", taskNames(got))
 	}
-	if _, ok := preferredRunTask(tasks, "Nope"); ok {
-		t.Error("unknown default should not match")
+	if got := preferredRunTasks(tasks, "Nope"); len(got) != 0 {
+		t.Errorf("unknown default should not match: %v", taskNames(got))
 	}
+}
+
+// A default naming the same project in two paths is ambiguous — the implicit
+// path must surface BOTH copies rather than launching whichever came first.
+func TestPreferredRunTasks_DuplicateDefaultIsAmbiguous(t *testing.T) {
+	tasks := []allTask{
+		{name: "Tweed.App", dir: "/repo/ui/src/Tweed.App", argv: []string{"dotnet", "run"}},
+		{name: "Tweed.App", dir: "/repo/.claude/worktrees/x/ui/src/Tweed.App", argv: []string{"dotnet", "run"}},
+	}
+	if got := preferredRunTasks(tasks, "Tweed.App"); len(got) != 2 {
+		t.Fatalf("duplicate default = %v, want both copies", taskNames(got))
+	}
+}
+
+func taskNames(ts []allTask) []string {
+	out := make([]string, len(ts))
+	for i, t := range ts {
+		out[i] = t.name
+	}
+	return out
 }
 
 func TestOfferRunChoice_DefaultProjectShortCircuitsThePicker(t *testing.T) {

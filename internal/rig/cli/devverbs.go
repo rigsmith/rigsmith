@@ -86,7 +86,12 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 				} else {
 					ts = discoverWorkspace(cdContext(cmd), root, excludeFor(root))
 				}
-				matches := matchTargets(ts, selectors[0])
+				// Tiered by name (exact beats prefix beats substring), then
+				// narrowed by proximity: the copy you are standing in — or the
+				// one nearest cwd — takes a tie outright. Matched against
+				// selectors, not args: a token after `--` belongs to the
+				// underlying command and never names a project.
+				matches := nearestTargets(cwd, matchTargets(ts, selectors[0]))
 				// `rig run <name>`/`rig build <name>` matching several targets is
 				// usually one project duplicated across paths (a nested worktree).
 				// Offer a picker rather than failing or silently guessing. Other verbs
@@ -230,7 +235,7 @@ func runnableProjectCompletion(_ *cobra.Command, args []string, _ string) ([]str
 	root := resolveRoot(cwd)
 	cfg, _ := config.LoadMerged(root)
 	var names []string
-	for _, p := range detect.DiscoverDotNet(root, cfg.Solution, cfg.Exclude) {
+	for _, p := range discoverDotnet(root, cfg.Solution, cfg.Exclude) {
 		if p.IsRunnable() {
 			names = append(names, p.ShortName())
 		}
@@ -427,12 +432,10 @@ func dispatchVerbPick(cmd *cobra.Command, verb string, tasks []allTask, offerAll
 // verbAmbiguousPick handles `rig <verb> <name>` when the name matches several
 // targets — typically one project checked out in more than one path (e.g. a
 // nested worktree). Rather than fail, it lets the user disambiguate: on a TTY a
-// picker (name · eco · path); off a TTY an error listing the candidates plus the
-// remedies that actually resolve it — narrow the name (when the collision is a
-// substring, not a true duplicate), run the verb from the target directory, or
-// exclude the extra copies in .rig.json (a query arg naming a path is not a
-// selector). Copies the verb can't act on are dropped (`run` skips non-runnable
-// ones), which may resolve the ambiguity on its own.
+// picker (name · eco · path); off a TTY the candidate list plus the remedies
+// that actually resolve it (see ambiguousTasks). Copies the verb can't act on
+// are dropped (`run` skips non-runnable ones), which may resolve the ambiguity
+// on its own.
 func verbAmbiguousPick(cmd *cobra.Command, root, verb, query string, matches []target, forwarded []string) error {
 	var tasks []allTask
 	for _, t := range matches {
@@ -459,37 +462,108 @@ func verbAmbiguousPick(cmd *cobra.Command, root, verb, query string, matches []t
 	case 1:
 		return runCommand(cmd, tasks[0].dir, tasks[0].argv)
 	}
-	if !interactive() {
-		// No picker off a TTY — print the candidates as clean lines (the error box
-		// would reflow a multi-line message), then return a short, actionable error.
-		errOut := cmd.ErrOrStderr()
-		nameW := 0
-		for _, t := range tasks {
-			nameW = max(nameW, runeLen(t.name))
-		}
-		for _, t := range tasks {
-			fmt.Fprintf(errOut, "  %s  %s\n", padRight(t.name, nameW), dimStyle.Render(taskPath(t)))
-		}
-		return fmt.Errorf("%q matches %d projects (listed above) — narrow the name, run `rig %s` from the target directory, or exclude the extra copies in .rig.json", query, len(tasks), verb)
+	return ambiguousTasks(cmd, root, verb, query, "", tasks)
+}
+
+// ambiguousTasks is the one place a project query that matches several copies is
+// resolved, whether the query came from an argument or from the configured
+// defaultProject (named by source). On a TTY it offers the picker; off a TTY it
+// prints the candidates as clean lines — the error box would reflow a multi-line
+// message — followed by the exact .rig.json line that excludes the copy you
+// probably don't want, then returns a short, actionable error.
+//
+// The implicit path routing through here is the point: `rig run` with a
+// defaultProject and `rig run <that same name>` must resolve identically, so a
+// bare `rig run` can never quietly launch a stale copy that an explicit run
+// would have refused.
+func ambiguousTasks(cmd *cobra.Command, root, verb, query, source string, tasks []allTask) error {
+	// Lead with a plain word, never the query: the error styling title-cases the
+	// first word, which would rewrite the project name the user typed.
+	subject := fmt.Sprintf("name %q", query)
+	if source != "" {
+		subject = fmt.Sprintf("configured %s %q", source, query)
 	}
-	choice := pickWorkspaceVerbTarget(verb, tasks, false)
-	if choice < 0 || choice >= len(tasks) { // pickCancel (or any out-of-range) → no-op
-		return nil
+	if interactive() {
+		choice := pickWorkspaceVerbTarget(verb, tasks, false)
+		if choice < 0 || choice >= len(tasks) { // pickCancel (or any out-of-range) → no-op
+			return nil
+		}
+		t := tasks[choice]
+		return runCommand(cmd, t.dir, t.argv)
 	}
-	t := tasks[choice]
-	return runCommand(cmd, t.dir, t.argv)
+
+	errOut := cmd.ErrOrStderr()
+	nameW := 0
+	for _, t := range tasks {
+		nameW = max(nameW, runeLen(t.name))
+	}
+	for _, t := range tasks {
+		line := fmt.Sprintf("  %s  %s", padRight(t.name, nameW), taskPath(t))
+		// Say what the extra copy IS when we know — a nested worktree, and
+		// whether `rig prune` would already remove it.
+		if note := nestedWorktreeNote(cdContext(cmd), root, t.dir); note != "" {
+			line += "  · " + note
+		}
+		fmt.Fprintln(errOut, dimStyle.Render(line))
+	}
+	fmt.Fprintf(errOut, "%s\n", dimStyle.Render("  exclude the copy you don't want — add to "+config.FileName+":"))
+	fmt.Fprintf(errOut, "%s\n", dimStyle.Render(`    "exclude": ["`+excludeHintGlob(root, tasks)+`"]`))
+	// Narrowing the name only helps when the collision is a partial match;
+	// against two copies of one project there is no narrower name to type.
+	remedies := fmt.Sprintf("run `rig %s` from the target directory, or add the exclude line above to %s", verb, config.FileName)
+	if !allSameName(tasks) {
+		remedies = "narrow the name, " + remedies
+	}
+	return fmt.Errorf("%s matches %d projects (listed above) — %s", subject, len(tasks), remedies)
+}
+
+// allSameName reports whether every candidate carries the same project name —
+// i.e. the ambiguity is one project checked out twice, not a loose query.
+func allSameName(tasks []allTask) bool {
+	for _, t := range tasks {
+		if !strings.EqualFold(t.name, tasks[0].name) {
+			return false
+		}
+	}
+	return true
+}
+
+// excludeHintGlob picks the glob to suggest for hiding the redundant copy. A
+// copy inside a nested worktree is best excluded by the whole worktree
+// directory ("<worktree>/*", whose '*' spans '/'), which also hides every other
+// project it duplicates; otherwise it is the copy's own repo-relative path.
+// Paths — not just names — are valid `exclude` entries, which is exactly what
+// the printed line has to demonstrate: with two copies sharing one name, a
+// name glob would hide both.
+func excludeHintGlob(root string, tasks []allTask) string {
+	fallback := taskPath(tasks[len(tasks)-1])
+	for _, t := range tasks {
+		if wt, ok := nestedWorktreeFor(root, t.dir); ok {
+			return relSlash(root, wt) + "/*"
+		}
+	}
+	return fallback
 }
 
 // offerRunChoice resolves a bare `rig run` at a workspace root over the runnable
-// packages and surfaced scripts. A configured defaultProject naming a runnable
-// package wins outright; otherwise a single target runs directly and several
-// open the grouped picker (Projects, then Scripts). Off a TTY it returns a
-// helpful error. With forcePick set (`-i`/`--interactive`) the picker always opens, even
-// when a default or a lone candidate would otherwise run.
+// packages and surfaced scripts. A configured defaultProject naming exactly one
+// runnable package wins outright (with its path echoed, since nothing else in
+// the output would tell you which copy started); naming several is ambiguous and
+// is reported exactly as `rig run <name>` would report it. Otherwise a single
+// target runs directly and several open the grouped picker (Projects, then
+// Scripts). Off a TTY it returns a helpful error. With forcePick set
+// (`-i`/`--interactive`) the picker always opens, even when a default or a lone
+// candidate would otherwise run.
 func offerRunChoice(cmd *cobra.Command, root string, tasks []allTask, scripts []scriptEntry, defaultProject string, forcePick bool) (handled bool, err error) {
 	if !forcePick {
-		if t, ok := preferredRunTask(tasks, defaultProject); ok {
+		switch hits := preferredRunTasks(tasks, defaultProject); len(hits) {
+		case 1:
+			t := hits[0]
+			noteResolvedDefault(cmd, defaultProject, t)
 			return true, runCommand(cmd, t.dir, t.argv)
+		case 0: // no default, or it names nothing runnable — fall through
+		default:
+			return true, ambiguousTasks(cmd, root, "run", defaultProject, "defaultProject", hits)
 		}
 		if len(tasks)+len(scripts) == 1 {
 			if len(tasks) == 1 {
@@ -532,35 +606,45 @@ func offerRunChoice(cmd *cobra.Command, root string, tasks []allTask, scripts []
 	}
 }
 
-// preferredRunTask finds the task matching the configured defaultProject by
-// full name or short name (case-insensitive). The short name is matched both
-// slash-segmented (node scopes) and dot-segmented (.NET project names like
-// "Acme.Desktop" → "Desktop"). ok=false when no default is set or it names no
+// preferredRunTasks finds the runnable tasks a configured defaultProject names,
+// scored through nameTier and narrowed by proximity to cwd — the identical
+// pipeline `rig run <name>` puts an argument through, so a config value and a
+// typed name always mean the same project.
+//
+// It returns every remaining match rather than the first: when a default names
+// two checkouts of the same project the caller must say so, not pick whichever
+// one discovery reached first. Empty when no default is set or it names no
 // runnable task — callers then fall back to the picker.
-func preferredRunTask(tasks []allTask, defaultProject string) (allTask, bool) {
-	if strings.TrimSpace(defaultProject) == "" {
-		return allTask{}, false
+func preferredRunTasks(tasks []allTask, defaultProject string) []allTask {
+	q := strings.TrimSpace(defaultProject)
+	if q == "" {
+		return nil
 	}
+	best := 0
+	var hits []allTask
 	for _, t := range tasks {
-		if defaultMatches(defaultProject, t.name) {
-			return t, true
+		switch tier := nameTier(t.name, q); {
+		case tier < minMatchTier:
+		case tier > best:
+			best, hits = tier, []allTask{t}
+		case tier == best:
+			hits = append(hits, t)
 		}
 	}
-	return allTask{}, false
+	cwd, _ := os.Getwd()
+	return nearestByDir(cwd, hits, func(t allTask) string { return t.dir })
 }
 
-// defaultMatches reports whether stored (a configured defaultProject) names the
-// project called name — the full / slash-short / dot-short, case-insensitive
-// match preferredRunTask uses, so the run picker marks exactly the row a bare
-// `rig run` would launch.
-func defaultMatches(stored, name string) bool {
-	q := strings.TrimSpace(stored)
-	if q == "" {
-		return false
+// noteResolvedDefault prints which project a bare `rig run` resolved through
+// defaultProject, and where it lives. Without it the launch is indistinguishable
+// from any other — same name, same output — even when the copy that started is
+// one you forgot existed. Suppressed by --quiet, like the command echo.
+func noteResolvedDefault(cmd *cobra.Command, defaultProject string, t allTask) {
+	if quiet {
+		return
 	}
-	return strings.EqualFold(name, q) ||
-		strings.EqualFold(shortName(name), q) ||
-		strings.EqualFold(dotShortName(name), q)
+	fmt.Fprintln(cmd.OutOrStdout(), dimStyle.Render(
+		fmt.Sprintf("· defaultProject %s → %s", defaultProject, taskPath(t))))
 }
 
 // dotShortName is the segment after the last '.' (a .NET project's short name).

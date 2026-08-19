@@ -118,6 +118,27 @@ func TestRankTierOrdering(t *testing.T) {
 	}
 }
 
+// `rig cd Foo.Web` used to report three candidates — the exact project, its
+// .Tests sibling (prefix), and anything the letters fit (subsequence) — and
+// refuse to move. Only the best tier answers the query.
+func TestTopCdTargetsBestTierOnly(t *testing.T) {
+	res := topCdTargets(cdFixture(), "Foo.Web")
+	if len(res) != 1 || res[0].Name != "Foo.Web" {
+		t.Fatalf("exact tier = %+v, want only Foo.Web", res)
+	}
+	// No exact match: the prefix tier answers.
+	if res := topCdTargets(cdFixture(), "Foo.Web."); len(res) != 1 || res[0].Name != "Foo.Web.Tests" {
+		t.Fatalf("prefix tier = %+v, want only Foo.Web.Tests", res)
+	}
+	// A tier with several members stays ambiguous — the picker's job, not a guess.
+	if res := topCdTargets(cdFixture(), "Foo."); len(res) != 2 {
+		t.Fatalf("shared prefix tier = %+v, want both Foo.Web projects", res)
+	}
+	if res := topCdTargets(cdFixture(), "zzzznope"); len(res) != 0 {
+		t.Fatalf("no match = %+v, want nothing", res)
+	}
+}
+
 func TestRankNoMatch(t *testing.T) {
 	res := rankCdTargets(cdFixture(), "zzzznope")
 	if len(res) != 0 {
