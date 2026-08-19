@@ -3,12 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/devroute"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/core/worktree"
 )
 
 func TestResolveWorktree(t *testing.T) {
@@ -153,6 +155,55 @@ func TestWorktreeUseActiveUnset(t *testing.T) {
 	}
 }
 
+// TestWorktreeNewListRmRepoFlag drives the visible lifecycle verbs against a
+// repo that is *not* the cwd — the --repo flag, which lets a session act on
+// another repo without cd'ing there (the clauderig guard denies moving).
+func TestWorktreeNewListRmRepoFlag(t *testing.T) {
+	ctx := context.Background()
+	r, err := gitrepo.Init(ctx, filepath.Join(t.TempDir(), "other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "a", "1", "init")
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := newWorktreeCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs(args)
+		if err := cmd.ExecuteContext(ctx); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return buf.String()
+	}
+
+	wtPath := filepath.Join(filepath.Dir(r.Dir), "other-worktrees", "feat-x")
+	// Match on the sibling SUFFIX, not the whole path: on Windows the temp dir
+	// arrives in 8.3 short form ("RUNNER~1") while the command prints the
+	// resolved long form, so comparing the full strings tests the path spelling
+	// rather than the behaviour. os.Stat below still pins the real location.
+	wantSuffix := filepath.Join("other-worktrees", "feat-x")
+	if out := run("new", "feat/x", "--repo", r.Dir, "--no-open"); !strings.Contains(out, wantSuffix) {
+		t.Fatalf("new --repo = %q; want a path ending %q", out, wantSuffix)
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Fatalf("worktree not created at %s: %v", wtPath, err)
+	}
+
+	if out := run("list", "--repo", r.Dir); !strings.Contains(out, "feat/x") {
+		t.Errorf("list --repo = %q; want feat/x", out)
+	}
+
+	if out := run("rm", "feat/x", "--repo", r.Dir); !strings.Contains(out, "removed") {
+		t.Errorf("rm --repo = %q", out)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("worktree still present after rm: %v", err)
+	}
+}
+
 // The rig menu's Worktrees group carries the worktree lifecycle commands and no
 // longer surfaces the retired -dev route pinning.
 func TestWorktreeMenuItems(t *testing.T) {
@@ -222,5 +273,46 @@ func assertEqual(t *testing.T, got, want []string) {
 		if got[i] != want[i] {
 			t.Fatalf("at %d got %q; want %q (full: %v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+// Completion must offer branches from the repository the command will ACT on.
+// Reading the working directory instead would suggest names that do not exist
+// in the target repo — or nothing at all when the cwd is not a repository.
+func TestWorktreeCompletionHonoursRepoFlag(t *testing.T) {
+	ctx := context.Background()
+	other, err := gitrepo.Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, other, "a", "1", "init")
+	root, err := other.Toplevel(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, _ := other.CurrentBranch(ctx)
+	wtPath := worktree.PathFor(root, "feat/from-other-repo")
+	if err := other.WorktreeAdd(ctx, wtPath, "feat/from-other-repo", base, true); err != nil {
+		t.Skipf("worktree add unavailable: %v", err)
+	}
+
+	// Run from a directory that is NOT the target repo — the case the flag
+	// exists for, and the one that used to return nothing.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	cmd := newWorktreeRemoveCmd()
+	cmd.SetContext(ctx)
+	if err := cmd.Flags().Set("repo", other.Dir); err != nil {
+		t.Fatal(err)
+	}
+	comps, _ := cmd.ValidArgsFunction(cmd, nil, "")
+	joined := strings.Join(comps, " ")
+	if !strings.Contains(joined, "feat/from-other-repo") {
+		t.Fatalf("completions = %v, want the --repo repository's worktree", comps)
 	}
 }

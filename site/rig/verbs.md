@@ -52,6 +52,7 @@ The full per-ecosystem matrix lives in [`docs/ECOSYSTEM-MATRIX.md`](https://gith
 ```sh
 rig worktree new feat/x          # sibling checkout off mainline (prints the path)
 rig worktree new feat/x --open   # …and open a review window for this run
+rig worktree new feat/x --repo ~/Git/other   # act on another repo without cd'ing there
 rig worktree list                # this repo's worktrees, newest-first (alias: ls)
 rig copy ../scratch --git        # detached copy that keeps history
 ```

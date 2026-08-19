@@ -57,7 +57,8 @@ A PreToolUse hook guards this environment. Work *with* it:
   run ` + "`rig worktree new <branch>`" + `. It creates a sibling checkout at
   ` + "`<repo>-worktrees/<branch>`" + ` and opens it in a *new* VS Code window for review —
   this window stays put. Edit files in the worktree by absolute path, run git via
-  ` + "`git -C <worktree> …`" + `, then push and open a PR.
+  ` + "`git -C <worktree> …`" + `, then push and open a PR. To branch a *different*
+  repo, add ` + "`--repo <path>`" + ` instead of cd'ing there.
 - **Docs and root config may go on the base branch directly** — ` + "`*.md`" + `, the
   ` + "`docs/`" + ` and ` + "`.github/`" + ` trees, and top-level config (` + "`*.toml`, `*.yml`, `*.json`" + `,
   ` + "`LICENSE`, `.gitignore`" + `). Everything else counts as code and needs a PR.
