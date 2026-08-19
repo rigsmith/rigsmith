@@ -96,17 +96,32 @@ func ShareStatus(p Profile, sharedRoot string, dirs []string) ShareState {
 	return st
 }
 
-// linkPointsAt reports whether path is a link (or junction) resolving to target.
+// linkPointsAt reports whether path is a link (or junction) naming target.
+//
+// Checked on the RAW link destination first, before any resolution: a link
+// whose target has been deleted or moved is still OUR link, and still the thing
+// standing between the profile and a usable session directory. Requiring
+// EvalSymlinks to succeed meant `unshare` silently skipped a dangling link and
+// reported success, leaving the profile pointing at nothing.
 func linkPointsAt(path, target string) bool {
 	fi, err := os.Lstat(path)
 	if err != nil {
 		return false
 	}
-	// A Windows junction is a reparse point: Go reports it as a symlink on
-	// modern versions, and EvalSymlinks resolves it either way.
-	if fi.Mode()&os.ModeSymlink == 0 && !fi.IsDir() {
+	if fi.Mode()&os.ModeSymlink == 0 {
 		return false
 	}
+	if raw, rerr := os.Readlink(path); rerr == nil {
+		if !filepath.IsAbs(raw) {
+			raw = filepath.Join(filepath.Dir(path), raw)
+		}
+		if filepath.Clean(raw) == filepath.Clean(target) {
+			return true
+		}
+	}
+	// Fall back to resolution for the cases a raw comparison cannot settle —
+	// a Windows junction, or a target reached by a different but equivalent
+	// spelling (a symlinked parent).
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return false
@@ -115,7 +130,7 @@ func linkPointsAt(path, target string) bool {
 	if err != nil {
 		wanted = filepath.Clean(target)
 	}
-	return sameDir(resolved, wanted) && fi.Mode()&os.ModeSymlink != 0
+	return sameDir(resolved, wanted)
 }
 
 func sameDir(a, b string) bool {
@@ -197,9 +212,17 @@ func Share(p Profile, sharedRoot string, dirs []string) ([]ShareResult, error) {
 			// Conflicts are preserved beside the profile, NOT inside data/,
 			// so Claude Desktop never sees them.
 			conflictDir := filepath.Join(p.Dir(), "conflicts", d)
-			migrated, skipped, conflicts, merr := mergeTree(link, target, conflictDir)
+			migrated, skipped, conflicts, unsupported, merr := mergeTree(link, target, conflictDir)
 			if merr != nil {
 				return out, fmt.Errorf("migrate %s into the shared tree: %w", d, merr)
+			}
+			// Refuse while the source is still intact: these entries cannot be
+			// copied, and the next step deletes the directory holding them.
+			if len(unsupported) > 0 {
+				return out, fmt.Errorf(
+					"%s holds %d entry/entries that cannot be migrated (first: %s).\n"+
+						"Nothing was changed — move or remove them, then share again",
+					d, len(unsupported), unsupported[0])
 			}
 			res.Migrated, res.Skipped, res.Conflicts = migrated, skipped, conflicts
 			if conflicts > 0 {
@@ -293,7 +316,7 @@ func Unshare(p Profile, sharedRoot string, dirs []string) error {
 // Never overwriting is what makes this safe to run against a tree the default
 // Desktop profile may also have written; never discarding is what makes the
 // "nothing is destroyed" promise true rather than nearly true.
-func mergeTree(src, dst, conflictDir string) (migrated, skipped, conflicts int, err error) {
+func mergeTree(src, dst, conflictDir string) (migrated, skipped, conflicts int, unsupported []string, err error) {
 	err = filepath.Walk(src, func(path string, info os.FileInfo, werr error) error {
 		if werr != nil {
 			return werr
@@ -309,9 +332,48 @@ func mergeTree(src, dst, conflictDir string) (migrated, skipped, conflicts int, 
 		if info.IsDir() {
 			return os.MkdirAll(targetPath, 0o700)
 		}
-		if !info.Mode().IsRegular() {
-			return nil // skip links/sockets: session trees hold plain files
+
+		// Symlinks are RECREATED, not skipped. Walk reports them without
+		// following (it lstats), and Share removes the source once migration
+		// reports success — so a link that is merely stepped over is destroyed
+		// rather than moved. The Cowork tree is where these turn up.
+		if info.Mode()&os.ModeSymlink != 0 {
+			if _, serr := os.Lstat(targetPath); serr == nil {
+				same, lerr := sameLink(path, targetPath)
+				if lerr != nil {
+					return lerr
+				}
+				if same {
+					skipped++
+					return nil
+				}
+				if _, perr := copyLink(path, filepath.Join(conflictDir, rel)); perr != nil {
+					return perr
+				}
+				conflicts++
+				return nil
+			}
+			created, cerr := copyLink(path, targetPath)
+			if cerr != nil {
+				return cerr
+			}
+			if created {
+				migrated++
+			} else {
+				skipped++
+			}
+			return nil
 		}
+
+		// Anything else — a socket, device or fifo — cannot be copied at all.
+		// Recording it lets Share refuse BEFORE deleting the source, which is
+		// the only way to keep the "nothing is destroyed" promise for something
+		// that cannot be moved.
+		if !info.Mode().IsRegular() {
+			unsupported = append(unsupported, path)
+			return nil
+		}
+
 		if _, serr := os.Lstat(targetPath); serr == nil {
 			same, cerr := sameContents(path, targetPath)
 			if cerr != nil {
@@ -322,19 +384,26 @@ func mergeTree(src, dst, conflictDir string) (migrated, skipped, conflicts int, 
 				return nil
 			}
 			// Differing: keep the shared copy, preserve ours.
-			if perr := copyFile(path, filepath.Join(conflictDir, rel), info.Mode()); perr != nil {
+			if _, perr := copyFile(path, filepath.Join(conflictDir, rel), info.Mode()); perr != nil {
 				return perr
 			}
 			conflicts++
 			return nil
 		}
-		if cerr := copyFile(path, targetPath, info.Mode()); cerr != nil {
+		created, cerr := copyFile(path, targetPath, info.Mode())
+		if cerr != nil {
 			return cerr
 		}
-		migrated++
+		// A lost O_EXCL race means the file was already there — someone else's
+		// copy stands, and counting ours as migrated would misreport it.
+		if created {
+			migrated++
+		} else {
+			skipped++
+		}
 		return nil
 	})
-	return migrated, skipped, conflicts, err
+	return migrated, skipped, conflicts, unsupported, err
 }
 
 // sameContents reports whether two files hold identical bytes. Size is checked
@@ -362,30 +431,78 @@ func sameContents(a, b string) (bool, error) {
 	return bytes.Equal(ba, bb), nil
 }
 
-func copyFile(src, dst string, mode os.FileMode) error {
+// copyFile copies src to dst without ever overwriting. created reports whether
+// this call made the file, so a caller can tell a real migration from a file
+// that was already there — including the O_EXCL race, where another writer won
+// and ours was NOT the copy that landed.
+func copyFile(src, dst string, mode os.FileMode) (created bool, err error) {
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer in.Close()
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return err
+		return false, err
 	}
 	// O_EXCL: the "never overwrite" promise is enforced by the filesystem, not
 	// just by the check above, so a concurrent writer cannot slip in between.
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode.Perm())
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 	if _, cerr := io.Copy(out, in); cerr != nil {
 		out.Close()
 		_ = os.Remove(dst)
-		return cerr
+		return false, cerr
 	}
-	return out.Close()
+	// A delayed write error surfaces at Close. Leaving the partial file behind
+	// would make it a collision on the next run — and mergeTree would then treat
+	// the truncated copy as the canonical one.
+	if cerr := out.Close(); cerr != nil {
+		_ = os.Remove(dst)
+		return false, cerr
+	}
+	return true, nil
+}
+
+// copyLink recreates a symlink at dst pointing wherever src points. created is
+// false when something is already there.
+//
+// Session trees are meant to hold plain files, but the Cowork tree carries
+// sandbox working directories that can contain anything — and Share deletes the
+// source once migration reports success, so a link that is merely "skipped"
+// would be destroyed rather than moved.
+func copyLink(src, dst string) (created bool, err error) {
+	target, err := os.Readlink(src)
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return false, err
+	}
+	if err := os.Symlink(target, dst); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// sameLink reports whether two symlinks name the same target.
+func sameLink(a, b string) (bool, error) {
+	ta, err := os.Readlink(a)
+	if err != nil {
+		return false, err
+	}
+	tb, err := os.Readlink(b)
+	if err != nil {
+		return false, err
+	}
+	return ta == tb, nil
 }
 
 // DescribeShared renders the shared directory list for help and messages.

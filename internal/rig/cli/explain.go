@@ -95,6 +95,40 @@ func newExplainCmd() *cobra.Command {
 	return cmd
 }
 
+// dryRunSuggestion rebuilds the user's invocation with --dry-run added, as a
+// line they can paste.
+//
+// Two details the naive form gets wrong. --dry-run has to sit BEFORE any `--`,
+// or it is forwarded to the ecosystem command and never enables anything: for
+// `rig explain build -- --target=x` the suggestion must be
+// `rig build --dry-run -- --target=x`. And cobra strips the separator out of
+// args, so it is reinserted from ArgsLenAtDash rather than lost — without it
+// the forwarded flags would be parsed by rig instead.
+//
+// Arguments are quoted for the shell the user is holding, since the whole point
+// is that the line can be pasted.
+func dryRunSuggestion(cmd *cobra.Command, verb string, args []string) string {
+	// ArgsLenAtDash indexes explain's own args, where [0] is the verb — so the
+	// separator sits one earlier within the verb's arguments.
+	dash := -1
+	if n := cmd.ArgsLenAtDash(); n > 0 {
+		dash = n - 1
+	}
+	// Literal "rig", matching the other messages in this file — cmd.Root() is
+	// the explain command itself when it has not been attached to the tree.
+	parts := []string{"rig", verb, "--dry-run"}
+	for i, a := range args {
+		if i == dash {
+			parts = append(parts, "--")
+		}
+		parts = append(parts, copyPasteArg(a))
+	}
+	if dash == len(args) {
+		parts = append(parts, "--")
+	}
+	return strings.Join(parts, " ")
+}
+
 // explainPlan resolves one verb to its plan, in the order the command tree is
 // built: rig's own verbs first (they are why a same-named custom command never
 // runs), then custom commands, package.json scripts and script directories.
@@ -120,12 +154,25 @@ func explainPlan(cmd *cobra.Command, cwd, root string, cfg config.Config, name s
 		if len(args) > 0 {
 			if dryRunVerbs[verb] {
 				return commandPlan{}, fmt.Errorf(
-					"an argument to `rig %s` selects a project or a filter, which is resolved while the verb runs — explain covers the bare verb, so for one invocation run `rig %s %s --dry-run`",
-					verb, verb, strings.Join(args, " "))
+					"an argument to `rig %s` selects a project or a filter, which is resolved while the verb runs — explain covers the bare verb, so for one invocation run `%s`",
+					verb, dryRunSuggestion(cmd, verb, args))
 			}
 			return commandPlan{}, fmt.Errorf(
 				"an argument to `rig %s` selects a project or a filter, which is resolved while the verb runs — explain covers the bare verb",
 				verb)
+		}
+		// ecosystemPlan describes the ROOT command, which is only what runs when
+		// the workspace dispatch would let it. In a Go module whose mains live
+		// under cmd/, a bare `rig run` opens the picker instead — printing
+		// `go run .` there describes a command the run path deliberately avoids,
+		// which is precisely the drift explain exists to prevent. Asked through
+		// the run path's own decision, so the two cannot disagree.
+		survey := surveyWorkspace(cmd, root, verb, false)
+		if !rootCommandStands(verb, survey.rootHasPackage, len(survey.tasks), len(survey.scripts)) {
+			return commandPlan{}, fmt.Errorf(
+				"`rig %s` here does not run one fixed command: this workspace has %d target(s), so it selects one (or opens a picker) while it runs.\n"+
+					"Name the project — `rig explain %s <project>` — or run `rig %s` to choose",
+				verb, len(survey.tasks), verb, verb)
 		}
 		eco, err := resolvePrimary(cwd, root)
 		if err != nil {

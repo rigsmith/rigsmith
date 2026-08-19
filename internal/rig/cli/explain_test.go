@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,7 +198,10 @@ func TestExplainRefusesArgsToABuiltinVerb(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error for an argument to a built-in verb")
 	}
-	if !strings.Contains(err.Error(), "rig test MyClass --dry-run") {
+	// --dry-run leads the arguments: appended after them it would land past a
+	// `--` and be forwarded to the ecosystem command instead of enabling
+	// anything.
+	if !strings.Contains(err.Error(), "rig test --dry-run MyClass") {
 		t.Errorf("the error should quote the --dry-run form back; got: %v", err)
 	}
 }
@@ -363,5 +367,92 @@ func TestExplainSurfacesAResolutionError(t *testing.T) {
 	_, err := runExplain(t, "broken")
 	if err == nil || !strings.Contains(err.Error(), "no command defined for this OS") {
 		t.Fatalf("want the run's own resolution error, got %v", err)
+	}
+}
+
+// --dry-run must sit BEFORE any `--`, or it is forwarded to the ecosystem
+// command and enables nothing — and the separator itself has to be reinserted,
+// since cobra strips it out of args.
+func TestDryRunSuggestionPutsTheFlagBeforeTheSeparator(t *testing.T) {
+	root := &cobra.Command{Use: "rig"}
+	c := &cobra.Command{Use: "explain", RunE: func(*cobra.Command, []string) error { return nil }}
+	c.Flags().SetInterspersed(false)
+	root.AddCommand(c)
+	root.SetArgs([]string{"explain", "build", "--", "--target=x"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	// explain sets SetInterspersed(false), so cobra hands the separator through
+	// IN args and reports ArgsLenAtDash as -1 — verified against cobra rather
+	// than assumed. The suggestion therefore passes args through verbatim, and
+	// only has to put --dry-run in front of them.
+	got := dryRunSuggestion(c, "build", []string{"--", "--target=x"})
+	want := "rig build --dry-run -- --target=x"
+	if got != want {
+		t.Fatalf("dryRunSuggestion = %q, want %q", got, want)
+	}
+}
+
+// The other parsing mode, in case explain ever stops suppressing interspersal:
+// cobra then strips the separator and records its position, and the suggestion
+// has to put it back — otherwise the forwarded flags would be parsed by rig.
+func TestDryRunSuggestionReinsertsAStrippedSeparator(t *testing.T) {
+	root := &cobra.Command{Use: "rig"}
+	c := &cobra.Command{Use: "explain", RunE: func(*cobra.Command, []string) error { return nil }}
+	root.AddCommand(c) // interspersed left on
+	root.SetArgs([]string{"explain", "build", "--", "--target=x"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := dryRunSuggestion(c, "build", []string{"--target=x"}), "rig build --dry-run -- --target=x"; got != want {
+		t.Fatalf("dryRunSuggestion = %q, want %q", got, want)
+	}
+}
+
+// Without a separator the arguments follow the flag unchanged.
+func TestDryRunSuggestionWithoutASeparator(t *testing.T) {
+	root := &cobra.Command{Use: "rig"}
+	c := &cobra.Command{Use: "explain", RunE: func(*cobra.Command, []string) error { return nil }}
+	root.AddCommand(c)
+	root.SetArgs([]string{"explain", "test", "MyClass"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := dryRunSuggestion(c, "test", []string{"MyClass"}), "rig test --dry-run MyClass"; got != want {
+		t.Fatalf("dryRunSuggestion = %q, want %q", got, want)
+	}
+}
+
+// The root command is only what runs when the workspace dispatch lets it, so
+// explain and the run path must agree about when that is.
+func TestRootCommandStandsMatchesTheDispatch(t *testing.T) {
+	cases := []struct {
+		name           string
+		verb           string
+		rootHasPackage bool
+		tasks, scripts int
+		want           bool
+	}{
+		{"runnable root", "run", true, 3, 2, true},
+		{"nothing to offer", "build", false, 0, 0, true},
+		{"go mains under cmd/", "run", false, 3, 0, false},
+		{"run with only scripts", "run", false, 0, 2, false},
+		{"lone subpackage, --all verb", "build", false, 1, 0, true},
+		{"several packages, --all verb", "build", false, 2, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rootCommandStands(tc.verb, tc.rootHasPackage, tc.tasks, tc.scripts); got != tc.want {
+				t.Fatalf("rootCommandStands = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

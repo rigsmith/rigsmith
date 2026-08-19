@@ -3,7 +3,9 @@ package desktop
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -312,5 +314,107 @@ func TestUnshareLeavesADirectoryEvenIfItMustRollBack(t *testing.T) {
 	}
 	if _, serr := os.Stat(link + ".clauderig-new"); !os.IsNotExist(serr) {
 		t.Fatal("a scratch directory was left behind")
+	}
+}
+
+// Share deletes the source once migration reports success, so anything merely
+// "skipped" is destroyed rather than moved. Symlinks are therefore recreated.
+func TestShareRecreatesSymlinksRatherThanDestroyingThem(t *testing.T) {
+	_, p, root := shareFixture(t)
+	own := filepath.Join(p.DataDir(), "claude-code-sessions", "acct-a")
+	writeFile(t, filepath.Join(own, "real.json"), "payload")
+	if err := os.Symlink("real.json", filepath.Join(own, "alias.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := Share(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "claude-code-sessions", "acct-a", "alias.json")
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("the symlink was destroyed by the migration: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the entry survived but is no longer a symlink")
+	}
+	if got, _ := os.Readlink(link); got != "real.json" {
+		t.Fatalf("link target = %q, want real.json", got)
+	}
+}
+
+// An entry that cannot be copied at all must stop the share BEFORE the source
+// directory is removed — otherwise "nothing is destroyed" is false.
+func TestShareRefusesRatherThanDestroyAnUnmovableEntry(t *testing.T) {
+	_, p, root := shareFixture(t)
+	own := filepath.Join(p.DataDir(), "claude-code-sessions")
+	writeFile(t, filepath.Join(own, "acct-a", "s1.json"), "history")
+	// A fifo stands in for the general case: an entry that is neither a regular
+	// file nor a symlink, so it cannot be copied at all.
+	if runtime.GOOS == "windows" {
+		t.Skip("no fifos on Windows")
+	}
+	sock := filepath.Join(own, "acct-a", "live.fifo")
+	if err := syscall.Mkfifo(sock, 0o600); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+
+	if _, serr := Share(p, root, SharedDirs); serr == nil {
+		t.Fatal("Share succeeded despite an entry it cannot migrate")
+	}
+	// The profile's directory — and the socket — are untouched.
+	if _, serr := os.Lstat(sock); serr != nil {
+		t.Fatalf("the unmovable entry was destroyed: %v", serr)
+	}
+	if got := readFile(t, filepath.Join(own, "acct-a", "s1.json")); got != "history" {
+		t.Fatalf("the source directory was disturbed: %q", got)
+	}
+}
+
+// A link whose target has been deleted is still our link: unshare must replace
+// it, not skip it and claim success.
+func TestUnshareReplacesADanglingSharedLink(t *testing.T) {
+	_, p, root := shareFixture(t)
+	if _, err := Share(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	// The shared tree goes away underneath the profile.
+	if err := os.RemoveAll(filepath.Join(root, "claude-code-sessions")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(p.DataDir(), "claude-code-sessions")
+	if !linkPointsAt(link, filepath.Join(root, "claude-code-sessions")) {
+		t.Fatal("a dangling link is no longer recognised as ours")
+	}
+	if err := Unshare(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("no session directory after unshare: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+		t.Fatal("unshare left the dangling link in place")
+	}
+}
+
+// A lost O_EXCL race means someone else's copy stands — counting ours as
+// migrated would misreport what happened.
+func TestCopyFileReportsWhetherItCreatedTheFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	writeFile(t, src, "x")
+	dst := filepath.Join(dir, "dst")
+
+	created, err := copyFile(src, dst, 0o600)
+	if err != nil || !created {
+		t.Fatalf("first copy: created=%v err=%v", created, err)
+	}
+	created, err = copyFile(src, dst, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("a copy that hit an existing file reported itself as created")
 	}
 }

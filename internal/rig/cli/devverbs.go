@@ -297,7 +297,46 @@ func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) err
 // forcePick (`-i`/`--interactive`) always shows the picker: a runnable root package (and,
 // for `run`, the surfaced scripts) is included even when one obvious target
 // exists, and a single candidate still opens the picker rather than running.
-func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, forcePick bool) (handled bool, err error) {
+
+// rootCommandStands reports whether a bare `rig <verb>` runs the ROOT command
+// rather than dispatching to a workspace picker.
+//
+// Shared with `rig explain`, which must answer the same question: explain
+// prints the ecosystem's root command, and that is only the truth when this is
+// true. In a Go module whose mains live under cmd/, a bare `rig run` opens the
+// picker — printing `go run .` there describes a command the run path
+// deliberately avoids, which is the one failure explain exists to prevent.
+//
+// Extracted rather than reimplemented for the same reason: a second copy of
+// this decision would drift, and explain would go back to being confidently
+// wrong.
+func rootCommandStands(verb string, rootHasPackage bool, tasks, scripts int) bool {
+	if rootHasPackage || tasks+scripts == 0 {
+		return true
+	}
+	// --all-capable verbs (build/test/…): a lone subpackage falls through to the
+	// root command; several open the package picker (with "All packages").
+	// `run` never falls through here — it offers its own choice.
+	return verb != "run" && tasks == 1
+}
+
+// workspaceSurvey is what the dispatch decision is made from: the runnable
+// targets, the surfaced scripts, and whether the repo root is itself buildable.
+type workspaceSurvey struct {
+	tasks          []allTask
+	scripts        []scriptEntry
+	rootHasPackage bool
+	defaultProject string
+}
+
+// surveyWorkspace gathers what a bare `rig <verb>` would dispatch on.
+//
+// Extracted so `rig explain` can reach the SAME answer through the same code:
+// explain prints the ecosystem's root command, which is only the truth when the
+// root command is what would actually run. A second implementation of this
+// would drift, and explain would go back to describing a command nobody
+// executes.
+func surveyWorkspace(cmd *cobra.Command, root, verb string, forcePick bool) workspaceSurvey {
 	// `run` expands each Go module into its individual binaries (cmd/rig, …) so a
 	// multi-binary repo offers each one; other verbs operate at the module level.
 	var raw []target
@@ -369,6 +408,13 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 	if verb == "run" && rootHasPackage && !forcePick {
 		scripts = nil
 	}
+	return workspaceSurvey{tasks: tasks, scripts: scripts, rootHasPackage: rootHasPackage, defaultProject: defaultProject}
+}
+
+func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, forcePick bool) (handled bool, err error) {
+	survey := surveyWorkspace(cmd, root, verb, forcePick)
+	tasks, scripts := survey.tasks, survey.scripts
+	rootHasPackage, defaultProject := survey.rootHasPackage, survey.defaultProject
 
 	if forcePick {
 		// `-i`/`--interactive`: always the picker, including a runnable root package.
@@ -389,7 +435,9 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 
 	// A buildable package at the root, or nothing to offer: the normal root
 	// command is the right thing — let it run (or produce its own error).
-	if rootHasPackage || len(tasks)+len(scripts) == 0 {
+	// `rig explain` asks the same question through rootCommandStands, so the
+	// two can never disagree about whether the root command is what runs.
+	if rootCommandStands(verb, rootHasPackage, len(tasks), len(scripts)) {
 		return false, nil
 	}
 
@@ -397,11 +445,6 @@ func offerWorkspaceChoice(cmd *cobra.Command, root, verb string, offerAll, force
 		return offerRunChoice(cmd, root, tasks, scripts, defaultProject, false)
 	}
 
-	// --all-capable verbs (build/test/…): a lone subpackage falls through to the
-	// root command; several open the package picker (with "All packages").
-	if len(tasks) == 1 {
-		return false, nil
-	}
 	if !interactive() {
 		hint := "run `rig " + verb + " <project>`"
 		if offerAll {
