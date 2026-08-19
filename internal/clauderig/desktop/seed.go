@@ -68,7 +68,7 @@ func Seed(p Profile, sourceRoot string) (SeedResult, error) {
 		if _, err := os.Stat(src); err != nil {
 			continue // not present in this install
 		}
-		if err := copyFile(src, filepath.Join(p.DataDir(), name), 0o600); err != nil {
+		if _, err := copyFile(src, filepath.Join(p.DataDir(), name), 0o600); err != nil {
 			return res, fmt.Errorf("seed %s: %w", name, err)
 		}
 		res.Files = append(res.Files, name)

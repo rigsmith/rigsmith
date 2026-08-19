@@ -1,0 +1,5 @@
+---
+"github.com/rigsmith/rigsmith": patch
+---
+
+clauderig/rig: seven fixes for findings that were suppressed rather than surfaced in earlier reviews. `desktop share` no longer destroys symlinks (they are recreated, since Share deletes the source once migration succeeds), refuses before deleting anything when an entry cannot be migrated at all, removes a partial file when Close reports a delayed write error rather than leaving it to become the canonical copy on retry, and counts a lost O_EXCL race as skipped instead of migrated. `desktop unshare` now recognises a link whose shared target has been deleted — it was skipped as unrecognised while the command reported success, leaving the profile with no session directory. And `rig explain` asks the run path's own dispatch decision instead of always describing the root command, so a Go module whose mains live under cmd/ no longer gets `go run .` (a command the run path deliberately avoids), and its `--dry-run` suggestion puts the flag before any `--` so it enables dry-run instead of being forwarded.

@@ -314,3 +314,161 @@ func TestUnshareLeavesADirectoryEvenIfItMustRollBack(t *testing.T) {
 		t.Fatal("a scratch directory was left behind")
 	}
 }
+
+// Share deletes the source once migration reports success, so anything merely
+// "skipped" is destroyed rather than moved. Symlinks are therefore recreated.
+func TestShareRecreatesSymlinksRatherThanDestroyingThem(t *testing.T) {
+	_, p, root := shareFixture(t)
+	own := filepath.Join(p.DataDir(), "claude-code-sessions", "acct-a")
+	writeFile(t, filepath.Join(own, "real.json"), "payload")
+	if err := os.Symlink("real.json", filepath.Join(own, "alias.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := Share(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "claude-code-sessions", "acct-a", "alias.json")
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("the symlink was destroyed by the migration: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the entry survived but is no longer a symlink")
+	}
+	if got, _ := os.Readlink(link); got != "real.json" {
+		t.Fatalf("link target = %q, want real.json", got)
+	}
+}
+
+// A link whose target has been deleted is still our link: unshare must replace
+// it, not skip it and claim success.
+func TestUnshareReplacesADanglingSharedLink(t *testing.T) {
+	_, p, root := shareFixture(t)
+	if _, err := Share(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	// The shared tree goes away underneath the profile.
+	if err := os.RemoveAll(filepath.Join(root, "claude-code-sessions")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(p.DataDir(), "claude-code-sessions")
+	if !linkPointsAt(link, filepath.Join(root, "claude-code-sessions")) {
+		t.Fatal("a dangling link is no longer recognised as ours")
+	}
+	if err := Unshare(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("no session directory after unshare: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+		t.Fatal("unshare left the dangling link in place")
+	}
+}
+
+// A lost O_EXCL race means someone else's copy stands — counting ours as
+// migrated would misreport what happened.
+func TestCopyFileReportsWhetherItCreatedTheFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	writeFile(t, src, "x")
+	dst := filepath.Join(dir, "dst")
+
+	created, err := copyFile(src, dst, 0o600)
+	if err != nil || !created {
+		t.Fatalf("first copy: created=%v err=%v", created, err)
+	}
+	created, err = copyFile(src, dst, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("a copy that hit an existing file reported itself as created")
+	}
+}
+
+// "Something was already there" is not "our copy is safe". Share deletes the
+// source once migration reports success, so a collision the winner wrote
+// DIFFERENTLY must be preserved, not counted as skipped.
+func TestShareTreatsADifferingRaceWinnerAsAConflict(t *testing.T) {
+	_, p, root := shareFixture(t)
+	// The shared tree already holds a different file at the same path — the
+	// same state a lost O_EXCL race leaves behind.
+	writeFile(t, filepath.Join(root, "claude-code-sessions", "acct-a", "s1.json"), "THEIRS")
+	writeFile(t, filepath.Join(p.DataDir(), "claude-code-sessions", "acct-a", "s1.json"), "OURS")
+
+	results, err := Share(p, root, SharedDirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Conflicts != 1 || results[0].Skipped != 0 {
+		t.Fatalf("results = %+v, want the differing collision preserved as a conflict", results)
+	}
+	if got := readFile(t, filepath.Join(results[0].ConflictDir, "acct-a", "s1.json")); got != "OURS" {
+		t.Fatalf("preserved copy = %q, want OURS", got)
+	}
+}
+
+// A conflict path that is already occupied by something DIFFERENT must not be
+// treated as "already preserved" — that would delete the source while claiming
+// to have saved it.
+func TestPreserveConflictNeverOverwritesAnEarlierBackup(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.json")
+	writeFile(t, src, "SECOND")
+	want := filepath.Join(dir, "conflicts", "src.json")
+	writeFile(t, want, "FIRST")
+
+	info, err := os.Lstat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perr := preserveConflict(src, want, info); perr != nil {
+		t.Fatal(perr)
+	}
+	if got := readFile(t, want); got != "FIRST" {
+		t.Fatalf("the earlier backup was overwritten: %q", got)
+	}
+	if got := readFile(t, want+".1"); got != "SECOND" {
+		t.Fatalf("the new copy was not preserved alongside it: %q", got)
+	}
+}
+
+// An identical backup from an earlier run is as good as ours — no numbered
+// duplicate should pile up on a retry.
+func TestPreserveConflictReusesAnIdenticalBackup(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.json")
+	writeFile(t, src, "SAME")
+	want := filepath.Join(dir, "conflicts", "src.json")
+	writeFile(t, want, "SAME")
+
+	info, _ := os.Lstat(src)
+	if err := preserveConflict(src, want, info); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(want + ".1"); !os.IsNotExist(err) {
+		t.Fatal("an identical backup was duplicated")
+	}
+}
+
+// A source symlink colliding with a regular file is a conflict to preserve, not
+// a Readlink error that aborts the whole migration.
+func TestEntriesEquivalentHandlesMismatchedKinds(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "plain")
+	writeFile(t, file, "x")
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink("plain", link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	same, err := entriesEquivalent(link, file)
+	if err != nil {
+		t.Fatalf("a symlink/file collision errored instead of reporting a difference: %v", err)
+	}
+	if same {
+		t.Fatal("a symlink and a regular file were reported as equivalent")
+	}
+}
