@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -132,5 +133,83 @@ func TestDesktopValueRewrite_RoundTrip(t *testing.T) {
 	}
 	if !contains(restored, `"model": "fable"`) {
 		t.Errorf("non-path value changed: %s", restored)
+	}
+}
+
+// The upgrade case. Tightening the allowlist only changes what the live walk
+// offers — so a sandbox staged by an EARLIER sync would otherwise stay tracked,
+// keep being pushed, and be handed back out by restore, making the exclusion
+// worthless for every machine that already synced one.
+func TestSync_ReconcilesSandboxStagedByAnEarlierSync(t *testing.T) {
+	liveCli, liveDesk := t.TempDir(), t.TempDir()
+	// The live tree now only has the sidecar — the sandbox is no longer offered.
+	write(t, liveDesk, "local-agent-mode-sessions/acct/org/local_x.json", `{"title":"t"}`)
+
+	staging := t.TempDir()
+	deskStage := filepath.Join(staging, "desktop")
+	// Seeded as an older clauderig would have left it.
+	write(t, deskStage, "local-agent-mode-sessions/acct/org/local_x.json", `{"title":"old"}`)
+	write(t, deskStage, "local-agent-mode-sessions/acct/org/local_x/.audit-key", "secret")
+	write(t, deskStage, "local-agent-mode-sessions/acct/org/local_x/audit.jsonl", "{}\n")
+	write(t, deskStage, "local-agent-mode-sessions/acct/org/local_x/uploads/statement.pdf", "pdf")
+	write(t, deskStage, "local-agent-mode-sessions/acct/org/local_x/outputs/build.py", "code")
+	// A sibling that IS still allowed must survive the reconcile.
+	write(t, deskStage, "local-agent-mode-sessions/acct/org/artifacts.json", `{"a":1}`)
+
+	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	rep, err := Sync(Options{
+		StagingDir: staging, Config: twoRootConfig(liveCli, liveDesk), Machine: john,
+		SourceOverride: override("cli", liveCli, "desktop", liveDesk),
+	})
+	if err != nil {
+		t.Fatalf("sync: %v (findings=%v)", err, rep.Findings)
+	}
+
+	sandbox := filepath.Join(deskStage, "local-agent-mode-sessions", "acct", "org", "local_x")
+	if _, err := os.Stat(sandbox); !os.IsNotExist(err) {
+		t.Error("the previously staged sandbox directory should have been removed")
+	}
+	for _, keep := range []string{
+		filepath.Join(deskStage, "local-agent-mode-sessions", "acct", "org", "local_x.json"),
+		filepath.Join(deskStage, "local-agent-mode-sessions", "acct", "org", "artifacts.json"),
+	} {
+		if _, err := os.Stat(keep); err != nil {
+			t.Errorf("still-allowed file should have been kept: %s", filepath.Base(keep))
+		}
+	}
+	var desk *RootResult
+	for i := range rep.Roots {
+		if rep.Roots[i].ID == "desktop" {
+			desk = &rep.Roots[i]
+		}
+	}
+	if desk == nil || desk.Disallowed != 4 {
+		t.Errorf("Disallowed = %v, want 4 (audit-key, audit.jsonl, upload, output)", desk)
+	}
+}
+
+// The reconcile must not touch a root this machine cannot see: skipping a root
+// says nothing about whether its staged files are still wanted, and pruning it
+// would delete another machine's data.
+func TestSync_ReconcileLeavesUnresolvedRootsAlone(t *testing.T) {
+	liveCli := t.TempDir()
+	staging := t.TempDir()
+	write(t, filepath.Join(staging, "desktop"), "claude-code-sessions/a/b/local_1.json", `{"x":1}`)
+	write(t, filepath.Join(staging, "desktop"), "Cache/junk", "junk") // not allowed, but not ours to judge
+
+	cfg := config.Default()
+	cfg.Roots = []config.Root{
+		{ID: "cli", Enabled: true, Location: pathmap.Cascade{Portable: liveCli}},
+		{ID: "desktop", Enabled: true, Location: pathmap.Cascade{Portable: filepath.Join(t.TempDir(), "absent")}},
+	}
+	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	if _, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: john,
+		SourceOverride: map[string]string{"cli": liveCli}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"claude-code-sessions/a/b/local_1.json", "Cache/junk"} {
+		if _, err := os.Stat(filepath.Join(staging, "desktop", filepath.FromSlash(p))); err != nil {
+			t.Errorf("staged file under a skipped root must be left alone: %s", p)
+		}
 	}
 }

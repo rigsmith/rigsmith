@@ -67,6 +67,9 @@ func NewSyncCmd() *cobra.Command {
 					if r.SkippedFiles > 0 {
 						extra += fmt.Sprintf(", %d skipped (churn)", r.SkippedFiles)
 					}
+					if r.Disallowed > 0 {
+						extra += fmt.Sprintf(", %d no longer allowed", r.Disallowed)
+					}
 					if n := len(r.Oversize); n > 0 {
 						extra += fmt.Sprintf(", %d too large", n)
 					}

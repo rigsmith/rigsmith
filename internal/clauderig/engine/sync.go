@@ -30,6 +30,7 @@ type RootResult struct {
 	RetentionByAge int      // project transcripts dropped as older than the window
 	SkippedFiles   int      // files that vanished/were unreadable mid-sync (live churn)
 	Oversize       []string // rel paths dropped for exceeding MaxFileBytes
+	Disallowed     int      // staged files removed because the allowlist no longer permits them
 	Skipped        bool     // root absent on this machine
 }
 
@@ -181,6 +182,21 @@ func Sync(opts Options) (*Report, error) {
 			}
 			rr.Files++
 		}
+		// Tightening the allowlist only changes which files the LIVE walk offers;
+		// copies an earlier sync already staged stay tracked, get re-committed and
+		// pushed, and are handed back out by restore. So a rule added to keep
+		// something out has no effect on the data already in the repo unless
+		// staging is reconciled against it — which is what this does.
+		//
+		// Only for roots that resolved on this machine: a root we skipped tells us
+		// nothing about whether its staged files are still wanted, and pruning it
+		// would delete another machine's data.
+		disallowed, perr := reconcileStagedRoot(stageRoot, allowlistFor(r.ID))
+		if perr != nil {
+			return nil, fmt.Errorf("reconcile staged %s: %w", r.ID, perr)
+		}
+		rr.Disallowed = disallowed
+
 		rep.Roots = append(rep.Roots, rr)
 	}
 
@@ -418,6 +434,50 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 }
 
 // removeEmptyDirs removes now-empty subdirectories of root (deepest first).
+// reconcileStagedRoot deletes staged files the allowlist no longer permits, and
+// returns how many it removed. This is what makes a tightened rule retroactive:
+// without it, an exclusion added today only stops NEW files, while everything the
+// old rule let through stays in the repo and keeps being pushed and restored.
+//
+// It judges paths, not existence, so files belonging to other machines (project
+// slugs this machine has never seen) are unaffected as long as the allowlist still
+// permits them. Retention, which removes allowed-but-aged files, is separate and
+// runs on its own.
+func reconcileStagedRoot(stageRoot string, l allowlist.List) (int, error) {
+	if !dirExists(stageRoot) {
+		return 0, nil
+	}
+	removed := 0
+	err := filepath.WalkDir(stageRoot, func(p string, d os.DirEntry, werr error) error {
+		if werr != nil {
+			// A staged tree churning under us is not a reason to fail the sync.
+			if os.IsNotExist(werr) {
+				return nil
+			}
+			return werr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(stageRoot, p)
+		if rerr != nil {
+			return nil
+		}
+		if l.Match(filepath.ToSlash(rel)) {
+			return nil
+		}
+		if os.Remove(p) == nil {
+			removed++
+		}
+		return nil
+	})
+	if err != nil {
+		return removed, err
+	}
+	removeEmptyDirs(stageRoot)
+	return removed, nil
+}
+
 func removeEmptyDirs(root string) {
 	var dirs []string
 	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
