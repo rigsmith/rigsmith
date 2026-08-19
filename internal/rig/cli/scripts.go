@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/core/script"
@@ -26,18 +27,42 @@ import (
 // name is always required to run one.
 const scriptVerbAnnotation = "rigScriptVerb"
 
-// isBuiltinVerb is the set of names rig owns, so custom commands and surfaced
+// builtinVerbs is the set of names rig owns, so custom commands and surfaced
 // package.json scripts never shadow a built-in verb.
-var isBuiltinVerb = map[string]bool{
-	"build": true, "test": true, "run": true, "format": true, "lint": true,
-	"typecheck": true, "rebuild": true, "install": true, "ci": true, "add": true,
-	"uninstall": true, "outdated": true, "upgrade": true, "clean": true,
-	"global": true, "dlx": true, "coverage": true, "kill": true, "doctor": true,
-	"info": true, "ui": true, "cd": true, "init": true, "watch": true,
-	"explain": true,
-	"publish": true, "default": true, "setup": true, "completion": true,
-	"config": true,
+//
+// DERIVED from the command tree rather than listed by hand. A literal list is a
+// second source of truth that drifts the moment a verb is added — `deps`,
+// `worktree`, `prune`, `copy`, `self-update` and `alias` were all missing from
+// it — and the failure is silent: a same-named config entry gets no shadow
+// warning and is treated as a discoverable script.
+//
+// newRootCmd() builds only the built-ins (Execute adds custom and package.json
+// commands afterwards), so this sees exactly the owned names, plus their
+// aliases, which shadow just as effectively.
+// Resolved on first use rather than at init: a package-level var referring to
+// newRootCmd is an initialization cycle, since building the tree reaches back
+// into this file.
+var (
+	builtinVerbsOnce sync.Once
+	builtinVerbsSet  map[string]bool
+)
+
+func builtinVerbs() map[string]bool {
+	builtinVerbsOnce.Do(func() {
+		owned := map[string]bool{}
+		for _, c := range newRootCmd().Commands() {
+			owned[c.Name()] = true
+			for _, a := range c.Aliases {
+				owned[a] = true
+			}
+		}
+		builtinVerbsSet = owned
+	})
+	return builtinVerbsSet
 }
+
+// isBuiltinVerbName reports whether name is a command rig itself owns.
+func isBuiltinVerbName(name string) bool { return builtinVerbs()[name] }
 
 // scriptEntry is one runnable script rig surfaces: a .rig.json custom command, a
 // package.json script, or a Go scripts//cmd verb. It is the shared source for
@@ -125,7 +150,7 @@ func customScripts(cfg config.Config) []scriptEntry {
 	}
 	var entries []scriptEntry
 	for _, name := range names {
-		if isBuiltinVerb[name] {
+		if isBuiltinVerbName(name) {
 			continue // shadowed by rig's own verb — reported by shadowedCommands
 		}
 		name, def := name, cfg.Commands[name]
@@ -156,7 +181,7 @@ func customScripts(cfg config.Config) []scriptEntry {
 func shadowedCommands(cfg config.Config) []string {
 	var out []string
 	for name := range cfg.Commands {
-		if isBuiltinVerb[name] {
+		if isBuiltinVerbName(name) {
 			out = append(out, name)
 		}
 	}
@@ -172,7 +197,7 @@ func shadowedCommands(cfg config.Config) []string {
 func configProblems(cfg config.Config) []string {
 	problems := append([]string(nil), cfg.Warnings...)
 	for _, name := range shadowedCommands(cfg) {
-		problems = append(problems, shadowWarning(name, cfg.Path))
+		problems = append(problems, shadowWarning(name, commandOrigin(cfg, name)))
 	}
 	return problems
 }
@@ -216,6 +241,17 @@ func printConfigProblems(w io.Writer, cfg config.Config, header string) {
 // shadowWarning is the sentence rig prints for a shadowed custom command. It
 // names the config file because the collision can come from the user-wide
 // ~/.rig.json, where it is least expected.
+// commandOrigin is the file that DECLARED a command, which is not necessarily
+// cfg.Path: after a merge, a global-only command sits in a config whose Path
+// names the repo file, so reporting Path would send the user to edit a file the
+// command is not in.
+func commandOrigin(cfg config.Config, name string) string {
+	if p := cfg.CommandPaths[name]; p != "" {
+		return p
+	}
+	return cfg.Path
+}
+
 func shadowWarning(name, configPath string) string {
 	where := config.FileName
 	if configPath != "" {
@@ -492,7 +528,7 @@ func nodeScripts(root string) []scriptEntry {
 
 	var entries []scriptEntry
 	for _, name := range names {
-		if isBuiltinVerb[name] {
+		if isBuiltinVerbName(name) {
 			continue // a built-in dev verb already maps this
 		}
 		script := name
@@ -543,7 +579,7 @@ func goScripts(root string) []scriptEntry {
 			continue // only conventional tool locations become bare verbs
 		}
 		name := filepath.Base(rel)
-		if name == "" || isBuiltinVerb[name] || seen[name] {
+		if name == "" || isBuiltinVerbName(name) || seen[name] {
 			continue
 		}
 		if !isGoMainPackage(filepath.Join(root, filepath.FromSlash(rel))) {

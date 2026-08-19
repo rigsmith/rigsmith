@@ -129,9 +129,12 @@ func customPlan(cfg config.Config, root, name string, def *config.Command, args 
 	if def.Cwd != "" {
 		dir = filepath.Join(root, def.Cwd)
 	}
+	// The file that declared THIS command, not merely the merged config's path:
+	// a global-only command in a repo that also has a .rig.json would otherwise
+	// be reported as coming from the repo file.
 	origin := ".rig.json"
-	if cfg.Path != "" {
-		origin = cfg.Path
+	if p := commandOrigin(cfg, name); p != "" {
+		origin = p
 	}
 	p := commandPlan{
 		verb:   name,

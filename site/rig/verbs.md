@@ -189,9 +189,12 @@ each with the command it becomes.
 
 The resolution comes from the same code the verb runs through, not a second
 implementation, so what you read is what executes. Verbs that decide part of
-their command while running (`coverage`, `rebuild`, `publish`, `upgrade`) are
-not guessed at: explain says so and points at `rig <verb> --dry-run`, which
-prints the exact command by going through the real path. The same is true for an
+their command while running (`coverage`, `rebuild`, `publish`, `upgrade`,
+`outdated`) are not guessed at: explain says so, and for the ones whose
+`--dry-run` prints an exact command it points there, since that goes through the
+real path. A few verbs have no such contract — `info` has no underlying command,
+and `outdated` runs its scans without echoing them — so explain says only that
+it cannot show a guaranteed answer. The same is true for an
 argument that selects a project or a test filter — `rig test MyClass --dry-run`
 rather than `rig explain test MyClass`.
 

@@ -23,6 +23,21 @@ import (
 // report. For those, resolution happens partly at run time, and a plausible
 // guess printed here is exactly the failure `explain` exists to prevent — so it
 // says so and points at `--dry-run`, which goes through the real path.
+// dryRunVerbs are the verbs whose --dry-run prints the exact command it would
+// have run. Every directVerb qualifies (that is what makes it direct), plus the
+// ones that assemble an argv and echo it.
+//
+// Deliberately NOT exhaustive-by-default: `info` has no underlying command at
+// all, and `outdated` runs its scans through captureOutdated whether or not
+// --dry-run is set and never prints their argv. Pointing at --dry-run for those
+// promises an exactness that does not exist.
+var dryRunVerbs = map[string]bool{
+	"build": true, "test": true, "run": true, "format": true, "lint": true,
+	"typecheck": true, "clean": true, "install": true, "ci": true, "add": true,
+	"global": true, "dlx": true,
+	"coverage": true, "rebuild": true, "publish": true, "upgrade": true,
+}
+
 var directVerbs = map[string]bool{
 	"build": true, "test": true, "run": true, "format": true, "lint": true,
 	"typecheck": true, "clean": true, "install": true, "ci": true, "add": true,
@@ -61,9 +76,15 @@ func newExplainCmd() *cobra.Command {
 			}
 			p, err := explainPlan(cmd, cwd, root, cfg, args[0], args[1:])
 			if err != nil {
+				// Even when there is no plan to show, a malformed config or an
+				// unknown key is worth saying: `explain` is exempt from the
+				// global warning banner precisely because it reports these
+				// itself, so staying silent here hides them entirely.
+				printConfigProblems(out, cfg, "")
 				return err
 			}
 			printPlan(out, p)
+			printConfigProblems(out, cfg, "")
 			return nil
 		},
 	}
@@ -80,16 +101,31 @@ func newExplainCmd() *cobra.Command {
 func explainPlan(cmd *cobra.Command, cwd, root string, cfg config.Config, name string, args []string) (commandPlan, error) {
 	verb := canonicalVerb(cmd, name)
 
-	if isBuiltinVerb[verb] {
+	if isBuiltinVerbName(verb) {
 		if !directVerbs[verb] {
+			// Only point at --dry-run for verbs that actually honour it. `info`
+			// has no underlying command and no such flag, and `outdated`'s
+			// captureOutdated path runs the scans regardless and never echoes
+			// their argv — so promising an "exact command" there sends the user
+			// to something that does not exist, or silently does the work.
+			if dryRunVerbs[verb] {
+				return commandPlan{}, fmt.Errorf(
+					"part of `rig %s`'s command is decided while it runs, so nothing printed here would be guaranteed to match it — run `rig %s --dry-run` for the exact command",
+					verb, verb)
+			}
 			return commandPlan{}, fmt.Errorf(
-				"part of `rig %s`'s command is decided while it runs, so nothing printed here would be guaranteed to match it — run `rig %s --dry-run` for the exact command",
-				verb, verb)
+				"`rig %s` decides part of what it does while it runs, and has no dry-run that prints an exact command — there is nothing explain could show that would be guaranteed to match",
+				verb)
 		}
 		if len(args) > 0 {
+			if dryRunVerbs[verb] {
+				return commandPlan{}, fmt.Errorf(
+					"an argument to `rig %s` selects a project or a filter, which is resolved while the verb runs — explain covers the bare verb, so for one invocation run `rig %s %s --dry-run`",
+					verb, verb, strings.Join(args, " "))
+			}
 			return commandPlan{}, fmt.Errorf(
-				"an argument to `rig %s` selects a project or a filter, which is resolved while the verb runs — explain covers the bare verb, so for one invocation run `rig %s %s --dry-run`",
-				verb, verb, strings.Join(args, " "))
+				"an argument to `rig %s` selects a project or a filter, which is resolved while the verb runs — explain covers the bare verb",
+				verb)
 		}
 		eco, err := resolvePrimary(cwd, root)
 		if err != nil {
@@ -134,7 +170,7 @@ func shadowNote(cfg config.Config, verb string) []string {
 	if cfg.Commands[verb] == nil {
 		return nil
 	}
-	return []string{shadowWarning(verb, cfg.Path)}
+	return []string{shadowWarning(verb, commandOrigin(cfg, verb))}
 }
 
 // printPlan renders one resolved verb.
