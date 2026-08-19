@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -228,10 +229,15 @@ func TestStore_SaveAndReadDesktop(t *testing.T) {
 	if !back.HasSession() || string(back.ConfigKeys["oauth:tokenCacheV2"]) != `"djEwZZZ"` {
 		t.Errorf("round-trip lost the session: %+v", back)
 	}
-	// It is a session, ciphertext or not.
+	// It is a session, ciphertext or not, so it is written owner-only. Windows
+	// does not carry Unix permission bits — the file reports 0666 there whatever
+	// mode is requested — so only the behaviour, not the assertion, is portable.
 	fi, err := os.Stat(st.desktopPath("acct"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not carry Unix permission bits")
 	}
 	if perm := fi.Mode().Perm(); perm != 0o600 {
 		t.Errorf("snapshot mode = %o, want 600", perm)
@@ -317,5 +323,27 @@ func TestMatchDesktopAccount(t *testing.T) {
 		if got := MatchDesktopAccount(c.snap, c.blk); got != c.want {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// Writing under a running Desktop is silently lost, so it must be refused.
+// Stubbed rather than probing for a real process: an assertion whose result
+// depends on whether the developer has the app open is not an assertion.
+func TestDesktop_RefusesWhileDesktopRunning(t *testing.T) {
+	root := fakeDesktop(t, map[string]string{"oauth:tokenCacheV2": "djEwX"}, false)
+	snap, err := CaptureDesktop(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := desktopRunning
+	t.Cleanup(func() { desktopRunning = orig })
+
+	desktopRunning = func() bool { return true }
+	if err := ApplyDesktop(root, snap); err != ErrDesktopRunning {
+		t.Errorf("err = %v, want ErrDesktopRunning", err)
+	}
+	desktopRunning = func() bool { return false }
+	if err := ApplyDesktop(root, snap); err != nil {
+		t.Errorf("should apply when Desktop is closed: %v", err)
 	}
 }

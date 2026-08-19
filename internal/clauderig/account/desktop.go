@@ -67,6 +67,11 @@ const desktopCookieHosts = `host_key LIKE '%claude.ai'`
 // securityBin in livestore_darwin.go.
 var sqlite3Bin = "/usr/bin/sqlite3"
 
+// desktopRunning is a package var so tests are not at the mercy of whether the
+// developer happens to have Desktop open — an assertion that passes or fails
+// depending on the state of an unrelated app is worse than no assertion.
+var desktopRunning = DesktopRunning
+
 // ErrNoDesktop means this machine has no Claude Desktop data directory.
 var ErrNoDesktop = errors.New("no Claude Desktop data directory on this machine")
 
@@ -217,9 +222,9 @@ func ApplyDesktop(root string, snap *DesktopSnapshot) error {
 	if !dirExists(root) {
 		return ErrNoDesktop
 	}
-	if DesktopRunning() {
-		return ErrDesktopRunning
-	}
+	// Validate the snapshot BEFORE looking at machine state. A snapshot from
+	// another host can never be applied, so reporting "Desktop is running" for it
+	// would send the caller off to quit an app that would not have helped.
 	host, _ := os.Hostname()
 	if snap.Host != "" && host != "" && snap.Host != host {
 		return fmt.Errorf(
@@ -228,6 +233,9 @@ func ApplyDesktop(root string, snap *DesktopSnapshot) error {
 				"produce an unreadable session rather than a login.\n"+
 				"Fix: sign in to Desktop once on this machine, then `clauderig account add`",
 			snap.Host, host)
+	}
+	if desktopRunning() {
+		return ErrDesktopRunning
 	}
 	if err := writeDesktopConfigKeys(root, snap.ConfigKeys); err != nil {
 		return err
