@@ -1,0 +1,5 @@
+---
+"github.com/rigsmith/rigsmith": minor
+---
+
+clauderig: new `clauderig desktop` command runs several Claude Desktop accounts side by side, each in its own permanent Electron profile, so they all stay logged in and their windows can be open together — `desktop add work`, then `desktop open work`. This is the opposite of the withdrawn session-switching feature and inherits none of its problems: nothing is captured, copied or decrypted, clauderig never reads Desktop's login, and each profile is a directory the app owns outright. macOS and Windows (where Anthropic ships Desktop); elsewhere it says so and points at `clauderig account`. Profiles live under ~/.clauderig, outside every sync root, so a logged-in session can never reach the sync remote — asserted by a test. Model and macOS launch mechanism credit guise by siddhjagani.
