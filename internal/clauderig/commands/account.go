@@ -588,7 +588,13 @@ func newAccountRunCmd() *cobra.Command {
 				return err
 			}
 			var a account.Account
-			if len(args) > 0 {
+			// Cobra removes the `--` from args, so `run -- --resume` arrives as
+			// args[0]=="--resume" and would be read as an account reference.
+			// ArgsLenAtDash reports how many args preceded the separator: zero
+			// means every argument belongs to claude, and the account comes from
+			// the directory mapping.
+			named := len(args) > 0 && cmd.ArgsLenAtDash() != 0
+			if named {
 				a, err = st.Resolve(args[0])
 				if err != nil {
 					return err
@@ -724,8 +730,6 @@ func newAccountRemoveCmd() *cobra.Command {
 			if err := st.Remove(a.ID); err != nil {
 				return err
 			}
-			// A directory mapping naming a removed account would do nothing at
-			// exactly the moment it was expected to work, so it goes with it.
 			pruneMappingsForAccount(a.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", OkStyle.Render("Removed"), accountTitle(a))
 			return nil
@@ -765,6 +769,11 @@ func newAccountPurgeCmd() *cobra.Command {
 			}
 			if err := st.Purge(); err != nil {
 				return err
+			}
+			// Purge removes every account, so every account binding is now
+			// stale. Same guarantee as `remove`, applied wholesale.
+			for _, a := range all {
+				pruneMappingsForAccount(a.ID)
 			}
 			fmt.Fprintf(out, "%s %d accounts\n", OkStyle.Render("Purged"), len(all))
 			return nil
@@ -860,6 +869,7 @@ func runAccountUI(cmd *cobra.Command) error {
 				note = ErrStyle.Render(err.Error())
 				continue
 			}
+			pruneMappingsForAccount(target.ID)
 			note = "removed " + accountTitle(target)
 		case "toggle-disable":
 			target, rerr := st.Resolve(final.Action.ID)
@@ -1009,7 +1019,8 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill, asJSON bo
 	}
 	if active == target.ID {
 		fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already live:"), accountTitle(target))
-		report(switchJSON{From: active, To: target.ID, ToEmail: target.Email, Reason: "already-live"})
+		report(switchJSON{From: active, To: target.ID, ToEmail: target.Email,
+			Reason: switchAlreadyLive, Message: "already the live account"})
 		return nil
 	}
 
@@ -1060,7 +1071,9 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill, asJSON bo
 		default:
 			printSwitchRefused(out, live)
 			report(switchJSON{From: active, To: target.ID, ToEmail: target.Email,
-				Reason: "live-sessions", Blocking: toInstancesJSON(live)})
+				Reason:   switchLiveSessions,
+				Message:  "Claude Code is running; close it, or use --force/--kill",
+				Blocking: toInstancesJSON(live)})
 			return errors.New("live Claude Code sessions detected")
 		}
 	}
@@ -1072,8 +1085,10 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill, asJSON bo
 	backup, blocked, err := doSwitch(st, target, force)
 	if err != nil {
 		// A refusal is the outcome a script most needs to see, so it is reported
-		// as JSON as well as returned — the error still sets the exit code.
-		report(switchJSON{From: active, To: target.ID, ToEmail: target.Email, Reason: err.Error()})
+		// as JSON as well as returned — the error still sets the exit code. The
+		// code is stable; the sentence is not, and goes in message.
+		report(switchJSON{From: active, To: target.ID, ToEmail: target.Email,
+			Reason: classifySwitchFailure(err), Message: err.Error()})
 		return err
 	}
 	if len(blocked) > 0 {

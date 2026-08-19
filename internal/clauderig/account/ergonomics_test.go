@@ -183,3 +183,43 @@ func TestEnabledExcludesDisabledAccounts(t *testing.T) {
 		t.Fatalf("a disabled account stopped resolving by name: %v", rerr)
 	}
 }
+
+// `account add` is the documented way to refresh an expired credential, and it
+// rebuilds the record from the live login — which knows nothing about an alias
+// or a disable. Without carrying them over it would silently drop the alias and
+// put a deliberately disabled account back into rotation.
+func TestCaptureLivePreservesAliasAndDisabled(t *testing.T) {
+	s := &Store{Root: t.TempDir()}
+	cred := []byte(`{"claudeAiOauth":{"accessToken":"a1","refreshToken":"r1"}}`)
+	oauth := []byte(`{"emailAddress":"a@b.c","organizationUuid":"org-abc"}`)
+	a, _, err := s.CaptureLive(cred, oauth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAlias(a.ID, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDisabled(a.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	firstAdded, _ := s.read(a.ID)
+
+	// Re-capture, as `account add` does after logging back in.
+	again := []byte(`{"claudeAiOauth":{"accessToken":"a2","refreshToken":"r2"}}`)
+	if _, existed, cerr := s.CaptureLive(again, oauth); cerr != nil || !existed {
+		t.Fatalf("re-capture: existed=%v err=%v", existed, cerr)
+	}
+	got, ok := s.read(a.ID)
+	if !ok {
+		t.Fatal("account vanished")
+	}
+	if got.Alias != "dev" {
+		t.Errorf("alias = %q, want dev — a re-capture must not drop it", got.Alias)
+	}
+	if !got.Disabled {
+		t.Error("a disabled account was silently re-enabled by a re-capture")
+	}
+	if got.AddedAt != firstAdded.AddedAt {
+		t.Errorf("AddedAt = %q, want the original %q — it records when tracking began", got.AddedAt, firstAdded.AddedAt)
+	}
+}

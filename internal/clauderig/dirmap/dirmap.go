@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -68,17 +69,25 @@ func (s *Store) List() ([]Entry, error) {
 	return f.Mappings, nil
 }
 
-// Lookup finds the mapping governing dir: an exact match, else the NEAREST
-// mapped ancestor, so a mapping on a repo root covers everything beneath it and
-// a mapping deeper inside still wins over it.
+// Lookup resolves the bindings governing dir. Each binding is resolved
+// INDEPENDENTLY against the nearest mapped ancestor that actually sets it.
+//
+// Resolving one nearest entry and reading both fields off it breaks staggered
+// mappings, which are the common shape: map a repo root to the work account,
+// then map one directory inside it to a Desktop profile, and the account
+// binding would stop applying below that child because the child's entry has an
+// empty Account. Each field walks its own way up.
+//
+// The returned Entry's Dir names the nearest ancestor that contributed
+// anything, for reporting.
 func (s *Store) Lookup(dir string) (Entry, error) {
 	all, err := s.List()
 	if err != nil {
 		return Entry{}, err
 	}
 	target := normalize(dir)
-	var best Entry
-	bestLen := -1
+	var out Entry
+	bestAccount, bestDesktop, bestAny := -1, -1, -1
 	for _, e := range all {
 		md := normalize(e.Dir)
 		if !covers(md, target) {
@@ -86,19 +95,26 @@ func (s *Store) Lookup(dir string) (Entry, error) {
 		}
 		// Longest match wins — that is what "nearest ancestor" means once
 		// several ancestors are mapped.
-		if len(md) > bestLen {
-			best, bestLen = e, len(md)
+		if e.Account != "" && len(md) > bestAccount {
+			out.Account, bestAccount = e.Account, len(md)
+		}
+		if e.Desktop != "" && len(md) > bestDesktop {
+			out.Desktop, bestDesktop = e.Desktop, len(md)
+		}
+		if len(md) > bestAny {
+			out.Dir, bestAny = e.Dir, len(md)
 		}
 	}
-	if bestLen < 0 {
+	if bestAny < 0 {
 		return Entry{}, fmt.Errorf("%w: %s", ErrNoMapping, dir)
 	}
-	return best, nil
+	return out, nil
 }
 
 // covers reports whether ancestor is dir or a parent of it. The separator check
 // is what stops /a/foo from matching /a/foobar.
 func covers(ancestor, dir string) bool {
+	ancestor, dir = foldPath(ancestor), foldPath(dir)
 	if ancestor == dir {
 		return true
 	}
@@ -107,6 +123,21 @@ func covers(ancestor, dir string) bool {
 		ancestor += sep
 	}
 	return strings.HasPrefix(dir, ancestor)
+}
+
+// foldPath case-folds a path where the platform's filesystem does. Windows
+// paths are case-insensitive, so a mapping saved as `C:\Work` must cover a
+// lookup spelled `c:\work\repo` — they name the same directory. Unix paths are
+// left alone, where two spellings really are two directories.
+//
+// macOS is deliberately not folded: its default filesystem is case-INsensitive
+// but case-preserving, and EvalSymlinks in normalize already resolves a path to
+// its canonical spelling, so folding here would only mask a genuine mismatch.
+func foldPath(p string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(p)
+	}
+	return p
 }
 
 // normalize makes a directory comparable: absolute, cleaned, and symlink-resolved
@@ -150,7 +181,7 @@ func (s *Store) Set(dir string, mutate func(*Entry)) (Entry, error) {
 	nd := normalize(dir)
 	idx := -1
 	for i, e := range all {
-		if normalize(e.Dir) == nd {
+		if foldPath(normalize(e.Dir)) == foldPath(nd) {
 			idx = i
 			break
 		}
@@ -177,7 +208,7 @@ func (s *Store) Remove(dir string) error {
 	}
 	nd := normalize(dir)
 	for i, e := range all {
-		if normalize(e.Dir) == nd {
+		if foldPath(normalize(e.Dir)) == foldPath(nd) {
 			return s.write(append(all[:i], all[i+1:]...))
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/dirmap"
@@ -93,17 +94,58 @@ func printAccountsJSON(w interface{ Write([]byte) (int, error) }, st *account.St
 	return emitJSON(w, out)
 }
 
+// Stable refusal codes for `switch --json`. A script branches on these; the
+// human sentence lives in `message` and may change wording freely.
+const (
+	switchAlreadyLive  = "already-live"  // the target is already the live account
+	switchLiveSessions = "live-sessions" // Claude Code is running (see blocking)
+	switchNoTokens     = "no-tokens"     // the stored credential would log the machine out
+	switchNoProfile    = "no-profile"    // no stored oauthAccount block to move with it
+	switchDesynced     = "stored-desync" // the stored pair names two different accounts
+	switchNoConfig     = "no-global-config"
+	switchClaudeBusy   = "claude-busy" // a credential lock is held (refresh in flight)
+	switchScanFailed   = "process-scan-failed"
+	switchFailed       = "failed" // anything else; read message
+)
+
 // switchJSON reports the outcome of a switch — including the refusals, which are
 // the interesting cases for a script deciding what to do next.
 type switchJSON struct {
-	Switched bool           `json:"switched"`
-	DryRun   bool           `json:"dryRun,omitempty"`
-	From     string         `json:"from,omitempty"`
-	To       string         `json:"to"`
-	ToEmail  string         `json:"toEmail,omitempty"`
-	Backup   string         `json:"backup,omitempty"`
-	Reason   string         `json:"reason,omitempty"`
+	Switched bool   `json:"switched"`
+	DryRun   bool   `json:"dryRun,omitempty"`
+	From     string `json:"from,omitempty"`
+	To       string `json:"to"`
+	ToEmail  string `json:"toEmail,omitempty"`
+	Backup   string `json:"backup,omitempty"`
+	// Reason is a stable code from the list above — branch on this.
+	Reason string `json:"reason,omitempty"`
+	// Message is the human sentence behind Reason. Never parse it.
+	Message  string         `json:"message,omitempty"`
 	Blocking []instanceJSON `json:"blocking,omitempty"`
+}
+
+// classifySwitchFailure maps a doSwitch error onto a stable code. The errors are
+// constructed in one file a few hundred lines away, so this matches on the
+// sentinel where there is one and on a distinctive fragment otherwise — and
+// falls back to "failed" rather than guessing, so a caller can always rely on
+// the code being one it knows or the catch-all.
+func classifySwitchFailure(err error) string {
+	switch {
+	case errors.Is(err, account.ErrClaudeBusy):
+		return switchClaudeBusy
+	case errors.Is(err, account.ErrProcessScan):
+		return switchScanFailed
+	case strings.Contains(err.Error(), "has no tokens"):
+		return switchNoTokens
+	case strings.Contains(err.Error(), "no stored account profile"):
+		return switchNoProfile
+	case strings.Contains(err.Error(), "is itself desynced"):
+		return switchDesynced
+	case strings.Contains(err.Error(), "~/.claude.json does not exist"):
+		return switchNoConfig
+	default:
+		return switchFailed
+	}
 }
 
 type instanceJSON struct {
@@ -373,9 +415,13 @@ func mappedAccount(st *account.Store, dir string) (account.Account, bool) {
 	return a, true
 }
 
-// pruneMappingsForAccount drops a removed account's bindings. Best effort: the
-// account is already gone, and failing the removal over a stale mapping would be
-// worse than the stale mapping.
+// pruneMappingsForAccount drops a removed account's bindings.
+//
+// Called from EVERY path that removes an account — the CLI command, the
+// interactive screen, and `purge` — because the promise is that a mapping never
+// outlives its target, and a guarantee honoured on one path out of three is not
+// a guarantee. Best effort: the account is already gone, and failing the removal
+// over a stale mapping would be worse than the stale mapping.
 func pruneMappingsForAccount(id string) {
 	if dm, err := dirmapStore(); err == nil {
 		_ = dm.PruneAccount(id)

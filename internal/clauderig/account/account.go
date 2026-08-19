@@ -207,6 +207,20 @@ func (s *Store) CaptureLive(cred, oauth []byte) (Account, bool, error) {
 		OrganizationUUID: org,
 		AddedAt:          time.Now().UTC().Format(time.RFC3339),
 	}
+	// Re-capturing an existing account must not undo the user's own settings.
+	// This builds a fresh record from the live login, which knows nothing about
+	// an alias or a disable — so without carrying them over, `account add` (the
+	// documented way to refresh an expired credential) would silently drop an
+	// alias and put a deliberately disabled account back into rotation.
+	if existed {
+		if prev, ok := s.read(id); ok {
+			a.Alias = prev.Alias
+			a.Disabled = prev.Disabled
+			if prev.AddedAt != "" {
+				a.AddedAt = prev.AddedAt // when it was first tracked, not last refreshed
+			}
+		}
+	}
 	if err := s.save(a, cred, authoritative); err != nil {
 		return Account{}, false, err
 	}

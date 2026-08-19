@@ -212,3 +212,70 @@ func TestFileIsNotWorldReadable(t *testing.T) {
 		t.Fatalf("mode = %v, want 0600", perm)
 	}
 }
+
+// Staggered bindings are the common shape: a repo root mapped to an account,
+// one directory inside it mapped to a Desktop profile. Resolving a single
+// nearest entry would drop the account binding below that child.
+func TestLookupResolvesEachBindingIndependently(t *testing.T) {
+	s := newTestStore(t)
+	root := t.TempDir()
+	inner := filepath.Join(root, "app")
+	deep := filepath.Join(inner, "src")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setAccount(t, s, root, "work-cli")
+	if _, err := s.Set(inner, func(e *Entry) { e.Desktop = "work-app" }); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Lookup(deep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Account != "work-cli" {
+		t.Errorf("Account = %q, want work-cli — the outer account binding still governs here", got.Account)
+	}
+	if got.Desktop != "work-app" {
+		t.Errorf("Desktop = %q, want work-app", got.Desktop)
+	}
+}
+
+// The nearer binding still wins when both ancestors set the same field.
+func TestLookupPrefersTheNearestForEachField(t *testing.T) {
+	s := newTestStore(t)
+	root := t.TempDir()
+	inner := filepath.Join(root, "app")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setAccount(t, s, root, "personal")
+	if _, err := s.Set(root, func(e *Entry) { e.Desktop = "personal-app" }); err != nil {
+		t.Fatal(err)
+	}
+	setAccount(t, s, inner, "work")
+
+	got, err := s.Lookup(inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Account != "work" {
+		t.Errorf("Account = %q, want work", got.Account)
+	}
+	if got.Desktop != "personal-app" {
+		t.Errorf("Desktop = %q, want personal-app inherited from the root", got.Desktop)
+	}
+}
+
+func TestFoldPathMatchesThePlatform(t *testing.T) {
+	got := foldPath(`C:\Work`)
+	if runtime.GOOS == "windows" {
+		if got != `c:\work` {
+			t.Fatalf("foldPath = %q, want lowercased — Windows paths are case-insensitive", got)
+		}
+		return
+	}
+	if got != `C:\Work` {
+		t.Fatalf("foldPath = %q, want unchanged off Windows", got)
+	}
+}

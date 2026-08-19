@@ -514,14 +514,21 @@ func runDesktopUI(cmd *cobra.Command) error {
 		_, installed := app.Installed()
 		rows := make([]tui.DesktopRow, 0, len(all))
 		for _, p := range all {
+			var open, unknown bool
+			if installed {
+				running, rerr := desktop.IsRunning(app, p.DataDir())
+				open, unknown = running, rerr != nil
+			}
 			rows = append(rows, tui.DesktopRow{
 				Name:      p.Name,
 				Email:     p.Email,
 				AccountID: p.AccountID,
-				// Resolved here, not in the model: the screen must never shell
-				// out to scan processes while the event loop is running.
-				Open:        installed && profileOpen(app, p.DataDir()),
-				OpenUnknown: installed && profileScanFailed(app, p.DataDir()),
+				// Both fields come from ONE scan: on Windows each one starts
+				// PowerShell and enumerates Win32_Process, so scanning twice per
+				// row would run 2N subprocesses to open the screen — and could
+				// derive "open" and "unknown" from different snapshots.
+				Open:        open,
+				OpenUnknown: unknown,
 			})
 		}
 		res, rerr := tea.NewProgram(tui.NewDesktop(rows, installed, desktop.Supported(), note)).Run()
@@ -644,17 +651,4 @@ func promptDesktopName() (string, error) {
 		return "", nil
 	}
 	return strings.TrimSpace(name), err
-}
-
-// profileOpen and profileScanFailed split IsRunning's two answers for the TUI,
-// which renders a row per profile and must show "unknown" rather than "closed"
-// when the scan fails.
-func profileOpen(app desktop.App, dataDir string) bool {
-	open, err := desktop.IsRunning(app, dataDir)
-	return err == nil && open
-}
-
-func profileScanFailed(app desktop.App, dataDir string) bool {
-	_, err := desktop.IsRunning(app, dataDir)
-	return err != nil
 }
