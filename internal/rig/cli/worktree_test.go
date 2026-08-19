@@ -10,6 +10,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/devroute"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/core/worktree"
 )
 
 func TestResolveWorktree(t *testing.T) {
@@ -267,5 +268,46 @@ func assertEqual(t *testing.T, got, want []string) {
 		if got[i] != want[i] {
 			t.Fatalf("at %d got %q; want %q (full: %v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+// Completion must offer branches from the repository the command will ACT on.
+// Reading the working directory instead would suggest names that do not exist
+// in the target repo — or nothing at all when the cwd is not a repository.
+func TestWorktreeCompletionHonoursRepoFlag(t *testing.T) {
+	ctx := context.Background()
+	other, err := gitrepo.Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, other, "a", "1", "init")
+	root, err := other.Toplevel(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, _ := other.CurrentBranch(ctx)
+	wtPath := worktree.PathFor(root, "feat/from-other-repo")
+	if err := other.WorktreeAdd(ctx, wtPath, "feat/from-other-repo", base, true); err != nil {
+		t.Skipf("worktree add unavailable: %v", err)
+	}
+
+	// Run from a directory that is NOT the target repo — the case the flag
+	// exists for, and the one that used to return nothing.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	cmd := newWorktreeRemoveCmd()
+	cmd.SetContext(ctx)
+	if err := cmd.Flags().Set("repo", other.Dir); err != nil {
+		t.Fatal(err)
+	}
+	comps, _ := cmd.ValidArgsFunction(cmd, nil, "")
+	joined := strings.Join(comps, " ")
+	if !strings.Contains(joined, "feat/from-other-repo") {
+		t.Fatalf("completions = %v, want the --repo repository's worktree", comps)
 	}
 }

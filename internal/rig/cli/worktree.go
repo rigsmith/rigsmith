@@ -326,7 +326,13 @@ func worktreeCompletion(dir cobra.ShellCompDirective) func(*cobra.Command, []str
 		if len(args) > 0 {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		repo, _, err := openRepo(cmd.Context())
+		// Complete against the SAME repository the command would act on. Reading
+		// the cwd here instead would offer branches from one repo while the verb
+		// operated on another — `rig worktree open --repo /other <TAB>` would
+		// suggest names that do not exist there, and offer nothing at all when
+		// the cwd is not a repository.
+		repoDir, _ := cmd.Flags().GetString("repo")
+		repo, _, err := openRepoAt(cmd.Context(), repoDir)
 		if err != nil {
 			return nil, dir
 		}
