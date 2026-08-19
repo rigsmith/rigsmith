@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	dotnetadapter "github.com/rigsmith/rigsmith/core/ecosystem/dotnet"
 )
 
 // ProjectInfo is a project discovered from the solution (or a csproj scan).
@@ -70,14 +72,22 @@ func (p ProjectInfo) IsRunnable() bool {
 // scopes discovery to that file; `exclude` trims whatever the scan over-reports.
 func DiscoverDotNet(root, configuredSolution string, exclude []string) []ProjectInfo {
 	var csprojs []string
+	// Branch on whether the pinned solution was FOUND, not on whether it yielded
+	// projects. A solution that exists but lists none — empty, or all of them
+	// unsupported, or unparseable — returns a nil slice, and treating that as
+	// "no pin" would silently widen an explicitly scoped repo to a full scan:
+	// the one outcome a pin exists to prevent.
+	//
+	// A pin naming a MISSING file still falls through to the scan rather than
+	// reporting an empty repo; `rig doctor` flags that separately.
+	pinned := false
 	if configuredSolution != "" {
-		// A pin that names a missing file resolves to "" and falls through to
-		// the scan rather than reporting an empty repo (`rig doctor` flags it).
 		if solution := FindSolution(root, configuredSolution); solution != "" {
 			csprojs = SolutionProjects(solution)
+			pinned = true
 		}
 	}
-	if csprojs == nil {
+	if !pinned {
 		csprojs = scanForProjects(root)
 	}
 
@@ -345,13 +355,15 @@ func readCsproj(path string) csprojProps {
 }
 
 // ProjectFileExts are the MSBuild project files a .NET project is found by.
-var ProjectFileExts = []string{".csproj", ".fsproj", ".vbproj"}
+// Defined in the adapter, which also gates whether .NET discovery runs at all —
+// the two must agree or a repo is silently reported as having no projects.
+var ProjectFileExts = dotnetadapter.ProjectFileExts
 
 // scanSkipDirs are never descended into: build output and dependency trees,
 // which hold copies of project files. `vendor` is deliberately absent — a
 // vendored *.csproj is a first-class build input in .NET (solutions routinely
 // list them), unlike a Go or PHP vendor tree; `exclude` hides one that isn't.
-var scanSkipDirs = []string{"bin", "obj", ".git", "node_modules"}
+var scanSkipDirs = dotnetadapter.SkippedScanDirs
 
 // scanForProjects finds every project file under root. This is the default
 // discovery path (see DiscoverDotNet), so it is the superset a solution would
@@ -379,14 +391,7 @@ func scanForProjects(root string) []string {
 }
 
 // isProjectFile reports whether name is an MSBuild project file.
-func isProjectFile(name string) bool {
-	for _, ext := range ProjectFileExts {
-		if hasSuffixFold(name, ext) {
-			return true
-		}
-	}
-	return false
-}
+func isProjectFile(name string) bool { return dotnetadapter.IsProjectFile(name) }
 
 func isTrue(value string) bool { return strings.EqualFold(strings.TrimSpace(value), "true") }
 

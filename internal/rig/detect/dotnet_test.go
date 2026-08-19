@@ -358,3 +358,30 @@ func TestLoadProject_TestsNameSuffixConventionClassifies(t *testing.T) {
 		t.Fatal("the *Tests naming convention should classify as a test project")
 	}
 }
+
+// A pin that names an existing solution scopes discovery to it — even when that
+// solution lists no supported projects. Falling back to a repo-wide scan there
+// would silently widen an explicitly scoped repo, which is the one thing a pin
+// exists to prevent.
+func TestDiscoverDotNetHonoursAPinThatYieldsNothing(t *testing.T) {
+	root := t.TempDir()
+	// An empty solution, plus a project it does not list.
+	if err := os.WriteFile(filepath.Join(root, "Empty.slnx"), []byte("<Solution/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stray := filepath.Join(root, "Other", "Other.csproj")
+	if err := os.MkdirAll(filepath.Dir(stray), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stray, []byte("<Project/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := DiscoverDotNet(root, "Empty.slnx", nil); len(got) != 0 {
+		t.Fatalf("pinned discovery returned %d project(s), want none — the pin was ignored", len(got))
+	}
+	// A pin naming a MISSING file still falls back, so the repo is not reported
+	// as empty when the config is simply wrong (doctor flags that separately).
+	if got := DiscoverDotNet(root, "NoSuch.slnx", nil); len(got) == 0 {
+		t.Fatal("a pin naming a missing solution should fall back to the scan")
+	}
+}
