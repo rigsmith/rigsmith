@@ -220,3 +220,20 @@ func LoadOrDefault() (*Config, error) {
 	}
 	return nil, fmt.Errorf("load config (%s): %w", filepath.Join(d, "config.json"), err)
 }
+
+// DesktopConfigKeepKeys are the top-level keys of Desktop's config.json that are
+// both stable and portable — the only ones safe to carry between machines or
+// between profiles.
+//
+// Everything else in that file is volatile or identity-bearing: `oauth:*` holds
+// the login itself, `lastKnownAccountUuid` names the account it belongs to, and
+// `dxt:*`, `updaterLastSeenVersion` and `first_launch_at` are caches and machine
+// state. Keep this list conservative — an omission costs coverage, a wrong entry
+// costs safety.
+//
+// Shared by `clauderig sync` (which prunes the synced copy to these keys) and by
+// `clauderig desktop add`'s profile seeding, so the two can never disagree about
+// what is safe to copy.
+func DesktopConfigKeepKeys() []string {
+	return []string{"preferences", "locale", "userThemeMode"}
+}

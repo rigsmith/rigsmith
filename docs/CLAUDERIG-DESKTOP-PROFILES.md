@@ -51,7 +51,7 @@ many windows.
 
 | Command | What it does |
 | --- | --- |
-| `clauderig desktop add <name> [--email X]` | Create a profile and open a fresh window to log into. One login, once. |
+| `clauderig desktop add <name> [--email X]` | Create a profile, seed it from your existing install, and open a window to log into. `--no-seed` starts empty. |
 | `clauderig desktop open <name\|email>` | Open the profile's window, or focus it if already open. |
 | `clauderig desktop list` (alias `ls`) | Saved profiles; `●` marks the ones open right now. |
 | `clauderig desktop quit <name\|email>` | Close that profile's window (SIGTERM, then firmly). |
@@ -138,6 +138,33 @@ The link is by name, not by credential. `desktop add work` looks `work` (and
 `desktop list` can show `↔ john-brightshore-io`. That is a **label**: the CLI
 login and the Desktop login remain entirely independent, which is the truth of
 how the two products work and the thing the withdrawn feature obscured.
+
+## What a new profile inherits
+
+A fresh `--user-data-dir` is genuinely empty, which is right for the *login* and
+needlessly unhelpful for everything else — your MCP servers and theme are yours,
+not the account's. So `desktop add` seeds a new profile from the existing Claude
+Desktop install:
+
+| Copied | Not copied |
+|---|---|
+| `claude_desktop_config.json` (MCP servers) | `Cookies`, `Local Storage`, `Session Storage` — the claude.ai session |
+| `config.json` → `locale`, `userThemeMode`, `preferences` | `config.json` → `oauth:tokenCache`, `oauth:tokenCacheV2`, `lastKnownAccountUuid` |
+| `extensions-blocklist.json`, `git-worktrees.json`, `cowork-enabled-cli-ops.json` | `dxt:*` caches, `updaterLastSeenVersion`, `first_launch_at` |
+
+`config.json` is **rebuilt** from the allowed keys rather than copied and
+filtered, so the safe set is additive: a key nobody has vetted is absent by
+default. That list is `config.DesktopConfigKeepKeys()` — the same one
+`clauderig sync` uses to prune the synced copy, so seeding and sync can never
+disagree about what is safe to copy, and a test asserts the credential-bearing
+keys are not in it.
+
+A seeded profile still starts **signed out**. That is the point: settings are
+portable, logins are not, and copying a login between profiles is exactly what
+the withdrawn session-switching feature did. `--no-seed` starts from nothing.
+
+Seeding happens before the window launches, because Desktop writes its own
+`config.json` on first run and seeding underneath a started app would race it.
 
 ## Sharing session history
 

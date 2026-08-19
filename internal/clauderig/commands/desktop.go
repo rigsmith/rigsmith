@@ -71,6 +71,7 @@ func desktopStore() (*desktop.Store, error) {
 
 func newDesktopAddCmd() *cobra.Command {
 	var email string
+	var noSeed bool
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Create a Desktop profile and open a window to log into",
@@ -79,7 +80,11 @@ func newDesktopAddCmd() *cobra.Command {
 			"other profile is touched.\n\n" +
 			"The name is yours to choose (work, personal, client-x). If it matches a\n" +
 			"stored `clauderig account`, the profile records the link — as a label only:\n" +
-			"the CLI login and the Desktop login stay independent.",
+			"the CLI login and the Desktop login stay independent.\n\n" +
+			"The profile is SEEDED from your existing Claude Desktop install so it is\n" +
+			"usable immediately: MCP servers, theme and locale come across. Nothing that\n" +
+			"carries the login does — the new profile still starts signed out, which is\n" +
+			"the point. `--no-seed` starts from nothing.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -100,11 +105,31 @@ func newDesktopAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Seed BEFORE launching: Desktop writes its own config.json on
+			// first run, and seeding underneath a started app would race it.
+			var seeded desktop.SeedResult
+			if !noSeed {
+				var serr error
+				if seeded, serr = desktop.Seed(p, sharedRootOrEmpty()); serr != nil {
+					return serr
+				}
+			}
 			if lerr := app.Launch(p.DataDir()); lerr != nil {
 				return lerr
 			}
 			_ = st.Touch(p)
 			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ created"), p.Label())
+			if !seeded.Empty() {
+				what := "settings"
+				if seeded.Config {
+					what = "preferences"
+				}
+				if len(seeded.Files) > 0 {
+					what += " and " + fmt.Sprintf("%d config file(s)", len(seeded.Files))
+				}
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(
+					"  seeded "+what+" from your existing Claude Desktop install (no login copied)"))
+			}
 			if accountID != "" {
 				fmt.Fprintf(out, "%s\n", DimStyle.Render("  linked to stored account "+accountID+" (label only — the two logins stay separate)"))
 			}
@@ -115,6 +140,8 @@ func newDesktopAddCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&email, "email", "", "email to show in the listing (also matches a stored account)")
+	cmd.Flags().BoolVar(&noSeed, "no-seed", false,
+		"start from an empty profile instead of copying settings from your existing Claude Desktop install")
 	return cmd
 }
 
