@@ -133,8 +133,13 @@ func TestRegisteredGroupRendered(t *testing.T) {
 // to the terminal); the rest keeps the lines and indentation it was written
 // with, so a command line stays copy-pasteable on a narrow terminal.
 func TestMultiLineErrorKeepsItsLayout(t *testing.T) {
-	t.Setenv("__FANG_TEST_WIDTH", "40")
-	const fix = "rig build -- --target=brave_browser_tests"
+	// NOT t.Setenv("__FANG_TEST_WIDTH", …): width is a package-level
+	// sync.OnceValue that earlier tests in this file have already resolved to
+	// 120, so setting it here would have no effect and the assertion below could
+	// pass against the old wrapping behaviour purely because the line is short.
+	// Use a fix line longer than the maximum cached width instead, so wrapping
+	// would definitely mangle it if the layout were not preserved.
+	const fix = "rig build -- --target=brave_browser_tests,brave_unit_tests,brave_installer_tests --config=Release --jobs=16 --out-dir=out/Release_x64"
 	root := &cobra.Command{
 		Use:          "demo",
 		SilenceUsage: true,

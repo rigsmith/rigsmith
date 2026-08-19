@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -142,7 +143,23 @@ func unknownFlag(err error) (name, token string, ok bool) {
 // The result is meant to be copied verbatim, so args that need quoting get it.
 func passthroughLine(cmd *cobra.Command, token string) string {
 	args := processArgs()
+	skipValue := false
 	for i, arg := range args {
+		// A token that pflag consumed as ANOTHER flag's value is not the
+		// occurrence that failed, even when it reads like the rejected flag. In
+		// `rig build --root --target --target=foo`, the first `--target` is the
+		// value of `--root`; inserting `--` there would change what the command
+		// means rather than fix it.
+		if skipValue {
+			skipValue = false
+			continue
+		}
+		if arg == "--" {
+			break // everything after a literal separator is already forwarded
+		}
+		if takesSeparateValue(cmd, arg) {
+			skipValue = true
+		}
 		keep, forward, ok := splitAtFlag(arg, token)
 		if !ok {
 			continue
@@ -153,7 +170,7 @@ func passthroughLine(cmd *cobra.Command, token string) string {
 		if keep != "" {
 			line = append(line, keep)
 		}
-		line = append(line, "--", shellArg(forward))
+		line = append(line, "--", copyPasteArg(forward))
 		line = append(line, quoteAll(args[i+1:])...)
 		return strings.Join(line, " ")
 	}
@@ -193,9 +210,52 @@ func splitAtFlag(arg, token string) (keep, forward string, ok bool) {
 func quoteAll(args []string) []string {
 	out := make([]string, len(args))
 	for i, a := range args {
-		out[i] = shellArg(a)
+		out[i] = copyPasteArg(a)
 	}
 	return out
+}
+
+// takesSeparateValue reports whether arg is a flag this command owns that
+// consumes the NEXT token as its value — i.e. not written as `--flag=value`,
+// and not a boolean (which pflag gives a NoOptDefVal).
+func takesSeparateValue(cmd *cobra.Command, arg string) bool {
+	fs := cmd.Flags()
+	switch {
+	case strings.HasPrefix(arg, "--"):
+		name := strings.TrimPrefix(arg, "--")
+		if name == "" || strings.Contains(name, "=") {
+			return false
+		}
+		f := fs.Lookup(name)
+		return f != nil && f.NoOptDefVal == ""
+	case strings.HasPrefix(arg, "-") && len(arg) > 1:
+		if strings.Contains(arg, "=") {
+			return false
+		}
+		// Only the LAST letter of a cluster can take a value ("-xzf file").
+		last := string(arg[len(arg)-1])
+		f := fs.ShorthandLookup(last)
+		return f != nil && f.NoOptDefVal == ""
+	}
+	return false
+}
+
+// copyPasteArg quotes a token for the shell the USER is most likely holding, so
+// the suggested fix can be pasted rather than adapted.
+//
+// shellArg is POSIX-only by design — it also renders real `sh -c` command lines
+// — and pasting POSIX single quotes into cmd.exe passes the apostrophes through
+// literally, while POSIX escaping for an embedded apostrophe is not valid
+// PowerShell either. On Windows this uses double quotes with embedded quotes
+// doubled, which both cmd.exe and PowerShell accept.
+func copyPasteArg(s string) string {
+	if runtime.GOOS != "windows" {
+		return shellArg(s)
+	}
+	if s != "" && !strings.ContainsAny(s, " \t\n\"&|<>^%()") {
+		return s
+	}
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 // nearestFlag returns the flag cmd actually has whose name is within a typo's

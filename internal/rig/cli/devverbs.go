@@ -36,6 +36,18 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// env layer in commandEnv).
 			presetEnv = activePresetEnv(root, presets)
 
+			// Split at `--` BEFORE any dispatch. Tokens the user put after it
+			// belong to the underlying command and are never a selector:
+			// `rig test -- --logger=trx` forwards a flag, it does not name a test
+			// class. Computing this later meant --watch, rebuild and the bare
+			// picker each saw the forwarded tail as arguments — so
+			// `rig build --watch -- --verbose` read `--verbose` as a project name,
+			// and `rig build -- --verbose` skipped workspace selection entirely.
+			//
+			// selectors is what NAMES something; args stays whole, because the
+			// forwarded tokens still have to reach the command.
+			selectors := argsBeforeDash(cmd, args)
+
 			if all {
 				if watch {
 					return fmt.Errorf("--watch cannot be combined with --all")
@@ -46,30 +58,24 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// (the trailing form is folded onto the `watch` subcommand by the
 			// pre-parse pipeline; both land in runWatchVerb).
 			if watch {
-				return runWatchVerb(cmd, verb, args)
+				return runWatchVerb(cmd, verb, selectors, args)
 			}
 			// rebuild sequences clean → build, so it has no single argv to ride the
 			// generic project picker (which keys off each package's one command); it
 			// gets its own arg-scoping + package picker.
 			if verb == "rebuild" {
-				return runRebuildVerb(cmd, root, args, forcePick)
+				return runRebuildVerb(cmd, root, selectors, args, forcePick)
 			}
 			// `-i`/`--interactive` (no project arg) always opens the picker — even
 			// when a single target would otherwise run directly. `run` lists every
 			// runnable package and surfaced script; the --all verbs list every
 			// package (with "All packages"). With an explicit project arg the arg
 			// wins (below).
-			if forcePick && len(args) == 0 && (supportsAll || verb == "run") {
+			if forcePick && len(selectors) == 0 && (supportsAll || verb == "run") {
 				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll, true); handled {
 					return herr
 				}
 			}
-			// Tokens the user put after `--` belong to the underlying command and
-			// are never a selector: `rig test -- --logger=trx` forwards a flag, it
-			// doesn't name a test class. cobra records where the separator was, so
-			// the selector reads only what precedes it while the full args (which
-			// still carry the forwarded tokens) go on to the command.
-			selectors := argsBeforeDash(cmd, args)
 			// A first arg that names a package scopes the verb to that package.
 			// `run` matches against the per-binary expansion so `rig run rig`
 			// resolves a cmd/rig main, not just a module.
@@ -119,7 +125,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// packages"; `run` gets a single-select of the runnable packages. This
 			// runs before the primary is required, so it works even when no
 			// primary resolves (the picker scopes the verb to a chosen package).
-			if len(args) == 0 && (supportsAll || verb == "run") {
+			if len(selectors) == 0 && (supportsAll || verb == "run") {
 				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll, false); handled {
 					return herr
 				}

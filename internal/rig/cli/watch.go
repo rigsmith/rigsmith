@@ -20,7 +20,14 @@ func newWatchCmd() *cobra.Command {
 		Short:   "Run a dev verb in watch mode",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runWatchVerb(cmd, normalizeWatchVerb(args[0]), args[1:])
+			// `rig watch <verb> [project] -- <forwarded>`: only the tokens before
+			// the separator may name a project.
+			rest := args[1:]
+			selectors := rest
+			if n := cmd.ArgsLenAtDash(); n > 0 && n <= len(args) {
+				selectors = args[1:n]
+			}
+			return runWatchVerb(cmd, normalizeWatchVerb(args[0]), selectors, rest)
 		},
 	}
 }
@@ -29,16 +36,20 @@ func newWatchCmd() *cobra.Command {
 // project named by rest[0]; any further tokens are forwarded to the watch argv.
 // Shared by the `watch` modifier subcommand and the per-verb --watch flag (the
 // .NET rig's `run --watch` / `test --watch` at any flag position).
-func runWatchVerb(cmd *cobra.Command, verb string, rest []string) error {
+// runWatchVerb scopes and runs a watch. selectors holds the tokens before `--`
+// (the only ones that may name a package); rest is the whole tail, which is what
+// gets forwarded. Matching against rest would read `rig build --watch --
+// --verbose` as a request to watch a package named "--verbose".
+func runWatchVerb(cmd *cobra.Command, verb string, selectors, rest []string) error {
 	cwd, _ := os.Getwd()
 	root := resolveRoot(cwd)
 
 	// Optional project selector: a first token naming a package scopes the
 	// watch to that package's directory.
 	dir, eco, forwarded, matched := root, "", rest, false
-	if len(rest) > 0 {
+	if len(selectors) > 0 {
 		ts := discoverWorkspace(cdContext(cmd), root, excludeFor(root))
-		if t, ok := matchTarget(ts, rest[0]); ok {
+		if t, ok := matchTarget(ts, selectors[0]); ok {
 			dir, eco, forwarded, matched = t.Dir, t.Eco, rest[1:], true
 		}
 	}
@@ -54,7 +65,7 @@ func runWatchVerb(cmd *cobra.Command, verb string, rest []string) error {
 	// defaultProject (the preferred run target) when one is set, so the watch
 	// targets a single project rather than an ambiguous solution root (e.g.
 	// `dotnet watch run` in one project's dir instead of at the repo root).
-	if !matched && len(rest) == 0 && verb == "run" {
+	if !matched && len(selectors) == 0 && verb == "run" {
 		cfg, _ := config.LoadMerged(root)
 		// Exact full/slash-short/dot-short match (no substring) so a default like
 		// "Desktop" scopes to Acme.Desktop without ambiguity against

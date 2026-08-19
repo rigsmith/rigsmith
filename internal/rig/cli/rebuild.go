@@ -18,13 +18,18 @@ import (
 // otherwise — a workspace root whose packages live only in subdirs, or with
 // -i/--interactive — opens a package picker whose "All packages" rebuilds each in
 // dependency order.
-func runRebuildVerb(cmd *cobra.Command, root string, args []string, forcePick bool) error {
+// runRebuildVerb scopes and runs a rebuild. selectors is what may NAME a
+// package — the tokens before `--` — while args is the whole tail, since
+// everything after the separator has to be forwarded to the underlying command.
+// Reading a project name out of args would treat `rig rebuild -- --verbose` as a
+// request to rebuild a package called "--verbose".
+func runRebuildVerb(cmd *cobra.Command, root string, selectors, args []string, forcePick bool) error {
 	// An explicit project arg scopes the rebuild to that package's dir + ecosystem.
-	if len(args) > 0 {
+	if len(selectors) > 0 {
 		ts := discoverWorkspace(cdContext(cmd), root, excludeFor(root))
-		t, ok := matchTarget(ts, args[0])
+		t, ok := matchTarget(ts, selectors[0])
 		if !ok {
-			return fmt.Errorf("no workspace package %q to rebuild", args[0])
+			return fmt.Errorf("no workspace package %q to rebuild", selectors[0])
 		}
 		return runRebuild(cmd, t.Eco, t.Dir, args[1:])
 	}

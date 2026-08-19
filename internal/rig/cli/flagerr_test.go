@@ -197,3 +197,41 @@ func TestArgsBeforeDashStopsAtTheSeparator(t *testing.T) {
 		t.Errorf("selectors = %v, want just [MyProject]", got)
 	}
 }
+
+// A token pflag consumed as ANOTHER flag's value is not the occurrence that
+// failed. Inserting `--` before it would change what the command means rather
+// than fix it.
+func TestPassthroughLineSkipsAValueThatLooksLikeTheFlag(t *testing.T) {
+	c := &cobra.Command{Use: "build"}
+	c.Flags().String("root", "", "repo root")
+	root := &cobra.Command{Use: "rig"}
+	root.AddCommand(c)
+
+	orig := processArgs
+	processArgs = func() []string { return []string{"build", "--root", "--target", "--target=foo"} }
+	t.Cleanup(func() { processArgs = orig })
+
+	got := passthroughLine(c, "--target")
+	// The separator must land before the SECOND --target (the real failure), so
+	// --root keeps its value.
+	want := "rig build --root --target -- --target=foo"
+	if got != want {
+		t.Fatalf("passthroughLine =\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+// Nothing after a literal `--` is a candidate: it is already forwarded.
+func TestPassthroughLineStopsAtAnExistingSeparator(t *testing.T) {
+	c := &cobra.Command{Use: "test"}
+	root := &cobra.Command{Use: "rig"}
+	root.AddCommand(c)
+
+	orig := processArgs
+	processArgs = func() []string { return []string{"test", "--", "--target"} }
+	t.Cleanup(func() { processArgs = orig })
+
+	got := passthroughLine(c, "--target")
+	if strings.Count(got, "--target") > 1 {
+		t.Fatalf("the already-forwarded token was rewritten: %q", got)
+	}
+}
