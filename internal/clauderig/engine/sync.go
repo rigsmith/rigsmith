@@ -39,6 +39,7 @@ type Report struct {
 	Roots            []RootResult
 	ManifestProjects int
 	RetentionPruned  int              // staged transcript files removed as aged-out
+	SidecarsPruned   int              // staged Desktop sidecars removed as orphaned
 	Findings         []redact.Finding // non-empty ⇒ Sync returned an error (tripwire)
 }
 
@@ -262,6 +263,15 @@ func Sync(opts Options) (*Report, error) {
 		}
 		rep.RetentionPruned, stagedSlugs = pruned, remaining
 	}
+
+	// Sidecars go last, after transcript retention above has settled which
+	// transcripts survive — that ordering is what makes the two trees age out as
+	// one unit instead of on independent clocks.
+	sidecarsPruned, err := pruneOrphanedSidecars(opts.StagingDir)
+	if err != nil {
+		return nil, err
+	}
+	rep.SidecarsPruned = sidecarsPruned
 
 	// Build the project manifest from the CLI root's projects dir.
 	if cliLoc, st := sourceLoc(opts, "cli"); st == pathmap.StatusResolved {
