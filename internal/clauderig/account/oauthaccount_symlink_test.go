@@ -3,6 +3,7 @@ package account
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -51,6 +52,12 @@ func TestAtomicWriteFileStillWritesAPlainFile(t *testing.T) {
 	}
 	if string(got) != `{"a":1}` {
 		t.Fatalf("content = %q", got)
+	}
+	// Windows has no Unix permission bits — Go's Chmod there only toggles the
+	// read-only flag, so a file written 0600 reports 0666. Asserting the mode
+	// would only be asserting the platform.
+	if runtime.GOOS == "windows" {
+		return
 	}
 	fi, err := os.Stat(p)
 	if err != nil {
