@@ -434,3 +434,56 @@ func TestRunCmdSurfacesStdoutOnFailure(t *testing.T) {
 		t.Errorf("error = %q, want it to carry the stdout diagnosis %q", err, sentinel)
 	}
 }
+
+// Detect gates whether rig's .NET discovery runs at all, so a false negative
+// here hides the whole repo rather than one project.
+func TestDetectFindsNonCSharpAndVendoredProjects(t *testing.T) {
+	cases := []struct {
+		name string
+		rel  string
+	}{
+		{"F# only", "src/App/App.fsproj"},
+		{"VB only", "src/App/App.vbproj"},
+		// A vendored .csproj is a first-class build input in .NET — solutions
+		// routinely list them — unlike a Go vendor tree.
+		{"vendored only", "vendor/Lib/Lib.csproj"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, filepath.FromSlash(tc.rel))
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("<Project/>"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ok, err := (&Adapter{}).Detect(context.Background(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				t.Fatalf("Detect did not recognise %s as a .NET repo", tc.rel)
+			}
+		})
+	}
+}
+
+// Build output still holds copies of project files and must not count.
+func TestDetectIgnoresBuildOutput(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "src", "App", "obj", "Debug", "App.csproj")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("<Project/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := (&Adapter{}).Detect(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("a project file under obj/ was treated as a real project")
+	}
+}

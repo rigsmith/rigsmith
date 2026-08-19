@@ -108,7 +108,7 @@ func newConfigSetCmd() *cobra.Command {
 		Use:   "set <key> <value>",
 		Short: "Set one scalar setting in the repo's .rig.json (comments preserved)",
 		Long: "Set a scalar key in the repo's .rig.json. Keys:\n" +
-			"  solution        the .sln/.slnx the .NET verbs operate on\n" +
+			"  solution        narrow the .NET verbs to one .sln/.slnx (unset: every project)\n" +
 			"  defaultProject  project `rig run` targets when none is named\n" +
 			"  ecosystem         pin the primary ecosystem (dotnet|node|go|cargo)\n" +
 			"  quiet             suppress the `→ command` echo (bool)\n" +

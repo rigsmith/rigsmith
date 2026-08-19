@@ -216,7 +216,9 @@ func newMenu() menuModel {
 	caps := detect.AllCapabilities
 	if eco == detect.DotNet {
 		cfg, _ := config.LoadMerged(root)
-		caps = detect.ProbeCapabilities(root, "", cfg.Exclude)
+		// Pass the pinned solution, not "": the menu must offer exactly the verbs
+		// the projects it lists support, and the picker is scoped by that pin too.
+		caps = detect.ProbeCapabilities(root, cfg.Solution, cfg.Exclude)
 	}
 	maps := func(verb string) bool {
 		if eco == "" {

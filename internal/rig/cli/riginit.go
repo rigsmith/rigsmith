@@ -65,14 +65,16 @@ func runInitWizard(cmd *cobra.Command, root string) (content string, ok bool, er
 	}
 
 	// Solution: only when several .sln/.slnx files exist to choose between.
+	// Leaving it unset is the norm — discovery covers every project either way;
+	// picking one NARROWS the .NET verbs to that solution's projects.
 	if solutions := solutionFiles(root); len(solutions) > 1 {
-		opts := []huh.Option[string]{huh.NewOption("(auto)", "")}
+		opts := []huh.Option[string]{huh.NewOption("(every project)", "")}
 		for _, s := range solutions {
 			opts = append(opts, huh.NewOption(s, s))
 		}
 		fields = append(fields, huh.NewSelect[string]().
 			Title("Solution").
-			Description("Which .sln rig builds/discovers against.").
+			Description("Narrow the .NET verbs to one solution, or leave them across the whole repo.").
 			Options(opts...).
 			Value(&solution))
 	}

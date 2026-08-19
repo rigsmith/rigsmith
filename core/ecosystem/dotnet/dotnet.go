@@ -91,11 +91,57 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 	}
 }
 
-// Detect reports whether any .csproj exists under root.
+// ProjectFileExts are the MSBuild project files a .NET project is found by.
+// C# is not the only .NET language, and a repo of F# or VB projects is a .NET
+// repo by every other measure.
+var ProjectFileExts = []string{".csproj", ".fsproj", ".vbproj"}
+
+// IsProjectFile reports whether name is an MSBuild project file.
+//
+// Exported because rig's own .NET discovery needs the identical answer: this
+// predicate decides whether a repo is .NET at all (Detect, below), and that runs
+// as a GATE before discovery. Any disagreement between the two is silent — the
+// repo is simply reported as having no projects.
+func IsProjectFile(name string) bool {
+	for _, ext := range ProjectFileExts {
+		if len(name) >= len(ext) && strings.EqualFold(name[len(name)-len(ext):], ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// SkippedScanDirs are the directories .NET discovery never descends into: build
+// output and dependency trees, which hold copies of project files.
+//
+// `vendor` is deliberately ABSENT, unlike the shared walkutil skip set: a
+// vendored *.csproj is a first-class build input in .NET and solutions routinely
+// list them, so skipping it would make a repo whose only project is vendored
+// look like no .NET repo at all.
+var SkippedScanDirs = []string{"bin", "obj", ".git", "node_modules"}
+
+// Detect reports whether any MSBuild project exists under root.
+//
+// Deliberately not walkutil.Walk: that skips `vendor` for every ecosystem, which
+// is right for Go and wrong here (see SkippedScanDirs). Since Detect gates
+// whether rig's .NET discovery runs at all, a false negative here hides the
+// whole repo — an F#-only or vendored-only project set would report no projects
+// rather than the ones it has.
 func (a *Adapter) Detect(ctx context.Context, root string) (bool, error) {
 	found := false
-	err := walkutil.Walk(root, func(path string, d fs.DirEntry) error {
-		if strings.HasSuffix(path, ".csproj") {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return nil // unreadable subtree — detection is best-effort
+		}
+		if d.IsDir() {
+			for _, skip := range SkippedScanDirs {
+				if strings.EqualFold(d.Name(), skip) {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if IsProjectFile(d.Name()) {
 			found = true
 			return filepath.SkipAll
 		}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -129,7 +128,7 @@ func maybeOfferDotnetInstall(cmd *cobra.Command, root string) {
 	if _, err := exec.LookPath("dotnet"); err == nil {
 		return
 	}
-	if len(discoverDotnetProjects(root)) == 0 {
+	if len(dotnetTargets(root, excludeFor(root))) == 0 {
 		return
 	}
 	offerOpenURL(cmd, "the .NET SDK isn't installed", "https://dot.net/download")
@@ -172,20 +171,16 @@ func docRowLine(glyph, label, detail, path string) string {
 // workspace: it discovers every project (the shared workspace searcher), and for
 // each ecosystem emits the toolchain rows once, then a row per project with its
 // own state (node deps / .NET TFM / go+cargo versions).
+//
+// Every ecosystem — .NET included — comes from discoverWorkspace, the same model
+// the verbs run on, so doctor cannot report a project `rig run` can't see (it
+// used to walk for .NET project files itself, which is how it green-lit a
+// `defaultProject` that discovery had hidden behind a solution).
 func gatherChecks(cmd *cobra.Command, root string) ([]pendingCheck, map[string]bool) {
 	targets := discoverWorkspace(cdContext(cmd), root, excludeFor(root))
 	byEco := map[string][]target{}
 	for _, t := range targets {
-		// .NET is handled by the presence scan below: discoverWorkspace is
-		// release-discovery and skips version-less projects (most apps), but
-		// doctor is an environment check and should list them too.
-		if t.Eco == detect.DotNet {
-			continue
-		}
 		byEco[t.Eco] = append(byEco[t.Eco], t)
-	}
-	if dn := discoverDotnetProjects(root); len(dn) > 0 {
-		byEco[detect.DotNet] = dn
 	}
 
 	// The ecosystems present, and every discovered project name (full + short)
@@ -536,37 +531,16 @@ var (
 	cargoVerRe = regexp.MustCompile(`(?m)^\s*version\s*=\s*"([^"]+)"`)
 )
 
-// dotnetProjectGlobs are the project-file patterns a .NET project is found by.
-var dotnetProjectGlobs = []string{"*.csproj", "*.fsproj", "*.vbproj"}
+// dotnetProjectGlobs are the project-file patterns a .NET project is found by,
+// as globs — the same set discovery scans for (detect.ProjectFileExts).
+var dotnetProjectGlobs = dotnetGlobs()
 
-// discoverDotnetProjects finds every .NET project by presence (walking for
-// project files), independent of whether it declares a version — doctor lists
-// apps (usually version-less) alongside versioned libraries. bin/obj/.git/
-// node_modules are skipped; the `exclude` globs are honored.
-func discoverDotnetProjects(root string) []target {
-	exclude := excludeFor(root)
-	skip := map[string]bool{"bin": true, "obj": true, ".git": true, "node_modules": true, "vendor": true}
-	var out []target
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			if skip[d.Name()] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		switch filepath.Ext(path) {
-		case ".csproj", ".fsproj", ".vbproj":
-			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-			if !excluded(name, exclude) {
-				out = append(out, target{Name: name, Eco: detect.DotNet, Dir: filepath.Dir(path)})
-			}
-		}
-		return nil
-	})
-	return out
+func dotnetGlobs() []string {
+	globs := make([]string, 0, len(detect.ProjectFileExts))
+	for _, ext := range detect.ProjectFileExts {
+		globs = append(globs, "*"+ext)
+	}
+	return globs
 }
 
 // readTargetFramework returns a project's TargetFramework(s): inline in the
