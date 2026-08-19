@@ -33,6 +33,18 @@ func NewDesktopCmd() *cobra.Command {
 		Long: "Claude Desktop holds one login at a time. This gives each account its own\n" +
 			"permanent profile, so they all stay logged in and their windows can be open\n" +
 			"together — you open the one you want.\n\n" +
+			"SETTING UP, in order:\n\n" +
+			"  1. `desktop add work`      creates a profile and opens a window\n" +
+			"  2. log in as that account  in the window that just opened\n" +
+			"  3. repeat 1–2 per account  `desktop add personal`, and so on\n" +
+			"  4. close every window      `desktop quit <name>`, or just close them\n" +
+			"  5. `desktop share --all`   OPTIONAL: one shared chat history\n\n" +
+			"You log in ONCE per profile. From then on `desktop open work` reopens it,\n" +
+			"already signed in, and any number of windows can be open together.\n\n" +
+			"Step 5 has to run with the windows CLOSED — it moves the directory Claude\n" +
+			"Desktop writes chat history into, and the app keeps writing through a\n" +
+			"directory it opened before the swap. Add a profile later? Run\n" +
+			"`desktop share --all` again; it is idempotent and only touches what changed.\n\n" +
 			"Nothing is copied, swapped or decrypted: clauderig never reads Desktop's\n" +
 			"login. Each profile is a directory Claude Desktop owns outright, and all\n" +
 			"clauderig decides is which one to launch against. That is what makes this\n" +
@@ -136,6 +148,12 @@ func newDesktopAddCmd() *cobra.Command {
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"  a fresh Claude Desktop window is opening — log into this account there.\n"+
 					"  it stays logged in; `clauderig desktop open "+name+"` reopens it."))
+			// The next step is the one people get wrong: sharing has to happen
+			// with the windows closed, so say it here rather than only in the
+			// share command's own help.
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(
+				"  next: add any other accounts the same way. To give them ONE shared chat\n"+
+					"  history, close the windows and run `clauderig desktop share --all`."))
 			return nil
 		},
 	}
@@ -167,13 +185,132 @@ func linkedAccount(name, email string) (id, resolvedEmail string) {
 	return "", email
 }
 
+// errNoOpenProfiles means `quit` was asked to pick and every profile was
+// determined to be closed — a statement of fact rather than a failure, so the
+// caller reports it and exits 0. A profile whose state could not be established
+// is NOT counted as closed, so this never stands in for "we could not look".
+var errNoOpenProfiles = errors.New("no profile windows are open")
+
+// resolveDesktopTarget picks the profile a command acts on, in the order a user
+// would expect to be asked:
+//
+//  1. the profile they named;
+//  2. the one bound to this directory (`desktop map`);
+//  3. on a terminal, one they choose from a picker;
+//  4. otherwise an error naming both ways to say which.
+//
+// Step 3 is why neither command guesses: with several profiles, silently
+// picking one is the surprising outcome, and erroring at someone who is sitting
+// right there is the unhelpful one.
+func resolveDesktopTarget(st *desktop.Store, app desktop.App, args []string, onlyOpen bool) (desktop.Profile, error) {
+	if len(args) > 0 && args[0] != "" {
+		p, err := st.Resolve(args[0])
+		if err != nil {
+			return desktop.Profile{}, desktopNotFound(err, args[0])
+		}
+		return p, nil
+	}
+	// A directory binding is an explicit answer the user already gave, so a
+	// binding that cannot be honoured is reported rather than stepped over.
+	// Falling through would ask (or, off a terminal, claim the directory is
+	// unmapped) while the user has already said which profile they mean — and a
+	// picker would then happily act on a DIFFERENT one.
+	if cwd, err := os.Getwd(); err == nil {
+		if dm, derr := dirmapStore(); derr == nil {
+			if entry, lerr := dm.Lookup(cwd); lerr == nil && entry.Desktop != "" {
+				p, rerr := st.Resolve(entry.Desktop)
+				if rerr != nil {
+					return desktop.Profile{}, fmt.Errorf(
+						"this directory is mapped to Desktop profile %q, which could not be resolved: %w\n"+
+							"Rebind it with `clauderig desktop map <name>`, or drop the binding with `clauderig desktop unmap`",
+						entry.Desktop, rerr)
+				}
+				return p, nil
+			}
+		}
+	}
+	if !Interactive() {
+		return desktop.Profile{}, errors.New(
+			"no profile named, and this directory is not mapped to one\n" +
+				"Name it, or bind this directory with `clauderig desktop map <name>`")
+	}
+	return pickProfile(st, app, onlyOpen)
+}
+
+// profileOptions builds the choices a picker would show — split out from
+// pickProfile so the decision can be tested without launching a form (a test
+// that reaches the form blocks forever waiting for input it will never get).
+func profileOptions(st *desktop.Store, app desktop.App, onlyOpen bool) ([]huh.Option[string], map[string]desktop.Profile, error) {
+	all, err := st.List()
+	if err != nil {
+		return nil, nil, err
+	}
+	var opts []huh.Option[string]
+	byName := map[string]desktop.Profile{}
+	for _, p := range all {
+		open, rerr := desktop.IsRunning(app, p.DataDir())
+		// Hide only what is KNOWN to be closed. A failed scan is not proof of
+		// anything — treating it as closed would let `quit` report "no profile
+		// windows are open" and exit zero while the state was simply unknown,
+		// which is the opposite of what IsRunning promises and of what the
+		// named-profile path does.
+		if onlyOpen && rerr == nil && !open {
+			continue
+		}
+		label := p.Label()
+		switch {
+		case rerr != nil:
+			label += "  (unknown)"
+		case open:
+			label += "  (open)"
+		default:
+			label += "  (closed)"
+		}
+		opts = append(opts, huh.NewOption(label, p.Name))
+		byName[p.Name] = p
+	}
+	if len(opts) == 0 {
+		if onlyOpen {
+			return nil, nil, errNoOpenProfiles
+		}
+		return nil, nil, errors.New("no Desktop profiles yet — `clauderig desktop add <name>` creates one")
+	}
+	return opts, byName, nil
+}
+
+// pickProfile offers the saved profiles for selection, showing which are open so
+// the choice is made on the same information the listing shows.
+func pickProfile(st *desktop.Store, app desktop.App, onlyOpen bool) (desktop.Profile, error) {
+	opts, byName, err := profileOptions(st, app, onlyOpen)
+	if err != nil {
+		return desktop.Profile{}, err
+	}
+	title := "Open which profile?"
+	if onlyOpen {
+		title = "Close which profile?"
+	}
+	var choice string
+	ferr := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().Title(title).Options(opts...).Value(&choice),
+	)).WithKeyMap(huhEscKeyMap()).WithTheme(brand.Theme(brand.AccentClaude)).Run()
+	if ferr != nil || choice == "" {
+		return desktop.Profile{}, errCancelled
+	}
+	return byName[choice], nil
+}
+
+// errCancelled means the user backed out of the picker — not a failure.
+var errCancelled = errors.New("cancelled")
+
 func newDesktopOpenCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "open [<name|email>]",
 		Short: "Open (or focus) a profile's Claude Desktop window",
 		Long: "Opens the profile's window, or focuses it if it is already open.\n\n" +
-			"With no profile named, uses the one mapped to this directory\n" +
-			"(`clauderig desktop map`), inheriting the nearest mapped ancestor.",
+			"With no profile named: uses the one mapped to this directory\n" +
+			"(`clauderig desktop map`, nearest mapped ancestor), and otherwise asks\n" +
+			"which — a picker on a terminal, an error naming both ways to say so\n" +
+			"off one. It never picks for you.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -185,13 +322,12 @@ func newDesktopOpenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ref, err := desktopRefFor(args)
+			p, err := resolveDesktopTarget(st, app, args, false)
+			if errors.Is(err, errCancelled) {
+				return nil
+			}
 			if err != nil {
 				return err
-			}
-			p, err := st.Resolve(ref)
-			if err != nil {
-				return desktopNotFound(err, ref)
 			}
 			running, rerr := desktop.IsRunning(app, p.DataDir())
 			if rerr != nil {
@@ -242,6 +378,7 @@ func newDesktopListCmd() *cobra.Command {
 			}
 			app := desktop.New()
 			shareRoot := sharedRootOrEmpty()
+			unshared := 0
 			fmt.Fprintln(out, HeaderStyle.Render("Claude Desktop profiles"))
 			for _, p := range all {
 				marker, state := "  ", DimStyle.Render("closed")
@@ -254,6 +391,8 @@ func newDesktopListCmd() *cobra.Command {
 				line := fmt.Sprintf("%s%s  %s", marker, p.Label(), state)
 				if profileShareState(p, shareRoot) {
 					line += "  " + DimStyle.Render("shared history")
+				} else {
+					unshared++
 				}
 				if p.AccountID != "" {
 					line += "  " + DimStyle.Render("↔ "+p.AccountID)
@@ -262,6 +401,13 @@ func newDesktopListCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"each profile is its own login — opening one never signs another out"))
+			// Suggest sharing only when it would change something: more than one
+			// profile, and at least one of them still on its own history. The
+			// hint disappears once they are shared, so it never becomes noise.
+			if len(all) > 1 && unshared > 0 {
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(
+					"chat history is per profile — close the windows and `clauderig desktop share --all` to pool it"))
+			}
 			return nil
 		},
 	}
@@ -271,20 +417,34 @@ func newDesktopListCmd() *cobra.Command {
 
 func newDesktopQuitCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "quit <name|email>",
+		Use:   "quit [<name|email>]",
 		Short: "Close a profile's Claude Desktop window",
-		Args:  cobra.ExactArgs(1),
+		Long: "Ends the Claude Desktop instance bound to that profile: politely first,\n" +
+			"firmly after 10 seconds, and only once it has confirmed the processes are\n" +
+			"gone. It touches nothing else — not another profile, not your plain\n" +
+			"Claude.app — and logs nothing out.\n\n" +
+			"With no profile named: uses the one mapped to this directory, and otherwise\n" +
+			"asks which — a picker listing the OPEN windows on a terminal, an error off\n" +
+			"one.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			st, err := desktopStore()
 			if err != nil {
 				return err
 			}
-			p, err := st.Resolve(args[0])
-			if err != nil {
-				return desktopNotFound(err, args[0])
-			}
 			app := desktop.New()
+			p, err := resolveDesktopTarget(st, app, args, true)
+			switch {
+			case errors.Is(err, errCancelled):
+				return nil
+			case errors.Is(err, errNoOpenProfiles):
+				// Nothing to close is an answer, not a failure.
+				fmt.Fprintf(out, "%s\n", DimStyle.Render("no profile windows are open"))
+				return nil
+			case err != nil:
+				return err
+			}
 			running, rerr := desktop.IsRunning(app, p.DataDir())
 			if rerr != nil {
 				return fmt.Errorf("could not tell whether %s is open: %w", p.Name, rerr)
