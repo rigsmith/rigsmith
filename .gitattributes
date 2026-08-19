@@ -3,3 +3,5 @@
 # git must store them byte for byte — normalising them to LF would leave the
 # CRLF test passing against a file that no longer has any CRLF in it.
 scripts/testdata/winget-komac/*.yaml -text
+
+.github/workflows/*.lock.yml linguist-generated=true
