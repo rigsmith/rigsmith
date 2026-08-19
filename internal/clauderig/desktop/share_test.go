@@ -1,0 +1,223 @@
+package desktop
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// shareFixture builds a store with one profile plus a shared root.
+func shareFixture(t *testing.T) (*Store, Profile, string) {
+	t.Helper()
+	s := newTestStore(t)
+	p, err := s.Create("work", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, p, filepath.Join(t.TempDir(), "shared-root")
+}
+
+func TestShareMigratesExistingHistoryAndLinks(t *testing.T) {
+	_, p, root := shareFixture(t)
+	// The profile has its own history, partitioned by account uuid as Desktop
+	// writes it.
+	own := filepath.Join(p.DataDir(), "claude-code-sessions", "acct-uuid-a")
+	writeFile(t, filepath.Join(own, "session-1.json"), `{"id":1}`)
+
+	results, err := Share(p, root, SharedDirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Migrated != 1 {
+		t.Fatalf("results = %+v, want one directory with one migrated file", results)
+	}
+	// The file is in the shared tree...
+	shared := filepath.Join(root, "claude-code-sessions", "acct-uuid-a", "session-1.json")
+	if got := readFile(t, shared); got != `{"id":1}` {
+		t.Fatalf("shared copy = %q", got)
+	}
+	// ...and still reachable through the profile, which is now a link.
+	link := filepath.Join(p.DataDir(), "claude-code-sessions")
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the profile's session directory is not a link")
+	}
+	if got := readFile(t, filepath.Join(link, "acct-uuid-a", "session-1.json")); got != `{"id":1}` {
+		t.Fatalf("through the link = %q", got)
+	}
+}
+
+// Two profiles signed into DIFFERENT accounts land in different uuid
+// subdirectories — the property that makes sharing safe at all.
+func TestShareMergesTwoProfilesWithoutCollision(t *testing.T) {
+	s, work, root := shareFixture(t)
+	personal, err := s.Create("personal", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(work.DataDir(), "claude-code-sessions", "acct-a", "s1.json"), "a1")
+	writeFile(t, filepath.Join(personal.DataDir(), "claude-code-sessions", "acct-b", "s2.json"), "b2")
+
+	for _, p := range []Profile{work, personal} {
+		if _, serr := Share(p, root, SharedDirs); serr != nil {
+			t.Fatal(serr)
+		}
+	}
+	if got := readFile(t, filepath.Join(root, "claude-code-sessions", "acct-a", "s1.json")); got != "a1" {
+		t.Fatalf("work history = %q", got)
+	}
+	if got := readFile(t, filepath.Join(root, "claude-code-sessions", "acct-b", "s2.json")); got != "b2" {
+		t.Fatalf("personal history = %q", got)
+	}
+	// Each profile now sees BOTH, which is the point of sharing.
+	for _, p := range []Profile{work, personal} {
+		for _, rel := range []string{"acct-a/s1.json", "acct-b/s2.json"} {
+			if _, err := os.Stat(filepath.Join(p.DataDir(), "claude-code-sessions", rel)); err != nil {
+				t.Errorf("%s cannot see %s: %v", p.Name, rel, err)
+			}
+		}
+	}
+}
+
+// Migration must never overwrite: the shared tree may hold the default profile's
+// own history, and clobbering it would destroy sessions this feature exists to
+// preserve.
+func TestShareNeverOverwritesAFileAlreadyInTheSharedTree(t *testing.T) {
+	_, p, root := shareFixture(t)
+	shared := filepath.Join(root, "claude-code-sessions", "acct-a", "s1.json")
+	writeFile(t, shared, "ORIGINAL")
+	writeFile(t, filepath.Join(p.DataDir(), "claude-code-sessions", "acct-a", "s1.json"), "INCOMING")
+
+	results, err := Share(p, root, SharedDirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Skipped != 1 || results[0].Migrated != 0 {
+		t.Fatalf("results = %+v, want the collision skipped, nothing migrated", results)
+	}
+	if got := readFile(t, shared); got != "ORIGINAL" {
+		t.Fatalf("shared file = %q, want ORIGINAL — migration overwrote existing history", got)
+	}
+}
+
+func TestShareIsIdempotent(t *testing.T) {
+	_, p, root := shareFixture(t)
+	writeFile(t, filepath.Join(p.DataDir(), "claude-code-sessions", "acct-a", "s1.json"), "x")
+	if _, err := Share(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	results, err := Share(p, root, SharedDirs)
+	if err != nil {
+		t.Fatalf("second share failed: %v", err)
+	}
+	if results[0].Migrated != 0 || results[0].Skipped != 0 {
+		t.Fatalf("results = %+v, want a no-op on an already-shared profile", results)
+	}
+	if !ShareStatus(p, root, SharedDirs).Shared(SharedDirs) {
+		t.Fatal("profile does not report as shared after sharing twice")
+	}
+}
+
+func TestShareStatusDistinguishesLinkedFromOwn(t *testing.T) {
+	_, p, root := shareFixture(t)
+	writeFile(t, filepath.Join(p.DataDir(), "claude-code-sessions", "a", "s.json"), "x")
+	st := ShareStatus(p, root, SharedDirs)
+	if st.Shared(SharedDirs) {
+		t.Fatal("an unshared profile reports as shared")
+	}
+	if len(st.Own) != 1 {
+		t.Fatalf("Own = %v, want the profile's own directory", st.Own)
+	}
+	if _, err := Share(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	st = ShareStatus(p, root, SharedDirs)
+	if !st.Shared(SharedDirs) || len(st.Own) != 0 {
+		t.Fatalf("after sharing: linked=%v own=%v", st.Linked, st.Own)
+	}
+}
+
+// Unsharing must not destroy history — it stops the sharing, nothing more.
+func TestUnshareLeavesTheSharedHistoryIntact(t *testing.T) {
+	_, p, root := shareFixture(t)
+	writeFile(t, filepath.Join(p.DataDir(), "claude-code-sessions", "acct-a", "s1.json"), "keep me")
+	if _, err := Share(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	if err := Unshare(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, filepath.Join(root, "claude-code-sessions", "acct-a", "s1.json")); got != "keep me" {
+		t.Fatalf("shared history = %q — unshare destroyed it", got)
+	}
+	link := filepath.Join(p.DataDir(), "claude-code-sessions")
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("the profile is still linked after unshare")
+	}
+	if !fi.IsDir() {
+		t.Fatal("unshare did not leave a usable directory behind")
+	}
+}
+
+// A link pointing somewhere else (an older shared root) is replaced, not merged
+// from — there is nothing of the profile's own in it.
+func TestShareReplacesALinkToAnotherTarget(t *testing.T) {
+	_, p, root := shareFixture(t)
+	elsewhere := filepath.Join(t.TempDir(), "old-shared")
+	if err := os.MkdirAll(elsewhere, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(p.DataDir(), "claude-code-sessions")
+	if err := os.RemoveAll(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := Share(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	if !ShareStatus(p, root, SharedDirs).Shared(SharedDirs) {
+		t.Fatal("the stale link was not repointed at the shared root")
+	}
+}
+
+func TestShareCreatesTheSharedTreeWhenAbsent(t *testing.T) {
+	_, p, root := shareFixture(t)
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatal("fixture should start without a shared root")
+	}
+	if _, err := Share(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(root, "claude-code-sessions"))
+	if err != nil || !fi.IsDir() {
+		t.Fatalf("shared tree was not created: %v", err)
+	}
+}

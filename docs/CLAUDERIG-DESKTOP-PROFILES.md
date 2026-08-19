@@ -57,6 +57,7 @@ many windows.
 | `clauderig desktop quit <name\|email>` | Close that profile's window (SIGTERM, then firmly). |
 | `clauderig desktop rm <name\|email> [--force]` | Delete the profile. Signs that account out of Desktop for good. |
 | `clauderig desktop map [<name>] [dir]` / `unmap [dir]` | Bind a directory to a profile, so a bare `desktop open` there opens it. Bare `map` lists every binding. |
+| `clauderig desktop share [<name>]` / `unshare [<name>]` | Share Claude Code session history between profiles — and bring it into `clauderig sync`. `--all`, `--cowork`. |
 
 `clauderig desktop list --json` emits one machine-readable object — the profiles,
 which are open, and whether Desktop is supported and installed on this platform.
@@ -138,30 +139,69 @@ The link is by name, not by credential. `desktop add work` looks `work` (and
 login and the Desktop login remain entirely independent, which is the truth of
 how the two products work and the thing the withdrawn feature obscured.
 
-## Known limitations, and the next step
+## Sharing session history
 
-**Chat history is per profile.** Each profile has its own
-`claude-code-sessions` and Cowork session directories, so a Claude Code session
-started from the `work` window does not appear in `personal` — and clauderig's
-sync only sees the *default* Desktop root, so profile history is not synced at
-all today.
+By default each profile has its own chat history, because each is a separate
+installation as far as the app is concerned — a Claude Code session started in
+the `work` window does not appear in `personal`, and clauderig's sync only
+watches the *default* Desktop root, so profile history is not backed up at all.
 
-guise solves this by symlinking each profile's `claude-code-sessions` at one
-shared folder. That is the right shape for clauderig too, and would make the
-existing Desktop sidecar sync cover every profile at once, but it needs care
-before it ships:
+`clauderig desktop share` fixes both at once:
 
-1. The symlink may only be repointed while that profile's window is **closed** —
-   Electron will happily write through a link it opened before the swap.
-2. Existing contents must be migrated into the shared folder, not orphaned.
-3. Windows needs a junction (or Developer Mode) rather than a symlink;
-   `os.Symlink` on a directory there fails without privileges.
-4. `clauderig sync`'s allowlist and secret tripwire must be re-checked against
-   the merged tree — several accounts' session metadata in one folder is a
-   different shape than the one the retention rules were written for.
+```console
+$ clauderig desktop share work        # or --all for every profile
+✓ sharing work · john@work.com
+    claude-code-sessions → shared (14 migrated, 0 already there)
+shared tree: ~/Library/Application Support/Claude
+`clauderig sync` already covers it, so this history is backed up now too
+```
 
-Proposed as `clauderig desktop share` (opt-in, off by default) once the above is
-settled.
+It points the profile's `claude-code-sessions` at the **default Desktop root's**
+own directory. That location is the point: the Desktop allowlist already includes
+`claude-code-sessions`, so sharing brings profile history into the existing
+backup with no new sync rules, no new root, and no new retention story.
+
+**Why this is safe.** Both session trees are already partitioned by account uuid
+— `claude-code-sessions/456fc32e-…/`, `claude-code-sessions/03d1c0c9-…/` — so two
+profiles signed into different accounts write to different subdirectories and
+cannot collide. Two profiles signed into the *same* account share one
+subdirectory, which is the intent rather than a bug.
+
+**Nothing is destroyed.** Existing history is copied into the shared tree before
+the directory is replaced, and migration **never overwrites**: a file already
+present is left exactly as it is and counted as skipped (enforced with `O_EXCL`,
+not just a pre-check, so a concurrent writer cannot slip in between). The shared
+tree may hold the default profile's own history, and clobbering that would
+destroy the very sessions this feature exists to preserve.
+
+**The window must be closed.** Electron keeps writing through a directory handle
+it opened before the swap, so relinking a live profile would silently lose
+whatever it writes next. `share` refuses while the profile is open — and refuses
+on an *unknown* state too, rather than moving history on a guess.
+
+`clauderig desktop unshare` puts a profile back on its own directory. It is
+deliberately non-destructive: the shared history stays where it is. Working out
+which sessions "belong" to a profile and copying them back would be guesswork,
+and getting it wrong would either duplicate or delete history — stopping the
+sharing is reversible, deleting is not.
+
+`--cowork` extends both commands to `local-agent-mode-sessions`. It is opt-in
+because that tree is two orders of magnitude larger (51 MB against 768 KB on the
+machine this was built on) and holds Cowork sandbox working directories, so
+moving it is a heavier operation than most callers want by default. Note that
+sync already excludes the sandbox contents (`local-agent-mode-sessions/*/*/local_*`)
+while keeping the session metadata beside them, so sharing it does not widen what
+leaves the machine.
+
+**Platforms.** A directory symlink on macOS and Linux. On Windows a **junction**:
+creating a directory symlink there needs `SeCreateSymbolicLinkPrivilege`, which a
+normal user does not have unless Developer Mode is on, while `mklink /J` needs no
+privilege at all. `os.Symlink` is still tried first, since it is the more
+standard artifact when the privilege is available.
+
+`desktop list` marks a sharing profile with `shared history`, `--json` reports it
+as `sharedHistory` alongside the `sharedRoot`, and the interactive screen toggles
+it with `s` (offered only for a profile known to be closed).
 
 ## Verification status
 
