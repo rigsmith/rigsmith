@@ -86,12 +86,77 @@ func RunningInstances(claudeHome string) []Instance {
 		}
 	}
 
+	// Process scan. The two registries above are the richer source — they carry
+	// cwd and entrypoint — but they cannot be RELIED on: Claude Code 2.1.227
+	// writes neither, so on a current install both directories sit empty and this
+	// function used to report "nothing running" with a live session in the room.
+	// That is the worst possible failure for a guard whose entire job is to
+	// refuse: it does not warn, it silently permits, and swapping the credential
+	// under a live session is exactly what logs that session out.
+	//
+	// So the process table is consulted too, and it is authoritative for
+	// existence. A pid already described by a registry keeps that description.
+	for _, p := range liveClaudeProcesses(claudeHome) {
+		if _, ok := seen[p.PID]; !ok {
+			seen[p.PID] = p
+		}
+	}
+
 	out := make([]Instance, 0, len(seen))
 	for _, inst := range seen {
 		out = append(out, inst)
 	}
 	sortByPID(out)
 	return out
+}
+
+// Indirected so tests can supply a process table instead of the machine's own —
+// a guard this important needs its logic covered, not just its plumbing.
+var (
+	claudeProcessPIDs = claudeProcessPIDsImpl
+	processConfigDir  = processConfigDirImpl
+)
+
+// liveClaudeProcesses returns running Claude Code processes that use the LIVE
+// credential — the only ones a switch endangers.
+//
+// Sessions started by `clauderig account run` are deliberately excluded: they
+// point CLAUDE_CONFIG_DIR at their own profile and authenticate from it, so
+// swapping the machine-wide credential does not touch them. Blocking on those
+// would make `switch` unusable on exactly the setup clauderig encourages —
+// several accounts running side by side.
+func liveClaudeProcesses(claudeHome string) []Instance {
+	var out []Instance
+	for _, pid := range claudeProcessPIDs() {
+		if pid <= 1 || !pidAlive(pid) {
+			continue
+		}
+		dir, known := processConfigDir(pid)
+		switch {
+		case !known:
+			// Environment unreadable (another user's process, or a platform where
+			// we cannot ask). Assume it is live: over-reporting costs a refusal the
+			// user can override, under-reporting costs them their login.
+		case dir != "" && !sameDir(dir, claudeHome):
+			continue // isolated `account run` profile — unaffected by a swap
+		}
+		out = append(out, Instance{PID: pid, Kind: "cli", Source: "process"})
+	}
+	return out
+}
+
+// sameDir compares two directory paths for the isolation check, tolerating a
+// trailing separator and resolving symlinks where possible so a profile that
+// happens to point at ~/.claude by another name is not mistaken for isolated.
+func sameDir(a, b string) bool {
+	clean := func(p string) string {
+		p = filepath.Clean(p)
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return p
+	}
+	return clean(a) == clean(b)
 }
 
 // KillInstances ends the given processes: SIGTERM first (graceful — lets editors

@@ -1,0 +1,5 @@
+---
+"github.com/rigsmith/rigsmith": patch
+---
+
+clauderig: `account switch` no longer logs the machine out. Switching to an account whose stored credential had been blanked (an expired refresh token, or a logout) wrote that blank over the live credential — it parses and writes like any healthy blob, so nothing stopped it, even though `list` and `doctor` were already flagging the account as `credential ✗ no tokens`. The switch now refuses and points at the repair. Also fixes two things found alongside it: the running-instance guard read session registry files that Claude Code 2.1.227 no longer writes, so it reported "nothing running" with a live session open and never refused anything — it now consults the process table, while still ignoring isolated `account run` sessions that a swap cannot affect; and repairing an account with `--from-session` no longer strips `organizationUuid` (which is the only field `doctor` can compare, so losing it turned the desync check into an unconditional all-clear) or `mcpOAuth` (the MCP servers' own logins).

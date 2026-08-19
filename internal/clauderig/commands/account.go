@@ -1124,6 +1124,24 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 	if err != nil {
 		return "", nil, fmt.Errorf("read stored credential: %w", err)
 	}
+	// The stored credential must actually authenticate BEFORE it is written over
+	// the live one. A blob whose tokens Claude Code has blanked — an expired
+	// refresh token, or a logout — parses perfectly well and writes perfectly
+	// well, and the result is a machine that is simply logged out. `list` and
+	// `doctor` already flag this state ("credential ✗ no tokens"); switching into
+	// it was still permitted, which is how a switch could log you out of an
+	// account that was working a moment earlier.
+	//
+	// #197 added the mirror of this guard on the way IN (SaveCredential refuses to
+	// store a token-less blob). This is the way OUT.
+	if !account.HasTokens(targetCred) {
+		return "", nil, fmt.Errorf(
+			"refusing to switch: the stored credential for %s has no tokens, so switching "+
+				"to it would log this machine out.\n"+
+				"Fix: `clauderig account add --from-session %s` to repair it from that "+
+				"account's own session, or log in as %s and run `clauderig account add`",
+			target.Email, target.ID, target.Email)
+	}
 	// The profile block must move WITH the credential, so fetch it BEFORE any
 	// mutation and refuse the switch if it's missing. Swapping the credential
 	// alone leaves ~/.claude.json naming the previous account while every request

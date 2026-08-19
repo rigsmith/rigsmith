@@ -70,3 +70,88 @@ func TestPidAlive(t *testing.T) {
 		t.Error("implausibly high pid should not be alive")
 	}
 }
+
+// stubProcesses installs a fake process table for the duration of a test.
+func stubProcesses(t *testing.T, pids []int, cfg map[int]string, unknown map[int]bool) {
+	t.Helper()
+	op, oc := claudeProcessPIDs, processConfigDir
+	claudeProcessPIDs = func() []int { return pids }
+	processConfigDir = func(pid int) (string, bool) {
+		if unknown[pid] {
+			return "", false
+		}
+		return cfg[pid], true
+	}
+	t.Cleanup(func() { claudeProcessPIDs, processConfigDir = op, oc })
+}
+
+// The regression that mattered: Claude Code 2.1.227 writes neither
+// sessions/{pid}.json nor ide/{port}.lock, so with an empty ~/.claude the guard
+// reported "nothing running" while a live session was open — and switching under
+// one is what logs it out. The process table has to be consulted.
+func TestRunningInstances_FoundWithNoRegistryFiles(t *testing.T) {
+	home := t.TempDir() // no sessions/, no ide/ — a current install
+	self := os.Getpid()
+	stubProcesses(t, []int{self}, map[int]string{self: ""}, nil)
+
+	got := RunningInstances(home)
+	if len(got) != 1 || got[0].PID != self {
+		t.Fatalf("got %+v, want the live process detected from the process table", got)
+	}
+	if got[0].Source != "process" {
+		t.Errorf("Source = %q, want %q", got[0].Source, "process")
+	}
+}
+
+// A session under `account run` uses its own profile and authenticates from it,
+// so a machine-wide swap cannot disturb it. Blocking on those would make switch
+// unusable on the very setup clauderig encourages.
+func TestRunningInstances_IsolatedProfileSessionsDoNotBlock(t *testing.T) {
+	home := t.TempDir()
+	profile := t.TempDir()
+	self := os.Getpid()
+	stubProcesses(t, []int{self}, map[int]string{self: profile}, nil)
+
+	if got := RunningInstances(home); len(got) != 0 {
+		t.Errorf("an isolated profile session must not block a switch: %+v", got)
+	}
+	// ...but relative to its OWN home it is live, and must be reported.
+	if got := RunningInstances(profile); len(got) != 1 {
+		t.Errorf("relative to its own config dir it is live: %+v", got)
+	}
+}
+
+// An unreadable environment must be assumed live. Over-reporting costs a
+// refusal the user can override; under-reporting costs them their login.
+func TestRunningInstances_UnknownEnvironmentAssumedLive(t *testing.T) {
+	home := t.TempDir()
+	self := os.Getpid()
+	stubProcesses(t, []int{self}, nil, map[int]bool{self: true})
+
+	if got := RunningInstances(home); len(got) != 1 {
+		t.Errorf("a process whose config dir cannot be read must be treated as live: %+v", got)
+	}
+}
+
+// Dead pids from the table are ignored, and a registry entry keeps its richer
+// description rather than being replaced by the bare process one.
+func TestRunningInstances_RegistryDescriptionWins(t *testing.T) {
+	home := t.TempDir()
+	self := os.Getpid()
+	if err := os.MkdirAll(filepath.Join(home, "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := fmt.Sprintf(`{"pid":%d,"entrypoint":"claude-vscode","cwd":"/tmp/x"}`, self)
+	if err := os.WriteFile(filepath.Join(home, "sessions", fmt.Sprintf("%d.json", self)), []byte(rec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stubProcesses(t, []int{self, 999999}, map[int]string{self: ""}, nil)
+
+	got := RunningInstances(home)
+	if len(got) != 1 {
+		t.Fatalf("dead pids must be dropped: %+v", got)
+	}
+	if got[0].Kind != "claude-vscode" || got[0].Cwd != "/tmp/x" {
+		t.Errorf("registry detail should survive the process scan: %+v", got[0])
+	}
+}

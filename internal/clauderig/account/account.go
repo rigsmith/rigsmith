@@ -228,6 +228,53 @@ func (s *Store) idFor(email, org string) (id string, existed bool) {
 
 // save writes an account's metadata and credential (0600), marking any existing
 // session profile stale so the next `run` re-seeds from the fresh credential.
+// mergeCredential carries forward top-level fields the incoming blob does not
+// carry itself, so a narrower source cannot silently strip the account's record.
+//
+// The credential is not only `claudeAiOauth`. It also holds `organizationUuid`,
+// which is the ONLY thing `doctor` can compare against the profile block — lose
+// it and the desync check stops comparing and starts reporting "both halves
+// agree" unconditionally, which is a false all-clear rather than a missing one.
+// And it holds `mcpOAuth`, the MCP servers' own logins.
+//
+// Both were being lost in practice. `account add --from-session` repairs from
+// the profile's Keychain entry, which Claude Code writes containing just
+// `claudeAiOauth`; storing that verbatim dropped the other two, and the next
+// switch then wrote the reduced blob live. Observed on a real machine: a
+// credential that had all three fields at 20:08 had exactly one by 04:26.
+//
+// Merging is safe because this is always the SAME account's own record — a
+// repair or a round-trip of its own credential — never another account's.
+func (s *Store) mergeCredential(id string, raw []byte) []byte {
+	var incoming map[string]json.RawMessage
+	if json.Unmarshal(raw, &incoming) != nil {
+		return raw // not an object we understand; store it untouched
+	}
+	prev, err := os.ReadFile(s.credPath(id))
+	if err != nil {
+		return raw
+	}
+	var existing map[string]json.RawMessage
+	if json.Unmarshal(prev, &existing) != nil {
+		return raw
+	}
+	added := false
+	for k, v := range existing {
+		if _, present := incoming[k]; !present {
+			incoming[k] = v
+			added = true
+		}
+	}
+	if !added {
+		return raw
+	}
+	merged, merr := json.MarshalIndent(incoming, "", "  ")
+	if merr != nil {
+		return raw
+	}
+	return merged
+}
+
 func (s *Store) save(a Account, raw []byte) error {
 	dir := s.acctDir(a.ID)
 	hadConfig := dirExists(s.ConfigDir(a.ID))
@@ -241,7 +288,7 @@ func (s *Store) save(a Account, raw []byte) error {
 	if err := os.WriteFile(s.metaPath(a.ID), meta, 0o600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.credPath(a.ID), raw, 0o600); err != nil {
+	if err := os.WriteFile(s.credPath(a.ID), s.mergeCredential(a.ID, raw), 0o600); err != nil {
 		return err
 	}
 	if hadConfig {
