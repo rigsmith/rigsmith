@@ -128,6 +128,32 @@ func TestCLI_Walk(t *testing.T) {
 	}
 }
 
+func TestWalk_SymlinkedMemoryDirSkipped(t *testing.T) {
+	// A worktree project slug shares memory with its main project via a symlink
+	// (memory -> ../<main-slug>/memory). The link must not surface as a file —
+	// that made sync read a directory and abort — and the target's content still
+	// syncs under its canonical slug.
+	root := t.TempDir()
+	mustWrite(t, root, "projects/-main/memory/MEMORY.md", "x")
+	mustWrite(t, root, "projects/-main-worktree/s.jsonl", "{}")
+	link := filepath.Join(root, "projects", "-main-worktree", "memory")
+	if err := os.Symlink(filepath.Join(root, "projects", "-main", "memory"), link); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Walk(root, CLI())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"projects/-main-worktree/s.jsonl",
+		"projects/-main/memory/MEMORY.md",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Walk = %v, want %v", got, want)
+	}
+}
+
 func mustWrite(t *testing.T, root, rel, content string) {
 	t.Helper()
 	p := filepath.Join(root, filepath.FromSlash(rel))

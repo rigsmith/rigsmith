@@ -142,6 +142,16 @@ func Walk(root string, l List) ([]string, error) {
 			}
 			return nil
 		}
+		// WalkDir doesn't follow symlinks, so a symlink to a directory arrives
+		// here as a non-directory entry; emitting it would make consumers read a
+		// directory as a file and abort the sync. Worktree project slugs link
+		// memory/ to the main project's memory dir, which already syncs under its
+		// own slug, so dropping the link loses no content.
+		if d.Type()&fs.ModeSymlink != 0 {
+			if info, serr := os.Stat(p); serr == nil && info.IsDir() {
+				return nil
+			}
+		}
 		if l.Match(rel) {
 			out = append(out, rel)
 		}
