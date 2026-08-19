@@ -41,35 +41,19 @@ single-use, so two profiles holding one copy of it would work until the first
 refresh and then sign one of them out at an unpredictable moment. Logging in
 gives each profile a credential it owns.
 
-### 2. Optionally, one shared chat history
+### 2. There is no step 2
 
-By default each profile keeps its own history. To pool it — and bring it into
-`clauderig sync`, which otherwise never sees it:
-
-```console
-$ clauderig desktop quit work            # every window must be CLOSED
-$ clauderig desktop quit personal
-$ clauderig desktop share --all
-```
-
-**When to run it:** after the profiles exist and you have logged into each, with
-the windows closed. Usually once, right after setup.
-
-**Why closed:** `share` moves the directory Claude Desktop writes history into,
-and the app keeps writing through a directory handle it opened before the swap —
-so relinking a live profile would silently lose whatever it writes next. `share`
-refuses rather than risk it, and refuses on an *unknown* process state too.
-
-**Adding a profile later?** Run `clauderig desktop share --all` again. It is
-idempotent: already-linked profiles are left alone and only the new one is
-migrated.
+`clauderig sync` picks profiles up on its own — settings and chat history,
+never the login. Nothing to enable, nothing to run with the windows closed.
+[How that works](#backup-and-restore).
 
 ```console
 $ clauderig desktop list
 Claude Desktop profiles
-● work · john@work.com      open    shared history  ↔ john-work-com
-  personal · john@home.com  closed  shared history
+● work · john@work.com      open    ↔ john-work-com
+  personal · john@home.com  closed
 each profile is its own login — opening one never signs another out
+chat history is per profile — `clauderig sync` backs each one up separately
 ```
 
 ## Why this model, when the last one was withdrawn
@@ -101,6 +85,10 @@ Claude Desktop installation as far as the app is concerned. Session switching
 promised one identity moving between windows; this promises many identities in
 many windows.
 
+Backed up separately, too — [see below](#backup-and-restore). Not pooled: the
+app partitions history by account, and clauderig honours that boundary rather
+than working around it.
+
 ## Commands
 
 | Command | What it does |
@@ -111,7 +99,6 @@ many windows.
 | `clauderig desktop quit [<name\|email>]` | Close that profile's window (SIGTERM, then firmly, then confirmed). |
 | `clauderig desktop rm <name\|email> [--force]` | Delete the profile. Signs that account out of Desktop for good. |
 | `clauderig desktop map [<name>] [dir]` / `unmap [dir]` | Bind a directory to a profile, so a bare `desktop open` there opens it. Bare `map` lists every binding. |
-| `clauderig desktop share [<name>]` / `unshare [<name>]` | Share Claude Code session history between profiles — and bring it into `clauderig sync`. `--all`, `--cowork`. |
 
 `clauderig desktop list --json` emits one machine-readable object — the profiles,
 which are open, and whether Desktop is supported and installed on this platform.
@@ -186,10 +173,13 @@ Linux build's layout.
 - **No credential is ever read.** clauderig creates an empty directory and
   launches an app at it. Compare the withdrawn feature, which exported cookies
   and token caches.
-- **Profiles never sync.** They live under `~/.clauderig`, outside both sync
-  roots (`$HOME/.claude` and the Desktop application-support directory). A
-  regression test asserts this, because a profile inside a sync root would push
-  live sessions to the remote.
+- **No credential ever syncs.** Sync reaches into a profile deliberately
+  ([backup](#backup-and-restore)), but only through the include-only Desktop
+  allowlist — the same named files it takes from the machine-wide install. The
+  store itself still lives under `~/.clauderig`, outside both configured roots
+  (`$HOME/.claude` and the Desktop application-support directory), and a
+  regression test asserts that: a profile store *inside* a root would be swept
+  wholesale by that root's own walk, with no allowlist in the way.
 - **Profile directories are 0700 and `profile.json` is 0600** — on macOS and
   Linux. Windows
   has no Unix permission bits (Go's `Chmod` there only toggles read-only), so
@@ -234,95 +224,68 @@ the withdrawn session-switching feature did. `--no-seed` starts from nothing.
 Seeding happens before the window launches, because Desktop writes its own
 `config.json` on first run and seeding underneath a started app would race it.
 
-## Sharing session history
+## Backup and restore
 
-[Setting it up](#2-optionally-one-shared-chat-history) has the commands and the
-timing; this is what they do and why it is safe.
-
-By default each profile has its own chat history, because each is a separate
-installation as far as the app is concerned — a Claude Code session started in
-the `work` window does not appear in `personal`, and clauderig's sync only
-watches the *default* Desktop root, so profile history is not backed up at all.
-
-`clauderig desktop share` fixes both at once:
+`clauderig sync` covers every profile. A profile has exactly the shape of the
+machine-wide install — same session trees, same `config.json` — so it is handed
+to the sync engine as a **root of its own**, staged under `desktop@<name>`:
 
 ```console
-$ clauderig desktop share work        # or --all for every profile
-✓ sharing work · john@work.com
-    claude-code-sessions → shared (14 migrated, 0 already there)
-shared tree: ~/Library/Application Support/Claude
-`clauderig sync` already covers it, so this history is backed up now too
+$ clauderig sync
+  cli                 412 files, 0 secret field(s) redacted
+  desktop             19 files, 0 secret field(s) redacted
+  desktop@work        8 files, 0 secret field(s) redacted
+  desktop@personal    8 files, 0 secret field(s) redacted
 ```
 
-It points the profile's `claude-code-sessions` at the **default Desktop root's**
-own directory. That location is the point: the Desktop allowlist already includes
-`claude-code-sessions`, so sharing brings profile history into the existing
-backup with no new sync rules, no new root, and no new retention story.
+Same walk, same allowlist, same retention window, same redaction pass, same
+sidecar pruning as the machine-wide root. No second tree format to reason about,
+and nothing new to turn on.
 
-The root is resolved from your **saved** configuration, not the compiled-in
-defaults — `clauderig init` can persist the Desktop root disabled, and sync skips
-disabled roots. When that is the case `share` still links the profiles (the
-sharing itself is useful) but says plainly that the history is *not* backed up,
-rather than promising a backup that will never run.
+**clauderig still never writes inside a profile.** The allowlist is
+include-only, so a profile contributes nothing beyond what the unprofiled
+Desktop root already contributed — the named config and session-metadata files,
+and nothing else. Cookies, Local Storage, the token cache and the OAuth blobs
+in `config.json` are not in that set on any platform. That is why a restored
+profile comes back with its settings and its history and is still **signed
+out**: the login was never in the backup to begin with.
 
-**Why this is safe.** Both session trees are already partitioned by account uuid
-— `claude-code-sessions/456fc32e-…/`, `claude-code-sessions/03d1c0c9-…/` — so two
-profiles signed into different accounts write to different subdirectories and
-cannot collide. Two profiles signed into the *same* account share one
-subdirectory, which is the intent rather than a bug.
+Alongside the app's `data/` tree, a profile's own `profile.json` — clauderig's
+record of the name, label and creation time — travels too. Without it a restore
+would leave a directory of files that `clauderig desktop open` could not find.
 
-**Nothing is destroyed, and a failure changes nothing.** The existing directory
-is moved aside rather than deleted, and put back if the link cannot be created —
-a Windows junction refused for want of privilege being the realistic case.
-Deleting first would leave the profile with *no* session directory, and Claude
-Desktop would quietly build a fresh empty tree in its place. Retrying after the
-cause is fixed is a no-op rather than a duplication, because migration never
-overwrites what the first attempt already copied.
+**Restoring onto a machine that has never run `clauderig desktop`** is the case
+that matters, and it works: the profile list comes from the staging tree rather
+than from local state, and locations are resolved from a `$HOME`-relative
+template rather than from the profile store, so they resolve on a computer that
+has never seen the profile. `restore` recreates each one, `clauderig desktop
+list` shows it, and one login per profile picks up where the old machine left
+off.
 
-Existing history is copied into the shared tree before the directory moves, and
-migration **never overwrites** — a file already present is left exactly as it is
-(enforced with `O_EXCL`, not just a pre-check, so a concurrent writer cannot slip
-in between). The shared tree may hold the default profile's own history, and
-clobbering that would destroy the very sessions this feature exists to preserve.
+**Turning it off** is the Desktop root's `enabled` flag in `clauderig config`.
+Profile roots inherit it: disabling Desktop sync is a statement about Desktop's
+data, and profiles are more of it, so one switch covers both rather than a
+second one nobody would think to look for.
 
-A collision has two meanings, and conflating them loses data:
+### Why history is not pooled across profiles
 
-- **Identical contents** — the same session recorded in both trees. The profile's
-  copy is redundant and is dropped.
-- **Different contents** — two genuinely different files claiming one path. The
-  shared copy is kept, because that is the tree the app reads, but the profile's
-  version is the only copy of *itself*, so it is preserved under
-  `~/.clauderig/desktop/<name>/conflicts/` and reported. That path sits **outside**
-  the profile's `data/`, so Claude Desktop never sees the preserved files.
+An earlier version of this feature (`clauderig desktop share`, removed before
+release) pointed several profiles' session directories at one tree, so a Claude
+Code chat started in any window appeared in all of them. It worked. It was
+withdrawn anyway:
 
-**The window must be closed.** Electron keeps writing through a directory handle
-it opened before the swap, so relinking a live profile would silently lose
-whatever it writes next. `share` refuses while the profile is open — and refuses
-on an *unknown* state too, rather than moving history on a guess.
+- It was the **only** place clauderig wrote inside a profile — the one thing
+  this whole model promises it will not do. Everything above stops being true
+  the moment that promise has an exception.
+- Desktop partitions those trees by account uuid deliberately. Merging them
+  pools genuinely account-scoped state (`scheduled-tasks.json` and friends) and
+  quietly moves work onto whichever account's window happens to be open.
+- It stood on a directory layout the app is free to change in any release, and
+  the failure mode would be silent.
 
-`clauderig desktop unshare` puts a profile back on its own directory. It is
-deliberately non-destructive: the shared history stays where it is. Working out
-which sessions "belong" to a profile and copying them back would be guesswork,
-and getting it wrong would either duplicate or delete history — stopping the
-sharing is reversible, deleting is not.
-
-`--cowork` extends both commands to `local-agent-mode-sessions`. It is opt-in
-because that tree is two orders of magnitude larger (51 MB against 768 KB on the
-machine this was built on) and holds Cowork sandbox working directories, so
-moving it is a heavier operation than most callers want by default. Note that
-sync already excludes the sandbox contents (`local-agent-mode-sessions/*/*/local_*`)
-while keeping the session metadata beside them, so sharing it does not widen what
-leaves the machine.
-
-**Platforms.** A directory symlink on macOS and Linux. On Windows a **junction**:
-creating a directory symlink there needs `SeCreateSymbolicLinkPrivilege`, which a
-normal user does not have unless Developer Mode is on, while `mklink /J` needs no
-privilege at all. `os.Symlink` is still tried first, since it is the more
-standard artifact when the privilege is available.
-
-`desktop list` marks a sharing profile with `shared history`, `--json` reports it
-as `sharedHistory` alongside the `sharedRoot`, and the interactive screen toggles
-it with `s` (offered only for a profile known to be closed).
+The value people actually wanted from it was **backup coverage**, and that
+needs none of it — hence this section. For reading history across accounts,
+`clauderig search` already spans every synced transcript without moving a file.
 
 ## Verification status
 

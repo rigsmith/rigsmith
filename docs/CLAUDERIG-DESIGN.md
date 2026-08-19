@@ -64,11 +64,22 @@ Legend: ✅ sync · 🔧 junk (machine-local/ephemeral) · 🔑 secret (never le
 |---|---|---|
 | `claude-code-sessions/` | ✅ | Desktop/Cowork session metadata; UUID-keyed, `cwd`/`originCwd` **inside** → field rewrite |
 | `local-agent-mode-sessions/` | ✅ | same shape |
+| `local-agent-mode-sessions/skills-plugin/` | 🔧 | the app's local copy of the bundled docx/pptx/xlsx/pdf skills — 8 MB of vendor content it re-downloads, and it would land once per profile |
 | `claude_desktop_config.json` | ✅ (redacted) | MCP server config; may carry secrets → redact |
 | `config.json`, `cowork-enabled-cli-ops.json`, `extensions-blocklist.json` | ✅ | small config |
 | `git-worktrees.json` | ✅ | path-keyed → rewrite |
 | `Cache/`, `Code Cache/`, `GPUCache/`, `IndexedDB/`, `blob_storage/`, `Crashpad/`, `sentry/`, `Cookies*`, `*Storage*`, `DIPS*`, `Trust Tokens*` | 🔧 | the 12 GB of Electron junk |
 | `window-state.json` | 🔧 | machine-local UI geometry |
+
+### Root: each `clauderig desktop` profile
+
+A profile (`~/.clauderig/desktop/<name>`) is a Claude Desktop install of its own,
+so it syncs as a root of its own — staged under `desktop@<name>`, with the table
+above rebased under the profile's `data/`, plus clauderig's `profile.json` record
+beside it. Same walk, allowlist, retention, redaction and sidecar pruning; the
+credential files are excluded there exactly as they are above, which is why a
+restored profile comes back signed out. See
+[CLAUDERIG-DESKTOP-PROFILES.md](CLAUDERIG-DESKTOP-PROFILES.md#backup-and-restore).
 
 **Allowlist rots — by design.** Claude Code adds files over time; a new
 secret-bearing file added upstream must not silently leak. So: allowlist +
