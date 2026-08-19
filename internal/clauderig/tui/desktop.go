@@ -30,6 +30,9 @@ type DesktopRow struct {
 	// window is open could not be established. Rendered distinctly from
 	// "closed": the difference decides whether deleting it is safe.
 	OpenUnknown bool
+	// Shared reports that this profile's session history is linked to the
+	// shared tree, and so is covered by `clauderig sync`.
+	Shared bool
 }
 
 // Label renders a row's identity.
@@ -43,7 +46,7 @@ func (r DesktopRow) Label() string {
 // DesktopAction is the intent the screen records on exit. Kind "" means the user
 // backed out.
 type DesktopAction struct {
-	Kind string // "" · "add" · "open" · "quit" · "remove"
+	Kind string // "" · "add" · "open" · "quit" · "remove" · "toggle-share"
 	Name string
 }
 
@@ -67,8 +70,9 @@ func NewDesktop(rows []DesktopRow, installed, supported bool, note string) Deskt
 func (m DesktopModel) Init() tea.Cmd { return nil }
 
 // Update drives the list: ↑/↓ (k/j) move; enter/o opens or focuses the selected
-// profile; c closes it; a creates a profile to log into; x deletes one; q/esc
-// back. Every action is inert when Claude Desktop isn't available.
+// profile; c closes it; a creates a profile to log into; s shares or unshares its
+// session history; x deletes one; q/esc back. Every action is inert when Claude
+// Desktop isn't available.
 func (m DesktopModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -102,6 +106,13 @@ func (m DesktopModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Action = DesktopAction{Kind: "quit", Name: r.Name}
 			return m, tea.Quit
 		}
+	case "s":
+		// Sharing repoints a directory Electron holds open, so it is offered
+		// only for a profile known to be closed.
+		if r, ok := m.current(); ok && !r.Open && !r.OpenUnknown {
+			m.Action = DesktopAction{Kind: "toggle-share", Name: r.Name}
+			return m, tea.Quit
+		}
 	case "x", "delete", "backspace":
 		if r, ok := m.current(); ok {
 			m.Action = DesktopAction{Kind: "remove", Name: r.Name}
@@ -109,6 +120,23 @@ func (m DesktopModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// shareWord names what `s` would do to the row under the cursor, so the hint is
+// never the opposite of the effect. A profile that is open cannot be relinked at
+// all, and the hint says so rather than offering an inert key.
+func shareWord(m DesktopModel) string {
+	r, ok := m.current()
+	switch {
+	case !ok:
+		return "s share"
+	case r.Open || r.OpenUnknown:
+		return dim.Render("s share (close it first)")
+	case r.Shared:
+		return "s unshare"
+	default:
+		return "s share"
+	}
 }
 
 func (m DesktopModel) current() (DesktopRow, bool) {
@@ -171,17 +199,20 @@ func (m DesktopModel) View() string {
 			marker = okC.Render("● ")
 		}
 		link := ""
+		if r.Shared {
+			link += dim.Render("  shared history")
+		}
 		if r.AccountID != "" {
-			link = dim.Render("  ↔ " + r.AccountID)
+			link += dim.Render("  ↔ " + r.AccountID)
 		}
 		b.WriteString(fmt.Sprintf("%s%s%s%s%s\n", cursor, marker, name, state, link))
 	}
 
 	b.WriteString("\n  " + dim.Render("each profile is its own login — opening one never signs another out") + "\n")
 
-	keys := "↑/↓ move · enter open · a add · x remove"
+	keys := "↑/↓ move · enter open · a add · " + shareWord(m) + " · x remove"
 	if anyOpen {
-		keys = "↑/↓ move · enter open · c close · a add · x remove"
+		keys = "↑/↓ move · enter open · c close · a add · " + shareWord(m) + " · x remove"
 	}
 	keys += " · q back"
 	b.WriteString("\n" + dim.Render(keys) + "\n")

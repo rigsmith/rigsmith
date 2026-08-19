@@ -42,6 +42,7 @@ func NewDesktopCmd() *cobra.Command {
 			"  list   show saved profiles and which are open\n" +
 			"  quit   close a profile's window\n" +
 			"  map    bind a directory to a profile, for a bare `open` there\n" +
+			"  share  share Claude Code session history between profiles (and back it up)\n" +
 			"  rm     delete a profile (logs that account out of Desktop for good)\n\n" +
 			"Separate from `clauderig account`, which switches the Claude Code CLI login.",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -52,7 +53,8 @@ func NewDesktopCmd() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newDesktopAddCmd(), newDesktopOpenCmd(), newDesktopListCmd(),
-		newDesktopQuitCmd(), newDesktopRemoveCmd(), newDesktopMapCmd(), newDesktopUnmapCmd())
+		newDesktopQuitCmd(), newDesktopRemoveCmd(), newDesktopMapCmd(), newDesktopUnmapCmd(),
+		newDesktopShareCmd(), newDesktopUnshareCmd())
 	return cmd
 }
 
@@ -69,6 +71,7 @@ func desktopStore() (*desktop.Store, error) {
 
 func newDesktopAddCmd() *cobra.Command {
 	var email string
+	var noSeed bool
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Create a Desktop profile and open a window to log into",
@@ -77,7 +80,11 @@ func newDesktopAddCmd() *cobra.Command {
 			"other profile is touched.\n\n" +
 			"The name is yours to choose (work, personal, client-x). If it matches a\n" +
 			"stored `clauderig account`, the profile records the link — as a label only:\n" +
-			"the CLI login and the Desktop login stay independent.",
+			"the CLI login and the Desktop login stay independent.\n\n" +
+			"The profile is SEEDED from your existing Claude Desktop install so it is\n" +
+			"usable immediately: MCP servers, theme and locale come across. Nothing that\n" +
+			"carries the login does — the new profile still starts signed out, which is\n" +
+			"the point. `--no-seed` starts from nothing.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -98,11 +105,31 @@ func newDesktopAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Seed BEFORE launching: Desktop writes its own config.json on
+			// first run, and seeding underneath a started app would race it.
+			var seeded desktop.SeedResult
+			if !noSeed {
+				var serr error
+				if seeded, serr = desktop.Seed(p, sharedRootOrEmpty()); serr != nil {
+					return serr
+				}
+			}
 			if lerr := app.Launch(p.DataDir()); lerr != nil {
 				return lerr
 			}
 			_ = st.Touch(p)
 			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ created"), p.Label())
+			if !seeded.Empty() {
+				what := "settings"
+				if seeded.Config {
+					what = "preferences"
+				}
+				if len(seeded.Files) > 0 {
+					what += " and " + fmt.Sprintf("%d config file(s)", len(seeded.Files))
+				}
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(
+					"  seeded "+what+" from your existing Claude Desktop install (no login copied)"))
+			}
 			if accountID != "" {
 				fmt.Fprintf(out, "%s\n", DimStyle.Render("  linked to stored account "+accountID+" (label only — the two logins stay separate)"))
 			}
@@ -113,6 +140,8 @@ func newDesktopAddCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&email, "email", "", "email to show in the listing (also matches a stored account)")
+	cmd.Flags().BoolVar(&noSeed, "no-seed", false,
+		"start from an empty profile instead of copying settings from your existing Claude Desktop install")
 	return cmd
 }
 
@@ -212,6 +241,7 @@ func newDesktopListCmd() *cobra.Command {
 				return nil
 			}
 			app := desktop.New()
+			shareRoot := sharedRootOrEmpty()
 			fmt.Fprintln(out, HeaderStyle.Render("Claude Desktop profiles"))
 			for _, p := range all {
 				marker, state := "  ", DimStyle.Render("closed")
@@ -222,6 +252,9 @@ func newDesktopListCmd() *cobra.Command {
 					marker, state = OkStyle.Render("● "), OkStyle.Render("open")
 				}
 				line := fmt.Sprintf("%s%s  %s", marker, p.Label(), state)
+				if profileShareState(p, shareRoot) {
+					line += "  " + DimStyle.Render("shared history")
+				}
 				if p.AccountID != "" {
 					line += "  " + DimStyle.Render("↔ "+p.AccountID)
 				}
@@ -352,35 +385,42 @@ type desktopProfileJSON struct {
 	AccountID   string `json:"accountId,omitempty"`
 	Open        bool   `json:"open"`
 	OpenUnknown bool   `json:"openUnknown,omitempty"`
-	DataDir     string `json:"dataDir"`
-	CreatedAt   string `json:"createdAt,omitempty"`
-	LastOpened  string `json:"lastOpened,omitempty"`
+	// SharedHistory reports whether this profile's session history is linked to
+	// the shared tree (and therefore covered by `clauderig sync`).
+	SharedHistory bool   `json:"sharedHistory"`
+	DataDir       string `json:"dataDir"`
+	CreatedAt     string `json:"createdAt,omitempty"`
+	LastOpened    string `json:"lastOpened,omitempty"`
 }
 
 type desktopListJSON struct {
-	Supported bool                 `json:"supported"`
-	Installed bool                 `json:"installed"`
-	AppPath   string               `json:"appPath,omitempty"`
-	Profiles  []desktopProfileJSON `json:"profiles"`
+	Supported  bool                 `json:"supported"`
+	Installed  bool                 `json:"installed"`
+	AppPath    string               `json:"appPath,omitempty"`
+	SharedRoot string               `json:"sharedRoot,omitempty"`
+	Profiles   []desktopProfileJSON `json:"profiles"`
 }
 
 func printDesktopJSON(w interface{ Write([]byte) (int, error) }, _ *desktop.Store, all []desktop.Profile) error {
 	app := desktop.New()
 	path, installed := app.Installed()
+	shareRoot := sharedRootOrEmpty()
 	out := desktopListJSON{
-		Supported: desktop.Supported(),
-		Installed: installed,
-		AppPath:   path,
-		Profiles:  make([]desktopProfileJSON, 0, len(all)),
+		Supported:  desktop.Supported(),
+		Installed:  installed,
+		AppPath:    path,
+		SharedRoot: shareRoot,
+		Profiles:   make([]desktopProfileJSON, 0, len(all)),
 	}
 	for _, p := range all {
 		row := desktopProfileJSON{
-			Name:       p.Name,
-			Email:      p.Email,
-			AccountID:  p.AccountID,
-			DataDir:    p.DataDir(),
-			CreatedAt:  p.CreatedAt,
-			LastOpened: p.LastOpened,
+			Name:          p.Name,
+			Email:         p.Email,
+			AccountID:     p.AccountID,
+			DataDir:       p.DataDir(),
+			CreatedAt:     p.CreatedAt,
+			LastOpened:    p.LastOpened,
+			SharedHistory: profileShareState(p, shareRoot),
 		}
 		// A failed scan is reported as such rather than as `open: false`, so a
 		// script cannot mistake "could not look" for "not running".
@@ -512,6 +552,7 @@ func runDesktopUI(cmd *cobra.Command) error {
 			return lerr
 		}
 		_, installed := app.Installed()
+		shareRoot := sharedRootOrEmpty()
 		rows := make([]tui.DesktopRow, 0, len(all))
 		for _, p := range all {
 			var open, unknown bool
@@ -529,6 +570,7 @@ func runDesktopUI(cmd *cobra.Command) error {
 				// derive "open" and "unknown" from different snapshots.
 				Open:        open,
 				OpenUnknown: unknown,
+				Shared:      profileShareState(p, shareRoot),
 			})
 		}
 		res, rerr := tea.NewProgram(tui.NewDesktop(rows, installed, desktop.Supported(), note)).Run()
@@ -596,6 +638,44 @@ func runDesktopUI(cmd *cobra.Command) error {
 				continue
 			}
 			note = "closed " + p.Label()
+		case "toggle-share":
+			p, gerr := st.Get(final.Action.Name)
+			if gerr != nil {
+				note = ErrStyle.Render(gerr.Error())
+				continue
+			}
+			root, rerr := resolveSharedRoot()
+			if rerr != nil {
+				note = ErrStyle.Render(rerr.Error())
+				continue
+			}
+			// Re-check rather than trust the snapshot the screen was drawn from:
+			// the window may have been opened since.
+			if openNow, cerr := desktop.IsRunning(app, p.DataDir()); cerr != nil || openNow {
+				note = WarnStyle.Render("close " + p.Name + " first — its session directory cannot be moved while it is open")
+				continue
+			}
+			if desktop.ShareStatus(p, root.Path, desktop.SharedDirs).Shared(desktop.SharedDirs) {
+				if uerr := desktop.Unshare(p, root.Path, desktop.SharedDirs); uerr != nil {
+					note = ErrStyle.Render(uerr.Error())
+					continue
+				}
+				note = p.Name + " now has its own session history (the shared history is untouched)"
+				continue
+			}
+			results, serr := desktop.Share(p, root.Path, desktop.SharedDirs)
+			if serr != nil {
+				note = ErrStyle.Render(serr.Error())
+				continue
+			}
+			migrated := 0
+			for _, r := range results {
+				migrated += r.Migrated
+			}
+			note = fmt.Sprintf("%s now shares session history (%d migrated)", p.Name, migrated)
+			if !root.Backed() {
+				note += " — note: the desktop sync root is disabled, so it is not backed up"
+			}
 		case "remove":
 			p, gerr := st.Get(final.Action.Name)
 			if gerr != nil {

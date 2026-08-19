@@ -140,3 +140,22 @@ func TestSaveLoad(t *testing.T) {
 		t.Errorf("config.json missing the $schema stamp:\n%s", body)
 	}
 }
+
+// The keep-list is shared by sync (which prunes the synced copy) and by profile
+// seeding (which rebuilds a new profile's config from it). It is the single
+// place deciding what is safe to copy out of Desktop's config.json, so the
+// credential-bearing keys must never appear in it.
+func TestDesktopConfigKeepKeysExcludeTheLogin(t *testing.T) {
+	for _, k := range DesktopConfigKeepKeys() {
+		switch k {
+		case "oauth:tokenCache", "oauth:tokenCacheV2", "lastKnownAccountUuid":
+			t.Fatalf("%q is credential/identity-bearing and must never be copied", k)
+		}
+	}
+	want := map[string]bool{"preferences": true, "locale": true, "userThemeMode": true}
+	for _, k := range DesktopConfigKeepKeys() {
+		if !want[k] {
+			t.Errorf("unvetted key %q in the keep-list — additions here widen what sync and seeding copy", k)
+		}
+	}
+}

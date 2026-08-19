@@ -390,7 +390,7 @@ func sourceLoc(opts Options, rootID string) (string, pathmap.Status) {
 // ("oauth:tokenCache"), not nested.
 func keepOnly(rootID, rel string) []string {
 	if rootID == "desktop" && rel == "config.json" {
-		return []string{"preferences", "locale", "userThemeMode"}
+		return config.DesktopConfigKeepKeys()
 	}
 	return nil
 }
