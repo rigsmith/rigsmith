@@ -221,3 +221,65 @@ func TestShareCreatesTheSharedTreeWhenAbsent(t *testing.T) {
 		t.Fatalf("shared tree was not created: %v", err)
 	}
 }
+
+// The failure that matters: if the link cannot be created, the profile must be
+// left exactly as it was. Deleting first would leave it with NO session
+// directory, and Claude Desktop would quietly build a fresh empty tree there.
+func TestShareRestoresTheOriginalWhenLinkingFails(t *testing.T) {
+	_, p, root := shareFixture(t)
+	own := filepath.Join(p.DataDir(), "claude-code-sessions")
+	writeFile(t, filepath.Join(own, "acct-a", "s1.json"), "history")
+
+	// Force linkDir to fail by occupying the link path with a file that Rename
+	// cannot replace... instead, make the parent read-only after migration.
+	orig := linkDirFn
+	linkDirFn = func(target, link string) error { return errTestLinkFailed }
+	t.Cleanup(func() { linkDirFn = orig })
+
+	if _, err := Share(p, root, SharedDirs); err == nil {
+		t.Fatal("Share reported success even though linking failed")
+	}
+	// The profile still has its own directory, with its history in it.
+	fi, err := os.Lstat(own)
+	if err != nil {
+		t.Fatalf("the profile was left with no session directory: %v", err)
+	}
+	if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("expected the original directory back, got mode %v", fi.Mode())
+	}
+	if got := readFile(t, filepath.Join(own, "acct-a", "s1.json")); got != "history" {
+		t.Fatalf("restored history = %q", got)
+	}
+	// No stash left lying around.
+	if _, serr := os.Stat(own + ".clauderig-stash"); !os.IsNotExist(serr) {
+		t.Fatal("a stash directory was left behind")
+	}
+	// Retrying after the cause is fixed is a no-op on the shared tree, because
+	// mergeTree never overwrites what the first attempt already copied.
+	linkDirFn = orig
+	results, rerr := Share(p, root, SharedDirs)
+	if rerr != nil {
+		t.Fatalf("retry failed: %v", rerr)
+	}
+	if results[0].Migrated != 0 || results[0].Skipped != 1 {
+		t.Fatalf("retry results = %+v, want the earlier copy recognised, not duplicated", results)
+	}
+}
+
+func TestUnshareLeavesADirectoryEvenIfItMustRollBack(t *testing.T) {
+	_, p, root := shareFixture(t)
+	if _, err := Share(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	if err := Unshare(p, root, SharedDirs); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(p.DataDir(), "claude-code-sessions")
+	fi, err := os.Lstat(link)
+	if err != nil || !fi.IsDir() {
+		t.Fatalf("no usable directory after unshare: %v", err)
+	}
+	if _, serr := os.Stat(link + ".clauderig-new"); !os.IsNotExist(serr) {
+		t.Fatal("a scratch directory was left behind")
+	}
+}

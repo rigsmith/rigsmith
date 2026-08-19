@@ -33,6 +33,13 @@ import (
 // Nothing is deleted: migration copies into the shared tree and never overwrites
 // an existing file, and `unshare` leaves the shared history in place.
 
+// linkDirFn is indirected so a test can force the one failure that matters —
+// the link refusing to be created — without arranging a privilege error.
+var linkDirFn = linkDir
+
+// errTestLinkFailed is used only by tests, through linkDirFn.
+var errTestLinkFailed = errors.New("link creation failed")
+
 // SharedDirs are the session trees `share` links. `claude-code-sessions` is the
 // Claude Code history shown in Desktop's Code tab — small, and the thing worth
 // sharing. The Cowork tree is opt-in (see CoworkDir): it is two orders of
@@ -157,29 +164,63 @@ func Share(p Profile, sharedRoot string, dirs []string) ([]ShareResult, error) {
 			continue
 		}
 		res := ShareResult{Dir: d}
+
+		// Move the existing directory ASIDE rather than deleting it, and put it
+		// back if the link cannot be created. Deleting first means a failure
+		// here — a Windows junction refused for want of privilege is the
+		// realistic case — leaves the profile with NO session directory at all,
+		// and Claude Desktop would then quietly build a fresh empty tree in its
+		// place. The stash is removed only once the profile points at the shared
+		// tree.
+		stash := link + ".clauderig-stash"
+		_ = os.RemoveAll(stash) // a stash from an interrupted earlier run
+		stashed := false
+
 		fi, lerr := os.Lstat(link)
 		switch {
 		case lerr == nil && fi.Mode()&os.ModeSymlink != 0:
-			// A link pointing somewhere else: replace it, nothing to migrate.
-			if rerr := os.Remove(link); rerr != nil {
+			// A link pointing somewhere else: nothing of the profile's own to
+			// migrate, but keep it until the replacement exists.
+			if rerr := os.Rename(link, stash); rerr != nil {
 				return out, rerr
 			}
+			stashed = true
 		case lerr == nil && fi.IsDir():
 			// A real directory: its contents are this profile's own history and
-			// must reach the shared tree before the directory goes away.
+			// must reach the shared tree before the directory goes anywhere.
 			migrated, skipped, merr := mergeTree(link, target)
 			if merr != nil {
 				return out, fmt.Errorf("migrate %s into the shared tree: %w", d, merr)
 			}
 			res.Migrated, res.Skipped = migrated, skipped
-			if rerr := os.RemoveAll(link); rerr != nil {
+			if rerr := os.Rename(link, stash); rerr != nil {
 				return out, rerr
 			}
+			stashed = true
 		case lerr == nil:
 			return out, fmt.Errorf("%s exists and is not a directory", link)
 		}
-		if err := linkDir(target, link); err != nil {
+
+		if err := linkDirFn(target, link); err != nil {
+			if stashed {
+				// Restore, so the failure leaves the profile exactly as it was.
+				// The migrated copies stay in the shared tree; they are additions
+				// there, and mergeTree never overwrites, so a later retry is a
+				// no-op rather than a duplication.
+				if rerr := os.Rename(stash, link); rerr != nil {
+					return out, fmt.Errorf(
+						"link %s to the shared tree: %w; AND the original could not be restored: %v.\n"+
+							"The profile's history is at %s — move it back to %s by hand",
+						d, err, rerr, stash, link)
+				}
+			}
 			return out, fmt.Errorf("link %s to the shared tree: %w", d, err)
+		}
+		if stashed {
+			if rerr := os.RemoveAll(stash); rerr != nil {
+				return out, fmt.Errorf("linked %s, but the old copy at %s could not be removed: %w",
+					d, stash, rerr)
+			}
 		}
 		out = append(out, res)
 	}
@@ -195,14 +236,27 @@ func Share(p Profile, sharedRoot string, dirs []string) ([]ShareResult, error) {
 func Unshare(p Profile, sharedRoot string, dirs []string) error {
 	for _, d := range dirs {
 		link := filepath.Join(p.DataDir(), d)
-		if !linkPointsAt(link, filepath.Join(sharedRoot, d)) {
+		target := filepath.Join(sharedRoot, d)
+		if !linkPointsAt(link, target) {
 			continue // not ours to undo
 		}
-		if err := os.Remove(link); err != nil {
+		// Build the replacement BEFORE removing the link, then swap, so a
+		// failure never leaves the profile without a session directory.
+		fresh := link + ".clauderig-new"
+		_ = os.RemoveAll(fresh)
+		if err := os.MkdirAll(fresh, 0o700); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(link, 0o700); err != nil {
+		if err := os.Remove(link); err != nil {
+			_ = os.RemoveAll(fresh)
 			return err
+		}
+		if err := os.Rename(fresh, link); err != nil {
+			// Put the link back rather than leave nothing behind.
+			if lerr := linkDirFn(target, link); lerr != nil {
+				return fmt.Errorf("unshare %s: %w; AND the shared link could not be restored: %v", d, err, lerr)
+			}
+			return fmt.Errorf("unshare %s: %w", d, err)
 		}
 	}
 	return nil

@@ -161,14 +161,28 @@ own directory. That location is the point: the Desktop allowlist already include
 `claude-code-sessions`, so sharing brings profile history into the existing
 backup with no new sync rules, no new root, and no new retention story.
 
+The root is resolved from your **saved** configuration, not the compiled-in
+defaults — `clauderig init` can persist the Desktop root disabled, and sync skips
+disabled roots. When that is the case `share` still links the profiles (the
+sharing itself is useful) but says plainly that the history is *not* backed up,
+rather than promising a backup that will never run.
+
 **Why this is safe.** Both session trees are already partitioned by account uuid
 — `claude-code-sessions/456fc32e-…/`, `claude-code-sessions/03d1c0c9-…/` — so two
 profiles signed into different accounts write to different subdirectories and
 cannot collide. Two profiles signed into the *same* account share one
 subdirectory, which is the intent rather than a bug.
 
-**Nothing is destroyed.** Existing history is copied into the shared tree before
-the directory is replaced, and migration **never overwrites**: a file already
+**Nothing is destroyed, and a failure changes nothing.** The existing directory
+is moved aside rather than deleted, and put back if the link cannot be created —
+a Windows junction refused for want of privilege being the realistic case.
+Deleting first would leave the profile with *no* session directory, and Claude
+Desktop would quietly build a fresh empty tree in its place. Retrying after the
+cause is fixed is a no-op rather than a duplication, because migration never
+overwrites what the first attempt already copied.
+
+Existing history is copied into the shared tree before the directory moves, and
+migration **never overwrites**: a file already
 present is left exactly as it is and counted as skipped (enforced with `O_EXCL`,
 not just a pre-check, so a concurrent writer cannot slip in between). The shared
 tree may hold the default profile's own history, and clobbering that would

@@ -6,33 +6,72 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/spf13/cobra"
 )
 
-// sharedSessionRoot is the default Desktop root — the app-support directory the
-// plain, un-profiled Claude Desktop uses.
+// sharedRoot is the tree profiles link their session history into, plus whether
+// `clauderig sync` will actually back it up.
+type sharedRoot struct {
+	Path string
+	// SyncedBy is the root id covering Path in the SAVED config, or "" when
+	// nothing does. Sharing still works then — it just is not a backup, and
+	// saying so would be a lie.
+	SyncedBy string
+}
+
+// Backed reports whether the shared tree is covered by an enabled sync root.
+func (s sharedRoot) Backed() bool { return s.SyncedBy != "" }
+
+// resolveSharedRoot finds the Desktop application-support directory and decides
+// whether sync covers it.
 //
-// That location is the point of the whole feature: `clauderig sync` already
-// watches it (the Desktop allowlist includes `claude-code-sessions`), so linking
-// profiles there brings their history into the existing backup with no new sync
-// rules. A neutral directory under ~/.clauderig would need its own root, its own
-// allowlist, and its own retention story.
-func sharedSessionRoot() (string, error) {
+// Resolved from the SAVED configuration rather than the compiled-in defaults:
+// `clauderig init` can persist the Desktop root disabled, and sync skips
+// disabled roots — so reading the defaults would let `share` promise a backup
+// that will never happen. The location itself still falls back to the default
+// when no config names it, because the directory exists regardless of whether
+// clauderig has been told to sync it.
+func resolveSharedRoot() (sharedRoot, error) {
+	cfg, err := config.LoadOrDefault()
+	if err != nil {
+		return sharedRoot{}, err
+	}
+	me := config.Detect(machineName(cfg))
+	for _, r := range cfg.Roots {
+		if r.ID != desktopRootID {
+			continue
+		}
+		loc, st := cfg.RootLocation(r.ID, me)
+		if st != pathmap.StatusResolved || loc == "" {
+			break
+		}
+		out := sharedRoot{Path: loc}
+		if r.Enabled {
+			out.SyncedBy = r.ID
+		}
+		return out, nil
+	}
+	// No usable Desktop root in the config: fall back to the platform default so
+	// sharing still works, but claim nothing about backup.
 	m := config.Detect("")
 	for _, r := range config.DefaultRoots() {
-		if r.ID != "desktop" {
+		if r.ID != desktopRootID {
 			continue
 		}
 		res := m.Resolver().Resolve(r.Location.RawFor(m.OS))
 		if res.Path == "" {
-			return "", errors.New("could not resolve the Claude Desktop application-support directory")
+			break
 		}
-		return res.Path, nil
+		return sharedRoot{Path: res.Path}, nil
 	}
-	return "", errors.New("no desktop root configured")
+	return sharedRoot{}, errors.New("could not resolve the Claude Desktop application-support directory")
 }
+
+// desktopRootID is the sync root covering Desktop's application-support tree.
+const desktopRootID = "desktop"
 
 // sharedDirsFor is the set of session trees to act on.
 func sharedDirsFor(includeCowork bool) []string {
@@ -101,7 +140,7 @@ func runShare(cmd *cobra.Command, args []string, cowork, all, on bool) error {
 	if err != nil {
 		return err
 	}
-	root, err := sharedSessionRoot()
+	root, err := resolveSharedRoot()
 	if err != nil {
 		return err
 	}
@@ -133,13 +172,13 @@ func runShare(cmd *cobra.Command, args []string, cowork, all, on bool) error {
 
 	for _, p := range targets {
 		if !on {
-			if uerr := desktop.Unshare(p, root, dirs); uerr != nil {
+			if uerr := desktop.Unshare(p, root.Path, dirs); uerr != nil {
 				return uerr
 			}
 			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ unshared"), p.Label())
 			continue
 		}
-		results, serr := desktop.Share(p, root, dirs)
+		results, serr := desktop.Share(p, root.Path, dirs)
 		if serr != nil {
 			return serr
 		}
@@ -155,8 +194,18 @@ func runShare(cmd *cobra.Command, args []string, cowork, all, on bool) error {
 		}
 	}
 	if on {
-		fmt.Fprintf(out, "%s\n", DimStyle.Render("shared tree: "+root))
-		fmt.Fprintf(out, "%s\n", DimStyle.Render("`clauderig sync` already covers it, so this history is backed up now too"))
+		fmt.Fprintf(out, "%s\n", DimStyle.Render("shared tree: "+root.Path))
+		if root.Backed() {
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(
+				"`clauderig sync` already covers it, so this history is backed up now too"))
+		} else {
+			// Never claim a backup that will not happen: the Desktop root is
+			// absent or disabled in the saved config, and sync skips it.
+			fmt.Fprintf(out, "%s\n", WarnStyle.Render(
+				"note: the desktop sync root is disabled, so this history is NOT backed up"))
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(
+				"  enable it in `clauderig config` (or re-run `clauderig init`) to include it"))
+		}
 	} else {
 		fmt.Fprintf(out, "%s\n", DimStyle.Render("the shared history is untouched — nothing was deleted"))
 	}
@@ -198,15 +247,15 @@ func profileShareState(p desktop.Profile, root string) bool {
 	return desktop.ShareStatus(p, root, desktop.SharedDirs).Shared(desktop.SharedDirs)
 }
 
-// sharedRootOrEmpty resolves the shared root for display paths, where a failure
-// should degrade to "not sharing" rather than break the listing.
+// sharedRootOrEmpty resolves the shared tree's path for listings, where a
+// failure should degrade to "not sharing" rather than break the output.
 func sharedRootOrEmpty() string {
-	root, err := sharedSessionRoot()
+	root, err := resolveSharedRoot()
 	if err != nil {
 		return ""
 	}
-	if _, serr := os.Stat(filepath.Dir(root)); serr != nil {
+	if _, serr := os.Stat(filepath.Dir(root.Path)); serr != nil {
 		return ""
 	}
-	return root
+	return root.Path
 }

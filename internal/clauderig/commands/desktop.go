@@ -617,7 +617,7 @@ func runDesktopUI(cmd *cobra.Command) error {
 				note = ErrStyle.Render(gerr.Error())
 				continue
 			}
-			root, rerr := sharedSessionRoot()
+			root, rerr := resolveSharedRoot()
 			if rerr != nil {
 				note = ErrStyle.Render(rerr.Error())
 				continue
@@ -628,15 +628,15 @@ func runDesktopUI(cmd *cobra.Command) error {
 				note = WarnStyle.Render("close " + p.Name + " first — its session directory cannot be moved while it is open")
 				continue
 			}
-			if desktop.ShareStatus(p, root, desktop.SharedDirs).Shared(desktop.SharedDirs) {
-				if uerr := desktop.Unshare(p, root, desktop.SharedDirs); uerr != nil {
+			if desktop.ShareStatus(p, root.Path, desktop.SharedDirs).Shared(desktop.SharedDirs) {
+				if uerr := desktop.Unshare(p, root.Path, desktop.SharedDirs); uerr != nil {
 					note = ErrStyle.Render(uerr.Error())
 					continue
 				}
 				note = p.Name + " now has its own session history (the shared history is untouched)"
 				continue
 			}
-			results, serr := desktop.Share(p, root, desktop.SharedDirs)
+			results, serr := desktop.Share(p, root.Path, desktop.SharedDirs)
 			if serr != nil {
 				note = ErrStyle.Render(serr.Error())
 				continue
@@ -646,6 +646,9 @@ func runDesktopUI(cmd *cobra.Command) error {
 				migrated += r.Migrated
 			}
 			note = fmt.Sprintf("%s now shares session history (%d migrated)", p.Name, migrated)
+			if !root.Backed() {
+				note += " — note: the desktop sync root is disabled, so it is not backed up"
+			}
 		case "remove":
 			p, gerr := st.Get(final.Action.Name)
 			if gerr != nil {
