@@ -77,6 +77,7 @@ func autoRestoreIfFresh(ctx context.Context, out io.Writer, cfg *config.Config, 
 	}
 	if rep, err := engine.Restore(engine.RestoreOptions{
 		StagingDir: staging, Config: cfg, Machine: me, Manifest: man, Prune: cfg.AlwaysPrune,
+		Profiles: engine.StagedProfileNames(staging),
 	}); err == nil {
 		fmt.Fprintln(out, "clauderig: fresh machine — auto-restored from sync")
 		if n := rep.DesktopSessions(); n > 0 {

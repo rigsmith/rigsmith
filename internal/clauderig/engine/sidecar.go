@@ -105,12 +105,26 @@ func stagedTranscriptIDs(projectsDir string) (ids map[string]bool, ok bool) {
 // have the copy stage and the staging prune disagree about sidecars whose
 // transcript is absent for a reason other than age (an oversized transcript the
 // size cap dropped, say), so each sync would re-add what the last one removed.
-func pruneOrphanedSidecars(stagingDir string) (int, error) {
+// Applied to every staged Desktop tree — the machine-wide install and each
+// profile — because they hold the same sidecars pointing into the same shared
+// CLI transcripts, and one clock has to govern all of them.
+func pruneOrphanedSidecars(stagingDir string, rootIDs []string) (int, error) {
 	ids, ok := stagedTranscriptIDs(filepath.Join(stagingDir, "cli", "projects"))
 	if !ok {
 		return 0, nil
 	}
-	root := filepath.Join(stagingDir, "desktop", sidecarTree)
+	total := 0
+	for _, id := range rootIDs {
+		n, err := pruneSidecarTree(filepath.Join(stagingDir, id, sidecarTree), ids)
+		total += n
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
+func pruneSidecarTree(root string, ids map[string]bool) (int, error) {
 	if !dirExists(root) {
 		return 0, nil
 	}

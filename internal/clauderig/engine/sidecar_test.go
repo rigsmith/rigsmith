@@ -37,7 +37,7 @@ func TestPruneOrphanedSidecars(t *testing.T) {
 	orphan := stageSidecar(t, staging, "claude-code-sessions", "c", "gone-9")
 	noRef := stageSidecar(t, staging, "claude-code-sessions", "d", "")
 
-	n, err := pruneOrphanedSidecars(staging)
+	n, err := pruneOrphanedSidecars(staging, []string{"desktop"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestPruneOrphanedSidecars_LeavesAgentModeAlone(t *testing.T) {
 	stageTranscript(t, staging, "-Users-john-p", "live-1")
 	agent := stageSidecar(t, staging, "local-agent-mode-sessions", "b", "sandbox-only-session")
 
-	n, err := pruneOrphanedSidecars(staging)
+	n, err := pruneOrphanedSidecars(staging, []string{"desktop"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestPruneOrphanedSidecars_FailsOpenWithoutTranscripts(t *testing.T) {
 			}
 			s := stageSidecar(t, staging, "claude-code-sessions", "a", "some-session")
 
-			n, err := pruneOrphanedSidecars(staging)
+			n, err := pruneOrphanedSidecars(staging, []string{"desktop"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -119,7 +119,7 @@ func TestPruneOrphanedSidecars_OldSidecarWithLiveTranscriptSurvives(t *testing.T
 		t.Fatal(err)
 	}
 
-	if n, err := pruneOrphanedSidecars(staging); err != nil || n != 0 {
+	if n, err := pruneOrphanedSidecars(staging, []string{"desktop"}); err != nil || n != 0 {
 		t.Fatalf("pruned = %d, err = %v; a 90-day-old sidecar with a live transcript must survive", n, err)
 	}
 	if _, err := os.Stat(s); err != nil {
@@ -232,7 +232,7 @@ func TestStagedTranscriptIDs_UnreadableSubtreeFailsOpen(t *testing.T) {
 	}
 	// And the prune built on it removes nothing.
 	s := stageSidecar(t, staging, "claude-code-sessions", "a", "hidden-1")
-	n, err := pruneOrphanedSidecars(staging)
+	n, err := pruneOrphanedSidecars(staging, []string{"desktop"})
 	if err != nil {
 		t.Fatal(err)
 	}

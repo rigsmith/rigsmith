@@ -5,14 +5,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 )
 
 // A Desktop profile directory holds that account's entire logged-in session —
-// cookies, token cache, the lot. If it ever fell inside a sync root, `clauderig
-// sync` would push live credentials to the remote. The store therefore lives
-// under ~/.clauderig, outside every root, and this test is the tripwire for
-// anyone who later moves either one.
+// cookies, token cache, the lot. Sync does reach inside a profile, but only
+// through the same include-only allowlist it applies to the machine-wide install
+// (engine/profiles.go), which reaches named session and config files and nothing
+// else.
+//
+// What must never happen is the store falling INSIDE a configured root, because
+// then the root's own walk would sweep the whole tree — every profile, every
+// file, credentials included — with no allowlist standing between it and the
+// remote. The store therefore lives under ~/.clauderig, outside every root, and
+// this test is the tripwire for anyone who later moves either one.
 func TestDesktopProfilesLiveOutsideEverySyncRoot(t *testing.T) {
 	st, err := desktopStore()
 	if err != nil {
@@ -44,5 +52,29 @@ func TestDesktopStoreIsUnderClauderig(t *testing.T) {
 	}
 	if parent := filepath.Base(filepath.Dir(st.Root)); parent != ".clauderig" {
 		t.Fatalf("profile store parent = %q, want \".clauderig\"", parent)
+	}
+}
+
+// Sync derives a profile's location from a $HOME-relative template so it
+// resolves on a machine that has never run `clauderig desktop` — which means the
+// engine and the profile store compute the same path by two different routes. If
+// either moves, sync would walk a directory nothing writes to and report a clean
+// backup of nothing.
+func TestSyncResolvesProfilesWhereTheStoreKeepsThem(t *testing.T) {
+	st, err := desktopStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := config.Detect("test")
+	if m.Home == "" {
+		t.Skip("no home directory on this machine")
+	}
+	got, status := engine.ProfileDataDir("work", m)
+	if status != pathmap.StatusResolved {
+		t.Fatalf("ProfileDataDir status = %v, want resolved", status)
+	}
+	want := filepath.Join(st.Root, "work", "data")
+	if filepath.Clean(got) != filepath.Clean(want) {
+		t.Fatalf("sync would read %q, but the store writes %q", got, want)
 	}
 }

@@ -60,6 +60,10 @@ type Options struct {
 	// drives path translation (portablize/manifest); this only decouples WHERE the
 	// files are read from — symmetric with restore's TargetOverride.
 	SourceOverride map[string]string
+	// Profiles names the Claude Desktop profiles to sync alongside the configured
+	// roots — see profiles.go. Each is walked as its own root, and they follow
+	// the Desktop root's enabled flag.
+	Profiles []string
 }
 
 // Sync materialises the allowlisted, redacted file set for each enabled root into
@@ -82,12 +86,12 @@ func Sync(opts Options) (*Report, error) {
 	// memory/ to their main project); recorded in the manifest for restore.
 	var cliLinks []allowlist.Link
 
-	for _, r := range opts.Config.Roots {
+	for _, r := range effectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
 			continue
 		}
 		rr := RootResult{ID: r.ID}
-		loc, st := sourceLoc(opts, r.ID)
+		loc, st := sourceLoc(opts, r)
 		if st != pathmap.StatusResolved || !dirExists(loc) {
 			rr.Skipped = true
 			rep.Roots = append(rep.Roots, rr)
@@ -276,7 +280,7 @@ func Sync(opts Options) (*Report, error) {
 	// the "no thrash" rule exists to prevent, so the emptiness check alone is not
 	// enough of a guard.
 	if cliSynced(rep) {
-		sidecarsPruned, err := pruneOrphanedSidecars(opts.StagingDir)
+		sidecarsPruned, err := pruneOrphanedSidecars(opts.StagingDir, desktopTreesIn(rep))
 		if err != nil {
 			return nil, err
 		}
@@ -284,7 +288,7 @@ func Sync(opts Options) (*Report, error) {
 	}
 
 	// Build the project manifest from the CLI root's projects dir.
-	if cliLoc, st := sourceLoc(opts, "cli"); st == pathmap.StatusResolved {
+	if cliLoc, st := cliSourceLoc(opts); st == pathmap.StatusResolved {
 		projects := filepath.Join(cliLoc, "projects")
 		if dirExists(projects) {
 			m, err := manifest.Build(projects, opts.ClaudeVersion, opts.Machine.OS, opts.Machine.Folders())
@@ -367,11 +371,19 @@ func Sync(opts Options) (*Report, error) {
 
 // sourceLoc resolves where a root's files are read from: the explicit override if
 // given (verbatim), else the machine-resolved root location.
-func sourceLoc(opts Options, rootID string) (string, pathmap.Status) {
-	if loc, ok := opts.SourceOverride[rootID]; ok {
+// cliSourceLoc resolves the CLI root, which several post-passes need by id.
+func cliSourceLoc(opts Options) (string, pathmap.Status) {
+	if loc, ok := opts.SourceOverride["cli"]; ok {
 		return loc, pathmap.StatusResolved
 	}
-	return opts.Config.RootLocation(rootID, opts.Machine)
+	return opts.Config.RootLocation("cli", opts.Machine)
+}
+
+func sourceLoc(opts Options, r config.Root) (string, pathmap.Status) {
+	if loc, ok := opts.SourceOverride[r.ID]; ok {
+		return loc, pathmap.StatusResolved
+	}
+	return r.ResolveOn(opts.Machine)
 }
 
 // keepOnly returns the top-level keys to retain for a file that's mostly volatile,
@@ -389,7 +401,7 @@ func sourceLoc(opts Options, rootID string) (string, pathmap.Status) {
 // or cache). Note Desktop's real keys are flat and colon-namespaced
 // ("oauth:tokenCache"), not nested.
 func keepOnly(rootID, rel string) []string {
-	if rootID == "desktop" && rel == "config.json" {
+	if isDesktopTree(rootID) && rel == "config.json" {
 		return config.DesktopConfigKeepKeys()
 	}
 	return nil
@@ -437,7 +449,7 @@ func scanNonJSON(srcPath, rel string, size int64) *redact.Finding {
 }
 
 func allowlistFor(rootID string) allowlist.List {
-	if rootID == "desktop" {
+	if isDesktopTree(rootID) {
 		return allowlist.Desktop()
 	}
 	return allowlist.CLI()

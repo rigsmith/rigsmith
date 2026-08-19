@@ -79,6 +79,11 @@ type RestoreOptions struct {
 	// aren't in the synced set — so a skill deleted upstream is deleted locally.
 	// Never touches projects/ (additive).
 	Prune bool
+	// Profiles names the Claude Desktop profiles to restore alongside the
+	// configured roots — see profiles.go. Read from the STAGING tree rather than
+	// from local state (engine.StagedProfileNames), so a machine that has never
+	// run `clauderig desktop` still gets every profile back.
+	Profiles []string
 }
 
 // Restore writes the staged file set back to this machine's roots, rewriting CLI
@@ -87,7 +92,7 @@ type RestoreOptions struct {
 // placeholder. Caller handles target-non-empty safety (backup/abort) first.
 func Restore(opts RestoreOptions) (*RestoreReport, error) {
 	rep := &RestoreReport{}
-	for _, r := range opts.Config.Roots {
+	for _, r := range effectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
 			continue
 		}
@@ -98,7 +103,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 		}
 		target, st := override, pathmap.StatusResolved
 		if !hasOverride {
-			target, st = opts.Config.RootLocation(r.ID, opts.Machine)
+			target, st = r.ResolveOn(opts.Machine)
 		}
 		stageRoot := filepath.Join(opts.StagingDir, r.ID)
 		if st != pathmap.StatusResolved || !dirExists(stageRoot) {
@@ -139,7 +144,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			}
 			written[targetRel] = true
 			rr.Files++
-			if r.ID == "desktop" && isDesktopSessionSidecar(targetRel) {
+			if isDesktopTree(r.ID) && isDesktopSessionSidecar(targetRel) {
 				rr.DesktopSessions++
 			}
 		}

@@ -54,6 +54,13 @@ func Desktop() List {
 		// so no downstream pass can make them safe and the exclusion has to happen
 		// here. The sidecar local_<id>.json FILE beside it is the session metadata we
 		// actually want, re-included by the longer (higher-scoring) pattern below.
+		// skills-plugin is not a session at all: it is the app's local copy of the
+		// bundled skills (docx/pptx/xlsx/pdf/skill-creator), ~8 MB of vendored
+		// scripts and XSD schemas that Claude Desktop re-downloads on its own.
+		// Syncing it costs repo size and restore time and buys nothing — and once
+		// each Desktop PROFILE is walked as its own root, the same 8 MB would land
+		// once per account.
+		exc("local-agent-mode-sessions/skills-plugin"),
 		exc("local-agent-mode-sessions/*/*/local_*"),
 		inc("local-agent-mode-sessions/*/*/local_*.json"),
 		inc("claude_desktop_config.json"),

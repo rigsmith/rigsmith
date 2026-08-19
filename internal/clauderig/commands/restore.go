@@ -124,6 +124,10 @@ func NewRestoreCmd() *cobra.Command {
 			opts.Config = cfg
 			opts.Machine = me
 			opts.Manifest = man
+			// Driven by what is in the repo, not by what this machine already
+			// has: restoring onto a new computer is the case that matters, and
+			// there the profiles do not exist locally yet.
+			opts.Profiles = engine.StagedProfileNames(staging)
 			rep, err := engine.Restore(opts)
 			if err != nil {
 				return err

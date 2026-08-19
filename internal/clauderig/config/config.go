@@ -122,13 +122,16 @@ func DefaultRoots() []Root {
 func (c *Config) RootLocation(rootID string, m Machine) (string, pathmap.Status) {
 	for _, r := range c.Roots {
 		if r.ID == rootID {
-			return resolveRoot(r, m)
+			return r.ResolveOn(m)
 		}
 	}
 	return "", pathmap.StatusInvalid
 }
 
-func resolveRoot(r Root, m Machine) (string, pathmap.Status) {
+// ResolveOn resolves this root's location on machine m. Takes the root by value
+// rather than by id so a root synthesized at runtime — one per Claude Desktop
+// profile — resolves the same way as one read from the config file.
+func (r Root) ResolveOn(m Machine) (string, pathmap.Status) {
 	res := m.Resolver().Resolve(r.Location.RawFor(m.OS))
 	return res.Path, res.Status
 }

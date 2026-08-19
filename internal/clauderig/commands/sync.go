@@ -50,6 +50,7 @@ func NewSyncCmd() *cobra.Command {
 				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
 				RetentionDays: cfg.Retention.HistoryDays,
 				MaxFileBytes:  cfg.Retention.MaxFileBytes,
+				Profiles:      localProfileNames(),
 			})
 			if rep != nil {
 				for _, r := range rep.Roots {
