@@ -84,6 +84,9 @@ func NewSyncCmd() *cobra.Command {
 				if rep.RetentionPruned > 0 {
 					fmt.Fprintf(out, "  retention %d aged file(s) pruned from staging\n", rep.RetentionPruned)
 				}
+				if rep.SidecarsPruned > 0 {
+					fmt.Fprintf(out, "  sidecars  %d orphaned session(s) pruned from staging\n", rep.SidecarsPruned)
+				}
 			}
 			if serr != nil {
 				if rep != nil {
