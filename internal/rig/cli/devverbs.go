@@ -36,6 +36,18 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// env layer in commandEnv).
 			presetEnv = activePresetEnv(root, presets)
 
+			// Split at `--` BEFORE any dispatch. Tokens the user put after it
+			// belong to the underlying command and are never a selector:
+			// `rig test -- --logger=trx` forwards a flag, it does not name a test
+			// class. Computing this later meant --watch, rebuild and the bare
+			// picker each saw the forwarded tail as arguments — so
+			// `rig build --watch -- --verbose` read `--verbose` as a project name,
+			// and `rig build -- --verbose` skipped workspace selection entirely.
+			//
+			// selectors is what NAMES something; args stays whole, because the
+			// forwarded tokens still have to reach the command.
+			selectors := argsBeforeDash(cmd, args)
+
 			if all {
 				if watch {
 					return fmt.Errorf("--watch cannot be combined with --all")
@@ -46,20 +58,20 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// (the trailing form is folded onto the `watch` subcommand by the
 			// pre-parse pipeline; both land in runWatchVerb).
 			if watch {
-				return runWatchVerb(cmd, verb, args)
+				return runWatchVerb(cmd, verb, selectors, args)
 			}
 			// rebuild sequences clean → build, so it has no single argv to ride the
 			// generic project picker (which keys off each package's one command); it
 			// gets its own arg-scoping + package picker.
 			if verb == "rebuild" {
-				return runRebuildVerb(cmd, root, args, forcePick)
+				return runRebuildVerb(cmd, root, selectors, args, forcePick)
 			}
 			// `-i`/`--interactive` (no project arg) always opens the picker — even
 			// when a single target would otherwise run directly. `run` lists every
 			// runnable package and surfaced script; the --all verbs list every
 			// package (with "All packages"). With an explicit project arg the arg
 			// wins (below).
-			if forcePick && len(args) == 0 && (supportsAll || verb == "run") {
+			if forcePick && len(selectors) == 0 && (supportsAll || verb == "run") {
 				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll, true); handled {
 					return herr
 				}
@@ -67,21 +79,21 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// A first arg that names a package scopes the verb to that package.
 			// `run` matches against the per-binary expansion so `rig run rig`
 			// resolves a cmd/rig main, not just a module.
-			if len(args) > 0 {
+			if len(selectors) > 0 {
 				var ts []target
 				if verb == "run" {
 					ts = runTargets(cdContext(cmd), root)
 				} else {
 					ts = discoverWorkspace(cdContext(cmd), root, excludeFor(root))
 				}
-				matches := matchTargets(ts, args[0])
+				matches := matchTargets(ts, selectors[0])
 				// `rig run <name>`/`rig build <name>` matching several targets is
 				// usually one project duplicated across paths (a nested worktree).
 				// Offer a picker rather than failing or silently guessing. Other verbs
 				// keep the single-match rule: an ambiguous arg falls through (e.g.
 				// `rig test <filter>`).
 				if (verb == "run" || verb == "build") && len(matches) > 1 {
-					return verbAmbiguousPick(cmd, root, verb, args[0], matches, args[1:])
+					return verbAmbiguousPick(cmd, root, verb, selectors[0], matches, args[1:])
 				}
 				if len(matches) == 1 {
 					t := matches[0]
@@ -104,7 +116,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			eco, ecoErr := resolvePrimary(cwd, root)
 			// `rig test <class|~filter>` in a .NET repo: an arg that names no
 			// package is a test-class query / filter shorthand (TestVerb).
-			if ecoErr == nil && verb == "test" && eco == detect.DotNet && len(args) > 0 {
+			if ecoErr == nil && verb == "test" && eco == detect.DotNet && len(selectors) > 0 {
 				return runDotnetTest(cmd, root, args, false)
 			}
 			// A bare verb at a workspace root (packages only in subdirs) has no
@@ -113,7 +125,7 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 			// packages"; `run` gets a single-select of the runnable packages. This
 			// runs before the primary is required, so it works even when no
 			// primary resolves (the picker scopes the verb to a chosen package).
-			if len(args) == 0 && (supportsAll || verb == "run") {
+			if len(selectors) == 0 && (supportsAll || verb == "run") {
 				if handled, herr := offerWorkspaceChoice(cmd, root, verb, supportsAll, false); handled {
 					return herr
 				}
@@ -150,7 +162,10 @@ func devVerbCmd(verb, short string, supportsAll bool, aliases ...string) *cobra.
 		cmd.Flags().BoolVarP(&forcePick, "interactive", "i", false, usage)
 	}
 	presets = registerPresetFlags(cmd)
-	return cmd
+	// Whatever the verb doesn't consume is appended to the ecosystem command's
+	// argv, so `rig <verb> -- <flags>` reaches the underlying tool — the escape
+	// hatch an unknown flag points at.
+	return markForwards(cmd, "rig "+verb+" -- --verbose")
 }
 
 // verbCompletion picks the [project] completion source for a verb. `run`

@@ -116,8 +116,17 @@ func DefaultErrorHandler(w io.Writer, styles Styles, err error) {
 			return
 		}
 	}
+	// Local fork behavior (rigsmith): an error may carry more than a sentence —
+	// a headline, then an explanation and the command line that fixes it. The
+	// headline is rendered as the error sentence; the rest keeps the lines it
+	// was written with, because the wrapping applied to the sentence would
+	// reflow a command the reader is meant to copy.
+	headline, detail, multiline := strings.Cut(err.Error(), "\n")
 	_, _ = fmt.Fprintln(w, styles.ErrorHeader.String())
-	_, _ = fmt.Fprintln(w, styles.ErrorText.Render(err.Error()+"."))
+	_, _ = fmt.Fprintln(w, styles.ErrorText.Render(headline+"."))
+	if multiline {
+		_, _ = fmt.Fprintln(w, styles.ErrorText.UnsetWidth().UnsetTransform().Render(detail))
+	}
 	_, _ = fmt.Fprintln(w)
 	if isUsageError(err) {
 		_, _ = fmt.Fprintln(w, lipgloss.JoinHorizontal(

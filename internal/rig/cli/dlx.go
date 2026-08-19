@@ -14,7 +14,7 @@ import (
 // with the .NET 10 SDK) so a missing runtime gives clear guidance instead of a
 // raw "command not found".
 func newDlxCmd() *cobra.Command {
-	return &cobra.Command{
+	return markForwards(&cobra.Command{
 		Use:     "dlx [tool] [args...]",
 		Short:   "Run a tool once without installing",
 		Aliases: []string{"x"},
@@ -36,5 +36,5 @@ func newDlxCmd() *cobra.Command {
 			}
 			return runCommand(cmd, root, append(argv, args...))
 		},
-	}
+	}, "rig dlx prettier -- --write .")
 }

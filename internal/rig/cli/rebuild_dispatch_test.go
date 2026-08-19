@@ -59,7 +59,7 @@ func TestRebuildVerb_NoPrimaryOffersPackagesOffTTY(t *testing.T) {
 func TestRunRebuildVerb_UnknownProjectArg(t *testing.T) {
 	isolateGlobalConfig(t)
 	host, _ := newRunHost()
-	err := runRebuildVerb(host, t.TempDir(), []string{"nope"}, false)
+	err := runRebuildVerb(host, t.TempDir(), []string{"nope"}, []string{"nope"}, false)
 	if err == nil || !strings.Contains(err.Error(), "no workspace package") {
 		t.Fatalf("err = %v, want a no-such-package error", err)
 	}

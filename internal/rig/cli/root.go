@@ -135,6 +135,10 @@ func newRootCmd() *cobra.Command {
 			return nil
 		},
 	}
+	// An unknown flag is answered with the flag rig probably meant and, on the
+	// verbs that forward, the user's own command line rewritten past `--`
+	// (flagerr.go). Set on the root, so every subcommand inherits it.
+	root.SetFlagErrorFunc(flagErrorHint)
 	root.PersistentFlags().BoolVarP(&dryRun, "dry-run", "n", false, "print the command instead of running it")
 	root.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "suppress the → command echo")
 	root.PersistentFlags().BoolVar(&noEnv, "no-env", false, "skip .env/.env.local loading for this run")
@@ -243,7 +247,7 @@ func resolvePrimary(cwd, root string) (eco string, err error) {
 }
 
 func verbCmd(verb, short string, aliases ...string) *cobra.Command {
-	return &cobra.Command{
+	return markForwards(&cobra.Command{
 		Use:     verb,
 		Short:   short,
 		Aliases: aliases,
@@ -261,7 +265,7 @@ func verbCmd(verb, short string, aliases ...string) *cobra.Command {
 			argv = append(argv, args...)
 			return runCommand(cmd, root, argv)
 		},
-	}
+	}, "rig "+verb+" -- --verbose")
 }
 
 // runCommand runs an ecosystem verb's argv in dir, echoing it first unless quiet.

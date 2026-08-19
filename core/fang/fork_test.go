@@ -3,6 +3,7 @@ package fang_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -123,5 +124,67 @@ func TestRegisteredGroupRendered(t *testing.T) {
 	out := runHelp(t, root, nil, "--help")
 	if !strings.Contains(strings.ToLower(out), "input/output") || !strings.Contains(out, "load") {
 		t.Errorf("registered group title/command missing; got:\n%s", out)
+	}
+}
+
+// Local fork behavior (rigsmith): an error whose message runs past one line
+// carries a layout — a headline, then an explanation and the command that fixes
+// it. Only the headline is treated as the error sentence (title-cased, wrapped
+// to the terminal); the rest keeps the lines and indentation it was written
+// with, so a command line stays copy-pasteable on a narrow terminal.
+func TestMultiLineErrorKeepsItsLayout(t *testing.T) {
+	// NOT t.Setenv("__FANG_TEST_WIDTH", …): width is a package-level
+	// sync.OnceValue that earlier tests in this file have already resolved to
+	// 120, so setting it here would have no effect and the assertion below could
+	// pass against the old wrapping behaviour purely because the line is short.
+	// Use a fix line longer than the maximum cached width instead, so wrapping
+	// would definitely mangle it if the layout were not preserved.
+	const fix = "rig build -- --target=brave_browser_tests,brave_unit_tests,brave_installer_tests --config=Release --jobs=16 --out-dir=out/Release_x64"
+	root := &cobra.Command{
+		Use:          "demo",
+		SilenceUsage: true,
+		RunE: func(*cobra.Command, []string) error {
+			return errors.New("unknown flag: --target\n\nan explanation long enough that the sentence above it would have been wrapped\n\n    " + fix)
+		},
+	}
+
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetArgs(nil)
+	if err := fang.Execute(context.Background(), root); err == nil {
+		t.Fatal("want the command's error back")
+	}
+	out := buf.String()
+
+	// The headline is rendered as the error sentence.
+	if !strings.Contains(out, "Unknown flag: --target.") {
+		t.Errorf("headline missing or unstyled; got:\n%s", out)
+	}
+	// The fix survives on one line, indented, despite the 40-column width.
+	if !strings.Contains(out, "    "+fix) {
+		t.Errorf("the fix was reflowed or lost; got:\n%s", out)
+	}
+}
+
+// A single-line error is unchanged by the multi-line handling: one sentence,
+// wrapped as before.
+func TestSingleLineErrorIsUnchanged(t *testing.T) {
+	t.Setenv("__FANG_TEST_WIDTH", "120")
+	root := &cobra.Command{
+		Use:          "demo",
+		SilenceUsage: true,
+		RunE:         func(*cobra.Command, []string) error { return errors.New("no test project found") },
+	}
+
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetArgs(nil)
+	if err := fang.Execute(context.Background(), root); err == nil {
+		t.Fatal("want the command's error back")
+	}
+	if out := buf.String(); !strings.Contains(out, "No test project found.") {
+		t.Errorf("single-line error changed; got:\n%s", out)
 	}
 }
