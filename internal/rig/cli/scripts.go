@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/core/script"
@@ -25,17 +27,42 @@ import (
 // name is always required to run one.
 const scriptVerbAnnotation = "rigScriptVerb"
 
-// isBuiltinVerb is the set of names rig owns, so custom commands and surfaced
+// builtinVerbs is the set of names rig owns, so custom commands and surfaced
 // package.json scripts never shadow a built-in verb.
-var isBuiltinVerb = map[string]bool{
-	"build": true, "test": true, "run": true, "format": true, "lint": true,
-	"typecheck": true, "rebuild": true, "install": true, "ci": true, "add": true,
-	"uninstall": true, "outdated": true, "upgrade": true, "clean": true,
-	"global": true, "dlx": true, "coverage": true, "kill": true, "doctor": true,
-	"info": true, "ui": true, "cd": true, "init": true, "watch": true,
-	"publish": true, "default": true, "setup": true, "completion": true,
-	"config": true,
+//
+// DERIVED from the command tree rather than listed by hand. A literal list is a
+// second source of truth that drifts the moment a verb is added — `deps`,
+// `worktree`, `prune`, `copy`, `self-update` and `alias` were all missing from
+// it — and the failure is silent: a same-named config entry gets no shadow
+// warning and is treated as a discoverable script.
+//
+// newRootCmd() builds only the built-ins (Execute adds custom and package.json
+// commands afterwards), so this sees exactly the owned names, plus their
+// aliases, which shadow just as effectively.
+// Resolved on first use rather than at init: a package-level var referring to
+// newRootCmd is an initialization cycle, since building the tree reaches back
+// into this file.
+var (
+	builtinVerbsOnce sync.Once
+	builtinVerbsSet  map[string]bool
+)
+
+func builtinVerbs() map[string]bool {
+	builtinVerbsOnce.Do(func() {
+		owned := map[string]bool{}
+		for _, c := range newRootCmd().Commands() {
+			owned[c.Name()] = true
+			for _, a := range c.Aliases {
+				owned[a] = true
+			}
+		}
+		builtinVerbsSet = owned
+	})
+	return builtinVerbsSet
 }
+
+// isBuiltinVerbName reports whether name is a command rig itself owns.
+func isBuiltinVerbName(name string) bool { return builtinVerbs()[name] }
 
 // scriptEntry is one runnable script rig surfaces: a .rig.json custom command, a
 // package.json script, or a Go scripts//cmd verb. It is the shared source for
@@ -49,6 +76,11 @@ type scriptEntry struct {
 	short       string // the cobra command's help line
 	annotations map[string]string
 	run         func(cmd *cobra.Command, args []string) error
+	// plan resolves the entry without running it, for `rig explain`. It is the
+	// same resolution run performs — both call one resolver — so the two can't
+	// describe different commands. err is the resolution error a run would
+	// report (a custom command with no spec for this OS, an unloadable script).
+	plan func(args []string) (commandPlan, error)
 }
 
 // scriptEntryCmds turns script entries into rig subcommands. Unknown flags fall
@@ -118,8 +150,8 @@ func customScripts(cfg config.Config) []scriptEntry {
 	}
 	var entries []scriptEntry
 	for _, name := range names {
-		if isBuiltinVerb[name] {
-			continue
+		if isBuiltinVerbName(name) {
+			continue // shadowed by rig's own verb — reported by shadowedCommands
 		}
 		name, def := name, cfg.Commands[name]
 		entries = append(entries, scriptEntry{
@@ -127,6 +159,10 @@ func customScripts(cfg config.Config) []scriptEntry {
 			eco:   "custom",
 			loc:   loc,
 			short: customShort(name, def),
+			plan: func(args []string) (commandPlan, error) {
+				cwd, _ := os.Getwd()
+				return customPlan(cfg, resolveRoot(cwd), name, def, args)
+			},
 			run: func(cmd *cobra.Command, args []string) error {
 				cwd, _ := os.Getwd()
 				root := resolveRoot(cwd)
@@ -135,6 +171,94 @@ func customScripts(cfg config.Config) []scriptEntry {
 		})
 	}
 	return entries
+}
+
+// shadowedCommands lists the `commands` entries that name a verb rig already
+// owns, in name order. Such an entry is skipped when the command tree is built,
+// so it never runs — and because the built-in verb still works, the symptom is
+// rig quietly doing something other than what the config says, which reads as
+// rig malfunctioning rather than as a naming collision. Callers report it.
+func shadowedCommands(cfg config.Config) []string {
+	var out []string
+	for name := range cfg.Commands {
+		if isBuiltinVerbName(name) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// configProblems is everything non-fatal that is wrong with the loaded config:
+// the parse-time warnings (a malformed file degraded to defaults, an unknown
+// top-level key, a script file that wouldn't load) followed by every `commands`
+// entry a built-in verb shadows. One list, so the per-run notice, `rig info`
+// and `rig explain` report the same problems in the same words.
+func configProblems(cfg config.Config) []string {
+	problems := append([]string(nil), cfg.Warnings...)
+	for _, name := range shadowedCommands(cfg) {
+		problems = append(problems, shadowWarning(name, commandOrigin(cfg, name)))
+	}
+	return problems
+}
+
+// reportConfigProblems prints them once per run, ahead of whatever the command
+// was actually asked to do.
+//
+// The parse warnings were collected and never shown until now, which is the
+// worst of both worlds — the config reads as accepted while a key of it does
+// nothing. Two commands are exempt because they report the same problems in
+// their own output, and completion is exempt because a shell parses it.
+func reportConfigProblems(cmd *cobra.Command, cfg config.Config) {
+	switch cmd.Name() {
+	case cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+		return
+	case "explain", "info":
+		return
+	}
+	w := cmd.ErrOrStderr()
+	for _, p := range configProblems(cfg) {
+		fmt.Fprintln(w, warnStyle.Render("rig: "+p))
+	}
+}
+
+// printConfigProblems renders the problems as a section of a report (`rig info`,
+// `rig explain`), or nothing when the config is clean.
+func printConfigProblems(w io.Writer, cfg config.Config, header string) {
+	problems := configProblems(cfg)
+	if len(problems) == 0 {
+		return
+	}
+	if header != "" {
+		fmt.Fprintln(w, headerStyle.Render(header))
+	}
+	for _, p := range problems {
+		fmt.Fprintln(w, warnStyle.Render("  ! "+p))
+	}
+	fmt.Fprintln(w)
+}
+
+// shadowWarning is the sentence rig prints for a shadowed custom command. It
+// names the config file because the collision can come from the user-wide
+// ~/.rig.json, where it is least expected.
+// commandOrigin is the file that DECLARED a command, which is not necessarily
+// cfg.Path: after a merge, a global-only command sits in a config whose Path
+// names the repo file, so reporting Path would send the user to edit a file the
+// command is not in.
+func commandOrigin(cfg config.Config, name string) string {
+	if p := cfg.CommandPaths[name]; p != "" {
+		return p
+	}
+	return cfg.Path
+}
+
+func shadowWarning(name, configPath string) string {
+	where := config.FileName
+	if configPath != "" {
+		where = configPath
+	}
+	return fmt.Sprintf("%q in %s is a built-in rig verb, so that entry never runs — rename it (e.g. %q)",
+		name, where, name+":custom")
 }
 
 // customShort picks the help line for a custom command: its description if it
@@ -156,52 +280,34 @@ func customShort(name string, def *config.Command) string {
 	return "Custom command: " + name
 }
 
-// runCustom executes one custom command: the Tengo script form (cross-platform
-// builtins), or — resolving the spec for the current OS — the shell-string or
-// argv form. It applies the command's cwd (relative to the repo root) and env
-// (layered over .rig.json `env` and the ambient environment). Extra CLI args
-// are appended (shell/argv) or exposed as ctx.args (script).
+// runCustom executes one custom command: it resolves the command (customPlan —
+// the Tengo script form, or the shell-string / argv form for this OS, with cwd,
+// env layers and extra args folded in) and then runs what came back. Resolution
+// lives in customPlan so `rig explain` reads the same answer rather than
+// deriving its own.
 func runCustom(cmd *cobra.Command, cfg config.Config, root, name string, def *config.Command, args []string) error {
-	dir := root
-	if def.Cwd != "" {
-		dir = filepath.Join(root, def.Cwd)
+	p, err := customPlan(cfg, root, name, def, args)
+	if err != nil {
+		return err
 	}
+	return runPlan(cmd, cfg, p)
+}
 
-	// The Tengo script form is mutually exclusive with the command/argv/os forms.
-	if def.Script != nil {
-		if def.Spec != nil || def.OS != nil {
-			return fmt.Errorf("command %q sets both %q and %q — use one", name, "command", "script")
+// runPlan executes a resolved plan: a shell line through the portable or system
+// shell, an argv exec'd directly, or a Tengo script in-process.
+func runPlan(cmd *cobra.Command, cfg config.Config, p commandPlan) error {
+	env := layeredEnviron(p.layers)
+	switch p.kind {
+	case planScript:
+		return runScript(cmd, cfg, p)
+	case planShell:
+		if p.shell == shellrun.ShellPortable {
+			return runPortableIn(cmd, p.dir, env, p.line)
 		}
-		return runScript(cmd, cfg, root, dir, name, def, args)
+		return runIn(cmd, p.dir, env, p.line, p.argv...)
+	default:
+		return runIn(cmd, p.dir, env, p.line, p.argv...)
 	}
-
-	spec := def.Resolve()
-	if spec == nil {
-		return fmt.Errorf("command %q has no command defined for this OS", name)
-	}
-	env := customEnv(cfg, def.Env)
-
-	if spec.IsShell() {
-		// A shell-string command runs cross-platform by default: through the
-		// in-process portable shell, so one command line works on every OS. The
-		// "system" mode (config-level or per-command) opts back into the OS
-		// shell for scripts that need a real userland or OS-specific syntax.
-		mode, err := shellrun.ShellMode(coalesceShell(def.Shell, cfg.Shell))
-		if err != nil {
-			return fmt.Errorf("command %q: %w", name, err)
-		}
-		if mode == shellrun.ShellPortable {
-			return runPortableIn(cmd, dir, env, portableLine(spec.Shell, args))
-		}
-		display, argv := shellInvocation(spec.Shell, args)
-		return runIn(cmd, dir, env, display, argv...)
-	}
-
-	if len(spec.Argv) == 0 {
-		return fmt.Errorf("command %q has an empty argv", name)
-	}
-	argv := append(append([]string{}, spec.Argv...), args...)
-	return runIn(cmd, dir, env, strings.Join(argv, " "), argv...)
 }
 
 // runScript runs a custom command's Tengo script through the shared core/script
@@ -210,21 +316,11 @@ func runCustom(cmd *cobra.Command, cfg config.Config, root, name string, def *co
 // file ops go through the portable shell by default (system mode via the
 // command/config `shell`), so the script is cross-platform; in a dry run the
 // side effects are previewed, not performed.
-func runScript(cmd *cobra.Command, cfg config.Config, root, dir, name string, def *config.Command, args []string) error {
-	if def.Script.File != "" {
-		// loadCommandScripts left File set, so the read failed (a Warning says why).
-		return fmt.Errorf("command %q: script file %q could not be loaded (see `rig info`)", name, def.Script.File)
-	}
-
-	mode, err := shellrun.ShellMode(coalesceShell(def.Shell, cfg.Shell))
-	if err != nil {
-		return fmt.Errorf("command %q: %w", name, err)
-	}
-
-	envMap := customEnvMap(cfg, def.Env)
+func runScript(cmd *cobra.Command, cfg config.Config, p commandPlan) error {
+	envMap := mergedEnv(p.layers)
 	runnerEnv := envstack.Environ(envMap)
 	runner := shellrun.NewPortableRunner(runnerEnv)
-	if mode == shellrun.ShellSystem {
+	if p.shell == shellrun.ShellSystem {
 		runner = shellrun.NewExecRunner(runnerEnv)
 	}
 
@@ -232,9 +328,9 @@ func runScript(cmd *cobra.Command, cfg config.Config, root, dir, name string, de
 	// In a dry run RunnerHost previews sh()/file ops while the script's own logic
 	// still runs, so the command is exercised without side effects.
 	report := func(line string) { fmt.Fprintln(cmd.OutOrStdout(), line) }
-	host := script.RunnerHost(runner, dir, dryRun, report)
-	if err := script.Run(def.Script.Code, scriptContext(cfg, root, dir, args, envMap), host); err != nil {
-		return fmt.Errorf("command %q: %w", name, err)
+	host := script.RunnerHost(runner, p.dir, dryRun, report)
+	if err := script.Run(p.code, scriptContext(cfg, p.root, p.dir, p.args, envMap), host); err != nil {
+		return fmt.Errorf("command %q: %w", p.verb, err)
 	}
 	return nil
 }
@@ -275,7 +371,7 @@ func scriptEcosystem(cfg config.Config, dir string) string {
 // (low→high: .env/.env.local, ambient, config env, command env), the shared
 // source for both a script's ctx.env and its runner environment.
 func customEnvMap(cfg config.Config, extra map[string]string) map[string]string {
-	return envstack.Merge(customFileEnv(cfg), envstack.Ambient(), cfg.Env, extra)
+	return mergedEnv(customCommandLayers(cfg, extra))
 }
 
 // customFileEnv reads the .env/.env.local layer that sits under a custom
@@ -364,11 +460,7 @@ func runIn(cmd *cobra.Command, dir string, env []string, display string, argv ..
 // does for the built-in verbs (see commandEnv). Returns nil (inherit) when
 // nothing applies.
 func customEnv(cfg config.Config, extra map[string]string) []string {
-	fileEnv := customFileEnv(cfg)
-	if len(fileEnv) == 0 && len(cfg.Env) == 0 && len(extra) == 0 {
-		return nil
-	}
-	return envstack.Environ(envstack.Merge(fileEnv, envstack.Ambient(), cfg.Env, extra))
+	return layeredEnviron(customCommandLayers(cfg, extra))
 }
 
 // shellArg quotes a forwarded argument for the shell string form, so args with
@@ -436,7 +528,7 @@ func nodeScripts(root string) []scriptEntry {
 
 	var entries []scriptEntry
 	for _, name := range names {
-		if isBuiltinVerb[name] {
+		if isBuiltinVerbName(name) {
 			continue // a built-in dev verb already maps this
 		}
 		script := name
@@ -445,9 +537,9 @@ func nodeScripts(root string) []scriptEntry {
 			eco:   "node",
 			loc:   "package.json",
 			short: "Script: " + pkg.Scripts[script],
+			plan:  func(args []string) (commandPlan, error) { return nodeScriptPlan(root, pm, script, args), nil },
 			run: func(cmd *cobra.Command, args []string) error {
-				argv := append([]string{pm, "run", script}, args...)
-				return runCommand(cmd, root, argv)
+				return runCommand(cmd, root, nodeScriptPlan(root, pm, script, args).argv)
 			},
 		})
 	}
@@ -487,7 +579,7 @@ func goScripts(root string) []scriptEntry {
 			continue // only conventional tool locations become bare verbs
 		}
 		name := filepath.Base(rel)
-		if name == "" || isBuiltinVerb[name] || seen[name] {
+		if name == "" || isBuiltinVerbName(name) || seen[name] {
 			continue
 		}
 		if !isGoMainPackage(filepath.Join(root, filepath.FromSlash(rel))) {
@@ -501,9 +593,9 @@ func goScripts(root string) []scriptEntry {
 			loc:         rel,
 			short:       "Script: go run ./" + rel,
 			annotations: map[string]string{scriptVerbAnnotation: "1"},
+			plan:        func(args []string) (commandPlan, error) { return goScriptPlan(root, rel, args), nil },
 			run: func(cmd *cobra.Command, args []string) error {
-				argv := append([]string{"go", "run", "./" + rel}, args...)
-				return runCommand(cmd, root, argv)
+				return runCommand(cmd, root, goScriptPlan(root, rel, args).argv)
 			},
 		})
 	}

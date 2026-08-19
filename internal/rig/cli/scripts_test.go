@@ -515,3 +515,26 @@ func TestShellInvocationShapes(t *testing.T) {
 		t.Fatalf("display = %q", display)
 	}
 }
+
+// The built-in set decides whether a config entry gets a shadow warning, so a
+// verb missing from it fails silently: the entry is treated as a runnable
+// script and never warned about. Deriving it from the tree is what keeps that
+// from drifting — this asserts the derivation actually covers everything.
+func TestBuiltinVerbsCoversEveryRegisteredCommand(t *testing.T) {
+	for _, c := range newRootCmd().Commands() {
+		if !isBuiltinVerbName(c.Name()) {
+			t.Errorf("%q is a registered command but not recognised as a built-in", c.Name())
+		}
+		for _, a := range c.Aliases {
+			if !isBuiltinVerbName(a) {
+				t.Errorf("%q (alias of %q) is not recognised as a built-in", a, c.Name())
+			}
+		}
+	}
+	// The names the review called out by name.
+	for _, name := range []string{"deps", "worktree", "prune", "copy", "self-update", "alias"} {
+		if !isBuiltinVerbName(name) {
+			t.Errorf("%q is owned by rig but not recognised as a built-in", name)
+		}
+	}
+}

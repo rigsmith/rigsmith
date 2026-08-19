@@ -20,7 +20,8 @@
 | `cd` | Fuzzy project navigation (prints the dir; pair with a shell wrapper) |
 | `watch <verb>` / `rig w r` | Watch modifier via the pre-parse pipeline (verb prefixes work too: `rig cove`) |
 | `init` | Scaffold a `.rig.json` |
-| `info` | Show what rig discovered (root, primary ecosystem, `.rig.json`, per-ecosystem dev commands, packages) |
+| `info` | Show what rig discovered (root, primary ecosystem, `.rig.json`, per-ecosystem dev commands, packages) — plus a `Warnings` section for anything wrong with the config |
+| `explain [verb]` | Show what a verb resolves to — command, directory, environment, source — without running it ([see below](#explain)) |
 | `config` | Manage `.rig.json` (`get` / `set` / `show` / `path` / `edit`) |
 | `default` | Show or set the default project for `run`/`publish` (interactive picker) |
 | `setup` | Install shell integration — `cd` wrapper + tab completion (zsh/bash/fish/PowerShell); `--aliases` also adds the short [verb aliases](./alias) |
@@ -153,6 +154,49 @@ the flag and quoting your own command line back with the `--` already in place:
 
       rig build -- --target=host
 ```
+## Reading a verb before you run it {#explain}
+
+`rig explain <verb>` prints what the verb resolves to and stops there:
+
+```
+$ rig explain markers
+Verb
+  name:    markers
+  source:  custom command · /repo/.rig.json
+
+Command
+  runs:    grep -rho 'sheepish-[a-z-]*' src | sort -u
+  shell:   portable · rig's in-process POSIX shell, same on every OS
+  dir:     /repo
+
+Environment
+  API_TOKEN=abc      · .env / .env.local
+  SHEEPISH_ROOT=src  · .rig.json env
+  the rest is inherited from the current environment
+
+  nothing ran — `rig markers` runs it
+```
+
+A custom command can be valid JSON wrapping a valid shell line that quietly does
+the wrong thing — a character class missing `0-9`, a `grep -h` upstream of a
+filter that matches on filenames — and it exits 0 while printing something
+plausible. Nothing can validate that for you, but a resolved command you can
+read takes seconds to check.
+
+Bare `rig explain` lists every verb the repo resolves — the ecosystem's dev
+loop, your `commands`, the `package.json` scripts and the script directories —
+each with the command it becomes.
+
+The resolution comes from the same code the verb runs through, not a second
+implementation, so what you read is what executes. Verbs that decide part of
+their command while running (`coverage`, `rebuild`, `publish`, `upgrade`,
+`outdated`) are not guessed at: explain says so, and for the ones whose
+`--dry-run` prints an exact command it points there, since that goes through the
+real path. A few verbs have no such contract — `info` has no underlying command,
+and `outdated` runs its scans without echoing them — so explain says only that
+it cannot show a guaranteed answer. The same is true for an
+argument that selects a project or a test filter — `rig test MyClass --dry-run`
+rather than `rig explain test MyClass`.
 
 ## Ecosystem coverage
 

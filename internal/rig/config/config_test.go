@@ -692,3 +692,30 @@ func TestMergeArtifactsAndVerify(t *testing.T) {
 		t.Error("run should fall through to the global value the repo didn't set")
 	}
 }
+
+// After a merge, Path names the overlay — so a command that came from the
+// global config would be reported as living in the repo file, sending the user
+// to edit a file that does not contain it.
+func TestMergeKeepsPerCommandProvenance(t *testing.T) {
+	global := Config{
+		Path:         "/home/u/.rig.json",
+		Commands:     map[string]*Command{"deploy": {Shell: "echo global"}},
+		CommandPaths: map[string]string{"deploy": "/home/u/.rig.json"},
+	}
+	repo := Config{
+		Path:         "/repo/.rig.json",
+		Commands:     map[string]*Command{"bench": {Shell: "echo repo"}},
+		CommandPaths: map[string]string{"bench": "/repo/.rig.json"},
+	}
+	merged := Merge(global, repo)
+
+	if merged.Path != "/repo/.rig.json" {
+		t.Fatalf("Path = %q, want the overlay's", merged.Path)
+	}
+	if got := merged.CommandPaths["deploy"]; got != "/home/u/.rig.json" {
+		t.Errorf("deploy came from %q, want the global config", got)
+	}
+	if got := merged.CommandPaths["bench"]; got != "/repo/.rig.json" {
+		t.Errorf("bench came from %q, want the repo config", got)
+	}
+}

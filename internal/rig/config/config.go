@@ -110,6 +110,13 @@ type Config struct {
 
 	// Path is the resolved location the config was loaded from, "" if none.
 	Path string `json:"-"`
+	// CommandPaths records which FILE declared each entry in Commands.
+	//
+	// Path alone cannot answer that after a merge: Merge keeps a global-only
+	// command while setting Path to the repo config, so anything reporting a
+	// command's source from Path names the wrong file whenever both exist —
+	// telling the user to edit a file that does not contain the command.
+	CommandPaths map[string]string `json:"-"`
 	// Warnings collects non-fatal load problems (malformed file degraded to
 	// defaults, unknown keys with did-you-mean suggestions). The loader never
 	// prints; the caller decides what to surface.
@@ -382,6 +389,14 @@ func loadFile(path string) (Config, error) {
 		}, nil
 	}
 	c.Path = path
+	// Every command in this file came from this file; a merge preserves the
+	// mapping so provenance survives layering.
+	if len(c.Commands) > 0 {
+		c.CommandPaths = make(map[string]string, len(c.Commands))
+		for name := range c.Commands {
+			c.CommandPaths[name] = path
+		}
+	}
 	c.loadCommandScripts(filepath.Dir(path))
 	for _, u := range UnknownKeys(src) {
 		w := fmt.Sprintf("%s: unknown key %q", path, u.Key)
@@ -533,6 +548,7 @@ func Merge(base, overlay Config) Config {
 		Publish:         mergePublish(base.Publish, overlay.Publish),
 		Env:             mergeDict(base.Env, overlay.Env),
 		Commands:        mergeDict(base.Commands, overlay.Commands),
+		CommandPaths:    mergeDict(base.CommandPaths, overlay.CommandPaths),
 		Aliases:         mergeDict(base.Aliases, overlay.Aliases),
 		Tools:           mergeDict(base.Tools, overlay.Tools),
 		Exclude:         mergeList(base.Exclude, overlay.Exclude),
