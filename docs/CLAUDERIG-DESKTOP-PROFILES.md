@@ -97,7 +97,9 @@ Linux build's layout.
   roots (`$HOME/.claude` and the Desktop application-support directory). A
   regression test asserts this, because a profile inside a sync root would push
   live sessions to the remote.
-- **Profiles are 0700**, and so is their metadata.
+- **Profiles are 0700**, and so is their metadata — on macOS and Linux. Windows
+  has no Unix permission bits (Go's `Chmod` there only toggles read-only), so
+  containment on Windows rests on the ACL inherited from `%USERPROFILE%`.
 - **`rm` refuses while the window is open** unless forced, then closes it first:
   deleting a live Electron profile leaves the app writing into unlinked files.
 - **Names are validated** before they become directory names, so a name cannot
@@ -141,7 +143,20 @@ settled.
 The profile store, name validation, instance bookkeeping and the sync-root
 exclusion are covered by tests. The **real** launch paths are not: they shell out
 to `open`/`powershell` and would open live windows, so they are exercised through
-a fake. Before this is relied on, run once by hand on each platform:
+a fake.
+
+That gap has already cost one bug. The macOS `pgrep` invocation was missing an
+end-of-options `--`, so it rejected every pattern (which begins with `--`) and
+returned an error for every profile — and a swallowed error rendered that as
+"closed". `list` would have shown everything closed, `open` would have launched
+duplicate windows, and `rm` would have deleted a live profile. A fake cannot see
+that. There is now a gated real-machine test for the scan specifically:
+
+```console
+CLAUDERIG_REAL_DESKTOP=1 go test ./internal/clauderig/desktop/ -run RealScan
+```
+
+Before this is relied on, still run once by hand on each platform:
 
 ```console
 clauderig desktop add scratch     # a window opens; log in

@@ -43,12 +43,50 @@ func (w windowsApp) Installed() (string, bool) {
 	if len(versioned) == 0 {
 		return "", false
 	}
-	sort.Strings(versioned) // lexical order is good enough to prefer a newer app-x.y.z
-	exe := filepath.Join(base, versioned[len(versioned)-1], "claude.exe")
-	if fi, err := os.Stat(exe); err == nil && !fi.IsDir() {
-		return exe, true
+	// Compare version components numerically: lexically, app-1.10.0 sorts BEFORE
+	// app-1.9.0, so the newest install would be passed over for a stale one.
+	sort.Slice(versioned, func(i, j int) bool {
+		return compareAppVersions(versioned[i], versioned[j]) > 0 // newest first
+	})
+	// Walk newest-first rather than trusting the top entry: a partially removed
+	// install can leave the directory without its executable, and an older
+	// working install beside it is a better answer than none.
+	for _, dir := range versioned {
+		exe := filepath.Join(base, dir, "claude.exe")
+		if fi, err := os.Stat(exe); err == nil && !fi.IsDir() {
+			return exe, true
+		}
 	}
 	return "", false
+}
+
+// compareAppVersions orders two `app-<version>` directory names by their numeric
+// components: >0 when a is newer, <0 when b is, 0 when they compare equal. A
+// non-numeric component sorts as 0, which keeps a malformed name from winning.
+func compareAppVersions(a, b string) int {
+	pa := strings.Split(strings.TrimPrefix(a, "app-"), ".")
+	pb := strings.Split(strings.TrimPrefix(b, "app-"), ".")
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		na, nb := versionPart(pa, i), versionPart(pb, i)
+		if na != nb {
+			if na > nb {
+				return 1
+			}
+			return -1
+		}
+	}
+	return 0
+}
+
+func versionPart(parts []string, i int) int {
+	if i >= len(parts) {
+		return 0
+	}
+	n, err := strconv.Atoi(parts[i])
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // Launch starts a detached instance. CREATE_NEW_PROCESS_GROUP plus DETACHED_PROCESS
@@ -85,8 +123,13 @@ type procRow struct {
 // line. There is no pgrep on Windows, so CIM answers the same question; asking
 // for JSON avoids parsing a localized table.
 func (w windowsApp) Running(dataDir string) ([]int, error) {
-	const script = `Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | ` +
-		`Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress -AsArray`
+	// -AsArray is PowerShell 6+, and `powershell` is Windows PowerShell 5.1 on a
+	// standard install — with it, this failed outright on the target platform.
+	// Wrapping the pipeline in @() and passing it via -InputObject keeps the
+	// array shape for zero and one result on both.
+	const script = `ConvertTo-Json -Compress -InputObject @(` +
+		`Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | ` +
+		`Select-Object ProcessId,CommandLine)`
 	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script).Output()
 	if err != nil {
 		return nil, fmt.Errorf("scan for Claude Desktop processes: %w", err)

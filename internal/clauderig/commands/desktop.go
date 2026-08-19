@@ -145,7 +145,12 @@ func newDesktopOpenCmd() *cobra.Command {
 			if err != nil {
 				return desktopNotFound(err, args[0])
 			}
-			if desktop.IsRunning(app, p.DataDir()) {
+			running, rerr := desktop.IsRunning(app, p.DataDir())
+			if rerr != nil {
+				return fmt.Errorf("could not tell whether %s is already open: %w\n"+
+					"Launching now would risk a second window on the same profile", p.Name, rerr)
+			}
+			if running {
 				if ferr := app.Focus(p.DataDir()); ferr != nil {
 					return ferr
 				}
@@ -187,7 +192,10 @@ func newDesktopListCmd() *cobra.Command {
 			fmt.Fprintln(out, HeaderStyle.Render("Claude Desktop profiles"))
 			for _, p := range all {
 				marker, state := "  ", DimStyle.Render("closed")
-				if desktop.IsRunning(app, p.DataDir()) {
+				switch running, rerr := desktop.IsRunning(app, p.DataDir()); {
+				case rerr != nil:
+					marker, state = WarnStyle.Render("? "), WarnStyle.Render("unknown (process scan failed)")
+				case running:
 					marker, state = OkStyle.Render("● "), OkStyle.Render("open")
 				}
 				line := fmt.Sprintf("%s%s  %s", marker, p.Label(), state)
@@ -219,7 +227,11 @@ func newDesktopQuitCmd() *cobra.Command {
 				return desktopNotFound(err, args[0])
 			}
 			app := desktop.New()
-			if !desktop.IsRunning(app, p.DataDir()) {
+			running, rerr := desktop.IsRunning(app, p.DataDir())
+			if rerr != nil {
+				return fmt.Errorf("could not tell whether %s is open: %w", p.Name, rerr)
+			}
+			if !running {
 				fmt.Fprintf(out, "%s %s\n", DimStyle.Render("not open:"), p.Label())
 				return nil
 			}
@@ -254,8 +266,15 @@ func newDesktopRemoveCmd() *cobra.Command {
 			}
 			app := desktop.New()
 			// Deleting a live Electron profile leaves the app writing into
-			// unlinked files, so close it first rather than racing it.
-			if desktop.IsRunning(app, p.DataDir()) {
+			// unlinked files, so close it first rather than racing it. An
+			// UNKNOWN state is treated as open: this deletes a logged-in
+			// session, and guessing wrong here is unrecoverable.
+			running, rerr := desktop.IsRunning(app, p.DataDir())
+			if rerr != nil {
+				return fmt.Errorf("could not tell whether %s is open: %w\n"+
+					"Refusing to delete a profile that may still be running — close Claude Desktop and retry", p.Name, rerr)
+			}
+			if running {
 				if !force {
 					return fmt.Errorf("%s is open — close it first with `clauderig desktop quit %s`, or pass --force to close and delete",
 						p.Name, p.Name)

@@ -34,10 +34,19 @@ var ErrNotInstalled = errors.New("Claude Desktop is not installed")
 // New returns the platform's App implementation.
 func New() App { return newApp() }
 
-// IsRunning is the common "is this profile open" question.
-func IsRunning(a App, dataDir string) bool {
+// IsRunning answers "is this profile open", and reports an error rather than
+// guessing when the process scan itself fails.
+//
+// Collapsing a failed scan into "closed" is not a cosmetic bug: `rm` deletes the
+// profile directory, and doing that while Electron is still writing into it
+// leaves the app writing to unlinked files. Every caller must be able to tell
+// "closed" from "I could not look".
+func IsRunning(a App, dataDir string) (bool, error) {
 	pids, err := a.Running(dataDir)
-	return err == nil && len(pids) > 0
+	if err != nil {
+		return false, err
+	}
+	return len(pids) > 0, nil
 }
 
 // userDataFlag is the Electron flag that binds an instance to a profile. It is

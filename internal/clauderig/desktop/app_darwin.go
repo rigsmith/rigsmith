@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -60,8 +61,19 @@ func (d darwinApp) Launch(dataDir string) error {
 // Running matches the full --user-data-dir= token so one profile's helper
 // processes are never mistaken for another's (the profile paths share a prefix
 // by construction: they are siblings under the same root).
+//
+// Two details the pattern needs, both load-bearing:
+//
+//   - `--` before it. The pattern itself starts with `--`, and without the
+//     end-of-options separator pgrep rejects it as an illegal option — so this
+//     returned an error for EVERY profile, which a swallowed error then turned
+//     into "closed".
+//   - regexp.QuoteMeta. pgrep -f takes an extended regular expression, but the
+//     intent here is an exact literal match on a filesystem path, which may
+//     contain `.`, `+`, `(` and friends.
 func (d darwinApp) Running(dataDir string) ([]int, error) {
-	out, err := exec.Command("/usr/bin/pgrep", "-f", userDataFlag(dataDir)).Output()
+	pattern := regexp.QuoteMeta(userDataFlag(dataDir))
+	out, err := exec.Command("/usr/bin/pgrep", "-f", "--", pattern).Output()
 	if err != nil {
 		// pgrep exits 1 for "no matches" — that is an answer, not a failure.
 		var ee *exec.ExitError

@@ -148,29 +148,58 @@ func (s *Store) Get(name string) (Profile, error) {
 	if uerr := json.Unmarshal(raw, &p); uerr != nil {
 		return Profile{}, fmt.Errorf("parse %s: %w", s.metaPath(name), uerr)
 	}
+	// The DIRECTORY is the identity, not the metadata. If profile.json somehow
+	// names something else — hand-edited, copied from another profile — then
+	// DataDir would point at the directory asked for while Touch and Remove
+	// operated on the name inside it, which is a write to (or a deletion of) a
+	// different profile. Overwrite rather than trust.
 	p.dir = s.profileDir(name)
-	if p.Name == "" {
-		p.Name = name
-	}
+	p.Name = name
 	return p, nil
 }
 
-// Resolve finds a profile by name or by the email label, so either works
-// wherever a profile is named.
+// Resolve finds a profile by name, or by the email label when no profile has
+// that name.
+//
+// A real load error is returned rather than swallowed: a profile whose
+// profile.json is corrupt or unreadable must not silently become "no such
+// profile", or a later `open` would create the impression it had been deleted.
+// Only a genuine miss falls through to the email lookup.
+//
+// Email labels are not unique — clauderig never verifies them, and two profiles
+// may legitimately carry the same one — so an ambiguous email is refused rather
+// than resolved to whichever sorted first. `quit` and `rm` act on the result.
 func (s *Store) Resolve(ref string) (Profile, error) {
-	if p, err := s.Get(ref); err == nil {
+	p, err := s.Get(ref)
+	switch {
+	case err == nil:
 		return p, nil
-	}
-	all, err := s.List()
-	if err != nil {
+	case !errors.Is(err, ErrNotFound):
 		return Profile{}, err
 	}
-	for _, p := range all {
-		if strings.EqualFold(p.Email, ref) {
-			return p, nil
+	all, lerr := s.List()
+	if lerr != nil {
+		return Profile{}, lerr
+	}
+	var matches []Profile
+	for _, cand := range all {
+		if cand.Email != "" && strings.EqualFold(cand.Email, ref) {
+			matches = append(matches, cand)
 		}
 	}
-	return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, ref)
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, ref)
+	default:
+		names := make([]string, len(matches))
+		for i, m := range matches {
+			names[i] = m.Name
+		}
+		return Profile{}, fmt.Errorf("%q labels %d profiles (%s) — name the one you mean",
+			ref, len(matches), strings.Join(names, ", "))
+	}
 }
 
 // Create makes a new, empty profile. The data directory is created but left
@@ -180,8 +209,15 @@ func (s *Store) Create(name, email, accountID string) (Profile, error) {
 	if err := ValidName(name); err != nil {
 		return Profile{}, err
 	}
-	if _, err := s.Get(name); err == nil {
+	// Only a genuine miss means the name is free. A permission or parse error
+	// here would otherwise fall through and overwrite an existing profile's
+	// metadata — and `add` would open an already-logged-in data directory as
+	// though it were new.
+	switch _, err := s.Get(name); {
+	case err == nil:
 		return Profile{}, fmt.Errorf("%w: %s", ErrExists, name)
+	case !errors.Is(err, ErrNotFound):
+		return Profile{}, fmt.Errorf("cannot tell whether %q already exists: %w", name, err)
 	}
 	p := Profile{
 		Name:      name,
@@ -206,6 +242,11 @@ func (s *Store) Touch(p Profile) error {
 	return s.save(p)
 }
 
+// save writes profile.json atomically. Touch calls it after every launch and
+// discards the error, so a torn write — an interrupt, a full disk — would leave
+// truncated JSON that List silently skips, and the profile would appear to have
+// vanished. A rename leaves either the old file or the new one, never a
+// fragment.
 func (s *Store) save(p Profile) error {
 	if err := os.MkdirAll(p.dir, 0o700); err != nil {
 		return err
@@ -214,7 +255,30 @@ func (s *Store) save(p Profile) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.metaPath(p.Name), append(body, '\n'), 0o600)
+	body = append(body, '\n')
+
+	final := s.metaPath(p.Name)
+	f, err := os.CreateTemp(p.dir, "profile.json.tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }() // no-op once the rename succeeds
+	if _, werr := f.Write(body); werr != nil {
+		_ = f.Close()
+		return werr
+	}
+	if serr := f.Sync(); serr != nil {
+		_ = f.Close()
+		return serr
+	}
+	if cerr := f.Close(); cerr != nil {
+		return cerr
+	}
+	if cerr := os.Chmod(tmp, 0o600); cerr != nil {
+		return cerr
+	}
+	return os.Rename(tmp, final)
 }
 
 // Remove deletes a profile and everything in it. The caller must ensure the
