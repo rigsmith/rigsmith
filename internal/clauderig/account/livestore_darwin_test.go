@@ -33,3 +33,13 @@ func TestHexCarriesBlobExactly(t *testing.T) {
 		t.Fatal("hex round-trip altered the credential blob")
 	}
 }
+
+// Empirical vector: on 2026-08-18 Claude Code created exactly this service for
+// exactly this CLAUDE_CONFIG_DIR. If this test breaks, Claude Code changed its
+// per-profile Keychain naming and sessionstore.go needs re-verifying.
+func TestSessionKeychainService(t *testing.T) {
+	got := sessionKeychainService("/Users/john/.clauderig/accounts/john-brightshore-io/config")
+	if got != "Claude Code-credentials-c890e741" {
+		t.Fatalf("sessionKeychainService = %q, want Claude Code-credentials-c890e741", got)
+	}
+}

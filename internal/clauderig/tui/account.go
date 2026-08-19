@@ -1,9 +1,10 @@
 // The accounts screen lists the Claude Code logins clauderig tracks and marks
 // the live one. Following the dashboard/MCP pattern, the model only records the
-// chosen intent (add/run/switch/remove) on exit; the command layer performs it
-// outside the event loop — execing claude, swapping the live credential,
-// capturing the current login, or removing an account — then re-opens the screen
-// (except `run`, which is terminal).
+// chosen intent (add/run/switch/remove/repair) on exit; the command layer
+// performs it outside the event loop — execing claude, swapping the live
+// credential, capturing the current login, recapturing from a session profile,
+// or removing an account — then re-opens the screen (except `run`, which is
+// terminal).
 package tui
 
 import (
@@ -16,16 +17,15 @@ import (
 )
 
 // AccountAction is the intent the accounts screen records on exit. Kind "" means
-// the user backed out. ID identifies the target for run/switch/remove.
+// the user backed out. ID identifies the target for run/switch/remove/repair.
 type AccountAction struct {
-	Kind string // "" · "add" · "run" · "switch" · "remove"
+	Kind string // "" · "add" · "run" · "switch" · "remove" · "repair"
 	ID   string
 }
 
 // AccountModel is the accounts management screen.
 type AccountModel struct {
-	accounts  []account.Account
-	activeID  string
+	accounts  []account.StoredStatus
 	procs     []account.Instance // live Claude Code processes (block a switch)
 	showProcs bool               // toggled with `p`
 	cursor    int
@@ -33,19 +33,21 @@ type AccountModel struct {
 	Action    AccountAction
 }
 
-// NewAccount builds the screen over a snapshot of tracked accounts. activeID is
-// the account clauderig tracks as the live login (""=none); procs are the live
-// Claude Code processes a switch must contend with; note is carried from the
-// prior action.
-func NewAccount(accounts []account.Account, activeID string, procs []account.Instance, note string) AccountModel {
-	return AccountModel{accounts: accounts, activeID: activeID, procs: procs, note: note}
+// NewAccount builds the screen over a snapshot of tracked accounts with their
+// health (which one is live, whether each stored credential still has tokens,
+// whether each session profile authenticates); procs are the live Claude Code
+// processes a switch must contend with; note is carried from the prior action.
+func NewAccount(accounts []account.StoredStatus, procs []account.Instance, note string) AccountModel {
+	return AccountModel{accounts: accounts, procs: procs, note: note}
 }
 
 func (m AccountModel) Init() tea.Cmd { return nil }
 
 // Update drives the list: ↑/↓ (k/j) move; enter/r runs the selected account as a
 // session; s swaps the machine-wide login to it; a captures the current login;
-// q/esc back. run/switch are inert on an empty list.
+// f recaptures a dead stored credential from its session profile (inert unless
+// the row is actually repairable); q/esc back. run/switch are inert on an empty
+// list.
 func (m AccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -75,6 +77,11 @@ func (m AccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Action = AccountAction{Kind: "switch", ID: a.ID}
 			return m, tea.Quit
 		}
+	case "f":
+		if a, ok := m.current(); ok && repairable(a) {
+			m.Action = AccountAction{Kind: "repair", ID: a.ID}
+			return m, tea.Quit
+		}
 	case "x", "delete", "backspace":
 		if a, ok := m.current(); ok {
 			m.Action = AccountAction{Kind: "remove", ID: a.ID}
@@ -88,11 +95,18 @@ func (m AccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m AccountModel) current() (account.Account, bool) {
+func (m AccountModel) current() (account.StoredStatus, bool) {
 	if m.cursor < 0 || m.cursor >= len(m.accounts) {
-		return account.Account{}, false
+		return account.StoredStatus{}, false
 	}
 	return m.accounts[m.cursor], true
+}
+
+// repairable means `f` can help: the stored credential would be refused by a
+// switch, but the account's session profile still authenticates, so its tokens
+// can be recaptured.
+func repairable(a account.StoredStatus) bool {
+	return !a.CredentialTokens && a.Session == account.SessionOK
 }
 
 func (m AccountModel) View() string {
@@ -113,13 +127,14 @@ func (m AccountModel) View() string {
 		return b.String()
 	}
 
+	anyRepairable, anyDeadStuck := false, false
 	for i, a := range m.accounts {
 		cursor := "  "
 		live := "  "
-		if a.ID == m.activeID {
+		if a.Active {
 			live = okC.Render("→ ")
 		}
-		name := accountName(a)
+		name := accountName(a.Account)
 		if i == m.cursor {
 			cursor = cursorC.Render("▸ ")
 			name = selected.Render(name)
@@ -128,7 +143,30 @@ func (m AccountModel) View() string {
 		if a.SubscriptionType != "" {
 			sub = dim.Render("  " + a.SubscriptionType)
 		}
-		b.WriteString(fmt.Sprintf("%s%s%s%s\n", cursor, live, name, sub))
+		health := ""
+		if !a.CredentialTokens {
+			health = errC.Render("  ✗ no tokens")
+			if repairable(a) {
+				anyRepairable = true
+			} else {
+				anyDeadStuck = true
+			}
+		}
+		switch a.Session {
+		case account.SessionOK:
+			health += dim.Render("  session ✓")
+		case account.SessionNoTokens:
+			health += warnC.Render("  session ✗")
+		case account.SessionUnknown:
+			health += warnC.Render("  session ?")
+		}
+		b.WriteString(fmt.Sprintf("%s%s%s%s%s\n", cursor, live, name, sub, health))
+	}
+	if anyRepairable {
+		b.WriteString("\n  " + dim.Render("✗ a stored credential has no tokens — press f on it to recapture from its session") + "\n")
+	}
+	if anyDeadStuck {
+		b.WriteString("\n  " + dim.Render("✗ no tokens and no live session — log in as that account, then press a") + "\n")
 	}
 
 	if n := len(m.procs); n > 0 {
@@ -141,10 +179,14 @@ func (m AccountModel) View() string {
 		}
 	}
 
-	keys := "↑/↓ move · enter run · s switch · a add · x remove · q back"
-	if len(m.procs) > 0 {
-		keys = "↑/↓ move · enter run · s switch · a add · x remove · p procs · q back"
+	keys := "↑/↓ move · enter start claude code · s switch · a add · x remove"
+	if anyRepairable {
+		keys += " · f repair"
 	}
+	if len(m.procs) > 0 {
+		keys += " · p procs"
+	}
+	keys += " · q back"
 	b.WriteString("\n" + dim.Render(keys) + "\n")
 	return b.String()
 }
