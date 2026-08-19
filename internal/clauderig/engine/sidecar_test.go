@@ -166,3 +166,72 @@ func TestSync_RetentionPrunesTranscriptAndItsSidecar(t *testing.T) {
 		t.Errorf("SidecarsPruned = %d, want 1", rep.SidecarsPruned)
 	}
 }
+
+// A Desktop-only sync must not prune. Staging keeps transcripts from earlier
+// syncs and other machines, so the index is rarely empty — treating that stale
+// set as authoritative would delete the sidecars this very run just copied.
+func TestSync_NoSidecarPruneWhenCLIRootAbsent(t *testing.T) {
+	staging := t.TempDir()
+	// Staging already holds an unrelated transcript, so the index is non-empty.
+	stageTranscript(t, staging, "-Users-other-p", "someone-elses-session")
+	kept := stageSidecar(t, staging, "claude-code-sessions", "a", "transcript-not-in-staging")
+
+	liveDesk := t.TempDir()
+	write(t, liveDesk, "claude-code-sessions/acct/org/local_a.json",
+		`{"cliSessionId":"transcript-not-in-staging"}`)
+
+	cfg := config.Default()
+	cfg.Roots = []config.Root{
+		{ID: "cli", Enabled: true, Location: pathmap.Cascade{Portable: filepath.Join(t.TempDir(), "absent")}},
+		{ID: "desktop", Enabled: true, Location: pathmap.Cascade{Portable: liveDesk}},
+	}
+	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	rep, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: john,
+		SourceOverride: map[string]string{"desktop": liveDesk}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.SidecarsPruned != 0 {
+		t.Errorf("SidecarsPruned = %d, want 0 when the CLI root did not sync", rep.SidecarsPruned)
+	}
+	if _, serr := os.Stat(kept); serr != nil {
+		t.Error("sidecar must survive a Desktop-only sync")
+	}
+}
+
+// An unreadable subtree must not be read as "those transcripts are gone" — this
+// pass deletes on absence, so incomplete evidence has to mean no action.
+func TestStagedTranscriptIDs_UnreadableSubtreeFailsOpen(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions are not enforced")
+	}
+	staging := t.TempDir()
+	stageTranscript(t, staging, "-Users-john-p", "readable-1")
+	locked := filepath.Join(staging, "cli", "projects", "-Users-john-locked")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "hidden-1.jsonl"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	if _, ok := stagedTranscriptIDs(filepath.Join(staging, "cli", "projects")); ok {
+		t.Error("a partial index must not be reported as usable")
+	}
+	// And the prune built on it removes nothing.
+	s := stageSidecar(t, staging, "claude-code-sessions", "a", "hidden-1")
+	n, err := pruneOrphanedSidecars(staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("pruned = %d, want 0", n)
+	}
+	if _, serr := os.Stat(s); serr != nil {
+		t.Error("sidecar must survive when the index could not be trusted")
+	}
+}

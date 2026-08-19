@@ -41,6 +41,18 @@ import (
 // for a reason that has nothing to do with retention drift.
 const sidecarTree = "claude-code-sessions"
 
+// cliSynced reports whether the CLI root was resolved and walked on this run —
+// the precondition for judging any sidecar, since its transcripts are the
+// evidence the prune deletes on the absence of.
+func cliSynced(rep *Report) bool {
+	for _, r := range rep.Roots {
+		if r.ID == "cli" {
+			return !r.Skipped
+		}
+	}
+	return false
+}
+
 // sidecarRef is the only field of a sidecar this pass needs.
 type sidecarRef struct {
 	CLISessionID string `json:"cliSessionId"`
@@ -53,7 +65,18 @@ type sidecarRef struct {
 func stagedTranscriptIDs(projectsDir string) (ids map[string]bool, ok bool) {
 	ids = map[string]bool{}
 	err := filepath.WalkDir(projectsDir, func(p string, d os.DirEntry, werr error) error {
-		if werr != nil || d.IsDir() {
+		if werr != nil {
+			// A vanished entry is ordinary churn and simply isn't in the index. But
+			// an unreadable DIRECTORY would silently yield a partial index, and this
+			// pass deletes based on absence — so every sidecar pointing into that
+			// subtree would be destroyed on incomplete evidence. Propagate anything
+			// that isn't a plain "gone" so the caller falls back to doing nothing.
+			if os.IsNotExist(werr) {
+				return nil
+			}
+			return werr
+		}
+		if d.IsDir() {
 			return nil
 		}
 		if name := d.Name(); strings.HasSuffix(name, ".jsonl") {

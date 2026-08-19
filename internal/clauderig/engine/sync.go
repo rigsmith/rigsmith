@@ -267,11 +267,21 @@ func Sync(opts Options) (*Report, error) {
 	// Sidecars go last, after transcript retention above has settled which
 	// transcripts survive — that ordering is what makes the two trees age out as
 	// one unit instead of on independent clocks.
-	sidecarsPruned, err := pruneOrphanedSidecars(opts.StagingDir)
-	if err != nil {
-		return nil, err
+	//
+	// Only when the CLI root actually synced this run. Staging keeps transcripts
+	// from earlier syncs and other machines, so the index is rarely empty even
+	// when this machine contributed nothing — and treating that stale set as
+	// authoritative would let a Desktop-only sync delete the very sidecars it just
+	// copied, whose transcripts were never offered to this run. That is the churn
+	// the "no thrash" rule exists to prevent, so the emptiness check alone is not
+	// enough of a guard.
+	if cliSynced(rep) {
+		sidecarsPruned, err := pruneOrphanedSidecars(opts.StagingDir)
+		if err != nil {
+			return nil, err
+		}
+		rep.SidecarsPruned = sidecarsPruned
 	}
-	rep.SidecarsPruned = sidecarsPruned
 
 	// Build the project manifest from the CLI root's projects dir.
 	if cliLoc, st := sourceLoc(opts, "cli"); st == pathmap.StatusResolved {
