@@ -138,7 +138,7 @@ func TestWalk_SymlinkedMemoryDirReportedAsLink(t *testing.T) {
 	mustWrite(t, root, "projects/-main-worktree/s.jsonl", "{}")
 	link := filepath.Join(root, "projects", "-main-worktree", "memory")
 	if err := os.Symlink(filepath.Join(root, "projects", "-main", "memory"), link); err != nil {
-		t.Fatal(err)
+		t.Skipf("symlink unsupported: %v", err)
 	}
 	// A directory link sitting at an excluded path is dropped, not reported.
 	if err := os.Symlink(filepath.Join(root, "projects", "-main", "memory"), filepath.Join(root, "statsig")); err != nil {

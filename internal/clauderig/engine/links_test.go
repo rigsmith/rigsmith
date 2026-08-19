@@ -25,7 +25,7 @@ func TestSync_RecordsSharedMemoryLink(t *testing.T) {
 	if err := os.Symlink(
 		filepath.Join(live, "projects", "-Users-john-Git-grasp", "memory"),
 		filepath.Join(live, "projects", "-Users-john-Git-grasp-wt", "memory")); err != nil {
-		t.Fatal(err)
+		t.Skipf("symlink unsupported: %v", err)
 	}
 
 	staging := t.TempDir()
@@ -51,6 +51,13 @@ func TestSync_RecordsSharedMemoryLink(t *testing.T) {
 }
 
 func TestRestore_RecreatesSharedMemoryLink(t *testing.T) {
+	// restoreLinks skips (by design) where symlinks can't be created, which
+	// would fail the Links = 1 assertion — probe the capability first.
+	probe := t.TempDir()
+	if err := os.Symlink(probe, filepath.Join(probe, "link")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
 	staging := t.TempDir()
 	write(t, staging, "cli/projects/-Users-john-Git-grasp/s.jsonl", "t\n")
 	write(t, staging, "cli/projects/-Users-john-Git-grasp/memory/MEMORY.md", "facts")
