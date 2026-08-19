@@ -96,6 +96,14 @@ func writeOAuthAccountTo(path string, raw []byte) error {
 // credential would be restored while the profile stayed corrupt. With a rename,
 // the destination is either the old file or the new one, never a fragment.
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	// Write THROUGH a symlink, never over it. A rename onto the link path would
+	// replace the link with a regular file, quietly detaching ~/.claude.json from
+	// wherever the user actually keeps it (a dotfiles repo, a synced folder) —
+	// their edits and ours would diverge from that moment on, with nothing to
+	// show for it. Resolving first means the temp file lands in the real target's
+	// own directory, which is also what keeps the rename atomic: a rename across
+	// filesystems fails outright. Credit: claude-swap #201 hit this first.
+	path = resolveLinkTarget(path)
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -143,4 +151,37 @@ func parseOAuthMeta(raw []byte) oauthMeta {
 	var m oauthMeta
 	_ = json.Unmarshal(raw, &m)
 	return m
+}
+
+// maxLinkHops bounds the walk so a symlink cycle cannot spin forever.
+const maxLinkHops = 32
+
+// resolveLinkTarget follows a symlink chain to the path it ultimately names,
+// WITHOUT requiring that path to exist.
+//
+// filepath.EvalSymlinks fails outright on a dangling link — one whose target has
+// not been created yet — and treating that failure as "not a symlink" is exactly
+// the case that must not fall through: the rename would then replace the link
+// with a regular file, detaching it from the location the user actually keeps it
+// in. That is the detachment this whole function exists to prevent, so the
+// dangling case has to be handled, not skipped.
+//
+// Relative targets resolve against the directory holding the link, as the OS
+// does.
+func resolveLinkTarget(path string) string {
+	for i := 0; i < maxLinkHops; i++ {
+		fi, err := os.Lstat(path)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			return path // not a link (or gone): this is the file to write
+		}
+		target, rerr := os.Readlink(path)
+		if rerr != nil {
+			return path
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = filepath.Clean(target)
+	}
+	return path // cycle: write where we ended up rather than loop
 }
