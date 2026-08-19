@@ -279,11 +279,21 @@ func sourceLoc(opts Options, rootID string) (string, pathmap.Status) {
 
 // keepOnly returns the top-level keys to retain for a file that's mostly volatile,
 // or nil to keep the whole document. The Desktop config.json is rewritten
-// constantly with rotating caches/tokens; only its `preferences` are stable and
-// worth syncing.
+// constantly with rotating caches and OAuth token blobs (which is what tripped the
+// redaction wire before this filter existed), so it is reduced to the few keys
+// that are both stable and portable.
+//
+// Keep the list conservative — everything omitted is dropped, so a wrong entry
+// costs sync coverage, never safety. `preferences` is a nested object Desktop has
+// used for settings; `locale` and `userThemeMode` are the flat keys it uses now.
+// Deliberately NOT kept: `lastKnownAccountUuid` (identity — syncing it would
+// re-point another machine's Desktop at this account), `updaterLastSeenVersion`
+// and `first_launch_at` (machine state), and every `oauth:*`/`dxt:*` key (secret
+// or cache). Note Desktop's real keys are flat and colon-namespaced
+// ("oauth:tokenCache"), not nested.
 func keepOnly(rootID, rel string) []string {
 	if rootID == "desktop" && rel == "config.json" {
-		return []string{"preferences"}
+		return []string{"preferences", "locale", "userThemeMode"}
 	}
 	return nil
 }

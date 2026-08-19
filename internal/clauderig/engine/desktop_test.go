@@ -17,14 +17,18 @@ func twoRootConfig(cliDir, deskDir string) *config.Config {
 	return c
 }
 
-// The Desktop config.json is reduced to its stable `preferences` — the volatile
-// caches/tokens (which previously tripped the wire) are dropped before sync.
+// The Desktop config.json is reduced to the keys that are stable and portable —
+// the volatile caches/tokens (which previously tripped the wire) are dropped
+// before sync. The fixture mirrors the document Desktop actually writes: flat,
+// colon-namespaced keys, NOT the nested objects an earlier fixture assumed.
 func TestSync_DesktopConfigKeepFilter(t *testing.T) {
 	liveCli, liveDesk := t.TempDir(), t.TempDir()
 	write(t, liveDesk, "config.json",
-		`{"preferences":{"sidebarMode":"compact","coworkWebSearchEnabled":true},`+
-			`"oauth":{"tokenCache":"Zk9q3xR7tLmA1cD8eF0gH2iJ4kL6mN8oP0qR2sT4uV6wX8y"},`+
-			`"dxt":{"allowlistCache":{"sid":"Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0Kk1Ll2Mm3Nn4"}}}`)
+		`{"locale":"en-US","userThemeMode":"dark","updaterLastSeenVersion":"1.2.3",`+
+			`"lastKnownAccountUuid":"03d1c0c9-823d-464b-a468-a9bea2383338",`+
+			`"oauth:tokenCache":"Zk9q3xR7tLmA1cD8eF0gH2iJ4kL6mN8oP0qR2sT4uV6wX8y",`+
+			`"oauth:tokenCacheV2":"Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0Kk1Ll2Mm3Nn4Oo5Pp6Qq7",`+
+			`"dxt:allowlistCache:sid":{"x":"Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0Kk1Ll2Mm3Nn4"}}`)
 
 	staging := t.TempDir()
 	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}
@@ -33,13 +37,41 @@ func TestSync_DesktopConfigKeepFilter(t *testing.T) {
 		t.Fatalf("sync: %v (findings=%v)", err, rep.Findings)
 	}
 	staged := read(t, filepath.Join(staging, "desktop", "config.json"))
-	if !contains(staged, "sidebarMode") {
-		t.Errorf("preferences should be kept: %s", staged)
+	// The portable preferences survive — the whole point of syncing this file.
+	for _, kept := range []string{"locale", "en-US", "userThemeMode", "dark"} {
+		if !contains(staged, kept) {
+			t.Errorf("portable key %q should have been kept: %s", kept, staged)
+		}
 	}
-	for _, gone := range []string{"oauth", "tokenCache", "dxt", "allowlistCache"} {
+	// Secrets, caches, identity and machine state are all dropped.
+	for _, gone := range []string{
+		"tokenCache", "tokenCacheV2", "allowlistCache",
+		"lastKnownAccountUuid", "updaterLastSeenVersion",
+	} {
 		if contains(staged, gone) {
 			t.Errorf("volatile key %q should have been dropped: %s", gone, staged)
 		}
+	}
+}
+
+// A `preferences` object is kept too, so the filter still works if Desktop moves
+// its settings back under one — the reason the key stays in the list.
+func TestSync_DesktopConfigKeepsPreferencesObject(t *testing.T) {
+	liveCli, liveDesk := t.TempDir(), t.TempDir()
+	write(t, liveDesk, "config.json",
+		`{"preferences":{"sidebarMode":"compact"},"first_launch_at":1750000000}`)
+
+	staging := t.TempDir()
+	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	if _, err := Sync(Options{StagingDir: staging, Config: twoRootConfig(liveCli, liveDesk), Machine: john, SourceOverride: override("cli", liveCli, "desktop", liveDesk)}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	staged := read(t, filepath.Join(staging, "desktop", "config.json"))
+	if !contains(staged, "sidebarMode") {
+		t.Errorf("preferences should be kept: %s", staged)
+	}
+	if contains(staged, "first_launch_at") {
+		t.Errorf("machine state should have been dropped: %s", staged)
 	}
 }
 
