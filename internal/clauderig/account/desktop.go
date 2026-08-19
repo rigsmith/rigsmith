@@ -59,18 +59,24 @@ var desktopOAuthKeys = []string{
 // everything else in the shared Cookies DB (other sites, analytics, Cloudflare
 // clearances for unrelated hosts) belongs to the machine, not to the account, and
 // is left strictly alone.
-const desktopCookieHosts = `host_key LIKE '%claude.ai'`
-
-// sqlite3Bin is pinned to an absolute path rather than resolved through PATH:
-// this reads and writes session cookies, so an attacker-controlled `sqlite3`
-// earlier on PATH must not be able to intercept them. Same reasoning as
-// securityBin in livestore_darwin.go.
-var sqlite3Bin = "/usr/bin/sqlite3"
+// Matched as the apex host or a dot-delimited subdomain, NOT a bare suffix: a
+// plain `LIKE '%claude.ai'` also matches `notclaude.ai` and would export and
+// delete an unrelated site's cookies.
+const desktopCookieHosts = `(host_key = 'claude.ai' OR host_key LIKE '%.claude.ai')`
 
 // desktopRunning is a package var so tests are not at the mercy of whether the
 // developer happens to have Desktop open — an assertion that passes or fails
 // depending on the state of an unrelated app is worse than no assertion.
 var desktopRunning = DesktopRunning
+
+// ErrDesktopUnsupported means Desktop switching is not implemented for this OS.
+// Returned rather than silently doing nothing: a feature that quietly records no
+// session looks identical to one that has nothing to record.
+var ErrDesktopUnsupported = errors.New("Claude Desktop account switching is only supported on macOS")
+
+// DesktopSupported reports whether this build can capture and restore Desktop
+// sessions.
+func DesktopSupported() bool { return desktopSupported }
 
 // ErrNoDesktop means this machine has no Claude Desktop data directory.
 var ErrNoDesktop = errors.New("no Claude Desktop data directory on this machine")
@@ -90,10 +96,10 @@ type DesktopSnapshot struct {
 	// ConfigKeys holds the desktopOAuthKeys that were present, as raw JSON so the
 	// values round-trip byte-exactly.
 	ConfigKeys map[string]json.RawMessage `json:"configKeys"`
-	// CookieSQL is a list of INSERT statements produced by `sqlite3 .mode insert`.
-	// Storing SQL rather than parsed rows keeps this schema-agnostic: Chromium
-	// changes the cookies table between versions, and blobs survive as X'..'
-	// literals without a binary-safe encoding of our own.
+	// CookieSQL is a list of INSERT statements naming their columns explicitly.
+	// Storing SQL rather than parsed rows keeps blobs binary-safe (X'..' literals)
+	// without inventing an encoding, and naming the columns is what survives
+	// Chromium changing this table between Desktop versions.
 	CookieSQL  []string  `json:"cookieSql"`
 	CapturedAt time.Time `json:"capturedAt"`
 }
@@ -185,6 +191,9 @@ func desktopCookiesPath(root string) string { return filepath.Join(root, "Cookie
 // moments later by a token refresh — which is why `switch` captures the outgoing
 // account after confirming Desktop is closed.
 func CaptureDesktop(root string) (*DesktopSnapshot, error) {
+	if !desktopSupported {
+		return nil, ErrDesktopUnsupported
+	}
 	if !dirExists(root) {
 		return nil, ErrNoDesktop
 	}
@@ -218,6 +227,9 @@ func CaptureDesktop(root string) (*DesktopSnapshot, error) {
 func ApplyDesktop(root string, snap *DesktopSnapshot) error {
 	if snap == nil {
 		return errors.New("no Desktop snapshot to apply")
+	}
+	if !desktopSupported {
+		return ErrDesktopUnsupported
 	}
 	if !dirExists(root) {
 		return ErrNoDesktop
@@ -284,9 +296,34 @@ func writeDesktopConfigKeys(root string, keys map[string]json.RawMessage) error 
 	return atomicWriteFile(desktopConfigPath(root), append(out, '\n'), 0o600)
 }
 
-// exportDesktopCookies dumps the claude.ai rows as INSERT statements. A missing
-// DB is not an error — a Desktop that has never opened the web UI simply has no
-// cookies to carry.
+// cookieColumns lists the cookies table's columns, in declared order.
+func cookieColumns(dbPath string) ([]string, error) {
+	out, err := runSQLite(dbPath, "SELECT name FROM pragma_table_info('cookies');")
+	if err != nil {
+		return nil, err
+	}
+	var cols []string
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			cols = append(cols, l)
+		}
+	}
+	if len(cols) == 0 {
+		return nil, errors.New("cookies table has no columns")
+	}
+	return cols, nil
+}
+
+// exportDesktopCookies dumps the claude.ai rows as INSERT statements naming
+// their columns explicitly. A missing DB is not an error — a Desktop that has
+// never opened the web UI simply has no cookies to carry.
+//
+// Named columns rather than sqlite3's `.mode insert`, which emits positional
+// `INSERT INTO cookies VALUES(…)`. Chromium changes this table between versions,
+// and Desktop updates itself, so a snapshot taken before an update can be
+// restored after one: positional values would then be misaligned or rejected.
+// Naming the columns tolerates additions and reordering, and a column that has
+// since disappeared is dropped on restore rather than failing the whole replay.
 func exportDesktopCookies(dbPath string) ([]string, error) {
 	if !fileExists(dbPath) {
 		return nil, nil
@@ -294,9 +331,19 @@ func exportDesktopCookies(dbPath string) ([]string, error) {
 	if err := requireSQLite(); err != nil {
 		return nil, err
 	}
-	out, err := runSQLite(dbPath,
-		".mode insert cookies",
-		"SELECT * FROM cookies WHERE "+desktopCookieHosts+";")
+	cols, err := cookieColumns(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("read cookies schema: %w", err)
+	}
+	// Build each row as a complete INSERT naming its columns. quote() renders
+	// every type — including BLOBs, as X'..' — in a form SQLite can re-read.
+	var parts []string
+	for _, c := range cols {
+		parts = append(parts, "quote("+quoteIdent(c)+")")
+	}
+	sel := "SELECT 'INSERT INTO cookies (" + strings.Join(quoteIdents(cols), ",") + ") VALUES (' || " +
+		strings.Join(parts, " || ',' || ") + " || ');' FROM cookies WHERE " + desktopCookieHosts + ";"
+	out, err := runSQLite(dbPath, sel)
 	if err != nil {
 		return nil, fmt.Errorf("export Desktop cookies: %w", err)
 	}
@@ -309,18 +356,42 @@ func exportDesktopCookies(dbPath string) ([]string, error) {
 	return stmts, nil
 }
 
+// quoteIdent wraps a SQL identifier in double quotes, doubling any embedded one.
+func quoteIdent(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
+
+func quoteIdents(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = quoteIdent(s)
+	}
+	return out
+}
+
 // importDesktopCookies replaces the claude.ai rows with the snapshot's. The
 // delete and the inserts run in one transaction so a failure can't leave the DB
 // with the old account's cookies gone and the new account's not yet in.
+//
+// The DELETE runs whenever the DB exists, even with nothing to insert: an
+// incoming account that simply has no claude.ai cookies must still displace the
+// outgoing account's, or the app would keep authenticating its web UI as the
+// account just switched away from — a half-switch that is worse than either end
+// state. Conversely, having cookies to restore and no DB to restore them into is
+// a failure, not a no-op, and must not be reported as success.
 func importDesktopCookies(dbPath string, stmts []string) error {
-	if !fileExists(dbPath) || len(stmts) == 0 {
+	if !fileExists(dbPath) {
+		if len(stmts) > 0 {
+			return fmt.Errorf("Desktop cookie database %s is missing, so the web session cannot be restored", dbPath)
+		}
 		return nil
 	}
 	if err := requireSQLite(); err != nil {
 		return err
 	}
-	script := "BEGIN IMMEDIATE;\nDELETE FROM cookies WHERE " + desktopCookieHosts + ";\n" +
-		strings.Join(stmts, "\n") + "\nCOMMIT;\n"
+	script := "BEGIN IMMEDIATE;\nDELETE FROM cookies WHERE " + desktopCookieHosts + ";\n"
+	if len(stmts) > 0 {
+		script += strings.Join(stmts, "\n") + "\n"
+	}
+	script += "COMMIT;\n"
 	if _, err := runSQLite(dbPath, script); err != nil {
 		return fmt.Errorf("restore Desktop cookies: %w", err)
 	}

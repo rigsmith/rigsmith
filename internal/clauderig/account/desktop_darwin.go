@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build darwin
 
 package account
 
@@ -12,6 +12,17 @@ import (
 // also match this very CLI, every `claude` session, and any editor window with
 // the word in its command line — and a false positive here blocks switching with
 // a confusing "Desktop is running".
+// desktopSupported gates the whole feature. Only macOS is verified: the
+// capture/restore round-trip, the safeStorage ciphertext behaviour and the
+// process match were all confirmed against the real app there. See
+// desktop_other.go for why the other platforms are refused rather than guessed.
+const desktopSupported = true
+
+// sqlite3Bin is pinned to Apple's absolute path, not resolved via PATH: this
+// reads and writes session cookies, so an attacker-controlled `sqlite3` earlier
+// on PATH must not intercept them. Present on every macOS.
+const sqlite3Bin = "/usr/bin/sqlite3"
+
 const desktopProcessMatch = "Claude.app/Contents/MacOS/Claude"
 
 // DesktopRunning reports whether Claude Desktop is currently open. Writing the

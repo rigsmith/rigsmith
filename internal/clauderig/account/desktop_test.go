@@ -347,3 +347,127 @@ func TestDesktop_RefusesWhileDesktopRunning(t *testing.T) {
 		t.Errorf("should apply when Desktop is closed: %v", err)
 	}
 }
+
+// Cookie scoping must be the apex host or a dot-delimited subdomain. A bare
+// `LIKE '%claude.ai'` also matches `notclaude.ai`, whose cookies are neither
+// ours to carry nor ours to delete.
+func TestDesktop_CookieScopeExcludesLookalikeHosts(t *testing.T) {
+	requireSQLiteOrSkip(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "config.json"), []byte(`{"oauth:tokenCacheV2":"djEwX"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db := filepath.Join(root, "Cookies")
+	if _, err := runSQLite(db,
+		"CREATE TABLE cookies (creation_utc INTEGER PRIMARY KEY, host_key TEXT, name TEXT, encrypted_value BLOB);",
+		"INSERT INTO cookies VALUES (1,'claude.ai','apex',X'01');",
+		"INSERT INTO cookies VALUES (2,'.claude.ai','sub',X'02');",
+		"INSERT INTO cookies VALUES (3,'notclaude.ai','lookalike',X'03');",
+		"INSERT INTO cookies VALUES (4,'evil-claude.ai','lookalike2',X'04');",
+	); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := CaptureDesktop(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(snap.CookieSQL, "\n")
+	if !strings.Contains(joined, "apex") || !strings.Contains(joined, "'sub'") {
+		t.Errorf("claude.ai cookies should be captured: %s", joined)
+	}
+	if strings.Contains(joined, "lookalike") {
+		t.Errorf("look-alike hosts must not be captured: %s", joined)
+	}
+	// And restoring must not delete them either.
+	if err := importDesktopCookies(db, snap.CookieSQL); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runSQLite(db, "SELECT name FROM cookies ORDER BY name;")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"lookalike", "lookalike2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%s should have survived the restore: %s", want, out)
+		}
+	}
+}
+
+// An incoming account with no claude.ai cookies must still displace the
+// outgoing account's, or the web UI keeps authenticating as the account just
+// switched away from.
+func TestDesktop_EmptyCookieSetStillDisplacesTheOutgoingSession(t *testing.T) {
+	requireSQLiteOrSkip(t)
+	root := t.TempDir()
+	db := filepath.Join(root, "Cookies")
+	if _, err := runSQLite(db,
+		"CREATE TABLE cookies (creation_utc INTEGER PRIMARY KEY, host_key TEXT, name TEXT, encrypted_value BLOB);",
+		"INSERT INTO cookies VALUES (1,'.claude.ai','sessionKey',X'01');",
+		"INSERT INTO cookies VALUES (2,'.example.com','other',X'02');",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := importDesktopCookies(db, nil); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runSQLite(db, "SELECT name FROM cookies;")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "sessionKey") {
+		t.Error("the outgoing account's cookies must be cleared even with nothing to insert")
+	}
+	if !strings.Contains(out, "other") {
+		t.Error("another host's cookies must be untouched")
+	}
+}
+
+// Having cookies to restore and no database to restore them into is a failure,
+// not a silent success — the caller would otherwise report a completed switch.
+func TestDesktop_MissingCookieDBWithRowsIsAnError(t *testing.T) {
+	err := importDesktopCookies(filepath.Join(t.TempDir(), "Cookies"),
+		[]string{"INSERT INTO cookies (name) VALUES ('x');"})
+	if err == nil {
+		t.Error("restoring cookies with no database should fail loudly")
+	}
+	if err := importDesktopCookies(filepath.Join(t.TempDir(), "Cookies"), nil); err != nil {
+		t.Errorf("nothing to restore and no database is not an error: %v", err)
+	}
+}
+
+// Snapshots name their columns, so a Desktop update that ADDS a cookie column
+// between capture and restore still replays.
+func TestDesktop_CookieRestoreSurvivesAddedColumn(t *testing.T) {
+	requireSQLiteOrSkip(t)
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "config.json"), []byte(`{"oauth:tokenCacheV2":"djEwX"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runSQLite(filepath.Join(src, "Cookies"),
+		"CREATE TABLE cookies (creation_utc INTEGER PRIMARY KEY, host_key TEXT, name TEXT, encrypted_value BLOB);",
+		"INSERT INTO cookies VALUES (1,'.claude.ai','sessionKey',X'763130aa');",
+	); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := CaptureDesktop(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The app updates; Chromium grows a column.
+	dst := filepath.Join(t.TempDir(), "Cookies")
+	if _, err := runSQLite(dst,
+		"CREATE TABLE cookies (creation_utc INTEGER PRIMARY KEY, host_key TEXT, name TEXT, encrypted_value BLOB, source_scheme INTEGER DEFAULT 0);",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := importDesktopCookies(dst, snap.CookieSQL); err != nil {
+		t.Fatalf("a snapshot must replay across an added column: %v", err)
+	}
+	out, err := runSQLite(dst, "SELECT name||'='||quote(encrypted_value) FROM cookies;")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(out), "sessionkey=x'763130aa'") {
+		t.Errorf("value not restored intact: %s", out)
+	}
+}

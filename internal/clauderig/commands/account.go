@@ -458,7 +458,55 @@ func captureCurrent(st *account.Store) (account.Account, bool, string, error) {
 // snapshot with C's session — and doing nothing would let C's session be
 // overwritten and lost, since Desktop keeps only the active account's tokens.
 // Filing it under C preserves it, so switching to C later still costs no login.
-func captureLiveDesktopIntoOwner(st *account.Store) string {
+// Outcomes of preserving the live Desktop session before it is overwritten.
+const (
+	preserveNothing = "nothing"  // no Desktop session to lose
+	preserveSaved   = "saved"    // filed under its owning account
+	preserveNoOwner = "no-owner" // a live session belonging to no tracked account
+	preserveFailed  = "failed"   // it exists, and we could not store it
+)
+
+func captureLiveDesktopIntoOwner(st *account.Store) (owner string, outcome string) {
+	root, err := account.DesktopHome()
+	if err != nil {
+		return "", preserveNothing
+	}
+	snap, err := account.CaptureDesktop(root)
+	if err != nil {
+		// Nothing to lose if there is no Desktop here at all; anything else means
+		// a session may exist that we failed to read.
+		if errors.Is(err, account.ErrNoDesktop) || errors.Is(err, account.ErrDesktopUnsupported) {
+			return "", preserveNothing
+		}
+		return "", preserveFailed
+	}
+	if !snap.HasSession() {
+		return "", preserveNothing
+	}
+	all, err := st.List()
+	if err != nil {
+		return "", preserveFailed
+	}
+	for _, a := range all {
+		blk, oerr := st.OAuth(a.ID)
+		if oerr != nil {
+			continue
+		}
+		if account.MatchDesktopAccount(snap, blk) == account.DesktopSame {
+			if serr := st.SaveDesktop(a.ID, snap); serr != nil {
+				return a.ID, preserveFailed
+			}
+			return a.ID, preserveSaved
+		}
+	}
+	return "", preserveNoOwner
+}
+
+// liveDesktopOwner names the account Desktop is CURRENTLY signed in as, matched
+// by uuid rather than assumed to be the active CLI account — the two are
+// independent logins and this feature exists precisely because they differ.
+// Returns "" when it cannot be established.
+func liveDesktopOwner(st *account.Store) string {
 	root, err := account.DesktopHome()
 	if err != nil {
 		return ""
@@ -472,15 +520,12 @@ func captureLiveDesktopIntoOwner(st *account.Store) string {
 		return ""
 	}
 	for _, a := range all {
-		blk, oerr := st.OAuth(a.ID)
-		if oerr != nil {
-			continue
-		}
-		if account.MatchDesktopAccount(snap, blk) == account.DesktopSame {
-			if st.SaveDesktop(a.ID, snap) == nil {
-				return a.ID
+		if blk, oerr := st.OAuth(a.ID); oerr == nil &&
+			account.MatchDesktopAccount(snap, blk) == account.DesktopSame {
+			if a.Email != "" {
+				return a.Email
 			}
-			return ""
+			return a.ID
 		}
 	}
 	return ""
@@ -1153,12 +1198,35 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 		// back later would restore tokens the server has already rolled. Capturing
 		// on the way out is what makes repeated switching work.
 		//
-		// captureDesktopFor verifies the session really belongs to `active` before
-		// storing it, which matters most here: Desktop may have been signed in as
-		// some third account all along, and overwriting the outgoing account's good
-		// snapshot with that one would lose a login nobody asked to give up.
+		// It is filed under whichever account it really belongs to, which matters
+		// most here: Desktop may have been signed in as some third account all
+		// along, and filing that under the outgoing account would lose a login
+		// nobody asked to give up.
+		//
+		// The outcome is checked, not discarded. Desktop keeps only the active
+		// account's tokens, so applying the target's session DESTROYS whatever is
+		// there now — if that could not be preserved first, the switch would
+		// silently cost a login that a later switch-back cannot recover.
 		if swapDesktop {
-			_ = captureLiveDesktopIntoOwner(st)
+			_, outcome := captureLiveDesktopIntoOwner(st)
+			if force {
+				outcome = preserveNothing // caller has accepted the loss
+			}
+			switch outcome {
+			case preserveFailed:
+				return "", nil, fmt.Errorf(
+					"refusing to switch: Claude Desktop has a live session that could not be " +
+						"saved first, and switching would overwrite it — costing a login that " +
+						"cannot be recovered.\n" +
+						"Fix: resolve the error above, or `--force` to switch anyway and lose it")
+			case preserveNoOwner:
+				return "", nil, fmt.Errorf(
+					"refusing to switch: Claude Desktop is signed in as an account clauderig " +
+						"does not track, so its session cannot be preserved and switching " +
+						"would discard it.\n" +
+						"Fix: run `clauderig account add` while that account is live to track " +
+						"it, or `--force` to switch anyway and lose it")
+			}
 		}
 	}
 	if err := account.WriteLive(targetCred); err != nil {
@@ -1191,6 +1259,13 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 	// state — and rolling the CLI back over it would be a bigger change than the
 	// one that failed. Report the split state instead, precisely, so it is obvious
 	// what to do next.
+	// With --force the guard above was bypassed, so Desktop may be open. The
+	// documented promise for that case is "swaps the CLI login only", so leave
+	// Desktop entirely alone rather than attempting a write the app would clobber
+	// and then reporting it as a failure.
+	if swapDesktop && account.DesktopRunning() {
+		return backup, nil, nil
+	}
 	if swapDesktop {
 		root, rerr := account.DesktopHome()
 		if rerr == nil {
@@ -1207,17 +1282,19 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 	return backup, nil, nil
 }
 
-// currentDesktopLabel names whichever account Desktop is currently signed in as,
-// for the refuse-while-running message. Falls back to a neutral phrase rather
-// than guessing when the active account isn't known.
-func currentDesktopLabel(st *account.Store, activeID string) string {
-	if activeID == "" {
-		return "the current account"
+// currentDesktopLabel names whichever account DESKTOP is signed in as, for the
+// refuse-while-running message.
+//
+// Resolved from the live Desktop session rather than from the active CLI
+// account: this whole feature exists because the two apps can be signed in as
+// different accounts, so naming the CLI's account here would confidently state
+// something false. Falls back to a neutral phrase when it cannot be established,
+// which is better than a specific wrong answer.
+func currentDesktopLabel(st *account.Store, _ string) string {
+	if owner := liveDesktopOwner(st); owner != "" {
+		return owner
 	}
-	if a, err := st.Resolve(activeID); err == nil && a.Email != "" {
-		return a.Email
-	}
-	return activeID
+	return "whichever account it is signed in as"
 }
 
 func printSwitchRefused(out interface{ Write([]byte) (int, error) }, live []account.Instance) {
