@@ -34,6 +34,7 @@ func NewRootCmd(version string) *cobra.Command {
 		NewConfigCmd(),
 		NewMCPCmd(),
 		NewAccountCmd(),
+		NewDesktopCmd(),
 		NewUICmd(),
 	)
 	root.AddCommand(ScopeCommands()...) // global (alias: hooks) / project / local
