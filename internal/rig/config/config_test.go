@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func mustParse(t *testing.T, src string) Config {
@@ -602,5 +603,92 @@ func TestLoadMergedSkipsTheGlobalWhenItIsTheRepoFile(t *testing.T) {
 	}
 	if len(cfg.Warnings) != 1 {
 		t.Fatalf("warnings = %v, want exactly one (the file must not be merged with itself)", cfg.Warnings)
+	}
+}
+
+// ---- artifacts / verify (the `rig verify` block) ----
+
+func TestParseArtifacts(t *testing.T) {
+	cfg, err := Parse(`{
+  "artifacts": {
+    // The object form: what is built, and what it is built from.
+    "browser":    { "path": "../out/Release/App.app", "inputs": ["**/*.cc", "**/*.grd"] },
+    // The string form: the path alone.
+    "unit-tests": "../out/Release/unit_tests"
+  }
+}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	browser := cfg.Artifacts["browser"]
+	if browser == nil || browser.Path != "../out/Release/App.app" {
+		t.Fatalf("browser = %+v, want the declared path", browser)
+	}
+	if len(browser.Inputs) != 2 || browser.Inputs[0] != "**/*.cc" {
+		t.Errorf("browser inputs = %v, want both globs", browser.Inputs)
+	}
+	tests := cfg.Artifacts["unit-tests"]
+	if tests == nil || tests.Path != "../out/Release/unit_tests" || len(tests.Inputs) != 0 {
+		t.Errorf("unit-tests = %+v, want the string form to set the path and no inputs", tests)
+	}
+}
+
+// `artifacts` and `verify` are known keys — a repo that uses them must not be
+// told it has a typo.
+func TestArtifactsAndVerifyAreKnownKeys(t *testing.T) {
+	if got := UnknownKeys(`{ "artifacts": {}, "verify": { "run": false } }`); len(got) != 0 {
+		t.Fatalf("UnknownKeys = %+v, want none", got)
+	}
+}
+
+func TestVerifyRunDefaultsToOn(t *testing.T) {
+	if !(Config{}).VerifyRun() {
+		t.Error("an unconfigured repo should include the run step")
+	}
+	off := false
+	if (Config{Verify: &Verify{Run: &off}}).VerifyRun() {
+		t.Error("verify.run: false should drop the run step")
+	}
+}
+
+func TestVerifyRunTimeout(t *testing.T) {
+	d, err := (Config{}).VerifyRunTimeout()
+	if err != nil || d != DefaultVerifyRunTimeout {
+		t.Fatalf("unset = (%s, %v), want the default", d, err)
+	}
+	if d, err := (Config{Verify: &Verify{RunTimeout: "45s"}}).VerifyRunTimeout(); err != nil || d != 45*time.Second {
+		t.Fatalf("45s = (%s, %v), want 45s", d, err)
+	}
+	// A misread timeout is exactly the quiet wrongness verify exists to catch,
+	// so a bad value is an error rather than a silent fallback.
+	if _, err := (Config{Verify: &Verify{RunTimeout: "soon"}}).VerifyRunTimeout(); err == nil {
+		t.Error("a non-duration runTimeout should be an error")
+	}
+	if _, err := (Config{Verify: &Verify{RunTimeout: "0s"}}).VerifyRunTimeout(); err == nil {
+		t.Error("a zero runTimeout should be an error")
+	}
+}
+
+// The repo's block layers over the user-wide one per key, like every other
+// section of the schema.
+func TestMergeArtifactsAndVerify(t *testing.T) {
+	on := true
+	base := Config{
+		Artifacts: map[string]*Artifact{"shared": {Path: "out/shared"}},
+		Verify:    &Verify{Run: &on, RunTimeout: "5s"},
+	}
+	overlay := Config{
+		Artifacts: map[string]*Artifact{"repo": {Path: "out/repo"}},
+		Verify:    &Verify{RunTimeout: "30s"},
+	}
+	merged := Merge(base, overlay)
+	if merged.Artifacts["shared"] == nil || merged.Artifacts["repo"] == nil {
+		t.Fatalf("artifacts = %v, want both entries", merged.Artifacts)
+	}
+	if merged.Verify.RunTimeout != "30s" {
+		t.Errorf("runTimeout = %q, want the repo's 30s", merged.Verify.RunTimeout)
+	}
+	if merged.Verify.Run == nil || !*merged.Verify.Run {
+		t.Error("run should fall through to the global value the repo didn't set")
 	}
 }

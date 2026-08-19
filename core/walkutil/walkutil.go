@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -44,28 +45,52 @@ func SkippedDir(name string) bool { return skippedDirs[name] }
 // or when the repo's .gitignore matches it; matching files are likewise skipped.
 // A missing root is not an error (returns nil), and unreadable subtrees are
 // pruned rather than aborting the whole scan.
+//
+// Discovery wants exactly that forgiveness: a manifest it can't read is a
+// manifest it doesn't offer. A caller that must not draw a conclusion from a
+// partial scan wants WalkReport instead, which hands back what it could not read.
 func Walk(root string, fn func(path string, d fs.DirEntry) error) error {
+	_, err := WalkReport(root, nil, fn)
+	return err
+}
+
+// WalkReport is Walk with the two additions a verification pass needs.
+//
+// skip prunes extra directories beyond the default set — absolute paths, or
+// paths relative to root (either separator). Passing a build-output directory
+// keeps its generated files from being mistaken for sources.
+//
+// The returned unreadable list names every directory the walk could not
+// descend into. Walk drops these silently, which is right for discovery and
+// wrong for a check: a caller comparing timestamps cannot tell a complete scan
+// from one that skipped the very subtree holding the newest file, so it needs
+// the chance to report itself inconclusive rather than passing.
+func WalkReport(root string, skip []string, fn func(path string, d fs.DirEntry) error) (unreadable []string, err error) {
 	if _, err := os.Stat(root); err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return nil, nil
 		}
-		return err
+		return nil, err
 	}
 
+	pruned := absSet(root, skip)
 	ign := LoadIgnorer(root)
-	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			// Skip unreadable subtrees rather than aborting the whole scan.
+			// Prune rather than aborting the whole scan — but say so, so the
+			// caller can decide whether a partial answer is good enough.
 			if d != nil && d.IsDir() {
+				unreadable = append(unreadable, path)
 				return filepath.SkipDir
 			}
+			unreadable = append(unreadable, path)
 			return nil
 		}
 		if d.IsDir() {
 			if path == root {
 				return nil
 			}
-			if skippedDirs[d.Name()] || ign.Ignored(relSlash(root, path), true) {
+			if skippedDirs[d.Name()] || pruned[cleanKey(path)] || ign.Ignored(relSlash(root, path), true) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -75,6 +100,37 @@ func Walk(root string, fn func(path string, d fs.DirEntry) error) error {
 		}
 		return fn(path, d)
 	})
+	return unreadable, err
+}
+
+// absSet resolves each skip entry against root and returns them as a lookup set
+// of cleaned absolute paths.
+func absSet(root string, skip []string) map[string]bool {
+	if len(skip) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(skip))
+	for _, s := range skip {
+		if s == "" {
+			continue
+		}
+		p := filepath.FromSlash(s)
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(root, p)
+		}
+		set[cleanKey(p)] = true
+	}
+	return set
+}
+
+// cleanKey normalizes a path for set comparison — cleaned, and case-folded on
+// the case-insensitive platforms so a skip entry matches the walked path.
+func cleanKey(p string) string {
+	c := filepath.Clean(p)
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.ToLower(c)
+	}
+	return c
 }
 
 // relSlash returns path relative to root using '/' separators (the form the

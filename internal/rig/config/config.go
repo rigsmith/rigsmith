@@ -12,6 +12,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -20,6 +21,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/jsonc"
 )
@@ -95,6 +97,17 @@ type Config struct {
 	// WorktreeOpenCmd accessors, which apply the defaults.
 	Worktree *Worktree `json:"worktree,omitempty"`
 
+	// Artifacts declares what this repo builds and what each thing is built
+	// from, so `rig verify` can tell whether the artifacts in play were
+	// produced together. Optional and small: rig infers the common case
+	// (source newer than build output) with no config at all — this block is
+	// for the artifacts it cannot know about (generated resources,
+	// multi-artifact builds, an `out/` tree beside the repo).
+	Artifacts map[string]*Artifact `json:"artifacts,omitempty"`
+	// Verify configures the verify verb (whether the run step is part of the
+	// sequence, and how long it is given to prove it starts).
+	Verify *Verify `json:"verify,omitempty"`
+
 	// Path is the resolved location the config was loaded from, "" if none.
 	Path string `json:"-"`
 	// Warnings collects non-fatal load problems (malformed file degraded to
@@ -139,6 +152,78 @@ func (c Config) WorktreeOpenCmd() []string {
 		}
 	}
 	return append([]string{}, DefaultWorktreeOpenCmd...)
+}
+
+// Artifact is one entry under "artifacts": something the repo builds, plus the
+// globs it is built from. Anything under Path older than the newest file
+// matching Inputs is stale — `rig verify` reports it rather than rebuilding to
+// find out, which is what makes the check usable on a build that takes hours.
+type Artifact struct {
+	// Path is the file or directory produced, relative to the repo root or
+	// absolute. It may sit outside the repo (e.g. "../out/Release/App.app").
+	Path string `json:"path,omitempty"`
+	// Inputs are the globs it is built from, relative to the repo root. `*`
+	// and `?` stay inside a path segment; `**` spans directories, so
+	// "**/*.cc" matches at any depth.
+	Inputs []string `json:"inputs,omitempty"`
+}
+
+// UnmarshalJSON accepts the object form or a bare string (the path alone).
+// A path with no inputs still earns its keep: verify reports the artifact as
+// unbuilt when it is missing, and says the comparison was skipped when it
+// isn't — which is more than silence.
+func (a *Artifact) UnmarshalJSON(data []byte) error {
+	if firstToken(data) == '"' {
+		return json.Unmarshal(data, &a.Path)
+	}
+	// A named type avoids recursing into this method.
+	type artifact Artifact
+	var alias artifact
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*a = Artifact(alias)
+	return nil
+}
+
+// Verify configures the verify verb.
+type Verify struct {
+	// Run controls whether the run step is part of `rig verify`'s sequence.
+	// A pointer so an unset repo value falls through to the global config.
+	// Defaults to true — "does it start" is part of "I checked".
+	Run *bool `json:"run,omitempty"`
+	// RunTimeout is how long the run step is given before "still alive"
+	// counts as success (a server or a browser never exits on its own). A Go
+	// duration string, e.g. "20s". Defaults to DefaultVerifyRunTimeout.
+	RunTimeout string `json:"runTimeout,omitempty"`
+}
+
+// DefaultVerifyRunTimeout is how long `rig verify` lets the run step live
+// before treating "still running" as a pass.
+const DefaultVerifyRunTimeout = 10 * time.Second
+
+// VerifyRun reports whether verify's sequence includes the run step (true when
+// unset).
+func (c Config) VerifyRun() bool {
+	return c.Verify == nil || c.Verify.Run == nil || *c.Verify.Run
+}
+
+// VerifyRunTimeout returns the configured run-step timeout, and an error when
+// the config holds something that isn't a duration (the caller reports it
+// rather than silently falling back — a misread timeout is exactly the kind of
+// quiet wrongness verify exists to catch).
+func (c Config) VerifyRunTimeout() (time.Duration, error) {
+	if c.Verify == nil || strings.TrimSpace(c.Verify.RunTimeout) == "" {
+		return DefaultVerifyRunTimeout, nil
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(c.Verify.RunTimeout))
+	if err != nil {
+		return DefaultVerifyRunTimeout, fmt.Errorf("verify.runTimeout %q is not a duration (e.g. %q): %w", c.Verify.RunTimeout, "20s", err)
+	}
+	if d <= 0 {
+		return DefaultVerifyRunTimeout, fmt.Errorf("verify.runTimeout %q must be positive", c.Verify.RunTimeout)
+	}
+	return d, nil
 }
 
 // Test configures the test verb.
@@ -443,6 +528,8 @@ func Merge(base, overlay Config) Config {
 		Kill:            kill,
 		Rebuild:         rebuild,
 		Worktree:        worktree,
+		Artifacts:       mergeDict(base.Artifacts, overlay.Artifacts),
+		Verify:          mergeVerify(base.Verify, overlay.Verify),
 		Publish:         mergePublish(base.Publish, overlay.Publish),
 		Env:             mergeDict(base.Env, overlay.Env),
 		Commands:        mergeDict(base.Commands, overlay.Commands),
@@ -548,6 +635,24 @@ func mergeCoverage(base, overlay *Coverage) *Coverage {
 	return merged
 }
 
+// mergeVerify layers the repo's verify block over the global one, per field.
+func mergeVerify(base, overlay *Verify) *Verify {
+	if base == nil {
+		return overlay
+	}
+	if overlay == nil {
+		return base
+	}
+	merged := &Verify{
+		Run:        overlay.Run,
+		RunTimeout: coalesce(overlay.RunTimeout, base.RunTimeout),
+	}
+	if merged.Run == nil {
+		merged.Run = base.Run
+	}
+	return merged
+}
+
 func mergePublish(base, overlay *Publish) *Publish {
 	if base == nil {
 		return overlay
@@ -578,6 +683,7 @@ var knownKeys = []string{
 	"$schema", "solution", "defaultProject", "ecosystem", "test", "coverage",
 	"kill", "rebuild", "publish", "env", "envPresets", "commands", "aliases",
 	"tools", "exclude", "quiet", "dotnet", "node", "worktree", "shell",
+	"artifacts", "verify",
 }
 
 // UnknownKey is a top-level key rig doesn't recognize, with the closest known
