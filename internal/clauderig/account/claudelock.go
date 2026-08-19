@@ -65,28 +65,54 @@ var ErrClaudeBusy = errors.New("Claude Code is holding its credential lock")
 
 // heldLock is one acquired lock directory and the goroutine keeping it fresh.
 //
-// info is the identity of the directory THIS process created. Everything else
-// keys off it: a lock is a pathname, and a pathname can come to mean a different
-// directory. If our lock is judged stale (a suspended laptop is enough) and
-// another holder removes and recreates it, then without an identity check our
-// toucher would go on refreshing THEIR lock, and our release would delete it —
-// silently destroying the exclusion for both of us.
+// A lock is a pathname, and a pathname can come to mean a different directory.
+// If ours is judged stale (a suspended laptop is enough) and another holder
+// removes and recreates it, then without an ownership check our toucher would go
+// on refreshing THEIR lock and our release would delete it — destroying the
+// exclusion for both of us.
+//
+// Ownership is tracked by MTIME, not by os.SameFile. Inode identity is the
+// obvious choice and it does not work: on Linux, removing a directory and
+// immediately recreating it typically reuses the inode, so SameFile reports the
+// takeover as the same directory. (macOS does not reuse it as eagerly, which is
+// exactly the kind of difference that passes locally and fails in CI.) The mtime
+// we last set is ours alone — a holder that recreates or touches the directory
+// changes it, and nanosecond resolution makes a collision vanishingly unlikely.
+// A missed detection is no worse than not checking at all.
 type heldLock struct {
 	dir  string
-	info os.FileInfo
 	stop chan struct{}
 	done chan struct{}
 	once sync.Once
 	lost atomic.Bool // set when the directory stopped being ours
+
+	mu    sync.Mutex
+	stamp time.Time // the mtime we last observed on our own directory
 }
 
-// stillOurs reports whether the lock directory is the one we created.
+// mark records the directory's current mtime as ours. Read back rather than
+// assumed: filesystems vary in the precision they keep.
+func (h *heldLock) mark() error {
+	fi, err := os.Stat(h.dir)
+	if err != nil {
+		return err
+	}
+	h.mu.Lock()
+	h.stamp = fi.ModTime()
+	h.mu.Unlock()
+	return nil
+}
+
+// stillOurs reports whether the lock directory is the one we are holding: it
+// exists, and its mtime is the one we last set.
 func (h *heldLock) stillOurs() bool {
 	fi, err := os.Stat(h.dir)
 	if err != nil {
 		return false
 	}
-	return os.SameFile(fi, h.info)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return fi.ModTime().Equal(h.stamp)
 }
 
 // compromised reports that ownership was lost while held — the caller must not
@@ -147,11 +173,10 @@ func acquireLock(dir string, stale, timeout time.Duration) (*heldLock, error) {
 		time.Sleep(250*time.Millisecond + time.Duration(rand.Int63n(int64(250*time.Millisecond))))
 	}
 
-	info, serr := os.Stat(dir)
-	if serr != nil {
+	h := &heldLock{dir: dir, stop: make(chan struct{}), done: make(chan struct{})}
+	if serr := h.mark(); serr != nil {
 		return nil, fmt.Errorf("take lock %s: %w", filepath.Base(dir), serr)
 	}
-	h := &heldLock{dir: dir, info: info, stop: make(chan struct{}), done: make(chan struct{})}
 	go func() {
 		defer close(h.done)
 		t := time.NewTicker(touchInterval)
@@ -172,6 +197,12 @@ func acquireLock(dir string, stale, timeout time.Duration) (*heldLock, error) {
 				if err := os.Chtimes(h.dir, now, now); err != nil {
 					h.lost.Store(true)
 					return // stolen or removed; nothing left to keep alive
+				}
+				// Re-read what actually landed: this becomes the stamp the next
+				// check compares against.
+				if err := h.mark(); err != nil {
+					h.lost.Store(true)
+					return
 				}
 			}
 		}

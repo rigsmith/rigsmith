@@ -74,6 +74,10 @@ func TestAcquireLockTakesOverAStaleHolder(t *testing.T) {
 
 // The toucher is what stops a legitimately-held lock from being stolen while a
 // slow swap is still in flight.
+//
+// Observed by watching the mtime advance on its own — NOT by forging one.
+// Backdating the directory is indistinguishable from another holder recreating
+// it, which the ownership check now (correctly) treats as a takeover.
 func TestHeldLockIsTouchedWhileHeld(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".oauth_refresh.lock")
 	h, err := acquireLock(dir, credentialStaleness, time.Second)
@@ -82,14 +86,17 @@ func TestHeldLockIsTouchedWhileHeld(t *testing.T) {
 	}
 	defer h.release()
 
-	stale := time.Now().Add(-credentialStaleness)
-	if err := os.Chtimes(dir, stale, stale); err != nil {
+	before, err := os.Stat(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2*touchInterval + time.Second)
+	deadline := time.Now().Add(2*touchInterval + 2*time.Second)
 	for time.Now().Before(deadline) {
 		fi, serr := os.Stat(dir)
-		if serr == nil && time.Since(fi.ModTime()) < credentialStaleness/2 {
+		if serr == nil && fi.ModTime().After(before.ModTime()) {
+			if !h.stillOurs() {
+				t.Fatal("the lock stopped being recognised as ours after our own touch")
+			}
 			return // refreshed
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -144,9 +151,12 @@ func TestHeldLockDoesNotTouchOrRemoveALockItNoLongerOwns(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Simulate a stale takeover: the directory is replaced by another holder's.
+	// Note this is exactly the case inode identity CANNOT see — Linux reuses the
+	// inode — so the check has to rest on the mtime we last set.
 	if rerr := os.Remove(dir); rerr != nil {
 		t.Fatal(rerr)
 	}
+	time.Sleep(10 * time.Millisecond) // ensure a distinguishable mtime
 	if merr := os.Mkdir(dir, 0o755); merr != nil {
 		t.Fatal(merr)
 	}
@@ -172,8 +182,9 @@ func TestHeldLockReportsLostOwnership(t *testing.T) {
 		t.Fatal("a freshly acquired lock reports itself compromised")
 	}
 	_ = os.Remove(dir)
+	time.Sleep(10 * time.Millisecond)
 	_ = os.Mkdir(dir, 0o755)
-	deadline := time.Now().Add(2*touchInterval + time.Second)
+	deadline := time.Now().Add(2*touchInterval + 2*time.Second)
 	for time.Now().Before(deadline) {
 		if h.compromised() {
 			return
