@@ -2,6 +2,7 @@ package cli
 
 import (
 	"io"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -72,11 +73,16 @@ func TestUnknownFlagHintCoversEveryForwardingVerb(t *testing.T) {
 }
 
 // An argument that needs quoting survives the round trip, so the suggested line
-// can be pasted as-is.
+// can be pasted as-is — in the shell the user is actually holding. POSIX single
+// quotes arrive literally in cmd.exe, so Windows gets double quotes instead.
 func TestUnknownFlagQuotesArgumentsInTheFix(t *testing.T) {
 	err := parseArgs(t, "test", "--grep=two words")
 
-	if want := `rig test -- '--grep=two words'`; !strings.Contains(err.Error(), want) {
+	want := `rig test -- '--grep=two words'`
+	if runtime.GOOS == "windows" {
+		want = `rig test -- "--grep=two words"`
+	}
+	if !strings.Contains(err.Error(), want) {
 		t.Errorf("want the fix %q; got:\n%s", want, err.Error())
 	}
 }
