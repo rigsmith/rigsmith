@@ -180,8 +180,13 @@ func TestWorktreeNewListRmRepoFlag(t *testing.T) {
 	}
 
 	wtPath := filepath.Join(filepath.Dir(r.Dir), "other-worktrees", "feat-x")
-	if out := run("new", "feat/x", "--repo", r.Dir, "--no-open"); !strings.Contains(out, wtPath) {
-		t.Fatalf("new --repo = %q; want the sibling path %q", out, wtPath)
+	// Match on the sibling SUFFIX, not the whole path: on Windows the temp dir
+	// arrives in 8.3 short form ("RUNNER~1") while the command prints the
+	// resolved long form, so comparing the full strings tests the path spelling
+	// rather than the behaviour. os.Stat below still pins the real location.
+	wantSuffix := filepath.Join("other-worktrees", "feat-x")
+	if out := run("new", "feat/x", "--repo", r.Dir, "--no-open"); !strings.Contains(out, wantSuffix) {
+		t.Fatalf("new --repo = %q; want a path ending %q", out, wantSuffix)
 	}
 	if _, err := os.Stat(wtPath); err != nil {
 		t.Fatalf("worktree not created at %s: %v", wtPath, err)
