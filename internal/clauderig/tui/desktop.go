@@ -26,6 +26,10 @@ type DesktopRow struct {
 	Email     string
 	AccountID string // linked `clauderig account` id, if any (a label)
 	Open      bool
+	// OpenUnknown means the process scan failed, so whether this profile's
+	// window is open could not be established. Rendered distinctly from
+	// "closed": the difference decides whether deleting it is safe.
+	OpenUnknown bool
 }
 
 // Label renders a row's identity.
@@ -94,7 +98,7 @@ func (m DesktopModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "c":
 		// Closing is only meaningful for a window that is open; offering it on a
 		// closed profile would report "not open" as though something happened.
-		if r, ok := m.current(); ok && r.Open {
+		if r, ok := m.current(); ok && r.Open && !r.OpenUnknown {
 			m.Action = DesktopAction{Kind: "quit", Name: r.Name}
 			return m, tea.Quit
 		}
@@ -147,7 +151,10 @@ func (m DesktopModel) View() string {
 	for i, r := range m.rows {
 		cursor := "  "
 		state := dim.Render("  closed")
-		if r.Open {
+		switch {
+		case r.OpenUnknown:
+			state = warnC.Render("  unknown (process scan failed)")
+		case r.Open:
 			state = okC.Render("  open")
 			anyOpen = true
 		}
@@ -157,7 +164,10 @@ func (m DesktopModel) View() string {
 			name = selected.Render(name)
 		}
 		marker := "  "
-		if r.Open {
+		switch {
+		case r.OpenUnknown:
+			marker = warnC.Render("? ")
+		case r.Open:
 			marker = okC.Render("● ")
 		}
 		link := ""

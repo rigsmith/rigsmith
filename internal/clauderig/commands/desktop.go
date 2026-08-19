@@ -347,13 +347,14 @@ func desktopUnavailable() error {
 // --- JSON + directory mapping ------------------------------------------------
 
 type desktopProfileJSON struct {
-	Name       string `json:"name"`
-	Email      string `json:"email,omitempty"`
-	AccountID  string `json:"accountId,omitempty"`
-	Open       bool   `json:"open"`
-	DataDir    string `json:"dataDir"`
-	CreatedAt  string `json:"createdAt,omitempty"`
-	LastOpened string `json:"lastOpened,omitempty"`
+	Name        string `json:"name"`
+	Email       string `json:"email,omitempty"`
+	AccountID   string `json:"accountId,omitempty"`
+	Open        bool   `json:"open"`
+	OpenUnknown bool   `json:"openUnknown,omitempty"`
+	DataDir     string `json:"dataDir"`
+	CreatedAt   string `json:"createdAt,omitempty"`
+	LastOpened  string `json:"lastOpened,omitempty"`
 }
 
 type desktopListJSON struct {
@@ -373,15 +374,22 @@ func printDesktopJSON(w interface{ Write([]byte) (int, error) }, _ *desktop.Stor
 		Profiles:  make([]desktopProfileJSON, 0, len(all)),
 	}
 	for _, p := range all {
-		out.Profiles = append(out.Profiles, desktopProfileJSON{
+		row := desktopProfileJSON{
 			Name:       p.Name,
 			Email:      p.Email,
 			AccountID:  p.AccountID,
-			Open:       desktop.IsRunning(app, p.DataDir()),
 			DataDir:    p.DataDir(),
 			CreatedAt:  p.CreatedAt,
 			LastOpened: p.LastOpened,
-		})
+		}
+		// A failed scan is reported as such rather than as `open: false`, so a
+		// script cannot mistake "could not look" for "not running".
+		if open, rerr := desktop.IsRunning(app, p.DataDir()); rerr != nil {
+			row.OpenUnknown = true
+		} else {
+			row.Open = open
+		}
+		out.Profiles = append(out.Profiles, row)
 	}
 	return emitJSON(w, out)
 }
@@ -512,7 +520,8 @@ func runDesktopUI(cmd *cobra.Command) error {
 				AccountID: p.AccountID,
 				// Resolved here, not in the model: the screen must never shell
 				// out to scan processes while the event loop is running.
-				Open: installed && desktop.IsRunning(app, p.DataDir()),
+				Open:        installed && profileOpen(app, p.DataDir()),
+				OpenUnknown: installed && profileScanFailed(app, p.DataDir()),
 			})
 		}
 		res, rerr := tea.NewProgram(tui.NewDesktop(rows, installed, desktop.Supported(), note)).Run()
@@ -553,7 +562,12 @@ func runDesktopUI(cmd *cobra.Command) error {
 				note = ErrStyle.Render(gerr.Error())
 				continue
 			}
-			if desktop.IsRunning(app, p.DataDir()) {
+			open, rerr := desktop.IsRunning(app, p.DataDir())
+			if rerr != nil {
+				note = ErrStyle.Render("could not tell whether " + p.Name + " is open: " + rerr.Error())
+				continue
+			}
+			if open {
 				_ = app.Focus(p.DataDir())
 				note = "already open: " + p.Label()
 				continue
@@ -591,8 +605,14 @@ func runDesktopUI(cmd *cobra.Command) error {
 			}
 			// Deleting a live profile leaves Electron writing into unlinked
 			// files, so close it first — the CLI refuses instead, but here the
-			// confirmation already established intent.
-			if desktop.IsRunning(app, p.DataDir()) {
+			// confirmation already established intent. An unknown state is
+			// treated as open, because deleting a live profile is unrecoverable.
+			open, rerr := desktop.IsRunning(app, p.DataDir())
+			if rerr != nil {
+				note = ErrStyle.Render("refusing to delete " + p.Name + ": could not tell whether it is open (" + rerr.Error() + ")")
+				continue
+			}
+			if open {
 				if qerr := app.Quit(p.DataDir(), quitGrace); qerr != nil {
 					note = ErrStyle.Render(qerr.Error())
 					continue
@@ -624,4 +644,17 @@ func promptDesktopName() (string, error) {
 		return "", nil
 	}
 	return strings.TrimSpace(name), err
+}
+
+// profileOpen and profileScanFailed split IsRunning's two answers for the TUI,
+// which renders a row per profile and must show "unknown" rather than "closed"
+// when the scan fails.
+func profileOpen(app desktop.App, dataDir string) bool {
+	open, err := desktop.IsRunning(app, dataDir)
+	return err == nil && open
+}
+
+func profileScanFailed(app desktop.App, dataDir string) bool {
+	_, err := desktop.IsRunning(app, dataDir)
+	return err != nil
 }

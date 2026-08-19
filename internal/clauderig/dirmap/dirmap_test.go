@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -194,6 +195,13 @@ func TestRemoveTargetsOneDirectoryNotItsAncestors(t *testing.T) {
 }
 
 func TestFileIsNotWorldReadable(t *testing.T) {
+	// Windows has no Unix permission bits — Go's Chmod there only toggles the
+	// read-only flag, so a 0600 file reports 0666 and this would assert the
+	// platform rather than the code. Containment there rests on the ACL the
+	// file inherits from %USERPROFILE%.
+	if runtime.GOOS == "windows" {
+		t.Skip("no Unix permission bits on Windows")
+	}
 	s := newTestStore(t)
 	setAccount(t, s, t.TempDir(), "work")
 	fi, err := os.Stat(s.Path)
