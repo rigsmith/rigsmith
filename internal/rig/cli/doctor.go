@@ -57,12 +57,12 @@ func newDoctorCmd() *cobra.Command {
 			fmt.Fprintln(out, headerStyle.Render("rig doctor")+"  "+dimStyle.Render(root))
 			fmt.Fprintln(out)
 
-			checks, present := gatherChecks(cmd, root)
-			if len(checks) == 0 {
-				fmt.Fprintln(out, dimStyle.Render(
-					"no recognized projects (.NET/Node/Go/Cargo) found here — nothing to check"))
-				return nil
-			}
+			// How rig itself is installed and wired into the shell comes first,
+			// and comes back even when there is no project here: a directory
+			// with nothing to build is exactly where you stand when asking why
+			// `rig cd` or `rcd` does nothing.
+			projects, present := gatherChecks(cmd, root)
+			checks := append(setupChecks(), projects...)
 
 			var severity docLevel
 			if doctorLiveEligible() {
@@ -85,6 +85,10 @@ func newDoctorCmd() *cobra.Command {
 				}
 				fmt.Fprintln(out)
 				fmt.Fprintln(out, doctorSummary(severity))
+			}
+			if len(projects) == 0 {
+				fmt.Fprintln(out, dimStyle.Render(
+					"no recognized projects (.NET/Node/Go/Cargo) found here — only the setup checks ran"))
 			}
 
 			// Offer to install the missing optional tools rig can install (owned
@@ -400,6 +404,8 @@ func ecoDisplayName(eco string) string {
 		return ".NET"
 	case detect.Cargo:
 		return "Cargo"
+	case setupGroup:
+		return "Setup"
 	case "tools":
 		return "Tools"
 	case "config":

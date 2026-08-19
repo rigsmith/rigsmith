@@ -35,9 +35,25 @@ Prefer to manage the aliases on their own? Use `rig alias`:
 ```sh
 rig alias install          # add the block to your shell startup file
 rig alias remove           # take it back out
-rig alias list             # show the set (also: bare `rig alias`)
+rig alias list             # show the set, ✓ marking what's live (also: bare `rig alias`)
 rig alias install --print  # inspect the snippet without writing anything
 ```
+
+`rig alias list` reads your startup file and marks the aliases that are actually
+installed, so it answers "why doesn't `rt` work" and not just "what could I
+install":
+
+```
+  ✓ rr   rig run  — Run the project
+  ✓ rb   rig build  — Build the project
+    rt   rig test  — Run the tests
+    …
+  ✓ = installed in ~/.zshrc; `rig alias install` adds the rest
+```
+
+When rig can't read your startup file (a shell it writes no snippet for) the
+legend says so rather than showing everything unmarked, which would read as
+"none installed".
 
 The shell is taken from the argument, else `$SHELL`. Supported shells: `zsh`,
 `bash`, `fish`, `powershell` (alias: `pwsh`).

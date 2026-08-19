@@ -344,12 +344,49 @@ func newAliasListCmd() *cobra.Command {
 	}
 }
 
+// runAliasList prints the candidate set, marking the ones actually live in your
+// shell. The set alone answers "what could I install"; the mark answers "why
+// doesn't rt work", which is the question people arrive with — and rig already
+// knew, since installedAliases reads the same block the installer writes.
 func runAliasList(cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
-	for _, a := range rigAliases {
-		fmt.Fprintf(out, "  %-4s %s\n", a.name, dimStyle.Render(integrationBase+" "+a.verb+"  — "+a.desc))
+	state := readShellState()
+	live := map[string]bool{}
+	for _, a := range installedAliases(state.shell, state.aliases) {
+		live[a.name] = true
 	}
+	for _, a := range rigAliases {
+		mark := " "
+		if live[a.name] {
+			mark = aliasInstalledMark
+		}
+		fmt.Fprintf(out, "  %s %-4s %s\n", mark, a.name, dimStyle.Render(integrationBase+" "+a.verb+"  — "+a.desc))
+	}
+	fmt.Fprintln(out, dimStyle.Render("  "+aliasListLegend(state, len(live))))
 	return nil
+}
+
+// aliasInstalledMark flags an alias that is live in the rc file.
+const aliasInstalledMark = "✓"
+
+// aliasListLegend says what the marks mean — or, when rig couldn't read the rc
+// file, that their absence proves nothing. Reporting "none installed" for a
+// shell rig can't read would be worse than saying nothing.
+func aliasListLegend(state shellState, live int) string {
+	switch {
+	case state.shell == "":
+		return "(couldn't tell which are installed — " + shellUnsupportedDetail() + ")"
+	case state.err != nil:
+		return "(couldn't tell which are installed — that startup file couldn't be read)"
+	case live == 0:
+		return "none installed — `rig alias install`"
+	case live >= len(rigAliases):
+		// Nothing left to add: offering to "add the rest" when there is no rest
+		// reads as though something is missing.
+		return aliasInstalledMark + " = installed in " + state.rcPath + "; all of them are in place"
+	default:
+		return aliasInstalledMark + " = installed in " + state.rcPath + "; `rig alias install` adds the rest"
+	}
 }
 
 // aliasNames renders every candidate alias name for a one-line summary, e.g.
