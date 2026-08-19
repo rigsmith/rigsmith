@@ -114,6 +114,9 @@ func humanizeSince(t time.Time) string {
 // printAccountLine renders the machine-wide Claude Code login.
 func printAccountLine(out io.Writer, a status.AccountInfo) {
 	switch {
+	case a.LoggedOut:
+		fmt.Fprintf(out, "  account   %s\n", DimStyle.Render("not logged in"))
+		return
 	case a.Problem != "":
 		fmt.Fprintf(out, "  account   %s\n", WarnStyle.Render(a.Problem))
 		return
@@ -130,7 +133,7 @@ func printAccountLine(out io.Writer, a status.AccountInfo) {
 	if a.Alias != "" {
 		line += DimStyle.Render(" · " + a.Alias)
 	}
-	if !a.InSync {
+	if a.Desynced {
 		// The desync `account doctor` exists to catch: requests authenticate as
 		// one account while Claude Code displays another.
 		line += "  " + ErrStyle.Render("✗ desynced — run `clauderig account doctor`")

@@ -59,10 +59,17 @@ type AccountInfo struct {
 	// Untracked reports a live login clauderig has never captured — `switch`
 	// cannot return to it, so it is worth naming.
 	Untracked bool
-	// InSync reports that the credential and the profile block agree. False is
-	// the desync `account doctor` exists to catch: requests authenticate as one
-	// account while the UI shows another.
-	InSync bool
+	// Desynced reports SPECIFICALLY that the two identity halves name different
+	// organizations — the failure `account doctor` exists to catch, where
+	// requests authenticate as one account while the UI shows another.
+	//
+	// Deliberately not Observation.InSync: that is the aggregate of every
+	// diagnostic problem, including pointer drift and an unreadable half, so
+	// reading it as "desynced" would report a desync that is not there.
+	Desynced bool
+	// LoggedOut reports that there is simply no credential — an ordinary state,
+	// not a failure to read one.
+	LoggedOut bool
 	// Problem is set when the identity could not be read at all.
 	Problem string
 }
@@ -122,25 +129,33 @@ func gatherAccount() AccountInfo {
 	ai := AccountInfo{
 		Email:        o.BlockEmail,
 		Subscription: o.CredSubscription,
-		InSync:       o.InSync,
+		// The desync proper: two identity halves naming different orgs.
+		Desynced: o.CredOrg != "" && o.BlockOrg != "" && o.CredOrg != o.BlockOrg,
 	}
-	if o.BlockEmail != "" {
-		if a, rerr := st.Resolve(o.BlockEmail); rerr == nil {
-			ai.Alias = a.Alias
-		} else {
-			ai.Untracked = true
-		}
-	}
-	if o.ActiveEmail != "" && o.BlockEmail != "" && o.ActiveEmail != o.BlockEmail {
+
+	// Pointer drift is measured against the CREDENTIAL, not the profile block —
+	// the credential is what the server authenticates, and during a desync the
+	// block is precisely the half that cannot be trusted. Same comparison
+	// Observation.Problems makes.
+	if o.ActiveOrg != "" && o.CredOrg != "" && o.ActiveOrg != o.CredOrg {
 		ai.PointerEmail = o.ActiveEmail
 	}
+
 	switch {
-	case o.CredErr != "" && o.BlockErr != "":
-		ai.Problem = "no live login found"
+	case o.CredErr == account.ErrNoLive.Error():
+		// An ordinary logout, not a failure. Compared as a string because that
+		// is what the observation records; the sentinel is the source of truth
+		// for the text.
+		ai.LoggedOut = true
 	case o.CredErr != "":
 		ai.Problem = "the live credential could not be read"
+	case o.BlockErr != "":
+		ai.Problem = "logged in, but ~/.claude.json could not be read"
 	case o.BlockEmail == "":
 		ai.Problem = "logged in, but ~/.claude.json names no account"
+	}
+	if ai.LoggedOut {
+		return AccountInfo{LoggedOut: true}
 	}
 	return ai
 }

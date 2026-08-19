@@ -221,9 +221,13 @@ credential, and the alias from clauderig's own record. Three things it will tell
 you that are otherwise invisible until something fails:
 
 - **`✗ desynced`** — the credential and the profile block name different
-  accounts, so requests authenticate as one while Claude Code displays another.
+  organizations, so requests authenticate as one account while Claude Code
+  displays another.
 - **a stale pointer** — clauderig's active account is not the live one, which
-  makes the `→` in `account list` describe the wrong account.
+  makes the `→` in `account list` describe the wrong account. Measured against
+  the **credential**, not the profile block: the credential is what the server
+  authenticates, and during a desync the block is the half that cannot be
+  trusted.
 - **`not tracked`** — a login clauderig has never captured, so `switch` has
   nothing to return to.
 
