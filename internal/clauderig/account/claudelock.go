@@ -100,7 +100,14 @@ func acquireLock(dir string, stale, timeout time.Duration) (*heldLock, error) {
 		}
 		fi, serr := os.Stat(dir)
 		if serr != nil {
-			continue // released between Mkdir and Stat — retry immediately
+			if errors.Is(serr, os.ErrNotExist) {
+				continue // released between Mkdir and Stat — retake it now
+			}
+			// Any other stat failure (a permission problem, a vanishing mount)
+			// would otherwise spin this loop hot until the deadline: Mkdir keeps
+			// failing with ErrExist and there is nothing to wait on.
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
 		if time.Since(fi.ModTime()) > stale {
 			// Dead holder by the protocol's own rule: remove and retake. Losing
