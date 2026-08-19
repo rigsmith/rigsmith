@@ -64,6 +64,14 @@ var desktopOAuthKeys = []string{
 // delete an unrelated site's cookies.
 const desktopCookieHosts = `(host_key = 'claude.ai' OR host_key LIKE '%.claude.ai')`
 
+// desktopSupported and sqlite3Bin are vars, not the platform consts directly, so
+// the test suite can exercise the mechanics on any OS. Production behaviour is
+// unchanged: they are initialised from the per-platform values.
+var (
+	desktopSupported = platformDesktopSupported
+	sqlite3Bin       = platformSQLite
+)
+
 // desktopRunning is a package var so tests are not at the mercy of whether the
 // developer happens to have Desktop open — an assertion that passes or fails
 // depending on the state of an unrelated app is worse than no assertion.

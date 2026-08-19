@@ -2,6 +2,8 @@
 
 package account
 
+import "runtime"
+
 // Desktop account switching is macOS-only for now, and says so rather than
 // half-working.
 //
@@ -20,11 +22,17 @@ package account
 //
 // Guessing at either would ship a feature that appears to work and doesn't, so
 // they are refused explicitly until someone can verify them on the platform.
-const desktopSupported = false
+const platformDesktopSupported = false
 
-// sqlite3Bin is unused while desktopSupported is false; declared so the shared
-// code compiles on every target.
-const sqlite3Bin = ""
+// platformSQLite is where sqlite3 lives when there is a standard location. Set
+// even though the feature is gated off here, so the mechanical parts stay
+// exercisable by the test suite on Linux CI rather than only on macOS.
+var platformSQLite = func() string {
+	if runtime.GOOS == "windows" {
+		return "" // no standard install location
+	}
+	return "/usr/bin/sqlite3"
+}()
 
 // DesktopRunning reports false: with no verified way to detect the app here, the
 // guard would be decorative, and the platform check refuses the operation first.

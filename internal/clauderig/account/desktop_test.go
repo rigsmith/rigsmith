@@ -38,6 +38,17 @@ func fakeDesktop(t *testing.T, keys map[string]string, cookies bool) string {
 	return root
 }
 
+// enableDesktopForTest exercises the mechanics on any OS. The platform gate is a
+// deployment policy — only macOS has been verified end to end — but the config
+// and cookie handling underneath it is ordinary file and SQL work worth testing
+// on every runner, not just the macOS one.
+func enableDesktopForTest(t *testing.T) {
+	t.Helper()
+	orig := desktopSupported
+	desktopSupported = true
+	t.Cleanup(func() { desktopSupported = orig })
+}
+
 func requireSQLiteOrSkip(t *testing.T) {
 	t.Helper()
 	if requireSQLite() != nil {
@@ -61,6 +72,7 @@ func readConfigDoc(t *testing.T, root string) map[string]any {
 // The core promise: capture then apply reproduces the session exactly, including
 // the encrypted cookie blob, and without ever decrypting anything.
 func TestDesktop_CaptureApplyRoundTrip(t *testing.T) {
+	enableDesktopForTest(t)
 	src := fakeDesktop(t, map[string]string{
 		"oauth:tokenCache":     "djEwAAAA1111",
 		"oauth:tokenCacheV2":   "djEwBBBB2222",
@@ -138,6 +150,7 @@ func TestDesktop_CaptureApplyRoundTrip(t *testing.T) {
 // account's must be REMOVED — leaving it behind would authenticate part of the
 // app as the account just switched away from.
 func TestDesktop_ApplyRemovesStaleManagedKeys(t *testing.T) {
+	enableDesktopForTest(t)
 	src := fakeDesktop(t, map[string]string{"oauth:tokenCacheV2": "djEwONLYV2"}, false)
 	snap, err := CaptureDesktop(src)
 	if err != nil {
@@ -168,6 +181,7 @@ func TestDesktop_ApplyRemovesStaleManagedKeys(t *testing.T) {
 // another host would write undecryptable bytes and look like a mystery logout.
 // Refuse with an explanation instead.
 func TestDesktop_RefusesSnapshotFromAnotherMachine(t *testing.T) {
+	enableDesktopForTest(t)
 	root := fakeDesktop(t, map[string]string{"oauth:tokenCacheV2": "djEwX"}, false)
 	snap, err := CaptureDesktop(root)
 	if err != nil {
@@ -204,12 +218,14 @@ func TestDesktop_HasSession(t *testing.T) {
 }
 
 func TestDesktop_CaptureMissingRootIsTyped(t *testing.T) {
+	enableDesktopForTest(t)
 	if _, err := CaptureDesktop(filepath.Join(t.TempDir(), "nope")); err != ErrNoDesktop {
 		t.Errorf("err = %v, want ErrNoDesktop", err)
 	}
 }
 
 func TestStore_SaveAndReadDesktop(t *testing.T) {
+	enableDesktopForTest(t)
 	st := &Store{Root: t.TempDir()}
 	if got, err := st.Desktop("nobody"); err != nil || got != nil {
 		t.Fatalf("absent snapshot = (%v, %v), want (nil, nil)", got, err)
@@ -257,6 +273,7 @@ func applyForTest(root string, snap *DesktopSnapshot) error {
 // has to say whose session it is, so a caller can refuse to file Desktop
 // account B's session under CLI account A.
 func TestDesktop_AccountUUIDIdentifiesTheSession(t *testing.T) {
+	enableDesktopForTest(t)
 	root := fakeDesktop(t, map[string]string{
 		"oauth:tokenCacheV2":   "djEwX",
 		"lastKnownAccountUuid": "03d1c0c9-823d-464b-a468-a9bea2383338",
@@ -330,6 +347,7 @@ func TestMatchDesktopAccount(t *testing.T) {
 // Stubbed rather than probing for a real process: an assertion whose result
 // depends on whether the developer has the app open is not an assertion.
 func TestDesktop_RefusesWhileDesktopRunning(t *testing.T) {
+	enableDesktopForTest(t)
 	root := fakeDesktop(t, map[string]string{"oauth:tokenCacheV2": "djEwX"}, false)
 	snap, err := CaptureDesktop(root)
 	if err != nil {
@@ -352,6 +370,7 @@ func TestDesktop_RefusesWhileDesktopRunning(t *testing.T) {
 // `LIKE '%claude.ai'` also matches `notclaude.ai`, whose cookies are neither
 // ours to carry nor ours to delete.
 func TestDesktop_CookieScopeExcludesLookalikeHosts(t *testing.T) {
+	enableDesktopForTest(t)
 	requireSQLiteOrSkip(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "config.json"), []byte(`{"oauth:tokenCacheV2":"djEwX"}`), 0o600); err != nil {
@@ -438,6 +457,7 @@ func TestDesktop_MissingCookieDBWithRowsIsAnError(t *testing.T) {
 // Snapshots name their columns, so a Desktop update that ADDS a cookie column
 // between capture and restore still replays.
 func TestDesktop_CookieRestoreSurvivesAddedColumn(t *testing.T) {
+	enableDesktopForTest(t)
 	requireSQLiteOrSkip(t)
 	src := t.TempDir()
 	if err := os.WriteFile(filepath.Join(src, "config.json"), []byte(`{"oauth:tokenCacheV2":"djEwX"}`), 0o600); err != nil {
@@ -469,5 +489,25 @@ func TestDesktop_CookieRestoreSurvivesAddedColumn(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(out), "sessionkey=x'763130aa'") {
 		t.Errorf("value not restored intact: %s", out)
+	}
+}
+
+// On a platform we have not verified, both entry points refuse explicitly rather
+// than quietly recording nothing — a feature that silently captures no session
+// looks identical to one with nothing to capture.
+func TestDesktop_UnsupportedPlatformRefusesLoudly(t *testing.T) {
+	orig := desktopSupported
+	desktopSupported = false
+	t.Cleanup(func() { desktopSupported = orig })
+
+	root := t.TempDir()
+	if _, err := CaptureDesktop(root); err != ErrDesktopUnsupported {
+		t.Errorf("CaptureDesktop err = %v, want ErrDesktopUnsupported", err)
+	}
+	if err := ApplyDesktop(root, &DesktopSnapshot{}); err != ErrDesktopUnsupported {
+		t.Errorf("ApplyDesktop err = %v, want ErrDesktopUnsupported", err)
+	}
+	if DesktopSupported() {
+		t.Error("DesktopSupported() should report the gate")
 	}
 }
