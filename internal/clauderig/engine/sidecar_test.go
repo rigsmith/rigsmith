@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -202,6 +203,13 @@ func TestSync_NoSidecarPruneWhenCLIRootAbsent(t *testing.T) {
 // An unreadable subtree must not be read as "those transcripts are gone" — this
 // pass deletes on absence, so incomplete evidence has to mean no action.
 func TestStagedTranscriptIDs_UnreadableSubtreeFailsOpen(t *testing.T) {
+	// Windows does not gate directory traversal on permission bits, so chmod 000
+	// there produces a perfectly readable directory and there is no failure to
+	// observe. The behaviour under test is identical on both platforms; only this
+	// way of provoking it is Unix-specific.
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission bits do not gate traversal on Windows")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: directory permissions are not enforced")
 	}
