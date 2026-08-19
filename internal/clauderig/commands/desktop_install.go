@@ -1,8 +1,12 @@
 package commands
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 )
 
 // desktopRootID is the sync root covering Desktop's application-support tree.
@@ -30,4 +34,18 @@ func desktopInstallDir() string {
 		}
 	}
 	return ""
+}
+
+// stagedProfilePath is the profile's backup in the staging repo, or "" when it
+// has none. Used to tell the truth about what `rm` did and did not delete.
+func stagedProfilePath(name string) string {
+	staging, err := config.StagingDir()
+	if err != nil {
+		return ""
+	}
+	p := filepath.Join(staging, engine.ProfileRootID(name))
+	if info, serr := os.Stat(p); serr != nil || !info.IsDir() {
+		return ""
+	}
+	return p
 }

@@ -444,7 +444,12 @@ func newDesktopRemoveCmd() *cobra.Command {
 		Short:   "Delete a Desktop profile (logs that account out of Desktop for good)",
 		Long: "Deletes the profile directory. The session lived only there, so this signs\n" +
 			"that account out of Claude Desktop permanently — you would log in again to\n" +
-			"get it back. The account's Claude Code login is untouched.",
+			"get it back. The account's Claude Code login is untouched.\n\n" +
+			"The profile's SYNCED copy is left alone, the same way deleting a project\n" +
+			"locally does not delete it from the repo — another machine may still have\n" +
+			"this profile, and its backup is not this machine's to discard. Consequence\n" +
+			"worth knowing: a later `clauderig restore` here would bring the directory\n" +
+			"back (signed out). `clauderig desktop rm` again after that is all it takes.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -486,6 +491,13 @@ func newDesktopRemoveCmd() *cobra.Command {
 			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ removed"), p.Label())
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"  that account is signed out of Desktop now; its Claude Code login is untouched"))
+			// Say so only when there IS a synced copy: otherwise this is a note
+			// about a file that does not exist, on the one command where the
+			// user is already being told what they cannot undo.
+			if staged := stagedProfilePath(p.Name); staged != "" {
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(
+					"  its synced copy is kept ("+staged+") — `clauderig restore` here would recreate the directory"))
+			}
 			return nil
 		},
 	}
