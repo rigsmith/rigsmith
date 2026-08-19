@@ -148,6 +148,10 @@ type StoredStatus struct {
 	Active           bool   `json:"active"`
 	CredentialTokens bool   `json:"credentialTokens"`
 	Session          string `json:"session"`
+	// Desktop reports whether a Claude Desktop session is stored for this
+	// account — i.e. whether `switch` can move Desktop too or will leave it
+	// signed in as whoever it was.
+	Desktop bool `json:"desktop"`
 }
 
 // StoredStatuses reports every tracked account's health, sorted like List.
@@ -159,11 +163,13 @@ func (s *Store) StoredStatuses() ([]StoredStatus, error) {
 	active, _ := s.Active()
 	out := make([]StoredStatus, 0, len(all))
 	for _, a := range all {
+		desk, _ := s.Desktop(a.ID)
 		st := StoredStatus{
 			Account:          a,
 			Active:           a.ID == active,
 			CredentialTokens: s.CredentialHealthy(a.ID),
 			Session:          SessionNone,
+			Desktop:          desk.HasSession(),
 		}
 		if dir := s.ConfigDir(a.ID); dirExists(dir) {
 			switch usable, uerr := sessionCredentialUsable(dir); {

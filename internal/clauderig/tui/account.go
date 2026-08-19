@@ -128,6 +128,15 @@ func (m AccountModel) View() string {
 	}
 
 	anyRepairable, anyDeadStuck := false, false
+	// Desktop state is only worth a column when this machine actually has Desktop
+	// sessions stored; otherwise it is a column of dashes on every row.
+	anyDesktop := false
+	for _, a := range m.accounts {
+		if a.Desktop {
+			anyDesktop = true
+			break
+		}
+	}
 	for i, a := range m.accounts {
 		cursor := "  "
 		live := "  "
@@ -159,6 +168,13 @@ func (m AccountModel) View() string {
 			health += warnC.Render("  session ✗")
 		case account.SessionUnknown:
 			health += warnC.Render("  session ?")
+		}
+		if anyDesktop {
+			if a.Desktop {
+				health += dim.Render("  desktop ✓")
+			} else {
+				health += dim.Render("  desktop —")
+			}
 		}
 		b.WriteString(fmt.Sprintf("%s%s%s%s%s\n", cursor, live, name, sub, health))
 	}
