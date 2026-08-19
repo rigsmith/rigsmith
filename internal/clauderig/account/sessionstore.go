@@ -116,7 +116,10 @@ func (s *Store) CaptureFromSession(a Account) error {
 	if sub != "" {
 		a.SubscriptionType = sub
 	}
-	if err := s.save(a, raw); err != nil {
+	// The one partial source: a session profile's Keychain entry holds only
+	// `claudeAiOauth`, so the account's other stored fields are carried forward
+	// rather than deleted by omission.
+	if err := s.save(a, raw, partial); err != nil {
 		return err
 	}
 	// The tokens came FROM this session — reseeding them back is pointless, and
@@ -179,3 +182,9 @@ func (s *Store) StoredStatuses() ([]StoredStatus, error) {
 	}
 	return out, nil
 }
+
+// HasTokens reports whether a credential blob would actually authenticate.
+// Exported for the switch guard: a blob Claude Code has blanked parses and
+// writes like any other, so the only thing standing between it and a logged-out
+// machine is checking before the write.
+func HasTokens(raw []byte) bool { return hasTokens(raw) }

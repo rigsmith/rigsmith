@@ -4,6 +4,13 @@ Run several Claude Code accounts (work, personal, a client's) from one machine �
 either as fully isolated, self-refreshing per-terminal sessions, or by swapping
 the machine-wide login.
 
+> **Scope: Claude Code only.** This moves the Claude Code CLI's login — the
+> machine-wide credential plus the `oauthAccount` block in `~/.claude.json`.
+> **Claude Desktop is a separate login** with its own token store and its own
+> claude.ai web session; clauderig neither reads nor writes it, so switching
+> accounts never signs Desktop in or out. To change Desktop, sign in from
+> Desktop. See [Why not Claude Desktop](#why-not-claude-desktop).
+
 > **Credit.** The concept and the safety mechanisms — process detection,
 > `security -i` writes, round-trip backup — come from
 > [**claude-swap** by realiti4](https://github.com/realiti4/claude-swap) (MIT).
@@ -105,6 +112,33 @@ clauderig account switch                         # rotate to the next account
 
 Prefer `run` for parallel accounts; reach for `switch` only when you genuinely
 want the machine-wide default login to change.
+
+## Why not Claude Desktop
+
+Desktop switching was built and then withdrawn (2026-08-19). Keeping the record
+so it isn't re-attempted blind — the obstacles are properties of the app, not
+gaps in the implementation:
+
+- **Desktop signs in twice, at different moments.** The OAuth login writes
+  `config.json`; the webview authenticates claude.ai separately with a
+  `sessionKey` cookie. A snapshot taken between those two moments holds tokens
+  and no web session — it restores a Desktop whose Code tab works and whose UI
+  is signed out, with nothing to distinguish it from a good snapshot at capture
+  time. That was the original bug report.
+- **Electron clobbers writes underneath itself.** Desktop holds the `Cookies`
+  SQLite DB open and rewrites `config.json` on exit, so a session written while
+  the app runs is silently lost. The only safe mitigation is refusing to switch
+  while Desktop is open — i.e. the feature works only when the app you want
+  switched is closed.
+- **It requires driving a private Chromium schema.** Moving the cookies at all
+  means shelling out to `sqlite3` against Desktop's cookie DB, whose layout is
+  Anthropic's to change in any release.
+- **Two guards, two silences.** The switch guard and `--dry-run` were separate
+  paths, so the dry run happily reported "switch would proceed" for a switch the
+  real path would refuse.
+
+The CLI has none of these properties: one credential store, one file, no live
+process holding it open, and a documented shape.
 
 ## Storage & platform notes
 

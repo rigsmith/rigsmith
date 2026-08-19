@@ -322,3 +322,114 @@ func mustWrite(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+// A narrower source must not strip fields off the account's record. `--from-session`
+// repairs from the profile Keychain entry, which Claude Code writes containing
+// only claudeAiOauth; storing that verbatim dropped organizationUuid (which is
+// the only thing doctor can compare) and mcpOAuth (the MCP servers' logins).
+func TestSaveCredential_KeepsTheOrgAnAuthoritativeBlobOmits(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	full := `{"claudeAiOauth":{"accessToken":"a1","refreshToken":"r1"},` +
+		`"organizationUuid":"org-abc","mcpOAuth":{"server-1":{"accessToken":"m"}}}`
+	if _, _, err := st.CaptureLive([]byte(full),
+		[]byte(`{"emailAddress":"a@b.c","organizationUuid":"org-abc"}`)); err != nil {
+		t.Fatal(err)
+	}
+	id := "a-b-c"
+
+	// A switch round-trips the LIVE credential back into the store. Claude Code
+	// does not always write organizationUuid, so its absence here is not a
+	// deletion — and it is the only field `doctor` can compare, so losing it
+	// turns the desync check into an unconditional all-clear.
+	live := `{"claudeAiOauth":{"accessToken":"a2","refreshToken":"r2"}}`
+	if err := st.SaveCredential(id, []byte(live)); err != nil {
+		t.Fatal(err)
+	}
+	m := readStoredCredential(t, st, id)
+	if m["organizationUuid"] != "org-abc" {
+		t.Errorf("organizationUuid was dropped: %v", m["organizationUuid"])
+	}
+	oauth, _ := m["claudeAiOauth"].(map[string]any)
+	if oauth["accessToken"] != "a2" {
+		t.Errorf("incoming tokens should win: %v", oauth["accessToken"])
+	}
+}
+
+// The mirror of the above: an authoritative capture MUST be able to delete.
+// Logging out of an MCP server and re-running `account add` legitimately drops
+// mcpOAuth, and carrying it forward would let a later switch restore tokens the
+// user had revoked.
+func TestCaptureLive_DropsAFieldTheLiveCredentialNoLongerCarries(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	oauth := []byte(`{"emailAddress":"a@b.c","organizationUuid":"org-abc"}`)
+	full := `{"claudeAiOauth":{"accessToken":"a1","refreshToken":"r1"},` +
+		`"organizationUuid":"org-abc","mcpOAuth":{"server-1":{"accessToken":"m"}}}`
+	if _, _, err := st.CaptureLive([]byte(full), oauth); err != nil {
+		t.Fatal(err)
+	}
+	withoutMCP := `{"claudeAiOauth":{"accessToken":"a2","refreshToken":"r2"},"organizationUuid":"org-abc"}`
+	if _, _, err := st.CaptureLive([]byte(withoutMCP), oauth); err != nil {
+		t.Fatal(err)
+	}
+	m := readStoredCredential(t, st, "a-b-c")
+	if _, ok := m["mcpOAuth"]; ok {
+		t.Error("mcpOAuth survived an authoritative capture that omitted it — a revoked MCP login would come back on the next switch")
+	}
+}
+
+// The narrow source cannot see the other fields at all, so absence there carries
+// no information and everything missing is carried forward.
+func TestCaptureFromSession_CarriesForwardEverythingTheProfileCannotSee(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	full := `{"claudeAiOauth":{"accessToken":"a1","refreshToken":"r1"},` +
+		`"organizationUuid":"org-abc","mcpOAuth":{"server-1":{"accessToken":"m"}}}`
+	a, _, err := st.CaptureLive([]byte(full),
+		[]byte(`{"emailAddress":"a@b.c","organizationUuid":"org-abc"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	narrow := []byte(`{"claudeAiOauth":{"accessToken":"a3","refreshToken":"r3"}}`)
+	if serr := st.save(a, narrow, partial); serr != nil {
+		t.Fatal(serr)
+	}
+	m := readStoredCredential(t, st, a.ID)
+	if m["organizationUuid"] != "org-abc" {
+		t.Errorf("organizationUuid was dropped: %v", m["organizationUuid"])
+	}
+	if _, ok := m["mcpOAuth"]; !ok {
+		t.Error("mcpOAuth was dropped — a session profile cannot see it, so its absence means nothing")
+	}
+	oauth, _ := m["claudeAiOauth"].(map[string]any)
+	if oauth["accessToken"] != "a3" {
+		t.Errorf("incoming tokens should win: %v", oauth["accessToken"])
+	}
+}
+
+func readStoredCredential(t *testing.T, st *Store, id string) map[string]any {
+	t.Helper()
+	got, err := st.Credential(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestSaveCredential_MergeCannotResurrectBlankedTokens(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	if _, _, err := st.CaptureLive(
+		[]byte(`{"claudeAiOauth":{"accessToken":"a1","refreshToken":"r1"},"organizationUuid":"o"}`),
+		[]byte(`{"emailAddress":"a@b.c","organizationUuid":"o"}`)); err != nil {
+		t.Fatal(err)
+	}
+	blank := []byte(`{"claudeAiOauth":{"accessToken":"","refreshToken":""}}`)
+	if err := st.SaveCredential("a-b-c", blank); err == nil {
+		t.Fatal("storing a token-less blob must still be refused")
+	}
+	if !st.CredentialHealthy("a-b-c") {
+		t.Error("the previously healthy credential must be intact")
+	}
+}
