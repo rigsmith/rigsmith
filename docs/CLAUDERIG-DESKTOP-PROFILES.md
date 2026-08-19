@@ -209,11 +209,20 @@ cause is fixed is a no-op rather than a duplication, because migration never
 overwrites what the first attempt already copied.
 
 Existing history is copied into the shared tree before the directory moves, and
-migration **never overwrites**: a file already
-present is left exactly as it is and counted as skipped (enforced with `O_EXCL`,
-not just a pre-check, so a concurrent writer cannot slip in between). The shared
-tree may hold the default profile's own history, and clobbering that would
-destroy the very sessions this feature exists to preserve.
+migration **never overwrites** — a file already present is left exactly as it is
+(enforced with `O_EXCL`, not just a pre-check, so a concurrent writer cannot slip
+in between). The shared tree may hold the default profile's own history, and
+clobbering that would destroy the very sessions this feature exists to preserve.
+
+A collision has two meanings, and conflating them loses data:
+
+- **Identical contents** — the same session recorded in both trees. The profile's
+  copy is redundant and is dropped.
+- **Different contents** — two genuinely different files claiming one path. The
+  shared copy is kept, because that is the tree the app reads, but the profile's
+  version is the only copy of *itself*, so it is preserved under
+  `~/.clauderig/desktop/<name>/conflicts/` and reported. That path sits **outside**
+  the profile's `data/`, so Claude Desktop never sees the preserved files.
 
 **The window must be closed.** Electron keeps writing through a directory handle
 it opened before the swap, so relinking a live profile would silently lose

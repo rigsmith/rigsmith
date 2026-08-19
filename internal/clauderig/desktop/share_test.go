@@ -3,6 +3,7 @@ package desktop
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -103,8 +104,9 @@ func TestShareMergesTwoProfilesWithoutCollision(t *testing.T) {
 
 // Migration must never overwrite: the shared tree may hold the default profile's
 // own history, and clobbering it would destroy sessions this feature exists to
-// preserve.
-func TestShareNeverOverwritesAFileAlreadyInTheSharedTree(t *testing.T) {
+// preserve. But it must not DISCARD the profile's version either — that was the
+// hole this test used to demonstrate without noticing.
+func TestShareKeepsTheSharedCopyAndPreservesTheDifferingOne(t *testing.T) {
 	_, p, root := shareFixture(t)
 	shared := filepath.Join(root, "claude-code-sessions", "acct-a", "s1.json")
 	writeFile(t, shared, "ORIGINAL")
@@ -114,11 +116,40 @@ func TestShareNeverOverwritesAFileAlreadyInTheSharedTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if results[0].Skipped != 1 || results[0].Migrated != 0 {
-		t.Fatalf("results = %+v, want the collision skipped, nothing migrated", results)
+	if results[0].Conflicts != 1 || results[0].Migrated != 0 || results[0].Skipped != 0 {
+		t.Fatalf("results = %+v, want the collision recorded as a conflict", results)
 	}
+	// The shared tree is untouched...
 	if got := readFile(t, shared); got != "ORIGINAL" {
 		t.Fatalf("shared file = %q, want ORIGINAL — migration overwrote existing history", got)
+	}
+	// ...and the profile's differing version still exists somewhere.
+	preserved := filepath.Join(results[0].ConflictDir, "acct-a", "s1.json")
+	if got := readFile(t, preserved); got != "INCOMING" {
+		t.Fatalf("preserved file = %q, want INCOMING — the profile's only copy was destroyed", got)
+	}
+	// Preserved files live outside data/, so Claude Desktop never reads them.
+	if strings.HasPrefix(results[0].ConflictDir, p.DataDir()) {
+		t.Fatalf("conflicts are inside the profile's data dir (%s) — the app would see them", results[0].ConflictDir)
+	}
+}
+
+// An identical collision is genuinely redundant and is simply dropped: the same
+// session recorded in both trees does not need preserving twice.
+func TestShareDropsAnIdenticalCollision(t *testing.T) {
+	_, p, root := shareFixture(t)
+	writeFile(t, filepath.Join(root, "claude-code-sessions", "acct-a", "s1.json"), "SAME")
+	writeFile(t, filepath.Join(p.DataDir(), "claude-code-sessions", "acct-a", "s1.json"), "SAME")
+
+	results, err := Share(p, root, SharedDirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Skipped != 1 || results[0].Conflicts != 0 {
+		t.Fatalf("results = %+v, want an identical collision skipped, not treated as a conflict", results)
+	}
+	if results[0].ConflictDir != "" {
+		t.Fatalf("ConflictDir = %q, want empty when nothing conflicted", results[0].ConflictDir)
 	}
 }
 

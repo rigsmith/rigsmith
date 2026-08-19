@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -140,7 +141,12 @@ var ErrProfileOpen = errors.New("the profile's Claude Desktop window is open")
 type ShareResult struct {
 	Dir      string
 	Migrated int // files copied into the shared tree
-	Skipped  int // files already present there, left untouched
+	Skipped  int // identical copies already present there, safely dropped
+	// Conflicts are files that existed in BOTH trees with DIFFERENT contents.
+	// The shared copy is kept and the profile's version is preserved under
+	// ConflictDir rather than discarded — see mergeTree.
+	Conflicts   int
+	ConflictDir string
 }
 
 // Share points a profile's session directories at the shared tree, migrating
@@ -188,11 +194,17 @@ func Share(p Profile, sharedRoot string, dirs []string) ([]ShareResult, error) {
 		case lerr == nil && fi.IsDir():
 			// A real directory: its contents are this profile's own history and
 			// must reach the shared tree before the directory goes anywhere.
-			migrated, skipped, merr := mergeTree(link, target)
+			// Conflicts are preserved beside the profile, NOT inside data/,
+			// so Claude Desktop never sees them.
+			conflictDir := filepath.Join(p.Dir(), "conflicts", d)
+			migrated, skipped, conflicts, merr := mergeTree(link, target, conflictDir)
 			if merr != nil {
 				return out, fmt.Errorf("migrate %s into the shared tree: %w", d, merr)
 			}
-			res.Migrated, res.Skipped = migrated, skipped
+			res.Migrated, res.Skipped, res.Conflicts = migrated, skipped, conflicts
+			if conflicts > 0 {
+				res.ConflictDir = conflictDir
+			}
 			if rerr := os.Rename(link, stash); rerr != nil {
 				return out, rerr
 			}
@@ -262,15 +274,26 @@ func Unshare(p Profile, sharedRoot string, dirs []string) error {
 	return nil
 }
 
-// mergeTree copies src into dst without ever overwriting: a file already present
-// in the shared tree is left exactly as it is.
+// mergeTree copies src into dst without ever overwriting, and without ever
+// discarding a file that differs.
+//
+// A collision has two very different meanings, and conflating them loses data:
+//
+//   - Identical contents: the same session recorded in both trees. The source
+//     copy is redundant and can simply be dropped.
+//   - DIFFERENT contents: two genuinely different files claiming the same path.
+//     Keeping the shared copy is the conservative choice for the tree the app
+//     will read, but the profile's version is still the only copy of itself, so
+//     it is preserved under conflictDir instead of deleted.
+//
+// conflictDir sits outside the profile's data directory, so preserved files are
+// never seen by Claude Desktop — a stray file inside `claude-code-sessions`
+// would be the app's problem to interpret.
 //
 // Never overwriting is what makes this safe to run against a tree the default
-// Desktop profile may also have written. The account-uuid partitioning means
-// collisions are rare to begin with — they require the same session id recorded
-// under the same account in two profiles — and when one happens, keeping the
-// shared copy is the conservative choice.
-func mergeTree(src, dst string) (migrated, skipped int, err error) {
+// Desktop profile may also have written; never discarding is what makes the
+// "nothing is destroyed" promise true rather than nearly true.
+func mergeTree(src, dst, conflictDir string) (migrated, skipped, conflicts int, err error) {
 	err = filepath.Walk(src, func(path string, info os.FileInfo, werr error) error {
 		if werr != nil {
 			return werr
@@ -290,7 +313,19 @@ func mergeTree(src, dst string) (migrated, skipped int, err error) {
 			return nil // skip links/sockets: session trees hold plain files
 		}
 		if _, serr := os.Lstat(targetPath); serr == nil {
-			skipped++
+			same, cerr := sameContents(path, targetPath)
+			if cerr != nil {
+				return cerr
+			}
+			if same {
+				skipped++
+				return nil
+			}
+			// Differing: keep the shared copy, preserve ours.
+			if perr := copyFile(path, filepath.Join(conflictDir, rel), info.Mode()); perr != nil {
+				return perr
+			}
+			conflicts++
 			return nil
 		}
 		if cerr := copyFile(path, targetPath, info.Mode()); cerr != nil {
@@ -299,7 +334,32 @@ func mergeTree(src, dst string) (migrated, skipped int, err error) {
 		migrated++
 		return nil
 	})
-	return migrated, skipped, err
+	return migrated, skipped, conflicts, err
+}
+
+// sameContents reports whether two files hold identical bytes. Size is checked
+// first because it settles almost every case without reading anything.
+func sameContents(a, b string) (bool, error) {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+	fb, err := os.Stat(b)
+	if err != nil {
+		return false, err
+	}
+	if fa.Size() != fb.Size() {
+		return false, nil
+	}
+	ba, err := os.ReadFile(a)
+	if err != nil {
+		return false, err
+	}
+	bb, err := os.ReadFile(b)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(ba, bb), nil
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {

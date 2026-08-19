@@ -185,11 +185,19 @@ func runShare(cmd *cobra.Command, args []string, cowork, all, on bool) error {
 		fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ sharing"), p.Label())
 		for _, r := range results {
 			switch {
-			case r.Migrated == 0 && r.Skipped == 0:
+			case r.Migrated == 0 && r.Skipped == 0 && r.Conflicts == 0:
 				fmt.Fprintf(out, "%s\n", DimStyle.Render("    "+r.Dir+" → shared"))
 			default:
 				fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf(
 					"    %s → shared (%d migrated, %d already there)", r.Dir, r.Migrated, r.Skipped)))
+			}
+			// Preserved files nobody is told about are barely better than lost
+			// ones, so a conflict is reported rather than counted quietly.
+			if r.Conflicts > 0 {
+				fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf(
+					"    %d file(s) differed from the shared copy — the shared version was kept", r.Conflicts)))
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(
+					"      this profile's versions preserved at "+r.ConflictDir))
 			}
 		}
 	}
