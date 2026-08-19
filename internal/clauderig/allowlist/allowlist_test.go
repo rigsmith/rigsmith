@@ -45,24 +45,55 @@ func TestLongestWins_CarveOut(t *testing.T) {
 }
 
 func TestNodeModules_PrunedAtAnyDepth(t *testing.T) {
-	// A Cowork session that ran a build, and a skill with npm deps: the vendored
-	// tree is excluded however deep it sits, and the exclude outranks the (much
-	// longer) include pattern it sits inside.
-	deep := "local-agent-mode-sessions/03d/e30/local_x/outputs/build/node_modules/xml-js/package.json"
-	if Desktop().Match(deep) {
-		t.Error("node_modules under a session should not sync")
-	}
+	// A skill with npm deps, and a Desktop session tree: the vendored tree is
+	// excluded however deep it sits, and the exclude outranks the (much longer)
+	// include pattern it sits inside.
 	if CLI().Match("skills/my-skill/node_modules/left-pad/index.js") {
 		t.Error("node_modules under a skill should not sync")
 	}
+	if Desktop().Match("claude-code-sessions/03d/e30/node_modules/xml-js/package.json") {
+		t.Error("node_modules under a session tree should not sync")
+	}
 	// Siblings of the vendored tree still sync — the prune is name-scoped, not a
-	// blanket exclude of everything below outputs/.
-	if !Desktop().Match("local-agent-mode-sessions/03d/e30/local_x/outputs/build/package.json") {
+	// blanket exclude of everything beside it.
+	if !CLI().Match("skills/my-skill/package.json") {
 		t.Error("lockfile beside node_modules should still sync")
 	}
 	// And the walk never enters it.
-	if Desktop().descend("local-agent-mode-sessions/03d/e30/local_x/outputs/build/node_modules") {
+	if Desktop().descend("claude-code-sessions/03d/e30/node_modules") {
 		t.Error("should prune the node_modules dir, not descend it")
+	}
+}
+
+func TestDesktop_PrunesCoworkSandbox(t *testing.T) {
+	l := Desktop()
+	const sess = "local-agent-mode-sessions/03d/e30/"
+
+	// The sidecar beside the sandbox is the metadata we want.
+	if !l.Match(sess + "local_x.json") {
+		t.Error("session sidecar should sync")
+	}
+	// Everything inside the sandbox directory stays local: the audit key is
+	// credential material, and uploads are the user's own documents.
+	for _, rel := range []string{
+		sess + "local_x/.audit-key",
+		sess + "local_x/audit.jsonl",
+		sess + "local_x/outputs/build_summary.py",
+		sess + "local_x/uploads/statement.pdf",
+		sess + "local_x/.claude/projects/-p/transcript.jsonl",
+	} {
+		if l.Match(rel) {
+			t.Errorf("sandbox file should not sync: %s", rel)
+		}
+	}
+	// The walk must prune the directory outright rather than descend and filter —
+	// this is what keeps a multi-GB sandbox off the disk walk entirely.
+	if l.descend(sess + "local_x") {
+		t.Error("should prune the sandbox dir, not descend it")
+	}
+	// Sibling metadata at the session level is unaffected by the carve-out.
+	if !l.Match(sess+"artifacts.json") || !l.Match(sess+"remote-session-spaces.json") {
+		t.Error("session-level metadata should still sync")
 	}
 }
 

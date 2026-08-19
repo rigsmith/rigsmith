@@ -47,6 +47,15 @@ func Desktop() List {
 	return List{Rules: append(vendored(),
 		inc("claude-code-sessions"),
 		inc("local-agent-mode-sessions"),
+		// A local_<id>/ DIRECTORY under a session is a Cowork sandbox working dir,
+		// not config: an audit log, build outputs, and the documents the user
+		// uploaded to that session, beside an .audit-key. Uploads are arbitrary user
+		// content — there is nothing structurally secret for redact.Scan to detect,
+		// so no downstream pass can make them safe and the exclusion has to happen
+		// here. The sidecar local_<id>.json FILE beside it is the session metadata we
+		// actually want, re-included by the longer (higher-scoring) pattern below.
+		exc("local-agent-mode-sessions/*/*/local_*"),
+		inc("local-agent-mode-sessions/*/*/local_*.json"),
 		inc("claude_desktop_config.json"),
 		inc("cowork-enabled-cli-ops.json"),
 		inc("extensions-blocklist.json"),
