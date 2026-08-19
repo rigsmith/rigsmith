@@ -32,7 +32,11 @@ func setupShellName() string {
 	// about the user's setup, and overriding it with powershell would make
 	// doctor read the wrong startup file and report bogus missing/stale blocks.
 	// Reporting "not checked" is the honest answer.
-	if shell == "" && runtime.GOOS == "windows" {
+	//
+	// Tested on the RAW variable, not on shellFromEnv's result: that runs the
+	// value through filepath.Base, which turns "" into ".", so an unset $SHELL
+	// is not distinguishable downstream.
+	if strings.TrimSpace(os.Getenv("SHELL")) == "" && runtime.GOOS == "windows" {
 		shell = "powershell"
 	}
 	if !isSetupShell(shell) {
