@@ -96,6 +96,16 @@ func writeOAuthAccountTo(path string, raw []byte) error {
 // credential would be restored while the profile stayed corrupt. With a rename,
 // the destination is either the old file or the new one, never a fragment.
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	// Write THROUGH a symlink, never over it. A rename onto the link path would
+	// replace the link with a regular file, quietly detaching ~/.claude.json from
+	// wherever the user actually keeps it (a dotfiles repo, a synced folder) —
+	// their edits and ours would diverge from that moment on, with nothing to
+	// show for it. Resolving first means the temp file lands in the real target's
+	// own directory, which is also what keeps the rename atomic: a rename across
+	// filesystems fails outright. Credit: claude-swap #201 hit this first.
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {

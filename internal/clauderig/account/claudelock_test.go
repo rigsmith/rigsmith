@@ -1,0 +1,135 @@
+package account
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestLockCredentialsTakesBothLocksInClaudeCodeOrder(t *testing.T) {
+	home := t.TempDir()
+	release, err := LockCredentials(home, time.Second)
+	if err != nil {
+		t.Fatalf("LockCredentials: %v", err)
+	}
+	for _, dir := range []string{oauthRefreshLockDir(home), legacyCredentialLockDir(home)} {
+		fi, serr := os.Stat(dir)
+		if serr != nil {
+			t.Fatalf("lock %s not held: %v", filepath.Base(dir), serr)
+		}
+		if !fi.IsDir() {
+			t.Fatalf("lock %s is not a directory — proper-lockfile uses mkdir as the mutex", dir)
+		}
+	}
+	release()
+	for _, dir := range []string{oauthRefreshLockDir(home), legacyCredentialLockDir(home)} {
+		if _, serr := os.Stat(dir); !os.IsNotExist(serr) {
+			t.Fatalf("lock %s survived release", filepath.Base(dir))
+		}
+	}
+	release() // idempotent
+}
+
+// A lock a live Claude Code may still hold must never be stolen, however much
+// the caller wants it: that is the whole point of the staleness rule.
+func TestAcquireLockRefusesAFreshHolder(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".oauth_refresh.lock")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_, err := acquireLock(dir, credentialStaleness, 300*time.Millisecond)
+	if !errors.Is(err, ErrClaudeBusy) {
+		t.Fatalf("want ErrClaudeBusy, got %v", err)
+	}
+	if waited := time.Since(start); waited < 300*time.Millisecond {
+		t.Fatalf("gave up after %v — should have waited out the full timeout", waited)
+	}
+}
+
+func TestAcquireLockTakesOverAStaleHolder(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".oauth_refresh.lock")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * credentialStaleness)
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	h, err := acquireLock(dir, credentialStaleness, time.Second)
+	if err != nil {
+		t.Fatalf("stale lock was not taken over: %v", err)
+	}
+	defer h.release()
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(fi.ModTime()) > credentialStaleness {
+		t.Fatal("took over the lock but left the old mtime — the next waiter would steal it from us")
+	}
+}
+
+// The toucher is what stops a legitimately-held lock from being stolen while a
+// slow swap is still in flight.
+func TestHeldLockIsTouchedWhileHeld(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".oauth_refresh.lock")
+	h, err := acquireLock(dir, credentialStaleness, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.release()
+
+	stale := time.Now().Add(-credentialStaleness)
+	if err := os.Chtimes(dir, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2*touchInterval + time.Second)
+	for time.Now().Before(deadline) {
+		fi, serr := os.Stat(dir)
+		if serr == nil && time.Since(fi.ModTime()) < credentialStaleness/2 {
+			return // refreshed
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("lock mtime was never refreshed — a live holder would be judged stale and robbed")
+}
+
+// Holding half the pair while failing on the other is how two waiters deadlock,
+// so a failed acquisition must leave nothing behind.
+func TestLockCredentialsReleasesThePrimaryWhenTheLegacyLockIsContended(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(legacyCredentialLockDir(home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LockCredentials(home, 200*time.Millisecond); !errors.Is(err, ErrClaudeBusy) {
+		t.Fatalf("want ErrClaudeBusy, got %v", err)
+	}
+	if _, err := os.Stat(oauthRefreshLockDir(home)); !os.IsNotExist(err) {
+		t.Fatal("primary lock left held after the legacy lock failed")
+	}
+}
+
+func TestLegacyLockPathResolvesSymlinks(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real-claude")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link-claude")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	// Resolve the expectation too: on macOS the temp root itself lives under a
+	// symlinked /var, so the raw path would never match.
+	realResolved, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := legacyCredentialLockDir(link), realResolved+".lock"; got != want {
+		t.Fatalf("legacy lock path = %q, want %q — Claude Code realpaths the config\n"+
+			"home before appending .lock, so a symlinked ~/.claude must land on the same artifact", got, want)
+	}
+}

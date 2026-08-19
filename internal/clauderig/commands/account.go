@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -415,7 +416,54 @@ func newAccountAddCmd() *cobra.Command {
 
 // captureCurrent reads the live credential + oauthAccount and stores them as an
 // account (keyed by email). Shared by the CLI `add` and the UI.
+// sessionProfileEnv reports the isolated profile directory this process is
+// pointed at, if any. Claude Code resolves its credential store through
+// CLAUDE_SECURESTORAGE_CONFIG_DIR before CLAUDE_CONFIG_DIR, so check in that
+// order and report the one that actually decides.
+func sessionProfileEnv() string {
+	for _, k := range []string{"CLAUDE_SECURESTORAGE_CONFIG_DIR", "CLAUDE_CONFIG_DIR"} {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// sameDirPath compares two directory paths, resolving symlinks where it can, so
+// a profile that merely spells ~/.claude differently is not mistaken for one.
+func sameDirPath(a, b string) bool {
+	clean := func(p string) string {
+		p = filepath.Clean(p)
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return p
+	}
+	return clean(a) == clean(b)
+}
+
 func captureCurrent(st *account.Store) (account.Account, bool, error) {
+	// `add` captures the LIVE, machine-wide login — ReadLive deliberately ignores
+	// the profile env vars. So inside a session terminal (`clauderig account run`,
+	// or any shell that exports these) the credential it reads is NOT the account
+	// this terminal is running as, and capturing it would file the default
+	// profile's credential under whatever `~/.claude.json` happens to name.
+	// Refuse and point at the two paths that do what was actually meant.
+	//
+	// Claude Code resolves its credential store through CLAUDE_SECURESTORAGE_CONFIG_DIR
+	// first, then CLAUDE_CONFIG_DIR (verified in the 2.1.227 bundle), so both count.
+	// Credit: claude-swap #190/#205 found this failure mode first.
+	if profile := sessionProfileEnv(); profile != "" {
+		if home, herr := account.ClaudeHome(); herr != nil || !sameDirPath(profile, home) {
+			return account.Account{}, false, fmt.Errorf(
+				"refusing to capture: this terminal is running an isolated profile (%s), but `add` "+
+					"reads the machine-wide login — it would store the WRONG account's credential.\n"+
+					"Fix: run `clauderig account add` from a normal terminal to capture the live login, "+
+					"or `clauderig account add --from-session <id|email>` to repair a tracked account "+
+					"from its own session profile",
+				profile)
+		}
+	}
 	cred, err := account.ReadLive()
 	if err != nil {
 		return account.Account{}, false, err
@@ -1017,6 +1065,26 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 			"~/.claude.json does not exist, so the account profile cannot be swapped alongside the credential.\n" +
 				"Run `claude` once to create it, then switch")
 	}
+	// Hold Claude Code's OWN credential locks across the whole read-modify-write.
+	// Its token refresh reads the credential, does a network round trip, and
+	// saves — all under these locks — so a swap landing inside that window is
+	// overwritten by the refreshed OLD account's token, and the backup taken a
+	// moment earlier preserves a refresh token that has already been rotated
+	// away. Under the lock, Claude Code's own double-checked re-read sees the
+	// swapped (non-expired) credential and abandons the refresh instead.
+	//
+	// This matters most in exactly the case the guard above permits: `--force`,
+	// or a session the process scan could not see. It costs nothing when nothing
+	// is running — an uncontended mkdir.
+	release, lerr := account.LockCredentials(home, 0)
+	if lerr != nil {
+		return "", nil, fmt.Errorf(
+			"refusing to switch: %w.\n"+
+				"A token refresh is in flight; swapping the credential underneath it would be "+
+				"overwritten by the old account's refreshed token. Retry in a few seconds", lerr)
+	}
+	defer release()
+
 	// Held for the whole swap so the credential can be put back if the profile
 	// write fails partway — a half-applied swap is the desync itself.
 	var displacedCred []byte
