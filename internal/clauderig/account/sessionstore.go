@@ -179,3 +179,9 @@ func (s *Store) StoredStatuses() ([]StoredStatus, error) {
 	}
 	return out, nil
 }
+
+// HasTokens reports whether a credential blob would actually authenticate.
+// Exported for the switch guard: a blob Claude Code has blanked parses and
+// writes like any other, so the only thing standing between it and a logged-out
+// machine is checking before the write.
+func HasTokens(raw []byte) bool { return hasTokens(raw) }

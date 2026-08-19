@@ -322,3 +322,62 @@ func mustWrite(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+// A narrower source must not strip fields off the account's record. `--from-session`
+// repairs from the profile Keychain entry, which Claude Code writes containing
+// only claudeAiOauth; storing that verbatim dropped organizationUuid (which is
+// the only thing doctor can compare) and mcpOAuth (the MCP servers' logins).
+func TestSaveCredential_PreservesFieldsANarrowerSourceOmits(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	full := `{"claudeAiOauth":{"accessToken":"a1","refreshToken":"r1"},` +
+		`"organizationUuid":"org-abc","mcpOAuth":{"server-1":{"accessToken":"m"}}}`
+	if _, _, err := st.CaptureLive([]byte(full),
+		[]byte(`{"emailAddress":"a@b.c","organizationUuid":"org-abc"}`)); err != nil {
+		t.Fatal(err)
+	}
+	id := "a-b-c"
+
+	// A repair from the session profile carries only the oauth block.
+	narrow := `{"claudeAiOauth":{"accessToken":"a2","refreshToken":"r2"}}`
+	if err := st.SaveCredential(id, []byte(narrow)); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.Credential(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["organizationUuid"] != "org-abc" {
+		t.Errorf("organizationUuid was dropped: %v", m["organizationUuid"])
+	}
+	if _, ok := m["mcpOAuth"]; !ok {
+		t.Error("mcpOAuth was dropped — MCP server logins lost")
+	}
+	// The new tokens must win; merging only fills in what the source omitted.
+	oauth, _ := m["claudeAiOauth"].(map[string]any)
+	if oauth["accessToken"] != "a2" {
+		t.Errorf("incoming tokens should win: %v", oauth["accessToken"])
+	}
+}
+
+// Merging must not resurrect a login that is genuinely dead: it fills absent
+// top-level fields, it does not reach inside the oauth block.
+func TestSaveCredential_MergeCannotResurrectBlankedTokens(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	if _, _, err := st.CaptureLive(
+		[]byte(`{"claudeAiOauth":{"accessToken":"a1","refreshToken":"r1"},"organizationUuid":"o"}`),
+		[]byte(`{"emailAddress":"a@b.c","organizationUuid":"o"}`)); err != nil {
+		t.Fatal(err)
+	}
+	blank := []byte(`{"claudeAiOauth":{"accessToken":"","refreshToken":""}}`)
+	if err := st.SaveCredential("a-b-c", blank); err == nil {
+		t.Fatal("storing a token-less blob must still be refused")
+	}
+	if !st.CredentialHealthy("a-b-c") {
+		t.Error("the previously healthy credential must be intact")
+	}
+}

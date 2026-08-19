@@ -34,6 +34,9 @@ func NewAccountCmd() *cobra.Command {
 		Aliases: []string{"acct"},
 		Short:   "Manage multiple Claude Code logins (isolated sessions or machine-wide swap)",
 		Long: "Run several Claude Code accounts from one machine.\n\n" +
+			"Claude Code only. Claude Desktop keeps its own separate login and is\n" +
+			"never read or written here — switching accounts does not sign Desktop\n" +
+			"in or out.\n\n" +
 			"  add     capture the currently logged-in account into claudeRig's store\n" +
 			"  list    show stored accounts and which one is live\n" +
 			"  run     launch Claude Code as an account in THIS terminal only\n" +
@@ -477,6 +480,10 @@ func newAccountListCmd() *cobra.Command {
 			if active == "" {
 				fmt.Fprintf(out, "\n%s\n", DimStyle.Render("(no account marked live — `account add` or `switch` sets it)"))
 			}
+			// Scope, stated where the accounts are listed: Claude Desktop is a
+			// separate login with its own token store, and users reasonably assume
+			// one "Claude account" covers both.
+			fmt.Fprintf(out, "%s\n", DimStyle.Render("Claude Code logins only — Claude Desktop signs in separately and is unaffected"))
 			// The arrow above marks clauderig's POINTER, not proof of what the
 			// server sees. If the live credential disagrees with ~/.claude.json,
 			// say so here — this listing is the screen most likely to be trusted.
@@ -538,6 +545,10 @@ func newAccountSwitchCmd() *cobra.Command {
 		Long: "Global swap: overwrites the live credential the whole machine reads, so\n" +
 			"every Claude Code instance follows. With no argument, rotates to the next\n" +
 			"stored account.\n\n" +
+			"SCOPE: the Claude Code CLI login only. Claude Desktop authenticates\n" +
+			"separately — its own token store and its own claude.ai session — so it\n" +
+			"stays signed in as whatever account it was, and a switch neither moves\n" +
+			"it nor logs it out. To change Desktop, sign in from Desktop itself.\n\n" +
 			"GUARDED: refuses while any Claude Code instance is running, because\n" +
 			"swapping the credential under a live session forces a re-login. Close your\n" +
 			"Claude windows first, or use `run` for parallel accounts instead. The\n" +
@@ -925,6 +936,24 @@ func doSwitch(st *account.Store, target account.Account, force bool) (backup str
 	targetCred, err := st.Credential(target.ID)
 	if err != nil {
 		return "", nil, fmt.Errorf("read stored credential: %w", err)
+	}
+	// The stored credential must actually authenticate BEFORE it is written over
+	// the live one. A blob whose tokens Claude Code has blanked — an expired
+	// refresh token, or a logout — parses perfectly well and writes perfectly
+	// well, and the result is a machine that is simply logged out. `list` and
+	// `doctor` already flag this state ("credential ✗ no tokens"); switching into
+	// it was still permitted, which is how a switch could log you out of an
+	// account that was working a moment earlier.
+	//
+	// #197 added the mirror of this guard on the way IN (SaveCredential refuses to
+	// store a token-less blob). This is the way OUT.
+	if !account.HasTokens(targetCred) {
+		return "", nil, fmt.Errorf(
+			"refusing to switch: the stored credential for %s has no tokens, so switching "+
+				"to it would log this machine out.\n"+
+				"Fix: `clauderig account add --from-session %s` to repair it from that "+
+				"account's own session, or log in as %s and run `clauderig account add`",
+			target.Email, target.ID, target.Email)
 	}
 	// The profile block must move WITH the credential, so fetch it BEFORE any
 	// mutation and refuse the switch if it's missing. Swapping the credential
