@@ -1,5 +1,13 @@
 # github.com/rigsmith/rigsmith
 
+## 1.7.0
+### Clauderig
+
+- clauderig: `clauderig search` gains `--since`, `--until` and `--cwd` to narrow by when a session was last used and which project it ran in. Results now close with the device roster, and name any machine whose sessions the search could not see — a chat missing from a laptop that has not synced since Tuesday is no longer indistinguishable from one that never existed.
+- clauderig: `sync` and `pull` now settle a diverged sync repo by themselves instead of stopping at the first conflict. Conflicts are resolved by policy — the clauderig manifest and device registry merge across machines, transcripts and memory notes keep both machines' additions, and machine-local state takes the newer snapshot — so a sync started by a hook or an agent no longer needs a terminal to finish. A staging repo left part-way through a merge by an earlier run is now repaired automatically instead of failing every session start with "unmerged files", and `clauderig doctor` reports that state as a `staging repo` failure it can fix.
+- clauderig: sync now keeps a permanent record of every session it has staged, so a chat stays findable by title, project and date long after its transcript ages out of the synced window. `search` shows those as ledger results and says the body may still be recoverable from the sync repo's git history. Default transcript retention is now 90 days, up from 30.
+- clauderig: new `clauderig ledger` command reports what the session record holds, and `clauderig ledger backfill` recovers entries for sessions that were pruned before the record existed, reading them out of the sync repo's git history. Run it once after upgrading — and before the repo next squashes its history, which prunes what backfill reads.
+
 ## 1.6.0
 ### 🚀 Enhancements
 

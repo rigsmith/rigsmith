@@ -1,4 +1,4 @@
-module github.com/rigsmith/rigsmith // rigsmith:version 1.6.0
+module github.com/rigsmith/rigsmith // rigsmith:version 1.7.0
 
 go 1.26
 
