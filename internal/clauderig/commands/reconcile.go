@@ -79,14 +79,24 @@ func reconcile(ctx context.Context, out io.Writer, repo *gitrepo.Repo, remote, b
 // publishing corrupted transcripts and settings to every other machine. Repairing
 // first makes that unreachable.
 //
-// Best-effort by design: it is on the SessionStart path, where a failure must
-// degrade to "sync is behind", never to "the session will not start".
-func repairWedgedMerge(ctx context.Context, out io.Writer, staging string, allowMergeTool bool) {
+// It reports whether the repo is safe to write into afterwards. Callers that go
+// on to STAGE and COMMIT must stop when it is not: `git add -A` over a still
+// conflicted index marks the conflicts resolved with their markers intact, so
+// continuing would publish exactly what this function exists to prevent — and a
+// failure here does not always end in an abort (a failed CommitMerge leaves the
+// merge standing). The SessionStart path writes nothing, so it can ignore the
+// result and degrade to "sync is behind" rather than "the session will not
+// start".
+func repairWedgedMerge(ctx context.Context, out io.Writer, staging string, allowMergeTool bool) (safe bool) {
 	repo, err := gitrepo.Open(ctx, staging)
-	if err != nil || !repo.InMerge(ctx) {
-		return
+	if err != nil {
+		return true // no staging repo yet — nothing to wedge
+	}
+	if !repo.InMerge(ctx) {
+		return true
 	}
 	if err := reconcile(ctx, out, repo, "origin", "main", allowMergeTool); err != nil {
 		fmt.Fprintf(out, "clauderig: staging repo is mid-merge and could not be settled automatically: %v\n", err)
 	}
+	return !repo.InMerge(ctx)
 }

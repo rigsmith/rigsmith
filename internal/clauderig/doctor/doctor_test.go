@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -191,5 +192,105 @@ func TestCheckProjectGuard_FlagsAndFixesAStaleHook(t *testing.T) {
 				t.Fatalf("%s settings still drifted: %v", scope, drift)
 			}
 		})
+	}
+}
+
+// wedgedStaging builds a staging repo abandoned mid-merge — the state that makes
+// every later session start print a git error and never clears itself.
+func wedgedStaging(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	writeFile := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "t")
+	writeFile("cli/projects/p/memory/note.md", "# note\nshared\n")
+	run("add", "-A")
+	run("commit", "-m", "base")
+	run("checkout", "-b", "other")
+	writeFile("cli/projects/p/memory/note.md", "# note\nshared\nfrom the desktop\n")
+	run("add", "-A")
+	run("commit", "-m", "machine B")
+	run("checkout", "main")
+	writeFile("cli/projects/p/memory/note.md", "# note\nshared\nfrom the laptop\n")
+	run("add", "-A")
+	run("commit", "-m", "machine A")
+	_ = exec.Command("git", "-C", dir, "merge", "--no-edit", "other").Run() // expected to conflict
+	return dir
+}
+
+// A wedged staging repo is invisible to every other check — `last sync` reads a
+// genuinely recent commit and `pushed` looks like ordinary drift — so it gets its
+// own, and its Fix must leave a committed, marker-free resolution.
+func TestCheckStagingMerge_FailsAndFixCommitsAMarkerFreeResolution(t *testing.T) {
+	dir := wedgedStaging(t)
+	env := Env{Cfg: &config.Config{}, Staging: dir}
+	ctx := context.Background()
+
+	r := checkStagingMerge(ctx, env)
+	if r.Status != Fail || r.Fix == nil {
+		t.Fatalf("wedged repo: got %+v, want Fail with a Fix", r)
+	}
+	if err := r.Fix(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r2 := checkStagingMerge(ctx, env); r2.Status != OK {
+		t.Fatalf("after fix: %+v, want OK", r2)
+	}
+
+	b, err := os.ReadFile(filepath.Join(dir, "cli/projects/p/memory/note.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	if strings.Contains(got, "<<<<<<<") {
+		t.Fatalf("conflict markers survived the fix:\n%s", got)
+	}
+	// Both machines' additions survive — the policy, not just "it stopped failing".
+	for _, want := range []string{"from the laptop", "from the desktop"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("fix lost %q:\n%s", want, got)
+		}
+	}
+	// And the merge is committed, not merely staged.
+	repo, err := gitrepo.Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.InMerge(ctx) {
+		t.Error("the fix left the merge in progress")
+	}
+	if dirty, _ := repo.Dirty(ctx); dirty {
+		t.Error("the fix left uncommitted changes behind")
+	}
+}
+
+// The normal case: a repo with no merge in progress reports OK and offers no fix.
+func TestCheckStagingMerge_CleanRepoIsOK(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	if _, err := gitrepo.Init(ctx, dir); err != nil {
+		t.Fatal(err)
+	}
+	r := checkStagingMerge(ctx, Env{Cfg: &config.Config{}, Staging: dir})
+	if r.Status != OK || r.Fix != nil {
+		t.Fatalf("clean repo: got %+v, want OK with no Fix", r)
 	}
 }

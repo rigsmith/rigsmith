@@ -74,7 +74,9 @@ func TestRepairWedgedMerge_SettlesWithoutATerminal(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	repairWedgedMerge(ctx, &out, dir, false)
+	if safe := repairWedgedMerge(ctx, &out, dir, false); !safe {
+		t.Fatalf("a settleable merge should report the repo safe to write; output:\n%s", out.String())
+	}
 
 	if repo.InMerge(ctx) {
 		t.Fatalf("still mid-merge after repair; output:\n%s", out.String())
@@ -125,5 +127,40 @@ func TestRepairWedgedMerge_NoOpOnCleanRepo(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Errorf("repair spoke on a clean repo: %q", out.String())
+	}
+}
+
+// The safe/unsafe answer is what sync stakes its abort on: `git add -A` over a
+// still-conflicted index marks the conflicts resolved with their markers intact,
+// so a caller that stages and commits must stop. The contract is therefore "is
+// the repo out of the merge", never "did the repair try" — and a repair can fail
+// WITHOUT aborting, which is the case that matters. Forced here with a
+// pre-commit hook that refuses, so the policies resolve every conflict and the
+// merge commit is what fails.
+func TestRepairWedgedMerge_UnsafeWhenTheMergeCannotBeCommitted(t *testing.T) {
+	dir := wedged(t)
+	ctx := context.Background()
+	repo, err := gitrepo.Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hooks := filepath.Join(t.TempDir(), "hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hooks, "pre-commit"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, dir, "config", "core.hooksPath", hooks)
+
+	var out bytes.Buffer
+	safe := repairWedgedMerge(ctx, &out, dir, false)
+
+	if !repo.InMerge(ctx) {
+		t.Skip("this git finished the merge anyway; the invariant below has nothing to pin")
+	}
+	if safe {
+		t.Fatalf("reported safe while still mid-merge — the exact state that publishes conflict markers; output:\n%s", out.String())
 	}
 }

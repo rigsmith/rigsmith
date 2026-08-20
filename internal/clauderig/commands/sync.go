@@ -49,8 +49,11 @@ func NewSyncCmd() *cobra.Command {
 			fmt.Fprintln(out, HeaderStyle.Render("clauderig sync"))
 			// Settle any merge an earlier run abandoned before the snapshot writes
 			// into the staging tree — committing over a conflicted index would
-			// publish the conflict markers themselves.
-			repairWedgedMerge(ctx, out, staging, true)
+			// publish the conflict markers themselves. If it cannot be settled,
+			// STOP: this path stages and commits, so carrying on is the hazard.
+			if !repairWedgedMerge(ctx, out, staging, true) {
+				return fmt.Errorf("the staging repo is still mid-merge — resolve it in %s, or run `clauderig doctor --fix`", staging)
+			}
 			claudeVer := ""
 			if cliLoc, st := cfg.RootLocation("cli", me); st == pathmap.StatusResolved {
 				claudeVer = config.DetectClaudeVersion(cliLoc)

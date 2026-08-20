@@ -156,3 +156,42 @@ func TestLastCommitTime_IsWhenThePathLastChanged(t *testing.T) {
 		t.Errorf("unknown path should report the zero time, got %v", tm)
 	}
 }
+
+// git quotes paths with non-ASCII characters unless asked for NUL-delimited
+// output, and a quoted display string is not a path ShowPrefix can open — so a
+// session in an accented project directory would be reported as unreadable
+// rather than recovered. Project slugs come from directory names, so this is
+// ordinary, not exotic.
+func TestDeletions_HandlesNonASCIIPaths(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	r, err := Init(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rel = "cli/projects/-Users-j-Café/s.jsonl"
+	write(t, dir, rel, "first line\nsecond\n")
+	if _, err := r.Commit(ctx, "base"); err != nil {
+		t.Fatal(err)
+	}
+	must(t, os.Remove(filepath.Join(dir, filepath.FromSlash(rel))))
+	if _, err := r.Commit(ctx, "retention"); err != nil {
+		t.Fatal(err)
+	}
+
+	dels, err := r.Deletions(ctx, "cli/projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dels) != 1 {
+		t.Fatalf("want one deletion, got %+v", dels)
+	}
+	if dels[0].Path != rel {
+		t.Fatalf("path = %q, want the real path (unquoted)", dels[0].Path)
+	}
+	// And the path it reports must actually resolve to the blob.
+	b, err := r.ShowPrefix(ctx, dels[0].Commit+"^", dels[0].Path, 5)
+	if err != nil || string(b) != "first" {
+		t.Errorf("recovered content = %q, err = %v", b, err)
+	}
+}

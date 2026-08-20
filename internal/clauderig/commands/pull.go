@@ -46,7 +46,9 @@ func NewPullCmd() *cobra.Command {
 					// An unfinished merge makes the ff-only pull below fail on every
 					// future session, so clear it first rather than reporting the
 					// same error forever.
-					repairWedgedMerge(ctx, out, staging, false)
+					// Result ignored on purpose: this path never stages or commits,
+					// so an unsettled merge costs a stale pull, not a corrupt push.
+					_ = repairWedgedMerge(ctx, out, staging, false)
 					if err := repo.Pull(ctx, "origin", "main"); err != nil {
 						// A non-ff divergence is not an error to report and forget —
 						// it never resolves itself. Merge it here (policies decide,

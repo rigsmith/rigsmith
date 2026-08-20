@@ -73,15 +73,22 @@ func (r *Repo) InMerge(ctx context.Context) bool {
 }
 
 // Conflicts lists the paths still unmerged in the index.
+//
+// NUL-delimited (-z) deliberately: without it git QUOTES any path with non-ASCII
+// or special characters ("caf\303\251.md"), and that quoted display string
+// would then be handed to ConflictStage/ResolveWith as if it were the real path
+// — so exactly the conflicts hardest to resolve by hand would be the ones the
+// policies silently could not resolve at all. Project slugs are derived from
+// directory names, so non-ASCII is ordinary here, not exotic.
 func (r *Repo) Conflicts(ctx context.Context) ([]string, error) {
-	out, err := runGit(ctx, r.Dir, "diff", "--name-only", "--diff-filter=U")
+	out, err := runGit(ctx, r.Dir, "diff", "--name-only", "--diff-filter=U", "-z")
 	if err != nil {
 		return nil, err
 	}
 	var paths []string
-	for _, line := range strings.Split(out, "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			paths = append(paths, line)
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			paths = append(paths, p)
 		}
 	}
 	return paths, nil

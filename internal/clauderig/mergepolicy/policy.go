@@ -109,15 +109,36 @@ func resolveOne(ctx context.Context, repo *gitrepo.Repo, p string) (Resolution, 
 }
 
 // isAppendText reports whether a path is one of the grow-by-appending files where
-// keeping both sides is right. Session transcripts are literally append-only, and
-// memory notes are edited the same way — a machine adds what it learned, so the
-// two sides are additions to a shared note rather than rival versions of it.
+// keeping both sides is right.
+//
+// Two different rules, because "text" is not the property that matters:
+//
+//   - Session transcripts (.jsonl) are literally append-only, wherever they sit.
+//   - Prose is unioned ONLY inside a memory/ directory. That is where a machine
+//     adds what it learned, so two sides are additions to a shared note. Every
+//     other synced document — CLAUDE.md, skills, plans, commands, agents — is a
+//     document someone EDITS, and concatenating two revisions of one would
+//     produce a file that contradicts itself while reporting success. Those take
+//     the newest-snapshot fallback like any other whole-file conflict.
 func isAppendText(p string) bool {
+	if strings.EqualFold(path.Ext(p), ".jsonl") {
+		return true
+	}
 	switch strings.ToLower(path.Ext(p)) {
-	case ".jsonl":
-		return true
 	case ".md", ".markdown", ".txt":
-		return true
+		return isMemoryPath(p)
+	}
+	return false
+}
+
+// isMemoryPath reports whether a staged path lies inside a memory/ directory —
+// projects/<slug>/memory/… in the CLI root, and the same shape under the repo's
+// cli/ prefix.
+func isMemoryPath(p string) bool {
+	for _, seg := range strings.Split(path.Dir(p), "/") {
+		if seg == "memory" {
+			return true
+		}
 	}
 	return false
 }

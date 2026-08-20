@@ -421,3 +421,86 @@ func TestResolve_DeleteVersusEditIsReportedAsKept(t *testing.T) {
 		t.Fatalf("path not resolved: %+v", rep)
 	}
 }
+
+// Prose is unioned only inside memory/. Everything else the sync carries —
+// CLAUDE.md, skills, plans, commands — is a document someone EDITS, and
+// concatenating two revisions of one would produce a file that contradicts
+// itself while the report claims a clean merge.
+func TestResolve_EditedDocumentsTakeTheNewerSnapshotNotBothSides(t *testing.T) {
+	for _, rel := range []string{"cli/CLAUDE.md", "cli/skills/deploy/SKILL.md", "cli/plans/roadmap.md"} {
+		t.Run(rel, func(t *testing.T) {
+			dir, repo := diverged(t,
+				map[string]string{rel: "# doc\nalways use pnpm\n"},
+				map[string]string{rel: "# doc\nalways use pnpm\nprefer tabs\n"},
+				map[string]string{rel: "# doc\nalways use pnpm\nprefer spaces\n"})
+
+			rep, err := Resolve(context.Background(), repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rep.Unresolved) != 0 {
+				t.Fatalf("unresolved: %v", rep.Unresolved)
+			}
+			got := read(t, dir, rel)
+			// The other machine's snapshot is the newer one in this fixture.
+			if !strings.Contains(got, "prefer spaces") {
+				t.Errorf("newer snapshot lost:\n%s", got)
+			}
+			if strings.Contains(got, "prefer tabs") {
+				t.Errorf("two revisions were concatenated into one contradictory doc:\n%s", got)
+			}
+			if p := rep.Resolved[0].Policy; p != PolicyNewest {
+				t.Errorf("policy = %q, want %q", p, PolicyNewest)
+			}
+		})
+	}
+}
+
+// A memory note under a project keeps both sides, which is the case the union
+// exists for — pinned next to the negative above so the boundary is visible.
+func TestResolve_MemoryNotesStillUnion(t *testing.T) {
+	rel := "cli/projects/-p/memory/MEMORY.md"
+	dir, repo := diverged(t,
+		map[string]string{rel: "# index\n- one\n"},
+		map[string]string{rel: "# index\n- one\n- from the laptop\n"},
+		map[string]string{rel: "# index\n- one\n- from the desktop\n"})
+
+	if _, err := Resolve(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, dir, rel)
+	for _, want := range []string{"from the laptop", "from the desktop"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lost %q:\n%s", want, got)
+		}
+	}
+}
+
+// git QUOTES paths with non-ASCII characters unless asked for NUL-delimited
+// output, and a quoted display string is not a path any resolver can open — so
+// the conflicts hardest to fix by hand would be the ones nothing could fix at
+// all. Project slugs come from directory names, so this is ordinary, not exotic.
+func TestResolve_HandlesNonASCIIPaths(t *testing.T) {
+	rel := "cli/projects/-Users-j-Café/memory/notes.md"
+	dir, repo := diverged(t,
+		map[string]string{rel: "# café\n- one\n"},
+		map[string]string{rel: "# café\n- one\n- from the laptop\n"},
+		map[string]string{rel: "# café\n- one\n- from the desktop\n"})
+
+	rep, err := Resolve(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Unresolved) != 0 {
+		t.Fatalf("a non-ASCII path was left unresolved: %v", rep.Unresolved)
+	}
+	got := read(t, dir, rel)
+	if strings.Contains(got, "<<<<<<<") {
+		t.Errorf("conflict markers survived:\n%s", got)
+	}
+	for _, want := range []string{"from the laptop", "from the desktop"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lost %q:\n%s", want, got)
+		}
+	}
+}
