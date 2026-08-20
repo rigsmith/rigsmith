@@ -161,7 +161,33 @@ func (l *Ledger) Save() error {
 		b.Write(row)
 		b.WriteByte('\n')
 	}
-	return os.WriteFile(l.path(), []byte(b.String()), 0o644)
+	// Written to a temporary file in the same directory and renamed over the
+	// destination. The ledger is the ONLY copy of an aged-out session — no
+	// transcript can reconstruct it — so a truncating write interrupted midway
+	// would permanently lose rows that exist nowhere else. Rename is atomic
+	// within a directory, so a reader sees the old file or the new one.
+	dst := l.path()
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".ledger-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+	if _, err := tmp.WriteString(b.String()); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, dst)
 }
 
 // Count is how many sessions this device's ledger remembers.
@@ -177,7 +203,8 @@ func LoadAll(dir string) map[string]Entry {
 		return out
 	}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		// Skip the dot-prefixed temporaries a Save in flight may have left.
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		rows, err := readFile(filepath.Join(dir, DirName, e.Name()))

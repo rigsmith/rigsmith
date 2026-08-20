@@ -54,7 +54,10 @@ the same in the gitignored `.claude/settings.local.json`). See
   one verified via `gh repo view`.
 - **Allowlist, default-deny.** Only curated files sync; the ~12 GB Desktop cache
   tree is pruned, never descended.
-- **Bounded repo.** 30-day retention on transcripts + a size-based history squash.
+- **Bounded repo, unbounded memory.** 90-day retention on transcripts + a
+  size-based history squash — but every session sync has staged keeps a
+  permanent row in the ledger, so an aged-out chat stays findable by title,
+  project and date.
 
 ## Commands
 

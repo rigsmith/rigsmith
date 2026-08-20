@@ -143,3 +143,38 @@ func TestBackfill_CountsUnreadable(t *testing.T) {
 		t.Fatalf("result = %+v", res)
 	}
 }
+
+// Rows are unioned across every device's file, so a session ANOTHER machine
+// already recovered is not new here. Treating it as new would re-read the blob
+// and write a duplicate row that then wins on recency while saying nothing the
+// other row didn't.
+func TestBackfill_SkipsSessionsAnotherDeviceAlreadyRecovered(t *testing.T) {
+	dir := t.TempDir()
+	when := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	other, _ := Open(dir, "the-other-mac")
+	other.Note(Entry{ID: "sess-1", Title: "recovered over there", End: when, Seen: when})
+	if err := other.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &fakeHistory{
+		dels:  []Deletion{{Path: "cli/projects/-slug/sess-1.jsonl", Commit: "c1"}},
+		blobs: map[string]string{"c1^:cli/projects/-slug/sess-1.jsonl": "from a deleted blob\n/tmp\n"},
+		when:  when,
+	}
+	l, _ := Open(dir, "this-mac")
+	res, err := Backfill(context.Background(), l, h, parseHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skipped != 1 || res.Recovered != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(h.asked) != 0 {
+		t.Errorf("a row another device holds should cost no blob read, asked=%v", h.asked)
+	}
+	if got := LoadAll(dir)["sess-1"].Title; got != "recovered over there" {
+		t.Errorf("the existing row should stand, got %q", got)
+	}
+}

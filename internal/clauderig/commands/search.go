@@ -475,9 +475,11 @@ func resumeHint(r *sessResult, cwd string) string {
 		return "synced copy only — restore on this machine to resume"
 	case r.hasLed && !r.present:
 		// Remembered by the ledger, body no longer in the window. Saying "gone"
-		// would be wrong — the blob is still in the sync repo's git history, which
-		// is the whole reason the row was kept.
-		return "aged out of the synced window — body recoverable from the sync repo's git history"
+		// would be wrong — the blob is usually still in the sync repo's git
+		// history. Only usually, though: sync squashes that history once the repo
+		// passes its size floor, and the squash prunes unreachable blobs. Hedged
+		// deliberately rather than promising a recovery that may not be there.
+		return "aged out of the synced window — the body may still be in the sync repo's git history"
 	default:
 		// Title-only, no transcript here to resume from.
 		return "matched by title — open it in Claude Desktop, or use --raw to search its text"

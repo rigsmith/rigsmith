@@ -132,6 +132,14 @@ It writes into the staging tree; your next `sync` commits it.
 Recovered rows carry a date from the last commit that touched the transcript,
 which is when it last changed rather than a timestamp read out of the body.
 
+::: warning What history still holds
+`sync` squashes the staging repo once it passes the size floor, and a squash
+prunes unreachable blobs — so bodies dropped before the last squash are gone,
+and `backfill` can only recover what history still carries. That is also why a
+ledger-only result says the body *may* still be recoverable rather than
+promising it.
+:::
+
 ### Which machines the search could see
 
 Absence of a hit is the answer people act on — *that chat is gone* — and it only

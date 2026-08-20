@@ -9,7 +9,7 @@ import (
 // headBytes is how much of a deleted transcript the backfill reads. The cwd and
 // the first human prompt sit in the first few records; the rest can be tens of
 // megabytes and holds nothing a ledger row wants.
-const headBytes = 512 << 10
+const headBytes = 1 << 20
 
 // Deletion is a transcript git no longer tracks, and the commit that removed it.
 type Deletion struct {
@@ -47,12 +47,22 @@ type BackfillResult struct {
 // sessions that aged out before it existed are exactly the ones with no row, and
 // their bodies are still in history. Rows already present are never overwritten —
 // a live transcript is a better source than a deleted blob.
+//
+// What it can see is bounded by what history still holds: `sync` squashes the
+// staging repo once it grows past the size floor, and that prunes unreachable
+// blobs, so anything dropped before the last squash is gone for good. Backfill
+// reports what it found rather than promising a complete recovery.
 func Backfill(ctx context.Context, l *Ledger, h History, parse Parse) (BackfillResult, error) {
 	var res BackfillResult
 	dels, err := h.Deletions(ctx, "cli/projects")
 	if err != nil {
 		return res, err
 	}
+	// Known ids come from EVERY device's shard, not just this one's. Rows are
+	// unioned on read, so a session another machine already recovered is not new
+	// here — treating it as new would re-read every blob and write a duplicate row
+	// that then wins on recency while saying nothing new.
+	known := LoadAll(l.dir)
 	for _, d := range dels {
 		rel, ok := cliRel(d.Path)
 		if !ok {
@@ -63,7 +73,11 @@ func Backfill(ctx context.Context, l *Ledger, h History, parse Parse) (BackfillR
 			continue
 		}
 		res.Deleted++
-		if _, known := l.rows[id]; known {
+		if _, seen := known[id]; seen {
+			res.Skipped++
+			continue
+		}
+		if _, seen := l.rows[id]; seen {
 			res.Skipped++
 			continue
 		}

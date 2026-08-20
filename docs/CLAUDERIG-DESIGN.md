@@ -49,7 +49,7 @@ Legend: ✅ sync · 🔧 junk (machine-local/ephemeral) · 🔑 secret (never le
 | `plans/` | ✅ | small |
 | `commands/`, `agents/`, `CLAUDE.md` | ✅ | global user config, if present |
 | `plugins/{marketplaces,data}` | ✅ | config; **not** `plugins/cache` |
-| `projects/<slug>/*.jsonl` | ✅ | the **resume payload**; slug-rewrite + 30d retention (history branch) |
+| `projects/<slug>/*.jsonl` | ✅ | the **resume payload**; slug-rewrite + 90d retention (history branch) |
 | `projects/<slug>/memory/` | ✅ | durable per-project memory; slug-rewrite, **no retention window** |
 | `sessions/*.json` | 🔧 | PID-named live-process registry; stale PIDs on another machine (see Open Q1) |
 | `file-history/` | 🔧 | 92 MB rewind cache; not needed for resume — **excluded, no opt-in** (Q2) |
@@ -139,12 +139,18 @@ cwd mappings (Q4).
 
 ## Retention & repo shape
 
-- **30-day** working-tree window on `projects/`, enforced two ways: sync skips
+- **90-day** working-tree window on `projects/`, enforced two ways: sync skips
   *copying* transcripts older than the window, AND **prunes already-staged files
   that have since aged out** (deepest-first, removing emptied dirs). So it's a true
   rolling window, not just "don't add old" — and a project deleted or gone idle on
   any machine ages out globally, so stale slugs don't accumulate. Pruned slugs are
   dropped from the manifest too.
+- **The window bounds the BODIES, not the record.** Before retention runs, sync
+  writes one row per staged session into `index/<device>.jsonl` — id, title (the
+  first prompt), project, date — and those rows are never deleted, so `search`
+  can still name a chat whose transcript has aged out. Caveat worth knowing: the
+  size-based squash prunes unreachable blobs, so an aged-out body is recoverable
+  from git history only until the next squash.
 - **`projects/<slug>/memory/` is exempt from the window**, on both paths. A
   transcript is a dated record and ages out; a memory is durable state that's only
   rewritten when the fact changes, so mtime is the wrong signal — aging it would
