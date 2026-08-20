@@ -81,8 +81,15 @@ func TestSearchSessions_LedgerDoesNotClaimPresentSessionIsGone(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := stripANSI(out.String())
-	if !strings.Contains(got, "the auth refactor") {
+	// Surfaced by the ledger's title, but titled from the transcript itself: when
+	// the body is present its own first prompt is the better source, and in
+	// practice the two agree — the ledger's title IS that first prompt, recorded
+	// earlier. The fixture makes them differ only to show which one wins.
+	if !strings.Contains(got, "1 session(s) match") {
 		t.Fatalf("ledger title match should surface the session:\n%s", got)
+	}
+	if !strings.Contains(got, "unrelated chatter") {
+		t.Errorf("a present body should title itself, not defer to the ledger row:\n%s", got)
 	}
 	if strings.Contains(got, "aged out") {
 		t.Errorf("body is in the synced repo — must not claim it aged out:\n%s", got)
