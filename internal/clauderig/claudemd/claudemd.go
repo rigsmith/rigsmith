@@ -104,6 +104,10 @@ The changeset lifecycle. When a change is user-facing, record it in the same PR:
 - ` + "`changerig status --verbose`" + ` — show the pending release plan.
 - ` + "`changerig version`" + ` — bump versions and write ` + "`CHANGELOG.md`" + `, cascading bumps to dependents.
 
+Write the entry for the person reading the changelog, not the reviewer reading
+the diff: a short paragraph on what changed for them and anything they must do.
+Rationale, file names and measurements belong in the commit and the PR.
+
 Don't hand-edit version numbers or changelogs — let ` + "`version`" + ` own them.
 
 ### shiprig — releases
