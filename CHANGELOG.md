@@ -1,5 +1,193 @@
 # github.com/rigsmith/rigsmith
 
+## 1.6.0
+### 🚀 Enhancements
+
+- `rig doctor` now reports on rig itself: which binary is running, the family on `PATH`, and what rig has registered in your shell.
+  
+  Doctor checked your *project's* environment — toolchains, per-project state, optional tools, `.rig.json` paths — and never checked rig's own. Two questions it couldn't answer:
+  
+  - Where is rig, and is there more than one? The toolchain rows say "not on your PATH" when a tool is missing but never report *which* binary answered, and nothing looked at rig at all. A second copy earlier on `PATH` is invisible until it answers a command you meant for the one you just upgraded.
+  - What is actually wired into my shell? `rig setup` writes a marked block (the `rig()` wrapper that makes `rig cd` work, plus completions) and `rig alias install` writes another. rig wrote both and never read either back.
+  
+  ```
+  Setup
+    ✓ rig        1.4.2 · /Users/john/.local/bin/rig
+    ✓ family     shiprig, changerig, clauderig · /Users/john/.local/bin
+    ! shell      not installed in ~/.zshrc — `rig cd` can't change your directory and
+                 tab completion is off; run `rig setup zsh`
+    ✓ aliases    4 of 11 installed: rr, rb, rt, rcd · ~/.zshrc
+  ```
+  
+  What warns is chosen so the group stays worth reading:
+  
+  - **Two copies on `PATH`** warns and names both, since the first is what runs. Running a binary that *isn't* on `PATH` doesn't warn — that's a source build or a `-dev` launcher, an ordinary dev loop — it just says what typing `rig` would run instead.
+  - **The setup block missing or stale** warns: `rig cd` silently doesn't change directories and completion silently doesn't complete, so neither failure announces itself. A startup file holding only a `--dev` block is called out by name — that is the state behind "I ran setup and `rig cd` still does nothing", because the block that got installed binds `rig-dev`.
+  - **The family and the aliases never warn.** Both are optional, and each companion's completion is loaded only when it's on `PATH`, so installing one later needs a new shell rather than a re-run. The rows exist to say what's there and where.
+  - **A shell rig writes no snippet for** (`ksh`, an unset `$SHELL`) is reported as a fact about the shell, and the aliases row says "not checked" rather than claiming none are installed off a file it never read.
+  
+  The group runs before the ecosystem checks and, unlike them, runs everywhere: doctor used to return early with "no recognized projects found here — nothing to check", which skipped the whole report in exactly the directory you'd be standing in while asking why `rcd` does nothing. That directory now gets the Setup group and a note that only it ran.
+  
+  Nothing here is offered to `rig doctor --fix`. Splicing a block into your startup file is `rig setup`'s job, it asks first, and `--fix` doesn't — so the rows point at the command instead of running it for you.
+  
+  Also: **`rig alias list` marks the aliases that are actually installed.** It printed the fixed candidate set, identical on a machine with all eleven and one with none — so it answered "what could I install" while people were asking "why doesn't `rt` work". The mark comes from `installedAliases`, which already existed and was used in exactly one place: pre-checking boxes in the install checklist.
+  
+  ```
+    ✓ rr   rig run  — Run the project
+      rt   rig test  — Run the tests
+    ✓ = installed in ~/.zshrc; `rig alias install` adds the rest
+  ```
+  
+- `rig explain <verb>` prints what a verb resolves to — command, directory, environment, source — without running it.
+  
+  A `.rig.json` custom command can be silently wrong in a way nothing catches. Two real ones, live for weeks in a Chromium fork:
+  
+  ```jsonc
+  "markers": "grep -rho 'sheepish-[a-z-]*' src | sort -u",
+  "unowned": "grep -rho 'sheepish-[a-z-]*' src | grep -v '^./sheepish/' | sort -u"
+  ```
+  
+  The first character class has no digits, so `sheepish-p3a-removal` was truncated to `sheepish-p` and counted as its own marker. The second pipes into a path filter that can never match, because `-h` upstream suppressed the filenames. Both exited 0 and printed a plausible list. Both were found by eye, long after the fact.
+  
+  Neither is a config error — the JSON is valid and the shell is valid — so no amount of validating `.rig.json` would have caught either. What was missing was a cheap way to look at the resolved command and think about it for ten seconds:
+  
+  ```
+  $ rig explain markers
+  Verb
+    name:    markers
+    source:  custom command · /repo/.rig.json
+  
+  Command
+    runs:    grep -rho 'sheepish-[a-z-]*' src | sort -u
+    shell:   portable · rig's in-process POSIX shell, same on every OS
+    dir:     /repo
+  
+  Environment
+    API_TOKEN=abc      · .env / .env.local
+    SHEEPISH_ROOT=src  · .rig.json env
+    the rest is inherited from the current environment
+  
+    nothing ran — `rig markers` runs it
+  ```
+  
+  It covers every form a verb can take: the shell string after OS selection (with the shell that will interpret it — portable or the OS one, which decides what syntax works), the argv form (flagged as exec'd directly, since that is why a pipe in it would not do what it looks like), a Tengo script's source, a `package.json` script, a script directory, and the ecosystem conventions. Env is listed per variable with the layer that set it, and a `.env` value the ambient environment overrides is marked as such — the stated value is otherwise one the command never sees. Bare `rig explain` lists every verb the repo resolves.
+  
+  **Resolution is not reimplemented.** `customPlan`, `nodeScriptPlan`, `goScriptPlan` and `ecosystemPlan` are now the single resolvers, and the run paths call them: `runCustom` resolves then executes what came back. The env layers are named in one place and feed both the environment a command gets and the listing explain prints. A test asserts the two agree by comparing explain's output against what the run path echoes under `--dry-run` — an explain that can drift from a run is worse than no explain, since it would describe a command nobody executes.
+  
+  For the same reason, explain refuses rather than guesses. `coverage`, `rebuild`, `publish`, `outdated` and `upgrade` decide part of their command while running; an argument to a built-in verb selects a project or a test class at run time. In both cases explain says so, and where that verb's `--dry-run` prints an exact command it points there, since that goes through the real path. `info` and `outdated` have no such contract — one has no underlying command, the other runs its scans without echoing them — so explain says only that it cannot show a guaranteed answer.
+  
+  Also in this change:
+  
+  - **A `commands` entry shadowed by a built-in verb now warns on load.** Defining `"build"` in a Node repo was silently ignored: the built-in ran, the config appeared accepted, and the symptom read as rig malfunctioning rather than as a naming collision. It now says `"build" in /repo/.rig.json is a built-in rig verb, so that entry never runs — rename it (e.g. "build:custom")`, and `rig explain build` repeats it next to the verb, which is where someone asking the question will be.
+  - **Config parse warnings are surfaced at all.** A malformed file degraded to defaults, an unknown top-level key, a script file that wouldn't load — these were collected into `Config.Warnings` and then read by nobody, so a broken config looked like an accepted one. Some of them were good messages nobody had ever seen: an unknown key already came with `did you mean "commands"?` attached. They now print once per run, and `rig info` — the report about the config, and where you look when rig isn't doing what the config says — grows a `Warnings` section listing the same problems. Commands that report them in their own output (`info`, `explain`) skip the per-run notice rather than saying it twice, and completion requests are exempt because a shell parses that output.
+  
+- `rig verify` runs build → test → run in sequence, then proves the artifacts were built together.
+  
+  `build`, `test` and `run` each produce or consume artifacts, and nothing checked that the ones in play were produced *together*. Every verb answers its own question honestly and the answers are still collectively wrong. On a Chromium fork: `rig tests` built only the unit tests (the underlying script takes one comma-separated `--target`, the config passed the flag twice, so the first target was silently dropped), then ran a browser-test binary that was two hours old, while a resource change had renumbered string IDs and regenerated the `.pak` files without relinking it. Every browser test crashed in a feature nobody had touched. Then the same shape from the other side: `rig start` launched a bundle loading a fresh dylib beside a stale `.pak`, and the crash read "invalid extension manifest". Three verbs, three green results, one broken product — and every stack trace pointed at innocent code.
+  
+  `rig verify` does the sequencing (stopping at the first failure, so "I checked" means one thing instead of three) and then the part that actually matters: it compares modification times to catch artifacts that disagree, *without* rebuilding to find out. Sequencing alone doesn't solve this, it hides it, by rebuilding everything every time — fine for a Go service, unusable where a build takes hours, which is exactly where stale artifacts survive longest.
+  
+  With no configuration it asks the generic question: is anything under the source tree newer than the newest build output? Output locations follow the ecosystem (Go `bin`/`dist`, Node `dist`/`build`/`out`/`.next` plus `node_modules` against its lockfile, .NET per-project `bin/<config>/<tfm>`, Cargo `target/<profile>`), and "source" is narrow enough that editing a README never reads as "you didn't rebuild". Artifacts rig cannot infer — generated resources, multi-artifact builds, an `out/` tree beside the repo — are declared in `.rig.json`:
+  
+  ```jsonc
+  "artifacts": {
+    "browser":    { "path": "../out/Component_arm64/Sheepish.app",
+                    "inputs": ["**/*.cc", "**/*.grd", "**/*.gni"] },
+    "unit-tests": { "path": "../out/Component_arm64/brave_unit_tests",
+                    "inputs": ["**/*.cc", "**/*.h"] }
+  }
+  ```
+  
+  `rig verify --stale-only` then answers "are the things I am about to trust built from the code I have?" in a second, against a build that takes two hours:
+  
+  ```
+    ✓ build output  up to date with main.go
+    ✗ browser       out/App.app/Contents/Resources/en.pak is 2h older than src/strings.grd (and 1 more file)
+    ✗ unit-tests    out/unit_tests is 2h older than src/renderer.cc
+  ```
+  
+  A directory artifact is judged by its **oldest** file, which is the whole point — a bundle whose newest file is minutes old can still hold a resource the build never refreshed. Staleness exits non-zero (a warning in a long log is what got missed the first time), checks that couldn't run are reported as skipped rather than counted as passes, and a report where nothing could be checked says so instead of printing a green line. The run step passes by staying alive: a server never exits, so "still running after `--run-timeout`" (default 10s) is the answer to "does it start" — `--no-run` or `verify.run: false` drops it. It runs in its own process group, so the timeout takes down everything it started (`go run`'s compiled binary, a dev server's children) instead of leaving one behind holding a port. Each step is the same `build`/`test`/`run` command the root tree registers, because a `verify` that could disagree with the verbs about what it ran would be worse than no `verify` at all.
+  
+- An unknown flag now names itself and hands back the `--` form of your own command line.
+  
+  `rig build --target=brave_browser_tests` in a Node repo ended at `Unknown flag: --target.` and nothing else. The flag was named — pflag has always done that — but the way out wasn't: rig forwards anything after `--` to the ecosystem command, and no error, no `--help` screen and no page of the docs said so. The escape hatch existed and was unreachable except by guessing.
+  
+  The error now answers both questions it used to leave open — was that a typo, and how do I pass it through:
+  
+  ```
+    ERROR
+  
+    Unknown flag: --target.
+  
+    rig build doesn't take --target. To pass it to the underlying command, put it after --:
+  
+        rig build -- --target=brave_browser_tests
+  ```
+  
+  The suggested line is the user's real command line with `--` inserted at the flag that failed, not a generic example, so it can be pasted as typed — quoting included, and with the tokens rig did understand left in front of the separator (`rig build -aZ` suggests `rig build -a -- -Z`, keeping `-a` as `--all`). Inserting at the *first* unrecognized flag means one edit fixes a line carrying several of them.
+  
+  Unknown flags still error rather than forwarding automatically. Forwarding would mean `rig build --dry-runn` silently runs a build with no dry run, and rig's own flags would become the special case needing an escape hatch instead of the ecosystem's. The cost of erroring was never the rule, it was that the rule was undiscoverable — so a near-miss of a real flag is now called out as one (`Did you mean --dry-run?`), and the passthrough form is offered alongside it in case it wasn't a typo. The budget for "near miss" scales with the flag's length: two edits over a short name is a different flag, not a typo of one, and a confident wrong guess is worse than none.
+  
+  Applies to every verb that appends what it doesn't consume to the ecosystem command — `build`, `test`, `run`, `format`, `lint`, `typecheck`, `clean`, `rebuild`, `install`, `ci`, `add`, `global`, `dlx`. A verb that assembles its own argv (`coverage`, `publish`, `worktree …`) keeps pflag's plain error rather than promising a `--` it cannot honour; those still get the did-you-mean. Each forwarding verb also states the convention in its own `--help`, so `--` is findable before you need it:
+  
+  ```
+    EXAMPLES
+  
+      # flags rig doesn't own go to the underlying command after --
+      rig build -- --verbose
+  ```
+  
+  Two supporting fixes make the suggested line true wherever it is printed:
+  
+  - Args after `--` are no longer read as a selector. `rig test -- --logger=trx` in a .NET repo used to hand `--logger=trx` to the test-class matcher as if it were a class name; a verb now takes its project/class argument only from the tokens ahead of the separator.
+  - `core/fang` renders a multi-line error with its layout intact — the headline as the error sentence, the rest unwrapped — instead of reflowing every line to the terminal width, which would break a command line the reader is meant to copy.
+  
+
+### 🩹 Fixes
+
+- clauderig sync no longer aborts on a project memory/ symlink, and restore now recreates it: worktree slugs share memory with their main project via a symlinked directory, which the allowlist walker surfaced as a regular file — the copy then read a directory and the whole sync failed ("read …/memory: is a directory"). The walker now reports directory symlinks whose endpoints are both in the synced set, sync records them in the manifest (`links`), and restore recreates them — endpoints rewritten through the machine's slug map — whenever the target directory exists and nothing already occupies the link path. The shared memory itself still syncs once, under its canonical project slug.
+
+### Changerig
+
+- changerig: `status` and `version` now warn when a changeset names several packages but its body only talks about some of them — because one body is rendered verbatim into every changelog it names, so the packages you were not thinking about get an entry about something else. The warning names the packages that will get the text and suggests splitting; it never blocks a release, and stays quiet for packages in the same `fixed` or `linked` group, which share a body by design.
+  
+
+### Clauderig
+
+- clauderig: stop syncing Cowork sandbox contents from the Desktop root. A `local_<id>/` directory under `local-agent-mode-sessions` is a session working directory — audit log, build outputs, an `.audit-key`, and the documents the user uploaded to that session — and was being carried to the sync remote wholesale. Only the `local_<id>.json` sidecar (the session metadata) syncs now. Sync also reconciles the staging tree against the allowlist on every run, so files an earlier, looser rule already staged are removed rather than left tracked and pushed forever — without that, tightening a rule only affects new files. Also fixes the Desktop `config.json` keep-filter, which retained a `preferences` key the app no longer writes and so synced an empty document; it now keeps `locale` and `userThemeMode` as well.
+  
+- clauderig: the worktree/base-branch guard now covers Claude Code's new `Monitor` tool, which runs shell commands like `Bash` and was slipping past unchecked. Installing hooks also brings an already-installed clauderig hook up to date instead of leaving it on an older release's tool list — run `clauderig doctor --fix` (or `clauderig project install`) to update an existing repo, which `doctor` now flags.
+  
+- clauderig: the `clauderig guide` CLAUDE.md block now says who a changeset entry is written for — the person reading the changelog, not the reviewer reading the diff. Run `clauderig guide install` to refresh the block.
+  
+- clauderig: `status` now reports which account the machine-wide Claude Code CLI is logged in as — the email, the plan, and the alias if one is set. On a machine tracking several accounts the live login changes and is otherwise invisible until something fails, which is exactly the state status should surface. It also flags the two ways that identity can be quietly wrong: a credential and profile block that disagree (the desync `account doctor` exists to catch), and a clauderig active pointer naming a different account, which makes the arrow in `account list` a lie. A login clauderig has never captured is called out too, since `switch` cannot return to it.
+- clauderig: `status` and `doctor` now tell you whether your sync actually reached the remote. `last sync` reports the last local commit, so it stays green while pushes are being rejected — `status` adds an `unpushed` line and `doctor` a `pushed` check that fails when commits have never left the machine, pointing at the reconcile path when the remote has diverged.
+  
+- clauderig: `account` now states its scope — it switches the Claude Code CLI login only. Claude Desktop is a separate login with its own token store and its own claude.ai web session, and clauderig neither reads nor writes it, so a switch never signs Desktop in or out. `account list` says so, the `account` and `account switch` help say so, and docs/CLAUDERIG-ACCOUNTS.md records why moving Desktop's session is not something clauderig will do: Desktop signs in twice at moments a capture cannot see, Electron rewrites its config and holds its cookie DB open so writes underneath a running app are silently lost, and reading the session at all means driving a private Chromium sqlite schema.
+- clauderig: `account switch` no longer logs the machine out. Switching to an account whose stored credential had been blanked (an expired refresh token, or a logout) wrote that blank over the live credential — it parses and writes like any healthy blob, so nothing stopped it, even though `list` and `doctor` were already flagging the account as `credential ✗ no tokens`. The switch now refuses and points at the repair. Also fixes two things found alongside it: the running-instance guard read session registry files that Claude Code 2.1.227 no longer writes, so it reported "nothing running" with a live session open and never refused anything — it now consults the process table, while still ignoring isolated `account run` sessions that a swap cannot affect; and repairing an account with `--from-session` no longer strips `organizationUuid` (which is the only field `doctor` can compare, so losing it turned the desync check into an unconditional all-clear) or `mcpOAuth` (the MCP servers' own logins).
+  
+- clauderig: account and Desktop ergonomics — `--json` on `account list`/`account switch`/`desktop list` (one object on stdout, human lines on stderr, refusals included so a script can branch on them); `account alias` for a short handle usable anywhere an id or email is, refused when it would shadow another account; `account disable`/`enable` to hold an account out of a bare `switch`'s rotation while keeping it switchable by name; and `account map`/`desktop map` binding a directory to an account and/or Desktop profile so a bare `account run` or `desktop open` there picks the right one, inheriting the nearest mapped ancestor. Mappings are per-machine, never synced, and dropped when their target is removed. The accounts screen gains alias editing and a disable toggle, and Claude Desktop profiles get an interactive screen of their own (also on the dashboard). Ergonomics credit claude-swap by realiti4.
+- clauderig: `desktop add` now seeds a new profile from your existing Claude Desktop install, so it is usable immediately — MCP servers (`claude_desktop_config.json`), theme and locale come across, along with the small declarative config files. Nothing that carries the login does: `config.json` is rebuilt from the vetted portable keys rather than copied and filtered, so `oauth:tokenCache`, `oauth:tokenCacheV2` and `lastKnownAccountUuid` are absent by construction, and the session-state directories are never touched. A seeded profile still starts signed out. The vetted key list is now shared with `clauderig sync`'s config filter so the two cannot disagree about what is safe to copy. `--no-seed` starts from an empty profile.
+- clauderig: `clauderig desktop` now walks you through setting profiles up — the ordered flow leads the group help, `desktop add` names the next step, and `open`/`quit` ask which profile instead of guessing when given no name.
+  
+- clauderig: understand Claude Code's per-profile Keychain entries (`Claude Code-credentials-<hash>`); refuse token-less credential round-trips; add `account add --from-session` repair; doctor now lists stored-account health
+- clauderig: `clauderig sync` now backs up your Claude Desktop profiles — settings and chat history, never the login — staged as `desktop@<name>` with the same retention and redaction as the machine-wide install. `restore` recreates them on a machine that has never run `clauderig desktop`, each one signed out. Profiles follow the Desktop root's enabled flag, and `status` lists them. Removes `clauderig desktop share`, which pooled history between profiles by writing inside them.
+  
+  Also stops syncing `local-agent-mode-sessions/skills-plugin` — Desktop's own copy of the bundled docx/pptx/xlsx/pdf skills, 8 MB per profile that the app re-downloads on its own. Your next sync will drop it from the repo.
+  
+- clauderig: prune Desktop session sidecars whose transcript is gone. Transcripts were aged out of staging by mtime while their `claude-code-sessions` sidecars were never pruned at all, so the two trees drifted apart and staging accumulated titles for sessions that no longer existed. A staged sidecar is now retained exactly as long as the transcript it names, so retention drives both on one clock. Retention is deliberately NOT applied to a sidecar's own mtime — Desktop rewrites that on its own schedule, and sidecars a month old routinely name transcripts written days ago.
+  
+- clauderig: `desktop open` and `desktop quit` now resolve their target the same way — the profile you named, else the one bound to this directory, else a picker on a terminal (`quit` lists only the open windows), else an error naming both ways to say which. Neither picks for you. `quit` takes an optional name to match `open`, and reports "no profile windows are open" as a fact rather than an error.
+- clauderig: new `clauderig desktop` command runs several Claude Desktop accounts side by side, each in its own permanent Electron profile, so they all stay logged in and their windows can be open together — `desktop add work`, then `desktop open work`. This is the opposite of the withdrawn session-switching feature and inherits none of its problems: nothing is captured, copied or decrypted, clauderig never reads Desktop's login, and each profile is a directory the app owns outright. macOS and Windows (where Anthropic ships Desktop); elsewhere it says so and points at `clauderig account`. Profiles live under ~/.clauderig, outside every sync root, so a logged-in session can never reach the sync remote — asserted by a test. Model and macOS launch mechanism credit guise by siddhjagani.
+- clauderig: extend the secret tripwire to non-JSON files. Until now only parsed JSON was scanned, so a credential that wasn't JSON — Claude Desktop's `.audit-key`, an `id_rsa`, a stray `.pem` — synced untouched. Files are now judged on their name (key material is conclusive; `.npmrc`/`.env`/`.netrc` are confirmed against their content first) plus two unambiguous content rules, and a hit refuses the sync naming the file. Deliberately narrow: transcripts are never entropy-scanned, because a tripwire hit aborts the whole sync and a false positive there would stop syncing entirely.
+  
+- clauderig: `account switch` now holds Claude Code's own credential locks while it swaps. Claude Code guards its token refresh with two advisory locks — `<config-home>/.oauth_refresh.lock` and the legacy `~/.claude.lock` — and refreshes by reading the credential, making a network round trip, then saving; a swap landing inside that window was overwritten by the refreshed *old* account's token, leaving the machine authenticating as the account it had just left. Under the lock, Claude Code's own re-read sees the swapped credential and abandons the refresh. Two more capture-path fixes alongside it: `account add` refuses to run inside an isolated session profile (`CLAUDE_CONFIG_DIR`/`CLAUDE_SECURESTORAGE_CONFIG_DIR`), where it would have stored the machine-wide credential under the session account's name; and atomic writes now resolve a symlinked `~/.claude.json` instead of replacing the link with a regular file, which silently detached it from a dotfiles repo. Lock protocol and both fixes credit claude-swap (realiti4, MIT) PRs #167, #190/#205 and #201; the protocol was re-verified against the Claude Code 2.1.227 bundle.
+
+### Rig
+
+- rig: `rig explain` now describes what the run path will actually do. A Go module whose mains live under `cmd/` no longer gets `go run .`, and the `--dry-run` suggestion places the flag before any `--` so it enables dry-run instead of being forwarded to your program.
+  
+
 ## 1.5.2
 ### 🩹 Fixes
 
