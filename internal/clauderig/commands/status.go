@@ -73,6 +73,12 @@ func NewStatusCmd() *cobra.Command {
 			} else if info.Unmerged > 0 {
 				fmt.Fprintf(out, "  %s\n", DimStyle.Render(fmt.Sprintf(
 					"behind    %d commit(s) on the remote are not here yet — `clauderig pull`", info.Unmerged)))
+			} else if info.HasStaging && !info.TrackingKnown && info.Remote != "" {
+				// A remote is configured and has never been reached. Saying
+				// "up to date with origin/main" here would be the same lie in a
+				// different shape.
+				fmt.Fprintf(out, "  %s\n", WarnStyle.Render(
+					"unpushed  never pushed to this remote"))
 			}
 
 			fmt.Fprintln(out, DimStyle.Render("  roots:"))

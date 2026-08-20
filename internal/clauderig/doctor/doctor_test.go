@@ -117,3 +117,32 @@ func TestCheckPushed_FailsWhenNothingReachedTheRemote(t *testing.T) {
 		t.Fatalf("after pushing: pushed = %v (%q), want OK", got.Status, got.Detail)
 	}
 }
+
+// The gap Copilot found in the first cut: a remote is configured, commits are
+// piling up locally, and nothing has ever reached it — so there is no
+// remote-tracking ref and ahead/behind are both 0. Reporting "up to date with
+// origin/main" there is the same false green this check exists to remove.
+func TestCheckPushed_NeverPushedToAConfiguredRemote(t *testing.T) {
+	ctx := context.Background()
+	staging := t.TempDir()
+	repo, err := gitrepo.Init(ctx, staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetRemote(ctx, "origin", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "a.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Commit(ctx, "local only"); err != nil {
+		t.Fatal(err)
+	}
+
+	env := Env{Cfg: &config.Config{Remote: "https://example.invalid/x.git"}, Staging: staging,
+		UserSettings: filepath.Join(t.TempDir(), "settings.json")}
+	got := checkPushed(ctx, env)
+	if got.Status == OK {
+		t.Fatalf("pushed = OK (%q) — nothing has ever reached the remote", got.Detail)
+	}
+}

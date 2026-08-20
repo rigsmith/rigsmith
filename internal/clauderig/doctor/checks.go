@@ -107,6 +107,14 @@ func checkPushed(ctx context.Context, env Env) Result {
 	if !info.HasStaging {
 		return Result{Name: "pushed", Status: Info, Detail: "no staging repo yet"}
 	}
+	if !info.TrackingKnown {
+		if info.Remote == "" {
+			return Result{Name: "pushed", Status: Info, Detail: "no remote configured"}
+		}
+		return Result{Name: "pushed", Status: Warn,
+			Detail: "never pushed to this remote",
+			Hint:   "run `clauderig sync`"}
+	}
 	switch {
 	case info.Unpushed > 0 && info.Unmerged > 0:
 		return Result{Name: "pushed", Status: Fail,

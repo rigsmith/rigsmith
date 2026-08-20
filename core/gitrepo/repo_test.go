@@ -141,8 +141,8 @@ func TestAheadBehind(t *testing.T) {
 	if err := a.Push(ctx, "origin", "main"); err != nil {
 		t.Fatal(err)
 	}
-	if ahead, behind, err := a.AheadBehind(ctx, "origin", "main"); err != nil || ahead != 0 || behind != 0 {
-		t.Fatalf("just pushed: ahead=%d behind=%d err=%v, want 0/0", ahead, behind, err)
+	if ahead, behind, known, err := a.AheadBehind(ctx, "origin", "main"); err != nil || !known || ahead != 0 || behind != 0 {
+		t.Fatalf("just pushed: ahead=%d behind=%d known=%v err=%v, want 0/0 known", ahead, behind, known, err)
 	}
 
 	// The other machine pushes twice.
@@ -170,24 +170,34 @@ func TestAheadBehind(t *testing.T) {
 	if _, err := runGit(ctx, a.Dir, "fetch", "origin"); err != nil {
 		t.Fatal(err)
 	}
-	ahead, behind, err := a.AheadBehind(ctx, "origin", "main")
+	ahead, behind, known, err := a.AheadBehind(ctx, "origin", "main")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !known {
+		t.Fatal("tracking ref exists but known=false")
 	}
 	if ahead != 3 || behind != 2 {
 		t.Fatalf("ahead=%d behind=%d, want 3/2", ahead, behind)
 	}
 }
 
-// "Cannot tell" must not render as "you have lost work": a repo with no
-// remote-tracking ref reports 0/0 rather than erroring or inventing a count.
+// "Cannot tell" is its own answer: not an error, not lost work, and — the case
+// that matters — not success either. A repo committing against a remote it has
+// never reached must not read as up to date with it.
 func TestAheadBehind_NoRemoteTrackingRef(t *testing.T) {
 	ctx := context.Background()
 	a, _ := Init(ctx, t.TempDir())
 	write(t, a.Dir, "settings.json", "{}")
 	a.Commit(ctx, "first")
-	ahead, behind, err := a.AheadBehind(ctx, "origin", "main")
-	if err != nil || ahead != 0 || behind != 0 {
-		t.Fatalf("ahead=%d behind=%d err=%v, want 0/0 and no error", ahead, behind, err)
+	ahead, behind, known, err := a.AheadBehind(ctx, "origin", "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if known {
+		t.Fatal("known=true with no remote-tracking ref — callers would report being in sync with a remote never reached")
+	}
+	if ahead != 0 || behind != 0 {
+		t.Fatalf("ahead=%d behind=%d, want 0/0 alongside known=false", ahead, behind)
 	}
 }

@@ -42,10 +42,14 @@ type Info struct {
 	// bound — read from the remote-tracking ref, so only as fresh as the last
 	// fetch (Gather does no network).
 	Unmerged int
-	Roots    []RootInfo
-	Hooks    []string
-	Devices  []devices.Device
-	Account  AccountInfo
+	// TrackingKnown reports whether Unpushed/Unmerged mean anything. False when
+	// there is no remote-tracking ref: a remote may be configured and simply
+	// never reached, which must not be reported as being up to date with it.
+	TrackingKnown bool
+	Roots         []RootInfo
+	Hooks         []string
+	Devices       []devices.Device
+	Account       AccountInfo
 }
 
 // AccountInfo is who the machine-wide Claude Code CLI is logged in as.
@@ -96,7 +100,7 @@ func Gather(ctx context.Context, cfg *config.Config, me config.Machine, staging,
 				info.LastSync = h + " " + when + " — " + subj
 			}
 			info.Dirty, _ = repo.Dirty(ctx)
-			info.Unpushed, info.Unmerged, _ = repo.AheadBehind(ctx, "origin", "main")
+			info.Unpushed, info.Unmerged, info.TrackingKnown, _ = repo.AheadBehind(ctx, "origin", "main")
 		}
 	}
 

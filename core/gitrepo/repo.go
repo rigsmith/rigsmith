@@ -107,29 +107,31 @@ func (r *Repo) Dirty(ctx context.Context) (bool, error) {
 // last fetch, so it is a lower bound. `ahead` does not have that problem, and
 // ahead is the number that matters — commits that never left this machine.
 //
-// A missing remote-tracking ref (never fetched, or no remote) is not an error:
-// it reports 0/0, because "we cannot tell" must not render as "you have lost
-// work".
-func (r *Repo) AheadBehind(ctx context.Context, remote, branch string) (ahead, behind int, err error) {
+// A missing remote-tracking ref (never fetched, or a remote configured but never
+// pushed to) reports known=false. That third state matters in both directions:
+// "cannot tell" must not render as lost work, and it must not render as "up to
+// date with origin/main" either — a repo that has committed for a week against a
+// remote it has never reached would otherwise look perfectly healthy.
+func (r *Repo) AheadBehind(ctx context.Context, remote, branch string) (ahead, behind int, known bool, err error) {
 	ref := remote + "/" + branch
 	if _, verr := runGit(ctx, r.Dir, "rev-parse", "--verify", "--quiet", ref); verr != nil {
-		return 0, 0, nil
+		return 0, 0, false, nil
 	}
 	out, err := runGit(ctx, r.Dir, "rev-list", "--left-right", "--count", ref+"...HEAD")
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, false, err
 	}
 	fields := strings.Fields(out)
 	if len(fields) != 2 {
-		return 0, 0, fmt.Errorf("rev-list --count: unexpected output %q", strings.TrimSpace(out))
+		return 0, 0, false, fmt.Errorf("rev-list --count: unexpected output %q", strings.TrimSpace(out))
 	}
 	if behind, err = strconv.Atoi(fields[0]); err != nil {
-		return 0, 0, err
+		return 0, 0, false, err
 	}
 	if ahead, err = strconv.Atoi(fields[1]); err != nil {
-		return 0, 0, err
+		return 0, 0, false, err
 	}
-	return ahead, behind, nil
+	return ahead, behind, true, nil
 }
 
 // Commit stages everything and commits with msg. It returns changed=false (and
