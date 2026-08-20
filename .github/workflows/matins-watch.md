@@ -3,7 +3,10 @@
 # assumptions clauderig makes about Claude Code's own configuration.
 on:
   schedule:
-    - cron: "0 13 * * *"   # 13:00 UTC — after the brief for the day is published
+    # 10:00 UTC = 06:00 in New York on EDT, 05:00 on EST — Actions cron is UTC-only and does
+    # not follow DST, so it drifts an hour in winter rather than tracking the clock. Either
+    # way it lands after matins publishes, which it does at 08:00 UTC every day.
+    - cron: "0 10 * * *"
   workflow_dispatch:
     inputs:
       since:
