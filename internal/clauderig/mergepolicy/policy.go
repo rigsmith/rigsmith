@@ -42,6 +42,11 @@ const (
 	PolicyUnionText Policy = "both"
 	// PolicyNewest takes whichever side was committed later.
 	PolicyNewest Policy = "newest"
+	// PolicyKeep keeps the surviving side of a delete-vs-edit conflict. Named
+	// apart from PolicyNewest because no comparison happened: one side simply
+	// still exists, and reporting that as "newest" would describe a decision the
+	// code never made.
+	PolicyKeep Policy = "kept"
 )
 
 // Resolution records one resolved path and why.
@@ -90,8 +95,13 @@ func resolveOne(ctx context.Context, repo *gitrepo.Repo, p string) (Resolution, 
 		}
 	case isAppendText(p):
 		if content, ok := repo.UnionMerge(ctx, p); ok {
+			content, dropped := dedupRecords(p, content)
 			if err := repo.ResolveWith(ctx, p, content); err == nil {
-				return Resolution{Path: p, Policy: PolicyUnionText, Note: "kept both machines' lines"}, true
+				note := "kept both machines' lines"
+				if dropped > 0 {
+					note += fmt.Sprintf(", dropped %d repeated record(s)", dropped)
+				}
+				return Resolution{Path: p, Policy: PolicyUnionText, Note: note}, true
 			}
 		}
 	}
@@ -112,6 +122,45 @@ func isAppendText(p string) bool {
 	return false
 }
 
+// dedupRecords drops repeated records from a unioned TRANSCRIPT, keeping the
+// first occurrence of each uuid and every line that has none.
+//
+// A transcript conflict only arises when the same session was continued
+// independently on both machines, and unioning two divergent tails can then emit
+// the same record twice. That matters more than tidiness: records carry
+// uuid/parentUuid links and `claude --resume` reads them in order, so a duplicated
+// uuid is a fork in the chain rather than a cosmetic repeat.
+//
+// Only .jsonl. Markdown is left exactly as unioned — a repeated line there is
+// usually legitimate (blank lines, list markers, code fences), and dropping one
+// would edit a note rather than merge it.
+func dedupRecords(p string, content []byte) ([]byte, int) {
+	if !strings.EqualFold(path.Ext(p), ".jsonl") {
+		return content, 0
+	}
+	lines := strings.Split(string(content), "\n")
+	seen := make(map[string]bool, len(lines))
+	out := make([]string, 0, len(lines))
+	dropped := 0
+	for _, line := range lines {
+		var rec struct {
+			UUID string `json:"uuid"`
+		}
+		if strings.TrimSpace(line) != "" && json.Unmarshal([]byte(line), &rec) == nil && rec.UUID != "" {
+			if seen[rec.UUID] {
+				dropped++
+				continue
+			}
+			seen[rec.UUID] = true
+		}
+		out = append(out, line)
+	}
+	if dropped == 0 {
+		return content, 0
+	}
+	return []byte(strings.Join(out, "\n")), dropped
+}
+
 // newest takes the side whose snapshot was committed later. It is the fallback for
 // everything without a smarter rule — machine-local caches, editor state, settings
 // — where merging two snapshots has no meaning and the later one simply wins. When
@@ -123,9 +172,9 @@ func newest(ctx context.Context, repo *gitrepo.Repo, p string) (Resolution, bool
 	theirs, hasTheirs := repo.ConflictStage(ctx, p, 3)
 	switch {
 	case hasOurs && !hasTheirs:
-		return keep(ctx, repo, p, ours, "kept this machine's copy (other side deleted it)")
+		return keepAs(ctx, repo, p, ours, PolicyKeep, "kept this machine's copy (other side deleted it)")
 	case hasTheirs && !hasOurs:
-		return keep(ctx, repo, p, theirs, "kept the incoming copy (this side deleted it)")
+		return keepAs(ctx, repo, p, theirs, PolicyKeep, "kept the incoming copy (this side deleted it)")
 	case !hasOurs && !hasTheirs:
 		return Resolution{}, false
 	}
@@ -141,15 +190,25 @@ func newest(ctx context.Context, repo *gitrepo.Repo, p string) (Resolution, bool
 }
 
 func keep(ctx context.Context, repo *gitrepo.Repo, p string, content []byte, note string) (Resolution, bool) {
+	return keepAs(ctx, repo, p, content, PolicyNewest, note)
+}
+
+func keepAs(ctx context.Context, repo *gitrepo.Repo, p string, content []byte, pol Policy, note string) (Resolution, bool) {
 	if err := repo.ResolveWith(ctx, p, content); err != nil {
 		return Resolution{}, false
 	}
-	return Resolution{Path: p, Policy: PolicyNewest, Note: note}, true
+	return Resolution{Path: p, Policy: pol, Note: note}, true
 }
 
 // unionManifest merges the two sides' project and link maps. Restore reads this to
 // map a slug back to a real directory, so a machine missing from it is a machine
 // whose history cannot be restored anywhere — the union is the only safe answer.
+//
+// Where both sides carry the same slug, OURS wins — deliberately not the incoming
+// tie-break the whole-file policy uses. A slug's entry is a statement about where
+// that project lives on the machine writing it, and this machine is the authority
+// on its own paths. The asymmetry cannot drift: the next sync rebuilds the whole
+// manifest from this machine's projects dir anyway.
 func unionManifest(ctx context.Context, repo *gitrepo.Repo, p string) (string, bool) {
 	var ours, theirs manifest.Manifest
 	if !decodeSides(ctx, repo, p, &ours, &theirs) {

@@ -300,3 +300,124 @@ func TestResolve_LeavesMergeReadyToCommit(t *testing.T) {
 		t.Error("repo is still mid-merge after committing")
 	}
 }
+
+// Union keeps both machines' work, and git's own 3-way merge already emits an
+// addition both sides made only ONCE — the dedup below is for what it cannot
+// align, not for the ordinary case. Pinned because it is the premise of that
+// dedup: if this ever changed, every merged transcript would double.
+func TestResolve_IdenticalAdditionsAreNotDuplicated(t *testing.T) {
+	rel := "cli/memory/notes.md"
+	base := "# notes\n\n- one\n"
+	dir, repo := diverged(t,
+		map[string]string{rel: base},
+		map[string]string{rel: base + "\n- shared\n- from A\n"},
+		map[string]string{rel: base + "\n- shared\n- from B\n"})
+
+	if _, err := Resolve(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, dir, rel)
+	if n := strings.Count(got, "- shared"); n != 1 {
+		t.Errorf("an addition both machines made should appear once, got %d:\n%s", n, got)
+	}
+	for _, want := range []string{"- from A", "- from B"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s:\n%s", want, got)
+		}
+	}
+}
+
+// What git cannot align, it duplicates. Here both machines recorded the same
+// turn but with different surrounding records, so the union emits it twice —
+// and in a transcript that is not a cosmetic repeat: records carry
+// uuid/parentUuid links and `claude --resume` walks them in order, so a repeated
+// uuid is a fork in the chain.
+func TestResolve_TranscriptDropsRecordsUnionCouldNotAlign(t *testing.T) {
+	rel := "cli/projects/-p/s.jsonl"
+	rec := func(id string) string { return `{"uuid":"` + id + `","type":"user"}` + "\n" }
+	base := rec("a")
+	// The shared record lands in a different position on each side, so diff3 has
+	// nothing to pair it against.
+	ours := base + rec("shared") + rec("ours-1")
+	theirs := base + rec("theirs-1") + rec("theirs-2") + rec("shared")
+
+	dir, repo := diverged(t,
+		map[string]string{rel: base},
+		map[string]string{rel: ours},
+		map[string]string{rel: theirs})
+
+	rep, err := Resolve(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Unresolved) != 0 {
+		t.Fatalf("unresolved: %v", rep.Unresolved)
+	}
+	got := read(t, dir, rel)
+	// Nothing either machine recorded may be lost…
+	for _, want := range []string{`"ours-1"`, `"theirs-1"`, `"theirs-2"`, `"shared"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s:\n%s", want, got)
+		}
+	}
+	// …and the record both have appears exactly once.
+	if n := strings.Count(got, `"uuid":"shared"`); n != 1 {
+		t.Errorf("repeated record kept %d times, want 1:\n%s", n, got)
+	}
+	var note string
+	for _, r := range rep.Resolved {
+		if r.Path == rel {
+			note = r.Note
+		}
+	}
+	if !strings.Contains(note, "repeated record") {
+		t.Errorf("a silent edit to a transcript is the thing nobody should discover later; note = %q", note)
+	}
+}
+
+// The survivor of a delete-vs-edit is reported as "kept", not "newest": no
+// comparison happened, one side simply still exists.
+func TestResolve_DeleteVersusEditIsReportedAsKept(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	git(t, dir, nil, "init", "-b", "main")
+	git(t, dir, nil, "config", "user.email", "t@example.com")
+	git(t, dir, nil, "config", "user.name", "t")
+	write(t, dir, "cli/statsig/cache.json", `{"v":1}`+"\n")
+	git(t, dir, at("2026-01-01T00:00:00Z"), "add", "-A")
+	git(t, dir, at("2026-01-01T00:00:00Z"), "commit", "-m", "base")
+
+	git(t, dir, nil, "checkout", "-b", "other")
+	if err := os.Remove(filepath.Join(dir, "cli/statsig/cache.json")); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, at("2026-02-02T00:00:00Z"), "add", "-A")
+	git(t, dir, at("2026-02-02T00:00:00Z"), "commit", "-m", "gone there")
+
+	git(t, dir, nil, "checkout", "main")
+	write(t, dir, "cli/statsig/cache.json", `{"v":2}`+"\n")
+	git(t, dir, at("2026-01-15T00:00:00Z"), "add", "-A")
+	git(t, dir, at("2026-01-15T00:00:00Z"), "commit", "-m", "edited here")
+
+	_ = exec.Command("git", "-C", dir, "merge", "--no-edit", "other").Run()
+	repo, err := gitrepo.Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Resolve(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rep.Resolved {
+		if r.Path == "cli/statsig/cache.json" {
+			found = true
+			if r.Policy != PolicyKeep {
+				t.Errorf("policy = %q, want %q (note: %s)", r.Policy, PolicyKeep, r.Note)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("path not resolved: %+v", rep)
+	}
+}

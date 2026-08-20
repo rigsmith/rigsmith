@@ -61,8 +61,14 @@ func runGitInteractive(ctx context.Context, dir string, args ...string) error {
 // repo left in this state wedges every later operation — an ff-only Pull fails
 // with "unmerged files" and never recovers on its own — so callers check it on
 // entry rather than only after a merge they started themselves.
+//
+// Asked of git rather than by stat-ing .git/MERGE_HEAD: in a linked worktree
+// .git is a FILE pointing at the real gitdir, so the stat silently answers "no
+// merge" while git reports one. clauderig's staging repo is an ordinary clone, but
+// this type is shared — rig's worktree verbs open it on worktree dirs — and a
+// method that reads the layout instead of asking git is wrong there.
 func (r *Repo) InMerge(ctx context.Context) bool {
-	_, err := os.Stat(filepath.Join(r.Dir, ".git", "MERGE_HEAD"))
+	_, err := runGit(ctx, r.Dir, "rev-parse", "--verify", "--quiet", "MERGE_HEAD")
 	return err == nil
 }
 
@@ -139,9 +145,15 @@ func (r *Repo) UnionMerge(ctx context.Context, path string) (content []byte, ok 
 	if oursPath == "" || basePath == "" || theirsPath == "" {
 		return nil, false
 	}
-	// merge-file exits non-zero to COUNT remaining conflicts; --union leaves none,
-	// so only a real failure (binary input) matters — detected by an empty result.
-	_, _ = runGit(ctx, r.Dir, "merge-file", "--union", "-q", oursPath, basePath, theirsPath)
+	// merge-file exits non-zero to COUNT remaining conflicts, and --union leaves
+	// none — so a non-zero exit here is a real failure (binary input), not a
+	// conflict count. It must be reported: merge-file writes its result over the
+	// "ours" file IN PLACE, so on failure that file still holds the unmodified ours
+	// side, and returning it would hand back one machine's copy under the label
+	// "kept both machines' lines".
+	if _, err := runGit(ctx, r.Dir, "merge-file", "--union", "-q", oursPath, basePath, theirsPath); err != nil {
+		return nil, false
+	}
 	merged, err := os.ReadFile(oursPath)
 	if err != nil {
 		return nil, false
