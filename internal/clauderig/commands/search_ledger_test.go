@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +42,11 @@ func TestSearchSessions_LedgerOnlySessionIsFound(t *testing.T) {
 	if !strings.Contains(got, "2026-03-04") {
 		t.Errorf("ledger row carries the date, so it should be shown:\n%s", got)
 	}
-	if !strings.Contains(got, "/Users/j/Git/api") {
+	// The row records the cwd as the machine that ran the session spelled it, and
+	// search resolves it onto THIS machine — so on Windows the separators come
+	// back native. Asserting the POSIX literal passed everywhere except the one
+	// platform the conversion exists for.
+	if !strings.Contains(got, filepath.FromSlash("/Users/j/Git/api")) {
 		t.Errorf("ledger row carries the project, so it should be shown:\n%s", got)
 	}
 	// "gone" would be wrong — the blob is still in the sync repo's git history,
