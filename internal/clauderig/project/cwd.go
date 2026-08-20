@@ -34,10 +34,15 @@ func CwdFromTranscript(path string) (cwd string, ok bool, err error) {
 		return "", false, err
 	}
 	defer f.Close()
+	return CwdFrom(f)
+}
 
+// CwdFrom is CwdFromTranscript over an already-open stream, for a transcript that
+// isn't a file on disk — a blob read out of git history, say.
+func CwdFrom(r io.Reader) (cwd string, ok bool, err error) {
 	// bufio.Reader (not Scanner) so a very long assistant line can't blow a token
 	// cap; we read whole lines and decode each as JSON.
-	br := bufio.NewReader(f)
+	br := bufio.NewReader(r)
 	for i := 0; i < maxHeaderLines; i++ {
 		line, rerr := br.ReadString('\n')
 		if len(line) > 0 {

@@ -8,6 +8,7 @@
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`); nudges a Desktop restart when Code sessions come back |
 | `status` | Sync state: remote, last sync, roots, hooks |
 | `search` | Find a Claude Code session by title or content across live + synced history (alias `grep`); `--since`/`--until`/`--cwd` narrow, `--raw` grep lines, `--all` every file, `--live`/`--repo` scope, `-s` case-sensitive |
+| `ledger` | Report the permanent session index; `ledger backfill` recovers rows for sessions pruned before it existed (`-n` dry run) |
 | `global` | `install` / `uninstall` / `status` the global sync hooks in `~/.claude` (alias `hooks`) |
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
@@ -110,6 +111,26 @@ still staged is never labelled this way; it gets the ordinary
 One file per device, because two machines appending to a shared file is a merge
 conflict on every sync. Rows are keyed by session id and unioned on read, newest
 row winning.
+
+#### Backfilling what aged out before the ledger existed
+
+The ledger only remembers from the day it is installed — every session pruned
+before that has no row. Their bodies are still in the sync repo's history
+though, because a deleted file leaves a git tree, not the history behind it:
+
+```sh
+clauderig ledger backfill        # -n / --dry-run to see what it would recover
+clauderig ledger                 # what it remembers now
+```
+
+`backfill` finds every transcript retention has removed, reads each one's head
+from the commit *before* its deletion, and writes the row. Rows already present
+are left alone — a live transcript is a better source than a deleted blob — so
+running it twice does nothing, and there is no reason to run it more than once.
+It writes into the staging tree; your next `sync` commits it.
+
+Recovered rows carry a date from the last commit that touched the transcript,
+which is when it last changed rather than a timestamp read out of the body.
 
 ### Which machines the search could see
 

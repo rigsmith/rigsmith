@@ -27,6 +27,7 @@ func NewRootCmd(version string) *cobra.Command {
 		NewRestoreCmd(),
 		NewStatusCmd(),
 		NewSearchCmd(),
+		NewLedgerCmd(),
 		NewMoveCmd(),
 		NewGuardCmd(),
 		NewGuideCmd(),
