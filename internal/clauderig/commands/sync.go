@@ -18,6 +18,11 @@ import (
 // past this, it's squashed to a single commit (it's tiny, so this is generous).
 const configHistoryMaxCommits = 200
 
+// pushAttempts bounds the push/reconcile retry loop. Small on purpose: each round
+// is a real fetch+merge, and if the remote is moving faster than that the next
+// scheduled sync is the right place to catch up, not a loop here.
+const pushAttempts = 3
+
 // NewSyncCmd builds the `sync` command — walk → redact → manifest → tripwire into
 // the staging repo, then commit (empty-guarded) and push. Streams the report so
 // redaction is visible, not magic. The tripwire fails the sync loudly if a secret
@@ -42,6 +47,10 @@ func NewSyncCmd() *cobra.Command {
 			}
 
 			fmt.Fprintln(out, HeaderStyle.Render("clauderig sync"))
+			// Settle any merge an earlier run abandoned before the snapshot writes
+			// into the staging tree — committing over a conflicted index would
+			// publish the conflict markers themselves.
+			repairWedgedMerge(ctx, out, staging, true)
 			claudeVer := ""
 			if cliLoc, st := cfg.RootLocation("cli", me); st == pathmap.StatusResolved {
 				claudeVer = config.DetectClaudeVersion(cliLoc)
@@ -140,30 +149,21 @@ func NewSyncCmd() *cobra.Command {
 				return nil
 			}
 			// Always push (even with no new commit) so a previously-failed push
-			// recovers; an in-sync push is a cheap no-op.
-			if err := repo.Push(ctx, "origin", "main"); err != nil {
-				// The remote likely advanced (another machine pushed). Reconcile:
-				// fetch + merge, hand conflicts to git mergetool, then push again.
-				conflicted, merr := repo.FetchMerge(ctx, "origin", "main")
-				if merr != nil {
-					return fmt.Errorf("push rejected and reconcile failed: %w", merr)
+			// recovers; an in-sync push is a cheap no-op. A rejection means the
+			// remote advanced, so reconcile and try again — and keep trying a few
+			// times, because with several machines syncing on a timer another one
+			// can land a push while this one is still merging. Failing there would
+			// report a broken sync for a race that resolves itself on the retry.
+			for attempt := 0; ; attempt++ {
+				perr := repo.Push(ctx, "origin", "main")
+				if perr == nil {
+					break
 				}
-				if conflicted {
-					if !interactive() {
-						_ = repo.AbortMerge(ctx)
-						return fmt.Errorf("remote diverged with conflicts; re-run `clauderig sync` in a terminal to resolve via git mergetool")
-					}
-					fmt.Fprintln(out, WarnStyle.Render("  merge conflicts — launching git mergetool…"))
-					if err := repo.RunMergeTool(ctx); err != nil {
-						_ = repo.AbortMerge(ctx)
-						return fmt.Errorf("mergetool: %w", err)
-					}
-					if err := repo.CommitMerge(ctx); err != nil {
-						return err
-					}
+				if attempt >= pushAttempts {
+					return fmt.Errorf("push after reconcile: %w", perr)
 				}
-				if err := repo.Push(ctx, "origin", "main"); err != nil {
-					return fmt.Errorf("push after reconcile: %w", err)
+				if err := reconcile(ctx, out, repo, "origin", "main", true); err != nil {
+					return err
 				}
 			}
 			if changed {
