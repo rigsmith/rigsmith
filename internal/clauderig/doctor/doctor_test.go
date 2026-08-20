@@ -9,6 +9,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
 )
 
 func TestCheckGuide_FixInstalls(t *testing.T) {
@@ -144,5 +145,51 @@ func TestCheckPushed_NeverPushedToAConfiguredRemote(t *testing.T) {
 	got := checkPushed(ctx, env)
 	if got.Status == OK {
 		t.Fatalf("pushed = OK (%q) — nothing has ever reached the remote", got.Detail)
+	}
+}
+
+// A guard hook installed by an older release is present but not current, and
+// "present" was all this check used to ask. Covers both scopes, since which
+// settings file gets repaired depends on where the hook lives.
+func TestCheckProjectGuard_FlagsAndFixesAStaleHook(t *testing.T) {
+	for _, scope := range []string{"project", "local"} {
+		t.Run(scope, func(t *testing.T) {
+			dir := t.TempDir()
+			proj := filepath.Join(dir, "settings.json")
+			local := filepath.Join(dir, "settings.local.json")
+			stale := filepath.Join(dir, "settings.json")
+			env := Env{RepoRoot: dir, ProjectSettings: proj, LocalSettings: local}
+			if scope == "local" {
+				stale = local
+				// The project file must have no clauderig hook, or it wins.
+				if err := os.WriteFile(proj, []byte(`{}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// An older release's matcher: no Monitor.
+			if _, err := hooks.Install(stale, []hooks.Plan{{
+				Event: "PreToolUse", Matcher: "Edit|Write|Bash", Command: "clauderig guard",
+			}}); err != nil {
+				t.Fatal(err)
+			}
+
+			got := checkProjectGuard(env)
+			if got.Status != Warn {
+				t.Fatalf("status = %v (%q), want Warn — installed but out of date", got.Status, got.Detail)
+			}
+			if got.Fix == nil {
+				t.Fatal("no Fix offered for a stale hook")
+			}
+			if err := got.Fix(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if after := checkProjectGuard(env); after.Status != OK {
+				t.Fatalf("after Fix: status = %v (%q), want OK", after.Status, after.Detail)
+			}
+			// And it repaired the file the hook actually lives in.
+			if drift, _ := hooks.Drift(stale, hooks.GuardPlans()); len(drift) != 0 {
+				t.Fatalf("%s settings still drifted: %v", scope, drift)
+			}
+		})
 	}
 }

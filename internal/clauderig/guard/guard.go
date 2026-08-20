@@ -77,16 +77,19 @@ var BaseBranches = map[string]bool{"main": true, "master": true, "trunk": true}
 // about; everything else Defers.
 func Evaluate(r Request, e Env) Result {
 	// Worktree tools relocate the session regardless of repo state — always block.
-	if r.Tool == "EnterWorktree" || r.Tool == "ExitWorktree" {
+	if Relocates(r.Tool) {
 		return Result{Deny, worktreeReason}
 	}
 	if !e.InRepo {
 		return Result{Defer, ""}
 	}
-	switch r.Tool {
-	case "Bash":
+	// Monitor runs its command in the same shell as Bash, so it gets the same
+	// rules. Its WebSocket form carries no command at all, which arrives as an
+	// empty string and defers — there is nothing to relocate or commit.
+	switch {
+	case RunsCommand(r.Tool):
 		return evalBash(r, e)
-	case "Edit", "Write", "NotebookEdit":
+	case WritesFile(r.Tool):
 		return evalWrite(r, e)
 	}
 	return Result{Defer, ""}

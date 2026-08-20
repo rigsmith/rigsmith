@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/guard"
 )
 
 // Marker identifies a clauderig-owned hook (its command contains this).
@@ -38,7 +40,11 @@ func SyncPlans() []Plan {
 // move the session dir or write code to a base branch.
 func GuardPlans() []Plan {
 	return []Plan{
-		{Event: "PreToolUse", Matcher: "Edit|Write|NotebookEdit|Bash|EnterWorktree|ExitWorktree", Command: "clauderig guard"},
+		// Derived from the guard's own registry, never restated: this matcher is
+		// what the hook fires on, so a tool the guard handles but the matcher
+		// omits is not guarded at all. That is exactly how Monitor — which runs
+		// shell commands in the same environment as Bash — went unguarded.
+		{Event: "PreToolUse", Matcher: strings.Join(guard.Tools(), "|"), Command: "clauderig guard"},
 	}
 }
 
@@ -47,13 +53,31 @@ func DefaultPlans() []Plan {
 	return append(SyncPlans(), GuardPlans()...)
 }
 
-// Install adds the given plans to the settings.json at path (created if absent),
-// idempotently — an event already carrying a clauderig hook is left alone. Other
-// settings and other hooks are preserved. Returns the events newly added.
+// Install adds the given plans to the settings.json at path (created if absent).
+// Other settings and other hooks are preserved. Returns the events newly added.
+//
+// A clauderig hook that is already installed is brought up to date rather than
+// left alone. That matters because the PreToolUse matcher is the list of tools
+// the guard even runs for: when Claude Code ships a new command-bearing tool and
+// clauderig adds it to the plan, "already installed, skip" would mean every
+// existing machine keeps the old list forever and stays unguarded for that tool,
+// while the release notes say otherwise. Only the fields clauderig owns
+// (matcher, command) are rewritten, on the group carrying its marker.
 func Install(path string, plans []Plan) (added []string, err error) {
+	added, _, err = install(path, plans)
+	return added, err
+}
+
+// InstallOrUpdate is Install, also reporting the events whose existing clauderig
+// hook it had to correct — so `doctor` can say what it repaired.
+func InstallOrUpdate(path string, plans []Plan) (added, updated []string, err error) {
+	return install(path, plans)
+}
+
+func install(path string, plans []Plan) (added, updated []string, err error) {
 	s, err := load(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	h := hooksMap(s)
 	for _, p := range plans {
@@ -63,22 +87,128 @@ func Install(path string, plans []Plan) (added []string, err error) {
 			continue // unexpected shape (malformed / future schema) — don't clobber it
 		}
 		if anyHasMarker(groups) {
+			if reconcileGroups(groups, p) {
+				h[p.Event] = groups
+				updated = append(updated, p.Event)
+			}
 			continue
 		}
-		group := map[string]any{
-			"hooks": []any{map[string]any{"type": "command", "command": p.Command}},
-		}
-		if p.Matcher != "" {
-			group["matcher"] = p.Matcher
-		}
-		groups = append(groups, group)
+		groups = append(groups, newGroup(p))
 		h[p.Event] = groups
 		added = append(added, p.Event)
 	}
-	if len(added) == 0 {
-		return added, nil
+	if len(added) == 0 && len(updated) == 0 {
+		return added, updated, nil
 	}
-	return added, save(path, s)
+	return added, updated, save(path, s)
+}
+
+func newGroup(p Plan) map[string]any {
+	group := map[string]any{
+		"hooks": []any{map[string]any{"type": "command", "command": p.Command}},
+	}
+	if p.Matcher != "" {
+		group["matcher"] = p.Matcher
+	}
+	return group
+}
+
+// reconcileGroups brings the clauderig-owned group in groups up to plan p,
+// reporting whether anything changed. Groups clauderig does not own are left
+// exactly as they are — this must never edit someone else's hook.
+func reconcileGroups(groups []any, p Plan) (changed bool) {
+	for _, raw := range groups {
+		g, ok := raw.(map[string]any)
+		if !ok || !hasMarker(g) {
+			continue
+		}
+		// Both directions: a plan that drops the matcher has to remove the field,
+		// or the hook stays scoped to the old tool list and may never fire — with
+		// Install reporting success.
+		if cur, had := g["matcher"].(string); cur != p.Matcher || (had && p.Matcher == "") {
+			if p.Matcher == "" {
+				delete(g, "matcher")
+			} else {
+				g["matcher"] = p.Matcher
+			}
+			changed = true
+		}
+		hs, ok := g["hooks"].([]any)
+		if !ok {
+			continue
+		}
+		for _, hraw := range hs {
+			hm, ok := hraw.(map[string]any)
+			if !ok {
+				continue
+			}
+			cur, _ := hm["command"].(string)
+			if !strings.Contains(cur, Marker) || cur == p.Command {
+				continue
+			}
+			hm["command"] = p.Command
+			changed = true
+		}
+	}
+	return changed
+}
+
+// Drift reports the events whose installed clauderig hook no longer matches the
+// plan — a settings.json written by an older release.
+//
+// Presence is not health here. The PreToolUse matcher decides which tools the
+// guard runs for at all, so a hook that is present but carries last release's
+// matcher is silently not guarding whatever was added since. Events with no
+// clauderig hook at all are NOT drift; that is `Install`'s business.
+func Drift(path string, plans []Plan) (events []string, err error) {
+	s, err := load(path)
+	if err != nil {
+		return nil, err
+	}
+	h, ok := s["hooks"].(map[string]any)
+	if !ok {
+		return nil, nil
+	}
+	for _, p := range plans {
+		groups, ok := h[p.Event].([]any)
+		if !ok || !anyHasMarker(groups) {
+			continue
+		}
+		for _, raw := range groups {
+			g, ok := raw.(map[string]any)
+			if !ok || !hasMarker(g) {
+				continue
+			}
+			if !groupMatchesPlan(g, p) {
+				events = append(events, p.Event)
+				break
+			}
+		}
+	}
+	return events, nil
+}
+
+func groupMatchesPlan(g map[string]any, p Plan) bool {
+	// Compared in both directions, matching newGroup, which omits the field when
+	// the plan has no matcher: an installed hook that is still scoped when the
+	// plan says it should not be is drift too.
+	if cur, _ := g["matcher"].(string); cur != p.Matcher {
+		return false
+	}
+	hs, ok := g["hooks"].([]any)
+	if !ok {
+		return false
+	}
+	for _, hraw := range hs {
+		hm, ok := hraw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if cur, _ := hm["command"].(string); strings.Contains(cur, Marker) && cur != p.Command {
+			return false
+		}
+	}
+	return true
 }
 
 // Uninstall removes clauderig-owned hooks, leaving other hooks and settings

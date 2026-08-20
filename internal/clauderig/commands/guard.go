@@ -67,7 +67,7 @@ func decide(ctx context.Context, stdin []byte) guard.Result {
 	env.Override = overridden(env.Root)
 
 	// Only pay for the staged-file lookup when it can change the verdict.
-	if req.Tool == "Bash" && env.OnBase && !env.Override {
+	if guard.RunsCommand(req.Tool) && env.OnBase && !env.Override {
 		if files, err := repo.CommittableFiles(ctx, hasAllFlag(req.Command)); err == nil {
 			env.Committable = files
 		}

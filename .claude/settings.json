@@ -8,7 +8,7 @@
             "type": "command"
           }
         ],
-        "matcher": "Edit|Write|NotebookEdit|Bash|EnterWorktree|ExitWorktree"
+        "matcher": "Edit|Write|NotebookEdit|Bash|Monitor|EnterWorktree|ExitWorktree"
       }
     ]
   }

@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"path/filepath"
 	"runtime"
 	"testing"
 )
@@ -154,6 +155,53 @@ func TestLowRisk(t *testing.T) {
 	for _, p := range high {
 		if LowRisk(p) {
 			t.Errorf("LowRisk(%q) = true, want false", p)
+		}
+	}
+}
+
+// Monitor executes its command in the same shell as Bash, so the same rules have
+// to apply — otherwise it is a way around every one of them. Its WebSocket form
+// carries no command and must stay inert.
+func TestEvaluate_MonitorIsTreatedAsBash(t *testing.T) {
+	root := t.TempDir()
+	// `~` rather than a literal path: home is outside the repo on every platform,
+	// where "/tmp" is only meaningful on one of them.
+	env := Env{InRepo: true, Root: root, Home: t.TempDir(), OnBase: true}
+
+	for _, tool := range []string{"Bash", "Monitor"} {
+		got := Evaluate(Request{Tool: tool, Command: "cd ~ && echo hi", Cwd: root}, env)
+		if got.Decision != Deny {
+			t.Errorf("%s escaping cd: decision = %v, want Deny", tool, got.Decision)
+		}
+	}
+	// The ws form: no command at all.
+	if got := Evaluate(Request{Tool: "Monitor", Cwd: root}, env); got.Decision != Defer {
+		t.Errorf("Monitor with no command: decision = %v, want Defer", got.Decision)
+	}
+	// And a harmless command still passes.
+	if got := Evaluate(Request{Tool: "Monitor", Command: "tail -f build.log", Cwd: root}, env); got.Decision != Defer {
+		t.Errorf("Monitor tail: decision = %v, want Defer", got.Decision)
+	}
+}
+
+// Every tool in the registry must actually be acted on. The registry drives the
+// PreToolUse matcher, so an entry the policy ignores means the hook pays to run
+// for nothing — and, more importantly, the reverse (a policy case missing from
+// the registry) is now impossible to express, because Evaluate asks the registry
+// rather than repeating it.
+func TestEveryRegisteredToolIsActedOn(t *testing.T) {
+	root := t.TempDir()
+	env := Env{InRepo: true, Root: root, Home: t.TempDir(), OnBase: true}
+	for _, tool := range Tools() {
+		req := Request{Tool: tool, Cwd: root}
+		switch {
+		case RunsCommand(tool):
+			req.Command = "cd ~ && echo hi"
+		case WritesFile(tool):
+			req.FilePath = filepath.Join(root, "main.go")
+		}
+		if got := Evaluate(req, env); got.Decision != Deny {
+			t.Errorf("%s: decision = %v, want Deny — it is in the matcher, so it should be governed", tool, got.Decision)
 		}
 	}
 }
