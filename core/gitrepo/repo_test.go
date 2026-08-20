@@ -120,3 +120,74 @@ func TestGitDirBytes(t *testing.T) {
 		t.Fatalf("git dir bytes = %d err=%v", n, err)
 	}
 }
+
+// Reproduces the state that hid ten days of failed backups: two machines sharing
+// one staging repo, each committing, neither able to fast-forward. The local
+// repo keeps making perfectly good commits — so anything reading "last commit"
+// reports health. Only ahead/behind tells the truth.
+func TestAheadBehind(t *testing.T) {
+	ctx := context.Background()
+	bare := t.TempDir()
+	if _, err := runGit(ctx, bare, "init", "--bare", "-b", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	a, _ := Init(ctx, t.TempDir())
+	if err := a.SetRemote(ctx, "origin", bare); err != nil {
+		t.Fatal(err)
+	}
+	write(t, a.Dir, "settings.json", "{}")
+	a.Commit(ctx, "first")
+	if err := a.Push(ctx, "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if ahead, behind, err := a.AheadBehind(ctx, "origin", "main"); err != nil || ahead != 0 || behind != 0 {
+		t.Fatalf("just pushed: ahead=%d behind=%d err=%v, want 0/0", ahead, behind, err)
+	}
+
+	// The other machine pushes twice.
+	bDir := filepath.Join(t.TempDir(), "clone")
+	b, err := Clone(ctx, bare, bDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"b1", "b2"} {
+		write(t, b.Dir, n+".json", "{}")
+		b.Commit(ctx, n)
+	}
+	if err := b.Push(ctx, "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// This machine commits three times and cannot push.
+	for _, n := range []string{"a1", "a2", "a3"} {
+		write(t, a.Dir, n+".json", "{}")
+		a.Commit(ctx, n)
+	}
+	if err := a.Push(ctx, "origin", "main"); err == nil {
+		t.Fatal("push should have been rejected — the remote advanced")
+	}
+	if _, err := runGit(ctx, a.Dir, "fetch", "origin"); err != nil {
+		t.Fatal(err)
+	}
+	ahead, behind, err := a.AheadBehind(ctx, "origin", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ahead != 3 || behind != 2 {
+		t.Fatalf("ahead=%d behind=%d, want 3/2", ahead, behind)
+	}
+}
+
+// "Cannot tell" must not render as "you have lost work": a repo with no
+// remote-tracking ref reports 0/0 rather than erroring or inventing a count.
+func TestAheadBehind_NoRemoteTrackingRef(t *testing.T) {
+	ctx := context.Background()
+	a, _ := Init(ctx, t.TempDir())
+	write(t, a.Dir, "settings.json", "{}")
+	a.Commit(ctx, "first")
+	ahead, behind, err := a.AheadBehind(ctx, "origin", "main")
+	if err != nil || ahead != 0 || behind != 0 {
+		t.Fatalf("ahead=%d behind=%d err=%v, want 0/0 and no error", ahead, behind, err)
+	}
+}

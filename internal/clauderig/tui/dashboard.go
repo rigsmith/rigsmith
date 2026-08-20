@@ -209,6 +209,14 @@ func (m Model) statusPanel() string {
 	if m.info.Dirty {
 		b.WriteString("            " + warnC.Render("uncommitted changes") + "\n")
 	}
+	// `last sync` is the last local COMMIT — it stays green through a rejected
+	// push, so the unpushed count is the one that answers "am I backed up".
+	if m.info.Unpushed > 0 {
+		b.WriteString("            " + warnC.Render(fmt.Sprintf("%d commit(s) never pushed", m.info.Unpushed)) + "\n")
+	}
+	if m.info.Unmerged > 0 {
+		b.WriteString("            " + dim.Render(fmt.Sprintf("%d on the remote not here yet", m.info.Unmerged)) + "\n")
+	}
 
 	b.WriteString(dim.Render("  roots:") + "\n")
 	// Column sized to the ids present: a Desktop profile root is `desktop@<name>`

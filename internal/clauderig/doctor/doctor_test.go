@@ -3,8 +3,12 @@ package doctor
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 )
 
 func TestCheckGuide_FixInstalls(t *testing.T) {
@@ -65,4 +69,51 @@ func TestRun_NoRepoSkipsRepoChecks(t *testing.T) {
 		}
 	}
 	_ = os.Stdout
+}
+
+// The pair that misled for ten days: a fresh local commit (so `last sync` is
+// green) sitting on top of a push that has been rejected every time. `pushed`
+// exists to fail in exactly that state.
+func TestCheckPushed_FailsWhenNothingReachedTheRemote(t *testing.T) {
+	ctx := context.Background()
+	bare := t.TempDir()
+	if err := exec.Command("git", "init", "--bare", "-b", "main", bare).Run(); err != nil {
+		t.Skip("git unavailable")
+	}
+	staging := t.TempDir()
+	repo, err := gitrepo.Init(ctx, staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetRemote(ctx, "origin", bare); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "a.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Commit(ctx, "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Push(ctx, "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	// A second commit that never gets pushed — the ten-day state.
+	if err := os.WriteFile(filepath.Join(staging, "b.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Commit(ctx, "never pushed"); err != nil {
+		t.Fatal(err)
+	}
+
+	env := Env{Cfg: &config.Config{}, Staging: staging, UserSettings: filepath.Join(t.TempDir(), "settings.json")}
+	if got := checkPushed(ctx, env); got.Status != Fail {
+		t.Fatalf("pushed = %v (%q), want Fail — an unpushed backup is broken, not untidy", got.Status, got.Detail)
+	}
+	// And it passes once the commit actually lands.
+	if err := repo.Push(ctx, "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if got := checkPushed(ctx, env); got.Status != OK {
+		t.Fatalf("after pushing: pushed = %v (%q), want OK", got.Status, got.Detail)
+	}
 }

@@ -91,6 +91,39 @@ func checkLastSync(ctx context.Context, env Env) Result {
 	return Result{Name: "last sync", Status: OK, Detail: info.LastSync}
 }
 
+// checkPushed asks the question `last sync` cannot: did any of it leave the
+// machine?
+//
+// These are separate checks because they fail separately, and the pair that
+// misleads is exactly "recent local commit + rejected push" — sync keeps
+// committing, `last sync` keeps looking fresh, and nothing has been backed up
+// since the day the remote diverged. Reported as a failure rather than a
+// warning: a backup tool that is not backing up is broken, not untidy.
+func checkPushed(ctx context.Context, env Env) Result {
+	if env.Cfg == nil {
+		return Result{Name: "pushed", Status: Info, Detail: "no config"}
+	}
+	info := status.Gather(ctx, env.Cfg, env.Machine, env.Staging, env.UserSettings)
+	if !info.HasStaging {
+		return Result{Name: "pushed", Status: Info, Detail: "no staging repo yet"}
+	}
+	switch {
+	case info.Unpushed > 0 && info.Unmerged > 0:
+		return Result{Name: "pushed", Status: Fail,
+			Detail: fmt.Sprintf("%d commit(s) never pushed; remote has %d this machine lacks", info.Unpushed, info.Unmerged),
+			Hint:   "the remote diverged — run `clauderig sync` in a terminal to reconcile (it needs a TTY to resolve conflicts)"}
+	case info.Unpushed > 0:
+		return Result{Name: "pushed", Status: Fail,
+			Detail: fmt.Sprintf("%d commit(s) never reached the remote", info.Unpushed),
+			Hint:   "run `clauderig sync`"}
+	case info.Unmerged > 0:
+		return Result{Name: "pushed", Status: Warn,
+			Detail: fmt.Sprintf("%d commit(s) on the remote are not here yet", info.Unmerged),
+			Hint:   "run `clauderig pull`"}
+	}
+	return Result{Name: "pushed", Status: OK, Detail: "up to date with origin/main"}
+}
+
 func checkPaths(env Env) Result {
 	if env.Cfg == nil {
 		return Result{Name: "path resolution", Status: Info, Detail: "no config"}
