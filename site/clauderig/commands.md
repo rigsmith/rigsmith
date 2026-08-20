@@ -7,7 +7,7 @@
 | `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`); nudges a Desktop restart when Code sessions come back |
 | `status` | Sync state: remote, last sync, roots, hooks |
-| `search` | Find a Claude Code session by title or content across live + synced history (alias `grep`); `--raw` grep lines, `--all` every file, `--live`/`--repo` scope, `-s` case-sensitive |
+| `search` | Find a Claude Code session by title or content across live + synced history (alias `grep`); `--since`/`--until`/`--cwd` narrow, `--raw` grep lines, `--all` every file, `--live`/`--repo` scope, `-s` case-sensitive |
 | `global` | `install` / `uninstall` / `status` the global sync hooks in `~/.claude` (alias `hooks`) |
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
@@ -64,11 +64,44 @@ hit, then match count, then recency). Matches inside injected skill-listing and
 system records are ignored — so a word that appears in the skill catalog (like a
 skill name) doesn't light up every session.
 
+- `--since` / `--until` — narrow to when the session was **last used**: a day
+  (`2026-08-17`), an RFC3339 timestamp, or an age (`7d`, `36h`, `90m`). Days are
+  read in UTC, matching the date printed on each result, and a day given to
+  `--until` covers that whole day
+- `--cwd` — narrow to sessions whose project directory contains this text
 - `--raw` — grep-style line output instead of grouped sessions
 - `--all` — search *every* file (config, skills, file-history, the Desktop dir),
   not just transcripts (implies `--raw`)
 - `--live` / `--repo` — restrict to this machine or the synced repo
 - `-s` / `--case-sensitive`
+
+The narrowing flags describe *sessions*, so they can't be combined with `--raw`
+or `--all` (a date isn't a property of a grep line) — `search` says so rather
+than ignoring them. Sessions dropped by a filter are counted in the footer, and
+one that has no date at all is dropped by a time window rather than waved
+through, with its own count — so the totals always add up.
+
+### Which machines the search could see
+
+Absence of a hit is the answer people act on — *that chat is gone* — and it only
+holds if the store is complete. A machine that hasn't synced since Tuesday makes
+every Wednesday session invisible here, so `search` closes with the device
+roster and flags any machine it couldn't see:
+
+```
+1 session(s) match
+scanned 1276 transcripts, skipped 0 binary
+devices  mbp-16 8m ago (this) · air-13 3d ago
+air-13 has not synced since 2026-08-16 23:39 UTC — anything it recorded after
+that is not searchable here
+  run `clauderig sync` there, then `clauderig pull` here
+```
+
+Only *other* machines can hide anything — this one's live `~/.claude` is scanned
+directly, so its own sync age costs the search nothing. The roster is skipped
+when yours is the only device on the registry (there is then no elsewhere for a
+chat to be), and under `--live`, which takes the synced repo out of scope along
+with any claim about other machines.
 
 On a long search a live `scanning… N transcripts, K matches` status shows on the
 terminal (and stays out of piped output).

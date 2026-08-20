@@ -38,6 +38,9 @@ func NewSearchCmd() *cobra.Command {
 		repoOnly      bool
 		all           bool
 		raw           bool
+		since         string
+		until         string
+		cwdFilter     string
 	)
 	cmd := &cobra.Command{
 		Use:     "search <text>",
@@ -50,11 +53,16 @@ func NewSearchCmd() *cobra.Command {
 			"Desktop title, project, last-used date, and a `claude --resume` command.\n" +
 			"Session titles are matched too, so a topic word finds the chat even when\n" +
 			"the word isn't in the body.\n\n" +
+			"  --since/--until  narrow to when the session was last used (2026-08-17,\n" +
+			"          an RFC3339 timestamp, or an age like 7d/36h)\n" +
+			"  --cwd   narrow to sessions whose project directory contains this text\n" +
 			"  --raw   grep-style line output instead of grouped sessions\n" +
 			"  --all   search EVERY file (config, skills, file-history, Desktop dir),\n" +
 			"          not just transcripts; implies --raw (non-chat files aren't sessions)\n\n" +
 			"Case-insensitive by default. Note: Desktop 'Chat' tab conversations live\n" +
-			"server-side, not in these files — a miss here doesn't prove one is gone.",
+			"server-side, not in these files — a miss here doesn't prove one is gone.\n" +
+			"Neither does a miss for a session on a machine that hasn't synced: the\n" +
+			"footer names every device and flags the ones this search couldn't see.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -67,21 +75,48 @@ func NewSearchCmd() *cobra.Command {
 			if query == "" {
 				return fmt.Errorf("empty search term — pass text to find, e.g. `clauderig search billing`")
 			}
+			// Flag validation runs before any config or filesystem read, so a bad
+			// --since is one immediate error rather than an error after a scan.
+			sc := sessionScope{caseSensitive: caseSensitive, now: time.Now()}
+			var err error
+			if sc.since, err = parseWhen(since, sc.now, false); err != nil {
+				return err
+			}
+			if sc.until, err = parseWhen(until, sc.now, true); err != nil {
+				return err
+			}
+			if !sc.since.IsZero() && !sc.until.IsZero() && sc.until.Before(sc.since) {
+				return fmt.Errorf("--until is before --since — nothing can match that window")
+			}
+			sc.cwd = strings.ToLower(strings.TrimSpace(cwdFilter))
+			// The filters narrow SESSIONS — a date and a project directory are
+			// properties of a session, not of a grep line — so refuse rather than
+			// silently ignore them.
+			if (raw || all) && sc.filtering() {
+				return fmt.Errorf("--since/--until/--cwd narrow grouped sessions and can't be combined with --raw/--all")
+			}
+
 			cfg, err := config.LoadOrDefault()
 			if err != nil {
 				return err
 			}
 			me := config.Detect(machineName(cfg))
 			targets := buildTargets(cfg, me, liveOnly, repoOnly)
+			sc.me = me.Name
+			// --live takes the synced repo out of scope, and with it any claim about
+			// other machines: no registry read, no footer.
+			if !liveOnly {
+				sc.devices = loadDevices()
+			}
 
 			fmt.Fprintf(out, "%s %q\n", HeaderStyle.Render("clauderig search"), query)
 
 			// --all can't be session-grouped (config/file-history aren't sessions), so
 			// it falls back to raw line output.
 			if raw || all {
-				return runRawSearch(cmd, targets, query, caseSensitive, all)
+				return runRawSearch(cmd, targets, query, caseSensitive, all, sc)
 			}
-			return runSessionSearch(cmd, cfg, me, targets, query, caseSensitive, liveOnly, repoOnly)
+			return runSessionSearch(cmd, cfg, me, targets, query, sc, liveOnly, repoOnly)
 		},
 	}
 	cmd.Flags().BoolVarP(&caseSensitive, "case-sensitive", "s", false, "match case exactly (default: case-insensitive)")
@@ -89,6 +124,9 @@ func NewSearchCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "search every file, not just chat transcripts (implies --raw)")
 	cmd.Flags().BoolVar(&liveOnly, "live", false, "search only this machine's live ~/.claude and Desktop dirs")
 	cmd.Flags().BoolVar(&repoOnly, "repo", false, "search only the synced staging repo")
+	cmd.Flags().StringVar(&since, "since", "", "only sessions last used on/after this day, timestamp, or age (7d)")
+	cmd.Flags().StringVar(&until, "until", "", "only sessions last used on/before this day, timestamp, or age (7d)")
+	cmd.Flags().StringVar(&cwdFilter, "cwd", "", "only sessions whose project directory contains this text")
 	return cmd
 }
 
@@ -118,6 +156,9 @@ type sessResult struct {
 	// when is the recency sort key: the sidecar's lastActivity, else the transcript
 	// mtime, computed once so the sort is deterministic even for CLI-only sessions.
 	when time.Time
+	// cwd is the session's resolved project directory, computed once because both
+	// the --cwd filter and the rendered line need it.
+	cwd string
 }
 
 // record folds one content hit into the session, deduping the same logical line
@@ -186,15 +227,16 @@ func chatHitKey(rel string, line int) string {
 // runSessionSearch is the default mode: content + title search grouped into named
 // sessions, ranked by relevance (title hit, then match count, then recency), each
 // with a resume command.
-func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine, targets []search.Target, query string, caseSensitive, liveOnly, repoOnly bool) error {
+func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine, targets []search.Target, query string, sc sessionScope, liveOnly, repoOnly bool) error {
 	roots := sessionRoots(cfg, me, liveOnly, repoOnly)
-	return searchSessions(cmd.OutOrStdout(), cmd.ErrOrStderr(), me, targets, roots, query, caseSensitive)
+	return searchSessions(cmd.OutOrStdout(), cmd.ErrOrStderr(), me, targets, roots, query, sc)
 }
 
 // searchSessions is the grouped-session search, decoupled from cobra/config for
 // testing: it takes explicit search targets and sidecar roots and writes to out
 // (results) and errw (progress + warnings).
-func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, query string, caseSensitive bool) error {
+func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, query string, sc sessionScope) error {
+	caseSensitive := sc.caseSensitive
 	idx := session.Build(roots)
 
 	hits := map[string]*sessResult{}
@@ -245,9 +287,18 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	liveIDs := liveCLITranscriptIDs(targets)
 
 	results := make([]*sessResult, 0, len(hits))
+	var hidden, undated int
 	for _, r := range hits {
 		r.when = sessionTime(r)
+		r.cwd = resolveCwd(me, r)
 		r.cliLive = r.hitTargets[cliTarget] || liveIDs[r.id]
+		if keep, noDate := sc.keep(r); !keep {
+			hidden++
+			if noDate {
+				undated++
+			}
+			continue
+		}
 		results = append(results, r)
 	}
 	// Rank by relevance for "find my session": a title hit is the strongest signal,
@@ -271,13 +322,26 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	fmt.Fprintln(out)
 	if len(results) == 0 {
 		fmt.Fprintln(out, DimStyle.Render("no matching sessions"))
+		if hidden > 0 {
+			fmt.Fprintln(out, DimStyle.Render("(every match was excluded by --since/--until/--cwd — widen them)"))
+		}
 		fmt.Fprintln(out, DimStyle.Render("(try --raw for line-level hits, or --all to include config/file-history)"))
 		fmt.Fprintln(out, DimStyle.Render("(Desktop 'Chat' tab chats are server-side and never appear here — check claude.ai)"))
 	} else {
 		fmt.Fprintf(out, "%s\n", OkStyle.Render(fmt.Sprintf("%d session(s) match", len(results))))
 	}
+	if hidden > 0 {
+		msg := fmt.Sprintf("%d session(s) hidden by filters", hidden)
+		if undated > 0 {
+			// Undated sessions are dropped by a time filter rather than assumed into
+			// range; say so, or the count reads as a bug.
+			msg += fmt.Sprintf(" (%d had no date to place)", undated)
+		}
+		fmt.Fprintf(out, "%s\n", DimStyle.Render(msg))
+	}
 	fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf(
 		"scanned %d transcripts, skipped %d binary", stats.FilesScanned, stats.FilesSkipped)))
+	renderCoverage(out, sc)
 	if serr != nil {
 		fmt.Fprintf(errw, "%s\n", WarnStyle.Render("some files could not be read: "+serr.Error()))
 	}
@@ -294,7 +358,7 @@ func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machin
 	if title == "" {
 		title = "(untitled session)"
 	}
-	cwd := resolveCwd(me, r)
+	cwd := r.cwd
 
 	fmt.Fprintf(out, "\n%s %s\n", OkStyle.Render("●"), lipgloss.NewStyle().Bold(true).Render(title))
 
@@ -452,7 +516,7 @@ func shortID(id string) string {
 }
 
 // runRawSearch is the grep-style path (--raw / --all): line hits grouped by file.
-func runRawSearch(cmd *cobra.Command, targets []search.Target, query string, caseSensitive, all bool) error {
+func runRawSearch(cmd *cobra.Command, targets []search.Target, query string, caseSensitive, all bool, sc sessionScope) error {
 	out := cmd.OutOrStdout()
 	lastFile := ""
 	matchedFiles := map[string]bool{}
@@ -483,6 +547,7 @@ func runRawSearch(cmd *cobra.Command, targets []search.Target, query string, cas
 	}
 	fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf(
 		"scanned %d files, skipped %d binary", stats.FilesScanned, stats.FilesSkipped)))
+	renderCoverage(out, sc)
 	if serr != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s\n", WarnStyle.Render("some files could not be read: "+serr.Error()))
 	}
