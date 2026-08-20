@@ -15,6 +15,9 @@ var (
 	PatchStyle  = lipgloss.NewStyle().Foreground(brand.Green)
 	DimStyle    = lipgloss.NewStyle().Foreground(brand.Muted)
 	HeaderStyle = lipgloss.NewStyle().Bold(true).Underline(true)
+	// WarnStyle is for advice, not failure — the same caution color a minor bump
+	// carries, so a nudge never reads as a broken release.
+	WarnStyle = lipgloss.NewStyle().Foreground(brand.Yellow)
 )
 
 func styleFor(b changeset.Bump) lipgloss.Style {

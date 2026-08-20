@@ -172,6 +172,15 @@ func NewVersionCmd() *cobra.Command {
 
 			PrintPlan(out, plan, false)
 
+			// Before any changelog is written, and before the override prompt —
+			// this is the last moment splitting is cheap. `status` is the better
+			// place to see it, but someone who never runs status still gets one
+			// chance here.
+			if found := FindUnmentioned(active, ws.Config); len(found) > 0 {
+				fmt.Fprintln(out)
+				PrintUnmentioned(out, found, cmd.Root().Name())
+			}
+
 			// Resolve the changelog generator once: both the --changelog dry-run
 			// preview and the real write below render through it, so the preview is
 			// byte-identical to the file content. The three @changesets generators

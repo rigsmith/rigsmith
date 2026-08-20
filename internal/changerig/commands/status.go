@@ -157,6 +157,12 @@ func NewStatusCmd() *cobra.Command {
 				return nil
 			}
 			PrintPlan(cmd.OutOrStdout(), plan, verbose)
+			// After the plan: the nudge is about how the changelogs will READ,
+			// which only makes sense once you can see what is about to release.
+			if found := FindUnmentioned(changesets, ws.Config); len(found) > 0 {
+				fmt.Fprintln(cmd.OutOrStdout())
+				PrintUnmentioned(cmd.OutOrStdout(), found, cmd.Root().Name())
+			}
 			return nil
 		},
 	}
