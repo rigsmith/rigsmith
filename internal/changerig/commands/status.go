@@ -157,6 +157,19 @@ func NewStatusCmd() *cobra.Command {
 				return nil
 			}
 			PrintPlan(cmd.OutOrStdout(), plan, verbose)
+			// After the plan: the nudge is about how the changelogs will READ,
+			// which only makes sense once you can see what is about to release.
+			// The same set the plan was built from: a changeset a prerelease has
+			// already consumed renders nothing this run, so warning about it
+			// would be advice about a changelog nobody is about to write.
+			pre, perr := prestate.Read(ws.ChangesetDir)
+			if perr != nil {
+				return perr
+			}
+			if found := FindUnmentioned(activeChangesets(changesets, pre), ws.Config); len(found) > 0 {
+				fmt.Fprintln(cmd.OutOrStdout())
+				PrintUnmentioned(cmd.OutOrStdout(), found, cmd.Root().Name())
+			}
 			return nil
 		},
 	}
@@ -247,21 +260,30 @@ func BuildPlan(ctx context.Context, ws *Workspace) ([]*planner.Module, error) {
 // mode (pre.json) the same way the version command does — status must never
 // show a different target version than the release that would follow.
 // Snapshot has no status equivalent.
+// activeChangesets drops the changesets a prerelease run has already consumed.
+// They stay on disk through a prerelease, so anything reasoning about what THIS
+// release will render has to filter them out — the plan does, and so must
+// anything reported alongside it.
+func activeChangesets(changesets []*changeset.Changeset, pre *prestate.PreState) []*changeset.Changeset {
+	if pre == nil || pre.Mode != prestate.ModePre {
+		return changesets
+	}
+	var active []*changeset.Changeset
+	for _, cs := range changesets {
+		if !pre.Contains(cs.ID) {
+			active = append(active, cs)
+		}
+	}
+	return active
+}
+
 func assemblePlan(ctx context.Context, ws *Workspace, changesets []*changeset.Changeset, pkgs []plugin.Package) ([]*planner.Module, error) {
 	pre, err := prestate.Read(ws.ChangesetDir)
 	if err != nil {
 		return nil, err
 	}
 
-	active := changesets
-	if pre != nil && pre.Mode == prestate.ModePre {
-		active = nil
-		for _, cs := range changesets {
-			if !pre.Contains(cs.ID) {
-				active = append(active, cs)
-			}
-		}
-	}
+	active := activeChangesets(changesets, pre)
 
 	plan := planner.Plan(active, pkgs, ws.Config)
 	switch {
