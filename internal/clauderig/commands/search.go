@@ -449,12 +449,10 @@ func transcriptPaths(targets []search.Target, label string) map[string]string {
 				return nil
 			}
 			rel = filepath.ToSlash(rel)
-			if !strings.HasSuffix(rel, ".jsonl") {
+			if !strings.HasSuffix(rel, ".jsonl") || !isSessionTranscriptRel(rel) {
 				return nil
 			}
-			// Only the session's own transcript: subagent files resolve to the SAME
-			// id, and are not what a date or a fallback title should come from.
-			if id := session.IDFromTranscriptRel(rel); id != "" && strings.Count(rel, "/") == 2 {
+			if id := session.IDFromTranscriptRel(rel); id != "" {
 				if _, seen := paths[id]; !seen {
 					paths[id] = p
 				}
@@ -463,6 +461,22 @@ func transcriptPaths(targets []search.Target, label string) map[string]string {
 		})
 	}
 	return paths
+}
+
+// isSessionTranscriptRel reports whether rel names a session's OWN transcript,
+// projects/<slug>/<id>.jsonl, rather than a subagent file nested under it — those
+// resolve to the same session id and are not what a date or a fallback title
+// should come from.
+//
+// Measured from the "projects/" segment, never by counting slashes from the
+// target root: the live root's paths start at projects/, the synced repo's start
+// at cli/projects/, and a fixed depth silently matches nothing in the repo.
+func isSessionTranscriptRel(rel string) bool {
+	i := strings.Index(rel, "projects/")
+	if i < 0 {
+		return false
+	}
+	return strings.Count(rel[i+len("projects/"):], "/") == 1
 }
 
 // shQuote renders s as a single POSIX shell word (bash/zsh — the mac/Linux shells

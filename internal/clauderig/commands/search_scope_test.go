@@ -313,3 +313,32 @@ func TestSearchSessions_TitleOnlyMatchIsDatedFromItsTranscript(t *testing.T) {
 		t.Errorf("nothing should have been dropped:\n%s", got)
 	}
 }
+
+// The two roots nest transcripts at different depths — the live root at
+// projects/<slug>/<id>.jsonl, the synced repo at cli/projects/<slug>/<id>.jsonl —
+// so the "is this the session's own transcript" test has to be measured from the
+// projects/ segment. A fixed depth matches everything in one root and nothing in
+// the other, silently.
+func TestTranscriptPaths_FindsBothRootDepthsAndSkipsSubagents(t *testing.T) {
+	live := t.TempDir()
+	repo := t.TempDir()
+	body := `{"type":"user","message":{"content":"x"}}` + "\n"
+	writeTestFile(t, live, "projects/-slug/sess-live.jsonl", body)
+	writeTestFile(t, repo, "cli/projects/-slug/sess-repo.jsonl", body)
+	writeTestFile(t, repo, "cli/projects/-slug/sess-repo/subagents/agent-a.jsonl", body)
+
+	targets := []search.Target{{Label: "cli", Dir: live}, {Label: "repo", Dir: repo}}
+
+	if got := transcriptPaths(targets, "cli"); len(got) != 1 || got["sess-live"] == "" {
+		t.Errorf("live root: %v", got)
+	}
+	got := transcriptPaths(targets, "repo")
+	if len(got) != 1 || got["sess-repo"] == "" {
+		t.Errorf("repo root should be found at its own depth: %v", got)
+	}
+	// The subagent file resolves to sess-repo too; the session's own transcript
+	// must win rather than being replaced by it.
+	if !strings.HasSuffix(got["sess-repo"], "sess-repo.jsonl") {
+		t.Errorf("subagent file was recorded as the session transcript: %v", got)
+	}
+}
