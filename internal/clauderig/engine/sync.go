@@ -39,7 +39,10 @@ type Report struct {
 	Roots            []RootResult
 	ManifestProjects int
 	RetentionPruned  int              // staged transcript files removed as aged-out
+	LedgerAdded      int              // sessions newly recorded (or re-fingerprinted) in the ledger
+	LedgerTotal      int              // sessions the ledger remembers, including aged-out ones
 	SidecarsPruned   int              // staged Desktop sidecars removed as orphaned
+	LedgerError      string           // why the ledger could not be updated ("" = fine); never fatal
 	Findings         []redact.Finding // non-empty ⇒ Sync returned an error (tripwire)
 }
 
@@ -253,6 +256,19 @@ func Sync(opts Options) (*Report, error) {
 		rr.Disallowed = disallowed
 
 		rep.Roots = append(rep.Roots, rr)
+	}
+
+	// Record every staged session in the permanent ledger BEFORE retention runs.
+	// The synced tree is a rolling window; the ledger is not, so a transcript that
+	// is about to age out still leaves a searchable row behind — otherwise `search`
+	// answers "no such session", which reads as "that chat never existed" rather
+	// than "its body is older than the window, recover it from git history".
+	if added, total, lerr := recordLedger(opts.StagingDir, opts.Machine.Name); lerr == nil {
+		rep.LedgerAdded, rep.LedgerTotal = added, total
+	} else {
+		// Best-effort: the ledger is a convenience for later searches and must
+		// never cost anyone a sync.
+		rep.LedgerError = lerr.Error()
 	}
 
 	// Enforce the rolling retention window on the STAGING tree, not just on copy:

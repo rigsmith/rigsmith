@@ -81,6 +81,36 @@ than ignoring them. Sessions dropped by a filter are counted in the footer, and
 one that has no date at all is dropped by a time window rather than waved
 through, with its own count — so the totals always add up.
 
+### Sessions whose body has aged out
+
+The synced repo is a rolling window: `sync` drops project transcripts older than
+`retention.historyDays` (90 by default). Without help, `search` then answers
+*no matching sessions* for anything older — which reads as *that chat never
+existed*, when in truth only its body left the window.
+
+So `sync` keeps a **ledger**: `index/<device>.jsonl`, one row per session it has
+ever staged — id, title (the first prompt), project, date — written *before*
+retention runs, and never deleted. A row is a couple of hundred bytes; a
+several-hundred-session history is well under a megabyte.
+
+Those sessions still answer a search:
+
+```
+● the auth refactor
+  0f3a91c2 · 2026-03-04 · ~/Git/api · ledger
+  title match   aged out of the synced window — body recoverable from the sync repo's git history
+```
+
+Only the **title** is searchable for them — the body isn't here to scan — and
+the note is deliberately not "gone": the blob is still in the sync repo's git
+history, which is the whole reason the row was kept. A session whose body *is*
+still staged is never labelled this way; it gets the ordinary
+*synced copy only — restore on this machine to resume*.
+
+One file per device, because two machines appending to a shared file is a merge
+conflict on every sync. Rows are keyed by session id and unioned on read, newest
+row winning.
+
 ### Which machines the search could see
 
 Absence of a hit is the answer people act on — *that chat is gone* — and it only
