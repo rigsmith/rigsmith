@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      mac:
+        description: 'Include the macOS leg (PAUSED by default — it bills at 10x)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -14,7 +20,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # macOS is PAUSED (2026-08-20). It bills at 10x the linux rate and this repo pushes
+        # often — 188 runs in the week to 08-20, 47 on that day alone, each carrying a mac leg.
+        # ubuntu + windows still cover the path/exec differences that matter most for a Go CLI.
+        # To get the mac leg back for one run:
+        #   gh workflow run ci.yml --ref <branch> -f mac=true
+        # To unpause permanently, put macos-latest back in the second array.
+        os: ${{ (github.event_name == 'workflow_dispatch' && inputs.mac) && fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
