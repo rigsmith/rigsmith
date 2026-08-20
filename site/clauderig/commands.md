@@ -8,6 +8,7 @@
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`); nudges a Desktop restart when Code sessions come back |
 | `status` | Sync state: remote, last sync, roots, hooks |
 | `search` | Find a Claude Code session by title or content across live + synced history (alias `grep`); `--since`/`--until`/`--cwd` narrow, `--raw` grep lines, `--all` every file, `--live`/`--repo` scope, `-s` case-sensitive |
+| `ledger` | Report the permanent session index; `ledger backfill` recovers rows for sessions pruned before it existed (`-n` dry run) |
 | `global` | `install` / `uninstall` / `status` the global sync hooks in `~/.claude` (alias `hooks`) |
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
@@ -80,6 +81,64 @@ or `--all` (a date isn't a property of a grep line) — `search` says so rather
 than ignoring them. Sessions dropped by a filter are counted in the footer, and
 one that has no date at all is dropped by a time window rather than waved
 through, with its own count — so the totals always add up.
+
+### Sessions whose body has aged out
+
+The synced repo is a rolling window: `sync` drops project transcripts older than
+`retention.historyDays` (90 by default). Without help, `search` then answers
+*no matching sessions* for anything older — which reads as *that chat never
+existed*, when in truth only its body left the window.
+
+So `sync` keeps a **ledger**: `index/<device>.jsonl`, one row per session it has
+ever staged — id, title (the first prompt), project, date — written *before*
+retention runs, and never deleted. A row is a couple of hundred bytes; a
+several-hundred-session history is well under a megabyte.
+
+Those sessions still answer a search:
+
+```
+● the auth refactor
+  0f3a91c2 · 2026-03-04 · ~/Git/api · ledger
+  title match   aged out of the synced window — body recoverable from the sync repo's git history
+```
+
+Only the **title** is searchable for them — the body isn't here to scan — and
+the note is deliberately not "gone": the blob is still in the sync repo's git
+history, which is the whole reason the row was kept. A session whose body *is*
+still staged is never labelled this way; it gets the ordinary
+*synced copy only — restore on this machine to resume*.
+
+One file per device, because two machines appending to a shared file is a merge
+conflict on every sync. Rows are keyed by session id and unioned on read, newest
+row winning.
+
+#### Backfilling what aged out before the ledger existed
+
+The ledger only remembers from the day it is installed — every session pruned
+before that has no row. Their bodies are still in the sync repo's history
+though, because a deleted file leaves a git tree, not the history behind it:
+
+```sh
+clauderig ledger backfill        # -n / --dry-run to see what it would recover
+clauderig ledger                 # what it remembers now
+```
+
+`backfill` finds every transcript retention has removed, reads each one's head
+from the commit *before* its deletion, and writes the row. Rows already present
+are left alone — a live transcript is a better source than a deleted blob — so
+running it twice does nothing, and there is no reason to run it more than once.
+It writes into the staging tree; your next `sync` commits it.
+
+Recovered rows carry a date from the last commit that touched the transcript,
+which is when it last changed rather than a timestamp read out of the body.
+
+::: warning What history still holds
+`sync` squashes the staging repo once it passes the size floor, and a squash
+prunes unreachable blobs — so bodies dropped before the last squash are gone,
+and `backfill` can only recover what history still carries. That is also why a
+ledger-only result says the body *may* still be recoverable rather than
+promising it.
+:::
 
 ### Which machines the search could see
 

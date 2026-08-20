@@ -56,7 +56,7 @@ func TestLoad_MaxFileBytesDefaultsWhenAbsent(t *testing.T) {
 
 func TestDefault(t *testing.T) {
 	c := Default()
-	if c.Retention.HistoryDays != 30 || c.Retention.SquashFactor != 2.0 || c.Retention.FloorBytes != 500<<20 {
+	if c.Retention.HistoryDays != 90 || c.Retention.SquashFactor != 2.0 || c.Retention.FloorBytes != 500<<20 {
 		t.Errorf("retention defaults wrong: %+v", c.Retention)
 	}
 	if len(c.Roots) != 2 {

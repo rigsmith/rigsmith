@@ -13,6 +13,7 @@ package session
 import (
 	"bufio"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -168,9 +169,14 @@ func IsConversationLine(line string) bool {
 	return rec.Type == "user" || rec.Type == "assistant"
 }
 
-// maxHeaderLines bounds the fallback-title scan: the first human prompt sits at
-// the very top of a transcript, so we never read the multi-MB body.
-const maxHeaderLines = 60
+// maxHeaderLines bounds the fallback-title scan. The first human prompt is near
+// the top of a transcript but not always at it: a session that opens with a long
+// injected preamble (skill listings, a pasted file, a resumed summary) can push
+// it well past the first few records. Measured over 569 real transcripts, raising
+// this from 60 to 250 took titleless sessions from 53 to 29 and cost nothing
+// measurable — the whole walk went 433ms to 385ms, inside the noise, because the
+// scan stops at the first usable prompt and only the titleless ones read on.
+const maxHeaderLines = 250
 
 // FirstPrompt derives a short title from a transcript's first genuine human
 // message, for a session with no Desktop sidecar. It skips tool/DOM/system noise
@@ -181,7 +187,13 @@ func FirstPrompt(path string) string {
 		return ""
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
+	return FirstPromptFrom(f)
+}
+
+// FirstPromptFrom is FirstPrompt over an already-open stream, for a transcript
+// that isn't a file on disk — a blob read out of git history, say.
+func FirstPromptFrom(r io.Reader) string {
+	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 8<<20) // headers are small; cap guards a pathological line
 	for line := 0; line < maxHeaderLines && sc.Scan(); line++ {
 		var rec struct {

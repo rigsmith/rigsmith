@@ -14,6 +14,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
@@ -110,6 +111,7 @@ func NewSearchCmd() *cobra.Command {
 				var ok bool
 				sc.devices, ok = loadDevices()
 				sc.devicesUnavailable = !ok
+				sc.ledger = loadLedger()
 			}
 
 			fmt.Fprintf(out, "%s %q\n", HeaderStyle.Render("clauderig search"), query)
@@ -162,6 +164,19 @@ type sessResult struct {
 	// cwd is the session's resolved project directory, computed once because both
 	// the --cwd filter and the rendered line need it.
 	cwd string
+	// led is the permanent ledger row for this session, when one exists. It is
+	// what lets a session whose transcript has aged out of the synced window still
+	// answer with a title, a project and a date instead of with silence.
+	led    ledger.Entry
+	hasLed bool
+	// present reports that a transcript for this session exists SOMEWHERE we can
+	// still read (live root or synced repo) — the distinction between "here" and
+	// "remembered but gone".
+	present bool
+	// inRepo reports a transcript in the synced staging repo. Tracked apart from a
+	// content hit because a title-only match on a body that IS staged should still
+	// say "restore it", not fall through to the generic no-transcript note.
+	inRepo bool
 }
 
 // record folds one content hit into the session, deduping the same logical line
@@ -284,10 +299,31 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 		}
 	}
 
+	// Ledger title matches: a session sync recorded, whose transcript may since have
+	// aged out of the window. Only the title is searchable for those — the body
+	// isn't here to scan — so this cannot be folded into the content pass above.
+	for id, e := range sc.ledger {
+		r := hits[id]
+		if r == nil {
+			hay := e.Title
+			if !caseSensitive {
+				hay = strings.ToLower(hay)
+			}
+			if e.Title == "" || !strings.Contains(hay, needle) {
+				continue
+			}
+			r = get(id)
+			r.titleMatch = true
+		}
+		r.led, r.hasLed = e, true
+	}
+
 	// A session is resumable here iff a transcript for it lives in the live CLI root
 	// — even a title-only match (query not in the body) is resumable if its
 	// transcript exists there, so track presence independently of content hits.
 	livePaths := transcriptPaths(targets, cliTarget)
+	// Repo paths matter for the ledger too: a session whose body sits unmatched in
+	// the synced repo is present, not aged out, and must not be told it is gone.
 	repoPaths := transcriptPaths(targets, repoTarget)
 
 	results := make([]*sessResult, 0, len(hits))
@@ -306,7 +342,20 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 		r.when = sessionTime(r)
 		r.cwd = resolveCwd(me, r)
 		_, inLive := livePaths[r.id]
+		_, inRepo := repoPaths[r.id]
 		r.cliLive = r.hitTargets[cliTarget] || inLive
+		r.inRepo = r.hitTargets[repoTarget] || inRepo
+		r.present = r.path != "" || r.cliLive || r.inRepo
+		// A ledger-only session has no sidecar and no transcript to stat, so its
+		// date and project come from the row sync wrote before the body aged out.
+		if r.hasLed {
+			if r.when.IsZero() {
+				r.when = r.led.End
+			}
+			if r.cwd == "" && r.led.Cwd != "" {
+				r.cwd = resolvePath(me, r.led.Cwd)
+			}
+		}
 		if keep, noDate := sc.keep(r); !keep {
 			hidden++
 			if noDate {
@@ -370,6 +419,9 @@ func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machin
 	if title == "" && r.path != "" {
 		title = session.FirstPrompt(r.path)
 	}
+	if title == "" && r.hasLed {
+		title = r.led.Title
+	}
 	if title == "" {
 		title = "(untitled session)"
 	}
@@ -417,9 +469,17 @@ func resumeHint(r *sessResult, cwd string) string {
 	case r.hitTargets[desktopTarget]:
 		// Cowork/Desktop transcript — `claude --resume` won't find it under ~/.claude.
 		return "Desktop session — open it in Claude Desktop's Code tab"
-	case r.matches > 0:
-		// The transcript was found only in the synced repo — not readable by `claude`.
+	case r.inRepo:
+		// The transcript is in the synced repo but not in ~/.claude — not readable
+		// by `claude` until it is restored here.
 		return "synced copy only — restore on this machine to resume"
+	case r.hasLed && !r.present:
+		// Remembered by the ledger, body no longer in the window. Saying "gone"
+		// would be wrong — the blob is usually still in the sync repo's git
+		// history. Only usually, though: sync squashes that history once the repo
+		// passes its size floor, and the squash prunes unreachable blobs. Hedged
+		// deliberately rather than promising a recovery that may not be there.
+		return "aged out of the synced window — the body may still be in the sync repo's git history"
 	default:
 		// Title-only, no transcript here to resume from.
 		return "matched by title — open it in Claude Desktop, or use --raw to search its text"
@@ -492,14 +552,21 @@ func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// resolvePath maps a path recorded on some machine onto this one, falling back
+// to the literal path when it maps nowhere (a project this machine has never
+// had). Shared by the sidecar cwd and the ledger's.
+func resolvePath(me config.Machine, p string) string {
+	if res := me.Resolver().Resolve(p); res.Path != "" {
+		return res.Path
+	}
+	return p
+}
+
 // resolveCwd returns a usable working directory for the session: the sidecar cwd
 // resolved for this machine, or the transcript's recorded cwd as a fallback.
 func resolveCwd(me config.Machine, r *sessResult) string {
 	if r.meta.Cwd != "" {
-		if res := me.Resolver().Resolve(r.meta.Cwd); res.Path != "" {
-			return res.Path
-		}
-		return r.meta.Cwd
+		return resolvePath(me, r.meta.Cwd)
 	}
 	if r.path != "" {
 		if cwd, ok, _ := project.CwdFromTranscript(r.path); ok {
@@ -532,6 +599,9 @@ func sourceLabel(r *sessResult) string {
 		}
 	} else {
 		labels = append(labels, r.meta.Sources...)
+	}
+	if r.hasLed && !r.present {
+		labels = append(labels, "ledger")
 	}
 	if len(labels) == 0 {
 		return ""

@@ -86,6 +86,12 @@ func NewSyncCmd() *cobra.Command {
 					}
 				}
 				fmt.Fprintf(out, "  manifest  %d projects\n", rep.ManifestProjects)
+				if rep.LedgerTotal > 0 {
+					fmt.Fprintf(out, "  ledger    %d session(s) remembered (+%d)\n", rep.LedgerTotal, rep.LedgerAdded)
+				}
+				if rep.LedgerError != "" {
+					fmt.Fprintf(out, "%s\n", WarnStyle.Render("  ledger    not updated: "+rep.LedgerError))
+				}
 				if rep.RetentionPruned > 0 {
 					fmt.Fprintf(out, "  retention %d aged file(s) pruned from staging\n", rep.RetentionPruned)
 				}

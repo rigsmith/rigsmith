@@ -39,7 +39,10 @@ clauderig ui                   # interactive dashboard
   one verified via `gh repo view`.
 - **Allowlist, default-deny.** Only curated files sync; the ~12 GB Desktop cache
   tree is pruned, never descended.
-- **Bounded repo.** 30-day retention on transcripts + a size-based history squash.
+- **Bounded repo, unbounded memory.** 90-day retention on transcripts + a
+  size-based history squash — but every session sync ever staged keeps a
+  permanent row in the ledger, so an aged-out chat is still findable by title,
+  project and date.
   Project memory is exempt — it's durable state, not a dated record, so it never
   ages out of the sync.
 - **Find your sessions.** `clauderig search` locates a Claude Code session by

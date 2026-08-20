@@ -10,6 +10,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
+	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 )
 
 // staleAfter is how long another machine may go without syncing before search
@@ -40,6 +41,9 @@ type sessionScope struct {
 	// devices is the synced registry; empty when there is no staging repo (or
 	// when --live took it out of scope), which correctly prints no footer.
 	devices []devices.Device
+	// ledger is the permanent session index unioned across devices, keyed by
+	// session id. Empty when there is no staging repo or under --live.
+	ledger map[string]ledger.Entry
 	// me is this machine's name.
 	me string
 	// liveInScope reports that this machine's live roots were searched. It gates
@@ -200,6 +204,16 @@ func renderCoverage(out io.Writer, sc sessionScope) {
 			d.Name, d.LastSync.UTC().Format("2006-01-02 15:04 UTC"))))
 		fmt.Fprintf(out, "%s\n", DimStyle.Render("  run `clauderig sync` there, then `clauderig pull` here"))
 	}
+}
+
+// loadLedger reads the permanent session index, best-effort for the same reason
+// as loadDevices: it can only ever add answers, never justify withholding them.
+func loadLedger() map[string]ledger.Entry {
+	staging, err := config.StagingDir()
+	if err != nil {
+		return nil
+	}
+	return ledger.LoadAll(staging)
 }
 
 // loadDevices reads the synced device registry, best-effort: search is a report,

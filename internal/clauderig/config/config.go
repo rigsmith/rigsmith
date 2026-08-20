@@ -101,7 +101,7 @@ func Default() *Config {
 		Schema:    schemaVersion,
 		Machines:  map[string]Machine{},
 		Roots:     DefaultRoots(),
-		Retention: Retention{HistoryDays: 30, SquashFactor: 2.0, FloorBytes: 500 << 20, MaxFileBytes: DefaultMaxFileBytes},
+		Retention: Retention{HistoryDays: 90, SquashFactor: 2.0, FloorBytes: 500 << 20, MaxFileBytes: DefaultMaxFileBytes},
 	}
 }
 
