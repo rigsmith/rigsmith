@@ -74,7 +74,32 @@ func Open(dir, device string) (*Ledger, error) {
 	return l, nil
 }
 
-func (l *Ledger) path() string { return filepath.Join(l.dir, DirName, l.device+".jsonl") }
+func (l *Ledger) path() string {
+	return filepath.Join(l.dir, DirName, fileNameFor(l.device))
+}
+
+// fileNameFor turns a machine name into one safe filename component. The name
+// comes from config.json's machines map or the hostname, so it is not guaranteed
+// to be path-safe — and a name containing a separator would put the file outside
+// index/, where LoadAll never looks, leaving that machine's ledger silently
+// unread rather than failing. The row keeps the original name in RecordedBy.
+func fileNameFor(device string) string {
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return r
+		case r == '-', r == '_', r == '.':
+			return r
+		default:
+			return '-'
+		}
+	}, device)
+	safe = strings.Trim(safe, ".-")
+	if safe == "" {
+		safe = "device"
+	}
+	return safe + ".jsonl"
+}
 
 // Note records a session, or updates the row when the transcript has changed
 // since it was last seen. Rows are never removed: a session that has aged out
@@ -160,13 +185,24 @@ func LoadAll(dir string) map[string]Entry {
 			continue
 		}
 		for _, r := range rows {
-			if prev, ok := out[r.ID]; ok && prev.Seen.After(r.Seen) {
+			if prev, ok := out[r.ID]; ok && !newerRow(r, prev) {
 				continue
 			}
 			out[r.ID] = r
 		}
 	}
 	return out
+}
+
+// newerRow reports whether a is the better row for a session two devices both
+// recorded. End first, Seen only as the tiebreak: End describes the SESSION, Seen
+// merely when a machine last looked — so a device syncing an older copy of a
+// transcript today must not walk the session's date backwards.
+func newerRow(a, b Entry) bool {
+	if !a.End.Equal(b.End) {
+		return a.End.After(b.End)
+	}
+	return a.Seen.After(b.Seen)
 }
 
 // readFile parses one ledger file, skipping malformed lines rather than failing

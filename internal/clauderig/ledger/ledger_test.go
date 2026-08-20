@@ -3,6 +3,7 @@ package ledger
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -160,5 +161,66 @@ func TestLedger_OlderTwinIsIgnored(t *testing.T) {
 	// And a genuine update still lands.
 	if !l.Note(Entry{ID: "twin", Slug: "-a", Title: "live copy", End: newer.Add(time.Hour), Bytes: 300, Seen: newer}) {
 		t.Error("a grown transcript should still update the row")
+	}
+}
+
+// The machine name comes from config.json or the hostname, so it is not
+// guaranteed to be a safe filename component. A name with a separator must not
+// put the file outside index/, where LoadAll never looks — that would leave the
+// machine's ledger silently unread rather than failing.
+func TestLedger_DeviceNameIsMadeFilenameSafe(t *testing.T) {
+	dir := t.TempDir()
+	when := time.Date(2026, 3, 4, 0, 0, 0, 0, time.UTC)
+
+	l, err := Open(dir, "../evil name/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Note(Entry{ID: "s1", Title: "kept", End: when, Bytes: 1, Seen: when})
+	if err := l.Save(); err != nil {
+		t.Fatal(err)
+	}
+	// Written inside index/, and readable from there.
+	entries, err := os.ReadDir(filepath.Join(dir, DirName))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("want one file inside %s, got %v (%v)", DirName, entries, err)
+	}
+	if name := entries[0].Name(); strings.ContainsAny(name, `/\`) || strings.HasPrefix(name, ".") {
+		t.Errorf("unsafe filename %q", name)
+	}
+	got := LoadAll(dir)
+	if got["s1"].Title != "kept" {
+		t.Fatalf("row not readable back: %+v", got)
+	}
+	// The real machine name survives in the row, which is what identifies it.
+	if got["s1"].RecordedBy != "../evil name/x" {
+		t.Errorf("RecordedBy = %q, want the original name", got["s1"].RecordedBy)
+	}
+}
+
+// Two devices recording the same session settle on the row describing the LATER
+// session, not the one written most recently: a machine syncing an older copy of
+// a transcript today must not walk the session's date backwards.
+func TestLoadAll_PrefersTheLaterSessionNotTheLaterWrite(t *testing.T) {
+	dir := t.TempDir()
+	early := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	late := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+
+	// A saw the session continue (End late), and recorded it yesterday.
+	a, _ := Open(dir, "a")
+	a.Note(Entry{ID: "s", Title: "the long version", End: late, Bytes: 900, Seen: early})
+	if err := a.Save(); err != nil {
+		t.Fatal(err)
+	}
+	// B holds an older copy and records it today.
+	b, _ := Open(dir, "b")
+	b.Note(Entry{ID: "s", Title: "the short version", End: early, Bytes: 100, Seen: late})
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := LoadAll(dir)
+	if got["s"].Title != "the long version" || !got["s"].End.Equal(late) {
+		t.Errorf("a later write of an older session won: %+v", got["s"])
 	}
 }
