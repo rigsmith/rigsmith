@@ -7,6 +7,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/changeset"
 	"github.com/rigsmith/rigsmith/core/config"
+	"github.com/rigsmith/rigsmith/core/prestate"
 )
 
 func cs(id, summary string, names ...string) *changeset.Changeset {
@@ -120,5 +121,68 @@ func TestPrintUnmentioned_SaysWhatWillHappen(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// An ignored package is never released, so nothing is rendered for it and the
+// warning's central claim — "will get this same text verbatim" — would be false.
+func TestFindUnmentioned_IgnoresIgnoredPackages(t *testing.T) {
+	cfg := &config.Config{Ignore: []string{"acme.internal"}}
+
+	// One live package left: the body cannot be aimed at the wrong one.
+	if found := FindUnmentioned([]*changeset.Changeset{
+		cs("a", "Adds a parser to acme.core.", "acme.core", "acme.internal"),
+	}, cfg); len(found) != 0 {
+		t.Fatalf("warned about an ignored package: %+v", found[0])
+	}
+
+	// Two live packages plus an ignored one: still worth flagging, but the
+	// ignored package must not be listed as a recipient.
+	found := FindUnmentioned([]*changeset.Changeset{
+		cs("b", "Adds a parser to acme.core.", "acme.core", "acme.ui", "acme.internal"),
+	}, cfg)
+	if len(found) != 1 {
+		t.Fatalf("found %d, want 1", len(found))
+	}
+	if got := found[0].Missing; len(got) != 1 || got[0] != "acme.ui" {
+		t.Fatalf("Missing = %v, want [acme.ui] — acme.internal receives nothing", got)
+	}
+}
+
+// A prerelease keeps consumed changesets on disk. Warning about one would be
+// advice about a changelog this run is not going to write.
+func TestActiveChangesets_DropsConsumedPrereleaseChangesets(t *testing.T) {
+	all := []*changeset.Changeset{cs("used", "x", "p"), cs("fresh", "y", "p")}
+
+	if got := activeChangesets(all, nil); len(got) != 2 {
+		t.Fatalf("no prestate: got %d, want all 2", len(got))
+	}
+	pre := &prestate.PreState{Mode: prestate.ModePre, Tag: "next", Changesets: []string{"used"}}
+	got := activeChangesets(all, pre)
+	if len(got) != 1 || got[0].ID != "fresh" {
+		t.Fatalf("in pre mode: got %v, want only the unconsumed one", got)
+	}
+	exit := &prestate.PreState{Mode: prestate.ModeExit, Changesets: []string{"used"}}
+	if got := activeChangesets(all, exit); len(got) != 2 {
+		t.Fatalf("exiting pre: got %d, want all 2 (they release now)", len(got))
+	}
+}
+
+// The body is judged as authored. A changelog-github run rewrites each summary
+// in place with a repo URL, and `acme/widgets` in that URL would read as a
+// mention of a package named widgets — silencing version where status warned.
+func TestFindUnmentioned_EnrichedSummaryWouldHideTheMismatch(t *testing.T) {
+	authored := "Adds a terminal host."
+	enriched := authored + " ([#12](https://github.com/acme/widgets/pull/12))"
+
+	if found := FindUnmentioned([]*changeset.Changeset{
+		cs("a", authored, "acme.host", "widgets"),
+	}, nil); len(found) != 1 {
+		t.Fatal("the authored body does not mention widgets — it should warn")
+	}
+	if found := FindUnmentioned([]*changeset.Changeset{
+		cs("b", enriched, "acme.host", "widgets"),
+	}, nil); len(found) != 0 {
+		t.Skip("enrichment no longer defeats the check; the ordering guard may be redundant")
 	}
 }

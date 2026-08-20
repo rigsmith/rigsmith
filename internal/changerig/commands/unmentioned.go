@@ -54,9 +54,20 @@ func FindUnmentioned(changesets []*changeset.Changeset, cfg *config.Config) []Un
 		if strings.TrimSpace(cs.Summary) == "" {
 			continue // nothing to judge; an empty body is a different problem
 		}
+		// Ignored packages are never released, so nothing is rendered for them
+		// and the warning's central claim — "will get this same text verbatim" —
+		// would simply be false. Dropping them can also take the count below two,
+		// which is the point: one live package cannot have the body aimed at the
+		// wrong one.
 		names := make([]string, 0, len(cs.Releases))
 		for _, r := range cs.Releases {
+			if cfg != nil && cfg.IsIgnored(r.Name) {
+				continue
+			}
 			names = append(names, r.Name)
+		}
+		if len(names) < 2 {
+			continue
 		}
 		if sameLockstepGroup(names, cfg) {
 			continue

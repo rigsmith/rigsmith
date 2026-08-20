@@ -113,6 +113,13 @@ func NewVersionCmd() *cobra.Command {
 			// already in hand (cs.Commit), so we decorate straight from it — better
 			// provenance, no archaeology. Every lookup failure degrades to an
 			// undecorated line — enrichment never fails the run.
+			// Judged on the AUTHORED body, before the enrichment below rewrites
+			// each summary in place. A changelog-github run injects a repo URL,
+			// and `acme/widgets` in that URL would read as a mention of a package
+			// named widgets — so version would fall silent exactly where status
+			// warned. Printed later, after the plan; only the reading happens here.
+			unmentioned := FindUnmentioned(active, ws.Config)
+
 			setting := changelog.ParseSetting(ws.Config)
 			if setting.Kind != changelog.KindDefault {
 				fileIDs := make([]string, 0, len(active))
@@ -176,9 +183,9 @@ func NewVersionCmd() *cobra.Command {
 			// this is the last moment splitting is cheap. `status` is the better
 			// place to see it, but someone who never runs status still gets one
 			// chance here.
-			if found := FindUnmentioned(active, ws.Config); len(found) > 0 {
+			if len(unmentioned) > 0 {
 				fmt.Fprintln(out)
-				PrintUnmentioned(out, found, cmd.Root().Name())
+				PrintUnmentioned(out, unmentioned, cmd.Root().Name())
 			}
 
 			// Resolve the changelog generator once: both the --changelog dry-run
