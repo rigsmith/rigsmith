@@ -42,3 +42,39 @@ Open questions to resolve before it's real:
   registry, or integration with the spawn features?
 - Relationship to `clauderig worktree`: does the hub absorb those verbs, or call
   into them (clauderig stays the worktree-mechanics owner, the hub is the view)?
+
+### `clauderig resume` — open the session `search` just found
+
+`search` already ends every result with the action for it, and there are three
+of them because a session can be in three places:
+
+- live in `~/.claude` → `resume: cd <cwd> && claude --resume <id>`
+- in the synced repo only → `synced copy only — restore on this machine to resume`
+- in the ledger only → `aged out of the synced window — the body may still be in
+  the sync repo's git history`
+
+The first is a line you copy and paste, which is a verb wearing a disguise.
+`clauderig resume <id-or-query>` would resolve a session the way `search` does —
+including by title, so `clauderig resume "windows runner"` works — and `exec`
+`claude --resume` in the right cwd. That part is plumbing over code that exists.
+
+The design work is the other two states, and it is the reason this is a roadmap
+entry rather than a chore:
+
+- **Repo-only.** The transcript is sitting in the staging tree and `claude` cannot
+  read it there. Should `resume` offer to restore just that one session onto this
+  machine first? A whole-tree `restore` is far more than the user asked for, so
+  this probably wants a narrower "materialise this session" path that does not
+  exist yet.
+- **Ledger-only.** The body aged out. `resume` could recover the blob from git
+  history — the same read `ledger backfill` already does — and materialise it, or
+  it could simply explain and stop. Recovering it silently resurrects something
+  retention deliberately dropped, so this needs a deliberate answer rather than a
+  default.
+- **Not on this machine at all.** A row recorded by another device names a session
+  whose transcript never synced here. The honest answer is "run `clauderig sync`
+  there", which `search`'s device roster already says — `resume` should not
+  pretend to more.
+
+Worth doing after the ledger has been in use for a while: the third case only
+becomes common once rows outlive their transcripts.
