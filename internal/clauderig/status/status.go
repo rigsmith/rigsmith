@@ -14,6 +14,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
 )
 
@@ -88,12 +89,15 @@ func Gather(ctx context.Context, cfg *config.Config, me config.Machine, staging,
 		}
 	}
 
-	for _, r := range cfg.Roots {
+	// Desktop profiles included: each is a sync root of its own, and a status
+	// that listed only the configured roots would report a machine as fully
+	// covered while saying nothing about the accounts sync is actually carrying.
+	for _, r := range engine.EffectiveRoots(cfg, engine.LocalProfileNames()) {
 		if !r.Enabled {
 			continue
 		}
 		ri := RootInfo{ID: r.ID}
-		loc, st := cfg.RootLocation(r.ID, me)
+		loc, st := r.ResolveOn(me)
 		if st == pathmap.StatusResolved && dirExists(loc) {
 			ri.Present = true
 			files, _, _ := allowlist.Walk(loc, allowlist.For(r.ID))

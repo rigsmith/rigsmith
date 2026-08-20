@@ -98,6 +98,20 @@ var ErrExists = errors.New("Desktop profile already exists")
 // NewStore roots the profile set at dir (…/.clauderig/desktop).
 func NewStore(dir string) *Store { return &Store{Root: dir} }
 
+// DefaultStore is the profile store this machine uses.
+//
+// Under ~/.clauderig and deliberately NOT under ~/.claude or Desktop's own
+// application-support directory: a profile holds a live logged-in session, and
+// keeping the store outside every sync root is what stops a root's own walk from
+// sweeping the whole tree, credentials included.
+func DefaultStore() (*Store, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	return NewStore(filepath.Join(home, ".clauderig", "desktop")), nil
+}
+
 func (s *Store) profileDir(name string) string { return filepath.Join(s.Root, name) }
 func (s *Store) metaPath(name string) string {
 	return filepath.Join(s.profileDir(name), "profile.json")
