@@ -69,6 +69,7 @@ func Run(ctx context.Context, env Env) []Section {
 	sync := Section{Title: "sync", Results: []Result{
 		checkRemote(ctx, env),
 		checkLastSync(ctx, env),
+		checkPushed(ctx, env),
 		checkPaths(env),
 	}}
 

@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -96,6 +97,41 @@ func (r *Repo) Dirty(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return strings.TrimSpace(out) != "", nil
+}
+
+// AheadBehind counts the commits HEAD has that remote/branch does not, and vice
+// versa. Local-only: it reads the remote-TRACKING ref, so it never touches the
+// network and never blocks — which is what lets `status` and `doctor` call it.
+//
+// The consequence of that is worth stating: `behind` is only as fresh as the
+// last fetch, so it is a lower bound. `ahead` does not have that problem, and
+// ahead is the number that matters — commits that never left this machine.
+//
+// A missing remote-tracking ref (never fetched, or a remote configured but never
+// pushed to) reports known=false. That third state matters in both directions:
+// "cannot tell" must not render as lost work, and it must not render as "up to
+// date with origin/main" either — a repo that has committed for a week against a
+// remote it has never reached would otherwise look perfectly healthy.
+func (r *Repo) AheadBehind(ctx context.Context, remote, branch string) (ahead, behind int, known bool, err error) {
+	ref := remote + "/" + branch
+	if _, verr := runGit(ctx, r.Dir, "rev-parse", "--verify", "--quiet", ref); verr != nil {
+		return 0, 0, false, nil
+	}
+	out, err := runGit(ctx, r.Dir, "rev-list", "--left-right", "--count", ref+"...HEAD")
+	if err != nil {
+		return 0, 0, false, err
+	}
+	fields := strings.Fields(out)
+	if len(fields) != 2 {
+		return 0, 0, false, fmt.Errorf("rev-list --count: unexpected output %q", strings.TrimSpace(out))
+	}
+	if behind, err = strconv.Atoi(fields[0]); err != nil {
+		return 0, 0, false, err
+	}
+	if ahead, err = strconv.Atoi(fields[1]); err != nil {
+		return 0, 0, false, err
+	}
+	return ahead, behind, true, nil
 }
 
 // Commit stages everything and commits with msg. It returns changed=false (and

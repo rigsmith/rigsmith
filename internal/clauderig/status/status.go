@@ -32,10 +32,24 @@ type Info struct {
 	HasStaging bool
 	LastSync   string // "hash when — subject", or "" when never
 	Dirty      bool
-	Roots      []RootInfo
-	Hooks      []string
-	Devices    []devices.Device
-	Account    AccountInfo
+	// Unpushed counts staging commits the remote does not have — work that only
+	// exists on this machine. THE number to look at: `LastSync` is the last local
+	// commit, which keeps advancing happily while every push is rejected, so a
+	// green "last sync 2 minutes ago" says nothing about whether anything was
+	// backed up.
+	Unpushed int
+	// Unmerged counts commits the remote has that this machine does not. A lower
+	// bound — read from the remote-tracking ref, so only as fresh as the last
+	// fetch (Gather does no network).
+	Unmerged int
+	// TrackingKnown reports whether Unpushed/Unmerged mean anything. False when
+	// there is no remote-tracking ref: a remote may be configured and simply
+	// never reached, which must not be reported as being up to date with it.
+	TrackingKnown bool
+	Roots         []RootInfo
+	Hooks         []string
+	Devices       []devices.Device
+	Account       AccountInfo
 }
 
 // AccountInfo is who the machine-wide Claude Code CLI is logged in as.
@@ -86,6 +100,7 @@ func Gather(ctx context.Context, cfg *config.Config, me config.Machine, staging,
 				info.LastSync = h + " " + when + " — " + subj
 			}
 			info.Dirty, _ = repo.Dirty(ctx)
+			info.Unpushed, info.Unmerged, info.TrackingKnown, _ = repo.AheadBehind(ctx, "origin", "main")
 		}
 	}
 

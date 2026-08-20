@@ -57,6 +57,30 @@ func NewStatusCmd() *cobra.Command {
 				fmt.Fprintf(out, "            %s\n", WarnStyle.Render("staging has uncommitted changes"))
 			}
 
+			// A rejected push is reported by `sync` — to whichever channel it ran
+			// on, which for the Stop hook is nobody. The state it leaves behind is
+			// the durable evidence, so it is stated here, where people look.
+			if info.Unpushed > 0 {
+				fmt.Fprintf(out, "  %s\n", WarnStyle.Render(fmt.Sprintf(
+					"unpushed  %d commit(s) have never reached the remote", info.Unpushed)))
+				if info.Unmerged > 0 {
+					fmt.Fprintf(out, "  %s\n", DimStyle.Render(fmt.Sprintf(
+						"          the remote also has %d this machine lacks — run `clauderig sync` in a terminal to reconcile", info.Unmerged)))
+				} else {
+					fmt.Fprintf(out, "  %s\n", DimStyle.Render(
+						"          run `clauderig sync` to push them"))
+				}
+			} else if info.Unmerged > 0 {
+				fmt.Fprintf(out, "  %s\n", DimStyle.Render(fmt.Sprintf(
+					"behind    %d commit(s) on the remote are not here yet — `clauderig pull`", info.Unmerged)))
+			} else if info.HasStaging && !info.TrackingKnown && info.Remote != "" {
+				// A remote is configured and has never been reached. Saying
+				// "up to date with origin/main" here would be the same lie in a
+				// different shape.
+				fmt.Fprintf(out, "  %s\n", WarnStyle.Render(
+					"unpushed  never pushed to this remote"))
+			}
+
 			fmt.Fprintln(out, DimStyle.Render("  roots:"))
 			w := 0
 			for _, r := range info.Roots {

@@ -99,7 +99,7 @@ func recommendedKey(info status.Info) string {
 		return "init"
 	case info.LastSync == "":
 		return "sync"
-	case info.Dirty:
+	case info.Dirty, info.Unpushed > 0:
 		return "sync"
 	default:
 		return "restore"
@@ -115,6 +115,13 @@ func nextStepFor(info status.Info) string {
 		return "Never synced — Sync snapshots and pushes your setup."
 	case info.Dirty:
 		return "Local changes not pushed — Sync to update."
+	// Before the "up to date" branch: a clean tree whose commits never left the
+	// machine is the state this dashboard used to call healthy while printing a
+	// warning two lines above it.
+	case info.Unpushed > 0 && info.Unmerged > 0:
+		return "The remote has diverged — run `clauderig sync` in a terminal to reconcile."
+	case info.Unpushed > 0:
+		return "Commits have never reached the remote — Sync to push them."
 	default:
 		return "Up to date — Restore your setup on another machine."
 	}
@@ -208,6 +215,14 @@ func (m Model) statusPanel() string {
 	b.WriteString("  last sync " + last + "\n")
 	if m.info.Dirty {
 		b.WriteString("            " + warnC.Render("uncommitted changes") + "\n")
+	}
+	// `last sync` is the last local COMMIT — it stays green through a rejected
+	// push, so the unpushed count is the one that answers "am I backed up".
+	if m.info.Unpushed > 0 {
+		b.WriteString("            " + warnC.Render(fmt.Sprintf("%d commit(s) never pushed", m.info.Unpushed)) + "\n")
+	}
+	if m.info.Unmerged > 0 {
+		b.WriteString("            " + dim.Render(fmt.Sprintf("%d on the remote not here yet", m.info.Unmerged)) + "\n")
 	}
 
 	b.WriteString(dim.Render("  roots:") + "\n")

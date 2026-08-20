@@ -171,3 +171,21 @@ func TestDashboard_ShowsBanner(t *testing.T) {
 		t.Errorf("dashboard should render the claudeRig banner\n%s", view)
 	}
 }
+
+// The dashboard must not contradict itself: it printed "N commit(s) never
+// pushed" and then recommended Restore under the heading "Up to date".
+func TestNextStep_UnpushedOutranksUpToDate(t *testing.T) {
+	info := status.Info{Remote: "git@example.com:x.git", LastSync: "abc123 2m ago — sync", Unpushed: 130, TrackingKnown: true}
+	if got := recommendedKey(info); got != "sync" {
+		t.Errorf("recommendedKey = %q, want \"sync\"", got)
+	}
+	step := nextStepFor(info)
+	if strings.Contains(step, "Up to date") {
+		t.Errorf("nextStep = %q, want it not to claim being up to date", step)
+	}
+	// And when the remote has diverged, the hint has to send them to a terminal.
+	info.Unmerged = 117
+	if step := nextStepFor(info); !strings.Contains(step, "terminal") {
+		t.Errorf("diverged nextStep = %q, want it to name the terminal reconcile", step)
+	}
+}
