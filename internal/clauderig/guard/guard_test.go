@@ -166,10 +166,12 @@ func TestLowRisk(t *testing.T) {
 // carries no command and must stay inert.
 func TestEvaluate_MonitorIsTreatedAsBash(t *testing.T) {
 	root := t.TempDir()
-	env := Env{InRepo: true, Root: root, Home: "/home/u", OnBase: true}
+	// `~` rather than a literal path: home is outside the repo on every platform,
+	// where "/tmp" is only meaningful on one of them.
+	env := Env{InRepo: true, Root: root, Home: t.TempDir(), OnBase: true}
 
 	for _, tool := range []string{"Bash", "Monitor"} {
-		got := Evaluate(Request{Tool: tool, Command: "cd /tmp && echo hi", Cwd: root}, env)
+		got := Evaluate(Request{Tool: tool, Command: "cd ~ && echo hi", Cwd: root}, env)
 		if got.Decision != Deny {
 			t.Errorf("%s escaping cd: decision = %v, want Deny", tool, got.Decision)
 		}
