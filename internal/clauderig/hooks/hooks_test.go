@@ -5,7 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/guard"
 )
 
 func settingsPath(t *testing.T, content string) string {
@@ -202,4 +205,55 @@ func matcherOf(t *testing.T, path, event string) string {
 		}
 	}
 	return ""
+}
+
+// A plan that DROPS the matcher has to remove the field. Left in place, the hook
+// stays scoped to the old tool list and may never fire — while Install reports
+// success, which is the same silent-failure shape as a stale matcher.
+func TestInstall_RemovesAMatcherThePlanNoLongerHas(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if _, err := Install(path, []Plan{{Event: "PreToolUse", Matcher: "Bash", Command: "clauderig guard"}}); err != nil {
+		t.Fatal(err)
+	}
+	unscoped := []Plan{{Event: "PreToolUse", Command: "clauderig guard"}}
+
+	drift, err := Drift(path, unscoped)
+	if err != nil || len(drift) != 1 {
+		t.Fatalf("Drift = %v, %v; want [PreToolUse] — still scoped when the plan says otherwise", drift, err)
+	}
+	if _, updated, err := InstallOrUpdate(path, unscoped); err != nil || len(updated) != 1 {
+		t.Fatalf("updated = %v, err = %v; want PreToolUse corrected", updated, err)
+	}
+	if got := matcherOf(t, path, "PreToolUse"); got != "" {
+		t.Fatalf("matcher = %q, want the field removed", got)
+	}
+	if drift, _ := Drift(path, unscoped); len(drift) != 0 {
+		t.Fatalf("still drifted: %v", drift)
+	}
+}
+
+// The matcher is generated from the guard's registry rather than restated, so
+// this asserts the wiring rather than a hand-copied list.
+func TestGuardPlans_MatcherComesFromTheGuardRegistry(t *testing.T) {
+	var matcher string
+	for _, p := range GuardPlans() {
+		if p.Event == "PreToolUse" {
+			matcher = p.Matcher
+		}
+	}
+	if matcher == "" {
+		t.Fatal("no PreToolUse matcher in GuardPlans")
+	}
+	listed := map[string]bool{}
+	for _, name := range strings.Split(matcher, "|") {
+		listed[name] = true
+	}
+	for _, tool := range guard.Tools() {
+		if !listed[tool] {
+			t.Errorf("%s is governed by the guard but missing from the matcher — the hook would never fire for it", tool)
+		}
+	}
+	if !listed["Monitor"] {
+		t.Error("Monitor must be in the matcher: it runs shell commands like Bash")
+	}
 }

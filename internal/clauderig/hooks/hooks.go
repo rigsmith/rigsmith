@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/guard"
 )
 
 // Marker identifies a clauderig-owned hook (its command contains this).
@@ -38,13 +40,11 @@ func SyncPlans() []Plan {
 // move the session dir or write code to a base branch.
 func GuardPlans() []Plan {
 	return []Plan{
-		// Monitor belongs here because it RUNS a shell command ("the script runs
-		// in the same shell environment as Bash"), so it can relocate the session
-		// with a `cd` or commit to a base branch exactly as Bash can. Anthropic's
-		// own auto-mode classifier reviews it as a Bash-class tool for the same
-		// reason. This list is what the hook fires on, so a command-bearing tool
-		// missing from it is simply unguarded.
-		{Event: "PreToolUse", Matcher: "Edit|Write|NotebookEdit|Bash|Monitor|EnterWorktree|ExitWorktree", Command: "clauderig guard"},
+		// Derived from the guard's own registry, never restated: this matcher is
+		// what the hook fires on, so a tool the guard handles but the matcher
+		// omits is not guarded at all. That is exactly how Monitor — which runs
+		// shell commands in the same environment as Bash — went unguarded.
+		{Event: "PreToolUse", Matcher: strings.Join(guard.Tools(), "|"), Command: "clauderig guard"},
 	}
 }
 
@@ -122,11 +122,16 @@ func reconcileGroups(groups []any, p Plan) (changed bool) {
 		if !ok || !hasMarker(g) {
 			continue
 		}
-		if p.Matcher != "" {
-			if cur, _ := g["matcher"].(string); cur != p.Matcher {
+		// Both directions: a plan that drops the matcher has to remove the field,
+		// or the hook stays scoped to the old tool list and may never fire — with
+		// Install reporting success.
+		if cur, had := g["matcher"].(string); cur != p.Matcher || (had && p.Matcher == "") {
+			if p.Matcher == "" {
+				delete(g, "matcher")
+			} else {
 				g["matcher"] = p.Matcher
-				changed = true
 			}
+			changed = true
 		}
 		hs, ok := g["hooks"].([]any)
 		if !ok {
@@ -184,10 +189,11 @@ func Drift(path string, plans []Plan) (events []string, err error) {
 }
 
 func groupMatchesPlan(g map[string]any, p Plan) bool {
-	if p.Matcher != "" {
-		if cur, _ := g["matcher"].(string); cur != p.Matcher {
-			return false
-		}
+	// Compared in both directions, matching newGroup, which omits the field when
+	// the plan has no matcher: an installed hook that is still scoped when the
+	// plan says it should not be is drift too.
+	if cur, _ := g["matcher"].(string); cur != p.Matcher {
+		return false
 	}
 	hs, ok := g["hooks"].([]any)
 	if !ok {

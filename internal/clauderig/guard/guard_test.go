@@ -1,11 +1,9 @@
 package guard
 
 import (
+	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
-
-	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
 )
 
 const root = "/Users/john/Git/rigsmith"
@@ -186,23 +184,24 @@ func TestEvaluate_MonitorIsTreatedAsBash(t *testing.T) {
 	}
 }
 
-// The matcher is what the hook fires on: a tool the policy handles but the
-// matcher omits is never consulted at all, which is exactly how Monitor slipped
-// through. Keep the two in step.
-func TestGuardPlansMatcherCoversEveryToolEvaluateHandles(t *testing.T) {
-	matcher := ""
-	for _, p := range hooks.GuardPlans() {
-		if p.Event == "PreToolUse" {
-			matcher = p.Matcher
+// Every tool in the registry must actually be acted on. The registry drives the
+// PreToolUse matcher, so an entry the policy ignores means the hook pays to run
+// for nothing — and, more importantly, the reverse (a policy case missing from
+// the registry) is now impossible to express, because Evaluate asks the registry
+// rather than repeating it.
+func TestEveryRegisteredToolIsActedOn(t *testing.T) {
+	root := t.TempDir()
+	env := Env{InRepo: true, Root: root, Home: t.TempDir(), OnBase: true}
+	for _, tool := range Tools() {
+		req := Request{Tool: tool, Cwd: root}
+		switch {
+		case RunsCommand(tool):
+			req.Command = "cd ~ && echo hi"
+		case WritesFile(tool):
+			req.FilePath = filepath.Join(root, "main.go")
 		}
-	}
-	listed := map[string]bool{}
-	for _, name := range strings.Split(matcher, "|") {
-		listed[name] = true
-	}
-	for _, tool := range []string{"Edit", "Write", "NotebookEdit", "Bash", "Monitor", "EnterWorktree", "ExitWorktree"} {
-		if !listed[tool] {
-			t.Errorf("%s is acted on by Evaluate but missing from the PreToolUse matcher — the hook would never fire for it", tool)
+		if got := Evaluate(req, env); got.Decision != Deny {
+			t.Errorf("%s: decision = %v, want Deny — it is in the matcher, so it should be governed", tool, got.Decision)
 		}
 	}
 }
