@@ -97,11 +97,24 @@ that is not searchable here
   run `clauderig sync` there, then `clauderig pull` here
 ```
 
-Only *other* machines can hide anything — this one's live `~/.claude` is scanned
-directly, so its own sync age costs the search nothing. The roster is skipped
-when yours is the only device on the registry (there is then no elsewhere for a
-chat to be), and under `--live`, which takes the synced repo out of scope along
-with any claim about other machines.
+In the **default** scope, only *other* machines can hide anything — this one's
+live `~/.claude` is scanned directly, so its own sync age costs the search
+nothing, and the roster is skipped entirely when yours is the only device (there
+is then no elsewhere for a chat to be).
+
+Two scopes change that:
+
+- **`--repo`** searches only the synced repo, so this machine's live tree is
+  *not* read: anything it has not yet synced is as invisible as another
+  machine's, and it is warned about like any other device — including when it is
+  the only one on the registry.
+- **`--live`** takes the synced repo out of scope, and with it any claim about
+  other machines, so no roster is printed at all.
+
+If the registry itself can't be read, the footer says
+`device coverage unavailable` rather than falling silent — silence there would
+be indistinguishable from a verified single-machine setup, which is the opposite
+conclusion.
 
 On a long search a live `scanning… N transcripts, K matches` status shows on the
 terminal (and stays out of piped output).

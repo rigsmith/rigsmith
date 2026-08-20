@@ -103,10 +103,13 @@ func NewSearchCmd() *cobra.Command {
 			me := config.Detect(machineName(cfg))
 			targets := buildTargets(cfg, me, liveOnly, repoOnly)
 			sc.me = me.Name
+			sc.liveInScope = !repoOnly
 			// --live takes the synced repo out of scope, and with it any claim about
 			// other machines: no registry read, no footer.
 			if !liveOnly {
-				sc.devices = loadDevices()
+				var ok bool
+				sc.devices, ok = loadDevices()
+				sc.devicesUnavailable = !ok
 			}
 
 			fmt.Fprintf(out, "%s %q\n", HeaderStyle.Render("clauderig search"), query)
@@ -284,14 +287,26 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	// A session is resumable here iff a transcript for it lives in the live CLI root
 	// — even a title-only match (query not in the body) is resumable if its
 	// transcript exists there, so track presence independently of content hits.
-	liveIDs := liveCLITranscriptIDs(targets)
+	livePaths := transcriptPaths(targets, cliTarget)
+	repoPaths := transcriptPaths(targets, repoTarget)
 
 	results := make([]*sessResult, 0, len(hits))
 	var hidden, undated int
 	for _, r := range hits {
+		// A title-only match has no recorded hit and therefore no path. Give it one
+		// before anything reads a date, a cwd or a fallback title off it — live
+		// first, since that is also the copy `claude --resume` would open.
+		if r.path == "" {
+			if p, ok := livePaths[r.id]; ok {
+				r.path = p
+			} else if p, ok := repoPaths[r.id]; ok {
+				r.path = p
+			}
+		}
 		r.when = sessionTime(r)
 		r.cwd = resolveCwd(me, r)
-		r.cliLive = r.hitTargets[cliTarget] || liveIDs[r.id]
+		_, inLive := livePaths[r.id]
+		r.cliLive = r.hitTargets[cliTarget] || inLive
 		if keep, noDate := sc.keep(r); !keep {
 			hidden++
 			if noDate {
@@ -411,16 +426,18 @@ func resumeHint(r *sessResult, cwd string) string {
 	}
 }
 
-// liveCLITranscriptIDs collects the session ids that have a transcript in the live
-// CLI root (~/.claude) — the sessions `claude --resume` can actually open. Only the
-// cli target qualifies; Desktop and repo transcripts aren't read by resume. It
-// enumerates filenames only (no content read), so it's cheap on the small CLI
-// tree, and lets a title-only match still offer resume when its body just didn't
-// hit the query.
-func liveCLITranscriptIDs(targets []search.Target) map[string]bool {
-	ids := map[string]bool{}
+// transcriptPaths maps session id to a transcript path under the target with this
+// label, enumerating filenames only (no content read) — cheap even on the whole
+// synced tree.
+//
+// The path matters beyond mere presence. A title-only match never records a hit,
+// so without a path such a session has no file to take its date, cwd or fallback
+// title from: a time filter would drop it as undated, and `--cwd` as pathless,
+// with its transcript sitting right there.
+func transcriptPaths(targets []search.Target, label string) map[string]string {
+	paths := map[string]string{}
 	for _, t := range targets {
-		if t.Label != cliTarget || t.Dir == "" {
+		if t.Label != label || t.Dir == "" {
 			continue
 		}
 		filepath.WalkDir(t.Dir, func(p string, d os.DirEntry, err error) error {
@@ -435,13 +452,17 @@ func liveCLITranscriptIDs(targets []search.Target) map[string]bool {
 			if !strings.HasSuffix(rel, ".jsonl") {
 				return nil
 			}
-			if id := session.IDFromTranscriptRel(rel); id != "" {
-				ids[id] = true
+			// Only the session's own transcript: subagent files resolve to the SAME
+			// id, and are not what a date or a fallback title should come from.
+			if id := session.IDFromTranscriptRel(rel); id != "" && strings.Count(rel, "/") == 2 {
+				if _, seen := paths[id]; !seen {
+					paths[id] = p
+				}
 			}
 			return nil
 		})
 	}
-	return ids
+	return paths
 }
 
 // shQuote renders s as a single POSIX shell word (bash/zsh — the mac/Linux shells

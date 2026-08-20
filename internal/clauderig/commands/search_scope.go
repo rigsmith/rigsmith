@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,10 @@ import (
 // says so out loud. A day is where "I searched everywhere" stops being true for
 // a laptop that has been shut since yesterday.
 const staleAfter = 24 * time.Hour
+
+// maxAgeDays is the largest "<n>d" an age can express: a time.Duration is int64
+// nanoseconds, which runs out at ~292 years.
+const maxAgeDays = int64(math.MaxInt64 / (24 * int64(time.Hour)))
 
 // sessionScope is everything that narrows a search and everything that bounds
 // what it could possibly have seen: the --since/--until/--cwd filters, plus the
@@ -35,10 +40,20 @@ type sessionScope struct {
 	// devices is the synced registry; empty when there is no staging repo (or
 	// when --live took it out of scope), which correctly prints no footer.
 	devices []devices.Device
-	// me is this machine's name — excluded from staleness warnings, because its
-	// live ~/.claude is scanned directly and its sync age hides nothing.
-	me  string
-	now time.Time
+	// me is this machine's name.
+	me string
+	// liveInScope reports that this machine's live roots were searched. It gates
+	// whether THIS device is exempt from the staleness warning: normally its
+	// ~/.claude is scanned directly, so its sync age hides nothing — but under
+	// --repo the live roots are not searched at all, and everything it has not
+	// yet synced is just as invisible as another machine's.
+	liveInScope bool
+	// devicesUnavailable reports that the registry could not be read, as opposed
+	// to naming no other machines. The two look identical in the output otherwise,
+	// and they mean opposite things: one is "nothing to say", the other is
+	// "coverage could not be established".
+	devicesUnavailable bool
+	now                time.Time
 }
 
 // filtering reports whether any narrowing flag was set.
@@ -108,9 +123,15 @@ func parseWhen(s string, now time.Time, endOfDay bool) (time.Time, error) {
 // day unit, and a day is the natural unit for "when did I have that chat".
 func parseAge(s string) (time.Duration, error) {
 	if strings.HasSuffix(s, "d") {
-		n, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
+		n, err := strconv.ParseInt(strings.TrimSuffix(s, "d"), 10, 64)
 		if err != nil || n < 0 {
 			return 0, fmt.Errorf("bad day count %q", s)
+		}
+		// A Duration is int64 nanoseconds, so a large day count silently wraps
+		// NEGATIVE — and a negative age becomes a FUTURE cutoff that hides every
+		// result while looking like a perfectly valid flag. Reject it instead.
+		if n > maxAgeDays {
+			return 0, fmt.Errorf("%q is too far back — the most this can express is %dd", s, maxAgeDays)
 		}
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
@@ -126,8 +147,8 @@ func parseAge(s string) (time.Duration, error) {
 func (sc sessionScope) staleDevices() []devices.Device {
 	var out []devices.Device
 	for _, d := range sc.devices {
-		if d.Name == sc.me {
-			continue
+		if d.Name == sc.me && sc.liveInScope {
+			continue // its live tree was searched directly
 		}
 		if sc.now.Sub(d.LastSync) > staleAfter {
 			out = append(out, d)
@@ -140,13 +161,23 @@ func (sc sessionScope) staleDevices() []devices.Device {
 // sessions this search could not see. It prints nothing when this machine is the
 // only one on the registry — there is then no elsewhere for a chat to be.
 func renderCoverage(out io.Writer, sc sessionScope) {
+	if sc.devicesUnavailable {
+		fmt.Fprintf(out, "%s\n", WarnStyle.Render(
+			"device coverage unavailable — the synced device registry could not be read"))
+		return
+	}
 	others := 0
 	for _, d := range sc.devices {
 		if d.Name != sc.me {
 			others++
 		}
 	}
-	if others == 0 {
+	// With the live roots out of scope (--repo), this machine's own sync age
+	// bounds the search too, so a one-device registry still has something to say.
+	if others == 0 && sc.liveInScope {
+		return
+	}
+	if len(sc.devices) == 0 {
 		return
 	}
 
@@ -155,6 +186,9 @@ func renderCoverage(out io.Writer, sc sessionScope) {
 		label := d.Name + " " + humanizeSinceAt(d.LastSync, sc.now)
 		if d.Name == sc.me {
 			label += " (this)"
+			if sc.liveInScope {
+				label += ", searched live"
+			}
 		}
 		parts = append(parts, label)
 	}
@@ -171,14 +205,14 @@ func renderCoverage(out io.Writer, sc sessionScope) {
 // loadDevices reads the synced device registry, best-effort: search is a report,
 // and a missing or unreadable registry means only that there is nothing to say
 // about other machines — never that the search should fail.
-func loadDevices() []devices.Device {
+func loadDevices() (list []devices.Device, ok bool) {
 	staging, err := config.StagingDir()
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	reg, err := devices.Load(staging)
 	if err != nil {
-		return nil
+		return nil, false
 	}
-	return reg.List()
+	return reg.List(), true
 }

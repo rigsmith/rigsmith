@@ -164,7 +164,7 @@ func TestRenderCoverage(t *testing.T) {
 	// A machine that hasn't synced in days is exactly the case where "no results"
 	// is not the same as "no such chat" — say so, and say since when.
 	var out bytes.Buffer
-	renderCoverage(&out, sessionScope{devices: []devices.Device{me, stale}, me: "mbp", now: now})
+	renderCoverage(&out, sessionScope{devices: []devices.Device{me, stale}, me: "mbp", now: now, liveInScope: true})
 	got := stripANSI(out.String())
 	if !strings.Contains(got, "air has not synced since 2026-08-16 12:00 UTC") {
 		t.Errorf("stale device should be named with its last sync:\n%s", got)
@@ -178,7 +178,7 @@ func TestRenderCoverage(t *testing.T) {
 
 	// A device that synced this morning hides nothing — list it, don't warn.
 	out.Reset()
-	renderCoverage(&out, sessionScope{devices: []devices.Device{me, fresh}, me: "mbp", now: now})
+	renderCoverage(&out, sessionScope{devices: []devices.Device{me, fresh}, me: "mbp", now: now, liveInScope: true})
 	got = stripANSI(out.String())
 	if strings.Contains(got, "has not synced") {
 		t.Errorf("fresh device should not be warned about:\n%s", got)
@@ -189,9 +189,63 @@ func TestRenderCoverage(t *testing.T) {
 
 	// One machine means there is no elsewhere for a chat to be — print nothing.
 	out.Reset()
-	renderCoverage(&out, sessionScope{devices: []devices.Device{me}, me: "mbp", now: now})
+	renderCoverage(&out, sessionScope{devices: []devices.Device{me}, me: "mbp", now: now, liveInScope: true})
 	if s := out.String(); s != "" {
 		t.Errorf("single-device registry should print no footer, got:\n%s", s)
+	}
+}
+
+// --repo takes this machine's live roots out of scope, so its OWN unsynced
+// sessions are just as invisible as another machine's — the "it's scanned
+// directly" exemption does not hold, even when it is the only device.
+func TestRenderCoverage_RepoOnlyDoesNotExemptThisMachine(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	meStale := devices.Device{Name: "mbp", OS: "macos", LastSync: now.Add(-3 * 24 * time.Hour)}
+
+	var out bytes.Buffer
+	renderCoverage(&out, sessionScope{devices: []devices.Device{meStale}, me: "mbp", now: now, liveInScope: false})
+	got := stripANSI(out.String())
+	if !strings.Contains(got, "mbp has not synced since") {
+		t.Errorf("under --repo this machine's own sync age bounds the search:\n%s", got)
+	}
+	if strings.Contains(got, "searched live") {
+		t.Errorf("nothing was searched live under --repo:\n%s", got)
+	}
+
+	// With the live roots back in scope the same machine is exempt.
+	out.Reset()
+	renderCoverage(&out, sessionScope{devices: []devices.Device{meStale}, me: "mbp", now: now, liveInScope: true})
+	if s := stripANSI(out.String()); s != "" {
+		t.Errorf("live-scoped single device should print nothing, got:\n%s", s)
+	}
+}
+
+// An unreadable registry must not look like a verified single-machine setup —
+// those mean opposite things and the output was identical.
+func TestRenderCoverage_UnavailableRegistrySaysSo(t *testing.T) {
+	var out bytes.Buffer
+	renderCoverage(&out, sessionScope{devicesUnavailable: true, me: "mbp", now: time.Now(), liveInScope: true})
+	got := stripANSI(out.String())
+	if !strings.Contains(got, "device coverage unavailable") {
+		t.Errorf("a failed registry read should say so:\n%s", got)
+	}
+}
+
+// A day count large enough to overflow time.Duration wraps NEGATIVE, which
+// parseWhen would turn into a FUTURE cutoff that hides every result while looking
+// like a perfectly ordinary flag.
+func TestParseAge_RejectsOverflowingDayCounts(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	if _, err := parseWhen("106752d", now, false); err == nil {
+		t.Error("an overflowing day count should be rejected, not silently wrapped")
+	}
+	// Just inside the range still works, and is still in the past.
+	got, err := parseWhen("106751d", now, false)
+	if err != nil {
+		t.Fatalf("106751d should parse: %v", err)
+	}
+	if !got.Before(now) {
+		t.Errorf("an age must resolve to the past, got %v", got)
 	}
 }
 
@@ -217,5 +271,45 @@ func TestSearchCmd_RejectsBadFlagCombinations(t *testing.T) {
 	}
 	if err := run("billing", "--all", "--cwd", "tweed"); err == nil {
 		t.Error("--all with a session filter should error")
+	}
+}
+
+// A title-only match records no hit, so it starts with no transcript path. It
+// must still be dated and placed from its transcript, or a sidecar that happens
+// to carry no lastActivityAt/cwd makes the session look undated and pathless and
+// a time filter drops it — with the file sitting right there.
+func TestSearchSessions_TitleOnlyMatchIsDatedFromItsTranscript(t *testing.T) {
+	live := t.TempDir()
+	desk := t.TempDir()
+	when := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
+	writeDatedTranscript(t, live, "projects/-Users-x-Git-tweed/sess-t.jsonl",
+		`{"type":"user","cwd":"/Users/x/Git/tweed","message":{"content":"unrelated chatter"}}`+"\n", when)
+	// Sidecar with a title and nothing else — no lastActivityAt, no cwd.
+	writeTestFile(t, desk, "claude-code-sessions/o/u/local_t.json",
+		`{"cliSessionId":"sess-t","title":"Rocket science notes"}`)
+
+	sc := sessionScope{
+		since: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		cwd:   "tweed",
+		now:   time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC),
+	}
+	var out, errw bytes.Buffer
+	if err := searchSessions(&out, &errw, testMachine(t.TempDir()),
+		[]search.Target{{Label: "cli", Dir: live}},
+		[]session.Root{{Label: "desktop", Base: desk}}, "rocket", sc); err != nil {
+		t.Fatal(err)
+	}
+	got := stripANSI(out.String())
+	if !strings.Contains(got, "Rocket science notes") {
+		t.Errorf("title-only match should survive filters its transcript satisfies:\n%s", got)
+	}
+	if !strings.Contains(got, "2026-07-04") {
+		t.Errorf("date should fall back to the transcript mtime:\n%s", got)
+	}
+	if !strings.Contains(got, "claude --resume sess-t") {
+		t.Errorf("its transcript is live, so it stays resumable:\n%s", got)
+	}
+	if strings.Contains(got, "hidden by filters") {
+		t.Errorf("nothing should have been dropped:\n%s", got)
 	}
 }
