@@ -84,7 +84,10 @@ func Evaluate(r Request, e Env) Result {
 		return Result{Defer, ""}
 	}
 	switch r.Tool {
-	case "Bash":
+	// Monitor runs its command in the same shell as Bash, so it gets the same
+	// rules. Its WebSocket form carries no command at all, which arrives here as
+	// an empty string and defers — there is nothing to relocate or commit.
+	case "Bash", "Monitor":
 		return evalBash(r, e)
 	case "Edit", "Write", "NotebookEdit":
 		return evalWrite(r, e)

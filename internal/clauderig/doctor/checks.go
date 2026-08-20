@@ -178,9 +178,21 @@ func checkProjectGuard(env Env) Result {
 	proj, _ := hooks.Status(env.ProjectSettings)
 	local, _ := hooks.Status(env.LocalSettings)
 	if contains(proj, "PreToolUse") || contains(local, "PreToolUse") {
-		where := "project"
+		where, settings := "project", env.ProjectSettings
 		if !contains(proj, "PreToolUse") {
-			where = "local"
+			where, settings = "local", env.LocalSettings
+		}
+		// Installed is not the same as current. The matcher lists the tools the
+		// guard runs for, so a hook written by an older release quietly stops
+		// covering whatever tools have been added since.
+		if drift, derr := hooks.Drift(settings, hooks.GuardPlans()); derr == nil && len(drift) > 0 {
+			return Result{Name: "guard hook", Status: Warn,
+				Detail:   "installed (" + where + ") but out of date — it does not cover every tool it should",
+				FixLabel: "update the guard hook (" + where + " settings.json)",
+				Fix: func(ctx context.Context) error {
+					_, _, err := hooks.InstallOrUpdate(settings, hooks.GuardPlans())
+					return err
+				}}
 		}
 		return Result{Name: "guard hook", Status: OK, Detail: "installed (" + where + ")"}
 	}

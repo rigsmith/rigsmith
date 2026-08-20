@@ -2,7 +2,10 @@ package guard
 
 import (
 	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
 )
 
 const root = "/Users/john/Git/rigsmith"
@@ -154,6 +157,50 @@ func TestLowRisk(t *testing.T) {
 	for _, p := range high {
 		if LowRisk(p) {
 			t.Errorf("LowRisk(%q) = true, want false", p)
+		}
+	}
+}
+
+// Monitor executes its command in the same shell as Bash, so the same rules have
+// to apply — otherwise it is a way around every one of them. Its WebSocket form
+// carries no command and must stay inert.
+func TestEvaluate_MonitorIsTreatedAsBash(t *testing.T) {
+	root := t.TempDir()
+	env := Env{InRepo: true, Root: root, Home: "/home/u", OnBase: true}
+
+	for _, tool := range []string{"Bash", "Monitor"} {
+		got := Evaluate(Request{Tool: tool, Command: "cd /tmp && echo hi", Cwd: root}, env)
+		if got.Decision != Deny {
+			t.Errorf("%s escaping cd: decision = %v, want Deny", tool, got.Decision)
+		}
+	}
+	// The ws form: no command at all.
+	if got := Evaluate(Request{Tool: "Monitor", Cwd: root}, env); got.Decision != Defer {
+		t.Errorf("Monitor with no command: decision = %v, want Defer", got.Decision)
+	}
+	// And a harmless command still passes.
+	if got := Evaluate(Request{Tool: "Monitor", Command: "tail -f build.log", Cwd: root}, env); got.Decision != Defer {
+		t.Errorf("Monitor tail: decision = %v, want Defer", got.Decision)
+	}
+}
+
+// The matcher is what the hook fires on: a tool the policy handles but the
+// matcher omits is never consulted at all, which is exactly how Monitor slipped
+// through. Keep the two in step.
+func TestGuardPlansMatcherCoversEveryToolEvaluateHandles(t *testing.T) {
+	matcher := ""
+	for _, p := range hooks.GuardPlans() {
+		if p.Event == "PreToolUse" {
+			matcher = p.Matcher
+		}
+	}
+	listed := map[string]bool{}
+	for _, name := range strings.Split(matcher, "|") {
+		listed[name] = true
+	}
+	for _, tool := range []string{"Edit", "Write", "NotebookEdit", "Bash", "Monitor", "EnterWorktree", "ExitWorktree"} {
+		if !listed[tool] {
+			t.Errorf("%s is acted on by Evaluate but missing from the PreToolUse matcher — the hook would never fire for it", tool)
 		}
 	}
 }
