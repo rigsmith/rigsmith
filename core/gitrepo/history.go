@@ -22,9 +22,16 @@ type Deletion struct {
 // Deletions lists files removed under pathspec, newest deletion first, one entry
 // per path (a path deleted, re-added and deleted again reports only its latest
 // removal — that is the copy worth recovering).
+//
+// NUL-delimited (-z) deliberately: without it git QUOTES any path holding
+// non-ASCII or special characters ("cli/projects/-Caf\303\251/s.jsonl"), and
+// that display string is not a path anything can open — so a session in an
+// accented project directory could never be recovered, and would be counted
+// unreadable instead. Under -z the commit headers arrive glued to the front of
+// the following name, which is what the inner loop peels off.
 func (r *Repo) Deletions(ctx context.Context, pathspec string) ([]Deletion, error) {
 	out, err := runGit(ctx, r.Dir, "log", "--all", "--diff-filter=D",
-		"--pretty=format:commit %H", "--name-only", "--", pathspec)
+		"--pretty=format:commit %H", "--name-only", "-z", "--", pathspec)
 	if err != nil {
 		return nil, err
 	}
@@ -33,16 +40,22 @@ func (r *Repo) Deletions(ctx context.Context, pathspec string) ([]Deletion, erro
 		seen = map[string]bool{}
 		cur  string
 	)
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		switch {
-		case line == "":
-		case strings.HasPrefix(line, "commit "):
-			cur = strings.TrimPrefix(line, "commit ")
-		case cur != "" && !seen[line]:
-			seen[line] = true
-			dels = append(dels, Deletion{Path: line, Commit: cur})
+	for _, chunk := range strings.Split(out, "\x00") {
+		for {
+			i := strings.IndexByte(chunk, '\n')
+			if i < 0 {
+				break
+			}
+			if line := strings.TrimSpace(chunk[:i]); strings.HasPrefix(line, "commit ") {
+				cur = strings.TrimPrefix(line, "commit ")
+			}
+			chunk = chunk[i+1:]
 		}
+		if chunk == "" || cur == "" || seen[chunk] {
+			continue
+		}
+		seen[chunk] = true
+		dels = append(dels, Deletion{Path: chunk, Commit: cur})
 	}
 	return dels, nil
 }

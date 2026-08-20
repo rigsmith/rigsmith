@@ -14,6 +14,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/ghrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/gitignore"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
+	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
 	"github.com/rigsmith/rigsmith/internal/clauderig/status"
 )
 
@@ -119,7 +120,7 @@ func checkPushed(ctx context.Context, env Env) Result {
 	case info.Unpushed > 0 && info.Unmerged > 0:
 		return Result{Name: "pushed", Status: Fail,
 			Detail: fmt.Sprintf("%d commit(s) never pushed; remote has %d this machine lacks", info.Unpushed, info.Unmerged),
-			Hint:   "the remote diverged — run `clauderig sync` in a terminal to reconcile (it needs a TTY to resolve conflicts)"}
+			Hint:   "the remote diverged — run `clauderig sync` to reconcile"}
 	case info.Unpushed > 0:
 		return Result{Name: "pushed", Status: Fail,
 			Detail: fmt.Sprintf("%d commit(s) never reached the remote", info.Unpushed),
@@ -275,4 +276,44 @@ func contains(ss []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// checkStagingMerge catches a staging repo abandoned part-way through a merge.
+//
+// It gets its own check because nothing else here can see it: `last sync` reads a
+// commit that is genuinely recent, `pushed` reports a divergence that looks like
+// ordinary drift, and neither says why every session start now prints a git error.
+// The state is also self-perpetuating — the hook's pull is fast-forward-only, so
+// it fails on the unmerged index instead of clearing it, every session, until
+// someone opens the repo by hand. Reported as a failure: while it lasts, nothing
+// from this machine is being backed up.
+func checkStagingMerge(ctx context.Context, env Env) Result {
+	if env.Cfg == nil || env.Staging == "" {
+		return Result{Name: "staging repo", Status: Info, Detail: "no config"}
+	}
+	repo, err := gitrepo.Open(ctx, env.Staging)
+	if err != nil {
+		return Result{Name: "staging repo", Status: Info, Detail: "no staging repo yet"}
+	}
+	if !repo.InMerge(ctx) {
+		return Result{Name: "staging repo", Status: OK, Detail: "clean (no merge in progress)"}
+	}
+	conflicts, _ := repo.Conflicts(ctx)
+	return Result{
+		Name:   "staging repo",
+		Status: Fail,
+		Detail: fmt.Sprintf("a merge was left in progress (%d conflicted file(s)) — sync is blocked", len(conflicts)),
+		Hint:   "clauderig can settle it with its merge policies",
+		Fix: func(ctx context.Context) error {
+			rep, err := mergepolicy.Resolve(ctx, repo)
+			if err != nil {
+				return err
+			}
+			if len(rep.Unresolved) > 0 {
+				return fmt.Errorf("%d conflict(s) need a human (%s) — run `clauderig sync` in a terminal",
+					len(rep.Unresolved), rep.Unresolved[0])
+			}
+			return repo.CommitMerge(ctx)
+		},
+	}
 }

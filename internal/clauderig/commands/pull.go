@@ -43,8 +43,23 @@ func NewPullCmd() *cobra.Command {
 						fmt.Fprintf(out, "clauderig pull: clone skipped: %v\n", err)
 					}
 				} else if repo, err := gitrepo.Open(ctx, staging); err == nil {
+					// An unfinished merge makes the ff-only pull below fail on every
+					// future session, so clear it first rather than reporting the
+					// same error forever.
+					// Result ignored on purpose: this path never stages or commits,
+					// so an unsettled merge costs a stale pull, not a corrupt push.
+					_ = repairWedgedMerge(ctx, out, staging, false)
 					if err := repo.Pull(ctx, "origin", "main"); err != nil {
-						fmt.Fprintf(out, "clauderig pull: %v\n", err)
+						// A non-ff divergence is not an error to report and forget —
+						// it never resolves itself. Merge it here (policies decide,
+						// no prompt) so the next sync has one line of history to push.
+						// Report the RECONCILE failure, not the ff-only one that sent us
+						// here: the ff error is a symptom of divergence, while this one
+						// names the path that needs a human and how to finish it — which
+						// is the only message that ends the wedge.
+						if rerr := reconcile(ctx, out, repo, "origin", "main", false); rerr != nil {
+							fmt.Fprintf(out, "clauderig pull: %v\n", rerr)
+						}
 					}
 				}
 			}
