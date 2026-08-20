@@ -122,11 +122,15 @@ func NewStatusCmd() *cobra.Command {
 }
 
 // humanizeSince renders a coarse relative time for device last-sync display.
-func humanizeSince(t time.Time) string {
+func humanizeSince(t time.Time) string { return humanizeSinceAt(t, time.Now()) }
+
+// humanizeSinceAt is humanizeSince against an explicit now, so callers that
+// already carry a clock (and tests) get a deterministic string.
+func humanizeSinceAt(t, now time.Time) string {
 	if t.IsZero() {
 		return "never"
 	}
-	d := time.Since(t)
+	d := now.Sub(t)
 	switch {
 	case d < time.Minute:
 		return "just now"
