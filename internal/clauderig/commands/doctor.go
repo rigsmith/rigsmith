@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/core/doctorui"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/doctor"
 	"github.com/rigsmith/rigsmith/internal/clauderig/settings"
-	"github.com/rigsmith/rigsmith/internal/doctorui"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +22,7 @@ import (
 // clauderig can repair, all pre-checked so Enter fixes everything. `--fix` applies
 // them non-interactively. doctor exits non-zero while any failing check remains, so
 // it's usable in scripts. The report model and the fix flow are shared with the
-// other rigs via core/doctor + internal/doctorui.
+// other rigs via core/doctor + core/doctorui.
 func NewDoctorCmd(version string) *cobra.Command {
 	var fixAll bool
 	cmd := &cobra.Command{
