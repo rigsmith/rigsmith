@@ -14,8 +14,8 @@ import (
 	"github.com/rigsmith/rigsmith/core/changeset"
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/doctor"
+	"github.com/rigsmith/rigsmith/core/doctorui"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
-	"github.com/rigsmith/rigsmith/internal/doctorui"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +24,7 @@ import (
 // workspace. shiprig reuses the same baseline via RunDoctor/ChangesetDoctorSections
 // and layers its release-readiness checks on top, so the two tools never diverge
 // on what "a healthy changeset setup" means. The report model and the fix flow are
-// the shared core/doctor + internal/doctorui.
+// the shared core/doctor + core/doctorui.
 func NewDoctorCmd() *cobra.Command {
 	var fixAll bool
 	cmd := &cobra.Command{

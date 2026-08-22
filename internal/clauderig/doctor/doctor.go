@@ -2,7 +2,7 @@
 // over the environment, the sync setup, and this repo's worktree-discipline wiring,
 // and returns a structured report. Each check reports OK/Warn/Fail with a detail
 // and, when the problem is something clauderig can repair, a Fix closure. The
-// presentation layer (internal/doctorui) renders the report and lets the user pick
+// presentation layer (core/doctorui) renders the report and lets the user pick
 // which fixes to apply — the package itself does no I/O to a terminal.
 //
 // The result model (Status/Result/Section + Counts/Fixable) is the shared

@@ -1,9 +1,12 @@
-// Package doctorui is the shared terminal presentation for every rig's `doctor`
-// command. It renders a core/doctor report and runs the fix-on-request flow — a
+// Package doctorui is the shared terminal presentation for a `doctor` command.
+// It renders a core/doctor report and runs the fix-on-request flow — a
 // pre-checked multi-select on a TTY, `--fix` to apply every fixable issue
 // non-interactively — so "install the missing tool for me" behaves identically
 // across rig, clauderig, changerig and shiprig. The checks and the install/repair
 // closures live in each tool; this package only presents and applies them.
+//
+// It lives in core/ rather than internal/ so tools outside this module get the
+// same flow from the same code.
 package doctorui
 
 import (

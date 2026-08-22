@@ -4,7 +4,7 @@
 // closure. The model is pure: it does no terminal I/O and pulls in nothing beyond
 // the standard library, so it can live in core/ and be shared by rig, clauderig,
 // changerig, and shiprig. Presentation and the fix-apply loop live in
-// internal/doctorui; the per-tool checks live in each tool's own package.
+// core/doctorui; the per-tool checks live in each tool's own package.
 package doctor
 
 import "context"
