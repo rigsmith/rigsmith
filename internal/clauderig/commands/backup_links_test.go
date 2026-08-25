@@ -48,3 +48,28 @@ func TestCopyTree_PreservesSymlinksInsteadOfFollowingThem(t *testing.T) {
 		t.Errorf("memory content = %q, want %q", b, "facts")
 	}
 }
+
+// ~/.claude holds 0600 transcripts, and the identity file beside it is 0600
+// too. os.Create would widen them to 0644 in the .bak, so the act of protecting
+// the data would be what exposed it.
+func TestCopyOne_PreservesSourcePermissions(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "private.jsonl")
+	if err := os.WriteFile(src, []byte("secret transcript"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "bak", "private.jsonl")
+	if err := copyOne(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Errorf("backup mode = %04o, want 0600 (source mode)", got)
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "secret transcript" {
+		t.Errorf("content = %q", b)
+	}
+}

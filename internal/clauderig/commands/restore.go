@@ -12,6 +12,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
@@ -111,6 +112,9 @@ func NewRestoreCmd() *cobra.Command {
 				fmt.Fprintf(out, "  backing up %s → %s\n", cliTarget, bak)
 				if err := copyTree(cliTarget, bak); err != nil {
 					return fmt.Errorf("backup: %w", err)
+				}
+				if err := backupIdentityFile(out); err != nil {
+					return err
 				}
 			}
 
@@ -269,6 +273,37 @@ func copyLink(src, dst string) error {
 	return os.Symlink(link, dst)
 }
 
+// backupIdentityFile copies ~/.claude.json alongside the tree backup.
+//
+// It holds the oauthAccount block — the ONLY record of which account this
+// machine is logged in as — and it sits outside ~/.claude, so the tree copy
+// above misses it entirely. That is the one file a bad account switch can ruin
+// and nothing else can reconstruct. It can also carry MCP server credentials
+// (mcpServers.*.headers / .env are free-form passthrough), which is exactly why
+// this stays a local .bak and is never what gets synced: the repo records only
+// the three identity fields, via devices.Account.
+//
+// An absent file is not an error — a machine that has never logged in has
+// nothing to protect.
+func backupIdentityFile(out io.Writer) error {
+	src, err := account.GlobalConfigPath()
+	if err != nil {
+		return nil // no home dir: nothing addressable to back up
+	}
+	if _, err := os.Stat(src); err != nil {
+		return nil
+	}
+	dst := src + ".bak"
+	if _, err := os.Stat(dst); err == nil {
+		return fmt.Errorf("backup %s already exists; move it away first", dst)
+	}
+	fmt.Fprintf(out, "  backing up %s → %s\n", src, dst)
+	if err := copyOne(src, dst); err != nil {
+		return fmt.Errorf("backup identity: %w", err)
+	}
+	return nil
+}
+
 func copyOne(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
@@ -278,11 +313,23 @@ func copyOne(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	// Copy the source's permissions, don't invent them. ~/.claude is full of
+	// 0600 transcripts and the identity file beside it is 0600 too; os.Create
+	// would widen every one of them to 0644 in the backup, so the act of
+	// protecting this data would be what exposed it.
+	mode := os.FileMode(0o600)
+	if fi, serr := in.Stat(); serr == nil {
+		mode = fi.Mode().Perm()
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	// OpenFile's mode only applies when it creates the file, and umask can clip
+	// it even then — restate it so the backup matches the source exactly.
+	return os.Chmod(dst, mode)
 }

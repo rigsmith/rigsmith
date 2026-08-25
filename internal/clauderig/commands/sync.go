@@ -8,6 +8,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
@@ -124,9 +125,17 @@ func NewSyncCmd() *cobra.Command {
 				return nil
 			}
 
-			// Record this machine in the synced device registry.
+			// Record this machine in the synced device registry, together with the
+			// account it synced as — identity only (see devices.Account), and the
+			// only account provenance anything in the repo carries. Best-effort:
+			// an unreadable identity leaves the previous record standing and never
+			// costs anyone a sync.
 			if reg, err := devices.Load(staging); err == nil {
-				reg.Touch(me.Name, me.OS, claudeVer, time.Now())
+				var acct *devices.Account
+				if a, o, e, aerr := account.LiveIdentity(); aerr == nil && (a != "" || o != "" || e != "") {
+					acct = &devices.Account{AccountUUID: a, OrganizationUUID: o, Email: e}
+				}
+				reg.Touch(me.Name, me.OS, claudeVer, acct, time.Now())
 				_ = reg.Save(staging)
 			}
 

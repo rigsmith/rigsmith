@@ -44,7 +44,11 @@ func (r *RestoreReport) DesktopSessions() int {
 }
 
 // isDesktopSessionSidecar reports whether a restored (slash) rel path is a
-// Desktop Code-session sidecar: claude-code-sessions/<org>/<user>/local_<id>.json.
+// Desktop Code-session sidecar:
+// claude-code-sessions/<accountUuid>/<organizationUuid>/local_<id>.json. Those
+// two uuids are the account's, straight from ~/.claude.json's oauthAccount — so
+// this tree is already partitioned per account, which is what devices.Account
+// records for the CLI side, where nothing else does.
 // The local_<id>.json shape is matched on the basename so a directory like
 // claude-code-sessions/org/local_cache/other.json isn't miscounted as a session.
 func isDesktopSessionSidecar(rel string) bool {
