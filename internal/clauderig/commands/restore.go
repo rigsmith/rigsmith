@@ -348,7 +348,14 @@ func copyOne(src, dst string) error {
 	if fi, serr := in.Stat(); serr == nil {
 		mode = fi.Mode().Perm()
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	// O_EXCL, and no O_TRUNC. backupPathIsFree checked that nothing occupied
+	// this path, but that check and this open are two moments: a symlink
+	// created in between would otherwise be FOLLOWED here and its target
+	// overwritten — for the identity file, one that can carry MCP credentials.
+	// O_CREATE|O_EXCL fails on any existing entry, a dangling symlink included,
+	// which closes the window instead of narrowing it. Every destination is a
+	// path nothing should hold yet, so nothing legitimate is refused.
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return err
 	}

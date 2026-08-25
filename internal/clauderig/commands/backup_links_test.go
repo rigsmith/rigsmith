@@ -116,3 +116,50 @@ func TestBackupPathIsFree_AllowsAnAbsentPath(t *testing.T) {
 		t.Errorf("an absent backup path is free: %v", err)
 	}
 }
+
+// backupPathIsFree and the write are two moments. A symlink created in between
+// would be followed by an O_CREATE|O_TRUNC open and its target overwritten, so
+// the open itself must refuse an existing entry rather than trusting the
+// earlier check.
+func TestCopyOne_RefusesADestinationThatAppearedAfterTheCheck(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "identity.json")
+	if err := os.WriteFile(src, []byte(`{"secret":"value"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(dir, "victim.txt")
+	if err := os.WriteFile(victim, []byte("must survive"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The race: something plants a symlink at dst after the path was checked.
+	dst := filepath.Join(dir, "identity.json.bak")
+	if err := os.Symlink(victim, dst); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if err := copyOne(src, dst); err == nil {
+		t.Error("copyOne must refuse a destination that already exists")
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "must survive" {
+		t.Errorf("wrote through the planted symlink: victim = %q", b)
+	}
+}
+
+// A plain existing file is refused too — never silently overwritten.
+func TestCopyOne_RefusesAnExistingRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "a")
+	dst := filepath.Join(dir, "b")
+	if err := os.WriteFile(src, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyOne(src, dst); err == nil {
+		t.Error("want a refusal")
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "old" {
+		t.Errorf("destination was overwritten: %q", b)
+	}
+}
