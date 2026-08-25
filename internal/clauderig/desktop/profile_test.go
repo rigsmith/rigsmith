@@ -393,3 +393,33 @@ func TestFakeQuitLeavesTheProfileClosed(t *testing.T) {
 		t.Fatalf("still open after quit (%v, %v)", running, err)
 	}
 }
+
+// A failed process scan is not "the app did not start". Swallowing it would
+// burn the whole deadline and then blame the app, while the caller is about to
+// decide where a deep link goes on the strength of the answer.
+func TestWaitRunningReportsAScanFailureRatherThanATimeout(t *testing.T) {
+	app := newFakeApp()
+	app.scanErr = errors.New("pgrep exploded")
+
+	start := time.Now()
+	ready, err := WaitRunning(app, "/p/data", start.Add(5*time.Second))
+	if err == nil {
+		t.Fatal("a failed scan must surface as an error, not a quiet false")
+	}
+	if ready {
+		t.Error("ready should be false when the scan failed")
+	}
+	// It must give up immediately rather than spinning out the deadline.
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("waited %v on a failing scan; should return at once", elapsed)
+	}
+}
+
+func TestWaitRunningSucceedsOnceTheProfileAppears(t *testing.T) {
+	app := newFakeApp()
+	app.running["/p/data"] = true
+	ready, err := WaitRunning(app, "/p/data", time.Now().Add(2*time.Second))
+	if err != nil || !ready {
+		t.Fatalf("ready=%v err=%v, want true/nil", ready, err)
+	}
+}

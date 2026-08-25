@@ -388,7 +388,12 @@ func newDesktopOpenCmd() *cobra.Command {
 				// With no instance up, the OS would resolve claude:// by launching
 				// the machine-wide install — the wrong profile entirely. Wait for
 				// this one to exist first.
-				if !desktop.WaitRunning(app, p.DataDir(), time.Now().Add(desktopReadyTimeout)) {
+				ready, werr := desktop.WaitRunning(app, p.DataDir(), time.Now().Add(desktopReadyTimeout))
+				if werr != nil {
+					return fmt.Errorf("could not tell whether %s started: %w\n"+
+						"Sending now could import the session into the wrong account", p.Name, werr)
+				}
+				if !ready {
 					return fmt.Errorf("%s did not start within %s, so the session was not sent\n"+
 						"Open it first (`clauderig desktop open %s`), then re-run with --session",
 						p.Name, desktopReadyTimeout, p.Name)

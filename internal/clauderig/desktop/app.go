@@ -109,13 +109,21 @@ func requireInstalled(a App) error {
 // flag, so it starts the machine-wide install instead of the profile that was
 // asked for. Waiting is what stops "open this session in my work profile" from
 // quietly opening a personal window.
-func WaitRunning(a App, dataDir string, deadline time.Time) bool {
+func WaitRunning(a App, dataDir string, deadline time.Time) (bool, error) {
 	for {
-		if pids, err := a.Running(dataDir); err == nil && len(pids) > 0 {
-			return true
+		pids, err := a.Running(dataDir)
+		if err != nil {
+			// A scan that FAILS is not an app that did not start. Swallowing it
+			// here would burn the whole deadline and then blame the app, while
+			// the caller is about to decide where a deep link goes on the
+			// strength of this answer.
+			return false, err
+		}
+		if len(pids) > 0 {
+			return true, nil
 		}
 		if time.Now().After(deadline) {
-			return false
+			return false, nil
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
