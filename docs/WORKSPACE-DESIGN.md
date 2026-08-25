@@ -110,12 +110,23 @@ a repo with a `.slnx` — existing ecosystem detection already resolves it.
 
 rig pins a default josh version as a constant (overridable per-workspace via
 the manifest's `josh` key) and installs to
-`~/.local/share/rigsmith/josh/<version>/bin/` via the user's cargo, exactly the
-josh-sync recipe. `ws doctor --fix` performs install/update; every verb that
-needs the engine triggers the same path on first use, with the honest
-message that it's a Rust build and takes minutes. cargo missing → doctor Fail
-with install hint. (Windows: cargo builds josh from source; we are early
-adopters there and the doctor message says so.)
+`~/.local/share/rigsmith/josh/<version>/bin/`. `ws doctor --fix` performs
+install/update; every verb that needs the engine triggers the same path on
+first use.
+
+**Distribution** (the fresh-machine problem): upstream josh ships source and
+Linux Docker images only — no binaries, and no stated Windows support. A
+machine with only the rig binary therefore can't get an engine from upstream.
+So rig's own release pipeline builds the pinned version per platform
+(linux/macos/windows matrix running the josh-sync cargo recipe) and publishes
+the binaries checksummed alongside rig's releases; `doctor --fix` *downloads*
+the prebuilt for GOOS/GOARCH and only falls back to a local
+`cargo install --tag <pin>` when no prebuilt exists (the current first-slice
+behavior, requiring cargo, with an honest it-takes-minutes message). This
+also makes Windows support a CI fact rather than a user-machine gamble:
+until the windows job compiles josh green, `rig ws` on Windows reports
+"engine not available prebuilt — use WSL or install rust", instead of
+implying a toolchain dance that may dead-end.
 
 ### Proxy lifecycle (Go)
 
