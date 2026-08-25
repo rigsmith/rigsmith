@@ -61,6 +61,16 @@ type Entry struct {
 	// sharply in confidence and a filter that hid that would be the kind of
 	// quiet lie RecordedBy is named to avoid. See AccountFrom*.
 	AccountSource string `json:"accountSource,omitempty"`
+	// AccountSince is when the CURRENT attribution was established, and it does
+	// not move when the transcript changes.
+	//
+	// Seen cannot serve here, which is subtle enough to be worth stating: Seen
+	// is the row's last-write time, so a machine merely re-syncing a changed
+	// transcript pushes its Seen past another machine's — and a tie-break on
+	// Seen would then hand the session to whichever device wrote most recently,
+	// which is the opposite of the first-attribution rule it is meant to
+	// enforce. Only a stamp tied to the attribution itself is stable.
+	AccountSince time.Time `json:"accountSince,omitempty"`
 }
 
 // How an Entry.Account was determined, worst to best. A higher rank may
@@ -105,28 +115,35 @@ func AccountRank(source string) int {
 // NEWER row, so using it here would let a second machine recording an
 // already-staged transcript under its own live login relabel the session on a
 // routine sync — the exact relabelling Note() refuses to do locally.
-func bestAccount(a, b Entry) (account, source string) {
+func bestAccount(a, b Entry) (account, source string, since time.Time) {
 	ra, rb := AccountRank(a.AccountSource), AccountRank(b.AccountSource)
 	if rb > ra {
-		return b.Account, b.AccountSource
+		return b.Account, b.AccountSource, b.AccountSince
 	}
 	if ra > rb {
-		return a.Account, a.AccountSource
+		return a.Account, a.AccountSource, a.AccountSince
 	}
-	if b.Seen.Before(a.Seen) {
-		return b.Account, b.AccountSource
+	// Equal rank: the earlier ATTRIBUTION wins. Tying on Seen instead would let
+	// a row whose transcript was merely re-synced displace the first
+	// attribution, and would not even be stable — a merged row carries the
+	// newer transcript's Seen alongside an older row's account, so a third
+	// device with an intermediate Seen could take the session from both.
+	if !b.AccountSince.IsZero() && (a.AccountSince.IsZero() || b.AccountSince.Before(a.AccountSince)) {
+		return b.Account, b.AccountSource, b.AccountSince
 	}
-	return a.Account, a.AccountSource
+	return a.Account, a.AccountSource, a.AccountSince
 }
 
 // mergeAccount picks the attribution to keep. Ties go to prev — attribution is
 // sticky, so re-syncing a session under a different login cannot rewrite whose
 // it was.
-func mergeAccount(prev, next Entry) (account, source string) {
+func mergeAccount(prev, next Entry) (account, source string, since time.Time) {
 	if next.Account != "" && AccountRank(next.AccountSource) > AccountRank(prev.AccountSource) {
-		return next.Account, next.AccountSource
+		// A genuinely new attribution: stamp it now, since this is the moment it
+		// was established.
+		return next.Account, next.AccountSource, next.AccountSince
 	}
-	return prev.Account, prev.AccountSource
+	return prev.Account, prev.AccountSource, prev.AccountSince
 }
 
 // Ledger is one device's file, loaded for update.
@@ -185,8 +202,13 @@ func (l *Ledger) Note(e Entry) bool {
 	if e.ID == "" {
 		return false
 	}
+	// A first attribution is established at this write; every later write
+	// carries the stamp forward through mergeAccount rather than restamping it.
+	if e.Account != "" && e.AccountSince.IsZero() {
+		e.AccountSince = e.Seen
+	}
 	if prev, ok := l.rows[e.ID]; ok {
-		e.Account, e.AccountSource = mergeAccount(prev, e)
+		e.Account, e.AccountSource, e.AccountSince = mergeAccount(prev, e)
 		// An account upgrade is a real change even when the transcript is byte
 		// identical — a session first attributed by inference and later covered
 		// by its Desktop sidecar must be allowed to take the better answer.
@@ -205,7 +227,7 @@ func (l *Ledger) Note(e Entry) bool {
 			}
 			// Take ONLY the better attribution; the older twin must not drag its
 			// stale transcript state over the newer row.
-			prev.Account, prev.AccountSource = e.Account, e.AccountSource
+			prev.Account, prev.AccountSource, prev.AccountSince = e.Account, e.AccountSource, e.AccountSince
 			prev.RecordedBy = l.device
 			// The row IS being rewritten, so Seen has to move with it — a stale
 			// stamp would misreport when this attribution was last confirmed,
@@ -328,7 +350,7 @@ func LoadAll(dir string) map[string]Entry {
 			// files meet: without this, a machine that later re-saw the same
 			// transcript with no sidecar would replace another machine's Desktop
 			// ground truth with its own inference purely by having synced last.
-			winner.Account, winner.AccountSource = bestAccount(winner, loser)
+			winner.Account, winner.AccountSource, winner.AccountSince = bestAccount(winner, loser)
 			out[r.ID] = winner
 		}
 	}

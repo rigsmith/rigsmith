@@ -157,7 +157,7 @@ func TestSessionScope_AccountAloneStillCountsAsNarrowing(t *testing.T) {
 		t.Error("--account alone must trip the raw/all guard")
 	}
 	// and with nothing set at all, it must not trip
-	if sc.filtering() || "" != "" {
+	if sc.filtering() {
 		t.Error("no filters must not trip the guard")
 	}
 }

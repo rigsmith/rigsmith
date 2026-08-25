@@ -399,3 +399,53 @@ func TestLoadAll_EqualRankKeepsTheFirstAttribution(t *testing.T) {
 		t.Errorf("union = %q, want acct-first — a routine sync must not relabel", got.Account)
 	}
 }
+
+// Three devices, all equal rank, sightings at 500 / 900 / 700. The first
+// attribution must win outright. Tying on Seen could not do this: merging the
+// 500 and 900 rows produces a row carrying the NEWER transcript's Seen (900)
+// beside the OLDER row's account, so the 700 row would look earlier than the
+// merged winner and take a session it never attributed first.
+func TestLoadAll_ThreeDeviceEqualRankKeepsTheEarliestAttribution(t *testing.T) {
+	dir := t.TempDir()
+	end := time.Unix(100, 0).UTC()
+	write := func(device, account string, seen int64) {
+		l, _ := Open(dir, device)
+		l.Note(Entry{ID: "s1", End: end, Bytes: 10, Seen: time.Unix(seen, 0).UTC(),
+			Account: account, AccountSource: AccountFromSync})
+		if err := l.Save(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("machine-a", "acct-first", 500)
+	write("machine-b", "acct-later", 900)
+	write("machine-c", "acct-middle", 700)
+
+	got := LoadAll(dir)["s1"]
+	if got.Account != "acct-first" {
+		t.Errorf("union = %q, want acct-first (earliest attribution)", got.Account)
+	}
+	if !got.AccountSince.Equal(time.Unix(500, 0).UTC()) {
+		t.Errorf("AccountSince = %v, want the first attribution's stamp", got.AccountSince)
+	}
+}
+
+// AccountSince must not move when the transcript changes, or a machine merely
+// re-syncing an updated transcript would push its stamp past another device's
+// and take the session.
+func TestNote_AccountSinceSurvivesATranscriptUpdate(t *testing.T) {
+	l, _ := Open(t.TempDir(), "mbp")
+	l.Note(Entry{ID: "s1", End: time.Unix(100, 0).UTC(), Bytes: 10,
+		Seen: time.Unix(500, 0).UTC(), Account: "acct-a", AccountSource: AccountFromSync})
+
+	// same account, later write, bigger transcript
+	l.Note(Entry{ID: "s1", End: time.Unix(200, 0).UTC(), Bytes: 20,
+		Seen: time.Unix(900, 0).UTC(), Account: "acct-a", AccountSource: AccountFromSync})
+
+	got := l.rows["s1"]
+	if !got.AccountSince.Equal(time.Unix(500, 0).UTC()) {
+		t.Errorf("AccountSince = %v, want it pinned to the first attribution (500)", got.AccountSince)
+	}
+	if !got.Seen.Equal(time.Unix(900, 0).UTC()) {
+		t.Errorf("Seen = %v, want it to track the latest write", got.Seen)
+	}
+}
