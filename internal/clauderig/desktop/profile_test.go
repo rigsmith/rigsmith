@@ -150,7 +150,15 @@ type fakeApp struct {
 	launched []string
 	running  map[string]bool
 	quitAt   map[string]time.Duration
-	scanErr  error // set to simulate a failed process scan
+	scanErr  error    // set to simulate a failed process scan
+	opened   []string // deep links handed to OpenURL
+}
+
+func (f *fakeApp) OpenURL(rawurl string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.opened = append(f.opened, rawurl)
+	return nil
 }
 
 func newFakeApp() *fakeApp {

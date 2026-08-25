@@ -1,0 +1,244 @@
+package commands
+
+import (
+	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/charmbracelet/huh"
+	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
+	"github.com/rigsmith/rigsmith/internal/clauderig/project"
+	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+)
+
+// sessionUUID is the shape Claude Desktop requires of ?session=. It rejects
+// anything else outright, so a reference that is not a uuid is treated as text
+// to search for rather than passed through to fail there.
+var sessionUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// resumeDeepLink builds the URL Claude Desktop imports a CLI session from.
+//
+// Verified against Claude Desktop 2.x: the handler takes exactly one parameter,
+// `session`, requires it to match a uuid, and calls importCliSession with it.
+// Anything else is dropped with "missing or invalid session" and no visible
+// effect, so the uuid check happens here rather than being discovered there.
+func resumeDeepLink(sessionID string) string {
+	return "claude://resume?session=" + url.QueryEscape(sessionID)
+}
+
+// sessionCandidate is one session `desktop open --session` could resume.
+type sessionCandidate struct {
+	ID    string
+	Title string // sidecar title, else the transcript's first prompt
+	Cwd   string
+	Path  string // live transcript path
+}
+
+// label is the human description — title and project, no id. Callers that need
+// the id add it, so it is never printed twice in the same line.
+func (c sessionCandidate) label() string {
+	t := c.Title
+	if t == "" {
+		t = "(no title)"
+	}
+	if len(t) > 58 {
+		t = t[:57] + "…"
+	}
+	if proj := c.project(); proj != "" {
+		return fmt.Sprintf("%s  ·  %s", t, proj)
+	}
+	return t
+}
+
+// project names the session's directory, because a title alone rarely tells two
+// sessions in different repos apart.
+//
+// The slug is deliberately NOT parsed for this. It is the cwd with separators
+// swapped for dashes, which is lossy in exactly the case that matters here: in
+// "-Users-john-Git-tweed-worktrees-grasp-lunar-cliff-claude" nothing marks
+// which dashes were slashes, so the last segment reads "claude" for every
+// worktree. The transcript records the real cwd, so read that instead.
+func (c sessionCandidate) project() string {
+	if c.Cwd != "" {
+		return filepath.Base(c.Cwd)
+	}
+	return ""
+}
+
+// liveTranscripts indexes every transcript in the live CLI root by session id.
+//
+// The LIVE root specifically, not the synced repo: Desktop imports a session by
+// reading the transcript off this machine's disk, so a session that exists only
+// in the staging repo cannot be opened however well `search` can describe it.
+// Checking here turns that into a clear message instead of a toast in the app.
+func liveTranscripts(claudeHome string) map[string]string {
+	out := map[string]string{}
+	projects := filepath.Join(claudeHome, "projects")
+	entries, err := os.ReadDir(projects)
+	if err != nil {
+		return out
+	}
+	for _, slug := range entries {
+		if !slug.IsDir() {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(projects, slug.Name()))
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			name := f.Name()
+			if f.IsDir() || !strings.HasSuffix(name, ".jsonl") {
+				continue
+			}
+			id := strings.TrimSuffix(name, ".jsonl")
+			// A session id can appear under two slugs (a worktree copy, or a slug
+			// restore rewrote). Either transcript resumes the same session, so the
+			// first is as good as the second.
+			if _, seen := out[id]; !seen {
+				out[id] = filepath.Join(projects, slug.Name(), name)
+			}
+		}
+	}
+	return out
+}
+
+// findSessions resolves a reference to the sessions it could mean.
+//
+// A uuid resolves to exactly itself — no search, no ambiguity. Anything else is
+// matched against titles (Desktop sidecars) and, for the ~97% of sessions that
+// have no sidecar, the transcript's first prompt, which is the same fallback
+// title `search` shows. Matching is case-insensitive substring, like --cwd.
+func findSessions(ref, claudeHome string, idx session.Index) []sessionCandidate {
+	live := liveTranscripts(claudeHome)
+
+	if sessionUUID.MatchString(ref) {
+		p, ok := live[ref]
+		if !ok {
+			return nil
+		}
+		m := idx[ref]
+		return []sessionCandidate{{ID: ref, Title: titleFor(m, p), Cwd: cwdFor(m, p), Path: p}}
+	}
+
+	needle := strings.ToLower(strings.TrimSpace(ref))
+	var out []sessionCandidate
+	for id, p := range live {
+		m := idx[id]
+		title := titleFor(m, p)
+		if !strings.Contains(strings.ToLower(title), needle) &&
+			!strings.Contains(strings.ToLower(m.Cwd), needle) {
+			continue
+		}
+		out = append(out, sessionCandidate{ID: id, Title: title, Cwd: cwdFor(m, p), Path: p})
+	}
+	// Newest first, so the picker's top entry is the one most likely wanted.
+	sort.Slice(out, func(i, j int) bool { return newer(out[i], out[j], idx) })
+	return out
+}
+
+// cwdFor prefers the sidecar's cwd and falls back to the one the transcript
+// itself recorded. Only matched candidates pay for the read, and matching has
+// already opened every live transcript for its first prompt.
+func cwdFor(m session.Meta, transcriptPath string) string {
+	if m.Cwd != "" {
+		return m.Cwd
+	}
+	if cwd, ok, err := project.CwdFromTranscript(transcriptPath); err == nil && ok {
+		return cwd
+	}
+	return ""
+}
+
+func titleFor(m session.Meta, transcriptPath string) string {
+	if m.Title != "" {
+		return m.Title
+	}
+	return session.FirstPrompt(transcriptPath)
+}
+
+func newer(a, b sessionCandidate, idx session.Index) bool {
+	at, bt := idx[a.ID].LastActivity, idx[b.ID].LastActivity
+	if !at.Equal(bt) {
+		return at.After(bt)
+	}
+	ai, _ := os.Stat(a.Path)
+	bi, _ := os.Stat(b.Path)
+	if ai == nil || bi == nil {
+		return a.ID < b.ID
+	}
+	return ai.ModTime().After(bi.ModTime())
+}
+
+// pickSession narrows several matches to one: a picker on a terminal, and off
+// one an error that lists them with ids, so the caller can re-run unambiguously
+// rather than have a session chosen for them.
+func pickSession(ref string, cands []sessionCandidate) (sessionCandidate, error) {
+	switch len(cands) {
+	case 0:
+		return sessionCandidate{}, fmt.Errorf("no session on this machine matches %q\n"+
+			"Only sessions whose transcript is in ~/.claude/projects can be opened — "+
+			"`clauderig search %s` will say whether it lives only in the synced repo", ref, shQuote(ref))
+	case 1:
+		return cands[0], nil
+	}
+	if !interactive() {
+		var b strings.Builder
+		fmt.Fprintf(&b, "%d sessions match %q — re-run naming one of these ids\n", len(cands), ref)
+		for i, c := range cands {
+			if i == 12 {
+				fmt.Fprintf(&b, "  … and %d more; narrow the text to see them\n", len(cands)-i)
+				break
+			}
+			fmt.Fprintf(&b, "  %s  %s\n", shortID(c.ID), c.label())
+		}
+		return sessionCandidate{}, fmt.Errorf("%s", strings.TrimRight(b.String(), "\n"))
+	}
+	opts := make([]huh.Option[string], 0, len(cands))
+	byID := map[string]sessionCandidate{}
+	for _, c := range cands {
+		opts = append(opts, huh.NewOption(c.label()+"  ·  "+shortID(c.ID), c.ID))
+		byID[c.ID] = c
+	}
+	choice := cands[0].ID
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title(fmt.Sprintf("%d sessions match %q — open which?", len(cands), ref)).
+			Options(opts...).Value(&choice),
+	)).WithTheme(brand.Theme(brand.AccentClaude)).Run(); err != nil {
+		return sessionCandidate{}, errCancelled
+	}
+	return byID[choice], nil
+}
+
+// warnAmbiguousRouting says so when more than one Desktop profile is running.
+//
+// A deep link is routed by scheme, not by instance, so with several profiles up
+// the OS decides which one imports the session — and it may not be the profile
+// just focused. Saying nothing would make a session landing in the wrong
+// account look like a bug in the session, not in what this can promise.
+func warnAmbiguousRouting(out io.Writer, app desktop.App, profiles []desktop.Profile, target desktop.Profile) {
+	var others []string
+	for _, p := range profiles {
+		if p.Name == target.Name {
+			continue
+		}
+		if pids, err := app.Running(p.DataDir()); err == nil && len(pids) > 0 {
+			others = append(others, p.Name)
+		}
+	}
+	if len(others) == 0 {
+		return
+	}
+	sort.Strings(others)
+	fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf(
+		"⚠ %s is also open — a deep link is routed by scheme, not per window, "+
+			"so the session may land there instead. Quit it to be certain.",
+		strings.Join(others, ", "))))
+}

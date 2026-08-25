@@ -23,6 +23,15 @@ type App interface {
 	Quit(dataDir string, grace time.Duration) error
 	// Installed reports whether Claude Desktop is present, and where.
 	Installed() (path string, ok bool)
+	// OpenURL hands a claude:// deep link to Claude Desktop.
+	//
+	// It cannot be aimed at a particular profile. The OS routes a URL by SCHEME,
+	// to whichever registered instance it picks — there is no per-instance
+	// address, and the profile flag that separates instances is a launch
+	// argument, not something a URL can carry. Callers that care which profile
+	// receives it must make that instance the only, or at least the frontmost,
+	// one first — and say so when they cannot be sure.
+	OpenURL(rawurl string) error
 }
 
 // ErrUnsupported means this OS has no Claude Desktop build we know how to drive.
@@ -78,4 +87,24 @@ func requireInstalled(a App) error {
 		return fmt.Errorf("%w — install it from https://claude.ai/download", ErrNotInstalled)
 	}
 	return nil
+}
+
+// WaitRunning blocks until an instance bound to dataDir appears, or the
+// deadline passes. Reports whether one did.
+//
+// A deep link needs a live instance to receive it: with none running, the OS
+// resolves the scheme by LAUNCHING the app — and that launch carries no profile
+// flag, so it starts the machine-wide install instead of the profile that was
+// asked for. Waiting is what stops "open this session in my work profile" from
+// quietly opening a personal window.
+func WaitRunning(a App, dataDir string, deadline time.Time) bool {
+	for {
+		if pids, err := a.Running(dataDir); err == nil && len(pids) > 0 {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }

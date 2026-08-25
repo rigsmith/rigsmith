@@ -196,3 +196,18 @@ func (w windowsApp) Quit(dataDir string, grace time.Duration) error {
 
 // Supported reports whether Anthropic ships Claude Desktop for this platform.
 func Supported() bool { return true }
+
+// OpenURL hands the deep link to the shell's protocol handler.
+//
+// `cmd /c start` is used rather than ShellExecute because the URL must not be
+// parsed as a command: `start` takes an empty title argument first, so a link
+// beginning with a quote can never be read as the window title. The URL is
+// passed as its own argv entry, so cmd's own metacharacters never see it.
+func (w windowsApp) OpenURL(rawurl string) error {
+	cmd := exec.Command("cmd", "/c", "start", "", rawurl)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("open %s: %w: %s", rawurl, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}

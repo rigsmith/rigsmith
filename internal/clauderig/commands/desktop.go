@@ -11,8 +11,10 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
+	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/dirmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/session"
 	"github.com/rigsmith/rigsmith/internal/clauderig/tui"
 	"github.com/spf13/cobra"
 )
@@ -289,14 +291,19 @@ func pickProfile(st *desktop.Store, app desktop.App, onlyOpen bool) (desktop.Pro
 var errCancelled = errors.New("cancelled")
 
 func newDesktopOpenCmd() *cobra.Command {
-	return &cobra.Command{
+	var sessionRef string
+	cmd := &cobra.Command{
 		Use:   "open [<name|email>]",
 		Short: "Open (or focus) a profile's Claude Desktop window",
 		Long: "Opens the profile's window, or focuses it if it is already open.\n\n" +
 			"With no profile named: uses the one mapped to this directory\n" +
 			"(`clauderig desktop map`, nearest mapped ancestor), and otherwise asks\n" +
 			"which — a picker on a terminal, an error naming both ways to say so\n" +
-			"off one. It never picks for you.",
+			"off one. It never picks for you.\n\n" +
+			"With --session, the window opens on that Claude Code session: pass its\n" +
+			"id, or text to match its title or project. Desktop reads the transcript\n" +
+			"from ~/.claude/projects, so a session that lives only in the synced repo\n" +
+			"must be restored before it can be opened.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -315,6 +322,25 @@ func newDesktopOpenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Resolve the session BEFORE touching any window: a reference that
+			// matches nothing should cost nothing, not leave an app open on the
+			// wrong thing.
+			var target sessionCandidate
+			if sessionRef != "" {
+				home, herr := account.ClaudeHome()
+				if herr != nil {
+					return herr
+				}
+				cands := findSessions(sessionRef, home, liveSessionIndex())
+				target, err = pickSession(sessionRef, cands)
+				if errors.Is(err, errCancelled) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+			}
+
 			running, rerr := desktop.IsRunning(app, p.DataDir())
 			if rerr != nil {
 				return fmt.Errorf("could not tell whether %s is already open: %w\n"+
@@ -324,17 +350,78 @@ func newDesktopOpenCmd() *cobra.Command {
 				if ferr := app.Focus(p.DataDir()); ferr != nil {
 					return ferr
 				}
+				if sessionRef == "" {
+					fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already open:"), p.Label())
+					return nil
+				}
 				fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already open:"), p.Label())
-				return nil
+			} else {
+				if lerr := app.Launch(p.DataDir()); lerr != nil {
+					return lerr
+				}
+				_ = st.Touch(p)
+				if sessionRef == "" {
+					fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ opened"), p.Label())
+					return nil
+				}
+				// With no instance up, the OS would resolve claude:// by launching
+				// the machine-wide install — the wrong profile entirely. Wait for
+				// this one to exist first.
+				if !desktop.WaitRunning(app, p.DataDir(), time.Now().Add(desktopReadyTimeout)) {
+					return fmt.Errorf("%s did not start within %s, so the session was not sent\n"+
+						"Open it first (`clauderig desktop open %s`), then re-run with --session",
+						p.Name, desktopReadyTimeout, p.Name)
+				}
+				// Running is not the same as ready to accept a deep link; Electron
+				// registers the handler shortly after the process exists.
+				time.Sleep(desktopSettle)
 			}
-			if lerr := app.Launch(p.DataDir()); lerr != nil {
-				return lerr
+
+			profiles, _ := st.List()
+			warnAmbiguousRouting(out, app, profiles, p)
+			if oerr := app.OpenURL(resumeDeepLink(target.ID)); oerr != nil {
+				return oerr
 			}
-			_ = st.Touch(p)
-			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ opened"), p.Label())
+			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ sent to Desktop:"), target.label())
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(
+				"If nothing appears, Desktop reports the reason in-app (sign-in, or a missing transcript)."))
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&sessionRef, "session", "", "open this Claude Code session: its id, or text matching its title or project")
+	return cmd
+}
+
+// desktopReadyTimeout bounds the wait for a just-launched profile to exist, and
+// desktopSettle gives Electron a moment past that to register its URL handler.
+const (
+	desktopReadyTimeout = 20 * time.Second
+	desktopSettle       = 1500 * time.Millisecond
+)
+
+// liveSessionIndex reads this machine's Desktop sidecars for session titles.
+// Titles are a nicety — a session with no sidecar still resolves by its first
+// prompt — so an unreadable tree yields an empty index rather than an error.
+func liveSessionIndex() session.Index {
+	var roots []session.Root
+	cfg, err := config.LoadOrDefault()
+	if err == nil {
+		me := config.Detect(machineName(cfg))
+		if loc, _ := cfg.RootLocation("desktop", me); loc != "" {
+			roots = append(roots, session.Root{Label: "desktop", Base: loc})
+		}
+	}
+	// Every profile too: a session opened in one of them has its sidecar there
+	// and nowhere else, so leaving them out would drop the titles for exactly
+	// the sessions this command exists to reach.
+	if st, serr := desktopStore(); serr == nil {
+		if profiles, lerr := st.List(); lerr == nil {
+			for _, pr := range profiles {
+				roots = append(roots, session.Root{Label: pr.Name, Base: pr.DataDir()})
+			}
+		}
+	}
+	return session.Build(roots)
 }
 
 func newDesktopListCmd() *cobra.Command {

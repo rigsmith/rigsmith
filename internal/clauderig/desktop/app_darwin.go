@@ -142,3 +142,15 @@ func (d darwinApp) Quit(dataDir string, grace time.Duration) error {
 
 // Supported reports whether Anthropic ships Claude Desktop for this platform.
 func Supported() bool { return true }
+
+// OpenURL hands the deep link to LaunchServices, which delivers it to the
+// registered handler for the scheme. No bundle is named: `open -a` would launch
+// a fresh instance when none of the running ones takes it, and a second instance
+// on a profile already open is the exact hazard `desktop open` guards against.
+func (d darwinApp) OpenURL(rawurl string) error {
+	cmd := exec.Command("/usr/bin/open", rawurl)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("open %s: %w: %s", rawurl, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}

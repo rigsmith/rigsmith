@@ -16,6 +16,7 @@ func (unsupportedApp) Launch(string) error              { return ErrUnsupported 
 func (unsupportedApp) Running(string) ([]int, error)    { return nil, nil }
 func (unsupportedApp) Focus(string) error               { return ErrUnsupported }
 func (unsupportedApp) Quit(string, time.Duration) error { return ErrUnsupported }
+func (unsupportedApp) OpenURL(string) error             { return ErrUnsupported }
 
 // Supported reports whether Anthropic ships Claude Desktop for this platform.
 func Supported() bool { return false }
