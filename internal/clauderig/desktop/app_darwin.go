@@ -184,7 +184,19 @@ func (d darwinApp) RunningDefault() ([]int, error) {
 		// A profile instance also matches the main binary; what separates it is
 		// the flag. Only a process WITHOUT one is the default install.
 		cmd, cerr := exec.Command("/bin/ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
-		if cerr != nil || strings.Contains(string(cmd), userDataFlagName) {
+		if cerr != nil {
+			// ps exits 1 for "no such process" — the pid vanished between the
+			// pgrep and this lookup, which is ordinary churn and genuinely
+			// means it is not running. Anything else is a failed inspection,
+			// and reporting that as "not the default app" would let the routing
+			// guard send under unknown state.
+			var ee *exec.ExitError
+			if errors.As(cerr, &ee) && ee.ExitCode() == 1 {
+				continue
+			}
+			return nil, fmt.Errorf("inspect Claude Desktop process %d: %w", pid, cerr)
+		}
+		if strings.Contains(string(cmd), userDataFlagName) {
 			continue
 		}
 		pids = append(pids, pid)
