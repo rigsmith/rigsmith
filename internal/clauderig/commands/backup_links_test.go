@@ -87,3 +87,32 @@ func TestCopyOne_PreservesSourcePermissions(t *testing.T) {
 		t.Errorf("content = %q", b)
 	}
 }
+
+// A DANGLING symlink at the backup path passes an os.Stat check as "not
+// present". The copy would then follow it and write through the link — for
+// ~/.claude.json that means an identity file, which can carry MCP credentials,
+// landing wherever the link points.
+func TestBackupPathIsFree_RejectsADanglingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	elsewhere := filepath.Join(dir, "elsewhere.json")
+	bak := filepath.Join(dir, "claude.json.bak")
+	if err := os.Symlink(elsewhere, bak); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	// Stat agrees the target is absent — that is exactly the trap.
+	if _, err := os.Stat(bak); !os.IsNotExist(err) {
+		t.Fatalf("test setup: want a dangling link, Stat gave %v", err)
+	}
+	if err := backupPathIsFree(bak); err == nil {
+		t.Fatal("a dangling symlink must be refused, not treated as free")
+	}
+	if _, err := os.Stat(elsewhere); err == nil {
+		t.Error("nothing should have been written through the link")
+	}
+}
+
+func TestBackupPathIsFree_AllowsAnAbsentPath(t *testing.T) {
+	if err := backupPathIsFree(filepath.Join(t.TempDir(), "nope.bak")); err != nil {
+		t.Errorf("an absent backup path is free: %v", err)
+	}
+}

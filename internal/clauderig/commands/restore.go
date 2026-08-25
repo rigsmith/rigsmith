@@ -107,8 +107,8 @@ func NewRestoreCmd() *cobra.Command {
 			}
 			if backup {
 				bak := cliTarget + ".bak"
-				if _, err := os.Stat(bak); err == nil {
-					return fmt.Errorf("backup %s already exists; move it away first", bak)
+				if err := backupPathIsFree(bak); err != nil {
+					return err
 				}
 				fmt.Fprintf(out, "  backing up %s → %s\n", cliTarget, bak)
 				if err := copyTree(cliTarget, bak); err != nil {
@@ -301,14 +301,34 @@ func backupIdentityFile(out io.Writer) error {
 		return fmt.Errorf("backup identity: %w", err)
 	}
 	dst := src + ".bak"
-	if _, err := os.Stat(dst); err == nil {
-		return fmt.Errorf("backup %s already exists; move it away first", dst)
+	if err := backupPathIsFree(dst); err != nil {
+		return err
 	}
 	fmt.Fprintf(out, "  backing up %s → %s\n", src, dst)
 	if err := copyOne(src, dst); err != nil {
 		return fmt.Errorf("backup identity: %w", err)
 	}
 	return nil
+}
+
+// backupPathIsFree reports that nothing occupies the backup path yet.
+//
+// Lstat, not Stat. A DANGLING symlink there passes a Stat check as "not
+// present", and the copy would then follow it — writing the backup through the
+// link to wherever it points. For the identity file that means ~/.claude.json,
+// which can carry MCP server credentials, landing somewhere never intended. Any
+// existing entry, link included, is a refusal, and a lookup that fails for any
+// other reason stops the backup rather than guessing.
+func backupPathIsFree(path string) error {
+	_, err := os.Lstat(path)
+	switch {
+	case err == nil:
+		return fmt.Errorf("backup %s already exists; move it away first", path)
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	default:
+		return fmt.Errorf("check backup path %s: %w", path, err)
+	}
 }
 
 func copyOne(src, dst string) error {
