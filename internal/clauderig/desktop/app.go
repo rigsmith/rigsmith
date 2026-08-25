@@ -14,6 +14,14 @@ type App interface {
 	Launch(dataDir string) error
 	// Running reports the PIDs of instances bound to exactly this dataDir.
 	Running(dataDir string) ([]int, error)
+	// RunningDefault reports the PIDs of instances running on the app's OWN data
+	// directory — the ordinary Claude Desktop, started with no profile flag.
+	//
+	// It cannot be expressed as Running(<some dir>): a default launch carries no
+	// --user-data-dir at all, so it matches no dataDir and is invisible to that
+	// scan. It still competes for a deep link like any other window, which is
+	// exactly why it needs its own question.
+	RunningDefault() ([]int, error)
 	// Focus brings an already-running instance to the foreground. Best effort:
 	// on platforms with no reliable way to raise one window of several, this may
 	// raise whichever instance the OS considers frontmost.
@@ -62,8 +70,12 @@ func IsRunning(a App, dataDir string) (bool, error) {
 // also the needle every platform matches on to identify a running instance, so
 // the flag and the match are defined in exactly one place.
 func userDataFlag(dataDir string) string {
-	return "--user-data-dir=" + dataDir
+	return userDataFlagName + dataDir
 }
+
+// userDataFlagName is the flag without a value — what tells a profile instance
+// apart from the default install, which carries no such flag at all.
+const userDataFlagName = "--user-data-dir="
 
 // waitGone polls until no instance is bound to dataDir, or the deadline passes.
 // Reports whether they are all gone.

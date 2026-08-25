@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -153,4 +154,40 @@ func (d darwinApp) OpenURL(rawurl string) error {
 		return fmt.Errorf("open %s: %w: %s", rawurl, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// RunningDefault finds instances started with no --user-data-dir: the ordinary
+// Claude Desktop. The pattern matches the MAIN binary only — a helper lives at
+// Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/…, so it
+// shares the bundle prefix but never ".app/Contents/MacOS/Claude".
+func (d darwinApp) RunningDefault() ([]int, error) {
+	bundle, ok := d.Installed()
+	if !ok {
+		return nil, nil // not installed: nothing can be running
+	}
+	main := filepath.Join(bundle, "Contents", "MacOS", "Claude")
+	out, err := exec.Command("/usr/bin/pgrep", "-f", "--", regexp.QuoteMeta(main)).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 {
+			return nil, nil // no matches is an answer
+		}
+		return nil, fmt.Errorf("scan for Claude Desktop processes: %w", err)
+	}
+	me := os.Getpid()
+	var pids []int
+	for _, f := range strings.Fields(string(out)) {
+		pid, perr := strconv.Atoi(f)
+		if perr != nil || pid == me {
+			continue
+		}
+		// A profile instance also matches the main binary; what separates it is
+		// the flag. Only a process WITHOUT one is the default install.
+		cmd, cerr := exec.Command("/bin/ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+		if cerr != nil || strings.Contains(string(cmd), userDataFlagName) {
+			continue
+		}
+		pids = append(pids, pid)
+	}
+	return pids, nil
 }

@@ -211,3 +211,32 @@ func (w windowsApp) OpenURL(rawurl string) error {
 	}
 	return nil
 }
+
+// RunningDefault finds instances started with no --user-data-dir: the ordinary
+// Claude Desktop. Same process listing as Running, inverted — a row WITHOUT the
+// flag is the default install rather than a profile.
+func (w windowsApp) RunningDefault() ([]int, error) {
+	const script = `ConvertTo-Json -Compress -InputObject @(` +
+		`Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | ` +
+		`Select-Object ProcessId,CommandLine)`
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script).Output()
+	if err != nil {
+		return nil, fmt.Errorf("scan for Claude Desktop processes: %w", err)
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" || trimmed == "null" {
+		return nil, nil
+	}
+	var rows []procRow
+	if uerr := json.Unmarshal([]byte(trimmed), &rows); uerr != nil {
+		return nil, fmt.Errorf("parse process list: %w", uerr)
+	}
+	me := os.Getpid()
+	var pids []int
+	for _, r := range rows {
+		if r.ProcessID != me && !strings.Contains(stripQuotes(r.CommandLine), userDataFlagName) {
+			pids = append(pids, r.ProcessID)
+		}
+	}
+	return pids, nil
+}

@@ -233,8 +233,19 @@ func otherRunningProfiles(app desktop.App, profiles []desktop.Profile, target de
 		}
 	}
 	sort.Strings(others)
+	// The ordinary Claude Desktop competes for the link too, and carries no
+	// --user-data-dir, so no profile scan can see it. Asked separately, and
+	// listed last because it is not a profile and cannot be quit by name.
+	if pids, err := app.RunningDefault(); err == nil && len(pids) > 0 {
+		others = append(others, defaultInstanceLabel)
+	}
 	return others
 }
+
+// defaultInstanceLabel names the profile-less install in the refusal. It is not
+// a profile name, so `desktop quit` cannot take it — the message says how to
+// close it instead.
+const defaultInstanceLabel = "the main Claude Desktop app"
 
 // ambiguousRoutingError refuses to send a session while the OS gets to choose
 // which window receives it.
@@ -248,10 +259,20 @@ func ambiguousRoutingError(target desktop.Profile, others []string) error {
 	// The first line is rendered as the headline — capitalised, and given a
 	// trailing period — so it must be one plain sentence that survives both, and
 	// must not start with a profile name.
-	return fmt.Errorf("another Desktop profile is open, so this session could be imported into the wrong account\n\n"+
+	// Only profiles can be quit by name; the default install is closed by hand.
+	var quittable []string
+	for _, o := range others {
+		if o != defaultInstanceLabel {
+			quittable = append(quittable, o)
+		}
+	}
+	remedy := "Quit it and re-run, or pass --anyway to send it to whichever window the OS picks."
+	if len(quittable) > 0 {
+		remedy = fmt.Sprintf("Quit the others (`clauderig desktop quit %s`) and re-run, or pass --anyway\n"+
+			"to send it to whichever window the OS picks.", strings.Join(quittable, " "))
+	}
+	return fmt.Errorf("another Claude Desktop window is open, so this session could be imported into the wrong account\n\n"+
 		"%s is open alongside %s. A deep link is routed by scheme, not to a particular\n"+
-		"window, so the OS decides which one receives it.\n\n"+
-		"Quit the others (`clauderig desktop quit %s`) and re-run, or pass --anyway to\n"+
-		"send it to whichever window the OS picks.",
-		strings.Join(others, ", "), target.Name, strings.Join(others, " "))
+		"window, so the OS decides which one receives it.\n\n%s",
+		strings.Join(others, ", "), target.Name, remedy)
 }

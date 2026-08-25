@@ -146,3 +146,35 @@ func TestOtherRunningProfilesAndRefusal(t *testing.T) {
 		}
 	}
 }
+
+// The ordinary Claude Desktop carries no --user-data-dir, so no profile scan
+// can see it — yet it competes for the deep link exactly like a profile. Left
+// out, the refusal under-reports and the session can still cross an account.
+func TestOtherRunningProfiles_IncludesTheDefaultInstall(t *testing.T) {
+	st := targetStore(t)
+	profiles, err := st.List()
+	if err != nil || len(profiles) != 2 {
+		t.Fatalf("store setup: %v %d", err, len(profiles))
+	}
+	target := profiles[0]
+
+	// Only the target profile, but the profile-less app is up.
+	app := stubApp{open: map[string]bool{target.DataDir(): true, "__default__": true}}
+	got := otherRunningProfiles(app, profiles, target)
+	if len(got) != 1 || got[0] != defaultInstanceLabel {
+		t.Fatalf("want [%s], got %v", defaultInstanceLabel, got)
+	}
+
+	// It cannot be quit by name, so the remedy must not offer a quit command
+	// naming it — that would be an instruction that fails.
+	err = ambiguousRoutingError(target, got)
+	if err == nil {
+		t.Fatal("want a refusal")
+	}
+	if strings.Contains(err.Error(), "desktop quit "+defaultInstanceLabel) {
+		t.Errorf("must not tell the user to quit a non-profile by name: %v", err)
+	}
+	if !strings.Contains(err.Error(), defaultInstanceLabel) {
+		t.Errorf("refusal should name it: %v", err)
+	}
+}

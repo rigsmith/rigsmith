@@ -19,6 +19,12 @@ func (s stubApp) Installed() (string, bool) { return "/Applications/Claude.app",
 func (s stubApp) Launch(string) error       { return nil }
 func (s stubApp) Focus(string) error        { return nil }
 func (s stubApp) OpenURL(string) error      { return nil }
+func (s stubApp) RunningDefault() ([]int, error) {
+	if s.open["__default__"] {
+		return []int{99}, nil
+	}
+	return nil, nil
+}
 func (s stubApp) Quit(string, time.Duration) error {
 	return nil
 }

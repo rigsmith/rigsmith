@@ -154,6 +154,8 @@ type fakeApp struct {
 	opened   []string // deep links handed to OpenURL
 }
 
+func (f *fakeApp) RunningDefault() ([]int, error) { return nil, nil }
+
 func (f *fakeApp) OpenURL(rawurl string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
