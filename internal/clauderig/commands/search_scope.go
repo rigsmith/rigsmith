@@ -82,12 +82,19 @@ const (
 	droppedUnattributed                // no recorded account to match --account
 )
 
-// keep decides whether one session survives the filters. A session with no
-// usable date cannot honestly be placed inside a time window, one with no
-// resolved cwd cannot be matched against --cwd, and one the ledger never
-// attributed cannot be matched against --account — each is dropped rather than
-// waved through, and the second return says which, so the caller can account
-// for them instead of silently shrinking the result set.
+// keep decides whether one session survives the filters. A session that lacks
+// what a filter needs is dropped rather than waved through: no usable date
+// cannot honestly be placed in a time window, no resolved cwd cannot be matched
+// against --cwd, and an attribution the ledger never recorded cannot be matched
+// against --account.
+//
+// The second return distinguishes only the two that are worth reporting —
+// undated and unattributed — because those are permanent properties of the
+// session rather than a verdict on it, and a caller that stayed silent about
+// them would shrink the result set for a reason the user cannot see. A missing
+// cwd is reported as an ordinary filter miss: unlike the other two, it is
+// almost always a transcript this run simply could not read a path from, not a
+// standing fact about the session.
 func (sc sessionScope) keep(r *sessResult) (ok bool, why dropped) {
 	if !sc.since.IsZero() || !sc.until.IsZero() {
 		if r.when.IsZero() {
@@ -255,4 +262,26 @@ func loadDevices() (list []devices.Device, ok bool) {
 		return nil, false
 	}
 	return reg.List(), true
+}
+
+// activeFilters names the narrowing flags actually set, so a "everything was
+// excluded" hint points at the flag that did it rather than a fixed list.
+func (sc sessionScope) activeFilters() []string {
+	var f []string
+	if !sc.since.IsZero() {
+		f = append(f, "--since")
+	}
+	if !sc.until.IsZero() {
+		f = append(f, "--until")
+	}
+	if sc.cwd != "" {
+		f = append(f, "--cwd")
+	}
+	if sc.account != "" {
+		f = append(f, "--account")
+	}
+	if len(f) == 0 {
+		return []string{"the filters"}
+	}
+	return f
 }

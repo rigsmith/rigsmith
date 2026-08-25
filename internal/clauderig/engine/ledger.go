@@ -32,6 +32,12 @@ func recordLedger(stagingDir, device, liveAccount string) (added int, total int,
 	// sessions opened through Desktop (3% of a real staged tree), which is why
 	// liveAccount exists as the fallback for the rest.
 	byDesktop := desktopSessionAccounts(stagingDir)
+	// Judge "would this attribution improve things?" against EVERY device's
+	// ledger, not just this one's. Another machine may already hold Desktop
+	// ground truth for a session this machine only has a transcript for, and
+	// writing a weaker guess here would churn a row every sync for an answer
+	// the union then discards anyway.
+	union := ledger.LoadAll(stagingDir)
 	projects := filepath.Join(stagingDir, "cli", "projects")
 	if dirExists(projects) {
 		walkErr := filepath.WalkDir(projects, func(p string, d os.DirEntry, werr error) error {
@@ -74,7 +80,11 @@ func recordLedger(stagingDir, device, liveAccount string) (added int, total int,
 			// one, or a session first labelled by inference could never be upgraded
 			// by its Desktop sidecar: the transcript it names never changes again,
 			// so there would be no later occasion to look.
-			_, prevSrc := l.Attribution(id)
+			_, localSrc := l.Attribution(id)
+			prevSrc := localSrc
+			if u := union[id].AccountSource; ledger.AccountRank(u) > ledger.AccountRank(prevSrc) {
+				prevSrc = u
+			}
 			if l.Fresh(id, end, info.Size()) && ledger.AccountRank(src) <= ledger.AccountRank(prevSrc) {
 				return nil
 			}

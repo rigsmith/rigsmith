@@ -58,6 +58,10 @@ func NewSearchCmd() *cobra.Command {
 			"  --since/--until  narrow to when the session was last used (2026-08-17,\n" +
 			"          an RFC3339 timestamp, or an age like 7d/36h)\n" +
 			"  --cwd   narrow to sessions whose project directory contains this text\n" +
+			"  --account  narrow to one account's sessions (alias, email, or an\n" +
+			"          accountUuid prefix). Reads the synced ledger, so it cannot be\n" +
+			"          combined with --live, and only sessions synced since attribution\n" +
+			"          was recorded carry one\n" +
 			"  --raw   grep-style line output instead of grouped sessions\n" +
 			"  --all   search EVERY file (config, skills, file-history, Desktop dir),\n" +
 			"          not just transcripts; implies --raw (non-chat files aren't sessions)\n\n" +
@@ -148,7 +152,7 @@ func NewSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&since, "since", "", "only sessions last used on/after this day, timestamp, or age (7d)")
 	cmd.Flags().StringVar(&until, "until", "", "only sessions last used on/before this day, timestamp, or age (7d)")
 	cmd.Flags().StringVar(&cwdFilter, "cwd", "", "only sessions whose project directory contains this text")
-	cmd.Flags().StringVar(&accountFilter, "account", "", "only sessions belonging to this account (alias, email, or accountUuid prefix)")
+	cmd.Flags().StringVar(&accountFilter, "account", "", "only sessions belonging to this account (alias, email, or accountUuid prefix); reads the synced ledger, so not with --live")
 	return cmd
 }
 
@@ -407,7 +411,11 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	if len(results) == 0 {
 		fmt.Fprintln(out, DimStyle.Render("no matching sessions"))
 		if hidden > 0 {
-			fmt.Fprintln(out, DimStyle.Render("(every match was excluded by --since/--until/--cwd — widen them)"))
+			// Name the filters actually in play. Listing --since/--until/--cwd
+			// when --account did the excluding sends the user to widen the wrong
+			// flag, and --account is the one whose exclusions are least visible.
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(
+				"(every match was excluded by "+strings.Join(sc.activeFilters(), "/")+" — widen them)"))
 		}
 		fmt.Fprintln(out, DimStyle.Render("(try --raw for line-level hits, or --all to include config/file-history)"))
 		fmt.Fprintln(out, DimStyle.Render("(Desktop 'Chat' tab chats are server-side and never appear here — check claude.ai)"))

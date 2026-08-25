@@ -184,6 +184,10 @@ func (l *Ledger) Note(e Entry) bool {
 			// stale transcript state over the newer row.
 			prev.Account, prev.AccountSource = e.Account, e.AccountSource
 			prev.RecordedBy = l.device
+			// The row IS being rewritten, so Seen has to move with it — a stale
+			// stamp would misreport when this attribution was last confirmed,
+			// and Seen is a tiebreak in the cross-device union.
+			prev.Seen = e.Seen
 			l.rows[e.ID] = prev
 			l.dirty = true
 			return true
@@ -287,10 +291,22 @@ func LoadAll(dir string) map[string]Entry {
 			continue
 		}
 		for _, r := range rows {
-			if prev, ok := out[r.ID]; ok && !newerRow(r, prev) {
+			prev, ok := out[r.ID]
+			if !ok {
+				out[r.ID] = r
 				continue
 			}
-			out[r.ID] = r
+			winner, loser := prev, r
+			if newerRow(r, prev) {
+				winner, loser = r, prev
+			}
+			// Attribution follows RANK across devices, not recency. Note()
+			// enforces that within one device's file, but the union is where two
+			// files meet: without this, a machine that later re-saw the same
+			// transcript with no sidecar would replace another machine's Desktop
+			// ground truth with its own inference purely by having synced last.
+			winner.Account, winner.AccountSource = mergeAccount(winner, loser)
+			out[r.ID] = winner
 		}
 	}
 	return out

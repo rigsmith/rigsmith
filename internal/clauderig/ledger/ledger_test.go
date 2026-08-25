@@ -303,3 +303,71 @@ func TestNote_AccountAttributionIsRankedAndSticky(t *testing.T) {
 		}
 	})
 }
+
+// Note() ranks attribution within one device's file; the union is where two
+// files meet. Without ranking there too, a machine that later re-saw the same
+// transcript with no sidecar would replace another machine's Desktop ground
+// truth purely by having synced last.
+func TestLoadAll_KeepsGroundTruthAcrossDevices(t *testing.T) {
+	dir := t.TempDir()
+	end := time.Unix(100, 0).UTC()
+
+	// Machine A: ground truth, seen earlier.
+	a, _ := Open(dir, "machine-a")
+	a.Note(Entry{ID: "s1", End: end, Bytes: 10, Seen: time.Unix(500, 0).UTC(),
+		Account: "acct-truth", AccountSource: AccountFromDesktop})
+	if err := a.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Machine B: same transcript, no sidecar, synced LATER.
+	b, _ := Open(dir, "machine-b")
+	b.Note(Entry{ID: "s1", End: end, Bytes: 10, Seen: time.Unix(900, 0).UTC(),
+		Account: "acct-guess", AccountSource: AccountFromSync})
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := LoadAll(dir)["s1"]
+	if got.Account != "acct-truth" || got.AccountSource != AccountFromDesktop {
+		t.Errorf("union = %q/%q, want acct-truth/%s — recency must not outrank ground truth",
+			got.Account, got.AccountSource, AccountFromDesktop)
+	}
+	// The rest of the row still comes from the newer sighting.
+	if !got.Seen.Equal(time.Unix(900, 0).UTC()) {
+		t.Errorf("Seen = %v, want the newer row's", got.Seen)
+	}
+}
+
+// An older twin that only contributes a better attribution is still a rewrite,
+// so its Seen stamp has to move — it is a tiebreak in the union.
+func TestNote_OlderTwinUpgradeStampsSeen(t *testing.T) {
+	l, _ := Open(t.TempDir(), "mbp")
+	newer := Entry{ID: "s1", End: time.Unix(200, 0).UTC(), Bytes: 20,
+		Seen: time.Unix(500, 0).UTC(), Account: "a", AccountSource: AccountFromSync}
+	l.Note(newer)
+
+	olderWithTruth := Entry{ID: "s1", End: time.Unix(100, 0).UTC(), Bytes: 10,
+		Seen: time.Unix(900, 0).UTC(), Account: "b", AccountSource: AccountFromDesktop}
+	if !l.Note(olderWithTruth) {
+		t.Fatal("an attribution upgrade from the older twin must write")
+	}
+	got := LoadAll(mustSave(t, l))["s1"]
+	if got.AccountSource != AccountFromDesktop || got.Account != "b" {
+		t.Errorf("attribution = %q/%q, want b/%s", got.Account, got.AccountSource, AccountFromDesktop)
+	}
+	if !got.End.Equal(time.Unix(200, 0).UTC()) || got.Bytes != 20 {
+		t.Errorf("the older twin overwrote transcript state: end=%v bytes=%d", got.End, got.Bytes)
+	}
+	if !got.Seen.Equal(time.Unix(900, 0).UTC()) {
+		t.Errorf("Seen = %v, want the writing row's stamp", got.Seen)
+	}
+}
+
+func mustSave(t *testing.T, l *Ledger) string {
+	t.Helper()
+	if err := l.Save(); err != nil {
+		t.Fatal(err)
+	}
+	return l.dir
+}

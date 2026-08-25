@@ -93,3 +93,19 @@ func TestResolveAccountFilter_AmbiguousPrefix(t *testing.T) {
 		t.Fatal("an ambiguous prefix must error rather than pick one")
 	}
 }
+
+// The "everything was excluded" hint must name the flag that did the excluding.
+// A fixed list sends the user to widen --since when --account was responsible.
+func TestSessionScope_ActiveFiltersNamesWhatIsSet(t *testing.T) {
+	if got := (sessionScope{}).activeFilters(); len(got) != 1 || got[0] != "the filters" {
+		t.Errorf("no filters set = %v, want a generic phrase", got)
+	}
+	got := (sessionScope{account: "acct-a"}).activeFilters()
+	if len(got) != 1 || got[0] != "--account" {
+		t.Errorf("account only = %v, want [--account]", got)
+	}
+	both := (sessionScope{account: "acct-a", cwd: "api"}).activeFilters()
+	if len(both) != 2 {
+		t.Errorf("account+cwd = %v, want both named", both)
+	}
+}
