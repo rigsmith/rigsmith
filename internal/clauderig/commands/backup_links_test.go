@@ -3,6 +3,7 @@ package commands
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -62,12 +63,25 @@ func TestCopyOne_PreservesSourcePermissions(t *testing.T) {
 	if err := copyOne(src, dst); err != nil {
 		t.Fatal(err)
 	}
+	si, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
 	fi, err := os.Stat(dst)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fi.Mode().Perm(); got != 0o600 {
-		t.Errorf("backup mode = %04o, want 0600 (source mode)", got)
+	// Assert the PROPERTY — the backup carries the source's mode — rather than a
+	// literal 0600. Windows has no Unix permission bits: Go reports 0666 and
+	// Chmod only toggles read-only, so a literal would fail there for a reason
+	// that has nothing to do with this code.
+	if got := fi.Mode().Perm(); got != si.Mode().Perm() {
+		t.Errorf("backup mode = %04o, want %04o (source mode)", got, si.Mode().Perm())
+	}
+	// Where the bits are real, pin the case that matters: ~/.claude is full of
+	// 0600 transcripts, and os.Create would have widened them to 0644.
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+		t.Errorf("backup mode = %04o, want 0600", fi.Mode().Perm())
 	}
 	if b, _ := os.ReadFile(dst); string(b) != "secret transcript" {
 		t.Errorf("content = %q", b)

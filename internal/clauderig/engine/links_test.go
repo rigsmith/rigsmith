@@ -201,3 +201,37 @@ func TestSync_RetiresStagedFileShadowedByDirLink(t *testing.T) {
 		t.Error("stale staged file shadowed by a dir link should be retired")
 	}
 }
+
+// The guard must cover symlinked ANCESTORS, not just a symlinked leaf. Another
+// machine that holds this project as a real directory stages
+// projects/<slug>/memory/MEMORY.md; here that memory/ is a link, so writing the
+// descendant follows it and clobbers the canonical project's memory — the same
+// damage the leaf check prevents, one level up.
+func TestRestore_NeverWritesThroughASymlinkedParent(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/projects/-main/memory/MEMORY.md", "canonical facts")
+	write(t, staging, "cli/projects/-wt/s.jsonl", "t\n")
+	// staged as a real path by the machine that had it as a real directory
+	write(t, staging, "cli/projects/-wt/memory/MEMORY.md", "worktree copy")
+
+	target := t.TempDir()
+	write(t, target, "projects/-main/memory/MEMORY.md", "canonical facts")
+	if err := os.MkdirAll(filepath.Join(target, "projects", "-wt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(target, "projects", "-wt", "memory")
+	if err := os.Symlink(filepath.Join(target, "projects", "-main", "memory"), link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	if _, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target), Machine: jane, TargetOverride: override("cli", target)}); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	// The canonical memory must be untouched — writing through the link would
+	// have replaced it with the worktree copy.
+	got, _ := os.ReadFile(filepath.Join(target, "projects", "-main", "memory", "MEMORY.md"))
+	if string(got) != "canonical facts" {
+		t.Errorf("canonical memory clobbered through the link: got %q", got)
+	}
+}

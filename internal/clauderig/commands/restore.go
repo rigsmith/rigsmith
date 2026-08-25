@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -291,7 +292,13 @@ func backupIdentityFile(out io.Writer) error {
 		return nil // no home dir: nothing addressable to back up
 	}
 	if _, err := os.Stat(src); err != nil {
-		return nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // never logged in here: nothing to protect
+		}
+		// Anything else — unreadable, an I/O error — is not "no identity file".
+		// Skipping silently would drop the one file this backup exists for, at
+		// the moment its state is least certain.
+		return fmt.Errorf("backup identity: %w", err)
 	}
 	dst := src + ".bak"
 	if _, err := os.Stat(dst); err == nil {
