@@ -229,23 +229,27 @@ func pickSession(ref string, cands []sessionCandidate) (sessionCandidate, error)
 // SCHEME, not per instance: there is no per-instance address, and the profile
 // flag that separates instances is a launch argument a URL cannot carry. With
 // more than one instance up, the OS picks the recipient.
+// dataDirs comes from CandidateDataDirs, not List: a profile whose metadata
+// will not parse is skipped by List but can still be RUNNING, and would then
+// compete for the deep link while being invisible to this scan.
+//
 // A scan that FAILS is not a scan that found nothing. Treating "could not
 // look" as "nothing is open" would let the refusal pass on unknown state and
 // send the session anyway — the same account-crossing this exists to stop. So
 // every error propagates, matching what `desktop open` already does when it
 // cannot tell whether a profile is running.
-func otherRunningProfiles(app desktop.App, profiles []desktop.Profile, target desktop.Profile) ([]string, error) {
+func otherRunningProfiles(app desktop.App, dataDirs map[string]string, target desktop.Profile) ([]string, error) {
 	var others []string
-	for _, p := range profiles {
-		if p.Name == target.Name {
+	for name, dir := range dataDirs {
+		if name == target.Name {
 			continue
 		}
-		pids, err := app.Running(p.DataDir())
+		pids, err := app.Running(dir)
 		if err != nil {
-			return nil, fmt.Errorf("could not tell whether %s is open: %w", p.Name, err)
+			return nil, fmt.Errorf("could not tell whether %s is open: %w", name, err)
 		}
 		if len(pids) > 0 {
-			others = append(others, p.Name)
+			others = append(others, name)
 		}
 	}
 	sort.Strings(others)

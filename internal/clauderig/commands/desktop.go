@@ -348,12 +348,12 @@ func newDesktopOpenCmd() *cobra.Command {
 				// declining to send reads as a half-done action. A listing or scan
 				// that FAILS stops here as well — unknown state must not be read as
 				// "nothing else is open".
-				profiles, lerr := st.List()
+				dirs, lerr := st.CandidateDataDirs()
 				if lerr != nil {
 					return fmt.Errorf("could not list Desktop profiles: %w\n"+
 						"Sending now could import the session into the wrong account", lerr)
 				}
-				others, oerr := otherRunningProfiles(app, profiles, p)
+				others, oerr := otherRunningProfiles(app, dirs, p)
 				if oerr != nil {
 					return fmt.Errorf("%w\nSending now could import the session into the wrong account", oerr)
 				}
@@ -406,12 +406,12 @@ func newDesktopOpenCmd() *cobra.Command {
 			// Re-read: launching this profile above may itself have changed what
 			// is running, and --anyway still needs to name what it is competing
 			// with. Errors stop the send for the same reason as above.
-			profiles, lerr := st.List()
+			dirs, lerr := st.CandidateDataDirs()
 			if lerr != nil {
 				return fmt.Errorf("could not list Desktop profiles: %w\n"+
 					"Sending now could import the session into the wrong account", lerr)
 			}
-			others, derr := otherRunningProfiles(app, profiles, p)
+			others, derr := otherRunningProfiles(app, dirs, p)
 			if derr != nil {
 				return fmt.Errorf("%w\nSending now could import the session into the wrong account", derr)
 			}

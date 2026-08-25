@@ -7,8 +7,18 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
 )
+
+// dirsOf mirrors Store.CandidateDataDirs for a set of loaded profiles.
+func dirsOf(profiles []desktop.Profile) map[string]string {
+	out := map[string]string{}
+	for _, p := range profiles {
+		out[p.Name] = p.DataDir()
+	}
+	return out
+}
 
 func writeTranscript(t *testing.T, home, slug, id, firstPrompt string) {
 	t.Helper()
@@ -127,7 +137,7 @@ func TestOtherRunningProfilesAndRefusal(t *testing.T) {
 	target, other := profiles[0], profiles[1]
 
 	onlyTarget := stubApp{open: map[string]bool{target.DataDir(): true}}
-	got, err := otherRunningProfiles(onlyTarget, profiles, target)
+	got, err := otherRunningProfiles(onlyTarget, dirsOf(profiles), target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +146,7 @@ func TestOtherRunningProfilesAndRefusal(t *testing.T) {
 	}
 
 	both := stubApp{open: map[string]bool{target.DataDir(): true, other.DataDir(): true}}
-	got, err = otherRunningProfiles(both, profiles, target)
+	got, err = otherRunningProfiles(both, dirsOf(profiles), target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +178,7 @@ func TestOtherRunningProfiles_IncludesTheDefaultInstall(t *testing.T) {
 
 	// Only the target profile, but the profile-less app is up.
 	app := stubApp{open: map[string]bool{target.DataDir(): true, "__default__": true}}
-	got, gerr := otherRunningProfiles(app, profiles, target)
+	got, gerr := otherRunningProfiles(app, dirsOf(profiles), target)
 	if gerr != nil {
 		t.Fatal(gerr)
 	}
@@ -199,10 +209,10 @@ func TestOtherRunningProfiles_FailsClosedOnScanError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := otherRunningProfiles(scanFailApp{}, profiles, profiles[0]); err == nil {
+	if _, err := otherRunningProfiles(scanFailApp{}, dirsOf(profiles), profiles[0]); err == nil {
 		t.Fatal("a failed profile scan must be an error, not an empty result")
 	}
-	if _, err := otherRunningProfiles(defaultScanFailApp{}, profiles, profiles[0]); err == nil {
+	if _, err := otherRunningProfiles(defaultScanFailApp{}, dirsOf(profiles), profiles[0]); err == nil {
 		t.Fatal("a failed scan for the profile-less app must be an error too")
 	}
 }
@@ -261,5 +271,47 @@ func TestAmbiguousRoutingError_MixedConflictNamesBothRemedies(t *testing.T) {
 	// staticcheck ST1005: error strings must not end in punctuation.
 	if strings.HasSuffix(msg, ".") {
 		t.Errorf("error string ends with punctuation: %q", msg)
+	}
+}
+
+// Store.List skips a profile whose profile.json will not parse — reasonable for
+// a listing, wrong for a safety scan: that profile can still be RUNNING and
+// competing for the deep link. CandidateDataDirs sees it, so the scan does too.
+func TestOtherRunningProfiles_SeesAProfileWithUnreadableMetadata(t *testing.T) {
+	st := targetStore(t)
+	profiles, err := st.List()
+	if err != nil || len(profiles) != 2 {
+		t.Fatalf("store setup: %v %d", err, len(profiles))
+	}
+	target := profiles[0]
+
+	// A directory that looks like a profile but whose metadata is corrupt.
+	broken := filepath.Join(st.Root, "broken")
+	if err := os.MkdirAll(filepath.Join(broken, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(broken, "profile.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.List(); len(got) != 2 {
+		t.Fatalf("List should still skip it, got %d", len(got))
+	}
+
+	dirs, err := st.CandidateDataDirs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := dirs["broken"]; !ok {
+		t.Fatal("CandidateDataDirs must include the unreadable profile")
+	}
+
+	// It is running: the scan has to report it, or the guard sends blind.
+	app := stubApp{open: map[string]bool{filepath.Join(broken, "data"): true}}
+	others, err := otherRunningProfiles(app, dirs, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(others) != 1 || others[0] != "broken" {
+		t.Errorf("want [broken], got %v", others)
 	}
 }

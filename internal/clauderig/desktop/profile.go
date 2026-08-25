@@ -117,6 +117,34 @@ func (s *Store) metaPath(name string) string {
 	return filepath.Join(s.profileDir(name), "profile.json")
 }
 
+// CandidateDataDirs returns the data directory of every entry under the store
+// root, keyed by directory name — INCLUDING entries List skips because their
+// profile.json is missing, corrupt, or unreadable.
+//
+// List is deliberately forgiving: an unreadable directory should not fail a
+// listing meant for display. But a safety scan cannot inherit that. A profile
+// whose metadata will not parse can still have a Claude Desktop instance
+// running against its data dir, competing for a scheme-routed deep link
+// exactly like any other — so anything deciding whether it is safe to send one
+// has to see it, name or no name.
+func (s *Store) CandidateDataDirs() (map[string]string, error) {
+	entries, err := os.ReadDir(s.Root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		out[e.Name()] = filepath.Join(s.profileDir(e.Name()), "data")
+	}
+	return out, nil
+}
+
 // List returns every saved profile, ordered by name.
 func (s *Store) List() ([]Profile, error) {
 	entries, err := os.ReadDir(s.Root)
