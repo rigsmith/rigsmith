@@ -22,11 +22,16 @@ import (
 //
 // Rows already matching the transcript's size and mtime are skipped without
 // opening the file, so a steady-state sync reads nothing and writes nothing.
-func recordLedger(stagingDir, device string) (added int, total int, err error) {
+func recordLedger(stagingDir, device, liveAccount string) (added int, total int, err error) {
 	l, err := ledger.Open(stagingDir, device)
 	if err != nil {
 		return 0, 0, err
 	}
+	// Ground truth first: Desktop files each session under the account that
+	// opened it, so anything this covers needs no guessing. It covers only
+	// sessions opened through Desktop (3% of a real staged tree), which is why
+	// liveAccount exists as the fallback for the rest.
+	byDesktop := desktopSessionAccounts(stagingDir)
 	projects := filepath.Join(stagingDir, "cli", "projects")
 	if dirExists(projects) {
 		walkErr := filepath.WalkDir(projects, func(p string, d os.DirEntry, werr error) error {
@@ -51,21 +56,37 @@ func recordLedger(stagingDir, device string) (added int, total int, err error) {
 			if id == "" {
 				return nil
 			}
+			var acct, src string
+			if a := byDesktop[id]; a != "" {
+				acct, src = a, ledger.AccountFromDesktop
+			} else if liveAccount != "" {
+				// Only ever an inference about this machine's own syncing, and
+				// sticky once stored — see ledger.AccountFromSync.
+				acct, src = liveAccount, ledger.AccountFromSync
+			}
 			info, serr := os.Stat(p)
 			if serr != nil {
 				return nil
 			}
 			end := info.ModTime().UTC()
-			if l.Fresh(id, end, info.Size()) {
+			// An unchanged transcript is normally skipped without reading it. It
+			// still needs a pass when the attribution on offer OUTRANKS the stored
+			// one, or a session first labelled by inference could never be upgraded
+			// by its Desktop sidecar: the transcript it names never changes again,
+			// so there would be no later occasion to look.
+			_, prevSrc := l.Attribution(id)
+			if l.Fresh(id, end, info.Size()) && ledger.AccountRank(src) <= ledger.AccountRank(prevSrc) {
 				return nil
 			}
 			e := ledger.Entry{
-				ID:    id,
-				Slug:  slugOf(rel),
-				End:   end,
-				Bytes: info.Size(),
-				Title: session.FirstPrompt(p),
-				Seen:  time.Now().UTC(),
+				ID:            id,
+				Slug:          slugOf(rel),
+				End:           end,
+				Bytes:         info.Size(),
+				Title:         session.FirstPrompt(p),
+				Seen:          time.Now().UTC(),
+				Account:       acct,
+				AccountSource: src,
 			}
 			if cwd, ok, cerr := project.CwdFromTranscript(p); cerr == nil && ok {
 				e.Cwd = cwd

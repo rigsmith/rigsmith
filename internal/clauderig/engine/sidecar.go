@@ -158,3 +158,85 @@ func pruneSidecarTree(root string, ids map[string]bool) (int, error) {
 	removeEmptyDirs(root)
 	return pruned, nil
 }
+
+// desktopSessionAccounts maps a CLI session id to the accountUuid that owns it,
+// read from every staged Desktop sidecar tree.
+//
+// The account is the PATH, not a field in the file:
+// <root>/claude-code-sessions/<accountUuid>/<organizationUuid>/local_<id>.json.
+// Desktop files each session under the account that opened it, which makes this
+// ground truth about ownership — unlike the syncing machine's current login,
+// which is only ever an inference about someone else's past.
+//
+// Every staged tree is read, including roots this run did not walk. That is the
+// opposite of pruneOrphanedSidecars' fail-open rule, and deliberately so: that
+// pass DELETES on absence, so a partial view is dangerous, while this one only
+// ever adds an attribution, so a partial view merely attributes less.
+func desktopSessionAccounts(stagingDir string) map[string]string {
+	out := map[string]string{}
+	entries, err := os.ReadDir(stagingDir)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		// Both layouts: a machine-wide root holds the tree directly, a profile
+		// root nests it under data/ (see desktopTreesIn).
+		for _, tree := range []string{
+			filepath.Join(stagingDir, e.Name(), sidecarTree),
+			filepath.Join(stagingDir, e.Name(), "data", sidecarTree),
+		} {
+			readSidecarAccounts(tree, out)
+		}
+	}
+	return out
+}
+
+// readSidecarAccounts adds one tree's <accountUuid>/<org>/local_*.json rows to
+// out. A sidecar that cannot be read or names no session is skipped: attribution
+// is optional, so an unreadable file costs one session's label and nothing else.
+func readSidecarAccounts(root string, out map[string]string) {
+	if !dirExists(root) {
+		return
+	}
+	accounts, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, acct := range accounts {
+		if !acct.IsDir() {
+			continue
+		}
+		orgs, err := os.ReadDir(filepath.Join(root, acct.Name()))
+		if err != nil {
+			continue
+		}
+		for _, org := range orgs {
+			if !org.IsDir() {
+				continue
+			}
+			dir := filepath.Join(root, acct.Name(), org.Name())
+			files, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, f := range files {
+				name := f.Name()
+				if !strings.HasPrefix(name, "local_") || !strings.HasSuffix(name, ".json") {
+					continue
+				}
+				data, rerr := os.ReadFile(filepath.Join(dir, name))
+				if rerr != nil {
+					continue
+				}
+				var ref sidecarRef
+				if json.Unmarshal(data, &ref) != nil || ref.CLISessionID == "" {
+					continue
+				}
+				out[ref.CLISessionID] = acct.Name()
+			}
+		}
+	}
+}

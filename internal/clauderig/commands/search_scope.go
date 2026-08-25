@@ -38,6 +38,11 @@ type sessionScope struct {
 	until time.Time
 	// cwd is a case-insensitive substring of the session's project directory.
 	cwd string
+	// account is a resolved accountUuid from --account; only sessions the ledger
+	// attributes to it survive. Attribution is recorded at sync time and cannot
+	// be reconstructed afterwards, so sessions synced before it existed have
+	// none and are reported as such rather than quietly assumed to match.
+	account string
 	// devices is the synced registry; empty when there is no staging repo (or
 	// when --live took it out of scope), which correctly prints no footer.
 	devices []devices.Device
@@ -62,35 +67,56 @@ type sessionScope struct {
 
 // filtering reports whether any narrowing flag was set.
 func (sc sessionScope) filtering() bool {
-	return !sc.since.IsZero() || !sc.until.IsZero() || sc.cwd != ""
+	return !sc.since.IsZero() || !sc.until.IsZero() || sc.cwd != "" || sc.account != ""
 }
 
+// dropped says WHY keep() rejected a session, when the reason is that the
+// session lacks the information the filter needs rather than that it failed the
+// filter. Those two look identical in a shrunken result set and mean opposite
+// things: "no such session" versus "cannot tell".
+type dropped int
+
+const (
+	droppedByFilter     dropped = iota // genuinely outside the filter
+	droppedUndated                     // no date to place in a time window
+	droppedUnattributed                // no recorded account to match --account
+)
+
 // keep decides whether one session survives the filters. A session with no
-// usable date cannot honestly be placed inside a time window, and one with no
-// resolved cwd cannot be matched against --cwd, so each is dropped rather than
-// waved through — the second return says which, so the caller can account for
-// them instead of silently shrinking the result set.
-func (sc sessionScope) keep(r *sessResult) (ok bool, undated bool) {
+// usable date cannot honestly be placed inside a time window, one with no
+// resolved cwd cannot be matched against --cwd, and one the ledger never
+// attributed cannot be matched against --account — each is dropped rather than
+// waved through, and the second return says which, so the caller can account
+// for them instead of silently shrinking the result set.
+func (sc sessionScope) keep(r *sessResult) (ok bool, why dropped) {
 	if !sc.since.IsZero() || !sc.until.IsZero() {
 		if r.when.IsZero() {
-			return false, true
+			return false, droppedUndated
 		}
 		if !sc.since.IsZero() && r.when.Before(sc.since) {
-			return false, false
+			return false, droppedByFilter
 		}
 		if !sc.until.IsZero() && r.when.After(sc.until) {
-			return false, false
+			return false, droppedByFilter
 		}
 	}
 	if sc.cwd != "" {
 		if r.cwd == "" {
-			return false, false
+			return false, droppedByFilter
 		}
 		if !strings.Contains(strings.ToLower(r.cwd), sc.cwd) {
-			return false, false
+			return false, droppedByFilter
 		}
 	}
-	return true, false
+	if sc.account != "" {
+		if r.led.Account == "" {
+			return false, droppedUnattributed
+		}
+		if !strings.EqualFold(r.led.Account, sc.account) {
+			return false, droppedByFilter
+		}
+	}
+	return true, droppedByFilter
 }
 
 // parseWhen reads a --since/--until value in any of three shapes: a calendar day

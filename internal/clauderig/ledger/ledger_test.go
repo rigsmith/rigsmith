@@ -224,3 +224,82 @@ func TestLoadAll_PrefersTheLaterSessionNotTheLaterWrite(t *testing.T) {
 		t.Errorf("a later write of an older session won: %+v", got["s"])
 	}
 }
+
+// Attribution is ranked and sticky: ground truth may upgrade an inference, but
+// nothing downgrades, and re-syncing under a different login cannot relabel a
+// session someone else's.
+func TestNote_AccountAttributionIsRankedAndSticky(t *testing.T) {
+	base := Entry{ID: "s1", End: time.Unix(100, 0).UTC(), Bytes: 10}
+
+	t.Run("inference is recorded when nothing is known", func(t *testing.T) {
+		l, _ := Open(t.TempDir(), "mbp")
+		e := base
+		e.Account, e.AccountSource = "acct-a", AccountFromSync
+		if !l.Note(e) {
+			t.Fatal("first note should write")
+		}
+		if a, s := l.Attribution("s1"); a != "acct-a" || s != AccountFromSync {
+			t.Errorf("got %q/%q", a, s)
+		}
+	})
+
+	t.Run("a later sync under another login does not relabel", func(t *testing.T) {
+		l, _ := Open(t.TempDir(), "mbp")
+		e := base
+		e.Account, e.AccountSource = "acct-a", AccountFromSync
+		l.Note(e)
+		// same rank, different account, and a changed transcript
+		e2 := base
+		e2.Bytes, e2.End = 20, time.Unix(200, 0).UTC()
+		e2.Account, e2.AccountSource = "acct-b", AccountFromSync
+		l.Note(e2)
+		if a, _ := l.Attribution("s1"); a != "acct-a" {
+			t.Errorf("sticky attribution lost: got %q, want acct-a", a)
+		}
+	})
+
+	t.Run("desktop ground truth upgrades an inference", func(t *testing.T) {
+		l, _ := Open(t.TempDir(), "mbp")
+		e := base
+		e.Account, e.AccountSource = "acct-a", AccountFromSync
+		l.Note(e)
+		up := base // byte-identical transcript: only the attribution improves
+		up.Account, up.AccountSource = "acct-b", AccountFromDesktop
+		if !l.Note(up) {
+			t.Fatal("an account upgrade must write even when the transcript is unchanged")
+		}
+		if a, s := l.Attribution("s1"); a != "acct-b" || s != AccountFromDesktop {
+			t.Errorf("got %q/%q, want acct-b/%s", a, s, AccountFromDesktop)
+		}
+	})
+
+	t.Run("ground truth is never downgraded", func(t *testing.T) {
+		l, _ := Open(t.TempDir(), "mbp")
+		e := base
+		e.Account, e.AccountSource = "acct-b", AccountFromDesktop
+		l.Note(e)
+		down := base
+		down.Bytes, down.End = 20, time.Unix(200, 0).UTC()
+		down.Account, down.AccountSource = "acct-a", AccountFromSync
+		l.Note(down)
+		if a, s := l.Attribution("s1"); a != "acct-b" || s != AccountFromDesktop {
+			t.Errorf("ground truth downgraded to %q/%q", a, s)
+		}
+	})
+
+	t.Run("an unattributed row stays writable and takes the first account", func(t *testing.T) {
+		l, _ := Open(t.TempDir(), "mbp")
+		l.Note(base)
+		if a, _ := l.Attribution("s1"); a != "" {
+			t.Fatalf("expected no attribution, got %q", a)
+		}
+		later := base
+		later.Account, later.AccountSource = "acct-a", AccountFromSync
+		if !l.Note(later) {
+			t.Fatal("adding a first attribution must write")
+		}
+		if a, _ := l.Attribution("s1"); a != "acct-a" {
+			t.Errorf("got %q", a)
+		}
+	})
+}

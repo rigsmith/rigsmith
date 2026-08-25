@@ -67,6 +67,11 @@ type Options struct {
 	// roots — see profiles.go. Each is walked as its own root, and they follow
 	// the Desktop root's enabled flag.
 	Profiles []string
+	// LiveAccountUUID is the account this machine is logged into Claude Code as,
+	// used to attribute ledger rows that no Desktop sidecar covers. Empty (not
+	// logged in, unreadable) simply leaves those rows unattributed — a guess is
+	// never invented, and a stored attribution is never overwritten by one.
+	LiveAccountUUID string
 }
 
 // Sync materialises the allowlisted, redacted file set for each enabled root into
@@ -263,7 +268,7 @@ func Sync(opts Options) (*Report, error) {
 	// is about to age out still leaves a searchable row behind — otherwise `search`
 	// answers "no such session", which reads as "that chat never existed" rather
 	// than "its body is older than the window, recover it from git history".
-	if added, total, lerr := recordLedger(opts.StagingDir, opts.Machine.Name); lerr == nil {
+	if added, total, lerr := recordLedger(opts.StagingDir, opts.Machine.Name, opts.LiveAccountUUID); lerr == nil {
 		rep.LedgerAdded, rep.LedgerTotal = added, total
 	} else {
 		// Best-effort: the ledger is a convenience for later searches and must

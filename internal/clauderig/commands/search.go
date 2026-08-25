@@ -42,6 +42,7 @@ func NewSearchCmd() *cobra.Command {
 		since         string
 		until         string
 		cwdFilter     string
+		accountFilter string
 	)
 	cmd := &cobra.Command{
 		Use:     "search <text>",
@@ -94,7 +95,7 @@ func NewSearchCmd() *cobra.Command {
 			// properties of a session, not of a grep line — so refuse rather than
 			// silently ignore them.
 			if (raw || all) && sc.filtering() {
-				return fmt.Errorf("--since/--until/--cwd narrow grouped sessions and can't be combined with --raw/--all")
+				return fmt.Errorf("--since/--until/--cwd/--account narrow grouped sessions and can't be combined with --raw/--all")
 			}
 
 			cfg, err := config.LoadOrDefault()
@@ -112,6 +113,21 @@ func NewSearchCmd() *cobra.Command {
 				sc.devices, ok = loadDevices()
 				sc.devicesUnavailable = !ok
 				sc.ledger = loadLedger()
+			}
+			// Resolved after the ledger loads, because the ledger is what says
+			// which accounts exist to be named — and --account is meaningless
+			// under --live, where no ledger is in scope at all.
+			if accountFilter != "" {
+				if liveOnly {
+					return fmt.Errorf("--account reads the synced ledger, which --live takes out of scope")
+				}
+				staging, serr := config.StagingDir()
+				if serr != nil {
+					return serr
+				}
+				if sc.account, err = resolveAccountFilter(accountFilter, staging, sc.ledger); err != nil {
+					return err
+				}
 			}
 
 			fmt.Fprintf(out, "%s %q\n", HeaderStyle.Render("clauderig search"), query)
@@ -132,6 +148,7 @@ func NewSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&since, "since", "", "only sessions last used on/after this day, timestamp, or age (7d)")
 	cmd.Flags().StringVar(&until, "until", "", "only sessions last used on/before this day, timestamp, or age (7d)")
 	cmd.Flags().StringVar(&cwdFilter, "cwd", "", "only sessions whose project directory contains this text")
+	cmd.Flags().StringVar(&accountFilter, "account", "", "only sessions belonging to this account (alias, email, or accountUuid prefix)")
 	return cmd
 }
 
@@ -327,7 +344,7 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	repoPaths := transcriptPaths(targets, repoTarget)
 
 	results := make([]*sessResult, 0, len(hits))
-	var hidden, undated int
+	var hidden, undated, unattributed int
 	for _, r := range hits {
 		// A title-only match has no recorded hit and therefore no path. Give it one
 		// before anything reads a date, a cwd or a fallback title off it — live
@@ -356,10 +373,13 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 				r.cwd = resolvePath(me, r.led.Cwd)
 			}
 		}
-		if keep, noDate := sc.keep(r); !keep {
+		if keep, why := sc.keep(r); !keep {
 			hidden++
-			if noDate {
+			switch why {
+			case droppedUndated:
 				undated++
+			case droppedUnattributed:
+				unattributed++
 			}
 			continue
 		}
@@ -400,6 +420,14 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 			// Undated sessions are dropped by a time filter rather than assumed into
 			// range; say so, or the count reads as a bug.
 			msg += fmt.Sprintf(" (%d had no date to place)", undated)
+		}
+		if unattributed > 0 {
+			// Attribution is recorded at sync time and cannot be backfilled, so
+			// these are permanently unmatchable by --account, not merely missing
+			// from this run. Saying "no recorded account" rather than letting them
+			// vanish is what keeps --account from reading as "you have no such
+			// sessions" when it means "I cannot tell which are yours".
+			msg += fmt.Sprintf(" (%d have no recorded account; only sessions synced since attribution was added carry one)", unattributed)
 		}
 		fmt.Fprintf(out, "%s\n", DimStyle.Render(msg))
 	}

@@ -51,6 +51,59 @@ type Entry struct {
 	RecordedBy string `json:"recordedBy,omitempty"`
 	// Seen is when this row was last written.
 	Seen time.Time `json:"seen"`
+	// Account is the accountUuid of the Claude Code login this session belongs
+	// to, empty when unknown. CLI transcripts carry no account field of their
+	// own, so this is the only place a session's account is ever recorded — and
+	// it cannot be reconstructed later, which is why it is captured here rather
+	// than derived at query time.
+	Account string `json:"account,omitempty"`
+	// AccountSource says HOW Account was determined, because the two ways differ
+	// sharply in confidence and a filter that hid that would be the kind of
+	// quiet lie RecordedBy is named to avoid. See AccountFrom*.
+	AccountSource string `json:"accountSource,omitempty"`
+}
+
+// How an Entry.Account was determined, worst to best. A higher rank may
+// overwrite a lower one; equal ranks never overwrite, so the first sync to
+// attribute a session wins and later syncs cannot relabel it.
+const (
+	// AccountFromSync is an INFERENCE: the account the syncing machine was
+	// logged in as when it first recorded the row. Right for the ordinary case
+	// — you sync the machine you work on — and wrong if you switched accounts
+	// between running the session and syncing it, or if this machine restored
+	// another machine's transcripts and staged them as its own. Sticky for
+	// exactly that reason: the earliest sighting is the closest to the truth.
+	AccountFromSync = "sync"
+	// AccountFromDesktop is GROUND TRUTH, taken from the path Claude Desktop
+	// files its session sidecar under —
+	// claude-code-sessions/<accountUuid>/<organizationUuid>/ — which is the
+	// account itself, not a guess about it. Only sessions opened through
+	// Desktop have one (measured: 3% of a real staged tree), so it upgrades
+	// what it covers and leaves the rest to the inference above.
+	AccountFromDesktop = "desktop"
+)
+
+// AccountRank orders the sources; an unattributed row ranks lowest. Exported so
+// the recorder can tell, before reading a transcript, whether the attribution it
+// is about to offer would actually improve on the stored one.
+func AccountRank(source string) int {
+	switch source {
+	case AccountFromDesktop:
+		return 2
+	case AccountFromSync:
+		return 1
+	}
+	return 0
+}
+
+// mergeAccount picks the attribution to keep. Ties go to prev — attribution is
+// sticky, so re-syncing a session under a different login cannot rewrite whose
+// it was.
+func mergeAccount(prev, next Entry) (account, source string) {
+	if next.Account != "" && AccountRank(next.AccountSource) > AccountRank(prev.AccountSource) {
+		return next.Account, next.AccountSource
+	}
+	return prev.Account, prev.AccountSource
 }
 
 // Ledger is one device's file, loaded for update.
@@ -110,7 +163,12 @@ func (l *Ledger) Note(e Entry) bool {
 		return false
 	}
 	if prev, ok := l.rows[e.ID]; ok {
-		if prev.Bytes == e.Bytes && prev.End.Equal(e.End) {
+		e.Account, e.AccountSource = mergeAccount(prev, e)
+		// An account upgrade is a real change even when the transcript is byte
+		// identical — a session first attributed by inference and later covered
+		// by its Desktop sidecar must be allowed to take the better answer.
+		upgraded := e.Account != prev.Account || e.AccountSource != prev.AccountSource
+		if prev.Bytes == e.Bytes && prev.End.Equal(e.End) && !upgraded {
 			return false
 		}
 		// The same session id can appear under two slugs — a transcript copied into
@@ -119,13 +177,30 @@ func (l *Ledger) Note(e Entry) bool {
 		// forever, which costs a commit per sync for a file nothing changed in.
 		// Measured on a real tree: 5 such ids, 10 pointless row writes per pass.
 		if prev.End.After(e.End) {
-			return false
+			if !upgraded {
+				return false
+			}
+			// Take ONLY the better attribution; the older twin must not drag its
+			// stale transcript state over the newer row.
+			prev.Account, prev.AccountSource = e.Account, e.AccountSource
+			prev.RecordedBy = l.device
+			l.rows[e.ID] = prev
+			l.dirty = true
+			return true
 		}
 	}
 	e.RecordedBy = l.device
 	l.rows[e.ID] = e
 	l.dirty = true
 	return true
+}
+
+// Attribution reports the account currently recorded for a session, so a caller
+// can decide whether a better source is worth a rewrite. Empty when the session
+// is unknown or unattributed.
+func (l *Ledger) Attribution(id string) (account, source string) {
+	e := l.rows[id]
+	return e.Account, e.AccountSource
 }
 
 // Fresh reports whether the ledger already holds this exact transcript state,

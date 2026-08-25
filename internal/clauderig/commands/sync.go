@@ -59,11 +59,16 @@ func NewSyncCmd() *cobra.Command {
 			if cliLoc, st := cfg.RootLocation("cli", me); st == pathmap.StatusResolved {
 				claudeVer = config.DetectClaudeVersion(cliLoc)
 			}
+			// Attribution for ledger rows no Desktop sidecar covers. Read once,
+			// before the walk, so every row this sync records is stamped with the
+			// same account rather than one that could change mid-run.
+			liveAcct, _, _, _ := account.LiveIdentity()
 			rep, serr := engine.Sync(engine.Options{
 				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
-				RetentionDays: cfg.Retention.HistoryDays,
-				MaxFileBytes:  cfg.Retention.MaxFileBytes,
-				Profiles:      engine.LocalProfileNames(),
+				RetentionDays:   cfg.Retention.HistoryDays,
+				MaxFileBytes:    cfg.Retention.MaxFileBytes,
+				Profiles:        engine.LocalProfileNames(),
+				LiveAccountUUID: liveAcct,
 			})
 			if rep != nil {
 				w := 0
