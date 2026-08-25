@@ -353,7 +353,10 @@ func (c linkCache) underSymlink(root, dst string) bool {
 		return v
 	}
 	rel, err := filepath.Rel(root, dir)
-	if err != nil || rel == "." || rel == string(filepath.Separator) || strings.HasPrefix(rel, "..") {
+	// Only ".." itself, or a path BELOW it, is outside the root. A bare prefix
+	// test would also catch a real directory named "..memory" — Rel returns that
+	// name unchanged — and skip the very symlink check this exists to perform.
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return false // at or outside the root — nothing left to walk
 	}
 	res := isSymlink(dir) || c.underSymlink(root, dir)

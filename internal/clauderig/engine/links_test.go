@@ -235,3 +235,27 @@ func TestRestore_NeverWritesThroughASymlinkedParent(t *testing.T) {
 		t.Errorf("canonical memory clobbered through the link: got %q", got)
 	}
 }
+
+// filepath.Rel returns "..memory" unchanged for a directory of that name, so a
+// bare `..` prefix test would call it outside the root and skip the symlink
+// check — writing through the very link the guard exists to protect.
+func TestRestore_DotDotPrefixedDirIsStillGuarded(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/projects/-main/memory/MEMORY.md", "canonical facts")
+	write(t, staging, "cli/..memory/NOTES.md", "staged copy")
+
+	target := t.TempDir()
+	write(t, target, "projects/-main/memory/MEMORY.md", "canonical facts")
+	link := filepath.Join(target, "..memory")
+	if err := os.Symlink(filepath.Join(target, "projects", "-main", "memory"), link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	if _, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target), Machine: jane, TargetOverride: override("cli", target)}); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "projects", "-main", "memory", "NOTES.md")); err == nil {
+		t.Error("wrote through a link under a '..'-prefixed directory")
+	}
+}
