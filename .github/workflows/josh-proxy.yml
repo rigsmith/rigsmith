@@ -153,6 +153,77 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # josh-project/josh#2288: on Windows, josh can mangle its --local
+      # directory into \\?\ extended-length form and hand that to git, which
+      # rejects it. The bug bites on cache *reuse*, so every path shape gets a
+      # cold clone and a warm second fetch. The smoke suite already built the
+      # git-http helper and seeded upstream.git; its server died with that
+      # step, so restart it here and hand the port to the pwsh step.
+      - name: "regression josh#2288: restart local git server"
+        id: regression-prep
+        if: runner.os == 'Windows' && steps.build.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          smoke="$RUNNER_TEMP/josh-smoke"
+          [ -x "$smoke/git-cgi-server.exe" ] || { echo "smoke scratch missing — smoke step failed too early"; exit 1; }
+          "$smoke/git-cgi-server.exe" -root "$(cygpath -m "$smoke/repos")" >"$smoke/gitserver-regression.log" 2>&1 &
+          port=""
+          for _ in $(seq 1 50); do
+            port=$(sed -n 's/^PORT=//p' "$smoke/gitserver-regression.log")
+            [ -n "$port" ] && break
+            sleep 0.1
+          done
+          [ -n "$port" ] || { cat "$smoke/gitserver-regression.log"; exit 1; }
+          echo "GIT_PORT=$port" >> "$GITHUB_ENV"
+          echo "JOSH_BIN=$(cygpath -m "$PWD/out/bin/josh-proxy.exe")" >> "$GITHUB_ENV"
+
+      - name: "regression josh#2288: --local path forms"
+        id: regression
+        if: runner.os == 'Windows' && steps.regression-prep.outcome == 'success'
+        continue-on-error: true # same visibility rule as the rest of the windows job
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $josh = "$env:JOSH_BIN"          # built josh-proxy.exe from this matrix leg
+          subst X: $env:RUNNER_TEMP        # reproduce the mapped-drive setup from the report
+          $cases = [ordered]@{
+            absolute    = Join-Path $env:RUNNER_TEMP "josh-abs"
+            relative    = ".\josh-rel"                                  # canonicalization bait
+            spaces      = Join-Path $env:RUNNER_TEMP "josh cache spaces"
+            subst_drive = "X:\josh-subst"                               # the Z:\ shape from #2288
+          }
+          $port = 42100
+          $failed = @()
+          foreach ($name in $cases.Keys) {
+            $port++
+            $local = $cases[$name]
+            Write-Host "== case: $name ($local)"
+            $p = Start-Process -FilePath $josh -PassThru -RedirectStandardOutput "josh-$name.out" -RedirectStandardError "josh-$name.err" -ArgumentList @(
+              "--local", $local, "--remote", "http://127.0.0.1:$env:GIT_PORT", "--port=$port", "--no-background")
+            $ready = $false
+            foreach ($i in 1..100) {
+              try { (New-Object Net.Sockets.TcpClient("127.0.0.1", $port)).Close(); $ready = $true; break }
+              catch { Start-Sleep -Milliseconds 100 }
+            }
+            if (-not $ready) { $failed += "$name (proxy never ready)"; Stop-Process -Id $p.Id -Force -EA SilentlyContinue; continue }
+            $clone = Join-Path $env:RUNNER_TEMP "clone-$name"
+            git clone "http://127.0.0.1:$port/upstream.git:prefix=lib.git" $clone 2>&1 | Tee-Object "clone-$name.log"
+            if ($LASTEXITCODE -ne 0) { $failed += "$name (cold clone)" }
+            elseif (-not (Test-Path (Join-Path $clone "lib"))) { $failed += "$name (prefix missing)" }
+            else {
+              git -C $clone fetch origin 2>&1 | Tee-Object "fetch-$name.log"   # warm cache reuse — where #2288 actually bites
+              if ($LASTEXITCODE -ne 0) { $failed += "$name (warm fetch)" }
+            }
+            Stop-Process -Id $p.Id -Force -EA SilentlyContinue
+            # The #2288 signature: surface it loudly even when git's exit code lied
+            $sig = Select-String -Pattern '\\\\\?\\' -Path "clone-$name.log","fetch-$name.log","josh-$name.err" -EA SilentlyContinue
+            if ($sig) { Write-Warning "extended-length path leaked in case ${name}:"; $sig | ForEach-Object { Write-Warning $_.Line } }
+          }
+          subst X: /d
+          if ($failed) { Write-Error ("josh#2288 regression cases failed: " + ($failed -join ", ")) }
+          Write-Host "all --local path forms round-tripped"
+
       # Surface the experiment's real result — the run stays green either way.
       - name: Report experimental outcome
         if: always() && matrix.experimental
@@ -168,6 +239,15 @@ jobs:
           else
             echo "✅ josh-proxy ${JOSH_VERSION} compiled **and passed the round-trip** on $plat" >> "$GITHUB_STEP_SUMMARY"
           fi
+          case "${{ steps.regression.outcome }}" in
+          success)
+            echo "✅ josh#2288 regression: all --local path forms round-tripped" >> "$GITHUB_STEP_SUMMARY" ;;
+          failure)
+            echo "::warning title=josh#2288 regression failed::Some --local path forms failed — see the regression step log."
+            echo "⚠️ josh#2288 regression: some --local path forms failed (allowed failure)" >> "$GITHUB_STEP_SUMMARY" ;;
+          *)
+            echo "ℹ️ josh#2288 regression: not run (build or server prep failed)" >> "$GITHUB_STEP_SUMMARY" ;;
+          esac
 
   # Prove the *shipped* file works, not the one still warm in the build dir:
   # download the artifact exactly as a consumer would, verify its checksum,
