@@ -96,6 +96,29 @@ func AccountRank(source string) int {
 	return 0
 }
 
+// bestAccount picks the attribution to surface when two devices hold a row for
+// the same session.
+//
+// Rank first. On EQUAL rank the EARLIER sighting wins, which is what makes the
+// stickiness promise hold across devices as well as within a file: mergeAccount
+// keeps its first argument on a tie, and the caller's first argument is the
+// NEWER row, so using it here would let a second machine recording an
+// already-staged transcript under its own live login relabel the session on a
+// routine sync — the exact relabelling Note() refuses to do locally.
+func bestAccount(a, b Entry) (account, source string) {
+	ra, rb := AccountRank(a.AccountSource), AccountRank(b.AccountSource)
+	if rb > ra {
+		return b.Account, b.AccountSource
+	}
+	if ra > rb {
+		return a.Account, a.AccountSource
+	}
+	if b.Seen.Before(a.Seen) {
+		return b.Account, b.AccountSource
+	}
+	return a.Account, a.AccountSource
+}
+
 // mergeAccount picks the attribution to keep. Ties go to prev — attribution is
 // sticky, so re-syncing a session under a different login cannot rewrite whose
 // it was.
@@ -305,7 +328,7 @@ func LoadAll(dir string) map[string]Entry {
 			// files meet: without this, a machine that later re-saw the same
 			// transcript with no sidecar would replace another machine's Desktop
 			// ground truth with its own inference purely by having synced last.
-			winner.Account, winner.AccountSource = mergeAccount(winner, loser)
+			winner.Account, winner.AccountSource = bestAccount(winner, loser)
 			out[r.ID] = winner
 		}
 	}

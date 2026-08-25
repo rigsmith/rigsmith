@@ -38,25 +38,37 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 		return "", nil
 	}
 
-	// uuid or uuid prefix — match it against the accounts the ledger actually
-	// names, so a typo fails here rather than silently matching nothing later.
+	byEmail := accountUUIDsByEmail(stagingDir)
+
+	// uuid or uuid prefix — matched against every account that IS known, which
+	// is the ledger's attributions plus the device registry's. Registry-only
+	// accounts matter: one that has synced but has no attributed sessions yet
+	// is a real account with zero results, and answering "unknown account"
+	// there would collapse the very distinction this resolver exists to keep.
 	if isHexPrefix(v) && len(v) >= minUUIDPrefix {
-		var hit string
+		candidates := map[string]bool{}
 		for _, e := range known {
-			if e.Account == "" || !strings.HasPrefix(strings.ToLower(e.Account), strings.ToLower(v)) {
+			if e.Account != "" {
+				candidates[e.Account] = true
+			}
+		}
+		for _, uuid := range byEmail {
+			candidates[uuid] = true
+		}
+		var hit string
+		for uuid := range candidates {
+			if !strings.HasPrefix(strings.ToLower(uuid), strings.ToLower(v)) {
 				continue
 			}
-			if hit != "" && !strings.EqualFold(hit, e.Account) {
-				return "", fmt.Errorf("%q matches more than one account (%s, %s) — use more characters", v, hit, e.Account)
+			if hit != "" && !strings.EqualFold(hit, uuid) {
+				return "", fmt.Errorf("%q matches more than one account (%s, %s) — use more characters", v, hit, uuid)
 			}
-			hit = e.Account
+			hit = uuid
 		}
 		if hit != "" {
 			return hit, nil
 		}
 	}
-
-	byEmail := accountUUIDsByEmail(stagingDir)
 
 	// alias / email / id from clauderig's account store, mapped to a uuid via
 	// the registry (the store keys accounts by email, not uuid).

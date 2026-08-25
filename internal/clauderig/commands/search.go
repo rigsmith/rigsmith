@@ -98,7 +98,11 @@ func NewSearchCmd() *cobra.Command {
 			// The filters narrow SESSIONS — a date and a project directory are
 			// properties of a session, not of a grep line — so refuse rather than
 			// silently ignore them.
-			if (raw || all) && sc.filtering() {
+			// accountFilter, not sc.account: the flag is resolved further down, so
+			// sc.filtering() is still false here when --account is the only one
+			// set — and --account --raw would then sail past this check and
+			// return matches the account filter never touched.
+			if (raw || all) && (sc.filtering() || accountFilter != "") {
 				return fmt.Errorf("--since/--until/--cwd/--account narrow grouped sessions and can't be combined with --raw/--all")
 			}
 

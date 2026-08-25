@@ -371,3 +371,31 @@ func mustSave(t *testing.T, l *Ledger) string {
 	}
 	return l.dir
 }
+
+// Two devices, both with only a sync-rank guess: the FIRST attribution owns the
+// session. Ranking alone is not enough — mergeAccount keeps its first argument
+// on a tie, and the union's first argument is the newer row, so a second
+// machine recording an already-staged transcript under its own live login would
+// otherwise relabel it on a routine sync.
+func TestLoadAll_EqualRankKeepsTheFirstAttribution(t *testing.T) {
+	dir := t.TempDir()
+	end := time.Unix(100, 0).UTC()
+
+	first, _ := Open(dir, "machine-a")
+	first.Note(Entry{ID: "s1", End: end, Bytes: 10, Seen: time.Unix(500, 0).UTC(),
+		Account: "acct-first", AccountSource: AccountFromSync})
+	if err := first.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	later, _ := Open(dir, "machine-b")
+	later.Note(Entry{ID: "s1", End: end, Bytes: 10, Seen: time.Unix(900, 0).UTC(),
+		Account: "acct-later", AccountSource: AccountFromSync})
+	if err := later.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := LoadAll(dir)["s1"]; got.Account != "acct-first" {
+		t.Errorf("union = %q, want acct-first — a routine sync must not relabel", got.Account)
+	}
+}

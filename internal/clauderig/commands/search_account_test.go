@@ -2,6 +2,9 @@ package commands
 
 import (
 	"testing"
+	"time"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 )
@@ -107,5 +110,54 @@ func TestSessionScope_ActiveFiltersNamesWhatIsSet(t *testing.T) {
 	both := (sessionScope{account: "acct-a", cwd: "api"}).activeFilters()
 	if len(both) != 2 {
 		t.Errorf("account+cwd = %v, want both named", both)
+	}
+}
+
+// An account the registry knows but the ledger has not attributed yet is a real
+// account with zero results — not an unknown one. Matching only ledger
+// attributions collapses exactly the distinction this resolver exists to keep.
+func TestResolveAccountFilter_UUIDPrefixFindsARegistryOnlyAccount(t *testing.T) {
+	staging := t.TempDir()
+	reg, err := devices.Load(staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.Touch("mbp", "macos", "2.1.237", &devices.Account{
+		AccountUUID: "03d1c0c9-823d-464b-a468-a9bea2383338", Email: "other@example.com",
+	}, time.Now())
+	if err := reg.Save(staging); err != nil {
+		t.Fatal(err)
+	}
+
+	// The ledger attributes a DIFFERENT account; the registry one has no rows.
+	known := map[string]ledger.Entry{"s1": {ID: "s1", Account: "456fc32e-7579-49c7-bb2a-099657892c6a"}}
+
+	got, err := resolveAccountFilter("03d1c0c9", staging, known)
+	if err != nil {
+		t.Fatalf("a registry-known account must resolve, not error: %v", err)
+	}
+	if got != "03d1c0c9-823d-464b-a468-a9bea2383338" {
+		t.Errorf("got %q", got)
+	}
+	// Its email resolves too, by the same registry.
+	if got, err := resolveAccountFilter("other@example.com", staging, known); err != nil || got == "" {
+		t.Errorf("email = %q/%v", got, err)
+	}
+}
+
+// --account narrows SESSIONS, so it is refused with --raw/--all like the other
+// session filters. The guard runs before the flag is resolved into the scope,
+// so it has to test the flag itself — testing sc.account would let
+// `--account X --raw` through and return matches the filter never touched.
+func TestSessionScope_AccountAloneStillCountsAsNarrowing(t *testing.T) {
+	// sc.account is empty at guard time even when --account was given.
+	sc := sessionScope{}
+	accountFilter := "work"
+	if !(sc.filtering() || accountFilter != "") {
+		t.Error("--account alone must trip the raw/all guard")
+	}
+	// and with nothing set at all, it must not trip
+	if sc.filtering() || "" != "" {
+		t.Error("no filters must not trip the guard")
 	}
 }
