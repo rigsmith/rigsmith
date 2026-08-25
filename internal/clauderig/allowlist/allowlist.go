@@ -165,6 +165,11 @@ func Walk(root string, l List) ([]string, []Link, error) {
 					l.decide(rel) == Include && l.decide(target) == Include {
 					links = append(links, Link{Rel: rel, Target: target})
 				}
+				// Either way this is a directory, so it is never a file to sync.
+				// Falling through to Match here would offer the link path as a
+				// regular file, which reading can only ever fail on (EISDIR) —
+				// and staged a 0-byte placeholder that restore later tried to
+				// write back over the live link.
 				return nil
 			}
 		}

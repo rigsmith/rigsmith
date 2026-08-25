@@ -23,6 +23,7 @@ type RestoreRootResult struct {
 	Files          int
 	SlugsRewritten int
 	Links          int // shared-memory symlinks recreated from the manifest
+	LinksKept      int // staged files skipped because a symlink already holds that path
 	Pruned         int // files removed as deleted-upstream (--prune)
 	// DesktopSessions counts Claude Desktop Code-session sidecars written this
 	// restore (claude-code-sessions/**/local_*.json). Desktop only rebuilds its
@@ -136,6 +137,18 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			}
 			src := filepath.Join(stageRoot, filepath.FromSlash(rel))
 			dst := filepath.Join(target, filepath.FromSlash(targetRel))
+
+			// A symlink already at dst is this machine's own state — nearly always
+			// one of the shared-memory links restoreLinks recreates. Every write
+			// below follows a symlink, so restoring a staged file over one would
+			// silently clobber the link's target, or fail outright with EISDIR when
+			// the link points at a directory. Leave it alone (and count it as
+			// written so --prune doesn't collect it).
+			if isSymlink(dst) {
+				written[targetRel] = true
+				rr.LinksKept++
+				continue
+			}
 
 			if strings.HasSuffix(rel, ".json") {
 				if err := restoreJSON(src, dst, opts.Machine.Resolver(), pm); err != nil {
@@ -314,6 +327,13 @@ func listFiles(root string) ([]string, error) {
 		return nil
 	})
 	return out, err
+}
+
+// isSymlink reports whether p is a symlink, without following it. A missing path
+// is not a symlink, so a fresh machine takes the ordinary write path.
+func isSymlink(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.Mode()&fs.ModeSymlink != 0
 }
 
 func copyFile(src, dst string, pm perm) error {

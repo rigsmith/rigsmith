@@ -233,6 +233,13 @@ func chooseRestoreSafety(target string) string {
 }
 
 // copyTree recursively copies src to dst (used for the pre-restore backup).
+//
+// Symlinks are recreated, never followed. ~/.claude is full of shared-memory
+// links (worktree slugs pointing memory/ at their main project), and copying
+// through one either duplicates the whole linked tree into the backup or fails
+// outright when it points at a directory. Link text is reproduced verbatim, so
+// an absolute link still resolves to the same place from inside the .bak — the
+// same thing `cp -R` does.
 func copyTree(src, dst string) error {
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -240,11 +247,26 @@ func copyTree(src, dst string) error {
 		}
 		rel, _ := filepath.Rel(src, p)
 		target := filepath.Join(dst, rel)
+		if d.Type()&fs.ModeSymlink != 0 {
+			return copyLink(p, target)
+		}
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
 		return copyOne(p, target)
 	})
+}
+
+// copyLink recreates the symlink at src as an identical symlink at dst.
+func copyLink(src, dst string) error {
+	link, err := os.Readlink(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return os.Symlink(link, dst)
 }
 
 func copyOne(src, dst string) error {

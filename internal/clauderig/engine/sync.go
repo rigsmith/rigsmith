@@ -30,7 +30,7 @@ type RootResult struct {
 	RetentionByAge int      // project transcripts dropped as older than the window
 	SkippedFiles   int      // files that vanished/were unreadable mid-sync (live churn)
 	Oversize       []string // rel paths dropped for exceeding MaxFileBytes
-	Disallowed     int      // staged files removed because the allowlist no longer permits them
+	Disallowed     int      // staged files retired: the allowlist no longer permits them, or the live path is a directory
 	Skipped        bool     // root absent on this machine
 }
 
@@ -249,7 +249,7 @@ func Sync(opts Options) (*Report, error) {
 		// Only for roots that resolved on this machine: a root we skipped tells us
 		// nothing about whether its staged files are still wanted, and pruning it
 		// would delete another machine's data.
-		disallowed, perr := reconcileStagedRoot(stageRoot, allowlist.For(r.ID))
+		disallowed, perr := reconcileStagedRoot(stageRoot, loc, allowlist.For(r.ID))
 		if perr != nil {
 			return nil, fmt.Errorf("reconcile staged %s: %w", r.ID, perr)
 		}
@@ -569,7 +569,10 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 // slugs this machine has never seen) are unaffected as long as the allowlist still
 // permits them. Retention, which removes allowed-but-aged files, is separate and
 // runs on its own.
-func reconcileStagedRoot(stageRoot string, l allowlist.List) (int, error) {
+//
+// liveRoot is this machine's copy of the root ("" when it didn't resolve). It
+// also retires staged files whose live counterpart is a directory — see below.
+func reconcileStagedRoot(stageRoot, liveRoot string, l allowlist.List) (int, error) {
 	if !dirExists(stageRoot) {
 		return 0, nil
 	}
@@ -589,11 +592,25 @@ func reconcileStagedRoot(stageRoot string, l allowlist.List) (int, error) {
 		if rerr != nil {
 			return nil
 		}
-		if l.Match(filepath.ToSlash(rel)) {
+		if !l.Match(filepath.ToSlash(rel)) {
+			if os.Remove(p) == nil {
+				removed++
+			}
 			return nil
 		}
-		if os.Remove(p) == nil {
-			removed++
+		// A staged FILE whose live counterpart is a DIRECTORY (or a symlink to
+		// one) is a category error left by an older sync: the walk now reports
+		// directory symlinks as links and never as files, so no future sync will
+		// ever refresh or remove this copy, while restore keeps trying to write
+		// it back over the live link. Retire it here so the repo can dig itself
+		// out. Judged only where the path exists on this machine — staging also
+		// carries other machines' files, whose absence here means nothing.
+		if liveRoot != "" {
+			if fi, serr := os.Stat(filepath.Join(liveRoot, rel)); serr == nil && fi.IsDir() {
+				if os.Remove(p) == nil {
+					removed++
+				}
+			}
 		}
 		return nil
 	})

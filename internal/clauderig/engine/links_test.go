@@ -131,3 +131,73 @@ func TestRestore_LinkSkippedWhenTargetAbsentOrOccupied(t *testing.T) {
 		t.Error("occupied path should keep the local dir")
 	}
 }
+
+// A stale 0-byte file left in staging by a pre-link-aware sync must never be
+// written back over the live shared-memory symlink. It used to be copied with
+// os.OpenFile(dst, O_WRONLY|…), which follows the link onto a directory and
+// fails the whole restore with "open …/memory: is a directory".
+func TestRestore_StagedFileNeverWritesThroughSymlink(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/projects/-main/s.jsonl", "t\n")
+	write(t, staging, "cli/projects/-main/memory/MEMORY.md", "facts")
+	write(t, staging, "cli/projects/-wt/s.jsonl", "t\n")
+	// the stale artefact: a link path staged as an empty regular file
+	write(t, staging, "cli/projects/-wt/memory", "")
+
+	target := t.TempDir()
+	write(t, target, "projects/-main/memory/MEMORY.md", "facts")
+	if err := os.MkdirAll(filepath.Join(target, "projects", "-wt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(target, "projects", "-wt", "memory")
+	if err := os.Symlink(filepath.Join(target, "projects", "-main", "memory"), link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	rep, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target), Machine: jane, TargetOverride: override("cli", target)})
+	if err != nil {
+		t.Fatalf("restore failed on a live shared-memory link: %v", err)
+	}
+	if rep.Roots[0].LinksKept != 1 {
+		t.Errorf("LinksKept = %d, want 1", rep.Roots[0].LinksKept)
+	}
+	// the link survived as a link, still pointing at the shared dir
+	info, err := os.Lstat(link)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("memory should still be a symlink, got %v (err %v)", info, err)
+	}
+	// and writing through it clobbered nothing
+	if b, _ := os.ReadFile(filepath.Join(link, "MEMORY.md")); string(b) != "facts" {
+		t.Errorf("shared memory through link = %q, want %q", b, "facts")
+	}
+}
+
+// A directory symlink whose target sits outside the synced set is not
+// recordable as a link, but it is still a directory — it must not be offered
+// as a file. Any 0-byte placeholder an older sync staged for it is retired, so
+// the repo digs itself out instead of handing the file back every restore.
+func TestSync_RetiresStagedFileShadowedByDirLink(t *testing.T) {
+	live := t.TempDir()
+	write(t, live, "projects/-wt/s.jsonl",
+		`{"type":"user","cwd":"/Users/john/Git/wt","isSidechain":false}`+"\n")
+	outside := t.TempDir() // link target outside the root: not recordable
+	if err := os.WriteFile(filepath.Join(outside, "MEMORY.md"), []byte("facts"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(live, "projects", "-wt", "memory")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	staging := t.TempDir()
+	stale := filepath.Join(staging, "cli", "projects", "-wt", "memory")
+	write(t, staging, "cli/projects/-wt/memory", "") // pre-link-aware residue
+
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	if _, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, SourceOverride: override("cli", live)}); err != nil {
+		t.Fatalf("sync failed on an unrecordable dir link: %v", err)
+	}
+	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
+		t.Error("stale staged file shadowed by a dir link should be retired")
+	}
+}
