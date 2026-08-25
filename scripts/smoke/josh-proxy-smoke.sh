@@ -146,7 +146,11 @@ fi
 say "reverse push round-trip (rig stack send)"
 echo "lib v2" >>"$WORK/filtered/lib/src/lib.txt"
 git -C "$WORK/filtered" commit -aqm "roundtrip: update lib through the filter"
-git -C "$WORK/filtered" push -q origin HEAD:refs/heads/roundtrip
+# josh refuses to create a ref that doesn't exist on the remote unless told
+# which ref to root it on (`-o base=...`). Creating a fresh PR branch is the
+# normal case for `rig stack send`, so its push must pass the same option —
+# core/gitrepo's Push does not yet (caught by this suite; flagged on feat/ws).
+git -C "$WORK/filtered" push -q -o base=refs/heads/main origin HEAD:refs/heads/roundtrip
 git clone -q -b roundtrip "http://127.0.0.1:$GIT_PORT/upstream.git" "$WORK/direct" # no josh
 grep -q "lib v2" "$WORK/direct/src/lib.txt" || die "pushed change not at src/lib.txt in upstream (prefix not stripped?)"
 [ ! -e "$WORK/direct/lib" ] || die "upstream grew a lib/ directory — reverse filter did not strip the prefix"
