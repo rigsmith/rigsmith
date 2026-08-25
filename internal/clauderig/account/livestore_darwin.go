@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os/exec"
 	"os/user"
+	"regexp"
 	"strings"
 )
 
@@ -46,13 +47,43 @@ func readKeychain(service string) (raw []byte, found bool, err error) {
 	out, err := exec.Command(securityBin, "find-generic-password",
 		"-a", accountName(), "-w", "-s", service).Output()
 	if err == nil {
-		return bytes.TrimRight(out, "\n"), true, nil
+		return decodeSecurityOutput(bytes.TrimRight(out, "\n")), true, nil
 	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) && ee.ExitCode() == errSecItemNotFound {
 		return nil, false, nil
 	}
 	return nil, false, fmt.Errorf("read keychain: %w", err)
+}
+
+// hexOnly matches security(1)'s hex fallback output — nothing but hex digits.
+var hexOnly = regexp.MustCompile(`^[0-9a-fA-F]+$`)
+
+// decodeSecurityOutput undoes security(1)'s hex fallback.
+//
+// `find-generic-password -w` normally prints the password as text, but when the
+// stored blob holds a byte it will not print inline — a newline is enough — it
+// prints the WHOLE blob as hex digits instead, with no flag to say which form
+// you got. Claude Code writes the credential as pretty-printed JSON, so the live
+// item is multi-line and comes back hex; clauderig writes compact JSON, so its
+// own per-profile items come back as text. Handing the hex form straight to a
+// JSON parser fails on "{" (0x7b) read as the number 7 followed by 'b' — which
+// is exactly the "credential unreadable" a machine sees once Claude Code has
+// rewritten the credential.
+//
+// The two forms cannot be confused: a credential is JSON and always starts with
+// '{', which is not a hex digit, so all-hex output is unambiguously the encoded
+// form. Anything that does not decode is returned untouched — a reader that
+// guessed wrong must not corrupt a blob that was fine.
+func decodeSecurityOutput(out []byte) []byte {
+	if len(out) == 0 || len(out)%2 != 0 || !hexOnly.Match(out) {
+		return out
+	}
+	dec := make([]byte, hex.DecodedLen(len(out)))
+	if _, err := hex.Decode(dec, out); err != nil {
+		return out
+	}
+	return dec
 }
 
 // writeKeychain creates or updates one generic-password service. The secret is

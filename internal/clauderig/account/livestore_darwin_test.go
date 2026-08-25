@@ -4,6 +4,7 @@ package account
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"testing"
 )
 
@@ -41,5 +42,54 @@ func TestSessionKeychainService(t *testing.T) {
 	got := sessionKeychainService("/Users/john/.clauderig/accounts/john-brightshore-io/config")
 	if got != "Claude Code-credentials-c890e741" {
 		t.Fatalf("sessionKeychainService = %q, want Claude Code-credentials-c890e741", got)
+	}
+}
+
+// security(1) prints the whole blob as hex whenever it holds a byte it won't
+// print inline — a newline is enough. Claude Code writes the credential as
+// pretty-printed JSON, so the live item comes back hex and the JSON parser
+// failed on '{' (0x7b) read as 7 then 'b': "invalid character 'b' after
+// top-level value". Observed live on 2026-08-25, Claude Code 2.1.237.
+func TestDecodeSecurityOutput(t *testing.T) {
+	pretty := "{\n  \"claudeAiOauth\": {\n    \"accessToken\": \"tok\"\n  },\n  \"organizationUuid\": \"f1eab509\"\n}"
+	compact := `{"claudeAiOauth":{"accessToken":"tok"},"organizationUuid":"f1eab509"}`
+
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"hex fallback decodes", hex.EncodeToString([]byte(pretty)), pretty},
+		{"compact json passes through", compact, compact},
+		{"pretty json passes through", pretty, pretty},
+		// Not the hex form: leave it exactly as it came, never half-decode it.
+		{"odd length is not hex", "abc", "abc"},
+		{"non-hex letters pass through", "zzzz", "zzzz"},
+		{"empty passes through", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := string(decodeSecurityOutput([]byte(c.in))); got != c.want {
+				t.Errorf("decodeSecurityOutput() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// The end-to-end shape of the bug: what security(1) hands back must parse.
+func TestDecodeSecurityOutput_HexBlobParsesAsCredential(t *testing.T) {
+	pretty := "{\n  \"claudeAiOauth\": {\n    \"accessToken\": \"tok\",\n    \"refreshToken\": \"ref\"\n  },\n  \"organizationUuid\": \"f1eab509\"\n}"
+	raw := decodeSecurityOutput([]byte(hex.EncodeToString([]byte(pretty))))
+	var v struct {
+		ClaudeAiOauth struct {
+			AccessToken string `json:"accessToken"`
+		} `json:"claudeAiOauth"`
+		OrganizationUUID string `json:"organizationUuid"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatalf("decoded credential should parse: %v", err)
+	}
+	if v.ClaudeAiOauth.AccessToken != "tok" || v.OrganizationUUID != "f1eab509" {
+		t.Errorf("round trip lost fields: %+v", v)
 	}
 }
