@@ -235,3 +235,31 @@ func TestFindSessions_MatchesProjectOfATranscriptOnlySession(t *testing.T) {
 		t.Fatalf("want the transcript-only session matched by project, got %+v", got)
 	}
 }
+
+// A mixed conflict — a named profile AND the profile-less app — must tell the
+// user about both. Naming only the quit command leaves the main app open, so
+// the re-run it instructs lands on this same refusal.
+func TestAmbiguousRoutingError_MixedConflictNamesBothRemedies(t *testing.T) {
+	st := targetStore(t)
+	profiles, err := st.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, other := profiles[0], profiles[1]
+
+	err = ambiguousRoutingError(target, []string{other.Name, defaultInstanceLabel})
+	if err == nil {
+		t.Fatal("want a refusal")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "desktop quit "+other.Name) {
+		t.Errorf("should name the quit command for the profile: %v", msg)
+	}
+	if !strings.Contains(msg, "close "+defaultInstanceLabel) {
+		t.Errorf("should tell the user to close the main app by hand: %v", msg)
+	}
+	// staticcheck ST1005: error strings must not end in punctuation.
+	if strings.HasSuffix(msg, ".") {
+		t.Errorf("error string ends with punctuation: %q", msg)
+	}
+}

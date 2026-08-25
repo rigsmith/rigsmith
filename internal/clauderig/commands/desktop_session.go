@@ -280,16 +280,29 @@ func ambiguousRoutingError(target desktop.Profile, others []string) error {
 	// trailing period — so it must be one plain sentence that survives both, and
 	// must not start with a profile name.
 	// Only profiles can be quit by name; the default install is closed by hand.
+	// All three cases have to be spelled out, because naming just the quit
+	// command in a MIXED conflict would leave the main app open and send the
+	// user straight back into this same refusal.
 	var quittable []string
+	hasDefault := false
 	for _, o := range others {
-		if o != defaultInstanceLabel {
-			quittable = append(quittable, o)
+		if o == defaultInstanceLabel {
+			hasDefault = true
+			continue
 		}
+		quittable = append(quittable, o)
 	}
-	remedy := "Quit it and re-run, or pass --anyway to send it to whichever window the OS picks."
-	if len(quittable) > 0 {
-		remedy = fmt.Sprintf("Quit the others (`clauderig desktop quit %s`) and re-run, or pass --anyway\n"+
-			"to send it to whichever window the OS picks.", strings.Join(quittable, " "))
+	var remedy string
+	switch {
+	case len(quittable) == 0:
+		remedy = "Close it and re-run, or pass --anyway to send it to whichever window the OS picks"
+	case !hasDefault:
+		remedy = fmt.Sprintf("Quit the others (`clauderig desktop quit %s`) and re-run, or pass\n"+
+			"--anyway to send it to whichever window the OS picks", strings.Join(quittable, " "))
+	default:
+		remedy = fmt.Sprintf("Quit the others (`clauderig desktop quit %s`), close %s by\n"+
+			"hand, then re-run — or pass --anyway to send it to whichever window the OS picks",
+			strings.Join(quittable, " "), defaultInstanceLabel)
 	}
 	return fmt.Errorf("another Claude Desktop window is open, so this session could be imported into the wrong account\n\n"+
 		"%s is open alongside %s. A deep link is routed by scheme, not to a particular\n"+
