@@ -1,9 +1,9 @@
-# ws: a fused workspace of upstream forks
+# stack: a fused workspace of upstream forks
 
-> Status: **in progress** (proposed 2026-08-25; first slice on `feat/ws` the
+> Status: **in progress** (proposed 2026-08-25; first slice on `feat/ws` (verb since renamed `stack`) the
 > same day — manifest, engine install, ephemeral proxy, init/pull/send/status/
 > doctor). Direction settled: josh integration style (one fused history, not
-> sibling clones). Adds a `rig ws` verb family: a
+> sibling clones). Adds a `rig stack` verb family: a
 > workspace repo whose children are *prefixes in one real git history*, imported
 > from and synced back to their upstream repos through
 > [josh](https://josh-project.dev)'s reversible filters, driven the way
@@ -64,7 +64,7 @@ rather than inheriting it.
 
 ## The model
 
-A `ws` workspace is **one ordinary git repo**. Each upstream project is a
+A stack workspace is **one ordinary git repo**. Each upstream project is a
 prefix (`porta-pty/`, `xterm-net/`, …) whose contents were imported through
 josh's `:prefix=` filter, plus workspace-owned glue at the root: the manifest,
 the ecosystem overlay (`.slnx` + `Directory.Build.targets` for .NET — see
@@ -72,9 +72,9 @@ appendix), CI. Branches, worktrees (`rig worktree` composes for free — they
 are just branches of one repo), stashes, bisect: all normal git.
 
 ```jsonc
-// rig.ws.jsonc  (discovery via cfgfind; also embeddable as "ws" in .rig.json)
+// rig.stack.jsonc  (discovery via cfgfind; also embeddable as "ws" in .rig.json)
 {
-  "$schema": "https://rigsmith.dev/schemas/rig-ws.json",
+  "$schema": "https://rigsmith.dev/schemas/rig-stack.json",
   "josh": "r26.07.19",              // engine pin; overrides rig's built-in default
   "repos": {
     "porta-pty": {
@@ -97,11 +97,11 @@ are just branches of one repo), stashes, bisect: all normal git.
 
 | verb | does |
 |---|---|
-| `rig ws init` | scaffold the manifest; for each repo, import upstream history under its prefix (proxy fetch through `:prefix=<child>`, merge, set cursor); scaffold the ecosystem overlay |
-| `rig ws pull [child]` | fetch upstream through the filter; `NothingToPull` if the cursor matches; else merge (strategy per child), update cursor. The CI-cronnable direction |
-| `rig ws send <child> <branch>` | extract workspace commits touching `<child>/` through the reverse filter onto the **fork** as `<branch>`; print the PR URL (`gh` optional). The deliberate direction |
-| `rig ws status` | per child: upstream commits since cursor, local commits touching the prefix not yet sent, cursor SHA |
-| `rig ws doctor` | engine installed + version matches pin, remotes reachable, manifest sane; `--fix` installs/updates josh (cliguard requires `--fix` on any doctor) |
+| `rig stack init` | scaffold the manifest; for each repo, import upstream history under its prefix (proxy fetch through `:prefix=<child>`, merge, set cursor); scaffold the ecosystem overlay |
+| `rig stack pull [child]` | fetch upstream through the filter; `NothingToPull` if the cursor matches; else merge (strategy per child), update cursor. The CI-cronnable direction |
+| `rig stack send <child> <branch>` | extract workspace commits touching `<child>/` through the reverse filter onto the **fork** as `<branch>`; print the PR URL (`gh` optional). The deliberate direction |
+| `rig stack status` | per child: upstream commits since cursor, local commits touching the prefix not yet sent, cursor SHA |
+| `rig stack doctor` | engine installed + version matches pin, remotes reachable, manifest sane; `--fix` installs/updates josh (cliguard requires `--fix` on any doctor) |
 
 `rig build` / `rig test` at the root need nothing new: the workspace root *is*
 a repo with a `.slnx` — existing ecosystem detection already resolves it.
@@ -110,7 +110,7 @@ a repo with a `.slnx` — existing ecosystem detection already resolves it.
 
 rig pins a default josh version as a constant (overridable per-workspace via
 the manifest's `josh` key) and installs to
-`~/.local/share/rigsmith/josh/<version>/bin/`. `ws doctor --fix` performs
+`~/.local/share/rigsmith/josh/<version>/bin/`. `stack doctor --fix` performs
 install/update; every verb that needs the engine triggers the same path on
 first use.
 
@@ -124,7 +124,7 @@ the prebuilt for GOOS/GOARCH and only falls back to a local
 `cargo install --tag <pin>` when no prebuilt exists (the current first-slice
 behavior, requiring cargo, with an honest it-takes-minutes message). This
 also makes Windows support a CI fact rather than a user-machine gamble:
-until the windows job compiles josh green, `rig ws` on Windows reports
+until the windows job compiles josh green, `rig stack` on Windows reports
 "engine not available prebuilt — use WSL or install rust", instead of
 implying a toolchain dance that may dead-end.
 
@@ -138,23 +138,25 @@ invocation, never a daemon. `--local` cache under
 
 ## Wiring into rig (from the codebase survey, 2026-08-25)
 
-- **Verb name `ws` — not `workspace`.** `internal/rig/cli/workspace.go` already
-  means *intra-repo package discovery* (`discoverWorkspace`, backing
-  `rig build --all`), and `detect.hasWorkspaceManifest` means go.work/sln/etc.
-  Files: `ws.go`, `wsmanifest.go`, `wsjosh.go`, `ws_test.go` — the `workspace*`
-  namespace stays untouched. If a friendlier alias is wanted later, `stack`
-  is free; `workspace` is not.
+- **Verb name `stack` — not `workspace`, not `josh`.** It names the thing (a
+  stack of upstream forks fused into one history — cf. terminal-stack), not
+  the engine (rig's build-not-dotnet rule) and not "workspace", which already
+  means intra-repo package discovery in this package
+  (`internal/rig/cli/workspace.go`, `detect.hasWorkspaceManifest`). Files:
+  `stack.go`, `stackmanifest.go`, `stackjosh.go`, `stack_test.go` — the
+  `workspace*` namespace stays untouched. (`ws` was the working name of the
+  first slice; rejected as bland and workspace-adjacent.)
 - Register `newWsCmd()` via `extraCmds()` in `internal/rig/cli/extras.go` —
   the documented home for heavier standalone commands.
 - **cliguard compliance** (hard-fail CI in `internal/cliconsistency`): the
   group gets a `RunE` driving `climenu` (a bare group with children fails the
   `group-menu` rule); no `--list` flags; reserved shorthands
-  (`-n/-y/-f/-i/-k/-a/-w/-m`) respected; `ws doctor` has `--fix`.
+  (`-n/-y/-f/-i/-k/-a/-w/-m`) respected; `stack doctor` has `--fix`.
 - Manifest discovery: a `cfgfind.Spec` (the shiprig `releaseConfigSpec`
-  pattern) — probes `rig.ws.jsonc`/`.json` at the workspace root, optionally
+  pattern) — probes `rig.stack.jsonc`/`.json` at the workspace root, optionally
   `RigPath`/`RigKeys` for inline-in-`.rig.json`, loud error on duplicates.
   Parse `core/jsonc`, write `core/confkit.Writer` with a new
-  `site/public/schemas/rig-ws.json`.
+  `site/public/schemas/rig-stack.json`.
 - Git operations through `core/gitrepo` (`Clone/Fetch/FetchMerge/AheadBehind/
   Conflicts…`) — it is "a thin shell over system git", which is exactly what
   the josh pattern wants. Nothing new in core except possibly a
@@ -167,8 +169,8 @@ invocation, never a daemon. `--local` cache under
   are gated behind the real binary's presence (skip when absent).
 - **Relationship to roadmap.md's "worktree hub (own binary)" item:** that hub
   is a *dashboard* over parallel dev (worktrees, PR status, agent ownership).
-  `ws` is *state and sync* — manifest, import, cursor, send. Different concern;
-  if the hub materializes it reads `ws` workspaces like any other repo. The
+  `stack` is *state and sync* — manifest, import, cursor, send. Different concern;
+  if the hub materializes it reads stack workspaces like any other repo. The
   hub's open question "where does cross-repo state live" gets an answer here:
   in the workspace repo, committed.
 
@@ -183,10 +185,10 @@ invocation, never a daemon. `--local` cache under
    (b) is the better shape if the filter invocation is tractable.
 2. Merge strategy per child on `pull` (merge vs squash vs rebase-ish), given
    the known merge-noise wart. Default merge, per-child override in manifest?
-3. `ws init` adopting an existing non-fused workspace (like today's
+3. `stack init` adopting an existing non-fused workspace (like today's
    terminal-stack sibling-clone layout): re-import and keep the overlay, or
    not worth the code?
-4. CI template (`ws init --ci github`) in v1 or after the verbs settle?
+4. CI template (`stack init --ci github`) in v1 or after the verbs settle?
 
 ## Appendix: the MSBuild overlay
 
@@ -214,4 +216,4 @@ default evaluation swaps `Porta.Pty`/`XTerm.NET` for project refs;
 upstream CI sees. The walk-up ignores git boundaries, so building a child from
 inside its folder also gets the overlay — right for the dev loop; use the flag
 for pristine verification. Node/Go equivalents (workspaces/overrides,
-`go.work`) slot into the same "overlay scaffolded by `ws init`" position.
+`go.work`) slot into the same "overlay scaffolded by `stack init`" position.
