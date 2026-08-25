@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://rigsmith.dev/schemas/rig-ws.json",
-  "title": "rig ws manifest",
+  "$id": "https://rigsmith.dev/schemas/rig-stack.json",
+  "title": "rig stack manifest",
   "description": "A fused workspace of upstream forks: each repo's history imported under a prefix of one git history through josh's reversible filters. See docs/WORKSPACE-DESIGN.md.",
   "type": "object",
   "properties": {
@@ -23,7 +23,7 @@
           },
           "fork": {
             "type": "string",
-            "description": "Your fork as host/owner/name. `rig ws send` pushes extracted branches here.",
+            "description": "Your fork as host/owner/name. `rig stack send` pushes extracted branches here.",
             "pattern": "^[^/:]+/[^/]+/[^/]+$"
           },
           "branch": {

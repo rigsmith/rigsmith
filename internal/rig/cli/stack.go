@@ -12,23 +12,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newWsCmd builds the `ws` command group — a fused workspace of upstream
+// newStackCmd builds the `ws` command group — a fused workspace of upstream
 // forks: each project's history imported under a prefix of one repo through
 // josh's reversible filters, so commits can span projects and any slice can
-// leave as a clean PR branch on the matching fork (docs/WORKSPACE-DESIGN.md).
-func newWsCmd() *cobra.Command {
+// leave as a clean PR branch on the matching fork (docs/STACK-DESIGN.md).
+func newStackCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "ws",
+		Use:   "stack",
 		Short: "Fused workspace — upstream forks as prefixes of one history",
-		Long: "A ws workspace fuses several upstream repos into one git history, each\n" +
+		Long: "A stack workspace fuses several upstream repos into one git history, each\n" +
 			"under a prefix, via josh's reversible filters. Commits may span projects;\n" +
 			"`send` extracts a prefix's changes back onto your fork as an ordinary\n" +
 			"PR-ready branch. Upstream never learns the workspace exists.\n\n" +
-			"  rig ws init                 scaffold the manifest / import the repos\n" +
-			"  rig ws status               cursor vs upstream, per repo\n" +
-			"  rig ws pull [repo]          merge new upstream commits (all repos by default)\n" +
-			"  rig ws send <repo> <branch> extract changes to a branch on your fork\n" +
-			"  rig ws doctor               engine + manifest checks (--fix installs josh)",
+			"  rig stack init                 scaffold the manifest / import the repos\n" +
+			"  rig stack status               cursor vs upstream, per repo\n" +
+			"  rig stack pull [repo]          merge new upstream commits (all repos by default)\n" +
+			"  rig stack send <repo> <branch> extract changes to a branch on your fork\n" +
+			"  rig stack doctor               engine + manifest checks (--fix installs josh)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
 				return climenu.Run(cmd)
@@ -36,13 +36,13 @@ func newWsCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newWsInitCmd(), newWsStatusCmd(), newWsPullCmd(), newWsSendCmd(), newWsDoctorCmd())
+	cmd.AddCommand(newStackInitCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackDoctorCmd())
 	return cmd
 }
 
-// wsWorkspace opens the manifest and the workspace repo together — every ws
+// stackWorkspace opens the manifest and the workspace repo together — every ws
 // verb needs both, and "no manifest here" should read the same everywhere.
-func wsWorkspace(ctx context.Context) (*wsManifest, *cfgfind.Source, *gitrepo.Repo, error) {
+func stackWorkspace(ctx context.Context) (*stackManifest, *cfgfind.Source, *gitrepo.Repo, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, nil, nil, err
@@ -53,30 +53,30 @@ func wsWorkspace(ctx context.Context) (*wsManifest, *cfgfind.Source, *gitrepo.Re
 		return nil, nil, nil, err
 	}
 	if m == nil {
-		return nil, nil, nil, fmt.Errorf("no ws manifest here — run `rig ws init` at the workspace root")
+		return nil, nil, nil, fmt.Errorf("no stack manifest here — run `rig stack init` at the workspace root")
 	}
 	repo, err := gitrepo.Open(ctx, root)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("ws workspace %s is not a git repository", root)
+		return nil, nil, nil, fmt.Errorf("stack workspace %s is not a git repository", root)
 	}
 	return m, src, repo, nil
 }
 
-// wsEngine resolves the workspace's josh version (manifest override, else the
+// stackEngine resolves the workspace's josh version (manifest override, else the
 // pinned default) and ensures the binary, printing install progress to out.
-func wsEngine(ctx context.Context, m *wsManifest, cmd *cobra.Command) (string, error) {
-	version := wsJoshVersion
+func stackEngine(ctx context.Context, m *stackManifest, cmd *cobra.Command) (string, error) {
+	version := stackJoshVersion
 	if m != nil && m.Josh != "" {
 		version = m.Josh
 	}
 	return ensureJoshProxy(ctx, version, cmd.OutOrStdout())
 }
 
-func newWsInitCmd() *cobra.Command {
+func newStackInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Scaffold the ws manifest, or import its repos into the workspace",
-		Long: "With no manifest, writes a commented rig.ws.jsonc to fill in. With a\n" +
+		Short: "Scaffold the stack manifest, or import its repos into the workspace",
+		Long: "With no manifest, writes a commented rig.stack.jsonc to fill in. With a\n" +
 			"manifest, imports each repo that has no cursor yet: fetches its upstream\n" +
 			"history through the :prefix filter and merges it in.",
 		Args: cobra.NoArgs,
@@ -92,18 +92,18 @@ func newWsInitCmd() *cobra.Command {
 				return err
 			}
 			if m == nil {
-				p, err := wsWriteTemplate(root)
+				p, err := stackWriteTemplate(root)
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "wrote %s — fill in the repos, then run `rig ws init` again to import them\n", p)
+				fmt.Fprintf(cmd.OutOrStdout(), "wrote %s — fill in the repos, then run `rig stack init` again to import them\n", p)
 				return nil
 			}
 			repo, err := gitrepo.Open(ctx, root)
 			if err != nil {
 				return fmt.Errorf("run `git init` first — the workspace itself is an ordinary git repo")
 			}
-			bin, err := wsEngine(ctx, m, cmd)
+			bin, err := stackEngine(ctx, m, cmd)
 			if err != nil {
 				return err
 			}
@@ -112,13 +112,13 @@ func newWsInitCmd() *cobra.Command {
 				if m.cursor(name) != "" {
 					continue // already imported; `pull` owns updates
 				}
-				if err := wsPullOne(ctx, cmd, repo, bin, src, m, name, true); err != nil {
+				if err := stackPullOne(ctx, cmd, repo, bin, src, m, name, true); err != nil {
 					return fmt.Errorf("importing %s: %w", name, err)
 				}
 				imported++
 			}
 			if imported == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "nothing to import — every repo has a cursor; use `rig ws pull` for updates")
+				fmt.Fprintln(cmd.OutOrStdout(), "nothing to import — every repo has a cursor; use `rig stack pull` for updates")
 			}
 			return nil
 		},
@@ -126,21 +126,21 @@ func newWsInitCmd() *cobra.Command {
 	return cmd
 }
 
-func newWsStatusCmd() *cobra.Command {
+func newStackStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Each repo's cursor vs its upstream branch tip",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			m, _, repo, err := wsWorkspace(ctx)
+			m, _, repo, err := stackWorkspace(ctx)
 			if err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()
 			for _, name := range m.names() {
 				r := m.Repos[name]
-				tip, err := repo.LsRemote(ctx, wsHTTPSURL(r.Upstream), "refs/heads/"+m.branch(name))
+				tip, err := repo.LsRemote(ctx, stackHTTPSURL(r.Upstream), "refs/heads/"+m.branch(name))
 				if err != nil {
 					fmt.Fprintf(out, "%-24s %s (upstream unreachable: %v)\n", name, short(m.cursor(name)), err)
 					continue
@@ -148,9 +148,9 @@ func newWsStatusCmd() *cobra.Command {
 				state := "up to date"
 				switch {
 				case m.cursor(name) == "":
-					state = "not imported — run `rig ws init`"
+					state = "not imported — run `rig stack init`"
 				case tip != m.cursor(name):
-					state = fmt.Sprintf("upstream moved (%s) — `rig ws pull %s`", short(tip), name)
+					state = fmt.Sprintf("upstream moved (%s) — `rig stack pull %s`", short(tip), name)
 				}
 				fmt.Fprintf(out, "%-24s %-10s %s\n", name, short(m.cursor(name)), state)
 			}
@@ -160,14 +160,14 @@ func newWsStatusCmd() *cobra.Command {
 	return cmd
 }
 
-func newWsPullCmd() *cobra.Command {
+func newStackPullCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pull [repo]",
 		Short: "Merge new upstream commits into a repo's prefix (all repos by default)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			m, src, repo, err := wsWorkspace(ctx)
+			m, src, repo, err := stackWorkspace(ctx)
 			if err != nil {
 				return err
 			}
@@ -179,16 +179,16 @@ func newWsPullCmd() *cobra.Command {
 			names := m.names()
 			if len(args) == 1 {
 				if m.Repos[args[0]] == nil {
-					return fmt.Errorf("no ws repo %q (have: %s)", args[0], strings.Join(names, ", "))
+					return fmt.Errorf("no stack repo %q (have: %s)", args[0], strings.Join(names, ", "))
 				}
 				names = args[:1]
 			}
-			bin, err := wsEngine(ctx, m, cmd)
+			bin, err := stackEngine(ctx, m, cmd)
 			if err != nil {
 				return err
 			}
 			for _, name := range names {
-				if err := wsPullOne(ctx, cmd, repo, bin, src, m, name, false); err != nil {
+				if err := stackPullOne(ctx, cmd, repo, bin, src, m, name, false); err != nil {
 					return fmt.Errorf("pulling %s: %w", name, err)
 				}
 			}
@@ -198,13 +198,13 @@ func newWsPullCmd() *cobra.Command {
 	return cmd
 }
 
-// wsPullOne imports or updates one repo's prefix: probe upstream's tip, stop at
+// stackPullOne imports or updates one repo's prefix: probe upstream's tip, stop at
 // the cursor (idempotent, the josh-sync NothingToPull check), else fetch that
 // exact SHA through the filter, merge, and commit the moved cursor with it.
-func wsPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, bin string, src *cfgfind.Source, m *wsManifest, name string, initial bool) error {
+func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, bin string, src *cfgfind.Source, m *stackManifest, name string, initial bool) error {
 	r := m.Repos[name]
 	out := cmd.OutOrStdout()
-	tip, err := repo.LsRemote(ctx, wsHTTPSURL(r.Upstream), "refs/heads/"+m.branch(name))
+	tip, err := repo.LsRemote(ctx, stackHTTPSURL(r.Upstream), "refs/heads/"+m.branch(name))
 	if err != nil {
 		return err
 	}
@@ -212,26 +212,26 @@ func wsPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, bin 
 		fmt.Fprintf(out, "%s: nothing to pull\n", name)
 		return nil
 	}
-	host, path := wsSplitHost(r.Upstream)
+	host, path := stackSplitHost(r.Upstream)
 	proxy, err := startJoshProxy(ctx, bin, host)
 	if err != nil {
 		return err
 	}
 	defer proxy.stop()
 	verb := "pulled"
-	msg := fmt.Sprintf("ws: pull %s @ %s", name, short(tip))
+	msg := fmt.Sprintf("stack: pull %s @ %s", name, short(tip))
 	if initial {
 		verb = "imported"
-		msg = fmt.Sprintf("ws: import %s @ %s", name, short(tip))
+		msg = fmt.Sprintf("stack: import %s @ %s", name, short(tip))
 	}
-	conflicted, err := repo.FetchMergeUnrelated(ctx, proxy.url(path, tip, wsPrefixFilter(name)), m.branch(name), msg)
+	conflicted, err := repo.FetchMergeUnrelated(ctx, proxy.url(path, tip, stackPrefixFilter(name)), m.branch(name), msg)
 	if err != nil {
 		return err
 	}
 	if conflicted {
 		return fmt.Errorf("merge conflicts under %s/ — resolve, commit, then re-run to move the cursor", name)
 	}
-	if err := wsSetCursor(src, m, name, tip); err != nil {
+	if err := stackSetCursor(src, m, name, tip); err != nil {
 		return err
 	}
 	if err := repo.StageAll(ctx); err != nil {
@@ -247,7 +247,7 @@ func wsPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, bin 
 	return nil
 }
 
-func newWsSendCmd() *cobra.Command {
+func newStackSendCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "send <repo> <branch>",
 		Short: "Extract a repo's workspace changes onto your fork as a PR-ready branch",
@@ -255,30 +255,30 @@ func newWsSendCmd() *cobra.Command {
 			"the commits touching <repo>'s prefix arrive, re-rooted on upstream history\n" +
 			"with correct parents, as <branch> on the fork. PR from there as usual.\n\n" +
 			"The proxy fronts https, so pushing authenticates with your git credential\n" +
-			"helper (a GitHub PAT). SSH-only setups: see docs/WORKSPACE-DESIGN.md.",
+			"helper (a GitHub PAT). SSH-only setups: see docs/STACK-DESIGN.md.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			name, branch := args[0], args[1]
-			m, _, repo, err := wsWorkspace(ctx)
+			m, _, repo, err := stackWorkspace(ctx)
 			if err != nil {
 				return err
 			}
 			r := m.Repos[name]
 			if r == nil {
-				return fmt.Errorf("no ws repo %q (have: %s)", name, strings.Join(m.names(), ", "))
+				return fmt.Errorf("no stack repo %q (have: %s)", name, strings.Join(m.names(), ", "))
 			}
-			bin, err := wsEngine(ctx, m, cmd)
+			bin, err := stackEngine(ctx, m, cmd)
 			if err != nil {
 				return err
 			}
-			host, path := wsSplitHost(r.Fork)
+			host, path := stackSplitHost(r.Fork)
 			proxy, err := startJoshProxy(ctx, bin, host)
 			if err != nil {
 				return err
 			}
 			defer proxy.stop()
-			if err := repo.Push(ctx, proxy.url(path, "", wsPrefixFilter(name)), "refs/heads/"+branch); err != nil {
+			if err := repo.Push(ctx, proxy.url(path, "", stackPrefixFilter(name)), "refs/heads/"+branch); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "sent %s to %s:%s — open the PR against %s\n",
@@ -289,7 +289,7 @@ func newWsSendCmd() *cobra.Command {
 	return cmd
 }
 
-func newWsDoctorCmd() *cobra.Command {
+func newStackDoctorCmd() *cobra.Command {
 	var fix bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
@@ -306,17 +306,17 @@ func newWsDoctorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			version := wsJoshVersion
+			version := stackJoshVersion
 			if m != nil && m.Josh != "" {
 				version = m.Josh
 			}
 			switch {
 			case m == nil:
-				fmt.Fprintln(out, "· no ws manifest here (fine outside a workspace)")
+				fmt.Fprintln(out, "· no stack manifest here (fine outside a workspace)")
 			default:
 				fmt.Fprintf(out, "✓ manifest: %d repo(s)\n", len(m.Repos))
 			}
-			bin, binErr := wsJoshProxyBin(version)
+			bin, binErr := stackJoshProxyBin(version)
 			if binErr == nil {
 				_, binErr = os.Stat(bin)
 			}
@@ -329,7 +329,7 @@ func newWsDoctorCmd() *cobra.Command {
 				}
 				fmt.Fprintf(out, "✓ josh-proxy %s installed\n", version)
 			default:
-				fmt.Fprintf(out, "✗ josh-proxy %s not installed — `rig ws doctor --fix` builds it via cargo\n", version)
+				fmt.Fprintf(out, "✗ josh-proxy %s not installed — `rig stack doctor --fix` builds it via cargo\n", version)
 			}
 			return nil
 		},

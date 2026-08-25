@@ -14,12 +14,12 @@ import (
 
 func writeWsManifest(t *testing.T, root, body string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(root, "rig.ws.jsonc"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
 
-const wsTestManifest = `{
+const stackTestManifest = `{
   // comments must survive: the manifest is jsonc
   "repos": {
     "porta-pty": {
@@ -38,7 +38,7 @@ const wsTestManifest = `{
 func TestLoadWsManifest(t *testing.T) {
 	t.Run("dedicated jsonc file with comments", func(t *testing.T) {
 		root := t.TempDir()
-		writeWsManifest(t, root, wsTestManifest)
+		writeWsManifest(t, root, stackTestManifest)
 		m, src, err := loadWsManifest(root)
 		if err != nil {
 			t.Fatal(err)
@@ -74,7 +74,7 @@ func TestLoadWsManifest(t *testing.T) {
 
 	t.Run("inline ws key in .rig.json is a source too", func(t *testing.T) {
 		root := t.TempDir()
-		body := `{"ws": {"repos": {"a": {"upstream": "github.com/u/a", "fork": "github.com/f/a"}}}}`
+		body := `{"stack": {"repos": {"a": {"upstream": "github.com/u/a", "fork": "github.com/f/a"}}}}`
 		if err := os.WriteFile(filepath.Join(root, ".rig.json"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -92,8 +92,8 @@ func TestLoadWsManifest(t *testing.T) {
 
 	t.Run("both file and inline key is a loud error", func(t *testing.T) {
 		root := t.TempDir()
-		writeWsManifest(t, root, wsTestManifest)
-		if err := os.WriteFile(filepath.Join(root, ".rig.json"), []byte(`{"ws": {"repos": {}}}`), 0o644); err != nil {
+		writeWsManifest(t, root, stackTestManifest)
+		if err := os.WriteFile(filepath.Join(root, ".rig.json"), []byte(`{"stack": {"repos": {}}}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if _, _, err := loadWsManifest(root); err == nil {
@@ -104,12 +104,12 @@ func TestLoadWsManifest(t *testing.T) {
 
 func TestWsSetCursor_PreservesComments(t *testing.T) {
 	root := t.TempDir()
-	writeWsManifest(t, root, wsTestManifest)
+	writeWsManifest(t, root, stackTestManifest)
 	m, src, err := loadWsManifest(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := wsSetCursor(src, m, "porta-pty", "abc123def456"); err != nil {
+	if err := stackSetCursor(src, m, "porta-pty", "abc123def456"); err != nil {
 		t.Fatal(err)
 	}
 	m2, src2, err := loadWsManifest(root)
@@ -120,7 +120,7 @@ func TestWsSetCursor_PreservesComments(t *testing.T) {
 		t.Fatalf("lastSync = %q", got)
 	}
 	// A second cursor lands beside the first, not over it.
-	if err := wsSetCursor(src2, m2, "xterm-net", "fedcba"); err != nil {
+	if err := stackSetCursor(src2, m2, "xterm-net", "fedcba"); err != nil {
 		t.Fatal(err)
 	}
 	m3, _, err := loadWsManifest(root)
@@ -130,7 +130,7 @@ func TestWsSetCursor_PreservesComments(t *testing.T) {
 	if m3.cursor("porta-pty") != "abc123def456" || m3.cursor("xterm-net") != "fedcba" {
 		t.Fatalf("cursors = %v", m3.LastSync)
 	}
-	data, _ := os.ReadFile(filepath.Join(root, "rig.ws.jsonc"))
+	data, _ := os.ReadFile(filepath.Join(root, "rig.stack.jsonc"))
 	if !strings.Contains(string(data), "comments must survive") {
 		t.Fatal("cursor write dropped the manifest's comments")
 	}
@@ -138,7 +138,7 @@ func TestWsSetCursor_PreservesComments(t *testing.T) {
 
 func TestJoshURL(t *testing.T) {
 	p := &joshProxy{port: 4242}
-	got := p.url("tomlm/Porta.Pty", "abc123", wsPrefixFilter("porta-pty"))
+	got := p.url("tomlm/Porta.Pty", "abc123", stackPrefixFilter("porta-pty"))
 	want := "http://127.0.0.1:4242/tomlm/Porta.Pty.git@abc123%3Aprefix%3Dporta-pty.git"
 	if got != want {
 		t.Fatalf("url:\n got %s\nwant %s", got, want)
@@ -149,7 +149,7 @@ func TestJoshURL(t *testing.T) {
 }
 
 func TestWsSplitHost(t *testing.T) {
-	host, path := wsSplitHost("github.com/tomlm/Porta.Pty")
+	host, path := stackSplitHost("github.com/tomlm/Porta.Pty")
 	if host != "github.com" || path != "tomlm/Porta.Pty" {
 		t.Fatalf("got %q %q", host, path)
 	}
@@ -203,13 +203,13 @@ func TestGitrepoWsAdditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustGitWs(t, src, "config", "user.email", "t@t")
-	mustGitWs(t, src, "config", "user.name", "t")
+	mustGitStack(t, src, "config", "user.email", "t@t")
+	mustGitStack(t, src, "config", "user.name", "t")
 	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustGitWs(t, src, "add", ".")
-	mustGitWs(t, src, "commit", "-m", "one")
+	mustGitStack(t, src, "add", ".")
+	mustGitStack(t, src, "commit", "-m", "one")
 	head, err := repo.Head(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +236,7 @@ func TestGitrepoWsAdditions(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(src, "g.txt"), []byte("2"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		mustGitWs(t, src, "add", ".")
+		mustGitStack(t, src, "add", ".")
 		newHead, err := repo.CommitAmendNoEdit(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -244,7 +244,7 @@ func TestGitrepoWsAdditions(t *testing.T) {
 		if newHead == head {
 			t.Fatal("amend did not move HEAD")
 		}
-		out := mustGitWs(t, src, "rev-list", "--count", "HEAD")
+		out := mustGitStack(t, src, "rev-list", "--count", "HEAD")
 		if strings.TrimSpace(out) != "1" {
 			t.Fatalf("amend created a second commit: count=%s", out)
 		}
@@ -255,16 +255,16 @@ func TestGitrepoWsAdditions(t *testing.T) {
 		if _, err := gitrepo.Init(ctx, other); err != nil {
 			t.Fatal(err)
 		}
-		mustGitWs(t, other, "config", "user.email", "t@t")
-		mustGitWs(t, other, "config", "user.name", "t")
+		mustGitStack(t, other, "config", "user.email", "t@t")
+		mustGitStack(t, other, "config", "user.name", "t")
 		if err := os.WriteFile(filepath.Join(other, "lib.txt"), []byte("lib"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		mustGitWs(t, other, "add", ".")
-		mustGitWs(t, other, "commit", "-m", "import me")
-		otherBranch := strings.TrimSpace(mustGitWs(t, other, "branch", "--show-current"))
+		mustGitStack(t, other, "add", ".")
+		mustGitStack(t, other, "commit", "-m", "import me")
+		otherBranch := strings.TrimSpace(mustGitStack(t, other, "branch", "--show-current"))
 
-		conflicted, err := repo.FetchMergeUnrelated(ctx, other, otherBranch, "ws: import other")
+		conflicted, err := repo.FetchMergeUnrelated(ctx, other, otherBranch, "stack: import other")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -277,7 +277,7 @@ func TestGitrepoWsAdditions(t *testing.T) {
 	})
 }
 
-func mustGitWs(t *testing.T, dir string, args ...string) string {
+func mustGitStack(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir

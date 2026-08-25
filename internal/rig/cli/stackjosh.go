@@ -1,6 +1,6 @@
 package cli
 
-// josh engine management for `rig ws` — the josh-sync pattern (rust-lang):
+// josh engine management for `rig stack` — the josh-sync pattern (rust-lang):
 // rig owns a pinned josh-proxy binary, spawns it as an ephemeral localhost
 // process per operation, and does all history work with plain git against
 // URLs that carry the filter in the path. No daemon, no user-managed install.
@@ -17,16 +17,16 @@ import (
 	"time"
 )
 
-// wsJoshVersion is the josh tag rig installs and expects. Pinned because the
+// stackJoshVersion is the josh tag rig installs and expects. Pinned because the
 // filter algebra must be deterministic against existing workspace history;
 // a workspace may override via the manifest's `josh` key, at its own risk.
-const wsJoshVersion = "r26.07.19"
+const stackJoshVersion = "r26.07.19"
 
-const wsJoshRepo = "https://github.com/josh-project/josh"
+const stackJoshRepo = "https://github.com/josh-project/josh"
 
-// wsJoshDir is where rig keeps its own josh installs, one per version, so an
+// stackJoshDir is where rig keeps its own josh installs, one per version, so an
 // engine upgrade is a new directory rather than an in-place mutation.
-func wsJoshDir(version string) (string, error) {
+func stackJoshDir(version string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -34,8 +34,8 @@ func wsJoshDir(version string) (string, error) {
 	return filepath.Join(home, ".local", "share", "rigsmith", "josh", version), nil
 }
 
-func wsJoshProxyBin(version string) (string, error) {
-	dir, err := wsJoshDir(version)
+func stackJoshProxyBin(version string) (string, error) {
+	dir, err := stackJoshDir(version)
 	if err != nil {
 		return "", err
 	}
@@ -44,10 +44,10 @@ func wsJoshProxyBin(version string) (string, error) {
 
 // ensureJoshProxy returns the pinned josh-proxy binary, installing it via the
 // user's cargo on first use. The install is a full Rust build — minutes, said
-// out loud on out — which is why it happens here (and in `ws doctor --fix`)
+// out loud on out — which is why it happens here (and in `stack doctor --fix`)
 // rather than silently inside a verb that looked instant.
 func ensureJoshProxy(ctx context.Context, version string, out io.Writer) (string, error) {
-	bin, err := wsJoshProxyBin(version)
+	bin, err := stackJoshProxyBin(version)
 	if err != nil {
 		return "", err
 	}
@@ -58,13 +58,13 @@ func ensureJoshProxy(ctx context.Context, version string, out io.Writer) (string
 	if err != nil {
 		return "", fmt.Errorf("josh-proxy %s is not installed and cargo was not found; install rust (https://rustup.rs) and re-run", version)
 	}
-	dir, err := wsJoshDir(version)
+	dir, err := stackJoshDir(version)
 	if err != nil {
 		return "", err
 	}
 	fmt.Fprintf(out, "installing josh-proxy %s (a Rust build — takes a few minutes, one time per version)…\n", version)
 	cmd := exec.CommandContext(ctx, cargo, "install", "--locked",
-		"--git", wsJoshRepo, "--tag", version, "--root", dir, "josh-proxy")
+		"--git", stackJoshRepo, "--tag", version, "--root", dir, "josh-proxy")
 	cmd.Stdout = out
 	cmd.Stderr = out
 	if err := cmd.Run(); err != nil {
@@ -160,9 +160,9 @@ func (p *joshProxy) url(repoPath, commit, filter string) string {
 	return fmt.Sprintf("http://127.0.0.1:%d/%s.git%s%s.git", p.port, repoPath, at, url.QueryEscape(filter))
 }
 
-// wsPrefixFilter is the josh filter that maps a whole upstream repo under a
+// stackPrefixFilter is the josh filter that maps a whole upstream repo under a
 // workspace prefix (and, reversed on push, back out of it).
-func wsPrefixFilter(prefix string) string { return ":prefix=" + prefix }
+func stackPrefixFilter(prefix string) string { return ":prefix=" + prefix }
 
 func freePort() (int, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
