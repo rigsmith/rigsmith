@@ -124,6 +124,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 		}
 		rewritten := map[string]bool{}
 		written := map[string]bool{}
+		links := linkCache{}
 		pm := permFor(r.ID)
 
 		files, err := listFiles(stageRoot)
@@ -142,13 +143,18 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			src := filepath.Join(stageRoot, filepath.FromSlash(rel))
 			dst := filepath.Join(target, filepath.FromSlash(targetRel))
 
-			// A symlink already at dst is this machine's own state — nearly always
+			// A symlink at or above dst is this machine's own state — nearly always
 			// one of the shared-memory links restoreLinks recreates. Every write
 			// below follows a symlink, so restoring a staged file over one would
 			// silently clobber the link's target, or fail outright with EISDIR when
 			// the link points at a directory. Leave it alone (and count it as
 			// written so --prune doesn't collect it).
-			if isSymlink(dst) {
+			//
+			// Ancestors matter as much as the leaf: another machine holding this
+			// project as a real directory stages projects/<slug>/memory/MEMORY.md,
+			// and writing that descendant here follows the linked memory/ straight
+			// into the canonical project.
+			if isSymlink(dst) || links.underSymlink(target, dst) {
 				written[targetRel] = true
 				rr.LinksKept++
 				continue
@@ -331,6 +337,28 @@ func listFiles(root string) ([]string, error) {
 		return nil
 	})
 	return out, err
+}
+
+// linkCache remembers which destination directories sit on or under a symlink,
+// so the ancestor walk costs one Lstat per directory across the whole restore
+// rather than one per path component per file.
+type linkCache map[string]bool
+
+// underSymlink reports whether any ancestor of dst, up to and excluding root, is
+// a symlink. root itself is never judged: the target directory is where the user
+// pointed restore, and following it is the whole intent.
+func (c linkCache) underSymlink(root, dst string) bool {
+	dir := filepath.Dir(dst)
+	if v, ok := c[dir]; ok {
+		return v
+	}
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == "." || rel == string(filepath.Separator) || strings.HasPrefix(rel, "..") {
+		return false // at or outside the root — nothing left to walk
+	}
+	res := isSymlink(dir) || c.underSymlink(root, dir)
+	c[dir] = res
+	return res
 }
 
 // isSymlink reports whether p is a symlink, without following it. A missing path
