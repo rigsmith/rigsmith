@@ -1,15 +1,23 @@
-# Build josh-proxy binaries for `rig ws` — the workspace engine.
+# Build josh-proxy binaries for `rig stack` — the workspace engine.
 #
 # Upstream josh ships source and Linux Docker images only: no binaries, and no
 # stated Windows support (docs/WORKSPACE-DESIGN.md, "Engine management →
 # Distribution"). A machine with only the rig binary therefore can't get an
 # engine from upstream. This workflow builds the pinned version per platform so
-# `rig ws doctor --fix` can eventually *download* the prebuilt for GOOS/GOARCH
-# instead of requiring cargo and a minutes-long local build.
+# `rig stack doctor --fix` can eventually *download* the prebuilt for
+# GOOS/GOARCH instead of requiring cargo and a minutes-long local build.
 #
-# JOSH_VERSION below must match the `wsJoshVersion` constant in
-# internal/rig/cli/wsjosh.go (feat/ws, PR #223); the pin-check job enforces
+# JOSH_VERSION below must match the `stackJoshVersion` constant in
+# internal/rig/cli/stackjosh.go (feat/ws, PR #223); the pin-check job enforces
 # that once the file lands on the base branch, and skips until then.
+#
+# Compiling is not the bar — shipping is. After each build, the binary must
+# pass scripts/smoke/josh-proxy-smoke.sh: a hermetic (localhost-only) round
+# trip of exactly what `rig stack` does with the engine — filtered clone
+# (init), pinned @sha fetch (pull), reverse push through the filter (send),
+# and a warm-cache refetch after a clean shutdown. Only then is it uploaded,
+# and a separate validate job re-downloads the artifact as a consumer would,
+# verifies the sha256, and reruns the suite against the shipped file.
 #
 # Artifacts are named josh-proxy-<version>-<goos>-<goarch>, deliberately the
 # same os/arch vocabulary as GoReleaser's rig_<version>_<os>_<arch> archives
@@ -19,11 +27,14 @@
 # derived from runtime.GOOS/GOARCH with no mapping table.
 #
 # Windows is an experiment: the point of that job is to learn whether josh
-# compiles there at all. Its build step carries continue-on-error, so a red
-# Windows build never fails the workflow — but the outcome stays visible as a
-# warning annotation and in the job summary. (Job-level continue-on-error is
-# the wrong tool for this: a failed job still renders a green check on the run,
-# hiding exactly the signal we're after — actions/runner#2347.)
+# compiles there — and if it compiles, whether it actually works (watch the
+# smoke suite for --local backslash handling and the %3A filter segment).
+# Its build and smoke steps carry continue-on-error, so a red Windows result
+# never fails the workflow — but the outcome stays visible as a warning
+# annotation and in the job summary, and a binary that compiles yet fails the
+# round-trip is never uploaded. (Job-level continue-on-error is the wrong
+# tool for this: a failed job still renders a green check on the run, hiding
+# exactly the signal we're after — actions/runner#2347.)
 
 name: josh-proxy binaries
 
@@ -31,31 +42,32 @@ on:
   workflow_dispatch: {} # the normal way to (re)build engine binaries
   pull_request:
     paths:
-      - ".github/workflows/josh-proxy.yml" # a PR touching this file proves it builds
+      - ".github/workflows/josh-proxy.yml" # a PR touching these proves the pipeline
+      - "scripts/smoke/**"
 
 permissions:
   contents: read
 
 env:
-  # Keep in sync with wsJoshVersion in internal/rig/cli/wsjosh.go.
+  # Keep in sync with stackJoshVersion in internal/rig/cli/stackjosh.go.
   JOSH_VERSION: r26.07.19
 
 jobs:
   pin-check:
-    name: pin matches wsJoshVersion
+    name: pin matches stackJoshVersion
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Compare JOSH_VERSION with wsJoshVersion
+      - name: Compare JOSH_VERSION with stackJoshVersion
         run: |
-          f=internal/rig/cli/wsjosh.go
+          f=internal/rig/cli/stackjosh.go
           if [ ! -f "$f" ]; then
             echo "$f is not on this branch yet (lands with PR #223) — skipping the pin check."
             exit 0
           fi
-          pin="$(sed -n 's/^const wsJoshVersion = "\(.*\)"$/\1/p' "$f")"
+          pin="$(sed -n 's/^const stackJoshVersion = "\(.*\)"$/\1/p' "$f")"
           if [ "$pin" != "$JOSH_VERSION" ]; then
-            echo "::error::wsJoshVersion in $f is '$pin' but this workflow builds '$JOSH_VERSION' — update JOSH_VERSION at the top of josh-proxy.yml."
+            echo "::error::stackJoshVersion in $f is '$pin' but this workflow builds '$JOSH_VERSION' — update JOSH_VERSION at the top of josh-proxy.yml."
             exit 1
           fi
           echo "Pin matches: $pin"
@@ -82,8 +94,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90 # a full Rust build of josh; Windows is the slow one
     steps:
-      # No checkout: the build pulls straight from the josh repo. rustup is
-      # preinstalled on all three runner images; just pin it to current stable.
+      # The checkout + Go toolchain are for the smoke suite (it builds
+      # scripts/smoke/git-cgi-server); the josh build itself pulls straight
+      # from the josh repo. rustup is preinstalled on all three runner images.
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
       - name: Install Rust (stable, minimal)
         shell: bash
         run: |
@@ -99,8 +119,19 @@ jobs:
           cargo install --locked --git https://github.com/josh-project/josh \
             --tag "$JOSH_VERSION" --root out josh-proxy
 
-      - name: Checksum
+      - name: Smoke test (filtered clone, pinned fetch, reverse push)
+        id: smoke
         if: steps.build.outcome == 'success'
+        continue-on-error: ${{ matrix.experimental || false }}
+        shell: bash
+        run: |
+          bin=out/bin/josh-proxy
+          [ "${{ matrix.goos }}" = "windows" ] && bin=out/bin/josh-proxy.exe
+          bash scripts/smoke/josh-proxy-smoke.sh "$bin" "$RUNNER_TEMP/josh-smoke"
+
+      # From here on, only a binary that passed the round-trip ships.
+      - name: Checksum
+        if: steps.smoke.outcome == 'success'
         shell: bash
         run: |
           bin=josh-proxy
@@ -114,7 +145,7 @@ jobs:
           cat "$bin.sha256"
 
       - name: Upload artifact
-        if: steps.build.outcome == 'success'
+        if: steps.smoke.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: josh-proxy-${{ env.JOSH_VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -127,9 +158,97 @@ jobs:
         if: always() && matrix.experimental
         shell: bash
         run: |
-          if [ "${{ steps.build.outcome }}" = "success" ]; then
-            echo "✅ josh-proxy ${JOSH_VERSION} compiled on ${{ matrix.goos }}-${{ matrix.goarch }}" >> "$GITHUB_STEP_SUMMARY"
+          plat="${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ "${{ steps.build.outcome }}" != "success" ]; then
+            echo "::warning title=josh-proxy did not compile on ${{ matrix.goos }}::Allowed failure — josh has no stated Windows support. See the build step log; rig stack on Windows keeps reporting 'engine not available prebuilt'."
+            echo "❌ josh-proxy ${JOSH_VERSION} did **not** compile on $plat (allowed failure)" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${{ steps.smoke.outcome }}" != "success" ]; then
+            echo "::warning title=josh-proxy compiled on ${{ matrix.goos }} but failed the round-trip::Allowed failure — the binary was NOT uploaded. See the smoke step log (suspects: --local backslash paths, the %3A filter segment)."
+            echo "⚠️ josh-proxy ${JOSH_VERSION} compiled on $plat but **failed the functional round-trip** — not shipped (allowed failure)" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning title=josh-proxy did not compile on ${{ matrix.goos }}::Allowed failure — josh has no stated Windows support. See the build step log; rig ws on Windows keeps reporting 'engine not available prebuilt'."
-            echo "❌ josh-proxy ${JOSH_VERSION} did **not** compile on ${{ matrix.goos }}-${{ matrix.goarch }} (allowed failure)" >> "$GITHUB_STEP_SUMMARY"
+            echo "✅ josh-proxy ${JOSH_VERSION} compiled **and passed the round-trip** on $plat" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Prove the *shipped* file works, not the one still warm in the build dir:
+  # download the artifact exactly as a consumer would, verify its checksum,
+  # and rerun the functional suite against it on the same platform.
+  validate-artifacts:
+    name: validate (${{ matrix.goos }}-${{ matrix.goarch }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+          - os: macos-15-intel
+            goos: darwin
+            goarch: amd64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            experimental: true
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # On Windows the artifact legitimately may not exist (build or smoke
+      # failed there); continue-on-error keeps that from failing the run while
+      # the missing download stays visible.
+      - name: Download artifact
+        id: download
+        continue-on-error: ${{ matrix.experimental || false }}
+        uses: actions/download-artifact@v7
+        with:
+          name: josh-proxy-${{ env.JOSH_VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist
+
+      - name: Verify checksum
+        if: steps.download.outcome == 'success'
+        continue-on-error: ${{ matrix.experimental || false }}
+        id: checksum
+        shell: bash
+        run: |
+          cd dist
+          if command -v sha256sum >/dev/null; then
+            sha256sum -c ./*.sha256
+          else
+            shasum -a 256 -c ./*.sha256
+          fi
+
+      - name: Smoke test the downloaded binary
+        if: steps.checksum.outcome == 'success'
+        continue-on-error: ${{ matrix.experimental || false }}
+        id: smoke
+        shell: bash
+        run: |
+          bin=dist/josh-proxy
+          [ "${{ matrix.goos }}" = "windows" ] && bin=dist/josh-proxy.exe
+          chmod +x "$bin" # upload-artifact drops the exec bit
+          bash scripts/smoke/josh-proxy-smoke.sh "$bin" "$RUNNER_TEMP/josh-validate"
+
+      - name: Report outcome
+        if: always()
+        shell: bash
+        run: |
+          plat="${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ "${{ steps.download.outcome }}" != "success" ]; then
+            echo "ℹ️ $plat: no artifact to validate (nothing shipped from the build job)" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${{ steps.smoke.outcome }}" = "success" ]; then
+            echo "✅ $plat: shipped artifact verified — checksum + functional round-trip" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${{ matrix.experimental || false }}" = "true" ]; then
+            echo "::warning title=Shipped windows artifact failed validation::See the checksum/smoke step logs."
+            echo "⚠️ $plat: shipped artifact FAILED validation (allowed failure)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ $plat: shipped artifact failed validation" >> "$GITHUB_STEP_SUMMARY"
           fi
