@@ -1,0 +1,135 @@
+# Build josh-proxy binaries for `rig ws` — the workspace engine.
+#
+# Upstream josh ships source and Linux Docker images only: no binaries, and no
+# stated Windows support (docs/WORKSPACE-DESIGN.md, "Engine management →
+# Distribution"). A machine with only the rig binary therefore can't get an
+# engine from upstream. This workflow builds the pinned version per platform so
+# `rig ws doctor --fix` can eventually *download* the prebuilt for GOOS/GOARCH
+# instead of requiring cargo and a minutes-long local build.
+#
+# JOSH_VERSION below must match the `wsJoshVersion` constant in
+# internal/rig/cli/wsjosh.go (feat/ws, PR #223); the pin-check job enforces
+# that once the file lands on the base branch, and skips until then.
+#
+# Artifacts are named josh-proxy-<version>-<goos>-<goarch>, deliberately the
+# same os/arch vocabulary as GoReleaser's rig_<version>_<os>_<arch> archives
+# (see .goreleaser.yaml and scripts/install.sh) — so when these binaries are
+# later attached to rig's own releases by the goreleaser.yml flow (as extra
+# release assets alongside the GoReleaser archives), the download URL can be
+# derived from runtime.GOOS/GOARCH with no mapping table.
+#
+# Windows is an experiment: the point of that job is to learn whether josh
+# compiles there at all. Its build step carries continue-on-error, so a red
+# Windows build never fails the workflow — but the outcome stays visible as a
+# warning annotation and in the job summary. (Job-level continue-on-error is
+# the wrong tool for this: a failed job still renders a green check on the run,
+# hiding exactly the signal we're after — actions/runner#2347.)
+
+name: josh-proxy binaries
+
+on:
+  workflow_dispatch: {} # the normal way to (re)build engine binaries
+  pull_request:
+    paths:
+      - ".github/workflows/josh-proxy.yml" # a PR touching this file proves it builds
+
+permissions:
+  contents: read
+
+env:
+  # Keep in sync with wsJoshVersion in internal/rig/cli/wsjosh.go.
+  JOSH_VERSION: r26.07.19
+
+jobs:
+  pin-check:
+    name: pin matches wsJoshVersion
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compare JOSH_VERSION with wsJoshVersion
+        run: |
+          f=internal/rig/cli/wsjosh.go
+          if [ ! -f "$f" ]; then
+            echo "$f is not on this branch yet (lands with PR #223) — skipping the pin check."
+            exit 0
+          fi
+          pin="$(sed -n 's/^const wsJoshVersion = "\(.*\)"$/\1/p' "$f")"
+          if [ "$pin" != "$JOSH_VERSION" ]; then
+            echo "::error::wsJoshVersion in $f is '$pin' but this workflow builds '$JOSH_VERSION' — update JOSH_VERSION at the top of josh-proxy.yml."
+            exit 1
+          fi
+          echo "Pin matches: $pin"
+
+  build:
+    name: build (${{ matrix.goos }}-${{ matrix.goarch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: macos-latest # Apple Silicon runner
+            goos: darwin
+            goarch: arm64
+          - os: macos-15-intel # last remaining x86_64 macOS runner
+            goos: darwin
+            goarch: amd64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            experimental: true # no stated Windows support — see header comment
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90 # a full Rust build of josh; Windows is the slow one
+    steps:
+      # No checkout: the build pulls straight from the josh repo. rustup is
+      # preinstalled on all three runner images; just pin it to current stable.
+      - name: Install Rust (stable, minimal)
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - name: Build josh-proxy ${{ env.JOSH_VERSION }}
+        id: build
+        continue-on-error: ${{ matrix.experimental || false }}
+        shell: bash
+        run: |
+          cargo install --locked --git https://github.com/josh-project/josh \
+            --tag "$JOSH_VERSION" --root out josh-proxy
+
+      - name: Checksum
+        if: steps.build.outcome == 'success'
+        shell: bash
+        run: |
+          bin=josh-proxy
+          [ "${{ matrix.goos }}" = "windows" ] && bin=josh-proxy.exe
+          cd out/bin
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$bin" > "$bin.sha256"
+          else
+            shasum -a 256 "$bin" > "$bin.sha256"
+          fi
+          cat "$bin.sha256"
+
+      - name: Upload artifact
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: josh-proxy-${{ env.JOSH_VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: out/bin/josh-proxy*
+          if-no-files-found: error
+          retention-days: 30
+
+      # Surface the experiment's real result — the run stays green either way.
+      - name: Report experimental outcome
+        if: always() && matrix.experimental
+        shell: bash
+        run: |
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            echo "✅ josh-proxy ${JOSH_VERSION} compiled on ${{ matrix.goos }}-${{ matrix.goarch }}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=josh-proxy did not compile on ${{ matrix.goos }}::Allowed failure — josh has no stated Windows support. See the build step log; rig ws on Windows keeps reporting 'engine not available prebuilt'."
+            echo "❌ josh-proxy ${JOSH_VERSION} did **not** compile on ${{ matrix.goos }}-${{ matrix.goarch }} (allowed failure)" >> "$GITHUB_STEP_SUMMARY"
+          fi
