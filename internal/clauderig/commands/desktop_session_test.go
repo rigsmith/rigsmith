@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
 )
@@ -126,12 +127,19 @@ func TestOtherRunningProfilesAndRefusal(t *testing.T) {
 	target, other := profiles[0], profiles[1]
 
 	onlyTarget := stubApp{open: map[string]bool{target.DataDir(): true}}
-	if got := otherRunningProfiles(onlyTarget, profiles, target); len(got) != 0 {
+	got, err := otherRunningProfiles(onlyTarget, profiles, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
 		t.Errorf("only the target running: want none, got %v", got)
 	}
 
 	both := stubApp{open: map[string]bool{target.DataDir(): true, other.DataDir(): true}}
-	got := otherRunningProfiles(both, profiles, target)
+	got, err = otherRunningProfiles(both, profiles, target)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 1 || got[0] != other.Name {
 		t.Fatalf("want [%s], got %v", other.Name, got)
 	}
@@ -160,7 +168,10 @@ func TestOtherRunningProfiles_IncludesTheDefaultInstall(t *testing.T) {
 
 	// Only the target profile, but the profile-less app is up.
 	app := stubApp{open: map[string]bool{target.DataDir(): true, "__default__": true}}
-	got := otherRunningProfiles(app, profiles, target)
+	got, gerr := otherRunningProfiles(app, profiles, target)
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
 	if len(got) != 1 || got[0] != defaultInstanceLabel {
 		t.Fatalf("want [%s], got %v", defaultInstanceLabel, got)
 	}
@@ -176,5 +187,51 @@ func TestOtherRunningProfiles_IncludesTheDefaultInstall(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), defaultInstanceLabel) {
 		t.Errorf("refusal should name it: %v", err)
+	}
+}
+
+// "Could not look" is not "nothing is open". A failed scan must stop the send,
+// or the refusal passes on unknown state and the session can still cross an
+// account — the exact outcome this guard exists to prevent.
+func TestOtherRunningProfiles_FailsClosedOnScanError(t *testing.T) {
+	st := targetStore(t)
+	profiles, err := st.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := otherRunningProfiles(scanFailApp{}, profiles, profiles[0]); err == nil {
+		t.Fatal("a failed profile scan must be an error, not an empty result")
+	}
+	if _, err := otherRunningProfiles(defaultScanFailApp{}, profiles, profiles[0]); err == nil {
+		t.Fatal("a failed scan for the profile-less app must be an error too")
+	}
+}
+
+// A title is arbitrary user text. Byte slicing would cut a multi-byte character
+// in half and print mojibake.
+func TestSessionCandidate_LabelTruncatesByRunes(t *testing.T) {
+	long := strings.Repeat("é", 80) // 2 bytes each: byte-slicing splits one
+	c := sessionCandidate{ID: "x", Title: long}
+	got := c.label()
+	if !utf8.ValidString(got) {
+		t.Errorf("label is not valid UTF-8: %q", got)
+	}
+	if r := []rune(got); len(r) != 58 { // 57 kept + the ellipsis
+		t.Errorf("label = %d runes, want 58", len(r))
+	}
+}
+
+// The project shown for a session must also be searchable. Matching the sidecar
+// cwd alone would search only the ~3% of sessions that have one, while listing a
+// project for all of them.
+func TestFindSessions_MatchesProjectOfATranscriptOnlySession(t *testing.T) {
+	home := t.TempDir()
+	id := "33333333-3333-3333-3333-333333333333"
+	writeTranscript(t, home, "-Users-j-Git-api", id, "nothing quotable here")
+
+	// no sidecar at all — cwd can only come from the transcript
+	got := findSessions("Git/api", home, session.Index{})
+	if len(got) != 1 || got[0].ID != id {
+		t.Fatalf("want the transcript-only session matched by project, got %+v", got)
 	}
 }

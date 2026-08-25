@@ -46,8 +46,10 @@ func (c sessionCandidate) label() string {
 	if t == "" {
 		t = "(no title)"
 	}
-	if len(t) > 58 {
-		t = t[:57] + "…"
+	// Count and slice by runes: a title is arbitrary user text, and byte
+	// slicing would cut a multi-byte character in half and emit mojibake.
+	if r := []rune(t); len(r) > 58 {
+		t = string(r[:57]) + "…"
 	}
 	if proj := c.project(); proj != "" {
 		return fmt.Sprintf("%s  ·  %s", t, proj)
@@ -131,11 +133,16 @@ func findSessions(ref, claudeHome string, idx session.Index) []sessionCandidate 
 	for id, p := range live {
 		m := idx[id]
 		title := titleFor(m, p)
+		// Resolve the cwd ONCE and match on the same value that is displayed.
+		// Matching m.Cwd instead would only ever search the ~3% of sessions with
+		// a Desktop sidecar, while showing a project for all of them — so a
+		// search by project name would silently miss most of what it lists.
+		cwd := cwdFor(m, p)
 		if !strings.Contains(strings.ToLower(title), needle) &&
-			!strings.Contains(strings.ToLower(m.Cwd), needle) {
+			!strings.Contains(strings.ToLower(cwd), needle) {
 			continue
 		}
-		out = append(out, sessionCandidate{ID: id, Title: title, Cwd: cwdFor(m, p), Path: p})
+		out = append(out, sessionCandidate{ID: id, Title: title, Cwd: cwd, Path: p})
 	}
 	// Newest first, so the picker's top entry is the one most likely wanted.
 	sort.Slice(out, func(i, j int) bool { return newer(out[i], out[j], idx) })
@@ -222,13 +229,22 @@ func pickSession(ref string, cands []sessionCandidate) (sessionCandidate, error)
 // SCHEME, not per instance: there is no per-instance address, and the profile
 // flag that separates instances is a launch argument a URL cannot carry. With
 // more than one instance up, the OS picks the recipient.
-func otherRunningProfiles(app desktop.App, profiles []desktop.Profile, target desktop.Profile) []string {
+// A scan that FAILS is not a scan that found nothing. Treating "could not
+// look" as "nothing is open" would let the refusal pass on unknown state and
+// send the session anyway — the same account-crossing this exists to stop. So
+// every error propagates, matching what `desktop open` already does when it
+// cannot tell whether a profile is running.
+func otherRunningProfiles(app desktop.App, profiles []desktop.Profile, target desktop.Profile) ([]string, error) {
 	var others []string
 	for _, p := range profiles {
 		if p.Name == target.Name {
 			continue
 		}
-		if pids, err := app.Running(p.DataDir()); err == nil && len(pids) > 0 {
+		pids, err := app.Running(p.DataDir())
+		if err != nil {
+			return nil, fmt.Errorf("could not tell whether %s is open: %w", p.Name, err)
+		}
+		if len(pids) > 0 {
 			others = append(others, p.Name)
 		}
 	}
@@ -236,10 +252,14 @@ func otherRunningProfiles(app desktop.App, profiles []desktop.Profile, target de
 	// The ordinary Claude Desktop competes for the link too, and carries no
 	// --user-data-dir, so no profile scan can see it. Asked separately, and
 	// listed last because it is not a profile and cannot be quit by name.
-	if pids, err := app.RunningDefault(); err == nil && len(pids) > 0 {
+	pids, err := app.RunningDefault()
+	if err != nil {
+		return nil, fmt.Errorf("could not tell whether %s is open: %w", defaultInstanceLabel, err)
+	}
+	if len(pids) > 0 {
 		others = append(others, defaultInstanceLabel)
 	}
-	return others
+	return others, nil
 }
 
 // defaultInstanceLabel names the profile-less install in the refusal. It is not

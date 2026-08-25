@@ -152,6 +152,13 @@ type scanFailApp struct{ stubApp }
 
 func (scanFailApp) Running(string) ([]int, error) { return nil, errors.New("pgrep exploded") }
 
+// defaultScanFailApp scans profiles fine but cannot see the profile-less app.
+type defaultScanFailApp struct{ stubApp }
+
+func (defaultScanFailApp) RunningDefault() ([]int, error) {
+	return nil, errors.New("pgrep exploded")
+}
+
 // "We could not look" must never be reported as "nothing is open" — that would
 // let `quit` exit zero on an unknown state, contradicting IsRunning's contract
 // and the named-profile path.

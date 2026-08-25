@@ -345,11 +345,20 @@ func newDesktopOpenCmd() *cobra.Command {
 					return err
 				}
 				// Refuse before touching a window too: focusing one and then
-				// declining to send reads as a half-done action.
-				if profiles, lerr := st.List(); lerr == nil {
-					if others := otherRunningProfiles(app, profiles, p); len(others) > 0 && !anyway {
-						return ambiguousRoutingError(p, others)
-					}
+				// declining to send reads as a half-done action. A listing or scan
+				// that FAILS stops here as well — unknown state must not be read as
+				// "nothing else is open".
+				profiles, lerr := st.List()
+				if lerr != nil {
+					return fmt.Errorf("could not list Desktop profiles: %w\n"+
+						"Sending now could import the session into the wrong account", lerr)
+				}
+				others, oerr := otherRunningProfiles(app, profiles, p)
+				if oerr != nil {
+					return fmt.Errorf("%w\nSending now could import the session into the wrong account", oerr)
+				}
+				if len(others) > 0 && !anyway {
+					return ambiguousRoutingError(p, others)
 				}
 			}
 
@@ -391,9 +400,16 @@ func newDesktopOpenCmd() *cobra.Command {
 
 			// Re-read: launching this profile above may itself have changed what
 			// is running, and --anyway still needs to name what it is competing
-			// with.
-			profiles, _ := st.List()
-			others := otherRunningProfiles(app, profiles, p)
+			// with. Errors stop the send for the same reason as above.
+			profiles, lerr := st.List()
+			if lerr != nil {
+				return fmt.Errorf("could not list Desktop profiles: %w\n"+
+					"Sending now could import the session into the wrong account", lerr)
+			}
+			others, derr := otherRunningProfiles(app, profiles, p)
+			if derr != nil {
+				return fmt.Errorf("%w\nSending now could import the session into the wrong account", derr)
+			}
 			if len(others) > 0 && !anyway {
 				return ambiguousRoutingError(p, others)
 			}
