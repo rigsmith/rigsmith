@@ -14,5 +14,6 @@ func extraCmds() []*cobra.Command {
 		newDefaultCmd(),
 		newSetupCmd(),
 		newAliasCmd(),
+		newWsCmd(),
 	}
 }

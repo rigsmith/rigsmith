@@ -184,6 +184,31 @@ func (r *Repo) Push(ctx context.Context, remote, branch string) error {
 	return err
 }
 
+// CommitAmendNoEdit folds the currently staged changes into the last commit,
+// keeping its message — for callers that must ship a metadata edit (e.g. a
+// sync cursor) inside the commit that caused it, as one reviewable unit.
+func (r *Repo) CommitAmendNoEdit(ctx context.Context) (string, error) {
+	if _, err := runGit(ctx, r.Dir, "commit", "--amend", "--no-edit"); err != nil {
+		return "", err
+	}
+	return r.Head(ctx)
+}
+
+// LsRemote resolves ref's SHA on a remote (a name or a URL) without fetching —
+// the cheap "has upstream moved past our cursor" probe. ref not found on the
+// remote is an error, not an empty result, so a typo'd branch is loud.
+func (r *Repo) LsRemote(ctx context.Context, remote, ref string) (string, error) {
+	out, err := runGit(ctx, r.Dir, "ls-remote", remote, ref)
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return "", fmt.Errorf("ls-remote %s: ref %q not found", remote, ref)
+	}
+	return fields[0], nil
+}
+
 // Pull fast-forwards the current branch from remote/branch. It is ff-only so a
 // non-interactive (hook) pull never creates a merge commit or leaves conflicts;
 // a non-ff divergence surfaces as an error for the caller to resolve.
