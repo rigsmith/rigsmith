@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,10 +114,10 @@ func TestPickSession_SingleMatchNeedsNoPrompt(t *testing.T) {
 	}
 }
 
-// A deep link is routed by scheme, not per window. With another profile open
-// the session may land there, and saying nothing would make that look like a
-// bug in the session rather than a limit of what this can promise.
-func TestWarnAmbiguousRouting(t *testing.T) {
+// A deep link is routed by scheme, not per window. Observed live: asking for
+// one profile with another open imported the session into the OTHER account.
+// That crosses an account boundary, so it is refused rather than warned about.
+func TestOtherRunningProfilesAndRefusal(t *testing.T) {
 	st := targetStore(t)
 	profiles, err := st.List()
 	if err != nil || len(profiles) != 2 {
@@ -126,20 +125,24 @@ func TestWarnAmbiguousRouting(t *testing.T) {
 	}
 	target, other := profiles[0], profiles[1]
 
-	var quiet bytes.Buffer
-	warnAmbiguousRouting(&quiet, stubApp{open: map[string]bool{target.DataDir(): true}}, profiles, target)
-	if quiet.Len() != 0 {
-		t.Errorf("only the target running: want silence, got %q", quiet.String())
+	onlyTarget := stubApp{open: map[string]bool{target.DataDir(): true}}
+	if got := otherRunningProfiles(onlyTarget, profiles, target); len(got) != 0 {
+		t.Errorf("only the target running: want none, got %v", got)
 	}
 
-	var warned bytes.Buffer
-	warnAmbiguousRouting(&warned, stubApp{open: map[string]bool{
-		target.DataDir(): true, other.DataDir(): true,
-	}}, profiles, target)
-	if !strings.Contains(warned.String(), other.Name) {
-		t.Errorf("want a warning naming %q, got %q", other.Name, warned.String())
+	both := stubApp{open: map[string]bool{target.DataDir(): true, other.DataDir(): true}}
+	got := otherRunningProfiles(both, profiles, target)
+	if len(got) != 1 || got[0] != other.Name {
+		t.Fatalf("want [%s], got %v", other.Name, got)
 	}
-	if !strings.Contains(warned.String(), "routed by scheme") {
-		t.Errorf("warning should say why it cannot promise: %q", warned.String())
+
+	err = ambiguousRoutingError(target, got)
+	if err == nil {
+		t.Fatal("want a refusal")
+	}
+	for _, want := range []string{other.Name, "wrong account", "--anyway", "clauderig desktop quit"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal missing %q: %v", want, err)
+		}
 	}
 }

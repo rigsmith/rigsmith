@@ -2,7 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -217,13 +216,13 @@ func pickSession(ref string, cands []sessionCandidate) (sessionCandidate, error)
 	return byID[choice], nil
 }
 
-// warnAmbiguousRouting says so when more than one Desktop profile is running.
+// otherRunningProfiles names the profiles running besides the target.
 //
-// A deep link is routed by scheme, not by instance, so with several profiles up
-// the OS decides which one imports the session — and it may not be the profile
-// just focused. Saying nothing would make a session landing in the wrong
-// account look like a bug in the session, not in what this can promise.
-func warnAmbiguousRouting(out io.Writer, app desktop.App, profiles []desktop.Profile, target desktop.Profile) {
+// This is the whole reason --session can refuse. A deep link is routed by
+// SCHEME, not per instance: there is no per-instance address, and the profile
+// flag that separates instances is a launch argument a URL cannot carry. With
+// more than one instance up, the OS picks the recipient.
+func otherRunningProfiles(app desktop.App, profiles []desktop.Profile, target desktop.Profile) []string {
 	var others []string
 	for _, p := range profiles {
 		if p.Name == target.Name {
@@ -233,12 +232,26 @@ func warnAmbiguousRouting(out io.Writer, app desktop.App, profiles []desktop.Pro
 			others = append(others, p.Name)
 		}
 	}
-	if len(others) == 0 {
-		return
-	}
 	sort.Strings(others)
-	fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf(
-		"⚠ %s is also open — a deep link is routed by scheme, not per window, "+
-			"so the session may land there instead. Quit it to be certain.",
-		strings.Join(others, ", "))))
+	return others
+}
+
+// ambiguousRoutingError refuses to send a session while the OS gets to choose
+// which window receives it.
+//
+// Observed, not theorised: asking for `brightshore` with `relatecpa` also open
+// imported the session into relatecpa — the sidecar landed under relatecpa's
+// accountUuid. That is a session crossing an ACCOUNT boundary, so the default
+// is to refuse rather than warn and hope. --anyway sends it regardless, for the
+// case where any window will do.
+func ambiguousRoutingError(target desktop.Profile, others []string) error {
+	// The first line is rendered as the headline — capitalised, and given a
+	// trailing period — so it must be one plain sentence that survives both, and
+	// must not start with a profile name.
+	return fmt.Errorf("another Desktop profile is open, so this session could be imported into the wrong account\n\n"+
+		"%s is open alongside %s. A deep link is routed by scheme, not to a particular\n"+
+		"window, so the OS decides which one receives it.\n\n"+
+		"Quit the others (`clauderig desktop quit %s`) and re-run, or pass --anyway to\n"+
+		"send it to whichever window the OS picks.",
+		strings.Join(others, ", "), target.Name, strings.Join(others, " "))
 }

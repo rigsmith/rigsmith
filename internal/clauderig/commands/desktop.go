@@ -292,6 +292,7 @@ var errCancelled = errors.New("cancelled")
 
 func newDesktopOpenCmd() *cobra.Command {
 	var sessionRef string
+	var anyway bool
 	cmd := &cobra.Command{
 		Use:   "open [<name|email>]",
 		Short: "Open (or focus) a profile's Claude Desktop window",
@@ -303,7 +304,11 @@ func newDesktopOpenCmd() *cobra.Command {
 			"With --session, the window opens on that Claude Code session: pass its\n" +
 			"id, or text to match its title or project. Desktop reads the transcript\n" +
 			"from ~/.claude/projects, so a session that lives only in the synced repo\n" +
-			"must be restored before it can be opened.",
+			"must be restored before it can be opened.\n\n" +
+			"A deep link is routed by scheme, not to a particular window, so with a\n" +
+			"second profile open the OS picks which one imports the session — that is\n" +
+			"refused rather than risked, since it would cross an account boundary.\n" +
+			"Quit the others, or pass --anyway when any window will do.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -338,6 +343,13 @@ func newDesktopOpenCmd() *cobra.Command {
 				}
 				if err != nil {
 					return err
+				}
+				// Refuse before touching a window too: focusing one and then
+				// declining to send reads as a half-done action.
+				if profiles, lerr := st.List(); lerr == nil {
+					if others := otherRunningProfiles(app, profiles, p); len(others) > 0 && !anyway {
+						return ambiguousRoutingError(p, others)
+					}
 				}
 			}
 
@@ -377,18 +389,33 @@ func newDesktopOpenCmd() *cobra.Command {
 				time.Sleep(desktopSettle)
 			}
 
+			// Re-read: launching this profile above may itself have changed what
+			// is running, and --anyway still needs to name what it is competing
+			// with.
 			profiles, _ := st.List()
-			warnAmbiguousRouting(out, app, profiles, p)
+			others := otherRunningProfiles(app, profiles, p)
+			if len(others) > 0 && !anyway {
+				return ambiguousRoutingError(p, others)
+			}
 			if oerr := app.OpenURL(resumeDeepLink(target.ID)); oerr != nil {
 				return oerr
 			}
-			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ sent to Desktop:"), target.label())
+			if len(others) > 0 {
+				// --anyway: say where it went in terms of what is actually known,
+				// which is not "the profile you named".
+				fmt.Fprintf(out, "%s %s\n", WarnStyle.Render("⚠ sent, recipient chosen by the OS:"), target.label())
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(
+					"With "+strings.Join(others, ", ")+" also open it may have landed there instead."))
+				return nil
+			}
+			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ opened in "+p.Name+":"), target.label())
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"If nothing appears, Desktop reports the reason in-app (sign-in, or a missing transcript)."))
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&sessionRef, "session", "", "open this Claude Code session: its id, or text matching its title or project")
+	cmd.Flags().BoolVar(&anyway, "anyway", false, "send the session even with other profiles open, when the OS picks which receives it")
 	return cmd
 }
 
