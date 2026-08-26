@@ -1,6 +1,9 @@
 package changeset
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseStandard(t *testing.T) {
 	content := `---
@@ -211,5 +214,40 @@ func TestEffectiveScope(t *testing.T) {
 	}
 	if got := (&Changeset{Summary: "plain"}).EffectiveScope(); got != "" {
 		t.Errorf("unscoped = %q", got)
+	}
+}
+
+// The prefix has to be lifted out of the summary at parse time, not at render
+// time: `version` prepends a commit or PR reference before anything renders,
+// and a prefix is only recognisable while it is still at the start of the line.
+func TestParseLiftsTheConventionalPrefix(t *testing.T) {
+	cs, err := Parse("---\n\"pkg\": minor\n---\n\nfeat(rig): add a thing\n", "id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs.Type != "feat" || cs.Scope != "rig" {
+		t.Fatalf("type/scope = %q/%q, want feat/rig", cs.Type, cs.Scope)
+	}
+	if strings.TrimSpace(cs.Summary) != "add a thing" {
+		t.Fatalf("summary = %q, want the prefix removed", cs.Summary)
+	}
+	// Decoration prepended afterwards must not resurrect it.
+	cs.Summary = "abc1234: " + strings.TrimSpace(cs.Summary)
+	if got := (&Changeset{Summary: cs.Summary}).EffectiveScope(); got == "rig" {
+		t.Fatal("a decorated summary should carry no parseable scope of its own")
+	}
+	if cs.EffectiveScope() != "rig" {
+		t.Fatal("the scope should still come from the field")
+	}
+}
+
+// Explicit frontmatter still wins over the prefix.
+func TestParseKeepsExplicitTypeAndScope(t *testing.T) {
+	cs, err := Parse("---\ntype: fix\nscope: clauderig\n\"pkg\": minor\n---\n\nfeat(rig): x\n", "id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs.Type != "fix" || cs.Scope != "clauderig" {
+		t.Fatalf("type/scope = %q/%q, want fix/clauderig", cs.Type, cs.Scope)
 	}
 }

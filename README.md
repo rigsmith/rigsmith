@@ -34,7 +34,7 @@ the decisions made along the way.
 ```sh
 # in any polyglot monorepo (.NET / Node / Go / Rust):
 changerig init                              # create .changeset/
-changerig add -t feat -m "…"                # write a changeset (interactive without flags)
+changerig add -t feat -p my/pkg -m "…"      # write a changeset (interactive without flags)
 changerig status --verbose                  # show the pending release plan
 changerig version                           # bump versions + write CHANGELOG.md, with dependency cascade
 changerig ui                                # interactive bubbletea menu

@@ -128,7 +128,7 @@ func NewAddCmd() *cobra.Command {
 			case "-":
 				scope = ""
 			case "":
-				scope = inferScope(cmd.Context(), ws.Root, sinceRef)
+				scope = inferScope(cmd.Context(), ws.Root, ws.Config.BaseBranch, sinceRef)
 			}
 
 			// Interactive only when nothing was given. With a --type (or --bump) and
@@ -139,6 +139,23 @@ func NewAddCmd() *cobra.Command {
 					return err
 				}
 				scope = strings.TrimSpace(scope)
+			}
+
+			// A conventional prefix in the message fills in whatever the flags did
+			// not say, and is then stripped: keeping it would leave two sources
+			// disagreeing — notably `--scope -` against a `feat(rig):` summary,
+			// where the prose would win when the changelog is rendered.
+			if mt, ms, mbreak, ok := changeset.ParseConventionalScope(summary); ok {
+				if typ == "" {
+					typ = mt
+					if mbreak {
+						typ += "!"
+					}
+				}
+				if scopeStr == "" && scope == "" {
+					scope = ms
+				}
+				summary = changeset.StripConventional(summary)
 			}
 
 			// A breaking `!` suffix on the type sets breaking and the bump derives.
@@ -326,18 +343,25 @@ func relDir(root, dir string) string {
 	return rel + string(filepath.Separator)
 }
 
-// knownScopes lists the scopes a repo can meaningfully use: the tools it builds,
-// which are the directories under cmd/.
+// knownScopes lists the scopes a repo can meaningfully use: the tools it builds
+// and the packages it builds them from — the same two roots inferScope reads,
+// so completion cannot offer less than inference will produce.
 func knownScopes(root string) []string {
-	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, e := range entries {
-		if e.IsDir() {
-			out = append(out, e.Name())
+	seen := map[string]bool{}
+	for _, dir := range []string{"cmd", "internal"} {
+		entries, err := os.ReadDir(filepath.Join(root, dir))
+		if err != nil {
+			continue
 		}
+		for _, e := range entries {
+			if e.IsDir() {
+				seen[e.Name()] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
 	}
 	sort.Strings(out)
 	return out
@@ -348,10 +372,10 @@ func knownScopes(root string) []string {
 // "" when the change spans several, or none — which is the honest answer, and
 // files the bullet under the section rather than under a tool it only half
 // belongs to.
-func inferScope(ctx context.Context, root, sinceRef string) string {
+func inferScope(ctx context.Context, root, base, sinceRef string) string {
 	ref := sinceRef
 	if ref == "" {
-		ref = defaultScopeRef(ctx, root)
+		ref = defaultScopeRef(ctx, root, base)
 	}
 	if ref == "" {
 		return ""
@@ -362,7 +386,13 @@ func inferScope(ctx context.Context, root, sinceRef string) string {
 	}
 	found := map[string]bool{}
 	for _, f := range files {
-		parts := strings.Split(filepath.ToSlash(f), "/")
+		// ChangedFilesSince returns paths joined to the repository root, so the
+		// first component is the filesystem root rather than cmd/ or internal/.
+		rel, err := filepath.Rel(root, f)
+		if err != nil {
+			continue
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
 		if len(parts) < 2 {
 			continue
 		}
@@ -382,16 +412,23 @@ func inferScope(ctx context.Context, root, sinceRef string) string {
 // defaultScopeRef is the base branch to diff against when --since was not
 // given. On the mainline itself there is no branch to compare, so inference
 // stays quiet rather than diffing main against itself.
-func defaultScopeRef(ctx context.Context, root string) string {
+func defaultScopeRef(ctx context.Context, root, base string) string {
 	repo, err := gitrepo.Open(ctx, root)
 	if err != nil {
 		return ""
 	}
+	// The configured baseBranch is the repo saying which branch it releases
+	// from; without one, gitrepo already knows how to find the default (it
+	// reads origin/HEAD before falling back to main/master/trunk), and
+	// guessing "main" here would silently infer nothing on a master repo.
+	if base == "" {
+		base = repo.DefaultBranch(ctx)
+	}
 	cur, err := repo.CurrentBranch(ctx)
-	if err != nil || cur == "main" || cur == "master" {
+	if err != nil || base == "" || cur == base {
 		return ""
 	}
-	return "main"
+	return base
 }
 
 func runAddForm(names []string, selected *[]string, bump, summary, scope *string) error {

@@ -373,6 +373,11 @@ type ChangelogRequest struct {
 	// ContributorsSection overrides the contributors heading; empty renders the
 	// default "❤️ Contributors".
 	ContributorsSection string `json:"contributorsSection,omitempty"`
+	// ScopeOrder is the order scopes should appear in within a section. Sent so
+	// an external generator can reproduce the ordering the built-in one applies
+	// — a change's scope alone does not say which tool a repo wants read first.
+	// Empty means alphabetical; unscoped changes come last either way.
+	ScopeOrder []string `json:"scopeOrder,omitempty"`
 }
 
 // Author identifies a changelog contributor. Email is carried for de-duplication

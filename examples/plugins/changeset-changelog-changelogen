@@ -77,6 +77,20 @@ function read(stream) {
     (byType[sectionKey(c)] ||= []).push(c);
   }
 
+  // Scopes sort by the order the request carries — the engine's configured
+  // changelogScopes — then alphabetically; unscoped changes come last, since
+  // they belong to the section rather than to any tool in it.
+  const scopeRank = new Map((req.scopeOrder || []).map((s, i) => [s, i]));
+  const byScope = (a, b) => {
+    const sa = a.scope || "";
+    const sb = b.scope || "";
+    if (sa === sb) return 0;
+    if (!sa || !sb) return sa ? -1 : 1;
+    const ra = scopeRank.has(sa) ? scopeRank.get(sa) : Infinity;
+    const rb = scopeRank.has(sb) ? scopeRank.get(sb) : Infinity;
+    return ra !== rb ? ra - rb : sa < sb ? -1 : 1;
+  };
+
   // Known sections in changelogen order, then any unknown types alphabetically.
   const seen = new Set(ORDER);
   const extra = Object.keys(byType).filter((k) => !seen.has(k)).sort();
@@ -84,13 +98,20 @@ function read(stream) {
     const changes = byType[key];
     if (!changes || changes.length === 0) continue;
     lines.push("", TYPE_SECTIONS[key] || `### ${key}`);
-    for (const c of changes) {
-      const first = (c.summary || "").split("\n")[0].trim();
+    for (const c of [...changes].sort(byScope)) {
+      // The type and scope are structure — the heading and the lead-in — so an
+      // authored `feat(rig):` prefix left in the prose would repeat both.
+      const first = (c.summary || "")
+        .split("\n")[0]
+        .replace(/^[a-zA-Z]+(\([^)]*\))?!?:\s*/, "")
+        .trim();
+      if (!first) continue;
+      const lead = c.scope ? `**${c.scope}:** ` : "";
       const refs = [];
       if (c.pr) refs.push(`#${c.pr}`);
       else if (c.commit) refs.push(c.commit.slice(0, 7));
       const suffix = refs.length ? ` (${refs.join(", ")})` : "";
-      lines.push(`- ${first}${suffix}`);
+      lines.push(`- ${lead}${first}${suffix}`);
     }
   }
 

@@ -39,10 +39,14 @@ lives in a `.rig.json` key, edit it there).
 
 ```sh
 changerig add -p my/pkg --bump minor -m "Add a feature"
-changerig add -t fix -m "Stop the crash"   # type-driven bump (suffix ! = breaking)
-changerig add -t feat --scope rig -m "…"   # files the entry under rig: in the changelog
+changerig add -p my/pkg -t fix -m "Stop the crash"     # type-driven bump (! = breaking)
+changerig add -p my/pkg -t feat --scope rig -m "…"     # files the entry under rig:
 changerig add                 # interactive: pick packages, bump, message, scope
 ```
+
+`--package` can be omitted only where there is one package to choose; with
+several, `add` says so rather than writing a changeset that names none — such a
+file is silently ignored by every later step.
 
 Writes a `.changeset/*.md` file in the shared @changesets format: which
 packages change, at what bump level (`major`/`minor`/`patch`), and a summary
@@ -67,8 +71,9 @@ They do different jobs. The **type** picks the changelog section and, when no
 explicit bump is given, decides the bump (`feat` → minor, `fix` → patch, per
 [`changelogGroups`](./index)). The **scope** names which tool the entry belongs
 to: it becomes the bullet's lead-in and groups that tool's lines together
-within a section. Neither is required — an untyped changeset still renders
-under `Minor Changes` as before.
+within a section. Neither is required — an untyped changeset still
+renders under the section for its bump (`Minor Changes`, `Patch Changes`) as
+before.
 
 Note the package line above carries no bump. Leave it off and the type decides;
 give one and it wins, per package — which is how one changeset can be a feature

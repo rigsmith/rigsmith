@@ -123,7 +123,10 @@ func (c *Changeset) EffectiveScope() string {
 }
 
 // conventionalRe matches a conventional-commit prefix: type(scope)!: subject.
-var conventionalRe = regexp.MustCompile(`^([a-zA-Z]+)(?:\(([^)]*)\))?(!)?:\s`)
+// The subject may be empty — "fix(rig):" with nothing after it is still a
+// prefix, and callers trim before matching, so requiring a trailing space would
+// stop recognising exactly that case.
+var conventionalRe = regexp.MustCompile(`^([a-zA-Z]+)(?:\(([^)]*)\))?(!)?:(?:\s|$)`)
 
 // ParseConventional extracts the type and breaking flag from a conventional-
 // commit-style first line.
@@ -142,6 +145,25 @@ func ParseConventionalScope(summary string) (typ, scope string, breaking bool, o
 		return "", "", false, false
 	}
 	return strings.ToLower(m[1]), strings.TrimSpace(m[2]), m[3] == "!", true
+}
+
+// normalizeConventional lifts a conventional prefix out of the summary and into
+// the Type/Scope fields, once, at parse time. Doing it here rather than at
+// render time is what makes it survive changelog decoration: `version` prepends
+// a commit or PR reference to the summary before anything renders, and a prefix
+// is only recognisable while it is still at the start of the line.
+func normalizeConventional(cs *Changeset) {
+	typ, scope, breaking, ok := ParseConventionalScope(cs.Summary)
+	if !ok {
+		return
+	}
+	if cs.Type == "" {
+		cs.Type, cs.Breaking = typ, breaking
+	}
+	if cs.Scope == "" {
+		cs.Scope = scope
+	}
+	cs.Summary = StripConventional(cs.Summary)
 }
 
 // StripConventional removes a conventional-commit prefix from a summary, so a
@@ -198,6 +220,7 @@ func Parse(content, id string) (*Changeset, error) {
 	// Empty changeset: closing '---' immediately follows the opening one.
 	if i < len(lines) && lines[i] == "---" {
 		cs.Summary = summaryAfter(lines, i)
+		normalizeConventional(cs)
 		return cs, nil
 	}
 
@@ -238,6 +261,7 @@ func Parse(content, id string) (*Changeset, error) {
 	}
 
 	cs.Summary = summaryAfter(lines, i)
+	normalizeConventional(cs)
 	return cs, nil
 }
 

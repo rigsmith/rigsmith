@@ -21,6 +21,11 @@ type it when it guesses wrong.
 Leave the bump off a typed changeset — `"github.com/rigsmith/rigsmith"` with no
 `: minor` — and the type decides it.
 
+This repo has one releasable package, so `add` selects it for you. In a
+workspace with several, a non-interactive `add` needs `-p <package>`: it will
+not write a changeset that names none, because every later step ignores such a
+file.
+
 `add` writes a `.changeset/*.md` in the shared @changesets format (the changed
 package — `github.com/rigsmith/rigsmith` — its bump level, and a summary line
 that becomes the changelog entry). `changerig status` shows the pending plan;

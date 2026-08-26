@@ -16,6 +16,7 @@ func TestRenderGroupsByTypeAndLeadsWithScope(t *testing.T) {
 		{Bump: "patch", Type: "fix", Scope: "rig", Summary: "fix(rig): a rig fix"},
 		{Bump: "minor", Type: "feat", Scope: "rig", Summary: "feat(rig): a rig feature"},
 		{Bump: "minor", Type: "feat", Scope: "clauderig", Summary: "feat(clauderig): a clauderig feature"},
+		{Bump: "minor", Type: "feat", Summary: "feat: an unscoped feature"},
 		{Bump: "patch", Type: "refactor", Summary: "refactor: an unscoped tidy"},
 	}
 	got := renderSections("1.1.0", changes, config.DefaultChangelogGroups, nil)
@@ -45,9 +46,14 @@ func TestRenderGroupsByTypeAndLeadsWithScope(t *testing.T) {
 	if strings.Index(enh, "**clauderig:**") > strings.Index(enh, "**rig:**") {
 		t.Errorf("bullets not grouped by scope:\n%s", enh)
 	}
-	// An unscoped bullet carries no lead-in.
+	// An unscoped bullet carries no lead-in, and sits after the scoped ones in
+	// a section that holds both — the comparator branch that a section of only
+	// scoped (or only unscoped) bullets never reaches.
 	if !strings.Contains(got, "- an unscoped tidy") {
 		t.Errorf("unscoped bullet should have no lead-in:\n%s", got)
+	}
+	if strings.Index(enh, "- an unscoped feature") < strings.LastIndex(enh, "**rig:**") {
+		t.Errorf("an unscoped bullet should follow the scoped ones:\n%s", enh)
 	}
 }
 
@@ -85,5 +91,22 @@ func TestTrailingNewlinesDoNotBecomeBlankContinuations(t *testing.T) {
 	}, config.DefaultChangelogGroups, nil)
 	if strings.Contains(got, "\n  \n") || strings.HasSuffix(got, "  \n") {
 		t.Errorf("blank continuation line rendered:\n%q", got)
+	}
+}
+
+// A summary that is only a conventional prefix, or only whitespace, has nothing
+// to say — it must not render as a bare "- ".
+func TestEmptySummariesRenderNoBullet(t *testing.T) {
+	got := renderSections("1.0.1", []plugin.ChangelogChange{
+		{Bump: "patch", Type: "fix", Scope: "rig", Summary: "fix(rig): "},
+		{Bump: "patch", Type: "fix", Summary: "   \n\n"},
+		{Bump: "patch", Type: "fix", Summary: "fix: a real one"},
+	}, config.DefaultChangelogGroups, nil)
+
+	if strings.Contains(got, "- \n") || strings.Contains(got, "- **rig:** \n") {
+		t.Errorf("empty bullet rendered:\n%q", got)
+	}
+	if n := strings.Count(got, "\n- "); n != 1 {
+		t.Errorf("bullets = %d, want 1 (only the real one):\n%s", n, got)
 	}
 }

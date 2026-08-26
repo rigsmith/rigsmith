@@ -250,7 +250,7 @@ type Config struct {
 	// the version bump they imply. Configurable; empty falls back to the built-in
 	// conventional defaults (see DefaultChangelogGroups).
 	ChangelogGroups []ChangelogGroup `json:"changelogGroups,omitempty"`
-	// ChangelogScopes is the order scopes appear in within a changelog section:
+	// ChangelogScopes is the order scopes appear within a changelog section:
 	// the tools this repo wants read first. Scopes left out follow, in
 	// alphabetical order; unscoped entries always come last.
 	ChangelogScopes []string `json:"changelogScopes,omitempty"`

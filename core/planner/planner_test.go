@@ -726,10 +726,14 @@ func TestTypeDerivesBumpPerPackageAndExplicitWins(t *testing.T) {
 	}
 	plan := Plan([]*changeset.Changeset{c}, pkgs, config.Default())
 
-	if got := find(plan, "App").NewVersion().String(); got != "1.1.0" {
+	app, lib := find(plan, "App"), find(plan, "Lib")
+	if app == nil || lib == nil {
+		t.Fatalf("plan is missing a package: App=%v Lib=%v", app != nil, lib != nil)
+	}
+	if got := app.NewVersion().String(); got != "1.1.0" {
 		t.Errorf("App = %s, want 1.1.0 (derived from feat)", got)
 	}
-	if got := find(plan, "Lib").NewVersion().String(); got != "1.0.1" {
+	if got := lib.NewVersion().String(); got != "1.0.1" {
 		t.Errorf("Lib = %s, want 1.0.1 (explicit patch beats the type)", got)
 	}
 }
@@ -745,7 +749,11 @@ func TestScopeReachesThePlan(t *testing.T) {
 			c.Summary = "fix(rig): " + c.Summary
 		}
 		plan := Plan([]*changeset.Changeset{c}, pkgs, config.Default())
-		if got := find(plan, "Core").Changes[0].Scope; got != "rig" {
+		m := find(plan, "Core")
+		if m == nil || len(m.Changes) == 0 {
+			t.Fatalf("plan is missing Core's change (summary %q)", c.Summary)
+		}
+		if got := m.Changes[0].Scope; got != "rig" {
 			t.Errorf("Scope = %q, want rig (summary %q)", got, c.Summary)
 		}
 	}

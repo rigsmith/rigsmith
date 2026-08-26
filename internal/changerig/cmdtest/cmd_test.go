@@ -913,3 +913,58 @@ func TestAddScopeDashMeansNone(t *testing.T) {
 		t.Errorf("scope written despite -: %q", got)
 	}
 }
+
+// Scope inference is the reason --scope is usually not typed, so it needs a
+// test that actually branches and edits a file: the first version read the
+// absolute paths ChangedFilesSince returns and so never matched anything,
+// which every explicit --scope test happily passed straight over.
+func TestAddInfersScopeFromChangedFiles(t *testing.T) {
+	dir := newWorkspace(t)
+	gitInit(t, dir)
+
+	git(t, dir, "checkout", "-q", "-b", "feat/something")
+	writeFile(t, filepath.Join(dir, "internal", "rig", "thing.go"), "package rig\n")
+	gitCommitAll(t, dir, "touch rig")
+
+	code, out := runChangerig(t, dir, "add", "-t", "feat", "-m", "a thing", "-p", "pkg-a")
+
+	assertExitZero(t, code, out)
+	if got := readFile(t, changesetFiles(t, dir)[0]); !strings.Contains(got, "scope: rig") {
+		t.Errorf("scope not inferred from internal/rig:\n%s", got)
+	}
+}
+
+// A branch spanning two tools names neither, rather than picking one.
+func TestAddInfersNoScopeAcrossTools(t *testing.T) {
+	dir := newWorkspace(t)
+	gitInit(t, dir)
+
+	git(t, dir, "checkout", "-q", "-b", "feat/wide")
+	writeFile(t, filepath.Join(dir, "internal", "rig", "a.go"), "package rig\n")
+	writeFile(t, filepath.Join(dir, "cmd", "shiprig", "b.go"), "package main\n")
+	gitCommitAll(t, dir, "touch both")
+
+	code, out := runChangerig(t, dir, "add", "-t", "feat", "-m", "a thing", "-p", "pkg-a")
+
+	assertExitZero(t, code, out)
+	if got := readFile(t, changesetFiles(t, dir)[0]); strings.Contains(got, "scope:") {
+		t.Errorf("a change spanning two tools should name neither:\n%s", got)
+	}
+}
+
+// `--scope -` has to win over a conventional prefix in the message, or the
+// prose quietly reinstates the scope the flag just refused.
+func TestAddScopeDashBeatsAPrefixedMessage(t *testing.T) {
+	dir := newWorkspace(t)
+
+	code, out := runChangerig(t, dir, "add", "--scope", "-", "-m", "feat(rig): a thing", "-p", "pkg-a")
+
+	assertExitZero(t, code, out)
+	got := readFile(t, changesetFiles(t, dir)[0])
+	if strings.Contains(got, "scope:") || strings.Contains(got, "feat(rig):") {
+		t.Errorf("scope survived --scope -:\n%s", got)
+	}
+	if !strings.Contains(got, "type: feat") {
+		t.Errorf("type should still come from the message:\n%s", got)
+	}
+}

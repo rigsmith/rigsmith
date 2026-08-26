@@ -151,6 +151,7 @@ func Synthesize(commits []gitutil.Commit, packages []plugin.Package, repoRoot st
 			Releases: releases,
 			Summary:  summary,
 			Type:     h.typ,
+			Scope:    h.scope,
 			Breaking: breaking,
 			ID:       shortHash(c.Hash),
 			Commit:   c.Hash,

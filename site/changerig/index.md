@@ -7,7 +7,7 @@ powers [shipRig](/shiprig/), without the publish/tag machinery. Aliased
 
 ```sh
 changerig init                                # create .changeset/ (--source changesets|commits|both)
-changerig add -t feat -m "…"                  # write a changeset (interactive without flags)
+changerig add -t feat -p my/pkg -m "…"        # write a changeset (interactive without flags)
 changerig status --verbose                    # show the pending release plan
 changerig browse                              # browse/manage pending changesets (alias: ls / list)
 changerig version                             # bump versions + write CHANGELOG.md

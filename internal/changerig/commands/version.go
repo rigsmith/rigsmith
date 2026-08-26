@@ -212,7 +212,7 @@ func NewVersionCmd() *cobra.Command {
 
 			if dryRun {
 				if showChangelog {
-					printChangelogPreview(out, cmd.Context(), gen, plan)
+					printChangelogPreview(out, cmd.Context(), gen, plan, ws.Config.Scopes())
 				}
 				fmt.Fprintln(out, DimStyle.Render("\n(dry run — no files written)"))
 				return nil
@@ -270,7 +270,7 @@ func NewVersionCmd() *cobra.Command {
 				if m.RangeOnly {
 					continue // "none" release: ranges rewritten, no version bump, no changelog
 				}
-				entry, err := gen.Render(cmd.Context(), planner.ModuleToRequest(m))
+				entry, err := gen.Render(cmd.Context(), planner.ModuleToRequestScoped(m, ws.Config.Scopes()))
 				if err != nil {
 					txn.rollback()
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
@@ -364,12 +364,12 @@ func NewVersionCmd() *cobra.Command {
 // preview is byte-identical to the written entry (honoring changelog groups,
 // lockstep grouping baked into the plan, and the contributors section attached
 // above). "none" releases (RangeOnly) get no changelog, so they are skipped.
-func printChangelogPreview(out io.Writer, ctx context.Context, gen plugin.ChangelogGenerator, plan []*planner.Module) {
+func printChangelogPreview(out io.Writer, ctx context.Context, gen plugin.ChangelogGenerator, plan []*planner.Module, scopeOrder []string) {
 	for _, m := range plan {
 		if m.RangeOnly {
 			continue
 		}
-		entry, err := gen.Render(ctx, planner.ModuleToRequest(m))
+		entry, err := gen.Render(ctx, planner.ModuleToRequestScoped(m, scopeOrder))
 		if err != nil {
 			fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("\n  (changelog render failed for %s: %v)", m.Name, err)))
 			continue

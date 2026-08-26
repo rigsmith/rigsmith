@@ -24,6 +24,11 @@ func RenderEntry(m *Module) string {
 // ModuleToRequest builds the changelog plugin request for a module. This is the
 // exact object serialized to a subprocess generator's stdin.
 func ModuleToRequest(m *Module) plugin.ChangelogRequest {
+	return ModuleToRequestScoped(m, nil)
+}
+
+// ModuleToRequestScoped is ModuleToRequest carrying the configured scope order.
+func ModuleToRequestScoped(m *Module, scopeOrder []string) plugin.ChangelogRequest {
 	changes := make([]plugin.ChangelogChange, 0, len(m.Changes))
 	for _, c := range m.Changes {
 		changes = append(changes, plugin.ChangelogChange{
@@ -46,6 +51,7 @@ func ModuleToRequest(m *Module) plugin.ChangelogRequest {
 		Changes:             changes,
 		Contributors:        m.Contributors,
 		ContributorsSection: m.ContributorsSection,
+		ScopeOrder:          scopeOrder,
 	}
 }
 
@@ -93,16 +99,21 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 	var order []string
 	buckets := map[string][]bullet{}
 	add := func(section string, c plugin.ChangelogChange) {
-		if _, ok := buckets[section]; !ok {
-			order = append(order, section)
-		}
 		// The type and scope become structure — the section heading and the
 		// bullet's lead-in — so leaving the prefix in the prose too would say
 		// each of them twice.
-		buckets[section] = append(buckets[section], bullet{
-			scope:   c.Scope,
-			summary: changeset.StripConventional(c.Summary),
-		})
+		summary := strings.TrimSpace(changeset.StripConventional(c.Summary))
+		if summary == "" {
+			// A changeset whose body is only a conventional prefix, or only
+			// whitespace, has nothing to say. Returning before the section is
+			// registered matters: registering it without filling its bucket
+			// would leave the heading in `order` and re-add it next time.
+			return
+		}
+		if _, ok := buckets[section]; !ok {
+			order = append(order, section)
+		}
+		buckets[section] = append(buckets[section], bullet{scope: c.Scope, summary: summary})
 	}
 
 	groupSection := func(typ string) (string, bool) {
