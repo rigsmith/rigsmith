@@ -207,9 +207,10 @@ has to serve as a URL, an engine path, and a label.
 written: a pull rewrites that one value while the entries you wrote, and their
 comments, stay untouched.
 
-An optional `"josh"` key pins the filtering engine version for this workspace,
-overriding the one rig ships with. Changing it against existing workspace
-history is at your own risk.
+An optional `"josh"` key pins the version of [josh](https://josh-project.dev) —
+the history-filtering engine [`init` and `pull`](./verbs#stack) run — for this
+workspace, overriding the one rig ships with. Changing it against existing
+workspace history is at your own risk.
 
 ## Declaring artifacts {#artifacts}
 

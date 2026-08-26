@@ -282,10 +282,19 @@ commit touching three projects becomes three such branches, one per `send`.
 is scoped to the project that caused it. The cursor only advances once the merge
 is committed, which makes a repeated `pull` a no-op rather than a surprise.
 
-Importing and pulling need a filtering engine (`josh-proxy`); `stack doctor
---fix` fetches a verified binary for your platform, falling back to building it
-where none is published. Nothing runs in the background: the engine starts per
-operation and stops after.
+Importing and pulling are done by **[josh](https://josh-project.dev)**, the git
+history-filtering proxy — `init` and `pull` drive its reversible `:prefix=`
+filter to move commits between an upstream repo and its directory here. `send`
+uses no engine at all: it is plain git, since the directory's tree is already
+what upstream wants.
+
+rig owns the binary so you don't have to: `stack doctor --fix` fetches a
+verified `josh-proxy` for your platform (built and published by
+[rigsmith/josh-binaries](https://github.com/rigsmith/josh-binaries), since
+upstream ships no releases), falling back to building it from source where none
+exists. Nothing runs in the background — the engine starts per operation and
+stops after. Pin a version per workspace with the manifest's
+[`josh` key](./configuration#stack).
 
 See [Configuration](./configuration#stack) for the manifest keys.
 
