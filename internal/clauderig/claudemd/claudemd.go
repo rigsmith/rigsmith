@@ -100,7 +100,7 @@ only what can't be inferred.
 
 The changeset lifecycle. When a change is user-facing, record it in the same PR:
 
-- ` + "`changerig add -t <feat|fix|…> -m \"<summary>\"`" + ` — write a changeset (interactive with no flags). The type picks the changelog section and derives the bump; add ` + "`--scope <tool>`" + ` in a monorepo, or let it infer from the changed files.
+- ` + "`changerig add -t <feat|fix|…> -p <pkg> -m \"<summary>\"`" + ` — write a changeset (interactive with no flags; ` + "`-p`" + ` is optional where the repo has one package). The type picks the changelog section and derives the bump; add ` + "`--scope <tool>`" + ` in a monorepo, or let it infer from the changed files.
 - ` + "`changerig status --verbose`" + ` — show the pending release plan.
 - ` + "`changerig version`" + ` — bump versions and write ` + "`CHANGELOG.md`" + `, cascading bumps to dependents.
 

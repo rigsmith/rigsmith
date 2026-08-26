@@ -215,3 +215,15 @@ func TestSynthesizeUnknownScopeFallsBackToPath(t *testing.T) {
 		t.Errorf("names = %v, want [pkg-a] (path fallback)", names)
 	}
 }
+
+// A scope written with padding — `fix( rig ):` — must not carry it into the
+// changelog, where it matches no configured order and renders as `** rig :**`.
+func TestParseHeaderTrimsScope(t *testing.T) {
+	h, ok := parseHeader("fix( rig ): a thing")
+	if !ok {
+		t.Fatal("header did not parse")
+	}
+	if h.scope != "rig" {
+		t.Fatalf("scope = %q, want %q", h.scope, "rig")
+	}
+}

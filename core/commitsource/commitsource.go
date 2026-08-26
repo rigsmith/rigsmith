@@ -81,8 +81,10 @@ func parseHeader(subject string) (header, bool) {
 	// same), leaving inline issue mentions intact.
 	desc := strings.TrimSpace(trailingRefRe.ReplaceAllString(m[4], ""))
 	return header{
-		typ:      strings.ToLower(m[1]),
-		scope:    m[2],
+		typ: strings.ToLower(m[1]),
+		// Trimmed: `fix( rig ):` is accepted, and an untrimmed " rig " matches no
+		// configured scope order and renders as `** rig :**`.
+		scope:    strings.TrimSpace(m[2]),
 		breaking: m[3] == "!",
 		desc:     desc,
 	}, true
