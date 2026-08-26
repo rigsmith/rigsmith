@@ -99,7 +99,7 @@ are just branches of one repo), stashes, bisect: all normal git.
 |---|---|
 | `rig stack init` | scaffold the manifest; for each repo, import upstream history under its prefix (proxy fetch through `:prefix=<child>`, merge, set cursor); scaffold the ecosystem overlay |
 | `rig stack pull [child]` | fetch upstream through the filter; `NothingToPull` if the cursor matches; else merge (strategy per child), update cursor. The CI-cronnable direction |
-| `rig stack send <child> <branch>` | extract workspace commits touching `<child>/` through the reverse filter onto the **fork** as `<branch>`; print the PR URL (`gh` optional). The deliberate direction |
+| `rig stack send <child> <branch>` | commit `<child>/`'s tree onto that project's upstream tip and push it to the **fork** as `<branch>`: one commit, whose diff is exactly what the workspace changed. The deliberate direction |
 | `rig stack status` | per child: upstream commits since cursor, local commits touching the prefix not yet sent, cursor SHA |
 | `rig stack doctor` | engine installed + version matches pin, remotes reachable, manifest sane; `--fix` installs/updates josh (cliguard requires `--fix` on any doctor) |
 
@@ -135,6 +135,33 @@ fixed 42042 — two rig invocations must not collide); readiness = TCP poll;
 teardown = SIGINT then wait with timeout, SIGKILL fallback. One proxy per verb
 invocation, never a daemon. `--local` cache under
 `~/.cache/rigsmith/josh/<workspace-hash>/`.
+
+### How `send` builds a branch, and why not with josh
+
+Reverse-filtering the workspace's commits through josh is the obvious route, and
+it works: `-o base=<branch> -o create -o edit` produces correctly re-rooted
+commits on the fork. It is not what ships, because the branch it produces
+carries the workspace's own history — its root commit, and its imports of
+*other* projects — into a pull request where none of that means anything.
+
+What ships is simpler and needs no engine at all. A workspace already stores
+each project as a subtree, so `HEAD:<child>` **is** the tree upstream wants,
+with the prefix already absent inside it. `send` therefore:
+
+1. resolves `HEAD:<child>` — the tree,
+2. asks the upstream for its branch tip and fetches that commit's objects,
+3. `commit-tree`s the tree onto that tip with a message,
+4. pushes that commit to the fork's `<branch>`.
+
+The result is one commit whose diff is exactly the workspace's changes to that
+project, rooted on current upstream, with no sign that the repo is fused with
+anything. It also matches what projects with a one-commit-per-PR convention
+(josh's own included) actually want.
+
+The trade is granularity: several workspace commits touching one project arrive
+as one. That is the right default for a pull request; preserving them is what
+the josh path is for, and it can return as `--preserve-history` if anyone wants
+it.
 
 ## Wiring into rig (from the codebase survey, 2026-08-25)
 
