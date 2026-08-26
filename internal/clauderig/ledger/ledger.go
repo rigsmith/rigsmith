@@ -39,7 +39,11 @@ type Entry struct {
 	// Title is the session's first prompt, the same fallback title `search`
 	// shows for a session with no Desktop sidecar.
 	Title string `json:"title,omitempty"`
-	// End is the transcript's last-modified time — the session's date.
+	// End is the session's date: the timestamp on its last transcript record.
+	// Deliberately NOT the file's mtime — a restore or a git checkout of the
+	// staged tree rewrites mtime, which would re-date every session to the copy.
+	// The writer (engine.updateLedger) falls back to mtime only for a transcript
+	// it cannot read.
 	End time.Time `json:"end"`
 	// Bytes is the transcript size; with End it forms the change fingerprint
 	// that decides whether a row needs rewriting.

@@ -13,7 +13,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
@@ -189,12 +192,18 @@ type sessResult struct {
 	// title-only session whose transcript simply didn't match. It, not mere
 	// this-machine presence, gates the resume command.
 	cliLive bool
-	// when is the recency sort key: the sidecar's lastActivity, else the transcript
-	// mtime, computed once so the sort is deterministic even for CLI-only sessions.
+	// when is the recency sort key: the transcript's own last record timestamp,
+	// else the sidecar's lastActivity, else the transcript mtime — computed once
+	// so the sort is deterministic even for CLI-only sessions. See sessionTime.
 	when time.Time
 	// cwd is the session's resolved project directory, computed once because both
 	// the --cwd filter and the rendered line need it.
 	cwd string
+	// act caches the one read of the transcript's tail — the session's real date,
+	// its ending cwd/branch, and the client that ran it. Cached because three
+	// different callers want pieces of it and the read is the expensive part.
+	act      session.Activity
+	actTried bool
 	// led is the permanent ledger row for this session, when one exists. It is
 	// what lets a session whose transcript has aged out of the synced window still
 	// answer with a title, a project and a date instead of with silence.
@@ -233,10 +242,33 @@ func (r *sessResult) record(m search.Match) bool {
 	return true
 }
 
-// sessionTime is the session's recency: the sidecar's lastActivity, else the
-// transcript's mtime, else zero. Used for both the sort key and the displayed
-// date so CLI-only sessions (no sidecar) still order by recency.
+// activity reads (once) what the transcript itself says about the session. A
+// session with no transcript here, or one too damaged to parse, yields the zero
+// Activity — callers fall back rather than treating that as an error.
+func (r *sessResult) activity() session.Activity {
+	if !r.actTried && r.path != "" {
+		r.actTried = true
+		r.act, _ = session.LastActivity(r.path)
+	}
+	return r.act
+}
+
+// sessionTime is the session's recency, in descending order of trust: the
+// transcript's own last record timestamp, then the Desktop sidecar's
+// lastActivity, then the file's mtime, then zero.
+//
+// The transcript leads because it is the only one of the three that a copy
+// cannot move. Both of the others are derived from the file rather than from the
+// conversation — a restore, a git checkout of the synced repo, or any tool that
+// walks the tree rewrites mtime, and the sidecar is rebuilt from those same
+// files — so on a machine that has ever restored, they report the restore and
+// not the session. The sidecar remains ahead of mtime for the case the
+// transcript cannot answer at all (aged out, unreadable), where it is at least
+// derived from something that once knew.
 func sessionTime(r *sessResult) time.Time {
+	if a := r.activity(); !a.At.IsZero() {
+		return a.At
+	}
 	if !r.meta.LastActivity.IsZero() {
 		return r.meta.LastActivity
 	}
@@ -287,6 +319,7 @@ func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine,
 func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, query string, sc sessionScope) error {
 	caseSensitive := sc.caseSensitive
 	idx := session.Build(roots)
+	reprofile(idx, profileByAccount())
 
 	hits := map[string]*sessResult{}
 	get := func(id string) *sessResult {
@@ -458,9 +491,22 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	return nil
 }
 
-// renderSession prints one grouped session: title, id/date/model/project/source
-// line, the resume command, and a preview snippet when there was a content hit.
+// renderSession prints one grouped SEARCH result: title, id/date/model/project/
+// source line, why it matched, the resume command, and a preview snippet when
+// there was a content hit.
 func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machine, r *sessResult) {
+	why := "title match"
+	if r.matches > 0 {
+		why = fmt.Sprintf("%d match(es)", r.matches)
+	}
+	renderSessionAs(out, me, r, why)
+}
+
+// renderSessionAs is renderSession with the match explanation supplied by the
+// caller. An empty why omits that column entirely, which is what a listing wants:
+// `recent` ran no query, so "title match" there would be answering a question
+// nobody asked.
+func renderSessionAs(out interface{ Write([]byte) (int, error) }, me config.Machine, r *sessResult, why string) {
 	title := r.meta.Title
 	if title == "" && r.path != "" {
 		title = session.FirstPrompt(r.path)
@@ -479,6 +525,9 @@ func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machin
 	if d := sessionDate(r); d != "" {
 		meta = append(meta, d)
 	}
+	if c := clientWithProfile(r); c != "" {
+		meta = append(meta, c)
+	}
 	if r.meta.Model != "" {
 		meta = append(meta, strings.TrimPrefix(r.meta.Model, "claude-"))
 	}
@@ -490,11 +539,11 @@ func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machin
 	}
 	fmt.Fprintf(out, "  %s\n", DimStyle.Render(strings.Join(meta, " · ")))
 
-	why := "title match"
-	if r.matches > 0 {
-		why = fmt.Sprintf("%d match(es)", r.matches)
+	if why != "" {
+		fmt.Fprintf(out, "  %s   %s\n", DimStyle.Render(why), DimStyle.Render(resumeHint(r, cwd)))
+	} else {
+		fmt.Fprintf(out, "  %s\n", DimStyle.Render(resumeHint(r, cwd)))
 	}
-	fmt.Fprintf(out, "  %s   %s\n", DimStyle.Render(why), DimStyle.Render(resumeHint(r, cwd)))
 	if r.matches > 0 {
 		fmt.Fprintf(out, "    %s\n", highlight(r.first))
 	}
@@ -512,6 +561,14 @@ func resumeHint(r *sessResult, cwd string) string {
 		return "resume: cd " + shQuote(cwd) + " && claude --resume " + shQuote(r.id)
 	case r.cliLive:
 		return "resume: claude --resume " + shQuote(r.id)
+	case r.meta.Profile != "":
+		// A Desktop profile is a separate install AND a separate login, and Claude
+		// Desktop lists only the sessions filed under the account it is signed in
+		// as — measured: a profile holding 25 sidecars from the other account shows
+		// 3. So this session will never appear in any Desktop but its own, however
+		// long you look. Name the one to open.
+		return "Desktop session in the " + r.meta.Profile +
+			" profile — no other Desktop will list it: clauderig desktop open " + shQuote(r.meta.Profile)
 	case r.hitTargets[desktopTarget]:
 		// Cowork/Desktop transcript — `claude --resume` won't find it under ~/.claude.
 		return "Desktop session — open it in Claude Desktop's Code tab"
@@ -623,7 +680,7 @@ func resolveCwd(me config.Machine, r *sessResult) string {
 }
 
 // sessionDate is the session's last-used day, from the precomputed recency time
-// (sidecar lastActivity, else transcript mtime).
+// (see sessionTime).
 func sessionDate(r *sessResult) string {
 	if r.when.IsZero() {
 		return ""
@@ -654,6 +711,129 @@ func sourceLabel(r *sessResult) string {
 	}
 	sort.Strings(labels)
 	return strings.Join(labels, "+")
+}
+
+// clientLabel renders a transcript's entrypoint as the app a person would name:
+// vscode, desktop, cli, sdk-cs. Only the "claude-" prefix is stripped — the sdk-*
+// variants keep their language, because "an SDK run" and "an SDK run from C#" are
+// different enough to be worth telling apart when you are hunting a session.
+//
+// Note this is a different question from sourceLabel's, and the two share the
+// word "desktop": sourceLabel says which STORE a transcript was found in, this
+// says which CLIENT wrote it. A session run in Claude Desktop and a session run
+// in VS Code both land in ~/.claude/projects, so the store cannot answer it.
+func clientLabel(entrypoint string) string {
+	return strings.TrimPrefix(entrypoint, "claude-")
+}
+
+// profileByAccount maps accountUuid → Desktop profile name, via the clauderig
+// account each profile is linked to. Empty when nothing can be resolved, which
+// leaves every session on its fallback rather than mislabelling any.
+func profileByAccount() map[string]string {
+	st, err := desktop.DefaultStore()
+	if err != nil {
+		return nil
+	}
+	profiles, err := st.List()
+	if err != nil || len(profiles) == 0 {
+		return nil
+	}
+	as, err := account.DefaultStore()
+	if err != nil {
+		return nil
+	}
+	accounts, err := as.List()
+	if err != nil {
+		return nil
+	}
+	uuidByID := map[string]string{}
+	for _, a := range accounts {
+		uuid := strings.ToLower(a.AccountUUID)
+		if uuid == "" {
+			// meta.json records the uuid only for accounts captured after that
+			// field existed; the stored oauthAccount block has always carried it.
+			// Without this fallback every pre-existing account resolves to nothing
+			// and the whole map comes back empty — which does not fail loudly, it
+			// just quietly reverts to labelling sessions by whichever tree a copy
+			// of the sidecar turned up in.
+			if raw, oerr := as.OAuth(a.ID); oerr == nil {
+				uuid = account.ProfileAccountUUID(raw)
+			}
+		}
+		if uuid != "" {
+			uuidByID[a.ID] = uuid
+		}
+	}
+	out := map[string]string{}
+	for _, p := range profiles {
+		if uuid := uuidByID[p.AccountID]; uuid != "" {
+			// Two profiles claiming one account would make the label a coin flip;
+			// drop both rather than pick.
+			if prev, dup := out[uuid]; dup && prev != p.Name {
+				out[uuid] = ""
+				continue
+			}
+			out[uuid] = p.Name
+		}
+	}
+	return out
+}
+
+// reprofile corrects each session's owning Desktop profile from the account its
+// sidecar is filed under, rather than from whichever profile's tree the file
+// happened to be found in.
+//
+// Those differ more often than they should: a sidecar copied between installs
+// keeps its account path but lands in the other profile's directory, and on one
+// real machine every one of 25 such copies sat in the wrong tree. Reading the
+// account makes the label immune to the strays — and means nobody has to go
+// delete them to get a truthful listing.
+//
+// Falls back to the tree when the account resolves to no profile: a session
+// belonging to an account with no Desktop profile of its own (the machine-wide
+// install) must keep reporting no profile, not borrow one.
+func reprofile(idx session.Index, byAccount map[string]string) {
+	if len(byAccount) == 0 {
+		return
+	}
+	for id, m := range idx {
+		if m.Account == "" {
+			continue
+		}
+		name, known := byAccount[strings.ToLower(m.Account)]
+		if !known {
+			// An account with no profile is the machine-wide install's; a tree
+			// label here would be a stray copy's, which is exactly the lie.
+			m.Profile = ""
+			idx[id] = m
+			continue
+		}
+		if name != "" {
+			m.Profile = name
+			idx[id] = m
+		}
+	}
+}
+
+// clientWithProfile is clientLabel qualified by the Desktop profile that owns the
+// session, when there is one: "desktop@work" rather than a bare "desktop".
+//
+// Unqualified "desktop" is the answer that sent this session's owner looking in
+// the wrong app: three Desktop installs on one machine — the machine-wide one and
+// two clauderig profiles — all write entrypoint "claude-desktop", so the
+// entrypoint alone narrows nothing. The profile comes from which sidecar tree the
+// session was found in, which is the only place the distinction is recorded.
+func clientWithProfile(r *sessResult) string {
+	c := clientLabel(r.activity().Entrypoint)
+	if r.meta.Profile == "" {
+		return c
+	}
+	if c == "" {
+		// No entrypoint to read (a transcript we could not parse), but the sidecar
+		// still says which Desktop filed it — which is the useful half anyway.
+		return desktopTarget + "@" + r.meta.Profile
+	}
+	return c + "@" + r.meta.Profile
 }
 
 func shortID(id string) string {
@@ -728,17 +908,42 @@ func buildTargets(cfg *config.Config, me config.Machine, liveOnly, repoOnly bool
 }
 
 // sessionRoots is where session.Build looks for Desktop sidecars: the live
-// Desktop dir and/or the synced repo's desktop tree, matching the search scope.
+// Desktop dirs and/or the synced repo's desktop trees, matching the search scope.
+//
+// "Dirs" plural is the point. Every clauderig-managed Desktop profile is a
+// separate Claude Desktop install with its own login and its own session list,
+// kept under ~/.clauderig/desktop/<name>/data; only the machine-wide install lives
+// at the configured `desktop` root. Scanning just that one leaves every session
+// run in a profile with no title, no model, and nothing to say which of your
+// Desktop installs to reopen it in — while its transcript sits in the shared
+// ~/.claude/projects tree looking exactly like all the others. sync already stages
+// each profile separately (as desktop@<name>), so the synced side is enumerated
+// the same way, which also picks up profiles that only exist on another machine.
 func sessionRoots(cfg *config.Config, me config.Machine, liveOnly, repoOnly bool) []session.Root {
 	var roots []session.Root
 	if !repoOnly {
 		if loc, _ := cfg.RootLocation("desktop", me); loc != "" {
-			roots = append(roots, session.Root{Label: "desktop", Base: loc})
+			roots = append(roots, session.Root{Label: desktopTarget, Base: loc})
+		}
+		if store, err := desktop.DefaultStore(); err == nil {
+			profiles, _ := store.List() // absent store → no profiles, not an error
+			for _, p := range profiles {
+				roots = append(roots, session.Root{
+					Label: desktopTarget, Base: p.DataDir(), Profile: p.Name})
+			}
 		}
 	}
 	if !liveOnly {
 		if staging, err := config.StagingDir(); err == nil {
-			roots = append(roots, session.Root{Label: "repo", Base: filepath.Join(staging, "desktop")})
+			roots = append(roots, session.Root{Label: repoTarget, Base: filepath.Join(staging, "desktop")})
+			// engine.StagedProfileNames, not a local scan: it is what `restore`
+			// reads to decide which profiles to write, it validates the name
+			// before it becomes a path, and having two definitions of "which
+			// profiles are staged" is how they drift apart.
+			for _, name := range engine.StagedProfileNames(staging) {
+				roots = append(roots, session.Root{
+					Label: repoTarget, Base: engine.StagedProfileDataDir(staging, name), Profile: name})
+			}
 		}
 	}
 	return roots

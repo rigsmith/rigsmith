@@ -8,6 +8,7 @@
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`); nudges a Desktop restart when Code sessions come back |
 | `status` | Sync state: remote, last sync, roots, hooks |
 | `search` | Find a Claude Code session by title or content across live + synced history (alias `grep`); `--since`/`--until`/`--cwd` narrow, `--raw` grep lines, `--all` every file, `--live`/`--repo` scope, `-s` case-sensitive |
+| `recent` | List sessions newest first (alias `last`); dated by each transcript's own records rather than by file mtime, and labelled with the client + Desktop profile that ran each one. Takes an optional search term to narrow the window. `--since` (default `24h`) / `--until` / `--cwd` / `--account` narrow, `--limit` caps, `-l` adds resume commands |
 | `ledger` | Report the permanent session index; `ledger backfill` recovers rows for sessions pruned before it existed (`-n` dry run) |
 | `global` | `install` / `uninstall` / `status` the global sync hooks in `~/.claude` (alias `hooks`) |
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
@@ -39,8 +40,78 @@ restarts.
 
 ## Finding a session
 
-Lost track of which chat had that work? `search` finds it by **title or
-content**:
+### "I was working on it yesterday"
+
+When you can't remember a word from the chat but you know roughly *when*,
+`recent` lists sessions newest first with no search term:
+
+```sh
+clauderig recent                    # the last 24 hours
+clauderig recent webhook            # …narrowed to sessions that mention it
+clauderig recent --since 7d --cwd acme-api
+clauderig recent -l                 # full ids and resume commands
+```
+
+```
+  today 09:12    a1b2c3d4  vscode           Refactor the auth middleware   feat/auth-split  ~/Git/acme-api
+  yest. 17:40    9f8e7d6c  desktop@work     Fix the stale README table     main             ~/Git/acme-api
+  ~yest. 13:22   f4501175                   (untitled session)
+```
+
+Each line is **the client that ran it**, the title, **the git branch it ended
+on**, and the project. Two of those columns exist because the project path so
+often identifies nothing — a session started one directory up, or one driving a
+worktree, tells you only that it was "in `~/Git`".
+
+The client column is qualified by **Desktop profile**. One machine can carry
+several Claude Desktop installs — the machine-wide one plus each `clauderig
+desktop` profile — and every one of them writes `entrypoint: claude-desktop`
+into the same shared `~/.claude/projects` tree. `desktop@work` versus
+`desktop@personal` is the only thing that says which app to reopen a session in.
+`recent` and `search` read the sidecars of *every* profile, not just the
+machine-wide install, and take ownership from the `accountUuid` each sidecar is
+filed under rather than from the directory it happens to sit in — sidecars get
+copied between installs and keep their account path, so the directory is not
+ownership.
+
+This matters because **Claude Desktop lists only the sessions filed under the
+account it is signed in as**. A profile can hold hundreds of another account's
+sidecars and show none of them, so a session will never appear in any Desktop but
+its own. `-l` says which one to open:
+
+```
+  Desktop session in the work profile — no other Desktop will list it:
+  clauderig desktop open work
+```
+
+Give `recent` a word and it narrows the window instead of ranking the whole
+store, still in time order — it reads only the transcripts inside the window, so
+it answers immediately:
+
+```sh
+clauderig recent --since 3d "connection pool"
+```
+
+#### Why not just sort by mtime
+
+Because a file's mtime is not when you had the conversation. Restoring a backup,
+checking out the synced repo, or any tool that walks `~/.claude` rewrites it — on
+one real machine, **580 of 670 transcripts** had an mtime more than an hour newer
+than their last message, 541 of them stamped with the same minute by a single
+restore. Sorted that way, "most recent chat" means "most recently copied", and
+the handful you actually worked on yesterday are buried under hundreds that only
+look fresh. Claude Desktop's own session list is rebuilt from those same files
+and drifts the same way.
+
+`recent` dates each session by the timestamp its **last transcript record**
+carries. That is content, not metadata, so it survives every copy, sync and
+restore. A session with no timestamped record at all — `~/.claude` holds a few
+stub files that never held a conversation — is still listed, but marked `~`, so
+its date is never mistaken for the real thing.
+
+### "I remember what it said"
+
+When you remember the words, `search` finds it by **title or content**:
 
 ```sh
 clauderig search "auth refactor"

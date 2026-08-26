@@ -431,6 +431,18 @@ func CredentialOrg(raw []byte) (string, error) {
 // ProfileOrg reports the organization an oauthAccount block names.
 func ProfileOrg(raw []byte) string { return parseOAuthMeta(raw).OrganizationUUID }
 
+// ProfileAccountUUID reports the accountUuid an oauthAccount block names,
+// lowercased, or "" when the block carries none.
+//
+// It exists because meta.json records the uuid only for accounts captured after
+// that field was added, while the stored oauthAccount block has carried it all
+// along — so this is where an older account's uuid can still be recovered. Two
+// logins can share an organization, which makes the account uuid the only
+// identifier that always tells them apart.
+func ProfileAccountUUID(raw []byte) string {
+	return CanonicalUUID(parseOAuthMeta(raw).AccountUUID)
+}
+
 // GlobalConfigExists reports whether ~/.claude.json is present. Callers that are
 // about to move a credential must check this first: WriteOAuthAccount silently
 // no-ops when the file is absent, so without this a swap would move the
