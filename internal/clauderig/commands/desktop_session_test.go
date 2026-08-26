@@ -712,14 +712,20 @@ func TestCompletionEntry_KeepsOneCandidatePerLine(t *testing.T) {
 func TestDesktopHint_OnlyWhereTheCommandWouldWork(t *testing.T) {
 	usable := desktopUsable
 	desktopUsable = func() bool { return true }
-	t.Cleanup(func() { desktopUsable = usable })
+	openable := openableSessions
+	openableSessions = func() map[string]string {
+		return map[string]string{"11111111-1111-1111-1111-111111111111": "/x.jsonl"}
+	}
+	t.Cleanup(func() { desktopUsable = usable; openableSessions = openable })
 
 	live := &sessResult{id: "11111111-1111-1111-1111-111111111111", cliLive: true}
 	if h := desktopHint(live); !strings.Contains(h, "--session "+live.id) {
 		t.Errorf("want a ready-to-paste command for a live CLI session: %q", h)
 	}
-	if h := desktopHint(&sessResult{id: live.id}); h != "" {
-		t.Errorf("a session with no live transcript has nothing to import: %q", h)
+	// cliLive is not the test: a --repo row can carry it for a transcript that
+	// is not on this machine, so the opener's own index is what decides.
+	if h := desktopHint(&sessResult{id: "99999999-9999-9999-9999-999999999999", cliLive: true}); h != "" {
+		t.Errorf("a session the opener cannot resolve must get no command: %q", h)
 	}
 
 	desktopUsable = func() bool { return false }

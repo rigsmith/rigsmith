@@ -571,25 +571,42 @@ var desktopUsable = sync.OnceValue(func() bool {
 	return err == nil && len(ps) > 0
 })
 
-// desktopHint offers the Claude Desktop equivalent of the resume command.
+// openableSessions is the id set `desktop open --session` could actually
+// resolve: the transcripts under the CLI home THAT COMMAND scans.
 //
-// Only for a session whose transcript is in the live CLI root. `desktop open
-// --session` hands Desktop a claude://resume link and Desktop imports the
-// transcript from ~/.claude/projects itself, so a Desktop-only session, a
-// synced-repo-only copy and a title-only match each have nothing for it to
-// read — the same precondition resumeHint tests, for the same reason.
+// Deliberately not `r.cliLive`. That flag is true for the configurable "cli"
+// search root, which need not be the home the opener reads — and it is true for
+// rows that came from the synced repo under --repo, whose transcripts are not
+// on this machine at all. Asking the opener's own index is the only way to
+// offer a command that will find what it names. It also settles the non-uuid
+// stems for free, since liveTranscripts already excludes them.
 //
-// Suppressed where Claude Desktop is not installed: on Linux there is no such
-// app at all, and offering a command that cannot work is worse than silence.
+// Memoised: one ReadDir sweep, no transcript contents, shared by every row.
+var openableSessions = sync.OnceValue(func() map[string]string {
+	home, err := account.ClaudeHome()
+	if err != nil {
+		return nil
+	}
+	live, err := liveTranscripts(home)
+	if err != nil {
+		return nil
+	}
+	return live
+})
+
+// desktopHint offers the Claude Desktop equivalent of the resume command, for
+// the sessions it would actually open.
+//
+// `desktop open --session` hands Desktop a claude://resume link and Desktop
+// imports the transcript from its own CLI home, so a Desktop-only session, a
+// synced-repo-only copy and a title-only match have nothing for it to read.
+// Suppressed too where Claude Desktop is not installed or no profile is saved,
+// since offering a command that cannot work is worse than silence.
 func desktopHint(r *sessResult) string {
-	if !r.cliLive || !desktopUsable() {
+	if !desktopUsable() {
 		return ""
 	}
-	// projects/ holds a few .jsonl files that are not sessions, and their stem
-	// becomes the id here. Desktop's deep link requires a uuid, and --session
-	// would treat "export" as text to search titles for — so the offered command
-	// resolves to nothing. Say nothing rather than offer it.
-	if !sessionUUID.MatchString(r.id) {
+	if _, ok := openableSessions()[strings.ToLower(r.id)]; !ok {
 		return ""
 	}
 	return "desktop: clauderig desktop open --session " + shQuote(r.id)
