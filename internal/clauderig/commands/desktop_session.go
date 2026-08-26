@@ -115,7 +115,17 @@ func liveTranscripts(claudeHome string) (map[string]string, error) {
 		}
 		for _, f := range files {
 			name := f.Name()
-			if f.IsDir() || !strings.HasSuffix(name, ".jsonl") {
+			if !strings.HasSuffix(name, ".jsonl") {
+				continue
+			}
+			// Regular files only. Ranking now opens each transcript's tail to
+			// date it, and os.Open on a FIFO BLOCKS until something opens the
+			// write end — so a uuid-named pipe in projects/ would hang `-i` and
+			// every <Tab> that completes --session, with no output to explain
+			// it. A symlink is resolved rather than dropped: pointing a
+			// transcript at another tree is a thing people do, and the target
+			// is what has to be readable.
+			if !regularFile(dir, f) {
 				continue
 			}
 			id := strings.TrimSuffix(name, ".jsonl")
@@ -138,6 +148,21 @@ func liveTranscripts(claudeHome string) (map[string]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// regularFile reports whether a directory entry is (or points at) a regular
+// file. Only a symlink costs a stat; everything else is answered from the type
+// bits ReadDir already carries.
+func regularFile(dir string, f os.DirEntry) bool {
+	t := f.Type()
+	if t.IsRegular() {
+		return true
+	}
+	if t&os.ModeSymlink == 0 {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(dir, f.Name()))
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // findSessions resolves a reference to the sessions it could mean.
@@ -190,11 +215,19 @@ func findSessions(ref, claudeHome string, idx session.Index) ([]sessionCandidate
 	return out, nil
 }
 
-// rankByRecency orders every live transcript newest-first WITHOUT opening any
-// of them: recency is the sidecar's LastActivity or the file's mtime, and both
-// are metadata. A title and a project are not — they come out of the
-// transcript's own bytes — so filling them in is left to the caller, which lets
-// a capped caller pay for the survivors instead of the whole machine.
+// rankByRecency orders every live transcript newest-first.
+//
+// It reads each transcript's TAIL, because that is the only place a trustworthy
+// date lives (see recency) — so the cap a caller applies afterwards does not
+// bound this part of the work. What the cap does bound is `describe`, which
+// reads each transcript's HEAD for a title and a project, and that is the
+// larger cost: skipping it for everything but the survivors took a real
+// 671-transcript machine from 0.40s to 0.16s per listing.
+//
+// Ranking on metadata alone would make it 0.05s and wrong; see recency for why
+// mtime and the sidecar cannot be trusted. If 0.16s ever becomes the thing
+// people notice, the fix is a cache keyed by path+mtime+size, not a cheaper
+// date.
 func rankByRecency(live map[string]string, idx session.Index) []sessionCandidate {
 	// Dated ONCE, before the sort. recency opens the transcript's tail, and a
 	// comparator runs O(n log n) times — dating inside it re-read every file
@@ -252,10 +285,9 @@ func sessionCandidates(live map[string]string, idx session.Index) []sessionCandi
 // cap is the only thing keeping a machine with thousands of transcripts from
 // rendering all of them into a picker or a completion list.
 //
-// The cap is applied BEFORE the transcripts are read. Describing all of them
-// first and slicing after cost two file reads per session on the machine — 0.4s
-// on a real 671-transcript machine, paid on every <Tab> — to produce a list that
-// throws all but `limit` of them away.
+// The cap is applied before `describe`, so the title and project of a session
+// that will not be shown are never read. Dating is not capped — ranking has to
+// compare every candidate to find the newest — but it reads only a tail.
 func recentSessions(claudeHome string, idx session.Index, limit int) ([]sessionCandidate, error) {
 	live, err := liveTranscripts(claudeHome)
 	if err != nil {

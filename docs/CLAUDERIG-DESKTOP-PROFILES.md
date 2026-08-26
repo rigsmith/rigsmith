@@ -225,11 +225,13 @@ clauderig desktop open work -i                          # pick one from a list
 
 **clauderig does not do the import.** It hands Desktop a
 `claude://resume?session=<uuid>` deep link, and Desktop's own handler reads the
-transcript and files the session — the same path the app uses for itself. No
-transcript is copied and nothing is written into the profile's `data/`
-directory, which is the promise the rest of this document rests on. (Opening a
-window does stamp a last-opened time into clauderig's own `profile.json`, which
-sits beside that directory rather than inside it.)
+transcript and files the session — the same path the app uses for itself.
+
+The no-write promise the rest of this document rests on is about **clauderig**:
+it copies no transcript and writes nothing into the profile's `data/` directory.
+Desktop itself does write there — filing the imported session is the whole point
+— and clauderig stamps a last-opened time into its own `profile.json`, which
+sits beside `data/` rather than inside it.
 
 Three consequences follow from that, worth knowing before the app tells you in a
 toast:
@@ -239,8 +241,9 @@ toast:
   repo must be restored here first — `clauderig search` says which case you are
   in.
 - **`--session` takes a uuid or text.** Text matches the session's title and its
-  project directory, case-insensitively. Several matches open a picker on a
-  terminal; off one they are listed with full ids to re-run with.
+  project directory, case-insensitively. When several sessions match, a terminal
+  gets a picker; when the command is not run from a terminal, the matches are
+  listed with their full ids so you can re-run naming one.
 - **A deep link is routed by scheme, not to a window.** With a second profile
   open the OS picks which one receives it, and that would cross an account
   boundary — so it is refused rather than risked. Quit the others, or pass

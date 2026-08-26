@@ -267,7 +267,9 @@ clauderig desktop open work -i                          # pick one from a list
 ```
 
 You rarely know a uuid, so `recent -l` prints the command under each session,
-beside the terminal one:
+beside the terminal one — for the sessions it would work on, which means Claude
+Desktop installed, a profile saved, and a transcript in `~/.claude/projects`
+here:
 
 ```text
 ● Refactor the auth middleware

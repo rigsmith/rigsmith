@@ -3,7 +3,9 @@ package commands
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -790,5 +792,73 @@ func TestRecency_TranscriptOutranksTheSidecar(t *testing.T) {
 
 	if got := recency(sessionCandidate{ID: id, Path: p}, idx); !got.Equal(want) {
 		t.Errorf("recency = %v, want the transcript's own record %v", got, want)
+	}
+}
+
+// Ranking opens each transcript's tail to date it, and os.Open on a FIFO blocks
+// until a writer appears — so a uuid-named pipe under projects/ would hang the
+// picker and every <Tab> that completes --session, with nothing on screen to
+// explain it.
+func TestLiveTranscripts_SkipsNonRegularFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mkfifo is not available on Windows")
+	}
+	home := t.TempDir()
+	dir := filepath.Join(home, "projects", "-Users-j-Git-api")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real := "11111111-1111-1111-1111-111111111111"
+	writeTranscript(t, home, "-Users-j-Git-api", real, "hello")
+
+	fifo := filepath.Join(dir, "22222222-2222-2222-2222-222222222222.jsonl")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("cannot create a fifo here: %v", err)
+	}
+
+	// A bare os.Open on the fifo would block forever, so the test itself has to
+	// be bounded: a hang here is the regression, not a slow machine.
+	done := make(chan []sessionCandidate, 1)
+	go func() {
+		got, err := recentSessions(home, session.Index{}, 0)
+		if err != nil {
+			done <- nil
+			return
+		}
+		done <- got
+	}()
+	select {
+	case got := <-done:
+		if len(got) != 1 || got[0].ID != real {
+			t.Errorf("want only the real transcript, got %+v", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("recentSessions blocked — a non-regular file reached the reader")
+	}
+}
+
+// A transcript reached through a symlink is still a transcript; only the
+// non-regular targets are the problem.
+func TestLiveTranscripts_FollowsSymlinkedTranscripts(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "projects", "-Users-j-Git-api")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := filepath.Join(t.TempDir(), "kept.jsonl")
+	if err := os.WriteFile(elsewhere, []byte(`{"type":"user","message":{"content":"hi"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id := "33333333-3333-3333-3333-333333333333"
+	if err := os.Symlink(elsewhere, filepath.Join(dir, id+".jsonl")); err != nil {
+		t.Skipf("cannot symlink here: %v", err)
+	}
+
+	got, err := recentSessions(home, session.Index{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != id {
+		t.Errorf("a symlinked transcript must still be offered, got %+v", got)
 	}
 }

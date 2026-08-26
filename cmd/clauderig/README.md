@@ -78,6 +78,9 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `prune` | One sweep: reap merged/done worktrees, then their branches and other merged (`--gone`) branches; `prune list` previews read-only; always asks at a terminal (no skip flag; fails if non-interactive; `-n` previews); alias `tidy` |
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md blocks standalone (worktree discipline + rigsmith-tools usage; e.g. `--global`). `install` previews the blocks in a scrollable UI before writing — `-y` or a non-TTY skips it |
 | `config` | `get` / `set` / `show` / `path` / `edit` |
+| `desktop` | `add` / `open` / `list` / `quit` / `map` / `shortcut` / `rm` — several Claude Desktop accounts side by side, each in its own profile. `open --session <id-or-text>` opens a window on a Claude Code session, `-i` picks one from a list (alias: `app`) |
+| `recent` | Sessions newest first, each dated by its own transcript records rather than mtime; `--since` / `--cwd` / `--account` narrow, `-l` adds full ids and ready-to-run resume commands (alias: `last`) |
+| `search` | Find a session by title or content, across this machine and every synced one (alias: `grep`) |
 | `mcp` | `list` / `get` / `add` / `remove` / `enable` / `disable` Claude Code MCP servers across local/project/user scopes (`~/.claude.json`, `<dir>/.mcp.json`); CLI mirrors `claude mcp` (same scopes/flags, default scope `local`); bare `mcp` opens the interactive screen |
 | `doctor` | Health-check environment + sync + worktree discipline; `--fix` repairs, or pick fixes interactively |
 | `ui` | Interactive dashboard |
