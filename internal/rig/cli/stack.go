@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,14 +43,37 @@ func newStackCmd() *cobra.Command {
 	return cmd
 }
 
-// stackWorkspace opens the manifest and the workspace repo together — every ws
+// stackRoot is the workspace root: the git top level, not resolveRoot's answer.
+// resolveRoot finds the nearest *project* — a package manifest or solution —
+// and every imported repo carries one of those, so from inside porta-pty/ it
+// would answer porta-pty/ and the workspace would look like it did not exist.
+// An explicit --root still wins, since that is the user saying where to look.
+func stackRoot(ctx context.Context) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	if rootFlag != "" {
+		return resolveRoot(cwd), nil
+	}
+	repo, err := gitrepo.Open(ctx, cwd)
+	if err != nil {
+		return "", fmt.Errorf("not inside a git repository — a stack workspace is one")
+	}
+	top, err := repo.Toplevel(ctx)
+	if err != nil || top == "" {
+		return resolveRoot(cwd), nil
+	}
+	return top, nil
+}
+
+// stackWorkspace opens the manifest and the workspace repo together — every stack
 // verb needs both, and "no manifest here" should read the same everywhere.
 func stackWorkspace(ctx context.Context) (*stackManifest, *cfgfind.Source, *gitrepo.Repo, error) {
-	cwd, err := os.Getwd()
+	root, err := stackRoot(ctx)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	root := resolveRoot(cwd)
 	m, src, err := loadStackManifest(root)
 	if err != nil {
 		return nil, nil, nil, err
@@ -84,11 +108,10 @@ func newStackInitCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			cwd, err := os.Getwd()
+			root, err := stackRoot(ctx)
 			if err != nil {
 				return err
 			}
-			root := resolveRoot(cwd)
 			m, src, err := loadStackManifest(root)
 			if err != nil {
 				return err
@@ -105,15 +128,41 @@ func newStackInitCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("run `git init` first — the workspace itself is an ordinary git repo")
 			}
-			bin, err := stackEngine(ctx, m, cmd)
-			if err != nil {
+			// Import amends the merge commit, and StageAll before it stages the
+			// whole tree: without this guard an unrelated edit sitting in the
+			// worktree would be swallowed into the import.
+			if dirty, err := repo.Dirty(ctx); err != nil {
 				return err
+			} else if dirty && !stackOnlyManifestDirty(ctx, repo, src) {
+				return fmt.Errorf("workspace has uncommitted changes — commit or stash before importing")
+			}
+			// A merge into an unborn HEAD fast-forwards instead of creating a
+			// merge commit, which leaves the cursor amended onto the upstream
+			// tip itself and breaks the ancestry every later pull merges against.
+			// Root the workspace on the manifest first.
+			if repo.Unborn(ctx) {
+				if _, err := repo.Commit(ctx, "stack: workspace manifest"); err != nil {
+					return fmt.Errorf("creating the workspace's first commit: %w", err)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "committed the manifest as the workspace's root commit")
+			}
+			names := []string{}
+			for _, name := range m.names() {
+				if m.cursor(name) == "" {
+					names = append(names, name)
+				}
+			}
+			// Only reach for the engine once there is something to import: on a
+			// fresh machine acquiring it can mean a multi-minute build, and a
+			// re-run with nothing to do should not pay that.
+			var bin string
+			if len(names) > 0 {
+				if bin, err = stackEngine(ctx, m, cmd); err != nil {
+					return err
+				}
 			}
 			imported := 0
-			for _, name := range m.names() {
-				if m.cursor(name) != "" {
-					continue // already imported; `pull` owns updates
-				}
+			for _, name := range names {
 				if err := stackPullOne(ctx, cmd, repo, bin, src, m, name, true); err != nil {
 					return fmt.Errorf("importing %s: %w", name, err)
 				}
@@ -126,6 +175,31 @@ func newStackInitCmd() *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+// stackOnlyManifestDirty reports whether the manifest itself is the only
+// uncommitted thing. Filling in the scaffolded manifest and running init again
+// is the documented first run, so that one file must not trip the dirty guard —
+// the import commits it anyway.
+func stackOnlyManifestDirty(ctx context.Context, repo *gitrepo.Repo, src *cfgfind.Source) bool {
+	if src == nil || src.File == "" {
+		return false
+	}
+	paths, err := repo.DirtyPaths(ctx)
+	if err != nil || len(paths) == 0 {
+		return false
+	}
+	manifest, err := filepath.Rel(repo.Dir, src.File)
+	if err != nil {
+		return false
+	}
+	manifest = filepath.ToSlash(manifest)
+	for _, p := range paths {
+		if filepath.ToSlash(p) != manifest {
+			return false
+		}
+	}
+	return true
 }
 
 func newStackStatusCmd() *cobra.Command {
@@ -186,11 +260,29 @@ func newStackPullCmd() *cobra.Command {
 				}
 				names = args[:1]
 			}
+			// Probe first: a workspace that is already current needs no engine,
+			// and acquiring one can mean a download or a multi-minute build. A
+			// no-op pull must not fail for want of a tool it never uses.
+			moved := make([]string, 0, len(names))
+			for _, name := range names {
+				tip, err := repo.LsRemote(ctx, stackRemoteURL(m.Repos[name].Upstream), "refs/heads/"+m.branch(name))
+				if err != nil {
+					return fmt.Errorf("pulling %s: %w", name, err)
+				}
+				if tip == m.cursor(name) {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to pull\n", name)
+					continue
+				}
+				moved = append(moved, name)
+			}
+			if len(moved) == 0 {
+				return nil
+			}
 			bin, err := stackEngine(ctx, m, cmd)
 			if err != nil {
 				return err
 			}
-			for _, name := range names {
+			for _, name := range moved {
 				if err := stackPullOne(ctx, cmd, repo, bin, src, m, name, false); err != nil {
 					return fmt.Errorf("pulling %s: %w", name, err)
 				}
@@ -239,16 +331,29 @@ func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, b
 	if conflicted {
 		return fmt.Errorf("merge conflicts under %s/ — resolve, commit, then re-run to move the cursor", name)
 	}
+	// The cursor is written to disk before it can be committed, so keep the
+	// bytes: a failure between here and the amend would otherwise leave the
+	// cursor advanced past history that does not contain it, and every later
+	// status and pull would believe this revision was already synced.
+	before, readErr := os.ReadFile(src.File)
+	restore := func() {
+		if readErr == nil {
+			_ = os.WriteFile(src.File, before, 0o644)
+		}
+	}
 	if err := stackSetCursor(src, m, name, tip); err != nil {
 		return err
 	}
 	if err := repo.StageAll(ctx); err != nil {
+		restore()
 		return err
 	}
 	// Amend the cursor edit into the merge commit, so one commit carries both
 	// the history and the fact that it was synced — the reviewable unit a
-	// cronned pull PR is built from.
+	// cron-driven pull PR is built from.
 	if _, err := repo.CommitAmendNoEdit(ctx); err != nil {
+		restore()
+		delete(m.LastSync, name)
 		return err
 	}
 	fmt.Fprintf(out, "%s: %s upstream %s\n", name, verb, short(tip))
@@ -278,6 +383,9 @@ func newStackSendCmd() *cobra.Command {
 			if r == nil {
 				return fmt.Errorf("no stack repo %q (have: %s)", name, strings.Join(m.names(), ", "))
 			}
+			if m.cursor(name) == "" {
+				return fmt.Errorf("%s is not imported yet — run `rig stack init`", name)
+			}
 			if dirty, err := repo.Dirty(ctx); err != nil {
 				return err
 			} else if dirty {
@@ -294,31 +402,54 @@ func newStackSendCmd() *cobra.Command {
 
 			// Root it on the upstream tip so the branch's one commit shows only
 			// what changed, and so it merges without the fork's history.
+			if tree == "" {
+				return fmt.Errorf("%s has no content at HEAD", name)
+			}
 			upstreamURL := stackRemoteURL(r.Upstream)
 			tip, err := repo.LsRemote(ctx, upstreamURL, "refs/heads/"+m.branch(name))
 			if err != nil {
 				return err
 			}
+			// The workspace tree is a snapshot taken at the cursor. Rooting it on
+			// a tip that has moved past the cursor would present every upstream
+			// commit in between as though this branch had undone it.
+			if tip != m.cursor(name) {
+				return fmt.Errorf("upstream %s has moved to %s since this workspace last pulled (%s)\n"+
+					"sending now would revert those commits — run `rig stack pull %s` first",
+					r.Upstream, short(tip), short(m.cursor(name)), name)
+			}
 			if err := repo.FetchObjects(ctx, upstreamURL, tip); err != nil {
 				return err
 			}
-			if tree == "" {
-				return fmt.Errorf("%s has no content at HEAD", name)
-			}
 
-			if message == "" {
-				message = fmt.Sprintf("Changes to %s from the %s workspace", name, filepath.Base(repo.Dir))
-			}
-			commit, err := repo.CommitTree(ctx, tree, tip, message)
+			// A new commit object never equals its parent, so the no-op has to be
+			// read off the trees: same tree as upstream means nothing to send.
+			tipTree, err := repo.RevParse(ctx, tip+"^{tree}")
 			if err != nil {
 				return err
 			}
-			if commit == tip {
+			if tipTree == tree {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to send — it matches upstream\n", name)
 				return nil
 			}
 
-			if err := repo.PushRef(ctx, stackRemoteURL(r.Fork), commit, "refs/heads/"+branch); err != nil {
+			// Local: message is the flag variable, and writing the default back
+			// into it would leak this repo's message into the next send.
+			msg := message
+			if msg == "" {
+				msg = fmt.Sprintf("Changes to %s from the %s workspace", name, filepath.Base(repo.Dir))
+			}
+			commit, err := repo.CommitTree(ctx, tree, tip, msg)
+			if err != nil {
+				return err
+			}
+
+			// Each send synthesizes a fresh commit parented on the upstream tip,
+			// so a second send to the same branch is a sibling of the first and a
+			// plain push is refused as non-fast-forward — which would make it
+			// impossible to update an open PR. Replace under a lease instead, so
+			// the push still fails if someone else moved the branch meanwhile.
+			if err := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), commit, "refs/heads/"+branch); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "sent %s to %s:%s — open the PR against %s\n",
@@ -334,16 +465,16 @@ func newStackDoctorCmd() *cobra.Command {
 	var fix bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check the ws engine and manifest; --fix installs the pinned josh",
+		Short: "Check the stack engine and manifest; --fix installs the pinned josh",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
-			cwd, err := os.Getwd()
+			root, err := stackRoot(ctx)
 			if err != nil {
 				return err
 			}
-			m, _, err := loadStackManifest(resolveRoot(cwd))
+			m, _, err := loadStackManifest(root)
 			if err != nil {
 				return err
 			}
@@ -359,7 +490,7 @@ func newStackDoctorCmd() *cobra.Command {
 			}
 			bin, binErr := stackJoshProxyBin(version)
 			if binErr == nil {
-				_, binErr = os.Stat(bin)
+				binErr = stackJoshInstalled(bin)
 			}
 			switch {
 			case binErr == nil:
@@ -370,7 +501,7 @@ func newStackDoctorCmd() *cobra.Command {
 				}
 				fmt.Fprintf(out, "✓ josh-proxy %s installed\n", version)
 			default:
-				fmt.Fprintf(out, "✗ josh-proxy %s not installed — `rig stack doctor --fix` builds it via cargo\n", version)
+				fmt.Fprintf(out, "✗ josh-proxy %s not installed — `rig stack doctor --fix` fetches a verified binary (or builds it where none is published)\n", version)
 			}
 			return nil
 		},
@@ -394,29 +525,40 @@ func stackRepoCompletion(cmd *cobra.Command, args []string, _ string) ([]string,
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	cwd, err := os.Getwd()
+	ctx := context.Background()
+	if cmd != nil {
+		ctx = cmd.Context()
+	}
+	root, err := stackRoot(ctx)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	m, _, err := loadStackManifest(resolveRoot(cwd))
+	m, _, err := loadStackManifest(root)
 	if err != nil || m == nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	return m.names(), cobra.ShellCompDirectiveNoFileComp
 }
 
-// stackMenuItems are the stack actions for `rig ui`, and are empty outside a
-// workspace so the group only appears where it means something.
+// stackMenuItems are the stack actions for `rig ui`. Without a manifest the
+// group is just `init` — hiding it entirely would leave no way to start a
+// workspace from the menu — and outside a git repo it disappears.
 func stackMenuItems() []menuItem {
-	cwd, err := os.Getwd()
+	root, err := stackRoot(context.Background())
 	if err != nil {
 		return nil
 	}
-	m, _, err := loadStackManifest(resolveRoot(cwd))
-	if err != nil || m == nil {
+	m, _, err := loadStackManifest(root)
+	if err != nil {
 		return nil
 	}
+	if m == nil {
+		return []menuItem{
+			{label: "init", desc: "scaffold rig.stack.jsonc to fuse repos here", cmd: newStackInitCmd()},
+		}
+	}
 	return []menuItem{
+		{label: "init", desc: "import any repo the manifest names but has not fused yet", cmd: newStackInitCmd()},
 		{label: "status", desc: "each repo's cursor against its upstream", cmd: newStackStatusCmd()},
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
 		{label: "send", desc: "a repo's changes to your fork (pick; prompts for a branch)", cmd: newStackSendMenuCmd()},
@@ -459,7 +601,10 @@ func newStackSendMenuCmd() *cobra.Command {
 
 			if err := huh.NewForm(huh.NewGroup(fields...)).
 				WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme()).Run(); err != nil {
-				return nil // cancelled
+				if errors.Is(err, huh.ErrUserAborted) {
+					return nil
+				}
+				return err
 			}
 			if branch = strings.TrimSpace(branch); branch == "" {
 				return nil

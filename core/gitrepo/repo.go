@@ -162,6 +162,34 @@ func (r *Repo) Head(ctx context.Context) (string, error) {
 }
 
 // RevParse resolves a ref (branch, tag, HEAD, SHA) to its full commit hash.
+// DirtyPaths lists the work-tree paths git reports as changed or untracked,
+// for callers that need to know *what* is dirty rather than merely whether.
+func (r *Repo) DirtyPaths(ctx context.Context) ([]string, error) {
+	out, err := runGit(ctx, r.Dir, "status", "--porcelain", "-z", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, entry := range strings.Split(out, "\x00") {
+		// Porcelain v1 -z: "XY <path>", and a rename adds a second NUL-separated
+		// path that arrives as its own (status-less) entry.
+		if len(entry) > 3 {
+			paths = append(paths, entry[3:])
+		} else if entry != "" {
+			paths = append(paths, entry)
+		}
+	}
+	return paths, nil
+}
+
+// Unborn reports whether HEAD points at a branch with no commits yet — a fresh
+// `git init`. Merges behave differently there (git fast-forwards instead of
+// creating a merge commit), so callers that need real merge topology check it.
+func (r *Repo) Unborn(ctx context.Context) bool {
+	_, err := runGit(ctx, r.Dir, "rev-parse", "--verify", "--quiet", "HEAD")
+	return err != nil
+}
+
 func (r *Repo) RevParse(ctx context.Context, ref string) (string, error) {
 	out, err := runGit(ctx, r.Dir, "rev-parse", ref)
 	return strings.TrimSpace(out), err
@@ -199,7 +227,7 @@ func (r *Repo) PushWithOptions(ctx context.Context, remote, branch string, opts 
 // FetchObjects fetches a single commit from a URL into the local object store,
 // without touching any ref — enough to build on top of it.
 func (r *Repo) FetchObjects(ctx context.Context, url, commit string) error {
-	_, err := runGit(ctx, r.Dir, "fetch", "--no-tags", url, commit)
+	_, err := runGit(ctx, r.Dir, "fetch", "--no-tags", "--no-write-fetch-head", url, commit)
 	return err
 }
 
@@ -216,6 +244,27 @@ func (r *Repo) CommitTree(ctx context.Context, tree, parent, message string) (st
 // PushRef pushes an arbitrary commit to a remote ref.
 func (r *Repo) PushRef(ctx context.Context, remote, commit, ref string) error {
 	_, err := runGit(ctx, r.Dir, "push", remote, commit+":"+ref)
+	return err
+}
+
+// PushRefForce replaces ref with commit under a lease: the push succeeds when
+// the remote ref still holds what we last saw, and is refused when someone else
+// has moved it. For callers that legitimately rewrite their own branch — a
+// re-synthesized commit replacing the one they pushed before — where a plain
+// push would be refused as non-fast-forward but a bare --force would be willing
+// to discard another person's work.
+func (r *Repo) PushRefForce(ctx context.Context, remote, commit, ref string) error {
+	// The lease needs the ref's current value; without it --force-with-lease has
+	// nothing to compare and git falls back to refusing the push.
+	expected, err := r.LsRemote(ctx, remote, ref)
+	if err != nil {
+		return err
+	}
+	lease := "--force-with-lease=" + ref
+	if expected != "" {
+		lease += ":" + expected
+	}
+	_, err = runGit(ctx, r.Dir, "push", lease, remote, commit+":"+ref)
 	return err
 }
 

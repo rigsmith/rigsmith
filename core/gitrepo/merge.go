@@ -33,7 +33,10 @@ func (r *Repo) fetchMerge(ctx context.Context, remote, branch string, allowUnrel
 	}
 	args := []string{"merge", "--no-edit"}
 	if allowUnrelated {
-		args = append(args, "--allow-unrelated-histories")
+		// --no-ff too: an import must land as a merge commit, and a repo
+		// configured merge.ff=only would otherwise refuse the merge outright
+		// (--allow-unrelated-histories does not override that policy).
+		args = append(args, "--allow-unrelated-histories", "--no-ff")
 	}
 	if msg != "" {
 		args = append(args, "-m", msg)

@@ -699,7 +699,7 @@ var knownKeys = []string{
 	"$schema", "solution", "defaultProject", "ecosystem", "test", "coverage",
 	"kill", "rebuild", "publish", "env", "envPresets", "commands", "aliases",
 	"tools", "exclude", "quiet", "dotnet", "node", "worktree", "shell",
-	"artifacts", "verify",
+	"artifacts", "verify", "stack",
 }
 
 // UnknownKey is a top-level key rig doesn't recognize, with the closest known

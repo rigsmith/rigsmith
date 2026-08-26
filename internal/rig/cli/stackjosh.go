@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -36,6 +37,10 @@ const stackJoshRepo = "https://github.com/josh-project/josh"
 const stackJoshRelease = "r26.07.19-win.3"
 
 const stackJoshBinaries = "https://github.com/rigsmith/josh-binaries/releases/download"
+
+// stackJoshMaxBytes bounds the engine download. The real binaries are ~30 MiB;
+// this is a ceiling on damage, not a size expectation.
+const stackJoshMaxBytes int64 = 256 << 20
 
 // stackJoshChecksums pins what each platform's josh-proxy must hash to. Pinned
 // here rather than read from the release, so that trusting a download does not
@@ -95,11 +100,15 @@ func downloadJoshProxy(ctx context.Context, dest string, out io.Writer) error {
 	}
 
 	fmt.Fprintf(out, "fetching josh-proxy %s for %s\n", stackJoshRelease, target)
+	// The command's context carries no deadline of its own, and a release server
+	// that accepts the connection then stops sending would hang the verb forever.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
 		return err
 	}
@@ -120,9 +129,16 @@ func downloadJoshProxy(ctx context.Context, dest string, out io.Writer) error {
 	defer os.Remove(tmp.Name())
 
 	sum := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, sum), resp.Body); err != nil {
+	// Cap the read: the checksum only decides whether the bytes are *run*, so
+	// without a limit a malformed release could fill the disk before we reject it.
+	n, err := io.Copy(io.MultiWriter(tmp, sum), io.LimitReader(resp.Body, stackJoshMaxBytes+1))
+	if err != nil {
 		tmp.Close()
 		return err
+	}
+	if n > stackJoshMaxBytes {
+		tmp.Close()
+		return fmt.Errorf("%s is larger than %d MiB and was not written", asset, stackJoshMaxBytes>>20)
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -151,7 +167,34 @@ func stackJoshProxyBin(version string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "bin", "josh-proxy"), nil
+	return filepath.Join(dir, "bin", "josh-proxy"+stackExeSuffix()), nil
+}
+
+// stackExeSuffix is what this platform's executables are named with — the
+// downloaded asset and cargo's output both carry it, so the installed path has
+// to as well or neither can be found again.
+func stackExeSuffix() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
+}
+
+// stackJoshInstalled reports whether bin is something we can actually run. A
+// bare os.Stat is satisfied by a directory of that name, which would let doctor
+// call the engine healthy and --fix skip a repair it needed to do.
+func stackJoshInstalled(bin string) error {
+	fi, err := os.Stat(bin)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a file", bin)
+	}
+	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("%s is not executable", bin)
+	}
+	return nil
 }
 
 // ensureJoshProxy returns the pinned josh-proxy binary, installing it via the
@@ -163,7 +206,7 @@ func ensureJoshProxy(ctx context.Context, version string, out io.Writer) (string
 	if err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(bin); err == nil {
+	if err := stackJoshInstalled(bin); err == nil {
 		return bin, nil
 	}
 	// A published binary is seconds; building josh is minutes. Only fall back
@@ -176,6 +219,13 @@ func ensureJoshProxy(ctx context.Context, version string, out io.Writer) (string
 		}
 	}
 
+	// Windows support lives in the patched release (the -win suffix), not in the
+	// upstream tag: building that tag from source would produce a binary that
+	// cannot run here, so say why instead of spending minutes on it.
+	if runtime.GOOS == "windows" {
+		return "", fmt.Errorf("could not fetch the published josh-proxy for windows, and building %s from source would omit the Windows support that %s carries; retry, or install a binary from %s manually",
+			version, stackJoshRelease, stackJoshBinaries)
+	}
 	cargo, err := exec.LookPath("cargo")
 	if err != nil {
 		return "", fmt.Errorf("josh-proxy %s is not installed, no published binary could be fetched, and cargo was not found; install rust (https://rustup.rs) and re-run", version)
@@ -192,8 +242,8 @@ func ensureJoshProxy(ctx context.Context, version string, out io.Writer) (string
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("cargo install josh-proxy: %w", err)
 	}
-	if _, err := os.Stat(bin); err != nil {
-		return "", fmt.Errorf("cargo install finished but %s is missing", bin)
+	if err := stackJoshInstalled(bin); err != nil {
+		return "", fmt.Errorf("cargo install finished but %s is unusable: %w", bin, err)
 	}
 	return bin, nil
 }
@@ -211,7 +261,7 @@ type joshProxy struct {
 // waits for it to accept connections. The port is picked fresh per invocation —
 // unlike josh-sync's fixed 42042 — so two rig commands can't collide.
 func startJoshProxy(ctx context.Context, bin, host string) (*joshProxy, error) {
-	port, err := freePort()
+	port, err := freePort(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -223,13 +273,15 @@ func startJoshProxy(ctx context.Context, bin, host string) (*joshProxy, error) {
 	// separates entries: a host carrying a port would be split in half and the
 	// fetch would fail claiming the repository is corrupt.
 	local := filepath.Join(cache, "rigsmith", "josh", strings.ReplaceAll(host, ":", "_"))
-	if err := os.MkdirAll(local, 0o755); err != nil {
+	// 0700: this cache holds the objects of whatever was pulled through it,
+	// which for a private upstream is content no other local user should read.
+	if err := os.MkdirAll(local, 0o700); err != nil {
 		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, bin,
 		"--local", local,
-		"--remote", stackRemoteScheme(host)+host,
-		fmt.Sprintf("--port=%d", port),
+		"--remote", stackRemoteScheme(host)+stackHostForURL(host),
+		"--port="+strconv.Itoa(port),
 		"--no-background")
 	// Keep the engine's output: when a filter or fetch fails, its log is the
 	// only place that says why, and discarding it leaves the caller guessing.
@@ -244,24 +296,43 @@ func startJoshProxy(ctx context.Context, bin, host string) (*joshProxy, error) {
 		return nil, fmt.Errorf("starting josh-proxy: %w", err)
 	}
 	p := &joshProxy{cmd: cmd, port: port, host: host, log: logFile.Name(), exited: make(chan struct{})}
-	go func() { _ = cmd.Wait(); close(p.exited) }() // sole reaper; stop() only observes
+	// The child holds its own descriptors for these; the parent's copy is only
+	// needed until Start, and leaving it open leaks one per stack operation.
+	go func() { _ = cmd.Wait(); logFile.Close(); close(p.exited) }() // sole reaper; stop() only observes
 	// Poll until the port answers. Budget is generous — a cold proxy opening a
 	// large --local cache is slower than josh-sync's 1s assumption.
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 50*time.Millisecond)
+		dialCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+		conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", "127.0.0.1:"+strconv.Itoa(port))
+		cancel()
 		if err == nil {
 			conn.Close()
 			return p, nil
 		}
 		select {
 		case <-p.exited:
-			return nil, fmt.Errorf("josh-proxy exited before becoming ready (port %d)", port)
+			// Its log is the only account of why it gave up.
+			err := fmt.Errorf("josh-proxy exited before becoming ready (port %d)", port)
+			if tail := p.tail(15); tail != "" {
+				err = fmt.Errorf("%w\n--- josh-proxy log:\n%s", err, tail)
+			}
+			p.cleanup()
+			return nil, err
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
 	p.stop()
 	return nil, fmt.Errorf("josh-proxy did not become ready on port %d", port)
+}
+
+// cleanup removes the engine's log once nothing more will be read from it.
+// Called after stop, or on a startup path that never handed the proxy back.
+func (p *joshProxy) cleanup() {
+	if p.log != "" {
+		_ = os.Remove(p.log)
+		p.log = ""
+	}
 }
 
 // stop shuts the proxy down, gracefully first so its --local cache is left
@@ -272,6 +343,16 @@ func (p *joshProxy) stop() {
 		return // already gone
 	default:
 	}
+	// os.Interrupt is not implemented on Windows: sending it there fails, and
+	// waiting out the grace period would add two seconds to every operation for
+	// a signal the process never received. Kill is the only option that platform
+	// gives us, so take it immediately rather than after a pointless wait.
+	if runtime.GOOS == "windows" {
+		_ = p.cmd.Process.Kill()
+		<-p.exited
+		p.cleanup()
+		return
+	}
 	_ = p.cmd.Process.Signal(os.Interrupt)
 	select {
 	case <-p.exited:
@@ -279,6 +360,7 @@ func (p *joshProxy) stop() {
 		_ = p.cmd.Process.Kill()
 		<-p.exited
 	}
+	p.cleanup()
 }
 
 // url builds the filtered git URL: /owner/name.git[@commit]<filter>.git with
@@ -290,7 +372,9 @@ func (p *joshProxy) url(repoPath, commit, filter string) string {
 	if commit != "" {
 		at = "@" + commit
 	}
-	return fmt.Sprintf("http://127.0.0.1:%d/%s.git%s%s.git", p.port, repoPath, at, url.QueryEscape(filter))
+	// PathEscape, not QueryEscape: this is a path segment, where QueryEscape's
+	// space-as-plus would rename a prefix to a directory literally called "+".
+	return fmt.Sprintf("http://127.0.0.1:%d/%s.git%s%s.git", p.port, repoPath, at, url.PathEscape(filter))
 }
 
 // tail returns the last lines of the engine's log, for attaching to an error.
@@ -310,8 +394,13 @@ func (p *joshProxy) tail(lines int) string {
 // workspace prefix (and, reversed on push, back out of it).
 func stackPrefixFilter(prefix string) string { return ":prefix=" + prefix }
 
-func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+// freePort asks the kernel for an unused port and hands it to the child. There
+// is an unavoidable gap between closing this listener and the child binding —
+// josh-proxy takes a port, not a socket — so callers retry rather than treat a
+// bind failure as fatal.
+func freePort(ctx context.Context) (int, error) {
+	var lc net.ListenConfig
+	l, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, err
 	}

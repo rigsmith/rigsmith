@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -72,7 +71,7 @@ func TestLoadWsManifest(t *testing.T) {
 		}
 	})
 
-	t.Run("inline ws key in .rig.json is a source too", func(t *testing.T) {
+	t.Run("inline stack key in .rig.json is a source too", func(t *testing.T) {
 		root := t.TempDir()
 		body := `{"stack": {"repos": {"a": {"upstream": "github.com/u/a", "fork": "github.com/f/a"}}}}`
 		if err := os.WriteFile(filepath.Join(root, ".rig.json"), []byte(body), 0o644); err != nil {
@@ -139,11 +138,13 @@ func TestWsSetCursor_PreservesComments(t *testing.T) {
 func TestJoshURL(t *testing.T) {
 	p := &joshProxy{port: 4242}
 	got := p.url("tomlm/Porta.Pty", "abc123", stackPrefixFilter("porta-pty"))
-	want := "http://127.0.0.1:4242/tomlm/Porta.Pty.git@abc123%3Aprefix%3Dporta-pty.git"
+	// ':' and '=' are legal in a path segment and stay literal, matching the
+	// filter syntax josh documents; only a separator like '/' is escaped.
+	want := "http://127.0.0.1:4242/tomlm/Porta.Pty.git@abc123:prefix=porta-pty.git"
 	if got != want {
 		t.Fatalf("url:\n got %s\nwant %s", got, want)
 	}
-	if got := p.url("a/b", "", ":/x"); got != "http://127.0.0.1:4242/a/b.git%3A%2Fx.git" {
+	if got := p.url("a/b", "", ":/x"); got != "http://127.0.0.1:4242/a/b.git:%2Fx.git" {
 		t.Fatalf("no-commit url = %s", got)
 	}
 }
@@ -155,44 +156,81 @@ func TestWsSplitHost(t *testing.T) {
 	}
 }
 
+// fakeProxySource is a stand-in for josh-proxy: it binds the --port it is given
+// and holds it. Built with the toolchain already running the tests rather than
+// scripted around `nc`, whose -l flag takes a host on BSD/openbsd netcat and
+// refuses one on netcat-traditional — LookPath proves the binary exists, not
+// that it speaks the syntax. Compiling also means the lifecycle (including the
+// Windows stop path) is covered on every platform, not just the shell ones.
+const fakeProxySource = `package main
+
+import ("net";"os";"strings";"time")
+
+func main() {
+	port := ""
+	for _, a := range os.Args[1:] {
+		if strings.HasPrefix(a, "--port=") {
+			port = strings.TrimPrefix(a, "--port=")
+		}
+	}
+	if os.Getenv("FAKE_PROXY_EXIT") != "" {
+		os.Exit(0)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:"+port)
+	if err != nil {
+		os.Exit(1)
+	}
+	defer l.Close()
+	time.Sleep(2 * time.Minute)
+}
+`
+
+// buildFakeProxy compiles fakeProxySource and returns the binary's path.
+func buildFakeProxy(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(fakeProxySource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module fakeproxy\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "josh-proxy"+stackExeSuffix())
+	cmd := exec.Command("go", "build", "-o", bin, ".")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("could not build the fake proxy: %v\n%s", err, out)
+	}
+	return bin
+}
+
 // TestStartJoshProxy_FakeBinary exercises the spawn/poll/stop lifecycle with a
 // stand-in that listens like the real proxy, so the lifecycle is covered
 // without a Rust toolchain anywhere near CI.
 func TestStartJoshProxy_FakeBinary(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake proxy is a shell script")
-	}
-	dir := t.TempDir()
-	fake := filepath.Join(dir, "josh-proxy")
-	// nc -l occupies the port the harness passes; enough for the TCP poll.
-	script := `#!/bin/sh
-for a in "$@"; do case "$a" in --port=*) port="${a#--port=}";; esac; done
-exec nc -l 127.0.0.1 "$port"
-`
-	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := exec.LookPath("nc"); err != nil {
-		t.Skip("nc not available")
-	}
-	p, err := startJoshProxy(context.Background(), fake, "github.com")
+	p, err := startJoshProxy(context.Background(), buildFakeProxy(t), "github.com")
 	if err != nil {
 		t.Fatal(err)
 	}
+	log := p.log
+	if log == "" {
+		t.Fatal("proxy kept no log to diagnose failures with")
+	}
 	p.stop() // must terminate promptly and not leak the process
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Fatalf("stop left the engine log behind at %s", log)
+	}
 }
 
 func TestStartJoshProxy_NeverReady(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake proxy is a shell script")
-	}
-	dir := t.TempDir()
-	fake := filepath.Join(dir, "josh-proxy")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := startJoshProxy(context.Background(), fake, "github.com"); err == nil {
+	bin := buildFakeProxy(t)
+	t.Setenv("FAKE_PROXY_EXIT", "1")
+	_, err := startJoshProxy(context.Background(), bin, "github.com")
+	if err == nil {
 		t.Fatal("expected readiness failure for a proxy that exits immediately")
+	}
+	if !strings.Contains(err.Error(), "exited before becoming ready") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -294,6 +332,9 @@ func TestStackMenuAndCompletion(t *testing.T) {
 	inWorkspace := func(t *testing.T, manifest string) {
 		t.Helper()
 		dir := t.TempDir()
+		// The workspace root is the git top level, so the fixture has to be a
+		// repository — outside one there is no stack workspace to find.
+		mustGitStack(t, dir, "init", "-q", "-b", "main")
 		if manifest != "" {
 			writeStackManifest(t, dir, manifest)
 		}
@@ -307,8 +348,24 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		t.Cleanup(func() { _ = os.Chdir(prev) })
 	}
 
-	t.Run("no menu group outside a workspace", func(t *testing.T) {
+	t.Run("only init is offered before a manifest exists", func(t *testing.T) {
 		inWorkspace(t, "")
+		items := stackMenuItems()
+		if len(items) != 1 || items[0].label != "init" {
+			t.Fatalf("expected just init, got %v", items)
+		}
+	})
+
+	t.Run("no menu group outside a git repo", func(t *testing.T) {
+		prev, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// t.TempDir under /var on macOS is not inside any repository.
+		if err := os.Chdir(t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(prev) })
 		if items := stackMenuItems(); items != nil {
 			t.Fatalf("expected no items, got %d", len(items))
 		}
@@ -320,7 +377,7 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		for _, it := range stackMenuItems() {
 			labels = append(labels, it.label)
 		}
-		want := "status,pull,send,doctor"
+		want := "init,status,pull,send,doctor"
 		if got := strings.Join(labels, ","); got != want {
 			t.Fatalf("menu = %q, want %q", got, want)
 		}

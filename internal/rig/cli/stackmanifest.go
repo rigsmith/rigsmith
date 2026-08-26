@@ -2,7 +2,7 @@ package cli
 
 // The stack manifest describes a fused workspace: upstream repos imported as
 // prefixes of one history through josh filters (docs/STACK-DESIGN.md).
-// Named ws*, not workspace* — in this package "workspace" already means
+// Named stack*, not workspace* — in this package "workspace" already means
 // intra-repo package discovery (workspace.go).
 
 import (
@@ -68,6 +68,12 @@ func (m *stackManifest) validate() error {
 		return fmt.Errorf("stack manifest has no repos")
 	}
 	for name, r := range m.Repos {
+		// The key is both a josh prefix and a `HEAD:<name>` tree path, so it has
+		// to name exactly one directory. Empty resolves to the workspace root —
+		// `send` would push the whole fused tree to one upstream.
+		if err := stackValidPrefix(name); err != nil {
+			return err
+		}
 		if r == nil || r.Upstream == "" || r.Fork == "" {
 			return fmt.Errorf("stack repo %q needs both upstream and fork", name)
 		}
@@ -75,7 +81,9 @@ func (m *stackManifest) validate() error {
 			if strings.Contains(spec, "://") || strings.HasSuffix(spec, ".git") {
 				return fmt.Errorf("stack repo %q: %q must be host/owner/name (no scheme, no .git)", name, spec)
 			}
-			if strings.Count(spec, "/") != 2 {
+			// Counting separators would accept "github.com//repo": require three
+			// non-empty components, or the URL fails later as an opaque git error.
+			if parts := strings.Split(spec, "/"); len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 				return fmt.Errorf("stack repo %q: %q must be host/owner/name", name, spec)
 			}
 		}
@@ -83,8 +91,23 @@ func (m *stackManifest) validate() error {
 	return nil
 }
 
+// stackValidPrefix rejects the keys that would escape their own directory.
+func stackValidPrefix(name string) error {
+	switch {
+	case name == "":
+		return fmt.Errorf("stack manifest has a repo with an empty name")
+	case name == "." || name == "..":
+		return fmt.Errorf("stack repo %q: the name is a directory in the workspace, not a path", name)
+	case strings.ContainsAny(name, "/\\"), strings.ContainsAny(name, " \t"):
+		return fmt.Errorf("stack repo %q: the name must be a single directory, without separators or spaces", name)
+	case strings.HasPrefix(name, "-"):
+		return fmt.Errorf("stack repo %q: the name must not start with a dash", name)
+	}
+	return nil
+}
+
 // stackSpec is the cfgfind spec for the stack manifest: a dedicated rig.stack.jsonc/.json
-// at the workspace root, or a `ws` key inline in .rig.json.
+// at the workspace root, or a `stack` key inline in .rig.json.
 func stackSpec(root string) cfgfind.Spec {
 	return cfgfind.Spec{
 		Label:   "stack manifest",
@@ -113,7 +136,7 @@ func loadStackManifest(root string) (*stackManifest, *cfgfind.Source, error) {
 
 // stackSetCursor records a pull's upstream SHA: the whole lastSync map is
 // rewritten as one value (depth ≤2, within the comment-preserving editor's
-// reach for both a dedicated file and an inline `ws` key), everything else in
+// reach for both a dedicated file and an inline `stack` key), everything else in
 // the file stays byte-for-byte.
 func stackSetCursor(src *cfgfind.Source, m *stackManifest, prefix, sha string) error {
 	if m.LastSync == nil {
@@ -140,17 +163,41 @@ func stackSetCursor(src *cfgfind.Source, m *stackManifest, prefix, sha string) e
 // would trust, and this is the only way the verbs are exercisable end to end
 // without a forge.
 func stackRemoteURL(spec string) string {
-	host, _, _ := strings.Cut(spec, "/")
-	return stackRemoteScheme(host) + spec + ".git"
+	host, rest, _ := strings.Cut(spec, "/")
+	return stackRemoteScheme(host) + stackHostForURL(host) + "/" + rest + ".git"
 }
 
 // stackRemoteScheme is https everywhere but loopback.
 func stackRemoteScheme(host string) string {
-	h, _, _ := strings.Cut(host, ":")
-	if h == "127.0.0.1" || h == "localhost" || h == "::1" {
+	switch h, _ := stackHostPort(host); h {
+	case "127.0.0.1", "localhost", "::1":
 		return "http://"
 	}
 	return "https://"
+}
+
+// stackHostForURL brackets a bare IPv6 literal, which is only legal in a URL
+// inside brackets. An already-bracketed host is left as it is.
+func stackHostForURL(host string) string {
+	if strings.HasPrefix(host, "[") || !strings.Contains(host, "::") {
+		return host
+	}
+	return "[" + host + "]"
+}
+
+// stackHostPort splits a host spec into host and port. Cutting at the first
+// colon would be wrong for IPv6, where the address itself carries colons:
+// "::1" would come back as an empty host and never match the loopback list.
+func stackHostPort(host string) (string, string) {
+	if strings.HasPrefix(host, "[") {
+		h, rest, _ := strings.Cut(strings.TrimPrefix(host, "["), "]")
+		return h, strings.TrimPrefix(rest, ":")
+	}
+	if strings.Count(host, ":") == 1 {
+		h, p, _ := strings.Cut(host, ":")
+		return h, p
+	}
+	return host, "" // bare IPv6, or a host with no port
 }
 
 // stackSplitHost splits host/owner/name into the proxy's --remote host and the
