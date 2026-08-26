@@ -84,3 +84,20 @@ func TestRewriteFromTemplate(t *testing.T) {
 		t.Fatalf("got slug=%q cwd=%q st=%v", slug, cwd, st)
 	}
 }
+
+// One enormous newline-free record used to set this process's memory ceiling:
+// ReadString allocates the whole line, and `desktop open --session <text>`
+// reads every live transcript.
+func TestCwdFrom_BoundsAnEnormousLine(t *testing.T) {
+	// a first line far larger than the cap, then the real header
+	huge := strings.Repeat("x", 4*maxTranscriptLineBytes)
+	body := `{"pad":"` + huge + `"}` + "\n" + `{"type":"user","cwd":"/Users/j/Git/api","isSidechain":false}` + "\n"
+
+	cwd, ok, err := CwdFrom(strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || cwd != "/Users/j/Git/api" {
+		t.Errorf("cwd = %q ok=%v; the oversized record should be skipped, not fatal", cwd, ok)
+	}
+}

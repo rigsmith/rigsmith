@@ -238,7 +238,7 @@ func (d darwinApp) Instances() ([]Instance, error) {
 			}
 			return nil, fmt.Errorf("inspect Claude Desktop process %d: %w", pid, cerr)
 		}
-		found = append(found, Instance{PID: pid, DataDir: dataDirFromCommand(string(cmd))})
+		found = append(found, Instance{PID: pid, DataDir: dataDirFromCommand(string(cmd)), Command: string(cmd)})
 	}
 	return found, nil
 }

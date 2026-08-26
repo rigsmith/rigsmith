@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -79,20 +80,30 @@ func (c sessionCandidate) project() string {
 // reading the transcript off this machine's disk, so a session that exists only
 // in the staging repo cannot be opened however well `search` can describe it.
 // Checking here turns that into a clear message instead of a toast in the app.
-func liveTranscripts(claudeHome string) map[string]string {
+func liveTranscripts(claudeHome string) (map[string]string, error) {
 	out := map[string]string{}
 	projects := filepath.Join(claudeHome, "projects")
 	entries, err := os.ReadDir(projects)
 	if err != nil {
-		return out
+		// An absent projects dir is a machine with no sessions. Anything else is
+		// a failed scan, and reporting it as "no sessions" sent the user to look
+		// in the synced repo for something that is sitting right here.
+		if errors.Is(err, os.ErrNotExist) {
+			return out, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", projects, err)
 	}
 	for _, slug := range entries {
 		if !slug.IsDir() {
 			continue
 		}
-		files, err := os.ReadDir(filepath.Join(projects, slug.Name()))
+		dir := filepath.Join(projects, slug.Name())
+		files, err := os.ReadDir(dir)
 		if err != nil {
-			continue
+			if errors.Is(err, os.ErrNotExist) {
+				continue // vanished mid-scan: ordinary churn
+			}
+			return nil, fmt.Errorf("read %s: %w", dir, err)
 		}
 		for _, f := range files {
 			name := f.Name()
@@ -114,11 +125,11 @@ func liveTranscripts(claudeHome string) map[string]string {
 			// happened to type.
 			id = strings.ToLower(id)
 			if _, seen := out[id]; !seen {
-				out[id] = filepath.Join(projects, slug.Name(), name)
+				out[id] = filepath.Join(dir, name)
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // findSessions resolves a reference to the sessions it could mean.
@@ -127,10 +138,13 @@ func liveTranscripts(claudeHome string) map[string]string {
 // matched against titles (Desktop sidecars) and, for the ~97% of sessions that
 // have no sidecar, the transcript's first prompt, which is the same fallback
 // title `search` shows. Matching is case-insensitive substring, like --cwd.
-func findSessions(ref, claudeHome string, idx session.Index) []sessionCandidate {
-	live := liveTranscripts(claudeHome)
+func findSessions(ref, claudeHome string, idx session.Index) ([]sessionCandidate, error) {
+	live, err := liveTranscripts(claudeHome)
+	if err != nil {
+		return nil, err
+	}
 
-	if sessionUUID.MatchString(ref) {
+	if sessionUUID.MatchString(ref) { //nolint:nestif // one branch, read top to bottom
 		// Normalise before looking up. sessionUUID accepts uppercase hex — as
 		// Claude Desktop's own validator does — but both maps are keyed by the
 		// on-disk transcript name, which Claude Code always writes lowercase.
@@ -141,10 +155,10 @@ func findSessions(ref, claudeHome string, idx session.Index) []sessionCandidate 
 		id := strings.ToLower(ref)
 		p, ok := live[id]
 		if !ok {
-			return nil
+			return nil, nil
 		}
 		m := idx[id]
-		return []sessionCandidate{{ID: id, Title: titleFor(m, p), Cwd: cwdFor(m, p), Path: p}}
+		return []sessionCandidate{{ID: id, Title: titleFor(m, p), Cwd: cwdFor(m, p), Path: p}}, nil
 	}
 
 	needle := strings.ToLower(strings.TrimSpace(ref))
@@ -153,7 +167,7 @@ func findSessions(ref, claudeHome string, idx session.Index) []sessionCandidate 
 	// to every session on the machine — and the command opens an arbitrary one.
 	// The caller trims too; the invariant belongs here, where the matching is.
 	if needle == "" {
-		return nil
+		return nil, nil
 	}
 	var out []sessionCandidate
 	for id, p := range live {
@@ -172,7 +186,7 @@ func findSessions(ref, claudeHome string, idx session.Index) []sessionCandidate 
 	}
 	// Newest first, so the picker's top entry is the one most likely wanted.
 	sort.Slice(out, func(i, j int) bool { return newer(out[i], out[j], idx) })
-	return out
+	return out, nil
 }
 
 // cwdFor prefers the sidecar's cwd and falls back to the one the transcript
@@ -294,6 +308,21 @@ func otherRunningWindows(app desktop.App, dirs map[string]string, target desktop
 	if err != nil {
 		return nil, fmt.Errorf("could not tell which Desktop windows are open: %w", err)
 	}
+	// The target is identified by PID, not by re-parsing a command line. A
+	// flattened command cannot be split back into arguments — given
+	// "--user-data-dir=/Users/Jane -- Doe/data", no rule decides whether the
+	// value ends at "Jane" or at "data" — and guessing wrong in the permissive
+	// direction skips a window that is NOT the target, undercounting the
+	// competitors this exists to find. Running() answers the same question the
+	// rest of the package already trusts it for.
+	targetPIDs, perr := app.Running(target.DataDir())
+	if perr != nil {
+		return nil, fmt.Errorf("could not tell whether %s is open: %w", target.Name, perr)
+	}
+	isTarget := make(map[int]bool, len(targetPIDs))
+	for _, pid := range targetPIDs {
+		isTarget[pid] = true
+	}
 	byDir := map[string]string{}
 	for name, d := range dirs {
 		byDir[canonicalDir(d)] = name
@@ -304,7 +333,11 @@ func otherRunningWindows(app desktop.App, dirs map[string]string, target desktop
 	var others []string
 	for _, inst := range instances {
 		dir := canonicalDir(inst.DataDir)
-		if dir == targetDir {
+		// Identity from the COMMAND first: a flattened command line cannot be
+		// split back into arguments reliably, so the parsed DataDir can be wrong
+		// for an awkward path — and being wrong here means the target's own
+		// window counts as a competitor and the send is refused.
+		if isTarget[inst.PID] || dir == targetDir {
 			continue
 		}
 		var label string

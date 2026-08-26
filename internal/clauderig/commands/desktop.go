@@ -356,7 +356,10 @@ func newDesktopOpenCmd() *cobra.Command {
 				if ierr != nil {
 					return ierr
 				}
-				cands := findSessions(sessionRef, home, idx)
+				cands, ferr := findSessions(sessionRef, home, idx)
+				if ferr != nil {
+					return ferr
+				}
 				target, err = pickSession(sessionRef, cands)
 				if errors.Is(err, errCancelled) {
 					return nil

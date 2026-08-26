@@ -13,6 +13,17 @@ import (
 )
 
 // dirsOf mirrors Store.CandidateDataDirs for a set of loaded profiles.
+// mustFind is findSessions for tests: a scan error is a test failure, never a
+// silent empty result.
+func mustFind(t *testing.T, ref, home string, idx session.Index) []sessionCandidate {
+	t.Helper()
+	got, err := findSessions(ref, home, idx)
+	if err != nil {
+		t.Fatalf("findSessions(%q): %v", ref, err)
+	}
+	return got
+}
+
 func dirsOf(profiles []desktop.Profile) map[string]string {
 	out := map[string]string{}
 	for _, p := range profiles {
@@ -50,7 +61,7 @@ func TestFindSessions_UUIDRequiresALiveTranscript(t *testing.T) {
 	id := "456fc32e-7579-49c7-bb2a-099657892c6a"
 	writeTranscript(t, home, "-Users-j-Git-api", id, "the auth refactor")
 
-	got := findSessions(id, home, session.Index{})
+	got := mustFind(t, id, home, session.Index{})
 	if len(got) != 1 || got[0].ID != id {
 		t.Fatalf("uuid should resolve to itself: %+v", got)
 	}
@@ -59,7 +70,7 @@ func TestFindSessions_UUIDRequiresALiveTranscript(t *testing.T) {
 	}
 
 	// present in the repo but not here: Desktop could not read it
-	absent := findSessions("00000000-0000-0000-0000-000000000000", home, session.Index{})
+	absent := mustFind(t, "00000000-0000-0000-0000-000000000000", home, session.Index{})
 	if len(absent) != 0 {
 		t.Errorf("a uuid with no live transcript must not resolve: %+v", absent)
 	}
@@ -76,14 +87,14 @@ func TestFindSessions_MatchesTitleAndFirstPrompt(t *testing.T) {
 
 	idx := session.Index{withSidecar: {ID: withSidecar, Title: "Auth refactor planning", Cwd: "/Users/j/Git/api"}}
 
-	if got := findSessions("auth refactor", home, idx); len(got) != 2 {
+	if got := mustFind(t, "auth refactor", home, idx); len(got) != 2 {
 		t.Errorf("both the sidecar title and the first prompt should match, got %d", len(got))
 	}
-	got := findSessions("planning", home, idx)
+	got := mustFind(t, "planning", home, idx)
 	if len(got) != 1 || got[0].ID != withSidecar {
 		t.Errorf("sidecar-title match = %+v", got)
 	}
-	if none := findSessions("nothing matches this", home, idx); len(none) != 0 {
+	if none := mustFind(t, "nothing matches this", home, idx); len(none) != 0 {
 		t.Errorf("want no matches, got %+v", none)
 	}
 }
@@ -241,7 +252,7 @@ func TestFindSessions_MatchesProjectOfATranscriptOnlySession(t *testing.T) {
 	writeTranscript(t, home, "-Users-j-Git-api", id, "nothing quotable here")
 
 	// no sidecar at all — cwd can only come from the transcript
-	got := findSessions("Git/api", home, session.Index{})
+	got := mustFind(t, "Git/api", home, session.Index{})
 	if len(got) != 1 || got[0].ID != id {
 		t.Fatalf("want the transcript-only session matched by project, got %+v", got)
 	}
@@ -332,7 +343,7 @@ func TestFindSessions_UppercaseUUIDResolves(t *testing.T) {
 		"456FC32E-7579-49C7-BB2A-099657892C6A",
 		"456Fc32E-7579-49c7-BB2a-099657892C6A",
 	} {
-		got := findSessions(ref, home, session.Index{})
+		got := mustFind(t, ref, home, session.Index{})
 		if len(got) != 1 {
 			t.Fatalf("%s: got %d candidates, want 1", ref, len(got))
 		}
@@ -382,7 +393,7 @@ func TestFindSessions_EmptyNeedleIsNotAWildcard(t *testing.T) {
 	writeTranscript(t, home, "-Users-j-Git-api", "22222222-2222-2222-2222-222222222222", "two")
 
 	// what the command now passes after trimming
-	if got := findSessions("", home, session.Index{}); len(got) != 0 {
+	if got := mustFind(t, "", home, session.Index{}); len(got) != 0 {
 		t.Errorf("an empty reference matched %d sessions; it must match none", len(got))
 	}
 }
@@ -482,7 +493,7 @@ func TestFindSessions_NewestFirstAcrossSidecarAndTranscriptOnly(t *testing.T) {
 	}
 	idx := session.Index{oldSidecar: {ID: oldSidecar, Title: "auth work one", LastActivity: old}}
 
-	got := findSessions("auth work", home, idx)
+	got := mustFind(t, "auth work", home, idx)
 	if len(got) != 2 {
 		t.Fatalf("want both, got %d", len(got))
 	}
@@ -499,7 +510,7 @@ func TestFindSessions_IgnoresNonSessionTranscripts(t *testing.T) {
 	writeTranscript(t, home, "-Users-j-Git-api", "not-a-session-id", "auth notes")
 	writeTranscript(t, home, "-Users-j-Git-api", "33333333-3333-3333-3333-333333333333", "auth notes")
 
-	got := findSessions("auth notes", home, session.Index{})
+	got := mustFind(t, "auth notes", home, session.Index{})
 	if len(got) != 1 {
 		t.Fatalf("want only the real session, got %d: %+v", len(got), got)
 	}
@@ -541,5 +552,37 @@ func TestPickSession_ListsFullIDs(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), full) {
 		t.Errorf("listing must print ids that can be re-run: %v", err)
+	}
+}
+
+// The target is excluded by PID. A flattened command line cannot be split back
+// into arguments — given "--user-data-dir=/Users/Jane -- Doe/data", no rule
+// decides whether the value ends at "Jane" or at "data" — and guessing wrong in
+// the permissive direction skips a window that is NOT the target, undercounting
+// the competitors the guard exists to find.
+func TestOtherRunningWindows_ExcludesTheTargetByPID(t *testing.T) {
+	st := targetStore(t)
+	profiles, err := st.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, other := profiles[0], profiles[1]
+	dirs, err := st.CandidateDataDirs()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app := stubApp{open: map[string]bool{target.DataDir(): true, other.DataDir(): true}}
+	got, err := otherRunningWindows(app, dirs, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != other.Name {
+		t.Fatalf("want [%s], got %v", other.Name, got)
+	}
+
+	// and a failed scan for the target is an error, not an empty exclusion set
+	if _, err := otherRunningWindows(scanFailApp{}, dirs, target); err == nil {
+		t.Error("a failed target scan must be an error")
 	}
 }

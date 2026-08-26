@@ -41,13 +41,15 @@ func CwdFromTranscript(path string) (cwd string, ok bool, err error) {
 // isn't a file on disk — a blob read out of git history, say.
 func CwdFrom(r io.Reader) (cwd string, ok bool, err error) {
 	// bufio.Reader (not Scanner) so a very long assistant line can't blow a token
-	// cap; we read whole lines and decode each as JSON.
+	// cap — but read it BOUNDED. ReadString allocates the whole record, so a
+	// transcript with one enormous newline-free line set this process's memory
+	// ceiling, and `desktop open --session <text>` reads every live transcript.
 	br := bufio.NewReader(r)
 	for i := 0; i < maxHeaderLines; i++ {
-		line, rerr := br.ReadString('\n')
+		line, rerr := readBoundedLine(br)
 		if len(line) > 0 {
 			var tl transcriptLine
-			if json.Unmarshal([]byte(strings.TrimSpace(line)), &tl) == nil && tl.Cwd != "" && !tl.IsSidechain {
+			if json.Unmarshal([]byte(strings.TrimSpace(string(line))), &tl) == nil && tl.Cwd != "" && !tl.IsSidechain {
 				return tl.Cwd, true, nil
 			}
 		}
@@ -94,4 +96,29 @@ func RewriteFromTemplate(template string, target *pathmap.Resolver) (newSlug, ne
 		return Flatten(template), template, res.Status
 	}
 	return Flatten(res.Path), res.Path, pathmap.StatusResolved
+}
+
+// maxTranscriptLineBytes bounds one record. The header lines carrying cwd are
+// small; anything larger is an assistant payload this never needs, and a
+// truncated record simply fails to parse and is skipped.
+const maxTranscriptLineBytes = 1 << 20 // 1 MiB
+
+// readBoundedLine returns at most maxTranscriptLineBytes of the next line and
+// discards the remainder, so an unbroken multi-gigabyte record costs a fixed
+// buffer rather than its own size. ReadLine never allocates past its internal
+// buffer, which is what makes the discard free.
+func readBoundedLine(br *bufio.Reader) ([]byte, error) {
+	var buf []byte
+	for {
+		chunk, more, err := br.ReadLine()
+		if room := maxTranscriptLineBytes - len(buf); room > 0 && len(chunk) > 0 {
+			if len(chunk) > room {
+				chunk = chunk[:room]
+			}
+			buf = append(buf, chunk...)
+		}
+		if !more || err != nil {
+			return buf, err
+		}
+	}
 }

@@ -62,6 +62,10 @@ type App interface {
 type Instance struct {
 	PID     int
 	DataDir string
+	// Command is the flattened command line, kept for diagnostics. Nothing
+	// decides identity from it: a flattened command cannot be split back into
+	// arguments, so DataDir below is a best-effort read used only for display.
+	Command string
 }
 
 // ErrUnsupported means this OS has no Claude Desktop build we know how to drive.
@@ -157,11 +161,27 @@ func WaitRunning(a App, dataDir string, deadline time.Time) (bool, error) {
 // dataDirFromCommand pulls the --user-data-dir value out of a command line,
 // returning "" when the flag is absent (the profile-less install).
 //
-// The value runs to the end of the argument. A path containing spaces is not
-// recoverable from a flattened command line, so it is taken up to the next
-// " --" instead — enough to compare instances, which is all the caller needs.
+// Best effort, and used for DISPLAY only. A path containing spaces cannot be
+// recovered from a flattened command line, so the value is taken up to the next
+// " --" — which is wrong for a directory that itself contains that sequence.
+// Identity comparisons go through CommandHasDataDir instead, which does not
+// depend on this succeeding.
 func dataDirFromCommand(cmd string) string {
-	i := strings.Index(cmd, userDataFlagName)
+	i := -1
+	// At an argument boundary only, so the flag is not found inside the
+	// executable path that precedes it.
+	for at := 0; at < len(cmd); {
+		j := strings.Index(cmd[at:], userDataFlagName)
+		if j < 0 {
+			break
+		}
+		k := at + j
+		if k == 0 || cmd[k-1] == ' ' || cmd[k-1] == '"' {
+			i = k
+			break
+		}
+		at = k + 1
+	}
 	if i < 0 {
 		return ""
 	}

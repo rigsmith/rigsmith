@@ -275,7 +275,7 @@ func (w windowsApp) Instances() ([]Instance, error) {
 		if !strings.Contains(strings.ToLower(cmd), root) {
 			continue // some other claude.exe — Claude Code's, most likely
 		}
-		found = append(found, Instance{PID: r.ProcessID, DataDir: dataDirFromCommand(cmd)})
+		found = append(found, Instance{PID: r.ProcessID, DataDir: dataDirFromCommand(cmd), Command: cmd})
 	}
 	return found, nil
 }
