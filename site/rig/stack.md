@@ -51,6 +51,9 @@ rig stack init          # writes rig.stack.jsonc
 ```jsonc
 {
   "$schema": "https://rigsmith.dev/schemas/rig-stack.json",
+  // Branches `send` creates are named stack/<what-you-typed>. Optional.
+  "branchPrefix": "stack/",
+
   "repos": {
     "pty-core": {
       "upstream": "github.com/acme/pty-core",   // where PRs go
@@ -160,10 +163,10 @@ current upstream tip.
 ```sh
 rig stack send <repo> <new-branch>
 
-rig stack send pty-core fix/read-timeout -m "Fix the read timeout"
-rig stack send term-control fix/read-timeout -m "Handle the new timeout"
+rig stack send pty-core read-timeout -m "Fix the read timeout"
+rig stack send term-control read-timeout -m "Handle the new timeout"
 
-# sent pty-core to you/pty-core:fix/read-timeout
+# sent pty-core to you/pty-core:stack/read-timeout
 #   — open the PR against acme/pty-core
 ```
 
@@ -175,6 +178,14 @@ around. Open the PR from your fork as usual.
 `<new-branch>` is a branch you are creating on *your fork*, named per change.
 Nothing reads it from the manifest, because it is a property of the change
 rather than of the project — which is also why the `rig ui` flow asks for it.
+
+What you type is prefixed with **`stack/`**, so `read-timeout` becomes
+`stack/read-timeout`. Your fork also carries your own branches; the prefix keeps
+these apart from them at a glance, and stops a name you chose from colliding
+with one upstream already uses. Change it with `branchPrefix` in the manifest,
+per workspace or per repo, or set it to `""` for bare names. A name that already
+starts with the prefix is left alone, so pasting a full branch name back in when
+re-sending does not stutter it.
 
 Sending again to the same branch **updates** it, so you can act on review
 feedback: commit in the workspace, re-send, and the pull request moves. The

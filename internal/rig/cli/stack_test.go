@@ -170,6 +170,46 @@ func TestStackUpstreamBranch(t *testing.T) {
 	})
 }
 
+func TestStackSendBranch(t *testing.T) {
+	ptr := func(s string) *string { return &s }
+	base := func(repo *stackRepo, workspace *string) *stackManifest {
+		return &stackManifest{BranchPrefix: workspace, Repos: map[string]*stackRepo{"x": repo}}
+	}
+
+	cases := []struct {
+		name  string
+		m     *stackManifest
+		given string
+		want  string
+	}{
+		{"defaults to stack/", base(&stackRepo{}, nil), "read-timeout", "stack/read-timeout"},
+		{"workspace override", base(&stackRepo{}, ptr("jc-")), "read-timeout", "jc-read-timeout"},
+		{"workspace opt-out", base(&stackRepo{}, ptr("")), "read-timeout", "read-timeout"},
+		{"repo beats workspace", base(&stackRepo{BranchPrefix: ptr("pr/")}, ptr("jc-")), "x", "pr/x"},
+		{"repo opts out alone", base(&stackRepo{BranchPrefix: ptr("")}, ptr("jc-")), "x", "x"},
+		{"already prefixed is left alone", base(&stackRepo{}, nil), "stack/read-timeout", "stack/read-timeout"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.m.sendBranch("x", c.given); got != c.want {
+				t.Fatalf("sendBranch(%q) = %q, want %q", c.given, got, c.want)
+			}
+		})
+	}
+
+	t.Run("a prefix git would reject is refused", func(t *testing.T) {
+		for _, bad := range []string{"/lead", "-lead", "has space", "dot..dot", "double//slash"} {
+			m := &stackManifest{
+				BranchPrefix: ptr(bad),
+				Repos:        map[string]*stackRepo{"x": {Upstream: "h/o/n", Fork: "h/me/n"}},
+			}
+			if err := m.validate(); err == nil {
+				t.Fatalf("accepted branch prefix %q", bad)
+			}
+		}
+	})
+}
+
 func TestJoshURL(t *testing.T) {
 	p := &joshProxy{port: 4242}
 	got := p.url("tomlm/Porta.Pty", "abc123", stackPrefixFilter("porta-pty"))

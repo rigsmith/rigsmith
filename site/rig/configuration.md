@@ -188,6 +188,7 @@ history: the key is the directory it lives under.
 
 ```jsonc
 {
+  "branchPrefix": "stack/",                   // prepended to `send` branch names
   "repos": {
     "pty-core": {
       "upstream": "github.com/acme/pty-core",   // where PRs go
@@ -212,6 +213,13 @@ with the older `branch` key is still read.
 `lastSync` is a separate map rather than a field per repo because it is machine
 written: a pull rewrites that one value while the entries you wrote, and their
 comments, stay untouched.
+
+`branchPrefix` is prepended to the name you give `rig stack send`, so
+`send pty-core read-timeout` creates `stack/read-timeout` on your fork. It
+defaults to `stack/`, keeping these branches apart from your own work on the
+same fork; set it to `""` for bare names, or override it on a single repo whose
+upstream asks for a different convention. A name that already carries the prefix
+is left as it is.
 
 An optional `"josh"` key pins the version of [josh](https://josh-project.dev) —
 the history-filtering engine [`init` and `pull`](./stack) run — for this

@@ -12,6 +12,24 @@
       "type": "string",
       "description": "josh engine version tag this workspace pins (e.g. r26.07.19). Defaults to the version pinned in rig. Changing it against existing workspace history is at your own risk."
     },
+    "branchPrefix": {
+      "type": "string",
+      "description": "Prepended to the name `rig stack send` is given, so `send lib read-timeout` creates stack/read-timeout. Defaults to \"stack/\"; set to \"\" for bare names. A repo entry may override it.",
+      "pattern": "^[^ \\t~^:?*\\[\\\\]*$",
+      "not": {
+        "anyOf": [
+          {
+            "pattern": "^[-/]"
+          },
+          {
+            "pattern": "//"
+          },
+          {
+            "pattern": "\\.\\."
+          }
+        ]
+      }
+    },
     "repos": {
       "type": "object",
       "description": "One entry per fused project; the key is the prefix directory its history lives under.",
@@ -45,6 +63,24 @@
           "branch": {
             "type": "string",
             "description": "Deprecated name for upstreamBranch. Still read; prefer upstreamBranch, which cannot be confused with the branch `send` creates."
+          },
+          "branchPrefix": {
+            "type": "string",
+            "description": "Overrides the workspace branchPrefix for this project. Set to \"\" to send bare names to this fork only.",
+            "pattern": "^[^ \\t~^:?*\\[\\\\]*$",
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "^[-/]"
+                },
+                {
+                  "pattern": "//"
+                },
+                {
+                  "pattern": "\\.\\."
+                }
+              ]
+            }
           }
         },
         "required": [

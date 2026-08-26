@@ -374,18 +374,26 @@ func newStackSendCmd() *cobra.Command {
 			"the workspace's own history: nothing upstream has to know this repo is\n" +
 			"fused with anything else. PR from there as usual.\n\n" +
 			"<new-branch> is a branch you are creating on your fork, named per change\n" +
-			"(fix/the-thing). It is unrelated to the manifest's upstreamBranch, which\n" +
+			"(read-timeout). It is unrelated to the manifest's upstreamBranch, which\n" +
 			"is the branch of *upstream* this directory follows. Sending twice to the\n" +
-			"same <new-branch> updates it, so an open PR can take review feedback.",
+			"same <new-branch> updates it, so an open PR can take review feedback.\n\n" +
+			"The name is prefixed with `stack/` so these branches stay recognisable\n" +
+			"among your own work on the same fork: `send lib read-timeout` creates\n" +
+			"stack/read-timeout. Change it with the manifest's branchPrefix, or set\n" +
+			"that to \"\" for bare names.",
 		Args:              cobra.ExactArgs(2),
 		ValidArgsFunction: stackRepoCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			name, branch := args[0], args[1]
+			name := args[0]
 			m, _, repo, err := stackWorkspace(ctx)
 			if err != nil {
 				return err
 			}
+			// The prefix keeps these branches recognisable on a fork that also
+			// carries your own work, and is applied here rather than at the call
+			// sites so the menu and the CLI cannot disagree about it.
+			branch := m.sendBranch(name, args[1])
 			r := m.Repos[name]
 			if r == nil {
 				return fmt.Errorf("no stack repo %q (have: %s)", name, strings.Join(m.names(), ", "))
@@ -573,6 +581,21 @@ func stackMenuItems() []menuItem {
 	}
 }
 
+// stackCommonPrefix is the branch prefix every named repo shares, or "" when
+// they differ — the menu can only promise one when there is one.
+func stackCommonPrefix(m *stackManifest, names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	first := m.branchPrefix(names[0])
+	for _, n := range names[1:] {
+		if m.branchPrefix(n) != first {
+			return ""
+		}
+	}
+	return first
+}
+
 // newStackSendMenuCmd is the menu's wrapper around the arg-taking `stack send`:
 // the repo comes from the manifest as a pick, the branch from a prompt. Hidden —
 // it exists only for the menu, like the worktree new/open/rm wrappers.
@@ -613,9 +636,16 @@ func newStackSendMenuCmd() *cobra.Command {
 			if len(names) == 1 {
 				where = m.Repos[names[0]].Fork
 			}
+			// Show the prefix rather than let it surprise them after the fact.
+			// It is uniform across repos unless a repo overrides it, so only
+			// promise a specific one when every repo here agrees.
+			desc := fmt.Sprintf("created on %s, holding one commit", where)
+			if prefix := stackCommonPrefix(m, names); prefix != "" {
+				desc = fmt.Sprintf("created on %s as %s<name> — e.g. read-timeout", where, prefix)
+			}
 			fields = append(fields, huh.NewInput().Title("New branch on your fork").
-				Description(fmt.Sprintf("created on %s, holding one commit — e.g. fix/the-thing", where)).
-				Placeholder("fix/…").
+				Description(desc).
+				Placeholder("read-timeout").
 				Value(&branch))
 
 			if err := huh.NewForm(huh.NewGroup(fields...)).

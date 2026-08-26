@@ -256,7 +256,7 @@ rig stack init                       # writes rig.stack.jsonc to fill in
 rig stack init                       # again: imports each repo it names
 rig stack status                     # who has moved upstream
 rig stack pull pty-core              # take that movement
-rig stack send pty-core fix/timeout -m "Fix the read timeout"
+rig stack send pty-core read-timeout -m "Fix the read timeout"  # → stack/read-timeout
 ```
 
 Importing and pulling are done by [josh](https://josh-project.dev), the git

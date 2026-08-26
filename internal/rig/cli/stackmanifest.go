@@ -19,6 +19,12 @@ import (
 )
 
 const (
+	// stackDefaultBranchPrefix namespaces the branches `send` creates on your
+	// forks, so they are recognisable among your own work and cannot collide
+	// with a branch name upstream already uses. Set "branchPrefix" to "" in the
+	// manifest to send bare names instead.
+	stackDefaultBranchPrefix = "stack/"
+
 	stackFileBase  = "rig.stack"
 	stackSchemaURL = "https://rigsmith.dev/schemas/rig-stack.json"
 )
@@ -37,12 +43,21 @@ type stackRepo struct {
 	// Branch is the name this key had before that ambiguity was worth fixing.
 	// Still read, never written.
 	Branch string `json:"branch,omitempty"`
+	// BranchPrefix overrides the workspace-wide prefix for this project — for the
+	// upstream whose contribution guide asks for something of its own. A pointer
+	// so that "" is a real answer (no prefix here) rather than "unset".
+	BranchPrefix *string `json:"branchPrefix,omitempty"`
 }
 
 type stackManifest struct {
 	Schema string                `json:"$schema,omitempty"`
 	Josh   string                `json:"josh,omitempty"` // engine version override; empty = rig's pinned default
 	Repos  map[string]*stackRepo `json:"repos"`
+	// BranchPrefix is prepended to the name `send` is given, so a short name per
+	// change ("read-timeout") becomes the branch your forks actually carry
+	// ("stack/read-timeout"). Unset means stackDefaultBranchPrefix; set it to ""
+	// to send bare names. Per-repo entries override it.
+	BranchPrefix *string `json:"branchPrefix,omitempty"`
 	// LastSync maps prefix -> upstream SHA of its last pull: the committed
 	// cursors. A separate top-level map, not a field per repo, because it is
 	// machine-written — pulls rewrite this one value while the jsonc editor
@@ -66,6 +81,29 @@ func (m *stackManifest) branch(name string) string {
 	return "main"
 }
 
+// branchPrefix is what `send` prepends for this project: the repo's own setting
+// if it has one, else the workspace's, else nothing.
+func (m *stackManifest) branchPrefix(name string) string {
+	if r := m.Repos[name]; r != nil && r.BranchPrefix != nil {
+		return *r.BranchPrefix
+	}
+	if m.BranchPrefix != nil {
+		return *m.BranchPrefix
+	}
+	return stackDefaultBranchPrefix
+}
+
+// sendBranch resolves the name given to `send` into the branch to create.
+// A name that already carries the prefix is left alone, so re-sending by
+// pasting the full branch name back in doesn't stutter it.
+func (m *stackManifest) sendBranch(name, given string) string {
+	prefix := m.branchPrefix(name)
+	if prefix == "" || strings.HasPrefix(given, prefix) {
+		return given
+	}
+	return prefix + given
+}
+
 // names returns the prefixes in stable order, so multi-repo verbs and their
 // output are deterministic.
 func (m *stackManifest) names() []string {
@@ -82,6 +120,11 @@ func (m *stackManifest) validate() error {
 		// Almost always the untouched scaffold: say what to do, not what is wrong.
 		return fmt.Errorf("no repos yet — uncomment the example entry and point it at your upstream and fork, then run `rig stack init` again")
 	}
+	if m.BranchPrefix != nil {
+		if err := stackValidBranchPrefix(*m.BranchPrefix, "branchPrefix"); err != nil {
+			return err
+		}
+	}
 	for name, r := range m.Repos {
 		// The key is both a josh prefix and a `HEAD:<name>` tree path, so it has
 		// to name exactly one directory. Empty resolves to the workspace root —
@@ -94,6 +137,11 @@ func (m *stackManifest) validate() error {
 		}
 		// Both spellings set to different branches is a manifest whose author
 		// believed one of them meant something else; refuse rather than pick.
+		if r.BranchPrefix != nil {
+			if err := stackValidBranchPrefix(*r.BranchPrefix, "stack repo "+name); err != nil {
+				return err
+			}
+		}
 		if r.UpstreamBranch != "" && r.Branch != "" && r.UpstreamBranch != r.Branch {
 			return fmt.Errorf("stack repo %q sets upstreamBranch %q and branch %q — keep upstreamBranch and drop branch, which is the old name for it",
 				name, r.UpstreamBranch, r.Branch)
@@ -108,6 +156,23 @@ func (m *stackManifest) validate() error {
 				return fmt.Errorf("stack repo %q: %q must be host/owner/name", name, spec)
 			}
 		}
+	}
+	return nil
+}
+
+// stackValidBranchPrefix keeps a prefix to something git will accept once a
+// change name is appended to it. It deliberately allows a trailing slash
+// ("stack/") and a bare lead-in ("jc-") alike.
+func stackValidBranchPrefix(prefix, where string) error {
+	switch {
+	case prefix == "":
+		return nil
+	case strings.HasPrefix(prefix, "/"), strings.HasPrefix(prefix, "-"):
+		return fmt.Errorf("%s: branch prefix %q cannot start with %q", where, prefix, prefix[:1])
+	case strings.ContainsAny(prefix, " \t~^:?*[\\"), strings.Contains(prefix, ".."):
+		return fmt.Errorf("%s: branch prefix %q contains characters git will not accept in a branch name", where, prefix)
+	case strings.Contains(prefix, "//"):
+		return fmt.Errorf("%s: branch prefix %q has an empty path segment", where, prefix)
 	}
 	return nil
 }
@@ -247,6 +312,11 @@ const stackManifestTemplate = `{
   //
   // Specs are host/owner/name — no https://, no .git — because the same string
   // has to serve as a URL, an engine path, and a label.
+
+  // Branches "rig stack send" creates are named stack/<what-you-typed>, which
+  // keeps them recognisable on a fork that also carries your own work. Override
+  // it here, or set it to "" to send bare names. A repo may override it too.
+  // "branchPrefix": "stack/",
 
   "repos": {
     // The key is the directory this project is fused under, and the name you
