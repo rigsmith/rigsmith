@@ -182,21 +182,21 @@ run instead.
 
 ## Stack workspaces {#stack}
 
-A [stack workspace](./verbs#stack) is described by `rig.stack.jsonc` at its root
+A [stack workspace](./stack) is described by `rig.stack.jsonc` at its root
 (or a `stack` key in `.rig.json`). Each entry names a repo fused into this
 history: the key is the directory it lives under.
 
 ```jsonc
 {
   "repos": {
-    "porta-pty": {
-      "upstream": "github.com/tomlm/Porta.Pty",        // where PRs go
-      "fork": "github.com/JohnCampionJr/Porta.Pty",    // where `send` pushes
-      "branch": "main"                                  // upstream branch, default main
+    "pty-core": {
+      "upstream": "github.com/acme/pty-core",   // where PRs go
+      "fork": "github.com/you/pty-core",        // where `send` pushes
+      "branch": "main"                          // upstream branch, default main
     }
   },
   // Written by `pull`, not by hand: the upstream commit each repo last took.
-  "lastSync": { "porta-pty": "c9f15861…" }
+  "lastSync": { "pty-core": "a1b2c3d4…" }
 }
 ```
 
@@ -208,7 +208,7 @@ written: a pull rewrites that one value while the entries you wrote, and their
 comments, stay untouched.
 
 An optional `"josh"` key pins the version of [josh](https://josh-project.dev) —
-the history-filtering engine [`init` and `pull`](./verbs#stack) run — for this
+the history-filtering engine [`init` and `pull`](./stack) run — for this
 workspace, overriding the one rig ships with. Changing it against existing
 workspace history is at your own risk.
 

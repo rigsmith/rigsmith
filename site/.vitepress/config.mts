@@ -56,7 +56,7 @@ export default defineConfig({
           items: [
             { text: 'Overview', link: '/rig/' },
             { text: 'Verbs', link: '/rig/verbs' },
-            { text: 'Stack workspaces', link: '/rig/verbs#stack' },
+            { text: 'Stack workspaces', link: '/rig/stack' },
             { text: 'Aliases', link: '/rig/alias' },
             { text: 'Configuration', link: '/rig/configuration' },
           ],
