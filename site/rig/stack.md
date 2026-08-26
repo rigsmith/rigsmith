@@ -242,6 +242,14 @@ filter to move commits between an upstream repo and its directory here.
 wants, prefix absent inside it, so the export is plain `git commit-tree` onto
 the upstream tip.
 
+Private upstreams work, and need no setup. Because the engine is what talks to
+upstream, it is the engine that has to authenticate: rig asks git for the
+credential you already have for that host — the keychain, the GitHub CLI's
+helper, whatever `git credential fill` answers with — and hands it to the engine
+for that one fetch. Nothing is stored, nothing is prompted for, and a public
+upstream is unaffected. `send` never needs any of this, since it pushes to your
+fork with plain git.
+
 rig owns the binary so you do not have to. `rig stack doctor --fix` fetches a
 verified `josh-proxy` for your platform — built and published by
 [rigsmith/josh-binaries](https://github.com/rigsmith/josh-binaries), since

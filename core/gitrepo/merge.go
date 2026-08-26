@@ -16,19 +16,19 @@ import (
 // state for the caller to resolve) when the merge hit conflicts, or a non-nil
 // error for any other failure.
 func (r *Repo) FetchMerge(ctx context.Context, remote, branch string) (conflicted bool, err error) {
-	return r.fetchMerge(ctx, remote, branch, false, "")
+	return r.fetchMerge(ctx, remote, branch, false, "", nil)
 }
 
 // FetchMergeUnrelated is FetchMerge for histories that share no common
 // ancestor — the initial import of an external repo (e.g. through a josh
 // filter), where git refuses a plain merge. msg, when non-empty, names the
 // merge commit so imports read as imports in the log.
-func (r *Repo) FetchMergeUnrelated(ctx context.Context, remote, branch, msg string) (conflicted bool, err error) {
-	return r.fetchMerge(ctx, remote, branch, true, msg)
+func (r *Repo) FetchMergeUnrelated(ctx context.Context, remote, branch, msg string, auth *HTTPAuth) (conflicted bool, err error) {
+	return r.fetchMerge(ctx, remote, branch, true, msg, auth)
 }
 
-func (r *Repo) fetchMerge(ctx context.Context, remote, branch string, allowUnrelated bool, msg string) (conflicted bool, err error) {
-	if _, err := runGit(ctx, r.Dir, "fetch", remote, branch); err != nil {
+func (r *Repo) fetchMerge(ctx context.Context, remote, branch string, allowUnrelated bool, msg string, auth *HTTPAuth) (conflicted bool, err error) {
+	if _, err := runGitStdin(ctx, r.Dir, "", auth.env(), "fetch", remote, branch); err != nil {
 		return false, err
 	}
 	args := []string{"merge", "--no-edit"}
