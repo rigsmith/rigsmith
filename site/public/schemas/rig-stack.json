@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigsmith.dev/schemas/rig-stack.json",
+  "title": "rig stack manifest",
+  "description": "A fused workspace of upstream forks: each repo's history imported under a prefix of one git history through josh's reversible filters. See docs/STACK-DESIGN.md.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "josh": {
+      "type": "string",
+      "description": "josh engine version tag this workspace pins (e.g. r26.07.19). Defaults to the version pinned in rig. Changing it against existing workspace history is at your own risk."
+    },
+    "repos": {
+      "type": "object",
+      "description": "One entry per fused project; the key is the prefix directory its history lives under.",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[^-./\\\\\\s][^/\\\\\\s]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "upstream": {
+            "type": "string",
+            "description": "Canonical repo as host/owner/name (no scheme, no .git). PRs land here.",
+            "pattern": "^[^/:]+/[^/]+/[^/]+$",
+            "not": {
+              "pattern": "\\.git$"
+            }
+          },
+          "fork": {
+            "type": "string",
+            "description": "Your fork as host/owner/name. `rig stack send` pushes extracted branches here.",
+            "pattern": "^[^/:]+/[^/]+/[^/]+$",
+            "not": {
+              "pattern": "\\.git$"
+            }
+          },
+          "branch": {
+            "type": "string",
+            "description": "Upstream branch to track. Default: main."
+          }
+        },
+        "required": [
+          "upstream",
+          "fork"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "lastSync": {
+      "type": "object",
+      "description": "Machine-written pull cursors: prefix -> upstream SHA of the last pull. Committed with each pull's merge commit; do not edit by hand.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "repos"
+  ],
+  "additionalProperties": false
+}
