@@ -175,6 +175,56 @@ func TestBundleReplacesOnlyItsOwn(t *testing.T) {
 	}
 }
 
+// Two profiles given the same --label land on one path. Replacing there without
+// being asked would delete the first profile's launcher and point its icon at
+// the second — so it is refused, the way a foreign file is.
+func TestBundleWillNotTakeOverAnotherProfile(t *testing.T) {
+	dir := t.TempDir()
+	exe, _ := fakeClauderig(t)
+	label := "Claude"
+	if _, err := installShortcutIn(dir, ShortcutSpec{
+		Profile: "work", Label: label, Dest: DestDesktop, Exe: exe,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second := ShortcutSpec{Profile: "personal", Label: label, Dest: DestDesktop, Exe: exe}
+	_, err := installShortcutIn(dir, second)
+	if !errors.Is(err, ErrShortcutClaimed) {
+		t.Fatalf("installing over another profile's shortcut = %v, want ErrShortcutClaimed", err)
+	}
+	if owner, _ := bundleProfile(filepath.Join(dir, label+appExt)); owner != "work" {
+		t.Fatalf("the refused install still changed the owner to %q", owner)
+	}
+	second.Force = true
+	if _, ferr := installShortcutIn(dir, second); ferr != nil {
+		t.Fatalf("--force over another profile's shortcut: %v", ferr)
+	}
+	if owner, _ := bundleProfile(filepath.Join(dir, label+appExt)); owner != "personal" {
+		t.Fatalf("after --force the owner is %q, want personal", owner)
+	}
+}
+
+// LaunchServices keys an application on CFBundleIdentifier, so two profiles
+// must never produce one. Sanitising alone collapses the three characters a
+// profile name may legally differ by.
+func TestBundleIDsAreDistinct(t *testing.T) {
+	seen := map[string]string{}
+	for _, name := range []string{"work_a", "work.a", "work-a", "work", "worka"} {
+		id := bundleID(name)
+		if other, clash := seen[id]; clash {
+			t.Fatalf("%q and %q share the bundle identifier %q", name, other, id)
+		}
+		seen[id] = name
+		for _, r := range id {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '.':
+			default:
+				t.Fatalf("bundle identifier %q contains %q, which is not legal in one", id, r)
+			}
+		}
+	}
+}
+
 // A failed build must not take the working shortcut with it: the bundle is
 // staged elsewhere and swapped in, so the old one survives.
 func TestBundleSurvivesAFailedRewrite(t *testing.T) {

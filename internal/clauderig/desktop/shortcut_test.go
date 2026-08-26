@@ -59,7 +59,7 @@ func TestValidLabelRejectsWhatWindowsCannotStore(t *testing.T) {
 		"trailing space": "Claude ",
 		"reserved":       "NUL",
 		"reserved ext":   "com1.thing",
-		"too long":       strings.Repeat("x", 65),
+		"too long":       strings.Repeat("x", maxLabel+1),
 	}
 	for name, label := range bad {
 		if err := ValidLabel(label); err == nil {
@@ -76,6 +76,17 @@ func TestValidLabelRejectsWhatWindowsCannotStore(t *testing.T) {
 func TestDefaultShortcutLabel(t *testing.T) {
 	if got := DefaultShortcutLabel("work"); got != "Claude - work" {
 		t.Fatalf("DefaultShortcutLabel = %q", got)
+	}
+	// The generated label must be valid for EVERY name the store accepts. A cap
+	// that fitted the profile name but not the name plus its "Claude - " prefix
+	// meant a legal 60-character profile could not be given a shortcut at all
+	// without passing --label.
+	longest := "a" + strings.Repeat("b", 63) // 64: the longest ValidName
+	if err := ValidName(longest); err != nil {
+		t.Fatalf("test premise wrong, %q is not a valid profile name: %v", longest, err)
+	}
+	if err := ValidLabel(DefaultShortcutLabel(longest)); err != nil {
+		t.Fatalf("the default label for the longest valid profile name is rejected: %v", err)
 	}
 }
 

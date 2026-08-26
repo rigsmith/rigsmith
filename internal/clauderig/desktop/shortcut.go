@@ -86,6 +86,16 @@ type ShortcutSpec struct {
 // is not one of ours — so replacing it would destroy someone else's file.
 var ErrShortcutExists = errors.New("a file that clauderig did not create is already there")
 
+// ErrShortcutClaimed means the path holds one of OUR shortcuts, but one that
+// opens a DIFFERENT profile.
+//
+// It cannot be folded into "replace our own", which is the ordinary case that
+// makes re-running the command a repair. Two profiles given the same --label
+// land on the same path, and silently rewriting there would delete the first
+// profile's launcher and point its icon at the second — a profile losing its
+// shortcut because another one was given a matching name.
+var ErrShortcutClaimed = errors.New("a shortcut for another profile already has that name")
+
 // ShortcutsSupported reports whether this platform has shortcuts to create. It
 // tracks Supported() exactly: there is no Claude Desktop to point at otherwise.
 func ShortcutsSupported() bool { return Supported() }
@@ -136,13 +146,26 @@ func profileFromTag(s string) (string, bool) {
 // reservedNames are the DOS device names Windows still refuses as file names,
 // with or without an extension. A label that hits one would fail at Save time
 // with an opaque COM error, so it is rejected here with a readable one.
+//
+// The superscript spellings are in the list because Windows reserves those too:
+// COM¹, COM² and COM³ (and the LPT equivalents) are device names, a leftover of
+// the OEM code pages that mapped those characters onto the digits.
 var reservedNames = map[string]bool{
 	"CON": true, "PRN": true, "AUX": true, "NUL": true,
-	"COM1": true, "COM2": true, "COM3": true, "COM4": true, "COM5": true,
-	"COM6": true, "COM7": true, "COM8": true, "COM9": true,
-	"LPT1": true, "LPT2": true, "LPT3": true, "LPT4": true, "LPT5": true,
-	"LPT6": true, "LPT7": true, "LPT8": true, "LPT9": true,
+	"COM0": true, "COM1": true, "COM2": true, "COM3": true, "COM4": true,
+	"COM5": true, "COM6": true, "COM7": true, "COM8": true, "COM9": true,
+	"COM¹": true, "COM²": true, "COM³": true,
+	"LPT0": true, "LPT1": true, "LPT2": true, "LPT3": true, "LPT4": true,
+	"LPT5": true, "LPT6": true, "LPT7": true, "LPT8": true, "LPT9": true,
+	"LPT¹": true, "LPT²": true, "LPT³": true,
 }
+
+// maxLabel bounds a shortcut's file name. Larger than the 64-character cap on a
+// profile NAME, and that is the point: the default label prefixes the profile
+// with "Claude - ", so a limit of 64 here would reject the generated default for
+// any profile name over 55 characters — a valid name that could then only be
+// given a shortcut by passing --label.
+const maxLabel = 96
 
 // ValidLabel reports whether a label is safe to use as a file name on BOTH
 // platforms — not just this one. A shortcut label is stored nowhere but the file
@@ -153,8 +176,8 @@ func ValidLabel(label string) error {
 	if strings.TrimSpace(label) == "" {
 		return errors.New("shortcut label is empty")
 	}
-	if len([]rune(label)) > 64 {
-		return fmt.Errorf("shortcut label %q is too long (max 64 characters)", label)
+	if len([]rune(label)) > maxLabel {
+		return fmt.Errorf("shortcut label %q is too long (max %d characters)", label, maxLabel)
 	}
 	if label != strings.TrimSpace(label) {
 		return fmt.Errorf("shortcut label %q has leading or trailing spaces", label)

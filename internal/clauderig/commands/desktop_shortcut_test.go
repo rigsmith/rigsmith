@@ -58,6 +58,36 @@ func TestShortcutTargetsNamed(t *testing.T) {
 	}
 }
 
+// Removal must not require the profile to still exist. `desktop rm` deletes the
+// profile first and its shortcuts second, so a failure in that second step
+// leaves icons behind that only `--rm` can clear — and it would answer "no such
+// profile" if it insisted on resolving one.
+func TestShortcutRemovalNamesOutlivesTheProfile(t *testing.T) {
+	st := targetStore(t) // work, personal
+
+	got, err := shortcutRemovalNames(st, stubApp{}, []string{"work"}, false)
+	if err != nil || len(got) != 1 || got[0] != "work" {
+		t.Fatalf("shortcutRemovalNames(work) = %v, %v", got, err)
+	}
+	// The profile is gone; the name still identifies the shortcuts.
+	if rerr := st.Remove("work"); rerr != nil {
+		t.Fatal(rerr)
+	}
+	got, err = shortcutRemovalNames(st, stubApp{}, []string{"work"}, false)
+	if err != nil || len(got) != 1 || got[0] != "work" {
+		t.Fatalf("shortcutRemovalNames(deleted profile) = %v, %v", got, err)
+	}
+	// A name that could never have been a profile is still an error, so a typo
+	// does not silently scan for shortcuts that cannot exist.
+	if _, err := shortcutRemovalNames(st, stubApp{}, []string{"../etc"}, false); err == nil {
+		t.Fatal("shortcutRemovalNames(../etc) should have failed")
+	}
+	all, err := shortcutRemovalNames(st, stubApp{}, nil, true)
+	if err != nil || len(all) != 1 || all[0] != "personal" {
+		t.Fatalf("shortcutRemovalNames(--all) = %v, %v", all, err)
+	}
+}
+
 // A shortcut records an absolute path to clauderig, so one written by a `go run`
 // build would point into a directory that is deleted minutes later — and fail
 // silently, at click time, long after anyone connects the two.

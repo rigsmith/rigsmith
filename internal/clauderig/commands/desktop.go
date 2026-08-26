@@ -937,6 +937,20 @@ func runDesktopUI(cmd *cobra.Command) error {
 			}
 			_ = st.Touch(p)
 			note = "created " + p.Label() + " — log into the window that just opened"
+			// The same offer `desktop add` makes on a terminal. Without it the
+			// screen that is the primary way in silently skipped the feature.
+			// Safe to run a form here: the full-screen program has exited for
+			// this iteration of the loop, which is what promptDesktopName above
+			// relies on too.
+			if desktop.ShortcutsSupported() {
+				if yes, aerr := askYesNo("Put a shortcut for "+p.Name+" on your desktop?", true); aerr == nil && yes {
+					if sc, serr := installDesktopShortcut(p.Name); serr != nil {
+						note += "; no shortcut (" + serr.Error() + ")"
+					} else {
+						note += "; shortcut at " + sc.Path
+					}
+				}
+			}
 		case "open":
 			p, gerr := st.Get(final.Action.Name)
 			if gerr != nil {
@@ -1006,7 +1020,20 @@ func runDesktopUI(cmd *cobra.Command) error {
 			if dm, derr := dirmapStore(); derr == nil {
 				_ = dm.PruneDesktop(p.Name)
 			}
+			// Same as the `desktop rm` command: a launcher left behind now
+			// opens nothing. Removing a profile HERE and leaving its icons was
+			// the inconsistency between the two paths.
 			note = "removed " + p.Label()
+			if gone, scErr := desktop.RemoveShortcutsFor(p.Name); len(gone) > 0 || scErr != nil {
+				switch {
+				case scErr != nil:
+					note += "; could not clear its shortcuts (" + scErr.Error() + ")"
+				case len(gone) == 1:
+					note += "; shortcut deleted"
+				default:
+					note += fmt.Sprintf("; %d shortcuts deleted", len(gone))
+				}
+			}
 		}
 	}
 }

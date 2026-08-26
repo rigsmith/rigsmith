@@ -4,6 +4,8 @@ package desktop
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -81,8 +83,12 @@ func installShortcutIn(dir string, spec ShortcutSpec) (Shortcut, error) {
 	// it is, not followed to whatever it points at and then deleted there.
 	switch _, err := os.Lstat(final); {
 	case err == nil:
-		if _, ours := bundleProfile(final); !ours && !spec.Force {
+		owner, ours := bundleProfile(final)
+		switch {
+		case !ours && !spec.Force:
 			return Shortcut{}, fmt.Errorf("%w: %s", ErrShortcutExists, final)
+		case ours && owner != spec.Profile && !spec.Force:
+			return Shortcut{}, fmt.Errorf("%w: %s opens %q", ErrShortcutClaimed, final, owner)
 		}
 	case !errors.Is(err, os.ErrNotExist):
 		return Shortcut{}, err
@@ -197,9 +203,16 @@ func xmlEscape(s string) string {
 	return buf.String()
 }
 
-// bundleID keeps every shortcut's identifier distinct (LaunchServices keys off
-// it) and legal: a bundle identifier takes alphanumerics, hyphens and dots
-// only, while a profile name may contain an underscore.
+// bundleID keeps every shortcut's identifier legal and DISTINCT. A bundle
+// identifier takes alphanumerics, hyphens and dots only, while a profile name
+// may also contain an underscore and a dot.
+//
+// Sanitising alone is not enough, and the reason is the whole point of the
+// digest: mapping every illegal character to a hyphen is not injective, so
+// `work_a`, `work.a` and `work-a` — three profiles a user may legitimately have
+// — would share one identifier. LaunchServices keys an application on this
+// identifier, so a click could then reach the wrong bundle. A short digest of
+// the raw name restores uniqueness while leaving the readable part readable.
 func bundleID(profile string) string {
 	safe := strings.Map(func(r rune) rune {
 		switch {
@@ -209,7 +222,8 @@ func bundleID(profile string) string {
 			return '-'
 		}
 	}, profile)
-	return "dev.rigsmith.clauderig.desktop." + safe
+	sum := sha256.Sum256([]byte(profile))
+	return "dev.rigsmith.clauderig.desktop." + safe + "-" + hex.EncodeToString(sum[:4])
 }
 
 // launcherScript is the bundle's executable.

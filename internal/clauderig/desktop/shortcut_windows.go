@@ -72,12 +72,16 @@ func installShortcutIn(dir string, spec ShortcutSpec) (Shortcut, error) {
 	case err == nil:
 		// Ownership is decided by the same listing that `rm` deletes from, so
 		// "may I replace this" and "is this mine" can never disagree.
-		ours, lerr := listShortcutsIn(dir)
+		list, lerr := listShortcutsIn(dir)
 		if lerr != nil {
 			return Shortcut{}, fmt.Errorf("could not tell whether %s is one of ours: %w", final, lerr)
 		}
-		if !containsPath(ours, final) && !spec.Force {
+		existing, ours := findByName(list, final)
+		switch {
+		case !ours && !spec.Force:
 			return Shortcut{}, fmt.Errorf("%w: %s", ErrShortcutExists, final)
+		case ours && existing.Profile != spec.Profile && !spec.Force:
+			return Shortcut{}, fmt.Errorf("%w: %s opens %q", ErrShortcutClaimed, final, existing.Profile)
 		}
 	case !errors.Is(err, os.ErrNotExist):
 		return Shortcut{}, err
@@ -145,10 +149,17 @@ func listShortcutsIn(dir string) ([]Shortcut, error) {
 	// Not recursive: clauderig writes into the folder itself, and a Start Menu
 	// tree can be large. A shortcut the user filed into a subfolder is theirs
 	// to manage, and is left alone rather than deleted from under them.
+	//
+	// The enumeration carries no -ErrorAction SilentlyContinue, so a folder that
+	// exists but cannot be read reaches the caller as an error. Silencing it
+	// would report "no shortcuts here", and `desktop rm` would then say it had
+	// cleaned up while leaving every launcher in place. Reading one BROKEN .lnk
+	// is different — that is skipped, since one unreadable file should not hide
+	// the rest of the folder.
 	const script = `$ErrorActionPreference='Stop'
 $sh = New-Object -ComObject WScript.Shell
 $rows = @()
-foreach ($f in Get-ChildItem -LiteralPath $env:CLAUDERIG_SC_DIR -Filter *.lnk -File -ErrorAction SilentlyContinue) {
+foreach ($f in Get-ChildItem -LiteralPath $env:CLAUDERIG_SC_DIR -Filter *.lnk -File) {
 	try { $lnk = $sh.CreateShortcut($f.FullName) } catch { continue }
 	$rows += [pscustomobject]@{ Path = $f.FullName; Description = $lnk.Description }
 }
@@ -182,9 +193,9 @@ ConvertTo-Json -Compress -InputObject @($rows)`
 
 func removeShortcutAt(path string) error { return os.Remove(path) }
 
-// containsPath reports whether a listing already holds this file.
+// findByName returns the listed shortcut that is this file.
 //
-// Compared by FILE NAME, not by full path, and the difference is load-bearing.
+// Matched by FILE NAME, not by full path, and the difference is load-bearing.
 // The listing came from the very directory the file is being written into, so a
 // name identifies it there uniquely — while the two paths can be spelled
 // differently and still be the same file: PowerShell reports the canonical long
@@ -193,22 +204,30 @@ func removeShortcutAt(path string) error { return os.Remove(path) }
 // re-running the command over its OWN shortcut refuse it as somebody else's,
 // which is the one thing that has to keep working: it is how a shortcut is
 // repaired after clauderig moves.
-func containsPath(list []Shortcut, path string) bool {
+func findByName(list []Shortcut, path string) (Shortcut, bool) {
 	name := filepath.Base(path)
 	for _, s := range list {
 		if strings.EqualFold(filepath.Base(s.Path), name) {
-			return true
+			return s, true
 		}
 	}
-	return false
+	return Shortcut{}, false
 }
+
+// utf8Out prefixes every script. Windows PowerShell writes redirected output in
+// the console code page, while everything on the Go side of the pipe — the JSON
+// decoder included — reads UTF-8. Without this, a user directory or a label with
+// a non-ASCII character comes back mangled, and the path that goes out is then
+// not the path that comes back: the destination lookup targets the wrong folder,
+// and a shortcut with an accent in its name is never found again.
+const utf8Out = "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\n"
 
 // runPowerShell runs a script with values supplied through the environment, and
 // folds stderr into the error — a PowerShell failure prints there and exits
 // zero often enough that a silent empty stdout would otherwise be read as an
 // empty result.
 func runPowerShell(script string, env map[string]string) (string, error) {
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", utf8Out+script)
 	cmd.Env = os.Environ()
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
