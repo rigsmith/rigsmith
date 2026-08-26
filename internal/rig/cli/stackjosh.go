@@ -7,13 +7,17 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -23,6 +27,113 @@ import (
 const stackJoshVersion = "r26.07.19"
 
 const stackJoshRepo = "https://github.com/josh-project/josh"
+
+// stackJoshRelease is the rigsmith/josh-binaries release the engine is fetched
+// from. It tracks a josh tag, with a -win.N suffix while the Windows port is
+// carried as a patch (josh-project/josh#2512); the suffix goes away once that
+// lands and tags build unmodified everywhere.
+const stackJoshRelease = "r26.07.19-win.3"
+
+const stackJoshBinaries = "https://github.com/rigsmith/josh-binaries/releases/download"
+
+// stackJoshChecksums pins what each platform's josh-proxy must hash to. Pinned
+// here rather than read from the release, so that trusting a download does not
+// reduce to trusting whoever can write to the release. Regenerate with
+// `rig stack doctor --print-checksums` when the release moves.
+var stackJoshChecksums = map[string]string{
+	"linux-arm64":   "685728fae9346cbbcda43ad372b02d447f873e8121f12de1403fac02b8533763",
+	"linux-x64":     "845c717891965242ce716f88efdec76eb0ed96e45ecc63933ef2f6d544d2638d",
+	"macos-arm64":   "f353cf4c845152347bd2bf645065267d0b48096af5b802f8abefcfdba565ac74",
+	"macos-x64":     "c659519ba3aa855053e03adbe723bee5de88c6c9850a95775b4de83d6065a172",
+	"windows-arm64": "c96ef9eb891c2b270f65d6fea3d62cdf43628674dac4801ad359e3af699121b9",
+	"windows-x64":   "2ae71b33b80cfc4fac70f0e1e6ac4878671237630e628fc9b86eebb6d8f149ee",
+}
+
+// stackJoshTarget names this platform the way the release assets do.
+func stackJoshTarget() (string, error) {
+	var os_, arch string
+	switch runtime.GOOS {
+	case "linux":
+		os_ = "linux"
+	case "darwin":
+		os_ = "macos"
+	case "windows":
+		os_ = "windows"
+	default:
+		return "", fmt.Errorf("no josh binaries are published for %s", runtime.GOOS)
+	}
+	switch runtime.GOARCH {
+	case "amd64":
+		arch = "x64"
+	case "arm64":
+		arch = "arm64"
+	default:
+		return "", fmt.Errorf("no josh binaries are published for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	return os_ + "-" + arch, nil
+}
+
+// downloadJoshProxy fetches the pinned engine for this platform into dest. It
+// verifies the checksum when one is pinned, and refuses a download it cannot
+// check rather than trusting the bytes.
+func downloadJoshProxy(ctx context.Context, dest string, out io.Writer) error {
+	target, err := stackJoshTarget()
+	if err != nil {
+		return err
+	}
+	ext := ""
+	if runtime.GOOS == "windows" {
+		ext = ".exe"
+	}
+	asset := fmt.Sprintf("josh-proxy-%s-%s%s", stackJoshRelease, target, ext)
+	url := fmt.Sprintf("%s/%s/%s", stackJoshBinaries, stackJoshRelease, asset)
+
+	want, pinned := stackJoshChecksums[target]
+	if !pinned {
+		return fmt.Errorf("no checksum is pinned for %s, so %s cannot be verified", target, asset)
+	}
+
+	fmt.Fprintf(out, "fetching josh-proxy %s for %s\n", stackJoshRelease, target)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("downloading %s: %s", asset, resp.Status)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	// Write beside the target and rename, so an interrupted download never
+	// leaves something executable in place.
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".josh-proxy-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+
+	sum := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tmp, sum), resp.Body); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if got := hex.EncodeToString(sum.Sum(nil)); got != want {
+		return fmt.Errorf("%s does not match its pinned checksum (got %s, want %s)", asset, got, want)
+	}
+	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), dest)
+}
 
 // stackJoshDir is where rig keeps its own josh installs, one per version, so an
 // engine upgrade is a new directory rather than an in-place mutation.
@@ -54,9 +165,19 @@ func ensureJoshProxy(ctx context.Context, version string, out io.Writer) (string
 	if _, err := os.Stat(bin); err == nil {
 		return bin, nil
 	}
+	// A published binary is seconds; building josh is minutes. Only fall back
+	// to cargo when this platform has no binary, or the download fails.
+	if version == stackJoshVersion {
+		if err := downloadJoshProxy(ctx, bin, out); err == nil {
+			return bin, nil
+		} else {
+			fmt.Fprintf(out, "could not fetch a published josh-proxy (%v); building from source\n", err)
+		}
+	}
+
 	cargo, err := exec.LookPath("cargo")
 	if err != nil {
-		return "", fmt.Errorf("josh-proxy %s is not installed and cargo was not found; install rust (https://rustup.rs) and re-run", version)
+		return "", fmt.Errorf("josh-proxy %s is not installed, no published binary could be fetched, and cargo was not found; install rust (https://rustup.rs) and re-run", version)
 	}
 	dir, err := stackJoshDir(version)
 	if err != nil {
