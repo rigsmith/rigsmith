@@ -149,8 +149,16 @@ func scanSidecars(idx Index, dir, label, profile string) {
 			if profile == "" {
 				profile = prev.Profile
 			}
-			if acct == "" {
+			switch {
+			case acct == "":
 				acct = prev.Account
+			case prev.Account != "" && prev.Account != acct:
+				// Two copies filing the same session under different accounts.
+				// Whichever was read last would otherwise decide, and this is meant
+				// to be ground truth — an arbitrary answer is worse than none, since
+				// it drives which Desktop the user is sent to. Leave it unassigned,
+				// as engine's sidecar scan does for the same conflict.
+				acct, profile = "", ""
 			}
 			// Keep the fresher sidecar's display fields; union the sources.
 			if prev.LastActivity.After(m.LastActivity) {

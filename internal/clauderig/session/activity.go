@@ -50,7 +50,7 @@ func LastActivity(path string) (Activity, bool) {
 	if err != nil {
 		return Activity{}, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
 		return Activity{}, false
@@ -68,13 +68,19 @@ func LastActivity(path string) (Activity, bool) {
 			want = size
 		}
 		off := size - want
-		buf := make([]byte, want)
-		if _, rerr := f.ReadAt(buf, off); rerr != nil && !errors.Is(rerr, io.EOF) {
+		// Read one byte early so the window itself shows whether it opened
+		// mid-record: a leading newline means the first record is whole and the
+		// trim below keeps it. Without that byte a boundary-aligned window discards
+		// a whole record, and at maxTailBytes there is no larger read to recover it.
+		read := off
+		if read > 0 {
+			read--
+		}
+		buf := make([]byte, size-read)
+		if _, rerr := f.ReadAt(buf, read); rerr != nil && !errors.Is(rerr, io.EOF) {
 			return Activity{}, false
 		}
-		// Unless the window reached the start of the file, its first line is a
-		// record cut in half.
-		if off > 0 {
+		if read < off {
 			if i := bytes.IndexByte(buf, '\n'); i >= 0 {
 				buf = buf[i+1:]
 			} else {
@@ -93,8 +99,13 @@ func LastActivity(path string) (Activity, bool) {
 // latestIn takes the newest timestamp rather than the final record's: sub-agent
 // records interleave into the same file, so the last LINE need not be the last
 // MOMENT.
+//
+// Context is read off that newest record, so what is displayed describes the same
+// moment as the date beside it. Records that carry a timestamp but no context
+// exist (queue operations), so a field the newest record leaves empty falls back
+// to the nearest one that filled it.
 func latestIn(buf []byte) (Activity, bool) {
-	var a Activity
+	var a, nearest Activity
 	lines := bytes.Split(buf, []byte{'\n'})
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := bytes.TrimSpace(lines[i])
@@ -105,15 +116,15 @@ func latestIn(buf []byte) (Activity, bool) {
 		if json.Unmarshal(line, &rec) != nil {
 			continue // one unreadable record must not abandon the file
 		}
-		// Scanning backwards, so the first one seen is the latest.
-		if a.Cwd == "" && rec.Cwd != "" {
-			a.Cwd = rec.Cwd
+		// Scanning backwards, so the first one seen is the nearest to the end.
+		if nearest.Cwd == "" {
+			nearest.Cwd = rec.Cwd
 		}
-		if a.GitBranch == "" && rec.GitBranch != "" {
-			a.GitBranch = rec.GitBranch
+		if nearest.GitBranch == "" {
+			nearest.GitBranch = rec.GitBranch
 		}
-		if a.Entrypoint == "" && rec.Entrypoint != "" {
-			a.Entrypoint = rec.Entrypoint
+		if nearest.Entrypoint == "" {
+			nearest.Entrypoint = rec.Entrypoint
 		}
 		if rec.Timestamp == "" {
 			continue
@@ -123,8 +134,20 @@ func latestIn(buf []byte) (Activity, bool) {
 			continue
 		}
 		if t = t.UTC(); t.After(a.At) {
-			a.At = t
+			a = Activity{At: t, Cwd: rec.Cwd, GitBranch: rec.GitBranch, Entrypoint: rec.Entrypoint}
 		}
 	}
-	return a, !a.At.IsZero()
+	if a.At.IsZero() {
+		return Activity{}, false
+	}
+	if a.Cwd == "" {
+		a.Cwd = nearest.Cwd
+	}
+	if a.GitBranch == "" {
+		a.GitBranch = nearest.GitBranch
+	}
+	if a.Entrypoint == "" {
+		a.Entrypoint = nearest.Entrypoint
+	}
+	return a, true
 }

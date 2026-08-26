@@ -41,8 +41,8 @@ func NewRecentCmd() *cobra.Command {
 		Short:   "List sessions by when you last worked on them (newest first)",
 		Long: "List your Claude Code sessions newest first — no search term needed.\n" +
 			"Defaults to the last 24 hours.\n\n" +
-			"Each session is dated by the timestamp its own last transcript record\n" +
-			"carries, NOT by the file's mtime and not by Claude Desktop's session\n" +
+			"Each session is dated by the newest timestamped record in its own\n" +
+			"transcript, NOT by the file's mtime and not by Claude Desktop's session\n" +
 			"list. Both of those are properties of the file rather than of the\n" +
 			"conversation: restoring a backup, checking out the synced repo, or any\n" +
 			"tool that rewrites ~/.claude re-dates every chat it touches to the same\n" +
@@ -160,7 +160,8 @@ type recentRow struct {
 // roots.
 func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, sc sessionScope, query string, limit int, long bool) error {
 	idx := session.Build(roots)
-	reprofile(idx, profileByAccount())
+	byAcct, acctComplete := profileByAccount()
+	reprofile(idx, byAcct, acctComplete)
 	livePaths := transcriptPaths(targets, cliTarget)
 	deskPaths := transcriptPaths(targets, desktopTarget)
 	repoPaths := transcriptPaths(targets, repoTarget)
@@ -212,10 +213,7 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 			}
 			read++
 			a := r.activity()
-			if a.GitBranch != "HEAD" {
-				// "HEAD" is what a detached checkout or a non-repo cwd records.
-				row.branch = a.GitBranch
-			}
+			row.branch = sessionBranch(r)
 			row.client = clientWithProfile(r)
 			if !a.At.IsZero() {
 				r.when = a.At
@@ -332,7 +330,7 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 	fmt.Fprintln(out)
 	if query != "" {
 		fmt.Fprintf(out, "%s\n", OkStyle.Render(fmt.Sprintf(
-			"%d of %d session(s) in the window match %q", len(shown), len(rows)+unmatched, query)))
+			"%d of %d session(s) in the window match %q", len(rows), len(rows)+unmatched, query)))
 	} else {
 		fmt.Fprintf(out, "%s\n", OkStyle.Render(fmt.Sprintf("%d session(s)", len(shown))))
 	}

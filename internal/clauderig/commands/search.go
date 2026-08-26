@@ -310,7 +310,8 @@ func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine,
 func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, query string, sc sessionScope) error {
 	caseSensitive := sc.caseSensitive
 	idx := session.Build(roots)
-	reprofile(idx, profileByAccount())
+	byAcct, acctComplete := profileByAccount()
+	reprofile(idx, byAcct, acctComplete)
 
 	hits := map[string]*sessResult{}
 	get := func(id string) *sessResult {
@@ -517,6 +518,9 @@ func renderSessionAs(out interface{ Write([]byte) (int, error) }, me config.Mach
 	if c := clientWithProfile(r); c != "" {
 		meta = append(meta, c)
 	}
+	if b := sessionBranch(r); b != "" {
+		meta = append(meta, b)
+	}
 	if r.meta.Model != "" {
 		meta = append(meta, strings.TrimPrefix(r.meta.Model, "claude-"))
 	}
@@ -710,24 +714,28 @@ func clientLabel(entrypoint string) string {
 }
 
 // profileByAccount maps accountUuid to Desktop profile name via the clauderig
-// account each profile is linked to. Empty when nothing resolves, which leaves
-// sessions on their fallback rather than mislabelling them.
-func profileByAccount() map[string]string {
+// account each profile is linked to. An empty NAME marks an account two profiles
+// both claim.
+//
+// complete reports that every profile resolved. Linking a profile to an account
+// is optional, so without it an account missing from the map does not mean "no
+// profile owns this" — and reprofile must not act as though it did.
+func profileByAccount() (byAccount map[string]string, complete bool) {
 	st, err := desktop.DefaultStore()
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	profiles, err := st.List()
 	if err != nil || len(profiles) == 0 {
-		return nil
+		return nil, false
 	}
 	as, err := account.DefaultStore()
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	accounts, err := as.List()
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	uuidByID := map[string]string{}
 	for _, a := range accounts {
@@ -745,24 +753,32 @@ func profileByAccount() map[string]string {
 		}
 	}
 	out := map[string]string{}
+	complete = true
 	for _, p := range profiles {
-		if uuid := uuidByID[p.AccountID]; uuid != "" {
-			// Two profiles on one account would make the label a coin flip.
-			if prev, dup := out[uuid]; dup && prev != p.Name {
-				out[uuid] = ""
-				continue
-			}
-			out[uuid] = p.Name
+		uuid := uuidByID[p.AccountID]
+		if uuid == "" {
+			complete = false // unlinked profile: its sessions are unresolvable here
+			continue
 		}
+		// Two profiles on one account would make the label a coin flip.
+		if prev, dup := out[uuid]; dup && prev != p.Name {
+			out[uuid] = ""
+			continue
+		}
+		out[uuid] = p.Name
 	}
-	return out
+	return out, complete
 }
 
 // reprofile takes each session's owning profile from the account its sidecar is
 // filed under rather than from the tree it was found in. A sidecar copied
 // between installs keeps its account path but lands in the other profile's
 // directory, so the tree is not ownership.
-func reprofile(idx session.Index, byAccount map[string]string) {
+//
+// complete gates the one case that removes information: an account absent from a
+// COMPLETE map belongs to no profile, so a label on it came from a stray copy.
+// Absent from a partial map means only that we cannot tell, and the tree stands.
+func reprofile(idx session.Index, byAccount map[string]string, complete bool) {
 	if len(byAccount) == 0 {
 		return
 	}
@@ -771,17 +787,17 @@ func reprofile(idx session.Index, byAccount map[string]string) {
 			continue
 		}
 		name, known := byAccount[strings.ToLower(m.Account)]
-		if !known {
-			// An account with no profile is the machine-wide install's, so any
-			// tree label here belongs to a stray copy.
+		switch {
+		case known:
+			// Includes the empty name two profiles share: a label nobody can
+			// justify is worse than none, since it decides where the user is sent.
+			m.Profile = name
+		case complete:
 			m.Profile = ""
-			idx[id] = m
+		default:
 			continue
 		}
-		if name != "" {
-			m.Profile = name
-			idx[id] = m
-		}
+		idx[id] = m
 	}
 }
 
@@ -800,6 +816,15 @@ func clientWithProfile(r *sessResult) string {
 		return desktopTarget + "@" + r.meta.Profile
 	}
 	return c + "@" + r.meta.Profile
+}
+
+// sessionBranch is the branch a session ended on, or "" when it names nothing.
+// "HEAD" is what a detached checkout or a non-repo cwd records.
+func sessionBranch(r *sessResult) string {
+	if b := r.activity().GitBranch; b != "HEAD" {
+		return b
+	}
+	return ""
 }
 
 func shortID(id string) string {

@@ -199,7 +199,7 @@ func TestReprofile_AccountBeatsTree(t *testing.T) {
 		"stray": {ID: "stray", Profile: "work", Account: "UUID-PERSONAL"},
 		"own":   {ID: "own", Profile: "work", Account: "uuid-work"},
 	}
-	reprofile(idx, map[string]string{"uuid-work": "work", "uuid-personal": "personal"})
+	reprofile(idx, map[string]string{"uuid-work": "work", "uuid-personal": "personal"}, true)
 
 	if got := idx["stray"].Profile; got != "personal" {
 		t.Errorf("stray copy labelled %q, want personal (its account) — case must not matter", got)
@@ -213,7 +213,7 @@ func TestReprofile_AccountBeatsTree(t *testing.T) {
 // inherit one from a tree it was copied into.
 func TestReprofile_AccountWithNoProfileClearsTreeLabel(t *testing.T) {
 	idx := session.Index{"s": {ID: "s", Profile: "work", Account: "uuid-machinewide"}}
-	reprofile(idx, map[string]string{"uuid-work": "work"})
+	reprofile(idx, map[string]string{"uuid-work": "work"}, true)
 	if got := idx["s"].Profile; got != "" {
 		t.Errorf("profile = %q, want empty — that account has no profile", got)
 	}
@@ -223,7 +223,7 @@ func TestReprofile_AccountWithNoProfileClearsTreeLabel(t *testing.T) {
 // answer than the account but far better than blanking every session.
 func TestReprofile_NoMappingLeavesLabelsAlone(t *testing.T) {
 	idx := session.Index{"s": {ID: "s", Profile: "work", Account: "uuid-work"}}
-	reprofile(idx, nil)
+	reprofile(idx, nil, false)
 	if got := idx["s"].Profile; got != "work" {
 		t.Errorf("profile = %q, want the tree fallback preserved", got)
 	}
@@ -232,8 +232,49 @@ func TestReprofile_NoMappingLeavesLabelsAlone(t *testing.T) {
 // A sidecar layout we do not understand keeps whatever the tree said.
 func TestReprofile_NoAccountKeepsTreeLabel(t *testing.T) {
 	idx := session.Index{"s": {ID: "s", Profile: "work"}}
-	reprofile(idx, map[string]string{"uuid-work": "work"})
+	reprofile(idx, map[string]string{"uuid-work": "work"}, true)
 	if got := idx["s"].Profile; got != "work" {
 		t.Errorf("profile = %q, want work", got)
+	}
+}
+
+// Linking a profile to an account is optional, so an account missing from an
+// INCOMPLETE map means "cannot tell", not "no profile owns this". Clearing there
+// would strip the only thing identifying an unlinked install.
+func TestReprofile_PartialMappingKeepsTreeLabel(t *testing.T) {
+	idx := session.Index{"s": {ID: "s", Profile: "unlinked", Account: "uuid-other"}}
+	reprofile(idx, map[string]string{"uuid-work": "work"}, false)
+	if got := idx["s"].Profile; got != "unlinked" {
+		t.Errorf("profile = %q, want the tree label kept while the mapping is partial", got)
+	}
+}
+
+// Two profiles sharing an account make the label a coin flip, and the label
+// decides which app the user is sent to.
+func TestReprofile_AmbiguousAccountClearsLabel(t *testing.T) {
+	idx := session.Index{"s": {ID: "s", Profile: "work", Account: "uuid-shared"}}
+	reprofile(idx, map[string]string{"uuid-shared": ""}, true)
+	if got := idx["s"].Profile; got != "" {
+		t.Errorf("profile = %q, want empty for an account two profiles claim", got)
+	}
+}
+
+// Copies disagreeing about the account leave the session unassigned rather than
+// letting traversal order pick which Desktop to send someone to.
+func TestSessionIndex_ContestedAccountLeavesUnassigned(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	writeSidecar(t, a, "acct-one", "sess-1", "Copy A")
+	writeSidecar(t, b, "acct-two", "sess-1", "Copy B")
+
+	idx := session.Build([]session.Root{
+		{Label: desktopTarget, Base: a, Profile: "one"},
+		{Label: desktopTarget, Base: b, Profile: "two"},
+	})
+	m := idx["sess-1"]
+	if m.Account != "" {
+		t.Errorf("account = %q, want empty for a contested session", m.Account)
+	}
+	if m.Profile != "" {
+		t.Errorf("profile = %q, want empty for a contested session", m.Profile)
 	}
 }

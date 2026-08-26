@@ -151,3 +151,62 @@ func TestLastActivity_MissingFile(t *testing.T) {
 		t.Error("ok=true for a missing file")
 	}
 }
+
+// A window opening exactly on a record boundary must not discard that record.
+//
+// Growing the window hides this in most files — the next, larger read puts the
+// record in the middle rather than at the edge. It bites at maxTailBytes, where
+// there is no next read, and the file is then reported undatable.
+func TestLastActivity_BoundaryAtMaxWindow(t *testing.T) {
+	rec := `{"timestamp":"2026-08-04T07:00:00Z","cwd":"/edge"}` + "\n"
+	// Fill the rest of the window with one untimestamped record, so every smaller
+	// window misses and the last read lands exactly on rec's first byte.
+	padLen := maxTailBytes - len(rec) - len(`{"type":"queue-operation","pad":""}`) - 1
+	filler := `{"type":"queue-operation","pad":"` + strings.Repeat("x", padLen) + `"}` + "\n"
+	head := `{"type":"queue-operation"}` + "\n"
+	body := head + rec + filler
+	if len(body)-len(head) != maxTailBytes {
+		t.Fatalf("tail is %d bytes, want exactly maxTailBytes (%d)", len(body)-len(head), maxTailBytes)
+	}
+
+	a, ok := LastActivity(writeTranscript(t, body))
+	if !ok {
+		t.Fatal("!ok — the record at the window boundary was discarded")
+	}
+	if want := mustParse(t, "2026-08-04T07:00:00Z"); !a.At.Equal(want) {
+		t.Errorf("At = %s, want %s", a.At, want)
+	}
+	if a.Cwd != "/edge" {
+		t.Errorf("cwd = %q, want /edge", a.Cwd)
+	}
+}
+
+// The context shown beside a date must describe that date's record, not some
+// earlier one that happened to be nearer the end of the file.
+func TestLastActivity_ContextMatchesNewestRecord(t *testing.T) {
+	p := writeTranscript(t,
+		`{"timestamp":"2026-08-05T12:00:00Z","cwd":"/newest","gitBranch":"feat/new"}`+"\n"+
+			`{"timestamp":"2026-08-05T09:00:00Z","cwd":"/older","gitBranch":"old"}`+"\n")
+	a, ok := LastActivity(p)
+	if !ok {
+		t.Fatal("!ok")
+	}
+	if a.Cwd != "/newest" || a.GitBranch != "feat/new" {
+		t.Errorf("got %q/%q, want the newest record's /newest and feat/new", a.Cwd, a.GitBranch)
+	}
+}
+
+// Records carrying a timestamp but no context are real (queue operations), so a
+// field the newest record leaves empty falls back rather than blanking.
+func TestLastActivity_ContextFallsBackWhenNewestHasNone(t *testing.T) {
+	p := writeTranscript(t,
+		`{"timestamp":"2026-08-05T09:00:00Z","cwd":"/work","gitBranch":"main"}`+"\n"+
+			`{"type":"queue-operation","timestamp":"2026-08-05T12:00:00Z"}`+"\n")
+	a, _ := LastActivity(p)
+	if want := mustParse(t, "2026-08-05T12:00:00Z"); !a.At.Equal(want) {
+		t.Errorf("At = %s, want %s", a.At, want)
+	}
+	if a.Cwd != "/work" || a.GitBranch != "main" {
+		t.Errorf("got %q/%q, want the fallback /work and main", a.Cwd, a.GitBranch)
+	}
+}

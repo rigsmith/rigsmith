@@ -278,3 +278,38 @@ func TestRecent_QueryNoMatchExplains(t *testing.T) {
 		t.Errorf("should point at the whole-store search:\n%s", got)
 	}
 }
+
+// The footer counts what MATCHED, not what fitted on screen — otherwise a capped
+// listing reports fewer matches than it found.
+func TestRecent_QueryCountIgnoresLimit(t *testing.T) {
+	live := t.TempDir()
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	for _, hour := range []string{"08", "09", "10"} {
+		recentFixture(t, live, "sess"+hour, "-"+hour,
+			record("2026-08-26T"+hour+":00:00Z", "/x", "main", "deploy the thing"), now)
+	}
+	recentFixture(t, live, "sessmiss", "-m",
+		record("2026-08-26T07:00:00Z", "/x", "main", "unrelated"), now)
+
+	got := runRecentQuery(t, live, "deploy", sessionScope{now: now}, 1, false)
+	if !strings.Contains(got, `3 of 4 session(s) in the window match "deploy"`) {
+		t.Errorf("match count should not be capped by --limit:\n%s", got)
+	}
+	if !strings.Contains(got, "2 more in this window") {
+		t.Errorf("the capped rows must still be named:\n%s", got)
+	}
+}
+
+// Long mode is documented as full detail, so it must carry the branch the compact
+// line shows.
+func TestRecent_LongShowsBranch(t *testing.T) {
+	live := t.TempDir()
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	recentFixture(t, live, "sessb", "-b",
+		record("2026-08-26T11:00:00Z", "/b", "feat/long-mode", "work"), now)
+
+	got := runRecent(t, live, sessionScope{now: now}, 0, true)
+	if !strings.Contains(got, "feat/long-mode") {
+		t.Errorf("--long dropped the branch:\n%s", got)
+	}
+}

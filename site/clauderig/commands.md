@@ -52,7 +52,7 @@ clauderig recent --since 7d --cwd acme-api
 clauderig recent -l                 # full ids and resume commands
 ```
 
-```
+```text
   today 09:12    a1b2c3d4  vscode           Refactor the auth middleware   feat/auth-split  ~/Git/acme-api
   yest. 17:40    9f8e7d6c  desktop@work     Fix the stale README table     main             ~/Git/acme-api
   ~yest. 13:22   f4501175                   (untitled session)
@@ -79,7 +79,7 @@ account it is signed in as**. A profile can hold hundreds of another account's
 sidecars and show none of them, so a session will never appear in any Desktop but
 its own. `-l` says which one to open:
 
-```
+```text
   Desktop session in the work profile — no other Desktop will list it:
   clauderig desktop open work
 ```
@@ -103,8 +103,8 @@ the handful you actually worked on yesterday are buried under hundreds that only
 look fresh. Claude Desktop's own session list is rebuilt from those same files
 and drifts the same way.
 
-`recent` dates each session by the timestamp its **last transcript record**
-carries. That is content, not metadata, so it survives every copy, sync and
+`recent` dates each session by the **newest timestamped record** in its own
+transcript. That is content, not metadata, so it survives every copy, sync and
 restore. A session with no timestamped record at all — `~/.claude` holds a few
 stub files that never held a conversation — is still listed, but marked `~`, so
 its date is never mistaken for the real thing.
