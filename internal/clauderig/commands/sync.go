@@ -12,6 +12,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 	"github.com/spf13/cobra"
 )
 
@@ -133,7 +134,22 @@ func NewSyncCmd() *cobra.Command {
 			if reg, err := devices.Load(staging); err == nil {
 				var acct *devices.Account
 				if a, o, e, aerr := account.LiveIdentity(); aerr == nil && (a != "" || o != "" || e != "") {
-					acct = &devices.Account{AccountUUID: a, OrganizationUUID: o, Email: e}
+					// The registry is written AFTER engine.Sync finishes its scan
+					// and is committed directly, so these three values never pass
+					// the tripwire that guards every other synced file. The
+					// argument that a uuid and an email cannot trip it is about
+					// their SHAPE, and nothing guarantees the shape: a malformed
+					// or rewritten oauthAccount could carry something token-like
+					// in accountUuid. Scan them here, and omit rather than publish
+					// identity that looks like a secret — a strange identity is
+					// not a reason to lose the whole snapshot.
+					candidate := &devices.Account{AccountUUID: a, OrganizationUUID: o, Email: e}
+					if f := scanIdentity(candidate); f != nil {
+						fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf(
+							"⚠ account identity not recorded: %s looks like %s — check what ~/.claude.json holds", f.Path, f.Kind)))
+					} else {
+						acct = candidate
+					}
 				}
 				reg.Touch(me.Name, me.OS, claudeVer, acct, time.Now())
 				_ = reg.Save(staging)
@@ -241,4 +257,28 @@ func machineName(cfg *config.Config) string {
 		return host
 	}
 	return "this"
+}
+
+// scanIdentity runs the same content rules over the three identity values that
+// guard every other synced file, returning the first finding or nil.
+//
+// It exists because the device registry is written after engine.Sync's scan and
+// committed directly, so nothing else would ever look at these. Each field is
+// scanned under its own name so the warning can say which one is wrong.
+func scanIdentity(a *devices.Account) *redact.Finding {
+	for _, f := range []struct{ name, value string }{
+		{"accountUuid", a.AccountUUID},
+		{"organizationUuid", a.OrganizationUUID},
+		{"email", a.Email},
+	} {
+		if f.value == "" {
+			continue
+		}
+		if found := redact.ScanFile(f.name, []byte(f.value)); len(found) > 0 {
+			hit := found[0]
+			hit.Path = f.name
+			return &hit
+		}
+	}
+	return nil
 }

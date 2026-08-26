@@ -233,6 +233,14 @@ func pruneConfigDirs(target string, written map[string]bool) (int, error) {
 			if err != nil || d.IsDir() {
 				return nil
 			}
+			// Never delete a symlink. It is the machine's own state — the same
+			// rule the restore loop applies when it declines to write through
+			// one — and a link is recorded in `written` only under the
+			// DESCENDANT path that was skipped, so judging the link itself by
+			// that map would collect it every time.
+			if d.Type()&fs.ModeSymlink != 0 {
+				return nil
+			}
 			rel, rerr := filepath.Rel(target, p)
 			if rerr != nil {
 				return rerr

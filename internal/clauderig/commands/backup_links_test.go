@@ -163,3 +163,48 @@ func TestCopyOne_RefusesAnExistingRegularFile(t *testing.T) {
 		t.Errorf("destination was overwritten: %q", b)
 	}
 }
+
+// If ~/.claude is ITSELF a symlink, WalkDir visits only that entry — and
+// recreating it would make .bak a second link to the very directory restore is
+// about to modify, so the "backup" would track the changes rather than preserve
+// what came before. The root is followed; links below it are still reproduced.
+func TestCopyTree_FollowsASymlinkedRootButNotLinksBelowIt(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real-claude")
+	if err := os.MkdirAll(filepath.Join(real, "projects", "-main", "memory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "projects", "-main", "memory", "MEMORY.md"), []byte("facts"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// a link BELOW the root, which must stay a link
+	if err := os.Symlink(filepath.Join(real, "projects", "-main", "memory"),
+		filepath.Join(real, "projects", "linked")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	// the root itself is a link
+	root := filepath.Join(dir, "claude")
+	if err := os.Symlink(real, root); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	bak := filepath.Join(dir, "claude.bak")
+	if err := copyTree(root, bak); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(bak)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("the backup is a symlink to the live tree, so it preserves nothing")
+	}
+	if b, _ := os.ReadFile(filepath.Join(bak, "projects", "-main", "memory", "MEMORY.md")); string(b) != "facts" {
+		t.Errorf("content not copied: %q", b)
+	}
+	// and the link below the root is still a link
+	li, err := os.Lstat(filepath.Join(bak, "projects", "linked"))
+	if err != nil || li.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("a link below the root should stay a link: %v", err)
+	}
+}

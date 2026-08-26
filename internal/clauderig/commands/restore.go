@@ -246,11 +246,20 @@ func chooseRestoreSafety(target string) string {
 // an absolute link still resolves to the same place from inside the .bak — the
 // same thing `cp -R` does.
 func copyTree(src, dst string) error {
-	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+	// Resolve the ROOT once. If ~/.claude is itself a symlink, WalkDir visits
+	// only that entry and the branch below would recreate it — making .bak a
+	// second link to the very directory restore is about to modify, so the
+	// "backup" would track the changes instead of preserving what came before.
+	// Links found BELOW the root are still reproduced, not followed.
+	root, rerr := filepath.EvalSymlinks(src)
+	if rerr != nil {
+		root = src // unreadable or absent: let WalkDir report it
+	}
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(src, p)
+		rel, _ := filepath.Rel(root, p)
 		target := filepath.Join(dst, rel)
 		if d.Type()&fs.ModeSymlink != 0 {
 			return copyLink(p, target)
@@ -363,7 +372,10 @@ func copyOne(src, dst string) error {
 	if _, err := io.Copy(out, in); err != nil {
 		return err
 	}
-	// OpenFile's mode only applies when it creates the file, and umask can clip
-	// it even then — restate it so the backup matches the source exactly.
-	return os.Chmod(dst, mode)
+	// Through the DESCRIPTOR, not the path. OpenFile's mode only applies at
+	// creation and umask can clip it even then, so it has to be restated — but
+	// a path-based Chmod would reopen by name the race O_EXCL just closed,
+	// letting the backup be renamed and a symlink planted in between so the
+	// mode landed on something else entirely.
+	return out.Chmod(mode)
 }

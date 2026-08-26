@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"os"
 	"testing"
 
@@ -37,5 +38,37 @@ func TestMachineName_EmptyMachinesFallback(t *testing.T) {
 	cfg := &config.Config{Machines: map[string]config.Machine{}}
 	if got := machineName(cfg); got == "" {
 		t.Fatalf("machineName returned empty string for empty Machines")
+	}
+}
+
+// The device registry is written after engine.Sync's scan and committed
+// directly, so nothing else ever looks at these three values. The argument that
+// a uuid and an email cannot trip the tripwire is about their SHAPE — so when
+// the shape is wrong, this is the only thing standing between a token-like
+// identity and the remote.
+func TestScanIdentity(t *testing.T) {
+	ok := &devices.Account{
+		AccountUUID:      "456fc32e-7579-49c7-bb2a-099657892c6a",
+		OrganizationUUID: "f1eab509-9590-47cf-a4e8-33e5f45a5747",
+		Email:            "john@example.com",
+	}
+	if f := scanIdentity(ok); f != nil {
+		t.Errorf("ordinary identity flagged as %s (%s)", f.Path, f.Kind)
+	}
+	if f := scanIdentity(&devices.Account{}); f != nil {
+		t.Errorf("empty identity flagged: %+v", f)
+	}
+
+	// A rewritten oauthAccount carrying something token-shaped must not travel.
+	bad := &devices.Account{
+		AccountUUID: "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+		Email:       "john@example.com",
+	}
+	f := scanIdentity(bad)
+	if f == nil {
+		t.Fatal("a token-shaped accountUuid must be caught")
+	}
+	if f.Path != "accountUuid" {
+		t.Errorf("finding names %q, want the offending field", f.Path)
 	}
 }
