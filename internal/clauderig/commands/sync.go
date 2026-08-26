@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -89,6 +90,9 @@ func NewSyncCmd() *cobra.Command {
 					if r.Disallowed > 0 {
 						extra += fmt.Sprintf(", %d no longer allowed", r.Disallowed)
 					}
+					if r.Shadowed > 0 {
+						extra += fmt.Sprintf(", %d stale placeholder(s) retired", r.Shadowed)
+					}
 					if n := len(r.Oversize); n > 0 {
 						extra += fmt.Sprintf(", %d too large", n)
 					}
@@ -133,7 +137,14 @@ func NewSyncCmd() *cobra.Command {
 			// costs anyone a sync.
 			if reg, err := devices.Load(staging); err == nil {
 				var acct *devices.Account
-				if a, o, e, aerr := account.LiveIdentity(); aerr == nil && (a != "" || o != "" || e != "") {
+				// Both halves required. An `||` gate built a non-nil record from
+				// ANY one field, so a partial read replaced a complete
+				// Device.Account with a fragment — and Touch keeps a nil to
+				// preserve the previous value precisely so that cannot happen.
+				// organizationUuid may legitimately be absent; the uuid and the
+				// email are what make a record usable, since one is the join key
+				// and the other is what a person types.
+				if a, o, e, aerr := account.LiveIdentity(); aerr == nil && a != "" && e != "" {
 					// The registry is written AFTER engine.Sync finishes its scan
 					// and is committed directly, so these three values never pass
 					// the tripwire that guards every other synced file. The
@@ -273,6 +284,14 @@ func scanIdentity(a *devices.Account) *redact.Finding {
 	} {
 		if f.value == "" {
 			continue
+		}
+		// Rejected outright, before the content rules see it. ScanFile skips its
+		// entropy check for multiline values — reasonable for a file, wrong
+		// here — so a newline in an identity field would carry whatever follows
+		// it straight past the scan and into the pushed registry. No real uuid
+		// or email contains one.
+		if strings.ContainsAny(f.value, "\r\n") {
+			return &redact.Finding{Path: f.name, Kind: "multiline identity"}
 		}
 		if found := redact.ScanFile(f.name, []byte(f.value)); len(found) > 0 {
 			hit := found[0]

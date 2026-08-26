@@ -72,3 +72,19 @@ func TestScanIdentity(t *testing.T) {
 		t.Errorf("finding names %q, want the offending field", f.Path)
 	}
 }
+
+// ScanFile skips its entropy check for multiline values — reasonable for a
+// file, wrong for an identity field, where a newline would carry whatever
+// follows it past the scan and into the pushed registry.
+func TestScanIdentity_RejectsMultilineValues(t *testing.T) {
+	f := scanIdentity(&devices.Account{
+		AccountUUID: "456fc32e-7579-49c7-bb2a-099657892c6a\nghp_0123456789abcdefghijklmnop",
+		Email:       "john@example.com",
+	})
+	if f == nil {
+		t.Fatal("a multiline identity value must be rejected")
+	}
+	if f.Path != "accountUuid" {
+		t.Errorf("finding names %q, want the offending field", f.Path)
+	}
+}

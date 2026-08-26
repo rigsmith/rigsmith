@@ -288,3 +288,34 @@ func TestRestore_PruneKeepsASymlinkedConfigDir(t *testing.T) {
 		t.Errorf("prune removed the machine's own symlink: %v", err)
 	}
 }
+
+// restoreLinks must apply the same ancestor rule as the write loop: checking
+// only the leaf lets MkdirAll and Symlink follow a linked ancestor and create
+// the link OUTSIDE the restore target.
+func TestRestoreLinks_SkipsALinkUnderASymlinkedAncestor(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/projects/-main/memory/MEMORY.md", "facts")
+	write(t, staging, "cli/projects/-main/s.jsonl", "t\n")
+
+	target := t.TempDir()
+	outside := t.TempDir()
+	write(t, target, "projects/-main/memory/MEMORY.md", "facts")
+	// projects/-wt is a link OUT of the restore target
+	if err := os.Symlink(outside, filepath.Join(target, "projects", "-wt")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	m := &manifest.Manifest{
+		Schema: 1, SourceOS: pathmap.OSMacOS,
+		Projects: map[string]manifest.Project{"-main": {Cwd: "/m"}, "-wt": {Cwd: "/w"}},
+		Links:    map[string]string{"projects/-wt/memory": "projects/-main/memory"},
+	}
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	if _, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target),
+		Machine: jane, Manifest: m, TargetOverride: override("cli", target)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "memory")); err == nil {
+		t.Error("a link was created outside the restore target")
+	}
+}

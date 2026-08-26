@@ -53,3 +53,21 @@ func TestIdentityFromFile_AbsentFileIsNotAnError(t *testing.T) {
 		t.Errorf("want all empty, got %q %q %q", a, o, e)
 	}
 }
+
+// A malformed oauthAccount previously yielded whatever fields happened to
+// decode before the error, and the caller — which writes those values into a
+// synced registry — could not tell that from a real identity.
+func TestIdentityFromFile_MalformedBlockIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, ".claude.json")
+	if err := os.WriteFile(p, []byte(`{"oauthAccount":{"emailAddress":"a@b.com","accountUuid":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, o, e, err := identityFromFile(p)
+	if err == nil {
+		t.Fatal("a malformed block must be an error, not a partial identity")
+	}
+	if a != "" || o != "" || e != "" {
+		t.Errorf("partial identity leaked: %q %q %q", a, o, e)
+	}
+}
