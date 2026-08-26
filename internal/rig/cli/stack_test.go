@@ -314,13 +314,13 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		}
 	})
 
-	t.Run("menu offers the verbs a pick can supply arguments for", func(t *testing.T) {
+	t.Run("menu offers every stack verb inside a workspace", func(t *testing.T) {
 		inWorkspace(t, stackTestManifest)
 		var labels []string
 		for _, it := range stackMenuItems() {
 			labels = append(labels, it.label)
 		}
-		want := "status,pull,doctor"
+		want := "status,pull,send,doctor"
 		if got := strings.Join(labels, ","); got != want {
 			t.Fatalf("menu = %q, want %q", got, want)
 		}

@@ -7,13 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/cfgfind"
 	"github.com/rigsmith/rigsmith/core/climenu"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/spf13/cobra"
 )
 
-// newStackCmd builds the `ws` command group — a fused workspace of upstream
+// newStackCmd builds the `stack` command group — a fused workspace of upstream
 // forks: each project's history imported under a prefix of one repo through
 // josh's reversible filters, so commits can span projects and any slice can
 // leave as a clean PR branch on the matching fork (docs/STACK-DESIGN.md).
@@ -405,8 +406,7 @@ func stackRepoCompletion(cmd *cobra.Command, args []string, _ string) ([]string,
 }
 
 // stackMenuItems are the stack actions for `rig ui`, and are empty outside a
-// workspace so the group only appears where it means something. send is absent:
-// it needs a repo and a branch name, which a menu pick cannot supply.
+// workspace so the group only appears where it means something.
 func stackMenuItems() []menuItem {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -419,6 +419,57 @@ func stackMenuItems() []menuItem {
 	return []menuItem{
 		{label: "status", desc: "each repo's cursor against its upstream", cmd: newStackStatusCmd()},
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
+		{label: "send", desc: "a repo's changes to your fork (pick; prompts for a branch)", cmd: newStackSendMenuCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
+	}
+}
+
+// newStackSendMenuCmd is the menu's wrapper around the arg-taking `stack send`:
+// the repo comes from the manifest as a pick, the branch from a prompt. Hidden —
+// it exists only for the menu, like the worktree new/open/rm wrappers.
+func newStackSendMenuCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "send",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			m, _, _, err := stackWorkspace(cmd.Context())
+			if err != nil {
+				return err
+			}
+			names := m.names()
+			if len(names) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("no repos in this workspace"))
+				return nil
+			}
+
+			name := names[0]
+			var branch string
+			fields := []huh.Field{}
+			if len(names) > 1 {
+				opts := make([]huh.Option[string], 0, len(names))
+				for _, n := range names {
+					opts = append(opts, huh.NewOption(fmt.Sprintf("%s  →  %s", n, m.Repos[n].Fork), n))
+				}
+				fields = append(fields, huh.NewSelect[string]().
+					Title("Send which repo?").Options(opts...).Filtering(true).Value(&name))
+			}
+			fields = append(fields, huh.NewInput().Title("Branch").
+				Description("branch to create on your fork, holding one commit").
+				Value(&branch))
+
+			if err := huh.NewForm(huh.NewGroup(fields...)).
+				WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme()).Run(); err != nil {
+				return nil // cancelled
+			}
+			if branch = strings.TrimSpace(branch); branch == "" {
+				return nil
+			}
+
+			sub := newStackSendCmd()
+			sub.SetContext(cmd.Context())
+			sub.SetOut(cmd.OutOrStdout())
+			sub.SetErr(cmd.ErrOrStderr())
+			return sub.RunE(sub, []string{name, branch})
+		},
 	}
 }
