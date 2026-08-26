@@ -46,6 +46,11 @@ type accountJSON struct {
 	Alias            string `json:"alias,omitempty"`
 	SubscriptionType string `json:"subscriptionType,omitempty"`
 	OrganizationUUID string `json:"organizationUuid,omitempty"`
+	// AccountUUID is the join key: the ledger records attribution by it and
+	// Desktop names accounts by it in its sidecar paths. Omitting it left a
+	// consumer of `account list --json` unable to correlate an account with
+	// either without reading private store files.
+	AccountUUID      string `json:"accountUuid,omitempty"`
 	Active           bool   `json:"active"`
 	Disabled         bool   `json:"disabled"`
 	CredentialTokens bool   `json:"credentialTokens"`
@@ -59,6 +64,7 @@ func toAccountJSON(st account.StoredStatus) accountJSON {
 		Alias:            st.Alias,
 		SubscriptionType: st.SubscriptionType,
 		OrganizationUUID: st.OrganizationUUID,
+		AccountUUID:      st.AccountUUID,
 		Active:           st.Active,
 		Disabled:         st.Disabled,
 		CredentialTokens: st.CredentialTokens,

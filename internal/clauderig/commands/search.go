@@ -42,6 +42,7 @@ func NewSearchCmd() *cobra.Command {
 		since         string
 		until         string
 		cwdFilter     string
+		accountFilter string
 	)
 	cmd := &cobra.Command{
 		Use:     "search <text>",
@@ -57,6 +58,10 @@ func NewSearchCmd() *cobra.Command {
 			"  --since/--until  narrow to when the session was last used (2026-08-17,\n" +
 			"          an RFC3339 timestamp, or an age like 7d/36h)\n" +
 			"  --cwd   narrow to sessions whose project directory contains this text\n" +
+			"  --account  narrow to one account's sessions (alias, email, or an\n" +
+			"          accountUuid prefix). Reads the synced ledger, so it cannot be\n" +
+			"          combined with --live, and only sessions synced since attribution\n" +
+			"          was recorded carry one\n" +
 			"  --raw   grep-style line output instead of grouped sessions\n" +
 			"  --all   search EVERY file (config, skills, file-history, Desktop dir),\n" +
 			"          not just transcripts; implies --raw (non-chat files aren't sessions)\n\n" +
@@ -90,11 +95,21 @@ func NewSearchCmd() *cobra.Command {
 				return fmt.Errorf("--until is before --since — nothing can match that window")
 			}
 			sc.cwd = strings.ToLower(strings.TrimSpace(cwdFilter))
+			// Trimmed here, once, so the raw/all guard and the resolver agree.
+			// resolveAccountFilter trims internally, so `--account "  "` used to
+			// resolve to nothing while the guard still saw a non-empty flag —
+			// grouped search then returned every session, unfiltered, with no
+			// sign the flag had been ignored.
+			accountFilter = strings.TrimSpace(accountFilter)
 			// The filters narrow SESSIONS — a date and a project directory are
 			// properties of a session, not of a grep line — so refuse rather than
 			// silently ignore them.
-			if (raw || all) && sc.filtering() {
-				return fmt.Errorf("--since/--until/--cwd narrow grouped sessions and can't be combined with --raw/--all")
+			// accountFilter, not sc.account: the flag is resolved further down, so
+			// sc.filtering() is still false here when --account is the only one
+			// set — and --account --raw would then sail past this check and
+			// return matches the account filter never touched.
+			if (raw || all) && (sc.filtering() || accountFilter != "") {
+				return fmt.Errorf("--since/--until/--cwd/--account narrow grouped sessions and can't be combined with --raw/--all")
 			}
 
 			cfg, err := config.LoadOrDefault()
@@ -112,6 +127,21 @@ func NewSearchCmd() *cobra.Command {
 				sc.devices, ok = loadDevices()
 				sc.devicesUnavailable = !ok
 				sc.ledger = loadLedger()
+			}
+			// Resolved after the ledger loads, because the ledger is what says
+			// which accounts exist to be named — and --account is meaningless
+			// under --live, where no ledger is in scope at all.
+			if accountFilter != "" {
+				if liveOnly {
+					return fmt.Errorf("--account reads the synced ledger, which --live takes out of scope")
+				}
+				staging, serr := config.StagingDir()
+				if serr != nil {
+					return serr
+				}
+				if sc.account, err = resolveAccountFilter(accountFilter, staging, sc.ledger); err != nil {
+					return err
+				}
 			}
 
 			fmt.Fprintf(out, "%s %q\n", HeaderStyle.Render("clauderig search"), query)
@@ -132,6 +162,7 @@ func NewSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&since, "since", "", "only sessions last used on/after this day, timestamp, or age (7d)")
 	cmd.Flags().StringVar(&until, "until", "", "only sessions last used on/before this day, timestamp, or age (7d)")
 	cmd.Flags().StringVar(&cwdFilter, "cwd", "", "only sessions whose project directory contains this text")
+	cmd.Flags().StringVar(&accountFilter, "account", "", "only sessions belonging to this account (alias, email, or accountUuid prefix); reads the synced ledger, so not with --live")
 	return cmd
 }
 
@@ -327,7 +358,7 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	repoPaths := transcriptPaths(targets, repoTarget)
 
 	results := make([]*sessResult, 0, len(hits))
-	var hidden, undated int
+	var hidden, undated, unattributed int
 	for _, r := range hits {
 		// A title-only match has no recorded hit and therefore no path. Give it one
 		// before anything reads a date, a cwd or a fallback title off it — live
@@ -356,10 +387,13 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 				r.cwd = resolvePath(me, r.led.Cwd)
 			}
 		}
-		if keep, noDate := sc.keep(r); !keep {
+		if keep, why := sc.keep(r); !keep {
 			hidden++
-			if noDate {
+			switch why {
+			case droppedUndated:
 				undated++
+			case droppedUnattributed:
+				unattributed++
 			}
 			continue
 		}
@@ -387,7 +421,11 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	if len(results) == 0 {
 		fmt.Fprintln(out, DimStyle.Render("no matching sessions"))
 		if hidden > 0 {
-			fmt.Fprintln(out, DimStyle.Render("(every match was excluded by --since/--until/--cwd — widen them)"))
+			// Name the filters actually in play. Listing --since/--until/--cwd
+			// when --account did the excluding sends the user to widen the wrong
+			// flag, and --account is the one whose exclusions are least visible.
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(
+				"(every match was excluded by "+strings.Join(sc.activeFilters(), "/")+" — widen them)"))
 		}
 		fmt.Fprintln(out, DimStyle.Render("(try --raw for line-level hits, or --all to include config/file-history)"))
 		fmt.Fprintln(out, DimStyle.Render("(Desktop 'Chat' tab chats are server-side and never appear here — check claude.ai)"))
@@ -400,6 +438,14 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 			// Undated sessions are dropped by a time filter rather than assumed into
 			// range; say so, or the count reads as a bug.
 			msg += fmt.Sprintf(" (%d had no date to place)", undated)
+		}
+		if unattributed > 0 {
+			// Attribution is recorded at sync time and cannot be backfilled, so
+			// these are permanently unmatchable by --account, not merely missing
+			// from this run. Saying "no recorded account" rather than letting them
+			// vanish is what keeps --account from reading as "you have no such
+			// sessions" when it means "I cannot tell which are yours".
+			msg += fmt.Sprintf(" (%d have no recorded account; only sessions synced since attribution was added carry one)", unattributed)
 		}
 		fmt.Fprintf(out, "%s\n", DimStyle.Render(msg))
 	}

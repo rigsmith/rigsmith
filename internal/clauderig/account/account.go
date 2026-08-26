@@ -72,7 +72,20 @@ type Account struct {
 	Email            string `json:"email"`
 	SubscriptionType string `json:"subscriptionType,omitempty"`
 	OrganizationUUID string `json:"organizationUuid,omitempty"`
-	AddedAt          string `json:"addedAt,omitempty"` // RFC3339
+	// AccountUUID is the account's own uuid from ~/.claude.json's oauthAccount.
+	//
+	// It is the join key everything else uses: Desktop names the account by
+	// uuid in its sidecar path, and the ledger records attribution by uuid. An
+	// email is only ever a label a person types. Without it here, resolving an
+	// alias to a uuid depends on the device registry, which holds only each
+	// device's LATEST account — so once every device has synced under a
+	// different login, an older account's alias stops resolving even though its
+	// sessions are still attributed.
+	//
+	// Empty for accounts captured before this was recorded; the registry
+	// remains the fallback for those.
+	AccountUUID string `json:"accountUuid,omitempty"`
+	AddedAt     string `json:"addedAt,omitempty"` // RFC3339
 	// Alias is a short handle the user chose — usable anywhere an id or email
 	// is, so `switch dev` works. Optional and unique across the store.
 	Alias string `json:"alias,omitempty"`
@@ -114,6 +127,25 @@ func metaFromBlob(raw []byte) (subscription, org string, err error) {
 		return "", "", errors.New("credential has no OAuth token (is Claude Code logged in?)")
 	}
 	return b.ClaudeAiOauth.SubscriptionType, b.OrganizationUUID, nil
+}
+
+// accountUUIDRe is the canonical accountUuid shape: 8-4-4-4-12 lowercase hex.
+var accountUUIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// CanonicalUUID lowercases a well-formed accountUuid and returns "" for
+// anything else.
+//
+// One definition, used everywhere an accountUuid enters or is compared. The
+// value is the join key between the ledger, the device registry and Desktop's
+// sidecar paths, so a source that stores it verbatim while a consumer
+// canonicalises makes the same account into two — and a malformed value stored
+// anywhere becomes a selectable account matching nothing.
+func CanonicalUUID(v string) string {
+	lower := strings.ToLower(strings.TrimSpace(v))
+	if !accountUUIDRe.MatchString(lower) {
+		return ""
+	}
+	return lower
 }
 
 // Slugify turns a label into a filesystem-safe, stable account id.
@@ -205,6 +237,7 @@ func (s *Store) CaptureLive(cred, oauth []byte) (Account, bool, error) {
 		Email:            email,
 		SubscriptionType: sub,
 		OrganizationUUID: org,
+		AccountUUID:      CanonicalUUID(m.AccountUUID),
 		AddedAt:          time.Now().UTC().Format(time.RFC3339),
 	}
 	// Re-capturing an existing account must not undo the user's own settings.
@@ -216,6 +249,12 @@ func (s *Store) CaptureLive(cred, oauth []byte) (Account, bool, error) {
 		if prev, ok := s.read(id); ok {
 			a.Alias = prev.Alias
 			a.Disabled = prev.Disabled
+			// A live block that omits the uuid must not erase one already
+			// recorded — losing it silently breaks alias resolution for every
+			// session attributed to this account.
+			if a.AccountUUID == "" {
+				a.AccountUUID = prev.AccountUUID
+			}
 			if prev.AddedAt != "" {
 				a.AddedAt = prev.AddedAt // when it was first tracked, not last refreshed
 			}
@@ -393,6 +432,16 @@ func (s *Store) read(id string) (Account, bool) {
 	return a, true
 }
 
+// ErrNoAccounts and ErrNoSuchAccount are the two "nothing matched" outcomes of
+// Resolve — the only ones a caller may safely treat as a miss and fall back
+// from. Every other failure (ambiguity, an unreadable store) means the answer
+// is unknown rather than absent, and classifying those by message text made a
+// permission error on a path containing "not found" look like a miss.
+var (
+	ErrNoAccounts    = errors.New("no accounts yet — run `clauderig account add` while logged in")
+	ErrNoSuchAccount = errors.New("no account matches")
+)
+
 // Resolve finds an account by exact id or email, otherwise by a unique
 // case-insensitive substring of the email or id. Ambiguous matches error.
 func (s *Store) Resolve(ref string) (Account, error) {
@@ -401,7 +450,7 @@ func (s *Store) Resolve(ref string) (Account, error) {
 		return Account{}, err
 	}
 	if len(all) == 0 {
-		return Account{}, errors.New("no accounts yet — run `clauderig account add` while logged in")
+		return Account{}, ErrNoAccounts
 	}
 	// An exact id, email or alias wins outright (even if it's a substring of
 	// another). Aliases are compared case-insensitively: they are typed by hand,
@@ -430,7 +479,7 @@ func (s *Store) Resolve(ref string) (Account, error) {
 	case 1:
 		return matches[0], nil
 	case 0:
-		return Account{}, fmt.Errorf("no account matches %q", ref)
+		return Account{}, fmt.Errorf("%w %q", ErrNoSuchAccount, ref)
 	default:
 		emails := make([]string, len(matches))
 		for i, a := range matches {

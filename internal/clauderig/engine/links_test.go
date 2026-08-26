@@ -176,8 +176,16 @@ func TestRestore_StagedFileNeverWritesThroughSymlink(t *testing.T) {
 // A directory symlink whose target sits outside the synced set is not
 // recordable as a link, but it is still a directory — it must not be offered
 // as a file. Any 0-byte placeholder an older sync staged for it is retired, so
-// the repo digs itself out instead of handing the file back every restore.
-func TestSync_RetiresStagedFileShadowedByDirLink(t *testing.T) {
+// A directory symlink whose target sits outside the synced set is not
+// recordable as a link, but it is still a directory — it must not be offered as
+// a file, or reading it fails with EISDIR and aborts the sync.
+//
+// The 0-byte placeholder an older sync staged for such a path is deliberately
+// LEFT ALONE. Retiring it was tried and removed: nothing on disk distinguishes
+// it from a legitimately empty file another machine staged, so every version of
+// that rule deleted somebody's data on the next push. It is harmless where it
+// sits, because restore refuses to write through the live link.
+func TestSync_LeavesAStalePlaceholderAloneButDoesNotChokeOnTheLink(t *testing.T) {
 	live := t.TempDir()
 	write(t, live, "projects/-wt/s.jsonl",
 		`{"type":"user","cwd":"/Users/john/Git/wt","isSidechain":false}`+"\n")
@@ -197,8 +205,8 @@ func TestSync_RetiresStagedFileShadowedByDirLink(t *testing.T) {
 	if _, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, SourceOverride: override("cli", live)}); err != nil {
 		t.Fatalf("sync failed on an unrecordable dir link: %v", err)
 	}
-	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
-		t.Error("stale staged file shadowed by a dir link should be retired")
+	if _, err := os.Stat(stale); err != nil {
+		t.Errorf("the placeholder was deleted: %v", err)
 	}
 }
 
@@ -317,5 +325,91 @@ func TestRestoreLinks_SkipsALinkUnderASymlinkedAncestor(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(outside, "memory")); err == nil {
 		t.Error("a link was created outside the restore target")
+	}
+}
+
+// A path that is a FILE on one machine and a real DIRECTORY here cannot be
+// written: the open fails with EISDIR and used to take the whole restore with
+// it. Sync no longer deletes the staged file in that situation — deleting it
+// cost other machines their data — so the resilience has to live at the write.
+func TestRestore_SkipsADestinationHeldByARealDirectory(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/projects/-main/s.jsonl", "t\n")
+	write(t, staging, "cli/projects/-main/notes", "another machine had this as a file")
+
+	target := t.TempDir()
+	// here the same path is a real directory
+	if err := os.MkdirAll(filepath.Join(target, "projects", "-main", "notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	rep, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target),
+		Machine: jane, TargetOverride: override("cli", target)})
+	if err != nil {
+		t.Fatalf("one unwriteable path must not abort the restore: %v", err)
+	}
+	if rep.Roots[0].Conflicts != 1 {
+		t.Errorf("Conflicts = %d, want 1 — the skip must be reported", rep.Roots[0].Conflicts)
+	}
+	// the rest of the root still restored
+	if _, serr := os.Stat(filepath.Join(target, "projects", "-main", "s.jsonl")); serr != nil {
+		t.Errorf("the other files did not restore: %v", serr)
+	}
+	// and the directory is untouched
+	if fi, serr := os.Lstat(filepath.Join(target, "projects", "-main", "notes")); serr != nil || !fi.IsDir() {
+		t.Error("the local directory should be left alone")
+	}
+}
+
+// --prune must not collect the contents of a directory restore declined to
+// write into. Recording only the collision path left the directory's real
+// children looking absent from the synced set, so prune deleted the user's
+// files under a path restore had just refused to touch.
+func TestRestore_PruneKeepsTheContentsOfAConflictingDirectory(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/skills/foo", "another machine had this as a file")
+
+	target := t.TempDir()
+	write(t, target, "skills/foo/local.md", "the user's own skill")
+
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	rep, err := Restore(RestoreOptions{
+		StagingDir: staging, Config: targetRootConfig(target), Machine: jane,
+		TargetOverride: override("cli", target), Prune: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Roots[0].Conflicts != 1 {
+		t.Errorf("Conflicts = %d, want 1", rep.Roots[0].Conflicts)
+	}
+	if b, _ := os.ReadFile(filepath.Join(target, "skills", "foo", "local.md")); string(b) != "the user's own skill" {
+		t.Errorf("prune deleted a file under the conflicting directory: %q", b)
+	}
+}
+
+// Lstat(dst) reports ENOTDIR when a regular FILE occupies an ancestor, so a
+// check that only inspects dst never sees it — and MkdirAll then fails, taking
+// the whole restore down over one path.
+func TestRestore_SkipsWhenAFileOccupiesAnAncestor(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/skills/foo/SKILL.md", "staged under foo")
+	write(t, staging, "cli/settings.json", "{}")
+
+	target := t.TempDir()
+	write(t, target, "skills/foo", "here foo is a FILE, not a directory")
+
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	rep, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target),
+		Machine: jane, TargetOverride: override("cli", target)})
+	if err != nil {
+		t.Fatalf("a file in the way must not abort the restore: %v", err)
+	}
+	if rep.Roots[0].Conflicts != 1 {
+		t.Errorf("Conflicts = %d, want 1", rep.Roots[0].Conflicts)
+	}
+	if _, serr := os.Stat(filepath.Join(target, "settings.json")); serr != nil {
+		t.Errorf("the rest of the root should still restore: %v", serr)
 	}
 }

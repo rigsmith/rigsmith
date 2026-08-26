@@ -31,12 +31,7 @@ type RootResult struct {
 	SkippedFiles   int      // files that vanished/were unreadable mid-sync (live churn)
 	Oversize       []string // rel paths dropped for exceeding MaxFileBytes
 	Disallowed     int      // staged files removed because the allowlist no longer permits them
-	// Shadowed counts empty placeholders retired because the live path is a
-	// directory. Counted apart from Disallowed because they mean different
-	// things to the person reading the summary: one is a policy change they
-	// made, the other is old residue healing itself.
-	Shadowed int
-	Skipped  bool // root absent on this machine
+	Skipped        bool     // root absent on this machine
 }
 
 // Report is the outcome of a sync into the staging dir.
@@ -72,6 +67,11 @@ type Options struct {
 	// roots — see profiles.go. Each is walked as its own root, and they follow
 	// the Desktop root's enabled flag.
 	Profiles []string
+	// LiveAccountUUID is the account this machine is logged into Claude Code as,
+	// used to attribute ledger rows that no Desktop sidecar covers. Empty (not
+	// logged in, unreadable) simply leaves those rows unattributed — a guess is
+	// never invented, and a stored attribution is never overwritten by one.
+	LiveAccountUUID string
 }
 
 // Sync materialises the allowlisted, redacted file set for each enabled root into
@@ -93,6 +93,12 @@ func Sync(opts Options) (*Report, error) {
 	// Shared-memory symlinks found under the CLI root (worktree slugs linking
 	// memory/ to their main project); recorded in the manifest for restore.
 	var cliLinks []allowlist.Link
+	// Session ids this machine's OWN root offered this run. The ledger's
+	// live-account fallback is confined to these: recordLedger walks the shared
+	// staged tree, which holds every machine's transcripts, so attributing on
+	// presence there would have the first machine to sync claim sessions it
+	// never ran — permanently, since attribution is sticky.
+	var cliSessionIDs map[string]bool
 
 	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
@@ -112,6 +118,7 @@ func Sync(opts Options) (*Report, error) {
 		}
 		if r.ID == "cli" {
 			cliLinks = links
+			cliSessionIDs = sessionIDsFrom(files)
 		}
 		stageRoot := filepath.Join(opts.StagingDir, r.ID)
 
@@ -254,12 +261,11 @@ func Sync(opts Options) (*Report, error) {
 		// Only for roots that resolved on this machine: a root we skipped tells us
 		// nothing about whether its staged files are still wanted, and pruning it
 		// would delete another machine's data.
-		disallowed, shadowed, perr := reconcileStagedRoot(stageRoot, loc, allowlist.For(r.ID))
+		disallowed, perr := reconcileStagedRoot(stageRoot, allowlist.For(r.ID))
 		if perr != nil {
 			return nil, fmt.Errorf("reconcile staged %s: %w", r.ID, perr)
 		}
 		rr.Disallowed = disallowed
-		rr.Shadowed = shadowed
 
 		rep.Roots = append(rep.Roots, rr)
 	}
@@ -269,7 +275,7 @@ func Sync(opts Options) (*Report, error) {
 	// is about to age out still leaves a searchable row behind — otherwise `search`
 	// answers "no such session", which reads as "that chat never existed" rather
 	// than "its body is older than the window, recover it from git history".
-	if added, total, lerr := recordLedger(opts.StagingDir, opts.Machine.Name); lerr == nil {
+	if added, total, lerr := recordLedger(opts.StagingDir, opts.Machine.Name, opts.LiveAccountUUID, cliSessionIDs); lerr == nil {
 		rep.LedgerAdded, rep.LedgerTotal = added, total
 	} else {
 		// Best-effort: the ledger is a convenience for later searches and must
@@ -576,11 +582,17 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 // permits them. Retention, which removes allowed-but-aged files, is separate and
 // runs on its own.
 //
-// liveRoot is this machine's copy of the root ("" when it didn't resolve). It
-// also retires staged files whose live counterpart is a directory — see below.
-func reconcileStagedRoot(stageRoot, liveRoot string, l allowlist.List) (removed int, shadowed int, err error) {
+// It judges the allowlist ONLY. An earlier version also retired staged files
+// whose live counterpart was a directory, to clean up placeholders left by
+// pre-#196 syncs — but nothing on disk distinguishes such a placeholder from a
+// legitimately empty file another machine staged, so every narrowing of that
+// rule still deleted somebody's data on the next push. It is gone: restore
+// already refuses to write through a symlink, which is what made the
+// placeholders harmful, so the cleanup bought tidiness at the price of a
+// data-loss class.
+func reconcileStagedRoot(stageRoot string, l allowlist.List) (removed int, err error) {
 	if !dirExists(stageRoot) {
-		return 0, 0, nil
+		return 0, nil
 	}
 	err = filepath.WalkDir(stageRoot, func(p string, d os.DirEntry, werr error) error {
 		if werr != nil {
@@ -610,28 +622,13 @@ func reconcileStagedRoot(stageRoot, liveRoot string, l allowlist.List) (removed 
 		// it back over the live link. Retire it here so the repo can dig itself
 		// out. Judged only where the path exists on this machine — staging also
 		// carries other machines' files, whose absence here means nothing.
-		if liveRoot != "" {
-			// ZERO-BYTE only. The placeholders this retires are empty by
-			// construction, and "the live path is a directory" on its own is far
-			// too broad: another machine can legitimately stage a real file at a
-			// path that happens to be a directory here, and deleting it would
-			// publish that machine's data as lost on the next push.
-			if fi, ferr := d.Info(); ferr != nil || fi.Size() != 0 {
-				return nil
-			}
-			if fi, serr := os.Stat(filepath.Join(liveRoot, rel)); serr == nil && fi.IsDir() {
-				if os.Remove(p) == nil {
-					shadowed++
-				}
-			}
-		}
 		return nil
 	})
 	if err != nil {
-		return removed, shadowed, err
+		return removed, err
 	}
 	removeEmptyDirs(stageRoot)
-	return removed, shadowed, nil
+	return removed, nil
 }
 
 func removeEmptyDirs(root string) {

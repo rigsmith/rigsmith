@@ -28,6 +28,10 @@ type RestoreRootResult struct {
 	// folded into Files: "✓ restored" over a silently unwritten file is the
 	// kind of quiet success this whole path exists to avoid.
 	LinksKept int
+	// Conflicts counts staged files skipped because a DIRECTORY holds that
+	// destination — a path that is a file on one machine and a directory here.
+	// Writing one would abort the whole restore with EISDIR.
+	Conflicts int
 	Pruned    int // files removed as deleted-upstream (--prune)
 	// DesktopSessions counts Claude Desktop Code-session sidecars written this
 	// restore (claude-code-sessions/**/local_*.json). Desktop only rebuilds its
@@ -128,6 +132,10 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 		}
 		rewritten := map[string]bool{}
 		written := map[string]bool{}
+		// protected holds destinations restore refused to write. Their whole
+		// subtree is off-limits to --prune: restore knows nothing about what is
+		// inside them, so "not in the synced set" is not evidence of anything.
+		protected := map[string]bool{}
 		links := linkCache{}
 		pm := permFor(r.ID)
 
@@ -164,6 +172,29 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 				continue
 			}
 
+			// A real DIRECTORY at dst cannot be written either: copyFile and
+			// restoreJSON both open it, and the open fails with EISDIR — taking
+			// the entire restore down over one path.
+			//
+			// This is the same abort the symlink guard was written to stop,
+			// reaching here by a different route. Sync used to delete the staged
+			// file in this situation, but that deleted other machines' data too,
+			// so staging now keeps whatever it has and the resilience has to
+			// live where the write happens. Reported, not silent — a path this
+			// machine cannot accept is worth saying out loud.
+			if conflictAt(target, dst) {
+				written[targetRel] = true
+				// The destination is a directory this restore will not write
+				// into, so everything ALREADY inside it must survive --prune.
+				// Recording only targetRel marked the collision itself as
+				// written and left the directory's real contents looking absent
+				// from the synced set — so prune deleted the user's files under
+				// a path restore had just declined to touch.
+				protected[targetRel] = true
+				rr.Conflicts++
+				continue
+			}
+
 			if strings.HasSuffix(rel, ".json") {
 				if err := restoreJSON(src, dst, opts.Machine.Resolver(), pm); err != nil {
 					return nil, err
@@ -183,7 +214,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 		}
 
 		if opts.Prune && r.ID == "cli" {
-			pruned, err := pruneConfigDirs(target, written)
+			pruned, err := pruneConfigDirs(target, written, protected)
 			if err != nil {
 				return nil, err
 			}
@@ -234,7 +265,7 @@ func restoreLinks(target string, manifestLinks map[string]string, slugMap map[st
 // pruneConfigDirs removes files under the authoritative config dirs that aren't in
 // the restored set (deleted upstream). written holds the slash-relative paths just
 // written. projects/ is never visited.
-func pruneConfigDirs(target string, written map[string]bool) (int, error) {
+func pruneConfigDirs(target string, written, protected map[string]bool) (int, error) {
 	pruned := 0
 	for _, dir := range prunableDirs {
 		base := filepath.Join(target, dir)
@@ -257,7 +288,11 @@ func pruneConfigDirs(target string, written map[string]bool) (int, error) {
 			if rerr != nil {
 				return rerr
 			}
-			if !written[filepath.ToSlash(rel)] {
+			relSlash := filepath.ToSlash(rel)
+			if underProtected(relSlash, protected) {
+				return nil
+			}
+			if !written[relSlash] {
 				if err := os.Remove(p); err != nil {
 					return err
 				}
@@ -382,6 +417,40 @@ func (c linkCache) underSymlink(root, dst string) bool {
 	res := isSymlink(dir) || c.underSymlink(root, dir)
 	c[dir] = res
 	return res
+}
+
+// conflictAt reports whether something at or above dst makes it unwriteable:
+// a directory occupying dst itself, or a regular FILE occupying one of its
+// ancestors.
+//
+// Both end the same way if written through — EISDIR from the open, or ENOTDIR
+// from MkdirAll — and both would take the whole restore down over one path. The
+// ancestor case is easy to miss because Lstat(dst) returns ENOTDIR rather than
+// describing dst, so a check that only inspects dst never sees it.
+func conflictAt(root, dst string) bool {
+	if fi, err := os.Lstat(dst); err == nil && fi.IsDir() {
+		return true
+	}
+	for dir := filepath.Dir(dst); ; dir = filepath.Dir(dir) {
+		rel, err := filepath.Rel(root, dir)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return false
+		}
+		if fi, lerr := os.Lstat(dir); lerr == nil && !fi.IsDir() {
+			return true // a file where a directory has to be
+		}
+	}
+}
+
+// underProtected reports whether rel sits at or beneath a destination restore
+// declined to write.
+func underProtected(rel string, protected map[string]bool) bool {
+	for p := range protected {
+		if rel == p || strings.HasPrefix(rel, p+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // isSymlink reports whether p is a symlink, without following it. A missing path
