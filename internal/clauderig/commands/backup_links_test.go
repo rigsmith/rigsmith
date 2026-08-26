@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -254,5 +255,58 @@ func TestBackupPathIsFree_BothSidesPreflighted(t *testing.T) {
 	}
 	if err := backupPathIsFree(identity); err == nil {
 		t.Error("an existing identity backup must be refused before anything is copied")
+	}
+}
+
+// ~/.claude.json can carry MCP server credentials in mcpServers.*.headers. A
+// source someone left world-readable must not be duplicated into a second
+// world-readable copy they never knew they were creating.
+func TestCopyOneAs_ForcesTheDestinationMode(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "claude.json")
+	if err := os.WriteFile(src, []byte(`{"oauthAccount":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "claude.json.bak")
+	if err := copyOneAs(src, dst, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+		t.Errorf("backup mode = %04o, want 0600 whatever the source was", fi.Mode().Perm())
+	}
+	// the source is left exactly as it was
+	if si, _ := os.Stat(src); runtime.GOOS != "windows" && si.Mode().Perm() != 0o644 {
+		t.Error("the source's own permissions should not change")
+	}
+}
+
+// os.Stat FOLLOWS links, so a dangling symlink at ~/.claude.json looked
+// identical to "never logged in" — opposite states, one silent.
+func TestIdentityBackupPaths_ReportsADanglingLink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // windows
+
+	link := filepath.Join(home, ".claude.json")
+	if err := os.Symlink(filepath.Join(home, "gone.json"), link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	src, dst, exists, note, err := identityBackupPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists || src != "" || dst != "" {
+		t.Errorf("a dangling link has nothing to copy: exists=%v src=%q", exists, src)
+	}
+	if note == "" {
+		t.Error("a dangling identity link must be reported, not passed off as no identity file")
+	}
+	if !strings.Contains(note, "gone.json") {
+		t.Errorf("the note should name what it points at: %q", note)
 	}
 }
