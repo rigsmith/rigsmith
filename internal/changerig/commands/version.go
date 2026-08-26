@@ -198,7 +198,7 @@ func NewVersionCmd() *cobra.Command {
 			if setting.Kind != changelog.KindDefault {
 				genSpec = "default"
 			}
-			gen, _ := plugin.ResolveChangelogGenerator(genSpec, ws.Root, planner.Builtins(ws.Config.Groups()))
+			gen, _ := plugin.ResolveChangelogGenerator(genSpec, ws.Root, planner.BuiltinsScoped(ws.Config.Groups(), ws.Config.Scopes()))
 
 			// Contributors section: resolve each changeset's author (from its
 			// source commit in commit mode, or the commit that added the file in

@@ -250,6 +250,10 @@ type Config struct {
 	// the version bump they imply. Configurable; empty falls back to the built-in
 	// conventional defaults (see DefaultChangelogGroups).
 	ChangelogGroups []ChangelogGroup `json:"changelogGroups,omitempty"`
+	// ChangelogScopes is the order scopes appear in within a changelog section:
+	// the tools this repo wants read first. Scopes left out follow, in
+	// alphabetical order; unscoped entries always come last.
+	ChangelogScopes []string `json:"changelogScopes,omitempty"`
 
 	// Paths optionally narrows package discovery to these repo-relative roots
 	// (globs allowed). Empty means scan the whole repo (minus the usual ignores
@@ -330,11 +334,16 @@ func (c *Config) Groups() []ChangelogGroup {
 	return DefaultChangelogGroups
 }
 
+// Scopes returns the configured scope order, empty when the repo has not asked
+// for one — in which case scopes sort alphabetically.
+func (c *Config) Scopes() []string { return c.ChangelogScopes }
+
 // Known top-level keys that are NOT per-ecosystem blocks.
 var sharedKeys = map[string]bool{
 	"$schema": true, "baseBranch": true, "access": true, "ignore": true,
 	"fixed": true, "linked": true, "updateInternalDependencies": true,
-	"snapshot": true, "format": true, "changelog": true, "commit": true,
+	"changelogScopes": true,
+	"snapshot":        true, "format": true, "changelog": true, "commit": true,
 	"privatePackages": true, "changelogGroups": true, "paths": true,
 	"versioning": true, "contributors": true, "issues": true,
 	// Cross-tool keys, ignored by changerig: a `release` key carries the shiprig

@@ -84,7 +84,7 @@ func renderContributors(authors []plugin.Author, section string) string {
 // section ("Major/Minor/Patch Changes"). Sections are ordered: Breaking, then
 // the configured group order, then Major, Minor, Patch — so an untyped changelog
 // is byte-identical to the bump-only layout.
-func renderSections(newVersion string, changes []plugin.ChangelogChange, groups []config.ChangelogGroup) string {
+func renderSections(newVersion string, changes []plugin.ChangelogChange, groups []config.ChangelogGroup, scopeOrder []string) string {
 	// Ordered list of (sectionHeading) and the bucket of bullets in it.
 	type bullet struct {
 		scope   string
@@ -145,10 +145,24 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 		// tool finds its lines together; unscoped ones keep their order at the
 		// end rather than being interleaved by a name they do not have.
 		bullets := buckets[section]
+		rank := scopeRank(scopeOrder)
 		sort.SliceStable(bullets, func(i, j int) bool {
 			si, sj := bullets[i].scope, bullets[j].scope
+			if si == sj {
+				return false
+			}
+			// Unscoped entries trail the scoped ones: they belong to the section
+			// rather than to any tool in it.
 			if (si == "") != (sj == "") {
 				return sj == ""
+			}
+			ri, oki := rank[si]
+			rj, okj := rank[sj]
+			switch {
+			case oki && okj:
+				return ri < rj
+			case oki != okj:
+				return oki // configured scopes before the rest
 			}
 			return si < sj
 		})
@@ -158,6 +172,19 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 		}
 	}
 	return b.String()
+}
+
+// scopeRank indexes the configured scope order, so a repo can say which tool
+// leads rather than taking whatever alphabetical order hands it. Scopes left
+// out keep their alphabetical order after the listed ones.
+func scopeRank(order []string) map[string]int {
+	rank := make(map[string]int, len(order))
+	for i, s := range order {
+		if _, seen := rank[s]; !seen {
+			rank[s] = i
+		}
+	}
+	return rank
 }
 
 // sortSections orders sections: Breaking first, then configured group order,
@@ -211,7 +238,11 @@ func formatReleaseLine(description, scope string) string {
 	if scope != "" {
 		lead = "**" + scope + ":** "
 	}
-	lines := strings.Split(strings.ReplaceAll(description, "\r\n", "\n"), "\n")
+	// Trailing newlines are an artefact of the file the summary came out of;
+	// left in, each becomes an indented empty continuation line under the
+	// bullet — two spaces of whitespace that show up in every rendered entry.
+	description = strings.TrimRight(strings.ReplaceAll(description, "\r\n", "\n"), "\n \t")
+	lines := strings.Split(description, "\n")
 	for i := range lines {
 		lines[i] = strings.TrimRight(lines[i], " \t")
 	}

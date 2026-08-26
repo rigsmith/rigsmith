@@ -78,6 +78,35 @@ for an app and a patch for the library under it.
 remember: a diff confined to `cmd/rig` or `internal/rig` infers `rig`, and a
 diff spanning several tools infers nothing rather than guessing.
 
+A `!` on the type marks a breaking change — `feat(rig)!: …`, or `type: feat!` —
+which forces a major bump and renders under **💥 Breaking Changes**, ahead of
+every other section.
+
+### Choosing the sections and their order
+
+`changelogGroups` maps each type to a heading and an implied bump, and the list
+order is the section order. Drop the emoji, rename a section, or move fixes
+above features by rewriting it:
+
+```jsonc
+{
+  "changelogGroups": [
+    { "type": "feat", "section": "Features", "bump": "minor" },
+    { "type": "fix",  "section": "Fixes",    "bump": "patch" }
+  ]
+}
+```
+
+`changelogScopes` does the same for scopes *within* a section — which tool a
+reader sees first:
+
+```jsonc
+{ "changelogScopes": ["rig", "clauderig"] }
+```
+
+Scopes left out follow alphabetically, and unscoped entries come last. Omit the
+key entirely and every scope sorts alphabetically.
+
 Flags:
 
 | Flag | Meaning |
