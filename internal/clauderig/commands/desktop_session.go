@@ -141,6 +141,13 @@ func findSessions(ref, claudeHome string, idx session.Index) []sessionCandidate 
 	}
 
 	needle := strings.ToLower(strings.TrimSpace(ref))
+	// An empty needle is not a wildcard. strings.Contains matches "" against
+	// everything, so without this a blank or whitespace-only reference resolves
+	// to every session on the machine — and the command opens an arbitrary one.
+	// The caller trims too; the invariant belongs here, where the matching is.
+	if needle == "" {
+		return nil
+	}
 	var out []sessionCandidate
 	for id, p := range live {
 		m := idx[id]
@@ -278,6 +285,21 @@ func otherRunningProfiles(app desktop.App, dataDirs map[string]string, target de
 	return others, nil
 }
 
+// quittableByName reports whether `clauderig desktop quit <name>` would work for
+// this candidate: a valid profile name, and one the store can actually load.
+// The routing scan is deliberately wider than that — it must see directories
+// whose metadata is unreadable — so the two questions are answered separately.
+func quittableByName(st *desktop.Store, name string) bool {
+	if st == nil || desktop.ValidName(name) != nil {
+		return false
+	}
+	if strings.ContainsAny(name, " \t\"'"+"`"+`\\`) {
+		return false // would not survive the shell as one argument
+	}
+	_, gerr := st.Get(name)
+	return gerr == nil
+}
+
 // defaultInstanceLabel names the profile-less install in the refusal. It is not
 // a profile name, so `desktop quit` cannot take it — the message says how to
 // close it instead.
@@ -291,37 +313,72 @@ const defaultInstanceLabel = "the main Claude Desktop app"
 // accountUuid. That is a session crossing an ACCOUNT boundary, so the default
 // is to refuse rather than warn and hope. --anyway sends it regardless, for the
 // case where any window will do.
-func ambiguousRoutingError(target desktop.Profile, others []string) error {
+func ambiguousRoutingError(st *desktop.Store, target desktop.Profile, others []string) error {
 	// The first line is rendered as the headline — capitalised, and given a
 	// trailing period — so it must be one plain sentence that survives both, and
 	// must not start with a profile name.
-	// Only profiles can be quit by name; the default install is closed by hand.
-	// All three cases have to be spelled out, because naming just the quit
-	// command in a MIXED conflict would leave the main app open and send the
-	// user straight back into this same refusal.
-	var quittable []string
-	hasDefault := false
+	// Only a real, resolvable profile can be quit by NAME. The scan deliberately
+	// includes directories whose metadata will not parse, and a name may contain
+	// a space — so emitting every candidate into a quit command produces
+	// instructions that fail: `quit broken` cannot resolve, and `quit has space`
+	// arrives as two arguments. Anything unquittable is named for manual
+	// closing instead, alongside the profile-less app.
+	var quittable, manual []string
 	for _, o := range others {
-		if o == defaultInstanceLabel {
-			hasDefault = true
-			continue
+		switch {
+		case o == defaultInstanceLabel:
+			manual = append(manual, o)
+		case quittableByName(st, o):
+			quittable = append(quittable, o)
+		default:
+			manual = append(manual, fmt.Sprintf("the %q profile window", o))
 		}
-		quittable = append(quittable, o)
 	}
+	hasDefault := len(manual) > 0
 	var remedy string
 	switch {
 	case len(quittable) == 0:
-		remedy = "Close it and re-run, or pass --anyway to send it to whichever window the OS picks"
+		remedy = fmt.Sprintf("Close %s and re-run, or pass --anyway to send it to\n"+
+			"whichever window the OS picks", strings.Join(manual, " and "))
 	case !hasDefault:
 		remedy = fmt.Sprintf("Quit the others (`clauderig desktop quit %s`) and re-run, or pass\n"+
 			"--anyway to send it to whichever window the OS picks", strings.Join(quittable, " "))
 	default:
 		remedy = fmt.Sprintf("Quit the others (`clauderig desktop quit %s`), close %s by\n"+
 			"hand, then re-run — or pass --anyway to send it to whichever window the OS picks",
-			strings.Join(quittable, " "), defaultInstanceLabel)
+			strings.Join(quittable, " "), strings.Join(manual, " and "))
 	}
 	return fmt.Errorf("another Claude Desktop window is open, so this session could be imported into the wrong account\n\n"+
 		"%s is open alongside %s. A deep link is routed by scheme, not to a particular\n"+
 		"window, so the OS decides which one receives it.\n\n%s",
 		strings.Join(others, ", "), target.Name, remedy)
+}
+
+// competingWindows lists the Desktop windows other than target that could
+// receive a scheme-routed deep link, failing closed on any discovery error.
+func competingWindows(st *desktop.Store, app desktop.App, target desktop.Profile) ([]string, error) {
+	dirs, lerr := st.CandidateDataDirs()
+	if lerr != nil {
+		return nil, fmt.Errorf("could not list Desktop profiles: %w\n"+
+			"Sending now could import the session into the wrong account", lerr)
+	}
+	others, oerr := otherRunningProfiles(app, dirs, target)
+	if oerr != nil {
+		return nil, fmt.Errorf("%w\nSending now could import the session into the wrong account", oerr)
+	}
+	return others, nil
+}
+
+// refuseIfRoutingIsAmbiguous stops the send while more than one window could
+// receive it. One helper, used both before and after a launch: two copies of a
+// safety rule are two chances for one of them to drift.
+func refuseIfRoutingIsAmbiguous(st *desktop.Store, app desktop.App, target desktop.Profile, anyway bool) error {
+	others, err := competingWindows(st, app, target)
+	if err != nil {
+		return err
+	}
+	if len(others) > 0 && !anyway {
+		return ambiguousRoutingError(st, target, others)
+	}
+	return nil
 }

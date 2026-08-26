@@ -154,7 +154,7 @@ func TestOtherRunningProfilesAndRefusal(t *testing.T) {
 		t.Fatalf("want [%s], got %v", other.Name, got)
 	}
 
-	err = ambiguousRoutingError(target, got)
+	err = ambiguousRoutingError(st, target, got)
 	if err == nil {
 		t.Fatal("want a refusal")
 	}
@@ -188,7 +188,7 @@ func TestOtherRunningProfiles_IncludesTheDefaultInstall(t *testing.T) {
 
 	// It cannot be quit by name, so the remedy must not offer a quit command
 	// naming it — that would be an instruction that fails.
-	err = ambiguousRoutingError(target, got)
+	err = ambiguousRoutingError(st, target, got)
 	if err == nil {
 		t.Fatal("want a refusal")
 	}
@@ -257,7 +257,7 @@ func TestAmbiguousRoutingError_MixedConflictNamesBothRemedies(t *testing.T) {
 	}
 	target, other := profiles[0], profiles[1]
 
-	err = ambiguousRoutingError(target, []string{other.Name, defaultInstanceLabel})
+	err = ambiguousRoutingError(st, target, []string{other.Name, defaultInstanceLabel})
 	if err == nil {
 		t.Fatal("want a refusal")
 	}
@@ -338,5 +338,50 @@ func TestFindSessions_UppercaseUUIDResolves(t *testing.T) {
 		if got[0].ID != lower {
 			t.Errorf("%s: ID = %q, want the canonical lowercase id", ref, got[0].ID)
 		}
+	}
+}
+
+// The routing scan deliberately includes directories whose metadata will not
+// parse, and a profile name may contain a space. Emitting every candidate into
+// a quit command produces instructions that fail — `quit broken` cannot
+// resolve, `quit has space` arrives as two arguments.
+func TestAmbiguousRoutingError_OnlyOffersQuitForRealProfiles(t *testing.T) {
+	st := targetStore(t)
+	profiles, err := st.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, real := profiles[0], profiles[1]
+
+	err = ambiguousRoutingError(st, target, []string{real.Name, "broken", "has space"})
+	if err == nil {
+		t.Fatal("want a refusal")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "desktop quit "+real.Name) {
+		t.Errorf("a real profile should be quittable by name: %v", msg)
+	}
+	for _, bad := range []string{"quit broken", "quit has space"} {
+		if strings.Contains(msg, bad) {
+			t.Errorf("offered an unusable command %q: %v", bad, msg)
+		}
+	}
+	for _, named := range []string{"broken", "has space"} {
+		if !strings.Contains(msg, named) {
+			t.Errorf("candidate %q should still be named for manual closing: %v", named, msg)
+		}
+	}
+}
+
+// A whitespace-only --session is not a request. Untrimmed it enabled the whole
+// path, then resolved an empty needle that matches every session.
+func TestFindSessions_EmptyNeedleIsNotAWildcard(t *testing.T) {
+	home := t.TempDir()
+	writeTranscript(t, home, "-Users-j-Git-api", "11111111-1111-1111-1111-111111111111", "one")
+	writeTranscript(t, home, "-Users-j-Git-api", "22222222-2222-2222-2222-222222222222", "two")
+
+	// what the command now passes after trimming
+	if got := findSessions("", home, session.Index{}); len(got) != 0 {
+		t.Errorf("an empty reference matched %d sessions; it must match none", len(got))
 	}
 }

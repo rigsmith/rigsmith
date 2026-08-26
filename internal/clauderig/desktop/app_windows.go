@@ -122,11 +122,18 @@ type procRow struct {
 // Running matches on the full --user-data-dir= token in each process's command
 // line. There is no pgrep on Windows, so CIM answers the same question; asking
 // for JSON avoids parsing a localized table.
-func (w windowsApp) Running(dataDir string) ([]int, error) {
-	// -AsArray is PowerShell 6+, and `powershell` is Windows PowerShell 5.1 on a
-	// standard install — with it, this failed outright on the target platform.
-	// Wrapping the pipeline in @() and passing it via -InputObject keeps the
-	// array shape for zero and one result on both.
+// claudeProcesses lists every claude.exe with its command line.
+//
+// One place, because Running and RunningDefault ask the same question and
+// differ only in the predicate they apply to the answer — and a scan that
+// drifts between the two would make the routing guard and the profile listing
+// disagree about what is running.
+//
+// -AsArray is PowerShell 6+, and `powershell` is Windows PowerShell 5.1 on a
+// standard install — with it, this failed outright on the target platform.
+// Wrapping the pipeline in @() and passing it via -InputObject keeps the array
+// shape for zero and one result on both.
+func claudeProcesses() ([]procRow, error) {
 	const script = `ConvertTo-Json -Compress -InputObject @(` +
 		`Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | ` +
 		`Select-Object ProcessId,CommandLine)`
@@ -141,6 +148,14 @@ func (w windowsApp) Running(dataDir string) ([]int, error) {
 	var rows []procRow
 	if uerr := json.Unmarshal([]byte(trimmed), &rows); uerr != nil {
 		return nil, fmt.Errorf("parse process list: %w", uerr)
+	}
+	return rows, nil
+}
+
+func (w windowsApp) Running(dataDir string) ([]int, error) {
+	rows, err := claudeProcesses()
+	if err != nil {
+		return nil, err
 	}
 	needle := userDataFlag(dataDir)
 	me := os.Getpid()
@@ -216,20 +231,9 @@ func (w windowsApp) OpenURL(rawurl string) error {
 // Claude Desktop. Same process listing as Running, inverted — a row WITHOUT the
 // flag is the default install rather than a profile.
 func (w windowsApp) RunningDefault() ([]int, error) {
-	const script = `ConvertTo-Json -Compress -InputObject @(` +
-		`Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | ` +
-		`Select-Object ProcessId,CommandLine)`
-	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script).Output()
+	rows, err := claudeProcesses()
 	if err != nil {
-		return nil, fmt.Errorf("scan for Claude Desktop processes: %w", err)
-	}
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" || trimmed == "null" {
-		return nil, nil
-	}
-	var rows []procRow
-	if uerr := json.Unmarshal([]byte(trimmed), &rows); uerr != nil {
-		return nil, fmt.Errorf("parse process list: %w", uerr)
+		return nil, err
 	}
 	me := os.Getpid()
 	var pids []int
