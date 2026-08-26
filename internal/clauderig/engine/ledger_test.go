@@ -9,6 +9,17 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 )
 
+// allSessions treats every staged transcript as this machine's own — what the
+// live walk would report when the machine did originate them.
+func allSessions(staging string) map[string]bool {
+	out := map[string]bool{}
+	matches, _ := filepath.Glob(filepath.Join(staging, "cli", "projects", "*", "*.jsonl"))
+	for _, m := range matches {
+		out[strings.TrimSuffix(filepath.Base(m), ".jsonl")] = true
+	}
+	return out
+}
+
 func stageTranscriptBody(t *testing.T, staging, slug, id, body string) string {
 	t.Helper()
 	dir := filepath.Join(staging, "cli", "projects", slug)
@@ -29,7 +40,7 @@ func TestRecordLedger_RowSurvivesRetention(t *testing.T) {
 	p := stageTranscriptBody(t, staging, "-Users-j-Git-api", "sess-1",
 		`{"type":"user","cwd":"/Users/j/Git/api","message":{"content":"the auth refactor"}}`+"\n")
 
-	added, total, err := recordLedger(staging, "mbp", "")
+	added, total, err := recordLedger(staging, "mbp", "", nil)
 	if err != nil || added != 1 || total != 1 {
 		t.Fatalf("first pass: added=%d total=%d err=%v", added, total, err)
 	}
@@ -50,7 +61,7 @@ func TestRecordLedger_RowSurvivesRetention(t *testing.T) {
 
 	// Nothing changed → nothing rewritten, which is what keeps an idle sync from
 	// producing a commit.
-	added, _, err = recordLedger(staging, "mbp", "")
+	added, _, err = recordLedger(staging, "mbp", "", nil)
 	if err != nil || added != 0 {
 		t.Fatalf("steady state should write nothing: added=%d err=%v", added, err)
 	}
@@ -59,7 +70,7 @@ func TestRecordLedger_RowSurvivesRetention(t *testing.T) {
 	if err := os.Remove(p); err != nil {
 		t.Fatal(err)
 	}
-	if _, total, err = recordLedger(staging, "mbp", ""); err != nil {
+	if _, total, err = recordLedger(staging, "mbp", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if total != 1 {
@@ -73,7 +84,7 @@ func TestRecordLedger_RowSurvivesRetention(t *testing.T) {
 // A staging tree with no transcripts at all is an ordinary state (a Desktop-only
 // sync, a fresh repo), not an error.
 func TestRecordLedger_EmptyStagingIsFine(t *testing.T) {
-	added, total, err := recordLedger(t.TempDir(), "mbp", "")
+	added, total, err := recordLedger(t.TempDir(), "mbp", "", nil)
 	if err != nil || added != 0 || total != 0 {
 		t.Fatalf("added=%d total=%d err=%v", added, total, err)
 	}
@@ -98,7 +109,7 @@ func TestRecordLedger_IgnoresSubagentTranscripts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	added, total, err := recordLedger(staging, "mbp", "")
+	added, total, err := recordLedger(staging, "mbp", "", nil)
 	if err != nil || total != 1 {
 		t.Fatalf("want exactly one session, got total=%d added=%d err=%v", total, added, err)
 	}
@@ -106,7 +117,7 @@ func TestRecordLedger_IgnoresSubagentTranscripts(t *testing.T) {
 		t.Errorf("parent's own transcript should own the row, got title %q", got)
 	}
 	// And the steady state writes nothing — the churn half of the same bug.
-	if added, _, _ := recordLedger(staging, "mbp", ""); added != 0 {
+	if added, _, _ := recordLedger(staging, "mbp", "", nil); added != 0 {
 		t.Errorf("steady state rewrote %d row(s)", added)
 	}
 }
@@ -136,7 +147,7 @@ func TestRecordLedger_AttributesAccounts(t *testing.T) {
 	// only one of them was opened through Desktop
 	stageAccountSidecar(t, staging, "desktop", "acct-desktop", "org-1", "desktop-sess")
 
-	if _, _, err := recordLedger(staging, "mbp", "acct-live"); err != nil {
+	if _, _, err := recordLedger(staging, "mbp", "acct-live", allSessions(staging)); err != nil {
 		t.Fatal(err)
 	}
 	l, err := ledger.Open(staging, "mbp")
@@ -159,12 +170,12 @@ func TestRecordLedger_SidecarUpgradesAnUnchangedTranscript(t *testing.T) {
 	stageTranscriptBody(t, staging, "-Users-j-Git-api", "sess-1",
 		`{"type":"user","cwd":"/Users/j/Git/api","message":{"content":"hi"}}`+"\n")
 
-	if _, _, err := recordLedger(staging, "mbp", "acct-live"); err != nil {
+	if _, _, err := recordLedger(staging, "mbp", "acct-live", allSessions(staging)); err != nil {
 		t.Fatal(err)
 	}
 	// Desktop syncs later; the transcript is untouched.
 	stageAccountSidecar(t, staging, "desktop", "acct-desktop", "org-1", "sess-1")
-	if _, _, err := recordLedger(staging, "mbp", "acct-live"); err != nil {
+	if _, _, err := recordLedger(staging, "mbp", "acct-live", allSessions(staging)); err != nil {
 		t.Fatal(err)
 	}
 	l, _ := ledger.Open(staging, "mbp")
@@ -179,7 +190,7 @@ func TestRecordLedger_NoLiveAccountLeavesRowsUnattributed(t *testing.T) {
 	staging := t.TempDir()
 	stageTranscriptBody(t, staging, "-Users-j-Git-api", "sess-1",
 		`{"type":"user","cwd":"/Users/j/Git/api","message":{"content":"hi"}}`+"\n")
-	if _, _, err := recordLedger(staging, "mbp", ""); err != nil {
+	if _, _, err := recordLedger(staging, "mbp", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	l, _ := ledger.Open(staging, "mbp")
@@ -195,11 +206,52 @@ func TestRecordLedger_ReadsProfileSidecarLayout(t *testing.T) {
 	stageTranscriptBody(t, staging, "-Users-j-Git-api", "sess-1",
 		`{"type":"user","cwd":"/Users/j/Git/api","message":{"content":"hi"}}`+"\n")
 	stageAccountSidecar(t, staging, filepath.Join("desktop@work", "data"), "acct-work", "org-2", "sess-1")
-	if _, _, err := recordLedger(staging, "mbp", ""); err != nil {
+	if _, _, err := recordLedger(staging, "mbp", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	l, _ := ledger.Open(staging, "mbp")
 	if a, s := l.Attribution("sess-1"); a != "acct-work" || s != ledger.AccountFromDesktop {
 		t.Errorf("got %q/%q, want acct-work/%s", a, s, ledger.AccountFromDesktop)
+	}
+}
+
+// recordLedger walks the SHARED staged tree, which holds every machine's
+// transcripts. The live-account fallback must not claim the ones this machine
+// never offered — attribution is sticky, so the first machine to sync would own
+// them permanently.
+func TestRecordLedger_LiveAccountOnlyClaimsThisMachinesSessions(t *testing.T) {
+	staging := t.TempDir()
+	body := `{"type":"user","cwd":"/Users/j/Git/api","message":{"content":"hi"}}` + "\n"
+	stageTranscriptBody(t, staging, "-Users-j-Git-api", "mine-sess", body)
+	stageTranscriptBody(t, staging, "-Users-j-Git-api", "theirs-sess", body)
+
+	// Only one of them came from this machine's own root.
+	mine := map[string]bool{"mine-sess": true}
+	if _, _, err := recordLedger(staging, "mbp", "acct-live", mine); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := ledger.Open(staging, "mbp")
+	if a, s := l.Attribution("mine-sess"); a != "acct-live" || s != ledger.AccountFromSync {
+		t.Errorf("own session = %q/%q, want acct-live/%s", a, s, ledger.AccountFromSync)
+	}
+	if a, s := l.Attribution("theirs-sess"); a != "" || s != "" {
+		t.Errorf("another machine's session was claimed: %q/%q", a, s)
+	}
+}
+
+// A Desktop sidecar is ground truth about ownership, so it still attributes a
+// session this machine never ran — that is the whole point of the better source.
+func TestRecordLedger_SidecarAttributesEvenAnotherMachinesSession(t *testing.T) {
+	staging := t.TempDir()
+	stageTranscriptBody(t, staging, "-Users-j-Git-api", "theirs-sess",
+		`{"type":"user","cwd":"/Users/j/Git/api","message":{"content":"hi"}}`+"\n")
+	stageAccountSidecar(t, staging, "desktop", "acct-desktop", "org-1", "theirs-sess")
+
+	if _, _, err := recordLedger(staging, "mbp", "acct-live", nil); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := ledger.Open(staging, "mbp")
+	if a, s := l.Attribution("theirs-sess"); a != "acct-desktop" || s != ledger.AccountFromDesktop {
+		t.Errorf("got %q/%q, want acct-desktop/%s", a, s, ledger.AccountFromDesktop)
 	}
 }

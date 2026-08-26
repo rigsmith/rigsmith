@@ -433,3 +433,30 @@ func TestSaveCredential_MergeCannotResurrectBlankedTokens(t *testing.T) {
 		t.Error("the previously healthy credential must be intact")
 	}
 }
+
+// The accountUuid is the join key the ledger and Desktop both record, so the
+// store has to keep it — otherwise resolving an alias depends on the device
+// registry, which holds only each device's latest account.
+func TestCaptureLive_RecordsAndPreservesTheAccountUUID(t *testing.T) {
+	s := &Store{Root: t.TempDir()}
+	cred := []byte(`{"claudeAiOauth":{"accessToken":"t","refreshToken":"r","subscriptionType":"max"},"organizationUuid":"org-1"}`)
+	oauth := []byte(`{"emailAddress":"a@example.com","organizationUuid":"org-1","accountUuid":"acct-uuid-1"}`)
+
+	a, _, err := s.CaptureLive(cred, oauth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.AccountUUID != "acct-uuid-1" {
+		t.Fatalf("AccountUUID = %q, want acct-uuid-1", a.AccountUUID)
+	}
+
+	// A later capture whose block omits the uuid must not erase it: losing it
+	// silently breaks alias resolution for every session attributed to it.
+	again, _, err := s.CaptureLive(cred, []byte(`{"emailAddress":"a@example.com","organizationUuid":"org-1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.AccountUUID != "acct-uuid-1" {
+		t.Errorf("AccountUUID = %q after a uuid-less re-capture, want it preserved", again.AccountUUID)
+	}
+}

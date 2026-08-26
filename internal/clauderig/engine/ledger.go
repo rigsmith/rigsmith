@@ -22,7 +22,7 @@ import (
 //
 // Rows already matching the transcript's size and mtime are skipped without
 // opening the file, so a steady-state sync reads nothing and writes nothing.
-func recordLedger(stagingDir, device, liveAccount string) (added int, total int, err error) {
+func recordLedger(stagingDir, device, liveAccount string, mine map[string]bool) (added int, total int, err error) {
 	l, err := ledger.Open(stagingDir, device)
 	if err != nil {
 		return 0, 0, err
@@ -65,9 +65,19 @@ func recordLedger(stagingDir, device, liveAccount string) (added int, total int,
 			var acct, src string
 			if a := byDesktop[id]; a != "" {
 				acct, src = a, ledger.AccountFromDesktop
-			} else if liveAccount != "" {
-				// Only ever an inference about this machine's own syncing, and
-				// sticky once stored — see ledger.AccountFromSync.
+			} else if liveAccount != "" && mine[id] {
+				// Only for sessions THIS machine's own root offered. The walk
+				// above covers the shared staged tree, which holds every
+				// machine's transcripts, so attributing on presence there would
+				// have the first machine to sync claim sessions it never ran —
+				// and sticky attribution would make that permanent.
+				//
+				// Residual, stated rather than hidden: a machine that RESTORED
+				// another's transcripts now has them in its own root, so if the
+				// originating machine never attributed them first, the restorer
+				// claims them. Nothing on disk distinguishes "I ran this" from
+				// "I restored this", so that is the honest limit of the
+				// inference — the Desktop sidecar is what settles it properly.
 				acct, src = liveAccount, ledger.AccountFromSync
 			}
 			info, serr := os.Stat(p)
@@ -111,6 +121,26 @@ func recordLedger(stagingDir, device, liveAccount string) (added int, total int,
 		}
 	}
 	return added, l.Count(), l.Save()
+}
+
+// sessionIDsFrom picks the session ids out of a CLI root's allowlisted paths:
+// projects/<slug>/<id>.jsonl only, matching the shape recordLedger records.
+// Deeper files (subagents/, tool-results/) resolve to the same session id and
+// are not separate sessions.
+func sessionIDsFrom(files []string) map[string]bool {
+	out := make(map[string]bool, len(files))
+	for _, rel := range files {
+		if !strings.HasPrefix(rel, "projects/") || !strings.HasSuffix(rel, ".jsonl") {
+			continue
+		}
+		if strings.Count(rel, "/") != 2 {
+			continue
+		}
+		if id := session.IDFromTranscriptRel(rel); id != "" {
+			out[id] = true
+		}
+	}
+	return out
 }
 
 // slugOf pulls the projects/<slug>/ segment out of a CLI-root-relative path.

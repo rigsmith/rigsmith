@@ -72,7 +72,20 @@ type Account struct {
 	Email            string `json:"email"`
 	SubscriptionType string `json:"subscriptionType,omitempty"`
 	OrganizationUUID string `json:"organizationUuid,omitempty"`
-	AddedAt          string `json:"addedAt,omitempty"` // RFC3339
+	// AccountUUID is the account's own uuid from ~/.claude.json's oauthAccount.
+	//
+	// It is the join key everything else uses: Desktop names the account by
+	// uuid in its sidecar path, and the ledger records attribution by uuid. An
+	// email is only ever a label a person types. Without it here, resolving an
+	// alias to a uuid depends on the device registry, which holds only each
+	// device's LATEST account — so once every device has synced under a
+	// different login, an older account's alias stops resolving even though its
+	// sessions are still attributed.
+	//
+	// Empty for accounts captured before this was recorded; the registry
+	// remains the fallback for those.
+	AccountUUID string `json:"accountUuid,omitempty"`
+	AddedAt     string `json:"addedAt,omitempty"` // RFC3339
 	// Alias is a short handle the user chose — usable anywhere an id or email
 	// is, so `switch dev` works. Optional and unique across the store.
 	Alias string `json:"alias,omitempty"`
@@ -205,6 +218,7 @@ func (s *Store) CaptureLive(cred, oauth []byte) (Account, bool, error) {
 		Email:            email,
 		SubscriptionType: sub,
 		OrganizationUUID: org,
+		AccountUUID:      m.AccountUUID,
 		AddedAt:          time.Now().UTC().Format(time.RFC3339),
 	}
 	// Re-capturing an existing account must not undo the user's own settings.
@@ -216,6 +230,12 @@ func (s *Store) CaptureLive(cred, oauth []byte) (Account, bool, error) {
 		if prev, ok := s.read(id); ok {
 			a.Alias = prev.Alias
 			a.Disabled = prev.Disabled
+			// A live block that omits the uuid must not erase one already
+			// recorded — losing it silently breaks alias resolution for every
+			// session attributed to this account.
+			if a.AccountUUID == "" {
+				a.AccountUUID = prev.AccountUUID
+			}
 			if prev.AddedAt != "" {
 				a.AddedAt = prev.AddedAt // when it was first tracked, not last refreshed
 			}

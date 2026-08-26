@@ -55,6 +55,17 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 		for _, uuid := range byEmail {
 			candidates[uuid] = true
 		}
+		// Accounts this machine tracks, whether or not any device has synced
+		// under them since.
+		if st, serr := account.DefaultStore(); serr == nil {
+			if all, lerr := st.List(); lerr == nil {
+				for _, a := range all {
+					if a.AccountUUID != "" {
+						candidates[a.AccountUUID] = true
+					}
+				}
+			}
+		}
 		var hit string
 		for uuid := range candidates {
 			if !strings.HasPrefix(strings.ToLower(uuid), strings.ToLower(v)) {
@@ -73,12 +84,21 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 	// alias / email / id from clauderig's account store, mapped to a uuid via
 	// the registry (the store keys accounts by email, not uuid).
 	if st, serr := account.DefaultStore(); serr == nil {
-		if a, rerr := st.Resolve(v); rerr == nil && a.Email != "" {
-			if uuid := byEmail[strings.ToLower(a.Email)]; uuid != "" {
-				return uuid, nil
+		if a, rerr := st.Resolve(v); rerr == nil {
+			// The store's own uuid first: it is recorded at capture and stays
+			// put. The registry holds only each device's LATEST account, so
+			// once every device has synced under a different login it can no
+			// longer resolve this one — the store can.
+			if a.AccountUUID != "" {
+				return a.AccountUUID, nil
 			}
-			return "", fmt.Errorf("account %s is known but no synced machine has recorded its accountUuid yet — "+
-				"run `clauderig sync` on a machine logged in as it, or pass the uuid", a.Email)
+			if a.Email != "" {
+				if uuid := byEmail[strings.ToLower(a.Email)]; uuid != "" {
+					return uuid, nil
+				}
+				return "", fmt.Errorf("account %s is known but its accountUuid has not been recorded — "+
+					"run `clauderig account add` while logged in as it (or `clauderig sync` on a machine that is), or pass the uuid", a.Email)
+			}
 		}
 	}
 
