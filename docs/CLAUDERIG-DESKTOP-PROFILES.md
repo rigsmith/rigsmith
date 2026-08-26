@@ -99,6 +99,7 @@ than working around it.
 | `clauderig desktop quit [<name\|email>]` | Close that profile's window (SIGTERM, then firmly, then confirmed). |
 | `clauderig desktop rm <name\|email> [--force]` | Delete the profile. Signs that account out of Desktop for good. |
 | `clauderig desktop map [<name>] [dir]` / `unmap [dir]` | Bind a directory to a profile, so a bare `desktop open` there opens it. Bare `map` lists every binding. |
+| `clauderig desktop shortcut [<name\|email>] [--to desktop\|apps]` | Make a clickable launcher for the profile. `--all` for every profile, `--rm` to delete them. |
 
 `clauderig desktop list --json` emits one machine-readable object — the profiles,
 which are open, and whether Desktop is supported and installed on this platform.
@@ -141,6 +142,75 @@ unhelpful one, which is why step 3 exists.
 `clauderig account`**, which switches the Claude Code CLI login: two different
 products, two independent logins, and conflating them is what produced the
 original bug report.
+
+## Shortcuts
+
+`clauderig desktop shortcut work` writes a clickable launcher for one profile:
+
+- **macOS** — a small `.app` bundle (`Claude - work.app`), carrying Claude's own
+  icon. It is built locally, so it is not quarantined and Gatekeeper does not
+  gate it; no signing identity is involved.
+- **Windows** — a real `.lnk`, created through the `WScript.Shell` COM object,
+  with its icon taken from `claude.exe`.
+
+`--to desktop` (the default) writes to the desktop — asked of Windows rather
+than composed from `%USERPROFILE%`, so a OneDrive-redirected desktop is still
+the one you see. `--to apps` writes to `~/Applications` on macOS (which puts it
+in Spotlight and Launchpad) and the Start Menu on Windows. Repeat `--to` for
+both, `--label` renames it, `--all` does every saved profile.
+
+**The shortcut runs `clauderig desktop open <name>`, not Claude directly.** That
+costs a process per click and buys the things the `--user-data-dir` flag alone
+cannot do: clicking again never starts a second instance on the same profile,
+`lastOpened` stays true, and a profile that has never been launched still gets
+seeded. A shortcut is a click-sized `desktop open`, not a second launch path to
+keep in step with the first.
+
+On macOS the second click also brings the window forward. On Windows it does
+not — `Focus` there is deliberately a no-op, because raising one instance of
+several is not something the command line can do without window-handle work the
+package does not carry. The duplicate window is still prevented; only the raise
+is missing.
+
+clauderig is named by **absolute path** inside the shortcut, because a GUI launch
+inherits none of the shell's `PATH`. That is the one thing that can rot: move or
+reinstall the binary and the shortcut points at nothing. Both platforms fail
+loudly rather than silently — macOS shows an alert naming the missing path,
+Windows shows the shell's own "target unavailable" dialog — and re-running
+`clauderig desktop shortcut <name>` rewrites them. The path is taken unresolved,
+so a Homebrew install stays pinned to `/opt/homebrew/bin/clauderig` rather than
+to the versioned Cellar path behind it, which would break on the next upgrade.
+
+A shortcut is recognised again by a **marker inside the artifact** — a file in
+the bundle's `Resources/` on macOS, the shortcut's description on Windows —
+never by a manifest kept beside it. A manifest goes stale the moment an icon is
+renamed or moved, and a stale manifest is what turns "remove this profile's
+shortcuts" into "delete a file that is no longer ours". So `--rm` and
+`clauderig desktop rm` only ever delete what carries the marker, and a file of
+the same name that clauderig did not write is refused until `--force`.
+
+Two profiles given the same `--label` would land on one path. The second is
+refused rather than allowed to delete the first profile's launcher and take its
+icon — `--force` if that really is what you want. Replacing a shortcut for the
+*same* profile stays ordinary, since that is what makes re-running a repair.
+
+What removal cannot find is a shortcut you have moved somewhere else: `--rm` and
+`desktop rm` look in the two destinations clauderig writes to, not across the
+disk. An icon dragged into a folder of its own survives its profile, and is
+yours to delete. Removal does **not** require the profile to still exist —
+`clauderig desktop shortcut work --rm` works after `work` is gone, which is what
+clears the icons if the cleanup during `desktop rm` ever fails.
+
+`clauderig desktop add` offers a desktop shortcut at the end on a terminal;
+`--shortcut` makes one without asking and `--no-shortcut` skips the question.
+The interactive screen (bare `clauderig desktop`) makes the same offer when it
+adds a profile, and clears a profile's shortcuts when it removes one.
+
+What a shortcut **cannot** do is brand the window it opens. macOS and Windows
+label a window by the application that owns it, and that application is Claude
+Desktop for every profile — so the icon and name are Claude's once the window is
+up, however the shortcut is labelled. Short of copying the whole app bundle per
+profile (which breaks updates and the signature), there is no way around it.
 
 ## How it works
 
@@ -324,3 +394,30 @@ clauderig desktop rm scratch      # profile gone
 Windows in particular is written from the documented install layout
 (`%LOCALAPPDATA%\AnthropicClaude`, stub launcher plus `app-<version>` directories)
 and has not been run on a Windows machine yet.
+
+**Shortcuts.** The macOS bundle is covered end to end: the tests build one and
+*run* it against a stub binary, asserting it invokes `clauderig desktop open
+<profile>` with the arguments intact through a path containing a space and a
+quote. The alert path is checked by parsing the script (`sh -n`) rather than by
+running it, because running it puts a modal dialog on the screen of whoever is
+running the tests.
+
+The Windows side creates real `.lnk` files through PowerShell and reads the
+fields back, on the `windows-latest` runner — and that has already earned its
+keep. The first CI run failed there on a bug no local run could reach: ownership
+was decided by comparing full path strings, and PowerShell reports a file's
+canonical long path (`C:\Users\runneradmin\…`) where the path clauderig
+composes may carry an 8.3 short component (`C:\Users\RUNNER~1\…`). Re-running
+the command over its own shortcut refused it as a stranger's file — breaking the
+documented repair path. Ownership is now decided by file name within the folder
+just listed, which no spelling of the parent can disturb.
+
+What remains untried on Windows is the **click itself**. Worth adding to the
+manual pass above:
+
+```console
+clauderig desktop shortcut scratch --to desktop --to apps
+# click it: a window opens on that profile
+# click it again: the same window comes forward, no second instance
+clauderig desktop shortcut scratch --rm
+```
