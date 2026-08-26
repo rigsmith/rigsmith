@@ -623,15 +623,26 @@ func reconcileStagedRoot(stageRoot, liveRoot string, l allowlist.List) (removed 
 		// out. Judged only where the path exists on this machine — staging also
 		// carries other machines' files, whose absence here means nothing.
 		if liveRoot != "" {
-			// ZERO-BYTE only. The placeholders this retires are empty by
-			// construction, and "the live path is a directory" on its own is far
-			// too broad: another machine can legitimately stage a real file at a
-			// path that happens to be a directory here, and deleting it would
-			// publish that machine's data as lost on the next push.
+			// Two coincidences, not one. Size alone cannot tell an old
+			// placeholder from a legitimately empty file another machine staged,
+			// so it is paired with the exact live shape that PRODUCED the
+			// placeholders: a symlink to a directory, staged as a file by a sync
+			// predating the guard that now reports such links as Links.
+			//
+			// A real directory at the same path is deliberately NOT enough. That
+			// is an ordinary cross-machine disagreement about one path, and
+			// deleting on it would publish the other machine's file as lost —
+			// while leaving it costs nothing, since restore already refuses to
+			// write through a link.
 			if fi, ferr := d.Info(); ferr != nil || fi.Size() != 0 {
 				return nil
 			}
-			if fi, serr := os.Stat(filepath.Join(liveRoot, rel)); serr == nil && fi.IsDir() {
+			live := filepath.Join(liveRoot, rel)
+			li, lerr := os.Lstat(live)
+			if lerr != nil || li.Mode()&os.ModeSymlink == 0 {
+				return nil
+			}
+			if fi, serr := os.Stat(live); serr == nil && fi.IsDir() {
 				if os.Remove(p) == nil {
 					shadowed++
 				}

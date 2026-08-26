@@ -71,6 +71,18 @@ func NewSyncCmd() *cobra.Command {
 			// alias or email back to that uuid, so the two disagreeing breaks
 			// `search --account` for exactly those rows.
 			liveAcct, liveOrg, liveEmail, _ := account.LiveIdentity()
+			// Validated HERE, before anything consumes it. There are two ways out
+			// of this variable — the ledger, via engine.Sync, and the device
+			// registry below — and only the second was checked, so an identity
+			// that looks like a secret was staged into ledger rows and pushed
+			// while the registry record that would have carried it was
+			// suppressed. Clearing all three keeps the two paths from
+			// disagreeing about what is safe to record.
+			if f := scanIdentity(&devices.Account{AccountUUID: liveAcct, OrganizationUUID: liveOrg, Email: liveEmail}); f != nil {
+				fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf(
+					"⚠ account identity not recorded: %s looks like %s — check what ~/.claude.json holds", f.Path, f.Kind)))
+				liveAcct, liveOrg, liveEmail = "", "", ""
+			}
 			rep, serr := engine.Sync(engine.Options{
 				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
 				RetentionDays:   cfg.Retention.HistoryDays,
@@ -155,19 +167,10 @@ func NewSyncCmd() *cobra.Command {
 				// organizationUuid may legitimately be absent; the uuid and the
 				// email are what make a record usable, since one is the join key
 				// and the other is what a person types.
+				// Already scanned above, and cleared if it failed — so reaching
+				// here with both halves present means it is safe to record.
 				if liveAcct != "" && liveEmail != "" {
-					// The registry is written AFTER engine.Sync finishes its scan
-					// and is committed directly, so these values never pass the
-					// tripwire that guards every other synced file. The argument
-					// that a uuid and an email cannot trip it is about their
-					// SHAPE, and nothing guarantees the shape.
-					candidate := &devices.Account{AccountUUID: liveAcct, OrganizationUUID: liveOrg, Email: liveEmail}
-					if f := scanIdentity(candidate); f != nil {
-						fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf(
-							"⚠ account identity not recorded: %s looks like %s — check what ~/.claude.json holds", f.Path, f.Kind)))
-					} else {
-						acct = candidate
-					}
+					acct = &devices.Account{AccountUUID: liveAcct, OrganizationUUID: liveOrg, Email: liveEmail}
 				}
 				reg.Touch(me.Name, me.OS, claudeVer, acct, time.Now())
 				_ = reg.Save(staging)
@@ -277,6 +280,11 @@ func machineName(cfg *config.Config) string {
 	return "this"
 }
 
+// maxIdentityBytes bounds an identity value. Generous next to a uuid or an
+// email, and far below redact.ScanContentLimit, so nothing reaches the registry
+// in the size range where ScanFile silently returns no finding.
+const maxIdentityBytes = 512
+
 // scanIdentity runs the same content rules over the three identity values that
 // guard every other synced file, returning the first finding or nil.
 //
@@ -292,11 +300,15 @@ func scanIdentity(a *devices.Account) *redact.Finding {
 		if f.value == "" {
 			continue
 		}
-		// Rejected outright, before the content rules see it. ScanFile skips its
-		// entropy check for multiline values — reasonable for a file, wrong
-		// here — so a newline in an identity field would carry whatever follows
-		// it straight past the scan and into the pushed registry. No real uuid
-		// or email contains one.
+		// Rejected outright, before the content rules see it, in the two shapes
+		// ScanFile cannot judge. It skips its entropy check for multiline
+		// values — reasonable for a file, wrong here, since a newline would
+		// carry whatever follows it past the scan — and it returns nothing at
+		// all above its content cap, so a value larger than that is unscanned
+		// rather than clean. No real uuid or email is either shape.
+		if len(f.value) > maxIdentityBytes {
+			return &redact.Finding{Path: f.name, Kind: "oversized identity"}
+		}
 		if strings.ContainsAny(f.value, "\r\n") {
 			return &redact.Finding{Path: f.name, Kind: "multiline identity"}
 		}

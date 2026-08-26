@@ -3,6 +3,7 @@ package commands
 import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
@@ -86,5 +87,24 @@ func TestScanIdentity_RejectsMultilineValues(t *testing.T) {
 	}
 	if f.Path != "accountUuid" {
 		t.Errorf("finding names %q, want the offending field", f.Path)
+	}
+}
+
+// ScanFile returns NOTHING above its content cap, so an oversized value is
+// unscanned rather than clean — and an identity that begins with a token would
+// have been committed and pushed on that silence.
+func TestScanIdentity_RejectsOversizedValues(t *testing.T) {
+	huge := "ghp_" + strings.Repeat("a", maxIdentityBytes)
+	f := scanIdentity(&devices.Account{AccountUUID: huge, Email: "john@example.com"})
+	if f == nil {
+		t.Fatal("an oversized identity value must be rejected")
+	}
+	if f.Path != "accountUuid" {
+		t.Errorf("finding names %q, want the offending field", f.Path)
+	}
+	// a real uuid is nowhere near the cap
+	if f := scanIdentity(&devices.Account{
+		AccountUUID: "456fc32e-7579-49c7-bb2a-099657892c6a", Email: "john@example.com"}); f != nil {
+		t.Errorf("an ordinary identity was rejected: %+v", f)
 	}
 }
