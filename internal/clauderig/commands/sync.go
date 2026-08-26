@@ -3,14 +3,17 @@ package commands
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 	"github.com/spf13/cobra"
 )
 
@@ -58,11 +61,40 @@ func NewSyncCmd() *cobra.Command {
 			if cliLoc, st := cfg.RootLocation("cli", me); st == pathmap.StatusResolved {
 				claudeVer = config.DetectClaudeVersion(cliLoc)
 			}
+			// Attribution for ledger rows no Desktop sidecar covers. Read once,
+			// before the walk, so every row this sync records is stamped with the
+			// same account rather than one that could change mid-run.
+			// Read ONCE, and reuse for both writes below. Reading again for the
+			// device registry would let a login change (or one transiently
+			// failing read) mid-sync stamp ledger rows with one uuid and the
+			// registry with another — and the registry is what resolves an
+			// alias or email back to that uuid, so the two disagreeing breaks
+			// `search --account` for exactly those rows.
+			liveAcct, liveOrg, liveEmail, _ := account.LiveIdentity()
+			// Validated HERE, before anything consumes it. There are two ways out
+			// of this variable — the ledger, via engine.Sync, and the device
+			// registry below — and only the second was checked, so an identity
+			// that looks like a secret was staged into ledger rows and pushed
+			// while the registry record that would have carried it was
+			// suppressed. Clearing all three keeps the two paths from
+			// disagreeing about what is safe to record.
+			// Canonicalised at the SOURCE. A whitespace-padded or non-uuid value
+			// was persisted verbatim as a sticky attribution, while the filter
+			// canonicalises its input — so the session stopped matching its own
+			// account, and a later correct attribution could not replace it
+			// because it carries the same rank.
+			liveAcct = account.CanonicalUUID(liveAcct)
+			if f := scanIdentity(&devices.Account{AccountUUID: liveAcct, OrganizationUUID: liveOrg, Email: liveEmail}); f != nil {
+				fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf(
+					"⚠ account identity not recorded: %s looks like %s — check what ~/.claude.json holds", f.Path, f.Kind)))
+				liveAcct, liveOrg, liveEmail = "", "", ""
+			}
 			rep, serr := engine.Sync(engine.Options{
 				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
-				RetentionDays: cfg.Retention.HistoryDays,
-				MaxFileBytes:  cfg.Retention.MaxFileBytes,
-				Profiles:      engine.LocalProfileNames(),
+				RetentionDays:   cfg.Retention.HistoryDays,
+				MaxFileBytes:    cfg.Retention.MaxFileBytes,
+				Profiles:        engine.LocalProfileNames(),
+				LiveAccountUUID: liveAcct,
 			})
 			if rep != nil {
 				w := 0
@@ -124,9 +156,26 @@ func NewSyncCmd() *cobra.Command {
 				return nil
 			}
 
-			// Record this machine in the synced device registry.
+			// Record this machine in the synced device registry, together with the
+			// account it synced as — identity only (see devices.Account), and the
+			// only account provenance anything in the repo carries. Best-effort:
+			// an unreadable identity leaves the previous record standing and never
+			// costs anyone a sync.
 			if reg, err := devices.Load(staging); err == nil {
-				reg.Touch(me.Name, me.OS, claudeVer, time.Now())
+				var acct *devices.Account
+				// Both halves required, from the ONE read above. An `||` gate
+				// built a non-nil record from any single field, so a partial
+				// read replaced a complete Device.Account with a fragment — and
+				// Touch keeps a nil precisely to preserve the previous value.
+				// organizationUuid may legitimately be absent; the uuid and the
+				// email are what make a record usable, since one is the join key
+				// and the other is what a person types.
+				// Already scanned above, and cleared if it failed — so reaching
+				// here with both halves present means it is safe to record.
+				if liveAcct != "" && liveEmail != "" {
+					acct = &devices.Account{AccountUUID: liveAcct, OrganizationUUID: liveOrg, Email: liveEmail}
+				}
+				reg.Touch(me.Name, me.OS, claudeVer, acct, time.Now())
 				_ = reg.Save(staging)
 			}
 
@@ -232,4 +281,52 @@ func machineName(cfg *config.Config) string {
 		return host
 	}
 	return "this"
+}
+
+// emailShape is a deliberately conservative check: one @, no spaces or control
+// characters, a dot in the domain. It is not RFC-complete and does not need to
+// be — the question here is "could this be something other than an email", and
+// anything unusual is worth refusing to publish.
+var emailShape = regexp.MustCompile(`^[^\s@\x00-\x1f]{1,128}@[^\s@\x00-\x1f]{1,128}\.[^\s@.\x00-\x1f]{2,63}$`)
+
+// scanIdentity validates the three identity values by SHAPE, returning the
+// first that does not fit.
+//
+// Positive validation, not scanning, and that inversion is the point. Three
+// separate findings arrived for three different ways a value slipped past
+// redact.ScanFile — multiline values skip its entropy check, oversized ones
+// exceed its content cap and return nothing at all, and binary bytes trip its
+// binary guard, which returns clean BEFORE secret detection runs. Each was
+// patched in turn and a fourth was always available, because asking "does this
+// look like a secret" has an open-ended set of ways to answer no.
+//
+// A uuid and an email have exact shapes. Requiring them ends the class: a value
+// that is not one of those two things is refused whatever it happens to be.
+func scanIdentity(a *devices.Account) *redact.Finding {
+	if a.AccountUUID != "" && account.CanonicalUUID(a.AccountUUID) == "" {
+		return &redact.Finding{Path: "accountUuid", Kind: "not a uuid"}
+	}
+	if a.OrganizationUUID != "" && account.CanonicalUUID(a.OrganizationUUID) == "" {
+		return &redact.Finding{Path: "organizationUuid", Kind: "not a uuid"}
+	}
+	if a.Email != "" && !emailShape.MatchString(a.Email) {
+		return &redact.Finding{Path: "email", Kind: "not an email"}
+	}
+	// Shape-valid values still go through the content rules, so a uuid-shaped
+	// string that somehow reads as a known token prefix is still caught.
+	for _, f := range []struct{ name, value string }{
+		{"accountUuid", a.AccountUUID},
+		{"organizationUuid", a.OrganizationUUID},
+		{"email", a.Email},
+	} {
+		if f.value == "" {
+			continue
+		}
+		if found := redact.ScanFile(f.name, []byte(f.value)); len(found) > 0 {
+			hit := found[0]
+			hit.Path = f.name
+			return &hit
+		}
+	}
+	return nil
 }

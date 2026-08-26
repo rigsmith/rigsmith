@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
@@ -37,5 +39,72 @@ func TestMachineName_EmptyMachinesFallback(t *testing.T) {
 	cfg := &config.Config{Machines: map[string]config.Machine{}}
 	if got := machineName(cfg); got == "" {
 		t.Fatalf("machineName returned empty string for empty Machines")
+	}
+}
+
+// The device registry is written after engine.Sync's scan and committed
+// directly, so nothing else ever looks at these three values. The argument that
+// a uuid and an email cannot trip the tripwire is about their SHAPE — so when
+// the shape is wrong, this is the only thing standing between a token-like
+// identity and the remote.
+func TestScanIdentity(t *testing.T) {
+	ok := &devices.Account{
+		AccountUUID:      "456fc32e-7579-49c7-bb2a-099657892c6a",
+		OrganizationUUID: "f1eab509-9590-47cf-a4e8-33e5f45a5747",
+		Email:            "john@example.com",
+	}
+	if f := scanIdentity(ok); f != nil {
+		t.Errorf("ordinary identity flagged as %s (%s)", f.Path, f.Kind)
+	}
+	if f := scanIdentity(&devices.Account{}); f != nil {
+		t.Errorf("empty identity flagged: %+v", f)
+	}
+
+	// A rewritten oauthAccount carrying something token-shaped must not travel.
+	bad := &devices.Account{
+		AccountUUID: "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+		Email:       "john@example.com",
+	}
+	f := scanIdentity(bad)
+	if f == nil {
+		t.Fatal("a token-shaped accountUuid must be caught")
+	}
+	if f.Path != "accountUuid" {
+		t.Errorf("finding names %q, want the offending field", f.Path)
+	}
+}
+
+// ScanFile skips its entropy check for multiline values — reasonable for a
+// file, wrong for an identity field, where a newline would carry whatever
+
+// ScanFile returns NOTHING above its content cap, so an oversized value is
+// unscanned rather than clean — and an identity that begins with a token would
+
+// Shape validation, not scanning. Three separate findings arrived for three
+// ways a value slipped past redact.ScanFile — multiline skipped its entropy
+// check, oversized exceeded its content cap, binary tripped its binary guard —
+// and a fourth was always available. Requiring the shape ends the class.
+func TestScanIdentity_RequiresTheShape(t *testing.T) {
+	good := &devices.Account{
+		AccountUUID:      "456fc32e-7579-49c7-bb2a-099657892c6a",
+		OrganizationUUID: "f1eab509-9590-47cf-a4e8-33e5f45a5747",
+		Email:            "john@example.com",
+	}
+	if f := scanIdentity(good); f != nil {
+		t.Errorf("ordinary identity rejected: %s (%s)", f.Path, f.Kind)
+	}
+
+	cases := map[string]*devices.Account{
+		"multiline":  {AccountUUID: "456fc32e-7579-49c7-bb2a-099657892c6a\nghp_x", Email: good.Email},
+		"oversized":  {AccountUUID: strings.Repeat("a", 4096), Email: good.Email},
+		"binary":     {AccountUUID: "456fc32e-7579-49c7-bb2a-09965789\x00c6a", Email: good.Email},
+		"not a uuid": {AccountUUID: "definitely-not-a-uuid", Email: good.Email},
+		"bad email":  {AccountUUID: good.AccountUUID, Email: "ghp_0123456789abcdefghij"},
+		"bad org":    {AccountUUID: good.AccountUUID, OrganizationUUID: "nope", Email: good.Email},
+	}
+	for name, a := range cases {
+		if f := scanIdentity(a); f == nil {
+			t.Errorf("%s: accepted, want rejected", name)
+		}
 	}
 }

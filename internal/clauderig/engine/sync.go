@@ -67,6 +67,11 @@ type Options struct {
 	// roots — see profiles.go. Each is walked as its own root, and they follow
 	// the Desktop root's enabled flag.
 	Profiles []string
+	// LiveAccountUUID is the account this machine is logged into Claude Code as,
+	// used to attribute ledger rows that no Desktop sidecar covers. Empty (not
+	// logged in, unreadable) simply leaves those rows unattributed — a guess is
+	// never invented, and a stored attribution is never overwritten by one.
+	LiveAccountUUID string
 }
 
 // Sync materialises the allowlisted, redacted file set for each enabled root into
@@ -88,6 +93,12 @@ func Sync(opts Options) (*Report, error) {
 	// Shared-memory symlinks found under the CLI root (worktree slugs linking
 	// memory/ to their main project); recorded in the manifest for restore.
 	var cliLinks []allowlist.Link
+	// Session ids this machine's OWN root offered this run. The ledger's
+	// live-account fallback is confined to these: recordLedger walks the shared
+	// staged tree, which holds every machine's transcripts, so attributing on
+	// presence there would have the first machine to sync claim sessions it
+	// never ran — permanently, since attribution is sticky.
+	var cliSessionIDs map[string]bool
 
 	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
@@ -107,6 +118,7 @@ func Sync(opts Options) (*Report, error) {
 		}
 		if r.ID == "cli" {
 			cliLinks = links
+			cliSessionIDs = sessionIDsFrom(files)
 		}
 		stageRoot := filepath.Join(opts.StagingDir, r.ID)
 
@@ -263,7 +275,7 @@ func Sync(opts Options) (*Report, error) {
 	// is about to age out still leaves a searchable row behind — otherwise `search`
 	// answers "no such session", which reads as "that chat never existed" rather
 	// than "its body is older than the window, recover it from git history".
-	if added, total, lerr := recordLedger(opts.StagingDir, opts.Machine.Name); lerr == nil {
+	if added, total, lerr := recordLedger(opts.StagingDir, opts.Machine.Name, opts.LiveAccountUUID, cliSessionIDs); lerr == nil {
 		rep.LedgerAdded, rep.LedgerTotal = added, total
 	} else {
 		// Best-effort: the ledger is a convenience for later searches and must
@@ -569,12 +581,20 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 // slugs this machine has never seen) are unaffected as long as the allowlist still
 // permits them. Retention, which removes allowed-but-aged files, is separate and
 // runs on its own.
-func reconcileStagedRoot(stageRoot string, l allowlist.List) (int, error) {
+//
+// It judges the allowlist ONLY. An earlier version also retired staged files
+// whose live counterpart was a directory, to clean up placeholders left by
+// pre-#196 syncs — but nothing on disk distinguishes such a placeholder from a
+// legitimately empty file another machine staged, so every narrowing of that
+// rule still deleted somebody's data on the next push. It is gone: restore
+// already refuses to write through a symlink, which is what made the
+// placeholders harmful, so the cleanup bought tidiness at the price of a
+// data-loss class.
+func reconcileStagedRoot(stageRoot string, l allowlist.List) (removed int, err error) {
 	if !dirExists(stageRoot) {
 		return 0, nil
 	}
-	removed := 0
-	err := filepath.WalkDir(stageRoot, func(p string, d os.DirEntry, werr error) error {
+	err = filepath.WalkDir(stageRoot, func(p string, d os.DirEntry, werr error) error {
 		if werr != nil {
 			// A staged tree churning under us is not a reason to fail the sync.
 			if os.IsNotExist(werr) {
@@ -589,12 +609,19 @@ func reconcileStagedRoot(stageRoot string, l allowlist.List) (int, error) {
 		if rerr != nil {
 			return nil
 		}
-		if l.Match(filepath.ToSlash(rel)) {
+		if !l.Match(filepath.ToSlash(rel)) {
+			if os.Remove(p) == nil {
+				removed++
+			}
 			return nil
 		}
-		if os.Remove(p) == nil {
-			removed++
-		}
+		// A staged FILE whose live counterpart is a DIRECTORY (or a symlink to
+		// one) is a category error left by an older sync: the walk now reports
+		// directory symlinks as links and never as files, so no future sync will
+		// ever refresh or remove this copy, while restore keeps trying to write
+		// it back over the live link. Retire it here so the repo can dig itself
+		// out. Judged only where the path exists on this machine — staging also
+		// carries other machines' files, whose absence here means nothing.
 		return nil
 	})
 	if err != nil {

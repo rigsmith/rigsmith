@@ -270,9 +270,24 @@ func unionDevices(ctx context.Context, repo *gitrepo.Repo, p string) (string, bo
 		merged.Devices = map[string]devices.Device{}
 	}
 	for name, d := range ours.Devices {
-		if cur, ok := merged.Devices[name]; !ok || d.LastSync.After(cur.LastSync) {
-			merged.Devices[name] = d
+		cur, ok := merged.Devices[name]
+		if ok && !d.LastSync.After(cur.LastSync) {
+			// The older side still wins on account: see below.
+			if cur.Account == nil && d.Account != nil {
+				cur.Account = d.Account
+				merged.Devices[name] = cur
+			}
+			continue
 		}
+		// The newer sync wins the entry, but NOT a nil account. A sync that
+		// could not read the identity records none, so taking the newer entry
+		// wholesale would erase provenance the older side knew — and the CLI
+		// side has no other record of which account a machine's sessions
+		// belong to, so that loss is not recoverable from anywhere else.
+		if ok && d.Account == nil {
+			d.Account = cur.Account
+		}
+		merged.Devices[name] = d
 	}
 	b, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {

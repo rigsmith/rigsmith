@@ -1,17 +1,20 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
@@ -105,12 +108,31 @@ func NewRestoreCmd() *cobra.Command {
 			}
 			if backup {
 				bak := cliTarget + ".bak"
-				if _, err := os.Stat(bak); err == nil {
-					return fmt.Errorf("backup %s already exists; move it away first", bak)
+				// Preflight BOTH destinations before copying EITHER. Checking the
+				// identity path only after the tree was copied meant an existing
+				// ~/.claude.json.bak aborted the restore having already written a
+				// half of the pair — a rollback set that is not a set.
+				if err := backupPathIsFree(bak); err != nil {
+					return err
+				}
+				idSrc, idDst, hasIdentity, ierr := identityBackupPaths()
+				if ierr != nil {
+					return ierr
+				}
+				if hasIdentity {
+					if err := backupPathIsFree(idDst); err != nil {
+						return err
+					}
 				}
 				fmt.Fprintf(out, "  backing up %s → %s\n", cliTarget, bak)
 				if err := copyTree(cliTarget, bak); err != nil {
 					return fmt.Errorf("backup: %w", err)
+				}
+				if hasIdentity {
+					fmt.Fprintf(out, "  backing up %s → %s\n", idSrc, idDst)
+					if err := copyOne(idSrc, idDst); err != nil {
+						return fmt.Errorf("backup identity: %w", err)
+					}
 				}
 			}
 
@@ -147,6 +169,12 @@ func NewRestoreCmd() *cobra.Command {
 				}
 				if r.Pruned > 0 {
 					extra += fmt.Sprintf(", %d pruned", r.Pruned)
+				}
+				if r.Conflicts > 0 {
+					extra += fmt.Sprintf(", %d skipped (a directory holds that path)", r.Conflicts)
+				}
+				if r.LinksKept > 0 {
+					extra += fmt.Sprintf(", %d kept under existing link(s)", r.LinksKept)
 				}
 				fmt.Fprintf(out, "  %-*s %d files, %d slug(s) rewritten%s\n", w, r.ID, r.Files, r.SlugsRewritten, extra)
 			}
@@ -233,34 +261,179 @@ func chooseRestoreSafety(target string) string {
 }
 
 // copyTree recursively copies src to dst (used for the pre-restore backup).
+//
+// Symlinks are recreated, never followed. ~/.claude is full of shared-memory
+// links (worktree slugs pointing memory/ at their main project), and copying
+// through one either duplicates the whole linked tree into the backup or fails
+// outright when it points at a directory. Link text is reproduced verbatim, so
+// an absolute link still resolves to the same place from inside the .bak — the
+// same thing `cp -R` does.
 func copyTree(src, dst string) error {
-	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+	// Resolve the ROOT once. If ~/.claude is itself a symlink, WalkDir visits
+	// only that entry and the branch below would recreate it — making .bak a
+	// second link to the very directory restore is about to modify, so the
+	// "backup" would track the changes instead of preserving what came before.
+	// Links found BELOW the root are still reproduced, not followed.
+	root, rerr := filepath.EvalSymlinks(src)
+	if rerr != nil {
+		root = src // unreadable or absent: let WalkDir report it
+	}
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(src, p)
+		rel, _ := filepath.Rel(root, p)
 		target := filepath.Join(dst, rel)
+		if d.Type()&fs.ModeSymlink != 0 {
+			return copyLink(p, target)
+		}
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
-		return copyOne(p, target)
+		return copyOneInto(dst, p, target)
 	})
 }
 
-func copyOne(src, dst string) error {
+// noSymlinkBetween reports an error when any directory from root down to the
+// parent of dst is a symlink — the ancestors an O_EXCL create would still
+// follow out of the tree.
+func noSymlinkBetween(root, dst string) error {
+	dir := filepath.Dir(dst)
+	for {
+		rel, err := filepath.Rel(root, dir)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil
+		}
+		fi, lerr := os.Lstat(dir)
+		if lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to write through a symlinked directory inside the backup: %s", dir)
+		}
+		dir = filepath.Dir(dir)
+	}
+}
+
+// copyLink recreates the symlink at src as an identical symlink at dst.
+func copyLink(src, dst string) error {
+	link, err := os.Readlink(src)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
+	}
+	return os.Symlink(link, dst)
+}
+
+// backupIdentityFile copies ~/.claude.json alongside the tree backup.
+//
+// It holds the oauthAccount block — the ONLY record of which account this
+// machine is logged in as — and it sits outside ~/.claude, so the tree copy
+// above misses it entirely. That is the one file a bad account switch can ruin
+// and nothing else can reconstruct. It can also carry MCP server credentials
+// (mcpServers.*.headers / .env are free-form passthrough), which is exactly why
+// this stays a local .bak and is never what gets synced: the repo records only
+// the three identity fields, via devices.Account.
+//
+// An absent file is not an error — a machine that has never logged in has
+// nothing to protect.
+// identityBackupPaths reports where ~/.claude.json would be backed up to, and
+// whether there is one to back up.
+//
+// It holds the oauthAccount block — the ONLY record of which account this
+// machine is logged in as — and it sits outside ~/.claude, so the tree copy
+// misses it entirely. That is the one file a bad account switch can ruin and
+// nothing else can reconstruct. It can also carry MCP server credentials
+// (mcpServers.*.headers / .env are free-form passthrough), which is why this
+// stays a local .bak and is never what gets synced.
+//
+// Absent is not an error — a machine that has never logged in has nothing to
+// protect — but unreadable is, because that is the moment its state is least
+// certain and least replaceable.
+func identityBackupPaths() (src, dst string, exists bool, err error) {
+	src, herr := account.GlobalConfigPath()
+	if herr != nil {
+		return "", "", false, nil // no home dir: nothing addressable to back up
+	}
+	if _, serr := os.Stat(src); serr != nil {
+		if errors.Is(serr, os.ErrNotExist) {
+			return "", "", false, nil
+		}
+		return "", "", false, fmt.Errorf("backup identity: %w", serr)
+	}
+	return src, src + ".bak", true, nil
+}
+
+// backupPathIsFree reports that nothing occupies the backup path yet.
+//
+// Lstat, not Stat. A DANGLING symlink there passes a Stat check as "not
+// present", and the copy would then follow it — writing the backup through the
+// link to wherever it points. For the identity file that means ~/.claude.json,
+// which can carry MCP server credentials, landing somewhere never intended. Any
+// existing entry, link included, is a refusal, and a lookup that fails for any
+// other reason stops the backup rather than guessing.
+func backupPathIsFree(path string) error {
+	_, err := os.Lstat(path)
+	switch {
+	case err == nil:
+		return fmt.Errorf("backup %s already exists; move it away first", path)
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	default:
+		return fmt.Errorf("check backup path %s: %w", path, err)
+	}
+}
+
+// copyOne copies one file to a destination that must not already exist.
+//
+// root, when non-empty, is the tree dst must stay inside. O_EXCL protects only
+// the LEAF: replacing an intermediate directory with a symlink after MkdirAll
+// still redirects the create, so the file lands outside the backup entirely.
+// Revalidating the ancestors narrows that window — it cannot close it without
+// openat/O_NOFOLLOW per component, which Go does not offer portably, and the
+// alternative of not checking at all is strictly worse.
+func copyOne(src, dst string) error { return copyOneInto("", src, dst) }
+
+func copyOneInto(root, src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if root != "" {
+		if err := noSymlinkBetween(root, dst); err != nil {
+			return err
+		}
 	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	// Copy the source's permissions, don't invent them. ~/.claude is full of
+	// 0600 transcripts and the identity file beside it is 0600 too; os.Create
+	// would widen every one of them to 0644 in the backup, so the act of
+	// protecting this data would be what exposed it.
+	mode := os.FileMode(0o600)
+	if fi, serr := in.Stat(); serr == nil {
+		mode = fi.Mode().Perm()
+	}
+	// O_EXCL, and no O_TRUNC. backupPathIsFree checked that nothing occupied
+	// this path, but that check and this open are two moments: a symlink
+	// created in between would otherwise be FOLLOWED here and its target
+	// overwritten — for the identity file, one that can carry MCP credentials.
+	// O_CREATE|O_EXCL fails on any existing entry, a dangling symlink included,
+	// which closes the window instead of narrowing it. Every destination is a
+	// path nothing should hold yet, so nothing legitimate is refused.
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	// Through the DESCRIPTOR, not the path. OpenFile's mode only applies at
+	// creation and umask can clip it even then, so it has to be restated — but
+	// a path-based Chmod would reopen by name the race O_EXCL just closed,
+	// letting the backup be renamed and a symlink planted in between so the
+	// mode landed on something else entirely.
+	return out.Chmod(mode)
 }

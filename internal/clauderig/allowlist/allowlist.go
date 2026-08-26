@@ -165,6 +165,13 @@ func Walk(root string, l List) ([]string, []Link, error) {
 					l.decide(rel) == Include && l.decide(target) == Include {
 					links = append(links, Link{Rel: rel, Target: target})
 				}
+				// Either way this is a directory, so it is never a file to sync.
+				// This return is load-bearing, not a formality: without it the
+				// link path falls through to Match and is offered as a regular
+				// file, which reading can only ever fail on (EISDIR). Staging
+				// trees written before this guard existed still carry the 0-byte
+				// placeholders that came of exactly that, which is what
+				// reconcileStagedRoot retires.
 				return nil
 			}
 		}
