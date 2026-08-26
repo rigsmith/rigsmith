@@ -115,9 +115,12 @@ func NewRestoreCmd() *cobra.Command {
 				if err := backupPathIsFree(bak); err != nil {
 					return err
 				}
-				idSrc, idDst, hasIdentity, ierr := identityBackupPaths()
+				idSrc, idDst, hasIdentity, idNote, ierr := identityBackupPaths()
 				if ierr != nil {
 					return ierr
+				}
+				if idNote != "" {
+					fmt.Fprintf(out, "  %s\n", WarnStyle.Render("⚠ "+idNote))
 				}
 				if hasIdentity {
 					if err := backupPathIsFree(idDst); err != nil {
@@ -130,7 +133,18 @@ func NewRestoreCmd() *cobra.Command {
 				}
 				if hasIdentity {
 					fmt.Fprintf(out, "  backing up %s → %s\n", idSrc, idDst)
-					if err := copyOne(idSrc, idDst); err != nil {
+					// 0600 rather than the source's mode. copyOne preserves
+					// permissions, which is right for transcripts — but this file
+					// can carry MCP server credentials in mcpServers.*.headers,
+					// and a source someone left world-readable would otherwise be
+					// duplicated into a second world-readable copy they never
+					// knew they were creating.
+					//
+					// On Unix that is a real narrowing. On Windows it is not:
+					// see copyOneAs. The backup is no more exposed than the file
+					// it came from on either platform, but only one of them is
+					// actually being protected here.
+					if err := copyOneAs(idSrc, idDst, 0o600); err != nil {
 						return fmt.Errorf("backup identity: %w", err)
 					}
 				}
@@ -336,6 +350,11 @@ func copyLink(src, dst string) error {
 //
 // An absent file is not an error — a machine that has never logged in has
 // nothing to protect.
+// readLink is a variable purely so a test can stage the one failure that
+// cannot be staged on a real filesystem: a link whose metadata reads but whose
+// target does not. Nothing else reassigns it.
+var readLink = os.Readlink
+
 // identityBackupPaths reports where ~/.claude.json would be backed up to, and
 // whether there is one to back up.
 //
@@ -349,18 +368,38 @@ func copyLink(src, dst string) error {
 // Absent is not an error — a machine that has never logged in has nothing to
 // protect — but unreadable is, because that is the moment its state is least
 // certain and least replaceable.
-func identityBackupPaths() (src, dst string, exists bool, err error) {
+func identityBackupPaths() (src, dst string, exists bool, note string, err error) {
 	src, herr := account.GlobalConfigPath()
 	if herr != nil {
-		return "", "", false, nil // no home dir: nothing addressable to back up
+		return "", "", false, "", nil // no home dir: nothing addressable to back up
 	}
 	if _, serr := os.Stat(src); serr != nil {
-		if errors.Is(serr, os.ErrNotExist) {
-			return "", "", false, nil
+		if !errors.Is(serr, os.ErrNotExist) {
+			return "", "", false, "", fmt.Errorf("backup identity: %w", serr)
 		}
-		return "", "", false, fmt.Errorf("backup identity: %w", serr)
+		// Stat FOLLOWS links, so a dangling symlink lands here too and looks
+		// exactly like "never logged in". There genuinely is nothing to copy,
+		// but the two states mean opposite things to someone about to restore
+		// — one is a machine with no identity, the other is an identity whose
+		// target has gone missing. Lstat separates them so the second can be
+		// said out loud instead of passing as the first.
+		if fi, lerr := os.Lstat(src); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			// A note is a diagnosis, and one nobody actually made must not be
+			// printed. The Lstat and this read are two moments: swap the link
+			// out in between, or hit a filesystem that hands over metadata but
+			// refuses the link body, and a discarded error becomes "a symlink
+			// to , which does not exist" — a confident sentence about a target
+			// never determined, with the restore proceeding underneath it.
+			target, rerr := readLink(src)
+			if rerr != nil {
+				return "", "", false, "", fmt.Errorf("backup identity: read link %s: %w", src, rerr)
+			}
+			return "", "", false, fmt.Sprintf(
+				"%s is a symlink to %s, which does not exist — no identity was backed up", src, target), nil
+		}
+		return "", "", false, "", nil
 	}
-	return src, src + ".bak", true, nil
+	return src, src + ".bak", true, "", nil
 }
 
 // backupPathIsFree reports that nothing occupies the backup path yet.
@@ -393,7 +432,22 @@ func backupPathIsFree(path string) error {
 // alternative of not checking at all is strictly worse.
 func copyOne(src, dst string) error { return copyOneInto("", src, dst) }
 
-func copyOneInto(root, src, dst string) error {
+// copyOneAs copies with an explicit destination mode instead of the source's,
+// for a file whose permissions should not be inherited from wherever it came.
+//
+// UNIX ONLY, and worth stating rather than implying: Go maps FileMode to the
+// read-only attribute on Windows and leaves the ACL alone, so this narrows
+// nothing there. A backup written beside ~/.claude.json inherits that
+// directory's ACL either way — usually the user profile's, which is already
+// restricted to the user — so the practical exposure on Windows is the same as
+// the original file's. What this cannot do is IMPROVE on it.
+func copyOneAs(src, dst string, mode os.FileMode) error {
+	return copyOneWith("", src, dst, &mode)
+}
+
+func copyOneInto(root, src, dst string) error { return copyOneWith(root, src, dst, nil) }
+
+func copyOneWith(root, src, dst string, force *os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -414,6 +468,9 @@ func copyOneInto(root, src, dst string) error {
 	mode := os.FileMode(0o600)
 	if fi, serr := in.Stat(); serr == nil {
 		mode = fi.Mode().Perm()
+	}
+	if force != nil {
+		mode = *force
 	}
 	// O_EXCL, and no O_TRUNC. backupPathIsFree checked that nothing occupied
 	// this path, but that check and this open are two moments: a symlink
