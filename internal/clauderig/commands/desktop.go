@@ -415,7 +415,11 @@ func newDesktopOpenCmd() *cobra.Command {
 				if ferr := app.Focus(p.DataDir()); ferr != nil {
 					return ferr
 				}
-				if sessionRef == "" {
+				// target.ID, not sessionRef: -i resolves a session with no
+				// reference at all, so keying the early return on the reference
+				// focused the window and dropped the session the user had just
+				// chosen — silently, and reported as success.
+				if target.ID == "" {
 					fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already open:"), p.Label())
 					return nil
 				}
@@ -425,7 +429,7 @@ func newDesktopOpenCmd() *cobra.Command {
 					return lerr
 				}
 				_ = st.Touch(p)
-				if sessionRef == "" {
+				if target.ID == "" {
 					fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ opened"), p.Label())
 					return nil
 				}

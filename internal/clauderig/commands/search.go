@@ -571,6 +571,13 @@ func desktopHint(r *sessResult) string {
 	if !r.cliLive || !desktopInstalled() {
 		return ""
 	}
+	// projects/ holds a few .jsonl files that are not sessions, and their stem
+	// becomes the id here. Desktop's deep link requires a uuid, and --session
+	// would treat "export" as text to search titles for — so the offered command
+	// resolves to nothing. Say nothing rather than offer it.
+	if !sessionUUID.MatchString(r.id) {
+		return ""
+	}
 	return "desktop: clauderig desktop open --session " + shQuote(r.id)
 }
 

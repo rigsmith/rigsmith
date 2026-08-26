@@ -225,9 +225,11 @@ clauderig desktop open work -i                          # pick one from a list
 
 **clauderig does not do the import.** It hands Desktop a
 `claude://resume?session=<uuid>` deep link, and Desktop's own handler reads the
-transcript and files the session — the same path the app uses for itself.
-Nothing is copied and no file inside a profile is written, which is the promise
-the rest of this document rests on.
+transcript and files the session — the same path the app uses for itself. No
+transcript is copied and nothing is written into the profile's `data/`
+directory, which is the promise the rest of this document rests on. (Opening a
+window does stamp a last-opened time into clauderig's own `profile.json`, which
+sits beside that directory rather than inside it.)
 
 Three consequences follow from that, worth knowing before the app tells you in a
 toast:

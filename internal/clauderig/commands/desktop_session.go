@@ -190,21 +190,41 @@ func findSessions(ref, claudeHome string, idx session.Index) ([]sessionCandidate
 	return out, nil
 }
 
-// sessionCandidates describes every live transcript, newest first.
-//
-// Title and cwd are resolved ONCE here, so callers match on exactly the values
-// they display. Matching session.Meta's own Cwd instead would only ever search
-// the ~3% of sessions that have a Desktop sidecar while showing a project for
-// all of them — a search by project name silently missing most of its listing.
-func sessionCandidates(live map[string]string, idx session.Index) []sessionCandidate {
+// rankByRecency orders every live transcript newest-first WITHOUT opening any
+// of them: recency is the sidecar's LastActivity or the file's mtime, and both
+// are metadata. A title and a project are not — they come out of the
+// transcript's own bytes — so filling them in is left to the caller, which lets
+// a capped caller pay for the survivors instead of the whole machine.
+func rankByRecency(live map[string]string, idx session.Index) []sessionCandidate {
 	out := make([]sessionCandidate, 0, len(live))
 	for id, p := range live {
-		m := idx[id]
-		out = append(out, sessionCandidate{ID: id, Title: titleFor(m, p), Cwd: cwdFor(m, p), Path: p})
+		out = append(out, sessionCandidate{ID: id, Path: p})
 	}
 	// Newest first, so the picker's top entry is the one most likely wanted.
 	sort.Slice(out, func(i, j int) bool { return newer(out[i], out[j], idx) })
 	return out
+}
+
+// describe fills in the title and project, reading each transcript to do it.
+//
+// Resolved ONCE, in one place, so callers match on exactly the values they
+// display. Matching session.Meta's own Cwd instead would only ever search the
+// ~3% of sessions that have a Desktop sidecar while showing a project for all
+// of them — a search by project name silently missing most of its listing.
+func describe(cands []sessionCandidate, idx session.Index) []sessionCandidate {
+	for i := range cands {
+		m := idx[cands[i].ID]
+		cands[i].Title = titleFor(m, cands[i].Path)
+		cands[i].Cwd = cwdFor(m, cands[i].Path)
+	}
+	return cands
+}
+
+// sessionCandidates describes every live transcript, newest first. Only for a
+// caller that genuinely needs all of them — a text search has to look at every
+// title, so it pays for every title.
+func sessionCandidates(live map[string]string, idx session.Index) []sessionCandidate {
+	return describe(rankByRecency(live, idx), idx)
 }
 
 // recentSessions lists the sessions this machine could open, newest first,
@@ -212,16 +232,21 @@ func sessionCandidates(live map[string]string, idx session.Index) []sessionCandi
 // --session completes against — neither has a reference to narrow by, so the
 // cap is the only thing keeping a machine with thousands of transcripts from
 // rendering all of them into a picker or a completion list.
+//
+// The cap is applied BEFORE the transcripts are read. Describing all of them
+// first and slicing after cost two file reads per session on the machine — 0.4s
+// on a real 671-transcript machine, paid on every <Tab> — to produce a list that
+// throws all but `limit` of them away.
 func recentSessions(claudeHome string, idx session.Index, limit int) ([]sessionCandidate, error) {
 	live, err := liveTranscripts(claudeHome)
 	if err != nil {
 		return nil, err
 	}
-	out := sessionCandidates(live, idx)
+	out := rankByRecency(live, idx)
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
-	return out, nil
+	return describe(out, idx), nil
 }
 
 // completeSessionRef offers this machine's recent session ids to the shell,
