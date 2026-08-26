@@ -160,7 +160,8 @@ func pruneSidecarTree(root string, ids map[string]bool) (int, error) {
 }
 
 // desktopSessionAccounts maps a CLI session id to the accountUuid that owns it,
-// read from every staged Desktop sidecar tree.
+// read from every staged Desktop sidecar tree. A session claimed by more than
+// one account maps to "" — see readSidecarAccounts.
 //
 // The account is the PATH, not a field in the file:
 // <root>/claude-code-sessions/<accountUuid>/<organizationUuid>/local_<id>.json.
@@ -233,6 +234,17 @@ func readSidecarAccounts(root string, out map[string]string) {
 				}
 				var ref sidecarRef
 				if json.Unmarshal(data, &ref) != nil || ref.CLISessionID == "" {
+					continue
+				}
+				if prev, seen := out[ref.CLISessionID]; seen && prev != acct.Name() {
+					// The same session claimed by two accounts. Whichever
+					// directory happened to be read last would otherwise decide,
+					// and this is supposed to be GROUND TRUTH — an arbitrary
+					// answer here is worse than none, because it outranks the
+					// inference that would have been used instead and is sticky
+					// once stored. Mark it unusable and let the session stay
+					// unattributed.
+					out[ref.CLISessionID] = ""
 					continue
 				}
 				out[ref.CLISessionID] = acct.Name()

@@ -63,6 +63,9 @@ func recordLedger(stagingDir, device, liveAccount string, mine map[string]bool) 
 				return nil
 			}
 			var acct, src string
+			// An empty value means conflicting sidecar claims, not "no sidecar":
+			// the session falls through to the inference below rather than
+			// taking an arbitrary winner as ground truth.
 			if a := byDesktop[id]; a != "" {
 				acct, src = a, ledger.AccountFromDesktop
 			} else if liveAccount != "" && mine[id] {

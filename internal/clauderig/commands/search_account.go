@@ -84,7 +84,15 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 	// alias / email / id from clauderig's account store, mapped to a uuid via
 	// the registry (the store keys accounts by email, not uuid).
 	if st, serr := account.DefaultStore(); serr == nil {
-		if a, rerr := st.Resolve(v); rerr == nil {
+		a, rerr := st.Resolve(v)
+		// A fuzzy input matching several local accounts is an AMBIGUITY, not a
+		// miss. Discarding that error reported the account as unknown, which
+		// sends the user to check their spelling instead of to disambiguate.
+		// Only a genuine no-match continues to the registry fallback.
+		if rerr != nil && !isNoSuchAccount(rerr) {
+			return "", rerr
+		}
+		if rerr == nil {
 			// The store's own uuid first: it is recorded at capture and stays
 			// put. The registry holds only each device's LATEST account, so
 			// once every device has synced under a different login it can no
@@ -115,7 +123,26 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 // synced device registry — which records both halves for every machine that has
 // synced (see devices.Account).
 func accountUUIDsByEmail(stagingDir string) map[string]string {
-	out := map[string]string{}
+	all := accountUUIDCandidates(stagingDir)
+	out := make(map[string]string, len(all))
+	for email, uuids := range all {
+		// One candidate only. The same email can belong to two accounts in
+		// different organisations, and keeping whichever device happened to be
+		// iterated last would resolve the filter to the wrong one — silently,
+		// and differently between runs, since map order is not stable.
+		if len(uuids) == 1 {
+			for u := range uuids {
+				out[email] = u
+			}
+		}
+	}
+	return out
+}
+
+// accountUUIDCandidates maps a lowercased email to every accountUuid the synced
+// registry has recorded for it.
+func accountUUIDCandidates(stagingDir string) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
 	if stagingDir == "" {
 		return out
 	}
@@ -127,9 +154,21 @@ func accountUUIDsByEmail(stagingDir string) map[string]string {
 		if d.Account == nil || d.Account.Email == "" || d.Account.AccountUUID == "" {
 			continue
 		}
-		out[strings.ToLower(d.Account.Email)] = d.Account.AccountUUID
+		email := strings.ToLower(d.Account.Email)
+		if out[email] == nil {
+			out[email] = map[string]bool{}
+		}
+		out[email][d.Account.AccountUUID] = true
 	}
 	return out
+}
+
+// isNoSuchAccount reports whether the store simply did not find the reference,
+// as opposed to finding several or failing to read.
+func isNoSuchAccount(err error) bool {
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "no account") || strings.Contains(m, "unknown account") ||
+		strings.Contains(m, "not found") || strings.Contains(m, "no accounts yet")
 }
 
 // knownAccountsHint lists what --account could have matched, so a failed lookup

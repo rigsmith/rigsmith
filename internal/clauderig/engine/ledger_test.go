@@ -255,3 +255,32 @@ func TestRecordLedger_SidecarAttributesEvenAnotherMachinesSession(t *testing.T) 
 		t.Errorf("got %q/%q, want acct-desktop/%s", a, s, ledger.AccountFromDesktop)
 	}
 }
+
+// A session claimed by two account directories has no ground truth. Letting
+// whichever directory was read last decide is worse than having no answer: it
+// OUTRANKS the inference that would otherwise apply, and is sticky once stored.
+func TestRecordLedger_ConflictingSidecarsLeaveTheSessionToInference(t *testing.T) {
+	staging := t.TempDir()
+	stageTranscriptBody(t, staging, "-Users-j-Git-api", "sess-1",
+		`{"type":"user","cwd":"/Users/j/Git/api","message":{"content":"hi"}}`+"\n")
+	stageAccountSidecar(t, staging, "desktop", "acct-one", "org-1", "sess-1")
+	stageAccountSidecar(t, staging, filepath.Join("desktop@work", "data"), "acct-two", "org-2", "sess-1")
+
+	// with no live account, the conflict must leave it unattributed
+	if _, _, err := recordLedger(staging, "mbp", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := ledger.Open(staging, "mbp")
+	if a, s := l.Attribution("sess-1"); a != "" || s != "" {
+		t.Errorf("conflicting claims produced %q/%q, want no attribution", a, s)
+	}
+
+	// and with one, it falls through to the inference rather than a coin flip
+	if _, _, err := recordLedger(staging, "mbp", "acct-live", map[string]bool{"sess-1": true}); err != nil {
+		t.Fatal(err)
+	}
+	l2, _ := ledger.Open(staging, "mbp")
+	if a, s := l2.Attribution("sess-1"); a != "acct-live" || s != ledger.AccountFromSync {
+		t.Errorf("got %q/%q, want the inference to apply", a, s)
+	}
+}

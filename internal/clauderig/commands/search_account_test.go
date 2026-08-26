@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -159,5 +160,54 @@ func TestSessionScope_AccountAloneStillCountsAsNarrowing(t *testing.T) {
 	// and with nothing set at all, it must not trip
 	if sc.filtering() {
 		t.Error("no filters must not trip the guard")
+	}
+}
+
+// The same email can belong to two accounts in different organisations. Keeping
+// whichever device was iterated last resolved the filter to the wrong one —
+// silently, and differently between runs, since map order is not stable.
+func TestAccountUUIDsByEmail_DropsAnAmbiguousEmail(t *testing.T) {
+	staging := t.TempDir()
+	reg, err := devices.Load(staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	reg.Touch("mbp", "macos", "2.1.237", &devices.Account{
+		AccountUUID: "uuid-org-a", OrganizationUUID: "org-a", Email: "same@example.com"}, now)
+	reg.Touch("air", "macos", "2.1.237", &devices.Account{
+		AccountUUID: "uuid-org-b", OrganizationUUID: "org-b", Email: "same@example.com"}, now)
+	reg.Touch("pc", "windows", "2.1.237", &devices.Account{
+		AccountUUID: "uuid-solo", OrganizationUUID: "org-c", Email: "solo@example.com"}, now)
+	if err := reg.Save(staging); err != nil {
+		t.Fatal(err)
+	}
+
+	byEmail := accountUUIDsByEmail(staging)
+	if _, ok := byEmail["same@example.com"]; ok {
+		t.Error("an email claimed by two accounts must not resolve to one of them arbitrarily")
+	}
+	if byEmail["solo@example.com"] != "uuid-solo" {
+		t.Errorf("unambiguous email = %q, want uuid-solo", byEmail["solo@example.com"])
+	}
+	// both uuids are still offered as prefix candidates
+	all := accountUUIDCandidates(staging)
+	if len(all["same@example.com"]) != 2 {
+		t.Errorf("want both candidates retained, got %v", all["same@example.com"])
+	}
+}
+
+// A fuzzy reference matching several local accounts is an ambiguity, not a
+// miss. Reporting it as unknown sends the user to check their spelling instead
+// of to disambiguate.
+func TestIsNoSuchAccount(t *testing.T) {
+	if isNoSuchAccount(errors.New(`no account matches "zzz"`)) != true {
+		t.Error("a genuine miss should continue to the registry fallback")
+	}
+	if isNoSuchAccount(errors.New(`"j" is ambiguous: john@a.com, john@b.com`)) {
+		t.Error("an ambiguity must not be treated as a miss")
+	}
+	if isNoSuchAccount(errors.New("permission denied reading the account store")) {
+		t.Error("a read failure must not be treated as a miss")
 	}
 }

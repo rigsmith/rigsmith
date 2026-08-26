@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -61,6 +62,17 @@ type Entry struct {
 	// sharply in confidence and a filter that hid that would be the kind of
 	// quiet lie RecordedBy is named to avoid. See AccountFrom*.
 	AccountSource string `json:"accountSource,omitempty"`
+	// Extra holds fields this binary does not know about, so a row written by a
+	// NEWER clauderig survives a round trip through this one instead of being
+	// silently dropped on the next rewrite.
+	//
+	// It does not rescue rows from an OLDER binary — that one has no such
+	// catch-all, so it drops Account/AccountSource/AccountSince when it rewrites
+	// a row whose transcript changed. Attribution re-derives on the next sync
+	// from a Desktop sidecar or this machine's own login, so the loss is not
+	// permanent; what is lost is the FIRST-attribution stamp, which is why
+	// mixed-version fleets should update together.
+	Extra map[string]json.RawMessage `json:"-"`
 	// AccountSince is when the CURRENT attribution was established, and it does
 	// not move when the transcript changes.
 	//
@@ -128,10 +140,36 @@ func bestAccount(a, b Entry) (account, source string, since time.Time) {
 	// attribution, and would not even be stable — a merged row carries the
 	// newer transcript's Seen alongside an older row's account, so a third
 	// device with an intermediate Seen could take the session from both.
-	if !b.AccountSince.IsZero() && (a.AccountSince.IsZero() || b.AccountSince.Before(a.AccountSince)) {
+	sa, sb := effectiveSince(a), effectiveSince(b)
+	if sb.Before(sa) {
+		return b.Account, b.AccountSource, b.AccountSince
+	}
+	if sa.Before(sb) {
+		return a.Account, a.AccountSource, a.AccountSince
+	}
+	// Identical stamps — including the case where two machines' clocks disagree
+	// enough to produce them. Wall-clock order cannot be trusted to say which
+	// attribution came first, so the tie is broken on the account uuid instead:
+	// it is arbitrary, but it is the SAME arbitrary answer on every machine,
+	// which is what stops the union from flip-flopping between devices. Skew
+	// can still crown the wrong "earliest"; it can no longer make them disagree.
+	if b.Account < a.Account {
 		return b.Account, b.AccountSource, b.AccountSince
 	}
 	return a.Account, a.AccountSource, a.AccountSince
+}
+
+// effectiveSince is the attribution's timestamp, falling back to the row's write
+// time for rows written before AccountSince existed.
+//
+// Without the fallback a legacy row — real attribution, zero stamp — loses to
+// anything written afterwards, because a zero time precedes everything. That
+// would quietly hand every historical session to whichever machine synced next.
+func effectiveSince(e Entry) time.Time {
+	if !e.AccountSince.IsZero() {
+		return e.AccountSince
+	}
+	return e.Seen
 }
 
 // mergeAccount picks the attribution to keep. Ties go to prev — attribution is
@@ -208,6 +246,20 @@ func (l *Ledger) Note(e Entry) bool {
 		e.AccountSince = e.Seen
 	}
 	if prev, ok := l.rows[e.ID]; ok {
+		// Migrate a legacy row in place, so the fallback in effectiveSince is
+		// only ever needed until each row is next written.
+		if prev.Account != "" && prev.AccountSince.IsZero() {
+			prev.AccountSince = prev.Seen
+			l.rows[e.ID] = prev
+		}
+		// Carry unknown fields across. The incoming row is built by this
+		// binary and cannot know about them, so replacing the stored row
+		// wholesale is exactly where a newer clauderig's data would be lost.
+		if e.Extra == nil {
+			e.Extra = prev.Extra
+		}
+	}
+	if prev, ok := l.rows[e.ID]; ok {
 		e.Account, e.AccountSource, e.AccountSince = mergeAccount(prev, e)
 		// An account upgrade is a real change even when the transcript is byte
 		// identical — a session first attributed by inference and later covered
@@ -278,7 +330,7 @@ func (l *Ledger) Save() error {
 
 	var b strings.Builder
 	for _, id := range ids {
-		row, err := json.Marshal(l.rows[id])
+		row, err := marshalEntry(l.rows[id])
 		if err != nil {
 			return err
 		}
@@ -370,6 +422,63 @@ func newerRow(a, b Entry) bool {
 
 // readFile parses one ledger file, skipping malformed lines rather than failing
 // the whole read — a truncated write must not cost every other row.
+// knownEntryFields is the JSON key set this binary understands, derived from the
+// struct tags so adding a field cannot forget to update it.
+var knownEntryFields = func() map[string]bool {
+	out := map[string]bool{}
+	t := reflect.TypeOf(Entry{})
+	for i := 0; i < t.NumField(); i++ {
+		name := strings.Split(t.Field(i).Tag.Get("json"), ",")[0]
+		if name != "" && name != "-" {
+			out[name] = true
+		}
+	}
+	return out
+}()
+
+// marshalEntry writes a row, folding back any fields this binary did not
+// recognise when it read them. Rewriting a row is otherwise a lossy operation
+// for anything a newer clauderig added.
+func marshalEntry(e Entry) ([]byte, error) {
+	row, err := json.Marshal(e)
+	if err != nil {
+		return nil, err
+	}
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(row, &merged); err != nil {
+		return row, nil //nolint:nilerr // a row that will not round-trip is still better written than dropped
+	}
+	// `omitempty` does not suppress a zero time.Time — it is a struct, never
+	// "empty" to encoding/json — so an unattributed row would carry a literal
+	// year-1 timestamp into every ledger file. Drop it here instead.
+	if e.AccountSince.IsZero() {
+		delete(merged, "accountSince")
+	}
+	for k, v := range e.Extra {
+		if !knownEntryFields[k] {
+			merged[k] = v
+		}
+	}
+	return json.Marshal(merged)
+}
+
+// unknownFields returns the keys of line that this binary does not model.
+func unknownFields(line []byte) map[string]json.RawMessage {
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(line, &raw) != nil {
+		return nil
+	}
+	for k := range raw {
+		if knownEntryFields[k] {
+			delete(raw, k)
+		}
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	return raw
+}
+
 func readFile(path string) ([]Entry, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -389,7 +498,10 @@ func readFile(path string) ([]Entry, error) {
 			continue
 		}
 		var e Entry
-		if json.Unmarshal([]byte(line), &e) != nil || e.ID == "" {
+		if json.Unmarshal([]byte(line), &e) == nil && e.ID != "" {
+			e.Extra = unknownFields([]byte(line))
+		}
+		if e.ID == "" {
 			continue
 		}
 		out = append(out, e)

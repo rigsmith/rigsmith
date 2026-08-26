@@ -449,3 +449,84 @@ func TestNote_AccountSinceSurvivesATranscriptUpdate(t *testing.T) {
 		t.Errorf("Seen = %v, want it to track the latest write", got.Seen)
 	}
 }
+
+// A legacy row has Account and AccountSource but no AccountSince. A zero time
+// precedes everything, so without a fallback any later equal-rank attribution
+// would beat it — quietly handing every historical session to whichever machine
+// synced next.
+func TestLoadAll_LegacyRowKeepsItsAttribution(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, DirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// written by hand, exactly as an older clauderig left it: no accountSince
+	legacy := `{"id":"s1","end":"2026-08-01T00:00:00Z","bytes":10,"seen":"2026-08-01T00:00:00Z","account":"acct-legacy","accountSource":"sync"}`
+	if err := os.WriteFile(filepath.Join(dir, DirName, "machine-a.jsonl"), []byte(legacy+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	later, _ := Open(dir, "machine-b")
+	later.Note(Entry{ID: "s1", End: mustTime(t, "2026-08-01T00:00:00Z"), Bytes: 10,
+		Seen: mustTime(t, "2026-08-20T00:00:00Z"), Account: "acct-new", AccountSource: AccountFromSync})
+	if err := later.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadAll(dir)["s1"]; got.Account != "acct-legacy" {
+		t.Errorf("union = %q, want acct-legacy — a legacy row must not lose to a newer stamp", got.Account)
+	}
+}
+
+// Two machines whose clocks disagree can produce identical stamps. Wall-clock
+// order cannot say which came first, so the tie must at least be resolved the
+// SAME way everywhere — otherwise the union disagrees between devices.
+func TestBestAccount_IdenticalStampsResolveDeterministically(t *testing.T) {
+	at := mustTime(t, "2026-08-01T00:00:00Z")
+	a := Entry{ID: "s1", Account: "bbb", AccountSource: AccountFromSync, AccountSince: at}
+	b := Entry{ID: "s1", Account: "aaa", AccountSource: AccountFromSync, AccountSince: at}
+
+	got1, _, _ := bestAccount(a, b)
+	got2, _, _ := bestAccount(b, a)
+	if got1 != got2 {
+		t.Errorf("order-dependent: %q vs %q", got1, got2)
+	}
+	if got1 != "aaa" {
+		t.Errorf("got %q, want the deterministic winner", got1)
+	}
+}
+
+// A row written by a NEWER clauderig must survive a round trip through this one
+// rather than losing its unknown fields on the next rewrite.
+func TestReadWrite_PreservesUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, DirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	row := `{"id":"s1","end":"2026-08-01T00:00:00Z","bytes":10,"seen":"2026-08-01T00:00:00Z","futureField":"keep me"}`
+	path := filepath.Join(dir, DirName, "mbp.jsonl")
+	if err := os.WriteFile(path, []byte(row+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	l, err := Open(dir, "mbp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Note(Entry{ID: "s1", End: mustTime(t, "2026-08-02T00:00:00Z"), Bytes: 20,
+		Seen: mustTime(t, "2026-08-02T00:00:00Z")})
+	if err := l.Save(); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	if !strings.Contains(string(b), "futureField") {
+		t.Errorf("unknown field dropped on rewrite: %s", b)
+	}
+}
+
+func mustTime(t *testing.T, v string) time.Time {
+	t.Helper()
+	ts, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ts.UTC()
+}
