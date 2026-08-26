@@ -50,7 +50,7 @@ func NewDesktopCmd() *cobra.Command {
 			"clauderig decides is which one to launch against. That is what makes this\n" +
 			"safe where moving a session around was not.\n\n" +
 			"  add       create a profile and open a window to log into\n" +
-			"  open      open (or focus) a profile's window\n" +
+			"  open      open (or focus) a profile's window, optionally on a session\n" +
 			"  list      show saved profiles and which are open\n" +
 			"  quit      close a profile's window\n" +
 			"  map       bind a directory to a profile, for a bare `open` there\n" +
@@ -315,7 +315,7 @@ func newDesktopOpenCmd() *cobra.Command {
 	var pick bool
 	cmd := &cobra.Command{
 		Use:   "open [<name|email>]",
-		Short: "Open (or focus) a profile's Claude Desktop window",
+		Short: "Open (or focus) a profile's Claude Desktop window, optionally on a session",
 		Long: "Opens the profile's window, or focuses it if it is already open.\n\n" +
 			"With no profile named: uses the one mapped to this directory\n" +
 			"(`clauderig desktop map`, nearest mapped ancestor), and otherwise asks\n" +
@@ -325,9 +325,11 @@ func newDesktopOpenCmd() *cobra.Command {
 			"id, or text to match its title or project. Desktop reads the transcript\n" +
 			"from ~/.claude/projects, so a session that lives only in the synced repo\n" +
 			"must be restored before it can be opened.\n\n" +
-			"With -i and no --session, it lists this machine's recent sessions and\n" +
-			"opens the one you choose — `clauderig recent` is the same listing. Given\n" +
-			"both, the picker opens on the matches instead of taking a lone one.\n\n" +
+			"With -i and no --session, it lists the sessions this machine could open\n" +
+			"— newest first, dated by each transcript's own records — and opens the\n" +
+			"one you choose. That is a narrower set than `clauderig recent` shows,\n" +
+			"which spans every synced machine and every client. Given both flags,\n" +
+			"the picker opens on the matches instead of taking a lone one.\n\n" +
 			"A deep link is routed by scheme, not to a particular window, so with a\n" +
 			"second profile open the OS picks which one imports the session — that is\n" +
 			"refused rather than risked, since it would cross an account boundary.\n" +
@@ -495,7 +497,10 @@ func newDesktopOpenCmd() *cobra.Command {
 	// become a positional profile name — the flag cannot be both. The wrapped
 	// error keeps pflag's own wording and adds the remedy.
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, ferr error) error {
-		if ferr != nil && strings.Contains(ferr.Error(), "--session") {
+		// pflag's exact wording for this one flag. A substring test for
+		// "--session" also caught `unknown flag: --sessions` and
+		// `--session-timeout`, answering a typo with advice about a value.
+		if ferr != nil && ferr.Error() == "flag needs an argument: --session" {
 			return fmt.Errorf("%w\nGive it a session id or some text to match, "+
 				"or pass -i to pick from recent sessions", ferr)
 		}

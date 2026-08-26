@@ -261,7 +261,7 @@ Having found a session, `clauderig desktop open --session` carries it into
 Desktop's Code tab:
 
 ```sh
-clauderig desktop open work --session 424f8e2f-9b1e-4074-b1b5-ac1fc09b67df
+clauderig desktop open work --session a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d
 clauderig desktop open work --session "auth refactor"   # title or project text
 clauderig desktop open work -i                          # pick one from a list
 ```
@@ -270,10 +270,10 @@ You rarely know a uuid, so `recent -l` prints the command under each session,
 beside the terminal one:
 
 ```text
-● Tweed worktrees review
-  2c399bda · 2026-08-26 · desktop@relatecpa · opus-5 · /Users/john/Git
-  resume: cd /Users/john/Git && claude --resume 2c399bda-6a70-…
-  desktop: clauderig desktop open --session 2c399bda-6a70-…
+● Refactor the auth middleware
+  a1b2c3d4 · 2026-05-14 · desktop@work · opus-5 · ~/Git/acme-api
+  resume: cd ~/Git/acme-api && claude --resume a1b2c3d4-…
+  desktop: clauderig desktop open --session a1b2c3d4-…
 ```
 
 `--session` also completes to recent ids on `<Tab>`, each labelled with its title

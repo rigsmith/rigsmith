@@ -344,7 +344,7 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 	// Shown in both modes. -l prints a ready-to-paste `--session <id>` per row,
 	// but neither mode otherwise says that the picker exists, and the picker is
 	// the only form that needs no id at all.
-	if desktopInstalled() {
+	if desktopUsable() {
 		fmt.Fprintf(out, "%s\n", DimStyle.Render("open one in Claude Desktop: clauderig desktop open -i"))
 	}
 	fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf(

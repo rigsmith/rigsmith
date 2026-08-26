@@ -196,12 +196,31 @@ func findSessions(ref, claudeHome string, idx session.Index) ([]sessionCandidate
 // transcript's own bytes — so filling them in is left to the caller, which lets
 // a capped caller pay for the survivors instead of the whole machine.
 func rankByRecency(live map[string]string, idx session.Index) []sessionCandidate {
-	out := make([]sessionCandidate, 0, len(live))
+	// Dated ONCE, before the sort. recency opens the transcript's tail, and a
+	// comparator runs O(n log n) times — dating inside it re-read every file
+	// several times over to answer the same question.
+	type dated struct {
+		c  sessionCandidate
+		at time.Time
+	}
+	all := make([]dated, 0, len(live))
 	for id, p := range live {
-		out = append(out, sessionCandidate{ID: id, Path: p})
+		c := sessionCandidate{ID: id, Path: p}
+		all = append(all, dated{c: c, at: recency(c, idx)})
 	}
 	// Newest first, so the picker's top entry is the one most likely wanted.
-	sort.Slice(out, func(i, j int) bool { return newer(out[i], out[j], idx) })
+	// The id breaks ties so the order is stable across runs: two sessions can
+	// share a timestamp, and a map range order must never decide which wins.
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].at.Equal(all[j].at) {
+			return all[i].at.After(all[j].at)
+		}
+		return all[i].c.ID < all[j].c.ID
+	})
+	out := make([]sessionCandidate, len(all))
+	for i, d := range all {
+		out[i] = d.c
+	}
 	return out
 }
 
@@ -312,23 +331,30 @@ func titleFor(m session.Meta, transcriptPath string) string {
 	return session.FirstPrompt(transcriptPath)
 }
 
-func newer(a, b sessionCandidate, idx session.Index) bool {
-	at, bt := recency(a, idx), recency(b, idx)
-	if !at.Equal(bt) {
-		return at.After(bt)
-	}
-	return a.ID < b.ID
-}
-
-// recency is the session's last-used time: the sidecar's LastActivity when
-// there is one, and the transcript's mtime otherwise.
+// recency is the session's last-used time, in descending order of how much the
+// source can be trusted: the newest timestamped record in the transcript, then
+// the Desktop sidecar, then the file's mtime.
 //
-// Comparing LastActivity FIRST looked reasonable and was not: it is zero for
-// the ~97% of sessions with no Desktop sidecar, so any sidecar timestamp beat
-// every transcript-only session regardless of true recency. "Newest first"
-// then meant "sidecar sessions first", and the picker's default entry was the
-// most recent sidecar rather than the most recent session.
+// The transcript's own record comes first because it is the only one of the
+// three that is CONTENT. A restore, a checkout of the synced repo, or any tool
+// that walks the tree rewrites mtime — on one real machine 580 of 670
+// transcripts had an mtime newer than their last message, 541 of them stamped
+// with the same minute by a single restore — and the sidecar's lastActivityAt
+// is rebuilt by Desktop from those same files, so it drifts with them. Ranked
+// by either, a picker of "recent sessions" fills with whatever was copied last.
+// `clauderig recent` dates sessions this way for exactly this reason; the
+// picker and the completion list are the same question and now get the same
+// answer. session.LastActivity reads only the transcript's tail, so this costs
+// a seek rather than a parse.
+//
+// Comparing the sidecar FIRST looked reasonable and was not: it is zero for the
+// ~97% of sessions with no Desktop sidecar, so any sidecar timestamp beat every
+// transcript-only session regardless of true recency. "Newest first" then meant
+// "sidecar sessions first".
 func recency(c sessionCandidate, idx session.Index) time.Time {
+	if a, ok := session.LastActivity(c.Path); ok && !a.At.IsZero() {
+		return a.At
+	}
 	if t := idx[c.ID].LastActivity; !t.IsZero() {
 		return t
 	}

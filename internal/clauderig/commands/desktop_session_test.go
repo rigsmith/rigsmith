@@ -708,9 +708,9 @@ func TestCompletionEntry_KeepsOneCandidatePerLine(t *testing.T) {
 // work: Desktop imports the transcript from ~/.claude/projects itself, so a
 // session that is not there has nothing for it to read.
 func TestDesktopHint_OnlyWhereTheCommandWouldWork(t *testing.T) {
-	installed := desktopInstalled
-	desktopInstalled = func() bool { return true }
-	t.Cleanup(func() { desktopInstalled = installed })
+	usable := desktopUsable
+	desktopUsable = func() bool { return true }
+	t.Cleanup(func() { desktopUsable = usable })
 
 	live := &sessResult{id: "11111111-1111-1111-1111-111111111111", cliLive: true}
 	if h := desktopHint(live); !strings.Contains(h, "--session "+live.id) {
@@ -720,8 +720,75 @@ func TestDesktopHint_OnlyWhereTheCommandWouldWork(t *testing.T) {
 		t.Errorf("a session with no live transcript has nothing to import: %q", h)
 	}
 
-	desktopInstalled = func() bool { return false }
+	desktopUsable = func() bool { return false }
 	if h := desktopHint(live); h != "" {
 		t.Errorf("no Claude Desktop, no command to offer: %q", h)
+	}
+}
+
+// The picker and the completion list rank by the transcript's own newest
+// record, not by mtime. A restore, a sync, or any tool that walks ~/.claude
+// rewrites mtimes — on one real machine 580 of 670 transcripts had an mtime
+// newer than their last message — so ranked that way a picker of "recent
+// sessions" fills with whatever was copied last.
+func TestRecentSessions_ContentDateBeatsMtime(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "projects", "-Users-j-Git-api")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := "11111111-1111-1111-1111-111111111111" // fresh mtime, old conversation
+	real := "22222222-2222-2222-2222-222222222222"  // old mtime, recent conversation
+
+	write := func(id, stamp string, mtime time.Time) {
+		t.Helper()
+		body := `{"type":"user","cwd":"/Users/j/Git/api","timestamp":"` + stamp +
+			`","message":{"content":"hi"}}` + "\n"
+		p := filepath.Join(dir, id+".jsonl")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UTC()
+	// Exactly the shape a restore leaves behind: every file stamped now, while
+	// the conversations inside them are of every age.
+	write(stale, now.Add(-30*24*time.Hour).Format(time.RFC3339), now)
+	write(real, now.Add(-1*time.Hour).Format(time.RFC3339), now.Add(-30*24*time.Hour))
+
+	got, err := recentSessions(home, session.Index{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want both, got %d", len(got))
+	}
+	if got[0].ID != real {
+		t.Errorf("first = %s, want the genuinely recent conversation (%s) — "+
+			"ranking fell back to mtime", got[0].ID, real)
+	}
+}
+
+// A Desktop sidecar's lastActivityAt is rebuilt by the app from the same files,
+// so it drifts with them; the transcript's own record outranks it too.
+func TestRecency_TranscriptOutranksTheSidecar(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "projects", "-Users-j-Git-api")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	id := "33333333-3333-3333-3333-333333333333"
+	want := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+	body := `{"type":"user","timestamp":"` + want.Format(time.RFC3339) + `","message":{"content":"hi"}}` + "\n"
+	p := filepath.Join(dir, id+".jsonl")
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	idx := session.Index{id: {ID: id, LastActivity: time.Now().UTC()}}
+
+	if got := recency(sessionCandidate{ID: id, Path: p}, idx); !got.Equal(want) {
+		t.Errorf("recency = %v, want the transcript's own record %v", got, want)
 	}
 }

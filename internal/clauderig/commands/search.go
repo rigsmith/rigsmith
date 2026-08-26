@@ -549,12 +549,26 @@ func renderSessionAs(out interface{ Write([]byte) (int, error) }, me config.Mach
 	}
 }
 
-// desktopInstalled is memoised: renderSessionAs runs once per result, and
-// whether Claude Desktop exists is a filesystem probe that cannot change
-// part-way through a listing.
-var desktopInstalled = sync.OnceValue(func() bool {
-	_, ok := desktop.New().Installed()
-	return ok
+// desktopUsable reports whether `clauderig desktop open` could actually run:
+// Claude Desktop installed AND at least one profile saved.
+//
+// Both halves matter. On Linux there is no such app at all. And with the app
+// but no profile, `open` resolves a profile before it looks at a session and
+// stops at "no Desktop profiles yet" — so a hint naming the command would be
+// advertising a dead end to the one user who most needs it to work.
+//
+// Memoised because it runs once per rendered result and is two filesystem
+// probes whose answer cannot change part-way through a listing.
+var desktopUsable = sync.OnceValue(func() bool {
+	if _, ok := desktop.New().Installed(); !ok {
+		return false
+	}
+	st, err := desktopStore()
+	if err != nil {
+		return false
+	}
+	ps, err := st.List()
+	return err == nil && len(ps) > 0
 })
 
 // desktopHint offers the Claude Desktop equivalent of the resume command.
@@ -568,7 +582,7 @@ var desktopInstalled = sync.OnceValue(func() bool {
 // Suppressed where Claude Desktop is not installed: on Linux there is no such
 // app at all, and offering a command that cannot work is worse than silence.
 func desktopHint(r *sessResult) string {
-	if !r.cliLive || !desktopInstalled() {
+	if !r.cliLive || !desktopUsable() {
 		return ""
 	}
 	// projects/ holds a few .jsonl files that are not sessions, and their stem
