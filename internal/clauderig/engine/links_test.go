@@ -361,3 +361,55 @@ func TestRestore_SkipsADestinationHeldByARealDirectory(t *testing.T) {
 		t.Error("the local directory should be left alone")
 	}
 }
+
+// --prune must not collect the contents of a directory restore declined to
+// write into. Recording only the collision path left the directory's real
+// children looking absent from the synced set, so prune deleted the user's
+// files under a path restore had just refused to touch.
+func TestRestore_PruneKeepsTheContentsOfAConflictingDirectory(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/skills/foo", "another machine had this as a file")
+
+	target := t.TempDir()
+	write(t, target, "skills/foo/local.md", "the user's own skill")
+
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	rep, err := Restore(RestoreOptions{
+		StagingDir: staging, Config: targetRootConfig(target), Machine: jane,
+		TargetOverride: override("cli", target), Prune: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Roots[0].Conflicts != 1 {
+		t.Errorf("Conflicts = %d, want 1", rep.Roots[0].Conflicts)
+	}
+	if b, _ := os.ReadFile(filepath.Join(target, "skills", "foo", "local.md")); string(b) != "the user's own skill" {
+		t.Errorf("prune deleted a file under the conflicting directory: %q", b)
+	}
+}
+
+// Lstat(dst) reports ENOTDIR when a regular FILE occupies an ancestor, so a
+// check that only inspects dst never sees it — and MkdirAll then fails, taking
+// the whole restore down over one path.
+func TestRestore_SkipsWhenAFileOccupiesAnAncestor(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/skills/foo/SKILL.md", "staged under foo")
+	write(t, staging, "cli/settings.json", "{}")
+
+	target := t.TempDir()
+	write(t, target, "skills/foo", "here foo is a FILE, not a directory")
+
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	rep, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target),
+		Machine: jane, TargetOverride: override("cli", target)})
+	if err != nil {
+		t.Fatalf("a file in the way must not abort the restore: %v", err)
+	}
+	if rep.Roots[0].Conflicts != 1 {
+		t.Errorf("Conflicts = %d, want 1", rep.Roots[0].Conflicts)
+	}
+	if _, serr := os.Stat(filepath.Join(target, "settings.json")); serr != nil {
+		t.Errorf("the rest of the root should still restore: %v", serr)
+	}
+}

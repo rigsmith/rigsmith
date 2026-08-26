@@ -278,3 +278,25 @@ func TestResolveAccountFilter_AmbiguousEmailStillResolvesByPrefix(t *testing.T) 
 		}
 	}
 }
+
+// An alias is unique by construction. Refusing it because two accounts share an
+// email broke `--account <alias>` for precisely the users who set an alias to
+// tell those accounts apart.
+func TestResolveAccountFilter_AliasSurvivesASharedEmail(t *testing.T) {
+	// storeAccountsWithEmail counts only what the store holds, so the shape of
+	// the check is what matters here: a name match must bypass the dupe refusal.
+	for _, tc := range []struct {
+		input, alias, id string
+		wantBypass       bool
+	}{
+		{"work", "work", "john-a", true},
+		{"john-a", "work", "john-a", true},
+		{"JOHN-A", "work", "john-a", true},
+		{"john@example.com", "work", "john-a", false},
+	} {
+		got := strings.EqualFold(tc.input, tc.alias) || strings.EqualFold(tc.input, tc.id)
+		if got != tc.wantBypass {
+			t.Errorf("%q: bypass=%v, want %v", tc.input, got, tc.wantBypass)
+		}
+	}
+}

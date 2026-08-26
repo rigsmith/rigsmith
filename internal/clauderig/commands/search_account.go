@@ -116,7 +116,12 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 			// one of them. The registry path already refuses an ambiguous email;
 			// the store path has to as well, or which account you get depends on
 			// listing order.
-			if dupes := storeAccountsWithEmail(st, a.Email); dupes > 1 {
+			// Only when the input WAS the email. An alias and an id are unique by
+			// construction, so refusing them because two accounts happen to share
+			// an email broke `--account <alias>` — the headline use of this flag —
+			// for exactly the users who set an alias to tell those accounts apart.
+			byName := strings.EqualFold(v, a.Alias) || strings.EqualFold(v, a.ID)
+			if dupes := storeAccountsWithEmail(st, a.Email); !byName && dupes > 1 {
 				return "", fmt.Errorf("%d accounts share the email %s — name one by alias, id, or accountUuid prefix", dupes, a.Email)
 			}
 			// The store's own uuid first: it is recorded at capture and stays
