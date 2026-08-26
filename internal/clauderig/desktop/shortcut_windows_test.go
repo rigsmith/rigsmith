@@ -29,6 +29,21 @@ ConvertTo-Json -Compress -InputObject @{ Target = $s.TargetPath; Args = $s.Argum
 	return row.Target, row.Args, row.Desc
 }
 
+// sameFile reports whether two paths name one file, whatever each is spelled
+// like — 8.3 short components and case both differ freely on Windows.
+func sameFile(t *testing.T, a, b string) bool {
+	t.Helper()
+	fa, err := os.Stat(a)
+	if err != nil {
+		t.Fatalf("stat %s: %v", a, err)
+	}
+	fb, err := os.Stat(b)
+	if err != nil {
+		t.Fatalf("stat %s: %v", b, err)
+	}
+	return os.SameFile(fa, fb)
+}
+
 // The shortcut has to run `clauderig desktop open <profile>` — that is the whole
 // contract, and it lives in fields only the shell can read back.
 func TestLnkRunsDesktopOpen(t *testing.T) {
@@ -48,8 +63,11 @@ func TestLnkRunsDesktopOpen(t *testing.T) {
 		t.Fatalf("shortcut at %q", sc.Path)
 	}
 	target, args, desc := readLnk(t, sc.Path)
-	if !strings.EqualFold(target, exe) {
-		t.Fatalf("target = %q, want %q", target, exe)
+	// By identity rather than by string: the shell stores the canonical long
+	// path, and a temp directory hands out an 8.3 short one, so the same file
+	// arrives spelled two ways.
+	if !sameFile(t, target, exe) {
+		t.Fatalf("target = %q, want %q (a different file)", target, exe)
 	}
 	if args != `desktop open "work_1"` {
 		t.Fatalf("arguments = %q", args)

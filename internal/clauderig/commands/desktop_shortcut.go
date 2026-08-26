@@ -85,7 +85,7 @@ func newDesktopShortcutCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&to, "to", []string{string(desktop.DestDesktop)},
 		"where to put it: desktop, apps (repeatable)")
 	cmd.Flags().StringVar(&label, "label", "", "name to show under the icon (default \"Claude - <profile>\")")
-	cmd.Flags().BoolVar(&all, "all", false, "one shortcut per saved profile")
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "one shortcut per saved profile")
 	cmd.Flags().BoolVar(&remove, "rm", false, "delete this profile's shortcuts instead of making them")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "replace a file of the same name that clauderig did not create")
 	cmd.Flags().StringVar(&exe, "exe", "",

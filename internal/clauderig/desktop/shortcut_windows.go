@@ -182,12 +182,21 @@ ConvertTo-Json -Compress -InputObject @($rows)`
 
 func removeShortcutAt(path string) error { return os.Remove(path) }
 
-// containsPath reports whether a listing already holds this file. Compared
-// case-insensitively: the path we built and the path PowerShell reported are
-// the same file on a case-insensitive filesystem even when they differ in case.
+// containsPath reports whether a listing already holds this file.
+//
+// Compared by FILE NAME, not by full path, and the difference is load-bearing.
+// The listing came from the very directory the file is being written into, so a
+// name identifies it there uniquely — while the two paths can be spelled
+// differently and still be the same file: PowerShell reports the canonical long
+// form (C:\Users\runneradmin\…) where the path we composed may carry an 8.3
+// short component (C:\Users\RUNNER~1\…). Comparing the full strings made
+// re-running the command over its OWN shortcut refuse it as somebody else's,
+// which is the one thing that has to keep working: it is how a shortcut is
+// repaired after clauderig moves.
 func containsPath(list []Shortcut, path string) bool {
+	name := filepath.Base(path)
 	for _, s := range list {
-		if strings.EqualFold(filepath.Clean(s.Path), filepath.Clean(path)) {
+		if strings.EqualFold(filepath.Base(s.Path), name) {
 			return true
 		}
 	}
