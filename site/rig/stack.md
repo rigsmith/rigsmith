@@ -1,12 +1,12 @@
 # Stack workspaces
 
-Some projects only make sense together — a library, a second library, and the
-thing that uses both. When you maintain forks of all three, iterating means
-publishing a package to see a change land, and a change that spans them cannot
-be one commit.
+Some projects only make sense together — an app, and the libraries it depends
+on that you have had to fork. Iterating across that boundary means publishing a
+package to see a change land, and a change that spans the repos cannot be one
+commit.
 
-A **stack workspace** fuses those repos into one git history, each under its own
-directory. A change spans them in a single commit, the build compiles against
+A **stack workspace** fuses the forked repos into one git history, each under
+its own directory. A change spans them in a single commit, the build compiles against
 source rather than packages, and each project still leaves as an ordinary pull
 request against its own upstream. Upstream never learns the workspace exists.
 
@@ -22,10 +22,51 @@ it as a throwaway localhost process and does everything else with plain git.
 Because it is one repo, one commit can touch every project in it.
 
 **The build half.** If the projects depend on each other through a package
-registry, your edits do not reach the consumer without a publish cycle. A
-workspace-level build file redirects those package references at the sources
-next door — see [wiring the build](#build) below. No upstream-owned file is
-modified.
+registry, your edits do not reach the consumer without a publish cycle. A build
+file sitting *above* the projects redirects those package references at the
+sources next door — see [wiring the build](#build) below. No upstream-owned
+file is modified, and no project file changes at all.
+
+## Where your own project goes {#topology}
+
+The workspace is for repos **you do not own**. Your own project usually stays
+outside it and reaches in — which surprises people often enough to be worth
+stating plainly. Both layouts work:
+
+**Consumer outside**, the common case. You fuse the forks; your project stays
+where it is, with its history, worktrees and tooling untouched. It gains one
+build file that points its package references next door *when the workspace
+happens to be present*.
+
+```
+~/src/my-stack/          # the workspace: forks only
+  pty-core/
+  term-core/
+~/src/term-app/          # your project, where it always was
+```
+
+**Consumer inside.** Your project is a member like any other. This wires up more
+simply — everything sits under one root — but every ordinary commit to your own
+app now round-trips through `send`, and if the app is yours it has no upstream
+to send to. Choose it only when your project is itself a fork you contribute
+back to.
+
+The layout decides how many build overlays you need, and that is the part that
+catches people out:
+
+| an overlay at… | wires |
+| --- | --- |
+| your project's root | your project → the workspace |
+| the workspace root | one fused repo → another fused repo |
+
+With the consumer inside, the workspace root sits above everything and one file
+does both jobs. With the consumer outside you need both, and the second is easy
+to miss: your project's overlay is found by walking up from *your* directory, so
+it can never reach a project in the workspace. If two of the fused repos depend
+on each other through a package — and forks of libraries that ship together
+usually do — only the workspace's own overlay can redirect that. Miss it and the
+fused library quietly restores its published sibling, putting two copies of the
+same code in one build.
 
 ## Setting one up
 
@@ -111,13 +152,17 @@ This part has nothing to do with git, and what it looks like depends on your
 ecosystem. The goal is the same everywhere: make the consumer compile against
 the sources next door instead of a published package.
 
-On .NET, a `Directory.Build.targets` at the workspace root is picked up by
-MSBuild's walk-up from every project underneath — so long as none of the
-imported repos carries a root targets file of its own, which is the usual case:
+On .NET that is a `Directory.Build.targets`, which MSBuild imports from the
+nearest ancestor directory of every project underneath it. **Which directory you
+put it in decides what it can reach**, so settle [where your own project
+goes](#topology) first — the consumer-outside layout needs two of these.
+
+**The workspace overlay** points one fused repo at another. It goes at the
+workspace root, above all of them:
 
 ```xml
 <Project>
-  <ItemGroup Condition="'$(UseWorkspaceProjects)' != 'false'">
+  <ItemGroup>
     <ProjectReference Include="$(MSBuildThisFileDirectory)pty-core/src/Pty.Core/Pty.Core.csproj"
                       Condition="@(PackageReference->AnyHaveMetadataValue('Identity', 'Pty.Core'))" />
     <PackageReference Remove="Pty.Core" />
@@ -127,18 +172,79 @@ imported repos carries a root targets file of its own, which is the usual case:
 
 Ordering matters: the `Condition` reads the package references *before* `Remove`
 deletes them. Conditioning on "did this project actually reference the package"
-stops it wiring anything circular.
+is what stops it wiring something circular — without it, `Pty.Core` itself would
+gain a reference to `Pty.Core`.
 
-Keep an escape hatch like the `UseWorkspaceProjects` property above, so you can
-still build the way upstream CI will:
+**The consumer overlay** points your own project at the workspace, and goes at
+your project's root. It needs one thing the other does not: it has to do
+*nothing at all* when the workspace is absent, so a fresh clone and your CI
+still build from packages.
+
+```xml
+<Project>
+  <PropertyGroup>
+    <StackWorkspace Condition="'$(StackWorkspace)' == ''"
+      >$(MSBuildThisFileDirectory)..\my-stack</StackWorkspace>
+    <UseStackSources
+      Condition="'$(UseStackSources)' == '' And Exists('$(StackWorkspace)\rig.stack.jsonc')"
+      >true</UseStackSources>
+    <UseStackSources Condition="'$(UseStackSources)' == ''">false</UseStackSources>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(UseStackSources)' == 'true'">
+    <ProjectReference Include="$(StackWorkspace)\pty-core\src\Pty.Core\Pty.Core.csproj"
+                      Condition="@(PackageReference->AnyHaveMetadataValue('Identity', 'Pty.Core'))" />
+    <PackageReference Remove="Pty.Core" />
+  </ItemGroup>
+</Project>
+```
+
+The `Exists()` test on `rig.stack.jsonc` is what makes this file safe to commit.
+Machines with the workspace build from source; every other machine — CI, a
+contributor's clone, your own laptop before you clone it — sees the file do
+nothing. No `.csproj` changes, so nothing in your repository advertises a
+workspace to anyone who has not got one. Override either property to force the
+question:
 
 ```sh
-dotnet build -p:UseWorkspaceProjects=false
+dotnet build -p:UseStackSources=false     # build the way CI will
 ```
 
 Other ecosystems have their own version of this — a workspace `paths` mapping,
 a `go.work` file, a linked dependency. Nothing in `rig stack` depends on which
 you choose.
+
+#### Checking that it took
+
+Do not infer this from a build succeeding; a build that quietly used the package
+succeeds too. Ask MSBuild what it actually evaluated:
+
+```sh
+dotnet msbuild App.csproj -getItem:PackageReference -getItem:ProjectReference
+```
+
+Each item carries a `DefiningProjectFullPath` naming the file that contributed
+it, so you can confirm a reference arrived from an overlay rather than the
+`.csproj` — and see *which* overlay, which is the fastest way to tell the two
+apart when only one of them is working. A package you expected to vanish still
+listed there means the swap missed it.
+
+#### Four things that will bite you
+
+- **Match on `Identity`, never `Filename`.** MSBuild splits `Filename` at the
+  last dot, so `Pty.Core.Native` has the `Filename` `Pty.Core`. A condition or
+  `Remove` written against `Filename` hits the wrong package and looks like it
+  worked.
+- **`ItemGroup` is a child of `Project`.** Nested inside `PropertyGroup` it
+  gives you `MSB4004: The "ItemGroup" property is reserved`, which does not
+  sound like what it means.
+- **Count the directories in the relative path.** A project checked out as a
+  linked worktree sits deeper than the main checkout, so the `..\` depth that
+  worked in one is wrong in the other.
+- **Nothing warns you when an overlay does nothing.** Removing a
+  `PackageReference` for something that is actually a `ProjectReference` — a
+  vendored copy, say — is valid MSBuild and a silent no-op. Delete blocks that
+  turn out not to apply, because they read as working.
 
 ## The daily loop
 
@@ -252,6 +358,15 @@ stops after. Pin a version per workspace with the manifest's
 
 ## Things worth knowing before they bite
 
+- **Private upstreams do not work yet.** The engine fetches anonymously, so a
+  private repository answers `401` during import. The forks you fuse have to be
+  public for now.
+- **A build without the workspace does not fail — it falls back.** That is the
+  point of the `Exists()` gate, and it is what keeps CI and fresh clones
+  working. But it means the moment your code uses something you added in a fork,
+  a build on a machine without the workspace resolves the *published* package
+  instead: at best a confusing "no such member", at worst a clean compile
+  against the old behaviour. Treat it as a fallback, not a guard.
 - **A clean worktree is required** for `init`, `pull`, and `send`. An import
   amends its merge commit and stages everything, so an unrelated edit sitting in
   the tree would be swallowed into it. The one exception is a dedicated
