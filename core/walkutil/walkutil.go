@@ -34,7 +34,20 @@ var skippedDirs = map[string]bool{
 	".turbo":       true,
 }
 
-// SkippedDir reports whether a directory with the given base name is in the
+// isNestedRepo reports whether dir carries its own `.git` — a clone, a
+// submodule, or a linked worktree (where `.git` is a *file* pointing back at the
+// parent, which is why skipping the name alone never caught them).
+//
+// Its contents belong to that repository, not this one. Walking in finds a
+// second copy of the same manifests: a release tool then discovers the same
+// module twice and can act on the copy — writing a changelog into a worktree,
+// or deriving a tag name from its path.
+func isNestedRepo(dir string) bool {
+	_, err := os.Lstat(filepath.Join(dir, ".git"))
+	return err == nil
+}
+
+// SkippedDir reports whether a directory// SkippedDir reports whether a directory with the given base name is in the
 // default skip set — shared so adapters that expand workspace globs themselves
 // prune the same directories Walk does.
 func SkippedDir(name string) bool { return skippedDirs[name] }
@@ -91,6 +104,9 @@ func WalkReport(root string, skip []string, fn func(path string, d fs.DirEntry) 
 				return nil
 			}
 			if skippedDirs[d.Name()] || pruned[cleanKey(path)] || ign.Ignored(relSlash(root, path), true) {
+				return filepath.SkipDir
+			}
+			if isNestedRepo(path) {
 				return filepath.SkipDir
 			}
 			return nil
