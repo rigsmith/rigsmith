@@ -94,11 +94,14 @@ rig stack init
 ```
 
 Each repo's history is fetched through its prefix filter and merged in. The
-first run also acquires the josh engine — a verified binary for your platform,
-seconds rather than the multi-minute Rust build it would otherwise be.
+first run also acquires the josh engine. For the version rig pins, on a platform
+it publishes for, that is a verified download and takes seconds; pin a different
+`josh` version or work on a platform without a published binary and it falls
+back to building from source, which takes minutes.
 
 You now have one history, one directory per project, and a `lastSync` block in
-the manifest recording the upstream commit each was taken from. Those cursors
+the manifest recording the upstream commit each was taken from — written by the
+import, and by every `pull` after it. Those cursors
 are committed alongside the import, which is what makes a repeated `pull` a
 no-op rather than a surprise.
 
@@ -181,16 +184,19 @@ rather than of the project — which is also why the `rig ui` flow asks for it.
 
 What you type is prefixed with **`stack/`**, so `read-timeout` becomes
 `stack/read-timeout`. Your fork also carries your own branches; the prefix keeps
-these apart from them at a glance, and stops a name you chose from colliding
-with one upstream already uses. Change it with `branchPrefix` in the manifest,
+these apart from them at a glance, and makes a collision with a name
+already on the fork far less likely — though a prefix reserves nothing, and a
+fork may already carry `stack/<name>`. Change it with `branchPrefix` in the manifest,
 per workspace or per repo, or set it to `""` for bare names. A name that already
 starts with the prefix is left alone, so pasting a full branch name back in when
 re-sending does not stutter it.
 
 Sending again to the same branch **updates** it, so you can act on review
 feedback: commit in the workspace, re-send, and the pull request moves. The
-branch is replaced under a lease, so the push still fails if someone else moved
-it in the meantime.
+branch is replaced under a lease taken at the moment of the push, which guards
+against a race between reading the branch and writing it — it is not a record of
+what you last sent, so it will not tell you that someone rewrote the branch
+between one send and the next.
 
 ::: warning `send` refuses a stale cursor
 Your workspace tree is a snapshot taken at the last `pull`. If upstream has
@@ -248,14 +254,19 @@ stops after. Pin a version per workspace with the manifest's
 
 - **A clean worktree is required** for `init`, `pull`, and `send`. An import
   amends its merge commit and stages everything, so an unrelated edit sitting in
-  the tree would be swallowed into it. The one exception is the manifest itself
-  on first import, since filling it in and re-running is the documented flow.
+  the tree would be swallowed into it. The one exception is a dedicated
+  `rig.stack.jsonc` on first import, since filling it in and re-running is the
+  documented flow — an inline `stack` block in `.rig.json` gets no exception,
+  because waving that file through would commit whatever else it holds.
 - **The workspace root is the git top level**, so the verbs work from anywhere
   inside it — including from within one of the imported projects, which carries
   its own package manifest and would otherwise look like the root.
-- **The workspace is disposable.** Every commit that matters reaches upstream
-  through a fork branch; the fused history is a working convenience, not an
-  archive. If it ever gets tangled, delete it and `init` again.
+- **The workspace is disposable — once your work has left it.** The fused
+  history is a working convenience, not an archive, so a tangled one can be
+  deleted and re-imported. But a commit you have not `send`-ed exists *only*
+  there, and `status` compares cursors against upstream rather than checking
+  whether your changes reached a fork, so it will not warn you. Send every
+  changed project first, or copy the directory somewhere before deleting it.
 - **Do not give the workspace a remote** and push it somewhere. It contains
   several rewritten upstream histories fused together, which is meaningful to
   you and to nobody else.

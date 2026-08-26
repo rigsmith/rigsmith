@@ -261,8 +261,9 @@ rig stack send pty-core read-timeout -m "Fix the read timeout"  # → stack/read
 
 Importing and pulling are done by [josh](https://josh-project.dev), the git
 history-filtering proxy; `send` uses no engine at all, since the directory's
-tree is already what upstream wants. rig fetches a verified `josh-proxy` for
-your platform on first use.
+tree is already what upstream wants. rig fetches a verified `josh-proxy` on
+first use where one is published for your platform and pinned version, and
+builds it from source otherwise.
 
 **[Stack workspaces](./stack)** is the full guide: setting one up, wiring the
 build so the consumer compiles against source, sending and updating pull

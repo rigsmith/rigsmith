@@ -26,6 +26,15 @@
           },
           {
             "pattern": "\\.\\."
+          },
+          {
+            "pattern": "@\\{"
+          },
+          {
+            "pattern": "(^|/)\\."
+          },
+          {
+            "pattern": "\\.lock(/|$)"
           }
         ]
       }
@@ -78,6 +87,15 @@
                 },
                 {
                   "pattern": "\\.\\."
+                },
+                {
+                  "pattern": "@\\{"
+                },
+                {
+                  "pattern": "(^|/)\\."
+                },
+                {
+                  "pattern": "\\.lock(/|$)"
                 }
               ]
             }
@@ -92,9 +110,11 @@
     },
     "lastSync": {
       "type": "object",
-      "description": "Machine-written pull cursors: prefix -> upstream SHA of the last pull. Committed with each pull's merge commit; do not edit by hand.",
+      "description": "Written by import and pull, not by hand: the full upstream commit each repo was last taken from.",
       "additionalProperties": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}$",
+        "description": "Full 40-character commit SHA. An abbreviated one never matches the remote tip."
       }
     }
   },

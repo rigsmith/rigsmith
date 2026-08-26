@@ -196,8 +196,8 @@ history: the key is the directory it lives under.
       "upstreamBranch": "main"                  // branch of upstream to follow
     }
   },
-  // Written by `pull`, not by hand: the upstream commit each repo last took.
-  "lastSync": { "pty-core": "a1b2c3d4…" }
+  // Written by import and pull, not by hand: the full SHA each repo last took.
+  "lastSync": { "pty-core": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" }
 }
 ```
 
@@ -211,8 +211,9 @@ is one you are creating on your fork for a single change. A manifest written
 with the older `branch` key is still read.
 
 `lastSync` is a separate map rather than a field per repo because it is machine
-written: a pull rewrites that one value while the entries you wrote, and their
-comments, stay untouched.
+written: an import or pull rewrites that one value while the entries you wrote,
+and their comments, stay untouched. The values are full 40-character SHAs — an
+abbreviated one would never equal the tip `status` reads from the remote.
 
 `branchPrefix` is prepended to the name you give `rig stack send`, so
 `send pty-core read-timeout` creates `stack/read-timeout` on your fork. It

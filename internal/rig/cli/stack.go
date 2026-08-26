@@ -453,7 +453,9 @@ func newStackSendCmd() *cobra.Command {
 			// into it would leak this repo's message into the next send.
 			msg := message
 			if msg == "" {
-				msg = fmt.Sprintf("Changes to %s from the %s workspace", name, filepath.Base(repo.Dir))
+				// Nothing about the workspace belongs in a commit an upstream
+				// maintainer reads — least of all the local directory it lives in.
+				msg = fmt.Sprintf("Changes to %s", name)
 			}
 			commit, err := repo.CommitTree(ctx, tree, tip, msg)
 			if err != nil {
@@ -566,7 +568,12 @@ func stackMenuItems() []menuItem {
 	}
 	m, _, err := loadStackManifest(root)
 	if err != nil {
-		return nil
+		// A manifest that exists but will not load is the scaffold, waiting to
+		// be filled in. Dropping the group here would hide `init` at exactly
+		// the moment it is the only thing left to do.
+		return []menuItem{
+			{label: "init", desc: "finish rig.stack.jsonc, then import — " + stackFirstLine(err), cmd: newStackInitCmd()},
+		}
 	}
 	if m == nil {
 		return []menuItem{
@@ -580,6 +587,18 @@ func stackMenuItems() []menuItem {
 		{label: "send", desc: "a repo's changes to your fork as a new branch (pick, then name it)", cmd: newStackSendMenuCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
 	}
+}
+
+// stackFirstLine is an error's first line, for a menu row that has one line.
+func stackFirstLine(err error) string {
+	line, _, _ := strings.Cut(err.Error(), "\n")
+	if i := strings.LastIndex(line, ": "); i >= 0 && i+2 < len(line) {
+		line = line[i+2:]
+	}
+	if len(line) > 60 {
+		line = line[:57] + "…"
+	}
+	return line
 }
 
 // stackCommonPrefix is the branch prefix every named repo shares, or "" when

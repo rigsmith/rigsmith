@@ -188,6 +188,7 @@ func TestStackSendBranch(t *testing.T) {
 		{"repo beats workspace", base(&stackRepo{BranchPrefix: ptr("pr/")}, ptr("jc-")), "x", "pr/x"},
 		{"repo opts out alone", base(&stackRepo{BranchPrefix: ptr("")}, ptr("jc-")), "x", "x"},
 		{"already prefixed is left alone", base(&stackRepo{}, nil), "stack/read-timeout", "stack/read-timeout"},
+		{"a prefix without a slash still concatenates", base(&stackRepo{}, ptr("jc-")), "fix/x", "jc-fix/x"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -198,7 +199,10 @@ func TestStackSendBranch(t *testing.T) {
 	}
 
 	t.Run("a prefix git would reject is refused", func(t *testing.T) {
-		for _, bad := range []string{"/lead", "-lead", "has space", "dot..dot", "double//slash"} {
+		for _, bad := range []string{
+			"/lead", "-lead", "has space", "dot..dot", "double//slash",
+			".review/", "stack/@{", "a/.hidden/", "x.lock/", "tilde~", "colon:",
+		} {
 			m := &stackManifest{
 				BranchPrefix: ptr(bad),
 				Repos:        map[string]*stackRepo{"x": {Upstream: "h/o/n", Fork: "h/me/n"}},
@@ -431,6 +435,15 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		items := stackMenuItems()
 		if len(items) != 1 || items[0].label != "init" {
 			t.Fatalf("expected just init, got %v", items)
+		}
+	})
+
+	t.Run("a scaffold that will not load still offers init", func(t *testing.T) {
+		// What `stack init` writes: a manifest whose repos block is still empty.
+		inWorkspace(t, "{\n  \"repos\": {}\n}\n")
+		items := stackMenuItems()
+		if len(items) != 1 || items[0].label != "init" {
+			t.Fatalf("expected init to stay reachable, got %v", items)
 		}
 	})
 

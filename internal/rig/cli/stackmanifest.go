@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cfgfind"
@@ -20,9 +21,9 @@ import (
 
 const (
 	// stackDefaultBranchPrefix namespaces the branches `send` creates on your
-	// forks, so they are recognisable among your own work and cannot collide
-	// with a branch name upstream already uses. Set "branchPrefix" to "" in the
-	// manifest to send bare names instead.
+	// forks, so they are recognisable among your own work and unlikely to land
+	// on a name already in use there. It reserves nothing — a fork may already
+	// carry stack/<name>. Set "branchPrefix" to "" to send bare names instead.
 	stackDefaultBranchPrefix = "stack/"
 
 	stackFileBase  = "rig.stack"
@@ -164,15 +165,34 @@ func (m *stackManifest) validate() error {
 // change name is appended to it. It deliberately allows a trailing slash
 // ("stack/") and a bare lead-in ("jc-") alike.
 func stackValidBranchPrefix(prefix, where string) error {
-	switch {
-	case prefix == "":
+	if prefix == "" {
 		return nil
+	}
+	bad := func(why string) error {
+		return fmt.Errorf("%s: branch prefix %q %s", where, prefix, why)
+	}
+	switch {
 	case strings.HasPrefix(prefix, "/"), strings.HasPrefix(prefix, "-"):
-		return fmt.Errorf("%s: branch prefix %q cannot start with %q", where, prefix, prefix[:1])
-	case strings.ContainsAny(prefix, " \t~^:?*[\\"), strings.Contains(prefix, ".."):
-		return fmt.Errorf("%s: branch prefix %q contains characters git will not accept in a branch name", where, prefix)
-	case strings.Contains(prefix, "//"):
-		return fmt.Errorf("%s: branch prefix %q has an empty path segment", where, prefix)
+		return bad("cannot start with " + strconv.Quote(prefix[:1]))
+	case strings.ContainsAny(prefix, " \t~^:?*[\\"):
+		return bad("contains a character git will not accept in a branch name")
+	case strings.Contains(prefix, ".."), strings.Contains(prefix, "@{"):
+		return bad("contains a sequence git will not accept in a branch name")
+	}
+	// git refuses a path component that is empty, starts with a dot, or ends
+	// with .lock. A trailing slash leaves an empty last component here, and that
+	// one is fine: the change name lands in it.
+	parts := strings.Split(prefix, "/")
+	for i, part := range parts {
+		last := i == len(parts)-1
+		switch {
+		case part == "" && !last:
+			return bad("has an empty path segment")
+		case strings.HasPrefix(part, "."):
+			return bad("has a path segment starting with a dot")
+		case strings.HasSuffix(part, ".lock"):
+			return bad("has a path segment ending in .lock")
+		}
 	}
 	return nil
 }
