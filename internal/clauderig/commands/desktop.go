@@ -312,6 +312,7 @@ var errCancelled = errors.New("cancelled")
 func newDesktopOpenCmd() *cobra.Command {
 	var sessionRef string
 	var anyway bool
+	var pick bool
 	cmd := &cobra.Command{
 		Use:   "open [<name|email>]",
 		Short: "Open (or focus) a profile's Claude Desktop window",
@@ -324,6 +325,9 @@ func newDesktopOpenCmd() *cobra.Command {
 			"id, or text to match its title or project. Desktop reads the transcript\n" +
 			"from ~/.claude/projects, so a session that lives only in the synced repo\n" +
 			"must be restored before it can be opened.\n\n" +
+			"With -i and no --session, it lists this machine's recent sessions and\n" +
+			"opens the one you choose — `clauderig recent` is the same listing. Given\n" +
+			"both, the picker opens on the matches instead of taking a lone one.\n\n" +
 			"A deep link is routed by scheme, not to a particular window, so with a\n" +
 			"second profile open the OS picks which one imports the session — that is\n" +
 			"refused rather than risked, since it would cross an account boundary.\n" +
@@ -361,11 +365,12 @@ func newDesktopOpenCmd() *cobra.Command {
 			if cmd.Flags().Changed("session") && strings.TrimSpace(sessionRef) == "" {
 				// Not starting with the flag name: the first letter of an error is
 				// rendered capitalised, which would print it as "--Session".
-				return fmt.Errorf("give --session a session id, or some text matching a title or project")
+				return fmt.Errorf("give --session a session id, or some text matching a title or project\n" +
+					"Or pass -i to choose from this machine's recent sessions")
 			}
 			sessionRef = strings.TrimSpace(sessionRef)
 			var target sessionCandidate
-			if sessionRef != "" {
+			if sessionRef != "" || pick {
 				home, herr := account.ClaudeHome()
 				if herr != nil {
 					return herr
@@ -374,11 +379,20 @@ func newDesktopOpenCmd() *cobra.Command {
 				if ierr != nil {
 					return ierr
 				}
-				cands, ferr := findSessions(sessionRef, home, idx)
+				// With no reference to narrow by, the candidates are simply the
+				// most recent sessions. pickSession is given the empty ref so its
+				// messages drop the "matches %q" framing.
+				var cands []sessionCandidate
+				var ferr error
+				if sessionRef != "" {
+					cands, ferr = findSessions(sessionRef, home, idx)
+				} else {
+					cands, ferr = recentSessions(home, idx, sessionPickLimit)
+				}
 				if ferr != nil {
 					return ferr
 				}
-				target, err = pickSession(sessionRef, cands)
+				target, err = pickSession(sessionRef, cands, pick)
 				if errors.Is(err, errCancelled) {
 					return nil
 				}
@@ -467,7 +481,22 @@ func newDesktopOpenCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&sessionRef, "session", "", "open this Claude Code session: its id, or text matching its title or project")
+	cmd.Flags().BoolVarP(&pick, "interactive", "i", false, "always open the picker (choose a recent session to open)")
 	cmd.Flags().BoolVar(&anyway, "anyway", false, "send the session even with other profiles open, when the OS picks which receives it")
+	_ = cmd.RegisterFlagCompletionFunc("session", completeSessionRef)
+	// pflag reports a value-less --session as "flag needs an argument", which is
+	// true and unhelpful: it names no way forward, and the two ways forward are
+	// not guessable. Giving --session a NoOptDefVal would let it stand alone but
+	// would stop it consuming the next word, so `--session winbox` would silently
+	// become a positional profile name — the flag cannot be both. The wrapped
+	// error keeps pflag's own wording and adds the remedy.
+	cmd.SetFlagErrorFunc(func(_ *cobra.Command, ferr error) error {
+		if ferr != nil && strings.Contains(ferr.Error(), "--session") {
+			return fmt.Errorf("%w\nGive it a session id or some text to match, "+
+				"or pass -i to pick from recent sessions", ferr)
+		}
+		return ferr
+	})
 	return cmd
 }
 

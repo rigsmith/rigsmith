@@ -341,6 +341,12 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 	if !long {
 		fmt.Fprintf(out, "%s\n", DimStyle.Render("ids are shortened — use -l for full ids and resume commands"))
 	}
+	// Shown in both modes. -l prints a ready-to-paste `--session <id>` per row,
+	// but neither mode otherwise says that the picker exists, and the picker is
+	// the only form that needs no id at all.
+	if desktopInstalled() {
+		fmt.Fprintf(out, "%s\n", DimStyle.Render("open one in Claude Desktop: clauderig desktop open -i"))
+	}
 	fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf(
 		"dated by each transcript's own last record (read %d, skipped %d as too old to qualify)", read, skipped)))
 	if approx > 0 {

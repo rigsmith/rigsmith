@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -537,9 +538,40 @@ func renderSessionAs(out interface{ Write([]byte) (int, error) }, me config.Mach
 	} else {
 		fmt.Fprintf(out, "  %s\n", DimStyle.Render(resumeHint(r, cwd)))
 	}
+	// Its own line rather than appended to the resume hint: that line already
+	// carries a cd and a full uuid, and a second command on the end of it wraps
+	// on any normal terminal — which is exactly where a copy/paste breaks.
+	if h := desktopHint(r); h != "" {
+		fmt.Fprintf(out, "  %s\n", DimStyle.Render(h))
+	}
 	if r.matches > 0 {
 		fmt.Fprintf(out, "    %s\n", highlight(r.first))
 	}
+}
+
+// desktopInstalled is memoised: renderSessionAs runs once per result, and
+// whether Claude Desktop exists is a filesystem probe that cannot change
+// part-way through a listing.
+var desktopInstalled = sync.OnceValue(func() bool {
+	_, ok := desktop.New().Installed()
+	return ok
+})
+
+// desktopHint offers the Claude Desktop equivalent of the resume command.
+//
+// Only for a session whose transcript is in the live CLI root. `desktop open
+// --session` hands Desktop a claude://resume link and Desktop imports the
+// transcript from ~/.claude/projects itself, so a Desktop-only session, a
+// synced-repo-only copy and a title-only match each have nothing for it to
+// read — the same precondition resumeHint tests, for the same reason.
+//
+// Suppressed where Claude Desktop is not installed: on Linux there is no such
+// app at all, and offering a command that cannot work is worse than silence.
+func desktopHint(r *sessResult) string {
+	if !r.cliLive || !desktopInstalled() {
+		return ""
+	}
+	return "desktop: clauderig desktop open --session " + shQuote(r.id)
 }
 
 // resumeHint renders the action for a session. `claude --resume` reads this

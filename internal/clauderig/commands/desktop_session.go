@@ -13,9 +13,11 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/spf13/cobra"
 )
 
 // sessionUUID is the shape Claude Desktop requires of ?session=. It rejects
@@ -32,6 +34,12 @@ var sessionUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 func resumeDeepLink(sessionID string) string {
 	return "claude://resume?session=" + url.QueryEscape(sessionID)
 }
+
+// sessionPickLimit caps the lists that have no reference to narrow them:
+// --interactive's picker and --session's shell completion. Both are read at
+// human speed, and a machine with hundreds of transcripts would otherwise
+// render every one of them.
+const sessionPickLimit = 50
 
 // sessionCandidate is one session `desktop open --session` could resume.
 type sessionCandidate struct {
@@ -170,23 +178,88 @@ func findSessions(ref, claudeHome string, idx session.Index) ([]sessionCandidate
 		return nil, nil
 	}
 	var out []sessionCandidate
-	for id, p := range live {
-		m := idx[id]
-		title := titleFor(m, p)
-		// Resolve the cwd ONCE and match on the same value that is displayed.
-		// Matching m.Cwd instead would only ever search the ~3% of sessions with
-		// a Desktop sidecar, while showing a project for all of them — so a
-		// search by project name would silently miss most of what it lists.
-		cwd := cwdFor(m, p)
-		if !strings.Contains(strings.ToLower(title), needle) &&
-			!strings.Contains(strings.ToLower(cwd), needle) {
+	// Filter the already-sorted list rather than sorting the matches after: the
+	// order is the same, and it is the one place that decides what "newest" means.
+	for _, c := range sessionCandidates(live, idx) {
+		if !strings.Contains(strings.ToLower(c.Title), needle) &&
+			!strings.Contains(strings.ToLower(c.Cwd), needle) {
 			continue
 		}
-		out = append(out, sessionCandidate{ID: id, Title: title, Cwd: cwd, Path: p})
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// sessionCandidates describes every live transcript, newest first.
+//
+// Title and cwd are resolved ONCE here, so callers match on exactly the values
+// they display. Matching session.Meta's own Cwd instead would only ever search
+// the ~3% of sessions that have a Desktop sidecar while showing a project for
+// all of them — a search by project name silently missing most of its listing.
+func sessionCandidates(live map[string]string, idx session.Index) []sessionCandidate {
+	out := make([]sessionCandidate, 0, len(live))
+	for id, p := range live {
+		m := idx[id]
+		out = append(out, sessionCandidate{ID: id, Title: titleFor(m, p), Cwd: cwdFor(m, p), Path: p})
 	}
 	// Newest first, so the picker's top entry is the one most likely wanted.
 	sort.Slice(out, func(i, j int) bool { return newer(out[i], out[j], idx) })
+	return out
+}
+
+// recentSessions lists the sessions this machine could open, newest first,
+// capped at limit (0 for all). It is what --interactive picks from and what
+// --session completes against — neither has a reference to narrow by, so the
+// cap is the only thing keeping a machine with thousands of transcripts from
+// rendering all of them into a picker or a completion list.
+func recentSessions(claudeHome string, idx session.Index, limit int) ([]sessionCandidate, error) {
+	live, err := liveTranscripts(claudeHome)
+	if err != nil {
+		return nil, err
+	}
+	out := sessionCandidates(live, idx)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
+}
+
+// completeSessionRef offers this machine's recent session ids to the shell,
+// each described by its title and project so the uuids are tellable apart.
+//
+// Every failure degrades to "no completions" rather than an error: completion
+// runs on every <Tab> and must never put a message between the user and their
+// command line. Titles come from the Desktop sidecars where there are any and
+// the transcript's first prompt otherwise, so an unreadable index costs
+// descriptions, not candidates.
+func completeSessionRef(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	home, err := account.ClaudeHome()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	idx, _ := liveSessionIndex()
+	cands, err := recentSessions(home, idx, sessionPickLimit)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	out := make([]string, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, completionEntry(c))
+	}
+	return out, cobra.ShellCompDirectiveNoFileComp
+}
+
+// completionEntry renders one candidate in the "value\tdescription" form the
+// shells split into a two-column menu.
+//
+// The description is scrubbed of tabs and newlines because it is derived from a
+// title, and a title is usually the user's own first prompt — it can contain
+// anything. An embedded tab would split the entry a second time, putting the
+// tail of a prompt into the shell's own column; a newline would end the entry
+// and make the rest look like a separate candidate.
+func completionEntry(c sessionCandidate) string {
+	desc := strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(c.label())
+	return c.ID + "\t" + desc
 }
 
 // cwdFor prefers the sidecar's cwd and falls back to the one the transcript
@@ -243,16 +316,37 @@ func recency(c sessionCandidate, idx session.Index) time.Time {
 // pickSession narrows several matches to one: a picker on a terminal, and off
 // one an error that lists them with ids, so the caller can re-run unambiguously
 // rather than have a session chosen for them.
-func pickSession(ref string, cands []sessionCandidate) (sessionCandidate, error) {
+//
+// An empty ref means the caller had nothing to narrow by — `--interactive` with
+// no `--session` — so the candidates are simply this machine's recent sessions
+// and every message drops the "matches %q" framing that would print as "".
+//
+// force keeps the picker open even for a single candidate, which is what
+// --interactive promises: "always open the picker", the same contract `rig run
+// -i` and `rig outdated -i` have.
+func pickSession(ref string, cands []sessionCandidate, force bool) (sessionCandidate, error) {
 	switch len(cands) {
 	case 0:
+		if ref == "" {
+			return sessionCandidate{}, fmt.Errorf("no session on this machine can be opened\n" +
+				"Only sessions whose transcript is in ~/.claude/projects can be opened — " +
+				"`clauderig recent` lists what is here")
+		}
 		return sessionCandidate{}, fmt.Errorf("no session on this machine matches %q\n"+
 			"Only sessions whose transcript is in ~/.claude/projects can be opened — "+
 			"`clauderig search %s` will say whether it lives only in the synced repo", ref, shQuote(ref))
 	case 1:
-		return cands[0], nil
+		if !force {
+			return cands[0], nil
+		}
 	}
 	if !interactive() {
+		if ref == "" {
+			// Not starting with the flag name: the first letter of an error is
+			// rendered capitalised, which would print it as "--Interactive".
+			return sessionCandidate{}, fmt.Errorf("choosing a session with --interactive needs a terminal\n" +
+				"Name one with --session <id> instead — `clauderig recent -l` prints the ids")
+		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "%d sessions match %q — re-run naming one of these ids\n", len(cands), ref)
 		for i, c := range cands {
@@ -274,9 +368,13 @@ func pickSession(ref string, cands []sessionCandidate) (sessionCandidate, error)
 		byID[c.ID] = c
 	}
 	choice := cands[0].ID
+	title := fmt.Sprintf("%d sessions match %q — open which?", len(cands), ref)
+	if ref == "" {
+		title = fmt.Sprintf("%d recent session(s) — open which?", len(cands))
+	}
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().
-			Title(fmt.Sprintf("%d sessions match %q — open which?", len(cands), ref)).
+			Title(title).
 			Options(opts...).Value(&choice),
 	)).WithTheme(brand.Theme(brand.AccentClaude)).Run(); err != nil {
 		return sessionCandidate{}, errCancelled

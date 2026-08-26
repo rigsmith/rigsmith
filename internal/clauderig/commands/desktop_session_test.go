@@ -106,7 +106,7 @@ func TestPickSession_AmbiguousOffATerminalListsIDs(t *testing.T) {
 		{ID: "11111111-1111-1111-1111-111111111111", Title: "one"},
 		{ID: "22222222-2222-2222-2222-222222222222", Title: "two"},
 	}
-	_, err := pickSession("auth", cands)
+	_, err := pickSession("auth", cands, false)
 	if err == nil {
 		t.Fatal("ambiguity must not resolve itself")
 	}
@@ -120,7 +120,7 @@ func TestPickSession_AmbiguousOffATerminalListsIDs(t *testing.T) {
 // No match names the one thing that would explain it — the transcript is not on
 // this machine — rather than just reporting nothing.
 func TestPickSession_NoMatchExplainsWhy(t *testing.T) {
-	_, err := pickSession("auth", nil)
+	_, err := pickSession("auth", nil, false)
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -131,7 +131,7 @@ func TestPickSession_NoMatchExplainsWhy(t *testing.T) {
 
 func TestPickSession_SingleMatchNeedsNoPrompt(t *testing.T) {
 	only := sessionCandidate{ID: "11111111-1111-1111-1111-111111111111", Title: "one"}
-	got, err := pickSession("auth", []sessionCandidate{only})
+	got, err := pickSession("auth", []sessionCandidate{only}, false)
 	if err != nil || got.ID != only.ID {
 		t.Fatalf("got %+v/%v", got, err)
 	}
@@ -546,7 +546,7 @@ func TestPickSession_ListsFullIDs(t *testing.T) {
 	_, err := pickSession("auth", []sessionCandidate{
 		{ID: full, Title: "one"},
 		{ID: "66666666-6666-6666-6666-666666666666", Title: "two"},
-	})
+	}, false)
 	if err == nil {
 		t.Fatal("want an ambiguity error")
 	}
@@ -584,5 +584,144 @@ func TestOtherRunningWindows_ExcludesTheTargetByPID(t *testing.T) {
 	// and a failed scan for the target is an error, not an empty exclusion set
 	if _, err := otherRunningWindows(scanFailApp{}, dirs, target); err == nil {
 		t.Error("a failed target scan must be an error")
+	}
+}
+
+// --interactive and --session's completion both list sessions with no reference
+// to narrow by, so the order IS the selection: whatever is newest lands under
+// the cursor. The cap is what keeps a machine with hundreds of transcripts from
+// rendering all of them into a picker.
+func TestRecentSessions_NewestFirstAndCapped(t *testing.T) {
+	home := t.TempDir()
+	ids := []string{
+		"11111111-1111-1111-1111-111111111111",
+		"22222222-2222-2222-2222-222222222222",
+		"33333333-3333-3333-3333-333333333333",
+	}
+	for i, id := range ids {
+		writeTranscript(t, home, "-Users-j-Git-api", id, "session "+id[:1])
+		// oldest first, so the LAST written is the newest
+		when := time.Now().Add(-time.Duration(len(ids)-i) * time.Hour)
+		path := filepath.Join(home, "projects", "-Users-j-Git-api", id+".jsonl")
+		if err := os.Chtimes(path, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	all, err := recentSessions(home, session.Index{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("limit 0 means all: got %d, want 3", len(all))
+	}
+	if all[0].ID != ids[2] || all[2].ID != ids[0] {
+		t.Errorf("want newest first, got %s … %s", all[0].ID, all[2].ID)
+	}
+
+	capped, err := recentSessions(home, session.Index{}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capped) != 2 {
+		t.Fatalf("cap not applied: got %d, want 2", len(capped))
+	}
+	// The cap must drop the OLDEST, not simply the tail of an unsorted map.
+	if capped[0].ID != ids[2] || capped[1].ID != ids[1] {
+		t.Errorf("cap kept the wrong two: %s, %s", capped[0].ID, capped[1].ID)
+	}
+}
+
+// With no --session there is no reference, and the messages must not print the
+// "%q" framing against an empty string — `matches ""` names nothing and points
+// at nothing.
+func TestPickSession_NoRefExplainsWithoutQuotingNothing(t *testing.T) {
+	_, err := pickSession("", nil, true)
+	if err == nil {
+		t.Fatal("want an error when there is nothing to open")
+	}
+	if strings.Contains(err.Error(), `""`) {
+		t.Errorf("empty ref must not be quoted back at the user: %v", err)
+	}
+	if !strings.Contains(err.Error(), "clauderig recent") {
+		t.Errorf("want the listing named as the way to look: %v", err)
+	}
+}
+
+// The picker cannot run without a terminal, so -i off one has to name the
+// alternative rather than report that a TUI failed to start.
+func TestPickSession_InteractiveOffATerminalNamesTheAlternative(t *testing.T) {
+	cands := []sessionCandidate{
+		{ID: "11111111-1111-1111-1111-111111111111", Title: "one"},
+		{ID: "22222222-2222-2222-2222-222222222222", Title: "two"},
+	}
+	_, err := pickSession("", cands, true)
+	if err == nil {
+		t.Fatal("want an error off a terminal")
+	}
+	if !strings.Contains(err.Error(), "--session") {
+		t.Errorf("want --session offered as the non-interactive route: %v", err)
+	}
+	// Cobra renders the first letter of an error capitalised, which would print
+	// a leading flag name as "--Interactive".
+	if strings.HasPrefix(err.Error(), "-") {
+		t.Errorf("must not open with a flag name: %v", err)
+	}
+}
+
+// "always open the picker" is the contract -i has everywhere else in the CLI
+// (`rig run -i`, `rig outdated -i`), so a lone candidate must not be taken
+// silently. Off a terminal that shows up as the refusal rather than a return.
+func TestPickSession_ForceDoesNotAutoSelectASingleCandidate(t *testing.T) {
+	only := []sessionCandidate{{ID: "11111111-1111-1111-1111-111111111111", Title: "one"}}
+
+	got, err := pickSession("", only, false)
+	if err != nil || got.ID != only[0].ID {
+		t.Fatalf("without force a single candidate is taken: %v %v", got, err)
+	}
+	if _, err := pickSession("", only, true); err == nil {
+		t.Error("with force the picker must be attempted, not short-circuited")
+	}
+}
+
+// A title is the user's own first prompt, so it can carry anything. A tab would
+// split the entry a second time and a newline would end it, either way turning
+// one candidate into a garbled two.
+func TestCompletionEntry_KeepsOneCandidatePerLine(t *testing.T) {
+	got := completionEntry(sessionCandidate{
+		ID:    "11111111-1111-1111-1111-111111111111",
+		Title: "fix\tthe\nparser",
+		Cwd:   "/Users/j/Git/api",
+	})
+	if strings.Count(got, "\t") != 1 {
+		t.Errorf("want exactly one tab (value/description): %q", got)
+	}
+	if strings.ContainsAny(got, "\n\r") {
+		t.Errorf("a newline ends the entry: %q", got)
+	}
+	if !strings.HasPrefix(got, "11111111-1111-1111-1111-111111111111\t") {
+		t.Errorf("the completed value must be the bare id: %q", got)
+	}
+}
+
+// The hint names a command, so it may only appear where that command would
+// work: Desktop imports the transcript from ~/.claude/projects itself, so a
+// session that is not there has nothing for it to read.
+func TestDesktopHint_OnlyWhereTheCommandWouldWork(t *testing.T) {
+	installed := desktopInstalled
+	desktopInstalled = func() bool { return true }
+	t.Cleanup(func() { desktopInstalled = installed })
+
+	live := &sessResult{id: "11111111-1111-1111-1111-111111111111", cliLive: true}
+	if h := desktopHint(live); !strings.Contains(h, "--session "+live.id) {
+		t.Errorf("want a ready-to-paste command for a live CLI session: %q", h)
+	}
+	if h := desktopHint(&sessResult{id: live.id}); h != "" {
+		t.Errorf("a session with no live transcript has nothing to import: %q", h)
+	}
+
+	desktopInstalled = func() bool { return false }
+	if h := desktopHint(live); h != "" {
+		t.Errorf("no Claude Desktop, no command to offer: %q", h)
 	}
 }
