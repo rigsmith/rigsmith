@@ -98,6 +98,8 @@ func stackValidPrefix(name string) error {
 		return fmt.Errorf("stack manifest has a repo with an empty name")
 	case name == "." || name == "..":
 		return fmt.Errorf("stack repo %q: the name is a directory in the workspace, not a path", name)
+	case strings.EqualFold(name, ".git"):
+		return fmt.Errorf("stack repo %q: git reserves that name, and the import would be rejected", name)
 	case strings.ContainsAny(name, "/\\"), strings.ContainsAny(name, " \t"):
 		return fmt.Errorf("stack repo %q: the name must be a single directory, without separators or spaces", name)
 	case strings.HasPrefix(name, "-"):

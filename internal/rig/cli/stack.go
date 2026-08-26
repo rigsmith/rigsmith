@@ -177,12 +177,15 @@ func newStackInitCmd() *cobra.Command {
 	return cmd
 }
 
-// stackOnlyManifestDirty reports whether the manifest itself is the only
-// uncommitted thing. Filling in the scaffolded manifest and running init again
-// is the documented first run, so that one file must not trip the dirty guard —
-// the import commits it anyway.
+// stackOnlyManifestDirty reports whether a dedicated manifest file is the only
+// uncommitted thing. Filling in the scaffolded rig.stack.jsonc and running init
+// again is the documented first run, so that one file must not trip the dirty
+// guard — the import commits it anyway.
 func stackOnlyManifestDirty(ctx context.Context, repo *gitrepo.Repo, src *cfgfind.Source) bool {
-	if src == nil || src.File == "" {
+	// Only a dedicated manifest earns the exemption. An inline `stack` block
+	// shares .rig.json with every other rig setting, so waving that file
+	// through would commit whatever else the user happened to be editing.
+	if src == nil || src.File == "" || src.Path == "" {
 		return false
 	}
 	paths, err := repo.DirtyPaths(ctx)

@@ -161,7 +161,6 @@ func (r *Repo) Head(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
-// RevParse resolves a ref (branch, tag, HEAD, SHA) to its full commit hash.
 // DirtyPaths lists the work-tree paths git reports as changed or untracked,
 // for callers that need to know *what* is dirty rather than merely whether.
 func (r *Repo) DirtyPaths(ctx context.Context) ([]string, error) {
@@ -170,14 +169,25 @@ func (r *Repo) DirtyPaths(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	var paths []string
+	origin := false // the next record is a rename/copy source, not a status line
 	for _, entry := range strings.Split(out, "\x00") {
-		// Porcelain v1 -z: "XY <path>", and a rename adds a second NUL-separated
-		// path that arrives as its own (status-less) entry.
+		if entry == "" {
+			continue
+		}
+		// Porcelain v1 -z reads "XY <path>", except that a rename or copy adds
+		// the path it came from as its own status-less record: trimming three
+		// bytes off that one would mangle the name rather than decode it.
+		if origin {
+			paths = append(paths, entry)
+			origin = false
+			continue
+		}
 		if len(entry) > 3 {
 			paths = append(paths, entry[3:])
-		} else if entry != "" {
-			paths = append(paths, entry)
+			origin = entry[0] == 'R' || entry[0] == 'C' || entry[1] == 'R' || entry[1] == 'C'
+			continue
 		}
+		paths = append(paths, entry)
 	}
 	return paths, nil
 }
@@ -190,6 +200,7 @@ func (r *Repo) Unborn(ctx context.Context) bool {
 	return err != nil
 }
 
+// RevParse resolves a ref (branch, tag, HEAD, SHA) to its full commit hash.
 func (r *Repo) RevParse(ctx context.Context, ref string) (string, error) {
 	out, err := runGit(ctx, r.Dir, "rev-parse", ref)
 	return strings.TrimSpace(out), err

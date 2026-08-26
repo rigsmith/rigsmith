@@ -212,9 +212,12 @@ func TestStartJoshProxy_FakeBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The log has to exist while the proxy runs — it is the only account of a
+	// filter or fetch failure — and be gone once it stops, or every operation
+	// leaves one behind.
 	log := p.log
-	if log == "" {
-		t.Fatal("proxy kept no log to diagnose failures with")
+	if _, err := os.Stat(log); err != nil {
+		t.Fatalf("no engine log while the proxy is running: %v", err)
 	}
 	p.stop() // must terminate promptly and not leak the process
 	if _, err := os.Stat(log); !os.IsNotExist(err) {

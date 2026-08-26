@@ -136,22 +136,20 @@ func TestStackFlow(t *testing.T) {
 
 	// ---- an unchanged project is a no-op, not an empty commit ------------
 
-	if err := runVerb(ctx, newStackSendCmd(), "libbar", "noop"); err != nil {
-		t.Fatalf("send libbar: %v", err)
-	}
-	mustGitStack(t, ws, "checkout", "-q", "--", ".") // libbar is still at v2 locally
+	// Put libbar back to exactly upstream's content, so the only thing that can
+	// make send act is a tree comparison it is not doing.
 	if err := os.WriteFile(filepath.Join(ws, "libbar", "src", "libbar.txt"), []byte("libbar v1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mustGitStack(t, ws, "commit", "-qam", "libbar: back to upstream's content")
-	out, err := runVerbOut(ctx, newStackSendCmd(), "libbar", "noop2")
+	out, err := runVerbOut(ctx, newStackSendCmd(), "libbar", "noop")
 	if err != nil {
 		t.Fatalf("no-op send: %v", err)
 	}
 	if !strings.Contains(out, "nothing to send") {
 		t.Fatalf("expected a no-op, got: %s", out)
 	}
-	if refExists(t, srv.path("me/libbar"), "refs/heads/noop2") {
+	if refExists(t, srv.path("me/libbar"), "refs/heads/noop") {
 		t.Fatal("no-op send pushed a branch anyway")
 	}
 

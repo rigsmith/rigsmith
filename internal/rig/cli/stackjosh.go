@@ -340,7 +340,8 @@ func (p *joshProxy) cleanup() {
 func (p *joshProxy) stop() {
 	select {
 	case <-p.exited:
-		return // already gone
+		p.cleanup() // already gone, but its log is still ours to remove
+		return
 	default:
 	}
 	// os.Interrupt is not implemented on Windows: sending it there fails, and
