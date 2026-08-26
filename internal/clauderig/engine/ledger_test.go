@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 )
@@ -304,5 +305,49 @@ func TestRecordLedger_ContestedSessionRevokesAnEarlierAttribution(t *testing.T) 
 	l, _ := ledger.Open(staging, "mbp")
 	if a, s := l.Attribution("sess-1"); a != "" || s != "" {
 		t.Errorf("stale attribution survived the conflict: %q/%q", a, s)
+	}
+}
+
+// A row's date must be the transcript's, not the file's — and must not move when
+// the file is merely copied. Because End is half the change fingerprint, an
+// mtime-derived date also means a restore rewrites every row on the next sync.
+func TestRecordLedger_EndComesFromTheTranscript(t *testing.T) {
+	staging := t.TempDir()
+	p := stageTranscriptBody(t, staging, "-Users-j-Git-api", "sess-1",
+		`{"type":"user","timestamp":"2026-06-01T10:00:00Z","cwd":"/Users/j/Git/api",`+
+			`"message":{"content":"the auth refactor"}}`+"\n")
+	touched := time.Date(2026, 8, 25, 13, 22, 0, 0, time.UTC)
+	if err := os.Chtimes(p, touched, touched); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := recordLedger(staging, "mbp", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	row := ledger.LoadAll(staging)["sess-1"]
+	want := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	if !row.End.Equal(want) {
+		t.Errorf("End = %s, want %s (the record, not the mtime %s)", row.End, want, touched)
+	}
+
+	// A second pass over an untouched transcript must see nothing to do.
+	added, _, err := recordLedger(staging, "mbp", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != 0 {
+		t.Errorf("added=%d on an unchanged transcript, want 0", added)
+	}
+
+	// Re-touching the file alone must not re-date the session.
+	later := touched.Add(48 * time.Hour)
+	if err := os.Chtimes(p, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := recordLedger(staging, "mbp", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := ledger.LoadAll(staging)["sess-1"].End; !got.Equal(want) {
+		t.Errorf("End moved to %s after a touch, want %s", got, want)
 	}
 }

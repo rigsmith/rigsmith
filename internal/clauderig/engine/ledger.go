@@ -94,7 +94,14 @@ func recordLedger(stagingDir, device, liveAccount string, mine map[string]bool) 
 			if serr != nil {
 				return nil
 			}
+			// The transcript's own last record, not its mtime: a restore or a
+			// checkout of the staged tree rewrites mtime, which would re-date
+			// every session to the copy and, since End is half the change
+			// fingerprint, force a rewrite of every row after it.
 			end := info.ModTime().UTC()
+			if a, ok := session.LastActivity(p); ok {
+				end = a.At
+			}
 			// An unchanged transcript is normally skipped without reading it. It
 			// still needs a pass when the attribution on offer OUTRANKS the stored
 			// one, or a session first labelled by inference could never be upgraded

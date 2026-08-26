@@ -156,6 +156,14 @@ func StagedProfileNames(stagingDir string) []string {
 	return names
 }
 
+// StagedProfileDataDir is where a staged profile's Desktop tree starts: the
+// profile's own metadata sits beside a data/ directory, mirroring the live
+// layout. Readers must descend that level — pointing at desktop@<name> itself
+// finds nothing, silently.
+func StagedProfileDataDir(stagingDir, name string) string {
+	return filepath.Join(stagingDir, profileRootPrefix+name, "data")
+}
+
 // desktopRel strips the wrapper a profile root adds, so the engine's rules about
 // paths inside a Desktop tree ("config.json", the sidecar layout) are written
 // once and hold for the machine-wide install and a profile alike.

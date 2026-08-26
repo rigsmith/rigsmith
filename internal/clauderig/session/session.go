@@ -31,6 +31,14 @@ type Meta struct {
 	LastActivity time.Time // sidecar lastActivityAt (zero if unknown)
 	Archived     bool
 	Sources      []string // sidecar source labels it was found in (e.g. "desktop", "repo")
+	// Account is the accountUuid directory the sidecar is filed under, which is
+	// the login that owns the session. Ground truth in a way Profile is not: a
+	// sidecar copied into another profile's tree keeps this path.
+	Account string
+	// Profile is the Desktop install whose session list holds this session, empty
+	// for the machine-wide one. The only thing that says which Desktop to reopen
+	// a session in — its transcript lands in the shared tree either way.
+	Profile string
 }
 
 // Index maps cliSessionId → Meta.
@@ -39,9 +47,14 @@ type Index map[string]Meta
 // Root is a place to scan for sidecars: a Label (for provenance) and the Base dir
 // that CONTAINS a claude-code-sessions/ tree — the live Desktop dir, or
 // <staging-repo>/desktop.
+//
+// Profile is the clauderig-managed Desktop profile this root belongs to, empty
+// for the machine-wide install. Kept apart from Label, which answers a different
+// question: which store the sidecar came from, live or synced.
 type Root struct {
-	Label string
-	Base  string
+	Label   string
+	Base    string
+	Profile string
 }
 
 // sidecar is the slice of a claude-code-sessions/*.json we read.
@@ -69,10 +82,25 @@ func Build(roots []Root) Index {
 	idx := Index{}
 	for _, r := range roots {
 		for _, tree := range sessionTrees {
-			scanSidecars(idx, filepath.Join(r.Base, tree), r.Label)
+			scanSidecars(idx, filepath.Join(r.Base, tree), r.Label, r.Profile)
 		}
 	}
 	return idx
+}
+
+// accountOf reads the accountUuid out of a sidecar's own path,
+// <tree>/<accountUuid>/<organizationUuid>/local_<id>.json. Anything shallower is
+// a layout we do not understand, where guessing beats nothing.
+func accountOf(tree, path string) string {
+	rel, err := filepath.Rel(tree, path)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) < 3 {
+		return ""
+	}
+	return parts[0]
 }
 
 // scanSidecars folds every local_<id>.json under dir into idx (see Build for the
@@ -80,7 +108,7 @@ func Build(roots []Root) Index {
 // local_<id>/ dir a cowork session keeps beside its sidecar) — that subtree holds
 // the session's outputs and a nested .claude/, which can be large and carries no
 // sidecars. The sidecar is the sibling local_<id>.json file, read separately.
-func scanSidecars(idx Index, dir, label string) {
+func scanSidecars(idx Index, dir, label, profile string) {
 	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -105,18 +133,39 @@ func scanSidecars(idx Index, dir, label string) {
 		}
 		m := Meta{
 			ID: sc.CliSessionID, Title: sc.Title, Cwd: sc.Cwd,
-			Model: sc.Model, Archived: sc.IsArchived,
+			Model: sc.Model, Archived: sc.IsArchived, Profile: profile,
+			Account: accountOf(dir, p),
 		}
 		if sc.LastActivityAt > 0 {
 			m.LastActivity = time.UnixMilli(sc.LastActivityAt).UTC()
 		}
 		if prev, ok := idx[m.ID]; ok {
 			sources := appendUnique(prev.Sources, label)
+			// Ownership is settled BEFORE the fresher-sidecar swap. Only one copy
+			// can name a profile, and reading it off the survivor loses it whenever
+			// the survivor is the machine-wide one — the common case, since that
+			// install is usually the most recently touched.
+			profile, acct := m.Profile, m.Account
+			if profile == "" {
+				profile = prev.Profile
+			}
+			switch {
+			case acct == "":
+				acct = prev.Account
+			case prev.Account != "" && prev.Account != acct:
+				// Two copies filing the same session under different accounts.
+				// Whichever was read last would otherwise decide, and this is meant
+				// to be ground truth — an arbitrary answer is worse than none, since
+				// it drives which Desktop the user is sent to. Leave it unassigned,
+				// as engine's sidecar scan does for the same conflict.
+				acct, profile = "", ""
+			}
 			// Keep the fresher sidecar's display fields; union the sources.
 			if prev.LastActivity.After(m.LastActivity) {
 				m = prev
 			}
 			m.Sources = sources
+			m.Profile, m.Account = profile, acct
 		} else {
 			m.Sources = []string{label}
 		}

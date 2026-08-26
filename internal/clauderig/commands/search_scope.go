@@ -32,8 +32,8 @@ const maxAgeDays = int64(math.MaxInt64 / (24 * int64(time.Hour)))
 // invisible here, and nothing in the results says so.
 type sessionScope struct {
 	caseSensitive bool
-	// since/until bound a session's recency time (the sidecar's lastActivity,
-	// else the transcript mtime) — the same instant the result line dates.
+	// since/until bound a session's recency time (its last transcript record; see
+	// sessionTime) — the same instant the result line dates.
 	since time.Time
 	until time.Time
 	// cwd is a case-insensitive substring of the session's project directory.

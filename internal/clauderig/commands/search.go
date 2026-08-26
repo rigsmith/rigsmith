@@ -13,7 +13,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
@@ -189,12 +192,18 @@ type sessResult struct {
 	// title-only session whose transcript simply didn't match. It, not mere
 	// this-machine presence, gates the resume command.
 	cliLive bool
-	// when is the recency sort key: the sidecar's lastActivity, else the transcript
-	// mtime, computed once so the sort is deterministic even for CLI-only sessions.
+	// when is the recency sort key: the transcript's own last record timestamp,
+	// else the sidecar's lastActivity, else the transcript mtime — computed once
+	// so the sort is deterministic even for CLI-only sessions. See sessionTime.
 	when time.Time
 	// cwd is the session's resolved project directory, computed once because both
 	// the --cwd filter and the rendered line need it.
 	cwd string
+	// act caches the one read of the transcript's tail — the session's real date,
+	// its ending cwd/branch, and the client that ran it. Cached because three
+	// different callers want pieces of it and the read is the expensive part.
+	act      session.Activity
+	actTried bool
 	// led is the permanent ledger row for this session, when one exists. It is
 	// what lets a session whose transcript has aged out of the synced window still
 	// answer with a title, a project and a date instead of with silence.
@@ -233,10 +242,24 @@ func (r *sessResult) record(m search.Match) bool {
 	return true
 }
 
-// sessionTime is the session's recency: the sidecar's lastActivity, else the
-// transcript's mtime, else zero. Used for both the sort key and the displayed
-// date so CLI-only sessions (no sidecar) still order by recency.
+// activity caches the one tail read three callers want pieces of. A missing or
+// unparseable transcript yields the zero Activity rather than an error.
+func (r *sessResult) activity() session.Activity {
+	if !r.actTried && r.path != "" {
+		r.actTried = true
+		r.act, _ = session.LastActivity(r.path)
+	}
+	return r.act
+}
+
+// sessionTime ranks three answers by trust: the transcript's own last record,
+// then the Desktop sidecar, then mtime. The transcript leads because it is the
+// only one a copy cannot move; the sidecar still beats mtime for a transcript
+// that cannot answer at all.
 func sessionTime(r *sessResult) time.Time {
+	if a := r.activity(); !a.At.IsZero() {
+		return a.At
+	}
 	if !r.meta.LastActivity.IsZero() {
 		return r.meta.LastActivity
 	}
@@ -287,6 +310,8 @@ func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine,
 func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, query string, sc sessionScope) error {
 	caseSensitive := sc.caseSensitive
 	idx := session.Build(roots)
+	byAcct, acctComplete := profileByAccount()
+	reprofile(idx, byAcct, acctComplete)
 
 	hits := map[string]*sessResult{}
 	get := func(id string) *sessResult {
@@ -458,9 +483,20 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	return nil
 }
 
-// renderSession prints one grouped session: title, id/date/model/project/source
-// line, the resume command, and a preview snippet when there was a content hit.
+// renderSession prints one grouped SEARCH result: title, id/date/model/project/
+// source line, why it matched, the resume command, and a preview snippet when
+// there was a content hit.
 func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machine, r *sessResult) {
+	why := "title match"
+	if r.matches > 0 {
+		why = fmt.Sprintf("%d match(es)", r.matches)
+	}
+	renderSessionAs(out, me, r, why)
+}
+
+// renderSessionAs is renderSession with the match explanation supplied by the
+// caller. An empty why omits that column, for a listing that ran no query.
+func renderSessionAs(out interface{ Write([]byte) (int, error) }, me config.Machine, r *sessResult, why string) {
 	title := r.meta.Title
 	if title == "" && r.path != "" {
 		title = session.FirstPrompt(r.path)
@@ -479,6 +515,12 @@ func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machin
 	if d := sessionDate(r); d != "" {
 		meta = append(meta, d)
 	}
+	if c := clientWithProfile(r); c != "" {
+		meta = append(meta, c)
+	}
+	if b := sessionBranch(r); b != "" {
+		meta = append(meta, b)
+	}
 	if r.meta.Model != "" {
 		meta = append(meta, strings.TrimPrefix(r.meta.Model, "claude-"))
 	}
@@ -490,11 +532,11 @@ func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machin
 	}
 	fmt.Fprintf(out, "  %s\n", DimStyle.Render(strings.Join(meta, " · ")))
 
-	why := "title match"
-	if r.matches > 0 {
-		why = fmt.Sprintf("%d match(es)", r.matches)
+	if why != "" {
+		fmt.Fprintf(out, "  %s   %s\n", DimStyle.Render(why), DimStyle.Render(resumeHint(r, cwd)))
+	} else {
+		fmt.Fprintf(out, "  %s\n", DimStyle.Render(resumeHint(r, cwd)))
 	}
-	fmt.Fprintf(out, "  %s   %s\n", DimStyle.Render(why), DimStyle.Render(resumeHint(r, cwd)))
 	if r.matches > 0 {
 		fmt.Fprintf(out, "    %s\n", highlight(r.first))
 	}
@@ -512,6 +554,11 @@ func resumeHint(r *sessResult, cwd string) string {
 		return "resume: cd " + shQuote(cwd) + " && claude --resume " + shQuote(r.id)
 	case r.cliLive:
 		return "resume: claude --resume " + shQuote(r.id)
+	case r.meta.Profile != "":
+		// Claude Desktop lists only sessions filed under the account it is signed
+		// in as, so this one will never appear in any install but its own.
+		return "Desktop session in the " + r.meta.Profile +
+			" profile — no other Desktop will list it: clauderig desktop open " + shQuote(r.meta.Profile)
 	case r.hitTargets[desktopTarget]:
 		// Cowork/Desktop transcript — `claude --resume` won't find it under ~/.claude.
 		return "Desktop session — open it in Claude Desktop's Code tab"
@@ -623,7 +670,7 @@ func resolveCwd(me config.Machine, r *sessResult) string {
 }
 
 // sessionDate is the session's last-used day, from the precomputed recency time
-// (sidecar lastActivity, else transcript mtime).
+// (see sessionTime).
 func sessionDate(r *sessResult) string {
 	if r.when.IsZero() {
 		return ""
@@ -654,6 +701,130 @@ func sourceLabel(r *sessResult) string {
 	}
 	sort.Strings(labels)
 	return strings.Join(labels, "+")
+}
+
+// clientLabel renders an entrypoint as the app a person would name: vscode,
+// desktop, cli, sdk-cs. The sdk-* variants keep their language, which is worth
+// telling apart when hunting a session.
+//
+// Distinct from sourceLabel despite both saying "desktop": that reports which
+// STORE a transcript was found in, this which CLIENT wrote it.
+func clientLabel(entrypoint string) string {
+	return strings.TrimPrefix(entrypoint, "claude-")
+}
+
+// profileByAccount maps accountUuid to Desktop profile name via the clauderig
+// account each profile is linked to. An empty NAME marks an account two profiles
+// both claim.
+//
+// complete reports that every profile resolved. Linking a profile to an account
+// is optional, so without it an account missing from the map does not mean "no
+// profile owns this" — and reprofile must not act as though it did.
+func profileByAccount() (byAccount map[string]string, complete bool) {
+	st, err := desktop.DefaultStore()
+	if err != nil {
+		return nil, false
+	}
+	profiles, err := st.List()
+	if err != nil || len(profiles) == 0 {
+		return nil, false
+	}
+	as, err := account.DefaultStore()
+	if err != nil {
+		return nil, false
+	}
+	accounts, err := as.List()
+	if err != nil {
+		return nil, false
+	}
+	uuidByID := map[string]string{}
+	for _, a := range accounts {
+		uuid := strings.ToLower(a.AccountUUID)
+		if uuid == "" {
+			// meta.json carries the uuid only for accounts captured after that
+			// field existed. Without this fallback the map comes back empty for
+			// older accounts, and does so silently.
+			if raw, oerr := as.OAuth(a.ID); oerr == nil {
+				uuid = account.ProfileAccountUUID(raw)
+			}
+		}
+		if uuid != "" {
+			uuidByID[a.ID] = uuid
+		}
+	}
+	out := map[string]string{}
+	complete = true
+	for _, p := range profiles {
+		uuid := uuidByID[p.AccountID]
+		if uuid == "" {
+			complete = false // unlinked profile: its sessions are unresolvable here
+			continue
+		}
+		// Two profiles on one account would make the label a coin flip.
+		if prev, dup := out[uuid]; dup && prev != p.Name {
+			out[uuid] = ""
+			continue
+		}
+		out[uuid] = p.Name
+	}
+	return out, complete
+}
+
+// reprofile takes each session's owning profile from the account its sidecar is
+// filed under rather than from the tree it was found in. A sidecar copied
+// between installs keeps its account path but lands in the other profile's
+// directory, so the tree is not ownership.
+//
+// complete gates the one case that removes information: an account absent from a
+// COMPLETE map belongs to no profile, so a label on it came from a stray copy.
+// Absent from a partial map means only that we cannot tell, and the tree stands.
+func reprofile(idx session.Index, byAccount map[string]string, complete bool) {
+	if len(byAccount) == 0 {
+		return
+	}
+	for id, m := range idx {
+		if m.Account == "" {
+			continue
+		}
+		name, known := byAccount[strings.ToLower(m.Account)]
+		switch {
+		case known:
+			// Includes the empty name two profiles share: a label nobody can
+			// justify is worse than none, since it decides where the user is sent.
+			m.Profile = name
+		case complete:
+			m.Profile = ""
+		default:
+			continue
+		}
+		idx[id] = m
+	}
+}
+
+// clientWithProfile qualifies the client with the Desktop profile that owns the
+// session: "desktop@work" rather than a bare "desktop". Several Desktop installs
+// can share a machine and all write entrypoint "claude-desktop", so the
+// entrypoint alone does not say which app to open.
+func clientWithProfile(r *sessResult) string {
+	c := clientLabel(r.activity().Entrypoint)
+	if r.meta.Profile == "" {
+		return c
+	}
+	if c == "" {
+		// No readable transcript, but the sidecar still says which Desktop filed
+		// it — the useful half.
+		return desktopTarget + "@" + r.meta.Profile
+	}
+	return c + "@" + r.meta.Profile
+}
+
+// sessionBranch is the branch a session ended on, or "" when it names nothing.
+// "HEAD" is what a detached checkout or a non-repo cwd records.
+func sessionBranch(r *sessResult) string {
+	if b := r.activity().GitBranch; b != "HEAD" {
+		return b
+	}
+	return ""
 }
 
 func shortID(id string) string {
@@ -727,18 +898,37 @@ func buildTargets(cfg *config.Config, me config.Machine, liveOnly, repoOnly bool
 	return targets
 }
 
-// sessionRoots is where session.Build looks for Desktop sidecars: the live
-// Desktop dir and/or the synced repo's desktop tree, matching the search scope.
+// sessionRoots is where session.Build looks for Desktop sidecars.
+//
+// Plural because every clauderig-managed Desktop profile is a separate install
+// with its own session list; only the machine-wide one lives at the configured
+// `desktop` root. Scanning that alone leaves profile-run sessions with no title
+// and no way to tell which install owns them. The staged side is enumerated the
+// same way, so profiles that exist only on another machine are covered too.
 func sessionRoots(cfg *config.Config, me config.Machine, liveOnly, repoOnly bool) []session.Root {
 	var roots []session.Root
 	if !repoOnly {
 		if loc, _ := cfg.RootLocation("desktop", me); loc != "" {
-			roots = append(roots, session.Root{Label: "desktop", Base: loc})
+			roots = append(roots, session.Root{Label: desktopTarget, Base: loc})
+		}
+		if store, err := desktop.DefaultStore(); err == nil {
+			profiles, _ := store.List() // absent store → no profiles, not an error
+			for _, p := range profiles {
+				roots = append(roots, session.Root{
+					Label: desktopTarget, Base: p.DataDir(), Profile: p.Name})
+			}
 		}
 	}
 	if !liveOnly {
 		if staging, err := config.StagingDir(); err == nil {
-			roots = append(roots, session.Root{Label: "repo", Base: filepath.Join(staging, "desktop")})
+			roots = append(roots, session.Root{Label: repoTarget, Base: filepath.Join(staging, "desktop")})
+			// Shared with `restore` rather than re-scanned here: one definition
+			// of which profiles are staged, and it validates the name before it
+			// becomes a path.
+			for _, name := range engine.StagedProfileNames(staging) {
+				roots = append(roots, session.Root{
+					Label: repoTarget, Base: engine.StagedProfileDataDir(staging, name), Profile: name})
+			}
 		}
 	}
 	return roots

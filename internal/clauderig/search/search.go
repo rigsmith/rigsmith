@@ -146,6 +146,22 @@ func Search(targets []Target, opts Options, emit func(Match)) (Stats, error) {
 	return stats, errors.Join(errs...)
 }
 
+// ScanFile searches a single file, for a caller that already knows which files it
+// cares about and does not want a walk. Emitted matches carry an empty Target,
+// there being no root to be relative to.
+func ScanFile(path string, opts Options, emit func(Match)) (int, error) {
+	if opts.Query == "" {
+		return 0, errors.New("empty search query")
+	}
+	needle := opts.Query
+	if !opts.CaseSensitive {
+		needle = strings.ToLower(needle)
+	}
+	t := Target{Dir: filepath.Dir(path)}
+	_, matches, err := scanFile(t, path, needle, opts.CaseSensitive, opts.Accept, emit)
+	return matches, err
+}
+
 // scanFile reads one file line by line, emitting a Match per hit. It returns
 // whether the file was actually scanned (false ⇒ skipped as binary) and the
 // number of matches. A NUL byte in the header marks the file binary and skips it.
