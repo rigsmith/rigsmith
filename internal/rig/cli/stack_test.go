@@ -21,14 +21,14 @@ func writeStackManifest(t *testing.T, root, body string) {
 const stackTestManifest = `{
   // comments must survive: the manifest is jsonc
   "repos": {
-    "porta-pty": {
-      "upstream": "github.com/tomlm/Porta.Pty",
-      "fork":     "github.com/JohnCampionJr/Porta.Pty",
+    "pty-core": {
+      "upstream": "github.com/acme/pty-core",
+      "fork":     "github.com/you/pty-core",
       "branch":   "main"
     },
-    "xterm-net": {
-      "upstream": "github.com/tomlm/XTerm.NET",
-      "fork":     "github.com/JohnCampionJr/XTerm.NET"
+    "term-core": {
+      "upstream": "github.com/acme/term-core",
+      "fork":     "github.com/you/term-core"
     }
   }
 }
@@ -45,13 +45,13 @@ func TestLoadWsManifest(t *testing.T) {
 		if src == nil || src.Path == "" {
 			t.Fatalf("expected a dedicated-file source, got %+v", src)
 		}
-		if got := m.branch("porta-pty"); got != "main" {
+		if got := m.branch("pty-core"); got != "main" {
 			t.Fatalf("branch = %q", got)
 		}
-		if got := m.branch("xterm-net"); got != "main" {
+		if got := m.branch("term-core"); got != "main" {
 			t.Fatalf("default branch = %q, want main", got)
 		}
-		if names := m.names(); strings.Join(names, ",") != "porta-pty,xterm-net" {
+		if names := m.names(); strings.Join(names, ",") != "pty-core,term-core" {
 			t.Fatalf("names = %v, want sorted stable order", names)
 		}
 	})
@@ -108,25 +108,25 @@ func TestWsSetCursor_PreservesComments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stackSetCursor(src, m, "porta-pty", "abc123def456"); err != nil {
+	if err := stackSetCursor(src, m, "pty-core", "abc123def456"); err != nil {
 		t.Fatal(err)
 	}
 	m2, src2, err := loadStackManifest(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := m2.cursor("porta-pty"); got != "abc123def456" {
+	if got := m2.cursor("pty-core"); got != "abc123def456" {
 		t.Fatalf("lastSync = %q", got)
 	}
 	// A second cursor lands beside the first, not over it.
-	if err := stackSetCursor(src2, m2, "xterm-net", "fedcba"); err != nil {
+	if err := stackSetCursor(src2, m2, "term-core", "fedcba"); err != nil {
 		t.Fatal(err)
 	}
 	m3, _, err := loadStackManifest(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m3.cursor("porta-pty") != "abc123def456" || m3.cursor("xterm-net") != "fedcba" {
+	if m3.cursor("pty-core") != "abc123def456" || m3.cursor("term-core") != "fedcba" {
 		t.Fatalf("cursors = %v", m3.LastSync)
 	}
 	data, _ := os.ReadFile(filepath.Join(root, "rig.stack.jsonc"))
@@ -212,10 +212,10 @@ func TestStackSendBranch(t *testing.T) {
 
 func TestJoshURL(t *testing.T) {
 	p := &joshProxy{port: 4242}
-	got := p.url("tomlm/Porta.Pty", "abc123", stackPrefixFilter("porta-pty"))
+	got := p.url("acme/pty-core", "abc123", stackPrefixFilter("pty-core"))
 	// ':' and '=' are legal in a path segment and stay literal, matching the
 	// filter syntax josh documents; only a separator like '/' is escaped.
-	want := "http://127.0.0.1:4242/tomlm/Porta.Pty.git@abc123:prefix=porta-pty.git"
+	want := "http://127.0.0.1:4242/acme/pty-core.git@abc123:prefix=pty-core.git"
 	if got != want {
 		t.Fatalf("url:\n got %s\nwant %s", got, want)
 	}
@@ -225,8 +225,8 @@ func TestJoshURL(t *testing.T) {
 }
 
 func TestWsSplitHost(t *testing.T) {
-	host, path := stackSplitHost("github.com/tomlm/Porta.Pty")
-	if host != "github.com" || path != "tomlm/Porta.Pty" {
+	host, path := stackSplitHost("github.com/acme/pty-core")
+	if host != "github.com" || path != "acme/pty-core" {
 		t.Fatalf("got %q %q", host, path)
 	}
 }
@@ -464,14 +464,14 @@ func TestStackMenuAndCompletion(t *testing.T) {
 	t.Run("completion offers the workspace's repos", func(t *testing.T) {
 		inWorkspace(t, stackTestManifest)
 		got, _ := stackRepoCompletion(nil, nil, "")
-		if strings.Join(got, ",") != "porta-pty,xterm-net" {
+		if strings.Join(got, ",") != "pty-core,term-core" {
 			t.Fatalf("completion = %v", got)
 		}
 	})
 
 	t.Run("completion stops after the repo argument", func(t *testing.T) {
 		inWorkspace(t, stackTestManifest)
-		if got, _ := stackRepoCompletion(nil, []string{"porta-pty"}, ""); got != nil {
+		if got, _ := stackRepoCompletion(nil, []string{"pty-core"}, ""); got != nil {
 			t.Fatalf("expected no completions for the second argument, got %v", got)
 		}
 	})

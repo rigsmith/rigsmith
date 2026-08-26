@@ -45,8 +45,9 @@ func newStackCmd() *cobra.Command {
 
 // stackRoot is the workspace root: the git top level, not resolveRoot's answer.
 // resolveRoot finds the nearest *project* — a package manifest or solution —
-// and every imported repo carries one of those, so from inside porta-pty/ it
-// would answer porta-pty/ and the workspace would look like it did not exist.
+// and every imported repo carries one of those, so from inside a fused project
+// it would answer that project and the workspace would look like it did not
+// exist.
 // An explicit --root still wins, since that is the user saying where to look.
 func stackRoot(ctx context.Context) (string, error) {
 	cwd, err := os.Getwd()
