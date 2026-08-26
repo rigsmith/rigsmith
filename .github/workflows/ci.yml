@@ -53,6 +53,28 @@ jobs:
       - name: Scan full history
         run: gitleaks git --no-banner -v -c .gitleaks.toml
 
+  vulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # go-version-file honours the go directive, so the scan runs on the same
+      # toolchain the module requires — which is the point: most findings here
+      # have been standard-library ones, invisible to any dependency bump.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # Pinned rather than @latest so a tool release cannot change the verdict
+      # on an unrelated PR; the vulnerability database is fetched live, so this
+      # still scans against current advisories.
+      - name: Install govulncheck
+        env:
+          GOVULNCHECK_VERSION: v1.1.4
+        run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+      - name: Scan
+        run: govulncheck ./...
+
   lint:
     name: vet + gofmt
     runs-on: ubuntu-latest
