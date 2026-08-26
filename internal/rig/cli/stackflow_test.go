@@ -46,9 +46,11 @@ func TestStackFlow(t *testing.T) {
 	mustGitStack(t, ws, "init", "-q", "-b", "main")
 	mustGitStack(t, ws, "config", "user.email", "t@t")
 	mustGitStack(t, ws, "config", "user.name", "t")
+	// libfoo uses the current key, libbar the older `branch` spelling, so the
+	// whole flow is walked once through each.
 	writeStackManifest(t, ws, fmt.Sprintf(`{
   "repos": {
-    "libfoo": { "upstream": %[1]q, "fork": %[2]q, "branch": "main" },
+    "libfoo": { "upstream": %[1]q, "fork": %[2]q, "upstreamBranch": "main" },
     "libbar": { "upstream": %[3]q, "fork": %[4]q, "branch": "main" }
   }
 }`, srv.spec("org/libfoo"), srv.spec("me/libfoo"),

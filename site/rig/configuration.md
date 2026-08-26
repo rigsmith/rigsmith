@@ -192,7 +192,7 @@ history: the key is the directory it lives under.
     "pty-core": {
       "upstream": "github.com/acme/pty-core",   // where PRs go
       "fork": "github.com/you/pty-core",        // where `send` pushes
-      "branch": "main"                          // upstream branch, default main
+      "upstreamBranch": "main"                  // branch of upstream to follow
     }
   },
   // Written by `pull`, not by hand: the upstream commit each repo last took.
@@ -202,6 +202,12 @@ history: the key is the directory it lives under.
 
 Repo specs are `host/owner/name` — no scheme and no `.git`, since the same spec
 has to serve as a URL, an engine path, and a label.
+
+`upstreamBranch` names the branch of `upstream` this directory follows — what
+`pull` takes and what `send` roots on. It is deliberately not called `branch`:
+that would collide with `rig stack send <repo> <new-branch>`, where the branch
+is one you are creating on your fork for a single change. A manifest written
+with the older `branch` key is still read.
 
 `lastSync` is a separate map rather than a field per repo because it is machine
 written: a pull rewrites that one value while the entries you wrote, and their

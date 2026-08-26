@@ -55,17 +55,17 @@ rig stack init          # writes rig.stack.jsonc
     "pty-core": {
       "upstream": "github.com/acme/pty-core",   // where PRs go
       "fork":     "github.com/you/pty-core",    // where `send` pushes
-      "branch":   "main"                        // upstream branch, default main
+      "upstreamBranch": "main"                  // branch of upstream to follow
     },
     "term-core": {
       "upstream": "github.com/acme/term-core",
       "fork":     "github.com/you/term-core",
-      "branch":   "main"
+      "upstreamBranch": "main"
     },
     "term-control": {
       "upstream": "github.com/acme/term-control",
       "fork":     "github.com/you/term-control",
-      "branch":   "main"
+      "upstreamBranch": "main"
     }
   }
 }
@@ -73,7 +73,11 @@ rig stack init          # writes rig.stack.jsonc
 
 The key is the directory the project will live under. Repo specs are
 `host/owner/name` — no scheme, no `.git` — because the same string has to serve
-as a URL, an engine path, and a label. Full key reference in
+as a URL, an engine path, and a label.
+
+`upstreamBranch` is the branch of **upstream** this directory follows: what
+`pull` takes, and what `send` roots its commit on. It is *not* the branch `send`
+creates — you name that one per change. Full key reference in
 [Configuration](./configuration#stack).
 
 ### 3. Import
@@ -154,6 +158,8 @@ commit whose diff is exactly what you changed in that directory, rooted on the
 current upstream tip.
 
 ```sh
+rig stack send <repo> <new-branch>
+
 rig stack send pty-core fix/read-timeout -m "Fix the read timeout"
 rig stack send term-control fix/read-timeout -m "Handle the new timeout"
 
@@ -165,6 +171,10 @@ The branch holds that project's files at their real un-prefixed paths —
 `src/Pty.Core/…`, not `pty-core/src/…` — with no sign the repo is fused with
 anything, and none of the workspace's own history for a maintainer to read
 around. Open the PR from your fork as usual.
+
+`<new-branch>` is a branch you are creating on *your fork*, named per change.
+Nothing reads it from the manifest, because it is a property of the change
+rather than of the project — which is also why the `rig ui` flow asks for it.
 
 Sending again to the same branch **updates** it, so you can act on review
 feedback: commit in the workspace, re-send, and the pull request moves. The
@@ -198,7 +208,7 @@ workspace. The cursor only advances once the merge is committed.
 | `stack init` | Scaffold the manifest, or import the repos it names that are not imported yet |
 | `stack status` | Each repo's cursor against its upstream branch tip |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
-| `stack send <repo> <branch>` | Put that repo's changes on your fork as a PR-ready branch |
+| `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
 All of it is in [`rig ui`](./verbs) too, under **▸ Stack** — `send` there picks

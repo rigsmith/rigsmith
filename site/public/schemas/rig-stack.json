@@ -38,9 +38,13 @@
               "pattern": "\\.git$"
             }
           },
+          "upstreamBranch": {
+            "type": "string",
+            "description": "Branch of `upstream` this directory follows \u2014 what `pull` takes and what `send` roots on. Defaults to main. Not the branch `send` creates; you name that per change."
+          },
           "branch": {
             "type": "string",
-            "description": "Upstream branch to track. Default: main."
+            "description": "Deprecated name for upstreamBranch. Still read; prefer upstreamBranch, which cannot be confused with the branch `send` creates."
           }
         },
         "required": [

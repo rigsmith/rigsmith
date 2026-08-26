@@ -135,6 +135,41 @@ func TestWsSetCursor_PreservesComments(t *testing.T) {
 	}
 }
 
+func TestStackUpstreamBranch(t *testing.T) {
+	repo := func(m *stackManifest) string { return m.branch("x") }
+
+	t.Run("defaults to main", func(t *testing.T) {
+		m := &stackManifest{Repos: map[string]*stackRepo{"x": {}}}
+		if got := repo(m); got != "main" {
+			t.Fatalf("branch = %q", got)
+		}
+	})
+
+	t.Run("upstreamBranch wins", func(t *testing.T) {
+		m := &stackManifest{Repos: map[string]*stackRepo{"x": {UpstreamBranch: "trunk"}}}
+		if got := repo(m); got != "trunk" {
+			t.Fatalf("branch = %q", got)
+		}
+	})
+
+	t.Run("the old branch key still works", func(t *testing.T) {
+		m := &stackManifest{Repos: map[string]*stackRepo{"x": {Branch: "develop"}}}
+		if got := repo(m); got != "develop" {
+			t.Fatalf("branch = %q", got)
+		}
+	})
+
+	t.Run("disagreeing spellings are refused", func(t *testing.T) {
+		m := &stackManifest{Repos: map[string]*stackRepo{
+			"x": {Upstream: "h/o/n", Fork: "h/me/n", UpstreamBranch: "trunk", Branch: "develop"},
+		}}
+		err := m.validate()
+		if err == nil || !strings.Contains(err.Error(), "old name") {
+			t.Fatalf("expected a refusal naming the old key, got %v", err)
+		}
+	})
+}
+
 func TestJoshURL(t *testing.T) {
 	p := &joshProxy{port: 4242}
 	got := p.url("tomlm/Porta.Pty", "abc123", stackPrefixFilter("porta-pty"))

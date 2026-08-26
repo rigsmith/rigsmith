@@ -27,9 +27,16 @@ const (
 // (the manifest key). Repo specs are host/owner/name — no scheme, no .git —
 // because the same spec must serve https URLs, josh proxy paths, and display.
 type stackRepo struct {
-	Upstream string `json:"upstream"`         // canonical repo, PRs land here
-	Fork     string `json:"fork"`             // contributor's fork, `send` pushes here
-	Branch   string `json:"branch,omitempty"` // upstream branch to track (default main)
+	Upstream string `json:"upstream"` // canonical repo, PRs land here
+	Fork     string `json:"fork"`     // contributor's fork, `send` pushes here
+	// UpstreamBranch is the branch of Upstream this prefix tracks — what `pull`
+	// follows and what `send` roots its commit on. Named in full because
+	// "branch" alone collided with `send <repo> <branch>`, which is a *new*
+	// branch on the fork: readers could not tell which one a manifest meant.
+	UpstreamBranch string `json:"upstreamBranch,omitempty"` // default main
+	// Branch is the name this key had before that ambiguity was worth fixing.
+	// Still read, never written.
+	Branch string `json:"branch,omitempty"`
 }
 
 type stackManifest struct {
@@ -45,8 +52,15 @@ type stackManifest struct {
 
 func (m *stackManifest) cursor(name string) string { return m.LastSync[name] }
 
+// branch is the upstream branch a prefix tracks.
 func (m *stackManifest) branch(name string) string {
-	if r := m.Repos[name]; r != nil && r.Branch != "" {
+	r := m.Repos[name]
+	switch {
+	case r == nil:
+		return "main"
+	case r.UpstreamBranch != "":
+		return r.UpstreamBranch
+	case r.Branch != "":
 		return r.Branch
 	}
 	return "main"
@@ -65,7 +79,8 @@ func (m *stackManifest) names() []string {
 
 func (m *stackManifest) validate() error {
 	if len(m.Repos) == 0 {
-		return fmt.Errorf("stack manifest has no repos")
+		// Almost always the untouched scaffold: say what to do, not what is wrong.
+		return fmt.Errorf("no repos yet — uncomment the example entry and point it at your upstream and fork, then run `rig stack init` again")
 	}
 	for name, r := range m.Repos {
 		// The key is both a josh prefix and a `HEAD:<name>` tree path, so it has
@@ -76,6 +91,12 @@ func (m *stackManifest) validate() error {
 		}
 		if r == nil || r.Upstream == "" || r.Fork == "" {
 			return fmt.Errorf("stack repo %q needs both upstream and fork", name)
+		}
+		// Both spellings set to different branches is a manifest whose author
+		// believed one of them meant something else; refuse rather than pick.
+		if r.UpstreamBranch != "" && r.Branch != "" && r.UpstreamBranch != r.Branch {
+			return fmt.Errorf("stack repo %q sets upstreamBranch %q and branch %q — keep upstreamBranch and drop branch, which is the old name for it",
+				name, r.UpstreamBranch, r.Branch)
 		}
 		for _, spec := range []string{r.Upstream, r.Fork} {
 			if strings.Contains(spec, "://") || strings.HasSuffix(spec, ".git") {
@@ -209,19 +230,47 @@ func stackSplitHost(spec string) (host, path string) {
 	return host, path
 }
 
-// stackManifestTemplate is what `stack init` writes when no manifest exists yet —
-// a commented skeleton, because the URLs are facts only the user knows.
+// stackManifestTemplate is what `stack init` writes when no manifest exists yet.
+// The example entry is commented out deliberately: an active one would send the
+// next `init` chasing a repo that does not exist, and the error for an empty
+// repos block says what to do instead.
 const stackManifestTemplate = `{
   "$schema": "` + stackSchemaURL + `",
-  // One entry per upstream project; the key is the prefix directory the
-  // project's history is fused under. Specs are host/owner/name.
+
+  // A stack workspace fuses several upstream repos into this one git history,
+  // each under its own directory, so a change can span them in a single commit
+  // and still leave as an ordinary pull request to each project.
+  //
+  // Uncomment the block below, point it at your repos, then run
+  //     rig stack init
+  // again to import them.
+  //
+  // Specs are host/owner/name — no https://, no .git — because the same string
+  // has to serve as a URL, an engine path, and a label.
+
   "repos": {
+    // The key is the directory this project is fused under, and the name you
+    // pass to the verbs:  rig stack pull some-lib
+
     // "some-lib": {
+    //   // Where pull requests eventually go. rig only ever reads from it.
     //   "upstream": "github.com/them/Some.Lib",
-    //   "fork":     "github.com/you/Some.Lib",
-    //   "branch":   "main"
-    // }
+    //
+    //   // Your fork, where "rig stack send" pushes PR-ready branches.
+    //   // You need push access to it.
+    //   "fork": "github.com/you/Some.Lib",
+    //
+    //   // Which branch of upstream this directory follows. Optional, main by
+    //   // default. This is NOT the branch send creates — you name that one per
+    //   // change:  rig stack send some-lib fix/the-thing
+    //   "upstreamBranch": "main"
+    // },
+
+    // "another-lib": { "upstream": "...", "fork": "..." }
   }
+
+  // A "lastSync" block appears here after the first import, recording the
+  // upstream commit each directory was taken from. Written by rig, not by hand.
 }
 `
 

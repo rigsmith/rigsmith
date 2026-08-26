@@ -366,13 +366,17 @@ func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, b
 func newStackSendCmd() *cobra.Command {
 	var message string
 	cmd := &cobra.Command{
-		Use:   "send <repo> <branch>",
+		Use:   "send <repo> <new-branch>",
 		Short: "Put a repo's workspace changes on your fork as a PR-ready branch",
 		Long: "Takes this workspace's version of <repo> and commits it on top of that\n" +
-			"project's upstream tip, as <branch> on your fork. The branch holds one\n" +
-			"commit whose diff is exactly what the workspace changed, with none of the\n" +
-			"workspace's own history: nothing upstream has to know this repo is fused\n" +
-			"with anything else. PR from there as usual.",
+			"project's upstream tip, as <new-branch> on your fork. The branch holds\n" +
+			"one commit whose diff is exactly what the workspace changed, with none of\n" +
+			"the workspace's own history: nothing upstream has to know this repo is\n" +
+			"fused with anything else. PR from there as usual.\n\n" +
+			"<new-branch> is a branch you are creating on your fork, named per change\n" +
+			"(fix/the-thing). It is unrelated to the manifest's upstreamBranch, which\n" +
+			"is the branch of *upstream* this directory follows. Sending twice to the\n" +
+			"same <new-branch> updates it, so an open PR can take review feedback.",
 		Args:              cobra.ExactArgs(2),
 		ValidArgsFunction: stackRepoCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -598,8 +602,20 @@ func newStackSendMenuCmd() *cobra.Command {
 				fields = append(fields, huh.NewSelect[string]().
 					Title("Send which repo?").Options(opts...).Filtering(true).Value(&name))
 			}
-			fields = append(fields, huh.NewInput().Title("Branch").
-				Description("branch to create on your fork, holding one commit").
+			// The prompt cannot be skipped by reading the manifest: this branch is
+			// named per change, and the manifest's upstreamBranch is a different
+			// thing entirely — the branch of upstream the directory follows.
+			//
+			// With one repo the destination fork is known now and worth naming;
+			// with several it is only decided by the select above, which has not
+			// run yet, so stay general rather than name the wrong one.
+			where := "your fork"
+			if len(names) == 1 {
+				where = m.Repos[names[0]].Fork
+			}
+			fields = append(fields, huh.NewInput().Title("New branch on your fork").
+				Description(fmt.Sprintf("created on %s, holding one commit — e.g. fix/the-thing", where)).
+				Placeholder("fix/…").
 				Value(&branch))
 
 			if err := huh.NewForm(huh.NewGroup(fields...)).
