@@ -49,12 +49,13 @@ func NewDesktopCmd() *cobra.Command {
 			"login. Each profile is a directory Claude Desktop owns outright, and all\n" +
 			"clauderig decides is which one to launch against. That is what makes this\n" +
 			"safe where moving a session around was not.\n\n" +
-			"  add    create a profile and open a window to log into\n" +
-			"  open   open (or focus) a profile's window\n" +
-			"  list   show saved profiles and which are open\n" +
-			"  quit   close a profile's window\n" +
-			"  map    bind a directory to a profile, for a bare `open` there\n" +
-			"  rm     delete a profile (logs that account out of Desktop for good)\n\n" +
+			"  add       create a profile and open a window to log into\n" +
+			"  open      open (or focus) a profile's window\n" +
+			"  list      show saved profiles and which are open\n" +
+			"  quit      close a profile's window\n" +
+			"  map       bind a directory to a profile, for a bare `open` there\n" +
+			"  shortcut  make a clickable launcher (desktop icon / app menu entry)\n" +
+			"  rm        delete a profile (logs that account out of Desktop for good)\n\n" +
 			"Separate from `clauderig account`, which switches the Claude Code CLI login.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if Interactive() {
@@ -64,7 +65,8 @@ func NewDesktopCmd() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newDesktopAddCmd(), newDesktopOpenCmd(), newDesktopListCmd(),
-		newDesktopQuitCmd(), newDesktopRemoveCmd(), newDesktopMapCmd(), newDesktopUnmapCmd())
+		newDesktopQuitCmd(), newDesktopRemoveCmd(), newDesktopMapCmd(), newDesktopUnmapCmd(),
+		newDesktopShortcutCmd())
 	return cmd
 }
 
@@ -75,7 +77,7 @@ func desktopStore() (*desktop.Store, error) { return desktop.DefaultStore() }
 
 func newDesktopAddCmd() *cobra.Command {
 	var email string
-	var noSeed bool
+	var noSeed, shortcut, noShortcut bool
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Create a Desktop profile and open a window to log into",
@@ -88,7 +90,10 @@ func newDesktopAddCmd() *cobra.Command {
 			"The profile is SEEDED from your existing Claude Desktop install so it is\n" +
 			"usable immediately: MCP servers, theme and locale come across. Nothing that\n" +
 			"carries the login does — the new profile still starts signed out, which is\n" +
-			"the point. `--no-seed` starts from nothing.",
+			"the point. `--no-seed` starts from nothing.\n\n" +
+			"On a terminal it offers a desktop shortcut for the new profile; `--shortcut`\n" +
+			"makes one without asking, `--no-shortcut` skips the question. Either way\n" +
+			"`clauderig desktop shortcut <name>` makes them later.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -143,12 +148,25 @@ func newDesktopAddCmd() *cobra.Command {
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"  next: add any other accounts the same way. `clauderig sync` backs each\n"+
 					"  profile's settings and chat history up — never its login."))
+			// Asked LAST, and never in a way that can fail the command: the
+			// profile exists and its window is already open by this point, so a
+			// shortcut is a convenience layered on top of finished work.
+			switch {
+			case shortcut:
+				makeShortcut(out, p.Name)
+			case noShortcut || !Interactive():
+			default:
+				offerShortcut(out, p.Name)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&email, "email", "", "email to show in the listing (also matches a stored account)")
 	cmd.Flags().BoolVar(&noSeed, "no-seed", false,
 		"start from an empty profile instead of copying settings from your existing Claude Desktop install")
+	cmd.Flags().BoolVar(&shortcut, "shortcut", false, "also put a shortcut for it on the desktop")
+	cmd.Flags().BoolVar(&noShortcut, "no-shortcut", false, "do not ask about a desktop shortcut")
+	cmd.MarkFlagsMutuallyExclusive("shortcut", "no-shortcut")
 	return cmd
 }
 
@@ -653,9 +671,21 @@ func newDesktopRemoveCmd() *cobra.Command {
 			if dm, derr := dirmapStore(); derr == nil {
 				_ = dm.PruneDesktop(p.Name)
 			}
+			// And the same again for its shortcuts: an icon left on the desktop
+			// now opens nothing. Reported rather than returned — the profile is
+			// already gone, so a shortcut that could not be deleted is something
+			// to tell the user about, not a reason to fail the command.
+			removedShortcuts, scErr := desktop.RemoveShortcutsFor(p.Name)
 			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ removed"), p.Label())
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"  that account is signed out of Desktop now; its Claude Code login is untouched"))
+			for _, sc := range removedShortcuts {
+				fmt.Fprintf(out, "%s\n", DimStyle.Render("  shortcut deleted: "+sc.Path))
+			}
+			if scErr != nil {
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(
+					"  could not clear its shortcuts ("+scErr.Error()+") — any left behind now open nothing"))
+			}
 			// Say so only when there IS a synced copy: otherwise this is a note
 			// about a file that does not exist, on the one command where the
 			// user is already being told what they cannot undo.
