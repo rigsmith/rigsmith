@@ -17,6 +17,17 @@ rig build --dry-run      # print the command, don't run it
 rig build --quiet        # suppress the → command echo
 ```
 
+Beyond the dev loop it manages parallel worktrees, and **stack workspaces** —
+several forked repos fused into one history, so a change can span them in a
+single commit and still leave as an ordinary pull request to each:
+
+```sh
+rig stack init                       # import the repos the manifest names
+rig stack status                     # who has moved upstream
+rig stack pull porta-pty             # take that movement
+rig stack send porta-pty fix/timeout -m "Fix the read timeout"
+```
+
 ## Verbs
 
 | Verb | What |

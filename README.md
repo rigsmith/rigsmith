@@ -9,7 +9,7 @@ and the shared engine under `core/`:
 | Path | Binary | What it is |
 |---|---|---|
 | [`core/`](core/) | — | `github.com/rigsmith/rigsmith/core` — the shared engine: semver, changeset parsing, the release planner (cascade + grouping), the plugin contract, the built-in ecosystem adapters (.NET, Node, Go, Rust), and `pathmap` (cross-OS path resolution). No external dependencies. |
-| [`cmd/rig/`](cmd/rig/) | `rig` | The convention-first dev launcher (run/build/test/format across .NET, Node, Go, Rust). Successor to the .NET/Node [`rig`](https://github.com/JohnCampionJr/rig). |
+| [`cmd/rig/`](cmd/rig/) | `rig` | The convention-first dev launcher (run/build/test/format across .NET, Node, Go, Rust), plus parallel worktrees and `stack` workspaces — forked repos fused into one history. Successor to the .NET/Node [`rig`](https://github.com/JohnCampionJr/rig). |
 | [`cmd/changerig/`](cmd/changerig/) | `changerig` | The lean changeset tool: the lifecycle (init → add → status → version) isolated from release orchestration. Its `commands` package (under `internal/changerig`) is reused by shiprig. Aliased `changeset`. |
 | [`cmd/shiprig/`](cmd/shiprig/) | `shiprig` | The release front door: everything changeRig does, plus publish/tag/pre orchestration. Successor to [net-changesets](../net-changesets). |
 | [`cmd/clauderig/`](cmd/clauderig/) | `clauderig` | Sync your Claude Code setup (config, skills, session history) across machines via a private git repo, with cross-OS path correction and secret stripping. See [docs/CLAUDERIG-DESIGN.md](docs/CLAUDERIG-DESIGN.md). |
@@ -46,6 +46,12 @@ rig build / test / run / format             # the right native command for the d
 rig verify [--stale-only]                   # build+test+run, then prove the artifacts were built together
 rig coverage --min 80 / kill / doctor / cd  # the dev-loop verbs (see cli/README.md for all)
 rig copy ../snapshot [--git]                 # detached copy of the tree (skips node_modules/.git; --git keeps history)
+rig worktree new feat/x                     # sibling checkout for working on a branch alongside
+
+# several forked repos fused into one history, PRs still land as one commit each:
+rig stack init                              # import the repos rig.stack.jsonc names
+rig stack status / pull [repo]              # what upstream did, and taking it
+rig stack send porta-pty fix/timeout        # that repo's changes, on your fork, PR-ready
 ```
 
 The release engine — changeset parsing, the dependency **cascade** (a dependent

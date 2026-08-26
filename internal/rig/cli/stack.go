@@ -49,7 +49,7 @@ func stackWorkspace(ctx context.Context) (*stackManifest, *cfgfind.Source, *gitr
 		return nil, nil, nil, err
 	}
 	root := resolveRoot(cwd)
-	m, src, err := loadWsManifest(root)
+	m, src, err := loadStackManifest(root)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -88,7 +88,7 @@ func newStackInitCmd() *cobra.Command {
 				return err
 			}
 			root := resolveRoot(cwd)
-			m, src, err := loadWsManifest(root)
+			m, src, err := loadStackManifest(root)
 			if err != nil {
 				return err
 			}
@@ -163,9 +163,10 @@ func newStackStatusCmd() *cobra.Command {
 
 func newStackPullCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "pull [repo]",
-		Short: "Merge new upstream commits into a repo's prefix (all repos by default)",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "pull [repo]",
+		Short:             "Merge new upstream commits into a repo's prefix (all repos by default)",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: stackRepoCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			m, src, repo, err := stackWorkspace(ctx)
@@ -263,7 +264,8 @@ func newStackSendCmd() *cobra.Command {
 			"commit whose diff is exactly what the workspace changed, with none of the\n" +
 			"workspace's own history: nothing upstream has to know this repo is fused\n" +
 			"with anything else. PR from there as usual.",
-		Args: cobra.ExactArgs(2),
+		Args:              cobra.ExactArgs(2),
+		ValidArgsFunction: stackRepoCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			name, branch := args[0], args[1]
@@ -340,7 +342,7 @@ func newStackDoctorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			m, _, err := loadWsManifest(resolveRoot(cwd))
+			m, _, err := loadStackManifest(resolveRoot(cwd))
 			if err != nil {
 				return err
 			}
@@ -384,4 +386,39 @@ func short(sha string) string {
 		return "—"
 	}
 	return sha
+}
+
+// stackRepoCompletion offers the workspace's repos for the verbs that take one.
+func stackRepoCompletion(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	m, _, err := loadStackManifest(resolveRoot(cwd))
+	if err != nil || m == nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return m.names(), cobra.ShellCompDirectiveNoFileComp
+}
+
+// stackMenuItems are the stack actions for `rig ui`, and are empty outside a
+// workspace so the group only appears where it means something. send is absent:
+// it needs a repo and a branch name, which a menu pick cannot supply.
+func stackMenuItems() []menuItem {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	m, _, err := loadStackManifest(resolveRoot(cwd))
+	if err != nil || m == nil {
+		return nil
+	}
+	return []menuItem{
+		{label: "status", desc: "each repo's cursor against its upstream", cmd: newStackStatusCmd()},
+		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
+		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
+	}
 }

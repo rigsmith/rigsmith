@@ -45,7 +45,7 @@ features:
       </div>
     </div>
     <p class="rs-tool-desc">Convention-first dev launcher. Auto-detects your stack — .NET, Node, Go, Rust — and runs the right native command for build, test, run, and format.</p>
-    <div class="rs-verbs"><code>build</code><code>test</code><code>run</code><code>fmt</code><code>coverage</code><code>doctor</code><code>kill</code><code>cd</code></div>
+    <div class="rs-verbs"><code>build</code><code>test</code><code>run</code><code>fmt</code><code>coverage</code><code>worktree</code><code>stack</code><code>doctor</code></div>
   </a>
 
   <a class="rs-tool acc-change" href="/changerig/">

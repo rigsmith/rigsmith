@@ -309,6 +309,11 @@ func newMenu() menuModel {
 	if proj := projectCommandItems(root); len(proj) > 0 {
 		top = append(top, menuItem{label: "▸ Project commands", desc: "custom commands + scripts from this repo", children: proj})
 	}
+	// Only in a workspace: outside one the verbs have nothing to act on, and a
+	// group that always errors is worse than one that isn't there.
+	if items := stackMenuItems(); len(items) > 0 {
+		top = append(top, menuItem{label: "▸ Stack", desc: "upstream forks fused into this history", children: items})
+	}
 	top = append(top, menuItem{label: "▸ Maintenance", desc: "prune / clean / kill / doctor", children: maint})
 
 	return menuModel{

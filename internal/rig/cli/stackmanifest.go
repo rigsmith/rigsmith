@@ -94,9 +94,9 @@ func stackSpec(root string) cfgfind.Spec {
 	}
 }
 
-// loadWsManifest resolves and parses the manifest at root. A nil manifest with
+// loadStackManifest resolves and parses the manifest at root. A nil manifest with
 // nil error means "not a stack workspace" — callers say so themselves.
-func loadWsManifest(root string) (*stackManifest, *cfgfind.Source, error) {
+func loadStackManifest(root string) (*stackManifest, *cfgfind.Source, error) {
 	src, err := cfgfind.Find(stackSpec(root))
 	if err != nil || src == nil {
 		return nil, nil, err

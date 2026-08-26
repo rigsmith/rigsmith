@@ -232,6 +232,63 @@ for how the guard makes worktrees + PRs the default under Claude Code, and
 [Configuration](./configuration#worktree) for the `worktree.autoOpen` /
 `worktree.openCmd` keys.
 
+## Fused forks: `stack` {#stack}
+
+Some projects only make sense together — a library, a second library, and the
+thing that uses both — and when you maintain forks of all three, iterating means
+publishing a package to see a change land. A stack workspace fuses those repos
+into **one history**, each under its own directory, so a change spans them in a
+single commit and the build compiles against source rather than packages.
+
+Upstream never learns about it. Each repo keeps its own remote, and `send`
+produces an ordinary pull request.
+
+| Verb | What |
+|------|------|
+| `stack init` | Write the manifest, or import the repos it names into this history |
+| `stack status` | Each repo's cursor against its upstream branch |
+| `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
+| `stack send <repo> <branch>` | Put that repo's changes on your fork as a PR-ready branch |
+| `stack doctor` | Check the engine and manifest; `--fix` installs what's missing |
+
+```sh
+rig stack init                       # writes rig.stack.jsonc to fill in
+rig stack init                       # again: imports each repo it names
+rig stack status                     # who has moved upstream
+rig stack pull porta-pty             # take that movement
+rig stack send porta-pty fix/timeout -m "Fix the read timeout"
+```
+
+The manifest names each repo, where it comes from, and where your changes go:
+
+```jsonc
+{
+  "repos": {
+    "porta-pty": {
+      "upstream": "github.com/tomlm/Porta.Pty",
+      "fork": "github.com/JohnCampionJr/Porta.Pty",
+      "branch": "main"
+    }
+  }
+}
+```
+
+`send` commits that directory's tree onto the upstream tip and pushes it: the
+branch holds one commit whose diff is exactly what you changed, with none of the
+workspace's own history — nothing for a maintainer to read around. A workspace
+commit touching three projects becomes three such branches, one per `send`.
+
+`pull` merges upstream's new commits into that repo's directory, so a conflict
+is scoped to the project that caused it. The cursor only advances once the merge
+is committed, which makes a repeated `pull` a no-op rather than a surprise.
+
+Importing and pulling need a filtering engine (`josh-proxy`); `stack doctor
+--fix` fetches a verified binary for your platform, falling back to building it
+where none is published. Nothing runs in the background: the engine starts per
+operation and stops after.
+
+See [Configuration](./configuration#stack) for the manifest keys.
+
 ## Prefix matching
 
 Verbs prefix-match, so `rig cove` runs `coverage` and `rig w r` is `watch run`.

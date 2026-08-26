@@ -12,7 +12,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 )
 
-func writeWsManifest(t *testing.T, root, body string) {
+func writeStackManifest(t *testing.T, root, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -38,8 +38,8 @@ const stackTestManifest = `{
 func TestLoadWsManifest(t *testing.T) {
 	t.Run("dedicated jsonc file with comments", func(t *testing.T) {
 		root := t.TempDir()
-		writeWsManifest(t, root, stackTestManifest)
-		m, src, err := loadWsManifest(root)
+		writeStackManifest(t, root, stackTestManifest)
+		m, src, err := loadStackManifest(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,7 +58,7 @@ func TestLoadWsManifest(t *testing.T) {
 	})
 
 	t.Run("no manifest -> nil, nil", func(t *testing.T) {
-		m, src, err := loadWsManifest(t.TempDir())
+		m, src, err := loadStackManifest(t.TempDir())
 		if err != nil || m != nil || src != nil {
 			t.Fatalf("got %v %v %v, want all nil", m, src, err)
 		}
@@ -66,8 +66,8 @@ func TestLoadWsManifest(t *testing.T) {
 
 	t.Run("scheme or .git in a spec is rejected", func(t *testing.T) {
 		root := t.TempDir()
-		writeWsManifest(t, root, `{"repos":{"x":{"upstream":"https://github.com/a/b","fork":"github.com/c/d"}}}`)
-		if _, _, err := loadWsManifest(root); err == nil {
+		writeStackManifest(t, root, `{"repos":{"x":{"upstream":"https://github.com/a/b","fork":"github.com/c/d"}}}`)
+		if _, _, err := loadStackManifest(root); err == nil {
 			t.Fatal("expected validation error for scheme-carrying spec")
 		}
 	})
@@ -78,7 +78,7 @@ func TestLoadWsManifest(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, ".rig.json"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		m, src, err := loadWsManifest(root)
+		m, src, err := loadStackManifest(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,11 +92,11 @@ func TestLoadWsManifest(t *testing.T) {
 
 	t.Run("both file and inline key is a loud error", func(t *testing.T) {
 		root := t.TempDir()
-		writeWsManifest(t, root, stackTestManifest)
+		writeStackManifest(t, root, stackTestManifest)
 		if err := os.WriteFile(filepath.Join(root, ".rig.json"), []byte(`{"stack": {"repos": {}}}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := loadWsManifest(root); err == nil {
+		if _, _, err := loadStackManifest(root); err == nil {
 			t.Fatal("expected ambiguity error")
 		}
 	})
@@ -104,15 +104,15 @@ func TestLoadWsManifest(t *testing.T) {
 
 func TestWsSetCursor_PreservesComments(t *testing.T) {
 	root := t.TempDir()
-	writeWsManifest(t, root, stackTestManifest)
-	m, src, err := loadWsManifest(root)
+	writeStackManifest(t, root, stackTestManifest)
+	m, src, err := loadStackManifest(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := stackSetCursor(src, m, "porta-pty", "abc123def456"); err != nil {
 		t.Fatal(err)
 	}
-	m2, src2, err := loadWsManifest(root)
+	m2, src2, err := loadStackManifest(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestWsSetCursor_PreservesComments(t *testing.T) {
 	if err := stackSetCursor(src2, m2, "xterm-net", "fedcba"); err != nil {
 		t.Fatal(err)
 	}
-	m3, _, err := loadWsManifest(root)
+	m3, _, err := loadStackManifest(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,4 +286,58 @@ func mustGitStack(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 	return string(out)
+}
+
+func TestStackMenuAndCompletion(t *testing.T) {
+	// Both read the manifest through the working directory, so the tests run
+	// from inside a temp workspace rather than passing a root around.
+	inWorkspace := func(t *testing.T, manifest string) {
+		t.Helper()
+		dir := t.TempDir()
+		if manifest != "" {
+			writeStackManifest(t, dir, manifest)
+		}
+		prev, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(prev) })
+	}
+
+	t.Run("no menu group outside a workspace", func(t *testing.T) {
+		inWorkspace(t, "")
+		if items := stackMenuItems(); items != nil {
+			t.Fatalf("expected no items, got %d", len(items))
+		}
+	})
+
+	t.Run("menu offers the verbs a pick can supply arguments for", func(t *testing.T) {
+		inWorkspace(t, stackTestManifest)
+		var labels []string
+		for _, it := range stackMenuItems() {
+			labels = append(labels, it.label)
+		}
+		want := "status,pull,doctor"
+		if got := strings.Join(labels, ","); got != want {
+			t.Fatalf("menu = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("completion offers the workspace's repos", func(t *testing.T) {
+		inWorkspace(t, stackTestManifest)
+		got, _ := stackRepoCompletion(nil, nil, "")
+		if strings.Join(got, ",") != "porta-pty,xterm-net" {
+			t.Fatalf("completion = %v", got)
+		}
+	})
+
+	t.Run("completion stops after the repo argument", func(t *testing.T) {
+		inWorkspace(t, stackTestManifest)
+		if got, _ := stackRepoCompletion(nil, []string{"porta-pty"}, ""); got != nil {
+			t.Fatalf("expected no completions for the second argument, got %v", got)
+		}
+	})
 }
