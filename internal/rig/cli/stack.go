@@ -27,11 +27,11 @@ func newStackCmd() *cobra.Command {
 			"under a prefix, via josh's reversible filters. Commits may span projects;\n" +
 			"`send` extracts a prefix's changes back onto your fork as an ordinary\n" +
 			"PR-ready branch. Upstream never learns the workspace exists.\n\n" +
-			"  rig stack init                 scaffold the manifest / import the repos\n" +
-			"  rig stack status               cursor vs upstream, per repo\n" +
-			"  rig stack pull [repo]          merge new upstream commits (all repos by default)\n" +
-			"  rig stack send <repo> <branch> extract changes to a branch on your fork\n" +
-			"  rig stack doctor               engine + manifest checks (--fix installs josh)",
+			"  rig stack init                      scaffold the manifest / import the repos\n" +
+			"  rig stack status                    cursor vs upstream, per repo\n" +
+			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
+			"  rig stack send <repo> <new-branch>  a branch on your fork, prefixed stack/\n" +
+			"  rig stack doctor                    engine + manifest checks (--fix installs josh)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
 				return climenu.Run(cmd)
@@ -576,7 +576,7 @@ func stackMenuItems() []menuItem {
 		{label: "init", desc: "import any repo the manifest names but has not fused yet", cmd: newStackInitCmd()},
 		{label: "status", desc: "each repo's cursor against its upstream", cmd: newStackStatusCmd()},
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
-		{label: "send", desc: "a repo's changes to your fork (pick; prompts for a branch)", cmd: newStackSendMenuCmd()},
+		{label: "send", desc: "a repo's changes to your fork as a new branch (pick, then name it)", cmd: newStackSendMenuCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
 	}
 }

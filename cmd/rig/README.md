@@ -24,8 +24,8 @@ single commit while still leaving an ordinary pull request for each repo:
 ```sh
 rig stack init                       # scaffold the manifest; run again to import
 rig stack status                     # who has moved upstream
-rig stack pull porta-pty             # take that movement
-rig stack send porta-pty fix/timeout -m "Fix the read timeout"
+rig stack pull some-lib              # take that movement
+rig stack send some-lib read-timeout -m "Fix the read timeout"   # → stack/read-timeout
 ```
 
 ## Verbs

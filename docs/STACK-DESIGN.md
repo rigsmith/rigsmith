@@ -80,7 +80,7 @@ are just branches of one repo), stashes, bisect: all normal git.
     "porta-pty": {
       "upstream": "github.com/tomlm/Porta.Pty",   // host/owner/name — no scheme, no .git
       "fork":     "github.com/JohnCampionJr/Porta.Pty",
-      "branch":   "main"
+      "upstreamBranch": "main"
     },
     "xterm-net":            { /* … */ },
     "iciclecreek-terminal": { /* … */ }
@@ -99,7 +99,7 @@ are just branches of one repo), stashes, bisect: all normal git.
 |---|---|
 | `rig stack init` | scaffold the manifest; for each repo, import upstream history under its prefix (proxy fetch through `:prefix=<child>`, merge, set cursor); scaffold the ecosystem overlay |
 | `rig stack pull [child]` | fetch upstream through the filter; `NothingToPull` if the cursor matches; else merge (strategy per child), update cursor. The CI-cronnable direction |
-| `rig stack send <child> <branch>` | commit `<child>/`'s tree onto that project's upstream tip and push it to the **fork** as `<branch>`: one commit, whose diff is exactly what the workspace changed. The deliberate direction |
+| `rig stack send <child> <new-branch>` | commit `<child>/`'s tree onto that project's upstream tip and push it to the **fork** as `branchPrefix + <new-branch>` (default `stack/`): one commit, whose diff is exactly what the workspace changed. The deliberate direction |
 | `rig stack status` | per child: upstream commits since cursor, local commits touching the prefix not yet sent, cursor SHA |
 | `rig stack doctor` | engine installed + version matches pin, remotes reachable, manifest sane; `--fix` installs/updates josh (cliguard requires `--fix` on any doctor) |
 
