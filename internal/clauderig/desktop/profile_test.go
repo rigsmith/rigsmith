@@ -156,6 +156,24 @@ type fakeApp struct {
 
 func (f *fakeApp) RunningDefault() ([]int, error) { return nil, nil }
 
+// Instances mirrors the real scan: one process per running data dir.
+func (f *fakeApp) Instances() ([]Instance, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.scanErr != nil {
+		return nil, f.scanErr
+	}
+	var out []Instance
+	pid := 1000
+	for dir, on := range f.running {
+		if on {
+			pid++
+			out = append(out, Instance{PID: pid, DataDir: dir})
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeApp) OpenURL(rawurl string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

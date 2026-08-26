@@ -203,3 +203,42 @@ func (d darwinApp) RunningDefault() ([]int, error) {
 	}
 	return pids, nil
 }
+
+// Instances lists every Claude Desktop main process and the data directory it
+// was launched against. Helpers are excluded by the pattern: they live under
+// Contents/Frameworks/Claude Helper.app, which never contains the main binary's
+// path. A process whose command line cannot be read is an error, not an
+// omission — the caller uses this to decide whether sending is safe.
+func (d darwinApp) Instances() ([]Instance, error) {
+	bundle, ok := d.Installed()
+	if !ok {
+		return nil, nil
+	}
+	main := filepath.Join(bundle, "Contents", "MacOS", "Claude")
+	out, err := exec.Command("/usr/bin/pgrep", "-f", "--", regexp.QuoteMeta(main)).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scan for Claude Desktop processes: %w", err)
+	}
+	me := os.Getpid()
+	var found []Instance
+	for _, f := range strings.Fields(string(out)) {
+		pid, perr := strconv.Atoi(f)
+		if perr != nil || pid == me {
+			continue
+		}
+		cmd, cerr := exec.Command("/bin/ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+		if cerr != nil {
+			var ee *exec.ExitError
+			if errors.As(cerr, &ee) && ee.ExitCode() == 1 {
+				continue // exited between the scan and the lookup: ordinary churn
+			}
+			return nil, fmt.Errorf("inspect Claude Desktop process %d: %w", pid, cerr)
+		}
+		found = append(found, Instance{PID: pid, DataDir: dataDirFromCommand(string(cmd))})
+	}
+	return found, nil
+}

@@ -3,6 +3,7 @@ package desktop
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -22,6 +23,20 @@ type App interface {
 	// scan. It still competes for a deep link like any other window, which is
 	// exactly why it needs its own question.
 	RunningDefault() ([]int, error)
+	// Instances reports EVERY running Claude Desktop main process with the data
+	// directory it was launched against ("" for the profile-less install).
+	//
+	// This exists because the routing guard kept being wrong in the same way.
+	// Asking "which of the profiles I know about are running" means enumerating
+	// instances, and five rounds of review found five kinds this missed: a
+	// profile whose metadata will not parse, one launched with a --user-data-dir
+	// outside clauderig's store, one whose store entry is a directory symlink,
+	// the profile-less install, and a scan that failed. Every one of them still
+	// competes for a scheme-routed deep link.
+	//
+	// Counting PROCESSES has no such list to be incomplete. A window either
+	// exists or it does not.
+	Instances() ([]Instance, error)
 	// Focus brings an already-running instance to the foreground. Best effort:
 	// on platforms with no reliable way to raise one window of several, this may
 	// raise whichever instance the OS considers frontmost.
@@ -40,6 +55,13 @@ type App interface {
 	// receives it must make that instance the only, or at least the frontmost,
 	// one first — and say so when they cannot be sure.
 	OpenURL(rawurl string) error
+}
+
+// Instance is one running Claude Desktop main process. DataDir is the value of
+// its --user-data-dir flag, or "" when it was launched without one.
+type Instance struct {
+	PID     int
+	DataDir string
 }
 
 // ErrUnsupported means this OS has no Claude Desktop build we know how to drive.
@@ -127,4 +149,22 @@ func WaitRunning(a App, dataDir string, deadline time.Time) (bool, error) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// dataDirFromCommand pulls the --user-data-dir value out of a command line,
+// returning "" when the flag is absent (the profile-less install).
+//
+// The value runs to the end of the argument. A path containing spaces is not
+// recoverable from a flattened command line, so it is taken up to the next
+// " --" instead — enough to compare instances, which is all the caller needs.
+func dataDirFromCommand(cmd string) string {
+	i := strings.Index(cmd, userDataFlagName)
+	if i < 0 {
+		return ""
+	}
+	rest := cmd[i+len(userDataFlagName):]
+	if j := strings.Index(rest, " --"); j >= 0 {
+		rest = rest[:j]
+	}
+	return strings.TrimSpace(strings.Trim(strings.TrimSpace(rest), `"`))
 }

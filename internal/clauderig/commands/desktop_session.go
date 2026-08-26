@@ -248,53 +248,80 @@ func pickSession(ref string, cands []sessionCandidate) (sessionCandidate, error)
 // SCHEME, not per instance: there is no per-instance address, and the profile
 // flag that separates instances is a launch argument a URL cannot carry. With
 // more than one instance up, the OS picks the recipient.
-// dataDirs comes from CandidateDataDirs, not List: a profile whose metadata
-// will not parse is skipped by List but can still be RUNNING, and would then
-// compete for the deep link while being invisible to this scan.
+// otherRunningWindows names every Claude Desktop window that is NOT the target
+// and could therefore receive a scheme-routed deep link.
 //
-// A scan that FAILS is not a scan that found nothing. Treating "could not
-// look" as "nothing is open" would let the refusal pass on unknown state and
-// send the session anyway — the same account-crossing this exists to stop. So
-// every error propagates, matching what `desktop open` already does when it
-// cannot tell whether a profile is running.
-func otherRunningProfiles(app desktop.App, dataDirs map[string]string, target desktop.Profile) ([]string, error) {
+// It asks the OS which processes exist rather than asking the store which
+// profiles it knows. Five review rounds found five kinds of window the
+// enumerate-the-profiles approach missed — unreadable metadata, a data dir
+// outside clauderig's store, a store entry that is a directory symlink, the
+// profile-less install, and a scan that failed — and each fix closed one and
+// left the next. A process list has no such gaps: a window either exists or it
+// does not.
+//
+// Names are recovered where possible, for the remedy; an unrecognised window is
+// still counted, described by what is known about it.
+func otherRunningWindows(app desktop.App, dirs map[string]string, target desktop.Profile) ([]string, error) {
+	instances, err := app.Instances()
+	if err != nil {
+		return nil, fmt.Errorf("could not tell which Desktop windows are open: %w", err)
+	}
+	byDir := map[string]string{}
+	for name, d := range dirs {
+		byDir[canonicalDir(d)] = name
+	}
+	targetDir := canonicalDir(target.DataDir())
+
+	seen := map[string]bool{}
 	var others []string
-	for name, dir := range dataDirs {
-		if name == target.Name {
+	for _, inst := range instances {
+		dir := canonicalDir(inst.DataDir)
+		if dir == targetDir {
 			continue
 		}
-		pids, err := app.Running(dir)
-		if err != nil {
-			return nil, fmt.Errorf("could not tell whether %s is open: %w", name, err)
+		var label string
+		switch {
+		case inst.DataDir == "":
+			label = defaultInstanceLabel
+		case byDir[dir] != "":
+			label = byDir[dir]
+		default:
+			// A profile clauderig does not manage. Still a competing window.
+			label = fmt.Sprintf("a Desktop window on %s", inst.DataDir)
 		}
-		if len(pids) > 0 {
-			others = append(others, name)
+		if !seen[label] {
+			seen[label] = true
+			others = append(others, label)
 		}
 	}
 	sort.Strings(others)
-	// The ordinary Claude Desktop competes for the link too, and carries no
-	// --user-data-dir, so no profile scan can see it. Asked separately, and
-	// listed last because it is not a profile and cannot be quit by name.
-	pids, err := app.RunningDefault()
-	if err != nil {
-		return nil, fmt.Errorf("could not tell whether %s is open: %w", defaultInstanceLabel, err)
-	}
-	if len(pids) > 0 {
-		others = append(others, defaultInstanceLabel)
-	}
 	return others, nil
 }
 
+// canonicalDir normalises a data directory for comparison: symlinks resolved
+// where possible, and case folded, so a store entry that is a directory symlink
+// or a case-insensitive filesystem cannot make one window look like two.
+func canonicalDir(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	return strings.ToLower(filepath.Clean(dir))
+}
+
 // quittableByName reports whether `clauderig desktop quit <name>` would work for
-// this candidate: a valid profile name, and one the store can actually load.
-// The routing scan is deliberately wider than that — it must see directories
-// whose metadata is unreadable — so the two questions are answered separately.
+// this label: a valid profile name, one the store can load, and one the shell
+// will carry as a single argument. The routing scan is deliberately wider than
+// that — it counts windows, including ones with no name at all — so the two
+// questions are answered separately.
 func quittableByName(st *desktop.Store, name string) bool {
 	if st == nil || desktop.ValidName(name) != nil {
 		return false
 	}
 	if strings.ContainsAny(name, " \t\"'"+"`"+`\\`) {
-		return false // would not survive the shell as one argument
+		return false
 	}
 	_, gerr := st.Get(name)
 	return gerr == nil
@@ -362,7 +389,7 @@ func competingWindows(st *desktop.Store, app desktop.App, target desktop.Profile
 		return nil, fmt.Errorf("could not list Desktop profiles: %w\n"+
 			"Sending now could import the session into the wrong account", lerr)
 	}
-	others, oerr := otherRunningProfiles(app, dirs, target)
+	others, oerr := otherRunningWindows(app, dirs, target)
 	if oerr != nil {
 		return nil, fmt.Errorf("%w\nSending now could import the session into the wrong account", oerr)
 	}

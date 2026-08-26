@@ -137,7 +137,7 @@ func TestOtherRunningProfilesAndRefusal(t *testing.T) {
 	target, other := profiles[0], profiles[1]
 
 	onlyTarget := stubApp{open: map[string]bool{target.DataDir(): true}}
-	got, err := otherRunningProfiles(onlyTarget, dirsOf(profiles), target)
+	got, err := otherRunningWindows(onlyTarget, dirsOf(profiles), target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestOtherRunningProfilesAndRefusal(t *testing.T) {
 	}
 
 	both := stubApp{open: map[string]bool{target.DataDir(): true, other.DataDir(): true}}
-	got, err = otherRunningProfiles(both, dirsOf(profiles), target)
+	got, err = otherRunningWindows(both, dirsOf(profiles), target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestOtherRunningProfilesAndRefusal(t *testing.T) {
 // The ordinary Claude Desktop carries no --user-data-dir, so no profile scan
 // can see it — yet it competes for the deep link exactly like a profile. Left
 // out, the refusal under-reports and the session can still cross an account.
-func TestOtherRunningProfiles_IncludesTheDefaultInstall(t *testing.T) {
+func TestOtherRunningWindows_IncludesTheDefaultInstall(t *testing.T) {
 	st := targetStore(t)
 	profiles, err := st.List()
 	if err != nil || len(profiles) != 2 {
@@ -178,7 +178,7 @@ func TestOtherRunningProfiles_IncludesTheDefaultInstall(t *testing.T) {
 
 	// Only the target profile, but the profile-less app is up.
 	app := stubApp{open: map[string]bool{target.DataDir(): true, "__default__": true}}
-	got, gerr := otherRunningProfiles(app, dirsOf(profiles), target)
+	got, gerr := otherRunningWindows(app, dirsOf(profiles), target)
 	if gerr != nil {
 		t.Fatal(gerr)
 	}
@@ -203,16 +203,16 @@ func TestOtherRunningProfiles_IncludesTheDefaultInstall(t *testing.T) {
 // "Could not look" is not "nothing is open". A failed scan must stop the send,
 // or the refusal passes on unknown state and the session can still cross an
 // account — the exact outcome this guard exists to prevent.
-func TestOtherRunningProfiles_FailsClosedOnScanError(t *testing.T) {
+func TestOtherRunningWindows_FailsClosedOnScanError(t *testing.T) {
 	st := targetStore(t)
 	profiles, err := st.List()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := otherRunningProfiles(scanFailApp{}, dirsOf(profiles), profiles[0]); err == nil {
+	if _, err := otherRunningWindows(scanFailApp{}, dirsOf(profiles), profiles[0]); err == nil {
 		t.Fatal("a failed profile scan must be an error, not an empty result")
 	}
-	if _, err := otherRunningProfiles(defaultScanFailApp{}, dirsOf(profiles), profiles[0]); err == nil {
+	if _, err := otherRunningWindows(defaultScanFailApp{}, dirsOf(profiles), profiles[0]); err == nil {
 		t.Fatal("a failed scan for the profile-less app must be an error too")
 	}
 }
@@ -277,7 +277,7 @@ func TestAmbiguousRoutingError_MixedConflictNamesBothRemedies(t *testing.T) {
 // Store.List skips a profile whose profile.json will not parse — reasonable for
 // a listing, wrong for a safety scan: that profile can still be RUNNING and
 // competing for the deep link. CandidateDataDirs sees it, so the scan does too.
-func TestOtherRunningProfiles_SeesAProfileWithUnreadableMetadata(t *testing.T) {
+func TestOtherRunningWindows_SeesAProfileWithUnreadableMetadata(t *testing.T) {
 	st := targetStore(t)
 	profiles, err := st.List()
 	if err != nil || len(profiles) != 2 {
@@ -307,7 +307,7 @@ func TestOtherRunningProfiles_SeesAProfileWithUnreadableMetadata(t *testing.T) {
 
 	// It is running: the scan has to report it, or the guard sends blind.
 	app := stubApp{open: map[string]bool{filepath.Join(broken, "data"): true}}
-	others, err := otherRunningProfiles(app, dirs, target)
+	others, err := otherRunningWindows(app, dirs, target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,5 +383,82 @@ func TestFindSessions_EmptyNeedleIsNotAWildcard(t *testing.T) {
 	// what the command now passes after trimming
 	if got := findSessions("", home, session.Index{}); len(got) != 0 {
 		t.Errorf("an empty reference matched %d sessions; it must match none", len(got))
+	}
+}
+
+// A Desktop window launched with a --user-data-dir OUTSIDE clauderig's store is
+// invisible to any profile enumeration — it has the flag, so it is not the
+// profile-less install, and it is not in the store, so no listing names it. It
+// still competes for a scheme-routed deep link.
+func TestOtherRunningWindows_SeesAnUnmanagedProfile(t *testing.T) {
+	st := targetStore(t)
+	profiles, err := st.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := profiles[0]
+	dirs, err := st.CandidateDataDirs()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app := stubApp{open: map[string]bool{
+		target.DataDir():       true,
+		"/somewhere/else/data": true, // never heard of by the store
+	}}
+	got, err := otherRunningWindows(app, dirs, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want the unmanaged window counted, got %v", got)
+	}
+	if !strings.Contains(got[0], "/somewhere/else/data") {
+		t.Errorf("an unnamed window should be described by what is known: %q", got[0])
+	}
+}
+
+// The store entry and the running process can spell the same directory
+// differently — a symlinked profile directory, or a case-insensitive
+// filesystem. Comparing raw strings made one window look like two and refused a
+// send when only the target was open.
+func TestOtherRunningWindows_MatchesTheTargetThroughASymlink(t *testing.T) {
+	st := targetStore(t)
+	profiles, err := st.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := profiles[0]
+	dirs, err := st.CandidateDataDirs()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// the process reports the path by another name
+	alias := filepath.Join(t.TempDir(), "aliased-data")
+	if err := os.MkdirAll(target.DataDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target.DataDir(), alias); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	got, err := otherRunningWindows(stubApp{open: map[string]bool{alias: true}}, dirs, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("the target's own window was counted as a competitor: %v", got)
+	}
+}
+
+// A failed process scan is not an empty one — the guard decides whether it is
+// safe to send on this answer.
+func TestOtherRunningWindows_FailsClosed(t *testing.T) {
+	st := targetStore(t)
+	profiles, _ := st.List()
+	dirs, _ := st.CandidateDataDirs()
+	if _, err := otherRunningWindows(scanFailApp{}, dirs, profiles[0]); err == nil {
+		t.Fatal("a failed scan must be an error, not an empty result")
 	}
 }

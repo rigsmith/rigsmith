@@ -244,3 +244,38 @@ func (w windowsApp) RunningDefault() ([]int, error) {
 	}
 	return pids, nil
 }
+
+// Instances lists every Claude Desktop main process and the data directory it
+// was launched against.
+//
+// Filtered by the INSTALLED PATH, not the executable name. Claude Code ships as
+// claude.exe too, so a name-only match classified the CLI's own process as a
+// Desktop window — and the routing guard then refused to send a session because
+// it believed a competing app was open, when the only thing running was the
+// tool doing the asking.
+func (w windowsApp) Instances() ([]Instance, error) {
+	rows, err := claudeProcesses()
+	if err != nil {
+		return nil, err
+	}
+	exe, ok := w.Installed()
+	if !ok {
+		return nil, nil
+	}
+	// Compare on the install DIRECTORY: the stub launcher and the versioned
+	// app-<version>\claude.exe are both Desktop, and both sit beneath it.
+	root := strings.ToLower(filepath.Dir(exe))
+	me := os.Getpid()
+	var found []Instance
+	for _, r := range rows {
+		if r.ProcessID == me {
+			continue
+		}
+		cmd := stripQuotes(r.CommandLine)
+		if !strings.Contains(strings.ToLower(cmd), root) {
+			continue // some other claude.exe — Claude Code's, most likely
+		}
+		found = append(found, Instance{PID: r.ProcessID, DataDir: dataDirFromCommand(cmd)})
+	}
+	return found, nil
+}
