@@ -184,3 +184,35 @@ func TestCopyReportsStats(t *testing.T) {
 		t.Errorf("Bytes = %d, want 7", st.Bytes)
 	}
 }
+
+// A nested linked worktree's files belong to the tree being copied; its `.git`
+// pointer does not — it names the ORIGINAL repository's worktree admin
+// directory, so git inside the copy would answer for the original. Pruning the
+// whole directory instead would silently drop real files, which `--git`
+// explicitly promises to carry.
+func TestCopyKeepsNestedWorktreeFilesButNotItsPointer(t *testing.T) {
+	src, dst := t.TempDir(), filepath.Join(t.TempDir(), "out")
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(src, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("main.go", "package main\n")
+	write("wt/.git", "gitdir: /parent/.git/worktrees/wt\n")
+	write("wt/keep.go", "package wt\n")
+
+	if _, err := Copy(src, dst, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "wt", "keep.go")); err != nil {
+		t.Errorf("nested worktree's ordinary file was dropped: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "wt", ".git")); !os.IsNotExist(err) {
+		t.Error("copied the nested worktree's .git pointer into the detached tree")
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 )
 
 // skippedDirs are directories never descended into, regardless of .gitignore:
@@ -34,6 +35,64 @@ var skippedDirs = map[string]bool{
 	".turbo":       true,
 }
 
+// includeWorktrees is the process-wide discovery policy for linked worktrees.
+// A CLI flag is a property of the invocation, not of any one walk, and adapters
+// are reached across a plugin boundary with nowhere to thread an option — so it
+// is set once at startup (rig's `--include-worktrees`) and read here. Default
+// false: a worktree is a duplicate of this repo, and discovering it twice is
+// what let a release act on the copy.
+var includeWorktrees atomic.Bool
+
+// SetIncludeWorktrees opts discovery back into linked worktrees for the whole
+// process. Call once, while parsing flags, before any discovery runs.
+func SetIncludeWorktrees(v bool) { includeWorktrees.Store(v) }
+
+// IncludeWorktrees reports the current policy, for callers doing their own
+// traversal (glob expansion, copytree) that must prune the same way.
+func IncludeWorktrees() bool { return includeWorktrees.Load() }
+
+// LinkedWorktreeRoot reports whether dir is the root of a linked git worktree —
+// a second checkout of *this* repository. Its tree is a copy of every manifest
+// the repo already has, so discovering it yields the same project twice and a
+// release tool can act on the copy: writing a changelog into it, or building a
+// tag name out of its path.
+//
+// A worktree keeps `.git` as a FILE whose `gitdir:` names a `worktrees/<name>`
+// admin directory — which is why skipping the *name* `.git` never caught them.
+// A submodule's pointer names `modules/<name>` instead, and submodules stay
+// discoverable: they are a different repository the user deliberately nested,
+// not a duplicate of this one.
+// Deliberately not memoized: a worktree can be added or removed while a
+// long-lived process is running, and a cache keyed only by path would answer
+// from a classification that is no longer true. The cost is one Lstat per
+// directory, and a read only for the rare directory that has a `.git` file.
+func LinkedWorktreeRoot(dir string) bool {
+	dotgit := filepath.Join(dir, ".git")
+	fi, err := os.Lstat(dotgit)
+	// Regular files only: a FIFO or device named `.git` would otherwise reach
+	// ReadFile and could block the walk indefinitely. git requires a regular
+	// file here too.
+	if err != nil || !fi.Mode().IsRegular() {
+		// A missing marker is not a worktree; an unreadable one is not either,
+		// and guessing "worktree" on an I/O error would drop real projects.
+		return false
+	}
+	data, err := os.ReadFile(dotgit)
+	if err != nil {
+		return false
+	}
+	rest, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
+	if !ok {
+		return false
+	}
+	// The admin dir is `<common>/worktrees/<name>`, so it is the IMMEDIATE
+	// parent that must be "worktrees". Matching the segment anywhere would
+	// misread a submodule *of* a linked worktree — gitdir
+	// `<common>/worktrees/<wt>/modules/<sub>` — as a worktree of its own.
+	gitdir := path.Clean(filepath.ToSlash(strings.TrimSpace(rest)))
+	return path.Base(path.Dir(gitdir)) == "worktrees"
+}
+
 // SkippedDir reports whether a directory with the given base name is in the
 // default skip set — shared so adapters that expand workspace globs themselves
 // prune the same directories Walk does.
@@ -49,6 +108,10 @@ func SkippedDir(name string) bool { return skippedDirs[name] }
 // Discovery wants exactly that forgiveness: a manifest it can't read is a
 // manifest it doesn't offer. A caller that must not draw a conclusion from a
 // partial scan wants WalkReport instead, which hands back what it could not read.
+// Linked worktrees are pruned by default — they are second checkouts of the
+// same repository, so walking one returns a duplicate of every manifest. Opt
+// back in process-wide with SetIncludeWorktrees, or per-call with
+// WalkIncludingWorktrees. Submodules and nested clones are never pruned.
 func Walk(root string, fn func(path string, d fs.DirEntry) error) error {
 	_, err := WalkReport(root, nil, fn)
 	return err
@@ -66,6 +129,17 @@ func Walk(root string, fn func(path string, d fs.DirEntry) error) error {
 // from one that skipped the very subtree holding the newest file, so it needs
 // the chance to report itself inconclusive rather than passing.
 func WalkReport(root string, skip []string, fn func(path string, d fs.DirEntry) error) (unreadable []string, err error) {
+	return walk(root, skip, false, fn)
+}
+
+// WalkIncludingWorktrees is WalkReport without the linked-worktree prune, for
+// the caller that has deliberately asked to sweep across them — rig's
+// `--include-worktrees`. Everything else still applies.
+func WalkIncludingWorktrees(root string, skip []string, fn func(path string, d fs.DirEntry) error) (unreadable []string, err error) {
+	return walk(root, skip, true, fn)
+}
+
+func walk(root string, skip []string, includeWorktrees bool, fn func(path string, d fs.DirEntry) error) (unreadable []string, err error) {
 	if _, err := os.Stat(root); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -91,6 +165,9 @@ func WalkReport(root string, skip []string, fn func(path string, d fs.DirEntry) 
 				return nil
 			}
 			if skippedDirs[d.Name()] || pruned[cleanKey(path)] || ign.Ignored(relSlash(root, path), true) {
+				return filepath.SkipDir
+			}
+			if !includeWorktrees && !IncludeWorktrees() && LinkedWorktreeRoot(path) {
 				return filepath.SkipDir
 			}
 			return nil

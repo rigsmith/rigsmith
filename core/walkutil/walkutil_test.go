@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"testing"
@@ -217,5 +218,66 @@ func TestWalkReportNamesUnreadableDirectories(t *testing.T) {
 	// Walk keeps its forgiving contract: same tree, no error, no report.
 	if err := Walk(root, func(string, fs.DirEntry) error { return nil }); err != nil {
 		t.Errorf("Walk should still prune unreadable subtrees silently: %v", err)
+	}
+}
+
+// Discovery prunes a linked worktree and nothing else. A worktree is a second
+// checkout of *this* repository, so walking in returns a duplicate of every
+// manifest — that is how `shiprig version` came to write a release changelog
+// into one, and `shiprig tag` to build a tag out of its path. A submodule or a
+// nested clone is a different repository the user put there deliberately, and
+// stays discoverable.
+func TestWalkPrunesLinkedWorktreesOnly(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module example.com/root\n")
+	write("wt/.git", "gitdir: /parent/.git/worktrees/wt\n") // linked worktree → pruned
+	write("wt/go.mod", "module example.com/root\n")
+	write("sub/.git", "gitdir: /parent/.git/modules/sub\n") // submodule → kept
+	write("sub/go.mod", "module example.com/sub\n")
+	// A submodule *of* a worktree: the segment appears, but not as the parent.
+	write("subofwt/.git", "gitdir: /parent/.git/worktrees/wt/modules/deep\n")
+	write("subofwt/go.mod", "module example.com/deep\n")
+	if err := os.MkdirAll(filepath.Join(root, "clone", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write("clone/go.mod", "module example.com/clone\n") // plain clone → kept
+
+	found := func() []string {
+		var seen []string
+		if err := Walk(root, func(path string, d fs.DirEntry) error {
+			if filepath.Base(path) == "go.mod" {
+				rel, _ := filepath.Rel(root, path)
+				seen = append(seen, filepath.ToSlash(rel))
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		sort.Strings(seen)
+		return seen
+	}
+
+	want := []string{"clone/go.mod", "go.mod", "sub/go.mod", "subofwt/go.mod"}
+	if got := found(); !reflect.DeepEqual(got, want) {
+		t.Errorf("default walk = %v, want %v", got, want)
+	}
+
+	// The opt-in has to reach the walker, or `--include-worktrees` does nothing.
+	SetIncludeWorktrees(true)
+	t.Cleanup(func() { SetIncludeWorktrees(false) })
+	withWT := append(append([]string{}, want...), "wt/go.mod")
+	sort.Strings(withWT)
+	if got := found(); !reflect.DeepEqual(got, withWT) {
+		t.Errorf("with --include-worktrees = %v, want %v", got, withWT)
 	}
 }
