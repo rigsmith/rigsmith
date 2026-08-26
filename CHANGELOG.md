@@ -1,5 +1,30 @@
 # github.com/rigsmith/rigsmith
 
+## 1.8.0
+### 🚀 Enhancements
+
+- **rig:** new `rig stack` — repos you maintain forks of, fused into one git history so a change can span them in a single commit, while each still leaves as an ordinary pull request to its own upstream. `stack init` imports the repos your `rig.stack.jsonc` names, `stack pull` takes upstream's new commits into the right directory, and `stack send <repo> <name>` puts that project's changes on your fork as a branch holding one clean commit — no trace of the other projects. Send again to the same branch to update an open PR. Guide: https://rigsmith.dev/rig/stack
+- **clauderig:** new `clauderig recent` lists your Claude Code sessions newest first — the answer to "I was working on it yesterday, what was it called?". Each line shows the client that ran it, the title, the branch it ended on and the project. `--since` (24h by default), `--until`, `--cwd` and `--account` narrow it, `-l` prints full ids with ready-to-run resume commands, and an optional search term narrows the window by title or body while keeping time order.
+- **clauderig:** `clauderig desktop shortcut <name>` makes a clickable launcher for a Desktop profile — a `.app` bundle on macOS, a `.lnk` on Windows — on the desktop (`--to desktop`) or in `~/Applications` / the Start Menu (`--to apps`), with `--all` for every profile and `--rm` to take them away again. `desktop add` offers one at the end on a terminal (`--shortcut` / `--no-shortcut` to decide without being asked), and `desktop rm` deletes a profile's shortcuts along with it so no icon is left opening nothing.
+  
+  The shortcut runs `clauderig desktop open <name>` rather than launching Claude with the profile flag, so clicking it twice focuses the open window instead of starting a second instance on the same profile.
+- **changerig:** changelog entries are now grouped by what a change *is* rather than by the order its file happened to sort in. Give a changeset a conventional type and scope — `feat(rig): …`, or `type:`/`scope:` frontmatter — and the type picks the section while the scope becomes the bullet's lead-in and groups that tool's entries together. `changerig add` infers the scope from the files your branch touched, `changelogScopes` in config sets which tool leads, and leaving the bump off a typed changeset lets the type decide it.
+
+### 🩹 Fixes
+
+- **rig:** `rig stack send` refuses when upstream has moved past your last `stack pull`. The workspace holds a snapshot taken at that pull, so committing it onto a newer tip would open a pull request that reverts whatever landed in between. Pull first, then send.
+- **clauderig:** sessions are now dated by the last record inside the transcript rather than by the file's timestamp, which copying rewrites. A restore or a checkout of the synced repo used to re-date hundreds of old chats to today and bury the ones you actually used. Affects `recent`, `search` ordering and the `--since`/`--until` filters; a transcript with no dated record is marked `~` rather than guessed at.
+- **clauderig:** `search` and `recent` now read every `clauderig desktop` profile rather than only the machine-wide install, and say which profile owns each session — so a Desktop session shows its title and which app to reopen it in. On a machine with three installs, two thirds of them were previously invisible.
+- project discovery no longer walks into a linked git worktree. A worktree is a second checkout of the same repository, so discovering it returned a duplicate of every manifest — and a release could then act on the copy, writing its changelog into the worktree or building a tag out of the worktree's path. Submodules and nested clones are different repositories you put there deliberately, and stay discoverable; `rig --include-worktrees` still opts worktrees back in, and now reaches the walker rather than only the filter after it. The same rule applies to Node workspace globs and `rig copy`, which do their own traversal.
+
+### 💅 Refactors
+
+- The doctor presentation layer moved to `core/doctorui`, so code outside this module can render a `core/doctor` report and run the same fix-on-request flow. Nothing changes about how `rig`, `clauderig`, `changerig` or `shiprig` doctor behaves.
+
+### 📦 Build
+
+- Dependencies updated and the minimum Go toolchain raised to 1.26.7, clearing every `govulncheck` finding. Six were in the standard library, where no dependency bump can reach them — building from source now uses that toolchain, which Go switches to on its own. CI scans for known vulnerabilities on every change from here.
+
 ## 1.7.0
 ### Clauderig
 
