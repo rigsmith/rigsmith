@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/changeset"
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/editor"
+	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/since"
 	"github.com/spf13/cobra"
@@ -26,6 +28,7 @@ func NewAddCmd() *cobra.Command {
 		message  string
 		bumpStr  string
 		typeStr  string
+		scopeStr string
 		packages []string
 		empty    bool
 		sinceRef string
@@ -116,13 +119,26 @@ func NewAddCmd() *cobra.Command {
 				preselect = since.ChangedProjectNames(changedFiles, pkgs, ws.Root)
 			}
 
+			// The scope decides which tool a changelog bullet is filed under, and
+			// it is the easiest thing to forget — so work it out from the files
+			// the branch touched rather than relying on anyone remembering. An
+			// explicit "-" is how you say it belongs to no one tool.
+			scope := strings.TrimSpace(scopeStr)
+			switch scope {
+			case "-":
+				scope = ""
+			case "":
+				scope = inferScope(cmd.Context(), ws.Root, sinceRef)
+			}
+
 			// Interactive only when nothing was given. With a --type (or --bump) and
 			// --message + --package, we skip prompts entirely.
 			if !empty && len(selected) == 0 && bump == "" && typ == "" && summary == "" {
 				selected = preselect
-				if err := runAddForm(names, &selected, &bump, &summary); err != nil {
+				if err := runAddForm(names, &selected, &bump, &summary, &scope); err != nil {
 					return err
 				}
+				scope = strings.TrimSpace(scope)
 			}
 
 			// A breaking `!` suffix on the type sets breaking and the bump derives.
@@ -144,6 +160,22 @@ func NewAddCmd() *cobra.Command {
 				pkgBump = changeset.BumpPatch
 			}
 
+			// A changeset that names no package is silently ignored by every
+			// later step, so "Created …" would be a lie. With one package there
+			// is nothing to choose; with several, say so rather than write a
+			// file that does nothing.
+			if !empty && len(selected) == 0 {
+				switch len(names) {
+				case 0:
+					return fmt.Errorf("no packages found to write a changeset for")
+				case 1:
+					selected = []string{names[0]}
+				default:
+					return fmt.Errorf("name the packages this affects with -p (have: %s), or run `changerig add` with no flags to pick them",
+						strings.Join(names, ", "))
+				}
+			}
+
 			var releases []changeset.Release
 			if !empty {
 				for _, n := range selected {
@@ -153,7 +185,7 @@ func NewAddCmd() *cobra.Command {
 
 			id := generateID()
 			path := filepath.Join(ws.ChangesetDir, id+".md")
-			content := changeset.Render(releases, summary, typ, breaking)
+			content := changeset.RenderScoped(releases, summary, typ, scope, breaking)
 			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 				return err
 			}
@@ -184,6 +216,16 @@ func NewAddCmd() *cobra.Command {
 	f.StringVarP(&message, "message", "m", "", "changeset summary (skip the prompt)")
 	f.StringVar(&bumpStr, "bump", "", "explicit bump override (major|minor|patch|auto)")
 	f.StringVarP(&typeStr, "type", "t", "", "conventional type (feat|fix|…, suffix ! for breaking); bump derives from it")
+	f.StringVar(&scopeStr, "scope", "", "which tool the change belongs to; inferred from the changed files when omitted (\"-\" for none)")
+	// Completion offers the scopes this repo actually uses — the tools under
+	// cmd/ — so the value is discoverable rather than guessed at.
+	_ = cmd.RegisterFlagCompletionFunc("scope", func(c *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		ws, err := Open()
+		if err != nil {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		return knownScopes(ws.Root), cobra.ShellCompDirectiveNoFileComp
+	})
 	f.StringSliceVarP(&packages, "package", "p", nil, "package to include (repeatable)")
 	f.BoolVar(&empty, "empty", false, "write an empty changeset (names no packages)")
 	f.StringVar(&sinceRef, "since", "", "preselect the packages changed since this git ref in the picker")
@@ -284,7 +326,75 @@ func relDir(root, dir string) string {
 	return rel + string(filepath.Separator)
 }
 
-func runAddForm(names []string, selected *[]string, bump, summary *string) error {
+// knownScopes lists the scopes a repo can meaningfully use: the tools it builds,
+// which are the directories under cmd/.
+func knownScopes(root string) []string {
+	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// inferScope names the tool a change belongs to by looking at what the branch
+// changed: a path under cmd/<tool> or internal/<tool> names that tool. Returns
+// "" when the change spans several, or none — which is the honest answer, and
+// files the bullet under the section rather than under a tool it only half
+// belongs to.
+func inferScope(ctx context.Context, root, sinceRef string) string {
+	ref := sinceRef
+	if ref == "" {
+		ref = defaultScopeRef(ctx, root)
+	}
+	if ref == "" {
+		return ""
+	}
+	files, err := gitutil.ChangedFilesSince(ctx, root, ref)
+	if err != nil {
+		return ""
+	}
+	found := map[string]bool{}
+	for _, f := range files {
+		parts := strings.Split(filepath.ToSlash(f), "/")
+		if len(parts) < 2 {
+			continue
+		}
+		if parts[0] == "cmd" || parts[0] == "internal" {
+			found[parts[1]] = true
+		}
+	}
+	if len(found) != 1 {
+		return "" // spans several tools, or none of them
+	}
+	for name := range found {
+		return name
+	}
+	return ""
+}
+
+// defaultScopeRef is the base branch to diff against when --since was not
+// given. On the mainline itself there is no branch to compare, so inference
+// stays quiet rather than diffing main against itself.
+func defaultScopeRef(ctx context.Context, root string) string {
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		return ""
+	}
+	cur, err := repo.CurrentBranch(ctx)
+	if err != nil || cur == "main" || cur == "master" {
+		return ""
+	}
+	return "main"
+}
+
+func runAddForm(names []string, selected *[]string, bump, summary, scope *string) error {
 	if *bump == "" {
 		*bump = "patch"
 	}
@@ -308,6 +418,13 @@ func runAddForm(names []string, selected *[]string, bump, summary *string) error
 				Title("Summary").
 				Placeholder("Describe the change for the changelog").
 				Value(summary),
+			// Pre-filled from what the branch touched. Shown rather than applied
+			// silently, because the inference is a guess about intent and the
+			// person typing the summary is the one who knows.
+			huh.NewInput().
+				Title("Scope").
+				Description("which tool this belongs to in the changelog; blank for none").
+				Value(scope),
 		),
 	).WithTheme(brand.Theme(brand.AccentChange))
 	return form.Run()

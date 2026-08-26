@@ -400,6 +400,9 @@ type ChangelogChange struct {
 	// declared or implied one; lets a generator group by real type rather than
 	// just bump. Empty when untyped.
 	Type string `json:"type,omitempty"`
+	// Scope names the part of a monorepo the change belongs to (`feat(rig): …`),
+	// so a generator can group bullets within a section by tool.
+	Scope string `json:"scope,omitempty"`
 	// Breaking marks a breaking change (a `!` on the type).
 	Breaking bool   `json:"breaking,omitempty"`
 	Commit   string `json:"commit,omitempty"`

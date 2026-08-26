@@ -1,8 +1,10 @@
 ---
-"github.com/rigsmith/rigsmith": minor
+type: feat
+scope: clauderig
+"github.com/rigsmith/rigsmith"
 ---
 
-clauderig: `clauderig desktop shortcut <name>` makes a clickable launcher for a Desktop
+`clauderig desktop shortcut <name>` makes a clickable launcher for a Desktop
 profile — a `.app` bundle on macOS, a `.lnk` on Windows — on the desktop
 (`--to desktop`) or in `~/Applications` / the Start Menu (`--to apps`), with
 `--all` for every profile and `--rm` to take them away again. `desktop add`

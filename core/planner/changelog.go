@@ -30,6 +30,7 @@ func ModuleToRequest(m *Module) plugin.ChangelogRequest {
 			Bump:     c.Bump.String(),
 			Summary:  c.Description,
 			Type:     c.Type,
+			Scope:    c.Scope,
 			Breaking: c.Breaking,
 		})
 	}
@@ -84,14 +85,24 @@ func renderContributors(authors []plugin.Author, section string) string {
 // the configured group order, then Major, Minor, Patch — so an untyped changelog
 // is byte-identical to the bump-only layout.
 func renderSections(newVersion string, changes []plugin.ChangelogChange, groups []config.ChangelogGroup) string {
-	// Ordered list of (sectionHeading) and the bucket of bullet descriptions.
+	// Ordered list of (sectionHeading) and the bucket of bullets in it.
+	type bullet struct {
+		scope   string
+		summary string
+	}
 	var order []string
-	buckets := map[string][]string{}
-	add := func(section, summary string) {
+	buckets := map[string][]bullet{}
+	add := func(section string, c plugin.ChangelogChange) {
 		if _, ok := buckets[section]; !ok {
 			order = append(order, section)
 		}
-		buckets[section] = append(buckets[section], summary)
+		// The type and scope become structure — the section heading and the
+		// bullet's lead-in — so leaving the prefix in the prose too would say
+		// each of them twice.
+		buckets[section] = append(buckets[section], bullet{
+			scope:   c.Scope,
+			summary: changeset.StripConventional(c.Summary),
+		})
 	}
 
 	groupSection := func(typ string) (string, bool) {
@@ -106,16 +117,16 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 	for _, c := range changes {
 		switch {
 		case c.Breaking:
-			add(config.BreakingGroup.Section, c.Summary)
+			add(config.BreakingGroup.Section, c)
 		case c.Type != "":
 			if s, ok := groupSection(c.Type); ok {
-				add(s, c.Summary)
+				add(s, c)
 			} else {
-				add(strings.Title(c.Type), c.Summary) //nolint:staticcheck // ASCII type names
+				add(strings.Title(c.Type), c) //nolint:staticcheck // ASCII type names
 			}
 		default:
 			bump, _ := changeset.ParseBump(c.Bump)
-			add(title(bump)+" Changes", c.Summary)
+			add(title(bump)+" Changes", c)
 		}
 	}
 
@@ -130,8 +141,19 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 			b.WriteByte('\n')
 		}
 		fmt.Fprintf(&b, "### %s\n\n", section)
-		for _, summary := range buckets[section] {
-			b.WriteString(formatReleaseLine(summary))
+		// Scoped bullets first, grouped by scope, so a reader scanning for one
+		// tool finds its lines together; unscoped ones keep their order at the
+		// end rather than being interleaved by a name they do not have.
+		bullets := buckets[section]
+		sort.SliceStable(bullets, func(i, j int) bool {
+			si, sj := bullets[i].scope, bullets[j].scope
+			if (si == "") != (sj == "") {
+				return sj == ""
+			}
+			return si < sj
+		})
+		for _, bl := range bullets {
+			b.WriteString(formatReleaseLine(bl.summary, bl.scope))
 			b.WriteByte('\n')
 		}
 	}
@@ -181,19 +203,23 @@ func title(b changeset.Bump) string {
 // getReleaseLine: the first line sits on the bullet and continuation lines are
 // indented two spaces. Dependency-update descriptions are pre-structured and
 // pass through unchanged.
-func formatReleaseLine(description string) string {
+func formatReleaseLine(description, scope string) string {
 	if strings.HasPrefix(description, dependencyUpdatesHeader) {
 		return "- " + description
+	}
+	lead := ""
+	if scope != "" {
+		lead = "**" + scope + ":** "
 	}
 	lines := strings.Split(strings.ReplaceAll(description, "\r\n", "\n"), "\n")
 	for i := range lines {
 		lines[i] = strings.TrimRight(lines[i], " \t")
 	}
 	if len(lines) == 1 {
-		return "- " + lines[0]
+		return "- " + lead + lines[0]
 	}
 	var b strings.Builder
-	b.WriteString("- " + lines[0])
+	b.WriteString("- " + lead + lines[0])
 	for _, line := range lines[1:] {
 		b.WriteString("\n  " + line)
 	}

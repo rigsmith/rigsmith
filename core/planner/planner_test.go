@@ -709,3 +709,44 @@ func TestRewriteRange(t *testing.T) {
 		})
 	}
 }
+
+// A typed changeset derives the bump per package, and an explicit bump on one
+// of them still wins — so a monorepo can say "this is a feature for the app and
+// only a patch for the library it sits on" inside a single changeset, which is
+// the whole reason the per-package bump exists.
+func TestTypeDerivesBumpPerPackageAndExplicitWins(t *testing.T) {
+	pkgs := []plugin.Package{pkg("App", "1.0.0"), pkg("Lib", "1.0.0")}
+	c := &changeset.Changeset{
+		Summary: "shared change",
+		Type:    "feat",
+		Releases: []changeset.Release{
+			{Name: "App"},                            // no bump: derives minor from feat
+			{Name: "Lib", Bump: changeset.BumpPatch}, // explicit: stays patch
+		},
+	}
+	plan := Plan([]*changeset.Changeset{c}, pkgs, config.Default())
+
+	if got := find(plan, "App").NewVersion().String(); got != "1.1.0" {
+		t.Errorf("App = %s, want 1.1.0 (derived from feat)", got)
+	}
+	if got := find(plan, "Lib").NewVersion().String(); got != "1.0.1" {
+		t.Errorf("Lib = %s, want 1.0.1 (explicit patch beats the type)", got)
+	}
+}
+
+// The scope reaches the plan, so the changelog can group bullets by tool.
+func TestScopeReachesThePlan(t *testing.T) {
+	pkgs := []plugin.Package{pkg("Core", "1.0.0")}
+	for _, c := range []*changeset.Changeset{
+		{Summary: "from the prefix", Releases: []changeset.Release{{Name: "Core", Bump: changeset.BumpPatch}}},
+		{Summary: "explicit", Scope: "rig", Releases: []changeset.Release{{Name: "Core", Bump: changeset.BumpPatch}}},
+	} {
+		if c.Scope == "" {
+			c.Summary = "fix(rig): " + c.Summary
+		}
+		plan := Plan([]*changeset.Changeset{c}, pkgs, config.Default())
+		if got := find(plan, "Core").Changes[0].Scope; got != "rig" {
+			t.Errorf("Scope = %q, want rig (summary %q)", got, c.Summary)
+		}
+	}
+}

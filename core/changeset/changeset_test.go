@@ -163,3 +163,53 @@ func TestBumpMax(t *testing.T) {
 		t.Error("minor.Max(none) should be minor")
 	}
 }
+
+func TestParseConventionalScope(t *testing.T) {
+	cases := []struct {
+		in           string
+		typ, scope   string
+		breaking, ok bool
+	}{
+		{"feat(rig): a thing", "feat", "rig", false, true},
+		{"fix(clauderig)!: a break", "fix", "clauderig", true, true},
+		{"feat: unscoped", "feat", "", false, true},
+		{"feat!: unscoped break", "feat", "", true, true},
+		{"no prefix at all", "", "", false, false},
+		{"feat(rig): first\nsecond line", "feat", "rig", false, true},
+	}
+	for _, c := range cases {
+		typ, scope, breaking, ok := ParseConventionalScope(c.in)
+		if typ != c.typ || scope != c.scope || breaking != c.breaking || ok != c.ok {
+			t.Errorf("ParseConventionalScope(%q) = (%q,%q,%v,%v), want (%q,%q,%v,%v)",
+				c.in, typ, scope, breaking, ok, c.typ, c.scope, c.breaking, c.ok)
+		}
+	}
+}
+
+func TestStripConventional(t *testing.T) {
+	cases := [][2]string{
+		{"feat(rig): a thing", "a thing"},
+		{"fix!: a thing", "a thing"},
+		{"no prefix at all", "no prefix at all"},
+		{"feat(rig): first\n\nsecond para", "first\n\nsecond para"},
+	}
+	for _, c := range cases {
+		if got := StripConventional(c[0]); got != c[1] {
+			t.Errorf("StripConventional(%q) = %q, want %q", c[0], got, c[1])
+		}
+	}
+}
+
+// An explicit `scope:` line beats one parsed from the summary, matching how
+// `type:` already behaves.
+func TestEffectiveScope(t *testing.T) {
+	if got := (&Changeset{Summary: "feat(rig): x"}).EffectiveScope(); got != "rig" {
+		t.Errorf("from summary = %q", got)
+	}
+	if got := (&Changeset{Scope: "clauderig", Summary: "feat(rig): x"}).EffectiveScope(); got != "clauderig" {
+		t.Errorf("explicit should win, got %q", got)
+	}
+	if got := (&Changeset{Summary: "plain"}).EffectiveScope(); got != "" {
+		t.Errorf("unscoped = %q", got)
+	}
+}
