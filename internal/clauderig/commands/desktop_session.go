@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
@@ -99,6 +100,12 @@ func liveTranscripts(claudeHome string) map[string]string {
 				continue
 			}
 			id := strings.TrimSuffix(name, ".jsonl")
+			// Only real session ids. projects/ can hold other .jsonl files, and
+			// a non-uuid stem reaching the deep link is silently dropped by
+			// Desktop — the command reports success and nothing opens.
+			if !sessionUUID.MatchString(id) {
+				continue
+			}
 			// A session id can appear under two slugs (a worktree copy, or a slug
 			// restore rewrote). Either transcript resumes the same session, so the
 			// first is as good as the second.
@@ -172,13 +179,18 @@ func findSessions(ref, claudeHome string, idx session.Index) []sessionCandidate 
 // itself recorded. Only matched candidates pay for the read, and matching has
 // already opened every live transcript for its first prompt.
 func cwdFor(m session.Meta, transcriptPath string) string {
-	if m.Cwd != "" {
+	// A sidecar read from the SYNCED tree carries a portable "$HOME/..."
+	// template rather than a path on this machine, so matching against it
+	// misses every search that uses the real path — and displaying it shows a
+	// directory that does not exist here. The transcript records the actual
+	// cwd, so prefer that whenever the sidecar's is templated.
+	if m.Cwd != "" && !strings.Contains(m.Cwd, "$") {
 		return m.Cwd
 	}
 	if cwd, ok, err := project.CwdFromTranscript(transcriptPath); err == nil && ok {
 		return cwd
 	}
-	return ""
+	return m.Cwd
 }
 
 func titleFor(m session.Meta, transcriptPath string) string {
@@ -189,16 +201,29 @@ func titleFor(m session.Meta, transcriptPath string) string {
 }
 
 func newer(a, b sessionCandidate, idx session.Index) bool {
-	at, bt := idx[a.ID].LastActivity, idx[b.ID].LastActivity
+	at, bt := recency(a, idx), recency(b, idx)
 	if !at.Equal(bt) {
 		return at.After(bt)
 	}
-	ai, _ := os.Stat(a.Path)
-	bi, _ := os.Stat(b.Path)
-	if ai == nil || bi == nil {
-		return a.ID < b.ID
+	return a.ID < b.ID
+}
+
+// recency is the session's last-used time: the sidecar's LastActivity when
+// there is one, and the transcript's mtime otherwise.
+//
+// Comparing LastActivity FIRST looked reasonable and was not: it is zero for
+// the ~97% of sessions with no Desktop sidecar, so any sidecar timestamp beat
+// every transcript-only session regardless of true recency. "Newest first"
+// then meant "sidecar sessions first", and the picker's default entry was the
+// most recent sidecar rather than the most recent session.
+func recency(c sessionCandidate, idx session.Index) time.Time {
+	if t := idx[c.ID].LastActivity; !t.IsZero() {
+		return t
 	}
-	return ai.ModTime().After(bi.ModTime())
+	if fi, err := os.Stat(c.Path); err == nil {
+		return fi.ModTime()
+	}
+	return time.Time{}
 }
 
 // pickSession narrows several matches to one: a picker on a terminal, and off
@@ -221,7 +246,10 @@ func pickSession(ref string, cands []sessionCandidate) (sessionCandidate, error)
 				fmt.Fprintf(&b, "  … and %d more; narrow the text to see them\n", len(cands)-i)
 				break
 			}
-			fmt.Fprintf(&b, "  %s  %s\n", shortID(c.ID), c.label())
+			// The FULL id: a short one cannot be passed back to --session, so
+			// the listing was suggesting a retry that could not select anything
+			// on it.
+			fmt.Fprintf(&b, "  %s\n      %s\n", c.ID, c.label())
 		}
 		return sessionCandidate{}, fmt.Errorf("%s", strings.TrimRight(b.String(), "\n"))
 	}

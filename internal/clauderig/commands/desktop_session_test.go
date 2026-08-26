@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
@@ -460,5 +461,85 @@ func TestOtherRunningWindows_FailsClosed(t *testing.T) {
 	dirs, _ := st.CandidateDataDirs()
 	if _, err := otherRunningWindows(scanFailApp{}, dirs, profiles[0]); err == nil {
 		t.Fatal("a failed scan must be an error, not an empty result")
+	}
+}
+
+// LastActivity is zero for the ~97% of sessions with no Desktop sidecar, so
+// comparing it first made any sidecar timestamp beat every transcript-only
+// session regardless of true recency. "Newest first" meant "sidecar first".
+func TestFindSessions_NewestFirstAcrossSidecarAndTranscriptOnly(t *testing.T) {
+	home := t.TempDir()
+	oldSidecar := "11111111-1111-1111-1111-111111111111"
+	newCLIOnly := "22222222-2222-2222-2222-222222222222"
+	writeTranscript(t, home, "-Users-j-Git-api", oldSidecar, "auth work one")
+	writeTranscript(t, home, "-Users-j-Git-api", newCLIOnly, "auth work two")
+
+	// the sidecar-backed session is genuinely OLDER
+	old := time.Now().Add(-72 * time.Hour)
+	oldPath := filepath.Join(home, "projects", "-Users-j-Git-api", oldSidecar+".jsonl")
+	if err := os.Chtimes(oldPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	idx := session.Index{oldSidecar: {ID: oldSidecar, Title: "auth work one", LastActivity: old}}
+
+	got := findSessions("auth work", home, idx)
+	if len(got) != 2 {
+		t.Fatalf("want both, got %d", len(got))
+	}
+	if got[0].ID != newCLIOnly {
+		t.Errorf("first = %s, want the genuinely newer transcript-only session", got[0].ID)
+	}
+}
+
+// projects/ can hold .jsonl files that are not sessions. A non-uuid stem
+// reaching the deep link is silently dropped by Desktop — the command reports
+// success and nothing opens.
+func TestFindSessions_IgnoresNonSessionTranscripts(t *testing.T) {
+	home := t.TempDir()
+	writeTranscript(t, home, "-Users-j-Git-api", "not-a-session-id", "auth notes")
+	writeTranscript(t, home, "-Users-j-Git-api", "33333333-3333-3333-3333-333333333333", "auth notes")
+
+	got := findSessions("auth notes", home, session.Index{})
+	if len(got) != 1 {
+		t.Fatalf("want only the real session, got %d: %+v", len(got), got)
+	}
+	if !sessionUUID.MatchString(got[0].ID) {
+		t.Errorf("candidate id %q is not a session id", got[0].ID)
+	}
+}
+
+// A sidecar read from the SYNCED tree carries a portable "$HOME/..." template,
+// not a path on this machine — so matching against it misses every search using
+// the real path, and displaying it shows a directory that does not exist here.
+func TestCwdFor_PrefersTheTranscriptOverATemplatedSidecar(t *testing.T) {
+	home := t.TempDir()
+	id := "44444444-4444-4444-4444-444444444444"
+	writeTranscript(t, home, "-Users-j-Git-api", id, "hello")
+	path := filepath.Join(home, "projects", "-Users-j-Git-api", id+".jsonl")
+
+	templated := session.Meta{ID: id, Cwd: "$HOME/Git/api"}
+	if got := cwdFor(templated, path); got != "/Users/j/Git/api" {
+		t.Errorf("cwdFor = %q, want the transcript's real path", got)
+	}
+	// a real sidecar path is still preferred
+	real := session.Meta{ID: id, Cwd: "/Users/someone/Git/api"}
+	if got := cwdFor(real, path); got != "/Users/someone/Git/api" {
+		t.Errorf("cwdFor = %q, want the sidecar's own path", got)
+	}
+}
+
+// The ambiguity listing suggests a retry, so the ids on it have to be usable —
+// a short id cannot be passed back to --session.
+func TestPickSession_ListsFullIDs(t *testing.T) {
+	full := "55555555-5555-5555-5555-555555555555"
+	_, err := pickSession("auth", []sessionCandidate{
+		{ID: full, Title: "one"},
+		{ID: "66666666-6666-6666-6666-666666666666", Title: "two"},
+	})
+	if err == nil {
+		t.Fatal("want an ambiguity error")
+	}
+	if !strings.Contains(err.Error(), full) {
+		t.Errorf("listing must print ids that can be re-run: %v", err)
 	}
 }

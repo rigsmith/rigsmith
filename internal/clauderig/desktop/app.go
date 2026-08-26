@@ -133,6 +133,12 @@ func requireInstalled(a App) error {
 // quietly opening a personal window.
 func WaitRunning(a App, dataDir string, deadline time.Time) (bool, error) {
 	for {
+		// Deadline FIRST. Accepting a running pid before checking it meant a
+		// profile that appeared after the timeout still counted as ready, so
+		// the bound was advisory rather than a bound.
+		if time.Now().After(deadline) {
+			return false, nil
+		}
 		pids, err := a.Running(dataDir)
 		if err != nil {
 			// A scan that FAILS is not an app that did not start. Swallowing it
@@ -143,9 +149,6 @@ func WaitRunning(a App, dataDir string, deadline time.Time) (bool, error) {
 		}
 		if len(pids) > 0 {
 			return true, nil
-		}
-		if time.Now().After(deadline) {
-			return false, nil
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

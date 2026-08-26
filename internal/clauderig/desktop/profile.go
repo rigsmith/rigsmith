@@ -137,8 +137,15 @@ func (s *Store) CandidateDataDirs() (map[string]string, error) {
 	}
 	out := map[string]string{}
 	for _, e := range entries {
+		// ReadDir reports a directory SYMLINK as a link, not a directory, so an
+		// IsDir check alone omitted a profile that Get and `desktop open` both
+		// follow happily — and a window running from it was then unnamed by
+		// anything that consulted this map.
 		if !e.IsDir() {
-			continue
+			fi, serr := os.Stat(filepath.Join(s.Root, e.Name()))
+			if serr != nil || !fi.IsDir() {
+				continue
+			}
 		}
 		out[e.Name()] = filepath.Join(s.profileDir(e.Name()), "data")
 	}

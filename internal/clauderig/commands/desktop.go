@@ -300,8 +300,8 @@ func newDesktopOpenCmd() *cobra.Command {
 		Long: "Opens the profile's window, or focuses it if it is already open.\n\n" +
 			"With no profile named: uses the one mapped to this directory\n" +
 			"(`clauderig desktop map`, nearest mapped ancestor), and otherwise asks\n" +
-			"which — a picker on a terminal, an error naming both ways to say so\n" +
-			"off a terminal. It never picks for you.\n\n" +
+			"which one — a picker on a terminal, an error naming both ways to say\n" +
+			"so off a terminal. It never picks for you.\n\n" +
 			"With --session, the window opens on that Claude Code session: pass its\n" +
 			"id, or text to match its title or project. Desktop reads the transcript\n" +
 			"from ~/.claude/projects, so a session that lives only in the synced repo\n" +
@@ -336,6 +336,15 @@ func newDesktopOpenCmd() *cobra.Command {
 			// needle that strings.Contains matches against every session — so
 			// `--session "   "` opened an arbitrary one, or reported hundreds of
 			// matches, instead of being rejected.
+			// An explicitly blank --session is a REQUEST that cannot be honoured,
+			// not the absence of one. Trimming it to "" and carrying on made the
+			// command silently open the profile instead, so a typo'd flag looked
+			// like it had worked.
+			if cmd.Flags().Changed("session") && strings.TrimSpace(sessionRef) == "" {
+				// Not starting with the flag name: the first letter of an error is
+				// rendered capitalised, which would print it as "--Session".
+				return fmt.Errorf("give --session a session id, or some text matching a title or project")
+			}
 			sessionRef = strings.TrimSpace(sessionRef)
 			var target sessionCandidate
 			if sessionRef != "" {
@@ -343,7 +352,11 @@ func newDesktopOpenCmd() *cobra.Command {
 				if herr != nil {
 					return herr
 				}
-				cands := findSessions(sessionRef, home, liveSessionIndex())
+				idx, ierr := liveSessionIndex()
+				if ierr != nil {
+					return ierr
+				}
+				cands := findSessions(sessionRef, home, idx)
 				target, err = pickSession(sessionRef, cands)
 				if errors.Is(err, errCancelled) {
 					return nil
@@ -447,14 +460,19 @@ const (
 // liveSessionIndex reads this machine's Desktop sidecars for session titles.
 // Titles are a nicety — a session with no sidecar still resolves by its first
 // prompt — so an unreadable tree yields an empty index rather than an error.
-func liveSessionIndex() session.Index {
+func liveSessionIndex() (session.Index, error) {
 	var roots []session.Root
+	// An unreadable config or profile store is reported, not absorbed. Silently
+	// dropping the sidecar roots means searching by a Desktop title finds
+	// nothing while the transcript sits right there — indistinguishable, to the
+	// person asking, from the session not existing.
 	cfg, err := config.LoadOrDefault()
-	if err == nil {
-		me := config.Detect(machineName(cfg))
-		if loc, _ := cfg.RootLocation("desktop", me); loc != "" {
-			roots = append(roots, session.Root{Label: "desktop", Base: loc})
-		}
+	if err != nil {
+		return nil, fmt.Errorf("read config for Desktop titles: %w", err)
+	}
+	me := config.Detect(machineName(cfg))
+	if loc, _ := cfg.RootLocation("desktop", me); loc != "" {
+		roots = append(roots, session.Root{Label: "desktop", Base: loc})
 	}
 	// The SYNCED desktop tree too. A sidecar can exist only there — restored
 	// from another machine, or aged out of the live dir — and without it
@@ -467,14 +485,18 @@ func liveSessionIndex() session.Index {
 	// Every profile too: a session opened in one of them has its sidecar there
 	// and nowhere else, so leaving them out would drop the titles for exactly
 	// the sessions this command exists to reach.
-	if st, serr := desktopStore(); serr == nil {
-		if profiles, lerr := st.List(); lerr == nil {
-			for _, pr := range profiles {
-				roots = append(roots, session.Root{Label: pr.Name, Base: pr.DataDir()})
-			}
-		}
+	st, serr := desktopStore()
+	if serr != nil {
+		return nil, fmt.Errorf("open the Desktop profile store: %w", serr)
 	}
-	return session.Build(roots)
+	profiles, lerr := st.List()
+	if lerr != nil {
+		return nil, fmt.Errorf("list Desktop profiles: %w", lerr)
+	}
+	for _, pr := range profiles {
+		roots = append(roots, session.Root{Label: pr.Name, Base: pr.DataDir()})
+	}
+	return session.Build(roots), nil
 }
 
 func newDesktopListCmd() *cobra.Command {
