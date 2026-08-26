@@ -27,11 +27,11 @@ func newStackCmd() *cobra.Command {
 			"under a prefix, via josh's reversible filters. Commits may span projects;\n" +
 			"`send` extracts a prefix's changes back onto your fork as an ordinary\n" +
 			"PR-ready branch. Upstream never learns the workspace exists.\n\n" +
-			"  rig stack init                 scaffold the manifest / import the repos\n" +
-			"  rig stack status               cursor vs upstream, per repo\n" +
-			"  rig stack pull [repo]          merge new upstream commits (all repos by default)\n" +
-			"  rig stack send <repo> <branch> extract changes to a branch on your fork\n" +
-			"  rig stack doctor               engine + manifest checks (--fix installs josh)",
+			"  rig stack init                      scaffold the manifest / import the repos\n" +
+			"  rig stack status                    cursor vs upstream, per repo\n" +
+			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
+			"  rig stack send <repo> <new-branch>  a branch on your fork, prefixed stack/\n" +
+			"  rig stack doctor                    engine + manifest checks (--fix installs josh)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
 				return climenu.Run(cmd)
@@ -45,8 +45,9 @@ func newStackCmd() *cobra.Command {
 
 // stackRoot is the workspace root: the git top level, not resolveRoot's answer.
 // resolveRoot finds the nearest *project* — a package manifest or solution —
-// and every imported repo carries one of those, so from inside porta-pty/ it
-// would answer porta-pty/ and the workspace would look like it did not exist.
+// and every imported repo carries one of those, so from inside a fused project
+// it would answer that project and the workspace would look like it did not
+// exist.
 // An explicit --root still wins, since that is the user saying where to look.
 func stackRoot(ctx context.Context) (string, error) {
 	cwd, err := os.Getwd()
@@ -366,22 +367,34 @@ func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, b
 func newStackSendCmd() *cobra.Command {
 	var message string
 	cmd := &cobra.Command{
-		Use:   "send <repo> <branch>",
+		Use:   "send <repo> <new-branch>",
 		Short: "Put a repo's workspace changes on your fork as a PR-ready branch",
 		Long: "Takes this workspace's version of <repo> and commits it on top of that\n" +
-			"project's upstream tip, as <branch> on your fork. The branch holds one\n" +
-			"commit whose diff is exactly what the workspace changed, with none of the\n" +
-			"workspace's own history: nothing upstream has to know this repo is fused\n" +
-			"with anything else. PR from there as usual.",
+			"project's upstream tip, as <new-branch> on your fork. The branch holds\n" +
+			"one commit whose diff is exactly what the workspace changed, with none of\n" +
+			"the workspace's own history: nothing upstream has to know this repo is\n" +
+			"fused with anything else. PR from there as usual.\n\n" +
+			"<new-branch> is a branch you are creating on your fork, named per change\n" +
+			"(read-timeout). It is unrelated to the manifest's upstreamBranch, which\n" +
+			"is the branch of *upstream* this directory follows. Sending twice to the\n" +
+			"same <new-branch> updates it, so an open PR can take review feedback.\n\n" +
+			"The name is prefixed with `stack/` so these branches stay recognisable\n" +
+			"among your own work on the same fork: `send lib read-timeout` creates\n" +
+			"stack/read-timeout. Change it with the manifest's branchPrefix, or set\n" +
+			"that to \"\" for bare names.",
 		Args:              cobra.ExactArgs(2),
 		ValidArgsFunction: stackRepoCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			name, branch := args[0], args[1]
+			name := args[0]
 			m, _, repo, err := stackWorkspace(ctx)
 			if err != nil {
 				return err
 			}
+			// The prefix keeps these branches recognisable on a fork that also
+			// carries your own work, and is applied here rather than at the call
+			// sites so the menu and the CLI cannot disagree about it.
+			branch := m.sendBranch(name, args[1])
 			r := m.Repos[name]
 			if r == nil {
 				return fmt.Errorf("no stack repo %q (have: %s)", name, strings.Join(m.names(), ", "))
@@ -440,7 +453,9 @@ func newStackSendCmd() *cobra.Command {
 			// into it would leak this repo's message into the next send.
 			msg := message
 			if msg == "" {
-				msg = fmt.Sprintf("Changes to %s from the %s workspace", name, filepath.Base(repo.Dir))
+				// Nothing about the workspace belongs in a commit an upstream
+				// maintainer reads — least of all the local directory it lives in.
+				msg = fmt.Sprintf("Changes to %s", name)
 			}
 			commit, err := repo.CommitTree(ctx, tree, tip, msg)
 			if err != nil {
@@ -553,7 +568,12 @@ func stackMenuItems() []menuItem {
 	}
 	m, _, err := loadStackManifest(root)
 	if err != nil {
-		return nil
+		// A manifest that exists but will not load is the scaffold, waiting to
+		// be filled in. Dropping the group here would hide `init` at exactly
+		// the moment it is the only thing left to do.
+		return []menuItem{
+			{label: "init", desc: "finish rig.stack.jsonc, then import — " + stackFirstLine(err), cmd: newStackInitCmd()},
+		}
 	}
 	if m == nil {
 		return []menuItem{
@@ -564,9 +584,36 @@ func stackMenuItems() []menuItem {
 		{label: "init", desc: "import any repo the manifest names but has not fused yet", cmd: newStackInitCmd()},
 		{label: "status", desc: "each repo's cursor against its upstream", cmd: newStackStatusCmd()},
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
-		{label: "send", desc: "a repo's changes to your fork (pick; prompts for a branch)", cmd: newStackSendMenuCmd()},
+		{label: "send", desc: "a repo's changes to your fork as a new branch (pick, then name it)", cmd: newStackSendMenuCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
 	}
+}
+
+// stackFirstLine is an error's first line, for a menu row that has one line.
+func stackFirstLine(err error) string {
+	line, _, _ := strings.Cut(err.Error(), "\n")
+	if i := strings.LastIndex(line, ": "); i >= 0 && i+2 < len(line) {
+		line = line[i+2:]
+	}
+	if len(line) > 60 {
+		line = line[:57] + "…"
+	}
+	return line
+}
+
+// stackCommonPrefix is the branch prefix every named repo shares, or "" when
+// they differ — the menu can only promise one when there is one.
+func stackCommonPrefix(m *stackManifest, names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	first := m.branchPrefix(names[0])
+	for _, n := range names[1:] {
+		if m.branchPrefix(n) != first {
+			return ""
+		}
+	}
+	return first
 }
 
 // newStackSendMenuCmd is the menu's wrapper around the arg-taking `stack send`:
@@ -598,8 +645,27 @@ func newStackSendMenuCmd() *cobra.Command {
 				fields = append(fields, huh.NewSelect[string]().
 					Title("Send which repo?").Options(opts...).Filtering(true).Value(&name))
 			}
-			fields = append(fields, huh.NewInput().Title("Branch").
-				Description("branch to create on your fork, holding one commit").
+			// The prompt cannot be skipped by reading the manifest: this branch is
+			// named per change, and the manifest's upstreamBranch is a different
+			// thing entirely — the branch of upstream the directory follows.
+			//
+			// With one repo the destination fork is known now and worth naming;
+			// with several it is only decided by the select above, which has not
+			// run yet, so stay general rather than name the wrong one.
+			where := "your fork"
+			if len(names) == 1 {
+				where = m.Repos[names[0]].Fork
+			}
+			// Show the prefix rather than let it surprise them after the fact.
+			// It is uniform across repos unless a repo overrides it, so only
+			// promise a specific one when every repo here agrees.
+			desc := fmt.Sprintf("created on %s, holding one commit", where)
+			if prefix := stackCommonPrefix(m, names); prefix != "" {
+				desc = fmt.Sprintf("created on %s as %s<name> — e.g. read-timeout", where, prefix)
+			}
+			fields = append(fields, huh.NewInput().Title("New branch on your fork").
+				Description(desc).
+				Placeholder("read-timeout").
 				Value(&branch))
 
 			if err := huh.NewForm(huh.NewGroup(fields...)).

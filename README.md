@@ -51,7 +51,7 @@ rig worktree new feat/x                     # sibling checkout for working on a 
 # several forked repos fused into one history, PRs still land as one commit each:
 rig stack init                              # scaffold rig.stack.jsonc; run again to import
 rig stack status / pull [repo]              # what upstream did, and taking it
-rig stack send porta-pty fix/timeout        # that repo's changes, on your fork, PR-ready
+rig stack send some-lib read-timeout        # → stack/read-timeout on your fork, PR-ready
 ```
 
 The release engine — changeset parsing, the dependency **cascade** (a dependent

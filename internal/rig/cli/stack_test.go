@@ -21,14 +21,14 @@ func writeStackManifest(t *testing.T, root, body string) {
 const stackTestManifest = `{
   // comments must survive: the manifest is jsonc
   "repos": {
-    "porta-pty": {
-      "upstream": "github.com/tomlm/Porta.Pty",
-      "fork":     "github.com/JohnCampionJr/Porta.Pty",
+    "pty-core": {
+      "upstream": "github.com/acme/pty-core",
+      "fork":     "github.com/you/pty-core",
       "branch":   "main"
     },
-    "xterm-net": {
-      "upstream": "github.com/tomlm/XTerm.NET",
-      "fork":     "github.com/JohnCampionJr/XTerm.NET"
+    "term-core": {
+      "upstream": "github.com/acme/term-core",
+      "fork":     "github.com/you/term-core"
     }
   }
 }
@@ -45,13 +45,13 @@ func TestLoadWsManifest(t *testing.T) {
 		if src == nil || src.Path == "" {
 			t.Fatalf("expected a dedicated-file source, got %+v", src)
 		}
-		if got := m.branch("porta-pty"); got != "main" {
+		if got := m.branch("pty-core"); got != "main" {
 			t.Fatalf("branch = %q", got)
 		}
-		if got := m.branch("xterm-net"); got != "main" {
+		if got := m.branch("term-core"); got != "main" {
 			t.Fatalf("default branch = %q, want main", got)
 		}
-		if names := m.names(); strings.Join(names, ",") != "porta-pty,xterm-net" {
+		if names := m.names(); strings.Join(names, ",") != "pty-core,term-core" {
 			t.Fatalf("names = %v, want sorted stable order", names)
 		}
 	})
@@ -108,25 +108,25 @@ func TestWsSetCursor_PreservesComments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stackSetCursor(src, m, "porta-pty", "abc123def456"); err != nil {
+	if err := stackSetCursor(src, m, "pty-core", "abc123def456"); err != nil {
 		t.Fatal(err)
 	}
 	m2, src2, err := loadStackManifest(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := m2.cursor("porta-pty"); got != "abc123def456" {
+	if got := m2.cursor("pty-core"); got != "abc123def456" {
 		t.Fatalf("lastSync = %q", got)
 	}
 	// A second cursor lands beside the first, not over it.
-	if err := stackSetCursor(src2, m2, "xterm-net", "fedcba"); err != nil {
+	if err := stackSetCursor(src2, m2, "term-core", "fedcba"); err != nil {
 		t.Fatal(err)
 	}
 	m3, _, err := loadStackManifest(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m3.cursor("porta-pty") != "abc123def456" || m3.cursor("xterm-net") != "fedcba" {
+	if m3.cursor("pty-core") != "abc123def456" || m3.cursor("term-core") != "fedcba" {
 		t.Fatalf("cursors = %v", m3.LastSync)
 	}
 	data, _ := os.ReadFile(filepath.Join(root, "rig.stack.jsonc"))
@@ -135,12 +135,91 @@ func TestWsSetCursor_PreservesComments(t *testing.T) {
 	}
 }
 
+func TestStackUpstreamBranch(t *testing.T) {
+	repo := func(m *stackManifest) string { return m.branch("x") }
+
+	t.Run("defaults to main", func(t *testing.T) {
+		m := &stackManifest{Repos: map[string]*stackRepo{"x": {}}}
+		if got := repo(m); got != "main" {
+			t.Fatalf("branch = %q", got)
+		}
+	})
+
+	t.Run("upstreamBranch wins", func(t *testing.T) {
+		m := &stackManifest{Repos: map[string]*stackRepo{"x": {UpstreamBranch: "trunk"}}}
+		if got := repo(m); got != "trunk" {
+			t.Fatalf("branch = %q", got)
+		}
+	})
+
+	t.Run("the old branch key still works", func(t *testing.T) {
+		m := &stackManifest{Repos: map[string]*stackRepo{"x": {Branch: "develop"}}}
+		if got := repo(m); got != "develop" {
+			t.Fatalf("branch = %q", got)
+		}
+	})
+
+	t.Run("disagreeing spellings are refused", func(t *testing.T) {
+		m := &stackManifest{Repos: map[string]*stackRepo{
+			"x": {Upstream: "h/o/n", Fork: "h/me/n", UpstreamBranch: "trunk", Branch: "develop"},
+		}}
+		err := m.validate()
+		if err == nil || !strings.Contains(err.Error(), "old name") {
+			t.Fatalf("expected a refusal naming the old key, got %v", err)
+		}
+	})
+}
+
+func TestStackSendBranch(t *testing.T) {
+	ptr := func(s string) *string { return &s }
+	base := func(repo *stackRepo, workspace *string) *stackManifest {
+		return &stackManifest{BranchPrefix: workspace, Repos: map[string]*stackRepo{"x": repo}}
+	}
+
+	cases := []struct {
+		name  string
+		m     *stackManifest
+		given string
+		want  string
+	}{
+		{"defaults to stack/", base(&stackRepo{}, nil), "read-timeout", "stack/read-timeout"},
+		{"workspace override", base(&stackRepo{}, ptr("jc-")), "read-timeout", "jc-read-timeout"},
+		{"workspace opt-out", base(&stackRepo{}, ptr("")), "read-timeout", "read-timeout"},
+		{"repo beats workspace", base(&stackRepo{BranchPrefix: ptr("pr/")}, ptr("jc-")), "x", "pr/x"},
+		{"repo opts out alone", base(&stackRepo{BranchPrefix: ptr("")}, ptr("jc-")), "x", "x"},
+		{"already prefixed is left alone", base(&stackRepo{}, nil), "stack/read-timeout", "stack/read-timeout"},
+		{"a prefix without a slash still concatenates", base(&stackRepo{}, ptr("jc-")), "fix/x", "jc-fix/x"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.m.sendBranch("x", c.given); got != c.want {
+				t.Fatalf("sendBranch(%q) = %q, want %q", c.given, got, c.want)
+			}
+		})
+	}
+
+	t.Run("a prefix git would reject is refused", func(t *testing.T) {
+		for _, bad := range []string{
+			"/lead", "-lead", "has space", "dot..dot", "double//slash",
+			".review/", "stack/@{", "a/.hidden/", "x.lock/", "tilde~", "colon:",
+		} {
+			m := &stackManifest{
+				BranchPrefix: ptr(bad),
+				Repos:        map[string]*stackRepo{"x": {Upstream: "h/o/n", Fork: "h/me/n"}},
+			}
+			if err := m.validate(); err == nil {
+				t.Fatalf("accepted branch prefix %q", bad)
+			}
+		}
+	})
+}
+
 func TestJoshURL(t *testing.T) {
 	p := &joshProxy{port: 4242}
-	got := p.url("tomlm/Porta.Pty", "abc123", stackPrefixFilter("porta-pty"))
+	got := p.url("acme/pty-core", "abc123", stackPrefixFilter("pty-core"))
 	// ':' and '=' are legal in a path segment and stay literal, matching the
 	// filter syntax josh documents; only a separator like '/' is escaped.
-	want := "http://127.0.0.1:4242/tomlm/Porta.Pty.git@abc123:prefix=porta-pty.git"
+	want := "http://127.0.0.1:4242/acme/pty-core.git@abc123:prefix=pty-core.git"
 	if got != want {
 		t.Fatalf("url:\n got %s\nwant %s", got, want)
 	}
@@ -150,8 +229,8 @@ func TestJoshURL(t *testing.T) {
 }
 
 func TestWsSplitHost(t *testing.T) {
-	host, path := stackSplitHost("github.com/tomlm/Porta.Pty")
-	if host != "github.com" || path != "tomlm/Porta.Pty" {
+	host, path := stackSplitHost("github.com/acme/pty-core")
+	if host != "github.com" || path != "acme/pty-core" {
 		t.Fatalf("got %q %q", host, path)
 	}
 }
@@ -359,6 +438,15 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		}
 	})
 
+	t.Run("a scaffold that will not load still offers init", func(t *testing.T) {
+		// What `stack init` writes: a manifest whose repos block is still empty.
+		inWorkspace(t, "{\n  \"repos\": {}\n}\n")
+		items := stackMenuItems()
+		if len(items) != 1 || items[0].label != "init" {
+			t.Fatalf("expected init to stay reachable, got %v", items)
+		}
+	})
+
 	t.Run("no menu group outside a git repo", func(t *testing.T) {
 		prev, err := os.Getwd()
 		if err != nil {
@@ -389,14 +477,14 @@ func TestStackMenuAndCompletion(t *testing.T) {
 	t.Run("completion offers the workspace's repos", func(t *testing.T) {
 		inWorkspace(t, stackTestManifest)
 		got, _ := stackRepoCompletion(nil, nil, "")
-		if strings.Join(got, ",") != "porta-pty,xterm-net" {
+		if strings.Join(got, ",") != "pty-core,term-core" {
 			t.Fatalf("completion = %v", got)
 		}
 	})
 
 	t.Run("completion stops after the repo argument", func(t *testing.T) {
 		inWorkspace(t, stackTestManifest)
-		if got, _ := stackRepoCompletion(nil, []string{"porta-pty"}, ""); got != nil {
+		if got, _ := stackRepoCompletion(nil, []string{"pty-core"}, ""); got != nil {
 			t.Fatalf("expected no completions for the second argument, got %v", got)
 		}
 	})

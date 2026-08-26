@@ -182,33 +182,48 @@ run instead.
 
 ## Stack workspaces {#stack}
 
-A [stack workspace](./verbs#stack) is described by `rig.stack.jsonc` at its root
+A [stack workspace](./stack) is described by `rig.stack.jsonc` at its root
 (or a `stack` key in `.rig.json`). Each entry names a repo fused into this
 history: the key is the directory it lives under.
 
 ```jsonc
 {
+  "branchPrefix": "stack/",                   // prepended to `send` branch names
   "repos": {
-    "porta-pty": {
-      "upstream": "github.com/tomlm/Porta.Pty",        // where PRs go
-      "fork": "github.com/JohnCampionJr/Porta.Pty",    // where `send` pushes
-      "branch": "main"                                  // upstream branch, default main
+    "pty-core": {
+      "upstream": "github.com/acme/pty-core",   // where PRs go
+      "fork": "github.com/you/pty-core",        // where `send` pushes
+      "upstreamBranch": "main"                  // branch of upstream to follow
     }
   },
-  // Written by `pull`, not by hand: the upstream commit each repo last took.
-  "lastSync": { "porta-pty": "c9f15861…" }
+  // Written by import and pull, not by hand: the full SHA each repo last took.
+  "lastSync": { "pty-core": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" }
 }
 ```
 
 Repo specs are `host/owner/name` — no scheme and no `.git`, since the same spec
 has to serve as a URL, an engine path, and a label.
 
+`upstreamBranch` names the branch of `upstream` this directory follows — what
+`pull` takes and what `send` roots on. It is deliberately not called `branch`:
+that would collide with `rig stack send <repo> <new-branch>`, where the branch
+is one you are creating on your fork for a single change. A manifest written
+with the older `branch` key is still read.
+
 `lastSync` is a separate map rather than a field per repo because it is machine
-written: a pull rewrites that one value while the entries you wrote, and their
-comments, stay untouched.
+written: an import or pull rewrites that one value while the entries you wrote,
+and their comments, stay untouched. The values are full 40-character SHAs — an
+abbreviated one would never equal the tip `status` reads from the remote.
+
+`branchPrefix` is prepended to the name you give `rig stack send`, so
+`send pty-core read-timeout` creates `stack/read-timeout` on your fork. It
+defaults to `stack/`, keeping these branches apart from your own work on the
+same fork; set it to `""` for bare names, or override it on a single repo whose
+upstream asks for a different convention. A name that already carries the prefix
+is left as it is.
 
 An optional `"josh"` key pins the version of [josh](https://josh-project.dev) —
-the history-filtering engine [`init` and `pull`](./verbs#stack) run — for this
+the history-filtering engine [`init` and `pull`](./stack) run — for this
 workspace, overriding the one rig ships with. Changing it against existing
 workspace history is at your own risk.
 

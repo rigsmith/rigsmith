@@ -12,6 +12,33 @@
       "type": "string",
       "description": "josh engine version tag this workspace pins (e.g. r26.07.19). Defaults to the version pinned in rig. Changing it against existing workspace history is at your own risk."
     },
+    "branchPrefix": {
+      "type": "string",
+      "description": "Prepended to the name `rig stack send` is given, so `send lib read-timeout` creates stack/read-timeout. Defaults to \"stack/\"; set to \"\" for bare names. A repo entry may override it.",
+      "pattern": "^[^ \\t~^:?*\\[\\\\]*$",
+      "not": {
+        "anyOf": [
+          {
+            "pattern": "^[-/]"
+          },
+          {
+            "pattern": "//"
+          },
+          {
+            "pattern": "\\.\\."
+          },
+          {
+            "pattern": "@\\{"
+          },
+          {
+            "pattern": "(^|/)\\."
+          },
+          {
+            "pattern": "\\.lock(/|$)"
+          }
+        ]
+      }
+    },
     "repos": {
       "type": "object",
       "description": "One entry per fused project; the key is the prefix directory its history lives under.",
@@ -38,9 +65,40 @@
               "pattern": "\\.git$"
             }
           },
+          "upstreamBranch": {
+            "type": "string",
+            "description": "Branch of `upstream` this directory follows \u2014 what `pull` takes and what `send` roots on. Defaults to main. Not the branch `send` creates; you name that per change."
+          },
           "branch": {
             "type": "string",
-            "description": "Upstream branch to track. Default: main."
+            "description": "Deprecated name for upstreamBranch. Still read; prefer upstreamBranch, which cannot be confused with the branch `send` creates."
+          },
+          "branchPrefix": {
+            "type": "string",
+            "description": "Overrides the workspace branchPrefix for this project. Set to \"\" to send bare names to this fork only.",
+            "pattern": "^[^ \\t~^:?*\\[\\\\]*$",
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "^[-/]"
+                },
+                {
+                  "pattern": "//"
+                },
+                {
+                  "pattern": "\\.\\."
+                },
+                {
+                  "pattern": "@\\{"
+                },
+                {
+                  "pattern": "(^|/)\\."
+                },
+                {
+                  "pattern": "\\.lock(/|$)"
+                }
+              ]
+            }
           }
         },
         "required": [
@@ -52,9 +110,11 @@
     },
     "lastSync": {
       "type": "object",
-      "description": "Machine-written pull cursors: prefix -> upstream SHA of the last pull. Committed with each pull's merge commit; do not edit by hand.",
+      "description": "Written by import and pull, not by hand: the full upstream commit each repo was last taken from.",
       "additionalProperties": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}$",
+        "description": "Full 40-character commit SHA. An abbreviated one never matches the remote tip."
       }
     }
   },

@@ -46,9 +46,12 @@ func TestStackFlow(t *testing.T) {
 	mustGitStack(t, ws, "init", "-q", "-b", "main")
 	mustGitStack(t, ws, "config", "user.email", "t@t")
 	mustGitStack(t, ws, "config", "user.name", "t")
+	// libfoo uses the current key, libbar the older `branch` spelling, so the
+	// whole flow is walked once through each.
 	writeStackManifest(t, ws, fmt.Sprintf(`{
+  "branchPrefix": "stack/",
   "repos": {
-    "libfoo": { "upstream": %[1]q, "fork": %[2]q, "branch": "main" },
+    "libfoo": { "upstream": %[1]q, "fork": %[2]q, "upstreamBranch": "main" },
     "libbar": { "upstream": %[3]q, "fork": %[4]q, "branch": "main" }
   }
 }`, srv.spec("org/libfoo"), srv.spec("me/libfoo"),
@@ -98,19 +101,23 @@ func TestStackFlow(t *testing.T) {
 
 	// ---- send extracts one project, and only that project ----------------
 
-	if err := runVerb(ctx, newStackSendCmd(), "libfoo", "fix/bump"); err != nil {
+	if err := runVerb(ctx, newStackSendCmd(), "libfoo", "bump"); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	fork := srv.path("me/libfoo")
+	// The name given was bare; branchPrefix decides what actually exists.
+	if refExists(t, fork, "refs/heads/bump") {
+		t.Fatal("send ignored branchPrefix and pushed the bare name")
+	}
 	upstreamTip := strings.TrimSpace(mustGitStack(t, srv.path("org/libfoo"), "rev-parse", "main"))
 
-	if got := strings.TrimSpace(mustGitStack(t, fork, "rev-parse", "fix/bump^")); got != upstreamTip {
+	if got := strings.TrimSpace(mustGitStack(t, fork, "rev-parse", "stack/bump^")); got != upstreamTip {
 		t.Fatalf("branch is not parented on the upstream tip: %s vs %s", got, upstreamTip)
 	}
-	if got := strings.TrimSpace(mustGitStack(t, fork, "rev-list", "--count", upstreamTip+"..fix/bump")); got != "1" {
+	if got := strings.TrimSpace(mustGitStack(t, fork, "rev-list", "--count", upstreamTip+"..stack/bump")); got != "1" {
 		t.Fatalf("branch holds %s commits, want exactly 1", got)
 	}
-	files := strings.Fields(mustGitStack(t, fork, "ls-tree", "-r", "--name-only", "fix/bump"))
+	files := strings.Fields(mustGitStack(t, fork, "ls-tree", "-r", "--name-only", "stack/bump"))
 	for _, f := range files {
 		if strings.HasPrefix(f, "libfoo/") || strings.HasPrefix(f, "libbar/") || f == "rig.stack.jsonc" {
 			t.Fatalf("branch leaked workspace layout: %v", files)
@@ -127,10 +134,14 @@ func TestStackFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustGitStack(t, ws, "commit", "-qam", "libfoo: v3")
-	if err := runVerb(ctx, newStackSendCmd(), "libfoo", "fix/bump"); err != nil {
+	// Given the full branch name this time: the prefix must not stutter.
+	if err := runVerb(ctx, newStackSendCmd(), "libfoo", "stack/bump"); err != nil {
 		t.Fatalf("second send to the same branch: %v", err)
 	}
-	if got := strings.TrimSpace(mustGitStack(t, fork, "show", "fix/bump:src/libfoo.txt")); got != "libfoo v3" {
+	if refExists(t, fork, "refs/heads/stack/stack/bump") {
+		t.Fatal("an already-prefixed name was prefixed again")
+	}
+	if got := strings.TrimSpace(mustGitStack(t, fork, "show", "stack/bump:src/libfoo.txt")); got != "libfoo v3" {
 		t.Fatalf("branch was not updated: %q", got)
 	}
 
@@ -149,14 +160,14 @@ func TestStackFlow(t *testing.T) {
 	if !strings.Contains(out, "nothing to send") {
 		t.Fatalf("expected a no-op, got: %s", out)
 	}
-	if refExists(t, srv.path("me/libbar"), "refs/heads/noop") {
+	if refExists(t, srv.path("me/libbar"), "refs/heads/stack/noop") {
 		t.Fatal("no-op send pushed a branch anyway")
 	}
 
 	// ---- upstream moves: send must refuse rather than revert it ----------
 
 	srv.commit(t, "org/libfoo", "src/extra.txt", "added upstream\n", "upstream: add extra")
-	err = runVerb(ctx, newStackSendCmd(), "libfoo", "fix/stale")
+	err = runVerb(ctx, newStackSendCmd(), "libfoo", "stale")
 	if err == nil {
 		t.Fatal("send accepted a stale cursor — the PR would have reverted upstream")
 	}
@@ -177,14 +188,14 @@ func TestStackFlow(t *testing.T) {
 	} else if !strings.Contains(out, "nothing to pull") {
 		t.Fatalf("a repeated pull should be a no-op, got: %s", out)
 	}
-	if err := runVerb(ctx, newStackSendCmd(), "libfoo", "fix/after-pull"); err != nil {
+	if err := runVerb(ctx, newStackSendCmd(), "libfoo", "after-pull"); err != nil {
 		t.Fatalf("send after pull: %v", err)
 	}
 	newTip := strings.TrimSpace(mustGitStack(t, srv.path("org/libfoo"), "rev-parse", "main"))
-	if got := strings.TrimSpace(mustGitStack(t, fork, "rev-parse", "fix/after-pull^")); got != newTip {
+	if got := strings.TrimSpace(mustGitStack(t, fork, "rev-parse", "stack/after-pull^")); got != newTip {
 		t.Fatalf("branch is not on the new upstream tip: %s vs %s", got, newTip)
 	}
-	files = strings.Fields(mustGitStack(t, fork, "ls-tree", "-r", "--name-only", "fix/after-pull"))
+	files = strings.Fields(mustGitStack(t, fork, "ls-tree", "-r", "--name-only", "stack/after-pull"))
 	if !contains(files, "src/extra.txt") {
 		t.Fatalf("the branch dropped upstream's own file — it would revert it: %v", files)
 	}

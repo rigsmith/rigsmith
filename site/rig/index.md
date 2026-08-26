@@ -32,7 +32,7 @@ discover projects inside [nested git worktrees](./configuration#nested-worktrees
 which are skipped by default).
 
 Beyond the dev loop, rig manages [parallel worktrees](./verbs#git--worktree-verbs)
-and [stack workspaces](./verbs#stack) — several forked repos fused into one
+and [stack workspaces](./stack) — several forked repos fused into one
 history, so a change can span them in a single commit and still leave as an
 ordinary pull request to each.
 

@@ -8,8 +8,9 @@
 > from and synced back to their upstream repos through
 > [josh](https://josh-project.dev)'s reversible filters, driven the way
 > [rust-lang/josh-sync](https://github.com/rust-lang/josh-sync) drives it — an
-> ephemeral localhost `josh-proxy` plus plain git. Reference workspace:
-> `~/Git/terminal-stack` (Porta.Pty + XTerm.NET + Iciclecreek.Avalonia.Terminal).
+> ephemeral localhost `josh-proxy` plus plain git. Designed against a real
+> reference workspace: three forked .NET repos — a pseudoterminal, a terminal
+> emulator core, and the UI control that consumes both.
 
 ## The job
 
@@ -65,7 +66,7 @@ rather than inheriting it.
 ## The model
 
 A stack workspace is **one ordinary git repo**. Each upstream project is a
-prefix (`porta-pty/`, `xterm-net/`, …) whose contents were imported through
+prefix (`pty-core/`, `term-core/`, …) whose contents were imported through
 josh's `:prefix=` filter, plus workspace-owned glue at the root: the manifest,
 the ecosystem overlay (`.slnx` + `Directory.Build.targets` for .NET — see
 appendix), CI. Branches, worktrees (`rig worktree` composes for free — they
@@ -77,19 +78,19 @@ are just branches of one repo), stashes, bisect: all normal git.
   "$schema": "https://rigsmith.dev/schemas/rig-stack.json",
   "josh": "r26.07.19",              // engine pin; overrides rig's built-in default
   "repos": {
-    "porta-pty": {
-      "upstream": "github.com/tomlm/Porta.Pty",   // host/owner/name — no scheme, no .git
-      "fork":     "github.com/JohnCampionJr/Porta.Pty",
-      "branch":   "main"
+    "pty-core": {
+      "upstream": "github.com/acme/pty-core",   // host/owner/name — no scheme, no .git
+      "fork":     "github.com/you/pty-core",
+      "upstreamBranch": "main"
     },
-    "xterm-net":            { /* … */ },
-    "iciclecreek-terminal": { /* … */ }
+    "term-core":    { /* … */ },
+    "term-control": { /* … */ }
   },
   // Machine-written pull cursors, committed with each pull's merge commit.
   // A separate top-level map, not a field per repo: pulls rewrite this one
   // value through the comment-preserving jsonc editor (which reaches depth ≤2)
   // while the human-authored entries above stay byte-for-byte untouched.
-  "lastSync": { "porta-pty": "8f3c2ab…" }
+  "lastSync": { "pty-core": "8f3c2ab…" }
 }
 ```
 
@@ -99,7 +100,7 @@ are just branches of one repo), stashes, bisect: all normal git.
 |---|---|
 | `rig stack init` | scaffold the manifest; for each repo, import upstream history under its prefix (proxy fetch through `:prefix=<child>`, merge, set cursor); scaffold the ecosystem overlay |
 | `rig stack pull [child]` | fetch upstream through the filter; `NothingToPull` if the cursor matches; else merge (strategy per child), update cursor. The CI-cronnable direction |
-| `rig stack send <child> <branch>` | commit `<child>/`'s tree onto that project's upstream tip and push it to the **fork** as `<branch>`: one commit, whose diff is exactly what the workspace changed. The deliberate direction |
+| `rig stack send <child> <new-branch>` | commit `<child>/`'s tree onto that project's upstream tip and push it to the **fork** as `branchPrefix + <new-branch>` (default `stack/`): one commit, whose diff is exactly what the workspace changed. The deliberate direction |
 | `rig stack status` | per child: upstream commits since cursor, local commits touching the prefix not yet sent, cursor SHA |
 | `rig stack doctor` | engine installed + version matches pin, remotes reachable, manifest sane; `--fix` installs/updates josh (cliguard requires `--fix` on any doctor) |
 
@@ -166,7 +167,7 @@ it.
 ## Wiring into rig (from the codebase survey, 2026-08-25)
 
 - **Verb name `stack` — not `workspace`, not `josh`.** It names the thing (a
-  stack of upstream forks fused into one history — cf. terminal-stack), not
+  stack of upstream forks fused into one history), not
   the engine (rig's build-not-dotnet rule) and not "workspace", which already
   means intra-repo package discovery in this package
   (`internal/rig/cli/workspace.go`, `detect.hasWorkspaceManifest`). Files:
@@ -212,14 +213,14 @@ it.
    (b) is the better shape if the filter invocation is tractable.
 2. Merge strategy per child on `pull` (merge vs squash vs rebase-ish), given
    the known merge-noise wart. Default merge, per-child override in manifest?
-3. `stack init` adopting an existing non-fused workspace (like today's
-   terminal-stack sibling-clone layout): re-import and keep the overlay, or
-   not worth the code?
+3. `stack init` adopting an existing non-fused workspace (the sibling-clone
+   layout people already have): re-import and keep the overlay, or not worth
+   the code?
 4. CI template (`stack init --ci github`) in v1 or after the verbs settle?
 
 ## Appendix: the MSBuild overlay
 
-Verified working in `~/Git/terminal-stack` (2026-08-25): none of the three
+Verified against the reference workspace (2026-08-25): none of its three
 upstream repos owns a root `Directory.Build.targets`, so a workspace-root one
 reaches every child project via MSBuild's walk-up and swaps the cross-repo
 `PackageReference`s for `ProjectReference`s with **zero upstream-file edits**.
@@ -230,15 +231,15 @@ actual consumers.
 ```xml
 <Project>
   <ItemGroup Condition="'$(UseWorkspaceProjects)' != 'false'">
-    <ProjectReference Include="$(MSBuildThisFileDirectory)porta-pty/src/Porta.Pty/Porta.Pty.csproj"
-                      Condition="@(PackageReference->AnyHaveMetadataValue('Identity', 'Porta.Pty'))" />
-    <PackageReference Remove="Porta.Pty" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)pty-core/src/Pty.Core/Pty.Core.csproj"
+                      Condition="@(PackageReference->AnyHaveMetadataValue('Identity', 'Pty.Core'))" />
+    <PackageReference Remove="Pty.Core" />
   </ItemGroup>
 </Project>
 ```
 
 Checked with `dotnet msbuild -getItem:ProjectReference,PackageReference`:
-default evaluation swaps `Porta.Pty`/`XTerm.NET` for project refs;
+default evaluation swaps `Pty.Core`/`Term.Core` for project refs;
 `-p:UseWorkspaceProjects=false` restores the against-real-packages build that
 upstream CI sees. The walk-up ignores git boundaries, so building a child from
 inside its folder also gets the overlay — right for the dev loop; use the flag
