@@ -269,8 +269,10 @@ You rarely know a session's uuid, so three things offer it:
   desktop: clauderig desktop open --session a1b2c3d4-…
 ```
 
-That last line appears only where it would work: Claude Desktop installed, and a
-session whose transcript is in the live CLI root.
+That last line appears only where the command would work: Claude Desktop
+installed, at least one profile saved, and a transcript `desktop open` can
+actually resolve on this machine. A session that lives only in the synced repo,
+or on another machine, gets the resume line without it.
 
 ## How it works
 

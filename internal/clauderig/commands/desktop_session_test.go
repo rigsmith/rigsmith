@@ -720,6 +720,14 @@ func TestDesktopHint_OnlyWhereTheCommandWouldWork(t *testing.T) {
 	if h := desktopHint(live); !strings.Contains(h, "--session "+live.id) {
 		t.Errorf("want a ready-to-paste command for a live CLI session: %q", h)
 	}
+	// A session the sidecar attributes to a profile must name it: without it the
+	// command resolves a profile the usual way and can land on another account's
+	// window, which is the boundary this whole feature refuses to cross.
+	owned := &sessResult{id: live.id, cliLive: true}
+	owned.meta.Profile = "work"
+	if h := desktopHint(owned); !strings.Contains(h, "desktop open work --session ") {
+		t.Errorf("want the owning profile named: %q", h)
+	}
 	// cliLive is not the test: a --repo row can carry it for a transcript that
 	// is not on this machine, so the opener's own index is what decides.
 	if h := desktopHint(&sessResult{id: "99999999-9999-9999-9999-999999999999", cliLive: true}); h != "" {

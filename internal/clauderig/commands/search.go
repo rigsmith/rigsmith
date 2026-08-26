@@ -609,7 +609,15 @@ func desktopHint(r *sessResult) string {
 	if _, ok := openableSessions()[strings.ToLower(r.id)]; !ok {
 		return ""
 	}
-	return "desktop: clauderig desktop open --session " + shQuote(r.id)
+	// Name the profile when the sidecar knows it. Without it the command
+	// resolves a profile the usual way — this directory's mapping, else a
+	// picker, else an error — which for a session that belongs to a KNOWN
+	// account means a prompt at best and the wrong window at worst.
+	cmd := "clauderig desktop open "
+	if r.meta.Profile != "" {
+		cmd += shQuote(r.meta.Profile) + " "
+	}
+	return "desktop: " + cmd + "--session " + shQuote(r.id)
 }
 
 // resumeHint renders the action for a session. `claude --resume` reads this
