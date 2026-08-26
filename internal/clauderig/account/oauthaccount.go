@@ -3,6 +3,7 @@ package account
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -153,6 +154,18 @@ func parseOAuthMeta(raw []byte) oauthMeta {
 	return m
 }
 
+// parseOAuthMetaStrict is parseOAuthMeta for callers that must not act on a
+// half-read block. The lenient form exists for diagnostics, where showing what
+// could be read beats showing nothing; identity that gets WRITTEN somewhere
+// needs the opposite answer.
+func parseOAuthMetaStrict(raw []byte) (oauthMeta, error) {
+	var m oauthMeta
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return oauthMeta{}, fmt.Errorf("parse oauthAccount: %w", err)
+	}
+	return m, nil
+}
+
 // maxLinkHops bounds the walk so a symlink cycle cannot spin forever.
 const maxLinkHops = 32
 
@@ -212,6 +225,12 @@ func identityFromFile(path string) (accountUUID, orgUUID, email string, err erro
 	if err != nil || len(raw) == 0 {
 		return "", "", "", err
 	}
-	m := parseOAuthMeta(raw)
+	// Strict. A malformed block previously yielded whatever fields happened to
+	// decode before the error, and the caller — which writes those values into
+	// a synced registry — had no way to tell that from a real identity.
+	m, perr := parseOAuthMetaStrict(raw)
+	if perr != nil {
+		return "", "", "", perr
+	}
 	return m.AccountUUID, m.OrganizationUUID, m.EmailAddress, nil
 }

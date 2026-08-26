@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -48,12 +50,14 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 	if isHexPrefix(v) && len(v) >= minUUIDPrefix {
 		candidates := map[string]bool{}
 		for _, e := range known {
-			if e.Account != "" {
-				candidates[e.Account] = true
+			if c := canonicalUUID(e.Account); c != "" {
+				candidates[c] = true
 			}
 		}
 		for _, uuid := range byEmail {
-			candidates[uuid] = true
+			if c := canonicalUUID(uuid); c != "" {
+				candidates[c] = true
+			}
 		}
 		// Accounts this machine tracks, whether or not any device has synced
 		// under them since.
@@ -66,12 +70,13 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 				}
 			}
 		}
+		needle := strings.ToLower(v)
 		var hit string
 		for uuid := range candidates {
-			if !strings.HasPrefix(strings.ToLower(uuid), strings.ToLower(v)) {
+			if !strings.HasPrefix(uuid, needle) {
 				continue
 			}
-			if hit != "" && !strings.EqualFold(hit, uuid) {
+			if hit != "" && hit != uuid {
 				return "", fmt.Errorf("%q matches more than one account (%s, %s) — use more characters", v, hit, uuid)
 			}
 			hit = uuid
@@ -89,7 +94,11 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 		// miss. Discarding that error reported the account as unknown, which
 		// sends the user to check their spelling instead of to disambiguate.
 		// Only a genuine no-match continues to the registry fallback.
-		if rerr != nil && !isNoSuchAccount(rerr) {
+		// Typed, not text-matched. A raw os.PathError from an unreadable store
+		// can contain "not found", and reading that as a miss silently fell
+		// through to the registry — answering with a different account, or a
+		// generic "unknown account", instead of the storage failure.
+		if rerr != nil && !errors.Is(rerr, account.ErrNoSuchAccount) && !errors.Is(rerr, account.ErrNoAccounts) {
 			return "", rerr
 		}
 		if rerr == nil {
@@ -97,8 +106,8 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 			// put. The registry holds only each device's LATEST account, so
 			// once every device has synced under a different login it can no
 			// longer resolve this one — the store can.
-			if a.AccountUUID != "" {
-				return a.AccountUUID, nil
+			if c := canonicalUUID(a.AccountUUID); c != "" {
+				return c, nil
 			}
 			if a.Email != "" {
 				if uuid := byEmail[strings.ToLower(a.Email)]; uuid != "" {
@@ -154,21 +163,17 @@ func accountUUIDCandidates(stagingDir string) map[string]map[string]bool {
 		if d.Account == nil || d.Account.Email == "" || d.Account.AccountUUID == "" {
 			continue
 		}
+		c := canonicalUUID(d.Account.AccountUUID)
+		if c == "" {
+			continue // a malformed uuid is not an account this can select
+		}
 		email := strings.ToLower(d.Account.Email)
 		if out[email] == nil {
 			out[email] = map[string]bool{}
 		}
-		out[email][d.Account.AccountUUID] = true
+		out[email][c] = true
 	}
 	return out
-}
-
-// isNoSuchAccount reports whether the store simply did not find the reference,
-// as opposed to finding several or failing to read.
-func isNoSuchAccount(err error) bool {
-	m := strings.ToLower(err.Error())
-	return strings.Contains(m, "no account") || strings.Contains(m, "unknown account") ||
-		strings.Contains(m, "not found") || strings.Contains(m, "no accounts yet")
 }
 
 // knownAccountsHint lists what --account could have matched, so a failed lookup
@@ -194,6 +199,25 @@ func knownAccountsHint(byEmail map[string]string, known map[string]ledger.Entry)
 	}
 	sort.Strings(out)
 	return "known: " + strings.Join(out, ", ")
+}
+
+// accountUUID is the canonical shape: 8-4-4-4-12 lowercase hex.
+var accountUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// canonicalUUID lowercases a well-formed accountUuid and returns "" for
+// anything else.
+//
+// Two problems it settles at once. Comparisons were raw spelling, so the same
+// account written in different case counted as two — a session could be
+// attributed under one and unreachable by a filter naming the other. And a
+// malformed value was accepted as an account, making a corrupt record
+// selectable while the sessions it should match stayed hidden.
+func canonicalUUID(v string) string {
+	lower := strings.ToLower(strings.TrimSpace(v))
+	if !accountUUID.MatchString(lower) {
+		return ""
+	}
+	return lower
 }
 
 func isHexPrefix(s string) bool {

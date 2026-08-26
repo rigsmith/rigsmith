@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -12,6 +13,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 	"github.com/spf13/cobra"
 )
 
@@ -99,6 +101,9 @@ func NewSyncCmd() *cobra.Command {
 					if r.Disallowed > 0 {
 						extra += fmt.Sprintf(", %d no longer allowed", r.Disallowed)
 					}
+					if r.Shadowed > 0 {
+						extra += fmt.Sprintf(", %d stale placeholder(s) retired", r.Shadowed)
+					}
 					if n := len(r.Oversize); n > 0 {
 						extra += fmt.Sprintf(", %d too large", n)
 					}
@@ -143,8 +148,26 @@ func NewSyncCmd() *cobra.Command {
 			// costs anyone a sync.
 			if reg, err := devices.Load(staging); err == nil {
 				var acct *devices.Account
-				if liveAcct != "" || liveOrg != "" || liveEmail != "" {
-					acct = &devices.Account{AccountUUID: liveAcct, OrganizationUUID: liveOrg, Email: liveEmail}
+				// Both halves required, from the ONE read above. An `||` gate
+				// built a non-nil record from any single field, so a partial
+				// read replaced a complete Device.Account with a fragment — and
+				// Touch keeps a nil precisely to preserve the previous value.
+				// organizationUuid may legitimately be absent; the uuid and the
+				// email are what make a record usable, since one is the join key
+				// and the other is what a person types.
+				if liveAcct != "" && liveEmail != "" {
+					// The registry is written AFTER engine.Sync finishes its scan
+					// and is committed directly, so these values never pass the
+					// tripwire that guards every other synced file. The argument
+					// that a uuid and an email cannot trip it is about their
+					// SHAPE, and nothing guarantees the shape.
+					candidate := &devices.Account{AccountUUID: liveAcct, OrganizationUUID: liveOrg, Email: liveEmail}
+					if f := scanIdentity(candidate); f != nil {
+						fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf(
+							"⚠ account identity not recorded: %s looks like %s — check what ~/.claude.json holds", f.Path, f.Kind)))
+					} else {
+						acct = candidate
+					}
 				}
 				reg.Touch(me.Name, me.OS, claudeVer, acct, time.Now())
 				_ = reg.Save(staging)
@@ -252,4 +275,36 @@ func machineName(cfg *config.Config) string {
 		return host
 	}
 	return "this"
+}
+
+// scanIdentity runs the same content rules over the three identity values that
+// guard every other synced file, returning the first finding or nil.
+//
+// It exists because the device registry is written after engine.Sync's scan and
+// committed directly, so nothing else would ever look at these. Each field is
+// scanned under its own name so the warning can say which one is wrong.
+func scanIdentity(a *devices.Account) *redact.Finding {
+	for _, f := range []struct{ name, value string }{
+		{"accountUuid", a.AccountUUID},
+		{"organizationUuid", a.OrganizationUUID},
+		{"email", a.Email},
+	} {
+		if f.value == "" {
+			continue
+		}
+		// Rejected outright, before the content rules see it. ScanFile skips its
+		// entropy check for multiline values — reasonable for a file, wrong
+		// here — so a newline in an identity field would carry whatever follows
+		// it straight past the scan and into the pushed registry. No real uuid
+		// or email contains one.
+		if strings.ContainsAny(f.value, "\r\n") {
+			return &redact.Finding{Path: f.name, Kind: "multiline identity"}
+		}
+		if found := redact.ScanFile(f.name, []byte(f.value)); len(found) > 0 {
+			hit := found[0]
+			hit.Path = f.name
+			return &hit
+		}
+	}
+	return nil
 }

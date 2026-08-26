@@ -30,8 +30,13 @@ type RootResult struct {
 	RetentionByAge int      // project transcripts dropped as older than the window
 	SkippedFiles   int      // files that vanished/were unreadable mid-sync (live churn)
 	Oversize       []string // rel paths dropped for exceeding MaxFileBytes
-	Disallowed     int      // staged files retired: the allowlist no longer permits them, or the live path is a directory
-	Skipped        bool     // root absent on this machine
+	Disallowed     int      // staged files removed because the allowlist no longer permits them
+	// Shadowed counts empty placeholders retired because the live path is a
+	// directory. Counted apart from Disallowed because they mean different
+	// things to the person reading the summary: one is a policy change they
+	// made, the other is old residue healing itself.
+	Shadowed int
+	Skipped  bool // root absent on this machine
 }
 
 // Report is the outcome of a sync into the staging dir.
@@ -261,11 +266,12 @@ func Sync(opts Options) (*Report, error) {
 		// Only for roots that resolved on this machine: a root we skipped tells us
 		// nothing about whether its staged files are still wanted, and pruning it
 		// would delete another machine's data.
-		disallowed, perr := reconcileStagedRoot(stageRoot, loc, allowlist.For(r.ID))
+		disallowed, shadowed, perr := reconcileStagedRoot(stageRoot, loc, allowlist.For(r.ID))
 		if perr != nil {
 			return nil, fmt.Errorf("reconcile staged %s: %w", r.ID, perr)
 		}
 		rr.Disallowed = disallowed
+		rr.Shadowed = shadowed
 
 		rep.Roots = append(rep.Roots, rr)
 	}
@@ -584,12 +590,11 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 //
 // liveRoot is this machine's copy of the root ("" when it didn't resolve). It
 // also retires staged files whose live counterpart is a directory — see below.
-func reconcileStagedRoot(stageRoot, liveRoot string, l allowlist.List) (int, error) {
+func reconcileStagedRoot(stageRoot, liveRoot string, l allowlist.List) (removed int, shadowed int, err error) {
 	if !dirExists(stageRoot) {
-		return 0, nil
+		return 0, 0, nil
 	}
-	removed := 0
-	err := filepath.WalkDir(stageRoot, func(p string, d os.DirEntry, werr error) error {
+	err = filepath.WalkDir(stageRoot, func(p string, d os.DirEntry, werr error) error {
 		if werr != nil {
 			// A staged tree churning under us is not a reason to fail the sync.
 			if os.IsNotExist(werr) {
@@ -618,19 +623,27 @@ func reconcileStagedRoot(stageRoot, liveRoot string, l allowlist.List) (int, err
 		// out. Judged only where the path exists on this machine — staging also
 		// carries other machines' files, whose absence here means nothing.
 		if liveRoot != "" {
+			// ZERO-BYTE only. The placeholders this retires are empty by
+			// construction, and "the live path is a directory" on its own is far
+			// too broad: another machine can legitimately stage a real file at a
+			// path that happens to be a directory here, and deleting it would
+			// publish that machine's data as lost on the next push.
+			if fi, ferr := d.Info(); ferr != nil || fi.Size() != 0 {
+				return nil
+			}
 			if fi, serr := os.Stat(filepath.Join(liveRoot, rel)); serr == nil && fi.IsDir() {
 				if os.Remove(p) == nil {
-					removed++
+					shadowed++
 				}
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return removed, err
+		return removed, shadowed, err
 	}
 	removeEmptyDirs(stageRoot)
-	return removed, nil
+	return removed, shadowed, nil
 }
 
 func removeEmptyDirs(root string) {

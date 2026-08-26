@@ -23,8 +23,12 @@ type RestoreRootResult struct {
 	Files          int
 	SlugsRewritten int
 	Links          int // shared-memory symlinks recreated from the manifest
-	LinksKept      int // staged files skipped because a symlink already holds that path
-	Pruned         int // files removed as deleted-upstream (--prune)
+	// LinksKept counts staged files NOT written because a symlink at or above
+	// the destination holds that path. Reported in the summary rather than
+	// folded into Files: "✓ restored" over a silently unwritten file is the
+	// kind of quiet success this whole path exists to avoid.
+	LinksKept int
+	Pruned    int // files removed as deleted-upstream (--prune)
 	// DesktopSessions counts Claude Desktop Code-session sidecars written this
 	// restore (claude-code-sessions/**/local_*.json). Desktop only rebuilds its
 	// Code-tab list from these on startup, so the command layer uses this to nudge
@@ -196,9 +200,10 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 // nothing occupies the link path — an existing file, dir, or link is the
 // machine's own state and is left alone. A failed creation (e.g. symlinks
 // unavailable on the platform) skips that link, never the restore.
-func restoreLinks(target string, links map[string]string, slugMap map[string]string) int {
+func restoreLinks(target string, manifestLinks map[string]string, slugMap map[string]string) int {
+	links := linkCache{}
 	n := 0
-	for rel, tgtRel := range links {
+	for rel, tgtRel := range manifestLinks {
 		rel, _, _ = rewriteProjectRel(rel, slugMap)
 		tgtRel, _, _ = rewriteProjectRel(tgtRel, slugMap)
 		linkPath := filepath.Join(target, filepath.FromSlash(rel))
@@ -207,6 +212,13 @@ func restoreLinks(target string, links map[string]string, slugMap map[string]str
 			continue // target absent on this machine — nothing to point at
 		}
 		if _, err := os.Lstat(linkPath); err == nil {
+			continue
+		}
+		// The same ancestor rule the write loop applies. Checking only the leaf
+		// lets MkdirAll and Symlink follow a linked ancestor and create the link
+		// OUTSIDE the restore target — writing into a directory the user never
+		// pointed restore at.
+		if links.underSymlink(target, linkPath) {
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
@@ -231,6 +243,14 @@ func pruneConfigDirs(target string, written map[string]bool) (int, error) {
 		}
 		err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
+				return nil
+			}
+			// Never delete a symlink. It is the machine's own state — the same
+			// rule the restore loop applies when it declines to write through
+			// one — and a link is recorded in `written` only under the
+			// DESCENDANT path that was skipped, so judging the link itself by
+			// that map would collect it every time.
+			if d.Type()&fs.ModeSymlink != 0 {
 				return nil
 			}
 			rel, rerr := filepath.Rel(target, p)

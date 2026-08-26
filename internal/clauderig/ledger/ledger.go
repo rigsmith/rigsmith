@@ -141,11 +141,15 @@ func bestAccount(a, b Entry) (account, source string, since time.Time) {
 	// newer transcript's Seen alongside an older row's account, so a third
 	// device with an intermediate Seen could take the session from both.
 	sa, sb := effectiveSince(a), effectiveSince(b)
+	// Return the EFFECTIVE stamp. Handing back a legacy row's raw zero would
+	// attach it to the merged winner, whose own Seen is newer — so the next
+	// merge would fall back to THAT, and a third equal-rank row could displace
+	// an attribution this comparison just decided was the earliest.
 	if sb.Before(sa) {
-		return b.Account, b.AccountSource, b.AccountSince
+		return b.Account, b.AccountSource, sb
 	}
 	if sa.Before(sb) {
-		return a.Account, a.AccountSource, a.AccountSince
+		return a.Account, a.AccountSource, sa
 	}
 	// Identical stamps — including the case where two machines' clocks disagree
 	// enough to produce them. Wall-clock order cannot be trusted to say which
@@ -154,9 +158,9 @@ func bestAccount(a, b Entry) (account, source string, since time.Time) {
 	// which is what stops the union from flip-flopping between devices. Skew
 	// can still crown the wrong "earliest"; it can no longer make them disagree.
 	if b.Account < a.Account {
-		return b.Account, b.AccountSource, b.AccountSince
+		return b.Account, b.AccountSource, sb
 	}
-	return a.Account, a.AccountSource, a.AccountSince
+	return a.Account, a.AccountSource, sa
 }
 
 // effectiveSince is the attribution's timestamp, falling back to the row's write
@@ -246,20 +250,18 @@ func (l *Ledger) Note(e Entry) bool {
 		e.AccountSince = e.Seen
 	}
 	if prev, ok := l.rows[e.ID]; ok {
-		// Migrate a legacy row in place, so the fallback in effectiveSince is
-		// only ever needed until each row is next written.
+		// Migrate a legacy row, so the fallback in effectiveSince is only ever
+		// needed until each row is next written.
 		if prev.Account != "" && prev.AccountSince.IsZero() {
 			prev.AccountSince = prev.Seen
 			l.rows[e.ID] = prev
 		}
-		// Carry unknown fields across. The incoming row is built by this
-		// binary and cannot know about them, so replacing the stored row
-		// wholesale is exactly where a newer clauderig's data would be lost.
+		// Carry unknown fields across. The incoming row is built by this binary
+		// and cannot know about them, so replacing the stored row wholesale is
+		// exactly where a newer clauderig's data would be lost.
 		if e.Extra == nil {
 			e.Extra = prev.Extra
 		}
-	}
-	if prev, ok := l.rows[e.ID]; ok {
 		e.Account, e.AccountSource, e.AccountSince = mergeAccount(prev, e)
 		// An account upgrade is a real change even when the transcript is byte
 		// identical — a session first attributed by inference and later covered
@@ -498,9 +500,14 @@ func readFile(path string) ([]Entry, error) {
 			continue
 		}
 		var e Entry
-		if json.Unmarshal([]byte(line), &e) == nil && e.ID != "" {
-			e.Extra = unknownFields([]byte(line))
+		// A decode error can still have populated earlier fields — ID among
+		// them — before failing on a later one. Appending that partial record
+		// would surface it as a searchable session with missing metadata, and
+		// the next save would rewrite the row from those zero values.
+		if json.Unmarshal([]byte(line), &e) != nil {
+			continue
 		}
+		e.Extra = unknownFields([]byte(line))
 		if e.ID == "" {
 			continue
 		}

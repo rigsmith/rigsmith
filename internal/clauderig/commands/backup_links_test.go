@@ -163,3 +163,96 @@ func TestCopyOne_RefusesAnExistingRegularFile(t *testing.T) {
 		t.Errorf("destination was overwritten: %q", b)
 	}
 }
+
+// If ~/.claude is ITSELF a symlink, WalkDir visits only that entry — and
+// recreating it would make .bak a second link to the very directory restore is
+// about to modify, so the "backup" would track the changes rather than preserve
+// what came before. The root is followed; links below it are still reproduced.
+func TestCopyTree_FollowsASymlinkedRootButNotLinksBelowIt(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real-claude")
+	if err := os.MkdirAll(filepath.Join(real, "projects", "-main", "memory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "projects", "-main", "memory", "MEMORY.md"), []byte("facts"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// a link BELOW the root, which must stay a link
+	if err := os.Symlink(filepath.Join(real, "projects", "-main", "memory"),
+		filepath.Join(real, "projects", "linked")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	// the root itself is a link
+	root := filepath.Join(dir, "claude")
+	if err := os.Symlink(real, root); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	bak := filepath.Join(dir, "claude.bak")
+	if err := copyTree(root, bak); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(bak)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("the backup is a symlink to the live tree, so it preserves nothing")
+	}
+	if b, _ := os.ReadFile(filepath.Join(bak, "projects", "-main", "memory", "MEMORY.md")); string(b) != "facts" {
+		t.Errorf("content not copied: %q", b)
+	}
+	// and the link below the root is still a link
+	li, err := os.Lstat(filepath.Join(bak, "projects", "linked"))
+	if err != nil || li.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("a link below the root should stay a link: %v", err)
+	}
+}
+
+// O_EXCL protects the LEAF. Replacing an intermediate directory with a symlink
+// after MkdirAll still redirects the create, so the file lands outside the
+// backup entirely.
+func TestCopyOneInto_RefusesASymlinkedAncestor(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.txt")
+	if err := os.WriteFile(src, []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(dir, "outside")
+	bak := filepath.Join(dir, "bak")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(bak, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// an ancestor inside the backup, swapped for a link out of it
+	if err := os.Symlink(outside, filepath.Join(bak, "nested")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	err := copyOneInto(bak, src, filepath.Join(bak, "nested", "file.txt"))
+	if err == nil {
+		t.Error("writing through a symlinked ancestor must be refused")
+	}
+	if _, serr := os.Stat(filepath.Join(outside, "file.txt")); serr == nil {
+		t.Error("the file escaped the backup tree")
+	}
+}
+
+// Both destinations are checked before either is copied: aborting after the
+// tree was written leaves a rollback pair that is not a pair.
+func TestBackupPathIsFree_BothSidesPreflighted(t *testing.T) {
+	dir := t.TempDir()
+	tree := filepath.Join(dir, "claude.bak")
+	identity := filepath.Join(dir, "claude.json.bak")
+	if err := os.WriteFile(identity, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := backupPathIsFree(tree); err != nil {
+		t.Errorf("a free tree path should pass: %v", err)
+	}
+	if err := backupPathIsFree(identity); err == nil {
+		t.Error("an existing identity backup must be refused before anything is copied")
+	}
+}

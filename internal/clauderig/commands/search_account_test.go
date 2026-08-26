@@ -2,6 +2,10 @@ package commands
 
 import (
 	"errors"
+	"fmt"
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -174,11 +178,11 @@ func TestAccountUUIDsByEmail_DropsAnAmbiguousEmail(t *testing.T) {
 	}
 	now := time.Now()
 	reg.Touch("mbp", "macos", "2.1.237", &devices.Account{
-		AccountUUID: "uuid-org-a", OrganizationUUID: "org-a", Email: "same@example.com"}, now)
+		AccountUUID: "aaaaaaaa-1111-2222-3333-444444444444", OrganizationUUID: "org-a", Email: "same@example.com"}, now)
 	reg.Touch("air", "macos", "2.1.237", &devices.Account{
-		AccountUUID: "uuid-org-b", OrganizationUUID: "org-b", Email: "same@example.com"}, now)
+		AccountUUID: "bbbbbbbb-1111-2222-3333-444444444444", OrganizationUUID: "org-b", Email: "same@example.com"}, now)
 	reg.Touch("pc", "windows", "2.1.237", &devices.Account{
-		AccountUUID: "uuid-solo", OrganizationUUID: "org-c", Email: "solo@example.com"}, now)
+		AccountUUID: "cccccccc-1111-2222-3333-444444444444", OrganizationUUID: "org-c", Email: "solo@example.com"}, now)
 	if err := reg.Save(staging); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +191,7 @@ func TestAccountUUIDsByEmail_DropsAnAmbiguousEmail(t *testing.T) {
 	if _, ok := byEmail["same@example.com"]; ok {
 		t.Error("an email claimed by two accounts must not resolve to one of them arbitrarily")
 	}
-	if byEmail["solo@example.com"] != "uuid-solo" {
+	if byEmail["solo@example.com"] != "cccccccc-1111-2222-3333-444444444444" {
 		t.Errorf("unambiguous email = %q, want uuid-solo", byEmail["solo@example.com"])
 	}
 	// both uuids are still offered as prefix candidates
@@ -197,17 +201,49 @@ func TestAccountUUIDsByEmail_DropsAnAmbiguousEmail(t *testing.T) {
 	}
 }
 
-// A fuzzy reference matching several local accounts is an ambiguity, not a
-// miss. Reporting it as unknown sends the user to check their spelling instead
-// of to disambiguate.
-func TestIsNoSuchAccount(t *testing.T) {
-	if isNoSuchAccount(errors.New(`no account matches "zzz"`)) != true {
-		t.Error("a genuine miss should continue to the registry fallback")
+// Store.Resolve now returns sentinels, so a caller can tell the two
+// fallback-safe misses from an ambiguity or an unreadable store. Text matching
+// could not: a raw os.PathError from a permission failure can contain "not
+// found", and reading that as a miss answered with the wrong account.
+func TestResolveErrors_OnlyTheTwoMissesAreFallbackSafe(t *testing.T) {
+	if !errors.Is(fmt.Errorf("%w %q", account.ErrNoSuchAccount, "zzz"), account.ErrNoSuchAccount) {
+		t.Error("a wrapped no-match must still classify as one")
 	}
-	if isNoSuchAccount(errors.New(`"j" is ambiguous: john@a.com, john@b.com`)) {
-		t.Error("an ambiguity must not be treated as a miss")
+	if errors.Is(account.ErrNoAccounts, account.ErrNoSuchAccount) {
+		t.Error("the two sentinels must stay distinct")
 	}
-	if isNoSuchAccount(errors.New("permission denied reading the account store")) {
-		t.Error("a read failure must not be treated as a miss")
+	// the shapes that must NOT be treated as a miss
+	ambiguous := fmt.Errorf("%q matches 2 accounts (a@x.com, b@x.com) — be more specific", "j")
+	pathErr := &os.PathError{Op: "open", Path: "/store/not found/accounts", Err: errors.New("permission denied")}
+	for _, e := range []error{ambiguous, pathErr} {
+		if errors.Is(e, account.ErrNoSuchAccount) || errors.Is(e, account.ErrNoAccounts) {
+			t.Errorf("%v must not classify as a miss", e)
+		}
+	}
+}
+
+// Raw spelling comparisons treated the same account written two ways as two
+// accounts, and accepted malformed values as selectable accounts.
+func TestCanonicalUUID(t *testing.T) {
+	want := "456fc32e-7579-49c7-bb2a-099657892c6a"
+	for _, in := range []string{want, strings.ToUpper(want), "  " + want + "  "} {
+		if got := canonicalUUID(in); got != want {
+			t.Errorf("canonicalUUID(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, bad := range []string{"", "not-a-uuid", "456fc32e75794 9c7bb2a099657892c6a", "456fc32e-7579-49c7-bb2a", "zzzzzzzz-7579-49c7-bb2a-099657892c6a"} {
+		if got := canonicalUUID(bad); got != "" {
+			t.Errorf("canonicalUUID(%q) = %q, want it rejected", bad, got)
+		}
+	}
+}
+
+// A prefix must resolve regardless of how the stored uuid was cased.
+func TestResolveAccountFilter_PrefixIsCaseInsensitiveOnBothSides(t *testing.T) {
+	full := "456fc32e-7579-49c7-bb2a-099657892c6a"
+	known := map[string]ledger.Entry{"s1": {ID: "s1", Account: strings.ToUpper(full)}}
+	got, err := resolveAccountFilter("456FC32E", t.TempDir(), known)
+	if err != nil || got != full {
+		t.Errorf("got %q/%v, want the canonical %q", got, err, full)
 	}
 }

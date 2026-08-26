@@ -259,3 +259,63 @@ func TestRestore_DotDotPrefixedDirIsStillGuarded(t *testing.T) {
 		t.Error("wrote through a link under a '..'-prefixed directory")
 	}
 }
+
+// --prune must never collect a symlink. `written` records the DESCENDANT path
+// that was skipped, not the link itself, so judging the link by that map
+// removes the machine's own state — the opposite of what the restore loop just
+// went out of its way to preserve.
+func TestRestore_PruneKeepsASymlinkedConfigDir(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/skills/shared/SKILL.md", "shared skill")
+	write(t, staging, "cli/skills/local/SKILL.md", "staged under the link")
+
+	target := t.TempDir()
+	write(t, target, "skills/shared/SKILL.md", "shared skill")
+	link := filepath.Join(target, "skills", "local")
+	if err := os.Symlink(filepath.Join(target, "skills", "shared"), link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	if _, err := Restore(RestoreOptions{
+		StagingDir: staging, Config: targetRootConfig(target), Machine: jane,
+		TargetOverride: override("cli", target), Prune: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("prune removed the machine's own symlink: %v", err)
+	}
+}
+
+// restoreLinks must apply the same ancestor rule as the write loop: checking
+// only the leaf lets MkdirAll and Symlink follow a linked ancestor and create
+// the link OUTSIDE the restore target.
+func TestRestoreLinks_SkipsALinkUnderASymlinkedAncestor(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/projects/-main/memory/MEMORY.md", "facts")
+	write(t, staging, "cli/projects/-main/s.jsonl", "t\n")
+
+	target := t.TempDir()
+	outside := t.TempDir()
+	write(t, target, "projects/-main/memory/MEMORY.md", "facts")
+	// projects/-wt is a link OUT of the restore target
+	if err := os.Symlink(outside, filepath.Join(target, "projects", "-wt")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	m := &manifest.Manifest{
+		Schema: 1, SourceOS: pathmap.OSMacOS,
+		Projects: map[string]manifest.Project{"-main": {Cwd: "/m"}, "-wt": {Cwd: "/w"}},
+		Links:    map[string]string{"projects/-wt/memory": "projects/-main/memory"},
+	}
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	if _, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target),
+		Machine: jane, Manifest: m, TargetOverride: override("cli", target)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "memory")); err == nil {
+		t.Error("a link was created outside the restore target")
+	}
+}

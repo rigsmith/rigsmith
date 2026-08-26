@@ -415,13 +415,23 @@ func (s *Store) read(id string) (Account, bool) {
 
 // Resolve finds an account by exact id or email, otherwise by a unique
 // case-insensitive substring of the email or id. Ambiguous matches error.
+// ErrNoAccounts and ErrNoSuchAccount are the two "nothing matched" outcomes of
+// Resolve — the only ones a caller may safely treat as a miss and fall back
+// from. Every other failure (ambiguity, an unreadable store) means the answer
+// is unknown rather than absent, and classifying those by message text made a
+// permission error on a path containing "not found" look like a miss.
+var (
+	ErrNoAccounts    = errors.New("no accounts yet — run `clauderig account add` while logged in")
+	ErrNoSuchAccount = errors.New("no account matches")
+)
+
 func (s *Store) Resolve(ref string) (Account, error) {
 	all, err := s.List()
 	if err != nil {
 		return Account{}, err
 	}
 	if len(all) == 0 {
-		return Account{}, errors.New("no accounts yet — run `clauderig account add` while logged in")
+		return Account{}, ErrNoAccounts
 	}
 	// An exact id, email or alias wins outright (even if it's a substring of
 	// another). Aliases are compared case-insensitively: they are typed by hand,
@@ -450,7 +460,7 @@ func (s *Store) Resolve(ref string) (Account, error) {
 	case 1:
 		return matches[0], nil
 	case 0:
-		return Account{}, fmt.Errorf("no account matches %q", ref)
+		return Account{}, fmt.Errorf("%w %q", ErrNoSuchAccount, ref)
 	default:
 		emails := make([]string, len(matches))
 		for i, a := range matches {
