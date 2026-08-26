@@ -23,3 +23,28 @@ A PreToolUse hook guards this environment. Work *with* it:
 Keep one VS Code window pinned to the primary repo as the continuous chat; treat
 worktree windows as review/diff only.
 <!-- END clauderig:worktree-discipline -->
+
+## What a change has to update
+
+Work through this before opening a PR. Most changes touch only the first two
+rows; the point of the list is that the rest are easy to forget, and each one
+was in fact forgotten at least once.
+
+| If the change… | Update |
+|---|---|
+| **anything a user would notice** | a changeset — `changerig add`. No changeset means no changelog entry, and the release ships silently |
+| touches behavior | tests, including the gated end-to-end ones where they exist (`RIG_STACK_E2E=1`) |
+| adds or renames a **verb or flag** | the command's `Short`/`Long`, the parent group's help block (and re-check its column alignment), tab completion if it takes an argument |
+| is reachable from the **menu** | `rig ui` — the item, its one-line description, and any prompt copy that names what it will do |
+| adds or changes a **config key** | the JSON schema in `site/public/schemas/`, the scaffold template the tool writes, `knownKeys` in `internal/rig/config` for a top-level `.rig.json` key, and `site/rig/configuration.md` |
+| changes what a **verb does** | `site/rig/verbs.md`, the feature's own page if it has one, `README.md`, `cmd/<tool>/README.md` |
+| changes how an **agent** should drive the tool | `~/.claude/skills/rigsmith-tools/SKILL.md` — including its `description`, which decides whether the skill fires at all |
+| changes a **design decision** | the `docs/*-DESIGN.md` that recorded it |
+
+Two things worth checking every time, because neither announces itself:
+
+- **Examples in docs use generic names** — `acme`/`you`, not a real fork. Real
+  repository names have leaked into published docs more than once.
+- **Claims in docs still match the code.** "A verified binary, seconds not
+  minutes" stopped being true the moment a custom pin could fall back to a
+  source build. Prose ages badly and nothing tests it.
