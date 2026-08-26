@@ -363,6 +363,11 @@ func copyLink(src, dst string) error {
 // Absent is not an error — a machine that has never logged in has nothing to
 // protect — but unreadable is, because that is the moment its state is least
 // certain and least replaceable.
+// readLink is a variable purely so a test can stage the one failure that
+// cannot be staged on a real filesystem: a link whose metadata reads but whose
+// target does not. Nothing else reassigns it.
+var readLink = os.Readlink
+
 func identityBackupPaths() (src, dst string, exists bool, note string, err error) {
 	src, herr := account.GlobalConfigPath()
 	if herr != nil {
@@ -379,7 +384,16 @@ func identityBackupPaths() (src, dst string, exists bool, note string, err error
 		// target has gone missing. Lstat separates them so the second can be
 		// said out loud instead of passing as the first.
 		if fi, lerr := os.Lstat(src); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
-			target, _ := os.Readlink(src)
+			// A note is a diagnosis, and one nobody actually made must not be
+			// printed. The Lstat and this read are two moments: swap the link
+			// out in between, or hit a filesystem that hands over metadata but
+			// refuses the link body, and a discarded error becomes "a symlink
+			// to , which does not exist" — a confident sentence about a target
+			// never determined, with the restore proceeding underneath it.
+			target, rerr := readLink(src)
+			if rerr != nil {
+				return "", "", false, "", fmt.Errorf("backup identity: read link %s: %w", src, rerr)
+			}
 			return "", "", false, fmt.Sprintf(
 				"%s is a symlink to %s, which does not exist — no identity was backed up", src, target), nil
 		}

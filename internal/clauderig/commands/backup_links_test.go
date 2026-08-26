@@ -267,6 +267,12 @@ func TestCopyOneAs_ForcesTheDestinationMode(t *testing.T) {
 	if err := os.WriteFile(src, []byte(`{"oauthAccount":{}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Chmod, because umask clips a creation mode: under a hardened 0077 the
+	// source would be born 0600 and this test would pass without copyOneAs
+	// having narrowed anything — the one thing it exists to prove.
+	if err := os.Chmod(src, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	dst := filepath.Join(dir, "claude.json.bak")
 	if err := copyOneAs(src, dst, 0o600); err != nil {
 		t.Fatal(err)
@@ -281,7 +287,11 @@ func TestCopyOneAs_ForcesTheDestinationMode(t *testing.T) {
 		t.Errorf("backup mode = %04o, want 0600 whatever the source was", fi.Mode().Perm())
 	}
 	// the source is left exactly as it was
-	if si, _ := os.Stat(src); runtime.GOOS != "windows" && si.Mode().Perm() != 0o644 {
+	si, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && si.Mode().Perm() != 0o644 {
 		t.Error("the source's own permissions should not change")
 	}
 }
@@ -310,5 +320,31 @@ func TestIdentityBackupPaths_ReportsADanglingLink(t *testing.T) {
 	}
 	if !strings.Contains(note, "gone.json") {
 		t.Errorf("the note should name what it points at: %q", note)
+	}
+}
+
+// A discarded read error turned "I could not tell what this is" into the
+// confident sentence "a symlink to , which does not exist" — and the restore
+// carried on overwriting ~/.claude underneath it. The one identity file a bad
+// switch can ruin deserves a stop, not a diagnosis nobody made.
+func TestIdentityBackupPaths_StopsWhenTheLinkTargetCannotBeRead(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // windows
+
+	link := filepath.Join(home, ".claude.json")
+	if err := os.Symlink(filepath.Join(home, "gone.json"), link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	// the link is swapped out, or its body refused, after the metadata read
+	readLink = func(string) (string, error) { return "", os.ErrPermission }
+	t.Cleanup(func() { readLink = os.Readlink })
+
+	_, _, exists, note, err := identityBackupPaths()
+	if err == nil {
+		t.Fatalf("an unreadable identity link must stop the backup, got note=%q", note)
+	}
+	if exists || note != "" {
+		t.Errorf("nothing was diagnosed, so nothing should be claimed: exists=%v note=%q", exists, note)
 	}
 }
