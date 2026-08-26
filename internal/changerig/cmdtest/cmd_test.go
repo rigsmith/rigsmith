@@ -852,3 +852,119 @@ func TestTagHonorsIgnore(t *testing.T) {
 		t.Errorf("tags = %v, want only pkg-a@1.0.0 (pkg-b is ignored)", tags)
 	}
 }
+
+// A non-interactive add with no --package used to write a changeset naming no
+// packages: every later step ignores it while `add` reported success. With one
+// package there is nothing to choose, so it is used.
+func TestAddWithoutPackageUsesTheOnlyOne(t *testing.T) {
+	dir := newWorkspace(t)
+
+	code, out := runChangerig(t, dir, "add", "-t", "feat", "-m", "a thing")
+
+	assertExitZero(t, code, out)
+	if got := readFile(t, changesetFiles(t, dir)[0]); !strings.Contains(got, `"pkg-a"`) {
+		t.Errorf("changeset names no package: %q", got)
+	}
+}
+
+// With several packages there is a real choice, so say so rather than write a
+// changeset that silently does nothing.
+func TestAddWithoutPackageAcrossSeveralFails(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0", "pkg-b": "2.0.0"})
+	initChangesets(t, dir)
+
+	code, out := runChangerig(t, dir, "add", "-t", "feat", "-m", "a thing")
+
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "-p")
+	if files := changesetFiles(t, dir); len(files) != 0 {
+		t.Errorf("wrote %d changeset(s) despite failing", len(files))
+	}
+}
+
+// The type writes itself into the frontmatter and leaves the bump to derive,
+// and a scope is recorded beside it.
+func TestAddTypeAndScopeWriteFrontmatter(t *testing.T) {
+	dir := newWorkspace(t)
+
+	code, out := runChangerig(t, dir, "add", "-t", "feat", "--scope", "rig", "-m", "a thing", "-p", "pkg-a")
+
+	assertExitZero(t, code, out)
+	files := changesetFiles(t, dir)
+	if len(files) != 1 {
+		t.Fatalf("changeset files = %d, want 1", len(files))
+	}
+	want := "---\ntype: feat\nscope: rig\n\"pkg-a\"\n---\n\na thing"
+	if got := readFile(t, files[0]); got != want {
+		t.Errorf("changeset content = %q, want %q", got, want)
+	}
+}
+
+// `--scope -` is how you say a change belongs to no one tool, and must not be
+// written through as a literal scope.
+func TestAddScopeDashMeansNone(t *testing.T) {
+	dir := newWorkspace(t)
+
+	code, out := runChangerig(t, dir, "add", "-t", "fix", "--scope", "-", "-m", "a thing", "-p", "pkg-a")
+
+	assertExitZero(t, code, out)
+	if got := readFile(t, changesetFiles(t, dir)[0]); strings.Contains(got, "scope:") {
+		t.Errorf("scope written despite -: %q", got)
+	}
+}
+
+// Scope inference is the reason --scope is usually not typed, so it needs a
+// test that actually branches and edits a file: the first version read the
+// absolute paths ChangedFilesSince returns and so never matched anything,
+// which every explicit --scope test happily passed straight over.
+func TestAddInfersScopeFromChangedFiles(t *testing.T) {
+	dir := newWorkspace(t)
+	gitInit(t, dir)
+
+	git(t, dir, "checkout", "-q", "-b", "feat/something")
+	writeFile(t, filepath.Join(dir, "internal", "rig", "thing.go"), "package rig\n")
+	gitCommitAll(t, dir, "touch rig")
+
+	code, out := runChangerig(t, dir, "add", "-t", "feat", "-m", "a thing", "-p", "pkg-a")
+
+	assertExitZero(t, code, out)
+	if got := readFile(t, changesetFiles(t, dir)[0]); !strings.Contains(got, "scope: rig") {
+		t.Errorf("scope not inferred from internal/rig:\n%s", got)
+	}
+}
+
+// A branch spanning two tools names neither, rather than picking one.
+func TestAddInfersNoScopeAcrossTools(t *testing.T) {
+	dir := newWorkspace(t)
+	gitInit(t, dir)
+
+	git(t, dir, "checkout", "-q", "-b", "feat/wide")
+	writeFile(t, filepath.Join(dir, "internal", "rig", "a.go"), "package rig\n")
+	writeFile(t, filepath.Join(dir, "cmd", "shiprig", "b.go"), "package main\n")
+	gitCommitAll(t, dir, "touch both")
+
+	code, out := runChangerig(t, dir, "add", "-t", "feat", "-m", "a thing", "-p", "pkg-a")
+
+	assertExitZero(t, code, out)
+	if got := readFile(t, changesetFiles(t, dir)[0]); strings.Contains(got, "scope:") {
+		t.Errorf("a change spanning two tools should name neither:\n%s", got)
+	}
+}
+
+// `--scope -` has to win over a conventional prefix in the message, or the
+// prose quietly reinstates the scope the flag just refused.
+func TestAddScopeDashBeatsAPrefixedMessage(t *testing.T) {
+	dir := newWorkspace(t)
+
+	code, out := runChangerig(t, dir, "add", "--scope", "-", "-m", "feat(rig): a thing", "-p", "pkg-a")
+
+	assertExitZero(t, code, out)
+	got := readFile(t, changesetFiles(t, dir)[0])
+	if strings.Contains(got, "scope:") || strings.Contains(got, "feat(rig):") {
+		t.Errorf("scope survived --scope -:\n%s", got)
+	}
+	if !strings.Contains(got, "type: feat") {
+		t.Errorf("type should still come from the message:\n%s", got)
+	}
+}

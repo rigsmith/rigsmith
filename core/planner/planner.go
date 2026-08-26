@@ -32,6 +32,7 @@ type Change struct {
 	Description string
 	Bump        changeset.Bump
 	Type        string // conventional type (feat/fix/…), empty when untyped
+	Scope       string // which tool the change belongs to, empty when unscoped
 	Breaking    bool   // a `!` breaking change
 }
 
@@ -387,7 +388,7 @@ func generateModules(changesets []*changeset.Changeset, byName map[string]plugin
 			if bump == changeset.BumpNone && hasType {
 				bump = deriveBump(typ, breaking, groups)
 			}
-			m.Changes = append(m.Changes, Change{Description: desc, Bump: bump, Type: typ, Breaking: breaking})
+			m.Changes = append(m.Changes, Change{Description: desc, Bump: bump, Type: typ, Scope: cs.EffectiveScope(), Breaking: breaking})
 		}
 	}
 

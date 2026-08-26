@@ -13,15 +13,22 @@ import (
 // silently grow gaps that only external plugins would hit.
 type BuiltinGenerator struct {
 	groups []config.ChangelogGroup
+	scopes []string
 }
 
 // NewBuiltinGenerator returns the built-in generator using the given changelog
 // groups (nil falls back to the conventional defaults).
 func NewBuiltinGenerator(groups []config.ChangelogGroup) BuiltinGenerator {
+	return NewBuiltinGeneratorScoped(groups, nil)
+}
+
+// NewBuiltinGeneratorScoped is NewBuiltinGenerator with the order scopes should
+// appear in within a section.
+func NewBuiltinGeneratorScoped(groups []config.ChangelogGroup, scopes []string) BuiltinGenerator {
 	if groups == nil {
 		groups = config.DefaultChangelogGroups
 	}
-	return BuiltinGenerator{groups: groups}
+	return BuiltinGenerator{groups: groups, scopes: scopes}
 }
 
 // ID identifies the built-in generator.
@@ -34,7 +41,7 @@ func (g BuiltinGenerator) Render(_ context.Context, req plugin.ChangelogRequest)
 	if groups == nil {
 		groups = config.DefaultChangelogGroups
 	}
-	out := renderSections(req.Package.NewVersion, req.Changes, groups)
+	out := renderSections(req.Package.NewVersion, req.Changes, groups, g.scopes)
 	out += renderContributors(req.Contributors, req.ContributorsSection)
 	return out, nil
 }
@@ -44,5 +51,10 @@ var _ plugin.ChangelogGenerator = BuiltinGenerator{}
 // Builtins returns the built-in changelog generators keyed by id, for
 // plugin.ResolveChangelogGenerator, using the given groups.
 func Builtins(groups []config.ChangelogGroup) map[string]plugin.ChangelogGenerator {
-	return map[string]plugin.ChangelogGenerator{"default": NewBuiltinGenerator(groups)}
+	return BuiltinsScoped(groups, nil)
+}
+
+// BuiltinsScoped is Builtins with a configured scope order.
+func BuiltinsScoped(groups []config.ChangelogGroup, scopes []string) map[string]plugin.ChangelogGenerator {
+	return map[string]plugin.ChangelogGenerator{"default": NewBuiltinGeneratorScoped(groups, scopes)}
 }

@@ -373,6 +373,11 @@ type ChangelogRequest struct {
 	// ContributorsSection overrides the contributors heading; empty renders the
 	// default "❤️ Contributors".
 	ContributorsSection string `json:"contributorsSection,omitempty"`
+	// ScopeOrder is the order scopes should appear in within a section. Sent so
+	// an external generator can reproduce the ordering the built-in one applies
+	// — a change's scope alone does not say which tool a repo wants read first.
+	// Empty means alphabetical; unscoped changes come last either way.
+	ScopeOrder []string `json:"scopeOrder,omitempty"`
 }
 
 // Author identifies a changelog contributor. Email is carried for de-duplication
@@ -400,6 +405,9 @@ type ChangelogChange struct {
 	// declared or implied one; lets a generator group by real type rather than
 	// just bump. Empty when untyped.
 	Type string `json:"type,omitempty"`
+	// Scope names the part of a monorepo the change belongs to (`feat(rig): …`),
+	// so a generator can group bullets within a section by tool.
+	Scope string `json:"scope,omitempty"`
 	// Breaking marks a breaking change (a `!` on the type).
 	Breaking bool   `json:"breaking,omitempty"`
 	Commit   string `json:"commit,omitempty"`

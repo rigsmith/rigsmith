@@ -87,6 +87,11 @@ type Changeset struct {
 	// Breaking marks a breaking change (a `!` on the type, e.g. `feat!`). A
 	// breaking changeset bumps major and renders under "Breaking Changes".
 	Breaking bool
+	// Scope names which part of a monorepo the change belongs to — the tool, in
+	// this family: `feat(rig): …`. From an explicit `scope:` frontmatter line or
+	// the summary's conventional prefix. Empty when none is given. It groups
+	// bullets inside a section; the type still decides which section.
+	Scope string
 	// Commit is the source commit SHA for a changeset synthesized from a commit
 	// (commit-based versioning). Empty for on-disk changeset files. When set, the
 	// changelog generators decorate the release line straight from this commit —
@@ -106,21 +111,83 @@ func (c *Changeset) EffectiveType() (typ string, breaking bool, ok bool) {
 	return ParseConventional(c.Summary)
 }
 
+// EffectiveScope resolves the change's scope — which tool it belongs to in a
+// monorepo. The explicit frontmatter `scope:` wins; otherwise it comes from the
+// summary's conventional-commit prefix. Empty when neither names one.
+func (c *Changeset) EffectiveScope() string {
+	if c.Scope != "" {
+		return c.Scope
+	}
+	_, scope, _, _ := ParseConventionalScope(c.Summary)
+	return scope
+}
+
 // conventionalRe matches a conventional-commit prefix: type(scope)!: subject.
-var conventionalRe = regexp.MustCompile(`^([a-zA-Z]+)(?:\([^)]*\))?(!)?:\s`)
+// The subject may be empty — "fix(rig):" with nothing after it is still a
+// prefix, and callers trim before matching, so requiring a trailing space would
+// stop recognising exactly that case.
+var conventionalRe = regexp.MustCompile(`^([a-zA-Z]+)(?:\(([^)]*)\))?(!)?:(?:\s|$)`)
 
 // ParseConventional extracts the type and breaking flag from a conventional-
 // commit-style first line.
 func ParseConventional(summary string) (typ string, breaking bool, ok bool) {
-	first := summary
-	if i := strings.IndexByte(first, '\n'); i >= 0 {
-		first = first[:i]
-	}
-	m := conventionalRe.FindStringSubmatch(strings.TrimSpace(first))
+	typ, _, breaking, ok = ParseConventionalScope(summary)
+	return typ, breaking, ok
+}
+
+// ParseConventionalScope is ParseConventional including the optional scope —
+// the part in parentheses, which in a monorepo names the tool a change belongs
+// to (`feat(rig): …`). Kept separate so the older two-result signature, which
+// several callers use, does not change.
+func ParseConventionalScope(summary string) (typ, scope string, breaking bool, ok bool) {
+	m := conventionalRe.FindStringSubmatch(strings.TrimSpace(firstLine(summary)))
 	if m == nil {
-		return "", false, false
+		return "", "", false, false
 	}
-	return strings.ToLower(m[1]), m[2] == "!", true
+	return strings.ToLower(m[1]), strings.TrimSpace(m[2]), m[3] == "!", true
+}
+
+// normalizeConventional lifts a conventional prefix out of the summary and into
+// the Type/Scope fields, once, at parse time. Doing it here rather than at
+// render time is what makes it survive changelog decoration: `version` prepends
+// a commit or PR reference to the summary before anything renders, and a prefix
+// is only recognisable while it is still at the start of the line.
+func normalizeConventional(cs *Changeset) {
+	typ, scope, breaking, ok := ParseConventionalScope(cs.Summary)
+	if !ok {
+		return
+	}
+	if cs.Type == "" {
+		cs.Type, cs.Breaking = typ, breaking
+	}
+	if cs.Scope == "" {
+		cs.Scope = scope
+	}
+	cs.Summary = StripConventional(cs.Summary)
+}
+
+// StripConventional removes a conventional-commit prefix from a summary, so a
+// renderer can present the type and scope as structure rather than as leading
+// punctuation in the sentence. Returns the summary unchanged when there is none.
+func StripConventional(summary string) string {
+	first := firstLine(summary)
+	m := conventionalRe.FindStringIndex(strings.TrimSpace(first))
+	if m == nil {
+		return summary
+	}
+	trimmed := strings.TrimSpace(first)
+	rest := trimmed[m[1]:]
+	if i := strings.IndexByte(summary, '\n'); i >= 0 {
+		return rest + summary[i:]
+	}
+	return rest
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // ChangedNames returns the package names the changeset touches.
@@ -153,6 +220,7 @@ func Parse(content, id string) (*Changeset, error) {
 	// Empty changeset: closing '---' immediately follows the opening one.
 	if i < len(lines) && lines[i] == "---" {
 		cs.Summary = summaryAfter(lines, i)
+		normalizeConventional(cs)
 		return cs, nil
 	}
 
@@ -164,6 +232,11 @@ func Parse(content, id string) (*Changeset, error) {
 			val = strings.Trim(val, `"'`)
 			cs.Breaking = strings.HasSuffix(val, "!")
 			cs.Type = strings.ToLower(strings.TrimSuffix(val, "!"))
+			i++
+			continue
+		}
+		if t := strings.TrimSpace(line); strings.HasPrefix(t, "scope:") {
+			cs.Scope = strings.Trim(strings.TrimSpace(strings.TrimPrefix(t, "scope:")), `"'`)
 			i++
 			continue
 		}
@@ -188,6 +261,7 @@ func Parse(content, id string) (*Changeset, error) {
 	}
 
 	cs.Summary = summaryAfter(lines, i)
+	normalizeConventional(cs)
 	return cs, nil
 }
 
@@ -216,6 +290,12 @@ func joinFrom(lines []string, start int) string {
 // conventional type (with the breaking flag) is written as a `type:` line; a
 // release with BumpNone is written bare (no `: bump`), meaning "derive from type".
 func Render(releases []Release, summary, typ string, breaking bool) string {
+	return RenderScoped(releases, summary, typ, "", breaking)
+}
+
+// RenderScoped is Render with a conventional scope — which tool the change
+// belongs to — written as its own frontmatter line.
+func RenderScoped(releases []Release, summary, typ, scope string, breaking bool) string {
 	var b strings.Builder
 	b.WriteString("---\n")
 	if typ != "" {
@@ -223,6 +303,9 @@ func Render(releases []Release, summary, typ string, breaking bool) string {
 			typ += "!"
 		}
 		fmt.Fprintf(&b, "type: %s\n", typ)
+	}
+	if scope != "" {
+		fmt.Fprintf(&b, "scope: %s\n", scope)
 	}
 	for _, r := range releases {
 		if r.Bump == BumpNone {

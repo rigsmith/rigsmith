@@ -1,6 +1,9 @@
 package changeset
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseStandard(t *testing.T) {
 	content := `---
@@ -161,5 +164,90 @@ func TestBumpMax(t *testing.T) {
 	}
 	if BumpMinor.Max(BumpNone) != BumpMinor {
 		t.Error("minor.Max(none) should be minor")
+	}
+}
+
+func TestParseConventionalScope(t *testing.T) {
+	cases := []struct {
+		in           string
+		typ, scope   string
+		breaking, ok bool
+	}{
+		{"feat(rig): a thing", "feat", "rig", false, true},
+		{"fix(clauderig)!: a break", "fix", "clauderig", true, true},
+		{"feat: unscoped", "feat", "", false, true},
+		{"feat!: unscoped break", "feat", "", true, true},
+		{"no prefix at all", "", "", false, false},
+		{"feat(rig): first\nsecond line", "feat", "rig", false, true},
+	}
+	for _, c := range cases {
+		typ, scope, breaking, ok := ParseConventionalScope(c.in)
+		if typ != c.typ || scope != c.scope || breaking != c.breaking || ok != c.ok {
+			t.Errorf("ParseConventionalScope(%q) = (%q,%q,%v,%v), want (%q,%q,%v,%v)",
+				c.in, typ, scope, breaking, ok, c.typ, c.scope, c.breaking, c.ok)
+		}
+	}
+}
+
+func TestStripConventional(t *testing.T) {
+	cases := [][2]string{
+		{"feat(rig): a thing", "a thing"},
+		{"fix!: a thing", "a thing"},
+		{"no prefix at all", "no prefix at all"},
+		{"feat(rig): first\n\nsecond para", "first\n\nsecond para"},
+	}
+	for _, c := range cases {
+		if got := StripConventional(c[0]); got != c[1] {
+			t.Errorf("StripConventional(%q) = %q, want %q", c[0], got, c[1])
+		}
+	}
+}
+
+// An explicit `scope:` line beats one parsed from the summary, matching how
+// `type:` already behaves.
+func TestEffectiveScope(t *testing.T) {
+	if got := (&Changeset{Summary: "feat(rig): x"}).EffectiveScope(); got != "rig" {
+		t.Errorf("from summary = %q", got)
+	}
+	if got := (&Changeset{Scope: "clauderig", Summary: "feat(rig): x"}).EffectiveScope(); got != "clauderig" {
+		t.Errorf("explicit should win, got %q", got)
+	}
+	if got := (&Changeset{Summary: "plain"}).EffectiveScope(); got != "" {
+		t.Errorf("unscoped = %q", got)
+	}
+}
+
+// The prefix has to be lifted out of the summary at parse time, not at render
+// time: `version` prepends a commit or PR reference before anything renders,
+// and a prefix is only recognisable while it is still at the start of the line.
+func TestParseLiftsTheConventionalPrefix(t *testing.T) {
+	cs, err := Parse("---\n\"pkg\": minor\n---\n\nfeat(rig): add a thing\n", "id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs.Type != "feat" || cs.Scope != "rig" {
+		t.Fatalf("type/scope = %q/%q, want feat/rig", cs.Type, cs.Scope)
+	}
+	if strings.TrimSpace(cs.Summary) != "add a thing" {
+		t.Fatalf("summary = %q, want the prefix removed", cs.Summary)
+	}
+	// Decoration prepended afterwards must not resurrect it.
+	cs.Summary = "abc1234: " + strings.TrimSpace(cs.Summary)
+	if got := (&Changeset{Summary: cs.Summary}).EffectiveScope(); got == "rig" {
+		t.Fatal("a decorated summary should carry no parseable scope of its own")
+	}
+	if cs.EffectiveScope() != "rig" {
+		t.Fatal("the scope should still come from the field")
+	}
+}
+
+// Explicit frontmatter still wins over the prefix.
+func TestParseKeepsExplicitTypeAndScope(t *testing.T) {
+	cs, err := Parse("---\ntype: fix\nscope: clauderig\n\"pkg\": minor\n---\n\nfeat(rig): x\n", "id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs.Type != "fix" || cs.Scope != "clauderig" {
+		t.Fatalf("type/scope = %q/%q, want fix/clauderig", cs.Type, cs.Scope)
 	}
 }

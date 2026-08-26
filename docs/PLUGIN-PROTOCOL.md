@@ -78,6 +78,14 @@ excluding the title — the engine owns file placement and insertion). See
 `core/plugin/protocol.go` `ChangelogRequest` and net-changesets'
 `docs/changelog-generator-plugins-design.md` for the full field reference.
 
+Each change carries a `type` and a `scope` when the changeset declared one —
+the type is which section it belongs in, the scope is which tool. The request
+also carries `scopeOrder`, the repo's configured `changelogScopes`, because a
+change's own scope does not say which tool a reader should see first. A
+generator that ignores both still renders correctly; the bundled
+`examples/plugins/changeset-changelog-changelogen` honours them, and is the
+reference for what "correctly" looks like.
+
 Resolution: `default` → in-process built-in; a path → executed; a bare name →
 `changeset-changelog-<name>` on `$PATH`.
 

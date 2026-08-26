@@ -39,13 +39,79 @@ lives in a `.rig.json` key, edit it there).
 
 ```sh
 changerig add -p my/pkg --bump minor -m "Add a feature"
-changerig add -t fix -m "Stop the crash"   # type-driven bump (suffix ! = breaking)
-changerig add                 # interactive: pick packages, bump, message
+changerig add -p my/pkg -t fix -m "Stop the crash"     # type-driven bump (! = breaking)
+changerig add -p my/pkg -t feat --scope rig -m "…"     # files the entry under rig:
+changerig add                 # interactive: pick packages, bump, message, scope
 ```
+
+`--package` can be omitted only where there is one package to choose; with
+several, `add` says so rather than writing a changeset that names none — such a
+file is silently ignored by every later step.
 
 Writes a `.changeset/*.md` file in the shared @changesets format: which
 packages change, at what bump level (`major`/`minor`/`patch`), and a summary
 line that becomes the changelog entry.
+
+### Type and scope
+
+A changeset can carry a conventional **type** and **scope**, either as
+frontmatter or as a `feat(rig): …` prefix on the summary:
+
+```md
+---
+type: feat
+scope: rig
+"github.com/you/repo"
+---
+
+new `rig stack` — several repos fused into one history
+```
+
+They do different jobs. The **type** picks the changelog section and, when no
+explicit bump is given, decides the bump (`feat` → minor, `fix` → patch, per
+[`changelogGroups`](./index)). The **scope** names which tool the entry belongs
+to: it becomes the bullet's lead-in and groups that tool's lines together
+within a section. Neither is required — an untyped changeset still
+renders under the section for its bump (`Minor Changes`, `Patch Changes`) as
+before.
+
+Note the package line above carries no bump. Leave it off and the type decides;
+give one and it wins, per package — which is how one changeset can be a feature
+for an app and a patch for the library under it.
+
+`--scope` is inferred from what the branch changed, so it is one less thing to
+remember: a diff confined to `cmd/rig` or `internal/rig` infers `rig`, and a
+diff spanning several tools infers nothing rather than guessing.
+
+A `!` on the type marks a breaking change — `feat(rig)!: …`, or `type: feat!` —
+which renders under **💥 Breaking Changes**, ahead of every other section, and
+derives a major bump. Like any derived bump, an explicit per-package bump on the
+changeset still wins, so `"pkg": patch` with `feat!` releases a patch.
+
+### Choosing the sections and their order
+
+`changelogGroups` maps each type to a heading and an implied bump, and the list
+order is the section order. Drop the emoji, rename a section, or move fixes
+above features by rewriting it:
+
+```jsonc
+{
+  "changelogGroups": [
+    { "type": "feat", "section": "Features", "bump": "minor" },
+    { "type": "fix",  "section": "Fixes",    "bump": "patch" }
+  ]
+}
+```
+
+`changelogScopes` does the same for scopes *within* a section — which tool a
+reader sees first:
+
+```jsonc
+{ "changelogScopes": ["rig", "clauderig"] }
+```
+
+Scopes left out follow alphabetically, and unscoped entries come last. Omit the
+key entirely and every scope sorts alphabetically.
 
 Flags:
 
@@ -56,6 +122,7 @@ Flags:
 | `-t, --type` | Conventional type (`feat`/`fix`/…, suffix `!` for breaking); the bump derives from it when `--bump` is omitted |
 | `-m, --message` | Changeset summary (skip the prompt) |
 | `--empty` | Write an empty changeset that names no packages |
+| `--scope` | Which part of the repo the change belongs to — the tool, in a monorepo. Inferred from the changed files when omitted; `-` for none |
 | `--since <ref>` | Preselect packages changed since a git ref in the picker |
 | `--open` | Open the created changeset in `$EDITOR` |
 

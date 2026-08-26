@@ -24,12 +24,18 @@ func RenderEntry(m *Module) string {
 // ModuleToRequest builds the changelog plugin request for a module. This is the
 // exact object serialized to a subprocess generator's stdin.
 func ModuleToRequest(m *Module) plugin.ChangelogRequest {
+	return ModuleToRequestScoped(m, nil)
+}
+
+// ModuleToRequestScoped is ModuleToRequest carrying the configured scope order.
+func ModuleToRequestScoped(m *Module, scopeOrder []string) plugin.ChangelogRequest {
 	changes := make([]plugin.ChangelogChange, 0, len(m.Changes))
 	for _, c := range m.Changes {
 		changes = append(changes, plugin.ChangelogChange{
 			Bump:     c.Bump.String(),
 			Summary:  c.Description,
 			Type:     c.Type,
+			Scope:    c.Scope,
 			Breaking: c.Breaking,
 		})
 	}
@@ -45,6 +51,7 @@ func ModuleToRequest(m *Module) plugin.ChangelogRequest {
 		Changes:             changes,
 		Contributors:        m.Contributors,
 		ContributorsSection: m.ContributorsSection,
+		ScopeOrder:          scopeOrder,
 	}
 }
 
@@ -83,15 +90,30 @@ func renderContributors(authors []plugin.Author, section string) string {
 // section ("Major/Minor/Patch Changes"). Sections are ordered: Breaking, then
 // the configured group order, then Major, Minor, Patch — so an untyped changelog
 // is byte-identical to the bump-only layout.
-func renderSections(newVersion string, changes []plugin.ChangelogChange, groups []config.ChangelogGroup) string {
-	// Ordered list of (sectionHeading) and the bucket of bullet descriptions.
+func renderSections(newVersion string, changes []plugin.ChangelogChange, groups []config.ChangelogGroup, scopeOrder []string) string {
+	// Ordered list of (sectionHeading) and the bucket of bullets in it.
+	type bullet struct {
+		scope   string
+		summary string
+	}
 	var order []string
-	buckets := map[string][]string{}
-	add := func(section, summary string) {
+	buckets := map[string][]bullet{}
+	add := func(section string, c plugin.ChangelogChange) {
+		// The type and scope become structure — the section heading and the
+		// bullet's lead-in — so leaving the prefix in the prose too would say
+		// each of them twice.
+		summary := strings.TrimSpace(changeset.StripConventional(c.Summary))
+		if summary == "" {
+			// A changeset whose body is only a conventional prefix, or only
+			// whitespace, has nothing to say. Returning before the section is
+			// registered matters: registering it without filling its bucket
+			// would leave the heading in `order` and re-add it next time.
+			return
+		}
 		if _, ok := buckets[section]; !ok {
 			order = append(order, section)
 		}
-		buckets[section] = append(buckets[section], summary)
+		buckets[section] = append(buckets[section], bullet{scope: c.Scope, summary: summary})
 	}
 
 	groupSection := func(typ string) (string, bool) {
@@ -106,16 +128,16 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 	for _, c := range changes {
 		switch {
 		case c.Breaking:
-			add(config.BreakingGroup.Section, c.Summary)
+			add(config.BreakingGroup.Section, c)
 		case c.Type != "":
 			if s, ok := groupSection(c.Type); ok {
-				add(s, c.Summary)
+				add(s, c)
 			} else {
-				add(strings.Title(c.Type), c.Summary) //nolint:staticcheck // ASCII type names
+				add(strings.Title(c.Type), c) //nolint:staticcheck // ASCII type names
 			}
 		default:
 			bump, _ := changeset.ParseBump(c.Bump)
-			add(title(bump)+" Changes", c.Summary)
+			add(title(bump)+" Changes", c)
 		}
 	}
 
@@ -130,12 +152,50 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 			b.WriteByte('\n')
 		}
 		fmt.Fprintf(&b, "### %s\n\n", section)
-		for _, summary := range buckets[section] {
-			b.WriteString(formatReleaseLine(summary))
+		// Scoped bullets first, grouped by scope, so a reader scanning for one
+		// tool finds its lines together; unscoped ones keep their order at the
+		// end rather than being interleaved by a name they do not have.
+		bullets := buckets[section]
+		rank := scopeRank(scopeOrder)
+		sort.SliceStable(bullets, func(i, j int) bool {
+			si, sj := bullets[i].scope, bullets[j].scope
+			if si == sj {
+				return false
+			}
+			// Unscoped entries trail the scoped ones: they belong to the section
+			// rather than to any tool in it.
+			if (si == "") != (sj == "") {
+				return sj == ""
+			}
+			ri, oki := rank[si]
+			rj, okj := rank[sj]
+			switch {
+			case oki && okj:
+				return ri < rj
+			case oki != okj:
+				return oki // configured scopes before the rest
+			}
+			return si < sj
+		})
+		for _, bl := range bullets {
+			b.WriteString(formatReleaseLine(bl.summary, bl.scope))
 			b.WriteByte('\n')
 		}
 	}
 	return b.String()
+}
+
+// scopeRank indexes the configured scope order, so a repo can say which tool
+// leads rather than taking whatever alphabetical order hands it. Scopes left
+// out keep their alphabetical order after the listed ones.
+func scopeRank(order []string) map[string]int {
+	rank := make(map[string]int, len(order))
+	for i, s := range order {
+		if _, seen := rank[s]; !seen {
+			rank[s] = i
+		}
+	}
+	return rank
 }
 
 // sortSections orders sections: Breaking first, then configured group order,
@@ -181,19 +241,30 @@ func title(b changeset.Bump) string {
 // getReleaseLine: the first line sits on the bullet and continuation lines are
 // indented two spaces. Dependency-update descriptions are pre-structured and
 // pass through unchanged.
-func formatReleaseLine(description string) string {
-	if strings.HasPrefix(description, dependencyUpdatesHeader) {
-		return "- " + description
+func formatReleaseLine(description, scope string) string {
+	lead := ""
+	if scope != "" {
+		lead = "**" + scope + ":** "
 	}
-	lines := strings.Split(strings.ReplaceAll(description, "\r\n", "\n"), "\n")
+	// The engine generates the dependency block pre-structured and unscoped, so
+	// it passes through — but a change that merely *starts* with those words and
+	// carries a scope is an authored entry, and still gets its lead-in.
+	if strings.HasPrefix(description, dependencyUpdatesHeader) {
+		return "- " + lead + description
+	}
+	// Trailing newlines are an artefact of the file the summary came out of;
+	// left in, each becomes an indented empty continuation line under the
+	// bullet — two spaces of whitespace that show up in every rendered entry.
+	description = strings.TrimRight(strings.ReplaceAll(description, "\r\n", "\n"), "\n \t")
+	lines := strings.Split(description, "\n")
 	for i := range lines {
 		lines[i] = strings.TrimRight(lines[i], " \t")
 	}
 	if len(lines) == 1 {
-		return "- " + lines[0]
+		return "- " + lead + lines[0]
 	}
 	var b strings.Builder
-	b.WriteString("- " + lines[0])
+	b.WriteString("- " + lead + lines[0])
 	for _, line := range lines[1:] {
 		b.WriteString("\n  " + line)
 	}
