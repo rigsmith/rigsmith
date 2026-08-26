@@ -102,6 +102,10 @@ func liveTranscripts(claudeHome string) map[string]string {
 			// A session id can appear under two slugs (a worktree copy, or a slug
 			// restore rewrote). Either transcript resumes the same session, so the
 			// first is as good as the second.
+			// Keyed lowercase so the lookup above can normalise to match, rather
+			// than depending on the filesystem's casing being what the caller
+			// happened to type.
+			id = strings.ToLower(id)
 			if _, seen := out[id]; !seen {
 				out[id] = filepath.Join(projects, slug.Name(), name)
 			}
@@ -120,12 +124,20 @@ func findSessions(ref, claudeHome string, idx session.Index) []sessionCandidate 
 	live := liveTranscripts(claudeHome)
 
 	if sessionUUID.MatchString(ref) {
-		p, ok := live[ref]
+		// Normalise before looking up. sessionUUID accepts uppercase hex — as
+		// Claude Desktop's own validator does — but both maps are keyed by the
+		// on-disk transcript name, which Claude Code always writes lowercase.
+		// Matching the ACCEPTED form against the STORED form is what turned a
+		// pasted uppercase uuid into "no session matches" for a session that
+		// was sitting right there: taking this branch also forgoes the
+		// substring fallback that would otherwise have found it.
+		id := strings.ToLower(ref)
+		p, ok := live[id]
 		if !ok {
 			return nil
 		}
-		m := idx[ref]
-		return []sessionCandidate{{ID: ref, Title: titleFor(m, p), Cwd: cwdFor(m, p), Path: p}}
+		m := idx[id]
+		return []sessionCandidate{{ID: id, Title: titleFor(m, p), Cwd: cwdFor(m, p), Path: p}}
 	}
 
 	needle := strings.ToLower(strings.TrimSpace(ref))

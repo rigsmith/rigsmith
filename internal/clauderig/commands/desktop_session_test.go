@@ -315,3 +315,28 @@ func TestOtherRunningProfiles_SeesAProfileWithUnreadableMetadata(t *testing.T) {
 		t.Errorf("want [broken], got %v", others)
 	}
 }
+
+// sessionUUID accepts uppercase hex, mirroring Claude Desktop's own validator,
+// but transcripts are written lowercase and both maps are keyed by the on-disk
+// name. Taking the exact-id branch on an uppercase uuid and then missing the
+// lookup also forgoes the substring fallback, so a session sitting on disk
+// reported as "no session matches".
+func TestFindSessions_UppercaseUUIDResolves(t *testing.T) {
+	home := t.TempDir()
+	lower := "456fc32e-7579-49c7-bb2a-099657892c6a"
+	writeTranscript(t, home, "-Users-j-Git-api", lower, "the auth refactor")
+
+	for _, ref := range []string{
+		lower,
+		"456FC32E-7579-49C7-BB2A-099657892C6A",
+		"456Fc32E-7579-49c7-BB2a-099657892C6A",
+	} {
+		got := findSessions(ref, home, session.Index{})
+		if len(got) != 1 {
+			t.Fatalf("%s: got %d candidates, want 1", ref, len(got))
+		}
+		if got[0].ID != lower {
+			t.Errorf("%s: ID = %q, want the canonical lowercase id", ref, got[0].ID)
+		}
+	}
+}
