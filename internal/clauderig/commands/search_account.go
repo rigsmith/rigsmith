@@ -39,7 +39,11 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 		return "", nil
 	}
 
-	byEmail := accountUUIDsByEmail(stagingDir)
+	// Read the registry ONCE. Two scans repeat the I/O and, worse, can see
+	// different snapshots if a sync lands between them — so the email branch and
+	// the prefix branch could disagree about which accounts exist.
+	candidatesByEmail := accountUUIDCandidates(stagingDir)
+	byEmail := unambiguousByEmail(candidatesByEmail)
 
 	// uuid or uuid prefix — matched against every account that IS known, which
 	// is the ledger's attributions plus the device registry's. Registry-only
@@ -57,7 +61,7 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 		// shared by two accounts is dropped from byEmail on purpose — it cannot
 		// resolve — but dropping both uuids from PREFIX matching too left those
 		// accounts unreachable by any means when they exist only in the registry.
-		for _, uuids := range accountUUIDCandidates(stagingDir) {
+		for _, uuids := range candidatesByEmail {
 			for uuid := range uuids {
 				if c := canonicalUUID(uuid); c != "" {
 					candidates[c] = true
@@ -137,7 +141,11 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 // synced device registry — which records both halves for every machine that has
 // synced (see devices.Account).
 func accountUUIDsByEmail(stagingDir string) map[string]string {
-	all := accountUUIDCandidates(stagingDir)
+	return unambiguousByEmail(accountUUIDCandidates(stagingDir))
+}
+
+// unambiguousByEmail keeps only the emails that name exactly one account.
+func unambiguousByEmail(all map[string]map[string]bool) map[string]string {
 	out := make(map[string]string, len(all))
 	for email, uuids := range all {
 		// One candidate only. The same email can belong to two accounts in

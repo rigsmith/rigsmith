@@ -3,8 +3,8 @@ package commands
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -118,9 +118,6 @@ func NewSyncCmd() *cobra.Command {
 					}
 					if r.Disallowed > 0 {
 						extra += fmt.Sprintf(", %d no longer allowed", r.Disallowed)
-					}
-					if r.Shadowed > 0 {
-						extra += fmt.Sprintf(", %d stale placeholder(s) retired", r.Shadowed)
 					}
 					if n := len(r.Oversize); n > 0 {
 						extra += fmt.Sprintf(", %d too large", n)
@@ -286,18 +283,37 @@ func machineName(cfg *config.Config) string {
 	return "this"
 }
 
-// maxIdentityBytes bounds an identity value. Generous next to a uuid or an
-// email, and far below redact.ScanContentLimit, so nothing reaches the registry
-// in the size range where ScanFile silently returns no finding.
-const maxIdentityBytes = 512
+// emailShape is a deliberately conservative check: one @, no spaces or control
+// characters, a dot in the domain. It is not RFC-complete and does not need to
+// be — the question here is "could this be something other than an email", and
+// anything unusual is worth refusing to publish.
+var emailShape = regexp.MustCompile(`^[^\s@\x00-\x1f]{1,128}@[^\s@\x00-\x1f]{1,128}\.[^\s@.\x00-\x1f]{2,63}$`)
 
-// scanIdentity runs the same content rules over the three identity values that
-// guard every other synced file, returning the first finding or nil.
+// scanIdentity validates the three identity values by SHAPE, returning the
+// first that does not fit.
 //
-// It exists because the device registry is written after engine.Sync's scan and
-// committed directly, so nothing else would ever look at these. Each field is
-// scanned under its own name so the warning can say which one is wrong.
+// Positive validation, not scanning, and that inversion is the point. Three
+// separate findings arrived for three different ways a value slipped past
+// redact.ScanFile — multiline values skip its entropy check, oversized ones
+// exceed its content cap and return nothing at all, and binary bytes trip its
+// binary guard, which returns clean BEFORE secret detection runs. Each was
+// patched in turn and a fourth was always available, because asking "does this
+// look like a secret" has an open-ended set of ways to answer no.
+//
+// A uuid and an email have exact shapes. Requiring them ends the class: a value
+// that is not one of those two things is refused whatever it happens to be.
 func scanIdentity(a *devices.Account) *redact.Finding {
+	if a.AccountUUID != "" && account.CanonicalUUID(a.AccountUUID) == "" {
+		return &redact.Finding{Path: "accountUuid", Kind: "not a uuid"}
+	}
+	if a.OrganizationUUID != "" && account.CanonicalUUID(a.OrganizationUUID) == "" {
+		return &redact.Finding{Path: "organizationUuid", Kind: "not a uuid"}
+	}
+	if a.Email != "" && !emailShape.MatchString(a.Email) {
+		return &redact.Finding{Path: "email", Kind: "not an email"}
+	}
+	// Shape-valid values still go through the content rules, so a uuid-shaped
+	// string that somehow reads as a known token prefix is still caught.
 	for _, f := range []struct{ name, value string }{
 		{"accountUuid", a.AccountUUID},
 		{"organizationUuid", a.OrganizationUUID},
@@ -305,18 +321,6 @@ func scanIdentity(a *devices.Account) *redact.Finding {
 	} {
 		if f.value == "" {
 			continue
-		}
-		// Rejected outright, before the content rules see it, in the two shapes
-		// ScanFile cannot judge. It skips its entropy check for multiline
-		// values — reasonable for a file, wrong here, since a newline would
-		// carry whatever follows it past the scan — and it returns nothing at
-		// all above its content cap, so a value larger than that is unscanned
-		// rather than clean. No real uuid or email is either shape.
-		if len(f.value) > maxIdentityBytes {
-			return &redact.Finding{Path: f.name, Kind: "oversized identity"}
-		}
-		if strings.ContainsAny(f.value, "\r\n") {
-			return &redact.Finding{Path: f.name, Kind: "multiline identity"}
 		}
 		if found := redact.ScanFile(f.name, []byte(f.value)); len(found) > 0 {
 			hit := found[0]

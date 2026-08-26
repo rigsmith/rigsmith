@@ -177,14 +177,12 @@ func indexOf(s, sub string) int {
 	return -1
 }
 
-// The placeholder cleanup must not delete a legitimately empty file another
-// machine staged. Size alone cannot tell the two apart, so it is paired with
-// the live shape that produced placeholders — a symlink to a directory.
-func TestReconcileStagedRoot_KeepsAnEmptyFileShadowedByARealDirectory(t *testing.T) {
+// The placeholder cleanup is gone: nothing on disk distinguishes an old
+// placeholder from a legitimately empty file another machine staged, so every
+// narrowing of that rule still deleted somebody's data. Reconcile judges the
+// allowlist only.
+func TestReconcileStagedRoot_KeepsEmptyFilesWhateverTheLivePathIs(t *testing.T) {
 	staging := t.TempDir()
-	live := t.TempDir()
-
-	// another machine's legitimately empty file; here the path is a real dir
 	empty := filepath.Join(staging, "cli", "projects", "-other", "notes")
 	if err := os.MkdirAll(filepath.Dir(empty), 0o755); err != nil {
 		t.Fatal(err)
@@ -192,16 +190,13 @@ func TestReconcileStagedRoot_KeepsAnEmptyFileShadowedByARealDirectory(t *testing
 	if err := os.WriteFile(empty, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(live, "projects", "-other", "notes"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 
-	_, shadowed, err := reconcileStagedRoot(filepath.Join(staging, "cli"), live, allowlist.For("cli"))
+	removed, err := reconcileStagedRoot(filepath.Join(staging, "cli"), allowlist.For("cli"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shadowed != 0 {
-		t.Errorf("retired %d file(s); a real directory is an ordinary conflict, not a placeholder", shadowed)
+	if removed != 0 {
+		t.Errorf("removed %d allowlisted file(s)", removed)
 	}
 	if _, serr := os.Stat(empty); serr != nil {
 		t.Error("another machine's empty file was deleted")

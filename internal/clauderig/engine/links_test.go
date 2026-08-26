@@ -176,8 +176,16 @@ func TestRestore_StagedFileNeverWritesThroughSymlink(t *testing.T) {
 // A directory symlink whose target sits outside the synced set is not
 // recordable as a link, but it is still a directory — it must not be offered
 // as a file. Any 0-byte placeholder an older sync staged for it is retired, so
-// the repo digs itself out instead of handing the file back every restore.
-func TestSync_RetiresStagedFileShadowedByDirLink(t *testing.T) {
+// A directory symlink whose target sits outside the synced set is not
+// recordable as a link, but it is still a directory — it must not be offered as
+// a file, or reading it fails with EISDIR and aborts the sync.
+//
+// The 0-byte placeholder an older sync staged for such a path is deliberately
+// LEFT ALONE. Retiring it was tried and removed: nothing on disk distinguishes
+// it from a legitimately empty file another machine staged, so every version of
+// that rule deleted somebody's data on the next push. It is harmless where it
+// sits, because restore refuses to write through the live link.
+func TestSync_LeavesAStalePlaceholderAloneButDoesNotChokeOnTheLink(t *testing.T) {
 	live := t.TempDir()
 	write(t, live, "projects/-wt/s.jsonl",
 		`{"type":"user","cwd":"/Users/john/Git/wt","isSidechain":false}`+"\n")
@@ -197,8 +205,8 @@ func TestSync_RetiresStagedFileShadowedByDirLink(t *testing.T) {
 	if _, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, SourceOverride: override("cli", live)}); err != nil {
 		t.Fatalf("sync failed on an unrecordable dir link: %v", err)
 	}
-	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
-		t.Error("stale staged file shadowed by a dir link should be retired")
+	if _, err := os.Stat(stale); err != nil {
+		t.Errorf("the placeholder was deleted: %v", err)
 	}
 }
 

@@ -31,12 +31,7 @@ type RootResult struct {
 	SkippedFiles   int      // files that vanished/were unreadable mid-sync (live churn)
 	Oversize       []string // rel paths dropped for exceeding MaxFileBytes
 	Disallowed     int      // staged files removed because the allowlist no longer permits them
-	// Shadowed counts empty placeholders retired because the live path is a
-	// directory. Counted apart from Disallowed because they mean different
-	// things to the person reading the summary: one is a policy change they
-	// made, the other is old residue healing itself.
-	Shadowed int
-	Skipped  bool // root absent on this machine
+	Skipped        bool     // root absent on this machine
 }
 
 // Report is the outcome of a sync into the staging dir.
@@ -266,12 +261,11 @@ func Sync(opts Options) (*Report, error) {
 		// Only for roots that resolved on this machine: a root we skipped tells us
 		// nothing about whether its staged files are still wanted, and pruning it
 		// would delete another machine's data.
-		disallowed, shadowed, perr := reconcileStagedRoot(stageRoot, loc, allowlist.For(r.ID))
+		disallowed, perr := reconcileStagedRoot(stageRoot, allowlist.For(r.ID))
 		if perr != nil {
 			return nil, fmt.Errorf("reconcile staged %s: %w", r.ID, perr)
 		}
 		rr.Disallowed = disallowed
-		rr.Shadowed = shadowed
 
 		rep.Roots = append(rep.Roots, rr)
 	}
@@ -588,11 +582,17 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 // permits them. Retention, which removes allowed-but-aged files, is separate and
 // runs on its own.
 //
-// liveRoot is this machine's copy of the root ("" when it didn't resolve). It
-// also retires staged files whose live counterpart is a directory — see below.
-func reconcileStagedRoot(stageRoot, liveRoot string, l allowlist.List) (removed int, shadowed int, err error) {
+// It judges the allowlist ONLY. An earlier version also retired staged files
+// whose live counterpart was a directory, to clean up placeholders left by
+// pre-#196 syncs — but nothing on disk distinguishes such a placeholder from a
+// legitimately empty file another machine staged, so every narrowing of that
+// rule still deleted somebody's data on the next push. It is gone: restore
+// already refuses to write through a symlink, which is what made the
+// placeholders harmful, so the cleanup bought tidiness at the price of a
+// data-loss class.
+func reconcileStagedRoot(stageRoot string, l allowlist.List) (removed int, err error) {
 	if !dirExists(stageRoot) {
-		return 0, 0, nil
+		return 0, nil
 	}
 	err = filepath.WalkDir(stageRoot, func(p string, d os.DirEntry, werr error) error {
 		if werr != nil {
@@ -622,39 +622,13 @@ func reconcileStagedRoot(stageRoot, liveRoot string, l allowlist.List) (removed 
 		// it back over the live link. Retire it here so the repo can dig itself
 		// out. Judged only where the path exists on this machine — staging also
 		// carries other machines' files, whose absence here means nothing.
-		if liveRoot != "" {
-			// Two coincidences, not one. Size alone cannot tell an old
-			// placeholder from a legitimately empty file another machine staged,
-			// so it is paired with the exact live shape that PRODUCED the
-			// placeholders: a symlink to a directory, staged as a file by a sync
-			// predating the guard that now reports such links as Links.
-			//
-			// A real directory at the same path is deliberately NOT enough. That
-			// is an ordinary cross-machine disagreement about one path, and
-			// deleting on it would publish the other machine's file as lost —
-			// while leaving it costs nothing, since restore already refuses to
-			// write through a link.
-			if fi, ferr := d.Info(); ferr != nil || fi.Size() != 0 {
-				return nil
-			}
-			live := filepath.Join(liveRoot, rel)
-			li, lerr := os.Lstat(live)
-			if lerr != nil || li.Mode()&os.ModeSymlink == 0 {
-				return nil
-			}
-			if fi, serr := os.Stat(live); serr == nil && fi.IsDir() {
-				if os.Remove(p) == nil {
-					shadowed++
-				}
-			}
-		}
 		return nil
 	})
 	if err != nil {
-		return removed, shadowed, err
+		return removed, err
 	}
 	removeEmptyDirs(stageRoot)
-	return removed, shadowed, nil
+	return removed, nil
 }
 
 func removeEmptyDirs(root string) {
