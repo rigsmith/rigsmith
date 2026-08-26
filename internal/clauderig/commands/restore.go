@@ -350,6 +350,11 @@ func copyLink(src, dst string) error {
 //
 // An absent file is not an error — a machine that has never logged in has
 // nothing to protect.
+// readLink is a variable purely so a test can stage the one failure that
+// cannot be staged on a real filesystem: a link whose metadata reads but whose
+// target does not. Nothing else reassigns it.
+var readLink = os.Readlink
+
 // identityBackupPaths reports where ~/.claude.json would be backed up to, and
 // whether there is one to back up.
 //
@@ -363,11 +368,6 @@ func copyLink(src, dst string) error {
 // Absent is not an error — a machine that has never logged in has nothing to
 // protect — but unreadable is, because that is the moment its state is least
 // certain and least replaceable.
-// readLink is a variable purely so a test can stage the one failure that
-// cannot be staged on a real filesystem: a link whose metadata reads but whose
-// target does not. Nothing else reassigns it.
-var readLink = os.Readlink
-
 func identityBackupPaths() (src, dst string, exists bool, note string, err error) {
 	src, herr := account.GlobalConfigPath()
 	if herr != nil {
