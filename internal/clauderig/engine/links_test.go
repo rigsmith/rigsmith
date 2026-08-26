@@ -327,3 +327,37 @@ func TestRestoreLinks_SkipsALinkUnderASymlinkedAncestor(t *testing.T) {
 		t.Error("a link was created outside the restore target")
 	}
 }
+
+// A path that is a FILE on one machine and a real DIRECTORY here cannot be
+// written: the open fails with EISDIR and used to take the whole restore with
+// it. Sync no longer deletes the staged file in that situation — deleting it
+// cost other machines their data — so the resilience has to live at the write.
+func TestRestore_SkipsADestinationHeldByARealDirectory(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/projects/-main/s.jsonl", "t\n")
+	write(t, staging, "cli/projects/-main/notes", "another machine had this as a file")
+
+	target := t.TempDir()
+	// here the same path is a real directory
+	if err := os.MkdirAll(filepath.Join(target, "projects", "-main", "notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	rep, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target),
+		Machine: jane, TargetOverride: override("cli", target)})
+	if err != nil {
+		t.Fatalf("one unwriteable path must not abort the restore: %v", err)
+	}
+	if rep.Roots[0].Conflicts != 1 {
+		t.Errorf("Conflicts = %d, want 1 — the skip must be reported", rep.Roots[0].Conflicts)
+	}
+	// the rest of the root still restored
+	if _, serr := os.Stat(filepath.Join(target, "projects", "-main", "s.jsonl")); serr != nil {
+		t.Errorf("the other files did not restore: %v", serr)
+	}
+	// and the directory is untouched
+	if fi, serr := os.Lstat(filepath.Join(target, "projects", "-main", "notes")); serr != nil || !fi.IsDir() {
+		t.Error("the local directory should be left alone")
+	}
+}

@@ -28,6 +28,10 @@ type RestoreRootResult struct {
 	// folded into Files: "✓ restored" over a silently unwritten file is the
 	// kind of quiet success this whole path exists to avoid.
 	LinksKept int
+	// Conflicts counts staged files skipped because a DIRECTORY holds that
+	// destination — a path that is a file on one machine and a directory here.
+	// Writing one would abort the whole restore with EISDIR.
+	Conflicts int
 	Pruned    int // files removed as deleted-upstream (--prune)
 	// DesktopSessions counts Claude Desktop Code-session sidecars written this
 	// restore (claude-code-sessions/**/local_*.json). Desktop only rebuilds its
@@ -161,6 +165,22 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			if isSymlink(dst) || links.underSymlink(target, dst) {
 				written[targetRel] = true
 				rr.LinksKept++
+				continue
+			}
+
+			// A real DIRECTORY at dst cannot be written either: copyFile and
+			// restoreJSON both open it, and the open fails with EISDIR — taking
+			// the entire restore down over one path.
+			//
+			// This is the same abort the symlink guard was written to stop,
+			// reaching here by a different route. Sync used to delete the staged
+			// file in this situation, but that deleted other machines' data too,
+			// so staging now keeps whatever it has and the resilience has to
+			// live where the write happens. Reported, not silent — a path this
+			// machine cannot accept is worth saying out loud.
+			if fi, lerr := os.Lstat(dst); lerr == nil && fi.IsDir() {
+				written[targetRel] = true
+				rr.Conflicts++
 				continue
 			}
 

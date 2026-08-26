@@ -170,6 +170,9 @@ func NewRestoreCmd() *cobra.Command {
 				if r.Pruned > 0 {
 					extra += fmt.Sprintf(", %d pruned", r.Pruned)
 				}
+				if r.Conflicts > 0 {
+					extra += fmt.Sprintf(", %d skipped (a directory holds that path)", r.Conflicts)
+				}
 				if r.LinksKept > 0 {
 					extra += fmt.Sprintf(", %d kept under existing link(s)", r.LinksKept)
 				}

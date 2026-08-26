@@ -111,6 +111,14 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 			return "", rerr
 		}
 		if rerr == nil {
+			// Store.Resolve returns the FIRST exact-email match, so two tracked
+			// accounts sharing an email across organisations resolve silently to
+			// one of them. The registry path already refuses an ambiguous email;
+			// the store path has to as well, or which account you get depends on
+			// listing order.
+			if dupes := storeAccountsWithEmail(st, a.Email); dupes > 1 {
+				return "", fmt.Errorf("%d accounts share the email %s — name one by alias, id, or accountUuid prefix", dupes, a.Email)
+			}
 			// The store's own uuid first: it is recorded at capture and stays
 			// put. The registry holds only each device's LATEST account, so
 			// once every device has synced under a different login it can no
@@ -228,4 +236,27 @@ func isHexPrefix(s string) bool {
 		}
 	}
 	return s != ""
+}
+
+// storeAccountsWithEmail counts tracked accounts carrying this email.
+//
+// Store.Resolve returns the first exact-email match, so two accounts sharing an
+// email across organisations resolve to whichever the listing happened to put
+// first. The registry path already refuses an ambiguous email; without this the
+// store path would answer one, confidently and arbitrarily.
+func storeAccountsWithEmail(st *account.Store, email string) int {
+	if email == "" {
+		return 0
+	}
+	all, err := st.List()
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, a := range all {
+		if strings.EqualFold(a.Email, email) {
+			n++
+		}
+	}
+	return n
 }
