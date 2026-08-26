@@ -318,7 +318,7 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	get := func(id string) *sessResult {
 		r := hits[id]
 		if r == nil {
-			m, ok := idx[id]
+			m, ok := idx[session.CanonicalID(id)]
 			r = &sessResult{id: id, meta: m, hasMeta: ok}
 			hits[id] = r
 		}
@@ -560,7 +560,7 @@ func renderSessionAs(out interface{ Write([]byte) (int, error) }, me config.Mach
 // Memoised because it runs once per rendered result and is two filesystem
 // probes whose answer cannot change part-way through a listing.
 var desktopUsable = sync.OnceValue(func() bool {
-	if _, ok := desktop.New().Installed(); !ok {
+	if _, ok := newDesktopApp().Installed(); !ok {
 		return false
 	}
 	st, err := desktopStore()
@@ -867,7 +867,7 @@ func reprofile(idx session.Index, byAccount map[string]string, complete bool) {
 		default:
 			continue
 		}
-		idx[id] = m
+		idx[session.CanonicalID(id)] = m
 	}
 }
 

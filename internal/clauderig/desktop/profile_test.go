@@ -441,3 +441,56 @@ func TestWaitRunningSucceedsOnceTheProfileAppears(t *testing.T) {
 		t.Fatalf("ready=%v err=%v, want true/nil", ready, err)
 	}
 }
+
+// os.ReadDir reports the entry, not its target, so a profile directory that is
+// a symlink answers IsDir false. Skipping those made List disagree with
+// Get/Resolve, which follow the link: `desktop list` hid such a profile,
+// `shortcut --all` and `rm` passed over it, and "are there any profiles at all"
+// was answered no for a store `desktop open <name>` drove happily.
+func TestList_IncludesSymlinkedProfileDirectories(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "desktop")
+	st := NewStore(root)
+	if _, err := st.Create("work", "work@example.com", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Move the real directory aside and leave a symlink where it was — the shape
+	// you get from relocating a profile onto another disk.
+	real := filepath.Join(t.TempDir(), "moved-work")
+	if err := os.Rename(filepath.Join(root, "work"), real); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(root, "work")); err != nil {
+		t.Skipf("cannot symlink here: %v", err)
+	}
+
+	got, err := st.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "work" {
+		t.Fatalf("List lost the symlinked profile: %+v", got)
+	}
+	// The invariant that was broken: List and Resolve must agree.
+	if _, err := st.Resolve("work"); err != nil {
+		t.Fatalf("Resolve disagrees with List: %v", err)
+	}
+}
+
+// A link pointing nowhere is not a profile, and must not become one.
+func TestList_IgnoresBrokenSymlinks(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "desktop")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "gone"), filepath.Join(root, "ghost")); err != nil {
+		t.Skipf("cannot symlink here: %v", err)
+	}
+	got, err := NewStore(root).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("a dangling link is not a profile: %+v", got)
+	}
+}

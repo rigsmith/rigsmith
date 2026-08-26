@@ -184,7 +184,7 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 	var read, skipped, hidden, undated, unattributed, approx, unmatched int
 	for id := range ids {
 		r := &sessResult{id: id, hitTargets: map[string]bool{}}
-		r.meta, r.hasMeta = idx[id]
+		r.meta, r.hasMeta = idx[session.CanonicalID(id)]
 		// Live first: it is the copy `claude --resume` opens.
 		switch {
 		case livePaths[id] != "":

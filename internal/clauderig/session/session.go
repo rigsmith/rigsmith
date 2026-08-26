@@ -78,6 +78,14 @@ var sessionTrees = []string{"claude-code-sessions", "local-agent-mode-sessions"}
 // the newer LastActivity supplies the display fields and every source label is
 // recorded. Sidecars with no cliSessionId (e.g. storage placeholders) are
 // ignored. Missing/unreadable trees are skipped, not errors.
+// CanonicalID is the form an Index is keyed by, and the form every lookup must
+// use. Session ids are uuids, which are case-insensitive by specification —
+// Claude Code writes its transcript filenames lowercase, but a Desktop sidecar
+// carries whatever `cliSessionId` it was given. Keyed by the raw value, an
+// uppercase sidecar simply never matched the transcript beside it, so the
+// session silently lost its title and project everywhere the index is consulted.
+func CanonicalID(id string) string { return strings.ToLower(id) }
+
 func Build(roots []Root) Index {
 	idx := Index{}
 	for _, r := range roots {
@@ -132,7 +140,7 @@ func scanSidecars(idx Index, dir, label, profile string) {
 			return nil
 		}
 		m := Meta{
-			ID: sc.CliSessionID, Title: sc.Title, Cwd: sc.Cwd,
+			ID: CanonicalID(sc.CliSessionID), Title: sc.Title, Cwd: sc.Cwd,
 			Model: sc.Model, Archived: sc.IsArchived, Profile: profile,
 			Account: accountOf(dir, p),
 		}

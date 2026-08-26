@@ -153,6 +153,20 @@ func (s *Store) CandidateDataDirs() (map[string]string, error) {
 }
 
 // List returns every saved profile, ordered by name.
+// isDirFollowingLinks reports whether an entry is, or points at, a directory.
+// Only a symlink pays for a stat; every other entry is answered from the type
+// bits ReadDir already carries. A broken link answers false.
+func isDirFollowingLinks(root string, e os.DirEntry) bool {
+	if e.IsDir() {
+		return true
+	}
+	if e.Type()&os.ModeSymlink == 0 {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(root, e.Name()))
+	return err == nil && fi.IsDir()
+}
+
 func (s *Store) List() ([]Profile, error) {
 	entries, err := os.ReadDir(s.Root)
 	if errors.Is(err, os.ErrNotExist) {
@@ -163,7 +177,13 @@ func (s *Store) List() ([]Profile, error) {
 	}
 	var out []Profile
 	for _, e := range entries {
-		if !e.IsDir() {
+		// os.ReadDir reports the entry itself, not its target, so a profile
+		// directory that is a SYMLINK answers IsDir false. Skipping those made
+		// List disagree with Get/Resolve, which follow the link and work fine:
+		// `desktop list` hid such a profile, `shortcut --all` and `rm` passed
+		// over it, and anything asking "are there any profiles" was told no
+		// while `desktop open <name>` drove it happily.
+		if !isDirFollowingLinks(s.Root, e) {
 			continue
 		}
 		p, lerr := s.Get(e.Name())

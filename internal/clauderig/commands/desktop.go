@@ -73,7 +73,21 @@ func NewDesktopCmd() *cobra.Command {
 // desktopStore roots the profiles beside the rest of clauderig's local state.
 // Deliberately under ~/.clauderig and NOT under ~/.claude: these directories
 // hold live logged-in sessions and must never reach the sync remote.
-func desktopStore() (*desktop.Store, error) { return desktop.DefaultStore() }
+// desktopStore and newDesktopApp are vars, not plain functions, so a test can
+// drive a whole command against a temporary store and a fake App. The one bug
+// this PR shipped — `-i` opening a window and never sending the session — lived
+// in the wiring BETWEEN the pieces, which is the one place unit tests on the
+// pieces cannot reach.
+var desktopStore = func() (*desktop.Store, error) { return desktop.DefaultStore() }
+
+var newDesktopApp = func() desktop.App { return desktop.New() }
+
+// selectSession is the picker, behind a seam. `-i` is the only path that
+// resolves a session with NO reference, and it is the path the send guard got
+// wrong — but the picker needs a terminal, so without this a test can only
+// drive `--session <id>`, which sets the very variable the bug was reading and
+// therefore passes against the bug.
+var selectSession = pickSession
 
 func newDesktopAddCmd() *cobra.Command {
 	var email string
@@ -97,7 +111,7 @@ func newDesktopAddCmd() *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
-			app := desktop.New()
+			app := newDesktopApp()
 			if _, ok := app.Installed(); !ok {
 				return desktopUnavailable()
 			}
@@ -337,7 +351,7 @@ func newDesktopOpenCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
-			app := desktop.New()
+			app := newDesktopApp()
 			if _, ok := app.Installed(); !ok {
 				return desktopUnavailable()
 			}
@@ -394,7 +408,7 @@ func newDesktopOpenCmd() *cobra.Command {
 				if ferr != nil {
 					return ferr
 				}
-				target, err = pickSession(sessionRef, cands, pick)
+				target, err = selectSession(sessionRef, cands, pick)
 				if errors.Is(err, errCancelled) {
 					return nil
 				}
@@ -583,7 +597,7 @@ func newDesktopListCmd() *cobra.Command {
 					"no Desktop profiles yet — `clauderig desktop add <name>` creates one"))
 				return nil
 			}
-			app := desktop.New()
+			app := newDesktopApp()
 			fmt.Fprintln(out, HeaderStyle.Render("Claude Desktop profiles"))
 			for _, p := range all {
 				marker, state := "  ", DimStyle.Render("closed")
@@ -628,7 +642,7 @@ func newDesktopQuitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			app := desktop.New()
+			app := newDesktopApp()
 			p, err := resolveDesktopTarget(st, app, args, true)
 			switch {
 			case errors.Is(err, errCancelled):
@@ -682,7 +696,7 @@ func newDesktopRemoveCmd() *cobra.Command {
 			if err != nil {
 				return desktopNotFound(err, args[0])
 			}
-			app := desktop.New()
+			app := newDesktopApp()
 			// Deleting a live Electron profile leaves the app writing into
 			// unlinked files, so close it first rather than racing it. An
 			// UNKNOWN state is treated as open: this deletes a logged-in
@@ -777,7 +791,7 @@ type desktopListJSON struct {
 }
 
 func printDesktopJSON(w interface{ Write([]byte) (int, error) }, _ *desktop.Store, all []desktop.Profile) error {
-	app := desktop.New()
+	app := newDesktopApp()
 	path, installed := app.Installed()
 	out := desktopListJSON{
 		Supported: desktop.Supported(),
@@ -916,7 +930,7 @@ func runDesktopUI(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	app := desktop.New()
+	app := newDesktopApp()
 	note := ""
 	for {
 		all, lerr := st.List()

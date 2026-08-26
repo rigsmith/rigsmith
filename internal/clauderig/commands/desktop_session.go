@@ -265,7 +265,7 @@ func rankByRecency(live map[string]string, idx session.Index) []sessionCandidate
 // of them — a search by project name silently missing most of its listing.
 func describe(cands []sessionCandidate, idx session.Index) []sessionCandidate {
 	for i := range cands {
-		m := idx[cands[i].ID]
+		m := idx[session.CanonicalID(cands[i].ID)]
 		cands[i].Title = titleFor(m, cands[i].Path)
 		cands[i].Cwd = cwdFor(m, cands[i].Path)
 	}
@@ -387,7 +387,7 @@ func recency(c sessionCandidate, idx session.Index) time.Time {
 	if a, ok := session.LastActivity(c.Path); ok && !a.At.IsZero() {
 		return a.At
 	}
-	if t := idx[c.ID].LastActivity; !t.IsZero() {
+	if t := idx[session.CanonicalID(c.ID)].LastActivity; !t.IsZero() {
 		return t
 	}
 	if fi, err := os.Stat(c.Path); err == nil {
