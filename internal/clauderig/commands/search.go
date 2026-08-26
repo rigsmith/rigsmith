@@ -95,6 +95,12 @@ func NewSearchCmd() *cobra.Command {
 				return fmt.Errorf("--until is before --since — nothing can match that window")
 			}
 			sc.cwd = strings.ToLower(strings.TrimSpace(cwdFilter))
+			// Trimmed here, once, so the raw/all guard and the resolver agree.
+			// resolveAccountFilter trims internally, so `--account "  "` used to
+			// resolve to nothing while the guard still saw a non-empty flag —
+			// grouped search then returned every session, unfiltered, with no
+			// sign the flag had been ignored.
+			accountFilter = strings.TrimSpace(accountFilter)
 			// The filters narrow SESSIONS — a date and a project directory are
 			// properties of a session, not of a grep line — so refuse rather than
 			// silently ignore them.

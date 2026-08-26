@@ -129,11 +129,15 @@ func AccountRank(source string) int {
 // routine sync — the exact relabelling Note() refuses to do locally.
 func bestAccount(a, b Entry) (account, source string, since time.Time) {
 	ra, rb := AccountRank(a.AccountSource), AccountRank(b.AccountSource)
+	// effectiveSince on the rank path too. A legacy row that wins on RANK still
+	// carries a zero stamp otherwise, and the merged row then falls back to its
+	// own newer Seen on the next merge — letting a third equal-rank row displace
+	// the attribution that was genuinely first.
 	if rb > ra {
-		return b.Account, b.AccountSource, b.AccountSince
+		return b.Account, b.AccountSource, effectiveSince(b)
 	}
 	if ra > rb {
-		return a.Account, a.AccountSource, a.AccountSince
+		return a.Account, a.AccountSource, effectiveSince(a)
 	}
 	// Equal rank: the earlier ATTRIBUTION wins. Tying on Seen instead would let
 	// a row whose transcript was merely re-synced displace the first
@@ -294,6 +298,25 @@ func (l *Ledger) Note(e Entry) bool {
 	}
 	e.RecordedBy = l.device
 	l.rows[e.ID] = e
+	l.dirty = true
+	return true
+}
+
+// Revoke clears a session's recorded attribution, reporting whether anything
+// changed.
+//
+// Ranked merging deliberately has no downgrade path — that is what makes
+// attribution sticky — so a session that BECOMES contested needs an explicit
+// way out. Without it, the ground truth recorded before the conflict keeps
+// filtering the session under an account that is now disputed, and the higher
+// rank guarantees no later answer can correct it.
+func (l *Ledger) Revoke(id string) bool {
+	e, ok := l.rows[id]
+	if !ok || (e.Account == "" && e.AccountSource == "") {
+		return false
+	}
+	e.Account, e.AccountSource, e.AccountSince = "", "", time.Time{}
+	l.rows[id] = e
 	l.dirty = true
 	return true
 }

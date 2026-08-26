@@ -3,7 +3,6 @@ package commands
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -54,9 +53,15 @@ func resolveAccountFilter(input string, stagingDir string, known map[string]ledg
 				candidates[c] = true
 			}
 		}
-		for _, uuid := range byEmail {
-			if c := canonicalUUID(uuid); c != "" {
-				candidates[c] = true
+		// EVERY registry uuid, not the de-duplicated byEmail map. An email
+		// shared by two accounts is dropped from byEmail on purpose — it cannot
+		// resolve — but dropping both uuids from PREFIX matching too left those
+		// accounts unreachable by any means when they exist only in the registry.
+		for _, uuids := range accountUUIDCandidates(stagingDir) {
+			for uuid := range uuids {
+				if c := canonicalUUID(uuid); c != "" {
+					candidates[c] = true
+				}
 			}
 		}
 		// Accounts this machine tracks, whether or not any device has synced
@@ -201,24 +206,10 @@ func knownAccountsHint(byEmail map[string]string, known map[string]ledger.Entry)
 	return "known: " + strings.Join(out, ", ")
 }
 
-// accountUUID is the canonical shape: 8-4-4-4-12 lowercase hex.
-var accountUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-
-// canonicalUUID lowercases a well-formed accountUuid and returns "" for
-// anything else.
-//
-// Two problems it settles at once. Comparisons were raw spelling, so the same
-// account written in different case counted as two — a session could be
-// attributed under one and unreachable by a filter naming the other. And a
-// malformed value was accepted as an account, making a corrupt record
-// selectable while the sessions it should match stayed hidden.
-func canonicalUUID(v string) string {
-	lower := strings.ToLower(strings.TrimSpace(v))
-	if !accountUUID.MatchString(lower) {
-		return ""
-	}
-	return lower
-}
+// canonicalUUID delegates to the account package, which owns the definition —
+// the same normalisation has to apply where uuids are STORED as where they are
+// compared, or one account becomes two.
+func canonicalUUID(v string) string { return account.CanonicalUUID(v) }
 
 func isHexPrefix(s string) bool {
 	for _, r := range s {

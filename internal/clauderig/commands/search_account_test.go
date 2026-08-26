@@ -247,3 +247,34 @@ func TestResolveAccountFilter_PrefixIsCaseInsensitiveOnBothSides(t *testing.T) {
 		t.Errorf("got %q/%v, want the canonical %q", got, err, full)
 	}
 }
+
+// An email shared by two accounts is dropped from byEmail on purpose — it
+// cannot resolve. Dropping both uuids from PREFIX matching too left those
+// accounts unreachable by any means when they exist only in the registry.
+func TestResolveAccountFilter_AmbiguousEmailStillResolvesByPrefix(t *testing.T) {
+	staging := t.TempDir()
+	reg, err := devices.Load(staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	a := "aaaaaaaa-1111-2222-3333-444444444444"
+	b := "bbbbbbbb-1111-2222-3333-444444444444"
+	reg.Touch("mbp", "macos", "2.1.237", &devices.Account{AccountUUID: a, Email: "same@example.com"}, now)
+	reg.Touch("air", "macos", "2.1.237", &devices.Account{AccountUUID: b, Email: "same@example.com"}, now)
+	if err := reg.Save(staging); err != nil {
+		t.Fatal(err)
+	}
+
+	// the email cannot resolve...
+	if _, err := resolveAccountFilter("same@example.com", staging, nil); err == nil {
+		t.Error("an ambiguous email must not resolve")
+	}
+	// ...but each account is still reachable by uuid prefix
+	for _, want := range []string{a, b} {
+		got, rerr := resolveAccountFilter(want[:8], staging, nil)
+		if rerr != nil || got != want {
+			t.Errorf("prefix %q = %q/%v, want %q", want[:8], got, rerr, want)
+		}
+	}
+}

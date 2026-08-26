@@ -31,7 +31,7 @@ func recordLedger(stagingDir, device, liveAccount string, mine map[string]bool) 
 	// opened it, so anything this covers needs no guessing. It covers only
 	// sessions opened through Desktop (3% of a real staged tree), which is why
 	// liveAccount exists as the fallback for the rest.
-	byDesktop := desktopSessionAccounts(stagingDir)
+	byDesktop, contested := desktopSessionAccounts(stagingDir)
 	// Judge "would this attribution improve things?" against EVERY device's
 	// ledger, not just this one's. Another machine may already hold Desktop
 	// ground truth for a session this machine only has a transcript for, and
@@ -63,9 +63,16 @@ func recordLedger(stagingDir, device, liveAccount string, mine map[string]bool) 
 				return nil
 			}
 			var acct, src string
-			// An empty value means conflicting sidecar claims, not "no sidecar":
-			// the session falls through to the inference below rather than
-			// taking an arbitrary winner as ground truth.
+			// A contested session is not merely unattributed: whatever was
+			// recorded before the conflict outranks every later answer, so it
+			// has to be revoked explicitly or it filters forever under an
+			// account that is now disputed.
+			if contested[id] {
+				if l.Revoke(id) {
+					added++
+				}
+				return nil
+			}
 			if a := byDesktop[id]; a != "" {
 				acct, src = a, ledger.AccountFromDesktop
 			} else if liveAccount != "" && mine[id] {

@@ -78,6 +78,12 @@ func NewSyncCmd() *cobra.Command {
 			// while the registry record that would have carried it was
 			// suppressed. Clearing all three keeps the two paths from
 			// disagreeing about what is safe to record.
+			// Canonicalised at the SOURCE. A whitespace-padded or non-uuid value
+			// was persisted verbatim as a sticky attribution, while the filter
+			// canonicalises its input — so the session stopped matching its own
+			// account, and a later correct attribution could not replace it
+			// because it carries the same rank.
+			liveAcct = account.CanonicalUUID(liveAcct)
 			if f := scanIdentity(&devices.Account{AccountUUID: liveAcct, OrganizationUUID: liveOrg, Email: liveEmail}); f != nil {
 				fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf(
 					"⚠ account identity not recorded: %s looks like %s — check what ~/.claude.json holds", f.Path, f.Kind)))

@@ -173,11 +173,11 @@ func pruneSidecarTree(root string, ids map[string]bool) (int, error) {
 // opposite of pruneOrphanedSidecars' fail-open rule, and deliberately so: that
 // pass DELETES on absence, so a partial view is dangerous, while this one only
 // ever adds an attribution, so a partial view merely attributes less.
-func desktopSessionAccounts(stagingDir string) map[string]string {
+func desktopSessionAccounts(stagingDir string) (accounts map[string]string, conflicted map[string]bool) {
 	out := map[string]string{}
 	entries, err := os.ReadDir(stagingDir)
 	if err != nil {
-		return out
+		return out, nil
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -192,7 +192,18 @@ func desktopSessionAccounts(stagingDir string) map[string]string {
 			readSidecarAccounts(tree, out)
 		}
 	}
-	return out
+	// Ambiguity reported APART from absence. Collapsing them let a session that
+	// later became contested keep the attribution recorded before the conflict:
+	// callers saw "" as "no sidecar", kept the existing higher-ranked desktop
+	// answer, and went on filtering it under an account that is now disputed.
+	conflicts := map[string]bool{}
+	for id, acct := range out {
+		if acct == "" {
+			conflicts[id] = true
+			delete(out, id)
+		}
+	}
+	return out, conflicts
 }
 
 // readSidecarAccounts adds one tree's <accountUuid>/<org>/local_*.json rows to

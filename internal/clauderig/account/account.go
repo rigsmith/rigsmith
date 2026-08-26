@@ -218,7 +218,7 @@ func (s *Store) CaptureLive(cred, oauth []byte) (Account, bool, error) {
 		Email:            email,
 		SubscriptionType: sub,
 		OrganizationUUID: org,
-		AccountUUID:      m.AccountUUID,
+		AccountUUID:      CanonicalUUID(m.AccountUUID),
 		AddedAt:          time.Now().UTC().Format(time.RFC3339),
 	}
 	// Re-capturing an existing account must not undo the user's own settings.
@@ -415,6 +415,25 @@ func (s *Store) read(id string) (Account, bool) {
 
 // Resolve finds an account by exact id or email, otherwise by a unique
 // case-insensitive substring of the email or id. Ambiguous matches error.
+// accountUUIDRe is the canonical accountUuid shape: 8-4-4-4-12 lowercase hex.
+var accountUUIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// CanonicalUUID lowercases a well-formed accountUuid and returns "" for
+// anything else.
+//
+// One definition, used everywhere an accountUuid enters or is compared. The
+// value is the join key between the ledger, the device registry and Desktop's
+// sidecar paths, so a source that stores it verbatim while a consumer
+// canonicalises makes the same account into two — and a malformed value stored
+// anywhere becomes a selectable account matching nothing.
+func CanonicalUUID(v string) string {
+	lower := strings.ToLower(strings.TrimSpace(v))
+	if !accountUUIDRe.MatchString(lower) {
+		return ""
+	}
+	return lower
+}
+
 // ErrNoAccounts and ErrNoSuchAccount are the two "nothing matched" outcomes of
 // Resolve — the only ones a caller may safely treat as a miss and fall back
 // from. Every other failure (ambiguity, an unreadable store) means the answer
