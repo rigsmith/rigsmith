@@ -135,8 +135,23 @@ func stackSetCursor(src *cfgfind.Source, m *stackManifest, prefix, sha string) e
 	return nil
 }
 
-// stackHTTPSURL turns a host/owner/name spec into a fetchable https URL.
-func stackHTTPSURL(spec string) string { return "https://" + spec + ".git" }
+// stackRemoteURL turns a host/owner/name spec into a fetchable URL. Loopback
+// hosts get http: a test server on 127.0.0.1 cannot hold a certificate anyone
+// would trust, and this is the only way the verbs are exercisable end to end
+// without a forge.
+func stackRemoteURL(spec string) string {
+	host, _, _ := strings.Cut(spec, "/")
+	return stackRemoteScheme(host) + spec + ".git"
+}
+
+// stackRemoteScheme is https everywhere but loopback.
+func stackRemoteScheme(host string) string {
+	h, _, _ := strings.Cut(host, ":")
+	if h == "127.0.0.1" || h == "localhost" || h == "::1" {
+		return "http://"
+	}
+	return "https://"
+}
 
 // stackSplitHost splits host/owner/name into the proxy's --remote host and the
 // owner/name path josh expects in the URL.

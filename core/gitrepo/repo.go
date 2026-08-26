@@ -180,7 +180,42 @@ func (r *Repo) Checkout(ctx context.Context, branch string, create bool) error {
 
 // Push pushes the current HEAD to remote's branch.
 func (r *Repo) Push(ctx context.Context, remote, branch string) error {
-	_, err := runGit(ctx, r.Dir, "push", remote, "HEAD:"+branch)
+	return r.PushWithOptions(ctx, remote, branch)
+}
+
+// PushWithOptions is Push, sending each opt as a push option (`git push -o`).
+// Servers that act on a push read them: josh, for one, refuses to create a ref
+// it has never seen unless the push says which ref to base it on.
+func (r *Repo) PushWithOptions(ctx context.Context, remote, branch string, opts ...string) error {
+	args := []string{"push"}
+	for _, o := range opts {
+		args = append(args, "-o", o)
+	}
+	args = append(args, remote, "HEAD:"+branch)
+	_, err := runGit(ctx, r.Dir, args...)
+	return err
+}
+
+// FetchObjects fetches a single commit from a URL into the local object store,
+// without touching any ref — enough to build on top of it.
+func (r *Repo) FetchObjects(ctx context.Context, url, commit string) error {
+	_, err := runGit(ctx, r.Dir, "fetch", "--no-tags", url, commit)
+	return err
+}
+
+// CommitTree writes a commit with the given tree and single parent, touching no
+// ref and no working tree. The caller decides where it goes.
+func (r *Repo) CommitTree(ctx context.Context, tree, parent, message string) (string, error) {
+	out, err := runGit(ctx, r.Dir, "commit-tree", tree, "-p", parent, "-m", message)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// PushRef pushes an arbitrary commit to a remote ref.
+func (r *Repo) PushRef(ctx context.Context, remote, commit, ref string) error {
+	_, err := runGit(ctx, r.Dir, "push", remote, commit+":"+ref)
 	return err
 }
 

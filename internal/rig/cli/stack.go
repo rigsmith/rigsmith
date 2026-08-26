@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cfgfind"
@@ -140,7 +141,7 @@ func newStackStatusCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			for _, name := range m.names() {
 				r := m.Repos[name]
-				tip, err := repo.LsRemote(ctx, stackHTTPSURL(r.Upstream), "refs/heads/"+m.branch(name))
+				tip, err := repo.LsRemote(ctx, stackRemoteURL(r.Upstream), "refs/heads/"+m.branch(name))
 				if err != nil {
 					fmt.Fprintf(out, "%-24s %s (upstream unreachable: %v)\n", name, short(m.cursor(name)), err)
 					continue
@@ -204,7 +205,7 @@ func newStackPullCmd() *cobra.Command {
 func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, bin string, src *cfgfind.Source, m *stackManifest, name string, initial bool) error {
 	r := m.Repos[name]
 	out := cmd.OutOrStdout()
-	tip, err := repo.LsRemote(ctx, stackHTTPSURL(r.Upstream), "refs/heads/"+m.branch(name))
+	tip, err := repo.LsRemote(ctx, stackRemoteURL(r.Upstream), "refs/heads/"+m.branch(name))
 	if err != nil {
 		return err
 	}
@@ -224,8 +225,13 @@ func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, b
 		verb = "imported"
 		msg = fmt.Sprintf("stack: import %s @ %s", name, short(tip))
 	}
-	conflicted, err := repo.FetchMergeUnrelated(ctx, proxy.url(path, tip, stackPrefixFilter(name)), m.branch(name), msg)
+	// The URL pins the upstream commit, and josh serves a pinned commit as HEAD
+	// rather than under its branch name.
+	conflicted, err := repo.FetchMergeUnrelated(ctx, proxy.url(path, tip, stackPrefixFilter(name)), "HEAD", msg)
 	if err != nil {
+		if tail := proxy.tail(15); tail != "" {
+			return fmt.Errorf("%w\n--- josh-proxy log:\n%s", err, tail)
+		}
 		return err
 	}
 	if conflicted {
@@ -248,14 +254,15 @@ func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, b
 }
 
 func newStackSendCmd() *cobra.Command {
+	var message string
 	cmd := &cobra.Command{
 		Use:   "send <repo> <branch>",
-		Short: "Extract a repo's workspace changes onto your fork as a PR-ready branch",
-		Long: "Pushes the current HEAD through josh's reverse filter at your fork: only\n" +
-			"the commits touching <repo>'s prefix arrive, re-rooted on upstream history\n" +
-			"with correct parents, as <branch> on the fork. PR from there as usual.\n\n" +
-			"The proxy fronts https, so pushing authenticates with your git credential\n" +
-			"helper (a GitHub PAT). SSH-only setups: see docs/STACK-DESIGN.md.",
+		Short: "Put a repo's workspace changes on your fork as a PR-ready branch",
+		Long: "Takes this workspace's version of <repo> and commits it on top of that\n" +
+			"project's upstream tip, as <branch> on your fork. The branch holds one\n" +
+			"commit whose diff is exactly what the workspace changed, with none of the\n" +
+			"workspace's own history: nothing upstream has to know this repo is fused\n" +
+			"with anything else. PR from there as usual.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -268,17 +275,47 @@ func newStackSendCmd() *cobra.Command {
 			if r == nil {
 				return fmt.Errorf("no stack repo %q (have: %s)", name, strings.Join(m.names(), ", "))
 			}
-			bin, err := stackEngine(ctx, m, cmd)
+			if dirty, err := repo.Dirty(ctx); err != nil {
+				return err
+			} else if dirty {
+				return fmt.Errorf("workspace has uncommitted changes — commit them before sending")
+			}
+
+			// The prefix directory is this project as the workspace has it, and
+			// it is already free of the prefix inside: it is the tree upstream
+			// wants, needing no filter to extract.
+			tree, err := repo.RevParse(ctx, "HEAD:"+name)
+			if err != nil {
+				return fmt.Errorf("%s is not a directory in this workspace: %w", name, err)
+			}
+
+			// Root it on the upstream tip so the branch's one commit shows only
+			// what changed, and so it merges without the fork's history.
+			upstreamURL := stackRemoteURL(r.Upstream)
+			tip, err := repo.LsRemote(ctx, upstreamURL, "refs/heads/"+m.branch(name))
 			if err != nil {
 				return err
 			}
-			host, path := stackSplitHost(r.Fork)
-			proxy, err := startJoshProxy(ctx, bin, host)
+			if err := repo.FetchObjects(ctx, upstreamURL, tip); err != nil {
+				return err
+			}
+			if tree == "" {
+				return fmt.Errorf("%s has no content at HEAD", name)
+			}
+
+			if message == "" {
+				message = fmt.Sprintf("Changes to %s from the %s workspace", name, filepath.Base(repo.Dir))
+			}
+			commit, err := repo.CommitTree(ctx, tree, tip, message)
 			if err != nil {
 				return err
 			}
-			defer proxy.stop()
-			if err := repo.Push(ctx, proxy.url(path, "", stackPrefixFilter(name)), "refs/heads/"+branch); err != nil {
+			if commit == tip {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to send — it matches upstream\n", name)
+				return nil
+			}
+
+			if err := repo.PushRef(ctx, stackRemoteURL(r.Fork), commit, "refs/heads/"+branch); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "sent %s to %s:%s — open the PR against %s\n",
@@ -286,6 +323,7 @@ func newStackSendCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVarP(&message, "message", "m", "", "commit message for the branch")
 	return cmd
 }
 

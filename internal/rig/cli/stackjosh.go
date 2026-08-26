@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -202,6 +203,7 @@ type joshProxy struct {
 	cmd    *exec.Cmd
 	port   int
 	host   string
+	log    string        // where the engine's own output went, for diagnosing failures
 	exited chan struct{} // closed once the process has been reaped (exactly one Wait)
 }
 
@@ -217,21 +219,31 @@ func startJoshProxy(ctx context.Context, bin, host string) (*joshProxy, error) {
 	if err != nil {
 		return nil, err
 	}
-	local := filepath.Join(cache, "rigsmith", "josh", host)
+	// git writes this path into .git/objects/info/alternates, where a colon
+	// separates entries: a host carrying a port would be split in half and the
+	// fetch would fail claiming the repository is corrupt.
+	local := filepath.Join(cache, "rigsmith", "josh", strings.ReplaceAll(host, ":", "_"))
 	if err := os.MkdirAll(local, 0o755); err != nil {
 		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, bin,
 		"--local", local,
-		"--remote", "https://"+host,
+		"--remote", stackRemoteScheme(host)+host,
 		fmt.Sprintf("--port=%d", port),
 		"--no-background")
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	// Keep the engine's output: when a filter or fetch fails, its log is the
+	// only place that says why, and discarding it leaves the caller guessing.
+	logFile, err := os.CreateTemp("", "josh-proxy-*.log")
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
+		logFile.Close()
 		return nil, fmt.Errorf("starting josh-proxy: %w", err)
 	}
-	p := &joshProxy{cmd: cmd, port: port, host: host, exited: make(chan struct{})}
+	p := &joshProxy{cmd: cmd, port: port, host: host, log: logFile.Name(), exited: make(chan struct{})}
 	go func() { _ = cmd.Wait(); close(p.exited) }() // sole reaper; stop() only observes
 	// Poll until the port answers. Budget is generous — a cold proxy opening a
 	// large --local cache is slower than josh-sync's 1s assumption.
@@ -279,6 +291,19 @@ func (p *joshProxy) url(repoPath, commit, filter string) string {
 		at = "@" + commit
 	}
 	return fmt.Sprintf("http://127.0.0.1:%d/%s.git%s%s.git", p.port, repoPath, at, url.QueryEscape(filter))
+}
+
+// tail returns the last lines of the engine's log, for attaching to an error.
+func (p *joshProxy) tail(lines int) string {
+	data, err := os.ReadFile(p.log)
+	if err != nil {
+		return ""
+	}
+	all := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(all) > lines {
+		all = all[len(all)-lines:]
+	}
+	return strings.Join(all, "\n")
 }
 
 // stackPrefixFilter is the josh filter that maps a whole upstream repo under a
