@@ -3,6 +3,7 @@ package account
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -153,6 +154,18 @@ func parseOAuthMeta(raw []byte) oauthMeta {
 	return m
 }
 
+// parseOAuthMetaStrict is parseOAuthMeta for callers that must not act on a
+// half-read block. The lenient form exists for diagnostics, where showing what
+// could be read beats showing nothing; identity that gets WRITTEN somewhere
+// needs the opposite answer.
+func parseOAuthMetaStrict(raw []byte) (oauthMeta, error) {
+	var m oauthMeta
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return oauthMeta{}, fmt.Errorf("parse oauthAccount: %w", err)
+	}
+	return m, nil
+}
+
 // maxLinkHops bounds the walk so a symlink cycle cannot spin forever.
 const maxLinkHops = 32
 
@@ -184,4 +197,40 @@ func resolveLinkTarget(path string) string {
 		path = filepath.Clean(target)
 	}
 	return path // cycle: write where we ended up rather than loop
+}
+
+// GlobalConfigPath is ~/.claude.json — where Claude Code keeps the oauthAccount
+// block. Exported for callers that must act on the file itself (the pre-restore
+// backup), not just its contents.
+func GlobalConfigPath() (string, error) { return globalConfigPath() }
+
+// LiveIdentity reports which account ~/.claude.json currently names: the account
+// uuid, its organization uuid, and the email address.
+//
+// Identity ONLY. Never the credential, the plan, the rate-limit tier, or
+// anything else in the block — this is the slice that is safe to write into the
+// synced repo, where it becomes the sole record of which account a machine's
+// sessions were captured under. All three come back empty when Claude Code has
+// never logged in here (file or key absent), which is not an error.
+func LiveIdentity() (accountUUID, orgUUID, email string, err error) {
+	p, err := globalConfigPath()
+	if err != nil {
+		return "", "", "", err
+	}
+	return identityFromFile(p)
+}
+
+func identityFromFile(path string) (accountUUID, orgUUID, email string, err error) {
+	raw, err := readOAuthAccountFrom(path)
+	if err != nil || len(raw) == 0 {
+		return "", "", "", err
+	}
+	// Strict. A malformed block previously yielded whatever fields happened to
+	// decode before the error, and the caller — which writes those values into
+	// a synced registry — had no way to tell that from a real identity.
+	m, perr := parseOAuthMetaStrict(raw)
+	if perr != nil {
+		return "", "", "", perr
+	}
+	return m.AccountUUID, m.OrganizationUUID, m.EmailAddress, nil
 }

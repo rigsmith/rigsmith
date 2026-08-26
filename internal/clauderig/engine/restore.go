@@ -23,7 +23,12 @@ type RestoreRootResult struct {
 	Files          int
 	SlugsRewritten int
 	Links          int // shared-memory symlinks recreated from the manifest
-	Pruned         int // files removed as deleted-upstream (--prune)
+	// LinksKept counts staged files NOT written because a symlink at or above
+	// the destination holds that path. Reported in the summary rather than
+	// folded into Files: "✓ restored" over a silently unwritten file is the
+	// kind of quiet success this whole path exists to avoid.
+	LinksKept int
+	Pruned    int // files removed as deleted-upstream (--prune)
 	// DesktopSessions counts Claude Desktop Code-session sidecars written this
 	// restore (claude-code-sessions/**/local_*.json). Desktop only rebuilds its
 	// Code-tab list from these on startup, so the command layer uses this to nudge
@@ -43,7 +48,11 @@ func (r *RestoreReport) DesktopSessions() int {
 }
 
 // isDesktopSessionSidecar reports whether a restored (slash) rel path is a
-// Desktop Code-session sidecar: claude-code-sessions/<org>/<user>/local_<id>.json.
+// Desktop Code-session sidecar:
+// claude-code-sessions/<accountUuid>/<organizationUuid>/local_<id>.json. Those
+// two uuids are the account's, straight from ~/.claude.json's oauthAccount — so
+// this tree is already partitioned per account, which is what devices.Account
+// records for the CLI side, where nothing else does.
 // The local_<id>.json shape is matched on the basename so a directory like
 // claude-code-sessions/org/local_cache/other.json isn't miscounted as a session.
 func isDesktopSessionSidecar(rel string) bool {
@@ -119,6 +128,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 		}
 		rewritten := map[string]bool{}
 		written := map[string]bool{}
+		links := linkCache{}
 		pm := permFor(r.ID)
 
 		files, err := listFiles(stageRoot)
@@ -136,6 +146,23 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			}
 			src := filepath.Join(stageRoot, filepath.FromSlash(rel))
 			dst := filepath.Join(target, filepath.FromSlash(targetRel))
+
+			// A symlink at or above dst is this machine's own state — nearly always
+			// one of the shared-memory links restoreLinks recreates. Every write
+			// below follows a symlink, so restoring a staged file over one would
+			// silently clobber the link's target, or fail outright with EISDIR when
+			// the link points at a directory. Leave it alone (and count it as
+			// written so --prune doesn't collect it).
+			//
+			// Ancestors matter as much as the leaf: another machine holding this
+			// project as a real directory stages projects/<slug>/memory/MEMORY.md,
+			// and writing that descendant here follows the linked memory/ straight
+			// into the canonical project.
+			if isSymlink(dst) || links.underSymlink(target, dst) {
+				written[targetRel] = true
+				rr.LinksKept++
+				continue
+			}
 
 			if strings.HasSuffix(rel, ".json") {
 				if err := restoreJSON(src, dst, opts.Machine.Resolver(), pm); err != nil {
@@ -173,9 +200,10 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 // nothing occupies the link path — an existing file, dir, or link is the
 // machine's own state and is left alone. A failed creation (e.g. symlinks
 // unavailable on the platform) skips that link, never the restore.
-func restoreLinks(target string, links map[string]string, slugMap map[string]string) int {
+func restoreLinks(target string, manifestLinks map[string]string, slugMap map[string]string) int {
+	links := linkCache{}
 	n := 0
-	for rel, tgtRel := range links {
+	for rel, tgtRel := range manifestLinks {
 		rel, _, _ = rewriteProjectRel(rel, slugMap)
 		tgtRel, _, _ = rewriteProjectRel(tgtRel, slugMap)
 		linkPath := filepath.Join(target, filepath.FromSlash(rel))
@@ -184,6 +212,13 @@ func restoreLinks(target string, links map[string]string, slugMap map[string]str
 			continue // target absent on this machine — nothing to point at
 		}
 		if _, err := os.Lstat(linkPath); err == nil {
+			continue
+		}
+		// The same ancestor rule the write loop applies. Checking only the leaf
+		// lets MkdirAll and Symlink follow a linked ancestor and create the link
+		// OUTSIDE the restore target — writing into a directory the user never
+		// pointed restore at.
+		if links.underSymlink(target, linkPath) {
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
@@ -208,6 +243,14 @@ func pruneConfigDirs(target string, written map[string]bool) (int, error) {
 		}
 		err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
+				return nil
+			}
+			// Never delete a symlink. It is the machine's own state — the same
+			// rule the restore loop applies when it declines to write through
+			// one — and a link is recorded in `written` only under the
+			// DESCENDANT path that was skipped, so judging the link itself by
+			// that map would collect it every time.
+			if d.Type()&fs.ModeSymlink != 0 {
 				return nil
 			}
 			rel, rerr := filepath.Rel(target, p)
@@ -314,6 +357,38 @@ func listFiles(root string) ([]string, error) {
 		return nil
 	})
 	return out, err
+}
+
+// linkCache remembers which destination directories sit on or under a symlink,
+// so the ancestor walk costs one Lstat per directory across the whole restore
+// rather than one per path component per file.
+type linkCache map[string]bool
+
+// underSymlink reports whether any ancestor of dst, up to and excluding root, is
+// a symlink. root itself is never judged: the target directory is where the user
+// pointed restore, and following it is the whole intent.
+func (c linkCache) underSymlink(root, dst string) bool {
+	dir := filepath.Dir(dst)
+	if v, ok := c[dir]; ok {
+		return v
+	}
+	rel, err := filepath.Rel(root, dir)
+	// Only ".." itself, or a path BELOW it, is outside the root. A bare prefix
+	// test would also catch a real directory named "..memory" — Rel returns that
+	// name unchanged — and skip the very symlink check this exists to perform.
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false // at or outside the root — nothing left to walk
+	}
+	res := isSymlink(dir) || c.underSymlink(root, dir)
+	c[dir] = res
+	return res
+}
+
+// isSymlink reports whether p is a symlink, without following it. A missing path
+// is not a symlink, so a fresh machine takes the ordinary write path.
+func isSymlink(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.Mode()&fs.ModeSymlink != 0
 }
 
 func copyFile(src, dst string, pm perm) error {
