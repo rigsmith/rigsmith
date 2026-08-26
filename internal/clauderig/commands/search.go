@@ -242,9 +242,8 @@ func (r *sessResult) record(m search.Match) bool {
 	return true
 }
 
-// activity reads (once) what the transcript itself says about the session. A
-// session with no transcript here, or one too damaged to parse, yields the zero
-// Activity — callers fall back rather than treating that as an error.
+// activity caches the one tail read three callers want pieces of. A missing or
+// unparseable transcript yields the zero Activity rather than an error.
 func (r *sessResult) activity() session.Activity {
 	if !r.actTried && r.path != "" {
 		r.actTried = true
@@ -253,18 +252,10 @@ func (r *sessResult) activity() session.Activity {
 	return r.act
 }
 
-// sessionTime is the session's recency, in descending order of trust: the
-// transcript's own last record timestamp, then the Desktop sidecar's
-// lastActivity, then the file's mtime, then zero.
-//
-// The transcript leads because it is the only one of the three that a copy
-// cannot move. Both of the others are derived from the file rather than from the
-// conversation — a restore, a git checkout of the synced repo, or any tool that
-// walks the tree rewrites mtime, and the sidecar is rebuilt from those same
-// files — so on a machine that has ever restored, they report the restore and
-// not the session. The sidecar remains ahead of mtime for the case the
-// transcript cannot answer at all (aged out, unreadable), where it is at least
-// derived from something that once knew.
+// sessionTime ranks three answers by trust: the transcript's own last record,
+// then the Desktop sidecar, then mtime. The transcript leads because it is the
+// only one a copy cannot move; the sidecar still beats mtime for a transcript
+// that cannot answer at all.
 func sessionTime(r *sessResult) time.Time {
 	if a := r.activity(); !a.At.IsZero() {
 		return a.At
@@ -503,9 +494,7 @@ func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machin
 }
 
 // renderSessionAs is renderSession with the match explanation supplied by the
-// caller. An empty why omits that column entirely, which is what a listing wants:
-// `recent` ran no query, so "title match" there would be answering a question
-// nobody asked.
+// caller. An empty why omits that column, for a listing that ran no query.
 func renderSessionAs(out interface{ Write([]byte) (int, error) }, me config.Machine, r *sessResult, why string) {
 	title := r.meta.Title
 	if title == "" && r.path != "" {
@@ -562,11 +551,8 @@ func resumeHint(r *sessResult, cwd string) string {
 	case r.cliLive:
 		return "resume: claude --resume " + shQuote(r.id)
 	case r.meta.Profile != "":
-		// A Desktop profile is a separate install AND a separate login, and Claude
-		// Desktop lists only the sessions filed under the account it is signed in
-		// as — measured: a profile holding 25 sidecars from the other account shows
-		// 3. So this session will never appear in any Desktop but its own, however
-		// long you look. Name the one to open.
+		// Claude Desktop lists only sessions filed under the account it is signed
+		// in as, so this one will never appear in any install but its own.
 		return "Desktop session in the " + r.meta.Profile +
 			" profile — no other Desktop will list it: clauderig desktop open " + shQuote(r.meta.Profile)
 	case r.hitTargets[desktopTarget]:
@@ -713,22 +699,19 @@ func sourceLabel(r *sessResult) string {
 	return strings.Join(labels, "+")
 }
 
-// clientLabel renders a transcript's entrypoint as the app a person would name:
-// vscode, desktop, cli, sdk-cs. Only the "claude-" prefix is stripped — the sdk-*
-// variants keep their language, because "an SDK run" and "an SDK run from C#" are
-// different enough to be worth telling apart when you are hunting a session.
+// clientLabel renders an entrypoint as the app a person would name: vscode,
+// desktop, cli, sdk-cs. The sdk-* variants keep their language, which is worth
+// telling apart when hunting a session.
 //
-// Note this is a different question from sourceLabel's, and the two share the
-// word "desktop": sourceLabel says which STORE a transcript was found in, this
-// says which CLIENT wrote it. A session run in Claude Desktop and a session run
-// in VS Code both land in ~/.claude/projects, so the store cannot answer it.
+// Distinct from sourceLabel despite both saying "desktop": that reports which
+// STORE a transcript was found in, this which CLIENT wrote it.
 func clientLabel(entrypoint string) string {
 	return strings.TrimPrefix(entrypoint, "claude-")
 }
 
-// profileByAccount maps accountUuid → Desktop profile name, via the clauderig
-// account each profile is linked to. Empty when nothing can be resolved, which
-// leaves every session on its fallback rather than mislabelling any.
+// profileByAccount maps accountUuid to Desktop profile name via the clauderig
+// account each profile is linked to. Empty when nothing resolves, which leaves
+// sessions on their fallback rather than mislabelling them.
 func profileByAccount() map[string]string {
 	st, err := desktop.DefaultStore()
 	if err != nil {
@@ -750,12 +733,9 @@ func profileByAccount() map[string]string {
 	for _, a := range accounts {
 		uuid := strings.ToLower(a.AccountUUID)
 		if uuid == "" {
-			// meta.json records the uuid only for accounts captured after that
-			// field existed; the stored oauthAccount block has always carried it.
-			// Without this fallback every pre-existing account resolves to nothing
-			// and the whole map comes back empty — which does not fail loudly, it
-			// just quietly reverts to labelling sessions by whichever tree a copy
-			// of the sidecar turned up in.
+			// meta.json carries the uuid only for accounts captured after that
+			// field existed. Without this fallback the map comes back empty for
+			// older accounts, and does so silently.
 			if raw, oerr := as.OAuth(a.ID); oerr == nil {
 				uuid = account.ProfileAccountUUID(raw)
 			}
@@ -767,8 +747,7 @@ func profileByAccount() map[string]string {
 	out := map[string]string{}
 	for _, p := range profiles {
 		if uuid := uuidByID[p.AccountID]; uuid != "" {
-			// Two profiles claiming one account would make the label a coin flip;
-			// drop both rather than pick.
+			// Two profiles on one account would make the label a coin flip.
 			if prev, dup := out[uuid]; dup && prev != p.Name {
 				out[uuid] = ""
 				continue
@@ -779,19 +758,10 @@ func profileByAccount() map[string]string {
 	return out
 }
 
-// reprofile corrects each session's owning Desktop profile from the account its
-// sidecar is filed under, rather than from whichever profile's tree the file
-// happened to be found in.
-//
-// Those differ more often than they should: a sidecar copied between installs
-// keeps its account path but lands in the other profile's directory, and on one
-// real machine every one of 25 such copies sat in the wrong tree. Reading the
-// account makes the label immune to the strays — and means nobody has to go
-// delete them to get a truthful listing.
-//
-// Falls back to the tree when the account resolves to no profile: a session
-// belonging to an account with no Desktop profile of its own (the machine-wide
-// install) must keep reporting no profile, not borrow one.
+// reprofile takes each session's owning profile from the account its sidecar is
+// filed under rather than from the tree it was found in. A sidecar copied
+// between installs keeps its account path but lands in the other profile's
+// directory, so the tree is not ownership.
 func reprofile(idx session.Index, byAccount map[string]string) {
 	if len(byAccount) == 0 {
 		return
@@ -802,8 +772,8 @@ func reprofile(idx session.Index, byAccount map[string]string) {
 		}
 		name, known := byAccount[strings.ToLower(m.Account)]
 		if !known {
-			// An account with no profile is the machine-wide install's; a tree
-			// label here would be a stray copy's, which is exactly the lie.
+			// An account with no profile is the machine-wide install's, so any
+			// tree label here belongs to a stray copy.
 			m.Profile = ""
 			idx[id] = m
 			continue
@@ -815,22 +785,18 @@ func reprofile(idx session.Index, byAccount map[string]string) {
 	}
 }
 
-// clientWithProfile is clientLabel qualified by the Desktop profile that owns the
-// session, when there is one: "desktop@work" rather than a bare "desktop".
-//
-// Unqualified "desktop" is the answer that sent this session's owner looking in
-// the wrong app: three Desktop installs on one machine — the machine-wide one and
-// two clauderig profiles — all write entrypoint "claude-desktop", so the
-// entrypoint alone narrows nothing. The profile comes from which sidecar tree the
-// session was found in, which is the only place the distinction is recorded.
+// clientWithProfile qualifies the client with the Desktop profile that owns the
+// session: "desktop@work" rather than a bare "desktop". Several Desktop installs
+// can share a machine and all write entrypoint "claude-desktop", so the
+// entrypoint alone does not say which app to open.
 func clientWithProfile(r *sessResult) string {
 	c := clientLabel(r.activity().Entrypoint)
 	if r.meta.Profile == "" {
 		return c
 	}
 	if c == "" {
-		// No entrypoint to read (a transcript we could not parse), but the sidecar
-		// still says which Desktop filed it — which is the useful half anyway.
+		// No readable transcript, but the sidecar still says which Desktop filed
+		// it — the useful half.
 		return desktopTarget + "@" + r.meta.Profile
 	}
 	return c + "@" + r.meta.Profile
@@ -907,18 +873,13 @@ func buildTargets(cfg *config.Config, me config.Machine, liveOnly, repoOnly bool
 	return targets
 }
 
-// sessionRoots is where session.Build looks for Desktop sidecars: the live
-// Desktop dirs and/or the synced repo's desktop trees, matching the search scope.
+// sessionRoots is where session.Build looks for Desktop sidecars.
 //
-// "Dirs" plural is the point. Every clauderig-managed Desktop profile is a
-// separate Claude Desktop install with its own login and its own session list,
-// kept under ~/.clauderig/desktop/<name>/data; only the machine-wide install lives
-// at the configured `desktop` root. Scanning just that one leaves every session
-// run in a profile with no title, no model, and nothing to say which of your
-// Desktop installs to reopen it in — while its transcript sits in the shared
-// ~/.claude/projects tree looking exactly like all the others. sync already stages
-// each profile separately (as desktop@<name>), so the synced side is enumerated
-// the same way, which also picks up profiles that only exist on another machine.
+// Plural because every clauderig-managed Desktop profile is a separate install
+// with its own session list; only the machine-wide one lives at the configured
+// `desktop` root. Scanning that alone leaves profile-run sessions with no title
+// and no way to tell which install owns them. The staged side is enumerated the
+// same way, so profiles that exist only on another machine are covered too.
 func sessionRoots(cfg *config.Config, me config.Machine, liveOnly, repoOnly bool) []session.Root {
 	var roots []session.Root
 	if !repoOnly {
@@ -936,10 +897,9 @@ func sessionRoots(cfg *config.Config, me config.Machine, liveOnly, repoOnly bool
 	if !liveOnly {
 		if staging, err := config.StagingDir(); err == nil {
 			roots = append(roots, session.Root{Label: repoTarget, Base: filepath.Join(staging, "desktop")})
-			// engine.StagedProfileNames, not a local scan: it is what `restore`
-			// reads to decide which profiles to write, it validates the name
-			// before it becomes a path, and having two definitions of "which
-			// profiles are staged" is how they drift apart.
+			// Shared with `restore` rather than re-scanned here: one definition
+			// of which profiles are staged, and it validates the name before it
+			// becomes a path.
 			for _, name := range engine.StagedProfileNames(staging) {
 				roots = append(roots, session.Root{
 					Label: repoTarget, Base: engine.StagedProfileDataDir(staging, name), Profile: name})

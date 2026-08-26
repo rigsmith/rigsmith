@@ -12,9 +12,8 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
 )
 
-// recentFixture writes a transcript for id whose records end at contentAt, then
-// forces its mtime to mtime — the two disagreeing is the normal state of a store
-// that has ever been restored or synced, not an edge case.
+// recentFixture makes a transcript's records and its mtime disagree, which is the
+// normal state of a store that has ever been restored or synced.
 func recentFixture(t *testing.T, live, id, slug, body string, mtime time.Time) {
 	t.Helper()
 	rel := "projects/" + slug + "/" + id + ".jsonl"
@@ -57,15 +56,15 @@ func runRecent(t *testing.T, live string, sc sessionScope, limit int, long bool)
 	return stripANSI(out.String())
 }
 
-// The core regression. Ordering follows the conversation, not the file: a chat
-// finished days ago but copied a minute ago must NOT outrank one finished today.
+// A chat finished days ago but copied a minute ago must not outrank one finished
+// today.
 func TestRecent_OrdersByContentNotMtime(t *testing.T) {
 	live := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
-	// "restored" ended a week ago but was touched most recently of all.
+	// Ended a week ago, touched most recently of all.
 	recentFixture(t, live, "sessold", "-a", record("2026-08-19T09:00:00Z", "/a", "main", "old work"),
 		now.Add(-time.Minute))
-	// "real" ended an hour ago and has not been touched since.
+	// Ended an hour ago, untouched since.
 	recentFixture(t, live, "sessnew", "-b", record("2026-08-26T11:00:00Z", "/b", "main", "todays work"),
 		now.Add(-time.Hour))
 
@@ -80,13 +79,12 @@ func TestRecent_OrdersByContentNotMtime(t *testing.T) {
 	}
 }
 
-// The bug that started this: a bulk touch (a restore, a repo checkout) re-dates
-// hundreds of old chats to the same minute, and a 24-hour window then shows all of
-// them. The window is judged on the record timestamps, so it does not.
+// A bulk touch re-dates hundreds of old chats to one minute. The window is judged
+// on record timestamps, so they stay out of it.
 func TestRecent_WindowIgnoresBulkTouch(t *testing.T) {
 	live := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
-	touched := now.Add(-30 * time.Minute) // all "restored" in the same minute
+	touched := now.Add(-30 * time.Minute) // all restored in the same minute
 	for _, id := range []string{"stale1", "stale2", "stale3"} {
 		recentFixture(t, live, id, "-old", record("2026-07-04T09:00:00Z", "/old", "main", "july work"), touched)
 	}
@@ -107,8 +105,7 @@ func TestRecent_WindowIgnoresBulkTouch(t *testing.T) {
 	}
 }
 
-// The mtime prefilter is an optimisation, and an optimisation that hides results
-// is a bug. A session inside the window whose mtime matches its content survives.
+// The mtime prefilter is an optimisation; one that hides results is a bug.
 func TestRecent_PrefilterKeepsUntouchedSession(t *testing.T) {
 	live := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
@@ -121,9 +118,8 @@ func TestRecent_PrefilterKeepsUntouchedSession(t *testing.T) {
 	}
 }
 
-// A file with no timestamped record cannot be dated honestly. It is still listed —
-// dropping it would answer "that chat isn't here" — but marked, and the footer
-// says why, so its date is never mistaken for the conversation's.
+// A file with no timestamped record is still listed — dropping it would answer
+// "that chat isn't here" — but marked, so its date is not mistaken for real.
 func TestRecent_MarksUndatableSessions(t *testing.T) {
 	live := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
@@ -142,8 +138,7 @@ func TestRecent_MarksUndatableSessions(t *testing.T) {
 	}
 }
 
-// "HEAD" is what a detached checkout or a cwd outside any repo records. It names
-// nothing, so it must not take the branch column.
+// "HEAD" names nothing, so it must not take the branch column.
 func TestRecent_SuppressesDetachedHead(t *testing.T) {
 	live := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
@@ -159,7 +154,7 @@ func TestRecent_SuppressesDetachedHead(t *testing.T) {
 	}
 }
 
-// Truncation is only acceptable when it announces itself.
+// Truncation must announce itself.
 func TestRecent_LimitNamesWhatItDropped(t *testing.T) {
 	live := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
@@ -176,8 +171,8 @@ func TestRecent_LimitNamesWhatItDropped(t *testing.T) {
 	}
 }
 
-// --long is what turns a listing into an action, so it must carry a runnable
-// resume command rather than the shortened id the compact view shows.
+// --long turns a listing into an action, so it needs a runnable command rather
+// than the compact view's shortened id.
 func TestRecent_LongGivesResumeCommand(t *testing.T) {
 	live := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
@@ -189,7 +184,7 @@ func TestRecent_LongGivesResumeCommand(t *testing.T) {
 	}
 }
 
-// An empty window says so plainly instead of printing a bare, ambiguous nothing.
+// An empty window says so instead of printing an ambiguous nothing.
 func TestRecent_EmptyWindowExplainsItself(t *testing.T) {
 	live := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
@@ -204,9 +199,8 @@ func TestRecent_EmptyWindowExplainsItself(t *testing.T) {
 	}
 }
 
-// Every client writes into the same ~/.claude/projects tree, so which app ran a
-// session is knowable only from the records. Without it a listing cannot tell you
-// where to go to reopen the thing you just found.
+// Every client writes into the same tree, so which app ran a session is knowable
+// only from the records.
 func TestRecent_ShowsClientThatRanIt(t *testing.T) {
 	live := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
@@ -223,19 +217,17 @@ func TestRecent_ShowsClientThatRanIt(t *testing.T) {
 			t.Errorf("client %q not shown:\n%s", want, got)
 		}
 	}
-	// The "claude-" prefix is Claude Code's internal spelling, not a name anyone
-	// uses for the app.
+	// "claude-" is the internal spelling, not a name anyone uses.
 	if strings.Contains(got, "claude-vscode") {
 		t.Errorf("entrypoint shown raw instead of as an app name:\n%s", got)
 	}
-	// --long carries it too, so the detailed view is not a step backwards.
+	// --long must carry it too.
 	if long := runRecent(t, live, sessionScope{now: now}, 0, true); !strings.Contains(long, "vscode") {
 		t.Errorf("--long should name the client:\n%s", long)
 	}
 }
 
-// A term narrows the window instead of ranking the whole store, and it searches
-// what was SAID, not just titles — the word you remember is usually mid-chat.
+// A term narrows the window and searches what was said, not just titles.
 func TestRecent_QueryNarrowsWindow(t *testing.T) {
 	live := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
@@ -256,13 +248,11 @@ func TestRecent_QueryNarrowsWindow(t *testing.T) {
 	}
 }
 
-// Time order is what separates this from `search`; a query must not resort by
-// relevance.
+// Time order is what separates this from `search`.
 func TestRecent_QueryKeepsTimeOrder(t *testing.T) {
 	live := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
-	// The older session mentions "deploy" three times, the newer one once. Ranked
-	// by relevance the older would lead; by time the newer must.
+	// Ranked by relevance the older would lead; by time the newer must.
 	recentFixture(t, live, "sessold", "-o",
 		record("2026-08-26T09:00:00Z", "/o", "main", "deploy deploy deploy"), now)
 	recentFixture(t, live, "sessnew", "-n",
@@ -274,8 +264,7 @@ func TestRecent_QueryKeepsTimeOrder(t *testing.T) {
 	}
 }
 
-// A query that finds nothing has to distinguish itself from an empty window, and
-// point at the tool that searches wider.
+// A query finding nothing must distinguish itself from an empty window.
 func TestRecent_QueryNoMatchExplains(t *testing.T) {
 	live := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)

@@ -156,13 +156,10 @@ func StagedProfileNames(stagingDir string) []string {
 	return names
 }
 
-// StagedProfileDataDir is where a staged profile's Desktop tree actually starts.
-//
-// A profile root is staged as desktop@<name>/ holding the profile's own
-// metadata beside a data/ directory — the same shape as the live profile, whose
-// Desktop tree is likewise <profile>/data. Readers that want claude-code-sessions
-// must therefore descend that one level; pointing at desktop@<name> itself finds
-// nothing, silently.
+// StagedProfileDataDir is where a staged profile's Desktop tree starts: the
+// profile's own metadata sits beside a data/ directory, mirroring the live
+// layout. Readers must descend that level — pointing at desktop@<name> itself
+// finds nothing, silently.
 func StagedProfileDataDir(stagingDir, name string) string {
 	return filepath.Join(stagingDir, profileRootPrefix+name, "data")
 }

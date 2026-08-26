@@ -30,10 +30,8 @@ func writeSidecarAt(t *testing.T, base, acct, cliID, title string, lastActivity 
 	}
 }
 
-// A machine can carry several Claude Desktop installs. Reading only the
-// machine-wide one leaves every session run in a profile with no title and
-// nothing to say which app owns it — while its transcript sits in the shared
-// projects tree looking like all the others.
+// Reading only the machine-wide install leaves profile-run sessions with no
+// title and nothing to say which app owns them.
 func TestSessionIndex_ReadsEveryDesktopProfile(t *testing.T) {
 	wide, profA, profB := t.TempDir(), t.TempDir(), t.TempDir()
 	writeSidecar(t, wide, "acct1", "sess-wide", "Machine-wide session")
@@ -66,9 +64,8 @@ func TestSessionIndex_ReadsEveryDesktopProfile(t *testing.T) {
 	}
 }
 
-// The same session staged in the synced repo AND live in a profile must keep the
-// profile: the merge rule picks the fresher sidecar for display fields, and the
-// repo copy carries no profile of its own.
+// The merge picks the fresher sidecar for display fields, and the repo copy
+// carries no profile of its own — the profile must still survive.
 func TestSessionIndex_ProfileSurvivesMerge(t *testing.T) {
 	live, repo := t.TempDir(), t.TempDir()
 	writeSidecar(t, live, "acct1", "sess-1", "Older title")
@@ -98,8 +95,8 @@ func TestSessionIndex_ProfileSurvivesMerge(t *testing.T) {
 	}
 }
 
-// The client label has to distinguish three Desktop installs that all report the
-// same entrypoint, or it sends you to the wrong app.
+// Several Desktop installs report the same entrypoint; the label must still
+// distinguish them.
 func TestClientWithProfile(t *testing.T) {
 	cases := []struct {
 		entrypoint, profile, want string
@@ -122,10 +119,8 @@ func TestClientWithProfile(t *testing.T) {
 	}
 }
 
-// A staged profile's Desktop tree sits one level down, under data/ — the same
-// shape as the live profile. Pointing a sidecar root at desktop@<name> itself
-// finds nothing and says nothing, which is exactly the silent miss this whole
-// change is about.
+// A staged profile's tree sits one level down, under data/. Pointing a root at
+// desktop@<name> itself finds nothing, silently.
 func TestStagedProfileRootsFindSidecars(t *testing.T) {
 	staging := t.TempDir()
 	for _, d := range []string{"desktop", "desktop@work", "cli", "index"} {
@@ -153,8 +148,7 @@ func TestStagedProfileRootsFindSidecars(t *testing.T) {
 	}
 }
 
-// The hint has to name the one Desktop that will actually list the session,
-// because no other one ever will.
+// The hint must name the one Desktop that will list the session.
 func TestResumeHint_NamesTheOwningProfile(t *testing.T) {
 	r := &sessResult{id: "s1"}
 	r.meta.Profile = "work"
@@ -165,8 +159,7 @@ func TestResumeHint_NamesTheOwningProfile(t *testing.T) {
 	if !strings.Contains(got, "clauderig desktop open work") {
 		t.Errorf("hint should give the command to open it: %q", got)
 	}
-	// A live CLI transcript still gets the runnable resume: the profile only
-	// decides where a DESKTOP-only session can be reopened.
+	// The profile only decides where a Desktop-only session can be reopened.
 	r2 := &sessResult{id: "s2", cliLive: true}
 	r2.meta.Profile = "work"
 	if got := resumeHint(r2, "/work"); !strings.Contains(got, "claude --resume s2") {
@@ -175,10 +168,8 @@ func TestResumeHint_NamesTheOwningProfile(t *testing.T) {
 }
 
 // The machine-wide install is usually the most recently touched, so it usually
-// WINS the fresher-sidecar rule — and it names no profile. Reading ownership off
-// the winner therefore loses the profile in the common case, which is how a
-// session that plainly belongs to one Desktop ends up labelled as belonging to
-// none.
+// wins the fresher-sidecar rule while naming no profile. Reading ownership off
+// the winner would lose the profile in the common case.
 func TestSessionIndex_ProfileSurvivesFresherMachineWideCopy(t *testing.T) {
 	wide, prof := t.TempDir(), t.TempDir()
 	writeSidecarAt(t, prof, "acct-a", "sess-1", "Older copy", 1000)
@@ -200,9 +191,8 @@ func TestSessionIndex_ProfileSurvivesFresherMachineWideCopy(t *testing.T) {
 	}
 }
 
-// A sidecar copied into another profile's tree keeps its own account path. The
-// label must follow the account, not the directory it landed in — otherwise a
-// stray copy relabels a session, and you go looking in the wrong app.
+// A sidecar copied into another profile's tree keeps its own account path, so
+// the label must follow the account rather than the directory.
 func TestReprofile_AccountBeatsTree(t *testing.T) {
 	idx := session.Index{
 		// Sitting in work's tree, but filed under personal's account.
@@ -219,8 +209,8 @@ func TestReprofile_AccountBeatsTree(t *testing.T) {
 	}
 }
 
-// An account with no Desktop profile is the machine-wide install's. It must
-// report no profile rather than inherit one from a tree it was copied into.
+// An account with no profile is the machine-wide install's, so it must not
+// inherit one from a tree it was copied into.
 func TestReprofile_AccountWithNoProfileClearsTreeLabel(t *testing.T) {
 	idx := session.Index{"s": {ID: "s", Profile: "work", Account: "uuid-machinewide"}}
 	reprofile(idx, map[string]string{"uuid-work": "work"})
@@ -229,9 +219,8 @@ func TestReprofile_AccountWithNoProfileClearsTreeLabel(t *testing.T) {
 	}
 }
 
-// With nothing to resolve against, every label must be left exactly as found:
-// the tree is a worse answer than the account, but it is far better than blanking
-// every session on a machine whose account store cannot be read.
+// With nothing to resolve against, labels are left as found: the tree is a worse
+// answer than the account but far better than blanking every session.
 func TestReprofile_NoMappingLeavesLabelsAlone(t *testing.T) {
 	idx := session.Index{"s": {ID: "s", Profile: "work", Account: "uuid-work"}}
 	reprofile(idx, nil)
@@ -240,8 +229,7 @@ func TestReprofile_NoMappingLeavesLabelsAlone(t *testing.T) {
 	}
 }
 
-// A session with no account path at all (a sidecar layout we do not understand)
-// keeps whatever the tree said rather than being blanked.
+// A sidecar layout we do not understand keeps whatever the tree said.
 func TestReprofile_NoAccountKeepsTreeLabel(t *testing.T) {
 	idx := session.Index{"s": {ID: "s", Profile: "work"}}
 	reprofile(idx, map[string]string{"uuid-work": "work"})

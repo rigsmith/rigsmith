@@ -27,9 +27,8 @@ func mustParse(t *testing.T, s string) time.Time {
 	return v.UTC()
 }
 
-// The whole point: a file touched long after the conversation ended still reports
-// the conversation's time. This is the case that breaks every mtime-ordered list
-// — a restore or a synced-repo checkout rewrites mtime on hundreds of old chats.
+// A file touched long after the conversation ended still reports the
+// conversation's time. This is the case that breaks every mtime-ordered list.
 func TestLastActivity_IgnoresMtime(t *testing.T) {
 	p := writeTranscript(t,
 		`{"type":"user","timestamp":"2026-08-01T10:00:00.000Z"}`+"\n"+
@@ -51,8 +50,7 @@ func TestLastActivity_IgnoresMtime(t *testing.T) {
 	}
 }
 
-// Sub-agent records are interleaved into the same file, so the last LINE is not
-// guaranteed to be the last MOMENT. The newest timestamp wins regardless of order.
+// Sub-agent records interleave, so the last LINE need not be the last MOMENT.
 func TestLastActivity_TakesNewestNotLast(t *testing.T) {
 	p := writeTranscript(t,
 		`{"timestamp":"2026-08-01T10:00:00Z"}`+"\n"+
@@ -67,8 +65,7 @@ func TestLastActivity_TakesNewestNotLast(t *testing.T) {
 	}
 }
 
-// cwd and branch come from the LAST record carrying them, so a session that moved
-// is described by where it ended rather than where it started.
+// A session that moved is described by where it ended.
 func TestLastActivity_LatestCwdAndBranchWin(t *testing.T) {
 	p := writeTranscript(t,
 		`{"timestamp":"2026-08-01T10:00:00Z","cwd":"/start","gitBranch":"main"}`+"\n"+
@@ -79,12 +76,10 @@ func TestLastActivity_LatestCwdAndBranchWin(t *testing.T) {
 	}
 }
 
-// A transcript far larger than the tail window is still read from the end, and the
-// record chopped in half by the window boundary must not be parsed as a whole one.
+// The record chopped in half by the window boundary must not be parsed as whole.
 func TestLastActivity_LargeFileReadsFromEnd(t *testing.T) {
 	var b strings.Builder
-	// Each record is ~1 KiB of padding; 400 of them clears the 64 KiB window well
-	// enough that the window opens mid-record.
+	// 400 padded records clears the window well enough that it opens mid-record.
 	pad := strings.Repeat("x", 1000)
 	for i := 0; i < 400; i++ {
 		fmt.Fprintf(&b, `{"timestamp":"2026-08-01T10:%02d:00Z","pad":"%s"}`+"\n", i%60, pad)
@@ -104,8 +99,7 @@ func TestLastActivity_LargeFileReadsFromEnd(t *testing.T) {
 	}
 }
 
-// A single record bigger than the initial window (an inlined image) must make the
-// window grow rather than making the file look undatable.
+// A record bigger than the initial window must grow it, not look undatable.
 func TestLastActivity_SingleRecordLargerThanWindow(t *testing.T) {
 	huge := strings.Repeat("y", 200<<10) // 200 KiB, past tailChunkBytes
 	p := writeTranscript(t, `{"timestamp":"2026-08-03T08:00:00Z","blob":"`+huge+`"}`+"\n")
@@ -118,8 +112,8 @@ func TestLastActivity_SingleRecordLargerThanWindow(t *testing.T) {
 	}
 }
 
-// A crash mid-append leaves a truncated final line. It is skipped, and the last
-// COMPLETE record answers — rather than the file being written off as undatable.
+// A crash mid-append leaves a truncated final line; the last complete record
+// still answers.
 func TestLastActivity_TornFinalRecord(t *testing.T) {
 	p := writeTranscript(t,
 		`{"timestamp":"2026-08-01T10:00:00Z"}`+"\n"+
@@ -133,9 +127,8 @@ func TestLastActivity_TornFinalRecord(t *testing.T) {
 	}
 }
 
-// Files with nothing to date report so, leaving the caller to fall back rather
-// than inventing a time. The stub case is real: ~/.claude holds small
-// "last-prompt" files that carry no conversation at all.
+// Files with nothing to date must say so rather than invent a time. The stub
+// case is real: ~/.claude holds "last-prompt" files with no conversation.
 func TestLastActivity_Undatable(t *testing.T) {
 	cases := map[string]string{
 		"empty":            "",

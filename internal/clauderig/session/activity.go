@@ -9,47 +9,28 @@ import (
 	"time"
 )
 
-// A transcript's mtime is not when the session was worked on. Copying restores
-// it (clauderig's own restore rewrites every file it lands), a git checkout of
-// the synced repo stamps checkout time, and a backup tool touching the tree
-// bumps hundreds of files to the same instant — after which "most recent chat"
-// means "most recently copied", which is not a question anyone asks. The Desktop
-// sidecar's lastActivityAt is no better: it is rebuilt from the same files, so it
-// drifts the same way, and it lags a session that is still running.
-//
-// The records themselves carry the truth. Every Claude Code transcript line is a
-// JSON object with its own RFC3339 `timestamp`, written when the record was
-// appended, and it survives every copy, sync and restore because it is content
-// rather than metadata. LastActivity reads it.
+// Session recency comes from the records, not from the file. A restore, a
+// checkout of the synced repo, or any tool that walks the tree rewrites mtime,
+// and the Desktop sidecar's lastActivityAt is rebuilt from those same files.
+// Record timestamps are content, so they survive the copying.
 
 const (
-	// tailChunkBytes is the first read window. A session's closing records are a
-	// few hundred bytes each, so 64 KiB normally holds dozens of them — but a
-	// single record can be enormous (an inlined image), which is why the window
-	// doubles rather than being a fixed guess.
+	// The window doubles rather than being fixed because a single record can be
+	// enormous (an inlined image), and stops at maxTailBytes because past that
+	// this is not a transcript we understand.
 	tailChunkBytes = 64 << 10
-	// maxTailBytes caps the growth. Past a megabyte with no parseable timestamped
-	// record, the file is not a transcript we understand, and the caller's mtime
-	// fallback is the honest answer.
-	maxTailBytes = 1 << 20
+	maxTailBytes   = 1 << 20
 )
 
-// Activity is what a transcript's own records say about the session: when it was
-// last appended to, and the working directory and git branch it was on at the
-// end. Cwd and GitBranch come from the tail rather than the header on purpose —
-// a long session can move, and the last thing it was doing is what makes it
-// recognisable in a list.
+// Activity describes a session from its own records. Taken from the END of the
+// transcript rather than the header: a long session can move, and what it was
+// last doing is what makes it recognisable.
 type Activity struct {
 	At        time.Time
 	Cwd       string
 	GitBranch string
-	// Entrypoint is the client that wrote the last record — "claude-vscode",
-	// "claude-desktop", "cli", "sdk-*". It answers a question nothing else in the
-	// store can: which app a session belongs to. Storage location cannot stand in
-	// for it, because every client writes to the same ~/.claude/projects tree.
-	//
-	// From the LAST record, like Cwd and GitBranch: a session resumed in another
-	// client is best described by where you left it, not where it began.
+	// "claude-vscode", "claude-desktop", "cli", "sdk-*". Nothing else identifies
+	// the client: they all write to the same ~/.claude/projects tree.
 	Entrypoint string
 }
 
@@ -61,11 +42,9 @@ type activityLine struct {
 	Entrypoint string `json:"entrypoint"`
 }
 
-// LastActivity reports when a transcript was last written to, according to the
-// transcript. It reads only the tail — the common case is one 64 KiB read
-// regardless of how large the file is — and returns false for a file with no
-// parseable timestamped record within maxTailBytes of the end, leaving the
-// caller to fall back.
+// LastActivity reports what a transcript says about itself, reading only its
+// tail. False means nothing datable was found near the end, so callers fall back
+// rather than being handed a guess.
 func LastActivity(path string) (Activity, bool) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -94,13 +73,12 @@ func LastActivity(path string) (Activity, bool) {
 			return Activity{}, false
 		}
 		// Unless the window reached the start of the file, its first line is a
-		// record cut in half. Dropping it costs nothing (a later line answers) and
-		// keeps a half-record from being parsed as though it were whole.
+		// record cut in half.
 		if off > 0 {
 			if i := bytes.IndexByte(buf, '\n'); i >= 0 {
 				buf = buf[i+1:]
 			} else {
-				buf = nil // one record spans the whole window — grow
+				buf = nil // one record spans the whole window
 			}
 		}
 		if a, ok := latestIn(buf); ok {
@@ -112,13 +90,9 @@ func LastActivity(path string) (Activity, bool) {
 	}
 }
 
-// latestIn returns the newest timestamp among the complete records in buf, plus
-// the cwd/branch/entrypoint from the last record that carries each.
-//
-// It takes the maximum rather than simply the final record: sub-agent records are
-// interleaved into the same file, so the last LINE is not guaranteed to be the
-// last MOMENT. Over a tail window that difference is seconds, but taking the max
-// costs one comparison per line and removes the caveat entirely.
+// latestIn takes the newest timestamp rather than the final record's: sub-agent
+// records interleave into the same file, so the last LINE need not be the last
+// MOMENT.
 func latestIn(buf []byte) (Activity, bool) {
 	var a Activity
 	lines := bytes.Split(buf, []byte{'\n'})
@@ -129,9 +103,9 @@ func latestIn(buf []byte) (Activity, bool) {
 		}
 		var rec activityLine
 		if json.Unmarshal(line, &rec) != nil {
-			continue // a record we can't read is not a reason to abandon the file
+			continue // one unreadable record must not abandon the file
 		}
-		// Scanning backwards, so the first cwd/branch seen is the latest one.
+		// Scanning backwards, so the first one seen is the latest.
 		if a.Cwd == "" && rec.Cwd != "" {
 			a.Cwd = rec.Cwd
 		}

@@ -31,19 +31,13 @@ type Meta struct {
 	LastActivity time.Time // sidecar lastActivityAt (zero if unknown)
 	Archived     bool
 	Sources      []string // sidecar source labels it was found in (e.g. "desktop", "repo")
-	// Account is the accountUuid directory the sidecar is filed under —
-	// claude-code-sessions/<accountUuid>/<organizationUuid>/ — which is the login
-	// that owns the session rather than a guess about it. It is ground truth in a
-	// way Profile is not: a sidecar can be COPIED into another profile's tree (a
-	// restore, a profile seeded from another install), and 25 such strays on one
-	// real machine each sat in a tree belonging to the other account. The path
-	// travels with the file, so it stays right.
+	// Account is the accountUuid directory the sidecar is filed under, which is
+	// the login that owns the session. Ground truth in a way Profile is not: a
+	// sidecar copied into another profile's tree keeps this path.
 	Account string
-	// Profile is the clauderig Desktop profile whose session list holds this
-	// session, empty for the machine-wide install. Every profile is a separate
-	// Desktop install with its own login and its own history, so this is the only
-	// thing that says WHICH Desktop to reopen a session in — the transcript itself
-	// lands in the shared ~/.claude/projects tree either way.
+	// Profile is the Desktop install whose session list holds this session, empty
+	// for the machine-wide one. The only thing that says which Desktop to reopen
+	// a session in — its transcript lands in the shared tree either way.
 	Profile string
 }
 
@@ -54,11 +48,9 @@ type Index map[string]Meta
 // that CONTAINS a claude-code-sessions/ tree — the live Desktop dir, or
 // <staging-repo>/desktop.
 //
-// Profile names the clauderig-managed Desktop profile this root belongs to, empty
-// for the machine-wide install. It is kept apart from Label because the two answer
-// different questions — Label is "which store did this come from" (live vs synced),
-// Profile is "which Desktop install owns it" — and a session found in both stores
-// must not end up with its profile buried in a joined provenance string.
+// Profile is the clauderig-managed Desktop profile this root belongs to, empty
+// for the machine-wide install. Kept apart from Label, which answers a different
+// question: which store the sidecar came from, live or synced.
 type Root struct {
 	Label   string
 	Base    string
@@ -96,9 +88,9 @@ func Build(roots []Root) Index {
 	return idx
 }
 
-// accountOf reads the accountUuid out of a sidecar's own path. The layout is
-// <tree>/<accountUuid>/<organizationUuid>/local_<id>.json; anything shallower is
-// not the layout we understand, and guessing would be worse than answering "".
+// accountOf reads the accountUuid out of a sidecar's own path,
+// <tree>/<accountUuid>/<organizationUuid>/local_<id>.json. Anything shallower is
+// a layout we do not understand, where guessing beats nothing.
 func accountOf(tree, path string) string {
 	rel, err := filepath.Rel(tree, path)
 	if err != nil {
@@ -149,13 +141,10 @@ func scanSidecars(idx Index, dir, label, profile string) {
 		}
 		if prev, ok := idx[m.ID]; ok {
 			sources := appendUnique(prev.Sources, label)
-			// Ownership is decided BEFORE the fresher-sidecar swap, not after.
-			// Only one of the two copies can name a profile (the machine-wide root
-			// reports none), and reading it off the survivor loses it whenever the
-			// survivor is the one that had nothing to say — which is the common
-			// case, since the machine-wide install is usually the most recently
-			// touched. Same for the account: both are properties of the session, not
-			// of whichever copy happened to be written last.
+			// Ownership is settled BEFORE the fresher-sidecar swap. Only one copy
+			// can name a profile, and reading it off the survivor loses it whenever
+			// the survivor is the machine-wide one — the common case, since that
+			// install is usually the most recently touched.
 			profile, acct := m.Profile, m.Account
 			if profile == "" {
 				profile = prev.Profile

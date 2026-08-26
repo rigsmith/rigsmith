@@ -95,12 +95,9 @@ func recordLedger(stagingDir, device, liveAccount string, mine map[string]bool) 
 				return nil
 			}
 			// The transcript's own last record, not its mtime: a restore or a
-			// git checkout of the staged tree rewrites mtime, which would both
-			// re-date every session to the copy and, because End is half the
-			// change fingerprint, force a rewrite of every row that follows.
-			// Reading the tail costs ~0.4ms per file and makes the row identical
-			// on every machine, since content is what syncs. mtime remains the
-			// fallback for a transcript too damaged to answer.
+			// checkout of the staged tree rewrites mtime, which would re-date
+			// every session to the copy and, since End is half the change
+			// fingerprint, force a rewrite of every row after it.
 			end := info.ModTime().UTC()
 			if a, ok := session.LastActivity(p); ok {
 				end = a.At

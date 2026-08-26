@@ -40,10 +40,8 @@ type Entry struct {
 	// shows for a session with no Desktop sidecar.
 	Title string `json:"title,omitempty"`
 	// End is the session's date: the timestamp on its last transcript record.
-	// Deliberately NOT the file's mtime — a restore or a git checkout of the
-	// staged tree rewrites mtime, which would re-date every session to the copy.
-	// The writer (engine.updateLedger) falls back to mtime only for a transcript
-	// it cannot read.
+	// Deliberately NOT mtime, which a restore or a checkout of the staged tree
+	// rewrites, re-dating every session to the copy.
 	End time.Time `json:"end"`
 	// Bytes is the transcript size; with End it forms the change fingerprint
 	// that decides whether a row needs rewriting.

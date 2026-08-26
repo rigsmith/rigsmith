@@ -16,20 +16,14 @@ import (
 )
 
 // defaultRecentLimit caps the list so a wide --since cannot dump a thousand
-// lines. What is dropped is always named in the footer — a silently truncated
-// list is worse than a long one, because it answers "that session isn't here"
-// when the truth is "you didn't ask for enough of them".
+// lines. What it drops is always named in the footer: a silent truncation reads
+// as "that session isn't here".
 const defaultRecentLimit = 50
 
-// NewRecentCmd builds the `recent` command: the sessions you actually worked on,
-// newest first, with no search term.
-//
-// It exists because `search` answers the wrong question when you cannot remember
-// a word from the chat. What you remember is that it was yesterday — and the
-// lists that ought to answer that (the editor's session list, a directory sorted
-// by mtime) are dated by the FILE rather than by the conversation, so a restore,
-// a sync checkout, or any tool that walks ~/.claude re-dates hundreds of old
-// chats to the same minute and buries the real ones.
+// NewRecentCmd builds the `recent` command, for when you remember roughly WHEN a
+// session was rather than anything said in it. `search` cannot answer that, and
+// the lists that look like they can are dated by the file rather than by the
+// conversation.
 func NewRecentCmd() *cobra.Command {
 	var (
 		since         string
@@ -76,8 +70,8 @@ func NewRecentCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var query string
 			if len(args) == 1 {
-				// An explicitly empty term would "match" every session (contains "")
-				// and quietly look like a filter that did nothing.
+				// An empty term matches every session and looks like a filter that
+				// silently did nothing.
 				if query = strings.TrimSpace(args[0]); query == "" {
 					return fmt.Errorf("empty search term — pass text to narrow by, or no argument to list everything in the window")
 				}
@@ -89,9 +83,8 @@ func NewRecentCmd() *cobra.Command {
 				return fmt.Errorf("--limit cannot be negative")
 			}
 			sc := sessionScope{now: time.Now()}
-			// "all"/"any" spell an absent lower bound, because the value that
-			// actually means it — the empty string — is awkward to type past a
-			// shell and reads like a mistake in a scrollback.
+			// The value that actually means "no lower bound" is the empty string,
+			// which is awkward to type past a shell and reads like a mistake.
 			if s := strings.ToLower(strings.TrimSpace(since)); s == "all" || s == "any" {
 				since = ""
 			}
@@ -143,7 +136,7 @@ func NewRecentCmd() *cobra.Command {
 	cmd.Flags().StringVar(&until, "until", "", "only sessions used before this time")
 	cmd.Flags().StringVar(&cwdFilter, "cwd", "", "only sessions whose project directory contains this text")
 	cmd.Flags().StringVar(&accountFilter, "account", "", "only sessions belonging to this account (alias, email, or id prefix)")
-	// No -n shorthand: that letter is reserved fleet-wide for --dry-run.
+	// -n is reserved fleet-wide for --dry-run.
 	cmd.Flags().IntVar(&limit, "limit", defaultRecentLimit, "how many sessions to show (0 = no cap)")
 	cmd.Flags().BoolVar(&liveOnly, "live", false, "only this machine's live ~/.claude")
 	cmd.Flags().BoolVar(&repoOnly, "repo", false, "only the synced staging repo")
@@ -151,24 +144,20 @@ func NewRecentCmd() *cobra.Command {
 	return cmd
 }
 
-// recentRow is one listed session: the shared sessResult the search path already
-// knows how to render, plus the two things read straight out of the transcript
-// tail — the branch it ended on, and the title to show.
+// recentRow is one listed session: the sessResult the search path already knows
+// how to render, plus what this listing adds.
 type recentRow struct {
 	*sessResult
 	branch string
 	client string
 	title  string
-	// approx marks a row whose date did NOT come from a transcript record — the
-	// sidecar or, worst case, the file's mtime answered instead. Those are the
-	// dates this command exists to distrust, so they are shown with a marker
-	// rather than dropped: a stub file with no conversation in it still deserves
-	// to be visible, just not to be quietly believed.
+	// approx marks a date that did not come from a transcript record. Shown with
+	// a marker rather than dropped: still visible, just not quietly believed.
 	approx bool
 }
 
-// listRecent gathers, filters, orders and prints the sessions. It is split from
-// the cobra wiring so a test can drive it with explicit roots.
+// listRecent is split from the cobra wiring so a test can drive it with explicit
+// roots.
 func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, sc sessionScope, query string, limit int, long bool) error {
 	idx := session.Build(roots)
 	reprofile(idx, profileByAccount())
@@ -194,8 +183,7 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 	for id := range ids {
 		r := &sessResult{id: id, hitTargets: map[string]bool{}}
 		r.meta, r.hasMeta = idx[id]
-		// Live first: it is the copy `claude --resume` opens, and its mtime is the
-		// one that was never rewritten by a checkout.
+		// Live first: it is the copy `claude --resume` opens.
 		switch {
 		case livePaths[id] != "":
 			r.path = livePaths[id]
@@ -212,14 +200,10 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 
 		row := recentRow{sessResult: r}
 		if r.path != "" {
-			// The cheap prefilter. A write is what sets mtime, so mtime can only
-			// ever be at or AFTER the last record — never before it. A file whose
-			// mtime already predates the window therefore cannot hold a record
-			// inside it, and can be dropped without opening it. That is what keeps
-			// a 24-hour listing from reading the tail of a thousand transcripts;
-			// the direction of the inequality is what keeps it from hiding
-			// anything, since the untrustworthy direction of mtime drift (a copy
-			// pushing it forward) only ever costs us a needless read.
+			// mtime is untrustworthy in one direction only: a write can push it
+			// forward but never back, so it is a valid upper bound. A file whose
+			// mtime predates the window cannot hold a record inside it, and drift
+			// only ever costs a needless read.
 			if !sc.since.IsZero() {
 				if info, serr := os.Stat(r.path); serr == nil && info.ModTime().Before(sc.since) {
 					skipped++
@@ -229,8 +213,7 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 			read++
 			a := r.activity()
 			if a.GitBranch != "HEAD" {
-				// "HEAD" is what a detached checkout or a cwd outside any repo
-				// records. It names nothing, so it is worse than an empty column.
+				// "HEAD" is what a detached checkout or a non-repo cwd records.
 				row.branch = a.GitBranch
 			}
 			row.client = clientWithProfile(r)
@@ -243,9 +226,8 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 			}
 		}
 		if r.when.IsZero() {
-			// No readable transcript, or one with no timestamped record. sessionTime
-			// applies the rest of the ladder (sidecar, then mtime); the ledger row
-			// answers for a session whose body has aged out of the synced window.
+			// sessionTime applies the rest of the ladder; the ledger row answers
+			// for a session whose body has aged out of the synced window.
 			r.when = sessionTime(r)
 			if r.cwd == "" {
 				r.cwd = resolveCwd(me, r)
@@ -259,12 +241,9 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 				r.cwd = resolvePath(me, r.led.Cwd)
 			}
 		}
-		// Marked whenever the date did not come from a record we read here. That
-		// covers the ledger too, deliberately: a row written before End became
-		// content-derived still holds an mtime, and an aged-out session's row is
-		// never rewritten, so those never self-correct. Over-warning on a handful
-		// of rows is the safe direction — the failure this whole command exists to
-		// prevent is a months-old chat presenting itself as yesterday's.
+		// Covers ledger-dated rows too: one written before End became
+		// content-derived still holds an mtime and is never rewritten, so it
+		// cannot self-correct. Over-warning is the safe direction here.
 		row.approx = !r.when.IsZero() && r.activity().At.IsZero()
 		if keep, why := sc.keep(r); !keep {
 			hidden++
@@ -287,8 +266,8 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 		rows = append(rows, row)
 	}
 
-	// Newest first, with the id as a tiebreaker so two sessions closed in the same
-	// second do not swap places between runs.
+	// The id tiebreaks so two sessions closed in the same second keep a stable
+	// order between runs.
 	sort.Slice(rows, func(i, j int) bool {
 		if !rows[i].when.Equal(rows[j].when) {
 			return rows[i].when.After(rows[j].when)
@@ -330,20 +309,17 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 			renderSessionAs(out, me, row.sessResult, why)
 		}
 	} else {
-		// The client column is sized to what is actually in it rather than to a
-		// fixed guess: "cli" and "desktop@<profile>" differ by more than a dozen
-		// characters, and a fixed width either truncates the profile — the half
-		// that says which app to open — or wastes the space on every listing that
-		// has no profiles at all.
+		// Sized to its contents: "cli" and "desktop@<profile>" differ by more
+		// than a dozen characters, so a fixed width either truncates the profile
+		// or wastes the space when there are none.
 		clientW := 0
 		for _, row := range shown {
 			if n := len([]rune(row.client)); n > clientW {
 				clientW = n
 			}
 		}
-		// sc.now, not time.Now(): the window was computed against it, so the
-		// "today"/"yesterday" labels must be read off the same clock or a listing
-		// taken seconds before midnight can label its own results inconsistently.
+		// The same clock the window was computed against, or a listing taken
+		// seconds before midnight labels its own results inconsistently.
 		now := sc.now
 		if now.IsZero() {
 			now = time.Now()
@@ -385,13 +361,11 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 	return nil
 }
 
-// matchSession reports whether a session answers the search term, by title or by
-// what was said in it. Title first because it is free; the body is read only when
-// the title misses, and only for sessions already inside the time window.
+// matchSession tries the title first because it is free, and reads the body only
+// for sessions already inside the time window.
 //
-// Content hits are counted through session.IsConversationLine, the same filter
-// `search` uses, so a word that appears in an injected skill catalog or an
-// attachment record does not "match" every session on the machine.
+// IsConversationLine keeps a word appearing in an injected skill catalog or an
+// attachment record from matching every session on the machine.
 func matchSession(r *sessResult, title, query string, caseSensitive bool) bool {
 	hay, needle := title, query
 	if !caseSensitive {
@@ -449,10 +423,8 @@ func renderRecentLine(out io.Writer, row recentRow, now time.Time, clientW int) 
 	fmt.Fprintln(out, strings.TrimRight(line, " "))
 }
 
-// recentWhen formats an instant for a human scanning a list: the clock time for
-// today and yesterday (which is the whole point of a 24-hour view), the month and
-// day within the current year, and the full date beyond it. Local time, because
-// "was that this morning?" is a local-time question.
+// recentWhen shows clock time for today and yesterday, coarsening with age.
+// Local time, because "was that this morning?" is a local-time question.
 func recentWhen(t, now time.Time) string {
 	if t.IsZero() {
 		return "—"
@@ -464,8 +436,8 @@ func recentWhen(t, now time.Time) string {
 	case y == ny && m == nm && d == nd:
 		return "today " + l.Format("15:04")
 	case l.After(now.AddDate(0, 0, -2)):
-		// Compared against an instant rather than a calendar day so a session two
-		// clock-hours ago is never labelled "yesterday" across a midnight boundary.
+		// An instant rather than a calendar day, so a session two hours ago is
+		// never labelled "yesterday" across a midnight boundary.
 		if yy, ym, yd := now.AddDate(0, 0, -1).Date(); yy == y && ym == m && yd == d {
 			return "yest. " + l.Format("15:04")
 		}
@@ -477,9 +449,8 @@ func recentWhen(t, now time.Time) string {
 	}
 }
 
-// recentTitle is the best name we have for a session: the Desktop title, else the
-// first prompt out of the transcript, else the title the ledger recorded before
-// the body aged out.
+// recentTitle falls back through the names a session might have, ending with the
+// one the ledger recorded before the body aged out.
 func recentTitle(r *sessResult) string {
 	title := r.meta.Title
 	if title == "" && r.path != "" {
@@ -491,12 +462,12 @@ func recentTitle(r *sessResult) string {
 	if title == "" {
 		return "(untitled session)"
 	}
-	// A first prompt can be multi-line; a list is one line per session.
+	// A first prompt can be multi-line.
 	return strings.Join(strings.Fields(title), " ")
 }
 
-// tildePath shortens a path under the home directory for display only — never
-// for a command we hand back, since not every shell expands ~ the same way.
+// tildePath shortens a path for display only, never for a command we hand back:
+// not every shell expands ~ the same way.
 func tildePath(p string) string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -511,8 +482,7 @@ func tildePath(p string) string {
 	return p
 }
 
-// clip truncates to n runes (not bytes, so a multi-byte title is not cut mid
-// character), marking the cut with an ellipsis.
+// clip truncates to n runes so a multi-byte title is not cut mid-character.
 func clip(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
@@ -524,8 +494,8 @@ func clip(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
-// padRunes right-pads to n runes so columns line up for titles containing
-// multi-byte characters, where %-*s would pad by byte count and misalign.
+// padRunes pads by runes because %-*s pads by bytes and misaligns multi-byte
+// titles.
 func padRunes(s string, n int) string {
 	if d := n - len([]rune(s)); d > 0 {
 		return s + strings.Repeat(" ", d)
