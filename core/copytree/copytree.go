@@ -90,6 +90,17 @@ func Copy(src, dst string, includeGit bool) (Stats, error) {
 		// The repo's top-level .git gets dedicated handling. In a normal checkout
 		// it's a directory copied verbatim under --git; in a linked worktree it's a
 		// pointer FILE into the parent repo, which can't be copied meaningfully.
+		// A *nested* linked worktree's pointer gets the same treatment as the
+		// root's: its files are part of the tree the caller asked to copy, but
+		// the pointer names the original repository's worktree administration
+		// directory, so git inside the copy would answer for the original. Copy
+		// the files, drop the pointer — pruning the whole directory instead
+		// would silently omit real files, and `--git` promises the full tree.
+		if filepath.Base(p) == ".git" && rel != ".git" && !d.IsDir() &&
+			walkutil.LinkedWorktreeRoot(filepath.Dir(p)) {
+			return nil
+		}
+
 		if rel == ".git" {
 			if !includeGit {
 				if d.IsDir() {
@@ -109,12 +120,6 @@ func Copy(src, dst string, includeGit bool) (Stats, error) {
 
 		if d.IsDir() {
 			if walkutil.SkippedDir(d.Name()) || ign.Ignored(relSlash, true) {
-				return filepath.SkipDir
-			}
-			// Copying a linked worktree would carry its `.git` pointer along,
-			// leaving git inside the copy talking to the original repository's
-			// worktree administration directory.
-			if p != absSrc && walkutil.LinkedWorktreeRoot(p) {
 				return filepath.SkipDir
 			}
 			if err := os.MkdirAll(target, dirMode(d)); err != nil {

@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 )
 
@@ -52,10 +51,6 @@ func SetIncludeWorktrees(v bool) { includeWorktrees.Store(v) }
 // traversal (glob expansion, copytree) that must prune the same way.
 func IncludeWorktrees() bool { return includeWorktrees.Load() }
 
-// linkedWorktreeCache memoizes the per-directory marker read: discovery asks
-// about the same ancestors once per project.
-var linkedWorktreeCache sync.Map // dir -> bool
-
 // LinkedWorktreeRoot reports whether dir is the root of a linked git worktree —
 // a second checkout of *this* repository. Its tree is a copy of every manifest
 // the repo already has, so discovering it yields the same project twice and a
@@ -67,19 +62,17 @@ var linkedWorktreeCache sync.Map // dir -> bool
 // A submodule's pointer names `modules/<name>` instead, and submodules stay
 // discoverable: they are a different repository the user deliberately nested,
 // not a duplicate of this one.
+// Deliberately not memoized: a worktree can be added or removed while a
+// long-lived process is running, and a cache keyed only by path would answer
+// from a classification that is no longer true. The cost is one Lstat per
+// directory, and a read only for the rare directory that has a `.git` file.
 func LinkedWorktreeRoot(dir string) bool {
-	if v, ok := linkedWorktreeCache.Load(dir); ok {
-		return v.(bool)
-	}
-	res := readLinkedWorktreeMarker(dir)
-	linkedWorktreeCache.Store(dir, res)
-	return res
-}
-
-func readLinkedWorktreeMarker(dir string) bool {
 	dotgit := filepath.Join(dir, ".git")
 	fi, err := os.Lstat(dotgit)
-	if err != nil || fi.IsDir() {
+	// Regular files only: a FIFO or device named `.git` would otherwise reach
+	// ReadFile and could block the walk indefinitely. git requires a regular
+	// file here too.
+	if err != nil || !fi.Mode().IsRegular() {
 		// A missing marker is not a worktree; an unreadable one is not either,
 		// and guessing "worktree" on an I/O error would drop real projects.
 		return false
@@ -115,6 +108,10 @@ func SkippedDir(name string) bool { return skippedDirs[name] }
 // Discovery wants exactly that forgiveness: a manifest it can't read is a
 // manifest it doesn't offer. A caller that must not draw a conclusion from a
 // partial scan wants WalkReport instead, which hands back what it could not read.
+// Linked worktrees are pruned by default — they are second checkouts of the
+// same repository, so walking one returns a duplicate of every manifest. Opt
+// back in process-wide with SetIncludeWorktrees, or per-call with
+// WalkIncludingWorktrees. Submodules and nested clones are never pruned.
 func Walk(root string, fn func(path string, d fs.DirEntry) error) error {
 	_, err := WalkReport(root, nil, fn)
 	return err
