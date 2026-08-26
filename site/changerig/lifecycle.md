@@ -84,8 +84,9 @@ remember: a diff confined to `cmd/rig` or `internal/rig` infers `rig`, and a
 diff spanning several tools infers nothing rather than guessing.
 
 A `!` on the type marks a breaking change — `feat(rig)!: …`, or `type: feat!` —
-which forces a major bump and renders under **💥 Breaking Changes**, ahead of
-every other section.
+which renders under **💥 Breaking Changes**, ahead of every other section, and
+derives a major bump. Like any derived bump, an explicit per-package bump on the
+changeset still wins, so `"pkg": patch` with `feat!` releases a patch.
 
 ### Choosing the sections and their order
 

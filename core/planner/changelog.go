@@ -242,12 +242,15 @@ func title(b changeset.Bump) string {
 // indented two spaces. Dependency-update descriptions are pre-structured and
 // pass through unchanged.
 func formatReleaseLine(description, scope string) string {
-	if strings.HasPrefix(description, dependencyUpdatesHeader) {
-		return "- " + description
-	}
 	lead := ""
 	if scope != "" {
 		lead = "**" + scope + ":** "
+	}
+	// The engine generates the dependency block pre-structured and unscoped, so
+	// it passes through — but a change that merely *starts* with those words and
+	// carries a scope is an authored entry, and still gets its lead-in.
+	if strings.HasPrefix(description, dependencyUpdatesHeader) {
+		return "- " + lead + description
 	}
 	// Trailing newlines are an artefact of the file the summary came out of;
 	// left in, each becomes an indented empty continuation line under the
