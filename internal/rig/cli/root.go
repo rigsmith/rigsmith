@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/fang"
+	"github.com/rigsmith/rigsmith/core/walkutil"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/rigsmith/rigsmith/internal/rig/detect"
 	"github.com/spf13/cobra"
@@ -149,6 +150,10 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().BoolVar(&noEnv, "no-env", false, "skip .env/.env.local loading for this run")
 	root.PersistentFlags().StringVar(&rootFlag, "root", "", "override the working root (skip walk-up discovery)")
 	root.PersistentFlags().BoolVar(&includeWorktrees, "include-worktrees", false, "also discover projects inside nested git worktrees (skipped by default)")
+	// Discovery prunes linked worktrees before rig's own filter ever sees the
+	// targets, so the opt-in has to reach the walker rather than only the
+	// post-filter — otherwise the flag silently does nothing.
+	cobra.OnInitialize(func() { walkutil.SetIncludeWorktrees(includeWorktrees) })
 
 	root.AddCommand(
 		// Dev loop (workspace-aware: [project] scopes; --all runs across the

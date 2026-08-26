@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"testing"
@@ -220,13 +221,13 @@ func TestWalkReportNamesUnreadableDirectories(t *testing.T) {
 	}
 }
 
-// A linked git worktree keeps its `.git` as a *file*, so skipping the name
-// alone walks straight into it — and the tree inside is a second copy of every
-// manifest in this repo. That is how `shiprig version` came to write a release
-// changelog into a worktree, and `shiprig tag` to derive a tag name from its
-// path (git then rejected the leading dot, which was the only reason it was
-// noticed at all).
-func TestWalkSkipsNestedRepositories(t *testing.T) {
+// Discovery prunes a linked worktree and nothing else. A worktree is a second
+// checkout of *this* repository, so walking in returns a duplicate of every
+// manifest — that is how `shiprig version` came to write a release changelog
+// into one, and `shiprig tag` to build a tag out of its path. A submodule or a
+// nested clone is a different repository the user put there deliberately, and
+// stays discoverable.
+func TestWalkPrunesLinkedWorktreesOnly(t *testing.T) {
 	root := t.TempDir()
 	write := func(rel, body string) {
 		t.Helper()
@@ -239,26 +240,44 @@ func TestWalkSkipsNestedRepositories(t *testing.T) {
 		}
 	}
 	write("go.mod", "module example.com/root\n")
-	// A linked worktree: .git is a file pointing at the parent's gitdir.
-	write("nested/worktree/.git", "gitdir: /elsewhere/.git/worktrees/x\n")
-	write("nested/worktree/go.mod", "module example.com/root\n")
-	// A plain clone: .git is a directory.
-	if err := os.MkdirAll(filepath.Join(root, "vendored", "clone", ".git"), 0o755); err != nil {
+	write("wt/.git", "gitdir: /parent/.git/worktrees/wt\n") // linked worktree → pruned
+	write("wt/go.mod", "module example.com/root\n")
+	write("sub/.git", "gitdir: /parent/.git/modules/sub\n") // submodule → kept
+	write("sub/go.mod", "module example.com/sub\n")
+	// A submodule *of* a worktree: the segment appears, but not as the parent.
+	write("subofwt/.git", "gitdir: /parent/.git/worktrees/wt/modules/deep\n")
+	write("subofwt/go.mod", "module example.com/deep\n")
+	if err := os.MkdirAll(filepath.Join(root, "clone", ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	write("vendored/clone/go.mod", "module example.com/root\n")
+	write("clone/go.mod", "module example.com/clone\n") // plain clone → kept
 
-	var seen []string
-	if err := Walk(root, func(path string, d fs.DirEntry) error {
-		if filepath.Base(path) == "go.mod" {
-			rel, _ := filepath.Rel(root, path)
-			seen = append(seen, filepath.ToSlash(rel))
+	found := func() []string {
+		var seen []string
+		if err := Walk(root, func(path string, d fs.DirEntry) error {
+			if filepath.Base(path) == "go.mod" {
+				rel, _ := filepath.Rel(root, path)
+				seen = append(seen, filepath.ToSlash(rel))
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
 		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
+		sort.Strings(seen)
+		return seen
 	}
-	if len(seen) != 1 || seen[0] != "go.mod" {
-		t.Fatalf("walked into a nested repository: found %v, want just the root go.mod", seen)
+
+	want := []string{"clone/go.mod", "go.mod", "sub/go.mod", "subofwt/go.mod"}
+	if got := found(); !reflect.DeepEqual(got, want) {
+		t.Errorf("default walk = %v, want %v", got, want)
+	}
+
+	// The opt-in has to reach the walker, or `--include-worktrees` does nothing.
+	SetIncludeWorktrees(true)
+	t.Cleanup(func() { SetIncludeWorktrees(false) })
+	withWT := append(append([]string{}, want...), "wt/go.mod")
+	sort.Strings(withWT)
+	if got := found(); !reflect.DeepEqual(got, withWT) {
+		t.Errorf("with --include-worktrees = %v, want %v", got, withWT)
 	}
 }

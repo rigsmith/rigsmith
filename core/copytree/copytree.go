@@ -111,6 +111,12 @@ func Copy(src, dst string, includeGit bool) (Stats, error) {
 			if walkutil.SkippedDir(d.Name()) || ign.Ignored(relSlash, true) {
 				return filepath.SkipDir
 			}
+			// Copying a linked worktree would carry its `.git` pointer along,
+			// leaving git inside the copy talking to the original repository's
+			// worktree administration directory.
+			if p != absSrc && walkutil.LinkedWorktreeRoot(p) {
+				return filepath.SkipDir
+			}
 			if err := os.MkdirAll(target, dirMode(d)); err != nil {
 				return err
 			}

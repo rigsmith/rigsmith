@@ -17,13 +17,11 @@ package cli
 
 import (
 	"context"
-	"os"
-	"path"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/core/walkutil"
 )
 
 // includeWorktrees is the `--include-worktrees` persistent flag: keep projects
@@ -77,7 +75,7 @@ func inNestedWorktree(root, rel string) bool {
 func nestedWorktreeFor(root, dir string) (string, bool) {
 	root = filepath.Clean(root)
 	for d := filepath.Clean(dir); d != root && d != "" && d != string(filepath.Separator); d = filepath.Dir(d) {
-		if isLinkedWorktreeRoot(d) {
+		if walkutil.LinkedWorktreeRoot(d) {
 			return d, true
 		}
 		if parent := filepath.Dir(d); parent == d {
@@ -85,46 +83,6 @@ func nestedWorktreeFor(root, dir string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// linkedWorktreeCache memoizes the per-directory marker stat, since discovery
-// asks about the same ancestors once per project.
-var linkedWorktreeCache sync.Map // dir -> bool
-
-// isLinkedWorktreeRoot reports whether dir is the root of a linked git worktree:
-// it holds a `.git` file (not a directory) whose `gitdir:` pointer names a
-// `worktrees/<name>` admin directory. A submodule's `.git` file points into
-// `modules/<name>` instead, so it is not a worktree.
-func isLinkedWorktreeRoot(dir string) bool {
-	if v, ok := linkedWorktreeCache.Load(dir); ok {
-		return v.(bool)
-	}
-	res := readLinkedWorktreeMarker(dir)
-	linkedWorktreeCache.Store(dir, res)
-	return res
-}
-
-func readLinkedWorktreeMarker(dir string) bool {
-	dotgit := filepath.Join(dir, ".git")
-	fi, err := os.Lstat(dotgit)
-	if err != nil || fi.IsDir() {
-		return false
-	}
-	data, err := os.ReadFile(dotgit)
-	if err != nil {
-		return false
-	}
-	rest, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
-	if !ok {
-		return false
-	}
-	// The admin dir is `<common>/worktrees/<name>`, so it is the IMMEDIATE
-	// parent that must be "worktrees". Matching the segment anywhere in the
-	// pointer would misread a submodule of a linked worktree — whose gitdir is
-	// `<common>/worktrees/<wt>/modules/<sub>` — as a worktree of its own, and
-	// silently drop its projects from discovery.
-	gitdir := path.Clean(filepath.ToSlash(strings.TrimSpace(rest)))
-	return path.Base(path.Dir(gitdir)) == "worktrees"
 }
 
 // nestedWorktrees lists the repo's linked worktrees that sit inside root, in

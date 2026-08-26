@@ -566,8 +566,10 @@ func expandGlob(root, glob string) []string {
 					}
 				}
 			default:
+				// A literal segment never reaches childDirs, so it needs the
+				// same prune: `packages/clone` names it outright.
 				candidate := filepath.Join(dir, seg)
-				if fi, err := os.Stat(candidate); err == nil && fi.IsDir() {
+				if fi, err := os.Stat(candidate); err == nil && fi.IsDir() && !(!walkutil.IncludeWorktrees() && walkutil.LinkedWorktreeRoot(candidate)) {
 					next = append(next, candidate)
 				}
 			}
@@ -593,9 +595,17 @@ func childDirs(dir string) []string {
 	}
 	var out []string
 	for _, e := range entries {
-		if e.IsDir() && !walkutil.SkippedDir(e.Name()) {
-			out = append(out, filepath.Join(dir, e.Name()))
+		if !e.IsDir() || walkutil.SkippedDir(e.Name()) {
+			continue
 		}
+		sub := filepath.Join(dir, e.Name())
+		// A workspace glob must prune what Walk prunes, or `packages/*` reaches
+		// into a linked worktree and returns a second copy of this repo's own
+		// manifests — the thing walkutil stops.
+		if !walkutil.IncludeWorktrees() && walkutil.LinkedWorktreeRoot(sub) {
+			continue
+		}
+		out = append(out, sub)
 	}
 	return out
 }
