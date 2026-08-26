@@ -18,6 +18,29 @@ type stubApp struct{ open map[string]bool }
 func (s stubApp) Installed() (string, bool) { return "/Applications/Claude.app", true }
 func (s stubApp) Launch(string) error       { return nil }
 func (s stubApp) Focus(string) error        { return nil }
+func (s stubApp) OpenURL(string) error      { return nil }
+func (s stubApp) Instances() ([]desktop.Instance, error) {
+	var out []desktop.Instance
+	pid := 2000
+	for dir, on := range s.open {
+		if !on {
+			continue
+		}
+		pid++
+		if dir == "__default__" {
+			out = append(out, desktop.Instance{PID: pid})
+			continue
+		}
+		out = append(out, desktop.Instance{PID: pid, DataDir: dir})
+	}
+	return out, nil
+}
+func (s stubApp) RunningDefault() ([]int, error) {
+	if s.open["__default__"] {
+		return []int{99}, nil
+	}
+	return nil, nil
+}
 func (s stubApp) Quit(string, time.Duration) error {
 	return nil
 }
@@ -144,6 +167,19 @@ func TestResolveDesktopTargetReportsABrokenDirectoryBinding(t *testing.T) {
 type scanFailApp struct{ stubApp }
 
 func (scanFailApp) Running(string) ([]int, error) { return nil, errors.New("pgrep exploded") }
+func (scanFailApp) Instances() ([]desktop.Instance, error) {
+	return nil, errors.New("pgrep exploded")
+}
+
+// defaultScanFailApp scans profiles fine but cannot see the profile-less app.
+type defaultScanFailApp struct{ stubApp }
+
+func (defaultScanFailApp) RunningDefault() ([]int, error) {
+	return nil, errors.New("pgrep exploded")
+}
+func (defaultScanFailApp) Instances() ([]desktop.Instance, error) {
+	return nil, errors.New("pgrep exploded")
+}
 
 // "We could not look" must never be reported as "nothing is open" — that would
 // let `quit` exit zero on an unknown state, contradicting IsRunning's contract

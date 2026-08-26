@@ -3,6 +3,7 @@ package desktop
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -14,6 +15,28 @@ type App interface {
 	Launch(dataDir string) error
 	// Running reports the PIDs of instances bound to exactly this dataDir.
 	Running(dataDir string) ([]int, error)
+	// RunningDefault reports the PIDs of instances running on the app's OWN data
+	// directory — the ordinary Claude Desktop, started with no profile flag.
+	//
+	// It cannot be expressed as Running(<some dir>): a default launch carries no
+	// --user-data-dir at all, so it matches no dataDir and is invisible to that
+	// scan. It still competes for a deep link like any other window, which is
+	// exactly why it needs its own question.
+	RunningDefault() ([]int, error)
+	// Instances reports EVERY running Claude Desktop main process with the data
+	// directory it was launched against ("" for the profile-less install).
+	//
+	// This exists because the routing guard kept being wrong in the same way.
+	// Asking "which of the profiles I know about are running" means enumerating
+	// instances, and five rounds of review found five kinds this missed: a
+	// profile whose metadata will not parse, one launched with a --user-data-dir
+	// outside clauderig's store, one whose store entry is a directory symlink,
+	// the profile-less install, and a scan that failed. Every one of them still
+	// competes for a scheme-routed deep link.
+	//
+	// Counting PROCESSES has no such list to be incomplete. A window either
+	// exists or it does not.
+	Instances() ([]Instance, error)
 	// Focus brings an already-running instance to the foreground. Best effort:
 	// on platforms with no reliable way to raise one window of several, this may
 	// raise whichever instance the OS considers frontmost.
@@ -23,6 +46,26 @@ type App interface {
 	Quit(dataDir string, grace time.Duration) error
 	// Installed reports whether Claude Desktop is present, and where.
 	Installed() (path string, ok bool)
+	// OpenURL hands a claude:// deep link to Claude Desktop.
+	//
+	// It cannot be aimed at a particular profile. The OS routes a URL by SCHEME,
+	// to whichever registered instance it picks — there is no per-instance
+	// address, and the profile flag that separates instances is a launch
+	// argument, not something a URL can carry. Callers that care which profile
+	// receives it must make that instance the only, or at least the frontmost,
+	// one first — and say so when they cannot be sure.
+	OpenURL(rawurl string) error
+}
+
+// Instance is one running Claude Desktop main process. DataDir is the value of
+// its --user-data-dir flag, or "" when it was launched without one.
+type Instance struct {
+	PID     int
+	DataDir string
+	// Command is the flattened command line, kept for diagnostics. Nothing
+	// decides identity from it: a flattened command cannot be split back into
+	// arguments, so DataDir below is a best-effort read used only for display.
+	Command string
 }
 
 // ErrUnsupported means this OS has no Claude Desktop build we know how to drive.
@@ -53,8 +96,12 @@ func IsRunning(a App, dataDir string) (bool, error) {
 // also the needle every platform matches on to identify a running instance, so
 // the flag and the match are defined in exactly one place.
 func userDataFlag(dataDir string) string {
-	return "--user-data-dir=" + dataDir
+	return userDataFlagName + dataDir
 }
+
+// userDataFlagName is the flag without a value — what tells a profile instance
+// apart from the default install, which carries no such flag at all.
+const userDataFlagName = "--user-data-dir="
 
 // waitGone polls until no instance is bound to dataDir, or the deadline passes.
 // Reports whether they are all gone.
@@ -78,4 +125,69 @@ func requireInstalled(a App) error {
 		return fmt.Errorf("%w — install it from https://claude.ai/download", ErrNotInstalled)
 	}
 	return nil
+}
+
+// WaitRunning blocks until an instance bound to dataDir appears, or the
+// deadline passes. Reports whether one did.
+//
+// A deep link needs a live instance to receive it: with none running, the OS
+// resolves the scheme by LAUNCHING the app — and that launch carries no profile
+// flag, so it starts the machine-wide install instead of the profile that was
+// asked for. Waiting is what stops "open this session in my work profile" from
+// quietly opening a personal window.
+func WaitRunning(a App, dataDir string, deadline time.Time) (bool, error) {
+	for {
+		// Deadline FIRST. Accepting a running pid before checking it meant a
+		// profile that appeared after the timeout still counted as ready, so
+		// the bound was advisory rather than a bound.
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		pids, err := a.Running(dataDir)
+		if err != nil {
+			// A scan that FAILS is not an app that did not start. Swallowing it
+			// here would burn the whole deadline and then blame the app, while
+			// the caller is about to decide where a deep link goes on the
+			// strength of this answer.
+			return false, err
+		}
+		if len(pids) > 0 {
+			return true, nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// dataDirFromCommand pulls the --user-data-dir value out of a command line,
+// returning "" when the flag is absent (the profile-less install).
+//
+// Best effort, and used for DISPLAY only. A path containing spaces cannot be
+// recovered from a flattened command line, so the value is taken up to the next
+// " --" — which is wrong for a directory that itself contains that sequence.
+// Identity comparisons go through CommandHasDataDir instead, which does not
+// depend on this succeeding.
+func dataDirFromCommand(cmd string) string {
+	i := -1
+	// At an argument boundary only, so the flag is not found inside the
+	// executable path that precedes it.
+	for at := 0; at < len(cmd); {
+		j := strings.Index(cmd[at:], userDataFlagName)
+		if j < 0 {
+			break
+		}
+		k := at + j
+		if k == 0 || cmd[k-1] == ' ' || cmd[k-1] == '"' {
+			i = k
+			break
+		}
+		at = k + 1
+	}
+	if i < 0 {
+		return ""
+	}
+	rest := cmd[i+len(userDataFlagName):]
+	if j := strings.Index(rest, " --"); j >= 0 {
+		rest = rest[:j]
+	}
+	return strings.TrimSpace(strings.Trim(strings.TrimSpace(rest), `"`))
 }

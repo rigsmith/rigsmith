@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,8 +12,10 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
+	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/dirmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/session"
 	"github.com/rigsmith/rigsmith/internal/clauderig/tui"
 	"github.com/spf13/cobra"
 )
@@ -289,14 +292,24 @@ func pickProfile(st *desktop.Store, app desktop.App, onlyOpen bool) (desktop.Pro
 var errCancelled = errors.New("cancelled")
 
 func newDesktopOpenCmd() *cobra.Command {
-	return &cobra.Command{
+	var sessionRef string
+	var anyway bool
+	cmd := &cobra.Command{
 		Use:   "open [<name|email>]",
 		Short: "Open (or focus) a profile's Claude Desktop window",
 		Long: "Opens the profile's window, or focuses it if it is already open.\n\n" +
 			"With no profile named: uses the one mapped to this directory\n" +
 			"(`clauderig desktop map`, nearest mapped ancestor), and otherwise asks\n" +
-			"which — a picker on a terminal, an error naming both ways to say so\n" +
-			"off one. It never picks for you.",
+			"which one — a picker on a terminal, an error naming both ways to say\n" +
+			"so off a terminal. It never picks for you.\n\n" +
+			"With --session, the window opens on that Claude Code session: pass its\n" +
+			"id, or text to match its title or project. Desktop reads the transcript\n" +
+			"from ~/.claude/projects, so a session that lives only in the synced repo\n" +
+			"must be restored before it can be opened.\n\n" +
+			"A deep link is routed by scheme, not to a particular window, so with a\n" +
+			"second profile open the OS picks which one imports the session — that is\n" +
+			"refused rather than risked, since it would cross an account boundary.\n" +
+			"Quit the others, or pass --anyway when any window will do.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -315,6 +328,52 @@ func newDesktopOpenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Resolve the session BEFORE touching any window: a reference that
+			// matches nothing should cost nothing, not leave an app open on the
+			// wrong thing.
+			// Trim BEFORE the guard. A whitespace-only value is not a request:
+			// left untrimmed it enabled the whole path, then resolved to an empty
+			// needle that strings.Contains matches against every session — so
+			// `--session "   "` opened an arbitrary one, or reported hundreds of
+			// matches, instead of being rejected.
+			// An explicitly blank --session is a REQUEST that cannot be honoured,
+			// not the absence of one. Trimming it to "" and carrying on made the
+			// command silently open the profile instead, so a typo'd flag looked
+			// like it had worked.
+			if cmd.Flags().Changed("session") && strings.TrimSpace(sessionRef) == "" {
+				// Not starting with the flag name: the first letter of an error is
+				// rendered capitalised, which would print it as "--Session".
+				return fmt.Errorf("give --session a session id, or some text matching a title or project")
+			}
+			sessionRef = strings.TrimSpace(sessionRef)
+			var target sessionCandidate
+			if sessionRef != "" {
+				home, herr := account.ClaudeHome()
+				if herr != nil {
+					return herr
+				}
+				idx, ierr := liveSessionIndex()
+				if ierr != nil {
+					return ierr
+				}
+				cands, ferr := findSessions(sessionRef, home, idx)
+				if ferr != nil {
+					return ferr
+				}
+				target, err = pickSession(sessionRef, cands)
+				if errors.Is(err, errCancelled) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				// Refuse before touching a window too: focusing one and then
+				// declining to send reads as a half-done action.
+				if err := refuseIfRoutingIsAmbiguous(st, app, p, anyway); err != nil {
+					return err
+				}
+			}
+
 			running, rerr := desktop.IsRunning(app, p.DataDir())
 			if rerr != nil {
 				return fmt.Errorf("could not tell whether %s is already open: %w\n"+
@@ -324,17 +383,123 @@ func newDesktopOpenCmd() *cobra.Command {
 				if ferr := app.Focus(p.DataDir()); ferr != nil {
 					return ferr
 				}
+				if sessionRef == "" {
+					fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already open:"), p.Label())
+					return nil
+				}
 				fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already open:"), p.Label())
+			} else {
+				if lerr := app.Launch(p.DataDir()); lerr != nil {
+					return lerr
+				}
+				_ = st.Touch(p)
+				if sessionRef == "" {
+					fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ opened"), p.Label())
+					return nil
+				}
+				// With no instance up, the OS would resolve claude:// by launching
+				// the machine-wide install — the wrong profile entirely. Wait for
+				// this one to exist first.
+				ready, werr := desktop.WaitRunning(app, p.DataDir(), time.Now().Add(desktopReadyTimeout))
+				if werr != nil {
+					return fmt.Errorf("could not tell whether %s started: %w\n"+
+						"Sending now could import the session into the wrong account", p.Name, werr)
+				}
+				if !ready {
+					return fmt.Errorf("%s did not start within %s, so the session was not sent\n"+
+						"Open it first (`clauderig desktop open %s`), then re-run with --session",
+						p.Name, desktopReadyTimeout, p.Name)
+				}
+				// Running is not the same as ready to accept a deep link; Electron
+				// registers the handler shortly after the process exists.
+				time.Sleep(desktopSettle)
+			}
+
+			// Re-checked immediately before dispatch, through the same helper:
+			// launching this profile may itself have changed what is running, and
+			// the window between the check and the send is where a competing
+			// instance can appear. Narrowing it is all that is available — a
+			// scheme-routed URL cannot be addressed to an instance, so delivery
+			// can never be confirmed.
+			if err := refuseIfRoutingIsAmbiguous(st, app, p, anyway); err != nil {
+				return err
+			}
+			others, derr := competingWindows(st, app, p)
+			if derr != nil {
+				return derr
+			}
+			if oerr := app.OpenURL(resumeDeepLink(target.ID)); oerr != nil {
+				return oerr
+			}
+			if len(others) > 0 {
+				// --anyway: say where it went in terms of what is actually known,
+				// which is not "the profile you named".
+				fmt.Fprintf(out, "%s %s\n", WarnStyle.Render("⚠ sent, recipient chosen by the OS:"), target.label())
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(
+					"With "+strings.Join(others, ", ")+" also open it may have landed there instead."))
 				return nil
 			}
-			if lerr := app.Launch(p.DataDir()); lerr != nil {
-				return lerr
-			}
-			_ = st.Touch(p)
-			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ opened"), p.Label())
+			// "sent", not "opened": nothing here observes the import. The OS
+			// routes by scheme, so the only honest claim is that the link was
+			// handed over — the line below says where to look if it did not land.
+			fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ sent to "+p.Name+":"), target.label())
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(
+				"If nothing appears, Desktop reports the reason in-app (sign-in, or a missing transcript)."))
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&sessionRef, "session", "", "open this Claude Code session: its id, or text matching its title or project")
+	cmd.Flags().BoolVar(&anyway, "anyway", false, "send the session even with other profiles open, when the OS picks which receives it")
+	return cmd
+}
+
+// desktopReadyTimeout bounds the wait for a just-launched profile to exist, and
+// desktopSettle gives Electron a moment past that to register its URL handler.
+const (
+	desktopReadyTimeout = 20 * time.Second
+	desktopSettle       = 1500 * time.Millisecond
+)
+
+// liveSessionIndex reads this machine's Desktop sidecars for session titles.
+// Titles are a nicety — a session with no sidecar still resolves by its first
+// prompt — so an unreadable tree yields an empty index rather than an error.
+func liveSessionIndex() (session.Index, error) {
+	var roots []session.Root
+	// An unreadable config or profile store is reported, not absorbed. Silently
+	// dropping the sidecar roots means searching by a Desktop title finds
+	// nothing while the transcript sits right there — indistinguishable, to the
+	// person asking, from the session not existing.
+	cfg, err := config.LoadOrDefault()
+	if err != nil {
+		return nil, fmt.Errorf("read config for Desktop titles: %w", err)
+	}
+	me := config.Detect(machineName(cfg))
+	if loc, _ := cfg.RootLocation("desktop", me); loc != "" {
+		roots = append(roots, session.Root{Label: "desktop", Base: loc})
+	}
+	// The SYNCED desktop tree too. A sidecar can exist only there — restored
+	// from another machine, or aged out of the live dir — and without it
+	// findSessions falls back to the transcript's first prompt and never shows
+	// the Desktop title this command advertises. Only titles come from here;
+	// the transcript itself must still be live, which liveTranscripts enforces.
+	if staging, serr := config.StagingDir(); serr == nil {
+		roots = append(roots, session.Root{Label: "repo", Base: filepath.Join(staging, "desktop")})
+	}
+	// Every profile too: a session opened in one of them has its sidecar there
+	// and nowhere else, so leaving them out would drop the titles for exactly
+	// the sessions this command exists to reach.
+	st, serr := desktopStore()
+	if serr != nil {
+		return nil, fmt.Errorf("open the Desktop profile store: %w", serr)
+	}
+	profiles, lerr := st.List()
+	if lerr != nil {
+		return nil, fmt.Errorf("list Desktop profiles: %w", lerr)
+	}
+	for _, pr := range profiles {
+		roots = append(roots, session.Root{Label: pr.Name, Base: pr.DataDir()})
+	}
+	return session.Build(roots), nil
 }
 
 func newDesktopListCmd() *cobra.Command {

@@ -122,11 +122,18 @@ type procRow struct {
 // Running matches on the full --user-data-dir= token in each process's command
 // line. There is no pgrep on Windows, so CIM answers the same question; asking
 // for JSON avoids parsing a localized table.
-func (w windowsApp) Running(dataDir string) ([]int, error) {
-	// -AsArray is PowerShell 6+, and `powershell` is Windows PowerShell 5.1 on a
-	// standard install — with it, this failed outright on the target platform.
-	// Wrapping the pipeline in @() and passing it via -InputObject keeps the
-	// array shape for zero and one result on both.
+// claudeProcesses lists every claude.exe with its command line.
+//
+// One place, because Running and RunningDefault ask the same question and
+// differ only in the predicate they apply to the answer — and a scan that
+// drifts between the two would make the routing guard and the profile listing
+// disagree about what is running.
+//
+// -AsArray is PowerShell 6+, and `powershell` is Windows PowerShell 5.1 on a
+// standard install — with it, this failed outright on the target platform.
+// Wrapping the pipeline in @() and passing it via -InputObject keeps the array
+// shape for zero and one result on both.
+func claudeProcesses() ([]procRow, error) {
 	const script = `ConvertTo-Json -Compress -InputObject @(` +
 		`Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | ` +
 		`Select-Object ProcessId,CommandLine)`
@@ -141,6 +148,14 @@ func (w windowsApp) Running(dataDir string) ([]int, error) {
 	var rows []procRow
 	if uerr := json.Unmarshal([]byte(trimmed), &rows); uerr != nil {
 		return nil, fmt.Errorf("parse process list: %w", uerr)
+	}
+	return rows, nil
+}
+
+func (w windowsApp) Running(dataDir string) ([]int, error) {
+	rows, err := claudeProcesses()
+	if err != nil {
+		return nil, err
 	}
 	needle := userDataFlag(dataDir)
 	me := os.Getpid()
@@ -196,3 +211,71 @@ func (w windowsApp) Quit(dataDir string, grace time.Duration) error {
 
 // Supported reports whether Anthropic ships Claude Desktop for this platform.
 func Supported() bool { return true }
+
+// OpenURL hands the deep link to the shell's protocol handler.
+//
+// `cmd /c start` is used rather than ShellExecute because the URL must not be
+// parsed as a command: `start` takes an empty title argument first, so a link
+// beginning with a quote can never be read as the window title. The URL is
+// passed as its own argv entry, so cmd's own metacharacters never see it.
+func (w windowsApp) OpenURL(rawurl string) error {
+	cmd := exec.Command("cmd", "/c", "start", "", rawurl)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("open %s: %w: %s", rawurl, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// RunningDefault finds instances started with no --user-data-dir: the ordinary
+// Claude Desktop. Same process listing as Running, inverted — a row WITHOUT the
+// flag is the default install rather than a profile.
+func (w windowsApp) RunningDefault() ([]int, error) {
+	rows, err := claudeProcesses()
+	if err != nil {
+		return nil, err
+	}
+	me := os.Getpid()
+	var pids []int
+	for _, r := range rows {
+		if r.ProcessID != me && !strings.Contains(stripQuotes(r.CommandLine), userDataFlagName) {
+			pids = append(pids, r.ProcessID)
+		}
+	}
+	return pids, nil
+}
+
+// Instances lists every Claude Desktop main process and the data directory it
+// was launched against.
+//
+// Filtered by the INSTALLED PATH, not the executable name. Claude Code ships as
+// claude.exe too, so a name-only match classified the CLI's own process as a
+// Desktop window — and the routing guard then refused to send a session because
+// it believed a competing app was open, when the only thing running was the
+// tool doing the asking.
+func (w windowsApp) Instances() ([]Instance, error) {
+	rows, err := claudeProcesses()
+	if err != nil {
+		return nil, err
+	}
+	exe, ok := w.Installed()
+	if !ok {
+		return nil, nil
+	}
+	// Compare on the install DIRECTORY: the stub launcher and the versioned
+	// app-<version>\claude.exe are both Desktop, and both sit beneath it.
+	root := strings.ToLower(filepath.Dir(exe))
+	me := os.Getpid()
+	var found []Instance
+	for _, r := range rows {
+		if r.ProcessID == me {
+			continue
+		}
+		cmd := stripQuotes(r.CommandLine)
+		if !strings.Contains(strings.ToLower(cmd), root) {
+			continue // some other claude.exe — Claude Code's, most likely
+		}
+		found = append(found, Instance{PID: r.ProcessID, DataDir: dataDirFromCommand(cmd), Command: cmd})
+	}
+	return found, nil
+}

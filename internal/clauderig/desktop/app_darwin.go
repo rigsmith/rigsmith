@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -142,3 +143,102 @@ func (d darwinApp) Quit(dataDir string, grace time.Duration) error {
 
 // Supported reports whether Anthropic ships Claude Desktop for this platform.
 func Supported() bool { return true }
+
+// OpenURL hands the deep link to LaunchServices, which delivers it to the
+// registered handler for the scheme. No bundle is named: `open -a` would launch
+// a fresh instance when none of the running ones takes it, and a second instance
+// on a profile already open is the exact hazard `desktop open` guards against.
+func (d darwinApp) OpenURL(rawurl string) error {
+	cmd := exec.Command("/usr/bin/open", rawurl)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("open %s: %w: %s", rawurl, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// RunningDefault finds instances started with no --user-data-dir: the ordinary
+// Claude Desktop. The pattern matches the MAIN binary only — a helper lives at
+// Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/…, so it
+// shares the bundle prefix but never ".app/Contents/MacOS/Claude".
+func (d darwinApp) RunningDefault() ([]int, error) {
+	bundle, ok := d.Installed()
+	if !ok {
+		return nil, nil // not installed: nothing can be running
+	}
+	main := filepath.Join(bundle, "Contents", "MacOS", "Claude")
+	out, err := exec.Command("/usr/bin/pgrep", "-f", "--", regexp.QuoteMeta(main)).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 {
+			return nil, nil // no matches is an answer
+		}
+		return nil, fmt.Errorf("scan for Claude Desktop processes: %w", err)
+	}
+	me := os.Getpid()
+	var pids []int
+	for _, f := range strings.Fields(string(out)) {
+		pid, perr := strconv.Atoi(f)
+		if perr != nil || pid == me {
+			continue
+		}
+		// A profile instance also matches the main binary; what separates it is
+		// the flag. Only a process WITHOUT one is the default install.
+		cmd, cerr := exec.Command("/bin/ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+		if cerr != nil {
+			// ps exits 1 for "no such process" — the pid vanished between the
+			// pgrep and this lookup, which is ordinary churn and genuinely
+			// means it is not running. Anything else is a failed inspection,
+			// and reporting that as "not the default app" would let the routing
+			// guard send under unknown state.
+			var ee *exec.ExitError
+			if errors.As(cerr, &ee) && ee.ExitCode() == 1 {
+				continue
+			}
+			return nil, fmt.Errorf("inspect Claude Desktop process %d: %w", pid, cerr)
+		}
+		if strings.Contains(string(cmd), userDataFlagName) {
+			continue
+		}
+		pids = append(pids, pid)
+	}
+	return pids, nil
+}
+
+// Instances lists every Claude Desktop main process and the data directory it
+// was launched against. Helpers are excluded by the pattern: they live under
+// Contents/Frameworks/Claude Helper.app, which never contains the main binary's
+// path. A process whose command line cannot be read is an error, not an
+// omission — the caller uses this to decide whether sending is safe.
+func (d darwinApp) Instances() ([]Instance, error) {
+	bundle, ok := d.Installed()
+	if !ok {
+		return nil, nil
+	}
+	main := filepath.Join(bundle, "Contents", "MacOS", "Claude")
+	out, err := exec.Command("/usr/bin/pgrep", "-f", "--", regexp.QuoteMeta(main)).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scan for Claude Desktop processes: %w", err)
+	}
+	me := os.Getpid()
+	var found []Instance
+	for _, f := range strings.Fields(string(out)) {
+		pid, perr := strconv.Atoi(f)
+		if perr != nil || pid == me {
+			continue
+		}
+		cmd, cerr := exec.Command("/bin/ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+		if cerr != nil {
+			var ee *exec.ExitError
+			if errors.As(cerr, &ee) && ee.ExitCode() == 1 {
+				continue // exited between the scan and the lookup: ordinary churn
+			}
+			return nil, fmt.Errorf("inspect Claude Desktop process %d: %w", pid, cerr)
+		}
+		found = append(found, Instance{PID: pid, DataDir: dataDirFromCommand(string(cmd)), Command: string(cmd)})
+	}
+	return found, nil
+}

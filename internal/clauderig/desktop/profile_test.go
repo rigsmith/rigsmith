@@ -150,7 +150,35 @@ type fakeApp struct {
 	launched []string
 	running  map[string]bool
 	quitAt   map[string]time.Duration
-	scanErr  error // set to simulate a failed process scan
+	scanErr  error    // set to simulate a failed process scan
+	opened   []string // deep links handed to OpenURL
+}
+
+func (f *fakeApp) RunningDefault() ([]int, error) { return nil, nil }
+
+// Instances mirrors the real scan: one process per running data dir.
+func (f *fakeApp) Instances() ([]Instance, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.scanErr != nil {
+		return nil, f.scanErr
+	}
+	var out []Instance
+	pid := 1000
+	for dir, on := range f.running {
+		if on {
+			pid++
+			out = append(out, Instance{PID: pid, DataDir: dir})
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeApp) OpenURL(rawurl string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.opened = append(f.opened, rawurl)
+	return nil
 }
 
 func newFakeApp() *fakeApp {
@@ -381,5 +409,35 @@ func TestFakeQuitLeavesTheProfileClosed(t *testing.T) {
 	}
 	if running, err := IsRunning(app, "/p/work/data"); err != nil || running {
 		t.Fatalf("still open after quit (%v, %v)", running, err)
+	}
+}
+
+// A failed process scan is not "the app did not start". Swallowing it would
+// burn the whole deadline and then blame the app, while the caller is about to
+// decide where a deep link goes on the strength of the answer.
+func TestWaitRunningReportsAScanFailureRatherThanATimeout(t *testing.T) {
+	app := newFakeApp()
+	app.scanErr = errors.New("pgrep exploded")
+
+	start := time.Now()
+	ready, err := WaitRunning(app, "/p/data", start.Add(5*time.Second))
+	if err == nil {
+		t.Fatal("a failed scan must surface as an error, not a quiet false")
+	}
+	if ready {
+		t.Error("ready should be false when the scan failed")
+	}
+	// It must give up immediately rather than spinning out the deadline.
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("waited %v on a failing scan; should return at once", elapsed)
+	}
+}
+
+func TestWaitRunningSucceedsOnceTheProfileAppears(t *testing.T) {
+	app := newFakeApp()
+	app.running["/p/data"] = true
+	ready, err := WaitRunning(app, "/p/data", time.Now().Add(2*time.Second))
+	if err != nil || !ready {
+		t.Fatalf("ready=%v err=%v, want true/nil", ready, err)
 	}
 }
