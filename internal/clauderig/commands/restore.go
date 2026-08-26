@@ -133,12 +133,17 @@ func NewRestoreCmd() *cobra.Command {
 				}
 				if hasIdentity {
 					fmt.Fprintf(out, "  backing up %s → %s\n", idSrc, idDst)
-					// 0600 regardless of the source's mode. copyOne preserves
+					// 0600 rather than the source's mode. copyOne preserves
 					// permissions, which is right for transcripts — but this file
 					// can carry MCP server credentials in mcpServers.*.headers,
 					// and a source someone left world-readable would otherwise be
 					// duplicated into a second world-readable copy they never
-					// knew they were creating. Tightening here never loosens.
+					// knew they were creating.
+					//
+					// On Unix that is a real narrowing. On Windows it is not:
+					// see copyOneAs. The backup is no more exposed than the file
+					// it came from on either platform, but only one of them is
+					// actually being protected here.
 					if err := copyOneAs(idSrc, idDst, 0o600); err != nil {
 						return fmt.Errorf("backup identity: %w", err)
 					}
@@ -415,6 +420,13 @@ func copyOne(src, dst string) error { return copyOneInto("", src, dst) }
 
 // copyOneAs copies with an explicit destination mode instead of the source's,
 // for a file whose permissions should not be inherited from wherever it came.
+//
+// UNIX ONLY, and worth stating rather than implying: Go maps FileMode to the
+// read-only attribute on Windows and leaves the ACL alone, so this narrows
+// nothing there. A backup written beside ~/.claude.json inherits that
+// directory's ACL either way — usually the user profile's, which is already
+// restricted to the user — so the practical exposure on Windows is the same as
+// the original file's. What this cannot do is IMPROVE on it.
 func copyOneAs(src, dst string, mode os.FileMode) error {
 	return copyOneWith("", src, dst, &mode)
 }

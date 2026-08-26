@@ -275,6 +275,8 @@ func TestCopyOneAs_ForcesTheDestinationMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Unix only: Go maps FileMode to the read-only attribute on Windows and
+	// leaves the ACL alone, so there is no mode here to assert against.
 	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("backup mode = %04o, want 0600 whatever the source was", fi.Mode().Perm())
 	}
