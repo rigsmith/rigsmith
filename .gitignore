@@ -34,3 +34,7 @@ go.work.sum
 # Generated Windows resource files (icon + version info); emitted by
 # scripts/winres.sh into each cmd/<tool>/ during the goreleaser before hook.
 cmd/*/*.syso
+
+# nimbalyst's local planning notes — a working artifact of the tool, not of
+# this repo. One escaped into history in June; keep the rest out.
+nimbalyst-local/
