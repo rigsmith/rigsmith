@@ -209,8 +209,37 @@ adds a profile, and clears a profile's shortcuts when it removes one.
 What a shortcut **cannot** do is brand the window it opens. macOS and Windows
 label a window by the application that owns it, and that application is Claude
 Desktop for every profile — so the icon and name are Claude's once the window is
-up, however the shortcut is labelled. Short of copying the whole app bundle per
-profile (which breaks updates and the signature), there is no way around it.
+up, however the shortcut is labelled.
+
+This has been looked at more than once, so the dead ends are written down here
+rather than re-derived. The name and Dock icon come from the bundle containing
+the running executable, which means the only lever is a bundle per profile, and
+every route to one is closed:
+
+- **Linking the real executable into a smaller shim bundle** does not avoid a
+  full copy. The main executable's signature covers the bundle's `Info.plist`,
+  so a shim carrying a different one fails the seal under the hardened runtime
+  and is refused at launch — and the shim would still need Electron's
+  frameworks beside it, which is the copy again.
+- **A full copy, re-signed ad hoc**, does launch, and is still wrong. Keychain
+  ACLs are bound to the signing identity, so the copies lose access to
+  Electron's `safeStorage` item; the app's own updater never touches them; and
+  it is about a gigabyte per profile.
+- **Setting the window title from outside** fails for a reason no permission can
+  fix: Electron owns the title and rewrites it as the app navigates. The
+  accessibility API exposes it read-only for these windows in any case, and
+  reaching for it at all would mean asking for an Accessibility grant.
+
+None of this changes if a launcher sits in front of the app. A launcher owns
+what happens *before* a window exists; branding is a property of the window.
+
+What does work, today and with no bundle surgery, is **theme**. Each profile has
+its own `config.json`, and Desktop writes `userThemeMode` into it — so setting
+one profile to dark and another to light in the app's own settings makes them
+tellable apart at a glance in Mission Control or Alt-Tab. It is weaker than an
+icon and worth describing as what it is: a workaround, not a fix. The fix is
+Desktop naming the signed-in account in its own title bar, which is one line
+inside the app and impossible from outside it.
 
 ## Opening a Claude Code session
 
@@ -247,7 +276,10 @@ toast:
 - **A deep link is routed by scheme, not to a window.** With a second profile
   open the OS picks which one receives it, and that would cross an account
   boundary — so it is refused rather than risked. Quit the others, or pass
-  `--anyway` when any window will do.
+  `--anyway` when any window will do. Loosening this — by having clauderig
+  register as the `claude://` handler and decide the destination itself — is
+  designed in
+  [CLAUDERIG-DESKTOP-LAUNCHER-DESIGN.md](CLAUDERIG-DESKTOP-LAUNCHER-DESIGN.md).
 
 ### Finding the session
 
