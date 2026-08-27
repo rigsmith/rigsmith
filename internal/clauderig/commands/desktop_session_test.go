@@ -723,10 +723,26 @@ func TestDesktopHint_OnlyWhereTheCommandWouldWork(t *testing.T) {
 	// A session the sidecar attributes to a profile must name it: without it the
 	// command resolves a profile the usual way and can land on another account's
 	// window, which is the boundary this whole feature refuses to cross.
+	names := desktopProfileNames
+	desktopProfileNames = func() map[string]bool { return map[string]bool{"work": true} }
+	t.Cleanup(func() { desktopProfileNames = names })
+
 	owned := &sessResult{id: live.id, cliLive: true}
 	owned.meta.Profile = "work"
 	if h := desktopHint(owned); !strings.Contains(h, "desktop open work --session ") {
 		t.Errorf("want the owning profile named: %q", h)
+	}
+	// A sidecar's profile name is history: it records where the session was
+	// filed, on whatever machine wrote it. Naming one this store no longer has
+	// produces a command that fails on the spot with "no Desktop profile".
+	stale := &sessResult{id: live.id, cliLive: true}
+	stale.meta.Profile = "deleted-last-year"
+	h := desktopHint(stale)
+	if strings.Contains(h, "deleted-last-year") {
+		t.Errorf("a profile this store cannot resolve must not be named: %q", h)
+	}
+	if !strings.Contains(h, "--session "+live.id) {
+		t.Errorf("the session is still openable, just unattributed: %q", h)
 	}
 	// cliLive is not the test: a --repo row can carry it for a transcript that
 	// is not on this machine, so the opener's own index is what decides.
@@ -830,5 +846,32 @@ func TestLiveTranscripts_FollowsSymlinkedTranscripts(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != id {
 		t.Errorf("a symlinked transcript must still be offered, got %+v", got)
+	}
+}
+
+// A title is a session's first prompt, and first prompts routinely carry text
+// pasted from a log, a web page or a terminal capture. Every renderer of these
+// strings writes them straight to a terminal, so an ESC left in one is
+// interpreted rather than shown.
+func TestLabel_StripsTerminalControlSequences(t *testing.T) {
+	c := sessionCandidate{
+		ID:    "11111111-1111-1111-1111-111111111111",
+		Title: "fix \x1b[31mthe\x07 parser\x1b]0;pwned\x07",
+		Cwd:   "/Users/j/Git/api",
+	}
+	got := c.label()
+	for _, bad := range []string{"\x1b", "\x07"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("control byte %q survived into the label: %q", bad, got)
+		}
+	}
+	// Ordinary text, in any language, must come through untouched.
+	plain := sessionCandidate{ID: c.ID, Title: "réparer l'analyseur — 日本語"}
+	if !strings.Contains(plain.label(), "réparer l'analyseur — 日本語") {
+		t.Errorf("non-ASCII text must survive: %q", plain.label())
+	}
+	// And the completion entry keeps exactly one tab, whatever the title held.
+	if n := strings.Count(completionEntry(c), "\t"); n != 1 {
+		t.Errorf("want exactly one tab in a completion entry, got %d", n)
 	}
 }

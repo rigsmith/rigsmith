@@ -559,16 +559,34 @@ func renderSessionAs(out interface{ Write([]byte) (int, error) }, me config.Mach
 //
 // Memoised because it runs once per rendered result and is two filesystem
 // probes whose answer cannot change part-way through a listing.
-var desktopUsable = sync.OnceValue(func() bool {
+var desktopUsable = func() bool { return len(desktopProfileNames()) > 0 }
+
+// desktopProfileNames is the set of profiles `desktop open` could resolve right
+// now — empty when Claude Desktop is absent, so one memo answers both "is there
+// an app" and "is there anything for it to open".
+//
+// A set rather than a count because a sidecar's profile name is HISTORY: it
+// records where a session was filed, on whatever machine wrote it. Emitting it
+// unchecked produced `desktop open work --session …` against a store that has
+// since renamed or deleted `work`, which fails on the spot with "no Desktop
+// profile" — a hint that is worse than no hint.
+var desktopProfileNames = sync.OnceValue(func() map[string]bool {
 	if _, ok := newDesktopApp().Installed(); !ok {
-		return false
+		return nil
 	}
 	st, err := desktopStore()
 	if err != nil {
-		return false
+		return nil
 	}
 	ps, err := st.List()
-	return err == nil && len(ps) > 0
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]bool, len(ps))
+	for _, p := range ps {
+		out[p.Name] = true
+	}
+	return out
 })
 
 // openableSessions is the id set `desktop open --session` could actually
@@ -614,7 +632,7 @@ func desktopHint(r *sessResult) string {
 	// picker, else an error — which for a session that belongs to a KNOWN
 	// account means a prompt at best and the wrong window at worst.
 	cmd := "clauderig desktop open "
-	if r.meta.Profile != "" {
+	if desktopProfileNames()[r.meta.Profile] {
 		cmd += shQuote(r.meta.Profile) + " "
 	}
 	return "desktop: " + cmd + "--session " + shQuote(r.id)

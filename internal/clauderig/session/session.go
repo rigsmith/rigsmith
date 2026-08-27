@@ -73,11 +73,6 @@ type sidecar struct {
 // human title we want to surface, so a search hit in either gets a real name.
 var sessionTrees = []string{"claude-code-sessions", "local-agent-mode-sessions"}
 
-// Build scans each root's sidecar trees and returns the merged index keyed by
-// cliSessionId. When a session has sidecars in more than one root, the entry with
-// the newer LastActivity supplies the display fields and every source label is
-// recorded. Sidecars with no cliSessionId (e.g. storage placeholders) are
-// ignored. Missing/unreadable trees are skipped, not errors.
 // CanonicalID is the form an Index is keyed by, and the form every lookup must
 // use. Session ids are uuids, which are case-insensitive by specification —
 // Claude Code writes its transcript filenames lowercase, but a Desktop sidecar
@@ -86,6 +81,11 @@ var sessionTrees = []string{"claude-code-sessions", "local-agent-mode-sessions"}
 // session silently lost its title and project everywhere the index is consulted.
 func CanonicalID(id string) string { return strings.ToLower(id) }
 
+// Build scans each root's sidecar trees and returns the merged index keyed by
+// cliSessionId. When a session has sidecars in more than one root, the entry with
+// the newer LastActivity supplies the display fields and every source label is
+// recorded. Sidecars with no cliSessionId (e.g. storage placeholders) are
+// ignored. Missing/unreadable trees are skipped, not errors.
 func Build(roots []Root) Index {
 	idx := Index{}
 	for _, r := range roots {

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
@@ -52,8 +53,10 @@ type sessionCandidate struct {
 // label is the human description — title and project, no id. Callers that need
 // the id add it, so it is never printed twice in the same line.
 func (c sessionCandidate) label() string {
-	t := c.Title
-	if t == "" {
+	// Sanitised HERE rather than at each rendering site: every caller writes the
+	// result to a terminal, and one that forgot would be the one that mattered.
+	t := sanitizeForDisplay(c.Title)
+	if strings.TrimSpace(t) == "" {
 		t = "(no title)"
 	}
 	// Count and slice by runes: a title is arbitrary user text, and byte
@@ -61,7 +64,7 @@ func (c sessionCandidate) label() string {
 	if r := []rune(t); len(r) > 58 {
 		t = string(r[:57]) + "…"
 	}
-	if proj := c.project(); proj != "" {
+	if proj := sanitizeForDisplay(c.project()); proj != "" {
 		return fmt.Sprintf("%s  ·  %s", t, proj)
 	}
 	return t
@@ -334,8 +337,29 @@ func completeSessionRef(_ *cobra.Command, _ []string, _ string) ([]string, cobra
 // tail of a prompt into the shell's own column; a newline would end the entry
 // and make the rest look like a separate candidate.
 func completionEntry(c sessionCandidate) string {
-	desc := strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(c.label())
-	return c.ID + "\t" + desc
+	return c.ID + "\t" + c.label()
+}
+
+// sanitizeForDisplay replaces every control rune with a space.
+//
+// A title is a session's first prompt, and a first prompt routinely carries
+// text pasted from somewhere else — a log, a web page, a terminal capture. An
+// ESC in there is not hypothetical, and everything that renders these strings
+// writes them straight to a terminal: the completion list, the picker, and the
+// ambiguity listing. Left in, the escape is INTERPRETED, so a title could move
+// the cursor, recolour the prompt or hide what it wrote.
+//
+// unicode.IsControl covers C0 and C1, which is where the escape introducers
+// live; ordinary Unicode text is untouched, so a title in any language survives
+// intact. Tabs go too, because the completion protocol splits an entry on the
+// first one.
+func sanitizeForDisplay(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // cwdFor prefers the sidecar's cwd and falls back to the one the transcript

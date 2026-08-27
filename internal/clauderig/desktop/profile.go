@@ -137,22 +137,18 @@ func (s *Store) CandidateDataDirs() (map[string]string, error) {
 	}
 	out := map[string]string{}
 	for _, e := range entries {
-		// ReadDir reports a directory SYMLINK as a link, not a directory, so an
-		// IsDir check alone omitted a profile that Get and `desktop open` both
-		// follow happily — and a window running from it was then unnamed by
-		// anything that consulted this map.
-		if !e.IsDir() {
-			fi, serr := os.Stat(filepath.Join(s.Root, e.Name()))
-			if serr != nil || !fi.IsDir() {
-				continue
-			}
+		// Shared with List, deliberately. This check lived here alone until a
+		// review found List missing symlinked profiles in exactly the way this
+		// comment already described — one copy fixed, the other not, which is
+		// what having two copies buys you.
+		if !isDirFollowingLinks(s.Root, e) {
+			continue
 		}
 		out[e.Name()] = filepath.Join(s.profileDir(e.Name()), "data")
 	}
 	return out, nil
 }
 
-// List returns every saved profile, ordered by name.
 // isDirFollowingLinks reports whether an entry is, or points at, a directory.
 // Only a symlink pays for a stat; every other entry is answered from the type
 // bits ReadDir already carries. A broken link answers false.
@@ -167,6 +163,7 @@ func isDirFollowingLinks(root string, e os.DirEntry) bool {
 	return err == nil && fi.IsDir()
 }
 
+// List returns every saved profile, ordered by name.
 func (s *Store) List() ([]Profile, error) {
 	entries, err := os.ReadDir(s.Root)
 	if errors.Is(err, os.ErrNotExist) {

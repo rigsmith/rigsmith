@@ -34,6 +34,17 @@ func TestLiveTranscripts_SkipsNonRegularFiles(t *testing.T) {
 		t.Skipf("cannot create a fifo here: %v", err)
 	}
 
+	// Opening the write end unblocks any reader that does reach the fifo, so a
+	// regression fails by assertion with no goroutine left holding an fd for the
+	// rest of the run. t.Fatal only unwinds the calling goroutine, so a reader
+	// blocked in os.Open would otherwise outlive this test entirely.
+	t.Cleanup(func() {
+		w, err := os.OpenFile(fifo, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if err == nil {
+			_ = w.Close()
+		}
+	})
+
 	// A bare os.Open on the fifo would block forever, so the test itself has to
 	// be bounded: a hang here is the regression, not a slow machine.
 	done := make(chan []sessionCandidate, 1)
