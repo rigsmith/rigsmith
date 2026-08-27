@@ -219,3 +219,9 @@ func velopackRefVersion(csprojText string) string {
 	}
 	return ""
 }
+
+// LocalOverlay is not implemented here: Velopack overlays dotnet, which owns the
+// dependency graph.
+func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayRequest) (plugin.LocalOverlayResponse, error) {
+	return plugin.LocalOverlayResponse{Skipped: true, Reason: "Velopack overlays dotnet: ask dotnet"}, nil
+}
