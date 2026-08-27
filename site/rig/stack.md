@@ -1,15 +1,15 @@
-# Stack workspaces
+# Stackspaces
 
 Some projects only make sense together — an app, and the libraries it depends
 on that you have had to fork. Iterating across that boundary means publishing a
 package to see a change land, and a change that spans the repos cannot be one
 commit.
 
-A **stack workspace** fuses those repos — your app included — into one git
+A **stackspace** fuses those repos — your app included — into one git
 history, each under its own directory. A change spans them in a single commit,
 the build compiles against source rather than packages, and every project still
 leaves as itself: a pull request to a fork you contribute to, or a
-fast-forward of a repository you own. Nobody downstream learns the workspace
+fast-forward of a repository you own. Nobody downstream learns the stackspace
 exists.
 
 ## The two halves
@@ -17,7 +17,7 @@ exists.
 Two independent problems, two independent solutions. You need both, and they
 know nothing about each other.
 
-**The git half.** Each upstream repo's history is imported into one workspace
+**The git half.** Each upstream repo's history is imported into one stackspace
 repo, rewritten to live under a prefix directory. That is
 [josh](https://josh-project.dev) doing reversible history filtering; rig drives
 it as a throwaway localhost process and does everything else with plain git.
@@ -31,7 +31,7 @@ flowchart TB
     U2["acme/term-core"] -->|"init · pull"| WS
     U3["you/term-app"] -->|"init · pull"| WS
 
-    WS["<b>your workspace</b><br/>pty-core/ &nbsp; term-core/ &nbsp; term-app/"] --> CM["one commit,<br/>several directories"]
+    WS["<b>your stackspace</b><br/>pty-core/ &nbsp; term-core/ &nbsp; term-app/"] --> CM["one commit,<br/>several directories"]
 
     CM -->|"send"| B1["you/pty-core<br/>stack/read-timeout"]
     CM -->|"push"| B2["you/term-app<br/>its own branch"]
@@ -57,14 +57,14 @@ file sitting *above* the projects redirects those package references at the
 sources next door — see [wiring the build](#build) below. No upstream-owned
 file is modified, and no project file changes at all.
 
-## Everything goes in the workspace {#topology}
+## Everything goes in the stackspace {#topology}
 
 Your own project included. One repo, one build file, one commit that can span
 all of it.
 
 That is worth saying plainly, because the instinct is the other way round: keep
-your app where it is, and have it reach into the workspace for the libraries.
-That does work. It also gives up the thing the workspace exists for — a change
+your app where it is, and have it reach into the stackspace for the libraries.
+That does work. It also gives up the thing the stackspace exists for — a change
 spanning your app and a library is two commits in two repos again — and it needs
 a second build file that most people do not realise they need until something
 silently builds against the published package.
@@ -94,7 +94,7 @@ way [`send`](#send) does for somebody else's project.
 ::: warning A repo with its own root build file hides the overlay
 MSBuild stops at the **first** `Directory.Build.targets` it finds walking up.
 Your own app is the project most likely to have one — and if it does, the
-workspace overlay above it is never read, and every project underneath quietly
+stackspace overlay above it is never read, and every project underneath quietly
 keeps building against published packages. Nothing warns you.
 
 Have that file continue the walk-up:
@@ -108,13 +108,13 @@ Have that file continue the walk-up:
 <Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != ''" />
 ```
 
-It is a no-op outside a workspace, where there is nothing above, so it is safe
+It is a no-op outside a stackspace, where there is nothing above, so it is safe
 to commit.
 :::
 
 ## Setting one up
 
-### 1. The workspace is an ordinary git repo
+### 1. The stackspace is an ordinary git repo
 
 It needs no remote and never gets one. Nothing is pushed *from* it except
 through `send`, which pushes to your forks.
@@ -198,9 +198,9 @@ This part has nothing to do with git, and what it looks like depends on your
 ecosystem. The goal is the same everywhere: make every project compile against
 the sources next door instead of a published package.
 
-On .NET that is a single `Directory.Build.targets` at the workspace root. MSBuild
+On .NET that is a single `Directory.Build.targets` at the stackspace root. MSBuild
 imports it from the nearest ancestor directory of every project underneath, and
-in a workspace that is all of them.
+in a stackspace that is all of them.
 
 Declare each swap once — the package name, and where its sources are:
 
@@ -230,16 +230,16 @@ What that buys is one unedited project file with two possible resolutions:
 ```mermaid
 flowchart TB
     S["App.csproj — never edited<br/><code>PackageReference Pty.Core</code>"]
-    S --> Q{"built inside<br/>the workspace?"}
+    S --> Q{"built inside<br/>the stackspace?"}
     Q -->|"yes"| P["<code>ProjectReference</code><br/>pty-core/src/Pty.Core"]
     Q -->|"no"| K["<code>PackageReference</code><br/>the published Pty.Core"]
 ```
 
-No `.csproj` is edited, so nothing any project carries advertises the workspace.
+No `.csproj` is edited, so nothing any project carries advertises the stackspace.
 Clone any member on its own and it builds from packages exactly as it always
 did — which is what its CI, and anyone you send a change to, will do.
 
-Other ecosystems have their own version of this — a workspace `paths` mapping,
+Other ecosystems have their own version of this — an npm `workspaces` array,
 a `go.work` file, a linked dependency. Nothing in `rig stack` depends on which
 you choose.
 
@@ -285,7 +285,7 @@ missed it.
   turn out not to apply, because they read as working.
 
 ::: tip Fusing a library your code pins to an old release
-If a member's sources no longer compile against the rest of the workspace, the
+If a member's sources no longer compile against the rest of the stackspace, the
 build wiring is usually not the problem — the *imported point* is. A library you
 depend on at an older release has to be fused at that release, not at a tip
 whose API has moved on. Pin it with
@@ -309,18 +309,18 @@ git commit -am "fix the read timeout and the app that hit it"
 One commit spanning your app and a forked library, and the build proved it works
 end to end before you committed. No version bump, no publish, no waiting for a
 feed. That is the whole point of the exercise, and it is the part you lose if
-your app lives outside the workspace.
+your app lives outside the stackspace.
 
 ## Getting your changes out
 
-A commit in the workspace can touch several projects. Getting it to each of them
+A commit in the stackspace can touch several projects. Getting it to each of them
 is one command per project — and which command depends on whose repository it
 is.
 
 ### Your own projects: `push` {#push}
 
 For a member marked `"owned": true`, `push` fast-forwards that project's own
-branch with every workspace commit that touched it:
+branch with every stackspace commit that touched it:
 
 ```sh
 rig stack push term-app
@@ -335,10 +335,10 @@ not appear at all. It works by running the exact inverse of the filter the repo
 was imported with, so the history you share with upstream comes back as its own
 commits and yours sit on top as a fast-forward.
 
-Pushing also brings the result back into the workspace before it returns. The
+Pushing also brings the result back into the stackspace before it returns. The
 commit that leaves is necessarily a different object from the one that produced
 it — the same content, under a different prefix, with different parents — so the
-workspace ends up holding both shapes of a cross-project change: your commit
+stackspace ends up holding both shapes of a cross-project change: your commit
 spanning several projects, and the single-project commit the repo received. That
 is the honest cost of one history being several, and taking it back at push time
 is what stops a later `pull` re-importing your own work as a parallel line of
@@ -362,7 +362,7 @@ rig stack send term-core read-timeout -m "Handle the new timeout"
 
 The branch holds that project's files at their real un-prefixed paths —
 `src/Pty.Core/…`, not `pty-core/src/…` — with no sign the repo is fused with
-anything, and none of the workspace's own history for a maintainer to read
+anything, and none of the stackspace's own history for a maintainer to read
 around. Open the PR from your fork as usual.
 
 `<new-branch>` is a branch you are creating on *your fork*, named per change.
@@ -374,19 +374,19 @@ What you type is prefixed with **`stack/`**, so `read-timeout` becomes
 these apart from them at a glance, and makes a collision with a name
 already on the fork far less likely — though a prefix reserves nothing, and a
 fork may already carry `stack/<name>`. Change it with `branchPrefix` in the manifest,
-per workspace or per repo, or set it to `""` for bare names. A name that already
+per stackspace or per repo, or set it to `""` for bare names. A name that already
 starts with the prefix is left alone, so pasting a full branch name back in when
 re-sending does not stutter it.
 
 Sending again to the same branch **updates** it, so you can act on review
-feedback: commit in the workspace, re-send, and the pull request moves. The
+feedback: commit in the stackspace, re-send, and the pull request moves. The
 branch is replaced under a lease taken at the moment of the push, which guards
 against a race between reading the branch and writing it — it is not a record of
 what you last sent, so it will not tell you that someone rewrote the branch
 between one send and the next.
 
 ::: warning `send` refuses a stale cursor
-Your workspace tree is a snapshot taken at the last `pull`. If upstream has
+Your stackspace tree is a snapshot taken at the last `pull`. If upstream has
 moved on since, committing that tree onto the newer tip would present every
 commit that landed in between as though your branch had **reverted** it. `send`
 stops rather than build such a branch — run `rig stack pull <repo>` and send
@@ -403,7 +403,7 @@ rig stack pull                # take all of them
 
 A pull merges the new upstream commits into that repo's directory, so a conflict
 is scoped to the project that caused it rather than landing across the whole
-workspace. The cursor only advances once the merge is committed.
+stackspace. The cursor only advances once the merge is committed.
 
 A [pinned](./configuration#stack) project has nothing to take: its tag was
 resolved once, and an upstream that later re-cuts that tag does not move you.
@@ -423,7 +423,7 @@ outright if it holds changes of its own.
 | `stack status` | Each repo's cursor against its upstream branch tip |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
-| `stack push <repo>` | Fast-forward a repo you own with this workspace's commits, history intact |
+| `stack push <repo>` | Fast-forward a repo you own with this stackspace's commits, history intact |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
 `send` and `push` answer different questions. `send` proposes one squashed
@@ -458,7 +458,7 @@ verified builds for your platform — built and published by
 [rigsmith/josh-binaries](https://github.com/rigsmith/josh-binaries), since
 upstream ships no releases — falling back to building it from source where none
 exists. Nothing runs in the background: the engine starts per operation and
-stops after. Pin a version per workspace with the manifest's
+stops after. Pin a version per stackspace with the manifest's
 [`josh` key](./configuration#stack).
 
 ## Things worth knowing before they bite
@@ -468,7 +468,7 @@ stops after. Pin a version per workspace with the manifest's
   registry exactly as it always did — which is what its CI does, and what
   anyone you send a change to will do. The corollary is that code depending on
   something you added in a fork but have not published yet compiles inside the
-  workspace and nowhere else. That is fine while the change is in flight and a
+  stackspace and nowhere else. That is fine while the change is in flight and a
   trap if you forget it.
 - **A clean worktree is required** for `init`, `pull`, `send`, and `push`. An import
   amends its merge commit and stages everything, so an unrelated edit sitting in
@@ -476,10 +476,10 @@ stops after. Pin a version per workspace with the manifest's
   `rig.stack.jsonc` on first import, since filling it in and re-running is the
   documented flow — an inline `stack` block in `.rig.json` gets no exception,
   because waving that file through would commit whatever else it holds.
-- **The workspace root is the git top level**, so the verbs work from anywhere
+- **The stackspace root is the git top level**, so the verbs work from anywhere
   inside it — including from within one of the imported projects, which carries
   its own package manifest and would otherwise look like the root.
-- **The workspace is disposable — once your work has left it.** The fused
+- **The stackspace is disposable — once your work has left it.** The fused
   history is a working convenience, not an archive, so a tangled one can be
   deleted and re-imported. But a commit you have not sent or pushed exists *only*
   there. `status` flags a project holding work that has not left — `unsent
@@ -489,6 +489,6 @@ stops after. Pin a version per workspace with the manifest's
   likely to be tidying up. It reports what has *changed*, not what has reached a
   fork: neither verb leaves a record, so a project stays flagged until upstream's
   own history moves on.
-- **Do not give the workspace a remote** and push it somewhere. It contains
+- **Do not give the stackspace a remote** and push it somewhere. It contains
   several rewritten upstream histories fused together, which is meaningful to
   you and to nobody else.

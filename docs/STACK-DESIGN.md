@@ -1,15 +1,15 @@
-# stack: a fused workspace of upstream forks
+# stack: a fused stackspace of upstream forks
 
 > Status: **in progress** (proposed 2026-08-25; first slice on `feat/ws` (verb since renamed `stack`) the
 > same day — manifest, engine install, ephemeral proxy, init/pull/send/status/
 > doctor). Direction settled: josh integration style (one fused history, not
 > sibling clones). Adds a `rig stack` verb family: a
-> workspace repo whose children are *prefixes in one real git history*, imported
+> stackspace repo whose children are *prefixes in one real git history*, imported
 > from and synced back to their upstream repos through
 > [josh](https://josh-project.dev)'s reversible filters, driven the way
 > [rust-lang/josh-sync](https://github.com/rust-lang/josh-sync) drives it — an
 > ephemeral localhost `josh-proxy` plus plain git. Designed against a real
-> reference workspace: three forked .NET repos — a pseudoterminal, a terminal
+> reference stackspace: three forked .NET repos — a pseudoterminal, a terminal
 > emulator core, and the UI control that consumes both.
 
 ## The job
@@ -21,10 +21,10 @@ requirements that every existing tool trades against each other:
 
 1. **Atomic iteration.** One commit may span an API change in the PTY library
    and the consumer fix in the terminal control. One history, bisectable,
-   with the workspace's own branches and worktrees.
+   with the stackspace's own branches and worktrees.
 2. **Clean upstream exits.** Any slice of that work must leave as an ordinary
    PR from an ordinary fork branch — correct parents, no rewritten-hash
-   archaeology, upstream never knows the workspace exists.
+   archaeology, upstream never knows the stackspace exists.
 
 Submodules and manifest tools (vcstool, west, repo…) satisfy 2 by giving up 1.
 git subtree attempts both and fails 2 (`subtree split` drift, garbage hashes).
@@ -65,9 +65,9 @@ rather than inheriting it.
 
 ## The model
 
-A stack workspace is **one ordinary git repo**. Each upstream project is a
+A stackspace is **one ordinary git repo**. Each upstream project is a
 prefix (`pty-core/`, `term-core/`, …) whose contents were imported through
-josh's `:prefix=` filter, plus workspace-owned glue at the root: the manifest,
+josh's `:prefix=` filter, plus stackspace-owned glue at the root: the manifest,
 the ecosystem overlay (`.slnx` + `Directory.Build.targets` for .NET — see
 appendix), CI. Branches, worktrees (`rig worktree` composes for free — they
 are just branches of one repo), stashes, bisect: all normal git.
@@ -100,16 +100,16 @@ are just branches of one repo), stashes, bisect: all normal git.
 |---|---|
 | `rig stack init` | scaffold the manifest; for each repo, import upstream history under its prefix (proxy fetch through `:prefix=<child>`, merge, set cursor); scaffold the ecosystem overlay |
 | `rig stack pull [child]` | fetch upstream through the filter; `NothingToPull` if the cursor matches; else merge (strategy per child), update cursor. The CI-cronnable direction |
-| `rig stack send <child> <new-branch>` | commit `<child>/`'s tree onto that project's upstream tip and push it to the **fork** as `branchPrefix + <new-branch>` (default `stack/`): one commit, whose diff is exactly what the workspace changed. The deliberate direction |
+| `rig stack send <child> <new-branch>` | commit `<child>/`'s tree onto that project's upstream tip and push it to the **fork** as `branchPrefix + <new-branch>` (default `stack/`): one commit, whose diff is exactly what the stackspace changed. The deliberate direction |
 | `rig stack status` | per child: upstream commits since cursor, local commits touching the prefix not yet sent, cursor SHA |
 | `rig stack doctor` | engine installed + version matches pin, remotes reachable, manifest sane; `--fix` installs/updates josh (cliguard requires `--fix` on any doctor) |
 
-`rig build` / `rig test` at the root need nothing new: the workspace root *is*
+`rig build` / `rig test` at the root need nothing new: the stackspace root *is*
 a repo with a `.slnx` — existing ecosystem detection already resolves it.
 
 ### Engine management
 
-rig pins a default josh version as a constant (overridable per-workspace via
+rig pins a default josh version as a constant (overridable per-stackspace via
 the manifest's `josh` key) and installs to
 `~/.local/share/rigsmith/josh/<version>/bin/`. `stack doctor --fix` performs
 install/update; every verb that needs the engine triggers the same path on
@@ -135,17 +135,18 @@ implying a toolchain dance that may dead-end.
 fixed 42042 — two rig invocations must not collide); readiness = TCP poll;
 teardown = SIGINT then wait with timeout, SIGKILL fallback. One proxy per verb
 invocation, never a daemon. `--local` cache under
-`~/.cache/rigsmith/josh/<workspace-hash>/`.
+`~/.cache/rigsmith/josh/<host>/`, keyed by the upstream host rather than
+by the stackspace, so several stackspaces fusing the same forge share objects.
 
 ### How `send` builds a branch, and why not with josh
 
-Reverse-filtering the workspace's commits through josh is the obvious route, and
+Reverse-filtering the stackspace's commits through josh is the obvious route, and
 it works: `-o base=<branch> -o create -o edit` produces correctly re-rooted
 commits on the fork. It is not what ships, because the branch it produces
-carries the workspace's own history — its root commit, and its imports of
+carries the stackspace's own history — its root commit, and its imports of
 *other* projects — into a pull request where none of that means anything.
 
-What ships is simpler and needs no engine at all. A workspace already stores
+What ships is simpler and needs no engine at all. A stackspace already stores
 each project as a subtree, so `HEAD:<child>` **is** the tree upstream wants,
 with the prefix already absent inside it. `send` therefore:
 
@@ -154,12 +155,12 @@ with the prefix already absent inside it. `send` therefore:
 3. `commit-tree`s the tree onto that tip with a message,
 4. pushes that commit to the fork's `<branch>`.
 
-The result is one commit whose diff is exactly the workspace's changes to that
+The result is one commit whose diff is exactly the stackspace's changes to that
 project, rooted on current upstream, with no sign that the repo is fused with
 anything. It also matches what projects with a one-commit-per-PR convention
 (josh's own included) actually want.
 
-The trade is granularity: several workspace commits touching one project arrive
+The trade is granularity: several stackspace commits touching one project arrive
 as one. That is the right default for a pull request; preserving them is what
 the josh path is for, and it can return as `--preserve-history` if anyone wants
 it.
@@ -174,6 +175,15 @@ it.
   `stack.go`, `stackmanifest.go`, `stackjosh.go`, `stack_test.go` — the
   `workspace*` namespace stays untouched. (`ws` was the working name of the
   first slice; rejected as bland and workspace-adjacent.)
+- **The noun is `stackspace` (2026-08-27).** The verb decision above kept
+  `workspace` out of the *command* namespace and then the prose used it for the
+  fused thing anyway, which put it back in collision with
+  `internal/rig/cli/workspace.go` — and with npm workspaces, `go.work` and
+  VS Code, which a reader arrives already knowing. "Stackspace" is a coinage,
+  and coinages cost a definition each time; this one buys a word that means
+  exactly one thing in this tool and nothing anywhere else. Renamed across the
+  code, the schema descriptions, error strings, both READMEs and the docs.
+
 - Register `newWsCmd()` via `extraCmds()` in `internal/rig/cli/extras.go` —
   the documented home for heavier standalone commands.
 - **cliguard compliance** (hard-fail CI in `internal/cliconsistency`): the
@@ -181,7 +191,7 @@ it.
   `group-menu` rule); no `--list` flags; reserved shorthands
   (`-n/-y/-f/-i/-k/-a/-w/-m`) respected; `stack doctor` has `--fix`.
 - Manifest discovery: a `cfgfind.Spec` (the shiprig `releaseConfigSpec`
-  pattern) — probes `rig.stack.jsonc`/`.json` at the workspace root, optionally
+  pattern) — probes `rig.stack.jsonc`/`.json` at the stackspace root, optionally
   `RigPath`/`RigKeys` for inline-in-`.rig.json`, loud error on duplicates.
   Parse `core/jsonc`, write `core/confkit.Writer` with a new
   `site/public/schemas/rig-stack.json`.
@@ -198,9 +208,9 @@ it.
 - **Relationship to roadmap.md's "worktree hub (own binary)" item:** that hub
   is a *dashboard* over parallel dev (worktrees, PR status, agent ownership).
   `stack` is *state and sync* — manifest, import, cursor, send. Different concern;
-  if the hub materializes it reads stack workspaces like any other repo. The
+  if the hub materializes it reads stackspaces like any other repo. The
   hub's open question "where does cross-repo state live" gets an answer here:
-  in the workspace repo, committed.
+  in the stackspace repo, committed.
 
 ## Open questions
 
@@ -223,7 +233,7 @@ it.
    git runner quotes its arguments into the error it returns on failure.
 2. Merge strategy per child on `pull` (merge vs squash vs rebase-ish), given
    the known merge-noise wart. Default merge, per-child override in manifest?
-3. `stack init` adopting an existing non-fused workspace (the sibling-clone
+3. `stack init` adopting an existing non-fused stackspace (the sibling-clone
    layout people already have): re-import and keep the overlay, or not worth
    the code?
 4. CI template (`stack init --ci github`) in v1 or after the verbs settle?
@@ -242,12 +252,12 @@ tree, _ := repo.RevParse(ctx, "HEAD:"+name)
 
 That is right for a pull request to somebody else's project — a reviewer wants
 the change, not your afternoon. It is wrong for a repo you own. Your app's own
-history flattens to a single commit every time it leaves the workspace, and the
+history flattens to a single commit every time it leaves the stackspace, and the
 messages, the bisect points and the authorship go with it.
 
 Today that is survivable, because the layout most people are told to use keeps
-their app *outside* the workspace, where it is pushed with ordinary git. If the
-workspace becomes the one supported path — everything inside, one overlay, no
+their app *outside* the stackspace, where it is pushed with ordinary git. If the
+stackspace becomes the one supported path — everything inside, one overlay, no
 topology question — then every commit to your own repo goes through `send`, and
 the squash stops being an acceptable trade.
 
@@ -264,13 +274,13 @@ exact inverses, which josh states in its own optimiser:
 [Op::Subdir(p1), Op::Prefix(p2)] if p1 == p2 => …
 ```
 
-So the export is: apply `:/<name>` to the workspace history, take the resulting
+So the export is: apply `:/<name>` to the stackspace history, take the resulting
 ref, push it to the member's own repo. No `commit-tree`, no squash — the filtered
 history *is* the member's history.
 
 A commit that touches three prefixes becomes one commit in each of the three
 repos, carrying the same message. That is the desired behaviour and worth saying
-out loud: an atomic change in the workspace lands as a matching commit in every
+out loud: an atomic change in the stackspace lands as a matching commit in every
 repo it touched, which is as close to atomic as separate repos allow.
 
 ### The identity question, settled by spike
@@ -279,12 +289,12 @@ repo it touched, which is as close to atomic as separate repos allow.
 or the push is not a fast-forward and the member's repo gets a parallel history
 instead of a continuation. The inverse-filter property gives matching *trees*;
 commit ids also depend on parents, and rig imports by **merging unrelated
-histories**, so every workspace commit near an import is a merge whose other
+histories**, so every stackspace commit near an import is a merge whose other
 parents belong to other prefixes. Whether filtering collapses those back to
 upstream's linear shape and reproduces its ids was the one thing that could have
 sunk the design.
 
-Spiked against a real three-member workspace. It holds.
+Spiked against a real three-member stackspace. It holds.
 
 Filtering a member with no local work reproduces the cursor exactly:
 
@@ -293,23 +303,23 @@ $ josh-filter ':/live-markdown' --update refs/heads/extracted HEAD
 3c76f5629d1c7cb78d51cd4d8cf36d9c6c1bf42f      <- the recorded cursor, byte for byte
 ```
 
-Filtering a member carrying one workspace commit continues upstream's history
+Filtering a member carrying one stackspace commit continues upstream's history
 rather than restating it:
 
 ```
 $ josh-filter ':/<app>' --update refs/heads/out HEAD
 $ git log --format="%h %p  %s" refs/heads/out
-0b001bd3 ee55c4a6  build against the fused sources     <- the workspace commit, message intact
+0b001bd3 ee55c4a6  build against the fused sources     <- the stackspace commit, message intact
 ee55c4a6 8d0bdf66  Route the wheel once per document   <- upstream's tip, unchanged id
 ```
 
 The new commit's parent *is* upstream's tip, so the push fast-forwards. The
 message survives, which is the entire point the squash gives up.
 
-A commit spanning two members splits correctly. One workspace commit touching
-both the workspace-root overlay and the app's own file produced, in the app's
+A commit spanning two members splits correctly. One stackspace commit touching
+both the stackspace-root overlay and the app's own file produced, in the app's
 filtered history, a commit containing only the app's half, with the prefix
-stripped. A workspace commit touching *no* file under a member produced no
+stripped. A stackspace commit touching *no* file under a member produced no
 commit in that member at all — dropped as empty, which is what open question 2
 predicted.
 
@@ -325,7 +335,7 @@ predicted.
   miss. `send` pushes a branch nobody tracks, so the cursor is untouched. `push`
   moves the member's *tracked* branch — so immediately afterwards upstream has
   moved, `status` would say "upstream moved", and `pull` would try to merge in
-  history the workspace already contains. `push` therefore advances the cursor to
+  history the stackspace already contains. `push` therefore advances the cursor to
   what it just pushed, in the same commit that records it, exactly as `pull`
   does.
 - **Fast-forward only.** Refuse otherwise. A member whose upstream moved since
@@ -338,7 +348,7 @@ predicted.
 
 `rig stack push <name>` parallels `git push` and reads correctly: push this
 member to its own repo. The tension is that the page tells you never to give the
-workspace a remote and push it — but that is about pushing *the workspace*, and
+stackspace a remote and push it — but that is about pushing *the stackspace*, and
 this pushes a member, so the distinction is the one the reader needs anyway.
 `export` and `sync` were considered; `export` suggests a file, and `sync`
 suggests bidirectional.
@@ -357,19 +367,19 @@ pinned checksums, not new pipeline work. The source-build fallback needs a secon
 1. Does `push` need a range, or is "everything since the cursor" always right?
    A member you own has no reason to hold back commits, but a partial push would
    let you keep work in progress local.
-2. ~~What happens to a workspace commit that touches only *other* prefixes?~~
+2. ~~What happens to a stackspace commit that touches only *other* prefixes?~~
    Confirmed by the spike: josh drops it as empty. The member's history therefore
-   has gaps relative to the workspace, which is correct and invisible in practice,
+   has gaps relative to the stackspace, which is correct and invisible in practice,
    but means the two are not one-to-one — any future "which member commit came
-   from which workspace commit" tooling has to accept that.
+   from which stackspace commit" tooling has to accept that.
 3. Should `pull` after `push` be a no-op automatically, given the cursor already
    advanced? Probably, and it falls out of the cursor rule above — but it needs a
    test, since the alternative is a merge of a history with itself.
 
 ## Appendix: the MSBuild overlay
 
-Verified against the reference workspace (2026-08-25): none of its three
-upstream repos owns a root `Directory.Build.targets`, so a workspace-root one
+Verified against the reference stackspace (2026-08-25): none of its three
+upstream repos owns a root `Directory.Build.targets`, so a stackspace-root one
 reaches every child project via MSBuild's walk-up and swaps the cross-repo
 `PackageReference`s for `ProjectReference`s with **zero upstream-file edits**.
 Ordering matters (conditions read the package refs before `Remove` deletes
@@ -378,7 +388,7 @@ actual consumers.
 
 ```xml
 <Project>
-  <ItemGroup Condition="'$(UseWorkspaceProjects)' != 'false'">
+  <ItemGroup Condition="'$(UseStackSources)' != 'false'">
     <ProjectReference Include="$(MSBuildThisFileDirectory)pty-core/src/Pty.Core/Pty.Core.csproj"
                       Condition="@(PackageReference->AnyHaveMetadataValue('Identity', 'Pty.Core'))" />
     <PackageReference Remove="Pty.Core" />
@@ -388,10 +398,10 @@ actual consumers.
 
 Checked with `dotnet msbuild -getItem:ProjectReference,PackageReference`:
 default evaluation swaps `Pty.Core`/`Term.Core` for project refs;
-`-p:UseWorkspaceProjects=false` restores the against-real-packages build that
+`-p:UseStackSources=false` restores the against-real-packages build that
 upstream CI sees. The walk-up ignores git boundaries, so building a child from
 inside its folder also gets the overlay — right for the dev loop; use the flag
-for pristine verification. Node/Go equivalents (workspaces/overrides,
+for pristine verification. Node/Go equivalents (npm workspaces/overrides,
 `go.work`) slot into the same "overlay scaffolded by `stack init`" position.
 
 ### Declaring the swaps once (2026-08-26)
@@ -417,7 +427,7 @@ is exactly the set to swap:
     <StackSource Include="Term.Core" Path="term-core/src/Term.Core/Term.Core.csproj" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(UseWorkspaceProjects)' != 'false'">
+  <ItemGroup Condition="'$(UseStackSources)' != 'false'">
     <_StackAbsent  Include="@(StackSource)" Exclude="@(PackageReference)" />
     <_StackPresent Include="@(StackSource)" Exclude="@(_StackAbsent)" />
     <ProjectReference Include="@(_StackPresent->'$(MSBuildThisFileDirectory)%(Path)')" />

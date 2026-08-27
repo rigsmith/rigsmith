@@ -9,7 +9,7 @@ and the shared engine under `core/`:
 | Path | Binary | What it is |
 |---|---|---|
 | [`core/`](core/) | — | `github.com/rigsmith/rigsmith/core` — the shared engine: semver, changeset parsing, the release planner (cascade + grouping), the plugin contract, the built-in ecosystem adapters (.NET, Node, Go, Rust), and `pathmap` (cross-OS path resolution). No external dependencies. |
-| [`cmd/rig/`](cmd/rig/) | `rig` | The convention-first dev launcher (run/build/test/format across .NET, Node, Go, Rust), plus parallel worktrees and `stack` workspaces — forked repos fused into one history. Successor to the .NET/Node [`rig`](https://github.com/JohnCampionJr/rig). |
+| [`cmd/rig/`](cmd/rig/) | `rig` | The convention-first dev launcher (run/build/test/format across .NET, Node, Go, Rust), plus parallel worktrees and **stackspaces** (`rig stack`) — your app and the repos you have forked, fused into one history. Successor to the .NET/Node [`rig`](https://github.com/JohnCampionJr/rig). |
 | [`cmd/changerig/`](cmd/changerig/) | `changerig` | The lean changeset tool: the lifecycle (init → add → status → version) isolated from release orchestration. Its `commands` package (under `internal/changerig`) is reused by shiprig. Aliased `changeset`. |
 | [`cmd/shiprig/`](cmd/shiprig/) | `shiprig` | The release front door: everything changeRig does, plus publish/tag/pre orchestration. Successor to [net-changesets](../net-changesets). |
 | [`cmd/clauderig/`](cmd/clauderig/) | `clauderig` | Sync your Claude Code setup (config, skills, session history) across machines via a private git repo, with cross-OS path correction and secret stripping. See [docs/CLAUDERIG-DESIGN.md](docs/CLAUDERIG-DESIGN.md). |

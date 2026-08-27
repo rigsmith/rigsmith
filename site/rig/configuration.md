@@ -2,7 +2,7 @@
 
 rig is convention-first — it works with **zero configuration**. An optional
 `.rig.json` at the repo root (found by walking up from cwd; the root anchor
-precedence is `.rig.json` > solution/workspace manifest > git root) supplies
+precedence is `.rig.json` > solution/stackspace manifest > git root) supplies
 only what can't be inferred.
 
 It's **JSONC** (comments + trailing commas welcome); a missing file is fine;
@@ -180,9 +180,9 @@ The worktree path is appended as the final argument to `openCmd` and run
 directly (no shell). When the opener isn't on `PATH`, rig prints the command to
 run instead.
 
-## Stack workspaces {#stack}
+## Stackspaces {#stack}
 
-A [stack workspace](./stack) is described by `rig.stack.jsonc` at its root
+A [stackspace](./stack) is described by `rig.stack.jsonc` at its root
 (or a `stack` key in `.rig.json`). Each entry names a repo fused into this
 history: the key is the directory it lives under.
 
@@ -229,12 +229,12 @@ Instead of a branch, a directory can be **pinned** with `upstreamTag` or
 mean very different things. A tag is resolved once, when the pin is
 first taken, and the result is recorded in `lastPin` beside the cursor. An
 upstream that later force-moves or re-cuts that tag does not move your
-workspace; editing the pin does, because that changes what was recorded. To
+stackspace; editing the pin does, because that changes what was recorded. To
 follow a moved tag deliberately, `rig stack pull --repin`.
 
 Repinning works in both directions. Moving a project to an *older* revision
 cannot be done by merging, since the target is already an ancestor of what the
-workspace holds, so the directory is replaced with the pinned revision instead
+stackspace holds, so the directory is replaced with the pinned revision instead
 and `pull` reports it as `moved`. That discards what is under it, so it is
 refused when the directory holds changes of its own: send or revert them first.
 
@@ -259,7 +259,7 @@ thing the pin exists to decide. Annotated tags are peeled to the commit they
 point at.
 
 `owned` marks a project as yours rather than someone else's, which changes how
-work leaves the workspace. Without it, `rig stack send` proposes a squashed
+work leaves the stackspace. Without it, `rig stack send` proposes a squashed
 commit on a branch of your fork — right for a pull request, wrong for a repo you
 own, since it discards every message on the way out. With it, `rig stack push`
 fast-forwards that project's own branch with each commit that touched it. It
@@ -280,8 +280,8 @@ is left as it is.
 
 An optional `"josh"` key pins the version of [josh](https://josh-project.dev) —
 the history-filtering engine [`init` and `pull`](./stack) run — for this
-workspace, overriding the one rig ships with. Changing it against existing
-workspace history is at your own risk.
+stackspace, overriding the one rig ships with. Changing it against existing
+stackspace history is at your own risk.
 
 ## Declaring artifacts {#artifacts}
 

@@ -186,8 +186,8 @@ func TestStackUpstreamBranch(t *testing.T) {
 
 func TestStackSendBranch(t *testing.T) {
 	ptr := func(s string) *string { return &s }
-	base := func(repo *stackRepo, workspace *string) *stackManifest {
-		return &stackManifest{BranchPrefix: workspace, Repos: map[string]*stackRepo{"x": repo}}
+	base := func(repo *stackRepo, stackspace *string) *stackManifest {
+		return &stackManifest{BranchPrefix: stackspace, Repos: map[string]*stackRepo{"x": repo}}
 	}
 
 	cases := []struct {
@@ -197,9 +197,9 @@ func TestStackSendBranch(t *testing.T) {
 		want  string
 	}{
 		{"defaults to stack/", base(&stackRepo{}, nil), "read-timeout", "stack/read-timeout"},
-		{"workspace override", base(&stackRepo{}, ptr("jc-")), "read-timeout", "jc-read-timeout"},
-		{"workspace opt-out", base(&stackRepo{}, ptr("")), "read-timeout", "read-timeout"},
-		{"repo beats workspace", base(&stackRepo{BranchPrefix: ptr("pr/")}, ptr("jc-")), "x", "pr/x"},
+		{"stackspace override", base(&stackRepo{}, ptr("jc-")), "read-timeout", "jc-read-timeout"},
+		{"stackspace opt-out", base(&stackRepo{}, ptr("")), "read-timeout", "read-timeout"},
+		{"repo beats stackspace", base(&stackRepo{BranchPrefix: ptr("pr/")}, ptr("jc-")), "x", "pr/x"},
 		{"repo opts out alone", base(&stackRepo{BranchPrefix: ptr("")}, ptr("jc-")), "x", "x"},
 		{"already prefixed is left alone", base(&stackRepo{}, nil), "stack/read-timeout", "stack/read-timeout"},
 		{"a prefix without a slash still concatenates", base(&stackRepo{}, ptr("jc-")), "fix/x", "jc-fix/x"},
@@ -424,12 +424,12 @@ func mustGitStack(t *testing.T, dir string, args ...string) string {
 
 func TestStackMenuAndCompletion(t *testing.T) {
 	// Both read the manifest through the working directory, so the tests run
-	// from inside a temp workspace rather than passing a root around.
-	inWorkspace := func(t *testing.T, manifest string) {
+	// from inside a temp stackspace rather than passing a root around.
+	inStackspace := func(t *testing.T, manifest string) {
 		t.Helper()
 		dir := t.TempDir()
-		// The workspace root is the git top level, so the fixture has to be a
-		// repository — outside one there is no stack workspace to find.
+		// The stackspace root is the git top level, so the fixture has to be a
+		// repository — outside one there is no stackspace to find.
 		mustGitStack(t, dir, "init", "-q", "-b", "main")
 		if manifest != "" {
 			writeStackManifest(t, dir, manifest)
@@ -445,7 +445,7 @@ func TestStackMenuAndCompletion(t *testing.T) {
 	}
 
 	t.Run("only init is offered before a manifest exists", func(t *testing.T) {
-		inWorkspace(t, "")
+		inStackspace(t, "")
 		items := stackMenuItems()
 		if len(items) != 1 || items[0].label != "init" {
 			t.Fatalf("expected just init, got %v", items)
@@ -454,7 +454,7 @@ func TestStackMenuAndCompletion(t *testing.T) {
 
 	t.Run("a scaffold that will not load still offers init", func(t *testing.T) {
 		// What `stack init` writes: a manifest whose repos block is still empty.
-		inWorkspace(t, "{\n  \"repos\": {}\n}\n")
+		inStackspace(t, "{\n  \"repos\": {}\n}\n")
 		items := stackMenuItems()
 		if len(items) != 1 || items[0].label != "init" {
 			t.Fatalf("expected init to stay reachable, got %v", items)
@@ -476,8 +476,8 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		}
 	})
 
-	t.Run("menu offers every stack verb inside a workspace", func(t *testing.T) {
-		inWorkspace(t, stackTestManifest)
+	t.Run("menu offers every stack verb inside a stackspace", func(t *testing.T) {
+		inStackspace(t, stackTestManifest)
 		var labels []string
 		for _, it := range stackMenuItems() {
 			labels = append(labels, it.label)
@@ -488,8 +488,8 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		}
 	})
 
-	t.Run("completion offers the workspace's repos", func(t *testing.T) {
-		inWorkspace(t, stackTestManifest)
+	t.Run("completion offers the stackspace's repos", func(t *testing.T) {
+		inStackspace(t, stackTestManifest)
 		got, _ := stackRepoCompletion(nil, nil, "")
 		if strings.Join(got, ",") != "pty-core,term-core" {
 			t.Fatalf("completion = %v", got)
@@ -497,7 +497,7 @@ func TestStackMenuAndCompletion(t *testing.T) {
 	})
 
 	t.Run("completion stops after the repo argument", func(t *testing.T) {
-		inWorkspace(t, stackTestManifest)
+		inStackspace(t, stackTestManifest)
 		if got, _ := stackRepoCompletion(nil, []string{"pty-core"}, ""); got != nil {
 			t.Fatalf("expected no completions for the second argument, got %v", got)
 		}
@@ -729,7 +729,7 @@ func TestStackPinnedCursor(t *testing.T) {
 
 	t.Run("a settled pin is not resolved again", func(t *testing.T) {
 		// The point of the whole thing: upstream may have moved the tag since,
-		// and the workspace must not move with it.
+		// and the stackspace must not move with it.
 		got, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamTag: "v1"}, "tag v1"), "lib")
 		if !ok || got != sha {
 			t.Fatalf("got (%q, %v), want the recorded cursor", got, ok)
@@ -801,7 +801,7 @@ func TestStackUnsentWork(t *testing.T) {
 		}
 	}
 
-	// A workspace shaped the way rig makes one: each project's own history on
+	// A stackspace shaped the way rig makes one: each project's own history on
 	// its own branch, merged in under a prefix with --no-ff, so the marker is a
 	// merge whose second parent is the imported side. Upstream keeps a file of
 	// its own so that its commits do not collide with local edits — a real pull
@@ -828,7 +828,7 @@ func TestStackUnsentWork(t *testing.T) {
 	}
 
 	git("init", "-q", "-b", "main", ws)
-	write("README", "workspace")
+	write("README", "stackspace")
 	git("add", "-A")
 	git("commit", "-qm", "manifest")
 	importUnder("pty-core", "one", "import")
@@ -1029,7 +1029,7 @@ func TestStackRunJoshFilter(t *testing.T) {
 	}
 
 	// A commit touching only the other prefix must not appear here: the member's
-	// history is what happened to *it*, not a copy of the workspace's.
+	// history is what happened to *it*, not a copy of the stackspace's.
 	log, err := repo.RevParse(ctx, "refs/rigsmith/test/app")
 	if err != nil {
 		t.Fatal(err)

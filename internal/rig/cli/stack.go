@@ -19,19 +19,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newStackCmd builds the `stack` command group — a fused workspace of upstream
+// newStackCmd builds the `stack` command group — a fused stackspace of upstream
 // forks: each project's history imported under a prefix of one repo through
 // josh's reversible filters, so commits can span projects and any slice can
 // leave as a clean PR branch on the matching fork (docs/STACK-DESIGN.md).
 func newStackCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stack",
-		Short: "Fused workspace — upstream forks as prefixes of one history",
-		Long: "A stack workspace fuses several upstream repos into one git history, each\n" +
+		Short: "Fused stackspace — upstream forks as prefixes of one history",
+		Long: "A stackspace fuses several upstream repos into one git history, each\n" +
 			"under a prefix, via josh's reversible filters. Commits may span projects,\n" +
 			"and leave one project at a time: `send` puts a prefix's changes on your\n" +
 			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
-			"its history. Neither leaves any trace that the workspace exists.\n\n" +
+			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
 			"  rig stack init                      scaffold the manifest / import the repos\n" +
 			"  rig stack status                    cursor vs upstream, per repo\n" +
 			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
@@ -49,10 +49,10 @@ func newStackCmd() *cobra.Command {
 	return cmd
 }
 
-// stackRoot is the workspace root: the git top level, not resolveRoot's answer.
+// stackRoot is the stackspace root: the git top level, not resolveRoot's answer.
 // resolveRoot finds the nearest *project* — a package manifest or solution —
 // and every imported repo carries one of those, so from inside a fused project
-// it would answer that project and the workspace would look like it did not
+// it would answer that project and the stackspace would look like it did not
 // exist.
 // An explicit --root still wins, since that is the user saying where to look.
 func stackRoot(ctx context.Context) (string, error) {
@@ -65,7 +65,7 @@ func stackRoot(ctx context.Context) (string, error) {
 	}
 	repo, err := gitrepo.Open(ctx, cwd)
 	if err != nil {
-		return "", fmt.Errorf("not inside a git repository — a stack workspace is one")
+		return "", fmt.Errorf("not inside a git repository — a stackspace is one")
 	}
 	top, err := repo.Toplevel(ctx)
 	if err != nil || top == "" {
@@ -74,9 +74,9 @@ func stackRoot(ctx context.Context) (string, error) {
 	return top, nil
 }
 
-// stackWorkspace opens the manifest and the workspace repo together — every stack
+// stackspace opens the manifest and the stackspace repo together — every stack
 // verb needs both, and "no manifest here" should read the same everywhere.
-func stackWorkspace(ctx context.Context) (*stackManifest, *cfgfind.Source, *gitrepo.Repo, error) {
+func stackspace(ctx context.Context) (*stackManifest, *cfgfind.Source, *gitrepo.Repo, error) {
 	root, err := stackRoot(ctx)
 	if err != nil {
 		return nil, nil, nil, err
@@ -86,16 +86,16 @@ func stackWorkspace(ctx context.Context) (*stackManifest, *cfgfind.Source, *gitr
 		return nil, nil, nil, err
 	}
 	if m == nil {
-		return nil, nil, nil, fmt.Errorf("no stack manifest here — run `rig stack init` at the workspace root")
+		return nil, nil, nil, fmt.Errorf("no stack manifest here — run `rig stack init` at the stackspace root")
 	}
 	repo, err := gitrepo.Open(ctx, root)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("stack workspace %s is not a git repository", root)
+		return nil, nil, nil, fmt.Errorf("stackspace %s is not a git repository", root)
 	}
 	return m, src, repo, nil
 }
 
-// stackEngine resolves the workspace's josh version (manifest override, else the
+// stackEngine resolves the stackspace's josh version (manifest override, else the
 // pinned default) and ensures the binary, printing install progress to out.
 func stackEngine(ctx context.Context, m *stackManifest, cmd *cobra.Command) (string, error) {
 	version := m.joshVersion()
@@ -105,7 +105,7 @@ func stackEngine(ctx context.Context, m *stackManifest, cmd *cobra.Command) (str
 func newStackInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Scaffold the stack manifest, or import its repos into the workspace",
+		Short: "Scaffold the stack manifest, or import its repos into the stackspace",
 		Long: "With no manifest, writes a commented rig.stack.jsonc to fill in. With a\n" +
 			"manifest, imports each repo that has no cursor yet: fetches its upstream\n" +
 			"history through the :prefix filter and merges it in.",
@@ -130,7 +130,7 @@ func newStackInitCmd() *cobra.Command {
 			}
 			repo, err := gitrepo.Open(ctx, root)
 			if err != nil {
-				return fmt.Errorf("run `git init` first — the workspace itself is an ordinary git repo")
+				return fmt.Errorf("run `git init` first — the stackspace itself is an ordinary git repo")
 			}
 			// Import amends the merge commit, and StageAll before it stages the
 			// whole tree: without this guard an unrelated edit sitting in the
@@ -138,17 +138,17 @@ func newStackInitCmd() *cobra.Command {
 			if dirty, err := repo.Dirty(ctx); err != nil {
 				return err
 			} else if dirty && !stackOnlyManifestDirty(ctx, repo, src) {
-				return fmt.Errorf("workspace has uncommitted changes — commit or stash before importing")
+				return fmt.Errorf("stackspace has uncommitted changes — commit or stash before importing")
 			}
 			// A merge into an unborn HEAD fast-forwards instead of creating a
 			// merge commit, which leaves the cursor amended onto the upstream
 			// tip itself and breaks the ancestry every later pull merges against.
-			// Root the workspace on the manifest first.
+			// Root the stackspace on the manifest first.
 			if repo.Unborn(ctx) {
-				if _, err := repo.Commit(ctx, "stack: workspace manifest"); err != nil {
-					return fmt.Errorf("creating the workspace's first commit: %w", err)
+				if _, err := repo.Commit(ctx, "stack: stackspace manifest"); err != nil {
+					return fmt.Errorf("creating the stackspace's first commit: %w", err)
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), "committed the manifest as the workspace's root commit")
+				fmt.Fprintln(cmd.OutOrStdout(), "committed the manifest as the stackspace's root commit")
 			}
 			names := []string{}
 			for _, name := range m.names() {
@@ -212,16 +212,16 @@ func stackOnlyManifestDirty(ctx context.Context, repo *gitrepo.Repo, src *cfgfin
 func newStackStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Each repo's cursor vs its upstream, and what has not left the workspace",
+		Short: "Each repo's cursor vs its upstream, and what has not left the stackspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			m, _, repo, err := stackWorkspace(ctx)
+			m, _, repo, err := stackspace(ctx)
 			if err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			// One status call for the whole workspace: the prefixes are filtered
+			// One status call for the whole stackspace: the prefixes are filtered
 			// out of it per repo below, rather than shelling out once each.
 			dirty, err := repo.DirtyPaths(ctx)
 			if err != nil {
@@ -230,9 +230,9 @@ func newStackStatusCmd() *cobra.Command {
 			for _, name := range m.names() {
 				pin := m.pin(name)
 				// Whether this prefix is holding work is answered from the
-				// workspace alone, so it is computed before anything reaches for
+				// stackspace alone, so it is computed before anything reaches for
 				// the network — the moment you most need to know is when you are
-				// about to delete a workspace, and that is exactly when you might
+				// about to delete a stackspace, and that is exactly when you might
 				// be on a plane.
 				u := stackUnsentWork(ctx, repo, name, dirty)
 				state := "up to date"
@@ -249,8 +249,8 @@ func newStackStatusCmd() *cobra.Command {
 					// reader needs to know this prefix will never move on its own.
 					state = "pinned to " + pin.describe()
 				}
-				// Work that has not left the workspace exists only here, and the
-				// workspace is documented as disposable. That combination is how
+				// Work that has not left the stackspace exists only here, and the
+				// stackspace is documented as disposable. That combination is how
 				// it gets thrown away, so report it whatever else is true.
 				switch {
 				case u.Working && u.Commits:
@@ -279,7 +279,7 @@ func newStackPullCmd() *cobra.Command {
 		ValidArgsFunction: stackRepoCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			m, src, repo, err := stackWorkspace(ctx)
+			m, src, repo, err := stackspace(ctx)
 			if err != nil {
 				return err
 			}
@@ -292,7 +292,7 @@ func newStackPullCmd() *cobra.Command {
 			if dirty, err := repo.Dirty(ctx); err != nil {
 				return err
 			} else if dirty {
-				return fmt.Errorf("workspace has uncommitted changes — commit or stash before pulling")
+				return fmt.Errorf("stackspace has uncommitted changes — commit or stash before pulling")
 			}
 			names := m.names()
 			if len(args) == 1 {
@@ -301,7 +301,7 @@ func newStackPullCmd() *cobra.Command {
 				}
 				names = args[:1]
 			}
-			// Probe first: a workspace that is already current needs no engine,
+			// Probe first: a stackspace that is already current needs no engine,
 			// and acquiring one can mean a download or a multi-minute build. A
 			// no-op pull must not fail for want of a tool it never uses.
 			moved := make([]string, 0, len(names))
@@ -339,7 +339,7 @@ func newStackPullCmd() *cobra.Command {
 // stackImportedTree is the tree a prefix had when it was last imported, pulled
 // or pushed — the baseline for "has anything happened here since".
 //
-// The cursor cannot answer it: that is an *upstream* commit id, and a workspace
+// The cursor cannot answer it: that is an *upstream* commit id, and a stackspace
 // only holds josh-rewritten commits, so the object is never here; `send` fetches
 // it deliberately when it needs to root on one. What is here is rig's own
 // marker commit, always a merge because the import is made with --no-ff, whose
@@ -365,8 +365,8 @@ func stackImportedTree(ctx context.Context, repo *gitrepo.Repo, name string) (st
 	return tree, true
 }
 
-// stackUnsent is what a prefix is holding that has not left the workspace —
-// the thing that makes a disposable workspace dangerous.
+// stackUnsent is what a prefix is holding that has not left the stackspace —
+// the thing that makes a disposable stackspace dangerous.
 type stackUnsent struct {
 	Commits bool // committed work the upstream repository does not have
 	Working bool // edits in the index or the worktree, not yet committed
@@ -414,7 +414,7 @@ func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty
 // has been resolved before under this exact selector.
 //
 // Without it a tag is looked up afresh on every command, so an upstream that
-// force-moves or re-cuts one drags the workspace along — the single thing a pin
+// force-moves or re-cuts one drags the stackspace along — the single thing a pin
 // exists to prevent. Editing the pin changes the recorded selector, so a
 // deliberate repin still resolves; `pull --repin` clears the record to follow a
 // tag that moved on purpose.
@@ -578,11 +578,11 @@ func newStackSendCmd() *cobra.Command {
 	var message string
 	cmd := &cobra.Command{
 		Use:   "send <repo> <new-branch>",
-		Short: "Put a repo's workspace changes on your fork as a PR-ready branch",
-		Long: "Takes this workspace's version of <repo> and commits it on top of that\n" +
+		Short: "Put a repo's stackspace changes on your fork as a PR-ready branch",
+		Long: "Takes this stackspace's version of <repo> and commits it on top of that\n" +
 			"project's upstream tip, as <new-branch> on your fork. The branch holds\n" +
-			"one commit whose diff is exactly what the workspace changed, with none of\n" +
-			"the workspace's own history: nothing upstream has to know this repo is\n" +
+			"one commit whose diff is exactly what the stackspace changed, with none of\n" +
+			"the stackspace's own history: nothing upstream has to know this repo is\n" +
 			"fused with anything else. PR from there as usual.\n\n" +
 			"<new-branch> is a branch you are creating on your fork, named per change\n" +
 			"(read-timeout). It is unrelated to the manifest's upstreamBranch, which\n" +
@@ -597,7 +597,7 @@ func newStackSendCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			name := args[0]
-			m, _, repo, err := stackWorkspace(ctx)
+			m, _, repo, err := stackspace(ctx)
 			if err != nil {
 				return err
 			}
@@ -615,15 +615,15 @@ func newStackSendCmd() *cobra.Command {
 			if dirty, err := repo.Dirty(ctx); err != nil {
 				return err
 			} else if dirty {
-				return fmt.Errorf("workspace has uncommitted changes — commit them before sending")
+				return fmt.Errorf("stackspace has uncommitted changes — commit them before sending")
 			}
 
-			// The prefix directory is this project as the workspace has it, and
+			// The prefix directory is this project as the stackspace has it, and
 			// it is already free of the prefix inside: it is the tree upstream
 			// wants, needing no filter to extract.
 			tree, err := repo.RevParse(ctx, "HEAD:"+name)
 			if err != nil {
-				return fmt.Errorf("%s is not a directory in this workspace: %w", name, err)
+				return fmt.Errorf("%s is not a directory in this stackspace: %w", name, err)
 			}
 
 			// Root it on the upstream tip so the branch's one commit shows only
@@ -636,11 +636,11 @@ func newStackSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// The workspace tree is a snapshot taken at the cursor. Rooting it on
+			// The stackspace tree is a snapshot taken at the cursor. Rooting it on
 			// a tip that has moved past the cursor would present every upstream
 			// commit in between as though this branch had undone it.
 			if tip != m.cursor(name) {
-				return fmt.Errorf("upstream %s has moved to %s since this workspace last pulled (%s)\n"+
+				return fmt.Errorf("upstream %s has moved to %s since this stackspace last pulled (%s)\n"+
 					"sending now would revert those commits — run `rig stack pull %s` first",
 					r.Upstream, short(tip), short(m.cursor(name)), name)
 			}
@@ -663,7 +663,7 @@ func newStackSendCmd() *cobra.Command {
 			// into it would leak this repo's message into the next send.
 			msg := message
 			if msg == "" {
-				// Nothing about the workspace belongs in a commit an upstream
+				// Nothing about the stackspace belongs in a commit an upstream
 				// maintainer reads — least of all the local directory it lives in.
 				msg = fmt.Sprintf("Changes to %s", name)
 			}
@@ -694,11 +694,11 @@ func newStackSendCmd() *cobra.Command {
 func newStackPushCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "push <repo>",
-		Short: "Fast-forward a repo you own with this workspace's commits, history intact",
+		Short: "Fast-forward a repo you own with this stackspace's commits, history intact",
 		Long: "For a project marked `\"owned\": true` in the manifest — one of yours,\n" +
-			"not a fork you contribute to. Extracts everything the workspace has done\n" +
+			"not a fork you contribute to. Extracts everything the stackspace has done\n" +
 			"under <repo>/ and fast-forwards that project's own branch with it.\n\n" +
-			"Unlike `send`, nothing is squashed. Each workspace commit that touched\n" +
+			"Unlike `send`, nothing is squashed. Each stackspace commit that touched\n" +
 			"<repo>/ arrives as its own commit, with its message, parented on what\n" +
 			"upstream already had — so a change spanning several projects lands as a\n" +
 			"matching commit in each of them. Commits that touched nothing under\n" +
@@ -712,7 +712,7 @@ func newStackPushCmd() *cobra.Command {
 			ctx := cmd.Context()
 			name := args[0]
 			out := cmd.OutOrStdout()
-			m, src, repo, err := stackWorkspace(ctx)
+			m, src, repo, err := stackspace(ctx)
 			if err != nil {
 				return err
 			}
@@ -735,7 +735,7 @@ func newStackPushCmd() *cobra.Command {
 			if dirty, err := repo.Dirty(ctx); err != nil {
 				return err
 			} else if dirty {
-				return fmt.Errorf("workspace has uncommitted changes — commit them before pushing")
+				return fmt.Errorf("stackspace has uncommitted changes — commit them before pushing")
 			}
 
 			upstreamURL := stackRemoteURL(r.Upstream)
@@ -744,16 +744,16 @@ func newStackPushCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Same guard as send, for the same reason: the workspace holds a
+			// Same guard as send, for the same reason: the stackspace holds a
 			// snapshot taken at the cursor, and building on anything else would
 			// present upstream's own commits as though this push had undone them.
 			if tip != m.cursor(name) {
-				return fmt.Errorf("upstream %s has moved to %s since this workspace last pulled (%s)\n"+
+				return fmt.Errorf("upstream %s has moved to %s since this stackspace last pulled (%s)\n"+
 					"pushing now would revert those commits — run `rig stack pull %s` first",
 					r.Upstream, short(tip), short(m.cursor(name)), name)
 			}
 
-			// Both engines before the push, not after: the workspace has to take
+			// Both engines before the push, not after: the stackspace has to take
 			// back what it sends (see below), and discovering a missing binary
 			// once the remote has already moved would leave exactly the split
 			// state this is trying to avoid.
@@ -790,20 +790,20 @@ func newStackPushCmd() *cobra.Command {
 
 			// Take back what we just sent, rather than only recording the cursor.
 			//
-			// The filtered commit is a different object from the workspace commit
+			// The filtered commit is a different object from the stackspace commit
 			// that produced it — same content under a different prefix and different
-			// parents — so the workspace does not contain it. Left that way, the
+			// parents — so the stackspace does not contain it. Left that way, the
 			// next pull that finds upstream moved re-imports our own commits as a
 			// parallel line of development: a duplicate in the log at best, and a
 			// conflict as soon as the same file has been touched since.
 			//
 			// Importing it here is the moment it costs nothing. The content is
-			// identical to what the workspace already has, because we just sent it,
+			// identical to what the stackspace already has, because we just sent it,
 			// so the merge is trivial — and from now on the prefixed commits are
 			// ancestors and later pulls are ordinary.
 			if err := stackPullOne(ctx, io.Discard, repo, proxy, src, m, name, false); err != nil {
-				return fmt.Errorf("%s was pushed to %s:%s, but the workspace could not take it back: %w\n"+
-					"run `rig stack pull %s` — until then this workspace still has the change only in its own shape",
+				return fmt.Errorf("%s was pushed to %s:%s, but the stackspace could not take it back: %w\n"+
+					"run `rig stack pull %s` — until then this stackspace still has the change only in its own shape",
 					name, r.Upstream, branch, err, name)
 			}
 			fmt.Fprintf(out, "pushed %s to %s:%s (%s)\n", name, r.Upstream, branch, short(head))
@@ -813,7 +813,7 @@ func newStackPushCmd() *cobra.Command {
 	return cmd
 }
 
-// stackRunJoshFilter rewrites the workspace's HEAD through filter, leaving the
+// stackRunJoshFilter rewrites the stackspace's HEAD through filter, leaving the
 // result at ref. The engine works in place on the repository it is pointed at,
 // touching no branch of its own, so the caller decides what happens next.
 func stackRunJoshFilter(ctx context.Context, bin, dir, filter, ref string) error {
@@ -837,7 +837,7 @@ func newStackPushMenuCmd() *cobra.Command {
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
-			m, _, _, err := stackWorkspace(cmd.Context())
+			m, _, _, err := stackspace(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -891,7 +891,7 @@ func newStackDoctorCmd() *cobra.Command {
 			version := m.joshVersion()
 			switch {
 			case m == nil:
-				fmt.Fprintln(out, "· no stack manifest here (fine outside a workspace)")
+				fmt.Fprintln(out, "· no stack manifest here (fine outside a stackspace)")
 			default:
 				fmt.Fprintf(out, "✓ manifest: %d repo(s)\n", len(m.Repos))
 			}
@@ -927,7 +927,7 @@ func short(sha string) string {
 	return sha
 }
 
-// stackRepoCompletion offers the workspace's repos for the verbs that take one.
+// stackRepoCompletion offers the stackspace's repos for the verbs that take one.
 func stackRepoCompletion(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -949,7 +949,7 @@ func stackRepoCompletion(cmd *cobra.Command, args []string, _ string) ([]string,
 
 // stackMenuItems are the stack actions for `rig ui`. Without a manifest the
 // group is just `init` — hiding it entirely would leave no way to start a
-// workspace from the menu — and outside a git repo it disappears.
+// stackspace from the menu — and outside a git repo it disappears.
 func stackMenuItems() []menuItem {
 	root, err := stackRoot(context.Background())
 	if err != nil {
@@ -1014,13 +1014,13 @@ func newStackSendMenuCmd() *cobra.Command {
 		Use:    "send",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			m, _, _, err := stackWorkspace(cmd.Context())
+			m, _, _, err := stackspace(cmd.Context())
 			if err != nil {
 				return err
 			}
 			names := m.names()
 			if len(names) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("no repos in this workspace"))
+				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("no repos in this stackspace"))
 				return nil
 			}
 
