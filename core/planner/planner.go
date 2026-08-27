@@ -171,13 +171,6 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 	dependentsOf := map[string][]depEdge{}
 	for _, p := range packages {
 		for _, d := range p.Dependencies {
-			// A sibling referenced through the registry is reported so the build
-			// wiring can redirect it, but it is not a cascade edge here: it
-			// consumes a published version, not the sources beside it. Whether it
-			// should cascade is a real question, deliberately left as it was.
-			if d.ViaRegistry {
-				continue
-			}
 			dependentsOf[d.Name] = append(dependentsOf[d.Name], depEdge{dependent: p.Name, kind: d.Kind, rng: d.Range})
 		}
 	}
@@ -276,9 +269,6 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 		m := rel[name]
 		releasing := m.HighestBump() != changeset.BumpNone
 		for _, d := range byName[name].Dependencies {
-			if d.ViaRegistry {
-				continue // see the note in dependentsOf
-			}
 			dep, ok := rel[d.Name]
 			if !ok || dep.HighestBump() == changeset.BumpNone {
 				continue

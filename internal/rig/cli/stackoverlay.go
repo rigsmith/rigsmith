@@ -43,7 +43,7 @@ func stackRedirects(ctx context.Context, root string, members []string) map[stri
 		if ok, err := eco.Detect(ctx, root); err != nil || !ok {
 			continue
 		}
-		resp, err := eco.Discover(ctx, plugin.DiscoverRequest{RepoRoot: root, SourcePath: ".", IncludeUnversioned: true})
+		resp, err := eco.Discover(ctx, plugin.DiscoverRequest{RepoRoot: root, SourcePath: ".", IncludeUnversioned: true, IncludeRegistrySiblings: true})
 		if err != nil {
 			continue
 		}
