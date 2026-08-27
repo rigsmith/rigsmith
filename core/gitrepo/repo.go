@@ -206,6 +206,18 @@ func (r *Repo) RevParse(ctx context.Context, ref string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// LastCommitMatching returns the newest commit whose message matches pattern as
+// an extended regular expression, or "" when none does. Merges are included:
+// callers looking for a commit a tool wrote itself need to find it wherever it
+// sits in the history.
+func (r *Repo) LastCommitMatching(ctx context.Context, pattern string) (string, error) {
+	out, err := runGit(ctx, r.Dir, "log", "-1", "--format=%H", "-E", "--grep="+pattern)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // Checkout switches to branch, creating/resetting it when create is set.
 func (r *Repo) Checkout(ctx context.Context, branch string, create bool) error {
 	args := []string{"checkout"}
@@ -305,18 +317,6 @@ func (r *Repo) LsRemote(ctx context.Context, remote, ref string) (string, error)
 		return "", fmt.Errorf("ls-remote %s: ref %q not found", remote, ref)
 	}
 	return sha, nil
-}
-
-// LastCommitMatching returns the newest commit whose message matches pattern as
-// an extended regular expression, or "" when none does. Merges are included:
-// callers looking for a commit a tool wrote itself need to find it wherever it
-// sits in the history.
-func (r *Repo) LastCommitMatching(ctx context.Context, pattern string) (string, error) {
-	out, err := runGit(ctx, r.Dir, "log", "-1", "--format=%H", "-E", "--grep="+pattern)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
 }
 
 // ReplacePath makes dir's contents match what commit holds at that path,

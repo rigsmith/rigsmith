@@ -774,3 +774,132 @@ func TestStackPinnedCursor(t *testing.T) {
 		}
 	})
 }
+
+func TestStackUnsentWork(t *testing.T) {
+	ctx := context.Background()
+	ws := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		c := exec.CommandContext(ctx, "git", append([]string{"-C", ws}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	write := func(rel, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(ws, rel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(ws, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A workspace shaped the way rig makes one: each project's own history on
+	// its own branch, merged in under a prefix with --no-ff, so the marker is a
+	// merge whose second parent is the imported side. Upstream keeps a file of
+	// its own so that its commits do not collide with local edits — a real pull
+	// can conflict, but that is a different behaviour from the one under test.
+	upstreams := map[string]bool{}
+	importUnder := func(name, content, verb string) {
+		t.Helper()
+		branch := "up-" + name
+		if upstreams[name] {
+			git("checkout", "-q", branch)
+		} else {
+			upstreams[name] = true
+			git("checkout", "-q", "--orphan", branch)
+			git("rm", "-rqf", "--ignore-unmatch", ".")
+			write(name+"/f.txt", "as upstream has it")
+		}
+		write(name+"/upstream.txt", content)
+		git("add", "-A")
+		git("commit", "-qm", "upstream "+content)
+		side := git("rev-parse", "HEAD")
+		git("checkout", "-q", "main")
+		git("merge", "-q", "--allow-unrelated-histories", "--no-ff", "-m",
+			"stack: "+verb+" "+name+" @ "+side[:8], side)
+	}
+
+	git("init", "-q", "-b", "main", ws)
+	write("README", "workspace")
+	git("add", "-A")
+	git("commit", "-qm", "manifest")
+	importUnder("pty-core", "one", "import")
+
+	unsent := func(t *testing.T, name string) stackUnsent {
+		t.Helper()
+		repo, err := gitrepo.Open(ctx, ws)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dirty, err := repo.DirtyPaths(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stackUnsentWork(ctx, repo, name, dirty)
+	}
+
+	t.Run("an untouched prefix has nothing outstanding", func(t *testing.T) {
+		if u := unsent(t, "pty-core"); u.any() || !u.Known {
+			t.Fatalf("%+v, want nothing outstanding and a known baseline", u)
+		}
+	})
+
+	t.Run("uncommitted work is reported", func(t *testing.T) {
+		write("pty-core/f.txt", "edited but not committed")
+		u := unsent(t, "pty-core")
+		if !u.Working || u.Commits {
+			t.Fatalf("%+v, want working-tree changes only", u)
+		}
+		git("checkout", "-q", "--", "pty-core")
+	})
+
+	t.Run("an edited prefix reports committed work", func(t *testing.T) {
+		write("pty-core/f.txt", "mine")
+		git("commit", "-qam", "fix the read timeout")
+		if u := unsent(t, "pty-core"); !u.Commits || u.Working {
+			t.Fatalf("%+v, want committed work only", u)
+		}
+	})
+
+	t.Run("a pull after local work does not hide it", func(t *testing.T) {
+		// The regression this test exists for. A pull's merge commit already
+		// contains the local work, so comparing against the merge's own tree
+		// reports the prefix clean; the imported side is the honest baseline.
+		importUnder("pty-core", "two", "pull")
+		if u := unsent(t, "pty-core"); !u.Commits {
+			t.Fatalf("%+v, want the local work still reported after a pull", u)
+		}
+	})
+
+	t.Run("content matching what was imported is nothing to send", func(t *testing.T) {
+		// Trees, not commits: the history is longer than at import, but what
+		// would be exported is identical.
+		write("pty-core/f.txt", "as upstream has it")
+		git("commit", "-qam", "back to what upstream has")
+		if u := unsent(t, "pty-core"); u.Commits {
+			t.Fatalf("%+v, want nothing outstanding when the tree matches", u)
+		}
+	})
+
+	t.Run("editing one prefix does not implicate another", func(t *testing.T) {
+		importUnder("term-core", "one", "import")
+		write("pty-core/f.txt", "mine again")
+		git("commit", "-qam", "another change to pty-core")
+		if u := unsent(t, "term-core"); u.any() {
+			t.Fatalf("%+v, want term-core untouched", u)
+		}
+	})
+
+	t.Run("no marker is unknown, never 'nothing to send'", func(t *testing.T) {
+		u := unsent(t, "never-imported")
+		if u.Known || u.Commits {
+			t.Fatalf("%+v, want an unknown baseline", u)
+		}
+	})
+}

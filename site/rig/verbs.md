@@ -246,7 +246,7 @@ produces an ordinary pull request.
 | Verb | What |
 |------|------|
 | `stack init` | Write the manifest, or import the repos it names into this history |
-| `stack status` | Each repo's cursor against its upstream branch |
+| `stack status` | Each repo's cursor against its upstream, and whether it holds unsent changes |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what's missing |
