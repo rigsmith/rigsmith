@@ -148,8 +148,10 @@ func (m *stackManifest) validate() error {
 				name, r.UpstreamBranch, r.Branch)
 		}
 		for _, spec := range []string{r.Upstream, r.Fork} {
-			if strings.Contains(spec, "://") || strings.HasSuffix(spec, ".git") {
-				return fmt.Errorf("stack repo %q: %q must be host/owner/name (no scheme, no .git)", name, spec)
+			// A paste is normalised into host/owner/name before this runs, so
+			// anything still carrying a scheme was not a shape we recognise.
+			if strings.Contains(spec, "://") {
+				return fmt.Errorf("stack repo %q: %q is not a repository URL this understands — host/owner/name, or the https or ssh URL of one", name, spec)
 			}
 			// Counting separators would accept "github.com//repo": require three
 			// non-empty components, or the URL fails later as an opaque git error.
@@ -236,6 +238,7 @@ func loadStackManifest(root string) (*stackManifest, *cfgfind.Source, error) {
 	if err := jsonc.Unmarshal(src.Data, &m); err != nil {
 		return nil, nil, fmt.Errorf("parsing %s: %w", src.Origin, err)
 	}
+	m.normalize()
 	if err := m.validate(); err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", src.Origin, err)
 	}
@@ -370,4 +373,44 @@ func stackWriteTemplate(root string) (string, error) {
 		return p, fmt.Errorf("%s already exists", p)
 	}
 	return p, os.WriteFile(p, []byte(stackManifestTemplate), 0o644)
+}
+
+// stackNormalizeSpec reduces what people actually paste — the URL in the browser
+// bar, the one the clone button hands out, an ssh remote — to the canonical
+// host/owner/name. Rejecting those was pure friction: the information is all
+// there, in a form the user did not choose.
+//
+// Anything unrecognised comes back unchanged so that validate reports the
+// specific problem, rather than this quietly reshaping it into a different one.
+func stackNormalizeSpec(s string) string {
+	s = strings.TrimSpace(s)
+	if _, rest, ok := strings.Cut(s, "://"); ok {
+		s = rest
+	} else if at := strings.Index(s, "@"); at >= 0 && strings.Contains(s[at:], ":") {
+		// scp-style git@host:owner/name, where the colon separates host from path
+		// and is the only thing distinguishing it from a host that carries a port.
+		s = strings.Replace(s[at+1:], ":", "/", 1)
+	}
+	// Userinfo left over from an ssh:// URL. Bounded to the first path segment so
+	// an "@" inside a repository name is not mistaken for one.
+	if slash := strings.Index(s, "/"); slash >= 0 {
+		if at := strings.LastIndex(s[:slash], "@"); at >= 0 {
+			s = s[at+1:]
+		}
+	}
+	s = strings.TrimSuffix(s, "/")
+	s = strings.TrimSuffix(s, ".git")
+	return strings.TrimSuffix(s, "/")
+}
+
+// normalize canonicalises every repo spec before validation, so the rest of the
+// tool only ever sees host/owner/name.
+func (m *stackManifest) normalize() {
+	for _, r := range m.Repos {
+		if r == nil {
+			continue
+		}
+		r.Upstream = stackNormalizeSpec(r.Upstream)
+		r.Fork = stackNormalizeSpec(r.Fork)
+	}
 }
