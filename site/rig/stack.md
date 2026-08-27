@@ -133,6 +133,20 @@ repos. Fill it in, and the second `init` imports them.
 rig stack init          # writes rig.stack.jsonc
 ```
 
+Or skip the editing entirely. `rig stack add` asks for a repo, works out where
+it goes, writes the entry and imports it — and every answer is also a flag, so
+the same thing scripts:
+
+```sh
+rig stack add                                    # asks
+rig stack add github.com/acme/pty-core --fork github.com/you/pty-core
+rig stack add github.com/you/term-app --owned    # one of yours
+```
+
+Paste the URL if that is what you have; it is reduced to `host/owner/name`. The
+rest of this section is what `add` writes, and what to write by hand if you
+would rather.
+
 ```jsonc
 {
   "$schema": "https://rigsmith.dev/schemas/rig-stack.json",
@@ -432,6 +446,7 @@ outright if it holds changes of its own.
 | Verb | What it does |
 |---|---|
 | `stack init` | Scaffold the manifest, or import the repos it names that are not imported yet |
+| `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
 | `stack status` | Each repo's cursor against its upstream branch tip |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |

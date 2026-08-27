@@ -35,6 +35,7 @@ func newStackCmd() *cobra.Command {
 			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
 			"  rig stack init                      scaffold the manifest / import the repos\n" +
+			"  rig stack add [upstream]            add a repo and import it (asks if not given)\n" +
 			"  rig stack status                    cursor vs upstream, per repo\n" +
 			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
 			"  rig stack send <repo> <new-branch>  a branch on your fork, prefixed stack/\n" +
@@ -48,7 +49,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackInitCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackInitCmd(), newStackAddCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
 	return cmd
 }
 
@@ -284,6 +285,9 @@ func newStackPullCmd() *cobra.Command {
 			ctx := cmd.Context()
 			m, src, repo, err := stackspace(ctx)
 			if err != nil {
+				return err
+			}
+			if err := m.requireRepos(); err != nil {
 				return err
 			}
 			// A pinned prefix reuses the commit its pin last resolved to, so an
@@ -610,6 +614,9 @@ func newStackSendCmd() *cobra.Command {
 			branch := m.sendBranch(name, args[1])
 			r := m.Repos[name]
 			if r == nil {
+				if err := m.requireRepos(); err != nil {
+					return err
+				}
 				return fmt.Errorf("no stack repo %q (have: %s)", name, strings.Join(m.names(), ", "))
 			}
 			if m.cursor(name) == "" {
@@ -721,6 +728,8 @@ func newStackPushCmd() *cobra.Command {
 			}
 			r := m.Repos[name]
 			switch {
+			case r == nil && m.requireRepos() != nil:
+				return m.requireRepos()
 			case r == nil:
 				return fmt.Errorf("no stack repo %q (have: %s)", name, strings.Join(m.names(), ", "))
 			case m.cursor(name) == "":
@@ -1054,8 +1063,18 @@ func stackMenuItems() []menuItem {
 			{label: "init", desc: "scaffold rig.stack.jsonc to fuse repos here", cmd: newStackInitCmd()},
 		}
 	}
+	// An empty manifest loads fine — it is what init scaffolds — but every other
+	// verb acts on repos, and offering seven of them when there are none is a
+	// menu that describes the tool rather than what you can do.
+	if len(m.Repos) == 0 {
+		return []menuItem{
+			{label: "add", desc: "add the first repo to this stackspace", cmd: newStackAddCmd()},
+			{label: "init", desc: "import the repos the manifest names", cmd: newStackInitCmd()},
+		}
+	}
 	return []menuItem{
 		{label: "init", desc: "import any repo the manifest names but has not fused yet", cmd: newStackInitCmd()},
+		{label: "add", desc: "add a repo to this stackspace and import it", cmd: newStackAddCmd()},
 		{label: "status", desc: "each repo's cursor against its upstream", cmd: newStackStatusCmd()},
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
 		{label: "send", desc: "a repo's changes to your fork as a new branch (pick, then name it)", cmd: newStackSendMenuCmd()},

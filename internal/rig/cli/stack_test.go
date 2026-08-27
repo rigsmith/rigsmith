@@ -452,12 +452,18 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		}
 	})
 
-	t.Run("a scaffold that will not load still offers init", func(t *testing.T) {
-		// What `stack init` writes: a manifest whose repos block is still empty.
+	t.Run("an empty scaffold offers only the two verbs that apply", func(t *testing.T) {
+		// What `stack init` writes. It loads — an empty repos block is a real
+		// state, not a broken file — but nothing else can act until there is a
+		// repo, so offering the rest would describe the tool rather than what
+		// can be done here.
 		inStackspace(t, "{\n  \"repos\": {}\n}\n")
-		items := stackMenuItems()
-		if len(items) != 1 || items[0].label != "init" {
-			t.Fatalf("expected init to stay reachable, got %v", items)
+		var got []string
+		for _, it := range stackMenuItems() {
+			got = append(got, it.label)
+		}
+		if strings.Join(got, ",") != "add,init" {
+			t.Fatalf("got %v, want just add and init", got)
 		}
 	})
 
@@ -482,7 +488,7 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		for _, it := range stackMenuItems() {
 			labels = append(labels, it.label)
 		}
-		want := "init,status,pull,send,push,wire,doctor"
+		want := "init,add,status,pull,send,push,wire,doctor"
 		if got := strings.Join(labels, ","); got != want {
 			t.Fatalf("menu = %q, want %q", got, want)
 		}

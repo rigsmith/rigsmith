@@ -109,6 +109,18 @@ type stackManifest struct {
 
 func (m *stackManifest) cursor(name string) string { return m.LastSync[name] }
 
+// requireRepos is the guard for verbs that act on repos. An empty manifest is a
+// legitimate state — it is what `stack init` scaffolds, and what `stack add`
+// writes the first entry into — so loading one is not an error; only asking it
+// to do something is.
+func (m *stackManifest) requireRepos() error {
+	if len(m.Repos) > 0 {
+		return nil
+	}
+	// Almost always the untouched scaffold: say what to do, not what is wrong.
+	return fmt.Errorf("no repos yet — `rig stack add <repo>` adds one, or fill in the manifest and run `rig stack init` again")
+}
+
 // joshVersion is the engine version this stackspace pins, or rig's default. Nil
 // receiver is a real case: the version is needed to install the engine before a
 // stackspace necessarily has a manifest to read.
@@ -182,10 +194,6 @@ func (m *stackManifest) names() []string {
 }
 
 func (m *stackManifest) validate() error {
-	if len(m.Repos) == 0 {
-		// Almost always the untouched scaffold: say what to do, not what is wrong.
-		return fmt.Errorf("no repos yet — uncomment the example entry and point it at your upstream and fork, then run `rig stack init` again")
-	}
 	if m.BranchPrefix != nil {
 		if err := stackValidBranchPrefix(*m.BranchPrefix, "branchPrefix"); err != nil {
 			return err
