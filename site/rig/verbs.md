@@ -236,7 +236,7 @@ for how the guard makes worktrees + PRs the default under Claude Code, and
 
 Some projects only make sense together — a library, a second library, and the
 thing that uses both — and when you maintain forks of all three, iterating means
-publishing a package to see a change land. A stack workspace fuses those repos
+publishing a package to see a change land. A stackspace fuses those repos
 into **one history**, each under its own directory, so a change spans them in a
 single commit and the build compiles against source rather than packages.
 
@@ -250,7 +250,7 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | `stack status` | Each repo's cursor against its upstream, and whether it holds work that has not left |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
-| `stack push <repo>` | Fast-forward a repo you own with this workspace's commits, history intact |
+| `stack push <repo>` | Fast-forward a repo you own with this stackspace's commits, history intact |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what's missing |
 
 ```sh
@@ -267,7 +267,7 @@ tree is already what upstream wants. rig fetches a verified `josh-proxy` on
 first use where one is published for your platform and pinned version, and
 builds it from source otherwise.
 
-**[Stack workspaces](./stack)** is the full guide: setting one up, wiring the
+**[Stackspaces](./stack)** is the full guide: setting one up, wiring the
 build so the consumer compiles against source, sending and updating pull
 requests, and the rules that will otherwise catch you out. Manifest keys are in
 [Configuration](./configuration#stack).
@@ -315,7 +315,7 @@ cleanly rig echoes what it picked:
 
 ## Opening the picker (`-i` / `--interactive`)
 
-At a workspace root where targets live only in subdirectories, a bare `rig run`
+At a stackspace root where targets live only in subdirectories, a bare `rig run`
 (or `build`/`test`/`format`/`lint`/`typecheck`/`clean`/`rebuild`) opens a picker —
 no flag needed. `run` lists the runnable packages **and** the repo's surfaced
 scripts; the other verbs list packages only. When one obvious target *would* run

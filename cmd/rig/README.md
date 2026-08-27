@@ -17,7 +17,7 @@ rig build --dry-run      # print the command, don't run it
 rig build --quiet        # suppress the → command echo
 ```
 
-Beyond the dev loop it manages parallel worktrees, and **stack workspaces** —
+Beyond the dev loop it manages parallel worktrees, and **stackspaces** —
 your app and the libraries you have forked, fused into one history, so a change
 can span them in a single commit while each still leaves as itself:
 
@@ -74,7 +74,7 @@ Global flags: `--dry-run`/`-n` (print what would run, don't run it) and
 
 rig is convention-first — it works with **zero configuration**. An optional
 `.rig.json` at the repo root (found by walking up from cwd; the root anchor
-precedence is `.rig.json` > solution/workspace manifest > git root) supplies
+precedence is `.rig.json` > solution/stackspace manifest > git root) supplies
 only what can't be inferred. **JSONC** (comments + trailing commas welcome);
 a missing file is fine; unknown keys get a did-you-mean warning.
 

@@ -1,9 +1,9 @@
 package cli
 
-// The stack manifest describes a fused workspace: upstream repos imported as
+// The stack manifest describes a fused stackspace: upstream repos imported as
 // prefixes of one history through josh filters (docs/STACK-DESIGN.md).
-// Named stack*, not workspace* — in this package "workspace" already means
-// intra-repo package discovery (workspace.go).
+// Named stack*, not stackspace* — in this package "stackspace" already means
+// intra-repo package discovery (stackspace.go).
 
 import (
 	"encoding/json"
@@ -30,7 +30,7 @@ const (
 	stackSchemaURL = "https://rigsmith.dev/schemas/rig-stack.json"
 )
 
-// stackRepo is one upstream project fused into the workspace under its prefix
+// stackRepo is one upstream project fused into the stackspace under its prefix
 // (the manifest key). Repo specs are host/owner/name — no scheme, no .git —
 // because the same spec must serve https URLs, josh proxy paths, and display.
 type stackRepo struct {
@@ -56,12 +56,12 @@ type stackRepo struct {
 	UpstreamTag    string `json:"upstreamTag,omitempty"`
 	UpstreamCommit string `json:"upstreamCommit,omitempty"`
 	// Owned marks a project as yours rather than someone else's, which changes
-	// how work leaves the workspace: `send` proposes a squashed branch to a fork,
+	// how work leaves the stackspace: `send` proposes a squashed branch to a fork,
 	// `push` fast-forwards your own repo with the history intact. It cannot be
 	// inferred — upstream and fork matching is suggestive, and a perfectly
 	// ordinary fork arrangement looks identical — so it is stated.
 	Owned bool `json:"owned,omitempty"`
-	// BranchPrefix overrides the workspace-wide prefix for this project — for the
+	// BranchPrefix overrides the stackspace-wide prefix for this project — for the
 	// upstream whose contribution guide asks for something of its own. A pointer
 	// so that "" is a real answer (no prefix here) rather than "unset".
 	BranchPrefix *string `json:"branchPrefix,omitempty"`
@@ -102,16 +102,16 @@ type stackManifest struct {
 	// LastPin records, for a pinned prefix, which pin its cursor was resolved
 	// under. Without it a tag and a repin are indistinguishable: both present as
 	// "the resolved SHA differs from the cursor", so an upstream that force-moves
-	// a tag would drag the workspace along, which is the one thing a pin is for.
+	// a tag would drag the stackspace along, which is the one thing a pin is for.
 	// Machine-written, like LastSync, and absent for a prefix following a branch.
 	LastPin map[string]string `json:"lastPin,omitempty"`
 }
 
 func (m *stackManifest) cursor(name string) string { return m.LastSync[name] }
 
-// joshVersion is the engine version this workspace pins, or rig's default. Nil
+// joshVersion is the engine version this stackspace pins, or rig's default. Nil
 // receiver is a real case: the version is needed to install the engine before a
-// workspace necessarily has a manifest to read.
+// stackspace necessarily has a manifest to read.
 func (m *stackManifest) joshVersion() string {
 	if m != nil && m.Josh != "" {
 		return m.Josh
@@ -148,7 +148,7 @@ func (m *stackManifest) pin(name string) stackPin {
 }
 
 // branchPrefix is what `send` prepends for this project: the repo's own setting
-// if it has one, else the workspace's, else nothing.
+// if it has one, else the stackspace's, else nothing.
 func (m *stackManifest) branchPrefix(name string) string {
 	if r := m.Repos[name]; r != nil && r.BranchPrefix != nil {
 		return *r.BranchPrefix
@@ -193,7 +193,7 @@ func (m *stackManifest) validate() error {
 	}
 	for name, r := range m.Repos {
 		// The key is both a josh prefix and a `HEAD:<name>` tree path, so it has
-		// to name exactly one directory. Empty resolves to the workspace root —
+		// to name exactly one directory. Empty resolves to the stackspace root —
 		// `send` would push the whole fused tree to one upstream.
 		if err := stackValidPrefix(name); err != nil {
 			return err
@@ -290,7 +290,7 @@ func stackValidPrefix(name string) error {
 	case name == "":
 		return fmt.Errorf("stack manifest has a repo with an empty name")
 	case name == "." || name == "..":
-		return fmt.Errorf("stack repo %q: the name is a directory in the workspace, not a path", name)
+		return fmt.Errorf("stack repo %q: the name is a directory in the stackspace, not a path", name)
 	case strings.EqualFold(name, ".git"):
 		return fmt.Errorf("stack repo %q: git reserves that name, and the import would be rejected", name)
 	case strings.ContainsAny(name, "/\\"), strings.ContainsAny(name, " \t"):
@@ -302,7 +302,7 @@ func stackValidPrefix(name string) error {
 }
 
 // stackSpec is the cfgfind spec for the stack manifest: a dedicated rig.stack.jsonc/.json
-// at the workspace root, or a `stack` key inline in .rig.json.
+// at the stackspace root, or a `stack` key inline in .rig.json.
 func stackSpec(root string) cfgfind.Spec {
 	return cfgfind.Spec{
 		Label:   "stack manifest",
@@ -313,7 +313,7 @@ func stackSpec(root string) cfgfind.Spec {
 }
 
 // loadStackManifest resolves and parses the manifest at root. A nil manifest with
-// nil error means "not a stack workspace" — callers say so themselves.
+// nil error means "not a stackspace" — callers say so themselves.
 func loadStackManifest(root string) (*stackManifest, *cfgfind.Source, error) {
 	src, err := cfgfind.Find(stackSpec(root))
 	if err != nil || src == nil {
@@ -428,7 +428,7 @@ func stackSplitHost(spec string) (host, path string) {
 const stackManifestTemplate = `{
   "$schema": "` + stackSchemaURL + `",
 
-  // A stack workspace fuses several upstream repos into this one git history,
+  // A stackspace fuses several upstream repos into this one git history,
   // each under its own directory, so a change can span them in a single commit
   // and still leave as an ordinary pull request to each project.
   //

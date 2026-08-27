@@ -24,8 +24,8 @@ import (
 )
 
 // stackJoshVersion is the josh tag rig installs and expects. Pinned because the
-// filter algebra must be deterministic against existing workspace history;
-// a workspace may override via the manifest's `josh` key, at its own risk.
+// filter algebra must be deterministic against existing stackspace history;
+// a stackspace may override via the manifest's `josh` key, at its own risk.
 const stackJoshVersion = "r26.07.19"
 
 const stackJoshRepo = "https://github.com/josh-project/josh"
@@ -439,7 +439,7 @@ func (p *joshProxy) tail(lines int) string {
 }
 
 // stackPrefixFilter is the josh filter that maps a whole upstream repo under a
-// workspace prefix (and, reversed on push, back out of it).
+// stackspace prefix (and, reversed on push, back out of it).
 func stackPrefixFilter(prefix string) string { return ":prefix=" + prefix }
 
 // freePort asks the kernel for an unused port and hands it to the child. There

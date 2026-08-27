@@ -39,7 +39,7 @@ func TestStackFlow(t *testing.T) {
 		srv.bare(t, "me/"+name)
 	}
 
-	ws := filepath.Join(work, "workspace")
+	ws := filepath.Join(work, "stackspace")
 	if err := os.MkdirAll(ws, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestStackFlow(t *testing.T) {
 	files := strings.Fields(mustGitStack(t, fork, "ls-tree", "-r", "--name-only", "stack/bump"))
 	for _, f := range files {
 		if strings.HasPrefix(f, "libfoo/") || strings.HasPrefix(f, "libbar/") || f == "rig.stack.jsonc" {
-			t.Fatalf("branch leaked workspace layout: %v", files)
+			t.Fatalf("branch leaked stackspace layout: %v", files)
 		}
 	}
 	if !contains(files, "src/libfoo.txt") {
@@ -271,7 +271,7 @@ func (g *gitServer) seed(t *testing.T, name, file string) {
 }
 
 // commit adds a commit to an upstream directly, standing in for another
-// contributor landing something while the workspace was not looking.
+// contributor landing something while the stackspace was not looking.
 func (g *gitServer) commit(t *testing.T, name, file, body, msg string) {
 	t.Helper()
 	bare := g.path(name)

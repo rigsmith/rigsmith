@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://rigsmith.dev/schemas/rig-stack.json",
   "title": "rig stack manifest",
-  "description": "A fused workspace of upstream forks: each repo's history imported under a prefix of one git history through josh's reversible filters. See docs/STACK-DESIGN.md.",
+  "description": "A fused stackspace of upstream forks: each repo's history imported under a prefix of one git history through josh's reversible filters. See docs/STACK-DESIGN.md.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -10,7 +10,7 @@
     },
     "josh": {
       "type": "string",
-      "description": "josh engine version tag this workspace pins (e.g. r26.07.19). Defaults to the version pinned in rig. Changing it against existing workspace history is at your own risk."
+      "description": "josh engine version tag this stackspace pins (e.g. r26.07.19). Defaults to the version pinned in rig. Changing it against existing stackspace history is at your own risk."
     },
     "branchPrefix": {
       "type": "string",
@@ -60,7 +60,7 @@
           },
           "owned": {
             "type": "boolean",
-            "description": "This project is yours, not someone else's. Enables `rig stack push`, which fast-forwards its own branch with the workspace's commits and their history, instead of `rig stack send`, which proposes one squashed commit to a fork."
+            "description": "This project is yours, not someone else's. Enables `rig stack push`, which fast-forwards its own branch with the stackspace's commits and their history, instead of `rig stack send`, which proposes one squashed commit to a fork."
           },
           "upstreamBranch": {
             "type": "string",
@@ -81,7 +81,7 @@
           },
           "branchPrefix": {
             "type": "string",
-            "description": "Overrides the workspace branchPrefix for this project. Set to \"\" to send bare names to this fork only.",
+            "description": "Overrides the stackspace branchPrefix for this project. Set to \"\" to send bare names to this fork only.",
             "pattern": "^[^ \\t~^:?*\\[\\\\]*$",
             "not": {
               "anyOf": [
