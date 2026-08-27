@@ -219,15 +219,25 @@ func newStackStatusCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
+			// One status call for the whole workspace: the prefixes are filtered
+			// out of it per repo below, rather than shelling out once each.
+			dirty, err := repo.DirtyPaths(ctx)
+			if err != nil {
+				return err
+			}
 			for _, name := range m.names() {
 				pin := m.pin(name)
-				tip, err := stackUpstreamTip(ctx, repo, m, name)
-				if err != nil {
-					fmt.Fprintf(out, "%-24s %s (upstream unreachable: %v)\n", name, short(m.cursor(name)), err)
-					continue
-				}
+				// Whether this prefix is holding work is answered from the
+				// workspace alone, so it is computed before anything reaches for
+				// the network — the moment you most need to know is when you are
+				// about to delete a workspace, and that is exactly when you might
+				// be on a plane.
+				u := stackUnsentWork(ctx, repo, name, dirty)
 				state := "up to date"
+				tip, err := stackUpstreamTip(ctx, repo, m, name)
 				switch {
+				case err != nil:
+					state = "upstream unreachable — " + stackFirstLine(err)
 				case m.cursor(name) == "":
 					state = "not imported — run `rig stack init`"
 				case tip != m.cursor(name):
@@ -237,13 +247,17 @@ func newStackStatusCmd() *cobra.Command {
 					// reader needs to know this prefix will never move on its own.
 					state = "pinned to " + pin.describe()
 				}
-				// Work that has not been sent exists only in this workspace, which
-				// is documented as disposable. That combination is how it gets
-				// thrown away, so report it whatever else is true of the prefix.
-				switch unsent, known := stackHasUnsent(ctx, repo, name); {
-				case unsent:
+				// Work that has not left the workspace exists only here, and the
+				// workspace is documented as disposable. That combination is how
+				// it gets thrown away, so report it whatever else is true.
+				switch {
+				case u.Working && u.Commits:
+					state += fmt.Sprintf("  ·  uncommitted and unsent changes — commit, then `rig stack send %s <branch>`", name)
+				case u.Working:
+					state += "  ·  uncommitted changes"
+				case u.Commits:
 					state += fmt.Sprintf("  ·  unsent changes — `rig stack send %s <branch>`", name)
-				case !known && m.cursor(name) != "":
+				case !u.Known && m.cursor(name) != "":
 					state += "  ·  cannot tell whether it has unsent changes (no import commit in this history)"
 				}
 				fmt.Fprintf(out, "%-24s %-10s %s\n", name, short(m.cursor(name)), state)
@@ -320,57 +334,74 @@ func newStackPullCmd() *cobra.Command {
 	return cmd
 }
 
-// stackImportedTree is the tree a prefix had when it was last imported or
-// pulled — the baseline for "has anything happened here since".
+// stackImportedTree is the tree a prefix had when it was last imported, pulled
+// or pushed — the baseline for "has anything happened here since".
 //
-// The cursor cannot answer it: that is an upstream commit id, and a workspace
-// only holds josh-rewritten commits, so the object is never here. What is here
-// is rig's own import or pull commit, always a merge because the import is made
-// with --no-ff, whose *second* parent is the filtered upstream side. That
-// parent's tree is what upstream had; the merge's own tree is not, since it
-// already contains whatever it merged past.
+// The cursor cannot answer it: that is an *upstream* commit id, and a workspace
+// only holds josh-rewritten commits, so the object is never here; `send` fetches
+// it deliberately when it needs to root on one. What is here is rig's own
+// marker commit, always a merge because the import is made with --no-ff, whose
+// *second* parent is the filtered upstream side. That parent's tree is what
+// upstream had. The merge's own tree is not: it already contains whatever local
+// work it merged past, so measuring against it calls a prefix clean the moment
+// anything has been pulled since the work was done.
 func stackImportedTree(ctx context.Context, repo *gitrepo.Repo, name string) (string, bool) {
-	marker, err := repo.LastCommitMatching(ctx, `^stack: (import|pull) `+regexp.QuoteMeta(name)+` @`)
+	marker, err := repo.LastCommitMatching(ctx, `^stack: (import|pull|push) `+regexp.QuoteMeta(name)+` @`)
 	if err != nil || marker == "" {
 		return "", false
 	}
 	tree, err := repo.RevParse(ctx, marker+"^2:"+name)
+	if err != nil {
+		// A marker without a second parent is not something rig writes, but a
+		// rewritten history can produce one; its own tree is the best available
+		// answer and is right whenever nothing was merged into it.
+		tree, err = repo.RevParse(ctx, marker+":"+name)
+	}
 	if err != nil {
 		return "", false
 	}
 	return tree, true
 }
 
-// stackHasUnsent reports whether a prefix holds work that exists nowhere but
-// this workspace — the thing that makes a disposable workspace dangerous.
-//
-// The cursor cannot be used for this. It is an *upstream* commit id, and the
-// workspace only ever contains josh-rewritten commits, so that object is never
-// present locally; `send` fetches it deliberately when it needs to root on it.
-// What is local is the import or pull commit rig wrote itself, and the prefix's
-// tree in it is exactly what upstream last had. Comparing that against the tree
-// at HEAD answers the question without touching the network.
+// stackUnsent is what a prefix is holding that has not left the workspace —
+// the thing that makes a disposable workspace dangerous.
+type stackUnsent struct {
+	Commits bool // committed work the upstream repository does not have
+	Working bool // edits in the index or the worktree, not yet committed
+	Known   bool // false when the imported baseline cannot be established
+}
+
+func (u stackUnsent) any() bool { return u.Commits || u.Working }
+
+// stackUnsentWork compares a prefix against what was last imported into it.
 //
 // Trees, not commits: a history amended or rebased without changing content has
 // nothing to send and must not be reported as though it did.
 //
-// Unknown, rather than false, when no marker is found — a history rewritten past
-// rig's own commits cannot answer, and "nothing to send" is the one wrong answer
-// there that loses work.
-func stackHasUnsent(ctx context.Context, repo *gitrepo.Repo, name string) (unsent, known bool) {
-	marker, err := repo.LastCommitMatching(ctx, `^stack: (import|pull) `+regexp.QuoteMeta(name)+` @`)
-	if err != nil || marker == "" {
-		return false, false
+// Unknown, rather than clean, when no baseline can be established — a history
+// rewritten past rig's own commits cannot answer, and "nothing to send" is the
+// one wrong answer there that loses work.
+func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty []string) stackUnsent {
+	u := stackUnsent{}
+	// Uncommitted work is the most easily lost of all, and needs no baseline.
+	prefix := name + "/"
+	for _, p := range dirty {
+		if strings.HasPrefix(p, prefix) {
+			u.Working = true
+			break
+		}
 	}
-	imported, err := repo.RevParse(ctx, marker+":"+name)
-	if err != nil {
-		return false, false
+	imported, known := stackImportedTree(ctx, repo, name)
+	if !known {
+		return u
 	}
 	here, err := repo.RevParse(ctx, "HEAD:"+name)
 	if err != nil {
-		return false, false
+		return u
 	}
-	return imported != here, true
+	u.Known = true
+	u.Commits = imported != here
+	return u
 }
 
 // stackResolveUpstream turns a prefix's pin into the upstream commit to import.

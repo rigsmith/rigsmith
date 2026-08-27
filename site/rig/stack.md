@@ -264,10 +264,13 @@ stops after. Pin a version per workspace with the manifest's
 - **The workspace is disposable — once your work has left it.** The fused
   history is a working convenience, not an archive, so a tangled one can be
   deleted and re-imported. But a commit you have not `send`-ed exists *only*
-  there. `status` flags a project whose tree has moved away from what was
-  imported — `unsent changes` — so check it before deleting anything. It reports
-  what has *changed*, not what has reached a fork: `send` leaves no record, so a
-  project stays flagged until upstream's own history moves on.
+  there. `status` flags a project holding work that has not left — `unsent
+  changes` for commits, `uncommitted changes` for edits still in the tree — so
+  check it before deleting anything. That comparison is local, so it still
+  answers when upstream is unreachable, which is exactly when you are most
+  likely to be tidying up. It reports what has *changed*, not what has reached a
+  fork: `send` leaves no record, so a project stays flagged until upstream's own
+  history moves on.
 - **Do not give the workspace a remote** and push it somewhere. It contains
   several rewritten upstream histories fused together, which is meaningful to
   you and to nobody else.
