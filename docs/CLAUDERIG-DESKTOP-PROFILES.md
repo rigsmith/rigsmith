@@ -236,10 +236,22 @@ what happens *before* a window exists; branding is a property of the window.
 What does work, today and with no bundle surgery, is **theme**. Each profile has
 its own `config.json`, and Desktop writes `userThemeMode` into it — so setting
 one profile to dark and another to light in the app's own settings makes them
-tellable apart at a glance in Mission Control or Alt-Tab. It is weaker than an
-icon and worth describing as what it is: a workaround, not a fix. The fix is
-Desktop naming the signed-in account in its own title bar, which is one line
-inside the app and impossible from outside it.
+tellable apart at a glance in Mission Control or Alt-Tab.
+
+Note the ceiling, because it is low: **there is no custom theming**.
+`userThemeMode` accepts exactly `system`, `light` and `dark`, and all it does is
+set Electron's `nativeTheme.themeSource`. The app carries no accent colour, no
+theme presets and no stylesheet a user could supply — the window renders the
+claude.ai web app, so its appearance comes from that app's own light and dark
+styling, and there is nothing local to override. (The theming machinery visible
+in the bundle belongs elsewhere: `themeVariables` configures Mermaid diagrams,
+and `applyHostTheme` passes a theme into artifact iframes.) So this distinguishes
+**two** profiles and no more, which is worth knowing before it is offered as the
+answer.
+
+It is weaker than an icon and worth describing as what it is: a workaround, not
+a fix. The fix is Desktop naming the signed-in account in its own title bar,
+which is one line inside the app and impossible from outside it.
 
 ## Opening a Claude Code session
 
