@@ -50,7 +50,7 @@ func NewDesktopCmd() *cobra.Command {
 			"clauderig decides is which one to launch against. That is what makes this\n" +
 			"safe where moving a session around was not.\n\n" +
 			"  add       create a profile and open a window to log into\n" +
-			"  open      open (or focus) a profile's window\n" +
+			"  open      open (or focus) a profile's window, optionally on a session\n" +
 			"  list      show saved profiles and which are open\n" +
 			"  quit      close a profile's window\n" +
 			"  map       bind a directory to a profile, for a bare `open` there\n" +
@@ -73,7 +73,21 @@ func NewDesktopCmd() *cobra.Command {
 // desktopStore roots the profiles beside the rest of clauderig's local state.
 // Deliberately under ~/.clauderig and NOT under ~/.claude: these directories
 // hold live logged-in sessions and must never reach the sync remote.
-func desktopStore() (*desktop.Store, error) { return desktop.DefaultStore() }
+// desktopStore and newDesktopApp are vars, not plain functions, so a test can
+// drive a whole command against a temporary store and a fake App. The one bug
+// this PR shipped — `-i` opening a window and never sending the session — lived
+// in the wiring BETWEEN the pieces, which is the one place unit tests on the
+// pieces cannot reach.
+var desktopStore = func() (*desktop.Store, error) { return desktop.DefaultStore() }
+
+var newDesktopApp = func() desktop.App { return desktop.New() }
+
+// selectSession is the picker, behind a seam. `-i` is the only path that
+// resolves a session with NO reference, and it is the path the send guard got
+// wrong — but the picker needs a terminal, so without this a test can only
+// drive `--session <id>`, which sets the very variable the bug was reading and
+// therefore passes against the bug.
+var selectSession = pickSession
 
 func newDesktopAddCmd() *cobra.Command {
 	var email string
@@ -97,7 +111,7 @@ func newDesktopAddCmd() *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
-			app := desktop.New()
+			app := newDesktopApp()
 			if _, ok := app.Installed(); !ok {
 				return desktopUnavailable()
 			}
@@ -312,9 +326,10 @@ var errCancelled = errors.New("cancelled")
 func newDesktopOpenCmd() *cobra.Command {
 	var sessionRef string
 	var anyway bool
+	var pick bool
 	cmd := &cobra.Command{
 		Use:   "open [<name|email>]",
-		Short: "Open (or focus) a profile's Claude Desktop window",
+		Short: "Open (or focus) a profile's Claude Desktop window, optionally on a session",
 		Long: "Opens the profile's window, or focuses it if it is already open.\n\n" +
 			"With no profile named: uses the one mapped to this directory\n" +
 			"(`clauderig desktop map`, nearest mapped ancestor), and otherwise asks\n" +
@@ -324,6 +339,11 @@ func newDesktopOpenCmd() *cobra.Command {
 			"id, or text to match its title or project. Desktop reads the transcript\n" +
 			"from ~/.claude/projects, so a session that lives only in the synced repo\n" +
 			"must be restored before it can be opened.\n\n" +
+			"With -i and no --session, it lists the sessions this machine could open\n" +
+			"— newest first, dated by each transcript's own records — and opens the\n" +
+			"one you choose. That is a narrower set than `clauderig recent` shows,\n" +
+			"which spans every synced machine and every client. Given both flags,\n" +
+			"the picker opens on the matches instead of taking a lone one.\n\n" +
 			"A deep link is routed by scheme, not to a particular window, so with a\n" +
 			"second profile open the OS picks which one imports the session — that is\n" +
 			"refused rather than risked, since it would cross an account boundary.\n" +
@@ -331,7 +351,7 @@ func newDesktopOpenCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
-			app := desktop.New()
+			app := newDesktopApp()
 			if _, ok := app.Installed(); !ok {
 				return desktopUnavailable()
 			}
@@ -361,11 +381,12 @@ func newDesktopOpenCmd() *cobra.Command {
 			if cmd.Flags().Changed("session") && strings.TrimSpace(sessionRef) == "" {
 				// Not starting with the flag name: the first letter of an error is
 				// rendered capitalised, which would print it as "--Session".
-				return fmt.Errorf("give --session a session id, or some text matching a title or project")
+				return fmt.Errorf("give --session a session id, or some text matching a title or project\n" +
+					"Or pass -i to choose from this machine's recent sessions")
 			}
 			sessionRef = strings.TrimSpace(sessionRef)
 			var target sessionCandidate
-			if sessionRef != "" {
+			if sessionRef != "" || pick {
 				home, herr := account.ClaudeHome()
 				if herr != nil {
 					return herr
@@ -374,11 +395,20 @@ func newDesktopOpenCmd() *cobra.Command {
 				if ierr != nil {
 					return ierr
 				}
-				cands, ferr := findSessions(sessionRef, home, idx)
+				// With no reference to narrow by, the candidates are simply the
+				// most recent sessions. pickSession is given the empty ref so its
+				// messages drop the "matches %q" framing.
+				var cands []sessionCandidate
+				var ferr error
+				if sessionRef != "" {
+					cands, ferr = findSessions(sessionRef, home, idx)
+				} else {
+					cands, ferr = recentSessions(home, idx, sessionPickLimit)
+				}
 				if ferr != nil {
 					return ferr
 				}
-				target, err = pickSession(sessionRef, cands)
+				target, err = selectSession(sessionRef, cands, pick)
 				if errors.Is(err, errCancelled) {
 					return nil
 				}
@@ -401,7 +431,11 @@ func newDesktopOpenCmd() *cobra.Command {
 				if ferr := app.Focus(p.DataDir()); ferr != nil {
 					return ferr
 				}
-				if sessionRef == "" {
+				// target.ID, not sessionRef: -i resolves a session with no
+				// reference at all, so keying the early return on the reference
+				// focused the window and dropped the session the user had just
+				// chosen — silently, and reported as success.
+				if target.ID == "" {
 					fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already open:"), p.Label())
 					return nil
 				}
@@ -411,7 +445,7 @@ func newDesktopOpenCmd() *cobra.Command {
 					return lerr
 				}
 				_ = st.Touch(p)
-				if sessionRef == "" {
+				if target.ID == "" {
 					fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ opened"), p.Label())
 					return nil
 				}
@@ -467,7 +501,25 @@ func newDesktopOpenCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&sessionRef, "session", "", "open this Claude Code session: its id, or text matching its title or project")
+	cmd.Flags().BoolVarP(&pick, "interactive", "i", false, "always open the picker (choose a recent session to open)")
 	cmd.Flags().BoolVar(&anyway, "anyway", false, "send the session even with other profiles open, when the OS picks which receives it")
+	_ = cmd.RegisterFlagCompletionFunc("session", completeSessionRef)
+	// pflag reports a value-less --session as "flag needs an argument", which is
+	// true and unhelpful: it names no way forward, and the two ways forward are
+	// not guessable. Giving --session a NoOptDefVal would let it stand alone but
+	// would stop it consuming the next word, so `--session winbox` would silently
+	// become a positional profile name — the flag cannot be both. The wrapped
+	// error keeps pflag's own wording and adds the remedy.
+	cmd.SetFlagErrorFunc(func(_ *cobra.Command, ferr error) error {
+		// pflag's exact wording for this one flag. A substring test for
+		// "--session" also caught `unknown flag: --sessions` and
+		// `--session-timeout`, answering a typo with advice about a value.
+		if ferr != nil && ferr.Error() == "flag needs an argument: --session" {
+			return fmt.Errorf("%w\nGive it a session id or some text to match, "+
+				"or pass -i to pick from recent sessions", ferr)
+		}
+		return ferr
+	})
 	return cmd
 }
 
@@ -545,7 +597,7 @@ func newDesktopListCmd() *cobra.Command {
 					"no Desktop profiles yet — `clauderig desktop add <name>` creates one"))
 				return nil
 			}
-			app := desktop.New()
+			app := newDesktopApp()
 			fmt.Fprintln(out, HeaderStyle.Render("Claude Desktop profiles"))
 			for _, p := range all {
 				marker, state := "  ", DimStyle.Render("closed")
@@ -590,7 +642,7 @@ func newDesktopQuitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			app := desktop.New()
+			app := newDesktopApp()
 			p, err := resolveDesktopTarget(st, app, args, true)
 			switch {
 			case errors.Is(err, errCancelled):
@@ -644,7 +696,7 @@ func newDesktopRemoveCmd() *cobra.Command {
 			if err != nil {
 				return desktopNotFound(err, args[0])
 			}
-			app := desktop.New()
+			app := newDesktopApp()
 			// Deleting a live Electron profile leaves the app writing into
 			// unlinked files, so close it first rather than racing it. An
 			// UNKNOWN state is treated as open: this deletes a logged-in
@@ -739,7 +791,7 @@ type desktopListJSON struct {
 }
 
 func printDesktopJSON(w interface{ Write([]byte) (int, error) }, _ *desktop.Store, all []desktop.Profile) error {
-	app := desktop.New()
+	app := newDesktopApp()
 	path, installed := app.Installed()
 	out := desktopListJSON{
 		Supported: desktop.Supported(),
@@ -878,7 +930,7 @@ func runDesktopUI(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	app := desktop.New()
+	app := newDesktopApp()
 	note := ""
 	for {
 		all, lerr := st.List()

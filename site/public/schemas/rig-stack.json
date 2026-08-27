@@ -42,7 +42,6 @@
     "repos": {
       "type": "object",
       "description": "One entry per fused project; the key is the prefix directory its history lives under.",
-      "minProperties": 1,
       "propertyNames": {
         "pattern": "^[^-./\\\\\\s][^/\\\\\\s]*$"
       },
@@ -51,19 +50,13 @@
         "properties": {
           "upstream": {
             "type": "string",
-            "description": "Canonical repo as host/owner/name (no scheme, no .git). PRs land here.",
-            "pattern": "^[^/:]+/[^/]+/[^/]+$",
-            "not": {
-              "pattern": "\\.git$"
-            }
+            "description": "Canonical repo. PRs land here. Written as host/owner/name; an https or ssh URL you pasted is accepted and reduced to that.",
+            "pattern": "^(?:(?:(?:https?|ssh|git)://)?(?:[^/@]+@)?(?:\\[[0-9A-Fa-f:]+\\]|[^/:@]+)(?::[0-9]+)?/[^/]+/[^/?#]+|[^/@]+@(?:\\[[0-9A-Fa-f:]+\\]|[^/:@]+):[^/]+/[^/?#]+)/?(?:[?#].*)?$"
           },
           "fork": {
             "type": "string",
-            "description": "Your fork as host/owner/name. `rig stack send` pushes extracted branches here.",
-            "pattern": "^[^/:]+/[^/]+/[^/]+$",
-            "not": {
-              "pattern": "\\.git$"
-            }
+            "description": "Your fork. `rig stack send` pushes extracted branches here. Written as host/owner/name; an https or ssh URL you pasted is accepted and reduced to that.",
+            "pattern": "^(?:(?:(?:https?|ssh|git)://)?(?:[^/@]+@)?(?:\\[[0-9A-Fa-f:]+\\]|[^/:@]+)(?::[0-9]+)?/[^/]+/[^/?#]+|[^/@]+@(?:\\[[0-9A-Fa-f:]+\\]|[^/:@]+):[^/]+/[^/?#]+)/?(?:[?#].*)?$"
           },
           "upstreamBranch": {
             "type": "string",

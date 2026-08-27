@@ -218,6 +218,144 @@ it.
    the code?
 4. CI template (`stack init --ci github`) in v1 or after the verbs settle?
 
+## `push`: exporting a member with its history (2026-08-26)
+
+### The gap
+
+`send` builds **one commit** from a prefix's tree at HEAD, rooted on the upstream
+tip, and pushes it to a fork:
+
+```go
+tree, _ := repo.RevParse(ctx, "HEAD:"+name)
+// "Root it on the upstream tip so the branch's one commit shows only what changed"
+```
+
+That is right for a pull request to somebody else's project — a reviewer wants
+the change, not your afternoon. It is wrong for a repo you own. Your app's own
+history flattens to a single commit every time it leaves the workspace, and the
+messages, the bisect points and the authorship go with it.
+
+Today that is survivable, because the layout most people are told to use keeps
+their app *outside* the workspace, where it is pushed with ordinary git. If the
+workspace becomes the one supported path — everything inside, one overlay, no
+topology question — then every commit to your own repo goes through `send`, and
+the squash stops being an acceptable trade.
+
+**So this verb is a prerequisite for standardising on the single-repo layout,
+not a follow-up to it.**
+
+### Mechanism
+
+`:prefix=<name>` nests a repo under a directory; `:/<name>` extracts it. They are
+exact inverses, which josh states in its own optimiser:
+
+```rust
+// Check for special case: Subdir + Prefix that cancel
+[Op::Subdir(p1), Op::Prefix(p2)] if p1 == p2 => …
+```
+
+So the export is: apply `:/<name>` to the workspace history, take the resulting
+ref, push it to the member's own repo. No `commit-tree`, no squash — the filtered
+history *is* the member's history.
+
+A commit that touches three prefixes becomes one commit in each of the three
+repos, carrying the same message. That is the desired behaviour and worth saying
+out loud: an atomic change in the workspace lands as a matching commit in every
+repo it touched, which is as close to atomic as separate repos allow.
+
+### The identity question, settled by spike
+
+**The filtered commits must be byte-identical to upstream's for shared history**,
+or the push is not a fast-forward and the member's repo gets a parallel history
+instead of a continuation. The inverse-filter property gives matching *trees*;
+commit ids also depend on parents, and rig imports by **merging unrelated
+histories**, so every workspace commit near an import is a merge whose other
+parents belong to other prefixes. Whether filtering collapses those back to
+upstream's linear shape and reproduces its ids was the one thing that could have
+sunk the design.
+
+Spiked against a real three-member workspace. It holds.
+
+Filtering a member with no local work reproduces the cursor exactly:
+
+```
+$ josh-filter ':/live-markdown' --update refs/heads/extracted HEAD
+3c76f5629d1c7cb78d51cd4d8cf36d9c6c1bf42f      <- the recorded cursor, byte for byte
+```
+
+Filtering a member carrying one workspace commit continues upstream's history
+rather than restating it:
+
+```
+$ josh-filter ':/<app>' --update refs/heads/out HEAD
+$ git log --format="%h %p  %s" refs/heads/out
+0b001bd3 ee55c4a6  build against the fused sources     <- the workspace commit, message intact
+ee55c4a6 8d0bdf66  Route the wheel once per document   <- upstream's tip, unchanged id
+```
+
+The new commit's parent *is* upstream's tip, so the push fast-forwards. The
+message survives, which is the entire point the squash gives up.
+
+A commit spanning two members splits correctly. One workspace commit touching
+both the workspace-root overlay and the app's own file produced, in the app's
+filtered history, a commit containing only the app's half, with the prefix
+stripped. A workspace commit touching *no* file under a member produced no
+commit in that member at all — dropped as empty, which is what open question 2
+predicted.
+
+### Semantics
+
+- **Which members qualify.** Only one you own, where the export target is the
+  member's own tracked branch rather than a PR branch. That is a manifest fact
+  rig cannot infer: `upstream == fork` is suggestive but a legitimate fork
+  arrangement can look the same. A per-repo `"owned": true` states it; the
+  target is that repo's `upstream` on its `upstreamBranch`, the same pair `pull`
+  follows, so there is no second remote or branch to configure.
+- **The cursor must advance.** This is the difference from `send` that is easy to
+  miss. `send` pushes a branch nobody tracks, so the cursor is untouched. `push`
+  moves the member's *tracked* branch — so immediately afterwards upstream has
+  moved, `status` would say "upstream moved", and `pull` would try to merge in
+  history the workspace already contains. `push` therefore advances the cursor to
+  what it just pushed, in the same commit that records it, exactly as `pull`
+  does.
+- **Fast-forward only.** Refuse otherwise. A member whose upstream moved since
+  the cursor is the existing `send` guard and applies unchanged: pull first.
+- **`send` stays.** Two verbs, because they answer different questions — "propose
+  this to someone" and "this is mine, take it". Collapsing them into one with a
+  flag would hide which one you are getting.
+
+### Naming
+
+`rig stack push <name>` parallels `git push` and reads correctly: push this
+member to its own repo. The tension is that the page tells you never to give the
+workspace a remote and push it — but that is about pushing *the workspace*, and
+this pushes a member, so the distinction is the one the reader needs anyway.
+`export` and `sync` were considered; `export` suggests a file, and `sync`
+suggests bidirectional.
+
+### Prerequisites
+
+`josh-filter` is a separate binary from `josh-proxy`, and rig downloads only the
+proxy. The pinned release already publishes it for all six platforms —
+`josh-filter-<version>-{linux,macos}-{arm64,x64}` and
+`windows-{arm64,x64}.exe` — so this is extending the existing fetch and its
+pinned checksums, not new pipeline work. The source-build fallback needs a second
+`cargo install` target alongside `josh-proxy`.
+
+### Open questions
+
+1. Does `push` need a range, or is "everything since the cursor" always right?
+   A member you own has no reason to hold back commits, but a partial push would
+   let you keep work in progress local.
+2. ~~What happens to a workspace commit that touches only *other* prefixes?~~
+   Confirmed by the spike: josh drops it as empty. The member's history therefore
+   has gaps relative to the workspace, which is correct and invisible in practice,
+   but means the two are not one-to-one — any future "which member commit came
+   from which workspace commit" tooling has to accept that.
+3. Should `pull` after `push` be a no-op automatically, given the cursor already
+   advanced? Probably, and it falls out of the cursor rule above — but it needs a
+   test, since the alternative is a merge of a history with itself.
+
 ## Appendix: the MSBuild overlay
 
 Verified against the reference workspace (2026-08-25): none of its three
@@ -245,3 +383,53 @@ upstream CI sees. The walk-up ignores git boundaries, so building a child from
 inside its folder also gets the overlay — right for the dev loop; use the flag
 for pristine verification. Node/Go equivalents (workspaces/overrides,
 `go.work`) slot into the same "overlay scaffolded by `stack init`" position.
+
+### Declaring the swaps once (2026-08-26)
+
+The form above repeats each package name three times per dependency — in the
+path, in the condition, and in the `Remove`. That is fine for two libraries and
+tiresome for ten, and every repetition is a place to typo a name into a silent
+no-op.
+
+The obvious fix, `%()` batching over a declared list, does **not** work: item
+batching is only available inside a `Target`, and a `Directory.Build.targets`
+puts its `ItemGroup`s at project level. The batched `Include` expands to nothing
+and reports no error, which is the worst of both.
+
+Set arithmetic gets there without batching. `Exclude` matches on identity, so
+the sources a project does not reference can be subtracted, and the complement
+is exactly the set to swap:
+
+```xml
+<Project>
+  <ItemGroup>
+    <StackSource Include="Pty.Core"  Path="pty-core/src/Pty.Core/Pty.Core.csproj" />
+    <StackSource Include="Term.Core" Path="term-core/src/Term.Core/Term.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseWorkspaceProjects)' != 'false'">
+    <_StackAbsent  Include="@(StackSource)" Exclude="@(PackageReference)" />
+    <_StackPresent Include="@(StackSource)" Exclude="@(_StackAbsent)" />
+    <ProjectReference Include="@(_StackPresent->'$(MSBuildThisFileDirectory)%(Path)')" />
+    <PackageReference Remove="@(StackSource)" />
+  </ItemGroup>
+</Project>
+```
+
+Item *transforms* are fine at project level — it is only batching that is not —
+so `@(_StackPresent->'…%(Path)')` evaluates as intended. The escape hatch stays
+on the outer `ItemGroup`, or the pristine against-real-packages build the
+section above promises would no longer be reachable.
+
+Beyond brevity this removes a real trap. Hand-written conditions get written
+against `%(Filename)`, which MSBuild splits at the **last dot**: `Pty.Core.Native`
+has the `Filename` `Pty.Core`, so such a condition matches the wrong package and
+looks like it worked. The set form never names a metadata field, so it cannot go
+wrong that way.
+
+Verified against four projects: one referencing `Pty.Core`, one referencing
+`Pty.Core.Native` only, one referencing both, one referencing neither. Each got
+exactly its own swaps and no others.
+
+This is the shape `rig stack adopt` should generate, since it is the one a human
+can extend by adding a line.

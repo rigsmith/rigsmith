@@ -180,3 +180,35 @@ func TestFirstPrompt(t *testing.T) {
 		t.Errorf("truncated to %d runes, want 70 + ellipsis", r)
 	}
 }
+
+// Session ids are uuids, and uuids are case-insensitive by specification.
+// Claude Code writes transcript filenames lowercase; a Desktop sidecar carries
+// whatever `cliSessionId` it was handed. Keyed by the raw value, an uppercase
+// sidecar never matched the transcript beside it and the session lost its title
+// and project everywhere the index is consulted.
+func TestBuild_KeysAreCaseCanonical(t *testing.T) {
+	live := t.TempDir()
+	up := "ABCDEF01-2345-4678-89AB-CDEF01234567"
+	writeSidecar(t, live, "org1", "user1", "up",
+		`{"cliSessionId":"`+up+`","title":"Uppercase sidecar","lastActivityAt":3000}`)
+
+	idx := Build([]Root{{Label: "desktop", Base: live}})
+	m, ok := idx[CanonicalID(up)]
+	if !ok {
+		t.Fatalf("lowercase lookup missed an uppercase sidecar; keys = %v", keysOf(idx))
+	}
+	if m.Title != "Uppercase sidecar" {
+		t.Errorf("title = %q, want the sidecar's", m.Title)
+	}
+	if m.ID != CanonicalID(up) {
+		t.Errorf("Meta.ID = %q, want the canonical form", m.ID)
+	}
+}
+
+func keysOf(idx Index) []string {
+	out := make([]string, 0, len(idx))
+	for k := range idx {
+		out = append(out, k)
+	}
+	return out
+}
