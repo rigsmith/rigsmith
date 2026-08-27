@@ -5,10 +5,12 @@ on that you have had to fork. Iterating across that boundary means publishing a
 package to see a change land, and a change that spans the repos cannot be one
 commit.
 
-A **stack workspace** fuses the forked repos into one git history, each under
-its own directory. A change spans them in a single commit, the build compiles against
-source rather than packages, and each project still leaves as an ordinary pull
-request against its own upstream. Upstream never learns the workspace exists.
+A **stack workspace** fuses those repos — your app included — into one git
+history, each under its own directory. A change spans them in a single commit,
+the build compiles against source rather than packages, and every project still
+leaves as itself: a pull request to a fork you contribute to, or a
+fast-forward of a repository you own. Nobody downstream learns the workspace
+exists.
 
 ## The two halves
 
@@ -27,20 +29,27 @@ The whole round trip, for two of the repos:
 flowchart TB
     U1["acme/pty-core"] -->|"init · pull"| WS
     U2["acme/term-core"] -->|"init · pull"| WS
+    U3["you/term-app"] -->|"init · pull"| WS
 
-    WS["<b>your workspace</b><br/>pty-core/ &nbsp; term-core/"] --> CM["one commit,<br/>both directories"]
+    WS["<b>your workspace</b><br/>pty-core/ &nbsp; term-core/ &nbsp; term-app/"] --> CM["one commit,<br/>several directories"]
 
     CM -->|"send"| B1["you/pty-core<br/>stack/read-timeout"]
-    CM -->|"send"| B2["you/term-core<br/>stack/read-timeout"]
+    CM -->|"push"| B2["you/term-app<br/>its own branch"]
 
     B1 --> PR1["PR to acme/pty-core"]
-    B2 --> PR2["PR to acme/term-core"]
 ```
 
-The two sides of that round trip are not symmetric. **Import** and `pull` are josh
-driving a reversible `:prefix=` filter. **Send** uses no engine at all: the
-directory's tree is already what upstream wants, so the export is a plain
-`git commit-tree` onto the upstream tip.
+Work arrives one way and leaves two, depending on whose repo it is going back
+to. `send` proposes a squashed commit on a branch of your fork, which is what a
+maintainer reviewing someone else's project wants. `push` fast-forwards a
+project you own with every commit that touched it, messages intact, which is the
+only sane thing to do to a repository that is yours.
+
+The engine is not involved everywhere. Import, `pull` and `push` all drive
+josh's reversible filters — in one direction to nest a repo under a prefix, in
+the other to take it out again. `send` uses no engine at all: the directory's
+tree is already what upstream wants, so the export is a plain `git commit-tree`
+onto the upstream tip.
 
 **The build half.** If the projects depend on each other through a package
 registry, your edits do not reach the consumer without a publish cycle. A build
@@ -48,65 +57,60 @@ file sitting *above* the projects redirects those package references at the
 sources next door — see [wiring the build](#build) below. No upstream-owned
 file is modified, and no project file changes at all.
 
-## Where your own project goes {#topology}
+## Everything goes in the workspace {#topology}
 
-The workspace is for repos **you do not own**. Your own project usually stays
-outside it and reaches in — which surprises people often enough to be worth
-stating plainly. Both layouts work:
+Your own project included. One repo, one build file, one commit that can span
+all of it.
 
-**Consumer outside**, the common case. You fuse the forks; your project stays
-where it is, with its history, worktrees and tooling untouched. It gains one
-build file that points its package references next door *when the workspace
-happens to be present*.
-
-```
-~/src/my-stack/          # the workspace: forks only
-  pty-core/
-  term-core/
-~/src/term-app/          # your project, where it always was
-```
-
-**Consumer inside.** Your project is a member like any other. This wires up more
-simply — everything sits under one root — but every ordinary commit to your own
-app now round-trips through `send`, and if the app is yours it has no upstream
-to send to. Choose it only when your project is itself a fork you contribute
-back to.
-
-The layout decides how many build overlays you need, and that is the part that
-catches people out:
-
-| an overlay at… | wires |
-| --- | --- |
-| your project's root | your project → the workspace |
-| the workspace root | one fused repo → another fused repo |
-
-An overlay is found by walking *up* from a project, so it governs its own
-directory tree and nothing else. Count the trees and you have counted the
-overlays. Consumer outside, that is two — dashed lines are package references
-that have to be redirected, lettered by the only overlay that can reach them:
+That is worth saying plainly, because the instinct is the other way round: keep
+your app where it is, and have it reach into the workspace for the libraries.
+That does work. It also gives up the thing the workspace exists for — a change
+spanning your app and a library is two commits in two repos again — and it needs
+a second build file that most people do not realise they need until something
+silently builds against the published package.
 
 ```mermaid
 flowchart TB
-    subgraph APPTREE["term-app/ &nbsp;·&nbsp; overlay B"]
-        APP["App.csproj"]
-    end
-
-    subgraph WSTREE["my-stack/ &nbsp;·&nbsp; overlay A"]
+    subgraph WS["my-stack/ &nbsp;·&nbsp; one overlay, above everything"]
+        direction TB
+        APP["term-app/"]
         TRM["term-core/"]
         PTY["pty-core/"]
-        TRM -. "A" .-> PTY
+        APP -. "package ref" .-> TRM
+        TRM -. "package ref" .-> PTY
     end
-
-    APP -. "B" .-> PTY
 ```
 
-With the consumer inside there is one tree, so one file does both jobs. With the
-consumer outside, **A** is the one people miss: your own project's overlay cannot
-reach across into the workspace, and if two of the fused repos depend on each
-other through a package — as forks of libraries that ship together usually do —
-only the workspace's own overlay can redirect that. Miss it and the fused
-library quietly restores its published sibling, putting two copies of the same
-code in one build.
+A build overlay is found by walking *up* from a project, so it governs its own
+directory tree and nothing else. Put every project in one tree and one file
+redirects every dashed line above — including the ones between two libraries,
+which is the pair people forget when their app sits outside.
+
+Your app is a member like any other, with one difference you declare: mark it
+`"owned": true` and `rig stack push` fast-forwards *its own* repo with your
+commits, history intact, instead of proposing a squashed branch to a fork the
+way [`send`](#send) does for somebody else's project.
+
+::: warning A repo with its own root build file hides the overlay
+MSBuild stops at the **first** `Directory.Build.targets` it finds walking up.
+Your own app is the project most likely to have one — and if it does, the
+workspace overlay above it is never read, and every project underneath quietly
+keeps building against published packages. Nothing warns you.
+
+Have that file continue the walk-up:
+
+```xml
+<PropertyGroup>
+  <!-- Resolved into a property first: a Condition is itself single-quoted, so
+       the quotes this function needs cannot appear inside one (MSB4092). -->
+  <StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets>
+</PropertyGroup>
+<Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != ''" />
+```
+
+It is a no-op outside a workspace, where there is nothing above, so it is safe
+to commit.
+:::
 
 ## Setting one up
 
@@ -146,10 +150,12 @@ rig stack init          # writes rig.stack.jsonc
       "fork":     "github.com/you/term-core",
       "upstreamBranch": "main"
     },
-    "term-control": {
-      "upstream": "github.com/acme/term-control",
-      "fork":     "github.com/you/term-control",
-      "upstreamBranch": "main"
+    // Your own project, fused like any other member. "owned" is what makes
+    // `push` available for it — see Getting your changes out.
+    "term-app": {
+      "upstream": "github.com/you/term-app",
+      "fork":     "github.com/you/term-app",
+      "owned":    true
     }
   }
 }
@@ -171,7 +177,7 @@ rig stack init
 
 # pty-core: imported upstream a1b2c3d4
 # term-core: imported upstream e5f6a7b8
-# term-control: imported upstream 9c0d1e2f
+# term-app:  imported upstream 9c0d1e2f
 ```
 
 Each repo's history is fetched through its prefix filter and merged in. The
@@ -189,75 +195,49 @@ no-op rather than a surprise.
 ### 4. Wire the build {#build}
 
 This part has nothing to do with git, and what it looks like depends on your
-ecosystem. The goal is the same everywhere: make the consumer compile against
+ecosystem. The goal is the same everywhere: make every project compile against
 the sources next door instead of a published package.
 
-On .NET that is a `Directory.Build.targets`, which MSBuild imports from the
-nearest ancestor directory of every project underneath it. **Which directory you
-put it in decides what it can reach**, so settle [where your own project
-goes](#topology) first — the consumer-outside layout needs two of these.
+On .NET that is a single `Directory.Build.targets` at the workspace root. MSBuild
+imports it from the nearest ancestor directory of every project underneath, and
+in a workspace that is all of them.
 
-**The workspace overlay** points one fused repo at another. It goes at the
-workspace root, above all of them:
+Declare each swap once — the package name, and where its sources are:
 
 ```xml
 <Project>
   <ItemGroup>
-    <ProjectReference Include="$(MSBuildThisFileDirectory)pty-core/src/Pty.Core/Pty.Core.csproj"
-                      Condition="@(PackageReference->AnyHaveMetadataValue('Identity', 'Pty.Core'))" />
-    <PackageReference Remove="Pty.Core" />
+    <StackSource Include="Pty.Core"  Path="pty-core/src/Pty.Core/Pty.Core.csproj" />
+    <StackSource Include="Term.Core" Path="term-core/src/Term.Core/Term.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <_StackAbsent  Include="@(StackSource)" Exclude="@(PackageReference)" />
+    <_StackPresent Include="@(StackSource)" Exclude="@(_StackAbsent)" />
+    <ProjectReference Include="@(_StackPresent->'$(MSBuildThisFileDirectory)%(Path)')" />
+    <PackageReference Remove="@(StackSource)" />
   </ItemGroup>
 </Project>
 ```
 
-Ordering matters: the `Condition` reads the package references *before* `Remove`
-deletes them. Conditioning on "did this project actually reference the package"
-is what stops it wiring something circular — without it, `Pty.Core` itself would
-gain a reference to `Pty.Core`.
+`Exclude` matches on identity, so `_StackAbsent` is every declared source a
+project does *not* reference and `_StackPresent` is the complement — exactly the
+swaps that project needs. Only actual consumers get rewired, which is what stops
+`Pty.Core` gaining a reference to itself.
 
-**The consumer overlay** points your own project at the workspace, and goes at
-your project's root. It needs one thing the other does not: it has to do
-*nothing at all* when the workspace is absent, so a fresh clone and your CI
-still build from packages.
-
-```xml
-<Project>
-  <PropertyGroup>
-    <StackWorkspace Condition="'$(StackWorkspace)' == ''"
-      >$(MSBuildThisFileDirectory)..\my-stack</StackWorkspace>
-    <UseStackSources
-      Condition="'$(UseStackSources)' == '' And Exists('$(StackWorkspace)\rig.stack.jsonc')"
-      >true</UseStackSources>
-    <UseStackSources Condition="'$(UseStackSources)' == ''">false</UseStackSources>
-  </PropertyGroup>
-
-  <ItemGroup Condition="'$(UseStackSources)' == 'true'">
-    <ProjectReference Include="$(StackWorkspace)\pty-core\src\Pty.Core\Pty.Core.csproj"
-                      Condition="@(PackageReference->AnyHaveMetadataValue('Identity', 'Pty.Core'))" />
-    <PackageReference Remove="Pty.Core" />
-  </ItemGroup>
-</Project>
-```
-
-What that buys you is one unedited project file with two possible resolutions:
+What that buys is one unedited project file with two possible resolutions:
 
 ```mermaid
 flowchart TB
     S["App.csproj — never edited<br/><code>PackageReference Pty.Core</code>"]
-    S --> Q{"rig.stack.jsonc<br/>next door?"}
+    S --> Q{"built inside<br/>the workspace?"}
     Q -->|"yes"| P["<code>ProjectReference</code><br/>pty-core/src/Pty.Core"]
     Q -->|"no"| K["<code>PackageReference</code><br/>the published Pty.Core"]
 ```
 
-The `Exists()` test on `rig.stack.jsonc` is what makes the file safe to commit:
-CI, a contributor's clone, and your own laptop before you clone the workspace
-all take the package branch and see the file do nothing. No `.csproj`
-changes, so nothing in your repository advertises a workspace to anyone who has
-not got one. Override either property to force the question:
-
-```sh
-dotnet build -p:UseStackSources=false     # build the way CI will
-```
+No `.csproj` is edited, so nothing any project carries advertises the workspace.
+Clone any member on its own and it builds from packages exactly as it always
+did — which is what its CI, and anyone you send a change to, will do.
 
 Other ecosystems have their own version of this — a workspace `paths` mapping,
 a `go.work` file, a linked dependency. Nothing in `rig stack` depends on which
@@ -273,27 +253,44 @@ dotnet msbuild App.csproj -getItem:PackageReference -getItem:ProjectReference
 ```
 
 Each item carries a `DefiningProjectFullPath` naming the file that contributed
-it, so you can confirm a reference arrived from an overlay rather than the
-`.csproj` — and see *which* overlay, which is the fastest way to tell the two
-apart when only one of them is working. A package you expected to vanish still
-listed there means the swap missed it.
+it, so you can confirm a reference arrived from the overlay rather than the
+`.csproj`. A package you expected to vanish still listed there means the swap
+missed it.
 
-#### Four things that will bite you
+#### Things that will bite you
 
-- **Match on `Identity`, never `Filename`.** MSBuild splits `Filename` at the
-  last dot, so `Pty.Core.Native` has the `Filename` `Pty.Core`. A condition or
-  `Remove` written against `Filename` hits the wrong package and looks like it
-  worked.
+- **A member with its own root `Directory.Build.targets` hides the overlay.**
+  The most important one, and covered [above](#topology): the walk-up stops at
+  the first file it finds, and everything under that member keeps building
+  against packages with no warning at all.
+- **Match on `Identity`, never `Filename`,** if you hand-write conditions
+  instead of using the form above. MSBuild splits `Filename` at the last dot, so
+  `Pty.Core.Native` has the `Filename` `Pty.Core`: a condition meant for one
+  package matches its sibling and looks like it worked. The `Exclude` form never
+  names a metadata field, so it cannot go wrong that way.
 - **`ItemGroup` is a child of `Project`.** Nested inside `PropertyGroup` it
   gives you `MSB4004: The "ItemGroup" property is reserved`, which does not
   sound like what it means.
-- **Count the directories in the relative path.** A project checked out as a
-  linked worktree sits deeper than the main checkout, so the `..\` depth that
-  worked in one is wrong in the other.
-- **Nothing warns you when an overlay does nothing.** Removing a
+- **Swapping a package for a project reference can break a publicizer.**
+  Anything that reaches a dependency's internals — `IgnoresAccessChecksToGenerator`
+  and friends — rewrites `@(ReferencePath)`, but the compiler reads
+  `@(ReferencePathWithRefAssemblies)`. Those are the same items for a package and
+  *different* for a project reference, which produces a reference assembly. The
+  publicized copy is built and then ignored, and every internal it was meant to
+  expose comes back as `CS0122`. Set `ProduceReferenceAssembly` to false on that
+  member.
+- **Nothing warns you when part of an overlay does nothing.** Removing a
   `PackageReference` for something that is actually a `ProjectReference` — a
   vendored copy, say — is valid MSBuild and a silent no-op. Delete blocks that
   turn out not to apply, because they read as working.
+
+::: tip Fusing a library your code pins to an old release
+If a member's sources no longer compile against the rest of the workspace, the
+build wiring is usually not the problem — the *imported point* is. A library you
+depend on at an older release has to be fused at that release, not at a tip
+whose API has moved on. Pin it with
+[`upstreamTag` or `upstreamCommit`](./configuration#stack).
+:::
 
 ## The daily loop
 
@@ -301,18 +298,53 @@ There is nothing special about it. It is one repo, so you work in it like one
 repo.
 
 ```sh
-# change an API and its consumer, together
+# change a library and the app that calls it, together
 $EDITOR pty-core/src/Pty.Core/PtyConnection.cs
-$EDITOR term-control/src/Control/TerminalControl.cs
+$EDITOR term-app/src/Terminal/Session.cs
 
 rig build          # compiles against source, no publish cycle
-git commit -am "fix the read timeout and the control that hit it"
+git commit -am "fix the read timeout and the app that hit it"
 ```
 
-One commit, spanning two projects, and the build proved the change works end to
-end before you committed it. That is the whole point of the exercise.
+One commit spanning your app and a forked library, and the build proved it works
+end to end before you committed. No version bump, no publish, no waiting for a
+feed. That is the whole point of the exercise, and it is the part you lose if
+your app lives outside the workspace.
 
-## Sending a change upstream
+## Getting your changes out
+
+A commit in the workspace can touch several projects. Getting it to each of them
+is one command per project — and which command depends on whose repository it
+is.
+
+### Your own projects: `push` {#push}
+
+For a member marked `"owned": true`, `push` fast-forwards that project's own
+branch with every workspace commit that touched it:
+
+```sh
+rig stack push term-app
+
+# pushed term-app to you/term-app:main (0b001bd3)
+```
+
+Nothing is squashed. Each commit arrives with its own message, parented on what
+the repo already had — so a change spanning your app and a library lands as a
+matching commit in each, and commits that touched nothing in that directory do
+not appear at all. It works by running the exact inverse of the filter the repo
+was imported with, so the history you share with upstream comes back as its own
+commits and yours sit on top as a fast-forward.
+
+Pushing also brings the result back into the workspace before it returns. The
+commit that leaves is necessarily a different object from the one that produced
+it — the same content, under a different prefix, with different parents — so the
+workspace ends up holding both shapes of a cross-project change: your commit
+spanning several projects, and the single-project commit the repo received. That
+is the honest cost of one history being several, and taking it back at push time
+is what stops a later `pull` re-importing your own work as a parallel line of
+development.
+
+### Somebody else's: `send` {#send}
 
 One `send` per project. Each produces a branch on **your fork** holding a single
 commit whose diff is exactly what you changed in that directory, rooted on the
@@ -322,7 +354,7 @@ current upstream tip.
 rig stack send <repo> <new-branch>
 
 rig stack send pty-core read-timeout -m "Fix the read timeout"
-rig stack send term-control read-timeout -m "Handle the new timeout"
+rig stack send term-core read-timeout -m "Handle the new timeout"
 
 # sent pty-core to you/pty-core:stack/read-timeout
 #   — open the PR against acme/pty-core
@@ -381,21 +413,29 @@ workspace. The cursor only advances once the merge is committed.
 | `stack status` | Each repo's cursor against its upstream branch tip |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
+| `stack push <repo>` | Fast-forward a repo you own with this workspace's commits, history intact |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
 All of it is in [`rig ui`](./verbs) too, under **▸ Stack** — `send` there picks
-the repo from the manifest and prompts for a branch name. Tab completion offers
+the repo from the manifest and prompts for a branch name, and `push` offers only
+the repos marked as yours. Tab completion offers
 your repo names for the verbs that take one.
 
 ## The engine
 
-Importing and pulling are done by [josh](https://josh-project.dev), the git
-history-filtering proxy — the inbound half of [the round trip](#the-two-halves)
-above. `send` needs no engine, so josh is only ever reached for `init` and
-`pull`.
+Importing, pulling and pushing are done by [josh](https://josh-project.dev), the
+git history-filtering engine — `josh-proxy` serves a repo's history through the
+filter for `init` and `pull`, and `josh-filter` runs the inverse locally for
+`push`. `send` needs neither.
 
-rig owns the binary so you do not have to. `rig stack doctor --fix` fetches a
-verified `josh-proxy` for your platform — built and published by
+Private upstreams work, and need no setup. Because the engine is what talks to
+upstream, it is the engine that has to authenticate: rig asks git for the
+credential you already have for that host — the keychain, the GitHub CLI's
+helper, whatever `git credential fill` answers with — and hands it over for that
+one fetch. Nothing is stored and nothing is prompted for.
+
+rig owns the binaries so you do not have to. `rig stack doctor --fix` fetches
+verified builds for your platform — built and published by
 [rigsmith/josh-binaries](https://github.com/rigsmith/josh-binaries), since
 upstream ships no releases — falling back to building it from source where none
 exists. Nothing runs in the background: the engine starts per operation and
@@ -404,16 +444,14 @@ stops after. Pin a version per workspace with the manifest's
 
 ## Things worth knowing before they bite
 
-- **Private upstreams do not work yet.** The engine fetches anonymously, so a
-  private repository answers `401` during import. The forks you fuse have to be
-  public for now.
-- **A build without the workspace does not fail — it falls back.** That is the
-  point of the `Exists()` gate, and it is what keeps CI and fresh clones
-  working. But it means the moment your code uses something you added in a fork,
-  a build on a machine without the workspace resolves the *published* package
-  instead: at best a confusing "no such member", at worst a clean compile
-  against the old behaviour. Treat it as a fallback, not a guard.
-- **A clean worktree is required** for `init`, `pull`, and `send`. An import
+- **A member built on its own still builds from packages.** No project file
+  changes, so a clone of any one repo resolves its dependencies from the
+  registry exactly as it always did — which is what its CI does, and what
+  anyone you send a change to will do. The corollary is that code depending on
+  something you added in a fork but have not published yet compiles inside the
+  workspace and nowhere else. That is fine while the change is in flight and a
+  trap if you forget it.
+- **A clean worktree is required** for `init`, `pull`, `send`, and `push`. An import
   amends its merge commit and stages everything, so an unrelated edit sitting in
   the tree would be swallowed into it. The one exception is a dedicated
   `rig.stack.jsonc` on first import, since filling it in and re-running is the
@@ -424,10 +462,11 @@ stops after. Pin a version per workspace with the manifest's
   its own package manifest and would otherwise look like the root.
 - **The workspace is disposable — once your work has left it.** The fused
   history is a working convenience, not an archive, so a tangled one can be
-  deleted and re-imported. But a commit you have not `send`-ed exists *only*
-  there, and `status` compares cursors against upstream rather than checking
-  whether your changes reached a fork, so it will not warn you. Send every
-  changed project first, or copy the directory somewhere before deleting it.
+  deleted and re-imported. But a commit you have not sent or pushed exists *only*
+  there. `status` flags a project whose tree has moved away from what was
+  imported — `unsent changes` — so check it before deleting anything. It reports
+  what has *changed*, not what reached a fork: `send` leaves no record, so a
+  project stays flagged until upstream's own history moves on.
 - **Do not give the workspace a remote** and push it somewhere. It contains
   several rewritten upstream histories fused together, which is meaningful to
   you and to nobody else.
