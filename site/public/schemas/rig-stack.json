@@ -163,6 +163,13 @@
       "additionalProperties": {
         "type": "string"
       }
+    },
+    "lastPropose": {
+      "type": "object",
+      "description": "Written by `rig stack propose`, not by hand: the branch name each repo was last proposed on, offered back next time so an open pull request can take another round without retyping it.",
+      "additionalProperties": {
+        "type": "string"
+      }
     }
   },
   "required": [

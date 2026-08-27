@@ -105,6 +105,12 @@ type stackManifest struct {
 	// a tag would drag the stackspace along, which is the one thing a pin is for.
 	// Machine-written, like LastSync, and absent for a prefix following a branch.
 	LastPin map[string]string `json:"lastPin,omitempty"`
+	// LastPropose maps prefix -> the branch name last given to `propose`, as
+	// typed rather than as prefixed. Proposing again to the same branch is how an
+	// open pull request takes review feedback, so that name is usually wanted
+	// several times and is tedious to retype exactly. Machine-written, like the
+	// cursors beside it.
+	LastPropose map[string]string `json:"lastPropose,omitempty"`
 }
 
 func (m *stackManifest) cursor(name string) string { return m.LastSync[name] }
@@ -126,6 +132,31 @@ func (m *stackManifest) ownedNames() []string {
 // legitimate state — it is what `stack init` scaffolds, and what `stack add`
 // writes the first entry into — so loading one is not an error; only asking it
 // to do something is.
+// rememberProposed records the branch a prefix was last proposed on, so the
+// next one can offer it back.
+func stackRememberProposed(src *cfgfind.Source, m *stackManifest, prefix, branch string) error {
+	if m.LastPropose == nil {
+		m.LastPropose = map[string]string{}
+	}
+	if m.LastPropose[prefix] == branch {
+		return nil // nothing to write, and no commit to make out of nothing
+	}
+	m.LastPropose[prefix] = branch
+	raw, err := json.Marshal(m.LastPropose)
+	if err != nil {
+		return err
+	}
+	path := []string{"lastPropose"}
+	if src.Path == "" { // embedded stack block in .rig.json
+		path = []string{"stack", "lastPropose"}
+	}
+	w := confkit.Writer{SchemaURL: stackSchemaURL}
+	if !w.Set(src.File, path, string(raw)) {
+		return fmt.Errorf("could not record the branch in %s", src.File)
+	}
+	return nil
+}
+
 func (m *stackManifest) requireRepos() error {
 	if len(m.Repos) > 0 {
 		return nil

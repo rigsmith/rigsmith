@@ -50,7 +50,7 @@ func newStackCmd() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newStackInitCmd(), newStackAddCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
-	return cmd
+	return refuseUnknownVerb(cmd)
 }
 
 // stackRoot is the stackspace root: the git top level, not resolveRoot's answer.
@@ -597,14 +597,14 @@ func newStackSendCmd() *cobra.Command {
 			"is the branch of *upstream* this directory follows. Sending twice to the\n" +
 			"same <new-branch> updates it, so an open PR can take review feedback.\n\n" +
 			"The name is prefixed with `stack/` so these branches stay recognisable\n" +
-			"among your own work on the same fork: `send lib read-timeout` creates\n" +
+			"among your own work on the same fork: `propose lib read-timeout` creates\n" +
 			"stack/read-timeout. Change it with the manifest's branchPrefix, or set\n" +
 			"that to \"\" for bare names.",
 		Args:              cobra.MaximumNArgs(2),
 		ValidArgsFunction: stackRepoCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			m, _, repo, err := stackspace(ctx)
+			m, src, repo, err := stackspace(ctx)
 			if err != nil {
 				return err
 			}
@@ -623,18 +623,27 @@ func newStackSendCmd() *cobra.Command {
 			// nobody is there to answer.
 			if name == "" || typed == "" {
 				if !stdinStdoutTTY() {
-					missing := "a repo and a new branch name"
-					if name != "" {
-						missing = "a new branch name for " + name
+					// The branch this repo was last proposed on is the one an open
+					// pull request is already watching, so without a terminal to
+					// ask, reusing it is the useful answer rather than a refusal.
+					if name != "" && m.LastPropose[name] != "" {
+						typed = m.LastPropose[name]
+						fmt.Fprintf(cmd.OutOrStdout(), "proposing to %s again\n", m.sendBranch(name, typed))
+					} else {
+						missing := "a repo and a new branch name"
+						if name != "" {
+							missing = "a new branch name for " + name
+						}
+						return fmt.Errorf("propose needs %s — `rig stack propose <repo> <new-branch>`, or run it on a terminal to be asked", missing)
 					}
-					return fmt.Errorf("propose needs %s — `rig stack propose <repo> <new-branch>`, or run it on a terminal to be asked", missing)
-				}
-				name, typed, err = stackAskSend(m, name, typed)
-				if err != nil {
-					return err
-				}
-				if typed == "" {
-					return nil // backed out
+				} else {
+					name, typed, err = stackAskSend(m, name, typed)
+					if err != nil {
+						return err
+					}
+					if typed == "" {
+						return nil // backed out
+					}
 				}
 			}
 			// The prefix keeps these branches recognisable on a fork that also
@@ -717,6 +726,11 @@ func newStackSendCmd() *cobra.Command {
 			// impossible to update an open PR. Replace under a lease instead, so
 			// the push still fails if someone else moved the branch meanwhile.
 			if err := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), commit, "refs/heads/"+branch); err != nil {
+				return err
+			}
+			// Remembered after the push, not before: a branch nothing reached is
+			// not the one to offer back next time.
+			if err := stackRememberProposed(src, m, name, typed); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "proposed %s — pushed to %s:%s, open the PR against %s\n",
@@ -1224,6 +1238,12 @@ func stackCommonPrefix(m *stackManifest, names []string) string {
 // Returns an empty branch when the user backs out, which the caller treats as
 // nothing to do rather than as a failure.
 func stackAskSend(m *stackManifest, name, branch string) (string, string, error) {
+	// Offer back the branch this repo was last proposed on: proposing again to
+	// the same one is how an open pull request takes review feedback, so it is
+	// usually wanted several times and is tedious to retype exactly.
+	if branch == "" && name != "" {
+		branch = m.LastPropose[name]
+	}
 	names := m.names()
 	fields := []huh.Field{}
 	if name == "" {
@@ -1255,7 +1275,14 @@ func stackAskSend(m *stackManifest, name, branch string) (string, string, error)
 		if prefix := stackCommonPrefix(m, names); prefix != "" {
 			desc = fmt.Sprintf("created on %s as %s<name> — e.g. read-timeout", where, prefix)
 		}
-		fields = append(fields, huh.NewInput().Title("New branch on your fork").
+		title := "New branch on your fork"
+		if branch != "" {
+			// It is not new any more, and pressing enter updates the pull request
+			// that is already open on it.
+			title = "Branch on your fork"
+			desc = fmt.Sprintf("%s — enter updates the pull request already on it", m.sendBranch(name, branch))
+		}
+		fields = append(fields, huh.NewInput().Title(title).
 			Description(desc).
 			Placeholder("read-timeout").
 			Value(&branch))

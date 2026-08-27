@@ -28,7 +28,9 @@ func newConfigCmd() *cobra.Command {
 		Use:   "config",
 		Short: "View or change .rig.json",
 		// Bare `config` on a TTY opens the subcommand menu; with a verb or off a
-		// TTY the subcommands stand (and `config -h` still prints help).
+		// TTY the subcommands stand (and `config -h` still prints help). A verb
+		// this build does not have is refused rather than quietly showing the
+		// menu — see refuseUnknownVerb.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
 				return climenu.Run(cmd)
@@ -43,7 +45,7 @@ func newConfigCmd() *cobra.Command {
 		newConfigPathCmd(),
 		newConfigEditCmd(),
 	)
-	return cmd
+	return refuseUnknownVerb(cmd)
 }
 
 // newConfigShowCmd prints the repo's whole .rig.json, matching changerig/

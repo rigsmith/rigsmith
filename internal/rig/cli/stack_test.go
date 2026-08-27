@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/spf13/cobra"
 )
 
 func writeStackManifest(t *testing.T, root, body string) {
@@ -1160,5 +1161,40 @@ func TestStackProposeKeepsSendWorking(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("aliases = %v, want send among them", cmd.Aliases)
+	}
+}
+
+func TestUnknownVerbIsRefused(t *testing.T) {
+	// A group whose parent opens a picker swallows an unrecognised subcommand:
+	// cobra hands it to the parent, which shows the menu and returns nil. A verb
+	// this build has never heard of then reports success and does nothing —
+	// worst of all for an older rig running a newer script.
+	for _, group := range []func() *cobra.Command{newStackCmd, newConfigCmd} {
+		cmd := group()
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		err := cmd.RunE(cmd, []string{"notaverb"})
+		if err == nil {
+			t.Fatalf("%s accepted an unknown verb", cmd.Name())
+		}
+		if !strings.Contains(err.Error(), "notaverb") {
+			t.Errorf("%s: error does not name what was typed: %v", cmd.Name(), err)
+		}
+		// An old binary is a likelier cause than a typo, and the one people do
+		// not think to check.
+		if !strings.Contains(err.Error(), "--version") {
+			t.Errorf("%s: does not suggest checking the version: %v", cmd.Name(), err)
+		}
+	}
+}
+
+func TestUnknownVerbLeavesTheBareCaseAlone(t *testing.T) {
+	// With no arguments the parent's own behaviour stands: that is the picker,
+	// and it is what the group is for.
+	cmd := newStackCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("bare group errored: %v", err)
 	}
 }
