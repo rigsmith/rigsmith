@@ -405,6 +405,16 @@ A pull merges the new upstream commits into that repo's directory, so a conflict
 is scoped to the project that caused it rather than landing across the whole
 workspace. The cursor only advances once the merge is committed.
 
+A [pinned](./configuration#stack) project has nothing to take: its tag was
+resolved once, and an upstream that later re-cuts that tag does not move you.
+Edit the pin to go somewhere else, or `rig stack pull --repin` to follow a moved
+tag deliberately.
+
+Moving a pin *backwards* — to a release older than the directory currently holds
+— cannot be a merge, since the target is already an ancestor. The directory is
+replaced with the pinned revision instead, reported as `moved`, and refused
+outright if it holds changes of its own.
+
 ## The verbs
 
 | Verb | What it does |
@@ -415,6 +425,12 @@ workspace. The cursor only advances once the merge is committed.
 | `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
 | `stack push <repo>` | Fast-forward a repo you own with this workspace's commits, history intact |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
+
+`send` and `push` answer different questions. `send` proposes one squashed
+commit on a branch of your fork, which is what a reviewer of someone else's
+project wants. `push` fast-forwards a project's *own* branch with every commit
+that touched it, messages intact, which is the only sane thing to do to a
+repository that is yours — mark it `"owned": true` to enable it.
 
 All of it is in [`rig ui`](./verbs) too, under **▸ Stack** — `send` there picks
 the repo from the manifest and prompts for a branch name, and `push` offers only
@@ -466,10 +482,13 @@ stops after. Pin a version per workspace with the manifest's
 - **The workspace is disposable — once your work has left it.** The fused
   history is a working convenience, not an archive, so a tangled one can be
   deleted and re-imported. But a commit you have not sent or pushed exists *only*
-  there. `status` flags a project whose tree has moved away from what was
-  imported — `unsent changes` — so check it before deleting anything. It reports
-  what has *changed*, not what reached a fork: `send` leaves no record, so a
-  project stays flagged until upstream's own history moves on.
+  there. `status` flags a project holding work that has not left — `unsent
+  changes` for commits, `uncommitted changes` for edits still in the tree — so
+  check it before deleting anything. That comparison is local, so it still
+  answers when upstream is unreachable, which is exactly when you are most
+  likely to be tidying up. It reports what has *changed*, not what has reached a
+  fork: neither verb leaves a record, so a project stays flagged until upstream's
+  own history moves on.
 - **Do not give the workspace a remote** and push it somewhere. It contains
   several rewritten upstream histories fused together, which is meaningful to
   you and to nobody else.

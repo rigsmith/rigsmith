@@ -206,6 +206,18 @@ func (r *Repo) RevParse(ctx context.Context, ref string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// LastCommitMatching returns the newest commit whose message matches pattern as
+// an extended regular expression, or "" when none does. Merges are included:
+// callers looking for a commit a tool wrote itself need to find it wherever it
+// sits in the history.
+func (r *Repo) LastCommitMatching(ctx context.Context, pattern string) (string, error) {
+	out, err := runGit(ctx, r.Dir, "log", "-1", "--format=%H", "-E", "--grep="+pattern)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // Checkout switches to branch, creating/resetting it when create is set.
 func (r *Repo) Checkout(ctx context.Context, branch string, create bool) error {
 	args := []string{"checkout"}
@@ -307,6 +319,43 @@ func (r *Repo) LsRemote(ctx context.Context, remote, ref string) (string, error)
 	return sha, nil
 }
 
+// ReplacePath makes dir's contents match what commit holds at that path,
+// deleting anything present here and absent there. Both the index and the
+// worktree are updated, so the result is ready to commit.
+//
+// Ordinary merging cannot do this: moving a directory *back* to an older
+// revision is a merge with an ancestor, which is a no-op however much the trees
+// differ.
+func (r *Repo) ReplacePath(ctx context.Context, commit, dir string) error {
+	// --ignore-unmatch: the path may not exist here at all, which is not an
+	// error when the point is to make it match something else.
+	if _, err := runGit(ctx, r.Dir, "rm", "-rq", "--ignore-unmatch", "--", dir); err != nil {
+		return err
+	}
+	_, err := runGit(ctx, r.Dir, "checkout", commit, "--", dir)
+	return err
+}
+
+// LsRemoteRefs resolves several refs on a remote in one round trip, returning
+// ref name -> SHA for those that exist. A ref that is absent is simply missing
+// from the map rather than an error: callers use this to ask which of a few
+// candidate forms a name takes — a tag and its peeled commit, say — where "not
+// this one" is the useful answer.
+func (r *Repo) LsRemoteRefs(ctx context.Context, remote string, refs ...string) (map[string]string, error) {
+	out, err := runGit(ctx, r.Dir, append([]string{"ls-remote", remote}, refs...)...)
+	if err != nil {
+		return nil, err
+	}
+	found := make(map[string]string, len(refs))
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		sha, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if ok && sha != "" {
+			found[ref] = sha
+		}
+	}
+	return found, nil
+}
+
 // lsRemoteOpt is LsRemote for callers that treat a missing ref as a fact rather
 // than a failure — creating it, say — and still need a real error to surface
 // when the remote itself is unreachable.
@@ -383,8 +432,21 @@ func gitExitCode(ctx context.Context, dir string, args ...string) (int, error) {
 }
 
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
+	return runGitStdin(ctx, dir, "", nil, args...)
+}
+
+// runGitStdin is runGit with an optional stdin and extra environment. Secrets
+// belong in env, never in args: the error below quotes every argument, and argv
+// is readable by any process on the machine.
+func runGitStdin(ctx context.Context, dir, stdin string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

@@ -94,7 +94,7 @@ than working around it.
 | Command | What it does |
 | --- | --- |
 | `clauderig desktop add <name> [--email X]` | Create a profile, seed it from your existing install, and open a window to log into. `--no-seed` starts empty. |
-| `clauderig desktop open [<name\|email>]` | Open the profile's window, or focus it if already open. |
+| `clauderig desktop open [<name\|email>]` | Open the profile's window, or focus it if already open. `--session` opens it on a Claude Code session; `-i` picks one from a list. |
 | `clauderig desktop list` (alias `ls`) | Saved profiles; `●` marks the ones open right now. |
 | `clauderig desktop quit [<name\|email>]` | Close that profile's window (SIGTERM, then firmly, then confirmed). |
 | `clauderig desktop rm <name\|email> [--force]` | Delete the profile. Signs that account out of Desktop for good. |
@@ -211,6 +211,68 @@ label a window by the application that owns it, and that application is Claude
 Desktop for every profile — so the icon and name are Claude's once the window is
 up, however the shortcut is labelled. Short of copying the whole app bundle per
 profile (which breaks updates and the signature), there is no way around it.
+
+## Opening a Claude Code session
+
+`clauderig desktop open --session` opens a window *on* a Claude Code session —
+the chat you had in the terminal, carried into Desktop's Code tab.
+
+```sh
+clauderig desktop open work --session a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+clauderig desktop open work --session "auth refactor"   # title or project text
+clauderig desktop open work -i                          # pick one from a list
+```
+
+**clauderig does not do the import.** It hands Desktop a
+`claude://resume?session=<uuid>` deep link, and Desktop's own handler reads the
+transcript and files the session — the same path the app uses for itself.
+
+The no-write promise the rest of this document rests on is about **clauderig**:
+it copies no transcript and writes nothing into the profile's `data/` directory.
+Desktop itself does write there — filing the imported session is the whole point
+— and clauderig stamps a last-opened time into its own `profile.json`, which
+sits beside `data/` rather than inside it.
+
+Three consequences follow from that, worth knowing before the app tells you in a
+toast:
+
+- **The transcript has to be in `~/.claude/projects` on this machine**, because
+  Desktop reads it from there itself. A session that exists only in the synced
+  repo must be restored here first — `clauderig search` says which case you are
+  in.
+- **`--session` takes a uuid or text.** Text matches the session's title and its
+  project directory, case-insensitively. When several sessions match, a terminal
+  gets a picker; when the command is not run from a terminal, the matches are
+  listed with their full ids so you can re-run naming one.
+- **A deep link is routed by scheme, not to a window.** With a second profile
+  open the OS picks which one receives it, and that would cross an account
+  boundary — so it is refused rather than risked. Quit the others, or pass
+  `--anyway` when any window will do.
+
+### Finding the session
+
+You rarely know a session's uuid, so three things offer it:
+
+- **`-i`** with no `--session` lists this machine's recent sessions and opens the
+  one you choose. It is "always open the picker", the same contract `rig run -i`
+  has, so a single match is offered rather than taken.
+- **`<Tab>` after `--session`** completes to those same recent ids in a shell
+  with completion installed, each described by its title and project so the
+  uuids are tellable apart.
+- **`clauderig recent -l`** prints the command ready to paste, under the
+  terminal resume command for the same session:
+
+```text
+● Refactor the auth middleware
+  a1b2c3d4 · 2026-05-14 · desktop@work · opus-5 · ~/Git/acme-api
+  resume: cd ~/Git/acme-api && claude --resume a1b2c3d4-…
+  desktop: clauderig desktop open --session a1b2c3d4-…
+```
+
+That last line appears only where the command would work: Claude Desktop
+installed, at least one profile saved, and a transcript `desktop open` can
+actually resolve on this machine. A session that lives only in the synced repo,
+or on another machine, gets the resume line without it.
 
 ## How it works
 

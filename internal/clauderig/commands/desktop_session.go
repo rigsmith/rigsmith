@@ -10,12 +10,15 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/spf13/cobra"
 )
 
 // sessionUUID is the shape Claude Desktop requires of ?session=. It rejects
@@ -33,6 +36,12 @@ func resumeDeepLink(sessionID string) string {
 	return "claude://resume?session=" + url.QueryEscape(sessionID)
 }
 
+// sessionPickLimit caps the lists that have no reference to narrow them:
+// --interactive's picker and --session's shell completion. Both are read at
+// human speed, and a machine with hundreds of transcripts would otherwise
+// render every one of them.
+const sessionPickLimit = 50
+
 // sessionCandidate is one session `desktop open --session` could resume.
 type sessionCandidate struct {
 	ID    string
@@ -44,8 +53,10 @@ type sessionCandidate struct {
 // label is the human description — title and project, no id. Callers that need
 // the id add it, so it is never printed twice in the same line.
 func (c sessionCandidate) label() string {
-	t := c.Title
-	if t == "" {
+	// Sanitised HERE rather than at each rendering site: every caller writes the
+	// result to a terminal, and one that forgot would be the one that mattered.
+	t := sanitizeForDisplay(c.Title)
+	if strings.TrimSpace(t) == "" {
 		t = "(no title)"
 	}
 	// Count and slice by runes: a title is arbitrary user text, and byte
@@ -53,7 +64,7 @@ func (c sessionCandidate) label() string {
 	if r := []rune(t); len(r) > 58 {
 		t = string(r[:57]) + "…"
 	}
-	if proj := c.project(); proj != "" {
+	if proj := sanitizeForDisplay(c.project()); proj != "" {
 		return fmt.Sprintf("%s  ·  %s", t, proj)
 	}
 	return t
@@ -107,7 +118,17 @@ func liveTranscripts(claudeHome string) (map[string]string, error) {
 		}
 		for _, f := range files {
 			name := f.Name()
-			if f.IsDir() || !strings.HasSuffix(name, ".jsonl") {
+			if !strings.HasSuffix(name, ".jsonl") {
+				continue
+			}
+			// Regular files only. Ranking now opens each transcript's tail to
+			// date it, and os.Open on a FIFO BLOCKS until something opens the
+			// write end — so a uuid-named pipe in projects/ would hang `-i` and
+			// every <Tab> that completes --session, with no output to explain
+			// it. A symlink is resolved rather than dropped: pointing a
+			// transcript at another tree is a thing people do, and the target
+			// is what has to be readable.
+			if !regularFile(dir, f) {
 				continue
 			}
 			id := strings.TrimSuffix(name, ".jsonl")
@@ -130,6 +151,21 @@ func liveTranscripts(claudeHome string) (map[string]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// regularFile reports whether a directory entry is (or points at) a regular
+// file. Only a symlink costs a stat; everything else is answered from the type
+// bits ReadDir already carries.
+func regularFile(dir string, f os.DirEntry) bool {
+	t := f.Type()
+	if t.IsRegular() {
+		return true
+	}
+	if t&os.ModeSymlink == 0 {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(dir, f.Name()))
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // findSessions resolves a reference to the sessions it could mean.
@@ -170,23 +206,160 @@ func findSessions(ref, claudeHome string, idx session.Index) ([]sessionCandidate
 		return nil, nil
 	}
 	var out []sessionCandidate
-	for id, p := range live {
-		m := idx[id]
-		title := titleFor(m, p)
-		// Resolve the cwd ONCE and match on the same value that is displayed.
-		// Matching m.Cwd instead would only ever search the ~3% of sessions with
-		// a Desktop sidecar, while showing a project for all of them — so a
-		// search by project name would silently miss most of what it lists.
-		cwd := cwdFor(m, p)
-		if !strings.Contains(strings.ToLower(title), needle) &&
-			!strings.Contains(strings.ToLower(cwd), needle) {
+	// Filter the already-sorted list rather than sorting the matches after: the
+	// order is the same, and it is the one place that decides what "newest" means.
+	for _, c := range sessionCandidates(live, idx) {
+		if !strings.Contains(strings.ToLower(c.Title), needle) &&
+			!strings.Contains(strings.ToLower(c.Cwd), needle) {
 			continue
 		}
-		out = append(out, sessionCandidate{ID: id, Title: title, Cwd: cwd, Path: p})
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// rankByRecency orders every live transcript newest-first.
+//
+// It reads each transcript's TAIL, because that is the only place a trustworthy
+// date lives (see recency) — so the cap a caller applies afterwards does not
+// bound this part of the work. What the cap does bound is `describe`, which
+// reads each transcript's HEAD for a title and a project, and that is the
+// larger cost: skipping it for everything but the survivors took a real
+// 671-transcript machine from 0.40s to 0.16s per listing.
+//
+// Ranking on metadata alone would make it 0.05s and wrong; see recency for why
+// mtime and the sidecar cannot be trusted. If 0.16s ever becomes the thing
+// people notice, the fix is a cache keyed by path+mtime+size, not a cheaper
+// date.
+func rankByRecency(live map[string]string, idx session.Index) []sessionCandidate {
+	// Dated ONCE, before the sort. recency opens the transcript's tail, and a
+	// comparator runs O(n log n) times — dating inside it re-read every file
+	// several times over to answer the same question.
+	type dated struct {
+		c  sessionCandidate
+		at time.Time
+	}
+	all := make([]dated, 0, len(live))
+	for id, p := range live {
+		c := sessionCandidate{ID: id, Path: p}
+		all = append(all, dated{c: c, at: recency(c, idx)})
 	}
 	// Newest first, so the picker's top entry is the one most likely wanted.
-	sort.Slice(out, func(i, j int) bool { return newer(out[i], out[j], idx) })
-	return out, nil
+	// The id breaks ties so the order is stable across runs: two sessions can
+	// share a timestamp, and a map range order must never decide which wins.
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].at.Equal(all[j].at) {
+			return all[i].at.After(all[j].at)
+		}
+		return all[i].c.ID < all[j].c.ID
+	})
+	out := make([]sessionCandidate, len(all))
+	for i, d := range all {
+		out[i] = d.c
+	}
+	return out
+}
+
+// describe fills in the title and project, reading each transcript to do it.
+//
+// Resolved ONCE, in one place, so callers match on exactly the values they
+// display. Matching session.Meta's own Cwd instead would only ever search the
+// ~3% of sessions that have a Desktop sidecar while showing a project for all
+// of them — a search by project name silently missing most of its listing.
+func describe(cands []sessionCandidate, idx session.Index) []sessionCandidate {
+	for i := range cands {
+		m := idx[session.CanonicalID(cands[i].ID)]
+		cands[i].Title = titleFor(m, cands[i].Path)
+		cands[i].Cwd = cwdFor(m, cands[i].Path)
+	}
+	return cands
+}
+
+// sessionCandidates describes every live transcript, newest first. Only for a
+// caller that genuinely needs all of them — a text search has to look at every
+// title, so it pays for every title.
+func sessionCandidates(live map[string]string, idx session.Index) []sessionCandidate {
+	return describe(rankByRecency(live, idx), idx)
+}
+
+// recentSessions lists the sessions this machine could open, newest first,
+// capped at limit (0 for all). It is what --interactive picks from and what
+// --session completes against — neither has a reference to narrow by, so the
+// cap is the only thing keeping a machine with thousands of transcripts from
+// rendering all of them into a picker or a completion list.
+//
+// The cap is applied before `describe`, so the title and project of a session
+// that will not be shown are never read. Dating is not capped — ranking has to
+// compare every candidate to find the newest — but it reads only a tail.
+func recentSessions(claudeHome string, idx session.Index, limit int) ([]sessionCandidate, error) {
+	live, err := liveTranscripts(claudeHome)
+	if err != nil {
+		return nil, err
+	}
+	out := rankByRecency(live, idx)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return describe(out, idx), nil
+}
+
+// completeSessionRef offers this machine's recent session ids to the shell,
+// each described by its title and project so the uuids are tellable apart.
+//
+// Every failure degrades to "no completions" rather than an error: completion
+// runs on every <Tab> and must never put a message between the user and their
+// command line. Titles come from the Desktop sidecars where there are any and
+// the transcript's first prompt otherwise, so an unreadable index costs
+// descriptions, not candidates.
+func completeSessionRef(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	home, err := account.ClaudeHome()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	idx, _ := liveSessionIndex()
+	cands, err := recentSessions(home, idx, sessionPickLimit)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	out := make([]string, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, completionEntry(c))
+	}
+	return out, cobra.ShellCompDirectiveNoFileComp
+}
+
+// completionEntry renders one candidate in the "value\tdescription" form the
+// shells split into a two-column menu.
+//
+// The description is scrubbed of tabs and newlines because it is derived from a
+// title, and a title is usually the user's own first prompt — it can contain
+// anything. An embedded tab would split the entry a second time, putting the
+// tail of a prompt into the shell's own column; a newline would end the entry
+// and make the rest look like a separate candidate.
+func completionEntry(c sessionCandidate) string {
+	return c.ID + "\t" + c.label()
+}
+
+// sanitizeForDisplay replaces every control rune with a space.
+//
+// A title is a session's first prompt, and a first prompt routinely carries
+// text pasted from somewhere else — a log, a web page, a terminal capture. An
+// ESC in there is not hypothetical, and everything that renders these strings
+// writes them straight to a terminal: the completion list, the picker, and the
+// ambiguity listing. Left in, the escape is INTERPRETED, so a title could move
+// the cursor, recolour the prompt or hide what it wrote.
+//
+// unicode.IsControl covers C0 and C1, which is where the escape introducers
+// live; ordinary Unicode text is untouched, so a title in any language survives
+// intact. Tabs go too, because the completion protocol splits an entry on the
+// first one.
+func sanitizeForDisplay(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // cwdFor prefers the sidecar's cwd and falls back to the one the transcript
@@ -214,24 +387,31 @@ func titleFor(m session.Meta, transcriptPath string) string {
 	return session.FirstPrompt(transcriptPath)
 }
 
-func newer(a, b sessionCandidate, idx session.Index) bool {
-	at, bt := recency(a, idx), recency(b, idx)
-	if !at.Equal(bt) {
-		return at.After(bt)
-	}
-	return a.ID < b.ID
-}
-
-// recency is the session's last-used time: the sidecar's LastActivity when
-// there is one, and the transcript's mtime otherwise.
+// recency is the session's last-used time, in descending order of how much the
+// source can be trusted: the newest timestamped record in the transcript, then
+// the Desktop sidecar, then the file's mtime.
 //
-// Comparing LastActivity FIRST looked reasonable and was not: it is zero for
-// the ~97% of sessions with no Desktop sidecar, so any sidecar timestamp beat
-// every transcript-only session regardless of true recency. "Newest first"
-// then meant "sidecar sessions first", and the picker's default entry was the
-// most recent sidecar rather than the most recent session.
+// The transcript's own record comes first because it is the only one of the
+// three that is CONTENT. A restore, a checkout of the synced repo, or any tool
+// that walks the tree rewrites mtime — on one real machine 580 of 670
+// transcripts had an mtime newer than their last message, 541 of them stamped
+// with the same minute by a single restore — and the sidecar's lastActivityAt
+// is rebuilt by Desktop from those same files, so it drifts with them. Ranked
+// by either, a picker of "recent sessions" fills with whatever was copied last.
+// `clauderig recent` dates sessions this way for exactly this reason; the
+// picker and the completion list are the same question and now get the same
+// answer. session.LastActivity reads only the transcript's tail, so this costs
+// a seek rather than a parse.
+//
+// Comparing the sidecar FIRST looked reasonable and was not: it is zero for the
+// ~97% of sessions with no Desktop sidecar, so any sidecar timestamp beat every
+// transcript-only session regardless of true recency. "Newest first" then meant
+// "sidecar sessions first".
 func recency(c sessionCandidate, idx session.Index) time.Time {
-	if t := idx[c.ID].LastActivity; !t.IsZero() {
+	if a, ok := session.LastActivity(c.Path); ok && !a.At.IsZero() {
+		return a.At
+	}
+	if t := idx[session.CanonicalID(c.ID)].LastActivity; !t.IsZero() {
 		return t
 	}
 	if fi, err := os.Stat(c.Path); err == nil {
@@ -243,16 +423,37 @@ func recency(c sessionCandidate, idx session.Index) time.Time {
 // pickSession narrows several matches to one: a picker on a terminal, and off
 // one an error that lists them with ids, so the caller can re-run unambiguously
 // rather than have a session chosen for them.
-func pickSession(ref string, cands []sessionCandidate) (sessionCandidate, error) {
+//
+// An empty ref means the caller had nothing to narrow by — `--interactive` with
+// no `--session` — so the candidates are simply this machine's recent sessions
+// and every message drops the "matches %q" framing that would print as "".
+//
+// force keeps the picker open even for a single candidate, which is what
+// --interactive promises: "always open the picker", the same contract `rig run
+// -i` and `rig outdated -i` have.
+func pickSession(ref string, cands []sessionCandidate, force bool) (sessionCandidate, error) {
 	switch len(cands) {
 	case 0:
+		if ref == "" {
+			return sessionCandidate{}, fmt.Errorf("no session on this machine can be opened\n" +
+				"Only sessions whose transcript is in ~/.claude/projects can be opened — " +
+				"`clauderig recent` lists what is here")
+		}
 		return sessionCandidate{}, fmt.Errorf("no session on this machine matches %q\n"+
 			"Only sessions whose transcript is in ~/.claude/projects can be opened — "+
 			"`clauderig search %s` will say whether it lives only in the synced repo", ref, shQuote(ref))
 	case 1:
-		return cands[0], nil
+		if !force {
+			return cands[0], nil
+		}
 	}
 	if !interactive() {
+		if ref == "" {
+			// Not starting with the flag name: the first letter of an error is
+			// rendered capitalised, which would print it as "--Interactive".
+			return sessionCandidate{}, fmt.Errorf("choosing a session with --interactive needs a terminal\n" +
+				"Name one with --session <id> instead — `clauderig recent -l` prints the ids")
+		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "%d sessions match %q — re-run naming one of these ids\n", len(cands), ref)
 		for i, c := range cands {
@@ -274,9 +475,13 @@ func pickSession(ref string, cands []sessionCandidate) (sessionCandidate, error)
 		byID[c.ID] = c
 	}
 	choice := cands[0].ID
+	title := fmt.Sprintf("%d sessions match %q — open which?", len(cands), ref)
+	if ref == "" {
+		title = fmt.Sprintf("%d recent session(s) — open which?", len(cands))
+	}
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().
-			Title(fmt.Sprintf("%d sessions match %q — open which?", len(cands), ref)).
+			Title(title).
 			Options(opts...).Value(&choice),
 	)).WithTheme(brand.Theme(brand.AccentClaude)).Run(); err != nil {
 		return sessionCandidate{}, errCancelled

@@ -201,3 +201,65 @@ func TestAheadBehind_NoRemoteTrackingRef(t *testing.T) {
 		t.Fatalf("ahead=%d behind=%d, want 0/0 alongside known=false", ahead, behind)
 	}
 }
+
+func TestReplacePath(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	write := func(rel, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	git("init", "-q", "-b", "main", dir)
+	write("lib/keep.txt", "old")
+	write("lib/gone-later.txt", "also old")
+	write("other/untouched.txt", "elsewhere")
+	git("add", "-A")
+	git("commit", "-qm", "the older revision")
+	git("tag", "older")
+
+	write("lib/keep.txt", "new")
+	os.Remove(filepath.Join(dir, "lib/gone-later.txt"))
+	write("lib/added.txt", "only in the newer one")
+	git("add", "-A")
+	git("commit", "-qm", "the newer revision")
+
+	repo, err := Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReplacePath(ctx, "older", "lib"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Restored, deleted and re-added: a merge with an ancestor does none of this.
+	for rel, want := range map[string]string{"lib/keep.txt": "old", "lib/gone-later.txt": "also old"} {
+		got, err := os.ReadFile(filepath.Join(dir, rel))
+		if err != nil {
+			t.Fatalf("%s: %v", rel, err)
+		}
+		if string(got) != want {
+			t.Errorf("%s = %q, want %q", rel, got, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "lib/added.txt")); !os.IsNotExist(err) {
+		t.Error("lib/added.txt survived; it is absent from the target revision")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "other/untouched.txt")); err != nil {
+		t.Error("other/ was touched; only the named path should change")
+	}
+}
