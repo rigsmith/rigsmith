@@ -1,7 +1,7 @@
 ---
 type: feat
 scope: rig
-"github.com/rigsmith/rigsmith/core"
+"github.com/rigsmith/rigsmith"
 ---
 
 Ecosystem adapters can now be asked to make a package resolve from sources in the tree instead of from a registry, and to report what would stop that happening. `rig stack doctor` uses it to check a stackspace's build wiring, and says so when it finds a member whose own build file quietly ends MSBuild's search — the failure that leaves every project beneath it resolving published packages while the build succeeds and says nothing.

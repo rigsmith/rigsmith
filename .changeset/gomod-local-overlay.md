@@ -1,7 +1,7 @@
 ---
 type: feat
 scope: rig
-"github.com/rigsmith/rigsmith/core"
+"github.com/rigsmith/rigsmith"
 ---
 
 Go modules in a stackspace now resolve each other from the tree. A `require` on a sibling module goes to the proxy however close its sources are — being next to it changes nothing — so `rig stack wire` writes a `go.work` listing every module in the tree, and `rig stack doctor` reports when a hand-written one is missing a module and a require on it is therefore being fetched rather than read.
