@@ -522,6 +522,35 @@ func TestStackNormalizeSpec(t *testing.T) {
 		}
 	}
 
+	t.Run("an IPv6 host survives every form", func(t *testing.T) {
+		// The scp branch cuts at a colon; an IPv6 literal is made of them, so
+		// only one after the closing bracket can be the host/path separator.
+		for in, want := range map[string]string{
+			"[::1]/acme/pty-core":                "[::1]/acme/pty-core",
+			"https://[::1]/acme/pty-core.git":    "[::1]/acme/pty-core",
+			"git@[::1]:acme/pty-core.git":        "[::1]/acme/pty-core",
+			"ssh://git@[::1]:2222/acme/pty-core": "[::1]:2222/acme/pty-core",
+		} {
+			if got := stackNormalizeSpec(in); got != want {
+				t.Errorf("%q -> %q, want %q", in, got, want)
+			}
+		}
+	})
+
+	t.Run("a query or fragment is not part of the repo", func(t *testing.T) {
+		// Left attached it also defeats the .git trim, so the spec keeps one
+		// suffix and gains another when the URL is rebuilt.
+		for _, in := range []string{
+			"https://github.com/acme/pty-core.git?tab=readme",
+			"https://github.com/acme/pty-core#readme",
+			"https://github.com/acme/pty-core/?foo=bar",
+		} {
+			if got := stackNormalizeSpec(in); got != "github.com/acme/pty-core" {
+				t.Errorf("%q -> %q", in, got)
+			}
+		}
+	})
+
 	t.Run("a host with a port survives", func(t *testing.T) {
 		// The scp-style branch keys off "@", so a port's colon must not be
 		// mistaken for the host/path separator.

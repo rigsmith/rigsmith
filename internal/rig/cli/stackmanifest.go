@@ -384,15 +384,38 @@ func stackWriteTemplate(root string) (string, error) {
 // specific problem, rather than this quietly reshaping it into a different one.
 func stackNormalizeSpec(s string) string {
 	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	// A URL copied from a browser can carry a query or a fragment. Neither is
+	// part of the repository's identity, and leaving one attached also defeats
+	// the .git trim below, so the spec would keep a suffix and gain another.
+	if i := strings.IndexAny(s, "?#"); i >= 0 {
+		s = s[:i]
+	}
 	if _, rest, ok := strings.Cut(s, "://"); ok {
 		s = rest
-	} else if at := strings.Index(s, "@"); at >= 0 && strings.Contains(s[at:], ":") {
-		// scp-style git@host:owner/name, where the colon separates host from path
-		// and is the only thing distinguishing it from a host that carries a port.
-		s = strings.Replace(s[at+1:], ":", "/", 1)
+	} else if at := strings.Index(s, "@"); at >= 0 {
+		// scp-style git@host:owner/name, where a colon separates host from path
+		// and is the only thing distinguishing it from a host carrying a port.
+		// An IPv6 literal brings its own colons, so only one after the closing
+		// bracket can be the separator.
+		host := s[at+1:]
+		sep := strings.Index(host, ":")
+		if strings.HasPrefix(host, "[") {
+			sep = -1
+			if end := strings.Index(host, "]"); end >= 0 {
+				if c := strings.Index(host[end:], ":"); c >= 0 {
+					sep = end + c
+				}
+			}
+		}
+		if sep >= 0 {
+			s = host[:sep] + "/" + host[sep+1:]
+		}
 	}
-	// Userinfo left over from an ssh:// URL. Bounded to the first path segment so
-	// an "@" inside a repository name is not mistaken for one.
+	// Userinfo left over from an ssh:// URL. Bounded to the first path segment
+	// so an "@" inside a repository name is not mistaken for one.
 	if slash := strings.Index(s, "/"); slash >= 0 {
 		if at := strings.LastIndex(s[:slash], "@"); at >= 0 {
 			s = s[at+1:]

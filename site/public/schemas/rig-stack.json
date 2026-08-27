@@ -51,12 +51,12 @@
           "upstream": {
             "type": "string",
             "description": "Canonical repo. PRs land here. Written as host/owner/name; an https or ssh URL you pasted is accepted and reduced to that.",
-            "pattern": "^(?:(?:https?|ssh|git)://)?(?:[^/@]+@)?[^/:]+(?::[0-9]+)?[/:][^/]+/[^/]+$"
+            "pattern": "^(?:(?:(?:https?|ssh|git)://)?(?:[^/@]+@)?(?:\\[[0-9A-Fa-f:]+\\]|[^/:@]+)(?::[0-9]+)?/[^/]+/[^/?#]+|[^/@]+@(?:\\[[0-9A-Fa-f:]+\\]|[^/:@]+):[^/]+/[^/?#]+)/?(?:[?#].*)?$"
           },
           "fork": {
             "type": "string",
             "description": "Your fork. `rig stack send` pushes extracted branches here. Written as host/owner/name; an https or ssh URL you pasted is accepted and reduced to that.",
-            "pattern": "^(?:(?:https?|ssh|git)://)?(?:[^/@]+@)?[^/:]+(?::[0-9]+)?[/:][^/]+/[^/]+$"
+            "pattern": "^(?:(?:(?:https?|ssh|git)://)?(?:[^/@]+@)?(?:\\[[0-9A-Fa-f:]+\\]|[^/:@]+)(?::[0-9]+)?/[^/]+/[^/?#]+|[^/@]+@(?:\\[[0-9A-Fa-f:]+\\]|[^/:@]+):[^/]+/[^/?#]+)/?(?:[?#].*)?$"
           },
           "upstreamBranch": {
             "type": "string",
