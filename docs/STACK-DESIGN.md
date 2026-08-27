@@ -308,7 +308,9 @@ predicted.
 - **Which members qualify.** Only one you own, where the export target is the
   member's own tracked branch rather than a PR branch. That is a manifest fact
   rig cannot infer: `upstream == fork` is suggestive but a legitimate fork
-  arrangement can look the same. Add an explicit key rather than guessing.
+  arrangement can look the same. A per-repo `"owned": true` states it; the
+  target is that repo's `upstream` on its `upstreamBranch`, the same pair `pull`
+  follows, so there is no second remote or branch to configure.
 - **The cursor must advance.** This is the difference from `send` that is easy to
   miss. `send` pushes a branch nobody tracks, so the cursor is untouched. `push`
   moves the member's *tracked* branch — so immediately afterwards upstream has
