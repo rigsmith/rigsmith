@@ -482,7 +482,7 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		for _, it := range stackMenuItems() {
 			labels = append(labels, it.label)
 		}
-		want := "init,status,pull,send,doctor"
+		want := "init,status,pull,send,push,doctor"
 		if got := strings.Join(labels, ","); got != want {
 			t.Fatalf("menu = %q, want %q", got, want)
 		}

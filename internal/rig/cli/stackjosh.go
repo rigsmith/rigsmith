@@ -51,6 +51,16 @@ const (
 	toolFilter = "josh-filter"
 )
 
+// stackJoshCrates maps a binary to the crate that builds it, which is not always
+// the same name: there is a `josh-filter` package, but it is the filter library,
+// and the binary of that name is produced by `josh-cli`. Installing the library
+// succeeds and produces no binary at all, so the source fallback would appear to
+// work and leave nothing behind.
+var stackJoshCrates = map[string]string{
+	toolProxy:  "josh-proxy",
+	toolFilter: "josh-cli",
+}
+
 // stackJoshChecksums pins what each binary must hash to on each platform.
 // Pinned here rather than read from the release, so that trusting a download
 // does not reduce to trusting whoever can write to the release.
@@ -257,12 +267,15 @@ func ensureJoshTool(ctx context.Context, version, tool string, out io.Writer) (s
 		return "", err
 	}
 	fmt.Fprintf(out, "installing %s %s (a Rust build — takes a few minutes, one time per version)…\n", tool, version)
+	// --bin: josh-cli builds more than one binary, and building the others is
+	// minutes of Rust for something the caller did not ask for.
 	cmd := exec.CommandContext(ctx, cargo, "install", "--locked",
-		"--git", stackJoshRepo, "--tag", version, "--root", dir, tool)
+		"--git", stackJoshRepo, "--tag", version, "--root", dir,
+		stackJoshCrates[tool], "--bin", tool)
 	cmd.Stdout = out
 	cmd.Stderr = out
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("cargo install %s: %w", tool, err)
+		return "", fmt.Errorf("cargo install %s --bin %s: %w", stackJoshCrates[tool], tool, err)
 	}
 	if err := stackJoshInstalled(bin); err != nil {
 		return "", fmt.Errorf("cargo install finished but %s is unusable: %w", bin, err)

@@ -28,13 +28,15 @@ func newStackCmd() *cobra.Command {
 		Use:   "stack",
 		Short: "Fused workspace — upstream forks as prefixes of one history",
 		Long: "A stack workspace fuses several upstream repos into one git history, each\n" +
-			"under a prefix, via josh's reversible filters. Commits may span projects;\n" +
-			"`send` extracts a prefix's changes back onto your fork as an ordinary\n" +
-			"PR-ready branch. Upstream never learns the workspace exists.\n\n" +
+			"under a prefix, via josh's reversible filters. Commits may span projects,\n" +
+			"and leave one project at a time: `send` puts a prefix's changes on your\n" +
+			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
+			"its history. Neither leaves any trace that the workspace exists.\n\n" +
 			"  rig stack init                      scaffold the manifest / import the repos\n" +
 			"  rig stack status                    cursor vs upstream, per repo\n" +
 			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
 			"  rig stack send <repo> <new-branch>  a branch on your fork, prefixed stack/\n" +
+			"  rig stack push <repo>               fast-forward a repo you own, history intact\n" +
 			"  rig stack doctor                    engine + manifest checks (--fix installs josh)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
@@ -210,7 +212,7 @@ func stackOnlyManifestDirty(ctx context.Context, repo *gitrepo.Repo, src *cfgfin
 func newStackStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Each repo's cursor vs its upstream branch tip",
+		Short: "Each repo's cursor vs its upstream, and what has not left the workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
