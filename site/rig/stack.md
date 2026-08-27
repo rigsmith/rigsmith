@@ -202,7 +202,15 @@ On .NET that is a single `Directory.Build.targets` at the stackspace root. MSBui
 imports it from the nearest ancestor directory of every project underneath, and
 in a stackspace that is all of them.
 
-Declare each swap once — the package name, and where its sources are:
+`rig stack wire` writes this file for you, from what the ecosystem adapters
+already know about the projects in the stackspace — which package each one
+produces, and which of them are referenced across a member boundary. Those are
+the ones that would otherwise come from a registry, and they are exactly the
+ones it redirects. Re-run it after adding a member. It rewrites its own file and
+refuses to touch one you wrote yourself.
+
+What it writes, and what to write by hand if you would rather — each swap
+declared once, the package name and where its sources are:
 
 ```xml
 <Project>
@@ -245,8 +253,12 @@ you choose.
 
 #### Checking that it took
 
-Do not infer this from a build succeeding; a build that quietly used the package
-succeeds too. Ask MSBuild what it actually evaluated:
+`rig stack doctor` reports the same findings `wire` does, without writing
+anything — including the case below, where a member's own build file ends
+MSBuild's search and everything under it keeps resolving packages.
+
+For a specific project, ask MSBuild what it actually evaluated. Do not infer it
+from a build succeeding; a build that quietly used the package succeeds too:
 
 ```sh
 dotnet msbuild App.csproj -getItem:PackageReference -getItem:ProjectReference
@@ -424,6 +436,7 @@ outright if it holds changes of its own.
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
 | `stack push <repo>` | Fast-forward a repo you own with this stackspace's commits, history intact |
+| `stack wire` | Write the build overlay so members resolve each other from source |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
 `send` and `push` answer different questions. `send` proposes one squashed

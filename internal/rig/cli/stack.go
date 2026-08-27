@@ -15,7 +15,9 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/cfgfind"
 	"github.com/rigsmith/rigsmith/core/climenu"
+	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/spf13/cobra"
 )
 
@@ -37,6 +39,7 @@ func newStackCmd() *cobra.Command {
 			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
 			"  rig stack send <repo> <new-branch>  a branch on your fork, prefixed stack/\n" +
 			"  rig stack push <repo>               fast-forward a repo you own, history intact\n" +
+			"  rig stack wire                      write the build overlay for the members\n" +
 			"  rig stack doctor                    engine + manifest checks (--fix installs josh)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
@@ -45,7 +48,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackInitCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackInitCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
 	return cmd
 }
 
@@ -871,6 +874,67 @@ func newStackPushMenuCmd() *cobra.Command {
 	}
 }
 
+// newStackWireCmd writes the build overlay a stackspace needs, from what the
+// ecosystem adapters already know about the projects in it.
+func newStackWireCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "wire",
+		Short: "Write the build overlay so members resolve each other from source",
+		Long: "Works out which package references cross from one member of the stackspace\n" +
+			"to another — those are the ones that would otherwise come from a registry —\n" +
+			"and writes the build file that points them at the sources instead.\n\n" +
+			"Nothing in any project file changes, so a member cloned on its own still\n" +
+			"builds from packages exactly as it did. Re-run it after adding a member or\n" +
+			"after a dependency moves; it rewrites its own file and refuses to touch one\n" +
+			"you wrote yourself.\n\n" +
+			"`rig stack doctor` reports the same findings without writing anything.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			out := cmd.OutOrStdout()
+			m, _, repo, err := stackspace(ctx)
+			if err != nil {
+				return err
+			}
+			byEco := stackRedirects(ctx, repo.Dir, m.names())
+			if len(byEco) == 0 {
+				fmt.Fprintln(out, "no package references cross between members — nothing to wire")
+				return nil
+			}
+			for _, eco := range ecosystem.Default().All() {
+				redirects := byEco[eco.Info().ID]
+				if len(redirects) == 0 {
+					continue
+				}
+				resp, err := eco.LocalOverlay(ctx, plugin.LocalOverlayRequest{
+					Root: repo.Dir, Redirects: redirects, Write: true,
+				})
+				if err != nil {
+					return err
+				}
+				if resp.Skipped {
+					fmt.Fprintf(out, "· %s: %s\n", eco.Info().ID, resp.Reason)
+					continue
+				}
+				for f := range resp.Files {
+					fmt.Fprintf(out, "✓ %s — %d package(s) now resolve from this stackspace\n", f, len(redirects))
+				}
+				for _, p := range redirects {
+					fmt.Fprintf(out, "    %s → %s\n", p.Package, p.Path)
+				}
+				// Problems the overlay cannot fix by existing. Reported here as
+				// well as in doctor, because a wire that looks like it worked and
+				// silently did not is the thing this whole path exists to stop.
+				for _, p := range resp.Problems {
+					fmt.Fprintf(out, "  ✗ %s — %s\n", p.Path, p.Message)
+				}
+			}
+			return nil
+		},
+	}
+	return cmd
+}
+
 func newStackDoctorCmd() *cobra.Command {
 	var fix bool
 	cmd := &cobra.Command{
@@ -996,6 +1060,7 @@ func stackMenuItems() []menuItem {
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
 		{label: "send", desc: "a repo's changes to your fork as a new branch (pick, then name it)", cmd: newStackSendMenuCmd()},
 		{label: "push", desc: "a repo you own back to its own branch, history intact (pick one)", cmd: newStackPushMenuCmd()},
+		{label: "wire", desc: "write the build overlay so members resolve each other from source", cmd: newStackWireCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
 	}
 }
