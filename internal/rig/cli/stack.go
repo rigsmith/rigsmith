@@ -165,7 +165,7 @@ func newStackInitCmd() *cobra.Command {
 			}
 			imported := 0
 			for _, name := range names {
-				if err := stackPullOne(ctx, cmd, repo, bin, src, m, name, true); err != nil {
+				if err := stackPullOne(ctx, cmd.OutOrStdout(), repo, bin, src, m, name, true); err != nil {
 					return fmt.Errorf("importing %s: %w", name, err)
 				}
 				imported++
@@ -322,7 +322,7 @@ func newStackPullCmd() *cobra.Command {
 				return err
 			}
 			for _, name := range moved {
-				if err := stackPullOne(ctx, cmd, repo, bin, src, m, name, false); err != nil {
+				if err := stackPullOne(ctx, cmd.OutOrStdout(), repo, bin, src, m, name, false); err != nil {
 					return fmt.Errorf("pulling %s: %w", name, err)
 				}
 			}
@@ -464,9 +464,8 @@ func stackResolveUpstream(ctx context.Context, repo *gitrepo.Repo, url string, p
 // stackPullOne imports or updates one repo's prefix: probe upstream's tip, stop at
 // the cursor (idempotent, the josh-sync NothingToPull check), else fetch that
 // exact SHA through the filter, merge, and commit the moved cursor with it.
-func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, bin string, src *cfgfind.Source, m *stackManifest, name string, initial bool) error {
+func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin string, src *cfgfind.Source, m *stackManifest, name string, initial bool) error {
 	r := m.Repos[name]
-	out := cmd.OutOrStdout()
 	tip, err := stackUpstreamTip(ctx, repo, m, name)
 	if err != nil {
 		return err
@@ -752,7 +751,15 @@ func newStackPushCmd() *cobra.Command {
 					r.Upstream, short(tip), short(m.cursor(name)), name)
 			}
 
+			// Both engines before the push, not after: the workspace has to take
+			// back what it sends (see below), and discovering a missing binary
+			// once the remote has already moved would leave exactly the split
+			// state this is trying to avoid.
 			filter, err := ensureJoshTool(ctx, m.joshVersion(), toolFilter, out)
+			if err != nil {
+				return err
+			}
+			proxy, err := ensureJoshTool(ctx, m.joshVersion(), toolProxy, out)
 			if err != nil {
 				return err
 			}
@@ -779,15 +786,23 @@ func newStackPushCmd() *cobra.Command {
 				return fmt.Errorf("pushing %s to %s:%s: %w", name, r.Upstream, branch, err)
 			}
 
-			// The cursor has to move with it. push advances a branch the workspace
-			// *tracks*, so leaving the cursor behind would have status reporting
-			// "upstream moved" the moment this returns, and pull trying to merge
-			// history the workspace already contains.
-			if err := stackSetCursor(src, m, name, head); err != nil {
-				return err
-			}
-			if _, err := repo.Commit(ctx, fmt.Sprintf("stack: push %s @ %s", name, short(head))); err != nil {
-				return err
+			// Take back what we just sent, rather than only recording the cursor.
+			//
+			// The filtered commit is a different object from the workspace commit
+			// that produced it — same content under a different prefix and different
+			// parents — so the workspace does not contain it. Left that way, the
+			// next pull that finds upstream moved re-imports our own commits as a
+			// parallel line of development: a duplicate in the log at best, and a
+			// conflict as soon as the same file has been touched since.
+			//
+			// Importing it here is the moment it costs nothing. The content is
+			// identical to what the workspace already has, because we just sent it,
+			// so the merge is trivial — and from now on the prefixed commits are
+			// ancestors and later pulls are ordinary.
+			if err := stackPullOne(ctx, io.Discard, repo, proxy, src, m, name, false); err != nil {
+				return fmt.Errorf("%s was pushed to %s:%s, but the workspace could not take it back: %w\n"+
+					"run `rig stack pull %s` — until then this workspace still has the change only in its own shape",
+					name, r.Upstream, branch, err, name)
 			}
 			fmt.Fprintf(out, "pushed %s to %s:%s (%s)\n", name, r.Upstream, branch, short(head))
 			return nil
