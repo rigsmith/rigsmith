@@ -1,7 +1,0 @@
----
-type: feat
-scope: rig
-"github.com/rigsmith/rigsmith"
----
-
-A stackspace can now fuse a repo at a tag or an exact commit, not only at the tip of a branch. Set `upstreamTag` or `upstreamCommit` on a repo in `rig.stack.jsonc` and that directory stops following upstream: `pull` has nothing to do until you change the pin, and `status` reports `pinned to tag v1.4.2` rather than `up to date`, since the two mean different things. This matters when what depends on the library needs an older release than upstream's tip — fusing the tip there hands you sources that no longer compile against your own code, and no amount of build wiring fixes it, because the wiring was never the problem. Exactly one of `upstreamBranch`, `upstreamTag` and `upstreamCommit` may be set, and an annotated tag resolves to the commit it points at rather than to the tag object. A tag is resolved once and the result recorded, so an upstream that later force-moves or re-cuts it does not move your stackspace — editing the pin does, and `rig stack pull --repin` follows a moved tag when that is what you want. Repinning works in both directions: moving a project to an older revision cannot be done by merging, since the target is already an ancestor of what the stackspace holds, so the directory is replaced with the pinned revision instead — and refused, rather than quietly discarding anything, when that directory holds changes of its own.
