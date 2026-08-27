@@ -109,6 +109,19 @@ type stackManifest struct {
 
 func (m *stackManifest) cursor(name string) string { return m.LastSync[name] }
 
+// ownedNames are the prefixes holding a repo of the user's own. Editing a file
+// inside one is a commit to their repository, which they want; doing it inside a
+// fork would put rig's plumbing into somebody else's pull request.
+func (m *stackManifest) ownedNames() []string {
+	var out []string
+	for _, n := range m.names() {
+		if r := m.Repos[n]; r != nil && r.Owned {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // requireRepos is the guard for verbs that act on repos. An empty manifest is a
 // legitimate state — it is what `stack init` scaffolds, and what `stack add`
 // writes the first entry into — so loading one is not an error; only asking it

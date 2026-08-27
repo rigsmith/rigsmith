@@ -905,18 +905,26 @@ func newStackWireCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			byEco := stackRedirects(ctx, repo.Dir, m.names())
+			byEco, orphans := stackRedirects(ctx, repo.Dir, m.names())
+			// Patching a member's own build file is a commit to that repository,
+			// and it travels back through `push` or `send`. Your own repos want
+			// that line; a fork you contribute to should not carry rig plumbing
+			// into somebody else's pull request.
+			writable := m.ownedNames()
+			// Reported before anything is written: a member nothing consumes is
+			// usually why there was less to wire than expected.
+			stackReportOrphans(out, m, orphans)
 			if len(byEco) == 0 {
 				fmt.Fprintln(out, "no package references cross between members — nothing to wire")
 				return nil
 			}
 			for _, eco := range ecosystem.Default().All() {
-				redirects := byEco[eco.Info().ID]
-				if len(redirects) == 0 {
+				links := byEco[eco.Info().ID]
+				if len(links) == 0 {
 					continue
 				}
 				resp, err := eco.LocalOverlay(ctx, plugin.LocalOverlayRequest{
-					Root: repo.Dir, Redirects: redirects, Write: true,
+					Root: repo.Dir, Redirects: redirectsOf(links), Write: true, Writable: writable,
 				})
 				if err != nil {
 					return err
@@ -926,10 +934,13 @@ func newStackWireCmd() *cobra.Command {
 					continue
 				}
 				for f := range resp.Files {
-					fmt.Fprintf(out, "✓ %s — %d package(s) now resolve from this stackspace\n", f, len(redirects))
+					fmt.Fprintf(out, "✓ %s — %d package(s) now resolve from this stackspace\n", f, len(links))
 				}
-				for _, p := range redirects {
-					fmt.Fprintf(out, "    %s → %s\n", p.Package, p.Path)
+				for _, l := range links {
+					fmt.Fprintf(out, "    %s\n", l.describe())
+				}
+				for _, f := range resp.Fixed {
+					fmt.Fprintf(out, "✓ %s — patched to stop hiding the overlay from what is under it\n", f)
 				}
 				// Problems the overlay cannot fix by existing. Reported here as
 				// well as in doctor, because a wire that looks like it worked and
@@ -942,6 +953,19 @@ func newStackWireCmd() *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+// stackReportOrphans names fused repos nothing here consumes. An app is a leaf
+// and belongs at the end of the graph, so one marked owned is left alone.
+func stackReportOrphans(out io.Writer, m *stackManifest, orphans []stackOrphan) {
+	for _, o := range orphans {
+		if r := m.Repos[o.Member]; r != nil && r.Owned {
+			continue
+		}
+		fmt.Fprintf(out, "· %s\n", o.describe())
+		fmt.Fprintf(out, "    either that is not the repo your code depends on, or it moved to a\n")
+		fmt.Fprintf(out, "    renamed fork of it — a package is matched by identity, not by origin\n")
+	}
 }
 
 func newStackDoctorCmd() *cobra.Command {
@@ -990,8 +1014,13 @@ func newStackDoctorCmd() *cobra.Command {
 			// leaves a build that succeeds against the published package and says
 			// nothing, so checking is the only way anyone finds out.
 			if m != nil {
-				for _, rep := range stackCheckOverlay(ctx, root, m.names()) {
-					fmt.Fprintf(out, "· %s: %d package(s) should resolve from this stackspace\n", rep.Eco, len(rep.Redirects))
+				reports, orphans := stackCheckOverlay(ctx, root, m.names(), m.ownedNames())
+				stackReportOrphans(out, m, orphans)
+				for _, rep := range reports {
+					fmt.Fprintf(out, "· %s: %d package(s) cross between members here\n", rep.Eco, len(rep.Links))
+					for _, l := range rep.Links {
+						fmt.Fprintf(out, "    %s\n", l.describe())
+					}
 					for _, p := range rep.Resp.Problems {
 						where := p.Path
 						if where == "" {

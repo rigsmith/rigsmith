@@ -472,6 +472,16 @@ type LocalOverlayRequest struct {
 	Root       string     `json:"root"` // the directory every Path is relative to
 	Redirects  []Redirect `json:"redirects"`
 	Write      bool       `json:"write"`
+	// Writable names directories, relative to Root, whose files the adapter may
+	// change beyond writing its own overlay. Empty means it may write only the
+	// overlay.
+	//
+	// Some problems can only be fixed inside a project's own tree, and in a
+	// fused workspace that tree belongs to somebody: a file edited there is a
+	// commit to that repository and travels back to it. The adapter knows how to
+	// make the edit and nothing about who owns what, so the caller says where it
+	// is welcome.
+	Writable []string `json:"writable,omitempty"`
 }
 
 // OverlayProblem is a reason the redirects would not take effect. These are the
@@ -484,7 +494,8 @@ type OverlayProblem struct {
 	Path string `json:"path,omitempty"`
 	// Message says what is wrong in the reader's terms, not the adapter's.
 	Message string `json:"message"`
-	// Fixable marks a problem this adapter would resolve on a Write.
+	// Fixable marks a problem this adapter would resolve on a Write — which for
+	// a problem inside a project's own tree also means the caller allowed it.
 	Fixable bool `json:"fixable"`
 }
 
@@ -498,6 +509,10 @@ type LocalOverlayResponse struct {
 	// both Files and Problems: the overlay may be correct and still be shadowed
 	// by something the adapter cannot rewrite.
 	Problems []OverlayProblem `json:"problems,omitempty"`
+	// Fixed lists files the adapter changed to clear a problem, beyond writing
+	// its own overlay. Reported separately because these are edits inside
+	// somebody's project, which the caller may want to say out loud.
+	Fixed []string `json:"fixed,omitempty"`
 	// Skipped marks an ecosystem with no local-resolution mechanism at all,
 	// which is different from one that has nothing to do.
 	Skipped bool   `json:"skipped,omitempty"`

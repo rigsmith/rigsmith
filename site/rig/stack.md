@@ -268,8 +268,21 @@ you choose.
 #### Checking that it took
 
 `rig stack doctor` reports the same findings `wire` does, without writing
-anything — including the case below, where a member's own build file ends
-MSBuild's search and everything under it keeps resolving packages.
+anything. Both name every package that crosses from one member to another and
+which way it goes — including library to library, the pair people forget,
+because the app is not involved and nothing looks wrong.
+
+Both also flag a member whose packages nothing here consumes. That is nearly
+always one of two mistakes, and silent either way: the wrong repo was fused, or
+the right one was and your code has since moved to a fork that renamed the
+package. A package is matched by identity, not by where it came from, so a
+stackspace like that imports, wires and builds while changing nothing.
+
+`wire` goes one step further where it is allowed to. A member carrying its own
+root `Directory.Build.targets` ends MSBuild's search there — see below — and for
+a member marked `"owned": true` `wire` patches it, since the file is yours and
+the line belongs committed. For a fork you contribute to it only reports: that
+line would otherwise ride into somebody else's pull request as rig plumbing.
 
 For a specific project, ask MSBuild what it actually evaluated. Do not infer it
 from a build succeeding; a build that quietly used the package succeeds too:
