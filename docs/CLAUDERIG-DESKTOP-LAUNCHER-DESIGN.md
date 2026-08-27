@@ -342,6 +342,17 @@ If it is ever built: behind `launcher install --takeover`, never by default, wit
 a loud `remove`. The failure mode is the kind that appears a week later on
 someone else's machine.
 
+A second rejected alternative, because it needs no OS trickery at all and will
+therefore come back around: **closing the competing windows automatically**.
+Every piece exists — `competingWindows` already enumerates them, including the
+profile-less app it currently tells you to close by hand, and `Quit` and
+`waitGone` already do the work — so `refuseIfRoutingIsAmbiguous` could offer to
+carry out its own remedy and then send. Rejected on judgement rather than
+mechanism: those windows hold live conversations, and a confirmation prompt
+people learn to click through is not consent. Which windows to close is the
+user's decision, because only the user knows what is in them. The refusal names
+them and stops there, and that is the right division.
+
 The rejected alternative is worth naming, because it looks reasonable: a
 **watchdog** — a launchd agent or scheduled task polling `RunningDefault()`,
 quitting a profile-less instance and offering the picker. It needs no privileges
