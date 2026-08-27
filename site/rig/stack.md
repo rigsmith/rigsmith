@@ -21,6 +21,27 @@ repo, rewritten to live under a prefix directory. That is
 it as a throwaway localhost process and does everything else with plain git.
 Because it is one repo, one commit can touch every project in it.
 
+The whole round trip, for two of the repos:
+
+```mermaid
+flowchart TB
+    U1["acme/pty-core"] -->|"init · pull"| WS
+    U2["acme/term-core"] -->|"init · pull"| WS
+
+    WS["<b>your workspace</b><br/>pty-core/ &nbsp; term-core/"] --> CM["one commit,<br/>both directories"]
+
+    CM -->|"send"| B1["you/pty-core<br/>stack/read-timeout"]
+    CM -->|"send"| B2["you/term-core<br/>stack/read-timeout"]
+
+    B1 --> PR1["PR to acme/pty-core"]
+    B2 --> PR2["PR to acme/term-core"]
+```
+
+The two sides of that round trip are not symmetric. **Import** and `pull` are josh
+driving a reversible `:prefix=` filter. **Send** uses no engine at all: the
+directory's tree is already what upstream wants, so the export is a plain
+`git commit-tree` onto the upstream tip.
+
 **The build half.** If the projects depend on each other through a package
 registry, your edits do not reach the consumer without a publish cycle. A build
 file sitting *above* the projects redirects those package references at the
@@ -59,14 +80,33 @@ catches people out:
 | your project's root | your project → the workspace |
 | the workspace root | one fused repo → another fused repo |
 
-With the consumer inside, the workspace root sits above everything and one file
-does both jobs. With the consumer outside you need both, and the second is easy
-to miss: your project's overlay is found by walking up from *your* directory, so
-it can never reach a project in the workspace. If two of the fused repos depend
-on each other through a package — and forks of libraries that ship together
-usually do — only the workspace's own overlay can redirect that. Miss it and the
-fused library quietly restores its published sibling, putting two copies of the
-same code in one build.
+An overlay is found by walking *up* from a project, so it governs its own
+directory tree and nothing else. Count the trees and you have counted the
+overlays. Consumer outside, that is two — dashed lines are package references
+that have to be redirected, lettered by the only overlay that can reach them:
+
+```mermaid
+flowchart TB
+    subgraph APPTREE["term-app/ &nbsp;·&nbsp; overlay B"]
+        APP["App.csproj"]
+    end
+
+    subgraph WSTREE["my-stack/ &nbsp;·&nbsp; overlay A"]
+        TRM["term-core/"]
+        PTY["pty-core/"]
+        TRM -. "A" .-> PTY
+    end
+
+    APP -. "B" .-> PTY
+```
+
+With the consumer inside there is one tree, so one file does both jobs. With the
+consumer outside, **A** is the one people miss: your own project's overlay cannot
+reach across into the workspace, and if two of the fused repos depend on each
+other through a package — as forks of libraries that ship together usually do —
+only the workspace's own overlay can redirect that. Miss it and the fused
+library quietly restores its published sibling, putting two copies of the same
+code in one build.
 
 ## Setting one up
 
@@ -199,12 +239,21 @@ still build from packages.
 </Project>
 ```
 
-The `Exists()` test on `rig.stack.jsonc` is what makes this file safe to commit.
-Machines with the workspace build from source; every other machine — CI, a
-contributor's clone, your own laptop before you clone it — sees the file do
-nothing. No `.csproj` changes, so nothing in your repository advertises a
-workspace to anyone who has not got one. Override either property to force the
-question:
+What that buys you is one unedited project file with two possible resolutions:
+
+```mermaid
+flowchart TB
+    S["App.csproj — never edited<br/><code>PackageReference Pty.Core</code>"]
+    S --> Q{"rig.stack.jsonc<br/>next door?"}
+    Q -->|"yes"| P["<code>ProjectReference</code><br/>pty-core/src/Pty.Core"]
+    Q -->|"no"| K["<code>PackageReference</code><br/>the published Pty.Core"]
+```
+
+The `Exists()` test on `rig.stack.jsonc` is what makes the file safe to commit:
+CI, a contributor's clone, and your own laptop before you clone the workspace
+all take the package branch and see the file do nothing. No `.csproj`
+changes, so nothing in your repository advertises a workspace to anyone who has
+not got one. Override either property to force the question:
 
 ```sh
 dotnet build -p:UseStackSources=false     # build the way CI will
@@ -341,12 +390,9 @@ your repo names for the verbs that take one.
 ## The engine
 
 Importing and pulling are done by [josh](https://josh-project.dev), the git
-history-filtering proxy: `init` and `pull` drive its reversible `:prefix=`
-filter to move commits between an upstream repo and its directory here.
-
-`send` uses no engine at all. The directory's tree is already what upstream
-wants, prefix absent inside it, so the export is plain `git commit-tree` onto
-the upstream tip.
+history-filtering proxy — the inbound half of [the round trip](#the-two-halves)
+above. `send` needs no engine, so josh is only ever reached for `init` and
+`pull`.
 
 rig owns the binary so you do not have to. `rig stack doctor --fix` fetches a
 verified `josh-proxy` for your platform — built and published by

@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
 // The site is keyed by binary name: /rig/, /changerig/, /shiprig/, /clauderig/,
 // plus /core/ (the engine) and /compare/. Each tool section gets its own
@@ -8,7 +9,11 @@ import { defineConfig } from 'vitepress'
 
 const GITHUB = 'https://github.com/JohnCampionJr/rigsmith'
 
-export default defineConfig({
+// `withMermaid` registers the ```mermaid fence and swaps mermaid's own theme
+// when the site's dark toggle flips, so diagrams stay legible in both. Keep
+// diagrams on mermaid's default palette — hardcoded colours survive only one
+// of the two themes.
+export default withMermaid(defineConfig({
   title: 'RigSmith',
   description:
     'A family of convention-first, zero-runtime-dependency CLI tools for polyglot monorepos.',
@@ -133,4 +138,12 @@ export default defineConfig({
   },
 
   sitemap: { hostname: 'https://rigsmith.dev' },
-})
+
+  // mermaid is ESM but pulls a CJS dependency (fastdom); without pre-bundling
+  // it, the dev server serves that raw and every page dies on "does not provide
+  // an export named 'default'".
+  vite: {
+    optimizeDeps: { include: ['mermaid'] },
+    ssr: { noExternal: ['mermaid'] },
+  },
+}))
