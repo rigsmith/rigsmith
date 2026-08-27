@@ -1,7 +1,8 @@
 # desktop launcher: what can, and cannot, decide which profile a link opens
 
-> Status: **partly closed by evidence** (proposed 2026-08-27, tested the same
-> day against Claude Desktop **1.37937.1**). Per-profile **theme** is confirmed
+> Status: **partly closed by evidence** (proposed 2026-08-27; read out of the
+> bundle and then **confirmed live** the same day, against Claude Desktop
+> **1.37937.1**). Per-profile **theme** is confirmed
 > and ready to build. **`claude://` handler registration** is **not viable** —
 > the app re-claims the scheme on every launch, on every platform; see
 > [What the experiment found](#findings). The **shim swap** remains **on hold**
@@ -45,10 +46,12 @@ what happens between "a link exists" and "a window receives it".
 
 ## What the experiment found {#findings}
 
-Read out of the shipped bundle — `/Applications/Claude.app/Contents/Resources/`
-at version **1.37937.1** — rather than by driving the app. Every claim below is
-a string in that bundle, so each is re-checkable and each is **version-specific**:
-this is what one release does, not a contract.
+First read out of the shipped bundle —
+`/Applications/Claude.app/Contents/Resources/` at version **1.37937.1** — and
+then, for the finding that decides the design, confirmed by taking the scheme
+over and watching the app take it back. Every claim below is either a string in
+that bundle or an observation, and all of it is **version-specific**: this is
+what one release does, not a contract.
 
 ### The app re-claims `claude://` on every launch (fatal to §2)
 
@@ -77,6 +80,37 @@ Corroborating evidence that scheme claims are contested and stale ones linger:
 this machine has **two** bundles claiming `claude:` — `/Applications/Claude.app`
 at 1.37937.1 and a still-registered `/Volumes/Claude/Claude.app` at 1.26832.0,
 a mounted installer image four hundred versions behind.
+
+### Confirmed live, not just read
+
+The bundle reading above was tested directly on 2026-08-27, and the app behaved
+exactly as the code says.
+
+Method: build a minimal `.app` claiming `claude` in `CFBundleURLTypes` under its
+own bundle id, register it, make it the default handler, then launch a Claude
+Desktop **profile** through `clauderig desktop open` and re-read the handler.
+
+```
+before launch   pref=dev.rigsmith.clauderig.schemeprobe
+                resolves=/Users/john/Applications/SchemeProbe.app
+after launch    pref=com.anthropic.claudefordesktop
+                resolves=/Applications/Claude.app
+```
+
+One launch, and the scheme was gone. Note it was a **profile** launch, not the
+machine-wide app — so the re-registration is not something a launcher could
+dodge by only ever starting profiles. Every path clauderig has to open Claude
+Desktop hands the scheme back.
+
+A detail worth keeping for whoever builds a handler bundle for any scheme: the
+probe was ignored while it lived in a temp directory. `LSSetDefaultHandlerForURLScheme`
+returned success and the `LSHandlers` preference recorded it, but
+`NSWorkspace.urlForApplication(toOpen:)` still resolved to Claude — the
+preference was written and not honoured. Copying the identical bundle to
+`~/Applications` and re-registering made it resolve immediately. Writing the
+preference is not evidence that the handoff took; resolution has to be read
+separately. (`shortcut_darwin.go` already puts bundles in `~/Applications`, so
+it lands on the right side of this by construction.)
 
 ### There is no single-instance lock (fatal to the Windows hypothesis)
 
@@ -309,11 +343,9 @@ Theme needs a changeset, and reaches `rig ui`, the parent help block,
   is read at startup — so writing it into a closed profile is enough.
 - **Answered.** Claude Desktop's Windows build takes no single-instance lock, so
   a deep link cannot be delivered into a running profile through `second-instance`.
-- **Open, and decisive if §2 is ever revived.** The re-registration above is read
-  from the bundle, not observed. Confirming it live means recording the current
-  `claude://` handler, pointing the scheme at a throwaway bundle, launching
-  Claude Desktop, and checking whether the default reverted. Reversible, but it
-  takes over `claude://` on a working machine for the duration.
+- **Answered, and it was the decisive one.** The re-registration is not merely
+  read from the bundle — the scheme was taken over and Claude Desktop took it
+  back on the next profile launch. §2 is closed on evidence, not on inference.
 - Should `desktop add` offer a theme at creation time? Theme and the abandoned
   launcher answered the same question — *which profile am I looking at* — and
   theme is now the only one left answering it.
