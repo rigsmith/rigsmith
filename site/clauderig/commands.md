@@ -255,6 +255,44 @@ appear here. `search` covers your Claude **Code** transcripts; a miss doesn't
 prove a Chat-tab conversation is gone, so check claude.ai for those.
 :::
 
+### Opening one in Claude Desktop
+
+Having found a session, `clauderig desktop open --session` carries it into
+Desktop's Code tab:
+
+```sh
+clauderig desktop open work --session a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+clauderig desktop open work --session "auth refactor"   # title or project text
+clauderig desktop open work -i                          # pick one from a list
+```
+
+You rarely know a uuid, so `recent -l` prints the command under each session,
+beside the terminal one — for the sessions it would work on, which means Claude
+Desktop installed, a profile saved, and a transcript in `~/.claude/projects`
+here:
+
+```text
+● Refactor the auth middleware
+  a1b2c3d4 · 2026-05-14 · desktop@work · opus-5 · ~/Git/acme-api
+  resume: cd ~/Git/acme-api && claude --resume a1b2c3d4-…
+  desktop: clauderig desktop open --session a1b2c3d4-…
+```
+
+`--session` also completes to recent ids on `<Tab>`, each labelled with its title
+and project, and `-i` on its own opens a picker over the same list.
+
+clauderig does not import anything itself: it hands Desktop a
+`claude://resume?session=<uuid>` link and the app's own handler reads the
+transcript. That is why the transcript has to be in `~/.claude/projects` on this
+machine — a session that lives only in the synced repo must be restored here
+first. It is also why a second open profile makes the command refuse: a deep link
+is routed by scheme rather than to a window, so the OS would pick the recipient
+and could file the session under the wrong account. Quit the others, or pass
+`--anyway` when any window will do.
+
+The profile model this sits on is in
+[`docs/CLAUDERIG-DESKTOP-PROFILES.md`](https://github.com/rigsmith/rigsmith/blob/main/docs/CLAUDERIG-DESKTOP-PROFILES.md).
+
 ## Hooks
 
 ```sh
