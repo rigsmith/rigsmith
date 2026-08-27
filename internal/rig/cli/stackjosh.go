@@ -42,17 +42,35 @@ const stackJoshBinaries = "https://github.com/rigsmith/josh-binaries/releases/do
 // this is a ceiling on damage, not a size expectation.
 const stackJoshMaxBytes int64 = 256 << 20
 
-// stackJoshChecksums pins what each platform's josh-proxy must hash to. Pinned
-// here rather than read from the release, so that trusting a download does not
-// reduce to trusting whoever can write to the release. Regenerate with
-// `rig stack doctor --print-checksums` when the release moves.
-var stackJoshChecksums = map[string]string{
-	"linux-arm64":   "685728fae9346cbbcda43ad372b02d447f873e8121f12de1403fac02b8533763",
-	"linux-x64":     "845c717891965242ce716f88efdec76eb0ed96e45ecc63933ef2f6d544d2638d",
-	"macos-arm64":   "f353cf4c845152347bd2bf645065267d0b48096af5b802f8abefcfdba565ac74",
-	"macos-x64":     "c659519ba3aa855053e03adbe723bee5de88c6c9850a95775b4de83d6065a172",
-	"windows-arm64": "c96ef9eb891c2b270f65d6fea3d62cdf43628674dac4801ad359e3af699121b9",
-	"windows-x64":   "2ae71b33b80cfc4fac70f0e1e6ac4878671237630e628fc9b86eebb6d8f149ee",
+// stackJoshTools are the engine binaries rig installs. josh-proxy serves the
+// filtered history over http, which is how a repo is imported; josh-filter
+// rewrites refs in a local repository, which is how a member is extracted again
+// with its history. Same release, same verification, different jobs.
+const (
+	toolProxy  = "josh-proxy"
+	toolFilter = "josh-filter"
+)
+
+// stackJoshChecksums pins what each binary must hash to on each platform.
+// Pinned here rather than read from the release, so that trusting a download
+// does not reduce to trusting whoever can write to the release.
+var stackJoshChecksums = map[string]map[string]string{
+	toolProxy: {
+		"linux-arm64":   "685728fae9346cbbcda43ad372b02d447f873e8121f12de1403fac02b8533763",
+		"linux-x64":     "845c717891965242ce716f88efdec76eb0ed96e45ecc63933ef2f6d544d2638d",
+		"macos-arm64":   "f353cf4c845152347bd2bf645065267d0b48096af5b802f8abefcfdba565ac74",
+		"macos-x64":     "c659519ba3aa855053e03adbe723bee5de88c6c9850a95775b4de83d6065a172",
+		"windows-arm64": "c96ef9eb891c2b270f65d6fea3d62cdf43628674dac4801ad359e3af699121b9",
+		"windows-x64":   "2ae71b33b80cfc4fac70f0e1e6ac4878671237630e628fc9b86eebb6d8f149ee",
+	},
+	toolFilter: {
+		"linux-arm64":   "01792ee8a4a5770d5af6d3f505dbec12769a3006cd0417f84dd15184e72e098f",
+		"linux-x64":     "a1cb4e50a1c7fc5b3e252e941e793843fd247f1e89af64a7a32fa2a06e788980",
+		"macos-arm64":   "13e8fd3ce187987c07957fec462c0e65c144fe592ac94bc0640a2188a131ee22",
+		"macos-x64":     "02e129dee85e760dd4caaea82255e351e6675411a6b19a5c59c2ea9080b2bdfd",
+		"windows-arm64": "05a69276f9d890465755e2cdf6366d091ccd809bc2c569385784a5b0c946ce3c",
+		"windows-x64":   "c91222e64c5cda7ec9ef3f94df4f9177a9b05b7e81d8a17c03afd6d40fba5625",
+	},
 }
 
 // stackJoshTarget names this platform the way the release assets do.
@@ -79,10 +97,10 @@ func stackJoshTarget() (string, error) {
 	return os_ + "-" + arch, nil
 }
 
-// downloadJoshProxy fetches the pinned engine for this platform into dest. It
-// verifies the checksum when one is pinned, and refuses a download it cannot
-// check rather than trusting the bytes.
-func downloadJoshProxy(ctx context.Context, dest string, out io.Writer) error {
+// downloadJoshTool fetches one pinned engine binary for this platform into
+// dest. It verifies the checksum when one is pinned, and refuses a download it
+// cannot check rather than trusting the bytes.
+func downloadJoshTool(ctx context.Context, tool, dest string, out io.Writer) error {
 	target, err := stackJoshTarget()
 	if err != nil {
 		return err
@@ -91,15 +109,15 @@ func downloadJoshProxy(ctx context.Context, dest string, out io.Writer) error {
 	if runtime.GOOS == "windows" {
 		ext = ".exe"
 	}
-	asset := fmt.Sprintf("josh-proxy-%s-%s%s", stackJoshRelease, target, ext)
+	asset := fmt.Sprintf("%s-%s-%s%s", tool, stackJoshRelease, target, ext)
 	url := fmt.Sprintf("%s/%s/%s", stackJoshBinaries, stackJoshRelease, asset)
 
-	want, pinned := stackJoshChecksums[target]
+	want, pinned := stackJoshChecksums[tool][target]
 	if !pinned {
 		return fmt.Errorf("no checksum is pinned for %s, so %s cannot be verified", target, asset)
 	}
 
-	fmt.Fprintf(out, "fetching josh-proxy %s for %s\n", stackJoshRelease, target)
+	fmt.Fprintf(out, "fetching %s %s for %s\n", tool, stackJoshRelease, target)
 	// The command's context carries no deadline of its own, and a release server
 	// that accepts the connection then stops sending would hang the verb forever.
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -122,7 +140,7 @@ func downloadJoshProxy(ctx context.Context, dest string, out io.Writer) error {
 	}
 	// Write beside the target and rename, so an interrupted download never
 	// leaves something executable in place.
-	tmp, err := os.CreateTemp(filepath.Dir(dest), ".josh-proxy-*")
+	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+tool+"-*")
 	if err != nil {
 		return err
 	}
@@ -162,12 +180,16 @@ func stackJoshDir(version string) (string, error) {
 	return filepath.Join(home, ".local", "share", "rigsmith", "josh", version), nil
 }
 
-func stackJoshProxyBin(version string) (string, error) {
+func stackJoshToolBin(version, tool string) (string, error) {
 	dir, err := stackJoshDir(version)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "bin", "josh-proxy"+stackExeSuffix()), nil
+	return filepath.Join(dir, "bin", tool+stackExeSuffix()), nil
+}
+
+func stackJoshProxyBin(version string) (string, error) {
+	return stackJoshToolBin(version, toolProxy)
 }
 
 // stackExeSuffix is what this platform's executables are named with — the
@@ -201,8 +223,8 @@ func stackJoshInstalled(bin string) error {
 // user's cargo on first use. The install is a full Rust build — minutes, said
 // out loud on out — which is why it happens here (and in `stack doctor --fix`)
 // rather than silently inside a verb that looked instant.
-func ensureJoshProxy(ctx context.Context, version string, out io.Writer) (string, error) {
-	bin, err := stackJoshProxyBin(version)
+func ensureJoshTool(ctx context.Context, version, tool string, out io.Writer) (string, error) {
+	bin, err := stackJoshToolBin(version, tool)
 	if err != nil {
 		return "", err
 	}
@@ -212,10 +234,10 @@ func ensureJoshProxy(ctx context.Context, version string, out io.Writer) (string
 	// A published binary is seconds; building josh is minutes. Only fall back
 	// to cargo when this platform has no binary, or the download fails.
 	if version == stackJoshVersion {
-		if err := downloadJoshProxy(ctx, bin, out); err == nil {
+		if err := downloadJoshTool(ctx, tool, bin, out); err == nil {
 			return bin, nil
 		} else {
-			fmt.Fprintf(out, "could not fetch a published josh-proxy (%v); building from source\n", err)
+			fmt.Fprintf(out, "could not fetch a published %s (%v); building from source\n", tool, err)
 		}
 	}
 
@@ -223,29 +245,35 @@ func ensureJoshProxy(ctx context.Context, version string, out io.Writer) (string
 	// upstream tag: building that tag from source would produce a binary that
 	// cannot run here, so say why instead of spending minutes on it.
 	if runtime.GOOS == "windows" {
-		return "", fmt.Errorf("could not fetch the published josh-proxy for windows, and building %s from source would omit the Windows support that %s carries; retry, or install a binary from %s manually",
-			version, stackJoshRelease, stackJoshBinaries)
+		return "", fmt.Errorf("could not fetch the published %s for windows, and building %s from source would omit the Windows support that %s carries; retry, or install a binary from %s manually",
+			tool, version, stackJoshRelease, stackJoshBinaries)
 	}
 	cargo, err := exec.LookPath("cargo")
 	if err != nil {
-		return "", fmt.Errorf("josh-proxy %s is not installed, no published binary could be fetched, and cargo was not found; install rust (https://rustup.rs) and re-run", version)
+		return "", fmt.Errorf("%s %s is not installed, no published binary could be fetched, and cargo was not found; install rust (https://rustup.rs) and re-run", tool, version)
 	}
 	dir, err := stackJoshDir(version)
 	if err != nil {
 		return "", err
 	}
-	fmt.Fprintf(out, "installing josh-proxy %s (a Rust build — takes a few minutes, one time per version)…\n", version)
+	fmt.Fprintf(out, "installing %s %s (a Rust build — takes a few minutes, one time per version)…\n", tool, version)
 	cmd := exec.CommandContext(ctx, cargo, "install", "--locked",
-		"--git", stackJoshRepo, "--tag", version, "--root", dir, "josh-proxy")
+		"--git", stackJoshRepo, "--tag", version, "--root", dir, tool)
 	cmd.Stdout = out
 	cmd.Stderr = out
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("cargo install josh-proxy: %w", err)
+		return "", fmt.Errorf("cargo install %s: %w", tool, err)
 	}
 	if err := stackJoshInstalled(bin); err != nil {
 		return "", fmt.Errorf("cargo install finished but %s is unusable: %w", bin, err)
 	}
 	return bin, nil
+}
+
+// ensureJoshProxy is ensureJoshTool for the proxy, which most of the stack verbs
+// want and none of them should have to name.
+func ensureJoshProxy(ctx context.Context, version string, out io.Writer) (string, error) {
+	return ensureJoshTool(ctx, version, toolProxy, out)
 }
 
 // joshProxy is one running ephemeral proxy, bound to a single remote host.

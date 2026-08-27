@@ -226,10 +226,18 @@ workspace. The cursor only advances once the merge is committed.
 | `stack status` | Each repo's cursor against its upstream branch tip |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
+| `stack push <repo>` | Fast-forward a repo you own with this workspace's commits, history intact |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
+`send` and `push` answer different questions. `send` proposes one squashed
+commit on a branch of your fork, which is what a reviewer of someone else's
+project wants. `push` fast-forwards a project's *own* branch with every commit
+that touched it, messages intact, which is the only sane thing to do to a
+repository that is yours — mark it `"owned": true` to enable it.
+
 All of it is in [`rig ui`](./verbs) too, under **▸ Stack** — `send` there picks
-the repo from the manifest and prompts for a branch name. Tab completion offers
+the repo from the manifest and prompts for a branch name, and `push` offers only
+the repos marked as yours. Tab completion offers
 your repo names for the verbs that take one.
 
 ## The engine
