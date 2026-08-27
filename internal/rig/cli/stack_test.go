@@ -774,3 +774,84 @@ func TestStackPinnedCursor(t *testing.T) {
 		}
 	})
 }
+
+func TestStackHasUnsent(t *testing.T) {
+	ctx := context.Background()
+	ws := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		c := exec.CommandContext(ctx, "git", args...)
+		c.Dir = ws
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	write := func(rel, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(ws, rel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(ws, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	git("init", "-q", "-b", "main", ws)
+	write("pty-core/a.txt", "upstream")
+	write("term-core/b.txt", "upstream")
+	git("add", "-A")
+	// The marker rig itself writes on import; finding it is what makes this work
+	// without the upstream object, which a workspace never has.
+	git("commit", "-qm", "stack: import pty-core @ abc1234")
+	git("commit", "-q", "--allow-empty", "-m", "stack: import term-core @ def5678")
+
+	repo, err := gitrepo.Open(ctx, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("an untouched prefix has nothing to send", func(t *testing.T) {
+		unsent, known := stackHasUnsent(ctx, repo, "pty-core")
+		if unsent || !known {
+			t.Fatalf("unsent=%v known=%v, want false/true", unsent, known)
+		}
+	})
+
+	t.Run("an edited prefix reports it", func(t *testing.T) {
+		write("pty-core/a.txt", "mine")
+		git("commit", "-qam", "fix the read timeout")
+		unsent, known := stackHasUnsent(ctx, repo, "pty-core")
+		if !unsent || !known {
+			t.Fatalf("unsent=%v known=%v, want true/true", unsent, known)
+		}
+	})
+
+	t.Run("editing one prefix does not implicate another", func(t *testing.T) {
+		if unsent, _ := stackHasUnsent(ctx, repo, "term-core"); unsent {
+			t.Fatal("term-core reported unsent after only pty-core changed")
+		}
+	})
+
+	t.Run("content restored is nothing to send", func(t *testing.T) {
+		// Trees, not commits: the history is two commits longer than at import,
+		// but what `send` would export is identical.
+		write("pty-core/a.txt", "upstream")
+		git("commit", "-qam", "revert it")
+		if unsent, _ := stackHasUnsent(ctx, repo, "pty-core"); unsent {
+			t.Fatal("reported unsent when the tree matches what was imported")
+		}
+	})
+
+	t.Run("no marker is unknown, never 'nothing to send'", func(t *testing.T) {
+		// The one wrong answer here loses work, so a history without rig's own
+		// commits must decline to answer.
+		unsent, known := stackHasUnsent(ctx, repo, "never-imported")
+		if unsent || known {
+			t.Fatalf("unsent=%v known=%v, want false/false", unsent, known)
+		}
+	})
+}

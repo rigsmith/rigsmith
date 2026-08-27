@@ -237,6 +237,15 @@ func newStackStatusCmd() *cobra.Command {
 					// reader needs to know this prefix will never move on its own.
 					state = "pinned to " + pin.describe()
 				}
+				// Work that has not been sent exists only in this workspace, which
+				// is documented as disposable. That combination is how it gets
+				// thrown away, so report it whatever else is true of the prefix.
+				switch unsent, known := stackHasUnsent(ctx, repo, name); {
+				case unsent:
+					state += fmt.Sprintf("  ·  unsent changes — `rig stack send %s <branch>`", name)
+				case !known && m.cursor(name) != "":
+					state += "  ·  cannot tell whether it has unsent changes (no import commit in this history)"
+				}
 				fmt.Fprintf(out, "%-24s %-10s %s\n", name, short(m.cursor(name)), state)
 			}
 			return nil
@@ -330,6 +339,38 @@ func stackImportedTree(ctx context.Context, repo *gitrepo.Repo, name string) (st
 		return "", false
 	}
 	return tree, true
+}
+
+// stackHasUnsent reports whether a prefix holds work that exists nowhere but
+// this workspace — the thing that makes a disposable workspace dangerous.
+//
+// The cursor cannot be used for this. It is an *upstream* commit id, and the
+// workspace only ever contains josh-rewritten commits, so that object is never
+// present locally; `send` fetches it deliberately when it needs to root on it.
+// What is local is the import or pull commit rig wrote itself, and the prefix's
+// tree in it is exactly what upstream last had. Comparing that against the tree
+// at HEAD answers the question without touching the network.
+//
+// Trees, not commits: a history amended or rebased without changing content has
+// nothing to send and must not be reported as though it did.
+//
+// Unknown, rather than false, when no marker is found — a history rewritten past
+// rig's own commits cannot answer, and "nothing to send" is the one wrong answer
+// there that loses work.
+func stackHasUnsent(ctx context.Context, repo *gitrepo.Repo, name string) (unsent, known bool) {
+	marker, err := repo.LastCommitMatching(ctx, `^stack: (import|pull) `+regexp.QuoteMeta(name)+` @`)
+	if err != nil || marker == "" {
+		return false, false
+	}
+	imported, err := repo.RevParse(ctx, marker+":"+name)
+	if err != nil {
+		return false, false
+	}
+	here, err := repo.RevParse(ctx, "HEAD:"+name)
+	if err != nil {
+		return false, false
+	}
+	return imported != here, true
 }
 
 // stackResolveUpstream turns a prefix's pin into the upstream commit to import.
