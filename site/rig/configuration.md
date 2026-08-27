@@ -211,9 +211,17 @@ is one you are creating on your fork for a single change. A manifest written
 with the older `branch` key is still read.
 
 Instead of a branch, a directory can be **pinned** with `upstreamTag` or
-`upstreamCommit`. A pin does not drift: `pull` has nothing to do until you edit
-the pin itself, and `status` says `pinned to tag v1.4.2` rather than `up to
-date`, because the two mean very different things.
+`upstreamCommit`. `pull` then has nothing to do until you edit the pin, and
+`status` says `pinned to tag v1.4.2` rather than `up to date`, because the two
+mean very different things. `upstreamCommit` is absolute. `upstreamTag` is
+resolved each time, so a tag that upstream force-moves will be followed — pin
+the commit if you need the stronger guarantee.
+
+Repinning works in both directions. Moving a project to an *older* revision
+cannot be done by merging, since the target is already an ancestor of what the
+workspace holds, so the directory is replaced with the pinned revision instead
+and `pull` reports it as `moved`. That discards what is under it, so it is
+refused when the directory holds changes of its own: send or revert them first.
 
 Reach for a pin when what depends on the library needs an older release than
 upstream's tip. Fusing at the tip in that situation gives you sources that no

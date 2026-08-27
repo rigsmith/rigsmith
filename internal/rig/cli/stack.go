@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -302,6 +303,27 @@ func newStackPullCmd() *cobra.Command {
 	return cmd
 }
 
+// stackImportedTree is the tree a prefix had when it was last imported or
+// pulled — the baseline for "has anything happened here since".
+//
+// The cursor cannot answer it: that is an upstream commit id, and a workspace
+// only holds josh-rewritten commits, so the object is never here. What is here
+// is rig's own import or pull commit, always a merge because the import is made
+// with --no-ff, whose *second* parent is the filtered upstream side. That
+// parent's tree is what upstream had; the merge's own tree is not, since it
+// already contains whatever it merged past.
+func stackImportedTree(ctx context.Context, repo *gitrepo.Repo, name string) (string, bool) {
+	marker, err := repo.LastCommitMatching(ctx, `^stack: (import|pull) `+regexp.QuoteMeta(name)+` @`)
+	if err != nil || marker == "" {
+		return "", false
+	}
+	tree, err := repo.RevParse(ctx, marker+"^2:"+name)
+	if err != nil {
+		return "", false
+	}
+	return tree, true
+}
+
 // stackResolveUpstream turns a prefix's pin into the upstream commit to import.
 // A branch or tag is looked up on the remote; a commit is already the answer,
 // which is also why a pinned prefix needs no network round trip to know it has
@@ -358,6 +380,11 @@ func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, b
 	}
 	// The URL pins the upstream commit, and josh serves a pinned commit as HEAD
 	// rather than under its branch name.
+	// Read before the merge: afterwards the newest import marker is the commit
+	// this pull is about to make, and the baseline would be the target itself.
+	preTree, _ := repo.RevParse(ctx, "HEAD:"+name)
+	preImported, preKnown := stackImportedTree(ctx, repo, name)
+
 	conflicted, err := repo.FetchMergeUnrelated(ctx, proxy.url(path, tip, stackPrefixFilter(name)), "HEAD", msg)
 	if err != nil {
 		if tail := proxy.tail(15); tail != "" {
@@ -368,6 +395,33 @@ func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, b
 	if conflicted {
 		return fmt.Errorf("merge conflicts under %s/ — resolve, commit, then re-run to move the cursor", name)
 	}
+
+	// A merge cannot move a prefix backwards. Repin a project to an older tag or
+	// commit and the target is already an ancestor of what is here, so the merge
+	// reports nothing to do — and recording the cursor anyway would claim a
+	// revision the directory does not contain, with `status` reporting the pin
+	// while the sources stay newer.
+	//
+	// FETCH_HEAD is the prefixed target that was just fetched, so its tree under
+	// the prefix is what this directory is supposed to hold.
+	want, wantErr := repo.RevParse(ctx, "FETCH_HEAD:"+name)
+	have, haveErr := repo.RevParse(ctx, "HEAD:"+name)
+	if wantErr == nil && haveErr == nil && want != have {
+		// Replacing the directory discards whatever is under it, so only do it
+		// when there is nothing of the user's to discard. Their own commits would
+		// survive in the history but be stranded there, which is a quiet way to
+		// lose work.
+		if !preKnown || preImported != preTree {
+			return fmt.Errorf("%s/ holds changes of its own, and moving it to %s (%s) needs the directory replaced\n"+
+				"send them first, or revert them, and run this again",
+				name, short(tip), m.pin(name).describe())
+		}
+		if err := repo.ReplacePath(ctx, "FETCH_HEAD", name); err != nil {
+			return fmt.Errorf("moving %s to %s: %w", name, m.pin(name).describe(), err)
+		}
+		verb = "moved"
+	}
+
 	// The cursor is written to disk before it can be committed, so keep the
 	// bytes: a failure between here and the amend would otherwise leave the
 	// cursor advanced past history that does not contain it, and every later
