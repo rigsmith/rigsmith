@@ -33,21 +33,21 @@ flowchart TB
 
     WS["<b>your stackspace</b><br/>pty-core/ &nbsp; term-core/ &nbsp; term-app/"] --> CM["one commit,<br/>several directories"]
 
-    CM -->|"send"| B1["you/pty-core<br/>stack/read-timeout"]
+    CM -->|"propose"| B1["you/pty-core<br/>stack/read-timeout"]
     CM -->|"push"| B2["you/term-app<br/>its own branch"]
 
     B1 --> PR1["PR to acme/pty-core"]
 ```
 
 Work arrives one way and leaves two, depending on whose repo it is going back
-to. `send` proposes a squashed commit on a branch of your fork, which is what a
+to. `propose` proposes a squashed commit on a branch of your fork, which is what a
 maintainer reviewing someone else's project wants. `push` fast-forwards a
 project you own with every commit that touched it, messages intact, which is the
 only sane thing to do to a repository that is yours.
 
 The engine is not involved everywhere. Import, `pull` and `push` all drive
 josh's reversible filters — in one direction to nest a repo under a prefix, in
-the other to take it out again. `send` uses no engine at all: the directory's
+the other to take it out again. `propose` uses no engine at all: the directory's
 tree is already what upstream wants, so the export is a plain `git commit-tree`
 onto the upstream tip.
 
@@ -89,7 +89,7 @@ which is the pair people forget when their app sits outside.
 Your app is a member like any other, with one difference you declare: mark it
 `"owned": true` and `rig stack push` fast-forwards *its own* repo with your
 commits, history intact, instead of proposing a squashed branch to a fork the
-way [`send`](#send) does for somebody else's project.
+way [`propose`](#propose) does for somebody else's project.
 
 ::: warning A repo with its own root build file hides the overlay
 MSBuild stops at the **first** `Directory.Build.targets` it finds walking up.
@@ -117,7 +117,7 @@ to commit.
 ### 1. The stackspace is an ordinary git repo
 
 It needs no remote and never gets one. Nothing is pushed *from* it except
-through `send`, which pushes to your forks.
+through `propose`, which pushes to your forks.
 
 ```sh
 mkdir ~/src/my-stack && cd ~/src/my-stack
@@ -150,13 +150,13 @@ would rather.
 ```jsonc
 {
   "$schema": "https://rigsmith.dev/schemas/rig-stack.json",
-  // Branches `send` creates are named stack/<what-you-typed>. Optional.
+  // Branches `propose` creates are named stack/<what-you-typed>. Optional.
   "branchPrefix": "stack/",
 
   "repos": {
     "pty-core": {
       "upstream": "github.com/acme/pty-core",   // where PRs go
-      "fork":     "github.com/you/pty-core",    // where `send` pushes
+      "fork":     "github.com/you/pty-core",    // where `propose` pushes
       "upstreamBranch": "main"                  // branch of upstream to follow
     },
     "term-core": {
@@ -180,7 +180,7 @@ The key is the directory the project will live under. Repo specs are
 as a URL, an engine path, and a label.
 
 `upstreamBranch` is the branch of **upstream** this directory follows: what
-`pull` takes, and what `send` roots its commit on. It is *not* the branch `send`
+`pull` takes, and what `propose` roots its commit on. It is *not* the branch `propose`
 creates — you name that one per change. Full key reference in
 [Configuration](./configuration#stack).
 
@@ -384,17 +384,17 @@ is the honest cost of one history being several, and taking it back at push time
 is what stops a later `pull` re-importing your own work as a parallel line of
 development.
 
-### Somebody else's: `send` {#send}
+### Somebody else's: `propose` {#propose}
 
-One `send` per project. Each produces a branch on **your fork** holding a single
+One `propose` per project. Each produces a branch on **your fork** holding a single
 commit whose diff is exactly what you changed in that directory, rooted on the
 current upstream tip.
 
 ```sh
-rig stack send <repo> <new-branch>
+rig stack propose <repo> <new-branch>
 
-rig stack send pty-core read-timeout -m "Fix the read timeout"
-rig stack send term-core read-timeout -m "Handle the new timeout"
+rig stack propose pty-core read-timeout -m "Fix the read timeout"
+rig stack propose term-core read-timeout -m "Handle the new timeout"
 
 # sent pty-core to you/pty-core:stack/read-timeout
 #   — open the PR against acme/pty-core
@@ -416,20 +416,20 @@ already on the fork far less likely — though a prefix reserves nothing, and a
 fork may already carry `stack/<name>`. Change it with `branchPrefix` in the manifest,
 per stackspace or per repo, or set it to `""` for bare names. A name that already
 starts with the prefix is left alone, so pasting a full branch name back in when
-re-sending does not stutter it.
+proposing again does not stutter it.
 
 Sending again to the same branch **updates** it, so you can act on review
-feedback: commit in the stackspace, re-send, and the pull request moves. The
+feedback: commit in the stackspace, propose again, and the pull request moves. The
 branch is replaced under a lease taken at the moment of the push, which guards
 against a race between reading the branch and writing it — it is not a record of
 what you last sent, so it will not tell you that someone rewrote the branch
-between one send and the next.
+between one proposal and the next.
 
-::: warning `send` refuses a stale cursor
+::: warning `propose` refuses a stale cursor
 Your stackspace tree is a snapshot taken at the last `pull`. If upstream has
 moved on since, committing that tree onto the newer tip would present every
-commit that landed in between as though your branch had **reverted** it. `send`
-stops rather than build such a branch — run `rig stack pull <repo>` and send
+commit that landed in between as though your branch had **reverted** it. `propose`
+stops rather than build such a branch — run `rig stack pull <repo>` and propose
 again.
 :::
 
@@ -463,18 +463,18 @@ outright if it holds changes of its own.
 | `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
 | `stack status` | Each repo's cursor against its upstream branch tip |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
-| `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
+| `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch |
 | `stack push [repo]` | Fast-forward a repo you own with this stackspace's commits, history intact; inferred when only one is yours |
 | `stack wire` | Write the build overlay so members resolve each other from source |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
-`send` and `push` answer different questions. `send` proposes one squashed
+`propose` and `push` answer different questions. `propose` proposes one squashed
 commit on a branch of your fork, which is what a reviewer of someone else's
 project wants. `push` fast-forwards a project's *own* branch with every commit
 that touched it, messages intact, which is the only sane thing to do to a
 repository that is yours — mark it `"owned": true` to enable it.
 
-All of it is in [`rig ui`](./verbs) too, under **▸ Stack** — `send` there picks
+All of it is in [`rig ui`](./verbs) too, under **▸ Stack** — `propose` there picks
 the repo from the manifest and prompts for a branch name, and `push` offers only
 the repos marked as yours. Tab completion offers
 your repo names for the verbs that take one.
@@ -484,7 +484,7 @@ your repo names for the verbs that take one.
 Importing, pulling and pushing are done by [josh](https://josh-project.dev), the
 git history-filtering engine — `josh-proxy` serves a repo's history through the
 filter for `init` and `pull`, and `josh-filter` runs the inverse locally for
-`push`. `send` needs neither.
+`push`. `propose` needs neither.
 
 Private upstreams work, and need no setup. Because the engine is what talks to
 upstream, it is the engine that has to authenticate: rig asks git for the
@@ -512,7 +512,7 @@ stops after. Pin a version per stackspace with the manifest's
   something you added in a fork but have not published yet compiles inside the
   stackspace and nowhere else. That is fine while the change is in flight and a
   trap if you forget it.
-- **A clean worktree is required** for `init`, `pull`, `send`, and `push`. An import
+- **A clean worktree is required** for `init`, `pull`, `propose`, and `push`. An import
   amends its merge commit and stages everything, so an unrelated edit sitting in
   the tree would be swallowed into it. The one exception is a dedicated
   `rig.stack.jsonc` on first import, since filling it in and re-running is the

@@ -184,7 +184,7 @@ func (m *stackManifest) branchPrefix(name string) string {
 	return stackDefaultBranchPrefix
 }
 
-// sendBranch resolves the name given to `send` into the branch to create.
+// sendBranch resolves the name given to `propose` into the branch to create.
 // A name that already carries the prefix is left alone, so re-sending by
 // pasting the full branch name back in doesn't stutter it.
 func (m *stackManifest) sendBranch(name, given string) string {
@@ -460,7 +460,7 @@ const stackManifestTemplate = `{
   // Specs are host/owner/name — no https://, no .git — because the same string
   // has to serve as a URL, an engine path, and a label.
 
-  // Branches "rig stack send" creates are named stack/<what-you-typed>, which
+  // Branches "rig stack propose" creates are named stack/<what-you-typed>, which
   // keeps them recognisable on a fork that also carries your own work. Override
   // it here, or set it to "" to send bare names. A repo may override it too.
   // "branchPrefix": "stack/",
@@ -473,7 +473,7 @@ const stackManifestTemplate = `{
     //   // Where pull requests eventually go. rig only ever reads from it.
     //   "upstream": "github.com/them/Some.Lib",
     //
-    //   // Your fork, where "rig stack send" pushes PR-ready branches.
+    //   // Your fork, where "rig stack propose" pushes PR-ready branches.
     //   // You need push access to it.
     //   "fork": "github.com/you/Some.Lib",
     //
@@ -484,7 +484,7 @@ const stackManifestTemplate = `{
     //
     //   // Which branch of upstream this directory follows. Optional, main by
     //   // default. This is NOT the branch send creates — you name that one per
-    //   // change:  rig stack send some-lib fix/the-thing
+    //   // change:  rig stack propose some-lib fix/the-thing
     //   "upstreamBranch": "main"
     //
     //   // Instead of a branch, pin to a fixed point and pull stops following

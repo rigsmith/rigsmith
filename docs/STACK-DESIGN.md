@@ -100,7 +100,7 @@ are just branches of one repo), stashes, bisect: all normal git.
 |---|---|
 | `rig stack init` | scaffold the manifest; for each repo, import upstream history under its prefix (proxy fetch through `:prefix=<child>`, merge, set cursor); scaffold the ecosystem overlay |
 | `rig stack pull [child]` | fetch upstream through the filter; `NothingToPull` if the cursor matches; else merge (strategy per child), update cursor. The CI-cronnable direction |
-| `rig stack send <child> <new-branch>` | commit `<child>/`'s tree onto that project's upstream tip and push it to the **fork** as `branchPrefix + <new-branch>` (default `stack/`): one commit, whose diff is exactly what the stackspace changed. The deliberate direction |
+| `rig stack propose <child> <new-branch>` | commit `<child>/`'s tree onto that project's upstream tip and push it to the **fork** as `branchPrefix + <new-branch>` (default `stack/`): one commit, whose diff is exactly what the stackspace changed. The deliberate direction |
 | `rig stack status` | per child: upstream commits since cursor, local commits touching the prefix not yet sent, cursor SHA |
 | `rig stack doctor` | engine installed + version matches pin, remotes reachable, manifest sane; `--fix` installs/updates josh (cliguard requires `--fix` on any doctor) |
 
@@ -138,7 +138,7 @@ invocation, never a daemon. `--local` cache under
 `~/.cache/rigsmith/josh/<host>/`, keyed by the upstream host rather than
 by the stackspace, so several stackspaces fusing the same forge share objects.
 
-### How `send` builds a branch, and why not with josh
+### How `propose` builds a branch, and why not with josh
 
 Reverse-filtering the stackspace's commits through josh is the obvious route, and
 it works: `-o base=<branch> -o create -o edit` produces correctly re-rooted
@@ -148,7 +148,7 @@ carries the stackspace's own history — its root commit, and its imports of
 
 What ships is simpler and needs no engine at all. A stackspace already stores
 each project as a subtree, so `HEAD:<child>` **is** the tree upstream wants,
-with the prefix already absent inside it. `send` therefore:
+with the prefix already absent inside it. `propose` therefore:
 
 1. resolves `HEAD:<child>` — the tree,
 2. asks the upstream for its branch tip and fetches that commit's objects,
@@ -214,12 +214,12 @@ it.
 
 ## Open questions
 
-1. ~~**Auth on `send`.**~~ *Settled — both halves, and differently.*
+1. ~~**Auth on `propose`.**~~ *Settled — both halves, and differently.*
 
-   `send` never touches the proxy: it builds the branch locally with
+   `propose` never touches the proxy: it builds the branch locally with
    `commit-tree` and pushes to the fork with plain git, so the user's existing
    remote credentials apply and nothing goes near josh. That is candidate (b),
-   and it fell out of the `send` design rather than needing a spike.
+   and it fell out of the `propose` design rather than needing a spike.
 
    Fetching is candidate (a), because it has to be: the proxy is what talks to
    upstream, so a private repo is only reachable if the proxy is given
@@ -242,7 +242,7 @@ it.
 
 ### The gap
 
-`send` builds **one commit** from a prefix's tree at HEAD, rooted on the upstream
+`propose` builds **one commit** from a prefix's tree at HEAD, rooted on the upstream
 tip, and pushes it to a fork:
 
 ```go
@@ -258,7 +258,7 @@ messages, the bisect points and the authorship go with it.
 Today that is survivable, because the layout most people are told to use keeps
 their app *outside* the stackspace, where it is pushed with ordinary git. If the
 stackspace becomes the one supported path — everything inside, one overlay, no
-topology question — then every commit to your own repo goes through `send`, and
+topology question — then every commit to your own repo goes through `propose`, and
 the squash stops being an acceptable trade.
 
 **So this verb is a prerequisite for standardising on the single-repo layout,
@@ -331,16 +331,16 @@ predicted.
   arrangement can look the same. A per-repo `"owned": true` states it; the
   target is that repo's `upstream` on its `upstreamBranch`, the same pair `pull`
   follows, so there is no second remote or branch to configure.
-- **The cursor must advance.** This is the difference from `send` that is easy to
-  miss. `send` pushes a branch nobody tracks, so the cursor is untouched. `push`
+- **The cursor must advance.** This is the difference from `propose` that is easy to
+  miss. `propose` pushes a branch nobody tracks, so the cursor is untouched. `push`
   moves the member's *tracked* branch — so immediately afterwards upstream has
   moved, `status` would say "upstream moved", and `pull` would try to merge in
   history the stackspace already contains. `push` therefore advances the cursor to
   what it just pushed, in the same commit that records it, exactly as `pull`
   does.
 - **Fast-forward only.** Refuse otherwise. A member whose upstream moved since
-  the cursor is the existing `send` guard and applies unchanged: pull first.
-- **`send` stays.** Two verbs, because they answer different questions — "propose
+  the cursor is the existing `propose` guard and applies unchanged: pull first.
+- **`propose` stays.** Two verbs, because they answer different questions — "propose
   this to someone" and "this is mine, take it". Collapsing them into one with a
   flag would hide which one you are getting.
 

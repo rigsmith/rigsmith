@@ -241,7 +241,7 @@ into **one history**, each under its own directory, so a change spans them in a
 single commit and the build compiles against source rather than packages.
 
 Nothing downstream learns about it. Each repo keeps its own remote, and work
-leaves one project at a time: `send` produces an ordinary pull request to a fork
+leaves one project at a time: `propose` produces an ordinary pull request to a fork
 you contribute to, and `push` fast-forwards a repo you own with its history.
 
 | Verb | What |
@@ -250,7 +250,7 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
 | `stack status` | Each repo's cursor against its upstream, and whether it holds work that has not left |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
-| `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
+| `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch |
 | `stack push [repo]` | Fast-forward a repo you own with this stackspace's commits, history intact; inferred when only one is yours |
 | `stack wire` | Write the build overlay so members resolve each other from source |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what's missing |
@@ -260,11 +260,11 @@ rig stack init                       # writes rig.stack.jsonc to fill in
 rig stack init                       # again: imports each repo it names
 rig stack status                     # who has moved upstream
 rig stack pull pty-core              # take that movement
-rig stack send pty-core read-timeout -m "Fix the read timeout"  # → stack/read-timeout
+rig stack propose pty-core read-timeout -m "Fix the read timeout"  # → stack/read-timeout
 ```
 
 Importing and pulling are done by [josh](https://josh-project.dev), the git
-history-filtering proxy; `send` uses no engine at all, since the directory's
+history-filtering proxy; `propose` uses no engine at all, since the directory's
 tree is already what upstream wants. rig fetches a verified `josh-proxy` on
 first use where one is published for your platform and pinned version, and
 builds it from source otherwise.

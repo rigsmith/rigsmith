@@ -488,7 +488,7 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		for _, it := range stackMenuItems() {
 			labels = append(labels, it.label)
 		}
-		want := "init,add,status,pull,send,push,wire,doctor"
+		want := "init,add,status,pull,propose,push,wire,doctor"
 		if got := strings.Join(labels, ","); got != want {
 			t.Fatalf("menu = %q, want %q", got, want)
 		}
@@ -958,8 +958,8 @@ func TestStackPushGuards(t *testing.T) {
 
 	t.Run("a repo not marked owned points at send instead", func(t *testing.T) {
 		err := run(t, `{"repos":{"lib":{"upstream":"github.com/acme/lib","fork":"github.com/you/lib"}},"lastSync":{"lib":"`+strings.Repeat("a", 40)+`"}}`, "lib")
-		if err == nil || !strings.Contains(err.Error(), "not marked as yours") || !strings.Contains(err.Error(), "stack send") {
-			t.Fatalf("got %v, want a refusal offering send", err)
+		if err == nil || !strings.Contains(err.Error(), "not marked as yours") || !strings.Contains(err.Error(), "stack propose") {
+			t.Fatalf("got %v, want a refusal offering propose", err)
 		}
 	})
 
@@ -1139,8 +1139,26 @@ func TestStackPushInfersTheOwnedRepo(t *testing.T) {
 
 	t.Run("none owned points at send", func(t *testing.T) {
 		err := run(t, `{"repos":{"lib":{"upstream":"github.com/acme/lib","fork":"github.com/you/lib"}}}`)
-		if err == nil || !strings.Contains(err.Error(), "stack send") {
-			t.Fatalf("got %v, want a refusal offering send", err)
+		if err == nil || !strings.Contains(err.Error(), "stack propose") {
+			t.Fatalf("got %v, want a refusal offering propose", err)
 		}
 	})
+}
+
+func TestStackProposeKeepsSendWorking(t *testing.T) {
+	// The verb was released as `send` one day before it became `propose`.
+	// Nobody's scripts break over a name.
+	cmd := newStackSendCmd()
+	if cmd.Name() != "propose" {
+		t.Fatalf("name = %q, want propose", cmd.Name())
+	}
+	var found bool
+	for _, a := range cmd.Aliases {
+		if a == "send" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("aliases = %v, want send among them", cmd.Aliases)
+	}
 }

@@ -38,7 +38,7 @@ func newStackCmd() *cobra.Command {
 			"  rig stack add [upstream]            add a repo and import it (asks if not given)\n" +
 			"  rig stack status                    cursor vs upstream, per repo\n" +
 			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
-			"  rig stack send <repo> <new-branch>  a branch on your fork, prefixed stack/\n" +
+			"  rig stack propose [repo] [branch]   a branch on your fork, prefixed stack/ (asks)\n" +
 			"  rig stack push [repo]               fast-forward a repo you own, history intact\n" +
 			"  rig stack wire                      write the build overlay for the members\n" +
 			"  rig stack doctor                    engine + manifest checks (--fix installs josh)",
@@ -258,11 +258,11 @@ func newStackStatusCmd() *cobra.Command {
 				// it gets thrown away, so report it whatever else is true.
 				switch {
 				case u.Working && u.Commits:
-					state += fmt.Sprintf("  ·  uncommitted and unsent changes — commit, then `rig stack send %s <branch>`", name)
+					state += fmt.Sprintf("  ·  uncommitted and unsent changes — commit, then `rig stack propose %s <branch>`", name)
 				case u.Working:
 					state += "  ·  uncommitted changes"
 				case u.Commits:
-					state += fmt.Sprintf("  ·  unsent changes — `rig stack send %s <branch>`", name)
+					state += fmt.Sprintf("  ·  unsent changes — `rig stack propose %s <branch>`", name)
 				case !u.Known && m.cursor(name) != "":
 					state += "  ·  cannot tell whether it has unsent changes (no import commit in this history)"
 				}
@@ -584,8 +584,9 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 func newStackSendCmd() *cobra.Command {
 	var message string
 	cmd := &cobra.Command{
-		Use:   "send <repo> <new-branch>",
-		Short: "Put a repo's stackspace changes on your fork as a PR-ready branch",
+		Use:     "propose [repo] [new-branch]",
+		Aliases: []string{"send"},
+		Short:   "Propose a repo's stackspace changes to its upstream, via your fork",
 		Long: "Takes this stackspace's version of <repo> and commits it on top of that\n" +
 			"project's upstream tip, as <new-branch> on your fork. The branch holds\n" +
 			"one commit whose diff is exactly what the stackspace changed, with none of\n" +
@@ -599,19 +600,47 @@ func newStackSendCmd() *cobra.Command {
 			"among your own work on the same fork: `send lib read-timeout` creates\n" +
 			"stack/read-timeout. Change it with the manifest's branchPrefix, or set\n" +
 			"that to \"\" for bare names.",
-		Args:              cobra.ExactArgs(2),
+		Args:              cobra.MaximumNArgs(2),
 		ValidArgsFunction: stackRepoCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			name := args[0]
 			m, _, repo, err := stackspace(ctx)
 			if err != nil {
 				return err
 			}
+			if err := m.requireRepos(); err != nil {
+				return err
+			}
+			name, typed := "", ""
+			if len(args) > 0 {
+				name = args[0]
+			}
+			if len(args) > 1 {
+				typed = args[1]
+			}
+			// Ask for what was not given. Only on a terminal: a script with a
+			// missing argument should be told so, not left waiting on a form
+			// nobody is there to answer.
+			if name == "" || typed == "" {
+				if !stdinStdoutTTY() {
+					missing := "a repo and a new branch name"
+					if name != "" {
+						missing = "a new branch name for " + name
+					}
+					return fmt.Errorf("propose needs %s — `rig stack propose <repo> <new-branch>`, or run it on a terminal to be asked", missing)
+				}
+				name, typed, err = stackAskSend(m, name, typed)
+				if err != nil {
+					return err
+				}
+				if typed == "" {
+					return nil // backed out
+				}
+			}
 			// The prefix keeps these branches recognisable on a fork that also
 			// carries your own work, and is applied here rather than at the call
 			// sites so the menu and the CLI cannot disagree about it.
-			branch := m.sendBranch(name, args[1])
+			branch := m.sendBranch(name, typed)
 			r := m.Repos[name]
 			if r == nil {
 				if err := m.requireRepos(); err != nil {
@@ -625,7 +654,7 @@ func newStackSendCmd() *cobra.Command {
 			if dirty, err := stackDirtyUnder(ctx, repo, name); err != nil {
 				return err
 			} else if dirty {
-				return fmt.Errorf("%s/ has uncommitted changes — commit them, or they will not be in what you send", name)
+				return fmt.Errorf("%s/ has uncommitted changes — commit them, or they will not be in what you propose", name)
 			}
 
 			// The prefix directory is this project as the stackspace has it, and
@@ -690,7 +719,7 @@ func newStackSendCmd() *cobra.Command {
 			if err := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), commit, "refs/heads/"+branch); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "sent %s to %s:%s — open the PR against %s\n",
+			fmt.Fprintf(cmd.OutOrStdout(), "proposed %s — pushed to %s:%s, open the PR against %s\n",
 				name, r.Fork, branch, r.Upstream)
 			return nil
 		},
@@ -741,7 +770,7 @@ func newStackPushCmd() *cobra.Command {
 					if err := m.requireRepos(); err != nil {
 						return err
 					}
-					return fmt.Errorf("no repo here is marked as yours — set \"owned\": true on the one you push to, or use `rig stack send <repo> <branch>` to propose a change to a fork")
+					return fmt.Errorf("no repo here is marked as yours — set \"owned\": true on the one you push to, or use `rig stack propose <repo> <branch>` to propose a change to a fork")
 				default:
 					return fmt.Errorf("several repos here are yours (%s) — name the one to push", strings.Join(owned, ", "))
 				}
@@ -756,7 +785,7 @@ func newStackPushCmd() *cobra.Command {
 				return fmt.Errorf("%s is not imported yet — run `rig stack init`", name)
 			case !r.Owned:
 				return fmt.Errorf("%s is not marked as yours — push fast-forwards a project's own branch, which is only right for a repo you own\n"+
-					"set \"owned\": true on %s in the manifest, or use `rig stack send %s <branch>` to propose the change to its fork instead",
+					"set \"owned\": true on %s in the manifest, or use `rig stack propose %s <branch>` to propose the change to its fork instead",
 					name, name, name)
 			case m.pin(name).pinned():
 				// A pin names a fixed point in history; there is no branch there to
@@ -1150,7 +1179,7 @@ func stackMenuItems() []menuItem {
 		{label: "add", desc: "add a repo to this stackspace and import it", cmd: newStackAddCmd()},
 		{label: "status", desc: "each repo's cursor against its upstream", cmd: newStackStatusCmd()},
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
-		{label: "send", desc: "a repo's changes to your fork as a new branch (pick, then name it)", cmd: newStackSendMenuCmd()},
+		{label: "propose", desc: "a repo's changes to its upstream, via a branch on your fork (asks)", cmd: newStackSendCmd()},
 		{label: "push", desc: "a repo you own back to its own branch, history intact (pick one)", cmd: newStackPushMenuCmd()},
 		{label: "wire", desc: "write the build overlay so members resolve each other from source", cmd: newStackWireCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
@@ -1184,74 +1213,62 @@ func stackCommonPrefix(m *stackManifest, names []string) string {
 	return first
 }
 
-// newStackSendMenuCmd is the menu's wrapper around the arg-taking `stack send`:
+// stackAskSend fills in whatever `propose` was not given:
 // the repo comes from the manifest as a pick, the branch from a prompt. Hidden —
 // it exists only for the menu, like the worktree new/open/rm wrappers.
-func newStackSendMenuCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:    "send",
-		Hidden: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			m, _, _, err := stackspace(cmd.Context())
-			if err != nil {
-				return err
+// stackAskSend fills in whatever `send` was not given. Extracted from what was
+// a second, hidden copy of the command that only the menu could reach: the same
+// form now answers a bare `rig stack propose`, so the picker is not a different
+// feature from the verb.
+//
+// Returns an empty branch when the user backs out, which the caller treats as
+// nothing to do rather than as a failure.
+func stackAskSend(m *stackManifest, name, branch string) (string, string, error) {
+	names := m.names()
+	fields := []huh.Field{}
+	if name == "" {
+		name = names[0]
+		if len(names) > 1 {
+			opts := make([]huh.Option[string], 0, len(names))
+			for _, n := range names {
+				opts = append(opts, huh.NewOption(fmt.Sprintf("%s  →  %s", n, m.Repos[n].Fork), n))
 			}
-			names := m.names()
-			if len(names) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("no repos in this stackspace"))
-				return nil
-			}
-
-			name := names[0]
-			var branch string
-			fields := []huh.Field{}
-			if len(names) > 1 {
-				opts := make([]huh.Option[string], 0, len(names))
-				for _, n := range names {
-					opts = append(opts, huh.NewOption(fmt.Sprintf("%s  →  %s", n, m.Repos[n].Fork), n))
-				}
-				fields = append(fields, huh.NewSelect[string]().
-					Title("Send which repo?").Options(opts...).Filtering(true).Value(&name))
-			}
-			// The prompt cannot be skipped by reading the manifest: this branch is
-			// named per change, and the manifest's upstreamBranch is a different
-			// thing entirely — the branch of upstream the directory follows.
-			//
-			// With one repo the destination fork is known now and worth naming;
-			// with several it is only decided by the select above, which has not
-			// run yet, so stay general rather than name the wrong one.
-			where := "your fork"
-			if len(names) == 1 {
-				where = m.Repos[names[0]].Fork
-			}
-			// Show the prefix rather than let it surprise them after the fact.
-			// It is uniform across repos unless a repo overrides it, so only
-			// promise a specific one when every repo here agrees.
-			desc := fmt.Sprintf("created on %s, holding one commit", where)
-			if prefix := stackCommonPrefix(m, names); prefix != "" {
-				desc = fmt.Sprintf("created on %s as %s<name> — e.g. read-timeout", where, prefix)
-			}
-			fields = append(fields, huh.NewInput().Title("New branch on your fork").
-				Description(desc).
-				Placeholder("read-timeout").
-				Value(&branch))
-
-			if err := huh.NewForm(huh.NewGroup(fields...)).
-				WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme()).Run(); err != nil {
-				if errors.Is(err, huh.ErrUserAborted) {
-					return nil
-				}
-				return err
-			}
-			if branch = strings.TrimSpace(branch); branch == "" {
-				return nil
-			}
-
-			sub := newStackSendCmd()
-			sub.SetContext(cmd.Context())
-			sub.SetOut(cmd.OutOrStdout())
-			sub.SetErr(cmd.ErrOrStderr())
-			return sub.RunE(sub, []string{name, branch})
-		},
+			fields = append(fields, huh.NewSelect[string]().
+				Title("Send which repo?").Options(opts...).Filtering(true).Value(&name))
+		}
 	}
+	if branch == "" {
+		// The prompt cannot be skipped by reading the manifest: this branch is
+		// named per change, and the manifest's upstreamBranch is a different
+		// thing entirely — the branch of upstream the directory follows.
+		//
+		// Name the destination fork when it is already settled; when a select
+		// above has yet to decide it, stay general rather than name the wrong one.
+		where := "your fork"
+		if len(fields) == 0 && m.Repos[name] != nil {
+			where = m.Repos[name].Fork
+		}
+		// Show the prefix rather than let it surprise them after the fact. It is
+		// uniform unless a repo overrides it, so only promise a specific one when
+		// every repo here agrees.
+		desc := fmt.Sprintf("created on %s, holding one commit", where)
+		if prefix := stackCommonPrefix(m, names); prefix != "" {
+			desc = fmt.Sprintf("created on %s as %s<name> — e.g. read-timeout", where, prefix)
+		}
+		fields = append(fields, huh.NewInput().Title("New branch on your fork").
+			Description(desc).
+			Placeholder("read-timeout").
+			Value(&branch))
+	}
+	if len(fields) == 0 {
+		return name, branch, nil
+	}
+	if err := huh.NewForm(huh.NewGroup(fields...)).
+		WithKeyMap(huhEscKeyMap()).WithTheme(rigTheme()).Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return name, "", nil
+		}
+		return name, "", err
+	}
+	return name, strings.TrimSpace(branch), nil
 }
