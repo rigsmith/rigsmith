@@ -220,7 +220,8 @@ func newStackStatusCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			for _, name := range m.names() {
 				r := m.Repos[name]
-				tip, err := repo.LsRemote(ctx, stackRemoteURL(r.Upstream), "refs/heads/"+m.branch(name))
+				pin := m.pin(name)
+				tip, err := stackResolveUpstream(ctx, repo, stackRemoteURL(r.Upstream), pin)
 				if err != nil {
 					fmt.Fprintf(out, "%-24s %s (upstream unreachable: %v)\n", name, short(m.cursor(name)), err)
 					continue
@@ -231,6 +232,10 @@ func newStackStatusCmd() *cobra.Command {
 					state = "not imported — run `rig stack init`"
 				case tip != m.cursor(name):
 					state = fmt.Sprintf("upstream moved (%s) — `rig stack pull %s`", short(tip), name)
+				case pin.pinned():
+					// A pin cannot drift, so "up to date" would understate it: the
+					// reader needs to know this prefix will never move on its own.
+					state = "pinned to " + pin.describe()
 				}
 				fmt.Fprintf(out, "%-24s %-10s %s\n", name, short(m.cursor(name)), state)
 			}
@@ -269,7 +274,7 @@ func newStackPullCmd() *cobra.Command {
 			// no-op pull must not fail for want of a tool it never uses.
 			moved := make([]string, 0, len(names))
 			for _, name := range names {
-				tip, err := repo.LsRemote(ctx, stackRemoteURL(m.Repos[name].Upstream), "refs/heads/"+m.branch(name))
+				tip, err := stackResolveUpstream(ctx, repo, stackRemoteURL(m.Repos[name].Upstream), m.pin(name))
 				if err != nil {
 					return fmt.Errorf("pulling %s: %w", name, err)
 				}
@@ -297,13 +302,41 @@ func newStackPullCmd() *cobra.Command {
 	return cmd
 }
 
+// stackResolveUpstream turns a prefix's pin into the upstream commit to import.
+// A branch or tag is looked up on the remote; a commit is already the answer,
+// which is also why a pinned prefix needs no network round trip to know it has
+// nothing to pull.
+func stackResolveUpstream(ctx context.Context, repo *gitrepo.Repo, url string, pin stackPin) (string, error) {
+	switch pin.Kind {
+	case "commit":
+		return pin.Value, nil
+	case "tag":
+		ref := "refs/tags/" + pin.Value
+		// An annotated tag resolves to a tag object rather than a commit, and its
+		// peeled entry is the commit. josh serves commits, and the cursor records
+		// one, so the peeled value wins wherever it exists.
+		found, err := repo.LsRemoteRefs(ctx, url, ref, ref+"^{}")
+		if err != nil {
+			return "", err
+		}
+		for _, k := range []string{ref + "^{}", ref} {
+			if sha := found[k]; sha != "" {
+				return sha, nil
+			}
+		}
+		return "", fmt.Errorf("ls-remote %s: tag %q not found", url, pin.Value)
+	default:
+		return repo.LsRemote(ctx, url, "refs/heads/"+pin.Value)
+	}
+}
+
 // stackPullOne imports or updates one repo's prefix: probe upstream's tip, stop at
 // the cursor (idempotent, the josh-sync NothingToPull check), else fetch that
 // exact SHA through the filter, merge, and commit the moved cursor with it.
 func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, bin string, src *cfgfind.Source, m *stackManifest, name string, initial bool) error {
 	r := m.Repos[name]
 	out := cmd.OutOrStdout()
-	tip, err := repo.LsRemote(ctx, stackRemoteURL(r.Upstream), "refs/heads/"+m.branch(name))
+	tip, err := stackResolveUpstream(ctx, repo, stackRemoteURL(r.Upstream), m.pin(name))
 	if err != nil {
 		return err
 	}
@@ -422,7 +455,7 @@ func newStackSendCmd() *cobra.Command {
 				return fmt.Errorf("%s has no content at HEAD", name)
 			}
 			upstreamURL := stackRemoteURL(r.Upstream)
-			tip, err := repo.LsRemote(ctx, upstreamURL, "refs/heads/"+m.branch(name))
+			tip, err := stackResolveUpstream(ctx, repo, upstreamURL, m.pin(name))
 			if err != nil {
 				return err
 			}

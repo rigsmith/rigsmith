@@ -489,3 +489,119 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		}
 	})
 }
+
+func TestStackPin(t *testing.T) {
+	pin := func(r *stackRepo) stackPin {
+		return (&stackManifest{Repos: map[string]*stackRepo{"x": r}}).pin("x")
+	}
+
+	t.Run("a branch is what a prefix follows by default", func(t *testing.T) {
+		if got := pin(&stackRepo{}); got.Kind != "branch" || got.Value != "main" || got.pinned() {
+			t.Fatalf("pin = %+v, want the main branch, unpinned", got)
+		}
+	})
+
+	t.Run("a tag pins it", func(t *testing.T) {
+		got := pin(&stackRepo{UpstreamTag: "v1.4.2"})
+		if got.Kind != "tag" || got.Value != "v1.4.2" || !got.pinned() {
+			t.Fatalf("pin = %+v, want a pinned tag", got)
+		}
+		if got.describe() != "tag v1.4.2" {
+			t.Fatalf("describe = %q", got.describe())
+		}
+	})
+
+	t.Run("a commit pins it", func(t *testing.T) {
+		sha := strings.Repeat("a", 40)
+		if got := pin(&stackRepo{UpstreamCommit: sha}); got.Kind != "commit" || !got.pinned() {
+			t.Fatalf("pin = %+v, want a pinned commit", got)
+		}
+	})
+
+	t.Run("two upstream points are refused", func(t *testing.T) {
+		for _, r := range []*stackRepo{
+			{Upstream: "h/o/n", Fork: "h/me/n", UpstreamBranch: "main", UpstreamTag: "v1"},
+			{Upstream: "h/o/n", Fork: "h/me/n", UpstreamTag: "v1", UpstreamCommit: strings.Repeat("a", 40)},
+			{Upstream: "h/o/n", Fork: "h/me/n", Branch: "old", UpstreamCommit: strings.Repeat("a", 40)},
+		} {
+			m := &stackManifest{Repos: map[string]*stackRepo{"x": r}}
+			if err := m.validate(); err == nil || !strings.Contains(err.Error(), "one upstream point") {
+				t.Errorf("expected a refusal naming both keys, got %v", err)
+			}
+		}
+	})
+
+	t.Run("an abbreviated commit is refused where it is written", func(t *testing.T) {
+		m := &stackManifest{Repos: map[string]*stackRepo{
+			"x": {Upstream: "h/o/n", Fork: "h/me/n", UpstreamCommit: "abc1234"},
+		}}
+		// Resolving an abbreviation needs the object, which is the very thing the
+		// pin decides whether to fetch — so it has to be rejected up front.
+		if err := m.validate(); err == nil || !strings.Contains(err.Error(), "40-character") {
+			t.Fatalf("expected a refusal naming the length, got %v", err)
+		}
+	})
+}
+
+func TestStackResolveUpstream(t *testing.T) {
+	ctx := context.Background()
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		c := exec.CommandContext(ctx, "git", args...)
+		c.Dir = dir
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	upstream := t.TempDir()
+	git(upstream, "init", "-q", "-b", "main", upstream)
+	os.WriteFile(filepath.Join(upstream, "a.txt"), []byte("one"), 0o644)
+	git(upstream, "add", "-A")
+	git(upstream, "commit", "-qm", "one")
+	first := git(upstream, "rev-parse", "HEAD")
+	git(upstream, "tag", "light")                             // lightweight: points at the commit
+	git(upstream, "tag", "-a", "heavy", "-m", "an annotated") // annotated: points at a tag object
+	os.WriteFile(filepath.Join(upstream, "a.txt"), []byte("two"), 0o644)
+	git(upstream, "commit", "-qam", "two")
+	tip := git(upstream, "rev-parse", "HEAD")
+
+	here, err := gitrepo.Open(ctx, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		pin  stackPin
+		want string
+	}{
+		{"a branch resolves to its tip", stackPin{Kind: "branch", Value: "main"}, tip},
+		{"a lightweight tag resolves to its commit", stackPin{Kind: "tag", Value: "light"}, first},
+		// The peeled entry is the point: an annotated tag's own SHA is a tag
+		// object, which josh cannot serve and the cursor must never record.
+		{"an annotated tag is peeled to its commit", stackPin{Kind: "tag", Value: "heavy"}, first},
+		{"a commit is already the answer", stackPin{Kind: "commit", Value: first}, first},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := stackResolveUpstream(ctx, here, upstream, tc.pin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %s, want %s", short(got), short(tc.want))
+			}
+		})
+	}
+
+	t.Run("a tag that does not exist says so", func(t *testing.T) {
+		_, err := stackResolveUpstream(ctx, here, upstream, stackPin{Kind: "tag", Value: "nope"})
+		if err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("got %v, want a not-found error", err)
+		}
+	})
+}

@@ -307,6 +307,26 @@ func (r *Repo) LsRemote(ctx context.Context, remote, ref string) (string, error)
 	return sha, nil
 }
 
+// LsRemoteRefs resolves several refs on a remote in one round trip, returning
+// ref name -> SHA for those that exist. A ref that is absent is simply missing
+// from the map rather than an error: callers use this to ask which of a few
+// candidate forms a name takes — a tag and its peeled commit, say — where "not
+// this one" is the useful answer.
+func (r *Repo) LsRemoteRefs(ctx context.Context, remote string, refs ...string) (map[string]string, error) {
+	out, err := runGit(ctx, r.Dir, append([]string{"ls-remote", remote}, refs...)...)
+	if err != nil {
+		return nil, err
+	}
+	found := make(map[string]string, len(refs))
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		sha, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if ok && sha != "" {
+			found[ref] = sha
+		}
+	}
+	return found, nil
+}
+
 // lsRemoteOpt is LsRemote for callers that treat a missing ref as a fact rather
 // than a failure — creating it, say — and still need a real error to surface
 // when the remote itself is unreachable.
