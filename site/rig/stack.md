@@ -432,7 +432,10 @@ Private upstreams work, and need no setup. Because the engine is what talks to
 upstream, it is the engine that has to authenticate: rig asks git for the
 credential you already have for that host — the keychain, the GitHub CLI's
 helper, whatever `git credential fill` answers with — and hands it over for that
-one fetch. Nothing is stored and nothing is prompted for.
+one fetch. Nothing new is stored, and rig asks for nothing of its own: terminal
+prompting is off for the lookup, so a host nothing has a credential for is
+simply answered "no". An askpass program you configured yourself can still
+appear, exactly as it would for a direct `git fetch` of the same host.
 
 rig owns the binaries so you do not have to. `rig stack doctor --fix` fetches
 verified builds for your platform — built and published by
