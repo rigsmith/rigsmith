@@ -44,10 +44,39 @@ type stackRepo struct {
 	// Branch is the name this key had before that ambiguity was worth fixing.
 	// Still read, never written.
 	Branch string `json:"branch,omitempty"`
+	// UpstreamTag and UpstreamCommit pin this prefix to a fixed point in
+	// upstream's history instead of following a branch. Either one makes `pull`
+	// a no-op until the pin itself is edited, which is the whole intent: a
+	// library your consumer depends on at an old release has to be fused at
+	// *that* release, not at a tip whose API has moved on.
+	//
+	// Separate keys rather than one that guesses, because a tag and a branch can
+	// share a name and git's own disambiguation order surprises people. Exactly
+	// one of the three may be set.
+	UpstreamTag    string `json:"upstreamTag,omitempty"`
+	UpstreamCommit string `json:"upstreamCommit,omitempty"`
 	// BranchPrefix overrides the workspace-wide prefix for this project — for the
 	// upstream whose contribution guide asks for something of its own. A pointer
 	// so that "" is a real answer (no prefix here) rather than "unset".
 	BranchPrefix *string `json:"branchPrefix,omitempty"`
+}
+
+// stackPin is what a prefix tracks upstream. A branch moves and `pull` follows
+// it; a tag or commit is fixed and `pull` has nothing to do until the manifest
+// says otherwise.
+type stackPin struct {
+	Kind  string // "branch", "tag" or "commit"
+	Value string
+}
+
+func (p stackPin) pinned() bool { return p.Kind != "branch" }
+
+// describe is how a pin reads in output, kept short enough for a status column.
+func (p stackPin) describe() string {
+	if p.Kind == "branch" {
+		return p.Value
+	}
+	return p.Kind + " " + p.Value
 }
 
 type stackManifest struct {
@@ -64,6 +93,12 @@ type stackManifest struct {
 	// machine-written — pulls rewrite this one value while the jsonc editor
 	// leaves the human-authored entries (and their comments) untouched.
 	LastSync map[string]string `json:"lastSync,omitempty"`
+	// LastPin records, for a pinned prefix, which pin its cursor was resolved
+	// under. Without it a tag and a repin are indistinguishable: both present as
+	// "the resolved SHA differs from the cursor", so an upstream that force-moves
+	// a tag would drag the workspace along, which is the one thing a pin is for.
+	// Machine-written, like LastSync, and absent for a prefix following a branch.
+	LastPin map[string]string `json:"lastPin,omitempty"`
 }
 
 func (m *stackManifest) cursor(name string) string { return m.LastSync[name] }
@@ -80,6 +115,20 @@ func (m *stackManifest) branch(name string) string {
 		return r.Branch
 	}
 	return "main"
+}
+
+// pin is what this prefix follows upstream: its tag or commit if either is set,
+// otherwise the branch.
+func (m *stackManifest) pin(name string) stackPin {
+	if r := m.Repos[name]; r != nil {
+		switch {
+		case r.UpstreamTag != "":
+			return stackPin{Kind: "tag", Value: r.UpstreamTag}
+		case r.UpstreamCommit != "":
+			return stackPin{Kind: "commit", Value: r.UpstreamCommit}
+		}
+	}
+	return stackPin{Kind: "branch", Value: m.branch(name)}
 }
 
 // branchPrefix is what `send` prepends for this project: the repo's own setting
@@ -146,6 +195,26 @@ func (m *stackManifest) validate() error {
 		if r.UpstreamBranch != "" && r.Branch != "" && r.UpstreamBranch != r.Branch {
 			return fmt.Errorf("stack repo %q sets upstreamBranch %q and branch %q — keep upstreamBranch and drop branch, which is the old name for it",
 				name, r.UpstreamBranch, r.Branch)
+		}
+		// One upstream point per prefix. Two would mean guessing which wins, and
+		// the guess would be invisible in the fused history afterwards.
+		set := []string{}
+		if r.UpstreamBranch != "" || r.Branch != "" {
+			set = append(set, "upstreamBranch")
+		}
+		if r.UpstreamTag != "" {
+			set = append(set, "upstreamTag")
+		}
+		if r.UpstreamCommit != "" {
+			set = append(set, "upstreamCommit")
+		}
+		if len(set) > 1 {
+			return fmt.Errorf("stack repo %q sets %s — a prefix follows one upstream point, so keep the branch to track it or the tag/commit to pin it",
+				name, strings.Join(set, " and "))
+		}
+		if c := r.UpstreamCommit; c != "" && !stackIsSHA(c) {
+			return fmt.Errorf("stack repo %q has upstreamCommit %q — that must be a full 40-character commit SHA, since an abbreviation cannot be resolved without fetching the repo first",
+				name, c)
 		}
 		for _, spec := range []string{r.Upstream, r.Fork} {
 			// A paste is normalised into host/owner/name before this runs, so
@@ -254,17 +323,35 @@ func stackSetCursor(src *cfgfind.Source, m *stackManifest, prefix, sha string) e
 		m.LastSync = map[string]string{}
 	}
 	m.LastSync[prefix] = sha
-	raw, err := json.Marshal(m.LastSync)
-	if err != nil {
-		return err
+	if m.LastPin == nil {
+		m.LastPin = map[string]string{}
 	}
-	path := []string{"lastSync"}
-	if src.Path == "" { // embedded key in .rig.json
-		path = []string{"stack", "lastSync"}
+	// The pin this cursor was resolved under, so a later run can tell a repin
+	// from a tag that moved underneath it. A prefix following a branch records
+	// nothing, and drops whatever it recorded when it was pinned.
+	if pin := m.pin(prefix); pin.pinned() {
+		m.LastPin[prefix] = pin.describe()
+	} else {
+		delete(m.LastPin, prefix)
 	}
+
 	w := confkit.Writer{SchemaURL: stackSchemaURL}
-	if !w.Set(src.File, path, string(raw)) {
-		return fmt.Errorf("could not update %s in %s", strings.Join(path, "."), src.File)
+	for _, kv := range []struct {
+		key   string
+		value map[string]string
+	}{{"lastSync", m.LastSync}, {"lastPin", m.LastPin}} {
+		key, value := kv.key, kv.value
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		path := []string{key}
+		if src.Path == "" { // embedded key in .rig.json
+			path = []string{"stack", key}
+		}
+		if !w.Set(src.File, path, string(raw)) {
+			return fmt.Errorf("could not update %s in %s", strings.Join(path, "."), src.File)
+		}
 	}
 	return nil
 }
@@ -357,6 +444,12 @@ const stackManifestTemplate = `{
     //   // default. This is NOT the branch send creates — you name that one per
     //   // change:  rig stack send some-lib fix/the-thing
     //   "upstreamBranch": "main"
+    //
+    //   // Instead of a branch, pin to a fixed point and pull stops following
+    //   // upstream until you edit it. Use this when what depends on this
+    //   // library needs an older release than upstream's tip:
+    //   //   "upstreamTag": "v1.4.2"
+    //   //   "upstreamCommit": "<full 40-character sha>"
     // },
 
     // "another-lib": { "upstream": "...", "fork": "..." }
@@ -373,6 +466,21 @@ func stackWriteTemplate(root string) (string, error) {
 		return p, fmt.Errorf("%s already exists", p)
 	}
 	return p, os.WriteFile(p, []byte(stackManifestTemplate), 0o644)
+}
+
+// stackIsSHA reports whether s is a full commit id. Abbreviations are rejected
+// where they appear: resolving one needs the object, which is the thing the pin
+// exists to decide whether to fetch.
+func stackIsSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 // stackNormalizeSpec reduces what people actually paste — the URL in the browser

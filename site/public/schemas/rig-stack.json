@@ -62,6 +62,15 @@
             "type": "string",
             "description": "Branch of `upstream` this directory follows — what `pull` takes and what `send` roots on. Defaults to main. Not the branch `send` creates; you name that per change."
           },
+          "upstreamTag": {
+            "type": "string",
+            "description": "Pins this directory to a tag of `upstream` instead of following a branch. `pull` has nothing to do until you edit the pin. Use it when your consumer depends on an older release than upstream's tip."
+          },
+          "upstreamCommit": {
+            "type": "string",
+            "description": "Pins this directory to an exact commit of `upstream`. Must be the full 40-character SHA — an abbreviation cannot be resolved without fetching the repo first.",
+            "pattern": "^[0-9a-f]{40}$"
+          },
           "branch": {
             "type": "string",
             "description": "Deprecated name for upstreamBranch. Still read; prefer upstreamBranch, which cannot be confused with the branch `send` creates."
@@ -98,7 +107,41 @@
           "upstream",
           "fork"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "upstreamBranch",
+                "upstreamTag"
+              ]
+            },
+            {
+              "required": [
+                "upstreamBranch",
+                "upstreamCommit"
+              ]
+            },
+            {
+              "required": [
+                "upstreamTag",
+                "upstreamCommit"
+              ]
+            },
+            {
+              "required": [
+                "branch",
+                "upstreamTag"
+              ]
+            },
+            {
+              "required": [
+                "branch",
+                "upstreamCommit"
+              ]
+            }
+          ]
+        }
       }
     },
     "lastSync": {
@@ -108,6 +151,13 @@
         "type": "string",
         "pattern": "^[0-9a-f]{40}$",
         "description": "Full 40-character commit SHA. An abbreviated one never matches the remote tip."
+      }
+    },
+    "lastPin": {
+      "type": "object",
+      "description": "Written by import and pull, not by hand: which pin each repo's cursor was resolved under, so a tag that upstream moves can be told apart from one you repinned.",
+      "additionalProperties": {
+        "type": "string"
       }
     }
   },

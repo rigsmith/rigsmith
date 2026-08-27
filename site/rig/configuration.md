@@ -223,6 +223,41 @@ that would collide with `rig stack send <repo> <new-branch>`, where the branch
 is one you are creating on your fork for a single change. A manifest written
 with the older `branch` key is still read.
 
+Instead of a branch, a directory can be **pinned** with `upstreamTag` or
+`upstreamCommit`. `pull` then has nothing to do until you edit the pin, and
+`status` says `pinned to tag v1.4.2` rather than `up to date`, because the two
+mean very different things. A tag is resolved once, when the pin is
+first taken, and the result is recorded in `lastPin` beside the cursor. An
+upstream that later force-moves or re-cuts that tag does not move your
+workspace; editing the pin does, because that changes what was recorded. To
+follow a moved tag deliberately, `rig stack pull --repin`.
+
+Repinning works in both directions. Moving a project to an *older* revision
+cannot be done by merging, since the target is already an ancestor of what the
+workspace holds, so the directory is replaced with the pinned revision instead
+and `pull` reports it as `moved`. That discards what is under it, so it is
+refused when the directory holds changes of its own: send or revert them first.
+
+Reach for a pin when what depends on the library needs an older release than
+upstream's tip. Fusing at the tip in that situation gives you sources that no
+longer compile against your consumer — the API it uses has moved — and the fix
+is not the build overlay, it is fusing the right point in the first place.
+
+```jsonc
+"some-lib": {
+  "upstream": "github.com/acme/some-lib",
+  "fork": "github.com/you/some-lib",
+  "upstreamTag": "v1.4.2"          // or "upstreamCommit": "<full 40-char sha>"
+}
+```
+
+Exactly one of `upstreamBranch`, `upstreamTag` and `upstreamCommit` may be set;
+two would mean guessing which wins, and the guess would be invisible in the
+fused history afterwards. `upstreamCommit` must be the full 40-character SHA,
+since resolving an abbreviation requires fetching the repository — which is the
+thing the pin exists to decide. Annotated tags are peeled to the commit they
+point at.
+
 `lastSync` is a separate map rather than a field per repo because it is machine
 written: an import or pull rewrites that one value while the entries you wrote,
 and their comments, stay untouched. The values are full 40-character SHAs — an

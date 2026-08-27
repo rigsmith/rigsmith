@@ -595,3 +595,182 @@ func TestStackNormalizeSpec(t *testing.T) {
 		}
 	})
 }
+
+func TestStackPin(t *testing.T) {
+	pin := func(r *stackRepo) stackPin {
+		return (&stackManifest{Repos: map[string]*stackRepo{"x": r}}).pin("x")
+	}
+
+	t.Run("a branch is what a prefix follows by default", func(t *testing.T) {
+		if got := pin(&stackRepo{}); got.Kind != "branch" || got.Value != "main" || got.pinned() {
+			t.Fatalf("pin = %+v, want the main branch, unpinned", got)
+		}
+	})
+
+	t.Run("a tag pins it", func(t *testing.T) {
+		got := pin(&stackRepo{UpstreamTag: "v1.4.2"})
+		if got.Kind != "tag" || got.Value != "v1.4.2" || !got.pinned() {
+			t.Fatalf("pin = %+v, want a pinned tag", got)
+		}
+		if got.describe() != "tag v1.4.2" {
+			t.Fatalf("describe = %q", got.describe())
+		}
+	})
+
+	t.Run("a commit pins it", func(t *testing.T) {
+		sha := strings.Repeat("a", 40)
+		if got := pin(&stackRepo{UpstreamCommit: sha}); got.Kind != "commit" || !got.pinned() {
+			t.Fatalf("pin = %+v, want a pinned commit", got)
+		}
+	})
+
+	t.Run("two upstream points are refused", func(t *testing.T) {
+		for _, r := range []*stackRepo{
+			{Upstream: "h/o/n", Fork: "h/me/n", UpstreamBranch: "main", UpstreamTag: "v1"},
+			{Upstream: "h/o/n", Fork: "h/me/n", UpstreamTag: "v1", UpstreamCommit: strings.Repeat("a", 40)},
+			{Upstream: "h/o/n", Fork: "h/me/n", Branch: "old", UpstreamCommit: strings.Repeat("a", 40)},
+		} {
+			m := &stackManifest{Repos: map[string]*stackRepo{"x": r}}
+			if err := m.validate(); err == nil || !strings.Contains(err.Error(), "one upstream point") {
+				t.Errorf("expected a refusal naming both keys, got %v", err)
+			}
+		}
+	})
+
+	t.Run("an abbreviated commit is refused where it is written", func(t *testing.T) {
+		m := &stackManifest{Repos: map[string]*stackRepo{
+			"x": {Upstream: "h/o/n", Fork: "h/me/n", UpstreamCommit: "abc1234"},
+		}}
+		// Resolving an abbreviation needs the object, which is the very thing the
+		// pin decides whether to fetch — so it has to be rejected up front.
+		if err := m.validate(); err == nil || !strings.Contains(err.Error(), "40-character") {
+			t.Fatalf("expected a refusal naming the length, got %v", err)
+		}
+	})
+}
+
+func TestStackResolveUpstream(t *testing.T) {
+	ctx := context.Background()
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		c := exec.CommandContext(ctx, "git", args...)
+		c.Dir = dir
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	upstream := t.TempDir()
+	git(upstream, "init", "-q", "-b", "main", upstream)
+	os.WriteFile(filepath.Join(upstream, "a.txt"), []byte("one"), 0o644)
+	git(upstream, "add", "-A")
+	git(upstream, "commit", "-qm", "one")
+	first := git(upstream, "rev-parse", "HEAD")
+	git(upstream, "tag", "light")                             // lightweight: points at the commit
+	git(upstream, "tag", "-a", "heavy", "-m", "an annotated") // annotated: points at a tag object
+	os.WriteFile(filepath.Join(upstream, "a.txt"), []byte("two"), 0o644)
+	git(upstream, "commit", "-qam", "two")
+	tip := git(upstream, "rev-parse", "HEAD")
+
+	here, err := gitrepo.Open(ctx, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		pin  stackPin
+		want string
+	}{
+		{"a branch resolves to its tip", stackPin{Kind: "branch", Value: "main"}, tip},
+		{"a lightweight tag resolves to its commit", stackPin{Kind: "tag", Value: "light"}, first},
+		// The peeled entry is the point: an annotated tag's own SHA is a tag
+		// object, which josh cannot serve and the cursor must never record.
+		{"an annotated tag is peeled to its commit", stackPin{Kind: "tag", Value: "heavy"}, first},
+		{"a commit is already the answer", stackPin{Kind: "commit", Value: first}, first},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := stackResolveUpstream(ctx, here, upstream, tc.pin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %s, want %s", short(got), short(tc.want))
+			}
+		})
+	}
+
+	t.Run("a tag that does not exist says so", func(t *testing.T) {
+		_, err := stackResolveUpstream(ctx, here, upstream, stackPin{Kind: "tag", Value: "nope"})
+		if err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("got %v, want a not-found error", err)
+		}
+	})
+}
+
+func TestStackPinnedCursor(t *testing.T) {
+	const sha = "6a78155eee4a0100c5cfb664dd7fc2782cd1c24c"
+	manifest := func(r *stackRepo, pin string) *stackManifest {
+		m := &stackManifest{
+			Repos:    map[string]*stackRepo{"lib": r},
+			LastSync: map[string]string{"lib": sha},
+		}
+		if pin != "" {
+			m.LastPin = map[string]string{"lib": pin}
+		}
+		return m
+	}
+
+	t.Run("a settled pin is not resolved again", func(t *testing.T) {
+		// The point of the whole thing: upstream may have moved the tag since,
+		// and the workspace must not move with it.
+		got, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamTag: "v1"}, "tag v1"), "lib")
+		if !ok || got != sha {
+			t.Fatalf("got (%q, %v), want the recorded cursor", got, ok)
+		}
+	})
+
+	t.Run("editing the pin resolves again", func(t *testing.T) {
+		// The recorded selector no longer matches, which is how a deliberate
+		// repin is told apart from a tag that moved underneath one.
+		if _, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamTag: "v2"}, "tag v1"), "lib"); ok {
+			t.Fatal("reused a cursor resolved under a different pin")
+		}
+	})
+
+	t.Run("a branch always resolves", func(t *testing.T) {
+		if _, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamBranch: "main"}, ""), "lib"); ok {
+			t.Fatal("a branch is meant to move")
+		}
+	})
+
+	t.Run("a pin with nothing recorded resolves", func(t *testing.T) {
+		// A manifest written before this existed, or a first import.
+		if _, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamTag: "v1"}, ""), "lib"); ok {
+			t.Fatal("reused a cursor with no recorded pin")
+		}
+	})
+
+	t.Run("an unimported pin resolves", func(t *testing.T) {
+		m := manifest(&stackRepo{UpstreamTag: "v1"}, "tag v1")
+		m.LastSync = nil
+		if _, ok := stackPinnedCursor(m, "lib"); ok {
+			t.Fatal("reused a cursor that does not exist")
+		}
+	})
+
+	t.Run("a commit pin records too, so its selector can change", func(t *testing.T) {
+		other := strings.Repeat("b", 40)
+		got, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamCommit: sha}, "commit "+sha), "lib")
+		if !ok || got != sha {
+			t.Fatalf("got (%q, %v), want the recorded cursor", got, ok)
+		}
+		if _, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamCommit: other}, "commit "+sha), "lib"); ok {
+			t.Fatal("reused a cursor after the commit pin changed")
+		}
+	})
+}

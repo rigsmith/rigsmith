@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -219,8 +220,8 @@ func newStackStatusCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			for _, name := range m.names() {
-				r := m.Repos[name]
-				tip, err := repo.LsRemote(ctx, stackRemoteURL(r.Upstream), "refs/heads/"+m.branch(name))
+				pin := m.pin(name)
+				tip, err := stackUpstreamTip(ctx, repo, m, name)
 				if err != nil {
 					fmt.Fprintf(out, "%-24s %s (upstream unreachable: %v)\n", name, short(m.cursor(name)), err)
 					continue
@@ -231,6 +232,10 @@ func newStackStatusCmd() *cobra.Command {
 					state = "not imported — run `rig stack init`"
 				case tip != m.cursor(name):
 					state = fmt.Sprintf("upstream moved (%s) — `rig stack pull %s`", short(tip), name)
+				case pin.pinned():
+					// A pin cannot drift, so "up to date" would understate it: the
+					// reader needs to know this prefix will never move on its own.
+					state = "pinned to " + pin.describe()
 				}
 				fmt.Fprintf(out, "%-24s %-10s %s\n", name, short(m.cursor(name)), state)
 			}
@@ -241,6 +246,7 @@ func newStackStatusCmd() *cobra.Command {
 }
 
 func newStackPullCmd() *cobra.Command {
+	var repin bool
 	cmd := &cobra.Command{
 		Use:               "pull [repo]",
 		Short:             "Merge new upstream commits into a repo's prefix (all repos by default)",
@@ -251,6 +257,12 @@ func newStackPullCmd() *cobra.Command {
 			m, src, repo, err := stackWorkspace(ctx)
 			if err != nil {
 				return err
+			}
+			// A pinned prefix reuses the commit its pin last resolved to, so an
+			// upstream that re-cuts a tag cannot move it. Following such a move is
+			// a deliberate act, and this is how you say so.
+			if repin {
+				m.LastPin = nil
 			}
 			if dirty, err := repo.Dirty(ctx); err != nil {
 				return err
@@ -269,7 +281,7 @@ func newStackPullCmd() *cobra.Command {
 			// no-op pull must not fail for want of a tool it never uses.
 			moved := make([]string, 0, len(names))
 			for _, name := range names {
-				tip, err := repo.LsRemote(ctx, stackRemoteURL(m.Repos[name].Upstream), "refs/heads/"+m.branch(name))
+				tip, err := stackUpstreamTip(ctx, repo, m, name)
 				if err != nil {
 					return fmt.Errorf("pulling %s: %w", name, err)
 				}
@@ -294,7 +306,87 @@ func newStackPullCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&repin, "repin", false, "resolve a tag pin again, taking it where upstream has moved it")
+
 	return cmd
+}
+
+// stackImportedTree is the tree a prefix had when it was last imported or
+// pulled — the baseline for "has anything happened here since".
+//
+// The cursor cannot answer it: that is an upstream commit id, and a workspace
+// only holds josh-rewritten commits, so the object is never here. What is here
+// is rig's own import or pull commit, always a merge because the import is made
+// with --no-ff, whose *second* parent is the filtered upstream side. That
+// parent's tree is what upstream had; the merge's own tree is not, since it
+// already contains whatever it merged past.
+func stackImportedTree(ctx context.Context, repo *gitrepo.Repo, name string) (string, bool) {
+	marker, err := repo.LastCommitMatching(ctx, `^stack: (import|pull) `+regexp.QuoteMeta(name)+` @`)
+	if err != nil || marker == "" {
+		return "", false
+	}
+	tree, err := repo.RevParse(ctx, marker+"^2:"+name)
+	if err != nil {
+		return "", false
+	}
+	return tree, true
+}
+
+// stackResolveUpstream turns a prefix's pin into the upstream commit to import.
+// A branch or tag is looked up on the remote; a commit is already the answer,
+// which is also why a pinned prefix needs no network round trip to know it has
+// nothing to pull.
+// stackPinnedCursor is the commit a prefix is already pinned to, when its pin
+// has been resolved before under this exact selector.
+//
+// Without it a tag is looked up afresh on every command, so an upstream that
+// force-moves or re-cuts one drags the workspace along — the single thing a pin
+// exists to prevent. Editing the pin changes the recorded selector, so a
+// deliberate repin still resolves; `pull --repin` clears the record to follow a
+// tag that moved on purpose.
+func stackPinnedCursor(m *stackManifest, name string) (string, bool) {
+	pin := m.pin(name)
+	if !pin.pinned() {
+		return "", false
+	}
+	cursor := m.cursor(name)
+	if cursor == "" || m.LastPin[name] != pin.describe() {
+		return "", false
+	}
+	return cursor, true
+}
+
+// stackUpstreamTip is the commit a prefix should be at: its pin if that is
+// already settled, otherwise whatever the pin resolves to upstream now.
+func stackUpstreamTip(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) (string, error) {
+	if cursor, ok := stackPinnedCursor(m, name); ok {
+		return cursor, nil
+	}
+	return stackResolveUpstream(ctx, repo, stackRemoteURL(m.Repos[name].Upstream), m.pin(name))
+}
+
+func stackResolveUpstream(ctx context.Context, repo *gitrepo.Repo, url string, pin stackPin) (string, error) {
+	switch pin.Kind {
+	case "commit":
+		return pin.Value, nil
+	case "tag":
+		ref := "refs/tags/" + pin.Value
+		// An annotated tag resolves to a tag object rather than a commit, and its
+		// peeled entry is the commit. josh serves commits, and the cursor records
+		// one, so the peeled value wins wherever it exists.
+		found, err := repo.LsRemoteRefs(ctx, url, ref, ref+"^{}")
+		if err != nil {
+			return "", err
+		}
+		for _, k := range []string{ref + "^{}", ref} {
+			if sha := found[k]; sha != "" {
+				return sha, nil
+			}
+		}
+		return "", fmt.Errorf("ls-remote %s: tag %q not found", url, pin.Value)
+	default:
+		return repo.LsRemote(ctx, url, "refs/heads/"+pin.Value)
+	}
 }
 
 // stackPullOne imports or updates one repo's prefix: probe upstream's tip, stop at
@@ -303,7 +395,7 @@ func newStackPullCmd() *cobra.Command {
 func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, bin string, src *cfgfind.Source, m *stackManifest, name string, initial bool) error {
 	r := m.Repos[name]
 	out := cmd.OutOrStdout()
-	tip, err := repo.LsRemote(ctx, stackRemoteURL(r.Upstream), "refs/heads/"+m.branch(name))
+	tip, err := stackUpstreamTip(ctx, repo, m, name)
 	if err != nil {
 		return err
 	}
@@ -325,6 +417,11 @@ func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, b
 	}
 	// The URL pins the upstream commit, and josh serves a pinned commit as HEAD
 	// rather than under its branch name.
+	// Read before the merge: afterwards the newest import marker is the commit
+	// this pull is about to make, and the baseline would be the target itself.
+	preTree, _ := repo.RevParse(ctx, "HEAD:"+name)
+	preImported, preKnown := stackImportedTree(ctx, repo, name)
+
 	conflicted, err := repo.FetchMergeUnrelated(ctx, proxy.url(path, tip, stackPrefixFilter(name)), "HEAD", msg)
 	if err != nil {
 		if tail := proxy.tail(15); tail != "" {
@@ -335,6 +432,33 @@ func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, b
 	if conflicted {
 		return fmt.Errorf("merge conflicts under %s/ — resolve, commit, then re-run to move the cursor", name)
 	}
+
+	// A merge cannot move a prefix backwards. Repin a project to an older tag or
+	// commit and the target is already an ancestor of what is here, so the merge
+	// reports nothing to do — and recording the cursor anyway would claim a
+	// revision the directory does not contain, with `status` reporting the pin
+	// while the sources stay newer.
+	//
+	// FETCH_HEAD is the prefixed target that was just fetched, so its tree under
+	// the prefix is what this directory is supposed to hold.
+	want, wantErr := repo.RevParse(ctx, "FETCH_HEAD:"+name)
+	have, haveErr := repo.RevParse(ctx, "HEAD:"+name)
+	if wantErr == nil && haveErr == nil && want != have {
+		// Replacing the directory discards whatever is under it, so only do it
+		// when there is nothing of the user's to discard. Their own commits would
+		// survive in the history but be stranded there, which is a quiet way to
+		// lose work.
+		if !preKnown || preImported != preTree {
+			return fmt.Errorf("%s/ holds changes of its own, and moving it to %s (%s) needs the directory replaced\n"+
+				"send them first, or revert them, and run this again",
+				name, short(tip), m.pin(name).describe())
+		}
+		if err := repo.ReplacePath(ctx, "FETCH_HEAD", name); err != nil {
+			return fmt.Errorf("moving %s to %s: %w", name, m.pin(name).describe(), err)
+		}
+		verb = "moved"
+	}
+
 	// The cursor is written to disk before it can be committed, so keep the
 	// bytes: a failure between here and the amend would otherwise leave the
 	// cursor advanced past history that does not contain it, and every later
@@ -422,7 +546,7 @@ func newStackSendCmd() *cobra.Command {
 				return fmt.Errorf("%s has no content at HEAD", name)
 			}
 			upstreamURL := stackRemoteURL(r.Upstream)
-			tip, err := repo.LsRemote(ctx, upstreamURL, "refs/heads/"+m.branch(name))
+			tip, err := stackUpstreamTip(ctx, repo, m, name)
 			if err != nil {
 				return err
 			}
