@@ -375,3 +375,8 @@ func runCmdEnv(ctx context.Context, dir string, env []string, name string, args 
 	}
 	return stdout, stderr, err
 }
+
+// LocalOverlay is not implemented here: Electron overlays node, which owns the dependency graph.
+func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayRequest) (plugin.LocalOverlayResponse, error) {
+	return plugin.LocalOverlayResponse{Skipped: true, Reason: "Electron overlays node: ask node"}, nil
+}

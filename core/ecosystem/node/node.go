@@ -681,3 +681,8 @@ func relTo(root, path string) string {
 	}
 	return rel
 }
+
+// LocalOverlay is not implemented here: npm overrides or a workspaces array would serve; not implemented yet.
+func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayRequest) (plugin.LocalOverlayResponse, error) {
+	return plugin.LocalOverlayResponse{Skipped: true, Reason: "node: local overrides not implemented"}, nil
+}

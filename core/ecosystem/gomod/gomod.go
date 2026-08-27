@@ -570,3 +570,9 @@ func sortStrings(s []string) {
 		}
 	}
 }
+
+// LocalOverlay is not implemented here: a go.work file would serve, but Go modules in one repo already resolve each
+// other by module path; nothing has needed redirecting.
+func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayRequest) (plugin.LocalOverlayResponse, error) {
+	return plugin.LocalOverlayResponse{Skipped: true, Reason: "Go: modules in one repo already resolve each other"}, nil
+}

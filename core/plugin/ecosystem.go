@@ -33,6 +33,16 @@ type Ecosystem interface {
 	// preflight and any build-config file to scaffold — so a release `init`
 	// wizard can set the repo up without hardcoding per-ecosystem knowledge.
 	ReleaseInit(ctx context.Context, req ReleaseInitRequest) (ReleaseInitResponse, error)
+	// LocalOverlay makes the named packages resolve from projects in the tree
+	// instead of from a registry, and reports anything that would stop that
+	// taking effect. With Write unset it changes nothing and only describes,
+	// which is how a check and a fix stay the same code.
+	//
+	// This is what a fused stackspace needs to build against source, but it is
+	// not specific to one: any repo holding both a package and its consumer can
+	// ask for it. Advertise MethodLocalOverlay to offer it; an ecosystem with no
+	// such mechanism returns Skipped.
+	LocalOverlay(ctx context.Context, req LocalOverlayRequest) (LocalOverlayResponse, error)
 }
 
 // Registry holds the available ecosystem adapters (built-in + discovered).
@@ -156,6 +166,13 @@ func (s *SubprocessEcosystem) ReleaseInit(ctx context.Context, req ReleaseInitRe
 	req.APIVersion = APIVersion
 	var resp ReleaseInitResponse
 	err := s.host.Call(ctx, MethodReleaseInit, req, &resp)
+	return resp, err
+}
+
+func (s *SubprocessEcosystem) LocalOverlay(ctx context.Context, req LocalOverlayRequest) (LocalOverlayResponse, error) {
+	req.APIVersion = APIVersion
+	var resp LocalOverlayResponse
+	err := s.host.Call(ctx, MethodLocalOverlay, req, &resp)
 	return resp, err
 }
 

@@ -38,6 +38,10 @@ func (s stubEco) ReleaseInit(context.Context, plugin.ReleaseInitRequest) (plugin
 	return plugin.ReleaseInitResponse{}, nil
 }
 
+func (s stubEco) LocalOverlay(context.Context, plugin.LocalOverlayRequest) (plugin.LocalOverlayResponse, error) {
+	return plugin.LocalOverlayResponse{Skipped: true}, nil
+}
+
 // registryOf builds a Registry from the given stub ecosystems, in order.
 func registryOf(ecos ...plugin.Ecosystem) *plugin.Registry {
 	r := plugin.NewRegistry()

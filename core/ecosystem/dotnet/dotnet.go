@@ -41,6 +41,7 @@ var (
 	versionPrefixRe = regexp.MustCompile(`(?s)(<VersionPrefix>)(.*?)(</VersionPrefix>)`)
 	packageIDRe     = regexp.MustCompile(`(?s)<PackageId>(.*?)</PackageId>`)
 	projectRefRe    = regexp.MustCompile(`<ProjectReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
+	packageRefRe    = regexp.MustCompile(`<PackageReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
 	propertyGroupRe = regexp.MustCompile(`<PropertyGroup[^>]*>`)
 )
 
@@ -65,7 +66,7 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		APIVersion:       plugin.APIVersion,
 		ID:               "dotnet",
 		DisplayName:      ".NET",
-		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts, plugin.MethodReleaseInit},
+		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts, plugin.MethodReleaseInit, plugin.MethodLocalOverlay},
 		ManifestPatterns: []string{"*.csproj"},
 		DevCommands: map[string][]string{
 			plugin.VerbBuild:  {"dotnet", "build"},
@@ -172,10 +173,15 @@ func (a *Adapter) Discover(ctx context.Context, req plugin.DiscoverRequest) (plu
 		text := string(content)
 
 		// Resolve the version: inline first, else from an ancestor props file. A
-		// project with no version anywhere is skipped (matches the C# original).
+		// project with no version anywhere is skipped (matches the C# original) —
+		// unless the caller asked for identity rather than release readiness, in
+		// which case it comes back with an empty Version.
 		resolved, ok := resolveVersion(path, text)
 		if !ok {
-			return nil
+			if !req.IncludeUnversioned {
+				return nil
+			}
+			resolved = resolvedVersion{}
 		}
 
 		name := packageID(text)
@@ -188,7 +194,7 @@ func (a *Adapter) Discover(ctx context.Context, req plugin.DiscoverRequest) (plu
 			Version:      resolved.version,
 			Dir:          relTo(root, filepath.Dir(path)),
 			ManifestPath: relTo(root, path),
-			Dependencies: projectReferences(text),
+			Dependencies: append(projectReferences(text), packageReferences(text)...),
 		}
 		// When the version comes from a shared props file the package's VersionFile
 		// differs from its manifest — this is what drives lockstep grouping.
@@ -533,6 +539,28 @@ func projectReferences(text string) []plugin.Dependency {
 			continue
 		}
 		deps = append(deps, plugin.Dependency{Name: name, Kind: plugin.DepNormal})
+	}
+	return deps
+}
+
+// packageReferences extracts <PackageReference Include="..."/> names, marked as
+// reached through the registry.
+//
+// Most of these are ordinary third-party packages and mean nothing to this repo.
+// The caller keeps only the ones naming a package this repo also produces — a
+// sibling consumed the way an outside consumer would — which is invisible in a
+// ProjectReference-only view and is precisely what a local overlay redirects.
+//
+// The Include is the package identity, not a path, so unlike a ProjectReference
+// there is no file name to strip and no chance of splitting it at a dot.
+func packageReferences(text string) []plugin.Dependency {
+	var deps []plugin.Dependency
+	for _, m := range packageRefRe.FindAllStringSubmatch(text, -1) {
+		name := strings.TrimSpace(m[1])
+		if name == "" {
+			continue
+		}
+		deps = append(deps, plugin.Dependency{Name: name, Kind: plugin.DepNormal, ViaRegistry: true})
 	}
 	return deps
 }

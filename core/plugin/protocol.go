@@ -73,6 +73,15 @@ type Dependency struct {
 	// Empty for ecosystems without ranges (e.g. .NET ProjectReference) — which
 	// the cascade treats as always-out-of-range, hence always-patch-bump.
 	Range string `json:"range,omitempty"`
+	// ViaRegistry marks a dependency on a package this repo also produces, but
+	// referenced the way an outside consumer would — a PackageReference rather
+	// than a ProjectReference, an npm version rather than a workspace link. The
+	// build fetches a published copy and never sees the sources beside it.
+	//
+	// It is reported so that LocalOverlay knows what to redirect. The release
+	// cascade deliberately ignores these; whether a registry-referenced sibling
+	// should cascade is a real question and not one this field decides.
+	ViaRegistry bool `json:"viaRegistry,omitempty"`
 }
 
 // HasRange reports whether the dependency carries a comparable version range.
@@ -131,13 +140,14 @@ const (
 
 // Method names for the ecosystem protocol (the plugin's first argv).
 const (
-	MethodInfo        = "info"
-	MethodDetect      = "detect"
-	MethodDiscover    = "discover"
-	MethodSetVersion  = "set-version"
-	MethodPublish     = "publish"
-	MethodArtifacts   = "artifacts"
-	MethodReleaseInit = "release-init"
+	MethodInfo         = "info"
+	MethodDetect       = "detect"
+	MethodDiscover     = "discover"
+	MethodSetVersion   = "set-version"
+	MethodPublish      = "publish"
+	MethodArtifacts    = "artifacts"
+	MethodReleaseInit  = "release-init"
+	MethodLocalOverlay = "local-overlay"
 )
 
 // DiscoverRequest asks an adapter to enumerate the packages it owns.
@@ -145,6 +155,13 @@ type DiscoverRequest struct {
 	APIVersion int    `json:"apiVersion"`
 	RepoRoot   string `json:"repoRoot"`
 	SourcePath string `json:"sourcePath"` // relative root to scan; "." by default
+	// IncludeUnversioned also reports projects that produce a package but carry
+	// no version anywhere in the tree — a library whose version is stamped by its
+	// own CI, say. They cannot be released from here, which is why the release
+	// path leaves them out, but they still have an identity a consumer
+	// references, and that identity is what a local overlay redirects. Such a
+	// package comes back with an empty Version.
+	IncludeUnversioned bool `json:"includeUnversioned,omitempty"`
 }
 
 // DiscoverResponse returns the discovered packages.
@@ -423,3 +440,57 @@ type ChangelogContext struct {
 
 // rawMessage is a tiny alias to keep call sites tidy.
 type rawMessage = json.RawMessage
+
+// Redirect names a package that should resolve from a project in this repo
+// rather than from a registry.
+type Redirect struct {
+	// Package is the identity consumers reference it by — the PackageId, the
+	// npm name, the module path — not the directory or the file name, which can
+	// differ and routinely do.
+	Package string `json:"package"`
+	// Path is the producing project's manifest, relative to Root.
+	Path string `json:"path"`
+}
+
+// LocalOverlayRequest asks an adapter to make Redirects resolve from source.
+//
+// The same call answers "what would this look like" and "is it in effect": with
+// Write false nothing is touched and the response describes what is missing,
+// which is what lets a check and a fix share one implementation and never drift
+// apart.
+type LocalOverlayRequest struct {
+	APIVersion int        `json:"apiVersion"`
+	Root       string     `json:"root"` // the directory every Path is relative to
+	Redirects  []Redirect `json:"redirects"`
+	Write      bool       `json:"write"`
+}
+
+// OverlayProblem is a reason the redirects would not take effect. These are the
+// failures that are otherwise silent — a build that resolves the registry copy
+// and succeeds — so an adapter should report anything it can prove rather than
+// only what it changed.
+type OverlayProblem struct {
+	// Path is the file responsible, relative to Root, or "" for a problem that
+	// belongs to the request rather than to a file.
+	Path string `json:"path,omitempty"`
+	// Message says what is wrong in the reader's terms, not the adapter's.
+	Message string `json:"message"`
+	// Fixable marks a problem this adapter would resolve on a Write.
+	Fixable bool `json:"fixable"`
+}
+
+// LocalOverlayResponse reports the overlay: what it contains, and what stands
+// between it and taking effect.
+type LocalOverlayResponse struct {
+	// Files maps a path relative to Root to its full contents — written when
+	// Write was set, proposed otherwise.
+	Files map[string]string `json:"files,omitempty"`
+	// Problems are reasons the redirects would not apply. A response can carry
+	// both Files and Problems: the overlay may be correct and still be shadowed
+	// by something the adapter cannot rewrite.
+	Problems []OverlayProblem `json:"problems,omitempty"`
+	// Skipped marks an ecosystem with no local-resolution mechanism at all,
+	// which is different from one that has nothing to do.
+	Skipped bool   `json:"skipped,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+}

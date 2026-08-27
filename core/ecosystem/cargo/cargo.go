@@ -558,3 +558,9 @@ func relTo(root, path string) string {
 	}
 	return rel
 }
+
+// LocalOverlay is not implemented here: cargo has [patch] and path dependencies, which would serve; nobody has needed
+// it from here yet.
+func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayRequest) (plugin.LocalOverlayResponse, error) {
+	return plugin.LocalOverlayResponse{Skipped: true, Reason: "cargo: local path/patch redirects not implemented"}, nil
+}

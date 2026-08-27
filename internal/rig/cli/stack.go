@@ -910,6 +910,27 @@ func newStackDoctorCmd() *cobra.Command {
 			default:
 				fmt.Fprintf(out, "✗ josh-proxy %s not installed — `rig stack doctor --fix` fetches a verified binary (or builds it where none is published)\n", version)
 			}
+
+			// The build wiring, which fails silently in every direction: an
+			// overlay that was never written, a member whose own build file hides
+			// it, a redirect naming a package nothing references. Each of those
+			// leaves a build that succeeds against the published package and says
+			// nothing, so checking is the only way anyone finds out.
+			if m != nil {
+				for _, rep := range stackCheckOverlay(ctx, root, m.names()) {
+					fmt.Fprintf(out, "· %s: %d package(s) should resolve from this stackspace\n", rep.Eco, len(rep.Redirects))
+					for _, p := range rep.Resp.Problems {
+						where := p.Path
+						if where == "" {
+							where = "manifest"
+						}
+						fmt.Fprintf(out, "  ✗ %s — %s\n", where, p.Message)
+					}
+					if len(rep.Resp.Problems) == 0 {
+						fmt.Fprintf(out, "  ✓ nothing found that would stop them\n")
+					}
+				}
+			}
 			return nil
 		},
 	}

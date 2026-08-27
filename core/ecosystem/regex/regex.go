@@ -180,3 +180,9 @@ func compilePattern(pattern string) (*regexp.Regexp, int, error) {
 	}
 	return re, re.SubexpIndex("version"), nil
 }
+
+// LocalOverlay is not implemented here: a regex-configured project declares its own version sites and has no dependency
+// graph to redirect.
+func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayRequest) (plugin.LocalOverlayResponse, error) {
+	return plugin.LocalOverlayResponse{Skipped: true, Reason: "regex adapter: no dependency resolution to redirect"}, nil
+}

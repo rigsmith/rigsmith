@@ -626,3 +626,9 @@ func runCmdEnv(ctx context.Context, dir string, env []string, name string, args 
 	}
 	return stdout, stderr, err
 }
+
+// LocalOverlay is not implemented here: Tauri overlays cargo, which owns the
+// dependency graph.
+func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayRequest) (plugin.LocalOverlayResponse, error) {
+	return plugin.LocalOverlayResponse{Skipped: true, Reason: "Tauri overlays cargo: ask cargo"}, nil
+}
