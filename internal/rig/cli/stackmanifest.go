@@ -105,14 +105,58 @@ type stackManifest struct {
 	// a tag would drag the stackspace along, which is the one thing a pin is for.
 	// Machine-written, like LastSync, and absent for a prefix following a branch.
 	LastPin map[string]string `json:"lastPin,omitempty"`
+	// LastPropose maps prefix -> the branch name last given to `propose`, as
+	// typed rather than as prefixed. Proposing again to the same branch is how an
+	// open pull request takes review feedback, so that name is usually wanted
+	// several times and is tedious to retype exactly. Machine-written, like the
+	// cursors beside it.
+	LastPropose map[string]string `json:"lastPropose,omitempty"`
 }
 
 func (m *stackManifest) cursor(name string) string { return m.LastSync[name] }
+
+// ownedNames are the prefixes holding a repo of the user's own. Editing a file
+// inside one is a commit to their repository, which they want; doing it inside a
+// fork would put rig's plumbing into somebody else's pull request.
+func (m *stackManifest) ownedNames() []string {
+	var out []string
+	for _, n := range m.names() {
+		if r := m.Repos[n]; r != nil && r.Owned {
+			out = append(out, n)
+		}
+	}
+	return out
+}
 
 // requireRepos is the guard for verbs that act on repos. An empty manifest is a
 // legitimate state — it is what `stack init` scaffolds, and what `stack add`
 // writes the first entry into — so loading one is not an error; only asking it
 // to do something is.
+// rememberProposed records the branch a prefix was last proposed on, so the
+// next one can offer it back.
+func stackRememberProposed(src *cfgfind.Source, m *stackManifest, prefix, branch string) error {
+	if m.LastPropose == nil {
+		m.LastPropose = map[string]string{}
+	}
+	if m.LastPropose[prefix] == branch {
+		return nil // nothing to write, and no commit to make out of nothing
+	}
+	m.LastPropose[prefix] = branch
+	raw, err := json.Marshal(m.LastPropose)
+	if err != nil {
+		return err
+	}
+	path := []string{"lastPropose"}
+	if src.Path == "" { // embedded stack block in .rig.json
+		path = []string{"stack", "lastPropose"}
+	}
+	w := confkit.Writer{SchemaURL: stackSchemaURL}
+	if !w.Set(src.File, path, string(raw)) {
+		return fmt.Errorf("could not record the branch in %s", src.File)
+	}
+	return nil
+}
+
 func (m *stackManifest) requireRepos() error {
 	if len(m.Repos) > 0 {
 		return nil
@@ -171,7 +215,7 @@ func (m *stackManifest) branchPrefix(name string) string {
 	return stackDefaultBranchPrefix
 }
 
-// sendBranch resolves the name given to `send` into the branch to create.
+// sendBranch resolves the name given to `propose` into the branch to create.
 // A name that already carries the prefix is left alone, so re-sending by
 // pasting the full branch name back in doesn't stutter it.
 func (m *stackManifest) sendBranch(name, given string) string {
@@ -447,7 +491,7 @@ const stackManifestTemplate = `{
   // Specs are host/owner/name — no https://, no .git — because the same string
   // has to serve as a URL, an engine path, and a label.
 
-  // Branches "rig stack send" creates are named stack/<what-you-typed>, which
+  // Branches "rig stack propose" creates are named stack/<what-you-typed>, which
   // keeps them recognisable on a fork that also carries your own work. Override
   // it here, or set it to "" to send bare names. A repo may override it too.
   // "branchPrefix": "stack/",
@@ -460,7 +504,7 @@ const stackManifestTemplate = `{
     //   // Where pull requests eventually go. rig only ever reads from it.
     //   "upstream": "github.com/them/Some.Lib",
     //
-    //   // Your fork, where "rig stack send" pushes PR-ready branches.
+    //   // Your fork, where "rig stack propose" pushes PR-ready branches.
     //   // You need push access to it.
     //   "fork": "github.com/you/Some.Lib",
     //
@@ -471,7 +515,7 @@ const stackManifestTemplate = `{
     //
     //   // Which branch of upstream this directory follows. Optional, main by
     //   // default. This is NOT the branch send creates — you name that one per
-    //   // change:  rig stack send some-lib fix/the-thing
+    //   // change:  rig stack propose some-lib fix/the-thing
     //   "upstreamBranch": "main"
     //
     //   // Instead of a branch, pin to a fixed point and pull stops following

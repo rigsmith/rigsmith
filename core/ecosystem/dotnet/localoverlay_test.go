@@ -183,3 +183,136 @@ func TestContinuesWalkUp(t *testing.T) {
 		t.Error("a file with no import at all was treated as continuing the walk-up")
 	}
 }
+
+func TestLocalOverlayPatchesShadowing(t *testing.T) {
+	ctx := context.Background()
+	a := New()
+	redirects := []plugin.Redirect{{Package: "Pty.Core", Path: "lib/src/Pty.Core/Pty.Core.csproj"}}
+
+	newRoot := func(t *testing.T) string {
+		t.Helper()
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "lib/src/Pty.Core/Pty.Core.csproj"), "<Project/>")
+		writeFile(t, filepath.Join(root, "app/src/App/App.csproj"), "<Project/>")
+		writeFile(t, filepath.Join(root, "app", overlayFile), "<Project>\n  <!-- mine -->\n</Project>\n")
+		return root
+	}
+
+	t.Run("patched where the caller allows it", func(t *testing.T) {
+		root := newRoot(t)
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{
+			Root: root, Redirects: redirects, Write: true, Writable: []string{"app"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Fixed) != 1 || got.Fixed[0] != "app/"+overlayFile {
+			t.Fatalf("Fixed = %v, want the shadowing file", got.Fixed)
+		}
+		for _, p := range got.Problems {
+			if strings.HasPrefix(p.Path, "app") {
+				t.Fatalf("still reported after patching: %+v", p)
+			}
+		}
+		body, _ := os.ReadFile(filepath.Join(root, "app", overlayFile))
+		if !continuesWalkUp(string(body)) {
+			t.Fatalf("patch did not make it continue the walk-up:\n%s", body)
+		}
+		// What was already in the file is not the caller's to lose.
+		if !strings.Contains(string(body), "<!-- mine -->") {
+			t.Fatal("patch discarded the file's own content")
+		}
+	})
+
+	t.Run("reported, never edited, where it is not allowed", func(t *testing.T) {
+		// A fork you contribute to: this line would ride back into somebody
+		// else's pull request as rig-specific plumbing.
+		root := newRoot(t)
+		before, _ := os.ReadFile(filepath.Join(root, "app", overlayFile))
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{
+			Root: root, Redirects: redirects, Write: true, Writable: []string{"lib"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Fixed) != 0 {
+			t.Fatalf("Fixed = %v, want nothing touched", got.Fixed)
+		}
+		var reported bool
+		for _, p := range got.Problems {
+			if strings.HasPrefix(p.Path, "app") {
+				reported = true
+				if p.Fixable {
+					t.Error("marked fixable when the caller did not allow it")
+				}
+			}
+		}
+		if !reported {
+			t.Fatalf("not reported either: %+v", got.Problems)
+		}
+		after, _ := os.ReadFile(filepath.Join(root, "app", overlayFile))
+		if string(before) != string(after) {
+			t.Fatal("edited a file the caller did not offer")
+		}
+	})
+
+	t.Run("a check says it could be fixed without fixing it", func(t *testing.T) {
+		root := newRoot(t)
+		before, _ := os.ReadFile(filepath.Join(root, "app", overlayFile))
+		got, _ := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{
+			Root: root, Redirects: redirects, Writable: []string{"app"},
+		})
+		var fixable bool
+		for _, p := range got.Problems {
+			if strings.HasPrefix(p.Path, "app") && p.Fixable {
+				fixable = true
+			}
+		}
+		if !fixable {
+			t.Fatalf("not offered as fixable: %+v", got.Problems)
+		}
+		after, _ := os.ReadFile(filepath.Join(root, "app", overlayFile))
+		if string(before) != string(after) {
+			t.Fatal("a check wrote to a file")
+		}
+	})
+
+	t.Run("patching twice does not patch twice", func(t *testing.T) {
+		root := newRoot(t)
+		req := plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: true, Writable: []string{"app"}}
+		if _, err := a.LocalOverlay(ctx, req); err != nil {
+			t.Fatal(err)
+		}
+		got, err := a.LocalOverlay(ctx, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Fixed) != 0 {
+			t.Fatalf("patched an already-patched file: %v", got.Fixed)
+		}
+		body, _ := os.ReadFile(filepath.Join(root, "app", overlayFile))
+		// Counting the element, not the identifier: one patch mentions
+		// StackParentTargets four times over the property and the import.
+		if n := strings.Count(string(body), "<Import Project=\"$(StackParentTargets)\""); n != 1 {
+			t.Fatalf("the import appears %d times, want once", n)
+		}
+	})
+
+	t.Run("a file with no Project element is left alone", func(t *testing.T) {
+		root := newRoot(t)
+		writeFile(t, filepath.Join(root, "app", overlayFile), "not xml at all\n")
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{
+			Root: root, Redirects: redirects, Write: true, Writable: []string{"app"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Fixed) != 0 {
+			t.Fatalf("patched something it could not parse: %v", got.Fixed)
+		}
+		body, _ := os.ReadFile(filepath.Join(root, "app", overlayFile))
+		if string(body) != "not xml at all\n" {
+			t.Fatalf("changed it anyway:\n%s", body)
+		}
+	})
+}

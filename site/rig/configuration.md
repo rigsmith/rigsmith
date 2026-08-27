@@ -188,11 +188,11 @@ history: the key is the directory it lives under.
 
 ```jsonc
 {
-  "branchPrefix": "stack/",                   // prepended to `send` branch names
+  "branchPrefix": "stack/",                   // prepended to `propose` branch names
   "repos": {
     "pty-core": {
       "upstream": "github.com/acme/pty-core",   // where PRs go
-      "fork": "github.com/you/pty-core",        // where `send` pushes
+      "fork": "github.com/you/pty-core",        // where `propose` pushes
       "upstreamBranch": "main"                  // branch of upstream to follow
     }
   },
@@ -218,8 +218,8 @@ which matters only if your forge answers ssh on a port that is not also its http
 port, since that port is part of the host and comes along.
 
 `upstreamBranch` names the branch of `upstream` this directory follows — what
-`pull` takes and what `send` roots on. It is deliberately not called `branch`:
-that would collide with `rig stack send <repo> <new-branch>`, where the branch
+`pull` takes and what `propose` roots on. It is deliberately not called `branch`:
+that would collide with `rig stack propose <repo> <new-branch>`, where the branch
 is one you are creating on your fork for a single change. A manifest written
 with the older `branch` key is still read.
 
@@ -259,7 +259,7 @@ thing the pin exists to decide. Annotated tags are peeled to the commit they
 point at.
 
 `owned` marks a project as yours rather than someone else's, which changes how
-work leaves the stackspace. Without it, `rig stack send` proposes a squashed
+work leaves the stackspace. Without it, `rig stack propose` proposes a squashed
 commit on a branch of your fork — right for a pull request, wrong for a repo you
 own, since it discards every message on the way out. With it, `rig stack push`
 fast-forwards that project's own branch with each commit that touched it. It
@@ -271,7 +271,7 @@ written: an import or pull rewrites that one value while the entries you wrote,
 and their comments, stay untouched. The values are full 40-character SHAs — an
 abbreviated one would never equal the tip `status` reads from the remote.
 
-`branchPrefix` is prepended to the name you give `rig stack send`, so
+`branchPrefix` is prepended to the name you give `rig stack propose`, so
 `send pty-core read-timeout` creates `stack/read-timeout` on your fork. It
 defaults to `stack/`, keeping these branches apart from your own work on the
 same fork; set it to `""` for bare names, or override it on a single repo whose

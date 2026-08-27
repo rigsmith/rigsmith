@@ -25,11 +25,11 @@ can span them in a single commit while each still leaves as itself:
 rig stack init                       # scaffold the manifest; run again to import
 rig stack status                     # who has moved upstream, and what has not left
 rig stack pull some-lib              # take that movement
-rig stack send some-lib read-timeout -m "Fix the read timeout"   # → stack/read-timeout
+rig stack propose some-lib read-timeout -m "Fix the read timeout"   # → stack/read-timeout
 rig stack push my-app                # a repo you own: its own branch, history intact
 ```
 
-`send` proposes one squashed commit to a fork you contribute to; `push`
+`propose` proposes one squashed commit to a fork you contribute to; `push`
 fast-forwards a project you own with every commit that touched it. Mark a
 project `"owned": true` in the manifest to enable the second.
 

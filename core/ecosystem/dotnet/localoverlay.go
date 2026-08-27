@@ -35,9 +35,9 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 		return resp, nil
 	}
 
-	for _, p := range overlayProblems(req) {
-		resp.Problems = append(resp.Problems, p)
-	}
+	problems, fixed := overlayProblems(req)
+	resp.Problems = problems
+	resp.Fixed = fixed
 
 	body := renderOverlay(req.Redirects)
 	resp.Files = map[string]string{overlayFile: body}
@@ -60,8 +60,9 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 // overlayProblems reports what would keep the overlay from taking effect. It
 // reads files rather than running MSBuild: an evaluation is a better check but
 // needs the SDK, and the failures worth catching here are structural.
-func overlayProblems(req plugin.LocalOverlayRequest) []plugin.OverlayProblem {
+func overlayProblems(req plugin.LocalOverlayRequest) ([]plugin.OverlayProblem, []string) {
 	var out []plugin.OverlayProblem
+	var fixed []string
 
 	// A build file between the root and any project ends MSBuild's search there,
 	// and every project beneath it keeps resolving packages from the registry.
@@ -79,15 +80,27 @@ func overlayProblems(req plugin.LocalOverlayRequest) []plugin.OverlayProblem {
 		if err != nil || rel == overlayFile {
 			return nil // the overlay itself
 		}
+		rel = filepath.ToSlash(rel)
 		data, err := os.ReadFile(path)
 		if err != nil || continuesWalkUp(string(data)) {
 			return nil
 		}
+		// Patching this means editing a file inside somebody's project, which is
+		// a commit to that repository. Only where the caller said it is welcome.
+		allowed := underAny(rel, req.Writable)
+		if allowed && req.Write {
+			if patched, ok := patchWalkUp(string(data)); ok {
+				if err := os.WriteFile(path, []byte(patched), 0o644); err == nil {
+					fixed = append(fixed, rel)
+					return nil
+				}
+			}
+		}
 		out = append(out, plugin.OverlayProblem{
-			Path: filepath.ToSlash(rel),
+			Path: rel,
 			Message: "ends MSBuild's search for " + overlayFile +
 				", so projects under it keep resolving packages from the registry — import the file above it",
-			Fixable: false,
+			Fixable: allowed,
 		})
 		return nil
 	})
@@ -104,7 +117,51 @@ func overlayProblems(req plugin.LocalOverlayRequest) []plugin.OverlayProblem {
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out
+	sort.Strings(fixed)
+	return out, fixed
+}
+
+// underAny reports whether rel sits inside one of the permitted directories.
+func underAny(rel string, dirs []string) bool {
+	for _, d := range dirs {
+		d = filepath.ToSlash(strings.TrimSuffix(d, "/"))
+		if d == "." || rel == d || strings.HasPrefix(rel, d+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// patchWalkUp inserts the import that continues MSBuild's search, right after
+// the opening Project element. Reports false when there is no such element to
+// insert after, rather than writing something that will not parse.
+//
+// The path is resolved into a property first: a Condition is itself
+// single-quoted, and the quotes this function needs around its arguments cannot
+// appear inside one (MSB4092).
+func patchWalkUp(body string) (string, bool) {
+	open := strings.Index(body, "<Project")
+	if open < 0 {
+		return "", false
+	}
+	end := strings.Index(body[open:], ">")
+	if end < 0 {
+		return "", false
+	}
+	at := open + end + 1
+	const patch = `
+
+  <!-- Added by rig. MSBuild stops at the first Directory.Build.targets it finds
+       walking up, so without this every project below here would keep resolving
+       packages from the registry even inside a workspace that redirects them —
+       and the build would succeed, saying nothing. No-op outside one, where
+       there is nothing above. -->
+  <PropertyGroup>
+    <StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets>
+  </PropertyGroup>
+  <Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != ''" />
+`
+	return body[:at] + patch + body[at:], true
 }
 
 // continuesWalkUp reports whether a Directory.Build.targets imports the one
