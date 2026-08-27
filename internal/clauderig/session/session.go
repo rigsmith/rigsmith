@@ -73,6 +73,14 @@ type sidecar struct {
 // human title we want to surface, so a search hit in either gets a real name.
 var sessionTrees = []string{"claude-code-sessions", "local-agent-mode-sessions"}
 
+// CanonicalID is the form an Index is keyed by, and the form every lookup must
+// use. Session ids are uuids, which are case-insensitive by specification —
+// Claude Code writes its transcript filenames lowercase, but a Desktop sidecar
+// carries whatever `cliSessionId` it was given. Keyed by the raw value, an
+// uppercase sidecar simply never matched the transcript beside it, so the
+// session silently lost its title and project everywhere the index is consulted.
+func CanonicalID(id string) string { return strings.ToLower(id) }
+
 // Build scans each root's sidecar trees and returns the merged index keyed by
 // cliSessionId. When a session has sidecars in more than one root, the entry with
 // the newer LastActivity supplies the display fields and every source label is
@@ -132,7 +140,7 @@ func scanSidecars(idx Index, dir, label, profile string) {
 			return nil
 		}
 		m := Meta{
-			ID: sc.CliSessionID, Title: sc.Title, Cwd: sc.Cwd,
+			ID: CanonicalID(sc.CliSessionID), Title: sc.Title, Cwd: sc.Cwd,
 			Model: sc.Model, Archived: sc.IsArchived, Profile: profile,
 			Account: accountOf(dir, p),
 		}

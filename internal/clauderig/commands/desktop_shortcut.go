@@ -49,7 +49,7 @@ func newDesktopShortcutCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			app := desktop.New()
+			app := newDesktopApp()
 
 			if all && label != "" {
 				return errors.New("--label names one shortcut, so it cannot be combined with --all")

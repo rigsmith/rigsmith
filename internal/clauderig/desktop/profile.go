@@ -137,19 +137,30 @@ func (s *Store) CandidateDataDirs() (map[string]string, error) {
 	}
 	out := map[string]string{}
 	for _, e := range entries {
-		// ReadDir reports a directory SYMLINK as a link, not a directory, so an
-		// IsDir check alone omitted a profile that Get and `desktop open` both
-		// follow happily — and a window running from it was then unnamed by
-		// anything that consulted this map.
-		if !e.IsDir() {
-			fi, serr := os.Stat(filepath.Join(s.Root, e.Name()))
-			if serr != nil || !fi.IsDir() {
-				continue
-			}
+		// Shared with List, deliberately. This check lived here alone until a
+		// review found List missing symlinked profiles in exactly the way this
+		// comment already described — one copy fixed, the other not, which is
+		// what having two copies buys you.
+		if !isDirFollowingLinks(s.Root, e) {
+			continue
 		}
 		out[e.Name()] = filepath.Join(s.profileDir(e.Name()), "data")
 	}
 	return out, nil
+}
+
+// isDirFollowingLinks reports whether an entry is, or points at, a directory.
+// Only a symlink pays for a stat; every other entry is answered from the type
+// bits ReadDir already carries. A broken link answers false.
+func isDirFollowingLinks(root string, e os.DirEntry) bool {
+	if e.IsDir() {
+		return true
+	}
+	if e.Type()&os.ModeSymlink == 0 {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(root, e.Name()))
+	return err == nil && fi.IsDir()
 }
 
 // List returns every saved profile, ordered by name.
@@ -163,7 +174,13 @@ func (s *Store) List() ([]Profile, error) {
 	}
 	var out []Profile
 	for _, e := range entries {
-		if !e.IsDir() {
+		// os.ReadDir reports the entry itself, not its target, so a profile
+		// directory that is a SYMLINK answers IsDir false. Skipping those made
+		// List disagree with Get/Resolve, which follow the link and work fine:
+		// `desktop list` hid such a profile, `shortcut --all` and `rm` passed
+		// over it, and anything asking "are there any profiles" was told no
+		// while `desktop open <name>` drove it happily.
+		if !isDirFollowingLinks(s.Root, e) {
 			continue
 		}
 		p, lerr := s.Get(e.Name())

@@ -307,6 +307,55 @@ func (r *Repo) LsRemote(ctx context.Context, remote, ref string) (string, error)
 	return sha, nil
 }
 
+// LastCommitMatching returns the newest commit whose message matches pattern as
+// an extended regular expression, or "" when none does. Merges are included:
+// callers looking for a commit a tool wrote itself need to find it wherever it
+// sits in the history.
+func (r *Repo) LastCommitMatching(ctx context.Context, pattern string) (string, error) {
+	out, err := runGit(ctx, r.Dir, "log", "-1", "--format=%H", "-E", "--grep="+pattern)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// ReplacePath makes dir's contents match what commit holds at that path,
+// deleting anything present here and absent there. Both the index and the
+// worktree are updated, so the result is ready to commit.
+//
+// Ordinary merging cannot do this: moving a directory *back* to an older
+// revision is a merge with an ancestor, which is a no-op however much the trees
+// differ.
+func (r *Repo) ReplacePath(ctx context.Context, commit, dir string) error {
+	// --ignore-unmatch: the path may not exist here at all, which is not an
+	// error when the point is to make it match something else.
+	if _, err := runGit(ctx, r.Dir, "rm", "-rq", "--ignore-unmatch", "--", dir); err != nil {
+		return err
+	}
+	_, err := runGit(ctx, r.Dir, "checkout", commit, "--", dir)
+	return err
+}
+
+// LsRemoteRefs resolves several refs on a remote in one round trip, returning
+// ref name -> SHA for those that exist. A ref that is absent is simply missing
+// from the map rather than an error: callers use this to ask which of a few
+// candidate forms a name takes — a tag and its peeled commit, say — where "not
+// this one" is the useful answer.
+func (r *Repo) LsRemoteRefs(ctx context.Context, remote string, refs ...string) (map[string]string, error) {
+	out, err := runGit(ctx, r.Dir, append([]string{"ls-remote", remote}, refs...)...)
+	if err != nil {
+		return nil, err
+	}
+	found := make(map[string]string, len(refs))
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		sha, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if ok && sha != "" {
+			found[ref] = sha
+		}
+	}
+	return found, nil
+}
+
 // lsRemoteOpt is LsRemote for callers that treat a missing ref as a fact rather
 // than a failure — creating it, say — and still need a real error to surface
 // when the remote itself is unreachable.

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -317,7 +318,7 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	get := func(id string) *sessResult {
 		r := hits[id]
 		if r == nil {
-			m, ok := idx[id]
+			m, ok := idx[session.CanonicalID(id)]
 			r = &sessResult{id: id, meta: m, hasMeta: ok}
 			hits[id] = r
 		}
@@ -537,9 +538,104 @@ func renderSessionAs(out interface{ Write([]byte) (int, error) }, me config.Mach
 	} else {
 		fmt.Fprintf(out, "  %s\n", DimStyle.Render(resumeHint(r, cwd)))
 	}
+	// Its own line rather than appended to the resume hint: that line already
+	// carries a cd and a full uuid, and a second command on the end of it wraps
+	// on any normal terminal — which is exactly where a copy/paste breaks.
+	if h := desktopHint(r); h != "" {
+		fmt.Fprintf(out, "  %s\n", DimStyle.Render(h))
+	}
 	if r.matches > 0 {
 		fmt.Fprintf(out, "    %s\n", highlight(r.first))
 	}
+}
+
+// desktopUsable reports whether `clauderig desktop open` could actually run:
+// Claude Desktop installed AND at least one profile saved.
+//
+// Both halves matter. On Linux there is no such app at all. And with the app
+// but no profile, `open` resolves a profile before it looks at a session and
+// stops at "no Desktop profiles yet" — so a hint naming the command would be
+// advertising a dead end to the one user who most needs it to work.
+//
+// Memoised because it runs once per rendered result and is two filesystem
+// probes whose answer cannot change part-way through a listing.
+var desktopUsable = func() bool { return len(desktopProfileNames()) > 0 }
+
+// desktopProfileNames is the set of profiles `desktop open` could resolve right
+// now — empty when Claude Desktop is absent, so one memo answers both "is there
+// an app" and "is there anything for it to open".
+//
+// A set rather than a count because a sidecar's profile name is HISTORY: it
+// records where a session was filed, on whatever machine wrote it. Emitting it
+// unchecked produced `desktop open work --session …` against a store that has
+// since renamed or deleted `work`, which fails on the spot with "no Desktop
+// profile" — a hint that is worse than no hint.
+var desktopProfileNames = sync.OnceValue(func() map[string]bool {
+	if _, ok := newDesktopApp().Installed(); !ok {
+		return nil
+	}
+	st, err := desktopStore()
+	if err != nil {
+		return nil
+	}
+	ps, err := st.List()
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]bool, len(ps))
+	for _, p := range ps {
+		out[p.Name] = true
+	}
+	return out
+})
+
+// openableSessions is the id set `desktop open --session` could actually
+// resolve: the transcripts under the CLI home THAT COMMAND scans.
+//
+// Deliberately not `r.cliLive`. That flag is true for the configurable "cli"
+// search root, which need not be the home the opener reads — and it is true for
+// rows that came from the synced repo under --repo, whose transcripts are not
+// on this machine at all. Asking the opener's own index is the only way to
+// offer a command that will find what it names. It also settles the non-uuid
+// stems for free, since liveTranscripts already excludes them.
+//
+// Memoised: one ReadDir sweep, no transcript contents, shared by every row.
+var openableSessions = sync.OnceValue(func() map[string]string {
+	home, err := account.ClaudeHome()
+	if err != nil {
+		return nil
+	}
+	live, err := liveTranscripts(home)
+	if err != nil {
+		return nil
+	}
+	return live
+})
+
+// desktopHint offers the Claude Desktop equivalent of the resume command, for
+// the sessions it would actually open.
+//
+// `desktop open --session` hands Desktop a claude://resume link and Desktop
+// imports the transcript from its own CLI home, so a Desktop-only session, a
+// synced-repo-only copy and a title-only match have nothing for it to read.
+// Suppressed too where Claude Desktop is not installed or no profile is saved,
+// since offering a command that cannot work is worse than silence.
+func desktopHint(r *sessResult) string {
+	if !desktopUsable() {
+		return ""
+	}
+	if _, ok := openableSessions()[strings.ToLower(r.id)]; !ok {
+		return ""
+	}
+	// Name the profile when the sidecar knows it. Without it the command
+	// resolves a profile the usual way — this directory's mapping, else a
+	// picker, else an error — which for a session that belongs to a KNOWN
+	// account means a prompt at best and the wrong window at worst.
+	cmd := "clauderig desktop open "
+	if desktopProfileNames()[r.meta.Profile] {
+		cmd += shQuote(r.meta.Profile) + " "
+	}
+	return "desktop: " + cmd + "--session " + shQuote(r.id)
 }
 
 // resumeHint renders the action for a session. `claude --resume` reads this
@@ -797,7 +893,7 @@ func reprofile(idx session.Index, byAccount map[string]string, complete bool) {
 		default:
 			continue
 		}
-		idx[id] = m
+		idx[session.CanonicalID(id)] = m
 	}
 }
 
