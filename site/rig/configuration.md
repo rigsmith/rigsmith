@@ -213,9 +213,11 @@ with the older `branch` key is still read.
 Instead of a branch, a directory can be **pinned** with `upstreamTag` or
 `upstreamCommit`. `pull` then has nothing to do until you edit the pin, and
 `status` says `pinned to tag v1.4.2` rather than `up to date`, because the two
-mean very different things. `upstreamCommit` is absolute. `upstreamTag` is
-resolved each time, so a tag that upstream force-moves will be followed — pin
-the commit if you need the stronger guarantee.
+mean very different things. A tag is resolved once, when the pin is
+first taken, and the result is recorded in `lastPin` beside the cursor. An
+upstream that later force-moves or re-cuts that tag does not move your
+workspace; editing the pin does, because that changes what was recorded. To
+follow a moved tag deliberately, `rig stack pull --repin`.
 
 Repinning works in both directions. Moving a project to an *older* revision
 cannot be done by merging, since the target is already an ancestor of what the

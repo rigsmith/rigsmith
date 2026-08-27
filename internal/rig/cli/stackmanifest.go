@@ -93,6 +93,12 @@ type stackManifest struct {
 	// machine-written — pulls rewrite this one value while the jsonc editor
 	// leaves the human-authored entries (and their comments) untouched.
 	LastSync map[string]string `json:"lastSync,omitempty"`
+	// LastPin records, for a pinned prefix, which pin its cursor was resolved
+	// under. Without it a tag and a repin are indistinguishable: both present as
+	// "the resolved SHA differs from the cursor", so an upstream that force-moves
+	// a tag would drag the workspace along, which is the one thing a pin is for.
+	// Machine-written, like LastSync, and absent for a prefix following a branch.
+	LastPin map[string]string `json:"lastPin,omitempty"`
 }
 
 func (m *stackManifest) cursor(name string) string { return m.LastSync[name] }
@@ -314,17 +320,35 @@ func stackSetCursor(src *cfgfind.Source, m *stackManifest, prefix, sha string) e
 		m.LastSync = map[string]string{}
 	}
 	m.LastSync[prefix] = sha
-	raw, err := json.Marshal(m.LastSync)
-	if err != nil {
-		return err
+	if m.LastPin == nil {
+		m.LastPin = map[string]string{}
 	}
-	path := []string{"lastSync"}
-	if src.Path == "" { // embedded key in .rig.json
-		path = []string{"stack", "lastSync"}
+	// The pin this cursor was resolved under, so a later run can tell a repin
+	// from a tag that moved underneath it. A prefix following a branch records
+	// nothing, and drops whatever it recorded when it was pinned.
+	if pin := m.pin(prefix); pin.pinned() {
+		m.LastPin[prefix] = pin.describe()
+	} else {
+		delete(m.LastPin, prefix)
 	}
+
 	w := confkit.Writer{SchemaURL: stackSchemaURL}
-	if !w.Set(src.File, path, string(raw)) {
-		return fmt.Errorf("could not update %s in %s", strings.Join(path, "."), src.File)
+	for _, kv := range []struct {
+		key   string
+		value map[string]string
+	}{{"lastSync", m.LastSync}, {"lastPin", m.LastPin}} {
+		key, value := kv.key, kv.value
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		path := []string{key}
+		if src.Path == "" { // embedded key in .rig.json
+			path = []string{"stack", key}
+		}
+		if !w.Set(src.File, path, string(raw)) {
+			return fmt.Errorf("could not update %s in %s", strings.Join(path, "."), src.File)
+		}
 	}
 	return nil
 }

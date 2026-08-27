@@ -605,3 +605,66 @@ func TestStackResolveUpstream(t *testing.T) {
 		}
 	})
 }
+
+func TestStackPinnedCursor(t *testing.T) {
+	const sha = "6a78155eee4a0100c5cfb664dd7fc2782cd1c24c"
+	manifest := func(r *stackRepo, pin string) *stackManifest {
+		m := &stackManifest{
+			Repos:    map[string]*stackRepo{"lib": r},
+			LastSync: map[string]string{"lib": sha},
+		}
+		if pin != "" {
+			m.LastPin = map[string]string{"lib": pin}
+		}
+		return m
+	}
+
+	t.Run("a settled pin is not resolved again", func(t *testing.T) {
+		// The point of the whole thing: upstream may have moved the tag since,
+		// and the workspace must not move with it.
+		got, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamTag: "v1"}, "tag v1"), "lib")
+		if !ok || got != sha {
+			t.Fatalf("got (%q, %v), want the recorded cursor", got, ok)
+		}
+	})
+
+	t.Run("editing the pin resolves again", func(t *testing.T) {
+		// The recorded selector no longer matches, which is how a deliberate
+		// repin is told apart from a tag that moved underneath one.
+		if _, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamTag: "v2"}, "tag v1"), "lib"); ok {
+			t.Fatal("reused a cursor resolved under a different pin")
+		}
+	})
+
+	t.Run("a branch always resolves", func(t *testing.T) {
+		if _, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamBranch: "main"}, ""), "lib"); ok {
+			t.Fatal("a branch is meant to move")
+		}
+	})
+
+	t.Run("a pin with nothing recorded resolves", func(t *testing.T) {
+		// A manifest written before this existed, or a first import.
+		if _, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamTag: "v1"}, ""), "lib"); ok {
+			t.Fatal("reused a cursor with no recorded pin")
+		}
+	})
+
+	t.Run("an unimported pin resolves", func(t *testing.T) {
+		m := manifest(&stackRepo{UpstreamTag: "v1"}, "tag v1")
+		m.LastSync = nil
+		if _, ok := stackPinnedCursor(m, "lib"); ok {
+			t.Fatal("reused a cursor that does not exist")
+		}
+	})
+
+	t.Run("a commit pin records too, so its selector can change", func(t *testing.T) {
+		other := strings.Repeat("b", 40)
+		got, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamCommit: sha}, "commit "+sha), "lib")
+		if !ok || got != sha {
+			t.Fatalf("got (%q, %v), want the recorded cursor", got, ok)
+		}
+		if _, ok := stackPinnedCursor(manifest(&stackRepo{UpstreamCommit: other}, "commit "+sha), "lib"); ok {
+			t.Fatal("reused a cursor after the commit pin changed")
+		}
+	})
+}

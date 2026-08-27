@@ -220,9 +220,8 @@ func newStackStatusCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			for _, name := range m.names() {
-				r := m.Repos[name]
 				pin := m.pin(name)
-				tip, err := stackResolveUpstream(ctx, repo, stackRemoteURL(r.Upstream), pin)
+				tip, err := stackUpstreamTip(ctx, repo, m, name)
 				if err != nil {
 					fmt.Fprintf(out, "%-24s %s (upstream unreachable: %v)\n", name, short(m.cursor(name)), err)
 					continue
@@ -247,6 +246,7 @@ func newStackStatusCmd() *cobra.Command {
 }
 
 func newStackPullCmd() *cobra.Command {
+	var repin bool
 	cmd := &cobra.Command{
 		Use:               "pull [repo]",
 		Short:             "Merge new upstream commits into a repo's prefix (all repos by default)",
@@ -257,6 +257,12 @@ func newStackPullCmd() *cobra.Command {
 			m, src, repo, err := stackWorkspace(ctx)
 			if err != nil {
 				return err
+			}
+			// A pinned prefix reuses the commit its pin last resolved to, so an
+			// upstream that re-cuts a tag cannot move it. Following such a move is
+			// a deliberate act, and this is how you say so.
+			if repin {
+				m.LastPin = nil
 			}
 			if dirty, err := repo.Dirty(ctx); err != nil {
 				return err
@@ -275,7 +281,7 @@ func newStackPullCmd() *cobra.Command {
 			// no-op pull must not fail for want of a tool it never uses.
 			moved := make([]string, 0, len(names))
 			for _, name := range names {
-				tip, err := stackResolveUpstream(ctx, repo, stackRemoteURL(m.Repos[name].Upstream), m.pin(name))
+				tip, err := stackUpstreamTip(ctx, repo, m, name)
 				if err != nil {
 					return fmt.Errorf("pulling %s: %w", name, err)
 				}
@@ -300,6 +306,8 @@ func newStackPullCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&repin, "repin", false, "resolve a tag pin again, taking it where upstream has moved it")
+
 	return cmd
 }
 
@@ -328,6 +336,35 @@ func stackImportedTree(ctx context.Context, repo *gitrepo.Repo, name string) (st
 // A branch or tag is looked up on the remote; a commit is already the answer,
 // which is also why a pinned prefix needs no network round trip to know it has
 // nothing to pull.
+// stackPinnedCursor is the commit a prefix is already pinned to, when its pin
+// has been resolved before under this exact selector.
+//
+// Without it a tag is looked up afresh on every command, so an upstream that
+// force-moves or re-cuts one drags the workspace along — the single thing a pin
+// exists to prevent. Editing the pin changes the recorded selector, so a
+// deliberate repin still resolves; `pull --repin` clears the record to follow a
+// tag that moved on purpose.
+func stackPinnedCursor(m *stackManifest, name string) (string, bool) {
+	pin := m.pin(name)
+	if !pin.pinned() {
+		return "", false
+	}
+	cursor := m.cursor(name)
+	if cursor == "" || m.LastPin[name] != pin.describe() {
+		return "", false
+	}
+	return cursor, true
+}
+
+// stackUpstreamTip is the commit a prefix should be at: its pin if that is
+// already settled, otherwise whatever the pin resolves to upstream now.
+func stackUpstreamTip(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) (string, error) {
+	if cursor, ok := stackPinnedCursor(m, name); ok {
+		return cursor, nil
+	}
+	return stackResolveUpstream(ctx, repo, stackRemoteURL(m.Repos[name].Upstream), m.pin(name))
+}
+
 func stackResolveUpstream(ctx context.Context, repo *gitrepo.Repo, url string, pin stackPin) (string, error) {
 	switch pin.Kind {
 	case "commit":
@@ -358,7 +395,7 @@ func stackResolveUpstream(ctx context.Context, repo *gitrepo.Repo, url string, p
 func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, bin string, src *cfgfind.Source, m *stackManifest, name string, initial bool) error {
 	r := m.Repos[name]
 	out := cmd.OutOrStdout()
-	tip, err := stackResolveUpstream(ctx, repo, stackRemoteURL(r.Upstream), m.pin(name))
+	tip, err := stackUpstreamTip(ctx, repo, m, name)
 	if err != nil {
 		return err
 	}
@@ -509,7 +546,7 @@ func newStackSendCmd() *cobra.Command {
 				return fmt.Errorf("%s has no content at HEAD", name)
 			}
 			upstreamURL := stackRemoteURL(r.Upstream)
-			tip, err := stackResolveUpstream(ctx, repo, upstreamURL, m.pin(name))
+			tip, err := stackUpstreamTip(ctx, repo, m, name)
 			if err != nil {
 				return err
 			}
