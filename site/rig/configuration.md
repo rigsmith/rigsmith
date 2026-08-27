@@ -212,6 +212,11 @@ https://github.com/acme/pty-core.git
 git@github.com:acme/pty-core.git
 ```
 
+Only the host, owner and name are kept. rig fetches over https regardless of
+what you pasted, so an ssh URL is read for those three parts and nothing else —
+which matters only if your forge answers ssh on a port that is not also its https
+port, since that port is part of the host and comes along.
+
 `upstreamBranch` names the branch of `upstream` this directory follows — what
 `pull` takes and what `send` roots on. It is deliberately not called `branch`:
 that would collide with `rig stack send <repo> <new-branch>`, where the branch
