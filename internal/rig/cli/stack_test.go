@@ -1083,3 +1083,64 @@ func TestEnsureJoshFilterDownloads(t *testing.T) {
 		t.Fatalf("installed %s, want the filter binary", bin)
 	}
 }
+
+func TestStackPushInfersTheOwnedRepo(t *testing.T) {
+	// Only a repo of your own can be pushed, so with exactly one there is
+	// nothing to disambiguate. With several, naming one is the difference
+	// between a deliberate write to a remote and a guess.
+	run := func(t *testing.T, manifest string) error {
+		t.Helper()
+		ctx := context.Background()
+		root := t.TempDir()
+		writeStackManifest(t, root, manifest)
+		for _, a := range [][]string{{"init", "-q", "-b", "main", root}, {"-C", root, "add", "-A"}} {
+			c := exec.CommandContext(ctx, "git", a...)
+			c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+				"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+			if out, err := c.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v: %s", a, err, out)
+			}
+		}
+		c := exec.CommandContext(ctx, "git", "-C", root, "commit", "-qm", "manifest")
+		c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("commit: %v: %s", err, out)
+		}
+		dir, _ := os.Getwd()
+		t.Cleanup(func() { _ = os.Chdir(dir) })
+		if err := os.Chdir(root); err != nil {
+			t.Fatal(err)
+		}
+		cmd := newStackPushCmd()
+		cmd.SetContext(ctx)
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		return cmd.RunE(cmd, nil)
+	}
+
+	sha := strings.Repeat("a", 40)
+	t.Run("one owned repo needs no name", func(t *testing.T) {
+		// It gets far enough to want the network, which is proof it resolved.
+		err := run(t, `{"repos":{"app":{"upstream":"github.com/you/app","fork":"github.com/you/app","owned":true},
+			"lib":{"upstream":"github.com/acme/lib","fork":"github.com/you/lib"}},"lastSync":{"app":"`+sha+`"}}`)
+		if err != nil && strings.Contains(err.Error(), "name the one") {
+			t.Fatalf("asked for a name with only one owned repo: %v", err)
+		}
+	})
+
+	t.Run("several owned repos must be named", func(t *testing.T) {
+		err := run(t, `{"repos":{"app":{"upstream":"github.com/you/app","fork":"github.com/you/app","owned":true},
+			"tool":{"upstream":"github.com/you/tool","fork":"github.com/you/tool","owned":true}}}`)
+		if err == nil || !strings.Contains(err.Error(), "name the one") {
+			t.Fatalf("got %v, want a refusal listing both", err)
+		}
+	})
+
+	t.Run("none owned points at send", func(t *testing.T) {
+		err := run(t, `{"repos":{"lib":{"upstream":"github.com/acme/lib","fork":"github.com/you/lib"}}}`)
+		if err == nil || !strings.Contains(err.Error(), "stack send") {
+			t.Fatalf("got %v, want a refusal offering send", err)
+		}
+	})
+}

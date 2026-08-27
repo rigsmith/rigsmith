@@ -39,7 +39,7 @@ func newStackCmd() *cobra.Command {
 			"  rig stack status                    cursor vs upstream, per repo\n" +
 			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
 			"  rig stack send <repo> <new-branch>  a branch on your fork, prefixed stack/\n" +
-			"  rig stack push <repo>               fast-forward a repo you own, history intact\n" +
+			"  rig stack push [repo]               fast-forward a repo you own, history intact\n" +
 			"  rig stack wire                      write the build overlay for the members\n" +
 			"  rig stack doctor                    engine + manifest checks (--fix installs josh)",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -622,10 +622,10 @@ func newStackSendCmd() *cobra.Command {
 			if m.cursor(name) == "" {
 				return fmt.Errorf("%s is not imported yet — run `rig stack init`", name)
 			}
-			if dirty, err := repo.Dirty(ctx); err != nil {
+			if dirty, err := stackDirtyUnder(ctx, repo, name); err != nil {
 				return err
 			} else if dirty {
-				return fmt.Errorf("stackspace has uncommitted changes — commit them before sending")
+				return fmt.Errorf("%s/ has uncommitted changes — commit them, or they will not be in what you send", name)
 			}
 
 			// The prefix directory is this project as the stackspace has it, and
@@ -703,9 +703,10 @@ func newStackSendCmd() *cobra.Command {
 // the history that `send` deliberately discards.
 func newStackPushCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "push <repo>",
+		Use:   "push [repo]",
 		Short: "Fast-forward a repo you own with this stackspace's commits, history intact",
 		Long: "For a project marked `\"owned\": true` in the manifest — one of yours,\n" +
+			"named, or inferred when exactly one repo here is yours.\n" +
 			"not a fork you contribute to. Extracts everything the stackspace has done\n" +
 			"under <repo>/ and fast-forwards that project's own branch with it.\n\n" +
 			"Unlike `send`, nothing is squashed. Each stackspace commit that touched\n" +
@@ -716,15 +717,34 @@ func newStackPushCmd() *cobra.Command {
 			"`send` is the verb for someone else's project: it proposes one squashed\n" +
 			"commit on a branch of your fork, which is what a reviewer wants and the\n" +
 			"wrong thing entirely for a repository that is yours.",
-		Args:              cobra.ExactArgs(1),
+		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: stackRepoCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			name := args[0]
 			out := cmd.OutOrStdout()
 			m, src, repo, err := stackspace(ctx)
 			if err != nil {
 				return err
+			}
+			// Only a repo of your own can be pushed, so with exactly one there is
+			// nothing to disambiguate and naming it is ceremony. With several, ask
+			// rather than guess — this one writes to somebody's remote.
+			name := ""
+			if len(args) == 1 {
+				name = args[0]
+			} else {
+				owned := m.ownedNames()
+				switch len(owned) {
+				case 1:
+					name = owned[0]
+				case 0:
+					if err := m.requireRepos(); err != nil {
+						return err
+					}
+					return fmt.Errorf("no repo here is marked as yours — set \"owned\": true on the one you push to, or use `rig stack send <repo> <branch>` to propose a change to a fork")
+				default:
+					return fmt.Errorf("several repos here are yours (%s) — name the one to push", strings.Join(owned, ", "))
+				}
 			}
 			r := m.Repos[name]
 			switch {
@@ -744,10 +764,10 @@ func newStackPushCmd() *cobra.Command {
 				return fmt.Errorf("%s is pinned to %s — there is no branch to fast-forward.\n"+
 					"replace the pin with upstreamBranch to follow a branch again", name, m.pin(name).describe())
 			}
-			if dirty, err := repo.Dirty(ctx); err != nil {
+			if dirty, err := stackDirtyUnder(ctx, repo, name); err != nil {
 				return err
 			} else if dirty {
-				return fmt.Errorf("stackspace has uncommitted changes — commit them before pushing")
+				return fmt.Errorf("%s/ has uncommitted changes — commit them, or they will not be in what you push", name)
 			}
 
 			upstreamURL := stackRemoteURL(r.Upstream)
@@ -966,6 +986,30 @@ func stackReportOrphans(out io.Writer, m *stackManifest, orphans []stackOrphan) 
 		fmt.Fprintf(out, "    either that is not the repo your code depends on, or it moved to a\n")
 		fmt.Fprintf(out, "    renamed fork of it — a package is matched by identity, not by origin\n")
 	}
+}
+
+// stackDirtyUnder reports whether a prefix has uncommitted changes.
+//
+// send and push export a prefix's tree at HEAD, so uncommitted work under it
+// would be silently left out of what leaves — which is worth refusing over.
+// Uncommitted work anywhere else cannot reach the export at all, and refusing
+// for it means `rig stack wire` writing the stackspace's own overlay blocks a
+// push that has nothing to do with it.
+//
+// import and pull keep the whole-tree check, and should: they amend a merge
+// commit and stage everything, so an unrelated edit is swallowed into it.
+func stackDirtyUnder(ctx context.Context, repo *gitrepo.Repo, name string) (bool, error) {
+	paths, err := repo.DirtyPaths(ctx)
+	if err != nil {
+		return false, err
+	}
+	prefix := name + "/"
+	for _, p := range paths {
+		if strings.HasPrefix(filepath.ToSlash(p), prefix) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func newStackDoctorCmd() *cobra.Command {

@@ -251,7 +251,7 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | `stack status` | Each repo's cursor against its upstream, and whether it holds work that has not left |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
-| `stack push <repo>` | Fast-forward a repo you own with this stackspace's commits, history intact |
+| `stack push [repo]` | Fast-forward a repo you own with this stackspace's commits, history intact; inferred when only one is yours |
 | `stack wire` | Write the build overlay so members resolve each other from source |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what's missing |
 

@@ -363,6 +363,7 @@ branch with every stackspace commit that touched it:
 
 ```sh
 rig stack push term-app
+rig stack push            # the same, when only one repo here is yours
 
 # pushed term-app to you/term-app:main (0b001bd3)
 ```
@@ -463,7 +464,7 @@ outright if it holds changes of its own.
 | `stack status` | Each repo's cursor against its upstream branch tip |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
-| `stack push <repo>` | Fast-forward a repo you own with this stackspace's commits, history intact |
+| `stack push [repo]` | Fast-forward a repo you own with this stackspace's commits, history intact; inferred when only one is yours |
 | `stack wire` | Write the build overlay so members resolve each other from source |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
