@@ -269,7 +269,7 @@ is exactly the set to swap:
     <StackSource Include="Term.Core" Path="term-core/src/Term.Core/Term.Core.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(UseWorkspaceProjects)' != 'false'">
     <_StackAbsent  Include="@(StackSource)" Exclude="@(PackageReference)" />
     <_StackPresent Include="@(StackSource)" Exclude="@(_StackAbsent)" />
     <ProjectReference Include="@(_StackPresent->'$(MSBuildThisFileDirectory)%(Path)')" />
@@ -279,7 +279,9 @@ is exactly the set to swap:
 ```
 
 Item *transforms* are fine at project level — it is only batching that is not —
-so `@(_StackPresent->'…%(Path)')` evaluates as intended.
+so `@(_StackPresent->'…%(Path)')` evaluates as intended. The escape hatch stays
+on the outer `ItemGroup`, or the pristine against-real-packages build the
+section above promises would no longer be reachable.
 
 Beyond brevity this removes a real trap. Hand-written conditions get written
 against `%(Filename)`, which MSBuild splits at the **last dot**: `Pty.Core.Native`
