@@ -432,8 +432,21 @@ func gitExitCode(ctx context.Context, dir string, args ...string) (int, error) {
 }
 
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
+	return runGitStdin(ctx, dir, "", nil, args...)
+}
+
+// runGitStdin is runGit with an optional stdin and extra environment. Secrets
+// belong in env, never in args: the error below quotes every argument, and argv
+// is readable by any process on the machine.
+func runGitStdin(ctx context.Context, dir, stdin string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

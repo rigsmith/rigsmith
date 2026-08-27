@@ -415,6 +415,19 @@ func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, b
 		verb = "imported"
 		msg = fmt.Sprintf("stack: import %s @ %s", name, short(tip))
 	}
+	// The engine fetches upstream with whatever credentials its own client
+	// presents, so reaching a private repo means forwarding ours to it. This is
+	// the same credential git would use fetching that host directly, scoped to
+	// the proxy's URL so a redirect cannot carry it anywhere else, and absent
+	// entirely when no helper has one. Whether the repo actually needs it is not
+	// knowable without asking the forge, so it rides along either way.
+	auth, err := gitrepo.CredentialFor(ctx, stackRemoteURL(r.Upstream))
+	if err != nil {
+		return err
+	}
+	if auth != nil {
+		auth.URLPrefix = proxy.base()
+	}
 	// The URL pins the upstream commit, and josh serves a pinned commit as HEAD
 	// rather than under its branch name.
 	// Read before the merge: afterwards the newest import marker is the commit
@@ -422,7 +435,7 @@ func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, b
 	preTree, _ := repo.RevParse(ctx, "HEAD:"+name)
 	preImported, preKnown := stackImportedTree(ctx, repo, name)
 
-	conflicted, err := repo.FetchMergeUnrelated(ctx, proxy.url(path, tip, stackPrefixFilter(name)), "HEAD", msg)
+	conflicted, err := repo.FetchMergeUnrelated(ctx, proxy.url(path, tip, stackPrefixFilter(name)), "HEAD", msg, auth)
 	if err != nil {
 		if tail := proxy.tail(15); tail != "" {
 			return fmt.Errorf("%w\n--- josh-proxy log:\n%s", err, tail)

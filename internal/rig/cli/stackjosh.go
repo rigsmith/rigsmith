@@ -375,7 +375,13 @@ func (p *joshProxy) url(repoPath, commit, filter string) string {
 	}
 	// PathEscape, not QueryEscape: this is a path segment, where QueryEscape's
 	// space-as-plus would rename a prefix to a directory literally called "+".
-	return fmt.Sprintf("http://127.0.0.1:%d/%s.git%s%s.git", p.port, repoPath, at, url.PathEscape(filter))
+	return fmt.Sprintf("%s%s.git%s%s.git", p.base(), repoPath, at, url.PathEscape(filter))
+}
+
+// base is the proxy's root URL, for scoping git config — notably the
+// Authorization header — to this proxy and nothing else.
+func (p *joshProxy) base() string {
+	return fmt.Sprintf("http://127.0.0.1:%d/", p.port)
 }
 
 // tail returns the last lines of the engine's log, for attaching to an error.

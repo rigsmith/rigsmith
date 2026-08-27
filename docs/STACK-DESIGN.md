@@ -204,13 +204,23 @@ it.
 
 ## Open questions
 
-1. **Auth on `send`.** The proxy fronts `https://github.com`; pushing the
-   fork branch through it means git credentials for `http://localhost:<p>`
-   forwarded by josh (rustc contributors do this with PATs). John's flow is
-   SSH. Two candidate answers, spike decides: (a) credential passthrough with
-   a scoped PAT; (b) reverse-filter locally via `josh-filter`, then plain
-   `git push git@github.com:…` over SSH — no credentials near josh at all.
-   (b) is the better shape if the filter invocation is tractable.
+1. ~~**Auth on `send`.**~~ *Settled — both halves, and differently.*
+
+   `send` never touches the proxy: it builds the branch locally with
+   `commit-tree` and pushes to the fork with plain git, so the user's existing
+   remote credentials apply and nothing goes near josh. That is candidate (b),
+   and it fell out of the `send` design rather than needing a spike.
+
+   Fetching is candidate (a), because it has to be: the proxy is what talks to
+   upstream, so a private repo is only reachable if the proxy is given
+   credentials. josh-proxy already supports this — it takes HTTP Basic from its
+   client and uses it for the upstream fetch — and rig was presenting none, so
+   every private upstream answered 401 (`auth=Handle { value: None }` in the
+   engine log). rig now resolves the credential through `git credential fill`,
+   so whatever the user already configured answers, and passes it as a
+   URL-scoped `http.extraHeader` in the environment. Not a PAT rig stores, and
+   not in argv: `git -c` would put the token in every process listing, and the
+   git runner quotes its arguments into the error it returns on failure.
 2. Merge strategy per child on `pull` (merge vs squash vs rebase-ish), given
    the known merge-noise wart. Default merge, per-child override in manifest?
 3. `stack init` adopting an existing non-fused workspace (the sibling-clone

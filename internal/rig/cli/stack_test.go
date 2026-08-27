@@ -396,7 +396,7 @@ func TestGitrepoWsAdditions(t *testing.T) {
 		mustGitStack(t, other, "commit", "-m", "import me")
 		otherBranch := strings.TrimSpace(mustGitStack(t, other, "branch", "--show-current"))
 
-		conflicted, err := repo.FetchMergeUnrelated(ctx, other, otherBranch, "stack: import other")
+		conflicted, err := repo.FetchMergeUnrelated(ctx, other, otherBranch, "stack: import other", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
