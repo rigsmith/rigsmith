@@ -125,6 +125,55 @@ prevent.
 So the hoped-for asymmetry does not exist. Windows is no better than macOS, and
 the ambiguity refusal stays on both.
 
+### Nothing can hold the scheme against the app
+
+Three routes were considered for pinning the handler so the app's
+re-registration could not win. All are closed.
+
+**Sandboxing does not apply.** Claude Desktop is not sandboxed to begin with —
+no `com.apple.security.app-sandbox` entitlement and no container; it ships
+hardened and notarized, with `keychain-access-groups` under team `Q6L2SF6YDW`
+(which is also what makes the re-signed-copy problem in the branding section
+real). More to the point, sandboxing would not help if it were: the App Sandbox
+isolates a process's filesystem and IPC, while the LaunchServices handler
+database is **per user**. Every process in the session, sandboxed or not,
+registers against the same `lsd`.
+
+The boundaries that do give a separate handler database defeat the purpose. A
+second macOS user account has its own, but it is also a separate GUI session, so
+the profiles stop being side-by-side windows — which is the model. A VM is
+complete isolation and far more than the problem is worth.
+
+**A managed preference does not work.** Tested 2026-08-27 on macOS 26, on a
+machine with no MDM and no profiles installed. An `LSHandlers` payload naming a
+probe bundle for the `claude` scheme was written into
+`/Library/Managed Preferences/<user>/` under **both** candidate domains,
+`com.apple.LaunchServices` and `com.apple.launchservices.secure`, root-owned.
+
+```
+com.apple.LaunchServices:        forced=true  claude->dev.rigsmith.clauderig.schemeprobe
+com.apple.launchservices.secure: forced=true  claude->dev.rigsmith.clauderig.schemeprobe
+resolves=/Applications/Claude.app
+```
+
+`CFPreferencesAppValueIsForced` returned true for both — the managed layer was
+working exactly as designed — and LaunchServices resolved to Claude anyway,
+before and after re-registering every domain. **The managed preference is
+honoured by `cfprefs` and not consulted by LaunchServices**, which resolves from
+its own database rather than from CFPreferences at query time. The probe never
+won the scheme at all, so the app was never even given the chance to take it
+back.
+
+The one caveat, stated rather than overstated: a managed `LSHandlers` might
+apply only at login, and a real profile install would normally be followed by
+one. But a mechanism that needs a re-login to take effect, and that the app
+overwrites on its next launch regardless, is not a foundation.
+
+**And even a win would have been small.** Holding the registration still gives
+no per-instance address. The best case was always automating the remedy
+`ambiguousRoutingError` already prints — quit the others, then send — at the
+cost of a configuration profile on every machine.
+
 ### Theme is confirmed (§1 is unaffected)
 
 ```js
