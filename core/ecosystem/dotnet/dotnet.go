@@ -194,7 +194,10 @@ func (a *Adapter) Discover(ctx context.Context, req plugin.DiscoverRequest) (plu
 			Version:      resolved.version,
 			Dir:          relTo(root, filepath.Dir(path)),
 			ManifestPath: relTo(root, path),
-			Dependencies: append(projectReferences(text), packageReferences(text)...),
+			Dependencies: projectReferences(text),
+		}
+		if req.IncludeRegistrySiblings {
+			pkg.Dependencies = append(pkg.Dependencies, packageReferences(text)...)
 		}
 		// When the version comes from a shared props file the package's VersionFile
 		// differs from its manifest — this is what drives lockstep grouping.

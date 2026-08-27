@@ -162,6 +162,15 @@ type DiscoverRequest struct {
 	// references, and that identity is what a local overlay redirects. Such a
 	// package comes back with an empty Version.
 	IncludeUnversioned bool `json:"includeUnversioned,omitempty"`
+	// IncludeRegistrySiblings also reports dependencies on packages this repo
+	// produces but that are referenced the way an outside consumer would — a
+	// PackageReference rather than a ProjectReference. They are marked
+	// ViaRegistry, and they are what a local overlay redirects.
+	//
+	// Off by default because the release path must not see them: adding cascade
+	// edges for siblings consumed from the registry is a real change to what
+	// gets bumped, and not one discovery should make on its own.
+	IncludeRegistrySiblings bool `json:"includeRegistrySiblings,omitempty"`
 }
 
 // DiscoverResponse returns the discovered packages.

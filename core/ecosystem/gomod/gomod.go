@@ -58,7 +58,7 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		APIVersion:       plugin.APIVersion,
 		ID:               "go",
 		DisplayName:      "Go",
-		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts, plugin.MethodReleaseInit},
+		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts, plugin.MethodReleaseInit, plugin.MethodLocalOverlay},
 		ManifestPatterns: []string{"go.mod"},
 		DevCommands: map[string][]string{
 			plugin.VerbBuild:  {"go", "build", "./..."},
@@ -150,7 +150,10 @@ func (a *Adapter) Discover(ctx context.Context, req plugin.DiscoverRequest) (plu
 		sortStrings(names)
 		for _, name := range names {
 			if modules[name] && name != pr.module {
-				deps = append(deps, plugin.Dependency{Name: name, Kind: plugin.DepNormal, Range: pr.require[name]})
+				// A require on a sibling module goes to the proxy however close the
+				// sources are — that is what go.work exists to change — so it is a
+				// registry reference as much as a cascade edge.
+				deps = append(deps, plugin.Dependency{Name: name, Kind: plugin.DepNormal, Range: pr.require[name], ViaRegistry: true})
 			}
 		}
 		dir := relTo(root, filepath.Dir(pr.path))
@@ -569,10 +572,4 @@ func sortStrings(s []string) {
 			s[j-1], s[j] = s[j], s[j-1]
 		}
 	}
-}
-
-// LocalOverlay is not implemented here: a go.work file would serve, but Go modules in one repo already resolve each
-// other by module path; nothing has needed redirecting.
-func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayRequest) (plugin.LocalOverlayResponse, error) {
-	return plugin.LocalOverlayResponse{Skipped: true, Reason: "Go: modules in one repo already resolve each other"}, nil
 }
