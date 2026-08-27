@@ -74,7 +74,10 @@ func TestCredentialFor(t *testing.T) {
 		dir := t.TempDir()
 		asked := filepath.Join(dir, "asked.txt")
 		cfg := filepath.Join(dir, "gitconfig")
-		script := "!f() { cat > " + asked + "; echo password=tok; }; f"
+		// Forward slashes: this path goes inside a git-config value, where a
+		// backslash is an escape, and then into a shell. Windows temp paths are
+		// full of them.
+		script := "!f() { cat > " + filepath.ToSlash(asked) + "; echo password=tok; }; f"
 		// git forwards the path to a helper only when asked to; without this the
 		// value we send is dropped before the helper sees it.
 		conf := "[credential]\n\thelper = \"" + script + "\"\n\tuseHttpPath = true\n"
