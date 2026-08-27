@@ -383,3 +383,53 @@ upstream CI sees. The walk-up ignores git boundaries, so building a child from
 inside its folder also gets the overlay — right for the dev loop; use the flag
 for pristine verification. Node/Go equivalents (workspaces/overrides,
 `go.work`) slot into the same "overlay scaffolded by `stack init`" position.
+
+### Declaring the swaps once (2026-08-26)
+
+The form above repeats each package name three times per dependency — in the
+path, in the condition, and in the `Remove`. That is fine for two libraries and
+tiresome for ten, and every repetition is a place to typo a name into a silent
+no-op.
+
+The obvious fix, `%()` batching over a declared list, does **not** work: item
+batching is only available inside a `Target`, and a `Directory.Build.targets`
+puts its `ItemGroup`s at project level. The batched `Include` expands to nothing
+and reports no error, which is the worst of both.
+
+Set arithmetic gets there without batching. `Exclude` matches on identity, so
+the sources a project does not reference can be subtracted, and the complement
+is exactly the set to swap:
+
+```xml
+<Project>
+  <ItemGroup>
+    <StackSource Include="Pty.Core"  Path="pty-core/src/Pty.Core/Pty.Core.csproj" />
+    <StackSource Include="Term.Core" Path="term-core/src/Term.Core/Term.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseWorkspaceProjects)' != 'false'">
+    <_StackAbsent  Include="@(StackSource)" Exclude="@(PackageReference)" />
+    <_StackPresent Include="@(StackSource)" Exclude="@(_StackAbsent)" />
+    <ProjectReference Include="@(_StackPresent->'$(MSBuildThisFileDirectory)%(Path)')" />
+    <PackageReference Remove="@(StackSource)" />
+  </ItemGroup>
+</Project>
+```
+
+Item *transforms* are fine at project level — it is only batching that is not —
+so `@(_StackPresent->'…%(Path)')` evaluates as intended. The escape hatch stays
+on the outer `ItemGroup`, or the pristine against-real-packages build the
+section above promises would no longer be reachable.
+
+Beyond brevity this removes a real trap. Hand-written conditions get written
+against `%(Filename)`, which MSBuild splits at the **last dot**: `Pty.Core.Native`
+has the `Filename` `Pty.Core`, so such a condition matches the wrong package and
+looks like it worked. The set form never names a metadata field, so it cannot go
+wrong that way.
+
+Verified against four projects: one referencing `Pty.Core`, one referencing
+`Pty.Core.Native` only, one referencing both, one referencing neither. Each got
+exactly its own swaps and no others.
+
+This is the shape `rig stack adopt` should generate, since it is the one a human
+can extend by adding a line.
