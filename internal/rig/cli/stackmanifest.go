@@ -55,6 +55,12 @@ type stackRepo struct {
 	// one of the three may be set.
 	UpstreamTag    string `json:"upstreamTag,omitempty"`
 	UpstreamCommit string `json:"upstreamCommit,omitempty"`
+	// Owned marks a project as yours rather than someone else's, which changes
+	// how work leaves the workspace: `send` proposes a squashed branch to a fork,
+	// `push` fast-forwards your own repo with the history intact. It cannot be
+	// inferred — upstream and fork matching is suggestive, and a perfectly
+	// ordinary fork arrangement looks identical — so it is stated.
+	Owned bool `json:"owned,omitempty"`
 	// BranchPrefix overrides the workspace-wide prefix for this project — for the
 	// upstream whose contribution guide asks for something of its own. A pointer
 	// so that "" is a real answer (no prefix here) rather than "unset".
@@ -102,6 +108,16 @@ type stackManifest struct {
 }
 
 func (m *stackManifest) cursor(name string) string { return m.LastSync[name] }
+
+// joshVersion is the engine version this workspace pins, or rig's default. Nil
+// receiver is a real case: the version is needed to install the engine before a
+// workspace necessarily has a manifest to read.
+func (m *stackManifest) joshVersion() string {
+	if m != nil && m.Josh != "" {
+		return m.Josh
+	}
+	return stackJoshVersion
+}
 
 // branch is the upstream branch a prefix tracks.
 func (m *stackManifest) branch(name string) string {
@@ -439,6 +455,11 @@ const stackManifestTemplate = `{
     //   // Your fork, where "rig stack send" pushes PR-ready branches.
     //   // You need push access to it.
     //   "fork": "github.com/you/Some.Lib",
+    //
+    //   // For one of YOUR OWN projects rather than a fork of someone else's:
+    //   // enables "rig stack push", which fast-forwards its own branch with
+    //   // every commit that touched it, instead of squashing to one.
+    //   //   "owned": true,
     //
     //   // Which branch of upstream this directory follows. Optional, main by
     //   // default. This is NOT the branch send creates — you name that one per

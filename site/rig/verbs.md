@@ -240,15 +240,17 @@ publishing a package to see a change land. A stack workspace fuses those repos
 into **one history**, each under its own directory, so a change spans them in a
 single commit and the build compiles against source rather than packages.
 
-Upstream never learns about it. Each repo keeps its own remote, and `send`
-produces an ordinary pull request.
+Nothing downstream learns about it. Each repo keeps its own remote, and work
+leaves one project at a time: `send` produces an ordinary pull request to a fork
+you contribute to, and `push` fast-forwards a repo you own with its history.
 
 | Verb | What |
 |------|------|
 | `stack init` | Write the manifest, or import the repos it names into this history |
-| `stack status` | Each repo's cursor against its upstream, and whether it holds unsent changes |
+| `stack status` | Each repo's cursor against its upstream, and whether it holds work that has not left |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
+| `stack push <repo>` | Fast-forward a repo you own with this workspace's commits, history intact |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what's missing |
 
 ```sh

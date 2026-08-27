@@ -58,6 +58,10 @@
             "description": "Your fork. `rig stack send` pushes extracted branches here. Written as host/owner/name; an https or ssh URL you pasted is accepted and reduced to that.",
             "pattern": "^(?:(?:(?:https?|ssh|git)://)?(?:[^/@]+@)?(?:\\[[0-9A-Fa-f:]+\\]|[^/:@]+)(?::[0-9]+)?/[^/]+/[^/?#]+|[^/@]+@(?:\\[[0-9A-Fa-f:]+\\]|[^/:@]+):[^/]+/[^/?#]+)/?(?:[?#].*)?$"
           },
+          "owned": {
+            "type": "boolean",
+            "description": "This project is yours, not someone else's. Enables `rig stack push`, which fast-forwards its own branch with the workspace's commits and their history, instead of `rig stack send`, which proposes one squashed commit to a fork."
+          },
           "upstreamBranch": {
             "type": "string",
             "description": "Branch of `upstream` this directory follows — what `pull` takes and what `send` roots on. Defaults to main. Not the branch `send` creates; you name that per change."

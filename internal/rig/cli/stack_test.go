@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -480,7 +482,7 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		for _, it := range stackMenuItems() {
 			labels = append(labels, it.label)
 		}
-		want := "init,status,pull,send,doctor"
+		want := "init,status,pull,send,push,doctor"
 		if got := strings.Join(labels, ","); got != want {
 			t.Fatalf("menu = %q, want %q", got, want)
 		}
@@ -902,4 +904,176 @@ func TestStackUnsentWork(t *testing.T) {
 			t.Fatalf("%+v, want an unknown baseline", u)
 		}
 	})
+}
+
+func TestStackPushGuards(t *testing.T) {
+	ctx := context.Background()
+	run := func(t *testing.T, manifest string, args ...string) error {
+		t.Helper()
+		root := t.TempDir()
+		writeStackManifest(t, root, manifest)
+		for _, a := range [][]string{{"init", "-q", "-b", "main", root}, {"-C", root, "add", "-A"}} {
+			c := exec.CommandContext(ctx, "git", a...)
+			c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+				"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+			if out, err := c.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v: %s", a, err, out)
+			}
+		}
+		c := exec.CommandContext(ctx, "git", "-C", root, "commit", "-qm", "manifest")
+		c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("commit: %v: %s", err, out)
+		}
+		dir, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(dir) })
+		if err := os.Chdir(root); err != nil {
+			t.Fatal(err)
+		}
+		cmd := newStackPushCmd()
+		cmd.SetContext(ctx)
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		return cmd.RunE(cmd, args)
+	}
+
+	const owned = `{"repos":{"app":{"upstream":"github.com/you/app","fork":"github.com/you/app","owned":true}},"lastSync":{"app":"%s"}}`
+
+	t.Run("an unknown repo names the ones there are", func(t *testing.T) {
+		err := run(t, fmt.Sprintf(owned, strings.Repeat("a", 40)), "nope")
+		if err == nil || !strings.Contains(err.Error(), "no stack repo") {
+			t.Fatalf("got %v", err)
+		}
+	})
+
+	t.Run("a repo not marked owned points at send instead", func(t *testing.T) {
+		err := run(t, `{"repos":{"lib":{"upstream":"github.com/acme/lib","fork":"github.com/you/lib"}},"lastSync":{"lib":"`+strings.Repeat("a", 40)+`"}}`, "lib")
+		if err == nil || !strings.Contains(err.Error(), "not marked as yours") || !strings.Contains(err.Error(), "stack send") {
+			t.Fatalf("got %v, want a refusal offering send", err)
+		}
+	})
+
+	t.Run("an unimported repo says to import it", func(t *testing.T) {
+		err := run(t, `{"repos":{"app":{"upstream":"github.com/you/app","fork":"github.com/you/app","owned":true}}}`, "app")
+		if err == nil || !strings.Contains(err.Error(), "not imported yet") {
+			t.Fatalf("got %v", err)
+		}
+	})
+
+	t.Run("a pinned repo has no branch to move", func(t *testing.T) {
+		// Advancing the cursor past a pin would contradict the pin itself, so
+		// this has to refuse rather than quietly follow the tag's commit.
+		err := run(t, `{"repos":{"app":{"upstream":"github.com/you/app","fork":"github.com/you/app","owned":true,"upstreamTag":"v1"}},"lastSync":{"app":"`+strings.Repeat("a", 40)+`"}}`, "app")
+		if err == nil || !strings.Contains(err.Error(), "pinned to tag v1") {
+			t.Fatalf("got %v, want a refusal naming the pin", err)
+		}
+	})
+}
+
+func TestStackRunJoshFilter(t *testing.T) {
+	ctx := context.Background()
+	bin, err := exec.LookPath("josh-filter")
+	if err != nil {
+		if home, e := os.UserHomeDir(); e == nil {
+			candidate := filepath.Join(home, ".local", "share", "rigsmith", "josh", stackJoshVersion, "bin", "josh-filter")
+			if _, e := os.Stat(candidate); e == nil {
+				bin = candidate
+			}
+		}
+	}
+	if bin == "" {
+		t.Skip("josh-filter is not installed; `rig stack doctor --fix` fetches it")
+	}
+
+	ws := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		c := exec.CommandContext(ctx, "git", append([]string{"-C", ws}, args...)...)
+		c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
+			"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2026-01-01T00:00:00Z")
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if out, err := exec.CommandContext(ctx, "git", "init", "-q", "-b", "main", ws).CombinedOutput(); err != nil {
+		t.Fatalf("init: %v: %s", err, out)
+	}
+	for _, p := range []string{"app", "lib"} {
+		if err := os.MkdirAll(filepath.Join(ws, p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(ws, p, "f.txt"), []byte("one"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", "-A")
+	git("commit", "-qm", "both")
+	if err := os.WriteFile(filepath.Join(ws, "lib", "f.txt"), []byte("two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("commit", "-qam", "only lib")
+
+	repo, err := gitrepo.Open(ctx, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stackRunJoshFilter(ctx, bin, ws, ":/app", "refs/rigsmith/test/app"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A commit touching only the other prefix must not appear here: the member's
+	// history is what happened to *it*, not a copy of the workspace's.
+	log, err := repo.RevParse(ctx, "refs/rigsmith/test/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	subjects := runGitTest(t, ws, "log", "--format=%s", log)
+	if got := strings.Count(subjects, "\n"); got != 1 {
+		t.Fatalf("app history has %d commits:\n%s\nwant only the one that touched it", got, subjects)
+	}
+	if !strings.Contains(subjects, "both") || strings.Contains(subjects, "only lib") {
+		t.Fatalf("app history = %q, want just the commit that touched app/", subjects)
+	}
+
+	// And the prefix is stripped: what comes out is shaped like the repo, not
+	// like the directory it lived in.
+	if tree := runGitTest(t, ws, "ls-tree", "--name-only", log); strings.TrimSpace(tree) != "f.txt" {
+		t.Fatalf("filtered tree = %q, want the prefix stripped", strings.TrimSpace(tree))
+	}
+}
+
+func runGitTest(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return string(out)
+}
+
+// TestEnsureJoshFilterDownloads exercises the real download and its pinned
+// checksum. Gated because it reaches the network; it is the only thing that
+// proves the second binary is fetched and verified like the first.
+
+func TestEnsureJoshFilterDownloads(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") == "" {
+		t.Skip("set RIG_STACK_E2E=1 to download the engine")
+	}
+	bin, err := ensureJoshTool(t.Context(), stackJoshVersion, toolFilter, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stackJoshInstalled(bin); err != nil {
+		t.Fatalf("%s: %v", bin, err)
+	}
+	if !strings.HasSuffix(bin, "josh-filter"+stackExeSuffix()) {
+		t.Fatalf("installed %s, want the filter binary", bin)
+	}
 }

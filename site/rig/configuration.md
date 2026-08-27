@@ -258,6 +258,14 @@ since resolving an abbreviation requires fetching the repository — which is th
 thing the pin exists to decide. Annotated tags are peeled to the commit they
 point at.
 
+`owned` marks a project as yours rather than someone else's, which changes how
+work leaves the workspace. Without it, `rig stack send` proposes a squashed
+commit on a branch of your fork — right for a pull request, wrong for a repo you
+own, since it discards every message on the way out. With it, `rig stack push`
+fast-forwards that project's own branch with each commit that touched it. It
+cannot be inferred: `upstream` and `fork` matching is suggestive, and an ordinary
+fork arrangement looks identical, so it is stated.
+
 `lastSync` is a separate map rather than a field per repo because it is machine
 written: an import or pull rewrites that one value while the entries you wrote,
 and their comments, stay untouched. The values are full 40-character SHAs — an

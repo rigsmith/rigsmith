@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -25,13 +28,15 @@ func newStackCmd() *cobra.Command {
 		Use:   "stack",
 		Short: "Fused workspace — upstream forks as prefixes of one history",
 		Long: "A stack workspace fuses several upstream repos into one git history, each\n" +
-			"under a prefix, via josh's reversible filters. Commits may span projects;\n" +
-			"`send` extracts a prefix's changes back onto your fork as an ordinary\n" +
-			"PR-ready branch. Upstream never learns the workspace exists.\n\n" +
+			"under a prefix, via josh's reversible filters. Commits may span projects,\n" +
+			"and leave one project at a time: `send` puts a prefix's changes on your\n" +
+			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
+			"its history. Neither leaves any trace that the workspace exists.\n\n" +
 			"  rig stack init                      scaffold the manifest / import the repos\n" +
 			"  rig stack status                    cursor vs upstream, per repo\n" +
 			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
 			"  rig stack send <repo> <new-branch>  a branch on your fork, prefixed stack/\n" +
+			"  rig stack push <repo>               fast-forward a repo you own, history intact\n" +
 			"  rig stack doctor                    engine + manifest checks (--fix installs josh)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
@@ -40,7 +45,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackInitCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackInitCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackDoctorCmd())
 	return cmd
 }
 
@@ -93,10 +98,7 @@ func stackWorkspace(ctx context.Context) (*stackManifest, *cfgfind.Source, *gitr
 // stackEngine resolves the workspace's josh version (manifest override, else the
 // pinned default) and ensures the binary, printing install progress to out.
 func stackEngine(ctx context.Context, m *stackManifest, cmd *cobra.Command) (string, error) {
-	version := stackJoshVersion
-	if m != nil && m.Josh != "" {
-		version = m.Josh
-	}
+	version := m.joshVersion()
 	return ensureJoshProxy(ctx, version, cmd.OutOrStdout())
 }
 
@@ -165,7 +167,7 @@ func newStackInitCmd() *cobra.Command {
 			}
 			imported := 0
 			for _, name := range names {
-				if err := stackPullOne(ctx, cmd, repo, bin, src, m, name, true); err != nil {
+				if err := stackPullOne(ctx, cmd.OutOrStdout(), repo, bin, src, m, name, true); err != nil {
 					return fmt.Errorf("importing %s: %w", name, err)
 				}
 				imported++
@@ -210,7 +212,7 @@ func stackOnlyManifestDirty(ctx context.Context, repo *gitrepo.Repo, src *cfgfin
 func newStackStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Each repo's cursor vs its upstream branch tip",
+		Short: "Each repo's cursor vs its upstream, and what has not left the workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -322,7 +324,7 @@ func newStackPullCmd() *cobra.Command {
 				return err
 			}
 			for _, name := range moved {
-				if err := stackPullOne(ctx, cmd, repo, bin, src, m, name, false); err != nil {
+				if err := stackPullOne(ctx, cmd.OutOrStdout(), repo, bin, src, m, name, false); err != nil {
 					return fmt.Errorf("pulling %s: %w", name, err)
 				}
 			}
@@ -464,9 +466,8 @@ func stackResolveUpstream(ctx context.Context, repo *gitrepo.Repo, url string, p
 // stackPullOne imports or updates one repo's prefix: probe upstream's tip, stop at
 // the cursor (idempotent, the josh-sync NothingToPull check), else fetch that
 // exact SHA through the filter, merge, and commit the moved cursor with it.
-func stackPullOne(ctx context.Context, cmd *cobra.Command, repo *gitrepo.Repo, bin string, src *cfgfind.Source, m *stackManifest, name string, initial bool) error {
+func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin string, src *cfgfind.Source, m *stackManifest, name string, initial bool) error {
 	r := m.Repos[name]
-	out := cmd.OutOrStdout()
 	tip, err := stackUpstreamTip(ctx, repo, m, name)
 	if err != nil {
 		return err
@@ -688,6 +689,188 @@ func newStackSendCmd() *cobra.Command {
 	return cmd
 }
 
+// newStackPushCmd exports a member you own back to its own repository, keeping
+// the history that `send` deliberately discards.
+func newStackPushCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "push <repo>",
+		Short: "Fast-forward a repo you own with this workspace's commits, history intact",
+		Long: "For a project marked `\"owned\": true` in the manifest — one of yours,\n" +
+			"not a fork you contribute to. Extracts everything the workspace has done\n" +
+			"under <repo>/ and fast-forwards that project's own branch with it.\n\n" +
+			"Unlike `send`, nothing is squashed. Each workspace commit that touched\n" +
+			"<repo>/ arrives as its own commit, with its message, parented on what\n" +
+			"upstream already had — so a change spanning several projects lands as a\n" +
+			"matching commit in each of them. Commits that touched nothing under\n" +
+			"<repo>/ do not appear at all.\n\n" +
+			"`send` is the verb for someone else's project: it proposes one squashed\n" +
+			"commit on a branch of your fork, which is what a reviewer wants and the\n" +
+			"wrong thing entirely for a repository that is yours.",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: stackRepoCompletion,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			name := args[0]
+			out := cmd.OutOrStdout()
+			m, src, repo, err := stackWorkspace(ctx)
+			if err != nil {
+				return err
+			}
+			r := m.Repos[name]
+			switch {
+			case r == nil:
+				return fmt.Errorf("no stack repo %q (have: %s)", name, strings.Join(m.names(), ", "))
+			case m.cursor(name) == "":
+				return fmt.Errorf("%s is not imported yet — run `rig stack init`", name)
+			case !r.Owned:
+				return fmt.Errorf("%s is not marked as yours — push fast-forwards a project's own branch, which is only right for a repo you own\n"+
+					"set \"owned\": true on %s in the manifest, or use `rig stack send %s <branch>` to propose the change to its fork instead",
+					name, name, name)
+			case m.pin(name).pinned():
+				// A pin names a fixed point in history; there is no branch there to
+				// move, and advancing the cursor past it would contradict the pin.
+				return fmt.Errorf("%s is pinned to %s — there is no branch to fast-forward.\n"+
+					"replace the pin with upstreamBranch to follow a branch again", name, m.pin(name).describe())
+			}
+			if dirty, err := repo.Dirty(ctx); err != nil {
+				return err
+			} else if dirty {
+				return fmt.Errorf("workspace has uncommitted changes — commit them before pushing")
+			}
+
+			upstreamURL := stackRemoteURL(r.Upstream)
+			branch := m.branch(name)
+			tip, err := repo.LsRemote(ctx, upstreamURL, "refs/heads/"+branch)
+			if err != nil {
+				return err
+			}
+			// Same guard as send, for the same reason: the workspace holds a
+			// snapshot taken at the cursor, and building on anything else would
+			// present upstream's own commits as though this push had undone them.
+			if tip != m.cursor(name) {
+				return fmt.Errorf("upstream %s has moved to %s since this workspace last pulled (%s)\n"+
+					"pushing now would revert those commits — run `rig stack pull %s` first",
+					r.Upstream, short(tip), short(m.cursor(name)), name)
+			}
+
+			// Both engines before the push, not after: the workspace has to take
+			// back what it sends (see below), and discovering a missing binary
+			// once the remote has already moved would leave exactly the split
+			// state this is trying to avoid.
+			filter, err := ensureJoshTool(ctx, m.joshVersion(), toolFilter, out)
+			if err != nil {
+				return err
+			}
+			proxy, err := ensureJoshTool(ctx, m.joshVersion(), toolProxy, out)
+			if err != nil {
+				return err
+			}
+			// :/<name> is the exact inverse of the :prefix=<name> this was imported
+			// with, so the shared history filters back to upstream's own commit ids
+			// and what is left on top is a fast-forward rather than a fork of it.
+			ref := "refs/rigsmith/push/" + name
+			if err := stackRunJoshFilter(ctx, filter, repo.Dir, ":/"+name, ref); err != nil {
+				return err
+			}
+			head, err := repo.RevParse(ctx, ref)
+			if err != nil {
+				return err
+			}
+			if head == tip {
+				fmt.Fprintf(out, "%s: nothing to push — it matches %s\n", name, r.Upstream)
+				return nil
+			}
+
+			// No force and no lease: a push that is not a fast-forward means the
+			// filtered history is not a continuation of upstream's, and overwriting
+			// is never the right answer to that.
+			if err := repo.PushRef(ctx, upstreamURL, head, "refs/heads/"+branch); err != nil {
+				return fmt.Errorf("pushing %s to %s:%s: %w", name, r.Upstream, branch, err)
+			}
+
+			// Take back what we just sent, rather than only recording the cursor.
+			//
+			// The filtered commit is a different object from the workspace commit
+			// that produced it — same content under a different prefix and different
+			// parents — so the workspace does not contain it. Left that way, the
+			// next pull that finds upstream moved re-imports our own commits as a
+			// parallel line of development: a duplicate in the log at best, and a
+			// conflict as soon as the same file has been touched since.
+			//
+			// Importing it here is the moment it costs nothing. The content is
+			// identical to what the workspace already has, because we just sent it,
+			// so the merge is trivial — and from now on the prefixed commits are
+			// ancestors and later pulls are ordinary.
+			if err := stackPullOne(ctx, io.Discard, repo, proxy, src, m, name, false); err != nil {
+				return fmt.Errorf("%s was pushed to %s:%s, but the workspace could not take it back: %w\n"+
+					"run `rig stack pull %s` — until then this workspace still has the change only in its own shape",
+					name, r.Upstream, branch, err, name)
+			}
+			fmt.Fprintf(out, "pushed %s to %s:%s (%s)\n", name, r.Upstream, branch, short(head))
+			return nil
+		},
+	}
+	return cmd
+}
+
+// stackRunJoshFilter rewrites the workspace's HEAD through filter, leaving the
+// result at ref. The engine works in place on the repository it is pointed at,
+// touching no branch of its own, so the caller decides what happens next.
+func stackRunJoshFilter(ctx context.Context, bin, dir, filter, ref string) error {
+	cmd := exec.CommandContext(ctx, bin, filter, "--update", ref, "HEAD")
+	cmd.Dir = dir
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	cmd.Stdout = io.Discard
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("josh-filter %s: %w: %s", filter, err, strings.TrimSpace(errb.String()))
+	}
+	return nil
+}
+
+// newStackPushMenuCmd is `push` for the menu: only projects marked as yours can
+// be pushed, so the picker offers those and says so when there are none, rather
+// than letting someone choose a repo the verb will refuse.
+func newStackPushMenuCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "push",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+			m, _, _, err := stackWorkspace(cmd.Context())
+			if err != nil {
+				return err
+			}
+			owned := make([]string, 0, len(m.Repos))
+			for _, n := range m.names() {
+				if r := m.Repos[n]; r != nil && r.Owned && !m.pin(n).pinned() {
+					owned = append(owned, n)
+				}
+			}
+			if len(owned) == 0 {
+				fmt.Fprintln(out, DimStyle.Render(`no repos here are marked "owned" — push fast-forwards a project's own branch, which is only right for one of yours`))
+				return nil
+			}
+			name := owned[0]
+			if len(owned) > 1 {
+				opts := make([]huh.Option[string], 0, len(owned))
+				for _, n := range owned {
+					opts = append(opts, huh.NewOption(fmt.Sprintf("%s  →  %s", n, m.Repos[n].Upstream), n))
+				}
+				if err := huh.NewSelect[string]().
+					Title("Push which repo?").Options(opts...).Filtering(true).Value(&name).Run(); err != nil {
+					return err
+				}
+			}
+			sub := newStackPushCmd()
+			sub.SetContext(cmd.Context())
+			sub.SetOut(out)
+			sub.SetErr(cmd.ErrOrStderr())
+			return sub.RunE(sub, []string{name})
+		},
+	}
+}
+
 func newStackDoctorCmd() *cobra.Command {
 	var fix bool
 	cmd := &cobra.Command{
@@ -705,10 +888,7 @@ func newStackDoctorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			version := stackJoshVersion
-			if m != nil && m.Josh != "" {
-				version = m.Josh
-			}
+			version := m.joshVersion()
 			switch {
 			case m == nil:
 				fmt.Fprintln(out, "· no stack manifest here (fine outside a workspace)")
@@ -794,6 +974,7 @@ func stackMenuItems() []menuItem {
 		{label: "status", desc: "each repo's cursor against its upstream", cmd: newStackStatusCmd()},
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
 		{label: "send", desc: "a repo's changes to your fork as a new branch (pick, then name it)", cmd: newStackSendMenuCmd()},
+		{label: "push", desc: "a repo you own back to its own branch, history intact (pick one)", cmd: newStackPushMenuCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
 	}
 }
