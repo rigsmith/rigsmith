@@ -67,6 +67,70 @@ func TestCredentialFor(t *testing.T) {
 		}
 	})
 
+	t.Run("the remote is described to git the way git would", func(t *testing.T) {
+		// The helper records what it was asked; the query is what is under test.
+		// Userinfo must not end up in the host, and the username and path have to
+		// be passed or entries scoped to either cannot match.
+		dir := t.TempDir()
+		asked := filepath.Join(dir, "asked.txt")
+		cfg := filepath.Join(dir, "gitconfig")
+		script := "!f() { cat > " + asked + "; echo password=tok; }; f"
+		// git forwards the path to a helper only when asked to; without this the
+		// value we send is dropped before the helper sees it.
+		conf := "[credential]\n\thelper = \"" + script + "\"\n\tuseHttpPath = true\n"
+		if err := os.WriteFile(cfg, []byte(conf), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+		t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+		t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+		if _, err := CredentialFor(ctx, "https://alice@example.com:8443/acme/pty-core.git"); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(asked)
+		if err != nil {
+			t.Fatalf("the helper was never asked: %v", err)
+		}
+		for _, want := range []string{
+			"protocol=https",
+			"host=example.com:8443",
+			"username=alice",
+			"path=acme/pty-core.git",
+		} {
+			if !strings.Contains(string(got), want) {
+				t.Errorf("missing %q in what git was asked:\n%s", want, got)
+			}
+		}
+		if strings.Contains(string(got), "host=alice@") {
+			t.Errorf("userinfo leaked into the host:\n%s", got)
+		}
+	})
+
+	t.Run("whitespace inside a credential survives", func(t *testing.T) {
+		// A password whose own spaces matter. Trimming the whole line eats them
+		// and turns a working credential into one that fails to authenticate.
+		cfg := filepath.Join(t.TempDir(), "gitconfig")
+		script := `!f() { test $1 = get && echo username=u && echo 'password= sp ace '; }; f`
+		if err := os.WriteFile(cfg, []byte("[credential]\n\thelper = \""+script+"\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+		t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+		t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+		got, err := CredentialFor(ctx, "https://github.com/acme/pty-core.git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == nil {
+			t.Fatal("no credential resolved")
+		}
+		if got.Password != " sp ace " {
+			t.Fatalf("password lost its spaces: %q", got.Password)
+		}
+	})
+
 	t.Run("reads whatever helper the user configured", func(t *testing.T) {
 		cfg := filepath.Join(t.TempDir(), "gitconfig")
 		// The value must be quoted: git's config parser treats an unquoted one
