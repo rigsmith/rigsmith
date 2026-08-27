@@ -247,6 +247,7 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | Verb | What |
 |------|------|
 | `stack init` | Write the manifest, or import the repos it names into this history |
+| `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
 | `stack status` | Each repo's cursor against its upstream, and whether it holds work that has not left |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack send <repo> <new-branch>` | Put that repo's changes on your fork as a PR-ready branch |
