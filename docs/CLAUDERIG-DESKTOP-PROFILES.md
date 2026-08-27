@@ -276,9 +276,10 @@ toast:
 - **A deep link is routed by scheme, not to a window.** With a second profile
   open the OS picks which one receives it, and that would cross an account
   boundary — so it is refused rather than risked. Quit the others, or pass
-  `--anyway` when any window will do. Loosening this — by having clauderig
-  register as the `claude://` handler and decide the destination itself — is
-  designed in
+  `--anyway` when any window will do. This is not a stopgap: Claude Desktop
+  re-claims the `claude://` scheme on every launch and takes no single-instance
+  lock, so nothing clauderig registers can route a link to a chosen window. The
+  evidence is in
   [CLAUDERIG-DESKTOP-LAUNCHER-DESIGN.md](CLAUDERIG-DESKTOP-LAUNCHER-DESIGN.md).
 
 ### Finding the session

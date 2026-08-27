@@ -1,9 +1,11 @@
-# desktop launcher: decide which profile a deep link opens, before the OS does
+# desktop launcher: what can, and cannot, decide which profile a link opens
 
-> Status: **proposed** (2026-08-27). Three pieces, deliberately separable:
-> per-profile **theme** (ready to build), **`claude://` handler registration**
-> (ready once one experiment lands), and the **shim swap** — which is **on
-> hold**, pending evidence described under [Shim swap](#shim-swap).
+> Status: **partly closed by evidence** (proposed 2026-08-27, tested the same
+> day against Claude Desktop **1.37937.1**). Per-profile **theme** is confirmed
+> and ready to build. **`claude://` handler registration** is **not viable** —
+> the app re-claims the scheme on every launch, on every platform; see
+> [What the experiment found](#findings). The **shim swap** remains **on hold**
+> and has lost most of its value with it.
 >
 > Builds on [Desktop profiles](CLAUDERIG-DESKTOP-PROFILES.md), whose deep-link
 > section states the constraint this document tries to loosen, and whose
@@ -41,9 +43,80 @@ exclude. It cannot be blocked from running:
 So the goal is not to block it. It is to **intercept the decision** — to own
 what happens between "a link exists" and "a window receives it".
 
+## What the experiment found {#findings}
+
+Read out of the shipped bundle — `/Applications/Claude.app/Contents/Resources/`
+at version **1.37937.1** — rather than by driving the app. Every claim below is
+a string in that bundle, so each is re-checkable and each is **version-specific**:
+this is what one release does, not a contract.
+
+### The app re-claims `claude://` on every launch (fatal to §2)
+
+```js
+function NDr(){ if(W().authentication.disableDeepLinks)
+    for(let e of ADr) o.app.removeAsDefaultProtocolClient(e,jDr,MDr);
+  else for(let e of ADr) o.app.setAsDefaultProtocolClient(e,jDr,MDr) }
+```
+
+`NDr()` sits in the startup call sequence and runs again on `window_created`,
+and — unlike the Squirrel handling nearby — it is **not** guarded by
+`platform === 'win32'`. On macOS Electron implements
+`setAsDefaultProtocolClient` as `LSSetDefaultHandlerForURLScheme`, on Windows as
+an `HKCU\Software\Classes` write. Both are exactly the registration a launcher
+would install, so **Claude Desktop takes the scheme back the next time it
+starts** — which, since clauderig is what starts it, is immediately.
+
+The one supported way to stop it is the managed-policy key the same code reads:
+`disableDeepLinks`, surfaced as `disableDeepLinkRegistration`. It is a dead end,
+because it does not only stop the *registration*. `claudeURLHandler` consults the
+same flag and refuses everything but Login and ClaudeAI hosts — so the policy
+that would let clauderig keep the scheme also stops the app honouring
+`claude://resume?session=`, which is the whole of `desktop open --session`.
+
+Corroborating evidence that scheme claims are contested and stale ones linger:
+this machine has **two** bundles claiming `claude:` — `/Applications/Claude.app`
+at 1.37937.1 and a still-registered `/Volumes/Claude/Claude.app` at 1.26832.0,
+a mounted installer image four hundred versions behind.
+
+### There is no single-instance lock (fatal to the Windows hypothesis)
+
+`requestSingleInstanceLock`, `second-instance`, `makeSingleInstance` and
+`hasSingleInstanceLock` are **all absent** from the bundle, `app.asar` and
+`app.asar.unpacked` alike. Electron fires `second-instance` only for an app that
+requested the lock, so `claude.exe --user-data-dir=<dir> <url>` cannot forward a
+URL into the instance already on that directory. It would start a *second*
+instance on a live profile — the specific hazard `desktop open` is built to
+prevent.
+
+So the hoped-for asymmetry does not exist. Windows is no better than macOS, and
+the ambiguity refusal stays on both.
+
+### Theme is confirmed (§1 is unaffected)
+
+```js
+var B9 = Ja.get(`userThemeMode`);
+(B9===`system`||B9===`light`||B9===`dark`) && (o.nativeTheme.themeSource = B9);
+```
+
+The accepted values are exactly `system`, `light` and `dark`; the file is **read
+at startup** and the value applied to `nativeTheme.themeSource`; and
+`setThemeMode` writes the same key back through the app's own store. Writing it
+into a closed profile's `config.json` is therefore sufficient, which is what §1
+assumed and can now stop assuming.
+
+### What this leaves
+
+`refuseIfRoutingIsAmbiguous` is not a stopgap awaiting a launcher. Given an app
+that re-registers the scheme at every launch and takes no instance lock, **it is
+the answer**, and the design should stop treating it as a limitation to be
+engineered around.
+
 ## Design
 
-### The primitive this rests on
+### The primitive this rests on — moot, kept for the reasoning
+
+Only relevant if §2 is ever revived; the recursion below is real, but it is
+downstream of a registration that does not survive a launch.
 
 Registering a handler for `claude://` creates a loop hazard that must be solved
 first. `darwinApp.OpenURL` is `/usr/bin/open <url>` and the Windows one is
@@ -91,7 +164,14 @@ discovering.
 live install reads `"system"`; the dark and light values are to be read back
 after toggling the app once.
 
-### 2. `claude://` handler registration
+### 2. `claude://` handler registration — **not viable**
+
+**Superseded by the findings above**: the app re-registers itself as the scheme
+handler on every launch, so any registration clauderig installs survives only
+until Claude Desktop next starts. The design below is kept because it is correct
+*given a handler that sticks* — if a future release stops re-claiming, or gains
+a policy that separates registration from handling, this is the shape to build.
+Nothing here should be started before that changes.
 
 Surface: `clauderig desktop launcher install | status | remove`.
 
@@ -154,6 +234,12 @@ The idea: relocate the real bundle to `~/Library/Application Support/clauderig/`
 and put a launcher bundle at `/Applications/Claude.app`. It is the only approach
 that catches a **Dock click**, which no scheme handler can see.
 
+**Worth less than it looked.** The findings above remove the deep-link half of
+its value: a relocated real bundle goes on claiming `claude://` at every launch,
+so links keep routing to the app regardless of what sits in `/Applications`. A
+Dock click is all the shim would ever catch — a much thinner return for the
+`Installed()` surgery and the update-clobber risk below.
+
 Held because:
 
 - `Installed()` would have to prefer a recorded relocated path and actively skip
@@ -206,22 +292,28 @@ settled.
 
 ## Sequencing
 
-1. Run the Windows single-instance forwarding experiment. It decides whether the
-   handler merely routes deliberately, or also retires the ambiguity refusal on
-   Windows.
-2. Theme, as a standalone PR. Smallest, safest, independently useful.
-3. Handler registration.
-4. Revisit the shim swap only with update-cycle evidence in hand.
+1. **Theme**, as a standalone PR. It is the only piece the evidence leaves
+   standing, and it is independently useful.
+2. Nothing else, until Claude Desktop's re-registration behaviour changes.
+   `desktop launcher` should not be built against 1.37937.1.
+3. Re-read this document at the next Desktop release that touches deep links.
+   The two greps that decide it — `setAsDefaultProtocolClient` and
+   `requestSingleInstanceLock` in `app.asar` — take under a minute.
 
-Each of 2 and 3 needs a changeset, and both reach `rig ui`, the parent help
-block, `site/rig/verbs.md`, and the `rigsmith-tools` skill.
+Theme needs a changeset, and reaches `rig ui`, the parent help block,
+`site/rig/verbs.md`, and the `rigsmith-tools` skill.
 
 ## Open questions
 
-- Do the `"dark"` and `"light"` spellings of `userThemeMode` match the app's own
-  settings exactly, and does Desktop re-read the file at launch or only write it?
-- Does Claude Desktop's Windows build handle a deep link delivered through
-  `second-instance`, or only through its own protocol registration?
-- Should `launcher install` offer to set distinct themes at the same time? The
-  two features answer the same underlying question — *which profile am I looking
-  at* — from opposite ends.
+- **Answered.** `userThemeMode` accepts exactly `system`, `light` and `dark`, and
+  is read at startup — so writing it into a closed profile is enough.
+- **Answered.** Claude Desktop's Windows build takes no single-instance lock, so
+  a deep link cannot be delivered into a running profile through `second-instance`.
+- **Open, and decisive if §2 is ever revived.** The re-registration above is read
+  from the bundle, not observed. Confirming it live means recording the current
+  `claude://` handler, pointing the scheme at a throwaway bundle, launching
+  Claude Desktop, and checking whether the default reverted. Reversible, but it
+  takes over `claude://` on a working machine for the duration.
+- Should `desktop add` offer a theme at creation time? Theme and the abandoned
+  launcher answered the same question — *which profile am I looking at* — and
+  theme is now the only one left answering it.
