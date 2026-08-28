@@ -15,7 +15,8 @@ clauderig restore              # pull → rewrite slugs for this OS → merge (k
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)
 clauderig status               # remote reachability, last sync, per-root counts, hooks
 clauderig repo                 # what the sync repo costs: size, files, commits, history ratio
-clauderig repo prune --before 7d  # fold history older than a week into one commit
+clauderig repo gc              # repack: reclaims space, keeps every commit — try this first
+clauderig repo prune --before 2026-08-01  # fold everything before a date into one commit
 clauderig recent                  # sessions you actually worked on, newest first
 clauderig search "auth refactor"  # find a session by title/content, with a resume command
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)

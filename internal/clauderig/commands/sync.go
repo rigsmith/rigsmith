@@ -270,17 +270,42 @@ func NewSyncCmd() *cobra.Command {
 				}
 			}
 
-			// Size-based squash: bound .git when transcript history has bloated it.
+			// Size-based maintenance: bound .git when it has outgrown the content.
+			//
+			// Repack FIRST, and re-measure. Every sync writes its objects loose
+			// and undeltified, and append-only transcripts compress to almost
+			// nothing once packed — on a real repo 2.4 GB of a 2.9 GB .git was
+			// simply unpacked. Squashing to escape that traded a month of
+			// history for something a gc would have given back for free.
 			gitBytes, _ := repo.GitDirBytes(ctx)
 			wtBytes, _ := repo.WorkTreeBytes(ctx)
 			if gitrepo.ShouldSquash(gitBytes, wtBytes, cfg.Retention.FloorBytes, cfg.Retention.SquashFactor) {
-				fmt.Fprintf(out, "  %s history squash (.git %dMB > %.0f× worktree)\n",
+				fmt.Fprintf(out, "  %s repacking (.git %dMB > %.0f× worktree)\n",
 					DimStyle.Render("⟳"), gitBytes>>20, cfg.Retention.SquashFactor)
-				if err := repo.Squash(ctx, "clauderig: squashed history"); err != nil {
+				if err := repo.Repack(ctx); err != nil {
+					return fmt.Errorf("repack: %w", err)
+				}
+				gitBytes, _ = repo.GitDirBytes(ctx)
+			}
+
+			// Only history's length can still be the problem here, so now it is
+			// fair to drop some. Keep whole days, cut on a day boundary: the
+			// squash used to fire at whatever o'clock it tripped, which is how a
+			// repo came to report that its history began at 08:18 on a Tuesday.
+			if gitrepo.ShouldSquash(gitBytes, wtBytes, cfg.Retention.FloorBytes, cfg.Retention.SquashFactor) {
+				keep := cfg.Retention.KeepDays()
+				cutoff := startOfDay(time.Now().AddDate(0, 0, -keep))
+				folded, err := repo.SquashBefore(ctx, cutoff,
+					"clauderig: history before "+cutoff.Format("2006-01-02"))
+				if err != nil {
 					return fmt.Errorf("squash: %w", err)
 				}
-				if err := repo.ForcePush(ctx, "origin", "main"); err != nil {
-					return fmt.Errorf("force-push after squash: %w", err)
+				if folded > 0 {
+					fmt.Fprintf(out, "  %s folded %d commit(s) before %s, kept the last %d days\n",
+						DimStyle.Render("⟳"), folded, cutoff.Format("2006-01-02"), keep)
+					if err := repo.ForcePush(ctx, "origin", "main"); err != nil {
+						return fmt.Errorf("force-push after squash: %w", err)
+					}
 				}
 			}
 			return nil

@@ -402,6 +402,7 @@ const ACCOUNTS_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.Get';
 const ACTIVITY_FILES = 'github.com/rigsmith/rigsmith/ui/bridge.Activity.Files';
 const REPO_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Get';
 const REPO_PRUNE = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Prune';
+const REPO_REPACK = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Repack';
 const WINDOWS_HIDE = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Hide';
 const LIBRARY_LIST = 'github.com/rigsmith/rigsmith/ui/bridge.Library.List';
 const LIBRARY_DETAIL = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Detail';
@@ -928,6 +929,13 @@ function bytes(n) {
 // transcripts only ever get longer and sync every few minutes, so each run
 // stores another copy. The ratio is the number that says so, and it is not one
 // anyone works out by eye.
+// The answer as it is asked — "a month or a day?" — not as a timestamp.
+function span(days) {
+  if (days < 1.5) return `${Math.round(days * 24)} hours`;
+  if (days < 60) return `${Math.round(days)} days`;
+  return `${Math.round(days / 30)} months`;
+}
+
 function renderRepo(v) {
   const box = $('repo');
   box.replaceChildren();
@@ -959,26 +967,48 @@ function renderRepo(v) {
   }
   row('history', hist);
 
-  if (v.first && !v.first.startsWith('0001')) {
-    // After a squash the oldest reachable commit is one the squash wrote, so a
-    // range would read as "the repo only goes back this far" — turning history
-    // that was thrown away into a repo that looks young. The automatic
-    // size-based squash does this unprompted, so it is worth saying out loud.
-    if (v.squashed) {
-      const when = new Date(v.first);
-      const n = el('span', null);
-      n.append(document.createTextNode(when.toLocaleDateString() + ' ' +
-        when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
-      n.append(el('span', 'hint', '  — earlier history was discarded'));
-      row('squashed', n);
-    } else {
-      row('spanning', document.createTextNode(
-        `${new Date(v.first).toLocaleDateString()} → ${new Date(v.last).toLocaleDateString()}`));
-    }
+  // Loose objects are not a long history and do not have a history's remedy.
+  // Offered before the prune, and phrased as what it costs: nothing.
+  if (v.looseBytes > 0 && v.gitBytes > 0 && v.looseBytes > 0.4 * v.gitBytes) {
+    const n = el('span', 'hint warn',
+      `${bytes(v.looseBytes)} in ${(v.looseObjects || 0).toLocaleString()} objects not yet packed`);
+    n.title = 'Repacking reclaims this and keeps every commit — try it before pruning anything';
+    row('unpacked', n);
   }
+
+  // The question the panel exists to answer: how far back can I go?
+  if (v.retainedDays > 0) {
+    const n = el('span', null);
+    n.append(el('b', null, span(v.retainedDays)));
+    n.append(el('span', 'hint', v.squashed
+      ? `  — squashed ${new Date(v.first).toLocaleDateString()}, earlier history discarded`
+      : `  — since ${new Date(v.first).toLocaleDateString()}`));
+    row('retained', n);
+  }
+
+
 
   const acts = el('div', 'reporow');
   acts.append(el('div', 'grow'));
+  const pack = document.createElement('button');
+  pack.textContent = 'Repack';
+  pack.title = 'Delta-compress loose objects. Reclaims space and keeps every commit.';
+  pack.disabled = running;
+  pack.onclick = async () => {
+    pack.disabled = true;
+    note('Repacking…');
+    try {
+      const res = await Call.ByName(REPO_REPACK);
+      renderRepo(res.after);
+      note(res.reclaimed > 0
+        ? `Reclaimed ${bytes(res.reclaimed)}, every commit kept`
+        : 'Already packed — nothing to reclaim');
+    } catch (e) {
+      note(String(e));
+      pack.disabled = false;
+    }
+  };
+  acts.append(pack);
   const prune = document.createElement('button');
   prune.textContent = 'Prune history…';
   prune.title = 'Fold older history into one commit. The files are kept exactly as they are.';

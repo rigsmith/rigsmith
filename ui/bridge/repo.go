@@ -30,8 +30,12 @@ type RepoStats struct {
 	// is where history was truncated rather than where the repo began. Decided
 	// here rather than in the window: which messages mean "squash" is a fact
 	// about clauderig, not about a date picker.
-	Squashed bool   `json:"squashed"`
-	Error    string `json:"error,omitempty"`
+	Squashed bool `json:"squashed"`
+	// RetainedDays is how far back history actually goes. A date makes the
+	// reader subtract it from today, and after a squash the answer is usually
+	// "less than you think" — which is exactly when nobody does the arithmetic.
+	RetainedDays float64 `json:"retainedDays"`
+	Error        string  `json:"error,omitempty"`
 }
 
 // Repo backs the window's repository panel.
@@ -56,6 +60,9 @@ func (s *Repo) Get(ctx context.Context) (RepoStats, error) {
 		return RepoStats{Error: err.Error()}, nil
 	}
 	out := RepoStats{Stats: st, Squashed: commands.SquashedRoot(st.RootSubject)}
+	if !st.First.IsZero() {
+		out.RetainedDays = time.Since(st.First).Hours() / 24
+	}
 	if st.WorkBytes > 0 {
 		out.Ratio = float64(st.GitBytes) / float64(st.WorkBytes)
 	}
@@ -118,4 +125,32 @@ func (s *Repo) Prune(ctx context.Context, days int) (PruneResult, error) {
 		Before:    before,
 		After:     after,
 	}, nil
+}
+
+// Repack delta-compresses loose objects into the pack. No history is lost, which
+// is why it needs no confirmation and why the window offers it first: a day of
+// syncing lands undeltified, and append-only transcripts pack down to nearly
+// nothing. Reaching for a prune before trying this trades history for something
+// git gives back for free.
+func (s *Repo) Repack(ctx context.Context) (PruneResult, error) {
+	staging, err := config.StagingDir()
+	if err != nil {
+		return PruneResult{}, err
+	}
+	repo, err := gitrepo.Open(ctx, staging)
+	if err != nil {
+		return PruneResult{}, errors.New("no staging repo yet")
+	}
+	before, err := s.Get(ctx)
+	if err != nil {
+		return PruneResult{}, err
+	}
+	if err := repo.Repack(ctx); err != nil {
+		return PruneResult{}, err
+	}
+	after, err := s.Get(ctx)
+	if err != nil {
+		return PruneResult{}, err
+	}
+	return PruneResult{Reclaimed: before.GitBytes - after.GitBytes, Before: before, After: after}, nil
 }

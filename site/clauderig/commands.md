@@ -7,7 +7,7 @@
 | `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`); nudges a Desktop restart when Code sessions come back |
 | `status` | Sync state: remote, last sync, roots, hooks |
-| `repo` | Repo size, files, commits and history-vs-content ratio; `repo prune --before 7d` folds older history into one commit |
+| `repo` | Repo size, files, commits and history-vs-content ratio; `repo gc` repacks (no history lost), `repo prune --before 2026-08-01` folds older history into one commit |
 | `search` | Find a Claude Code session by title or content across live + synced history (alias `grep`); `--since`/`--until`/`--cwd` narrow, `--raw` grep lines, `--all` every file, `--live`/`--repo` scope, `-s` case-sensitive |
 | `recent` | List sessions newest first (alias `last`); dated by each transcript's own records rather than by file mtime, and labelled with the client + Desktop profile that ran each one. Takes an optional search term to narrow the window. `--since` (default `24h`) / `--until` / `--cwd` / `--account` narrow, `--limit` caps, `-l` adds resume commands |
 | `ledger` | Report the permanent session index; `ledger backfill` recovers rows for sessions pruned before it existed (`-n` dry run) |

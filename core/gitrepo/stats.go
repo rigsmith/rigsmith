@@ -10,11 +10,20 @@ import (
 // Stats is a repository's shape and cost: how much history it carries and what
 // that history costs on disk.
 type Stats struct {
-	Commits   int       `json:"commits"`
-	Files     int       `json:"files"`     // tracked files at HEAD
-	GitBytes  int64     `json:"gitBytes"`  // .git, i.e. the history
-	WorkBytes int64     `json:"workBytes"` // the checkout, i.e. what is actually being kept
-	First     time.Time `json:"first"`     // oldest commit still REACHABLE, which is
+	Commits  int   `json:"commits"`
+	Files    int   `json:"files"`    // tracked files at HEAD
+	GitBytes int64 `json:"gitBytes"` // .git in total, packed and not
+	// LooseBytes is the part of GitBytes sitting in loose objects — written by
+	// recent commits and not yet delta-compressed. Split out because it is not
+	// the same problem as a long history and does not have the same remedy:
+	// append-only transcripts delta superbly, so repacking collapses this while
+	// keeping every commit, and pruning history to escape it throws away the
+	// wrong thing. It was 82% of a real 2.9 GB repo.
+	LooseBytes   int64     `json:"looseBytes"`
+	LooseObjects int       `json:"looseObjects"`
+	PackBytes    int64     `json:"packBytes"`
+	WorkBytes    int64     `json:"workBytes"` // the checkout, i.e. what is actually being kept
+	First        time.Time `json:"first"`     // oldest commit still REACHABLE, which is
 	// not when the repo started if history has ever been squashed.
 	Last   time.Time `json:"last"`
 	Branch string    `json:"branch"`
@@ -60,6 +69,7 @@ func (r *Repo) Stats(ctx context.Context) (Stats, error) {
 		s.Last = firstTime(out)
 	}
 	s.GitBytes, _ = r.GitDirBytes(ctx)
+	s.LooseObjects, s.LooseBytes, s.PackBytes = r.objectCounts(ctx)
 	s.WorkBytes, _ = r.WorkTreeBytes(ctx)
 	return s, nil
 }
@@ -72,4 +82,42 @@ func firstTime(out string) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// objectCounts reads git's own accounting of loose versus packed storage.
+// count-objects reports KiB, which is why these are shifted rather than parsed
+// as bytes.
+func (r *Repo) objectCounts(ctx context.Context) (loose int, looseBytes, packBytes int64) {
+	out, err := runGit(ctx, r.Dir, "count-objects", "-v")
+	if err != nil {
+		return 0, 0, 0
+	}
+	for _, line := range strings.Split(out, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), ": ")
+		if !ok {
+			continue
+		}
+		n, perr := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if perr != nil {
+			continue
+		}
+		switch k {
+		case "count":
+			loose = int(n)
+		case "size":
+			looseBytes = n << 10
+		case "size-pack":
+			packBytes = n << 10
+		}
+	}
+	return loose, looseBytes, packBytes
+}
+
+// Repack delta-compresses loose objects into the pack and drops what is
+// unreachable. Nothing reachable is lost — this is ordinary git maintenance, and
+// it is the remedy to reach for before considering a prune: it costs no history
+// at all.
+func (r *Repo) Repack(ctx context.Context) error {
+	_, err := runGit(ctx, r.Dir, "gc", "--quiet")
+	return err
 }

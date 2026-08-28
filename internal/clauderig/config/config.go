@@ -68,6 +68,35 @@ type Retention struct {
 	// GitHub warns past 50 MB and refuses past 100 MB, which fails the whole push.
 	// One runaway session must not be able to wedge the sync.
 	MaxFileBytes int64 `json:"maxFileBytes"`
+	// SquashKeepDays is how many whole days of sync history the automatic squash
+	// leaves standing. 0 means the default (DefaultSquashKeepDays).
+	//
+	// The squash used to collapse everything to a single commit, so the moment
+	// it fired became the beginning of recorded history — at whatever o'clock
+	// that happened to be. Keeping a week means there is still something to read
+	// afterwards, and cutting on a day boundary means the answer to "how far
+	// back do I go" is a date rather than a timestamp.
+	SquashKeepDays int `json:"squashKeepDays,omitempty"`
+}
+
+// DefaultSquashKeepDays is the history the automatic squash retains when the
+// config does not say.
+//
+// Generous on purpose. Once loose objects are packed before the size is judged,
+// the squash almost never fires — a repo whose .git looked like 2.9 GB was 559
+// MB of actual history against a 3.2 GB threshold — so when it does fire the
+// right instinct is to keep a month rather than to cut to the bone. If a month
+// is not enough relief, nothing is folded again and the ratio simply stays
+// visible, which is a better outcome than a tool quietly eating history until
+// the number looks nice.
+const DefaultSquashKeepDays = 30
+
+// KeepDays is SquashKeepDays with the default applied.
+func (r Retention) KeepDays() int {
+	if r.SquashKeepDays <= 0 {
+		return DefaultSquashKeepDays
+	}
+	return r.SquashKeepDays
 }
 
 // Root is a sync root: an id, whether it's enabled, and its per-OS location as a

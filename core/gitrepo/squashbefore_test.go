@@ -179,3 +179,51 @@ func TestStats_RootSubjectExposesASquashedHistory(t *testing.T) {
 		t.Errorf("First = %v, want the squash point, not the original root", s.First)
 	}
 }
+
+// A day of syncing lands as loose, undeltified objects, and append-only files
+// pack down to nearly nothing. Repacking has to be tried before anyone reaches
+// for a squash — on a real repo 2.4 GB of a 2.9 GB .git was simply unpacked, and
+// squashing to escape that traded a month of history for something git gives
+// back for free.
+func TestRepack_ReclaimsLooseObjectsWithoutLosingHistory(t *testing.T) {
+	ctx := context.Background()
+	r, err := Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An append-only file, committed repeatedly — the transcript's shape.
+	body := strings.Repeat("a line of conversation\n", 400)
+	for i := 0; i < 12; i++ {
+		body += strings.Repeat("another line of conversation\n", 400)
+		write(t, r.Dir, "t.jsonl", body)
+		if _, err := r.Commit(ctx, "sync"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	before, err := r.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.LooseObjects == 0 {
+		t.Fatal("nothing loose — the fixture is not reproducing the shape")
+	}
+
+	if err := r.Repack(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, err := r.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.LooseBytes >= before.LooseBytes {
+		t.Errorf("loose bytes not reclaimed: %d → %d", before.LooseBytes, after.LooseBytes)
+	}
+	// The entire point: no commit is lost.
+	if after.Commits != before.Commits {
+		t.Errorf("commits = %d, want %d — a repack must keep every one", after.Commits, before.Commits)
+	}
+	if after.GitBytes >= before.GitBytes {
+		t.Errorf(".git did not shrink: %d → %d", before.GitBytes, after.GitBytes)
+	}
+}

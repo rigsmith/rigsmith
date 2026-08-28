@@ -56,7 +56,8 @@
       "properties": {
         "historyDays": { "type": "integer", "description": "Project-history retention window in days. Applies to transcripts; project memory is exempt and never ages out." },
         "squashFactor": { "type": "number", "description": "Squash the history branch when its footprint exceeds this × the retained working-tree size." },
-        "floorBytes": { "type": "integer", "description": "Never squash below this byte floor." }
+        "floorBytes": { "type": "integer", "description": "Never squash below this byte floor." },
+        "squashKeepDays": { "type": "integer", "description": "Whole days of sync history the automatic squash leaves standing (default 30). It repacks first and only squashes if .git is still oversized." }
       }
     },
     "redactTranscripts": {
