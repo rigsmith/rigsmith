@@ -16,7 +16,8 @@ and the shared engine under `core/`:
 
 These binaries are single, statically-linked Go executables — the north-star
 property: no .NET runtime, no Node, installable via `curl | sh` / Homebrew /
-Scoop on any machine John roams onto.
+winget / Scoop on any machine John roams onto. Every release builds all four
+tools for macOS, Linux, and Windows, on x86-64 and Arm64 alike.
 
 ## Status
 

@@ -16,7 +16,8 @@ const GITHUB = 'https://github.com/JohnCampionJr/rigsmith'
 export default withMermaid(defineConfig({
   title: 'RigSmith',
   description:
-    'A family of convention-first, zero-runtime-dependency CLI tools for polyglot monorepos.',
+    'A family of convention-first, zero-runtime-dependency CLI tools for polyglot monorepos. ' +
+    'Single native binaries for macOS, Linux, and Windows — install with winget, Homebrew, Scoop, or curl | sh.',
   lang: 'en-US',
   cleanUrls: true,
   lastUpdated: true,
@@ -46,6 +47,7 @@ export default withMermaid(defineConfig({
     siteTitle: 'RigSmith',
 
     nav: [
+      { text: 'Install', link: '/guide/installation', activeMatch: '^/guide/' },
       { text: 'rig', link: '/rig/', activeMatch: '^/rig/' },
       { text: 'changeRig', link: '/changerig/', activeMatch: '^/changerig/' },
       { text: 'shipRig', link: '/shiprig/', activeMatch: '^/shiprig/' },

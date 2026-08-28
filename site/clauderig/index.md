@@ -6,7 +6,8 @@ paths corrected across OSes and secrets never leaked. Pick up where you left off
 on a different machine.
 
 The fourth rig: a single statically-linked Go binary, zero runtime deps,
-installable by `curl | sh` / Homebrew / Scoop on any machine.
+installable by `curl | sh` / Homebrew / winget / Scoop on macOS, Linux, and
+Windows.
 
 ```sh
 clauderig init                 # wizard: create/choose a PRIVATE repo, machine name, hooks
