@@ -189,16 +189,23 @@ func newSessionsWindow(app *application.App) *application.WebviewWindow {
 // has focus, which reads as "the menu item did nothing" — and as an accessory
 // app there is no Dock icon to click as a fallback.
 //
+// Focusing once is not enough, for two separate reasons.
+//
 // A window that has never been shown has no platform window behind it yet:
-// Show() creates one and returns early, so the Focus() that follows can land
-// before there is anything to raise and the window comes up behind whatever was
-// already there. Re-focusing a moment later catches that case. Calling Show()
-// twice does NOT work — the second one races window creation and takes the app
-// down with "window not found".
+// Show() creates one and returns early, so the first Focus() can land before
+// there is anything to raise. And when the reveal came from a click in ANOTHER
+// of our windows — the status window's Sessions button — that click finishes
+// after we return, and its window takes key back, leaving the new one behind it.
+//
+// So focus is re-asserted a couple of times over the next half second, which
+// covers both. Calling Show() twice does NOT work — the second races window
+// creation and takes the app down with "window not found".
 func reveal(w *application.WebviewWindow) {
 	w.Show()
 	w.Focus()
-	time.AfterFunc(150*time.Millisecond, w.Focus)
+	for _, d := range []time.Duration{150 * time.Millisecond, 450 * time.Millisecond} {
+		time.AfterFunc(d, w.Focus)
+	}
 }
 
 // newTray builds the menu bar icon. Clicking it toggles the window beneath the

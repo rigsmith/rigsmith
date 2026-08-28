@@ -49,7 +49,9 @@
   input{min-width:280px;}
   input::placeholder{color:var(--muted-2);}
   select:focus,input:focus{outline:1px solid var(--muted-2);}
-  .filters label{
+  /* Both filter rows — scoped to .filters alone, the second row's labels fell
+     back to body size and towered over the controls beside them. */
+  .filters label,.filters2 label{
     font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted-2);
   }
   .count{margin-left:auto;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;}
