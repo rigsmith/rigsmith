@@ -179,7 +179,15 @@ func newWindow(app *application.App) *application.WebviewWindow {
 		// the white flash, arriving from the one surface CSS cannot reach. This
 		// UI is dark whatever the system says, so declaring it is right on its
 		// own merits and not only as a fix.
-		Windows: application.WindowsWindow{Theme: application.Dark},
+		Windows: application.WindowsWindow{
+			Theme: application.Dark,
+			// A tray popover is not a program you alt-tab to. macOS says the same
+			// thing with ActivationPolicyAccessory and LSUIElement, which keep it
+			// out of the Dock; this is the Windows half of that, and without it
+			// the popup had a taskbar button showing a thumbnail of a window that
+			// disappears the moment you click it.
+			HiddenOnTaskbar: true,
+		},
 		Mac: application.MacWindow{
 			TitleBar: application.MacTitleBarHiddenInset,
 			// WKWebView is created opaque white and Wails never sets the
@@ -277,7 +285,10 @@ func newSessionsWindow(app *application.App) *application.WebviewWindow {
 		MinWidth:         900,
 		Hidden:           true,
 		URL:              "/sessions.html",
-		// Same as the status window: see newWindow.
+		// Dark like the popup, but this one KEEPS its taskbar button. It is a
+		// real window you leave open and come back to, and on Windows that means
+		// alt-tab and the taskbar — the same reason it keeps its native frame.
+		// Hiding it to match the popover would be fidelity for its own sake.
 		Windows: application.WindowsWindow{Theme: application.Dark},
 		Mac: application.MacWindow{
 			TitleBar: application.MacTitleBarHiddenInset,
