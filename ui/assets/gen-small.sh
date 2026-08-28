@@ -13,8 +13,13 @@ cd "$(dirname "$0")"
 command -v rsvg-convert >/dev/null || { echo "needs rsvg-convert (brew install librsvg)" >&2; exit 1; }
 
 mark() { # $1 = colour
+  # Cropped to the artwork. The mark is drawn 21..79 in a 100 box, so a third of
+  # a 16px icon was empty margin — fine in a macOS menu bar, wasteful in a
+  # notification area slot this small. The strokes overhang their path by half
+  # their width (7.5), so the real extent is 13.5..86.5; two units of air either
+  # side keeps the round caps off the edge.
   cat <<SVG
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="11.5 11.5 77 77" width="100" height="100">
 <path d="M38 21 L23 21 L23 79 L38 79" fill="none" stroke="$1" stroke-width="15"
       stroke-linecap="round" stroke-linejoin="round"/>
 <path d="M62 21 L77 21 L77 79 L62 79" fill="none" stroke="$1" stroke-width="15"

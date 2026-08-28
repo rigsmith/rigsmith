@@ -14,8 +14,10 @@ scales whatever it is handed. Size was only half the problem: the mark's
 published `stroke-width` of 8 on a 100 viewBox is 1.3px at 16, which
 anti-aliases into a smudge, and the spark's four crossed arms span under three
 pixels and merge into a blob. The small set uses the same geometry and the same
-colours with 15-wide strokes, and draws the spark as the dot it becomes at that
-size.
+colours with 15-wide strokes, draws the spark as the dot it becomes at that
+size, and crops the viewBox to the artwork — the mark occupies 21..79 of a 100
+box, so a third of a 16px icon was empty margin. It now fills 93% of the slot
+against the 44px set's 58%.
 
 This file twice claimed 44px "downsamples cleanly" on Windows. Screenshots from
 a real machine said otherwise both times.
