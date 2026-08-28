@@ -111,7 +111,7 @@ func FromSync(machine string, rep *engine.Report, serr error) Record {
 			rec.Files += r.Files
 			rec.Unchanged += r.Unchanged
 			rec.Redactions += r.Redactions
-			rec.AgedOut += r.RetentionByAge
+			rec.TooOld += r.RetentionByAge
 			rec.Skipped += r.SkippedFiles
 			rec.Oversize += len(r.Oversize)
 		}

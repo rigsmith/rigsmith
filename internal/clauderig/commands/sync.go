@@ -123,7 +123,9 @@ func NewSyncCmd() *cobra.Command {
 						extra += fmt.Sprintf(", %d unchanged", r.Unchanged)
 					}
 					if r.RetentionByAge > 0 {
-						extra += fmt.Sprintf(", %d aged out", r.RetentionByAge)
+						// "aged out" read as a deletion; nothing is deleted here. These
+						// files stay in ~/.claude and are declined again every run.
+						extra += fmt.Sprintf(", %d too old", r.RetentionByAge)
 					}
 					if r.SkippedFiles > 0 {
 						extra += fmt.Sprintf(", %d skipped (churn)", r.SkippedFiles)

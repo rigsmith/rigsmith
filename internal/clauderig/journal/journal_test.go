@@ -259,8 +259,14 @@ func TestFromSyncSumsRoots(t *testing.T) {
 	if rec.Redactions != 5 {
 		t.Errorf("Redactions = %d, want 5", rec.Redactions)
 	}
-	if rec.AgedOut != 5 { // 3 pruned from staging + 2 by age
-		t.Errorf("AgedOut = %d, want 5", rec.AgedOut)
+	// The two retention numbers mean different things and must not be summed:
+	// AgedOut is a deletion that happened, TooOld is a standing property of the
+	// live tree that repeats on every run forever.
+	if rec.AgedOut != 3 {
+		t.Errorf("AgedOut = %d, want 3 (pruned from staging only)", rec.AgedOut)
+	}
+	if rec.TooOld != 2 {
+		t.Errorf("TooOld = %d, want 2 (declined at the source)", rec.TooOld)
 	}
 	if rec.Oversize != 2 || rec.Skipped != 1 || rec.Projects != 42 {
 		t.Errorf("unexpected counts: %+v", rec)

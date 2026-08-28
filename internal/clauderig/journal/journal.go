@@ -95,10 +95,19 @@ type Record struct {
 	// "nothing had changed" from "nothing got through".
 	Unchanged  int `json:"unchanged,omitempty"`
 	Redactions int `json:"redactions,omitempty"`
-	AgedOut    int `json:"agedOut,omitempty"`
-	Oversize   int `json:"oversize,omitempty"`
-	Skipped    int `json:"skipped,omitempty"`
-	Projects   int `json:"projects,omitempty"`
+	// AgedOut is files REMOVED from staging this run because they passed the
+	// retention window — an event, and normally zero.
+	AgedOut int `json:"agedOut,omitempty"`
+	// TooOld is files in the live tree the sync declined to stage because they
+	// are already past the window. It is a standing condition, not an event:
+	// clauderig never deletes from ~/.claude, so the same files are re-counted
+	// on every run and the number holds steady until they are removed by hand.
+	// Kept out of Summary for that reason — folded into AgedOut it made a real
+	// prune indistinguishable from the constant.
+	TooOld   int `json:"tooOld,omitempty"`
+	Oversize int `json:"oversize,omitempty"`
+	Skipped  int `json:"skipped,omitempty"`
+	Projects int `json:"projects,omitempty"`
 
 	Leaks []Leak `json:"leaks,omitempty"`
 }

@@ -107,6 +107,25 @@ func TestQuietSyncSaysSo(t *testing.T) {
 
 // Pruning and size refusals happen to the staged copy whether or not anything
 // new was written, so a quiet run still has to report them.
+// Files past the window are re-counted every run because clauderig never
+// deletes from ~/.claude. Summed into AgedOut they made every row report the
+// same number forever and buried the runs that pruned something for real.
+func TestStandingTooOldCountIsNotReportedAsAnEvent(t *testing.T) {
+	rec := Record{
+		Op:        OpSync,
+		Outcome:   OutcomeOK,
+		Unchanged: 3260,
+		TooOld:    6,
+	}
+	got := rec.Summary()
+	if strings.Contains(got, "aged out") {
+		t.Errorf("a standing skip was reported as a prune: %q", got)
+	}
+	if want := "No changes — 3260 files already current"; got != want {
+		t.Fatalf("Summary() = %q, want %q", got, want)
+	}
+}
+
 func TestQuietSyncStillReportsPruning(t *testing.T) {
 	rec := Record{
 		Op:        OpSync,
