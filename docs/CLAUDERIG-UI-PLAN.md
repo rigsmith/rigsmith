@@ -15,13 +15,23 @@ A Wails v3 app with two faces:
 
 - **Tray icon** — the ambient face. Green (synced) / amber (behind remote) / red (diverged
   or last sync failed). Menu: sync now, per-device freshness, open window.
-- **Window** — the interactive face: device board, activity feed, conflict resolution,
-  remote-session browsing, account switching. Hidden at startup; the tray is the app.
-- **Sessions window** (added 2026-08-27) — a second window, not a tab: every session this
-  machine can see, from the live `~/.claude`, each Desktop install, and the synced repo.
-  The status window answers "is my sync healthy" and is read in seconds from the tray;
-  this one is a browser you keep open and scroll, and wants far more width. Sharing one
-  window would have meant one of them fitting badly.
+- **Popup** — the tray-attached window, and the primary surface. It holds two views
+  behind one toggle: **status** (health banner with its action button, accounts, devices,
+  roots, sync activity) and **sessions** (a compact list, and a session's detail in place
+  of it). It behaves like a menu bar popover — click elsewhere and it hides — and its
+  header is pinned across all three panes.
+- **Sessions window** — the workspace: the same sessions at full width, with the filters,
+  two-mode search and per-store delete that do not fit a popup. Reached from the popup's
+  pop-out icon, or from a session's detail, which hands the session across so this window
+  opens on it.
+
+  *Revised 2026-08-28.* These began as one status window plus one sessions window, and
+  moving between them meant raising one over the other — which never worked reliably. The
+  click that asks for the new window hands focus back to the old one as it finishes, and
+  neither re-focusing nor lifting the window level settled it. Putting both views in the
+  popup removed the problem rather than fighting it: there is only one window in play for
+  everyday use, and the full window is a deliberate step out rather than a place you land
+  by accident.
 
 ## Stack
 
@@ -124,8 +134,8 @@ ui/
 ├── frontend/
 │   ├── src/               # reuses design/ brand tokens
 │   └── dist/              # go:embed all:frontend/dist
-│       ├── index.html     #   status window
-│       └── sessions.html  #   sessions manager
+│       ├── index.html     #   the popup: status + compact sessions
+│       └── sessions.html  #   the full sessions workspace
 └── build/                 # wails per-OS Taskfiles, Info.plist, icons, nsis
 ```
 
@@ -256,7 +266,10 @@ Unchanged in substance; `--json` is no longer blocking (see [Engine seam](#engin
 - **Spike first** (before any UI code): confirm a Wails v3 entrypoint can live at `ui/`
   inside this module rather than at a project root. See [Risks](#risks-and-open-spikes).
 - SystemTray with the three-state health colour, driven by `health.From(status.Gather(...))`
-  in-process (30–60s; immediate refresh after any action).
+  in-process — 45s while the popup is closed, 5s while it is open (someone watching the
+  window is watching for exactly the change it would otherwise sit on), and immediately
+  after any action. The session list keeps its own 30s floor: it opens transcripts to date
+  them, so it must not ride the fast tick.
 - Device board: one card per device — last sync, ahead/behind, OS, Claude version,
   staleness colouring. (`devices.Registry` + journal.)
 - Activity feed: recent syncs across machines with outcomes; failures and secret-tripwire

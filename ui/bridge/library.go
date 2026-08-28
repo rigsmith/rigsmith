@@ -2,8 +2,10 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
@@ -83,6 +85,40 @@ type LibraryView struct {
 	// things.
 	DevicesUnavailable bool   `json:"devicesUnavailable"`
 	Error              string `json:"error,omitempty"`
+}
+
+// handOff is the session the popup was looking at when it asked for the full
+// window, so the full window can open on it rather than dropping you at the top
+// of a list you have already scrolled past.
+//
+// Package-level rather than a field: the two windows are served by separate
+// Library values, so an instance field would never be seen by the other side.
+// It is a single slot — the last hand-off wins — and it is cleared when taken,
+// so a later reveal of the same window does not reopen a stale session.
+var handOff struct {
+	mu sync.Mutex
+	id string
+}
+
+// HandOff records the session the full window should open on.
+func (l *Library) HandOff(ctx context.Context, id string) error {
+	if !idRule.MatchString(id) {
+		return errors.New("invalid session id")
+	}
+	handOff.mu.Lock()
+	defer handOff.mu.Unlock()
+	handOff.id = id
+	return nil
+}
+
+// TakeHandOff returns the pending session and clears it. Empty when there is
+// none, which is the normal case — the full window asks on every reveal.
+func (l *Library) TakeHandOff(ctx context.Context) (string, error) {
+	handOff.mu.Lock()
+	defer handOff.mu.Unlock()
+	id := handOff.id
+	handOff.id = ""
+	return id, nil
 }
 
 // Library is the read side of the sessions manager: every session this machine

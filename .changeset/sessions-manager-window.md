@@ -26,6 +26,8 @@ Click a row and a panel opens with the first and last couple of prompts, so you 
 
 The status window gains a **Sessions** button, both windows can be dragged by their header, and `--sessions` opens the manager at startup the way `--window` opens the status window.
 
+The menu bar window is the one you live in. It holds both views behind a single toggle — sync status, and your sessions — with a session's detail opening in place rather than sending you elsewhere. It hides when you click away, the way a menu bar window should, and refreshes every five seconds while it is open rather than every forty-five: if you are looking at it, you are looking for something. The full sessions window is still there for the work that needs room — filters, searching inside transcripts, deleting — one click from the pop-out icon, and opening a session from the popup carries it across so you land on what you were reading.
+
 A session the sync holds but this Mac does not now offers **Bring to this Mac**, which copies it over so it can be opened here.
 
 The status window catches up with its own documentation: the health banner's advice is now a button — Sync now, Pull, or Resolve, chosen from the same reason the banner reports, so the two cannot disagree — with the CLI's output streaming into a pane beneath it. That matters for the failure this project started from: a sync refusing on a secret tripwire used to say so only in hook stderr, where nobody saw it. Below that, the accounts you have captured, with the live one marked and a switch button that stays disabled while Claude Code is running, naming the processes holding it up rather than letting the CLI's refusal look like a bug.

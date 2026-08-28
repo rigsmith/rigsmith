@@ -16,6 +16,7 @@ import (
 	"log"
 	"log/slog"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/health"
@@ -51,9 +52,16 @@ const (
 	BundleID = "dev.rigsmith.clauderig-ui"
 )
 
-// pollInterval is the tray's refresh cadence. status.Gather is local-only, so
-// this costs a few git plumbing calls and no network.
-const pollInterval = 45 * time.Second
+// The tray's refresh cadence, and the faster one used while the window is on
+// screen. status.Gather is local-only — a few git plumbing calls, no network —
+// so the fast rate is affordable, and someone who has the window open is
+// watching for exactly the change it would otherwise sit on for most of a
+// minute. Closed, it drops back: nobody is looking, and the only consumer is
+// the colour of a menu bar icon.
+const (
+	pollInterval = 45 * time.Second
+	pollOpen     = 5 * time.Second
+)
 
 func main() {
 	// Linux tray support is desktop-environment dependent — GNOME needs an
@@ -98,8 +106,8 @@ func main() {
 
 	// Registered by name so the status window can raise the sessions window
 	// without the frontend knowing anything about how windows are built.
-	windowsSvc.Register("sessions", func() { reveal(sessionsWindow) })
-	windowsSvc.Register("main", func() { reveal(window) })
+	windowsSvc.Register("sessions", func() { reveal(sessionsWindow) }, func() { sessionsWindow.Hide() })
+	windowsSvc.Register("main", func() { reveal(window) }, func() { window.Hide() })
 
 	go poll(app, statusSvc, tray, window)
 
@@ -151,7 +159,53 @@ func newWindow(app *application.App) *application.WebviewWindow {
 		e.Cancel()
 		w.Hide()
 	})
+
+	// This window hangs off the menu bar icon, so it behaves like a menu bar
+	// popover: click anywhere else and it goes away. Without this it lingers on
+	// screen like an ordinary window that merely happens to have no Dock icon.
+	//
+	// Guarded by a grace period after being revealed. Showing a window is not
+	// instantaneous, and a stray resign-key during that window — the tray menu
+	// closing, focus settling — would hide it before it was ever usable, which
+	// reads as the menu item doing nothing.
+	// Gaining focus restarts the grace period too. Clicking the tray icon shows
+	// this window from inside Wails without going through reveal, so focus is
+	// the only signal that path gives us.
+	w.OnWindowEvent(events.Common.WindowFocus, func(*application.WindowEvent) {
+		markRevealed(w)
+	})
+	w.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
+		if time.Since(lastReveal(w)) < revealGrace {
+			return
+		}
+		w.Hide()
+	})
 	return w
+}
+
+// revealGrace is how long after a reveal focus loss is ignored. Long enough to
+// cover the window appearing and the tray menu dismissing itself, short enough
+// that a genuine click elsewhere still dismisses it promptly.
+const revealGrace = 700 * time.Millisecond
+
+var revealed struct {
+	mu sync.Mutex
+	at map[*application.WebviewWindow]time.Time
+}
+
+func markRevealed(w *application.WebviewWindow) {
+	revealed.mu.Lock()
+	defer revealed.mu.Unlock()
+	if revealed.at == nil {
+		revealed.at = map[*application.WebviewWindow]time.Time{}
+	}
+	revealed.at[w] = time.Now()
+}
+
+func lastReveal(w *application.WebviewWindow) time.Time {
+	revealed.mu.Lock()
+	defer revealed.mu.Unlock()
+	return revealed.at[w]
 }
 
 // newSessionsWindow builds the sessions manager: every session this machine can
@@ -188,23 +242,30 @@ func newSessionsWindow(app *application.App) *application.WebviewWindow {
 // has focus, which reads as "the menu item did nothing" — and as an accessory
 // app there is no Dock icon to click as a fallback.
 //
-// Focusing once is not enough, for two separate reasons.
+// reveal shows the window and puts it in front.
 //
-// A window that has never been shown has no platform window behind it yet:
-// Show() creates one and returns early, so the first Focus() can land before
-// there is anything to raise. And when the reveal came from a click in ANOTHER
-// of our windows — the status window's Sessions button — that click finishes
-// after we return, and its window takes key back, leaving the new one behind it.
+// Focus alone is not enough and no amount of retrying fixes it: raising by
+// focus is a race against whoever else wants to be key, and when the reveal
+// came from a click in another of our windows — the status window's Sessions
+// button — that click finishes after we return and hands key straight back.
 //
-// So focus is re-asserted a couple of times over the next half second, which
-// covers both. Calling Show() twice does NOT work — the second races window
-// creation and takes the app down with "window not found".
+// So the window is lifted to the floating window LEVEL for a moment instead.
+// Level ordering is not a race: a floating window sits above every normal one
+// regardless of focus, so nothing that happens afterwards can bury it. Once it
+// is up, it drops back to the normal level — keeping its place at the front,
+// but no longer floating over unrelated apps.
+//
+// Show() is called exactly once. Calling it twice races window creation and
+// takes the app down with "window not found".
 func reveal(w *application.WebviewWindow) {
+	markRevealed(w)
 	w.Show()
+	w.SetAlwaysOnTop(true)
 	w.Focus()
-	for _, d := range []time.Duration{150 * time.Millisecond, 450 * time.Millisecond} {
-		time.AfterFunc(d, w.Focus)
-	}
+	time.AfterFunc(400*time.Millisecond, func() {
+		w.SetAlwaysOnTop(false)
+		w.Focus()
+	})
 }
 
 // newTray builds the menu bar icon. Clicking it toggles the window beneath the
@@ -238,15 +299,21 @@ func newTray(app *application.App, window, sessions *application.WebviewWindow, 
 // app's context so quitting does not leave a goroutine mid-git.
 func poll(app *application.App, svc *bridge.Status, tray *application.SystemTray, window *application.WebviewWindow) {
 	ctx := app.Context()
-	tick := time.NewTicker(pollInterval)
-	defer tick.Stop()
-
 	for {
 		refresh(ctx, svc, tray, window)
+
+		// Chosen after each pass rather than by a fixed ticker, so opening or
+		// closing the window changes the rate from the next tick.
+		wait := pollInterval
+		if window != nil && window.IsVisible() {
+			wait = pollOpen
+		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-tick.C:
+		case <-timer.C:
 		}
 	}
 }

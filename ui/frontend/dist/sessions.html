@@ -39,6 +39,13 @@
     color:var(--muted);font-weight:500;display:flex;gap:14px;align-items:center;
   }
   .eyebrow .rule{flex:1;height:1px;background:var(--line);}
+  .eyebrow button{
+    background:var(--ink-3);color:var(--paper);border:1px solid var(--line);
+    border-radius:5px;padding:5px 10px;cursor:pointer;
+    font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;
+    --wails-draggable:no-drag;
+  }
+  .eyebrow button:hover{border-color:var(--muted-2);}
 
   /* filter bar */
   .filters{display:flex;gap:10px;align-items:center;margin:18px 0 0;flex-wrap:wrap;}
@@ -253,7 +260,11 @@
 </head>
 <body>
 <div class="head">
-  <div class="eyebrow"><span id="machine">Sessions</span><span class="rule"></span></div>
+  <div class="eyebrow">
+    <span id="machine">Sessions</span>
+    <span class="rule"></span>
+    <button id="openStatus" title="Back to sync status">Status</button>
+  </div>
 
   <div class="filters">
     <label for="since">Window</label>
@@ -342,6 +353,9 @@ const LIBRARY_DESKTOP = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenDesk
 const LIBRARY_VSCODE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenVSCode';
 const LIBRARY_DELETE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Delete';
 const LIBRARY_MATERIALIZE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Materialize';
+const WINDOWS_OPEN = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Open';
+const WINDOWS_HIDE = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Hide';
+const LIBRARY_TAKE_HANDOFF = 'github.com/rigsmith/rigsmith/ui/bridge.Library.TakeHandOff';
 
 const LIMIT = 200;
 
@@ -871,6 +885,15 @@ async function openDetail(id, tr) {
   }
 }
 
+$('openStatus').addEventListener('click', async () => {
+  try {
+    await Call.ByName(WINDOWS_OPEN, 'main');
+    await Call.ByName(WINDOWS_HIDE, 'sessions');
+  } catch (e) {
+    $('count').textContent = String(e);
+  }
+});
+
 $('scrim').onclick = closeDrawer;
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
@@ -917,6 +940,7 @@ function syncAccountOptions(accounts) {
 });
 $('account').addEventListener('change', refresh);
 syncDeepState();
+takeHandOff();
 $('deep').addEventListener('click', () => {
   $('deep').setAttribute('aria-pressed', String(!pressed('deep')));
   syncDeepState();
@@ -936,6 +960,19 @@ function syncDeepState() {
 // The progress line and the result note key off this rather than the toggle, so
 // an empty box never claims to have read anything.
 const deepRunning = () => pressed('deep') && $('q').value.trim() !== '';
+
+// The popup can hand a session across when it asks for this window, so that
+// what you were reading there opens here. Checked on load and on every focus,
+// because the window is usually already open and merely revealed — there is no
+// second load to hang this on. The slot is cleared when taken, so a later
+// reveal does not reopen a session you have moved on from.
+async function takeHandOff() {
+  try {
+    const id = await Call.ByName(LIBRARY_TAKE_HANDOFF);
+    if (id) openDetail(id);
+  } catch { /* nothing handed over */ }
+}
+window.addEventListener('focus', takeHandOff);
 
 // Typing filters as you go, but not on every keystroke — each call re-reads
 // transcripts off disk. This searches what a row SHOWS; to search what was said

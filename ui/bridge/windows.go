@@ -17,17 +17,21 @@ import (
 type Windows struct {
 	mu      sync.RWMutex
 	openers map[string]func()
+	hiders  map[string]func()
 }
 
 // NewWindows builds the service with no windows registered; main adds them as
 // it creates them.
-func NewWindows() *Windows { return &Windows{openers: map[string]func(){}} }
+func NewWindows() *Windows {
+	return &Windows{openers: map[string]func(){}, hiders: map[string]func(){}}
+}
 
-// Register names a window the frontend may open.
-func (w *Windows) Register(name string, open func()) {
+// Register names a window the frontend may open and dismiss.
+func (w *Windows) Register(name string, open, hide func()) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.openers[name] = open
+	w.hiders[name] = hide
 }
 
 // Open shows the named window. An unknown name is an error rather than a
@@ -40,5 +44,24 @@ func (w *Windows) Open(ctx context.Context, name string) error {
 		return fmt.Errorf("no window named %q", name)
 	}
 	open()
+	return nil
+}
+
+// Hide dismisses the named window.
+//
+// It exists so moving between the two windows can be a swap rather than a
+// stack. Raising one window over another turned out to be unreliable: the click
+// that asks for the new window hands focus back to the old one as it finishes,
+// and neither re-focusing nor lifting the window level settled it. Hiding the
+// one you are leaving has no such race — there is nothing left to be behind.
+// Both windows carry a button back to the other, so the swap is reversible.
+func (w *Windows) Hide(ctx context.Context, name string) error {
+	w.mu.RLock()
+	hide, ok := w.hiders[name]
+	w.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("no window named %q", name)
+	}
+	hide()
 	return nil
 }

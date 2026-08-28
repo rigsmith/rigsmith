@@ -80,8 +80,8 @@ object, so a tree built once without it can keep emitting warnings until
 | `bridge/sessions.go` | the REMOTE session browser — `peek` over the staging repo |
 | `bridge/library.go` | the sessions manager — every session this machine can see |
 | `assets/` | tray icons, three states × light/dark ([README](assets/README.md)) |
-| `frontend/dist/index.html` | the status window, plain HTML/CSS/JS on the `design/` tokens |
-| `frontend/dist/sessions.html` | the sessions manager window |
+| `frontend/dist/index.html` | the tray popup — status and a compact sessions view |
+| `frontend/dist/sessions.html` | the full sessions workspace |
 
 ## The engine seam
 
