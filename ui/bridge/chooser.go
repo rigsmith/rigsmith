@@ -38,7 +38,7 @@ func NewChooser() *Chooser { return &Chooser{} }
 // Directory prompts for a folder, starting at start when it is a real directory.
 // Returns "" when the dialog is cancelled, which is not an error — the caller
 // asked a question and the answer was "never mind".
-func (c *Chooser) Directory(ctx context.Context, title, start string) (string, error) {
+func (c *Chooser) Directory(ctx context.Context, window, title, start string) (string, error) {
 	app := application.Get()
 	if app == nil {
 		return "", errors.New("no window to attach a dialog to")
@@ -56,6 +56,16 @@ func (c *Chooser) Directory(ctx context.Context, title, start string) (string, e
 		CanChooseDirectories(true).
 		CanChooseFiles(false).
 		CanCreateDirectories(false)
+
+	// Attached, so macOS runs it as a sheet belonging to the window rather than
+	// as a free-floating panel. Unattached it opened BEHIND the window that
+	// asked for it, because the tray window is raised on reveal and nothing put
+	// the dialog above it. A sheet is always in front of its parent and moves
+	// with it, which is also what makes it obvious which question is being
+	// answered.
+	if w, ok := app.Window.GetByName(window); ok && w != nil {
+		d.AttachToWindow(w)
+	}
 
 	// Start where the session already is, so the common case — moving it one
 	// level down — opens next to the answer rather than at the home directory.

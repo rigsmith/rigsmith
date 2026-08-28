@@ -1652,7 +1652,10 @@ function openRerootModal(d) {
   browse.onclick = async () => {
     browse.disabled = true;
     try {
-      const chosen = await Call.ByName(CHOOSE_DIR, 'Re-file this session under…', input.value || d.session.cwd || '');
+      // The window name is what lets the picker attach as a sheet on this
+      // window rather than opening behind it.
+      const chosen = await Call.ByName(CHOOSE_DIR, 'main',
+        'Re-file this session under\u2026', input.value || d.session.cwd || '');
       // Cancelling is an answer, not a failure: leave what was typed alone.
       if (chosen) input.value = chosen;
     } catch (e) {

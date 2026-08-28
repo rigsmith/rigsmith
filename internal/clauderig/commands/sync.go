@@ -49,15 +49,22 @@ func NewSyncCmd() *cobra.Command {
 				return err
 			}
 
-			// Hook-driven runs debounce and serialise; a sync typed by hand
-			// always does the work, because someone asking for it now means now.
+			// Automated runs debounce and serialise; a sync typed by hand always
+			// does the work, because someone asking for it now means now.
+			//
+			// Keyed on whether there is a terminal, not only on --hook. "Typed
+			// by hand" is a property of how the command was invoked, and every
+			// install that already exists has a bare `clauderig sync` written
+			// into its settings — a flag would have left all of them thrashing
+			// until their owner happened to re-run a command nobody knows they
+			// need. --hook stays as the explicit form for scripts.
 			//
 			// The Stop hook fires at the end of every turn in EVERY open chat,
 			// and the work is walking the whole tree, redacting every JSON file
 			// and pushing. On one real machine that was 37 syncs with a median
-			// gap of 163s and a minimum of 7s — for one conversation. Several at
-			// once multiplied it and raced on the same git repo.
-			if hook {
+			// gap of 163s and a minimum of 7s — for one conversation, and three
+			// landing in the same second once several were open.
+			if hook || !Interactive() {
 				lock, got, lerr := acquireSyncLock(staging)
 				if lerr != nil {
 					return lerr
@@ -348,7 +355,7 @@ func NewSyncCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "stage and scan, but don't commit or push")
 	cmd.Flags().BoolVar(&hook, "hook", false,
-		"debounce and serialise: skip if another sync is running or one ran recently (used by the Stop hook)")
+		"force the debounce on even with a terminal attached (it is automatic without one)")
 	return cmd
 }
 
