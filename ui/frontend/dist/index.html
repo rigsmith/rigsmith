@@ -936,6 +936,24 @@ function span(days) {
   return `${Math.round(days / 30)} months`;
 }
 
+// Repacking and pruning both move ground the rest of the window is standing on,
+// and neither is something the poll will notice: the journal is unchanged, so
+// the activity feed's signature check would keep the stale render, and the
+// status panel's last-sync line is read from a commit that a prune has just
+// replaced.
+//
+// rewrote says whether commit ids changed. A repack keeps every sha, so its
+// cached file lists stay valid; a prune rebuilds every commit above the cutoff,
+// which makes every cached sha a lie and every expanded row unopenable.
+function repoChanged(rewrote) {
+  if (rewrote) {
+    filesCache.clear();
+    filesOpen.clear();
+  }
+  lastActivitySig = '';   // force the feed to repaint even though the journal did not move
+  refresh();
+}
+
 function renderRepo(v) {
   const box = $('repo');
   box.replaceChildren();
@@ -989,26 +1007,39 @@ function renderRepo(v) {
 
 
   const acts = el('div', 'reporow');
-  acts.append(el('div', 'grow'));
+  // Progress goes here rather than in the banner's sub-line at the top of the
+  // pane: repacking gigabytes takes a minute, and a message that far from the
+  // panel you are looking at is a message nobody sees. Silence for a minute
+  // reads as a button that did nothing.
+  const status = el('div', 'grow hint');
+  acts.append(status);
+
   const pack = document.createElement('button');
   pack.textContent = 'Repack';
   pack.title = 'Delta-compress loose objects. Reclaims space and keeps every commit.';
   pack.disabled = running;
   pack.onclick = async () => {
     pack.disabled = true;
-    note('Repacking…');
+    prune.disabled = true;
+    status.textContent = v.looseBytes
+      ? `Packing ${bytes(v.looseBytes)}\u2026 this can take a minute`
+      : 'Repacking\u2026';
     try {
       const res = await Call.ByName(REPO_REPACK);
       renderRepo(res.after);
+      repoChanged(false);
       note(res.reclaimed > 0
         ? `Reclaimed ${bytes(res.reclaimed)}, every commit kept`
         : 'Already packed — nothing to reclaim');
     } catch (e) {
-      note(String(e));
+      status.className = 'grow hint warn';
+      status.textContent = String(e);
       pack.disabled = false;
+      prune.disabled = false;
     }
   };
   acts.append(pack);
+
   const prune = document.createElement('button');
   prune.textContent = 'Prune history…';
   prune.title = 'Fold older history into one commit. The files are kept exactly as they are.';
@@ -1061,6 +1092,7 @@ function openPruneModal(stats) {
       close();
       if (res.folded) {
         renderRepo(res.after);
+        repoChanged(true);
         note(`Folded ${res.folded.toLocaleString()} commits, reclaimed ${bytes(res.reclaimed)}`);
       } else {
         note('Nothing older than that — the repo is unchanged');
