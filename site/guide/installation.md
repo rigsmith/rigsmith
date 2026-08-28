@@ -12,8 +12,8 @@ others.
 | **macOS** | [Homebrew](#homebrew-macos-linux) · [curl \| sh](#curl-sh-macos-linux) |
 | **Linux** | [Homebrew](#homebrew-macos-linux) · [curl \| sh](#curl-sh-macos-linux) |
 
-Every channel offers the same choice: install the whole family with one command,
-or just the one tool you want.
+Winget, Homebrew, the install scripts, and direct downloads offer the same choice:
+install the whole family or just one tool. Scoop provides the family bundle.
 
 ## winget (Windows)
 
