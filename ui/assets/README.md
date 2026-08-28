@@ -6,11 +6,19 @@ returns the matching pair for `SetIcon` / `SetDarkModeIcon`.
 
 44px is the macOS retina menu bar slot (22pt @2x).
 
-Windows is a separate set at 32px. It draws the notification area icon at 16
-(32 on a high-DPI display) and scales whatever it is handed to fit — from 44
-that is a non-integer ratio and the mark comes out visibly squashed. This file
-used to claim it downsampled cleanly; a screenshot from a real Windows machine
-says otherwise.
+Windows is a separate set at 32px, drawn HEAVIER — regenerate with
+`./gen-small.sh` (needs `rsvg-convert`).
+
+It asks for `GetSystemMetrics(SM_CXSMICON)`, which is 16px at 100% DPI, and
+scales whatever it is handed. Size was only half the problem: the mark's
+published `stroke-width` of 8 on a 100 viewBox is 1.3px at 16, which
+anti-aliases into a smudge, and the spark's four crossed arms span under three
+pixels and merge into a blob. The small set uses the same geometry and the same
+colours with 15-wide strokes, and draws the spark as the dot it becomes at that
+size.
+
+This file twice claimed 44px "downsamples cleanly" on Windows. Screenshots from
+a real machine said otherwise both times.
 
 ## Source
 

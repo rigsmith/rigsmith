@@ -131,9 +131,6 @@ func main() {
 		window.SetBackgroundColour(inkColour)
 		sessionsWindow.SetBackgroundColour(inkColour)
 
-		// Now the tray is registered, so Windows will accept an icon.
-		applyLevel(tray, health.Amber)
-
 		if *showWindow {
 			reveal(window)
 		}
@@ -341,22 +338,34 @@ func newTray(app *application.App, window, sessions *application.WebviewWindow, 
 
 	// Amber until the first poll answers — better an honest "unknown" than a
 	// green icon we have not earned.
-	// NOT here on Windows: the notification area icon is not registered until
-	// the app runs, and setting one first logs "ShellNotifyIcon NIM_MODIFY
-	// failed (icon not registered)" twice on every launch. macOS does not mind,
-	// but there is no reason to do it early on either — the first poll sets the
-	// real level within seconds.
-	if runtime.GOOS != "windows" {
-		applyLevel(tray, health.Amber)
-	}
+	//
+	// HERE, before app.Run, on purpose. SystemTray.SetIcon stores the bytes
+	// while the native tray does not exist yet and registration carries them in
+	// with NIM_ADD; called later it goes straight to the native side, and if the
+	// icon is not registered at that instant Windows logs "ShellNotifyIcon
+	// NIM_MODIFY failed". Early is the quiet path, not the noisy one.
+	applyLevel(tray, health.Amber)
 	tray.SetTooltip(AppName + " — checking…")
 	return tray
 }
+
+// trayReadyGrace is how long the poll waits before its first pass, so it cannot
+// touch the tray icon before the platform has registered one.
+const trayReadyGrace = 750 * time.Millisecond
 
 // poll refreshes the tray from the engine on a fixed cadence. It stops with the
 // app's context so quitting does not leave a goroutine mid-git.
 func poll(app *application.App, svc *bridge.Status, tray *application.SystemTray, window *application.WebviewWindow) {
 	ctx := app.Context()
+	// The first pass sets the tray icon, and this goroutine starts before
+	// app.Run. Reaching the native tray before Windows has registered it is
+	// what logs "ShellNotifyIcon NIM_MODIFY failed"; the icon set above is
+	// already showing, so there is nothing to race for.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(trayReadyGrace):
+	}
 	for {
 		refresh(ctx, svc, tray, window)
 
