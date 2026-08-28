@@ -379,10 +379,12 @@
     <span class="rule"></span>
     <button id="backToList" hidden title="Back to the session list">← Back</button>
     <button class="iconbtn" id="popOut" title="Open the full sessions window" aria-label="Open the full sessions window"></button>
-    <button class="iconbtn" id="closeWin" title="Close" aria-label="Close"></button>
     <button id="toggleView" title="Switch between sync status and your sessions">
       <span id="lblSessions">Sessions</span><span id="lblStatus" data-off>Status</span>
     </button>
+    <!-- Last, so it lands where a close belongs on Windows: the far right,
+         where the caption buttons would have been. -->
+    <button class="iconbtn" id="closeWin" title="Close" aria-label="Close"></button>
   </div>
 </div>
 
