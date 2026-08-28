@@ -99,6 +99,15 @@
   .stale{color:var(--warn);}
   .err{color:var(--err);}
 
+  .repo{display:flex;gap:10px;align-items:baseline;font-size:12px;padding:2px 0;}
+  .repo .k{color:var(--muted);width:74px;flex:none;}
+  .repo .v{flex:1;min-width:0;}
+  .repo .v b{font-weight:700;}
+  .repo .hint{color:var(--muted);font-size:11px;}
+  .repo .hint.warn{color:var(--warn);}
+  .reporow{display:flex;gap:8px;align-items:center;margin-top:10px;}
+  .reporow .grow{flex:1;}
+
   .ev.can{cursor:pointer;}
   .files{
     margin:6px 0 2px;padding-left:1px;
@@ -359,6 +368,9 @@
   <table><thead><tr><th>Root</th><th>Files</th><th>State</th></tr></thead>
     <tbody id="roots"></tbody></table>
 
+  <div class="seclabel"><span>Repository</span><span class="rule"></span></div>
+  <div id="repo"></div>
+
   <div class="seclabel"><span>Sync Activity</span><span class="rule"></span></div>
   <div id="activity"></div>
   </div><!-- /statusView -->
@@ -388,6 +400,8 @@ const ACTIONS_RUN_WITH = 'github.com/rigsmith/rigsmith/ui/bridge.Actions.RunWith
 const ACTIONS_BUSY = 'github.com/rigsmith/rigsmith/ui/bridge.Actions.Busy';
 const ACCOUNTS_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.Get';
 const ACTIVITY_FILES = 'github.com/rigsmith/rigsmith/ui/bridge.Activity.Files';
+const REPO_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Get';
+const REPO_PRUNE = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Prune';
 const WINDOWS_HIDE = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Hide';
 const LIBRARY_LIST = 'github.com/rigsmith/rigsmith/ui/bridge.Library.List';
 const LIBRARY_DETAIL = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Detail';
@@ -774,6 +788,13 @@ async function refresh() {
   } catch (e) {
     $('accounts').replaceChildren(el('div', 'empty err', `Could not read accounts: ${e}`));
   }
+  // Independent again: walking the checkout to size it is the slowest read here,
+  // and it must not be able to blank the panels above it.
+  try {
+    renderRepo(await Call.ByName(REPO_GET));
+  } catch (e) {
+    $('repo').replaceChildren(el('div', 'empty err', `Could not read the repo: ${e}`));
+  }
 
   // Independent of the status call: a broken journal must not blank the
   // status panel, and vice versa.
@@ -892,6 +913,152 @@ Events.On(ACTIONS_DONE_EVENT, (e) => {
 });
 
 // ---- accounts ---------------------------------------------------------------
+
+// ---- repository ------------------------------------------------------------
+
+function bytes(n) {
+  if (!n || n < 0) return '0 B';
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${Math.round(n / 1024)} KB`;
+  if (n < 1073741824) return `${(n / 1048576).toFixed(1)} MB`;
+  return `${(n / 1073741824).toFixed(2)} GB`;
+}
+
+// The repo is the one thing here that grows without anyone deciding it should:
+// transcripts only ever get longer and sync every few minutes, so each run
+// stores another copy. The ratio is the number that says so, and it is not one
+// anyone works out by eye.
+function renderRepo(v) {
+  const box = $('repo');
+  box.replaceChildren();
+  if (!v || v.error) {
+    box.append(el('div', 'empty err', v?.error || 'Could not read the repo'));
+    return;
+  }
+  const row = (k, node) => {
+    const r = el('div', 'repo');
+    r.append(el('div', 'k', k));
+    const val = el('div', 'v');
+    val.append(node);
+    r.append(val);
+    box.append(r);
+  };
+
+  const content = el('span', null);
+  content.append(el('b', null, bytes(v.workBytes)));
+  content.append(document.createTextNode(` across ${(v.files || 0).toLocaleString()} files`));
+  row('content', content);
+
+  const hist = el('span', null);
+  hist.append(el('b', null, bytes(v.gitBytes)));
+  hist.append(document.createTextNode(` in ${(v.commits || 0).toLocaleString()} commits`));
+  if (v.ratio) {
+    const r = el('span', 'hint' + (v.ratio >= 4 ? ' warn' : ''), `  ${v.ratio.toFixed(1)}× the content`);
+    if (v.ratio >= 4) r.title = 'History costs several times the files it is history of — pruning reclaims most of it';
+    hist.append(r);
+  }
+  row('history', hist);
+
+  if (v.first && !v.first.startsWith('0001')) {
+    row('spanning', document.createTextNode(
+      `${new Date(v.first).toLocaleDateString()} → ${new Date(v.last).toLocaleDateString()}`));
+  }
+
+  const acts = el('div', 'reporow');
+  acts.append(el('div', 'grow'));
+  const prune = document.createElement('button');
+  prune.textContent = 'Prune history…';
+  prune.title = 'Fold older history into one commit. The files are kept exactly as they are.';
+  prune.disabled = running;
+  prune.onclick = () => openPruneModal(v);
+  acts.append(prune);
+  box.append(acts);
+}
+
+// Same shape as the delete confirm, for the same reason: this rewrites history
+// that other machines share, so it has to be a decision rather than a click.
+// The CLI refuses to do it without a terminal on purpose; this dialog is the
+// window's equivalent of standing there, not a way around it.
+function openPruneModal(stats) {
+  const scrim = el('div', 'modal');
+  const card = el('div', 'card');
+  const close = () => { document.removeEventListener('keydown', onKey, true); scrim.remove(); };
+  const onKey = (e) => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation(); e.preventDefault(); close();
+  };
+
+  const box = el('div', 'confirmrow');
+  box.append(el('div', 'note', 'Fold sync history older than:'));
+
+  let days = 30;
+  const choices = el('div', 'row');
+  choices.style.justifyContent = 'flex-start';
+  [[7, 'a week'], [30, 'a month'], [90, 'three months']].forEach(([d, label]) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.dataset.days = String(d);
+    b.onclick = () => { days = d; paint(); };
+    choices.append(b);
+  });
+  box.append(choices);
+
+  const warn = el('div', 'warn');
+  box.append(warn);
+
+  const row = el('div', 'row');
+  const cancel = el('button', null, 'Cancel');
+  cancel.onclick = close;
+  const go = el('button', 'danger', 'Prune');
+  go.onclick = async () => {
+    go.disabled = true;
+    warn.textContent = 'Folding history and force-pushing…';
+    try {
+      const res = await Call.ByName(REPO_PRUNE, days);
+      close();
+      if (res.folded) {
+        renderRepo(res.after);
+        note(`Folded ${res.folded.toLocaleString()} commits, reclaimed ${bytes(res.reclaimed)}`);
+      } else {
+        note('Nothing older than that — the repo is unchanged');
+      }
+    } catch (e) {
+      warn.textContent = String(e);
+      go.disabled = false;
+    }
+  };
+  row.append(cancel, go);
+  box.append(row);
+
+  function paint() {
+    choices.querySelectorAll('button').forEach(b => {
+      b.className = Number(b.dataset.days) === days ? 'primary' : '';
+    });
+    // Say what is lost, not just what is saved. Backfill reads deleted sessions
+    // out of history, and that is exactly what this throws away.
+    warn.textContent =
+      `Everything before ${new Date(Date.now() - days * 864e5).toLocaleDateString()} becomes one commit. ` +
+      `Your files do not change. Other machines pick the new history up on their next sync. ` +
+      `Sessions that retention deleted before then can no longer be recovered with \u0060ledger backfill\u0060.`;
+  }
+  paint();
+
+  card.append(box);
+  scrim.append(card);
+  scrim.addEventListener('click', (e) => { if (e.target === scrim) close(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(scrim);
+  requestAnimationFrame(() => cancel.focus());
+}
+
+// A one-line result, shown where the banner sub-line lives so it is read.
+function note(text) {
+  const sub = $('sub');
+  if (!sub) return;
+  const prev = sub.textContent;
+  sub.textContent = text;
+  setTimeout(() => { if (sub.textContent === text) sub.textContent = prev; }, 6000);
+}
 
 function renderAccounts(v) {
   const box = $('accounts');

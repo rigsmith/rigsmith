@@ -45,6 +45,8 @@ func TestFrontendCallsMatchBoundMethods(t *testing.T) {
 		fqn(&Status{}, "Get"),
 		fqn(&Activity{}, "Recent"),
 		fqn(&Activity{}, "Files"),
+		fqn(&Repo{}, "Get"),
+		fqn(&Repo{}, "Prune"),
 		fqn(&Actions{}, "Run"),
 		fqn(&Actions{}, "Busy"),
 		fqn(&Actions{}, "RunWith"),
@@ -78,6 +80,7 @@ func TestBoundMethodsExist(t *testing.T) {
 	}{
 		{&Status{}, []string{"Get", "Health"}},
 		{&Activity{}, []string{"Recent", "Files"}},
+		{&Repo{}, []string{"Get", "Prune"}},
 		{&Actions{}, []string{"Run", "Busy", "RunWith"}},
 		{&Library{}, []string{"List", "Detail", "OpenTerminal", "OpenDesktop", "OpenVSCode", "Materialize", "HandOff", "TakeHandOff", "Delete"}},
 		{&Accounts{}, []string{"Get"}},

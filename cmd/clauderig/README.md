@@ -68,6 +68,7 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
 | `status` | Sync state: remote, last sync, roots, hooks |
+| `repo` | Repo size, files, commits and history-vs-content ratio; `repo prune --before 7d` folds older history into one commit |
 | `mv` | Move/rename a directory and relink its Claude history (slug dirs + transcript cwds + Desktop/settings paths); guards live sessions; `-n`/`--dry-run` previews |
 | `global` | `install` / `uninstall` / `status` the global sync hooks in ~/.claude (alias: `hooks`) |
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
