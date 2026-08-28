@@ -11,6 +11,8 @@
 //
 //	go run ./scripts/source-install                 # install to ~/.local/bin
 //	RIGSMITH_INSTALL=/opt/rigsmith go run ./scripts/source-install   # prefix → bin/
+//
+//go:generate go run github.com/tc-hib/go-winres@v0.3.3 make --in ../install-winres.json --out rsrc --arch amd64,arm64
 package main
 
 import (
@@ -22,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/gowork"
+	"github.com/rigsmith/rigsmith/scripts/internal/installutil"
 )
 
 func main() {
@@ -49,8 +52,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		return fmt.Errorf("creating %s: %w", bin, err)
+	relaunched, err := installutil.PrepareDir(bin)
+	if err != nil {
+		return err
+	}
+	if relaunched {
+		return nil
 	}
 
 	var made []string
