@@ -7,7 +7,7 @@ hero:
   tagline: >-
     A family of single-binary CLIs that wrap your stack — from the inner
     build/test loop to changesets, releases, and your Claude Code setup.
-    Change It, Ship It.
+    Native on macOS, Linux, and Windows. Change It, Ship It.
   image:
     src: /marks/rigsmith.svg
     alt: RigSmith
@@ -23,7 +23,11 @@ features:
   - title: Zero runtime
     details: >-
       Every tool is a single, statically-linked Go binary. No .NET runtime, no
-      Node — install with curl | sh, Homebrew, or Scoop on any machine.
+      Node — install with winget, Homebrew, Scoop, curl | sh, or PowerShell.
+  - title: Cross-platform
+    details: >-
+      macOS, Linux, and Windows, on Intel and Arm alike. Every release ships all
+      six builds of all four tools, so no platform trails the others.
   - title: Convention-first
     details: >-
       The same verb works across .NET, Node, Go, and Rust. rig detects your

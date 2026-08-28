@@ -19,13 +19,14 @@ const INSTALL_HOSTS: Record<string, string> = {
   'www.rigcli.sh': 'rig',
 }
 
-// Tools the installer can fetch today. (changerig isn't a release artifact yet;
-// requests for it fall through to the docs.)
-const TOOLS = new Set(['rig', 'shiprig', 'clauderig'])
+// Tools the installer can fetch. All four ship a release archive for every
+// platform, and scripts/install.{sh,ps1} accept all four by name.
+const TOOLS = new Set(['rig', 'changerig', 'shiprig', 'clauderig'])
 
 // Where a browser lands per tool.
 const DOCS_PATH: Record<string, string> = {
   rig: '/rig/',
+  changerig: '/changerig/',
   shiprig: '/shiprig/',
   clauderig: '/clauderig/',
   all: '/guide/installation',
