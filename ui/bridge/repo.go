@@ -9,6 +9,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/commands"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/contents"
 )
 
 // MinPruneDays is the closest to now this will fold history. Keeping a few days
@@ -35,7 +36,12 @@ type RepoStats struct {
 	// reader subtract it from today, and after a squash the answer is usually
 	// "less than you think" — which is exactly when nobody does the arithmetic.
 	RetainedDays float64 `json:"retainedDays"`
-	Error        string  `json:"error,omitempty"`
+	// Contents is what the checkout is made of. A total says the repo is large
+	// without saying what it is large WITH, and the two have different remedies:
+	// transcripts answer to retention, attachments to the allowlist, history to
+	// a prune. On a real repo 97% was conversation, which no squash touches.
+	Contents []contents.Group `json:"contents,omitempty"`
+	Error    string           `json:"error,omitempty"`
 }
 
 // Repo backs the window's repository panel.
@@ -60,6 +66,11 @@ func (s *Repo) Get(ctx context.Context) (RepoStats, error) {
 		return RepoStats{Error: err.Error()}, nil
 	}
 	out := RepoStats{Stats: st, Squashed: commands.SquashedRoot(st.RootSubject)}
+	// Best-effort: a breakdown that cannot be walked must not cost the numbers
+	// above it, which are the ones the panel exists for.
+	if rep, cerr := contents.Scan(staging); cerr == nil {
+		out.Contents = rep.Groups
+	}
 	if !st.First.IsZero() {
 		out.RetainedDays = time.Since(st.First).Hours() / 24
 	}

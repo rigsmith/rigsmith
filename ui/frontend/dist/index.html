@@ -105,6 +105,15 @@
   .repo .v b{font-weight:700;}
   .repo .hint{color:var(--muted);font-size:11px;}
   .repo .hint.warn{color:var(--warn);}
+  .holds{margin:8px 0 2px;}
+  .holds .h{display:flex;gap:10px;align-items:baseline;font-size:11px;padding:1px 0;}
+  .holds .h .n{flex:1;min-width:0;color:var(--muted);overflow-wrap:anywhere;}
+  .holds .h .b{flex:none;font-variant-numeric:tabular-nums;}
+  .holds .h .p{flex:none;width:34px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;}
+  /* The bar is the point: one line is 97% and the rest are noise, which a
+     column of numbers makes you work out and a bar does not. */
+  .holds .bar{flex:none;width:56px;height:4px;border-radius:2px;background:var(--ink-3);overflow:hidden;}
+  .holds .bar i{display:block;height:100%;background:var(--muted);}
   .reporow{display:flex;gap:8px;align-items:center;margin-top:10px;}
   .reporow .grow{flex:1;}
 
@@ -1005,6 +1014,30 @@ function renderRepo(v) {
   }
 
 
+
+  // What it is large WITH. A total invites pruning history, and on a real repo
+  // that is the wrong lever — nearly all of it is conversation, which no squash
+  // touches.
+  if (v.contents?.length) {
+    const holds = el('div', 'holds');
+    const top = v.contents[0]?.bytes || 1;
+    for (const g of v.contents) {
+      if (!g.bytes) continue;
+      const h = el('div', 'h');
+      const bar = el('div', 'bar');
+      const fill = document.createElement('i');
+      fill.style.width = `${Math.max(2, Math.round(100 * g.bytes / top))}%`;
+      bar.append(fill);
+      h.append(bar);
+      h.append(el('div', 'p', v.workBytes ? `${Math.round(100 * g.bytes / v.workBytes)}%` : ''));
+      const n = el('div', 'n', g.name);
+      n.title = `${g.detail} — ${g.files.toLocaleString()} files`;
+      h.append(n);
+      h.append(el('div', 'b', bytes(g.bytes)));
+      holds.append(h);
+    }
+    box.append(holds);
+  }
 
   const acts = el('div', 'reporow');
   // Progress goes here rather than in the banner's sub-line at the top of the

@@ -12,6 +12,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/contents"
 	"github.com/rigsmith/rigsmith/internal/clauderig/sessions"
 )
 
@@ -55,7 +56,31 @@ func runRepoStats(ctx context.Context, out io.Writer) error {
 		return err
 	}
 	printRepoStats(out, s)
+
+	// The breakdown, not just the total: "1.6 GB" invites pruning history, and
+	// on a real repo that would have been the wrong lever — nearly all of it was
+	// conversation, which no squash touches.
+	if rep, cerr := contents.Scan(staging); cerr == nil {
+		printContents(out, rep)
+	}
 	return nil
+}
+
+func printContents(out io.Writer, rep contents.Report) {
+	if len(rep.Groups) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "  %s\n", DimStyle.Render("what it holds"))
+	for _, g := range rep.Groups {
+		share := ""
+		if rep.Bytes > 0 {
+			share = fmt.Sprintf("%3.0f%%", 100*float64(g.Bytes)/float64(rep.Bytes))
+		}
+		fmt.Fprintf(out, "    %-26s %10s  %4s  %s\n",
+			g.Name, humanBytes(g.Bytes), share,
+			DimStyle.Render(countOf(g.Files, "file", "files")))
+	}
+	fmt.Fprintln(out)
 }
 
 func printRepoStats(out io.Writer, s gitrepo.Stats) {
