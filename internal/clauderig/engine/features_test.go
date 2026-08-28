@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -271,5 +272,54 @@ func TestRestore_NoPruneByDefault(t *testing.T) {
 	}
 	if !fexists(filepath.Join(target, "skills", "stale", "SKILL.md")) {
 		t.Error("without --prune, stale file must remain")
+	}
+}
+
+// JSON is regenerated on every sync — read, redacted, portablized, re-marshalled
+// — so unlike the plain-copy path it can't be skipped on mtime. It was therefore
+// counted as written every single time, which made Files a constant floor rather
+// than a measure of change and left the activity feed repeating one identical
+// line forever. The comparison happens on the produced bytes instead.
+func TestSync_UnchangedJSONIsNotCountedAsWritten(t *testing.T) {
+	live := t.TempDir()
+	write(t, live, "settings.json", `{"theme":"dark"}`)
+	staging := t.TempDir()
+	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
+	cfg := cliOnlyConfig(live)
+
+	r1, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, SourceOverride: override("cli", live)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1.Roots[0].Files != 1 {
+		t.Fatalf("first sync Files = %d, want 1", r1.Roots[0].Files)
+	}
+
+	r2, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, SourceOverride: override("cli", live)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2.Roots[0].Files != 0 {
+		t.Errorf("second sync Files = %d, want 0 — nothing changed", r2.Roots[0].Files)
+	}
+	if r2.Roots[0].Unchanged != 1 {
+		t.Errorf("second sync Unchanged = %d, want 1", r2.Roots[0].Unchanged)
+	}
+
+	// And a real edit still gets through.
+	write(t, live, "settings.json", `{"theme":"light"}`)
+	r3, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, SourceOverride: override("cli", live)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r3.Roots[0].Files != 1 {
+		t.Errorf("edited JSON: Files = %d, want 1", r3.Roots[0].Files)
+	}
+	got, err := os.ReadFile(filepath.Join(staging, "cli", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "light") {
+		t.Errorf("staged copy did not pick up the edit: %s", got)
 	}
 }

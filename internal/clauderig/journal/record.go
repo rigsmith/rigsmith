@@ -37,17 +37,36 @@ func (r Record) Summary() string {
 		}
 		return "Merged the remote cleanly"
 	default:
+		// Pruning and size refusals are events in their own right — they happen
+		// to the staged copy whether or not anything new was written — so they
+		// are reported on quiet runs too. Redactions are not: the redactor runs
+		// over every JSON file on every pass, so its count is a property of the
+		// tree rather than of this run, and repeating it on a run that wrote
+		// nothing is the noise that hid the interesting lines.
+		var extra string
+		if r.AgedOut > 0 {
+			extra += fmt.Sprintf(", %d aged out", r.AgedOut)
+		}
+		if r.Oversize > 0 {
+			extra += fmt.Sprintf(", %s too large", plural(r.Oversize, "file", "files"))
+		}
+
+		// Most syncs change nothing — they run every few minutes against a tree
+		// that only moves when someone is actually working. Saying so plainly
+		// keeps the runs that did something legible instead of burying them
+		// under identical lines.
+		if r.Files == 0 {
+			if r.Unchanged > 0 {
+				return fmt.Sprintf("No changes — %s already current", plural(r.Unchanged, "file", "files")) + extra
+			}
+			return "No changes" + extra
+		}
+
 		s := fmt.Sprintf("Synced %s", plural(r.Files, "file", "files"))
 		if r.Redactions > 0 {
 			s += fmt.Sprintf(", %s redacted", plural(r.Redactions, "secret", "secrets"))
 		}
-		if r.AgedOut > 0 {
-			s += fmt.Sprintf(", %d aged out", r.AgedOut)
-		}
-		if r.Oversize > 0 {
-			s += fmt.Sprintf(", %s too large", plural(r.Oversize, "file", "files"))
-		}
-		return s
+		return s + extra
 	}
 }
 
@@ -90,6 +109,7 @@ func FromSync(machine string, rep *engine.Report, serr error) Record {
 				continue
 			}
 			rec.Files += r.Files
+			rec.Unchanged += r.Unchanged
 			rec.Redactions += r.Redactions
 			rec.AgedOut += r.RetentionByAge
 			rec.Skipped += r.SkippedFiles

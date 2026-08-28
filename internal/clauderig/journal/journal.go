@@ -89,7 +89,11 @@ type Record struct {
 	// Error is the failure text, already trimmed to one line.
 	Error string `json:"error,omitempty"`
 
-	Files      int `json:"files,omitempty"`
+	Files int `json:"files,omitempty"`
+	// Unchanged is what the sync looked at and left alone. Without it a quiet
+	// sync and a broken one both read as "0 files", and there is no way to tell
+	// "nothing had changed" from "nothing got through".
+	Unchanged  int `json:"unchanged,omitempty"`
 	Redactions int `json:"redactions,omitempty"`
 	AgedOut    int `json:"agedOut,omitempty"`
 	Oversize   int `json:"oversize,omitempty"`

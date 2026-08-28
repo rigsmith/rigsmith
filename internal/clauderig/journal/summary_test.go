@@ -84,3 +84,52 @@ func TestSummary(t *testing.T) {
 		})
 	}
 }
+
+// A sync that wrote nothing must not read like a sync that did. Before the
+// engine stopped counting regenerated-but-identical JSON as written, every run
+// reported the same file and redaction totals, and the activity feed was an
+// unbroken column of one identical line.
+func TestQuietSyncSaysSo(t *testing.T) {
+	rec := Record{
+		Op:         OpSync,
+		Outcome:    OutcomeOK,
+		Unchanged:  1035,
+		Redactions: 21,
+	}
+	got := rec.Summary()
+	if want := "No changes — 1035 files already current"; got != want {
+		t.Fatalf("Summary() = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "redacted") {
+		t.Errorf("a run that wrote nothing reported redactions: %q", got)
+	}
+}
+
+// Pruning and size refusals happen to the staged copy whether or not anything
+// new was written, so a quiet run still has to report them.
+func TestQuietSyncStillReportsPruning(t *testing.T) {
+	rec := Record{
+		Op:        OpSync,
+		Outcome:   OutcomeOK,
+		Unchanged: 10,
+		AgedOut:   6,
+		Oversize:  2,
+	}
+	got := rec.Summary()
+	if want := "No changes — 10 files already current, 6 aged out, 2 files too large"; got != want {
+		t.Fatalf("Summary() = %q, want %q", got, want)
+	}
+}
+
+func TestBusySyncStillCountsWhatItWrote(t *testing.T) {
+	rec := Record{
+		Op:         OpSync,
+		Outcome:    OutcomeOK,
+		Files:      3,
+		Unchanged:  1032,
+		Redactions: 21,
+	}
+	if want, got := "Synced 3 files, 21 secrets redacted", rec.Summary(); got != want {
+		t.Fatalf("Summary() = %q, want %q", got, want)
+	}
+}

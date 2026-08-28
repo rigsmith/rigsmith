@@ -6,6 +6,7 @@
 package engine
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -246,6 +247,20 @@ func Sync(opts Options) (*Report, error) {
 				rep.Findings = append(rep.Findings, redact.Finding{
 					Path: r.ID + "/" + rel + ":" + f.Path, Kind: f.Kind,
 				})
+			}
+			// Compare before writing. A JSON file is regenerated on every sync —
+			// read, redacted, portablized, re-marshalled — so without this every
+			// one of them counted as "written" whether or not anything changed.
+			// That made Files a constant floor rather than a measure of change,
+			// which is what left the activity feed repeating one identical line
+			// forever, and it rewrote a couple of thousand files an hour for
+			// nothing.
+			//
+			// Byte comparison rather than mtime: the output is derived, so its
+			// timestamp says nothing about whether the content moved.
+			if prev, rerr := os.ReadFile(dstPath); rerr == nil && bytes.Equal(prev, out) {
+				rr.Unchanged++
+				continue
 			}
 			if err := writeFile(dstPath, out); err != nil {
 				return nil, err

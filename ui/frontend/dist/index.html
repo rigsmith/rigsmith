@@ -429,6 +429,32 @@ function render(snap) {
   }
 }
 
+// Syncs fire every few minutes whether or not anything moved, so a run of rows
+// saying the same thing about the same machine is the normal case, not news.
+// Folding them into one row with a count keeps the runs that actually did
+// something visible instead of scrolled off the bottom.
+//
+// Only clean rows fold. A failure or a refusal is its own event every time it
+// happens — collapsing three refusals into "×3" would hide two of them, and
+// those are the rows the feed exists for.
+function collapse(events) {
+  const out = [];
+  for (const ev of events) {
+    const last = out[out.length - 1];
+    const foldable = ev.outcome === 'ok' && !ev.leaks?.length;
+    if (
+      foldable && last?.foldable &&
+      last.summary === ev.summary && last.op === ev.op && last.machine === ev.machine
+    ) {
+      last.count++;
+      last.oldest = ev.at;   // events arrive newest first
+      continue;
+    }
+    out.push({ ...ev, foldable, count: 1, oldest: ev.at });
+  }
+  return out;
+}
+
 function renderActivity(events) {
   const box = $('activity');
   box.replaceChildren();
@@ -441,7 +467,7 @@ function renderActivity(events) {
     return;
   }
 
-  for (const ev of events) {
+  for (const ev of collapse(events)) {
     const row = document.createElement('div');
     row.className = 'ev';
     row.dataset.outcome = ev.outcome;
@@ -469,6 +495,10 @@ function renderActivity(events) {
     const meta = document.createElement('div');
     meta.className = 'meta';
     meta.textContent = ev.this ? ev.op : `${ev.op} · ${ev.machine}`;
+    if (ev.count > 1) {
+      meta.textContent += ` · ×${ev.count}`;
+      meta.title = `${ev.count} identical runs, oldest ${since(ev.oldest)}`;
+    }
     body.append(meta);
 
     const when = document.createElement('div');
