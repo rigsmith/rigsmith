@@ -57,6 +57,7 @@ func TestFrontendCallsMatchBoundMethods(t *testing.T) {
 		fqn(&Library{}, "OpenDesktop"),
 		fqn(&Library{}, "OpenVSCode"),
 		fqn(&Library{}, "Delete"),
+		fqn(&Library{}, "RerootSession"),
 		fqn(&Library{}, "Materialize"),
 		fqn(&Library{}, "HandOff"),
 		fqn(&Library{}, "TakeHandOff"),
@@ -85,7 +86,7 @@ func TestBoundMethodsExist(t *testing.T) {
 		{&Activity{}, []string{"Recent", "Files"}},
 		{&Repo{}, []string{"Get", "Prune", "Repack"}},
 		{&Actions{}, []string{"Run", "Busy", "RunWith"}},
-		{&Library{}, []string{"List", "Detail", "OpenTerminal", "OpenDesktop", "OpenVSCode", "Materialize", "HandOff", "TakeHandOff", "Delete"}},
+		{&Library{}, []string{"List", "Detail", "OpenTerminal", "OpenDesktop", "OpenVSCode", "Materialize", "HandOff", "TakeHandOff", "Delete", "RerootSession"}},
 		{&Accounts{}, []string{"Get", "OpenDesktop", "RunCLI"}},
 		{&Windows{}, []string{"Open", "Hide"}},
 	} {

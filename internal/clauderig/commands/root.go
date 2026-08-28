@@ -33,6 +33,7 @@ func NewRootCmd(version string) *cobra.Command {
 		NewRecentCmd(),
 		NewLedgerCmd(),
 		NewMoveCmd(),
+		NewRerootCmd(),
 		NewGuardCmd(),
 		NewGuideCmd(),
 		NewDoctorCmd(version),

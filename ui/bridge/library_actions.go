@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
+	"github.com/rigsmith/rigsmith/internal/clauderig/mover"
+	"github.com/rigsmith/rigsmith/internal/clauderig/session"
 	"net/url"
 	"os"
 	"os/exec"
@@ -402,4 +405,67 @@ func (l *Library) Delete(ctx context.Context, id string, stores []string) (Delet
 		res.Failed = append(res.Failed, f.Path+": "+f.Reason)
 	}
 	return res, nil
+}
+
+// Reroot is what re-filing a session did, or would do.
+type Reroot struct {
+	OldCwd  string `json:"oldCwd"`
+	NewCwd  string `json:"newCwd"`
+	Records int    `json:"records"`
+	Moved   bool   `json:"moved"`
+}
+
+// RerootSession re-files one session under a directory the caller names.
+//
+// The directory comes from the user; nothing is inferred. Claude Code files a
+// session where it was launched, which is often a folder that merely holds
+// projects rather than the project the work happened in — this says where it
+// belongs and does the mechanics.
+//
+// Unlike the CLI's `reroot`, this runs in-process rather than shelling out:
+// there is no interactive step to preserve, the caller has already confirmed in
+// a dialog, and the report is wanted as data rather than as text to parse.
+func (l *Library) RerootSession(ctx context.Context, id, dir string, dryRun bool) (Reroot, error) {
+	var out Reroot
+	if !idRule.MatchString(id) {
+		return out, errors.New("invalid session id")
+	}
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return out, errors.New("name a directory")
+	}
+	if strings.HasPrefix(dir, "~") {
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			return out, herr
+		}
+		dir = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(dir, "~"), "/"))
+	}
+	if !filepath.IsAbs(dir) {
+		return out, errors.New("give an absolute directory")
+	}
+	// It has to exist, or `claude --resume` lands nowhere and the session is
+	// worse off than it was.
+	if info, serr := os.Stat(dir); serr != nil || !info.IsDir() {
+		return out, fmt.Errorf("%s is not a directory on this Mac", dir)
+	}
+
+	claudeHome := claudeHome()
+	if claudeHome == "" {
+		return out, errors.New("could not locate ~/.claude")
+	}
+	// Same test `delete` uses, and for the same hazard: rewriting a transcript
+	// a live process is appending to would race it. Matched on session id, since
+	// several conversations run out of one folder at once.
+	for _, inst := range account.RunningInstances(claudeHome) {
+		if inst.SessionID != "" && session.CanonicalID(inst.SessionID) == session.CanonicalID(id) {
+			return out, fmt.Errorf("that session is running right now (pid %d) — close it first", inst.PID)
+		}
+	}
+
+	mv, err := mover.MoveSession(filepath.Join(claudeHome, "projects"), id, dir, dryRun)
+	if err != nil {
+		return out, err
+	}
+	return Reroot{OldCwd: mv.OldCwd, NewCwd: mv.NewCwd, Records: mv.Records, Moved: mv.Moved}, nil
 }

@@ -14,6 +14,7 @@ clauderig sync                 # snapshot → redact secrets → rewrite paths �
 clauderig restore              # pull → rewrite slugs for this OS → merge (keeps local secrets)
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)
 clauderig status               # remote reachability, last sync, per-root counts, hooks
+clauderig reroot <id> ~/Git/p  # re-file a session under the directory it really belongs to
 clauderig repo                 # what the sync repo costs: size, files, commits, history ratio
 clauderig repo gc              # repack: reclaims space, keeps every commit — try this first
 clauderig repo prune --before 2026-08-01  # fold everything before a date into one commit

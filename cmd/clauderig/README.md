@@ -70,6 +70,7 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `status` | Sync state: remote, last sync, roots, hooks |
 | `repo` | Repo size, files, commits and history-vs-content ratio; `repo gc` repacks (no history lost), `repo prune --before 2026-08-01` folds older history into one commit |
 | `mv` | Move/rename a directory and relink its Claude history (slug dirs + transcript cwds + Desktop/settings paths); guards live sessions; `-n`/`--dry-run` previews |
+| `reroot` | Re-file one session under a directory you name (`-n`/`--dry-run` previews) |
 | `global` | `install` / `uninstall` / `status` the global sync hooks in ~/.claude (alias: `hooks`) |
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |

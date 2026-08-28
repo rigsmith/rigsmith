@@ -277,3 +277,74 @@ func fileReferencesSrc(path, src string) bool {
 	_, n := rebaseJSONValues(v, src, src) // rebase to itself just to count matches
 	return n > 0
 }
+
+// rewriteExactCwd rewrites records whose cwd is EXACTLY oldCwd, leaving deeper
+// paths alone. rebaseTranscriptCwds is the other half of this pair: it rewrites
+// anything under oldCwd, because there the directory moved and everything below
+// it moved too. Here nothing moved, so a record naming /a/sub still names a real
+// directory that is still there and must not be edited.
+func rewriteExactCwd(path, oldCwd, newCwd string, dryRun bool) (int, error) {
+	in, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer in.Close()
+
+	br := bufio.NewReaderSize(in, 1<<20)
+	changed := 0
+	var out *bufio.Writer
+	var tmp *os.File
+	if !dryRun {
+		tmp, err = os.CreateTemp(filepath.Dir(path), ".clauderig-reroot-*")
+		if err != nil {
+			return 0, err
+		}
+		defer func() { _ = os.Remove(tmp.Name()) }() // no-op once renamed
+		out = bufio.NewWriterSize(tmp, 1<<20)
+	}
+
+	oldQ, _ := json.Marshal(oldCwd)
+	newQ, _ := json.Marshal(newCwd)
+	for {
+		line, rerr := br.ReadBytes('\n')
+		if len(line) > 0 {
+			var probe struct {
+				Cwd string `json:"cwd"`
+			}
+			if json.Unmarshal(bytes.TrimSpace(line), &probe) == nil && probe.Cwd == oldCwd {
+				line = bytes.Replace(line, oldQ, newQ, 1)
+				changed++
+			}
+			if out != nil {
+				if _, werr := out.Write(line); werr != nil {
+					return changed, werr
+				}
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return changed, rerr
+		}
+	}
+
+	if dryRun || changed == 0 {
+		if tmp != nil {
+			_ = tmp.Close()
+		}
+		return changed, nil
+	}
+	if err := out.Flush(); err != nil {
+		return changed, err
+	}
+	if err := tmp.Close(); err != nil {
+		return changed, err
+	}
+	// Close the input before replacing it: Windows refuses to rename over a
+	// file that is still open.
+	if err := in.Close(); err != nil {
+		return changed, err
+	}
+	return changed, os.Rename(tmp.Name(), path)
+}
