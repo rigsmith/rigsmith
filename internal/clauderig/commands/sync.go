@@ -75,7 +75,7 @@ func NewSyncCmd() *cobra.Command {
 					if last, ok := lastSuccessfulSync(staging, me.Name); ok {
 						if since := time.Since(last); since < iv {
 							fmt.Fprintf(out, "  %s\n", DimStyle.Render(fmt.Sprintf(
-								"synced %s ago — next in %s (hookIntervalSeconds)",
+								"synced %s ago — next in %s (hookIntervalMinutes)",
 								since.Round(time.Second), (iv-since).Round(time.Second))))
 							return nil
 						}

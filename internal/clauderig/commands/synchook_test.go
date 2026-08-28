@@ -90,18 +90,22 @@ func TestSyncLock_LivesOutsideTheRepo(t *testing.T) {
 }
 
 func TestHookInterval_ConfigurableWithADisableEscape(t *testing.T) {
+	mins := func(n int) *int { return &n }
 	for _, tc := range []struct {
-		secs int
+		name string
+		set  *int
 		want time.Duration
 	}{
-		{0, config.DefaultHookInterval}, // unset means the default
-		{30, 30 * time.Second},
-		{600, 10 * time.Minute},
-		{-1, 0}, // opt out: sync on every turn, as it did before
+		// Unset and 0 must differ, which is the whole reason this is a pointer.
+		{"unset takes the default", nil, config.DefaultHookInterval},
+		{"zero turns it off", mins(0), 0},
+		{"one minute", mins(1), time.Minute},
+		{"ten minutes", mins(10), 10 * time.Minute},
+		{"negative reads as off", mins(-1), 0},
 	} {
-		c := &config.Config{HookIntervalSeconds: tc.secs}
+		c := &config.Config{HookIntervalMinutes: tc.set}
 		if got := c.HookInterval(); got != tc.want {
-			t.Errorf("HookInterval(%d) = %v, want %v", tc.secs, got, tc.want)
+			t.Errorf("%s: HookInterval() = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

@@ -80,21 +80,26 @@ type Retention struct {
 	SquashKeepDays int `json:"squashKeepDays,omitempty"`
 }
 
-// HookInterval is HookIntervalSeconds as a duration, with the default applied.
-// A negative setting means "no debounce" and comes back as zero.
+// HookInterval is HookIntervalMinutes as a duration: unset means the default,
+// 0 means no debounce at all. A negative value is read as 0 rather than
+// rejected — someone who wrote -1 meant "off", and refusing to sync over a sign
+// would be a poor way to tell them.
 func (c *Config) HookInterval() time.Duration {
-	switch {
-	case c.HookIntervalSeconds < 0:
-		return 0
-	case c.HookIntervalSeconds == 0:
+	if c.HookIntervalMinutes == nil {
 		return DefaultHookInterval
 	}
-	return time.Duration(c.HookIntervalSeconds) * time.Second
+	if *c.HookIntervalMinutes <= 0 {
+		return 0
+	}
+	return time.Duration(*c.HookIntervalMinutes) * time.Minute
 }
 
-// DefaultHookInterval is the debounce applied to hook-driven syncs when the
-// config does not say otherwise.
-const DefaultHookInterval = 5 * time.Minute
+// DefaultHookIntervalMinutes is the debounce applied to hook-driven syncs when
+// the config does not say otherwise.
+const DefaultHookIntervalMinutes = 5
+
+// DefaultHookInterval is DefaultHookIntervalMinutes as a duration.
+const DefaultHookInterval = DefaultHookIntervalMinutes * time.Minute
 
 // DefaultSquashKeepDays is the history the automatic squash retains when the
 // config does not say.
@@ -135,15 +140,23 @@ type Config struct {
 	// agents/plans deleted upstream) by default, as if --prune were passed.
 	// `restore --prune=false` overrides it for a single run.
 	AlwaysPrune bool `json:"alwaysPrune,omitempty"`
-	// HookIntervalSeconds is how long a hook-driven sync waits before doing the
+	// HookIntervalMinutes is how long a hook-driven sync waits before doing the
 	// work again. The Stop hook fires at the end of every turn in every chat, so
 	// several open conversations meant the same tree walked, redacted and pushed
 	// several times a minute to write one changed file.
 	//
-	// 0 means the default; a negative value disables the debounce and syncs on
-	// every turn, which is what happened before this existed. Only hook-driven
-	// runs are affected — `clauderig sync` typed by hand always does the work.
-	HookIntervalSeconds int `json:"hookIntervalSeconds,omitempty"`
+	// Minutes because that is the unit the decision is made in — "sync at most
+	// every few minutes" — and seconds invited a number precise enough to imply
+	// a control this does not have.
+	//
+	// 0 turns the debounce off and syncs on every turn, which is what happened
+	// before this existed. A POINTER because "0" and "absent" have to mean
+	// different things: unset is the default interval, and a plain int cannot
+	// tell someone who wrote 0 from someone who wrote nothing.
+	//
+	// Only hook-driven runs are affected — `clauderig sync` typed by hand always
+	// does the work.
+	HookIntervalMinutes *int `json:"hookIntervalMinutes,omitempty"`
 	// RedactTranscripts scrubs credential-shaped tokens out of the STAGED copy of
 	// a transcript before it is committed. The live ~/.claude file is never
 	// touched — clauderig backs your machine up, it does not edit it — so the
