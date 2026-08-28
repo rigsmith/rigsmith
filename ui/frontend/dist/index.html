@@ -107,6 +107,41 @@
   .ev .leak{color:var(--warn);font-size:11px;margin-top:4px;overflow-wrap:anywhere;}
   .ev .when{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums;}
   .empty{color:var(--muted-2);font-size:12px;padding:6px 0;}
+  /* actions — the buttons follow the banner's advice, so the reason you are
+     shown and the button you get are the same thing. */
+  .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px;}
+  button{
+    background:var(--ink-3);color:var(--paper);border:1px solid var(--line);
+    border-radius:5px;padding:7px 11px;font-family:var(--mono);font-size:11px;cursor:pointer;
+  }
+  button:hover:not(:disabled){border-color:var(--muted-2);}
+  button:disabled{color:var(--muted-2);cursor:not-allowed;opacity:.65;}
+  button.primary{border-color:var(--muted-2);}
+  button:focus-visible{outline:1px solid var(--muted);outline-offset:2px;}
+  button:focus:not(:focus-visible){outline:none;}
+  button.ok,button.ok:hover{color:var(--ok);border-color:var(--ok);}
+  /* Streamed CLI output. It exists because a sync that refuses on a secret
+     tripwire used to say so only in hook stderr, where nobody saw it. */
+  .out{
+    margin-top:12px;background:var(--ink-2);border:1px solid var(--line);
+    border-radius:6px;padding:10px 12px;font-size:11px;line-height:1.55;
+    max-height:190px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;
+  }
+  .out:empty{display:none;}
+  .out .e{color:var(--err);}
+  .out .head{color:var(--muted-2);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;}
+
+  /* accounts */
+  .acct{
+    display:flex;gap:12px;align-items:baseline;padding:9px 0;
+    border-bottom:1px solid var(--line-soft);font-size:12px;
+  }
+  .acct:last-child{border-bottom:none;}
+  .acct .who{flex:1;min-width:0;overflow-wrap:anywhere;}
+  .acct .live{color:var(--ok);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;}
+  .acct .plan{color:var(--muted-2);font-size:10px;}
+  .warnrow{color:var(--warn);font-size:11px;margin-top:10px;}
+
 </style>
 </head>
 <body>
@@ -125,6 +160,12 @@
       <div class="sub" id="sub"></div>
     </div>
   </div>
+
+  <div class="acts" id="acts"></div>
+  <div class="out" id="out"></div>
+
+  <div class="seclabel"><span>Accounts</span><span class="rule"></span></div>
+  <div id="accounts"></div>
 
   <div class="seclabel"><span>Devices</span><span class="rule"></span></div>
   <table><thead><tr><th>Machine</th><th>OS</th><th>Claude</th><th>Last sync</th></tr></thead>
@@ -150,6 +191,20 @@ const $ = id => document.getElementById(id);
 const STATUS_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Status.Get';
 const ACTIVITY_RECENT = 'github.com/rigsmith/rigsmith/ui/bridge.Activity.Recent';
 const WINDOWS_OPEN = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Open';
+const ACTIONS_RUN = 'github.com/rigsmith/rigsmith/ui/bridge.Actions.Run';
+const ACTIONS_RUN_WITH = 'github.com/rigsmith/rigsmith/ui/bridge.Actions.RunWith';
+const ACTIONS_BUSY = 'github.com/rigsmith/rigsmith/ui/bridge.Actions.Busy';
+const ACCOUNTS_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.Get';
+const ACTIONS_START_EVENT = 'clauderig:action:start';
+const ACTIONS_LINE_EVENT = 'clauderig:action:line';
+const ACTIONS_DONE_EVENT = 'clauderig:action:done';
+
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
 
 // Coarse relative time, matching how `clauderig status` phrases it.
 function since(iso) {
@@ -276,12 +331,22 @@ function renderActivity(events) {
 
 async function refresh() {
   try {
-    render(await Call.ByName(STATUS_GET));
+    const snap = await Call.ByName(STATUS_GET);
+    render(snap);
+    renderActions(snap);
   } catch (e) {
     $('banner').dataset.level = 'red';
     $('summary').textContent = 'Could not read sync status';
     $('sub').textContent = String(e);
   }
+  // Independent of the status call: a broken accounts store must not blank the
+  // status panel, and vice versa.
+  try {
+    renderAccounts(await Call.ByName(ACCOUNTS_GET));
+  } catch (e) {
+    $('accounts').replaceChildren(el('div', 'empty err', `Could not read accounts: ${e}`));
+  }
+
   // Independent of the status call: a broken journal must not blank the
   // status panel, and vice versa.
   try {
@@ -293,6 +358,136 @@ async function refresh() {
     p.className = 'empty err';
     p.textContent = `Could not read the journal: ${e}`;
     box.append(p);
+  }
+}
+
+// ---- actions ---------------------------------------------------------------
+
+// Which verbs to offer for a given health reason. The banner already says what
+// is wrong and what to run; these are the same advice, clickable — so the two
+// can never disagree.
+const ACTIONS_FOR = {
+  synced:             ['sync'],
+  unconfigured:       [],
+  'never-fetched':    ['pull', 'sync'],
+  uncommitted:        ['sync'],
+  ahead:              ['sync'],
+  behind:             ['pull'],
+  diverged:           ['merge', 'pull'],
+  conflict:           ['merge'],
+  merging:            ['merge'],
+  'last-run-failed':  ['sync', 'pull'],
+  'last-run-refused': ['sync'],
+};
+const ACTION_LABEL = { sync: 'Sync now', pull: 'Pull', merge: 'Resolve' };
+
+let running = false;
+
+function renderActions(snap) {
+  const acts = $('acts');
+  acts.replaceChildren();
+  const verbs = ACTIONS_FOR[snap.reason] ?? ['sync'];
+  verbs.forEach((verb, i) => {
+    const b = document.createElement('button');
+    if (i === 0) b.className = 'primary';
+    b.textContent = ACTION_LABEL[verb] ?? verb;
+    b.disabled = running;
+    b.dataset.verb = verb;
+    b.onclick = () => runAction(verb);
+    acts.append(b);
+  });
+  if (snap.action) {
+    const hint = document.createElement('span');
+    hint.className = 'plan';
+    hint.textContent = snap.action;
+    acts.append(hint);
+  }
+}
+
+function setRunning(on) {
+  running = on;
+  document.querySelectorAll('.acts button').forEach(b => { b.disabled = on; });
+}
+
+async function runAction(verb, arg) {
+  const out = $('out');
+  out.replaceChildren();
+  setRunning(true);
+  try {
+    if (arg === undefined) await Call.ByName(ACTIONS_RUN, verb);
+    else await Call.ByName(ACTIONS_RUN_WITH, verb, arg);
+  } catch (e) {
+    // A rejected action never reaches the done event, so report it here.
+    setRunning(false);
+    appendLine(String(e), 'stderr');
+  }
+}
+
+function appendLine(text, stream) {
+  const out = $('out');
+  const line = document.createElement('div');
+  if (stream === 'stderr') line.className = 'e';
+  line.textContent = text;
+  out.append(line);
+  out.scrollTop = out.scrollHeight;
+}
+
+Events.On(ACTIONS_START_EVENT, (e) => {
+  setRunning(true);
+  const head = document.createElement('div');
+  head.className = 'head';
+  head.textContent = `clauderig ${e?.data?.action ?? ''}`;
+  $('out').append(head);
+});
+Events.On(ACTIONS_LINE_EVENT, (e) => {
+  const d = e?.data ?? {};
+  appendLine(d.text ?? '', d.stream);
+});
+Events.On(ACTIONS_DONE_EVENT, (e) => {
+  const d = e?.data ?? {};
+  setRunning(false);
+  if (d.error) appendLine(d.error, 'stderr');
+  // The tray repaints from the same snapshot, so pull the window back in step.
+  refresh();
+});
+
+// ---- accounts ---------------------------------------------------------------
+
+function renderAccounts(v) {
+  const box = $('accounts');
+  box.replaceChildren();
+  if (v.error) {
+    box.append(el('div', 'empty err', v.error));
+    return;
+  }
+  if (!v.accounts || !v.accounts.length) {
+    box.append(el('div', 'empty', 'No accounts captured yet — run `clauderig account add`.'));
+    return;
+  }
+  v.accounts.forEach(a => {
+    const row = el('div', 'acct');
+    const who = el('div', 'who', a.email || a.id);
+    if (a.subscription) who.append(el('span', 'plan', `  ${a.subscription}`));
+    row.append(who);
+    if (a.active) row.append(el('span', 'live', 'live'));
+    else {
+      const b = document.createElement('button');
+      b.textContent = 'Switch';
+      // The guard is surfaced, never routed around: swapping the credential
+      // under a running session corrupts its identity, so the CLI refuses and
+      // the window says why instead of letting that refusal look like a bug.
+      b.disabled = running || v.switchBlocked;
+      b.title = v.switchBlocked
+        ? `Claude Code is running (${(v.live || []).map(l => l.pid).join(', ')}) — close it first`
+        : `Make ${a.email || a.id} the machine-wide login`;
+      b.onclick = () => runAction('account-switch', a.id);
+      row.append(b);
+    }
+    box.append(row);
+  });
+  if (v.desynced) {
+    box.append(el('div', 'warnrow',
+      'The live credential and ~/.claude.json name different organizations — run `clauderig account doctor`.'));
   }
 }
 
@@ -309,6 +504,10 @@ $('openSessions').addEventListener('click', async () => {
 // The tray polls anyway; re-read the full snapshot whenever it does, so an open
 // window never drifts from the icon.
 Events.On('clauderig:health', refresh);
+
+// A window reopened mid-action must come back with its buttons disabled rather
+// than offering to start a second one.
+Call.ByName(ACTIONS_BUSY).then(setRunning).catch(() => {});
 refresh();
 </script>
 </body>

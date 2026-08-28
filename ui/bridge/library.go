@@ -189,6 +189,15 @@ func libraryScope(since, me string, now time.Time) (sessions.Scope, error) {
 	return sc, err
 }
 
+// shortSessionID is the leading segment of a session uuid — enough to recognise
+// one, short enough to sit in a column.
+func shortSessionID(id string) string {
+	if i := strings.IndexByte(id, '-'); i > 0 {
+		return id[:i]
+	}
+	return id
+}
+
 // toLibrarySession flattens one row into what the window holds. Shared with the
 // detail panel so a session cannot describe itself differently depending on
 // whether you are looking at the list or at one row of it.

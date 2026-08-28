@@ -117,9 +117,9 @@ ui/
 ├── main.go                # app + systray + window wiring
 ├── bridge/                # service structs bound to the frontend
 │   ├── status.go          #   imports internal/clauderig/status, devices
-│   ├── sessions.go        #   the REMOTE browser: peek over the staging repo
 │   ├── library.go         #   the sessions manager: internal/clauderig/sessions
-│   └── actions.go         #   shells out; streams stdout/stderr to the drawer
+│   ├── windows.go         #   lets one window raise another
+│   └── actions.go         #   shells out; streams stdout/stderr to the pane
 ├── assets/                # tray icons: 3 states x {template, dark, light}
 ├── frontend/
 │   ├── src/               # reuses design/ brand tokens
@@ -262,7 +262,9 @@ Unchanged in substance; `--json` is no longer blocking (see [Engine seam](#engin
 - Activity feed: recent syncs across machines with outcomes; failures and secret-tripwire
   refusals rendered as first-class rows, not buried.
 - ~~"Sync now" / "Pull" actions shelling out, with streamed CLI output in a drawer.~~
-  **Done 2026-08-08.** `ui/bridge` gained `runner.go` (allowlisted verbs → fixed argv,
+  **Go side done 2026-08-08; wired into the window 2026-08-28** — the buttons come from
+  `snapshot.reason`, so the banner's advice and the button you get cannot disagree, and
+  the output streams into a pane under them. `ui/bridge` gained `runner.go` (allowlisted verbs → fixed argv,
   one action at a time, line-streamed, ANSI-stripped) and `actions.go` (the bound
   service, emitting `clauderig:action:{start,line,done}`). Buttons follow the health
   reason, so the banner's advice and the button you get are the same thing; the tray
@@ -285,10 +287,14 @@ Unchanged in substance; `--json` is no longer blocking (see [Engine seam](#engin
   files stay conflicted with git's markers intact and the merge exits nonzero naming
   them, so `git mergetool` handles them safely. Building a picker needs its own design
   pass on what "pick a side" means per file class.
-- **Remote session browser — done 2026-08-08.** A Sessions tab over `ui/bridge/sessions.go`:
-  machine filter, titles, read-only transcript rendering (bounded at 400 turns and
-  *says so* when it clips), and **Bring to this Mac** → `peek materialize`, greyed out
-  for sessions already here.
+- ~~**Remote session browser.**~~ **Folded into the sessions manager, 2026-08-28**, and
+  `ui/bridge/sessions.go` removed. It was written before the manager existed and was
+  largely superseded by it: the manager already lists sessions held only by the sync,
+  and because the staging repo is a working tree their transcripts are already readable
+  — the detail panel opens them. The one capability it had that the manager lacked was
+  **materialize**, now a *Bring to this Mac* button on any row the sync holds and this
+  machine does not. What remains genuinely unavailable is reading a session that is in
+  `origin/main` but not yet checked out locally; `clauderig peek` still does that.
 - **Search — partial.** The browser filters the listed sessions by title client-side.
   Full-text search across live + synced (`search` package in-process, `search --json`
   shape) is not wired into the window yet; the CLI has it.
@@ -375,8 +381,10 @@ header, with every control inside opting back out.
 
 ## Phase 3 — Accounts
 
-- **Done 2026-08-08**, with one gap. An Accounts tab over `ui/bridge/accounts.go`:
-  logins list with the live one marked, capture (`account add`), and switch.
+- **Go side done 2026-08-08; wired into the window 2026-08-28**, with one gap. An
+  accounts section over `ui/bridge/accounts.go`: logins with the live one marked, and
+  switch. Capture (`account add`) is not offered — it is an interactive login flow, not
+  a button.
 - **The switch guard is surfaced, not routed around.** `Get` reports every running
   Claude Code process, and the switch buttons are disabled while any exist, naming the
   pids — a swap underneath a live session corrupts its identity, so the UI shows why it

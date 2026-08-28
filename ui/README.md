@@ -100,8 +100,9 @@ which would otherwise compile clean and break only at runtime. It scans every
 `frontend/dist/*.html`, so a method wired from the sessions window counts the
 same as one wired from the status page.
 
-Two services deal in sessions and they are not interchangeable. `Sessions`
-answers "what is on the other Mac" — it reads the synced repo through `peek` and
-never touches the local tree. `Library` answers "what sessions do I have",
+`Library` is the sessions surface: it answers "what sessions do I have",
 merging the live `~/.claude`, every Desktop install and the synced copy into one
-row each, via `internal/clauderig/sessions`.
+row each, via `internal/clauderig/sessions`. A `Sessions` service used to sit
+beside it reading the remote through `peek`; it was folded in and removed once
+the manager covered listing, reading, and — via *Bring to this Mac* —
+materialising.

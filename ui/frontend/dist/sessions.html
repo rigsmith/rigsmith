@@ -341,6 +341,7 @@ const LIBRARY_TERMINAL = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenTer
 const LIBRARY_DESKTOP = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenDesktop';
 const LIBRARY_VSCODE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenVSCode';
 const LIBRARY_DELETE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Delete';
+const LIBRARY_MATERIALIZE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Materialize';
 
 const LIMIT = 200;
 
@@ -697,6 +698,32 @@ function renderActions(d) {
     }
   }
 
+  // A session only in the sync can be read here but not opened — so the useful
+  // primary action is to bring it over, not a disabled Open button explaining
+  // why it cannot. Once it lands, the row re-renders with the usual choices.
+  if (!d.resumable && (d.session.sources || []).includes('repo')) {
+    const bring = el('button', 'primary', 'Bring to this Mac');
+    bring.title = 'Copy this session out of the sync into ~/.claude so it can be opened here';
+    bring.onclick = async () => {
+      say('');
+      bring.disabled = true;
+      try {
+        await Call.ByName(LIBRARY_MATERIALIZE, d.session.id);
+        flash(bring);
+        await refresh();                       // its Where column changes
+        renderDetail(await Call.ByName(LIBRARY_DETAIL, d.session.id));
+      } catch (e) {
+        bring.disabled = false;
+        say('failed — hover for details', 'err', String(e));
+      }
+    };
+    acts.append(bring);
+    acts.append(copyButton(d, say));
+    acts.append(deleteButton(d));
+    acts.append(toast);
+    return;
+  }
+
   const primary = lastUsed();
   const go = el('button', 'primary', `Open in ${primary.label}`);
   // All three paths read the live ~/.claude copy, so none is possible without one.
@@ -730,6 +757,12 @@ function renderActions(d) {
 
   // An icon, not a word: it sits beside two controls that already say "open",
   // and the label would be the longest thing in the row.
+  acts.append(copyButton(d, say));
+  acts.append(deleteButton(d));
+  acts.append(toast);
+}
+
+function copyButton(d, say) {
   const copy = el('button', 'icon');
   copy.title = 'Copy the resume command';
   copy.setAttribute('aria-label', 'Copy the resume command');
@@ -739,8 +772,8 @@ function renderActions(d) {
       await navigator.clipboard.writeText(d.resumeCommand);
       // The icon itself answers: a tick where the copy glyph was, then back.
       copy.innerHTML = ICON_CHECK;
-      flash(copy);
-      setTimeout(() => { copy.innerHTML = ICON_COPY; }, 2200);
+      copy.classList.add('ok');
+      setTimeout(() => { copy.innerHTML = ICON_COPY; copy.classList.remove('ok'); }, 2200);
       say('', '', d.resumeCommand);
     } catch {
       // Clipboard access can be refused in a webview; the command is still
@@ -748,14 +781,14 @@ function renderActions(d) {
       say('could not copy — hover for the command', 'err', d.resumeCommand);
     }
   };
-  acts.append(copy);
+  return copy;
+}
 
+function deleteButton(d) {
   const del = el('button', 'danger', 'Delete…');
   del.disabled = !(d.session.sources || []).length;
   del.onclick = () => openConfirm(d);
-  acts.append(del);
-
-  acts.append(toast);
+  return del;
 }
 
 function openConfirm(d) {

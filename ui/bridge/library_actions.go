@@ -319,6 +319,44 @@ func openURL(ctx context.Context, u string) error {
 	return nil
 }
 
+// Materialize copies a session out of the synced repo into ~/.claude, so it
+// becomes something this machine can open.
+//
+// The write stays in the CLI: `peek materialize` owns rewriting the project slug
+// for this machine's paths and refusing when the id already exists locally. This
+// only names the session.
+//
+// It is the one capability the retired remote-session browser had that the
+// listing did not — a row whose transcript is only in the sync is visible and
+// readable here, but not resumable until it is brought over.
+func (l *Library) Materialize(ctx context.Context, id string) error {
+	row, _, err := l.find(id)
+	if err != nil {
+		return err
+	}
+	if row.CLILive {
+		return errors.New("that session is already on this Mac")
+	}
+	if !row.InRepo {
+		return errors.New("that session is not in the synced repo, so there is nothing to bring over")
+	}
+	if !idRule.MatchString(row.ID) {
+		return errors.New("invalid session id")
+	}
+	bin, err := resolveCLI()
+	if err != nil {
+		return err
+	}
+	out, err := exec.CommandContext(ctx, bin, "peek", "materialize", row.ID).CombinedOutput()
+	if err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return errors.New(msg)
+		}
+		return err
+	}
+	return nil
+}
+
 // DeleteResult reports what a delete removed and, more importantly, what it did
 // not.
 type DeleteResult struct {

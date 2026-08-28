@@ -78,7 +78,6 @@ func main() {
 			application.NewService(statusSvc),
 			application.NewService(bridge.NewActivity()),
 			application.NewService(actionsSvc),
-			application.NewService(bridge.NewSessions()),
 			application.NewService(bridge.NewLibrary()),
 			application.NewService(bridge.NewAccounts()),
 			application.NewService(windowsSvc),
