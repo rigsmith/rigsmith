@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/confkit"
 	"github.com/rigsmith/rigsmith/core/jsonc"
@@ -79,6 +80,22 @@ type Retention struct {
 	SquashKeepDays int `json:"squashKeepDays,omitempty"`
 }
 
+// HookInterval is HookIntervalSeconds as a duration, with the default applied.
+// A negative setting means "no debounce" and comes back as zero.
+func (c *Config) HookInterval() time.Duration {
+	switch {
+	case c.HookIntervalSeconds < 0:
+		return 0
+	case c.HookIntervalSeconds == 0:
+		return DefaultHookInterval
+	}
+	return time.Duration(c.HookIntervalSeconds) * time.Second
+}
+
+// DefaultHookInterval is the debounce applied to hook-driven syncs when the
+// config does not say otherwise.
+const DefaultHookInterval = 5 * time.Minute
+
 // DefaultSquashKeepDays is the history the automatic squash retains when the
 // config does not say.
 //
@@ -118,6 +135,15 @@ type Config struct {
 	// agents/plans deleted upstream) by default, as if --prune were passed.
 	// `restore --prune=false` overrides it for a single run.
 	AlwaysPrune bool `json:"alwaysPrune,omitempty"`
+	// HookIntervalSeconds is how long a hook-driven sync waits before doing the
+	// work again. The Stop hook fires at the end of every turn in every chat, so
+	// several open conversations meant the same tree walked, redacted and pushed
+	// several times a minute to write one changed file.
+	//
+	// 0 means the default; a negative value disables the debounce and syncs on
+	// every turn, which is what happened before this existed. Only hook-driven
+	// runs are affected — `clauderig sync` typed by hand always does the work.
+	HookIntervalSeconds int `json:"hookIntervalSeconds,omitempty"`
 	// RedactTranscripts scrubs credential-shaped tokens out of the STAGED copy of
 	// a transcript before it is committed. The live ~/.claude file is never
 	// touched — clauderig backs your machine up, it does not edit it — so the

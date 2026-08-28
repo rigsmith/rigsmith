@@ -31,6 +31,7 @@ const pushAttempts = 3
 // slips past redaction; nothing is pushed in that case.
 func NewSyncCmd() *cobra.Command {
 	var dryRun bool
+	var hook bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Snapshot, redact, rewrite, and push your Claude Code setup",
@@ -46,6 +47,40 @@ func NewSyncCmd() *cobra.Command {
 			staging, err := config.StagingDir()
 			if err != nil {
 				return err
+			}
+
+			// Hook-driven runs debounce and serialise; a sync typed by hand
+			// always does the work, because someone asking for it now means now.
+			//
+			// The Stop hook fires at the end of every turn in EVERY open chat,
+			// and the work is walking the whole tree, redacting every JSON file
+			// and pushing. On one real machine that was 37 syncs with a median
+			// gap of 163s and a minimum of 7s — for one conversation. Several at
+			// once multiplied it and raced on the same git repo.
+			if hook {
+				lock, got, lerr := acquireSyncLock(staging)
+				if lerr != nil {
+					return lerr
+				}
+				if !got {
+					// Another sync is mid-run. It is walking the same tree and
+					// will capture the same work, so there is nothing useful to
+					// do here and failing would only make the hook noisy.
+					fmt.Fprintln(out, DimStyle.Render("  another sync is running — skipping"))
+					return nil
+				}
+				defer lock.Release()
+
+				if iv := cfg.HookInterval(); iv > 0 {
+					if last, ok := lastSuccessfulSync(staging, me.Name); ok {
+						if since := time.Since(last); since < iv {
+							fmt.Fprintf(out, "  %s\n", DimStyle.Render(fmt.Sprintf(
+								"synced %s ago — next in %s (hookIntervalSeconds)",
+								since.Round(time.Second), (iv-since).Round(time.Second))))
+							return nil
+						}
+					}
+				}
 			}
 
 			// Once the commit is made, any later failure is a git-phase one —
@@ -312,6 +347,8 @@ func NewSyncCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "stage and scan, but don't commit or push")
+	cmd.Flags().BoolVar(&hook, "hook", false,
+		"debounce and serialise: skip if another sync is running or one ran recently (used by the Stop hook)")
 	return cmd
 }
 

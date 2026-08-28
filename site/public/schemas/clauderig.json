@@ -60,6 +60,10 @@
         "squashKeepDays": { "type": "integer", "description": "Whole days of sync history the automatic squash leaves standing (default 30). It repacks first and only squashes if .git is still oversized." }
       }
     },
+    "hookIntervalSeconds": {
+      "type": "integer",
+      "description": "How long a hook-driven sync waits before doing the work again (default 300). The Stop hook fires at the end of every turn in every open chat. 0 uses the default; a negative value disables the debounce. `clauderig sync` typed by hand is never debounced."
+    },
     "redactTranscripts": {
       "type": "boolean",
       "description": "Scrub credential-shaped tokens (API keys, tokens, JWTs) out of the STAGED copy of a transcript before it is committed. Your live ~/.claude file is never modified. Off by default."
