@@ -9,6 +9,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
+	"github.com/rigsmith/rigsmith/internal/clauderig/sessions"
 )
 
 // The case the ledger exists for: the transcript has aged out of the synced
@@ -19,9 +20,9 @@ func TestSearchSessions_LedgerOnlySessionIsFound(t *testing.T) {
 	live := t.TempDir()
 	when := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
 
-	sc := sessionScope{
-		now: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC),
-		ledger: map[string]ledger.Entry{
+	sc := sessions.Scope{
+		Now: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC),
+		Ledger: map[string]ledger.Entry{
 			"sess-gone": {
 				ID: "sess-gone", Title: "the auth refactor", Cwd: "/Users/j/Git/api",
 				End: when, Bytes: 1234, RecordedBy: "air",
@@ -73,9 +74,9 @@ func TestSearchSessions_LedgerDoesNotClaimPresentSessionIsGone(t *testing.T) {
 	writeTestFile(t, repo, "cli/projects/-slug/sess-here.jsonl",
 		`{"type":"user","message":{"content":"unrelated chatter"}}`+"\n")
 
-	sc := sessionScope{
-		now: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC),
-		ledger: map[string]ledger.Entry{
+	sc := sessions.Scope{
+		Now: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC),
+		Ledger: map[string]ledger.Entry{
 			"sess-here": {ID: "sess-here", Title: "the auth refactor", End: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)},
 		},
 	}
@@ -107,10 +108,10 @@ func TestSearchSessions_LedgerDoesNotClaimPresentSessionIsGone(t *testing.T) {
 // The filters apply to ledger rows too — they carry a date and a project.
 func TestSearchSessions_LedgerRowsRespectFilters(t *testing.T) {
 	live := t.TempDir()
-	sc := sessionScope{
-		now:   time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC),
-		since: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
-		ledger: map[string]ledger.Entry{
+	sc := sessions.Scope{
+		Now:   time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC),
+		Since: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		Ledger: map[string]ledger.Entry{
 			"old": {ID: "old", Title: "the auth refactor", End: time.Date(2026, 3, 4, 0, 0, 0, 0, time.UTC)},
 			"new": {ID: "new", Title: "the auth refactor again", End: time.Date(2026, 7, 4, 0, 0, 0, 0, time.UTC)},
 		},

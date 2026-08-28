@@ -20,11 +20,33 @@
     -webkit-font-smoothing:antialiased;font-feature-settings:"liga" 0;
     user-select:none;
   }
-  .wrap{padding:28px 32px 40px;}
+  /* 38px clears the inset traffic lights, which are drawn over the page with
+     the macOS hidden-inset title bar rather than above it. */
+  .wrap{padding:38px 32px 40px;}
   .eyebrow{
     font-size:11px;letter-spacing:0.22em;text-transform:uppercase;
     color:var(--muted);font-weight:500;
+    display:flex;align-items:center;gap:14px;
+    /* Drag the window by its header — the title bar is hidden-inset, so there
+       is almost nothing else to grab. The button opts out below. */
+    --wails-draggable:drag;
   }
+  .eyebrow button{--wails-draggable:no-drag;}
+  .eyebrow .rule{flex:1;height:1px;background:var(--line);}
+  /* Reaching the sessions window should not require finding the tray icon —
+     the tray is the app, but once a window is open the other one is the
+     obvious next place to go. */
+  .eyebrow button{
+    background:var(--ink-3);color:var(--paper);border:1px solid var(--line);
+    border-radius:5px;padding:5px 10px;cursor:pointer;
+    font-family:var(--mono);font-size:10px;letter-spacing:0.12em;
+    text-transform:uppercase;
+  }
+  .eyebrow button:hover{border-color:var(--muted-2);}
+  /* The default ring draws inside the control and gets clipped by its own
+     border radius, which reads as a stray highlight across the label. */
+  .eyebrow button:focus-visible{outline:1px solid var(--muted);outline-offset:2px;}
+  .eyebrow button:focus:not(:focus-visible){outline:none;}
   .seclabel{
     display:flex;align-items:center;gap:14px;
     font-size:11px;letter-spacing:0.18em;text-transform:uppercase;
@@ -89,7 +111,11 @@
 </head>
 <body>
 <div class="wrap">
-  <div class="eyebrow" id="machine">—</div>
+  <div class="eyebrow">
+    <span id="machine">—</span>
+    <span class="rule"></span>
+    <button id="openSessions" title="Browse every Claude Code session this machine can see">Sessions</button>
+  </div>
 
   <div class="seclabel"><span>Sync</span><span class="rule"></span></div>
   <div class="banner" id="banner" data-level="amber">
@@ -123,6 +149,7 @@ const $ = id => document.getElementById(id);
 // ui/bridge; ui/bridge/binding_test.go fails if this drifts.
 const STATUS_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Status.Get';
 const ACTIVITY_RECENT = 'github.com/rigsmith/rigsmith/ui/bridge.Activity.Recent';
+const WINDOWS_OPEN = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Open';
 
 // Coarse relative time, matching how `clauderig status` phrases it.
 function since(iso) {
@@ -268,6 +295,16 @@ async function refresh() {
     box.append(p);
   }
 }
+
+$('openSessions').addEventListener('click', async () => {
+  try {
+    await Call.ByName(WINDOWS_OPEN, 'sessions');
+  } catch (e) {
+    // A window that will not open is worth saying out loud; the button
+    // otherwise looks simply dead.
+    $('sub').textContent = `Could not open the sessions window: ${e}`;
+  }
+});
 
 // The tray polls anyway; re-read the full snapshot whenever it does, so an open
 // window never drifts from the icon.

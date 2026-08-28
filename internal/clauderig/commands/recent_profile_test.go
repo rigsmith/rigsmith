@@ -9,6 +9,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/sessions"
 )
 
 func writeSidecar(t *testing.T, base, acct, cliID, title string) {
@@ -199,7 +200,7 @@ func TestReprofile_AccountBeatsTree(t *testing.T) {
 		"stray": {ID: "stray", Profile: "work", Account: "UUID-PERSONAL"},
 		"own":   {ID: "own", Profile: "work", Account: "uuid-work"},
 	}
-	reprofile(idx, map[string]string{"uuid-work": "work", "uuid-personal": "personal"}, true)
+	sessions.Reprofile(idx, map[string]string{"uuid-work": "work", "uuid-personal": "personal"}, true)
 
 	if got := idx["stray"].Profile; got != "personal" {
 		t.Errorf("stray copy labelled %q, want personal (its account) — case must not matter", got)
@@ -213,7 +214,7 @@ func TestReprofile_AccountBeatsTree(t *testing.T) {
 // inherit one from a tree it was copied into.
 func TestReprofile_AccountWithNoProfileClearsTreeLabel(t *testing.T) {
 	idx := session.Index{"s": {ID: "s", Profile: "work", Account: "uuid-machinewide"}}
-	reprofile(idx, map[string]string{"uuid-work": "work"}, true)
+	sessions.Reprofile(idx, map[string]string{"uuid-work": "work"}, true)
 	if got := idx["s"].Profile; got != "" {
 		t.Errorf("profile = %q, want empty — that account has no profile", got)
 	}
@@ -223,7 +224,7 @@ func TestReprofile_AccountWithNoProfileClearsTreeLabel(t *testing.T) {
 // answer than the account but far better than blanking every session.
 func TestReprofile_NoMappingLeavesLabelsAlone(t *testing.T) {
 	idx := session.Index{"s": {ID: "s", Profile: "work", Account: "uuid-work"}}
-	reprofile(idx, nil, false)
+	sessions.Reprofile(idx, nil, false)
 	if got := idx["s"].Profile; got != "work" {
 		t.Errorf("profile = %q, want the tree fallback preserved", got)
 	}
@@ -232,7 +233,7 @@ func TestReprofile_NoMappingLeavesLabelsAlone(t *testing.T) {
 // A sidecar layout we do not understand keeps whatever the tree said.
 func TestReprofile_NoAccountKeepsTreeLabel(t *testing.T) {
 	idx := session.Index{"s": {ID: "s", Profile: "work"}}
-	reprofile(idx, map[string]string{"uuid-work": "work"}, true)
+	sessions.Reprofile(idx, map[string]string{"uuid-work": "work"}, true)
 	if got := idx["s"].Profile; got != "work" {
 		t.Errorf("profile = %q, want work", got)
 	}
@@ -243,7 +244,7 @@ func TestReprofile_NoAccountKeepsTreeLabel(t *testing.T) {
 // would strip the only thing identifying an unlinked install.
 func TestReprofile_PartialMappingKeepsTreeLabel(t *testing.T) {
 	idx := session.Index{"s": {ID: "s", Profile: "unlinked", Account: "uuid-other"}}
-	reprofile(idx, map[string]string{"uuid-work": "work"}, false)
+	sessions.Reprofile(idx, map[string]string{"uuid-work": "work"}, false)
 	if got := idx["s"].Profile; got != "unlinked" {
 		t.Errorf("profile = %q, want the tree label kept while the mapping is partial", got)
 	}
@@ -253,7 +254,7 @@ func TestReprofile_PartialMappingKeepsTreeLabel(t *testing.T) {
 // decides which app the user is sent to.
 func TestReprofile_AmbiguousAccountClearsLabel(t *testing.T) {
 	idx := session.Index{"s": {ID: "s", Profile: "work", Account: "uuid-shared"}}
-	reprofile(idx, map[string]string{"uuid-shared": ""}, true)
+	sessions.Reprofile(idx, map[string]string{"uuid-shared": ""}, true)
 	if got := idx["s"].Profile; got != "" {
 		t.Errorf("profile = %q, want empty for an account two profiles claim", got)
 	}

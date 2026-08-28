@@ -21,11 +21,25 @@ func fqn(service any, method string) string {
 // would compile cleanly and fail only at runtime, in a window nobody has open.
 // This test is that missing link.
 func TestFrontendCallsMatchBoundMethods(t *testing.T) {
-	page, err := os.ReadFile(filepath.Join("..", "frontend", "dist", "index.html"))
+	// Every page, not just index.html: the window is more than one screen now,
+	// and a method wired from sessions.html is just as bound as one wired from
+	// the status page.
+	pages, err := filepath.Glob(filepath.Join("..", "frontend", "dist", "*.html"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	html := string(page)
+	if len(pages) == 0 {
+		t.Fatal("no frontend pages found — the embed would ship an empty window")
+	}
+	var b strings.Builder
+	for _, p := range pages {
+		body, rerr := os.ReadFile(p)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		b.Write(body)
+	}
+	html := b.String()
 
 	called := []string{
 		fqn(&Status{}, "Get"),
@@ -36,7 +50,14 @@ func TestFrontendCallsMatchBoundMethods(t *testing.T) {
 		fqn(&Sessions{}, "List"),
 		fqn(&Sessions{}, "Read"),
 		fqn(&Sessions{}, "Machines"),
+		fqn(&Library{}, "List"),
+		fqn(&Library{}, "Detail"),
+		fqn(&Library{}, "OpenTerminal"),
+		fqn(&Library{}, "OpenDesktop"),
+		fqn(&Library{}, "OpenVSCode"),
+		fqn(&Library{}, "Delete"),
 		fqn(&Accounts{}, "Get"),
+		fqn(&Windows{}, "Open"),
 	}
 	for _, want := range called {
 		if !strings.Contains(html, want) {
@@ -57,7 +78,9 @@ func TestBoundMethodsExist(t *testing.T) {
 		{&Activity{}, []string{"Recent"}},
 		{&Actions{}, []string{"Run", "Busy", "RunWith"}},
 		{&Sessions{}, []string{"List", "Read", "Machines"}},
+		{&Library{}, []string{"List", "Detail", "OpenTerminal", "OpenDesktop", "OpenVSCode", "Delete"}},
 		{&Accounts{}, []string{"Get"}},
+		{&Windows{}, []string{"Open"}},
 	} {
 		typ := reflect.TypeOf(tc.svc)
 		for _, method := range tc.methods {

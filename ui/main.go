@@ -59,11 +59,13 @@ func main() {
 	// Linux tray support is desktop-environment dependent — GNOME needs an
 	// AppIndicator extension for the icon to appear at all. --window is the
 	// escape hatch when the tray never shows up.
-	showWindow := flag.Bool("window", false, "open the window at startup instead of starting in the tray only")
+	showWindow := flag.Bool("window", false, "open the status window at startup instead of starting in the tray only")
+	showSessions := flag.Bool("sessions", false, "open the sessions window at startup")
 	flag.Parse()
 
 	statusSvc := bridge.NewStatus()
 	actionsSvc := bridge.NewActions()
+	windowsSvc := bridge.NewWindows()
 
 	app := application.New(application.Options{
 		Name:        AppName,
@@ -77,7 +79,9 @@ func main() {
 			application.NewService(bridge.NewActivity()),
 			application.NewService(actionsSvc),
 			application.NewService(bridge.NewSessions()),
+			application.NewService(bridge.NewLibrary()),
 			application.NewService(bridge.NewAccounts()),
+			application.NewService(windowsSvc),
 		},
 		Mac: application.MacOptions{
 			// Accessory keeps it out of the Dock and the app switcher: the
@@ -90,7 +94,13 @@ func main() {
 	})
 
 	window := newWindow(app)
-	tray := newTray(app, window, actionsSvc)
+	sessionsWindow := newSessionsWindow(app)
+	tray := newTray(app, window, sessionsWindow, actionsSvc)
+
+	// Registered by name so the status window can raise the sessions window
+	// without the frontend knowing anything about how windows are built.
+	windowsSvc.Register("sessions", func() { reveal(sessionsWindow) })
+	windowsSvc.Register("main", func() { reveal(window) })
 
 	go poll(app, statusSvc, tray, window)
 
@@ -100,8 +110,19 @@ func main() {
 		refresh(app.Context(), statusSvc, tray, window)
 	})
 
-	if *showWindow {
-		reveal(window)
+	// Revealed once the app is actually running, not here. Showing a window
+	// before Run silently does nothing for any window but the first — the
+	// sessions window opened from the tray menu and never from --sessions,
+	// which looked like a broken flag rather than a lifecycle rule.
+	if *showWindow || *showSessions {
+		app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+			if *showWindow {
+				reveal(window)
+			}
+			if *showSessions {
+				reveal(sessionsWindow)
+			}
+		})
 	}
 
 	if err := app.Run(); err != nil {
@@ -134,21 +155,60 @@ func newWindow(app *application.App) *application.WebviewWindow {
 	return w
 }
 
+// newSessionsWindow builds the sessions manager: every session this machine can
+// see, from the live ~/.claude, each Claude Desktop install and the synced repo.
+//
+// A window of its own rather than a tab in the status window. The status window
+// answers "is my sync healthy" and is read in seconds from the tray; this one is
+// a browser you keep open and scroll, wants far more width, and has nothing to
+// do with sync health. Sharing a window would have meant one of them fitting
+// badly.
+func newSessionsWindow(app *application.App) *application.WebviewWindow {
+	w := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:     "sessions",
+		Title:    AppName + " — Sessions",
+		Width:    1200,
+		Height:   700,
+		MinWidth: 900,
+		Hidden:   true,
+		URL:      "/sessions.html",
+		Mac: application.MacWindow{
+			TitleBar: application.MacTitleBarHiddenInset,
+		},
+	})
+	// Hide rather than close, exactly as the status window does: the tray is
+	// the app, and closing either window must not take it down.
+	w.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		e.Cancel()
+		w.Hide()
+	})
+	return w
+}
+
 // reveal shows the window and raises it. Show alone leaves it behind whatever
 // has focus, which reads as "the menu item did nothing" — and as an accessory
 // app there is no Dock icon to click as a fallback.
+//
+// A window that has never been shown has no platform window behind it yet:
+// Show() creates one and returns early, so the Focus() that follows can land
+// before there is anything to raise and the window comes up behind whatever was
+// already there. Re-focusing a moment later catches that case. Calling Show()
+// twice does NOT work — the second one races window creation and takes the app
+// down with "window not found".
 func reveal(w *application.WebviewWindow) {
 	w.Show()
 	w.Focus()
+	time.AfterFunc(150*time.Millisecond, w.Focus)
 }
 
 // newTray builds the menu bar icon. Clicking it toggles the window beneath the
 // icon; the menu carries the actions.
-func newTray(app *application.App, window *application.WebviewWindow, actions *bridge.Actions) *application.SystemTray {
+func newTray(app *application.App, window, sessions *application.WebviewWindow, actions *bridge.Actions) *application.SystemTray {
 	tray := app.SystemTray.New()
 
 	menu := app.NewMenu()
 	menu.Add("Open " + AppName).OnClick(func(*application.Context) { reveal(window) })
+	menu.Add("Sessions…").OnClick(func(*application.Context) { reveal(sessions) })
 	menu.AddSeparator()
 	// Running an action from the tray opens the window too: the output streams
 	// into the drawer, and a sync that reports a tripwire refusal with nobody

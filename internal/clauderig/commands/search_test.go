@@ -13,6 +13,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/sessions"
 )
 
 var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
@@ -58,7 +59,7 @@ func TestSearchSessions_DedupTitleAndResume(t *testing.T) {
 	roots := []session.Root{{Label: "desktop", Base: desk}}
 
 	var out, errw bytes.Buffer
-	if err := searchSessions(&out, &errw, testMachine(t.TempDir()), targets, roots, "billing", sessionScope{}, false); err != nil {
+	if err := searchSessions(&out, &errw, testMachine(t.TempDir()), targets, roots, "billing", sessions.Scope{}, false); err != nil {
 		t.Fatal(err)
 	}
 	got := stripANSI(out.String())
@@ -97,7 +98,7 @@ func TestSearchSessions_TitleOnly(t *testing.T) {
 
 	var out, errw bytes.Buffer
 	err := searchSessions(&out, &errw, testMachine(t.TempDir()),
-		[]search.Target{{Label: "cli", Dir: live}}, []session.Root{{Label: "desktop", Base: desk}}, "rocket", sessionScope{}, false)
+		[]search.Target{{Label: "cli", Dir: live}}, []session.Root{{Label: "desktop", Base: desk}}, "rocket", sessions.Scope{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +124,7 @@ func TestSearchSessions_RepoOnlyNotResumable(t *testing.T) {
 
 	var out, errw bytes.Buffer
 	err := searchSessions(&out, &errw, testMachine(t.TempDir()),
-		[]search.Target{{Label: "cli", Dir: live}, {Label: "repo", Dir: repo}}, nil, "widget", sessionScope{}, false)
+		[]search.Target{{Label: "cli", Dir: live}, {Label: "repo", Dir: repo}}, nil, "widget", sessions.Scope{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +204,7 @@ func TestSearchSessions_TitleOnlyButLiveTranscriptResumable(t *testing.T) {
 
 	var out, errw bytes.Buffer
 	err := searchSessions(&out, &errw, testMachine(t.TempDir()),
-		[]search.Target{{Label: "cli", Dir: live}}, []session.Root{{Label: "desktop", Base: desk}}, "kubernetes", sessionScope{}, false)
+		[]search.Target{{Label: "cli", Dir: live}}, []session.Root{{Label: "desktop", Base: desk}}, "kubernetes", sessions.Scope{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

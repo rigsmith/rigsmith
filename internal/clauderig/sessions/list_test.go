@@ -1,0 +1,360 @@
+package sessions
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
+	"github.com/rigsmith/rigsmith/internal/clauderig/search"
+	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+)
+
+func testMachine(home string) config.Machine {
+	return config.Machine{Name: "test", OS: config.OSToken(), Home: home}
+}
+
+func write(t *testing.T, dir, rel, body string) string {
+	t.Helper()
+	p := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// turn builds one transcript record.
+func turn(role, text, ts string) string {
+	b, _ := json.Marshal(map[string]any{
+		"type": role, "timestamp": ts, "cwd": "/work/api", "gitBranch": "feat/x",
+		"entrypoint": "cli",
+		"message":    map[string]any{"role": role, "content": text},
+	})
+	return string(b) + "\n"
+}
+
+func writeSidecar(t *testing.T, base, acct, id, title string, lastActivity int64) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"cliSessionId": id, "title": title, "lastActivityAt": lastActivity, "cwd": "/work/api",
+	})
+	write(t, base, filepath.ToSlash(filepath.Join("claude-code-sessions", acct, "org", "local_"+id+".json")), string(body))
+}
+
+func rowByID(rows []Row, id string) (Row, bool) {
+	for _, r := range rows {
+		if r.ID == id {
+			return r, true
+		}
+	}
+	return Row{}, false
+}
+
+// The point of the package: one session that exists in several places is one
+// row that names all of them, dated from its transcript and titled from its
+// sidecar. Getting this wrong is what made the same chat appear three times.
+func TestList_MergesEveryPlaceASessionLives(t *testing.T) {
+	live, repo, desk := t.TempDir(), t.TempDir(), t.TempDir()
+	id := "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+	body := turn("user", "set up the database", "2026-08-20T09:00:00Z") +
+		turn("assistant", "done", "2026-08-20T09:01:00Z") +
+		turn("user", "now add the migration", "2026-08-20T09:02:00Z")
+	write(t, live, "projects/-work-api/"+id+".jsonl", body)
+	write(t, repo, "projects/-work-api/"+id+".jsonl", body)
+	writeSidecar(t, desk, "acct-1", id, "Database work", 1000)
+
+	rows, rep := List(Options{
+		Machine: testMachine(t.TempDir()),
+		Roots:   []session.Root{{Label: DesktopSource, Base: desk}},
+		Targets: []search.Target{{Label: CLISource, Dir: live}, {Label: RepoSource, Dir: repo}},
+		Scope:   Scope{Now: time.Now()},
+	})
+
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want the session listed exactly once: %+v", len(rows), rows)
+	}
+	r := rows[0]
+	if r.Title != "Database work" {
+		t.Errorf("Title = %q, want the sidecar's", r.Title)
+	}
+	if r.LastPrompt != "now add the migration" {
+		t.Errorf("LastPrompt = %q, want the newest typed prompt", r.LastPrompt)
+	}
+	if want := time.Date(2026, 8, 20, 9, 2, 0, 0, time.UTC); !r.When.Equal(want) {
+		t.Errorf("When = %s, want the last transcript record %s", r.When, want)
+	}
+	if r.Approx {
+		t.Error("Approx = true for a transcript-dated session")
+	}
+	if r.Cwd != "/work/api" {
+		t.Errorf("Cwd = %q, want /work/api", r.Cwd)
+	}
+	if r.Branch != "feat/x" {
+		t.Errorf("Branch = %q, want feat/x", r.Branch)
+	}
+	if r.Client != "cli" {
+		t.Errorf("Client = %q, want cli", r.Client)
+	}
+	if !r.CLILive || !r.InRepo || !r.Present {
+		t.Errorf("presence flags wrong: live=%v repo=%v present=%v", r.CLILive, r.InRepo, r.Present)
+	}
+	// All three: transcripts in cli and repo, and the Desktop sidecar counts as
+	// the Desktop store holding something. A Desktop Code-tab session keeps its
+	// transcript in the shared cli tree, so a transcript-only reading reported
+	// "Desktop has nothing" for exactly the sessions Desktop lists.
+	if len(r.Sources) != 3 || r.Sources[0] != CLISource || r.Sources[1] != DesktopSource || r.Sources[2] != RepoSource {
+		t.Errorf("Sources = %v, want cli, desktop and repo named", r.Sources)
+	}
+	// Paths stays strictly about transcripts, so "where is the conversation"
+	// still has an unambiguous answer.
+	if _, ok := r.Paths[DesktopSource]; ok {
+		t.Error("a sidecar was recorded as a transcript path")
+	}
+	// The live copy is the one `claude --resume` opens, so it must be the one
+	// the row points at.
+	if filepath.Dir(filepath.Dir(filepath.Dir(r.Path))) != live {
+		t.Errorf("Path = %q, want the live copy under %q", r.Path, live)
+	}
+	if rep.Read != 1 {
+		t.Errorf("Read = %d, want 1 — the second copy must not be opened again", rep.Read)
+	}
+}
+
+// Newest first, and the cap is applied after ordering so --limit gives the most
+// recent N rather than an arbitrary N.
+func TestList_NewestFirstThenLimited(t *testing.T) {
+	live := t.TempDir()
+	for i, ts := range []string{"2026-08-01T10:00:00Z", "2026-08-03T10:00:00Z", "2026-08-02T10:00:00Z"} {
+		id := string(rune('a'+i)) + "aaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+		write(t, live, "projects/-p/"+id+".jsonl", turn("user", "hello", ts))
+	}
+	rows, rep := List(Options{
+		Machine: testMachine(t.TempDir()),
+		Targets: []search.Target{{Label: CLISource, Dir: live}},
+		Scope:   Scope{Now: time.Now()},
+		Limit:   2,
+	})
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if !rows[0].When.After(rows[1].When) {
+		t.Errorf("not newest-first: %s then %s", rows[0].When, rows[1].When)
+	}
+	if want := time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC); !rows[0].When.Equal(want) {
+		t.Errorf("newest = %s, want %s", rows[0].When, want)
+	}
+	if rep.Total != 3 {
+		t.Errorf("Total = %d, want 3 — the count before the limit", rep.Total)
+	}
+}
+
+// A filter that shrinks the list must say what it hid, and separate "outside the
+// window" from "could not be dated at all" — they look identical in the output
+// and mean opposite things.
+func TestList_WindowHidesAndReportsWhy(t *testing.T) {
+	live := t.TempDir()
+	old := "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+	fresh := "bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb"
+	undated := "cccccccc-1111-4111-8111-cccccccccccc"
+	write(t, live, "projects/-p/"+old+".jsonl", turn("user", "old", "2026-08-01T10:00:00Z"))
+	write(t, live, "projects/-p/"+fresh+".jsonl", turn("user", "fresh", "2026-08-19T10:00:00Z"))
+	// No timestamp anywhere, and an mtime inside the window so it is not skipped
+	// before it is even read.
+	p := write(t, live, "projects/-p/"+undated+".jsonl", `{"type":"queue-operation"}`+"\n")
+	inWindow := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(p, inWindow, inWindow); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, rep := List(Options{
+		Machine: testMachine(t.TempDir()),
+		Targets: []search.Target{{Label: CLISource, Dir: live}},
+		Scope: Scope{
+			Since: time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC),
+			Now:   time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC),
+		},
+	})
+
+	if _, ok := rowByID(rows, old); ok {
+		t.Error("a session before --since was listed")
+	}
+	if _, ok := rowByID(rows, fresh); !ok {
+		t.Error("the session inside the window was dropped")
+	}
+	// The undated one has an mtime in the window, so it is dated approximately
+	// and kept — but it must be marked, not quietly believed.
+	if r, ok := rowByID(rows, undated); ok && !r.Approx {
+		t.Error("an mtime-dated session was not marked approximate")
+	}
+	if rep.Skipped == 0 && rep.Hidden == 0 {
+		t.Error("nothing was reported as excluded, but a session was")
+	}
+}
+
+// A session whose transcript has aged out of the synced window still answers,
+// from the permanent ledger, rather than vanishing from the list entirely.
+func TestList_LedgerOnlySessionSurvives(t *testing.T) {
+	id := "dddddddd-1111-4111-8111-dddddddddddd"
+	when := time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC)
+	rows, _ := List(Options{
+		Machine: testMachine(t.TempDir()),
+		Scope: Scope{
+			Now:    time.Now(),
+			Ledger: map[string]ledger.Entry{id: {ID: id, Title: "the qbo migration", Cwd: "/work/qbo", End: when}},
+		},
+	})
+	r, ok := rowByID(rows, id)
+	if !ok {
+		t.Fatal("a ledger-only session vanished from the listing")
+	}
+	if r.Title != "the qbo migration" {
+		t.Errorf("Title = %q, want the ledger's", r.Title)
+	}
+	if !r.When.Equal(when) {
+		t.Errorf("When = %s, want the ledger's %s", r.When, when)
+	}
+	if r.Present || r.CLILive || r.InRepo {
+		t.Error("a session with no transcript anywhere reported as present")
+	}
+	if !r.Approx {
+		t.Error("a ledger-dated session should be marked approximate")
+	}
+}
+
+// A Claude Desktop Code-tab session keeps its transcript in the shared
+// ~/.claude/projects tree and leaves only a sidecar in the Desktop tree. The
+// listing must not then report that Desktop holds nothing — that reads as a
+// contradiction beside a "desktop@profile" client, and it is the store you
+// would delete from to take the session out of Desktop's list.
+func TestList_DesktopSidecarCountsAsPresence(t *testing.T) {
+	live, desk := t.TempDir(), t.TempDir()
+	id := "eeeeeeee-1111-4111-8111-eeeeeeeeeeee"
+	write(t, live, "projects/-work-api/"+id+".jsonl", turn("user", "hello", "2026-08-20T09:00:00Z"))
+	writeSidecar(t, desk, "acct-1", id, "Filed by Desktop", 1000)
+
+	rows, _ := List(Options{
+		Machine: testMachine(t.TempDir()),
+		Roots:   []session.Root{{Label: DesktopSource, Base: desk}},
+		Targets: []search.Target{{Label: CLISource, Dir: live}},
+		Scope:   Scope{Now: time.Now()},
+	})
+	r, ok := rowByID(rows, id)
+	if !ok {
+		t.Fatal("session missing from the listing")
+	}
+	if len(r.Sources) != 2 || r.Sources[0] != CLISource || r.Sources[1] != DesktopSource {
+		t.Errorf("Sources = %v, want cli and desktop", r.Sources)
+	}
+	// The conversation is in the cli tree, and only there.
+	if r.Paths[CLISource] == "" || r.Paths[DesktopSource] != "" {
+		t.Errorf("Paths = %v, want the transcript under cli only", r.Paths)
+	}
+	// So it is still resumable, which is what CLILive is for.
+	if !r.CLILive {
+		t.Error("CLILive false for a session whose transcript is in the live tree")
+	}
+}
+
+// One search box over everything a row shows: you rarely remember whether the
+// thing you recall was the title, the last thing you typed, or the directory.
+func TestList_TextSearchesEveryVisibleField(t *testing.T) {
+	live, desk := t.TempDir(), t.TempDir()
+	ids := map[string]string{
+		"title":  "11111111-1111-4111-8111-111111111111",
+		"prompt": "22222222-2222-4222-8222-222222222222",
+		"other":  "33333333-3333-4333-8333-333333333333",
+	}
+	write(t, live, "projects/-work-api/"+ids["title"]+".jsonl", turn("user", "hello", "2026-08-20T09:00:00Z"))
+	writeSidecar(t, desk, "acct", ids["title"], "The billing migration", 1000)
+	write(t, live, "projects/-work-api/"+ids["prompt"]+".jsonl",
+		turn("user", "check the billing totals", "2026-08-20T09:00:00Z"))
+	write(t, live, "projects/-work-api/"+ids["other"]+".jsonl", turn("user", "unrelated work", "2026-08-20T09:00:00Z"))
+
+	run := func(text string) []Row {
+		rows, _ := List(Options{
+			Machine: testMachine(t.TempDir()),
+			Roots:   []session.Root{{Label: DesktopSource, Base: desk}},
+			Targets: []search.Target{{Label: CLISource, Dir: live}},
+			Scope:   Scope{Now: time.Now()},
+			Text:    text,
+		})
+		return rows
+	}
+
+	// The title, and the last prompt, each on their own.
+	if rows := run("billing"); len(rows) != 2 {
+		t.Errorf("searching \"billing\" gave %d rows, want the title and prompt matches", len(rows))
+	}
+	// The project directory, as the Project column renders it — the resolved
+	// path, not the flattened slug the transcript is filed under.
+	if rows := run("work/api"); len(rows) != 3 {
+		t.Errorf("searching the project gave %d rows, want all three", len(rows))
+	}
+	if rows := run("-work-api"); len(rows) != 0 {
+		t.Error("the on-disk slug is not shown anywhere, so it should not match")
+	}
+	// And an id, which is what you have when you copied it from somewhere else.
+	if rows := run(ids["other"]); len(rows) != 1 || rows[0].ID != ids["other"] {
+		t.Errorf("searching by id gave %v", rows)
+	}
+	// Case-insensitively, and empty text is not a filter.
+	if rows := run("BILLING"); len(rows) != 2 {
+		t.Error("search should be case-insensitive")
+	}
+	if rows := run("  "); len(rows) != 3 {
+		t.Error("blank text should not filter anything out")
+	}
+	if rows := run("nothing matches this"); len(rows) != 0 {
+		t.Errorf("got %d rows for a term nothing contains", len(rows))
+	}
+}
+
+// Deep search reads transcript bodies, so it finds sessions whose row shows
+// nothing matching — and reports how many times, with the first hit.
+func TestList_ContentSearchesTranscriptBodies(t *testing.T) {
+	live := t.TempDir()
+	hit := "44444444-4444-4444-8444-444444444444"
+	miss := "55555555-5555-4555-8555-555555555555"
+	// The distinctive term appears only in the ASSISTANT's replies — never in a
+	// prompt, so it is nowhere in the row's own fields.
+	write(t, live, "projects/-p/"+hit+".jsonl",
+		turn("user", "why is this slow", "2026-08-20T09:00:00Z")+
+			turn("assistant", "the culprit is lock contention", "2026-08-20T09:01:00Z")+
+			turn("assistant", "that culprit shows up under load", "2026-08-20T09:02:00Z"))
+	write(t, live, "projects/-p/"+miss+".jsonl", turn("user", "something else entirely", "2026-08-20T09:00:00Z"))
+
+	opts := Options{
+		Machine: testMachine(t.TempDir()),
+		Targets: []search.Target{{Label: CLISource, Dir: live}},
+		Scope:   Scope{Now: time.Now()},
+	}
+
+	// Nothing in either ROW says "dropping" — only the bodies do.
+	plain := opts
+	plain.Text = "culprit"
+	if rows, _ := List(plain); len(rows) != 0 {
+		t.Errorf("row-field search matched %d rows; the term is only in the body", len(rows))
+	}
+
+	deep := opts
+	deep.Content = "culprit"
+	rows, _ := List(deep)
+	if len(rows) != 1 || rows[0].ID != hit {
+		t.Fatalf("content search gave %v, want just the session containing it", rows)
+	}
+	if rows[0].Matches != 2 {
+		t.Errorf("Matches = %d, want both assistant lines", rows[0].Matches)
+	}
+	if rows[0].Snippet == "" {
+		t.Error("no snippet returned for a hit")
+	}
+	if _, ok := rowByID(rows, miss); ok {
+		t.Error("a session without the term survived a content search")
+	}
+}

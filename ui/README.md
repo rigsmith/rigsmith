@@ -24,9 +24,20 @@ CGO_LDFLAGS="-O2 -g -mmacosx-version-min=12.0" \
   go run ./ui --window
 ```
 
-`--window` opens the window at startup. Without it the app starts in the tray
-only — which is the intended behaviour, and also the escape hatch for Linux
-desktops where the tray never appears (GNOME needs an AppIndicator extension).
+`--window` opens the status window at startup and `--sessions` the sessions
+manager. Without either the app starts in the tray only — which is the intended
+behaviour, and also the escape hatch for Linux desktops where the tray never
+appears (GNOME needs an AppIndicator extension).
+
+`CLAUDERIG_TERMINAL` names the application the sessions window's **Open in
+terminal** button hands the resume script to; it defaults to `Terminal`, which
+is the one macOS always has. The **Copy command** button beside it is the path
+that works with any terminal, multiplexer or remote host.
+
+Both flags reveal their window on `events.Common.ApplicationStarted` rather than
+before `app.Run()`. Showing a window before the app is running silently does
+nothing for any window but the first, which made `--sessions` look like a dead
+flag while the same window opened fine from the tray menu.
 
 ### Why the macOS deployment-target flags
 
@@ -66,8 +77,11 @@ object, so a tree built once without it can keep emitting warnings until
 | `main.go` | app, tray, window wiring, the poll loop |
 | `health/` | `status.Info` → green/amber/red, in one place |
 | `bridge/` | services bound to the frontend; the read half of the engine seam |
+| `bridge/sessions.go` | the REMOTE session browser — `peek` over the staging repo |
+| `bridge/library.go` | the sessions manager — every session this machine can see |
 | `assets/` | tray icons, three states × light/dark ([README](assets/README.md)) |
-| `frontend/dist/` | the window, plain HTML/CSS/JS on the `design/` tokens |
+| `frontend/dist/index.html` | the status window, plain HTML/CSS/JS on the `design/` tokens |
+| `frontend/dist/sessions.html` | the sessions manager window |
 
 ## The engine seam
 
@@ -82,4 +96,12 @@ The frontend calls bound methods by their full Go FQN
 (`github.com/rigsmith/rigsmith/ui/bridge.Status.Get`) because we deliberately
 skip `wails3 generate bindings` — it would add a Node step to a Go-only CI.
 `bridge/binding_test.go` fails if the frontend and the Go signature drift apart,
-which would otherwise compile clean and break only at runtime.
+which would otherwise compile clean and break only at runtime. It scans every
+`frontend/dist/*.html`, so a method wired from the sessions window counts the
+same as one wired from the status page.
+
+Two services deal in sessions and they are not interchangeable. `Sessions`
+answers "what is on the other Mac" — it reads the synced repo through `peek` and
+never touches the local tree. `Library` answers "what sessions do I have",
+merging the live `~/.claude`, every Desktop install and the synced copy into one
+row each, via `internal/clauderig/sessions`.

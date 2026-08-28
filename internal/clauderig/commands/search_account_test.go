@@ -12,36 +12,37 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
+	"github.com/rigsmith/rigsmith/internal/clauderig/sessions"
 )
 
 // --account matches the recorded attribution, and a session that has none is
 // reported as unmatchable rather than silently dropped: "no such session" and
 // "I cannot tell whose this is" are opposite answers.
 func TestSessionScope_AccountFilter(t *testing.T) {
-	sc := sessionScope{account: "acct-a"}
+	sc := sessions.Scope{Account: "acct-a"}
 
 	mine := &sessResult{id: "1", led: ledger.Entry{Account: "acct-a", AccountSource: ledger.AccountFromSync}}
-	if ok, _ := sc.keep(mine); !ok {
+	if ok, _ := sc.Keep(mine.when, mine.cwd, mine.led.Account); !ok {
 		t.Error("a session attributed to the filtered account must survive")
 	}
 
 	theirs := &sessResult{id: "2", led: ledger.Entry{Account: "acct-b", AccountSource: ledger.AccountFromDesktop}}
-	if ok, why := sc.keep(theirs); ok || why != droppedByFilter {
-		t.Errorf("other account: ok=%v why=%v, want false/droppedByFilter", ok, why)
+	if ok, why := sc.Keep(theirs.when, theirs.cwd, theirs.led.Account); ok || why != sessions.DroppedByFilter {
+		t.Errorf("other account: ok=%v why=%v, want false/sessions.DroppedByFilter", ok, why)
 	}
 
 	unknown := &sessResult{id: "3"}
-	if ok, why := sc.keep(unknown); ok || why != droppedUnattributed {
-		t.Errorf("unattributed: ok=%v why=%v, want false/droppedUnattributed", ok, why)
+	if ok, why := sc.Keep(unknown.when, unknown.cwd, unknown.led.Account); ok || why != sessions.DroppedUnattributed {
+		t.Errorf("unattributed: ok=%v why=%v, want false/sessions.DroppedUnattributed", ok, why)
 	}
 }
 
 // Attribution is compared case-insensitively — uuids are hex and get written
 // both ways by different producers.
 func TestSessionScope_AccountFilterIgnoresCase(t *testing.T) {
-	sc := sessionScope{account: "ACCT-A"}
+	sc := sessions.Scope{Account: "ACCT-A"}
 	r := &sessResult{id: "1", led: ledger.Entry{Account: "acct-a"}}
-	if ok, _ := sc.keep(r); !ok {
+	if ok, _ := sc.Keep(r.when, r.cwd, r.led.Account); !ok {
 		t.Error("uuid comparison should be case-insensitive")
 	}
 }
@@ -49,10 +50,10 @@ func TestSessionScope_AccountFilterIgnoresCase(t *testing.T) {
 // --account counts as narrowing, so it is refused alongside --raw/--all like
 // the other session filters.
 func TestSessionScope_AccountCountsAsFiltering(t *testing.T) {
-	if !(sessionScope{account: "acct-a"}).filtering() {
+	if !(sessions.Scope{Account: "acct-a"}).Filtering() {
 		t.Error("account filter should report as filtering")
 	}
-	if (sessionScope{}).filtering() {
+	if (sessions.Scope{}).Filtering() {
 		t.Error("empty scope should not report as filtering")
 	}
 }
@@ -105,14 +106,14 @@ func TestResolveAccountFilter_AmbiguousPrefix(t *testing.T) {
 // The "everything was excluded" hint must name the flag that did the excluding.
 // A fixed list sends the user to widen --since when --account was responsible.
 func TestSessionScope_ActiveFiltersNamesWhatIsSet(t *testing.T) {
-	if got := (sessionScope{}).activeFilters(); len(got) != 1 || got[0] != "the filters" {
+	if got := (sessions.Scope{}).ActiveFilters(); len(got) != 1 || got[0] != "the filters" {
 		t.Errorf("no filters set = %v, want a generic phrase", got)
 	}
-	got := (sessionScope{account: "acct-a"}).activeFilters()
+	got := (sessions.Scope{Account: "acct-a"}).ActiveFilters()
 	if len(got) != 1 || got[0] != "--account" {
 		t.Errorf("account only = %v, want [--account]", got)
 	}
-	both := (sessionScope{account: "acct-a", cwd: "api"}).activeFilters()
+	both := (sessions.Scope{Account: "acct-a", Cwd: "api"}).ActiveFilters()
 	if len(both) != 2 {
 		t.Errorf("account+cwd = %v, want both named", both)
 	}
@@ -152,17 +153,17 @@ func TestResolveAccountFilter_UUIDPrefixFindsARegistryOnlyAccount(t *testing.T) 
 
 // --account narrows SESSIONS, so it is refused with --raw/--all like the other
 // session filters. The guard runs before the flag is resolved into the scope,
-// so it has to test the flag itself — testing sc.account would let
+// so it has to test the flag itself — testing sc.Account would let
 // `--account X --raw` through and return matches the filter never touched.
 func TestSessionScope_AccountAloneStillCountsAsNarrowing(t *testing.T) {
-	// sc.account is empty at guard time even when --account was given.
-	sc := sessionScope{}
+	// sc.Account is empty at guard time even when --account was given.
+	sc := sessions.Scope{}
 	accountFilter := "work"
-	if !(sc.filtering() || accountFilter != "") {
+	if !(sc.Filtering() || accountFilter != "") {
 		t.Error("--account alone must trip the raw/all guard")
 	}
 	// and with nothing set at all, it must not trip
-	if sc.filtering() {
+	if sc.Filtering() {
 		t.Error("no filters must not trip the guard")
 	}
 }

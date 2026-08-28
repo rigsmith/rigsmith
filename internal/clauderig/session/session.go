@@ -39,6 +39,18 @@ type Meta struct {
 	// for the machine-wide one. The only thing that says which Desktop to reopen
 	// a session in — its transcript lands in the shared tree either way.
 	Profile string
+	// Sidecars are every sidecar file found for this session, with the store
+	// each was found in. A session filed by two Desktop installs has two, and a
+	// caller deleting it has to remove all of them — the display fields below
+	// come from whichever was fresher, which says nothing about where the files
+	// actually are.
+	Sidecars []SidecarRef
+}
+
+// SidecarRef is one Desktop sidecar file and which store holds it.
+type SidecarRef struct {
+	Label string // the Root label it was scanned under: "desktop" or "repo"
+	Path  string
 }
 
 // Index maps cliSessionId → Meta.
@@ -147,8 +159,13 @@ func scanSidecars(idx Index, dir, label, profile string) {
 		if sc.LastActivityAt > 0 {
 			m.LastActivity = time.UnixMilli(sc.LastActivityAt).UTC()
 		}
+		m.Sidecars = []SidecarRef{{Label: label, Path: p}}
 		if prev, ok := idx[m.ID]; ok {
 			sources := appendUnique(prev.Sources, label)
+			// Unioned for the same reason as Sources, and kept out of the
+			// fresher-wins swap below: every copy's path has to survive, or a
+			// delete silently leaves one behind.
+			sidecars := appendSidecar(prev.Sidecars, SidecarRef{Label: label, Path: p})
 			// Ownership is settled BEFORE the fresher-sidecar swap. Only one copy
 			// can name a profile, and reading it off the survivor loses it whenever
 			// the survivor is the machine-wide one — the common case, since that
@@ -173,6 +190,7 @@ func scanSidecars(idx Index, dir, label, profile string) {
 				m = prev
 			}
 			m.Sources = sources
+			m.Sidecars = sidecars
 			m.Profile, m.Account = profile, acct
 		} else {
 			m.Sources = []string{label}
@@ -275,27 +293,58 @@ func FirstPromptFrom(r io.Reader) string {
 		if json.Unmarshal(sc.Bytes(), &rec) != nil || rec.Type != "user" {
 			continue
 		}
-		text := strings.TrimSpace(textOf(rec.Message.Content))
+		text, hasText := PromptCandidate(rec.Message.Content)
 		// Only a record carrying real text is a candidate. Tool results are
 		// also recorded as "user" records but hold tool_result blocks, so
 		// textOf yields nothing for them — counting those against the budget
 		// spent it on plumbing before reaching anything a person typed.
-		if text != "" {
+		if hasText {
 			seenUser++
 		}
-		if text == "" || strings.HasPrefix(text, "<") || strings.HasPrefix(text, "Caveat:") ||
-			strings.Contains(text, "DOM Probe") || strings.HasPrefix(text, "[Request interrupted") {
+		if !hasText || !IsHumanPrompt(text) {
 			continue
 		}
-		text = strings.ReplaceAll(text, "\n", " ")
-		// Truncate by runes, not bytes — a byte cut can split a multibyte character
-		// and yield an invalid-UTF-8 title.
-		if utf8.RuneCountInString(text) > 70 {
-			text = string([]rune(text)[:70]) + "…"
-		}
-		return text
+		return TidyPrompt(text)
 	}
 	return ""
+}
+
+// PromptCandidate pulls the trimmed text out of a user record's content and
+// reports whether there was any. False means the record carries no text at all
+// — a tool result, an attachment — as opposed to text that turned out to be
+// machine-written, which is [IsHumanPrompt]'s question.
+func PromptCandidate(raw json.RawMessage) (text string, hasText bool) {
+	text = strings.TrimSpace(textOf(raw))
+	return text, text != ""
+}
+
+// IsHumanPrompt reports whether text a "user" record carries was actually typed
+// by a person. Claude Code files several kinds of injected message under the
+// same record type: IDE state and DOM probes (angle-bracket tags), the caveat
+// prepended to a resumed session, and the marker left when a turn is
+// interrupted. None of them is something the user said, and any of them read as
+// a session's title or its last words would be actively misleading.
+//
+// Shared by [FirstPromptFrom] and the tail scan behind [Activity.LastPrompt] so
+// the first and last prompt of a session can never disagree about what counts.
+func IsHumanPrompt(text string) bool {
+	if text == "" {
+		return false
+	}
+	return !strings.HasPrefix(text, "<") && !strings.HasPrefix(text, "Caveat:") &&
+		!strings.Contains(text, "DOM Probe") && !strings.HasPrefix(text, "[Request interrupted")
+}
+
+// TidyPrompt flattens a prompt to one line and bounds its length, so a
+// multi-line paste renders as a title rather than reflowing the whole list.
+func TidyPrompt(text string) string {
+	text = strings.ReplaceAll(text, "\n", " ")
+	// Truncate by runes, not bytes — a byte cut can split a multibyte character
+	// and yield an invalid-UTF-8 title.
+	if utf8.RuneCountInString(text) > 70 {
+		text = string([]rune(text)[:70]) + "…"
+	}
+	return text
 }
 
 // MessageText decodes one transcript line into its speaker and plain text.
@@ -353,6 +402,17 @@ func textOf(raw json.RawMessage) string {
 		return b.String()
 	}
 	return ""
+}
+
+// appendSidecar adds a sidecar reference unless that exact file is already
+// recorded — the same tree can be scanned under more than one root.
+func appendSidecar(xs []SidecarRef, x SidecarRef) []SidecarRef {
+	for _, e := range xs {
+		if e.Path == x.Path {
+			return xs
+		}
+	}
+	return append(append([]SidecarRef(nil), xs...), x)
 }
 
 func appendUnique(xs []string, x string) []string {

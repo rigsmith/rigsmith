@@ -1,0 +1,930 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>clauderig sessions</title>
+<style>
+  /* Same tokens as index.html — design/RigSmith Brand.html is the source. */
+  :root{
+    --ink:#0E0E12; --ink-2:#15151b; --ink-3:#1c1c24;
+    --line:#26262f; --line-soft:#1d1d25;
+    --paper:#ECECEE; --muted:#7b7b87; --muted-2:#52525c;
+    --ok:#4CB86A; --warn:#E4B750; --err:#EF6661;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;background:var(--ink);color:var(--paper);
+    font-family:var(--mono);font-weight:400;line-height:1.6;
+    -webkit-font-smoothing:antialiased;font-feature-settings:"liga" 0;
+  }
+  /* Text IS selectable here, unlike the status window: an id or a project path
+     is something people copy out. */
+  /* The page is a fixed head over a scrolling body, so the filters and the
+     column headings stay put — a session list you scroll for a minute is
+     useless if you can no longer see which column is which, or change the
+     window without scrolling back. */
+  body{height:100vh;overflow:hidden;display:flex;flex-direction:column;}
+  /* 38px of top padding clears the inset traffic lights — with the macOS
+     hidden-inset title bar they are drawn over the page, not above it. */
+  /* The title bar is hidden-inset, so without this the window can only be moved
+     by the few pixels of chrome beside the traffic lights. Wails reads the
+     COMPUTED value of --wails-draggable, and custom properties inherit, so
+     every control inside has to opt back out or it stops being clickable. */
+  .head{flex:none;padding:38px 28px 0;--wails-draggable:drag;}
+  .head select,.head input,.head button{--wails-draggable:no-drag;}
+  .scroll{flex:1;min-height:0;overflow-y:auto;padding:0 28px 36px;}
+  .eyebrow{
+    font-size:11px;letter-spacing:0.22em;text-transform:uppercase;
+    color:var(--muted);font-weight:500;display:flex;gap:14px;align-items:center;
+  }
+  .eyebrow .rule{flex:1;height:1px;background:var(--line);}
+
+  /* filter bar */
+  .filters{display:flex;gap:10px;align-items:center;margin:18px 0 0;flex-wrap:wrap;}
+  select,input{
+    background:var(--ink-3);color:var(--paper);border:1px solid var(--line);
+    border-radius:5px;padding:6px 9px;font-family:var(--mono);font-size:12px;
+  }
+  input{min-width:280px;}
+  input::placeholder{color:var(--muted-2);}
+  select:focus,input:focus{outline:1px solid var(--muted-2);}
+  .filters label{
+    font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted-2);
+  }
+  .count{margin-left:auto;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;}
+  /* second filter row: where + account */
+  .filters2{display:flex;gap:8px;align-items:center;margin:10px 0 0;flex-wrap:wrap;}
+  .chipbtn{
+    background:none;border:1px solid var(--line);border-radius:20px;
+    color:var(--muted-2);padding:4px 11px;cursor:pointer;
+    font-family:var(--mono);font-size:10px;letter-spacing:0.06em;
+  }
+  .chipbtn:hover:not(:disabled){border-color:var(--muted-2);color:var(--muted);}
+  .chipbtn:disabled{opacity:.45;cursor:not-allowed;}
+  .chipbtn[aria-pressed=true]{color:var(--paper);border-color:var(--muted);background:var(--ink-3);}
+  .chipbtn[data-risk=yes][aria-pressed=true]{color:var(--warn);border-color:var(--warn);}
+  /* The default ring is drawn inside the control and gets clipped by its own
+     border radius, which read as a stray highlight over the label. */
+  button:focus-visible,select:focus-visible,input:focus-visible{
+    outline:1px solid var(--muted);outline-offset:2px;
+  }
+  button:focus:not(:focus-visible){outline:none;}
+
+  /* Fixed layout with explicit widths: left to itself the browser gives the
+     space to whichever column holds the longest unbreakable token — which is
+     the email address, and it shredded it into three lines while the title
+     column went narrow. The title is what people scan, so it gets the slack. */
+  table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;table-layout:fixed;}
+  th{
+    position:sticky;top:0;z-index:1;background:var(--ink);
+    text-align:left;font-weight:500;font-size:10px;letter-spacing:0.14em;
+    text-transform:uppercase;color:var(--muted-2);
+    padding:14px 12px 8px 0;white-space:nowrap;
+    /* inset shadow, not a border: a sticky cell's own border scrolls with the
+       row underneath it and leaves the heading floating. */
+    box-shadow:inset 0 -1px 0 var(--line-soft);
+  }
+  td{padding:10px 12px 10px 0;border-bottom:1px solid var(--line-soft);vertical-align:top;}
+  tbody tr:last-child td{border-bottom:none;}
+  .when{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--paper);}
+  /* An approximate date is shown, never hidden — but it is marked, because it
+     may be when the file was copied rather than when the session was used. */
+  .approx{color:var(--warn);}
+  .title{font-weight:700;overflow-wrap:anywhere;}
+  .untitled{font-weight:400;color:var(--muted-2);font-style:normal;}
+  /* The last prompt sits under the title: what the session was opened to do,
+     then what it was last asked to do. Those are rarely the same thing after
+     an hour, and the second is what makes a row recognisable. */
+  .last{color:var(--muted);font-size:11px;margin-top:3px;overflow-wrap:anywhere;}
+  .path{color:var(--muted);overflow-wrap:anywhere;}
+  .hits{color:var(--ok);}
+  .branch{color:var(--muted-2);font-size:10px;letter-spacing:0.08em;}
+  /* Truncated rather than wrapped, with the full value on hover: an account is
+     an identifier you check, not prose you read. */
+  .acct,.client{
+    color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .none{color:var(--muted-2);}
+  .where span{white-space:nowrap;}
+  /* Colour encodes PRESENCE, nothing else. Marking the resumable copy green and
+     the rest grey read as "here but NOT synced" for a session that was in fact
+     both — the grey looked like absence. So every store is always listed, lit
+     when it holds a transcript and clearly dim when it does not.
+     Amber is reserved for the one asymmetry that costs you something: a session
+     on this Mac that has never been synced anywhere. */
+  /* All three on one line, always in the same order — in a monospace face the
+     labels then line up down the column, so a missing store reads as a gap in a
+     grid rather than a list you have to parse per row. */
+  .where{font-size:10px;letter-spacing:0.04em;white-space:nowrap;}
+  /* Three tiers, because there are three states and a glyph could not carry the
+     middle one legibly: bright holds the conversation, mid-grey knows about it
+     but keeps the transcript elsewhere, near-black is not there at all. The
+     middle case is the norm for here-desk — Desktop files a sidecar and leaves
+     the transcript in the shared ~/.claude tree — so it must read as ordinary,
+     not as a warning. */
+  .chip{color:#34343e;}
+  .chip.listed{color:var(--muted);}
+  .chip.on{color:var(--paper);}
+  .chip.risk{color:var(--warn);}
+  .empty{color:var(--muted-2);font-size:12px;padding:18px 0;}
+  .empty button{margin-left:8px;}
+
+  /* rows are clickable — a session opens a panel over the list */
+  tbody tr{cursor:pointer;}
+  tbody tr:hover td{background:var(--ink-2);}
+  tbody tr[data-open=yes] td{background:var(--ink-3);}
+
+  /* detail panel: a drawer over the list rather than a route, so the list keeps
+     its scroll position and you can pick the next session straight after. */
+  /* Explicit z-index, not just position:fixed. With z-index auto the drawer
+     paints in the same layer as the flex header above it, and the header wins —
+     it rendered straight over the panel. */
+  .scrim{
+    position:fixed;inset:0;z-index:20;background:rgba(8,8,11,0.55);
+    opacity:0;pointer-events:none;transition:opacity .12s ease;
+  }
+  .scrim[data-on=yes]{opacity:1;pointer-events:auto;}
+  .drawer{
+    position:fixed;top:0;right:0;bottom:0;z-index:21;width:min(460px,86vw);
+    background:var(--ink-2);border-left:1px solid var(--line);
+    display:flex;flex-direction:column;
+    transform:translateX(100%);transition:transform .14s ease;
+  }
+  .drawer[data-on=yes]{transform:none;}
+  /* Header pinned like the action bar: the title is what tells you which
+     session the buttons at the bottom would act on, so it must not scroll away
+     while you read the prompts between them. */
+  .dhead{
+    flex:none;padding:38px 22px 12px;border-bottom:1px solid var(--line-soft);
+  }
+  .drawer .body{flex:1;min-height:0;overflow-y:auto;padding:14px 22px 22px;}
+  .drawer h2{
+    font-size:14px;font-weight:700;line-height:1.35;margin:0 0 8px;
+    letter-spacing:-0.01em;overflow-wrap:anywhere;
+  }
+  .drawer .meta{color:var(--muted);font-size:11px;overflow-wrap:anywhere;}
+  .drawer .meta b{color:var(--muted-2);font-weight:500;letter-spacing:0.1em;
+    text-transform:uppercase;font-size:9px;display:block;margin-top:10px;}
+  .drawer .id{font-size:10px;color:var(--muted-2);overflow-wrap:anywhere;margin-top:2px;}
+  .turns{margin-top:8px;}
+  .turn{
+    border-left:2px solid var(--line);padding:2px 0 2px 11px;margin:9px 0;
+    font-size:11px;color:var(--paper);overflow-wrap:anywhere;line-height:1.5;
+  }
+  .turn .at{display:block;color:var(--muted-2);font-size:9px;margin-top:3px;}
+  .gap{color:var(--muted-2);font-size:10px;margin:12px 0 4px;letter-spacing:0.08em;}
+  .acts{
+    flex:none;border-top:1px solid var(--line);padding:14px 22px 18px;
+    display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+  }
+  button{
+    background:var(--ink-3);color:var(--paper);border:1px solid var(--line);
+    border-radius:5px;padding:7px 11px;font-family:var(--mono);font-size:11px;cursor:pointer;
+  }
+  button:hover:not(:disabled){border-color:var(--muted-2);}
+  button:disabled{color:var(--muted-2);cursor:not-allowed;opacity:.65;}
+  button.icon{
+    display:inline-flex;align-items:center;justify-content:center;
+    padding:6px 8px;color:var(--muted);
+  }
+  button.icon:hover:not(:disabled){color:var(--paper);}
+  button.danger{color:var(--err);border-color:#3a2226;}
+  /* Success lands on the control that was clicked — the eye is already there,
+     and a message off to the side gets missed. Errors still go to the status
+     line, because they need more words than a colour.
+     Declared last, and with :hover included, because these selectors tie on
+     specificity with .icon / .danger and the pointer is still sitting on the
+     control at the moment it succeeds. */
+  button.ok, button.ok:hover, select.ok{color:var(--ok);border-color:var(--ok);}
+  button.danger:hover:not(:disabled){border-color:var(--err);}
+  button.primary{border-color:var(--muted-2);}
+  /* Fixed width: a select otherwise sizes to its widest option ("Desktop ·
+     brightshore"), which pushed Delete onto a second row. Closed it only ever
+     reads "Other…", so the width can be small. */
+  .acts select{padding:7px 9px;width:104px;flex:none;}
+  .acts button.primary{
+    max-width:172px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  /* Pinned to the end of the last button row rather than given a line of its
+     own: on its own line it grew the action bar and shifted every button down
+     as messages came and went. margin-left:auto puts it at the far right of
+     whatever row it lands on, and an empty one occupies no height at all. */
+  /* Its own line, which costs nothing: success now shows on the control that
+     was clicked, so this is empty except on an error — and an error needs the
+     full width to say something useful. */
+  .toast{font-size:10px;color:var(--muted);flex-basis:100%;overflow-wrap:anywhere;}
+  .toast:empty{display:none;}
+  .toast.err{color:var(--err);}
+  .toast.ok{color:var(--ok);}
+
+  /* confirm dialog — the interactive confirmation a destructive verb requires,
+     which is why this is a real dialog and not a one-click button. */
+  .confirm{
+    position:absolute;inset:0;background:var(--ink);
+    display:none;flex-direction:column;padding:38px 22px 18px;
+  }
+  .confirm[data-on=yes]{display:flex;}
+  .confirm h3{font-size:13px;margin:0 0 4px;}
+  .confirm .what{color:var(--muted);font-size:11px;margin-bottom:14px;overflow-wrap:anywhere;}
+  .confirm label{
+    display:flex;gap:9px;align-items:flex-start;font-size:11px;
+    padding:8px 0;border-bottom:1px solid var(--line-soft);cursor:pointer;
+  }
+  .confirm label span{color:var(--muted);}
+  .confirm .warn{color:var(--warn);font-size:10px;margin-top:14px;line-height:1.5;}
+  .confirm .row{margin-top:auto;display:flex;gap:8px;justify-content:flex-end;}
+  .legend{
+    display:flex;flex-wrap:wrap;gap:6px 20px;margin-top:18px;
+    padding-top:14px;border-top:1px solid var(--line-soft);
+    font-size:10px;color:var(--muted-2);
+  }
+  .legend b{font-weight:700;color:var(--muted);}
+  .legend .warn{color:var(--warn);}
+  .legend .listed{color:var(--muted);font-weight:700;}
+  .legend code{background:none;border:none;padding:0;font-size:10px;color:var(--muted-2);}
+  .notes{margin-top:14px;font-size:11px;color:var(--muted-2);}
+  .notes div{margin-top:5px;}
+  .notes .warn{color:var(--warn);}
+  .notes .err{color:var(--err);}
+</style>
+</head>
+<body>
+<div class="head">
+  <div class="eyebrow"><span id="machine">Sessions</span><span class="rule"></span></div>
+
+  <div class="filters">
+    <label for="since">Window</label>
+    <select id="since">
+      <option value="24h">last 24 hours</option>
+      <option value="7d">last 7 days</option>
+      <option value="30d" selected>last 30 days</option>
+      <option value="90d">last 90 days</option>
+      <option value="all">everything</option>
+    </select>
+    <label for="q">Search</label>
+    <input id="q" type="search" placeholder="title, prompt, project, branch, id…" autocomplete="off">
+    <button class="chipbtn" id="deep" aria-pressed="false"
+      title="Search inside the transcripts themselves, not just what each row shows. Slower — it reads every session in the current window.">search inside</button>
+    <span class="count" id="count"></span>
+  </div>
+  <div class="filters2">
+    <label>Where</label>
+    <button class="chipbtn" id="f-cli" aria-pressed="false" title="Only sessions with a transcript in this Mac's ~/.claude">here-cli</button>
+    <button class="chipbtn" id="f-desk" aria-pressed="false" title="Only sessions in this Mac's Claude Desktop tree">here-desk</button>
+    <button class="chipbtn" id="f-sync" aria-pressed="false" title="Only sessions the synced repo holds">sync</button>
+    <button class="chipbtn" id="f-unsynced" data-risk="yes" aria-pressed="false" title="Only sessions on this Mac that have never been synced — the ones that would be lost">never synced</button>
+    <label for="account">Account</label>
+    <select id="account"><option value="">all accounts</option></select>
+  </div>
+</div>
+
+<div class="scroll">
+  <table>
+    <colgroup>
+      <col style="width:68px">
+      <col>
+      <col style="width:232px">
+      <col style="width:168px">
+      <col style="width:150px">
+      <col style="width:176px">
+    </colgroup>
+    <thead><tr>
+      <th>Age</th><th>Session</th><th>Project</th><th>Account</th><th>Client</th>
+      <th>Where</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <div class="empty" id="empty" hidden></div>
+  <div class="legend">
+    <span><b>Where</b> — <b>bright</b> holds the conversation, <span class="listed">grey</span> only lists it, dark means not there:</span>
+    <span><b>here-cli</b> this Mac's ~/.claude, the copy <code>claude --resume</code> opens</span>
+    <span><b>here-desk</b> this Mac's Claude Desktop tree — Code-tab chats keep their transcript in here-cli, so this is usually grey</span>
+    <span><b>sync</b> the synced repo — <span class="warn">amber</span> when a session here has never been synced</span>
+  </div>
+  <div class="notes" id="notes"></div>
+</div>
+
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" data-on="no" aria-hidden="true">
+  <div class="dhead" id="dhead"></div>
+  <div class="body" id="detail"></div>
+  <div class="acts" id="acts"></div>
+  <div class="confirm" id="confirm" data-on="no">
+    <h3>Delete this session?</h3>
+    <div class="what" id="confirmWhat"></div>
+    <div id="confirmStores"></div>
+    <div class="warn" id="confirmWarn"></div>
+    <div class="row">
+      <button id="confirmCancel">Cancel</button>
+      <button class="danger" id="confirmGo">Delete</button>
+    </div>
+  </div>
+</aside>
+
+<script type="module">
+import { Call } from '/wails/runtime.js';
+
+const $ = id => document.getElementById(id);
+
+// Wails keys bound methods by "<go import path>.<type>.<method>". Spelled out
+// because we call the runtime directly rather than running `wails3 generate
+// bindings` — that would add a Node step to a Go-only CI. Keep in sync with
+// ui/bridge; ui/bridge/binding_test.go fails if this drifts.
+const LIBRARY_LIST = 'github.com/rigsmith/rigsmith/ui/bridge.Library.List';
+const LIBRARY_DETAIL = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Detail';
+const LIBRARY_TERMINAL = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenTerminal';
+const LIBRARY_DESKTOP = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenDesktop';
+const LIBRARY_VSCODE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenVSCode';
+const LIBRARY_DELETE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Delete';
+
+const LIMIT = 200;
+
+const SVG = 'viewBox="0 0 16 16" width="13" height="13" fill="none" ' +
+  'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"';
+const ICON_COPY = `<svg ${SVG}><rect x="5.75" y="5.75" width="8.5" height="8.5" rx="1.5"/>` +
+  '<path d="M11 3.75A1.75 1.75 0 0 0 9.25 2h-5.5A1.75 1.75 0 0 0 2 3.75v5.5c0 .97.78 1.75 1.75 1.75"/></svg>';
+const ICON_CHECK = `<svg ${SVG}><path d="M3 8.5 6.5 12 13 4.5"/></svg>`;
+
+// What each store is called in the window. The ids underneath stay cli/desktop/
+// repo — those are config root IDs and the CLI's own flag vocabulary — but the
+// raw names read as jargon here, and worse, they hide the distinction that
+// matters: two of these are on THIS machine and one is the sync.
+const SOURCE_LABEL = { cli: 'here-cli', desktop: 'here-desk', repo: 'sync' };
+
+// Always rendered in this order, present or not, so the column reads as a
+// checklist rather than a variable-length list you have to parse.
+const STORES = ['cli', 'desktop', 'repo'];
+
+const SOURCE_HELP = {
+  cli: 'here-cli — this machine\'s live ~/.claude, the copy `claude --resume` opens',
+  desktop: 'here-desk — this machine\'s Claude Desktop tree',
+  repo: 'sync — the synced staging repo, so it is backed up and other machines can pull it',
+};
+
+// Ages are rendered here rather than server-side so a window left open
+// overnight does not quietly report yesterday's "2h ago".
+function age(iso) {
+  if (!iso || iso.startsWith('0001-01-01')) return '—';
+  const mins = Math.floor((Date.now() - new Date(iso)) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m`;
+  if (mins < 1440) return `${Math.floor(mins / 60)}h`;
+  const days = Math.floor(mins / 1440);
+  if (days < 90) return `${days}d`;
+  return `${Math.floor(days / 30)}mo`;
+}
+
+// Home-relative, the way `clauderig recent` prints project paths.
+function tilde(p) {
+  if (!p) return '';
+  const m = p.match(/^\/(?:Users|home)\/[^/]+(\/.*)?$/);
+  return m ? '~' + (m[1] || '') : p;
+}
+
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+
+function row(s) {
+  const tr = document.createElement('tr');
+
+  const when = el('td', 'when' + (s.approx ? ' approx' : ''), age(s.when) + (s.approx ? ' ~' : ''));
+  if (s.when) when.title = new Date(s.when).toLocaleString();
+  tr.append(when);
+
+  const session = el('td');
+  session.append(s.title
+    ? el('div', 'title', s.title)
+    : el('div', 'title untitled', '(untitled session)'));
+  if (s.matches) {
+    // A deep search matched inside the transcript, so show the hit rather than
+    // the last prompt — the hit is why this row is on screen.
+    const hit = el('div', 'last');
+    hit.append(el('span', 'hits', `${s.matches} ${s.matches === 1 ? 'match' : 'matches'}`));
+    hit.append(document.createTextNode('  ' + (s.snippet || '')));
+    session.append(hit);
+  } else if (s.lastPrompt && s.lastPrompt !== s.title) {
+    // Only when it says something the title does not — repeating the title in
+    // smaller grey text is noise pretending to be information.
+    session.append(el('div', 'last', s.lastPrompt));
+  }
+  tr.append(session);
+  tr.dataset.id = s.id;
+  tr.addEventListener('click', () => openDetail(s.id, tr));
+
+  const project = el('td');
+  project.append(el('div', 'path', tilde(s.cwd) || '—'));
+  if (s.cwd) project.title = s.cwd;
+  if (s.branch) project.append(el('div', 'branch', s.branch));
+  tr.append(project);
+
+  // The label is what a person reads; falling back to the raw uuid is still
+  // better than a blank, and "—" is the honest answer for a session synced
+  // before attribution was recorded.
+  const acct = s.accountLabel || s.account;
+  const acctCell = acct ? el('td', 'acct', acct) : el('td', 'acct none', '—');
+  if (acct) acctCell.title = s.account && s.accountLabel ? `${s.accountLabel} (${s.account})` : acct;
+  tr.append(acctCell);
+
+  const client = el('td', 'client', s.client || '—');
+  if (s.client) client.title = s.client;
+  tr.append(client);
+
+  const where = el('td', 'where');
+  const held = new Set(s.sources || []);
+  if (!held.size) {
+    // No transcript anywhere: the ledger remembers the session, the body is
+    // gone. Worth saying plainly rather than showing three dim chips.
+    const none = el('span', 'chip risk', 'gone');
+    none.title = 'No transcript survives in any store — only the synced ledger still remembers this session';
+    where.append(none);
+  } else {
+    STORES.forEach((src, i) => {
+      if (i) where.append(document.createTextNode(' '));
+      const on = held.has(src);
+      // Never synced is the state that loses work, so it is the one absence
+      // worth colouring rather than merely dimming.
+      const risk = !on && src === 'repo' && held.has('cli');
+      // Present with no transcript means a sidecar only: that store lists the
+      // session, the conversation itself is in here-cli. Its own tier rather
+      // than a marker on the lit one — a "desktop@profile" client beside a dim
+      // here-desk reads as a contradiction, and a marker on every row is noise.
+      const hasTranscript = on && !!(s.paths || {})[src];
+      const tier = hasTranscript ? ' on' : on ? ' listed' : '';
+      const tag = el('span', 'chip' + tier + (risk ? ' risk' : ''), SOURCE_LABEL[src]);
+      tag.title = hasTranscript ? SOURCE_HELP[src]
+        : on ? `${SOURCE_LABEL[src]} lists this session, but the transcript itself is in here-cli — Claude Desktop keeps Code-tab conversations in the shared ~/.claude tree`
+        : risk ? 'Not in the synced repo — this session exists only on this Mac'
+        : `Not in ${SOURCE_LABEL[src]}`;
+      where.append(tag);
+    });
+  }
+  tr.append(where);
+  return tr;
+}
+
+// The most likely next move after a row-field search finds nothing is to look
+// inside the transcripts, so offer it here rather than making it a toggle the
+// user has to know about.
+function showEmpty(v) {
+  const box = $('empty');
+  box.replaceChildren();
+  const term = $('q').value.trim();
+  if (term && !pressed('deep')) {
+    box.append(document.createTextNode(`Nothing in this window mentions "${term}" in its title, prompt or project. `));
+    const go = el('button', null, 'Search inside the transcripts');
+    go.onclick = () => {
+      $('deep').setAttribute('aria-pressed', 'true');
+      syncDeepState();
+      refresh();
+    };
+    box.append(go);
+  } else if (term && pressed('deep')) {
+    box.append(document.createTextNode(`No session in this window contains "${term}". Try a longer window.`));
+  } else {
+    box.append(document.createTextNode('No sessions in this window.'));
+  }
+}
+
+function renderNotes(v) {
+  const notes = $('notes');
+  notes.replaceChildren();
+  const add = (text, cls) => notes.append(el('div', cls, text));
+
+  if (deepRunning()) {
+    add(`searched inside ${v.read} transcript(s) — ${v.total} contain that text`, 'warn');
+  }
+  if (v.total > v.sessions.length) {
+    add(`${v.total - v.sessions.length} more in this window — narrow by project, or shorten the window`);
+  }
+  add(`dated by each transcript's own last record (read ${v.read}, skipped ${v.skipped} as too old to qualify)`);
+  if (v.approx) {
+    add(`${v.approx} marked ~ could not be dated from a transcript record — those dates may be when the file was last copied rather than when you used it`, 'warn');
+  }
+  // Absence is the answer people act on ("that chat is gone"), and it is only
+  // sound when the store is complete. Everything below says where it is not.
+  if (v.undated) {
+    add(`${v.undated} session(s) had no readable date and were left out rather than assumed into the window`);
+  }
+  if (v.unattributed) {
+    add(`${v.unattributed} session(s) have no recorded account; only sessions synced since attribution was added carry one`);
+  }
+  if (v.devicesUnavailable) {
+    add('device coverage unavailable — the synced device registry could not be read', 'warn');
+  }
+  (v.stale || []).forEach(name => {
+    add(`${name} has not synced recently — anything it recorded since is not listed here`, 'warn');
+  });
+}
+
+const pressed = id => $(id).getAttribute('aria-pressed') === 'true';
+
+// The stores are AND-ed: picking here-cli and sync asks for sessions that are
+// in both. "never synced" is the inverse question, so it is its own toggle
+// rather than a fourth store.
+function whereFilter() {
+  const stores = [];
+  if (pressed('f-cli')) stores.push('cli');
+  if (pressed('f-desk')) stores.push('desktop');
+  if (pressed('f-sync')) stores.push('repo');
+  return { stores, unsynced: pressed('f-unsynced') };
+}
+
+let inFlight = 0;
+async function refresh() {
+  const seq = ++inFlight;
+  if (deepRunning()) $('count').textContent = 'reading transcripts…';
+  try {
+    const w = whereFilter();
+    const v = await Call.ByName(LIBRARY_LIST, {
+      since: $('since').value,
+      text: $('q').value,
+      deep: pressed('deep'),
+      stores: w.stores,
+      unsynced: w.unsynced,
+      account: $('account').value,
+      limit: LIMIT,
+    });
+    // A slow wide query must not overwrite the results of a later narrow one.
+    if (seq !== inFlight) return;
+    if (v.error) throw new Error(v.error);
+
+    $('machine').textContent = v.machine ? `Sessions · ${v.machine}` : 'Sessions';
+    syncAccountOptions(v.accounts || []);
+    $('count').textContent = `${v.sessions.length} of ${v.total}`;
+    $('rows').replaceChildren(...v.sessions.map(row));
+    $('empty').hidden = v.sessions.length > 0;
+    if (!v.sessions.length) showEmpty(v);
+    renderNotes(v);
+  } catch (e) {
+    if (seq !== inFlight) return;
+    $('rows').replaceChildren();
+    $('count').textContent = '';
+    $('empty').hidden = false;
+    $('empty').textContent = `Could not list sessions: ${e}`;
+    $('notes').replaceChildren();
+  }
+}
+
+
+// ---- detail panel ------------------------------------------------------
+
+let current = null;   // the session detail on screen
+
+const fmtWhen = iso =>
+  (!iso || iso.startsWith('0001-01-01')) ? '' : new Date(iso).toLocaleString();
+
+function turn(p, cls) {
+  const d = el('div', 'turn' + (cls ? ' ' + cls : ''), p.text);
+  if (p.at && !String(p.at).startsWith('0001-01-01')) {
+    d.append(el('span', 'at', fmtWhen(p.at)));
+  }
+  return d;
+}
+
+function renderDetail(d) {
+  current = d;
+  const s = d.session;
+  const head = $('dhead');
+  head.replaceChildren();
+  head.append(el('h2', null, s.title || '(untitled session)'));
+  head.append(el('div', 'id', s.id));
+
+  const box = $('detail');
+  box.replaceChildren();
+
+  const meta = el('div', 'meta');
+  const field = (label, value) => {
+    if (!value) return;
+    meta.append(el('b', null, label));
+    meta.append(el('div', null, value));
+  };
+  field('When', fmtWhen(s.when) + (s.approx ? '  (approximate — not from a transcript record)' : ''));
+  field('Project', tilde(s.cwd));
+  field('Branch', s.branch);
+  field('Account', s.accountLabel || s.account);
+  field('Client', s.client);
+  field('Where', STORES.filter(x => (s.sources || []).includes(x)).map(x => SOURCE_LABEL[x]).join(' · ') || 'nowhere — only the ledger remembers it');
+  box.append(meta);
+
+  if (d.error) box.append(el('div', 'toast err', d.error));
+
+  if (d.prompts) {
+    box.append(el('b', null, 'Opened with'));
+    const turns = el('div', 'turns');
+    (d.first || []).forEach(p => turns.append(turn(p)));
+    // Only claim a gap when there actually is one; for a short session First
+    // already holds the whole conversation.
+    const shown = (d.first || []).length + (d.last || []).length;
+    if (d.prompts > shown) {
+      turns.append(el('div', 'gap', `\u22ef ${d.prompts - shown} more prompt(s) \u22ef`));
+    }
+    if ((d.last || []).length) {
+      turns.append(el('b', null, 'Last said'));
+      d.last.forEach(p => turns.append(turn(p)));
+    }
+    box.append(turns);
+  } else if (!d.error) {
+    box.append(el('div', 'gap', s.present
+      ? 'No typed prompts found in this transcript.'
+      : 'No transcript on this machine to read.'));
+  }
+
+  renderActions(d);
+  $('confirm').dataset.on = 'no';
+  $('drawer').dataset.on = 'yes';
+  $('drawer').setAttribute('aria-hidden', 'false');
+  $('scrim').dataset.on = 'yes';
+}
+
+function renderActions(d) {
+  const acts = $('acts');
+  acts.replaceChildren();
+  const toast = el('div', 'toast');
+  const say = (text, cls, full) => {
+    toast.className = 'toast ' + (cls || '');
+    toast.textContent = text;
+    toast.title = full || text;
+  };
+
+  // Every way to reopen a session, in one list. Terminal is always possible;
+  // the others depend on what is installed and configured.
+  const targets = [{ kind: 'terminal', label: 'Terminal' }];
+  if (d.vscode) targets.push({ kind: 'vscode', label: 'VS Code' });
+  (d.profiles || []).forEach(p => targets.push({ kind: 'desktop', profile: p, label: `Desktop · ${p}` }));
+
+  // "Open" reopens it the way it was last used, read off the client the
+  // transcript recorded. Falls through to the terminal when that client isn't
+  // reachable — a Desktop session whose profile is no longer configured, or a
+  // VS Code session on a machine without the extension.
+  function lastUsed() {
+    const client = d.session.client || '';
+    const c = client.toLowerCase();
+    if (c.startsWith('desktop')) {
+      const profile = (client.split('@')[1] || '').trim();
+      const match = targets.find(t => t.kind === 'desktop' && t.profile === profile);
+      if (match) return match;
+    }
+    if (c.includes('vscode') && d.vscode) return targets.find(t => t.kind === 'vscode');
+    return targets[0];
+  }
+
+  // flash marks a control as having succeeded, then lets it settle back.
+  const flash = (node) => {
+    node.classList.add('ok');
+    setTimeout(() => node.classList.remove('ok'), 2200);
+  };
+
+  async function open(target, node) {
+    say('');
+    try {
+      if (target.kind === 'desktop') await Call.ByName(LIBRARY_DESKTOP, d.session.id, target.profile);
+      else if (target.kind === 'vscode') await Call.ByName(LIBRARY_VSCODE, d.session.id);
+      else await Call.ByName(LIBRARY_TERMINAL, d.session.id);
+      flash(node);
+    } catch (e) {
+      // The CLI's own refusal is the useful message — "other profiles are open"
+      // is guidance, not a failure of the button.
+      say('failed — hover for details', 'err', String(e));
+    }
+  }
+
+  const primary = lastUsed();
+  const go = el('button', 'primary', `Open in ${primary.label}`);
+  // All three paths read the live ~/.claude copy, so none is possible without one.
+  go.disabled = !d.resumable;
+  go.title = d.resumable
+    ? `Where this session was last used`
+    : 'Not on this Mac — restore it from the sync first';
+  go.onclick = () => open(primary, go);
+  acts.append(go);
+
+  const pick = document.createElement('select');
+  pick.disabled = !d.resumable;
+  pick.title = 'Reopen somewhere other than where it was last used';
+  const head = document.createElement('option');
+  head.textContent = 'Other…';
+  head.value = '';
+  pick.append(head);
+  targets.forEach((t, i) => {
+    if (t === primary) return; // already the primary button
+    const o = document.createElement('option');
+    o.value = String(i);
+    o.textContent = t.label;
+    pick.append(o);
+  });
+  pick.onchange = () => {
+    const t = targets[Number(pick.value)];
+    pick.value = ''; // snap back, so the control reads as an action not a state
+    if (t) open(t, pick);
+  };
+  acts.append(pick);
+
+  // An icon, not a word: it sits beside two controls that already say "open",
+  // and the label would be the longest thing in the row.
+  const copy = el('button', 'icon');
+  copy.title = 'Copy the resume command';
+  copy.setAttribute('aria-label', 'Copy the resume command');
+  copy.innerHTML = ICON_COPY;
+  copy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(d.resumeCommand);
+      // The icon itself answers: a tick where the copy glyph was, then back.
+      copy.innerHTML = ICON_CHECK;
+      flash(copy);
+      setTimeout(() => { copy.innerHTML = ICON_COPY; }, 2200);
+      say('', '', d.resumeCommand);
+    } catch {
+      // Clipboard access can be refused in a webview; the command is still
+      // worth surfacing, so put it where it can be read in full.
+      say('could not copy — hover for the command', 'err', d.resumeCommand);
+    }
+  };
+  acts.append(copy);
+
+  const del = el('button', 'danger', 'Delete…');
+  del.disabled = !(d.session.sources || []).length;
+  del.onclick = () => openConfirm(d);
+  acts.append(del);
+
+  acts.append(toast);
+}
+
+function openConfirm(d) {
+  const held = d.session.sources || [];
+  $('confirmWhat').textContent = d.session.title || d.session.id;
+  const box = $('confirmStores');
+  box.replaceChildren();
+  STORES.filter(x => held.includes(x)).forEach(store => {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = store;
+    // Defaults to this Mac only: the local copy is the one you can always get
+    // back from the sync, so it is the safe thing to tick for you.
+    cb.checked = store === 'cli';
+    label.append(cb, el('span', null, `${SOURCE_LABEL[store]} — ${d.paths[store] || 'sidecar only'}`));
+    box.append(label);
+    cb.addEventListener('change', updateWarn);
+  });
+  $('confirm').dataset.on = 'yes';
+  updateWarn();
+
+  function updateWarn() {
+    const picked = [...box.querySelectorAll('input:checked')].map(i => i.value);
+    const left = held.filter(x => !picked.includes(x));
+    const warn = $('confirmWarn');
+    if (!picked.length) {
+      warn.textContent = 'Nothing selected — this would delete nothing.';
+    } else if (left.includes('repo')) {
+      warn.textContent = 'The synced copy is being kept, so a later restore can bring this session back here.';
+    } else if (picked.includes('repo')) {
+      warn.textContent = 'Deleting the synced copy propagates to your other machines on the next sync. The ledger still records that the session existed.';
+    } else {
+      warn.textContent = '';
+    }
+    $('confirmGo').disabled = !picked.length;
+  }
+}
+
+$('confirmCancel').onclick = () => { $('confirm').dataset.on = 'no'; };
+$('confirmGo').onclick = async () => {
+  const stores = [...$('confirmStores').querySelectorAll('input:checked')].map(i => i.value);
+  const btn = $('confirmGo');
+  btn.disabled = true;
+  try {
+    const res = await Call.ByName(LIBRARY_DELETE, current.session.id, stores);
+    $('confirm').dataset.on = 'no';
+    if (res.error) throw new Error(res.error);
+    closeDrawer();
+    await refresh();
+  } catch (e) {
+    $('confirmWarn').textContent = String(e);
+    btn.disabled = false;
+  }
+};
+
+function closeDrawer() {
+  $('dhead').replaceChildren();
+  $('drawer').dataset.on = 'no';
+  $('drawer').setAttribute('aria-hidden', 'true');
+  $('scrim').dataset.on = 'no';
+  $('confirm').dataset.on = 'no';
+  current = null;
+  document.querySelectorAll('tbody tr[data-open]').forEach(tr => delete tr.dataset.open);
+}
+
+async function openDetail(id, tr) {
+  document.querySelectorAll('tbody tr[data-open]').forEach(x => delete x.dataset.open);
+  if (tr) tr.dataset.open = 'yes';
+  $('dhead').replaceChildren(el('h2', null, 'Reading the transcript\u2026'));
+  $('detail').replaceChildren();
+  $('acts').replaceChildren();
+  $('drawer').dataset.on = 'yes';
+  $('scrim').dataset.on = 'yes';
+  try {
+    renderDetail(await Call.ByName(LIBRARY_DETAIL, id));
+  } catch (e) {
+    $('dhead').replaceChildren(el('h2', null, 'Could not open that session'));
+    $('detail').replaceChildren(el('div', 'toast err', String(e)));
+  }
+}
+
+$('scrim').onclick = closeDrawer;
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if ($('confirm').dataset.on === 'yes') { $('confirm').dataset.on = 'no'; return; }
+  closeDrawer();
+});
+
+// The account list is rebuilt from what the listing saw, but the current choice
+// is preserved — otherwise selecting an account resets the control that
+// selected it.
+function syncAccountOptions(accounts) {
+  const sel = $('account');
+  const chosen = sel.value;
+  const wanted = ['|all accounts'].concat(accounts.map(a => a.value + '|' + a.label)).join(',');
+  if (sel.dataset.built === wanted) return;
+  sel.dataset.built = wanted;
+  sel.replaceChildren();
+  const all = document.createElement('option');
+  all.value = ''; all.textContent = 'all accounts';
+  sel.append(all);
+  accounts.forEach(a => {
+    const o = document.createElement('option');
+    o.value = a.value; o.textContent = a.label;
+    sel.append(o);
+  });
+  // A previously chosen account that no longer appears would silently widen the
+  // listing, so keep it selectable until the user changes it.
+  if (chosen && !accounts.some(a => a.value === chosen)) {
+    const gone = document.createElement('option');
+    gone.value = chosen; gone.textContent = chosen + ' (no sessions here)';
+    sel.append(gone);
+  }
+  sel.value = chosen;
+}
+
+['f-cli', 'f-desk', 'f-sync', 'f-unsynced'].forEach(id => {
+  $(id).addEventListener('click', () => {
+    $(id).setAttribute('aria-pressed', String(!pressed(id)));
+    // "never synced" and "sync" are contradictory; turning one on clears the other.
+    if (id === 'f-unsynced' && pressed(id)) $('f-sync').setAttribute('aria-pressed', 'false');
+    if (id === 'f-sync' && pressed(id)) $('f-unsynced').setAttribute('aria-pressed', 'false');
+    refresh();
+  });
+});
+$('account').addEventListener('change', refresh);
+syncDeepState();
+$('deep').addEventListener('click', () => {
+  $('deep').setAttribute('aria-pressed', String(!pressed('deep')));
+  syncDeepState();
+  refresh();
+});
+
+// The toggle is always available — it arms which of the two searches the box
+// runs, and the placeholder is what says so. Toggling with an empty box changes
+// nothing about the list, and that is fine: the placeholder already changed.
+function syncDeepState() {
+  $('q').placeholder = pressed('deep')
+    ? 'search inside the transcripts…'
+    : 'title, prompt, project, branch, id…';
+}
+
+// deepRunning is deep search actually doing something — armed AND given a term.
+// The progress line and the result note key off this rather than the toggle, so
+// an empty box never claims to have read anything.
+const deepRunning = () => pressed('deep') && $('q').value.trim() !== '';
+
+// Typing filters as you go, but not on every keystroke — each call re-reads
+// transcripts off disk. This searches what a row SHOWS; to search what was said
+// inside a session, `clauderig search` scans the transcripts themselves.
+let debounce;
+$('q').addEventListener('input', () => {
+  syncDeepState();
+  clearTimeout(debounce);
+  debounce = setTimeout(refresh, 250);
+});
+
+// Enter goes straight inside the transcripts. Typing already filters the rows
+// as you go, so the useful thing left for Enter to mean is "and now look
+// deeper" — no reaching for the toggle.
+$('q').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || $('q').value.trim() === '') return;
+  e.preventDefault();
+  clearTimeout(debounce);
+  $('deep').setAttribute('aria-pressed', 'true');
+  syncDeepState();
+  refresh();
+});
+$('since').addEventListener('change', refresh);
+refresh();
+</script>
+</body>
+</html>

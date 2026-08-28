@@ -17,6 +17,11 @@ A Wails v3 app with two faces:
   or last sync failed). Menu: sync now, per-device freshness, open window.
 - **Window** — the interactive face: device board, activity feed, conflict resolution,
   remote-session browsing, account switching. Hidden at startup; the tray is the app.
+- **Sessions window** (added 2026-08-27) — a second window, not a tab: every session this
+  machine can see, from the live `~/.claude`, each Desktop install, and the synced repo.
+  The status window answers "is my sync healthy" and is read in seconds from the tray;
+  this one is a browser you keep open and scroll, and wants far more width. Sharing one
+  window would have meant one of them fitting badly.
 
 ## Stack
 
@@ -61,6 +66,7 @@ uses.
 | Status poll, root state | `internal/clauderig/status` | `Gather(ctx, cfg, me, staging, settingsPath) Info` |
 | Device board | `internal/clauderig/devices` | `Load(dir) (*Registry, error)` |
 | Session lists, transcripts | `internal/clauderig/session` | `Build(roots) Index`, `FirstPrompt(path)` |
+| Assembled session listing | `internal/clauderig/sessions` | `List(Options) ([]Row, Report)` |
 | Search | `internal/clauderig/search` | package API |
 | Config, machine identity | `internal/clauderig/config` | package API |
 
@@ -111,12 +117,15 @@ ui/
 ├── main.go                # app + systray + window wiring
 ├── bridge/                # service structs bound to the frontend
 │   ├── status.go          #   imports internal/clauderig/status, devices
-│   ├── sessions.go        #   imports internal/clauderig/session, search
+│   ├── sessions.go        #   the REMOTE browser: peek over the staging repo
+│   ├── library.go         #   the sessions manager: internal/clauderig/sessions
 │   └── actions.go         #   shells out; streams stdout/stderr to the drawer
 ├── assets/                # tray icons: 3 states x {template, dark, light}
 ├── frontend/
 │   ├── src/               # reuses design/ brand tokens
 │   └── dist/              # go:embed all:frontend/dist
+│       ├── index.html     #   status window
+│       └── sessions.html  #   sessions manager
 └── build/                 # wails per-OS Taskfiles, Info.plist, icons, nsis
 ```
 
@@ -283,6 +292,86 @@ Unchanged in substance; `--json` is no longer blocking (see [Engine seam](#engin
 - **Search — partial.** The browser filters the listed sessions by title client-side.
   Full-text search across live + synced (`search` package in-process, `search --json`
   shape) is not wired into the window yet; the CLI has it.
+
+## Phase 2.5 — Sessions manager
+
+**Done 2026-08-27.** A second window (`ui/frontend/dist/sessions.html`) over
+`ui/bridge/library.go`: one row per session, merged across the live `~/.claude`, every
+Desktop install including clauderig-managed profiles, and the synced repo. Columns are
+age, title, last prompt, project + branch, account, client, and which stores hold a
+transcript. Filters are a time window and a project substring. Reachable from the tray
+menu, or `--sessions` at startup.
+
+Three things are worth recording because each was a decision rather than a detail:
+
+- **The listing moved below both front ends.** It was `listRecent` inside
+  `internal/clauderig/commands`, unexported and wrapped in cobra, so the UI could not
+  reach it. It now lives in `internal/clauderig/sessions` (`List`, `Scope`, `Row`) and
+  `clauderig recent` renders it. The alternative — shelling out to a new `recent --json`
+  — was rejected: it contradicts [Engine seam](#engine-seam) and puts a subprocess on
+  every refresh. Rendering stays in `commands`; `search` keeps its own hit-tracking
+  result type and shares the facts underneath, so the two cannot drift on what a
+  session's date, project or client is.
+- **Title and last prompt are separate columns.** The title is the session's FIRST
+  prompt; what it was opened to do is rarely what it became. `session.Activity` grew
+  `LastPrompt`, read from the same tail scan that already establishes the date, filtered
+  through the same predicate as the title so an IDE-state injection or a resumed-session
+  caveat never poses as the last word.
+- **Delete and resume are built, and delete is the exception to the seam.** Clicking a
+  row opens a detail panel: the first and last couple of prompts, resume, and delete.
+
+  *Resume* has two halves. Claude Code gets **Open in terminal** (writes a `.command`
+  script and hands it to Terminal.app, or `$CLAUDERIG_TERMINAL`) and **Copy command**,
+  because `claude --resume` is interactive and cannot run inside a webview — the copy
+  path is the one that works with any terminal, multiplexer or remote host. Desktop
+  shells out to `desktop open <profile> --session <id>`; the profile is chosen from the
+  clauderig-managed installs only, never the machine-wide one, since sending a session
+  there files it under whichever account that install happens to be logged into. Both
+  are disabled unless the transcript is in the live `~/.claude`, which is the only copy
+  either can read. The CLI's refusal when several profile windows are open is surfaced
+  verbatim rather than routed around with `--anyway`.
+
+  *Delete* could not shell out. Every destructive verb here confirms interactively and
+  refuses without a terminal — the wall that stopped `account remove` in Phase 3 — and
+  the fix is emphatically not a `--yes` that would let any script delete transcripts
+  silently. So the logic moved below both front ends (`sessions.Delete`), exactly as
+  `health` did, and each front end supplies its own confirmation: a terminal prompt
+  there, a dialog here. This is a deliberate exception to "shell out for writes", and
+  the reasoning is the seam's own: the CLI stays the single *implementation*, it just
+  no longer has to be the single *entry point* for something a GUI can confirm better.
+
+  The dialog is per-store, not all-or-nothing, because the stores mean different
+  things: dropping the local copy of a synced session frees space and a restore brings
+  it back, while dropping the synced copy propagates to every other machine. It
+  defaults to this Mac only and says which way the asymmetry falls. Guards: a session
+  a running Claude Code process is appending to is refused outright (restore's
+  live-session guard, applied to deletion), and any path whose filename does not
+  identify the session is refused as braces against a future change to the path scan.
+  The ledger row is deliberately kept — it holds no conversation content, and silently
+  forgetting a session ever existed is the failure mode this project started from.
+
+- **Search is two searches behind one box.** The box filters on what a row shows
+  (title, last prompt, project, branch, id, client); **search inside** — or Enter, or
+  the offer in the empty state — sends the same term to the transcript bodies via
+  `search.ScanFile` with `session.IsConversationLine`, the same filter `clauderig
+  search` applies, so the two agree on what counts as a hit. It runs last, over the
+  rows the cheap filters already kept, so the time window bounds how much is read.
+  Deliberately either/or rather than both: a session that matches a row but not its
+  body would otherwise vanish the moment deep search was switched on.
+- **VS Code resumes the session, not just the folder.** The extension registers a URI
+  handler whose `/open` path takes `?session=` and forwards it to
+  `claude-vscode.primaryEditor.open`. Undocumented, so it is verified rather than
+  trusted — the button appears only when the extension is installed, and the failure
+  mode if the shape ever changes is a no-op window rather than a wrong action. The
+  project folder is opened first so the session lands in the right workspace.
+
+Two window-lifecycle fixes: revealing a window before `app.Run()` silently does
+nothing for any window but the first, so `--sessions` opened nothing while the tray
+menu worked (both flags now reveal on `events.Common.ApplicationStarted`, and a
+follow-up focus catches the first-open case — calling `Show()` twice instead races
+window creation and takes the app down). And with the macOS hidden-inset title bar
+there is almost nothing to grab, so both windows set `--wails-draggable` on their
+header, with every control inside opting back out.
 
 ## Phase 3 — Accounts
 

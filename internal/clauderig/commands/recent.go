@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/sessions"
 	"github.com/spf13/cobra"
 )
 
@@ -83,23 +83,23 @@ func NewRecentCmd() *cobra.Command {
 			if limit < 0 {
 				return fmt.Errorf("--limit cannot be negative")
 			}
-			sc := sessionScope{now: time.Now()}
+			sc := sessions.Scope{Now: time.Now()}
 			// The value that actually means "no lower bound" is the empty string,
 			// which is awkward to type past a shell and reads like a mistake.
 			if s := strings.ToLower(strings.TrimSpace(since)); s == "all" || s == "any" {
 				since = ""
 			}
 			var err error
-			if sc.since, err = parseWhen(since, sc.now, false); err != nil {
+			if sc.Since, err = sessions.ParseWhen(since, sc.Now, false); err != nil {
 				return err
 			}
-			if sc.until, err = parseWhen(until, sc.now, true); err != nil {
+			if sc.Until, err = sessions.ParseWhen(until, sc.Now, true); err != nil {
 				return err
 			}
-			if !sc.since.IsZero() && !sc.until.IsZero() && sc.until.Before(sc.since) {
+			if !sc.Since.IsZero() && !sc.Until.IsZero() && sc.Until.Before(sc.Since) {
 				return fmt.Errorf("--until is before --since — nothing can match that window")
 			}
-			sc.cwd = strings.ToLower(strings.TrimSpace(cwdFilter))
+			sc.Cwd = strings.ToLower(strings.TrimSpace(cwdFilter))
 			accountFilter = strings.TrimSpace(accountFilter)
 
 			cfg, err := config.LoadOrDefault()
@@ -107,15 +107,15 @@ func NewRecentCmd() *cobra.Command {
 				return err
 			}
 			me := config.Detect(machineName(cfg))
-			targets := buildTargets(cfg, me, liveOnly, repoOnly)
-			roots := sessionRoots(cfg, me, liveOnly, repoOnly)
-			sc.me = me.Name
-			sc.liveInScope = !repoOnly
+			targets := sessions.Targets(cfg, me, liveOnly, repoOnly)
+			roots := sessions.Roots(cfg, me, liveOnly, repoOnly)
+			sc.Me = me.Name
+			sc.LiveInScope = !repoOnly
 			if !liveOnly {
 				var ok bool
-				sc.devices, ok = loadDevices()
-				sc.devicesUnavailable = !ok
-				sc.ledger = loadLedger()
+				sc.Devices, ok = sessions.LoadDevices()
+				sc.DevicesUnavailable = !ok
+				sc.Ledger = sessions.LoadLedger()
 			}
 			if accountFilter != "" {
 				if liveOnly {
@@ -125,7 +125,7 @@ func NewRecentCmd() *cobra.Command {
 				if serr != nil {
 					return serr
 				}
-				sc.account, err = resolveAccountFilter(accountFilter, staging, sc.ledger)
+				sc.Account, err = resolveAccountFilter(accountFilter, staging, sc.Ledger)
 				if err != nil {
 					return err
 				}
@@ -159,103 +159,41 @@ type recentRow struct {
 
 // listRecent is split from the cobra wiring so a test can drive it with explicit
 // roots.
-func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, sc sessionScope, query string, limit int, long bool) error {
-	idx := session.Build(roots)
-	byAcct, acctComplete := profileByAccount()
-	reprofile(idx, byAcct, acctComplete)
-	livePaths := transcriptPaths(targets, cliTarget)
-	deskPaths := transcriptPaths(targets, desktopTarget)
-	repoPaths := transcriptPaths(targets, repoTarget)
-
-	ids := map[string]bool{}
-	for _, m := range []map[string]string{livePaths, deskPaths, repoPaths} {
-		for id := range m {
-			ids[id] = true
-		}
-	}
-	for id := range idx {
-		ids[id] = true
-	}
-	for id := range sc.ledger {
-		ids[id] = true
-	}
+// listRecent is split from the cobra wiring so a test can drive it with explicit
+// roots.
+//
+// The facts come from [sessions.List], which the UI reads too; what stays here
+// is the text query, which scans transcript bodies and belongs with `search`,
+// and every decision about how to say it.
+func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, sc sessions.Scope, query string, limit int, long bool) error {
+	// No limit here: the query below still has to run over the whole window, or
+	// `--limit 20` would search twenty sessions rather than showing twenty
+	// matches out of all of them.
+	listed, rep := sessions.List(sessions.Options{Machine: me, Roots: roots, Targets: targets, Scope: sc})
+	read, skipped := rep.Read, rep.Skipped
+	hidden, undated, unattributed := rep.Hidden, rep.Undated, rep.Unattributed
 
 	var rows []recentRow
-	var read, skipped, hidden, undated, unattributed, approx, unmatched int
-	for id := range ids {
-		r := &sessResult{id: id, hitTargets: map[string]bool{}}
-		r.meta, r.hasMeta = idx[session.CanonicalID(id)]
-		// Live first: it is the copy `claude --resume` opens.
-		switch {
-		case livePaths[id] != "":
-			r.path = livePaths[id]
-		case deskPaths[id] != "":
-			r.path = deskPaths[id]
-			r.hitTargets[desktopTarget] = true
-		default:
-			r.path = repoPaths[id]
+	var approx, unmatched int
+	for _, l := range listed {
+		// sessResult carries the hit-tracking the shared listing has no business
+		// knowing about, and it is what the detailed renderer and the Desktop
+		// hint both read.
+		r := &sessResult{
+			id: l.ID, meta: l.Meta, hasMeta: l.HasMeta, path: l.Path,
+			when: l.When, cwd: l.Cwd, led: l.Ledger, hasLed: l.HasLedger,
+			cliLive: l.CLILive, inRepo: l.InRepo, present: l.Present,
+			hitTargets: map[string]bool{},
 		}
-		r.cliLive = livePaths[id] != ""
-		r.inRepo = repoPaths[id] != ""
-		r.present = r.path != ""
-		r.led, r.hasLed = sc.ledger[id]
-
-		row := recentRow{sessResult: r}
-		if r.path != "" {
-			// mtime is untrustworthy in one direction only: a write can push it
-			// forward but never back, so it is a valid upper bound. A file whose
-			// mtime predates the window cannot hold a record inside it, and drift
-			// only ever costs a needless read.
-			if !sc.since.IsZero() {
-				if info, serr := os.Stat(r.path); serr == nil && info.ModTime().Before(sc.since) {
-					skipped++
-					continue
-				}
-			}
-			read++
-			a := r.activity()
-			row.branch = sessionBranch(r)
-			row.client = clientWithProfile(r)
-			if !a.At.IsZero() {
-				r.when = a.At
-				r.cwd = resolveCwd(me, r)
-				if r.cwd == "" && a.Cwd != "" {
-					r.cwd = resolvePath(me, a.Cwd)
-				}
-			}
+		for _, src := range l.Sources {
+			r.hitTargets[src] = true
 		}
-		if r.when.IsZero() {
-			// sessionTime applies the rest of the ladder; the ledger row answers
-			// for a session whose body has aged out of the synced window.
-			r.when = sessionTime(r)
-			if r.cwd == "" {
-				r.cwd = resolveCwd(me, r)
-			}
+		row := recentRow{sessResult: r, branch: l.Branch, client: l.Client, approx: l.Approx}
+		row.title = l.Title
+		if row.title == "" {
+			row.title = "(untitled session)"
 		}
-		if r.hasLed {
-			if r.when.IsZero() {
-				r.when = r.led.End
-			}
-			if r.cwd == "" && r.led.Cwd != "" {
-				r.cwd = resolvePath(me, r.led.Cwd)
-			}
-		}
-		// Covers ledger-dated rows too: one written before End became
-		// content-derived still holds an mtime and is never rewritten, so it
-		// cannot self-correct. Over-warning is the safe direction here.
-		row.approx = !r.when.IsZero() && r.activity().At.IsZero()
-		if keep, why := sc.keep(r); !keep {
-			hidden++
-			switch why {
-			case droppedUndated:
-				undated++
-			case droppedUnattributed:
-				unattributed++
-			}
-			continue
-		}
-		row.title = recentTitle(r)
-		if query != "" && !matchSession(r, row.title, query, sc.caseSensitive) {
+		if query != "" && !matchSession(r, row.title, query, sc.CaseSensitive) {
 			unmatched++
 			continue
 		}
@@ -264,15 +202,6 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 		}
 		rows = append(rows, row)
 	}
-
-	// The id tiebreaks so two sessions closed in the same second keep a stable
-	// order between runs.
-	sort.Slice(rows, func(i, j int) bool {
-		if !rows[i].when.Equal(rows[j].when) {
-			return rows[i].when.After(rows[j].when)
-		}
-		return rows[i].id < rows[j].id
-	})
 
 	shown := rows
 	if limit > 0 && len(shown) > limit {
@@ -290,7 +219,7 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 		fmt.Fprintln(out, DimStyle.Render("no sessions in that window"))
 		if hidden > 0 {
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf(
-				"(%d excluded by %s — widen them, e.g. --since 7d)", hidden, strings.Join(sc.activeFilters(), "/"))))
+				"(%d excluded by %s — widen them, e.g. --since 7d)", hidden, strings.Join(sc.ActiveFilters(), "/"))))
 		}
 		renderCoverage(out, sc)
 		return nil
@@ -319,7 +248,7 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 		}
 		// The same clock the window was computed against, or a listing taken
 		// seconds before midnight labels its own results inconsistently.
-		now := sc.now
+		now := sc.Now
 		if now.IsZero() {
 			now = time.Now()
 		}
@@ -459,23 +388,6 @@ func recentWhen(t, now time.Time) string {
 	default:
 		return l.Format("2006-01-02")
 	}
-}
-
-// recentTitle falls back through the names a session might have, ending with the
-// one the ledger recorded before the body aged out.
-func recentTitle(r *sessResult) string {
-	title := r.meta.Title
-	if title == "" && r.path != "" {
-		title = session.FirstPrompt(r.path)
-	}
-	if title == "" && r.hasLed {
-		title = r.led.Title
-	}
-	if title == "" {
-		return "(untitled session)"
-	}
-	// A first prompt can be multi-line.
-	return strings.Join(strings.Fields(title), " ")
 }
 
 // tildePath shortens a path for display only, never for a command we hand back:

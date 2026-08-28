@@ -32,6 +32,17 @@ type Activity struct {
 	// "claude-vscode", "claude-desktop", "cli", "sdk-*". Nothing else identifies
 	// the client: they all write to the same ~/.claude/projects tree.
 	Entrypoint string
+	// LastPrompt is the most recent thing a person actually typed, flattened to
+	// one line. Distinct from the title, which is the FIRST prompt: what a
+	// session was opened to do and what it was last asked to do are rarely the
+	// same after an hour, and the second is what makes a row recognisable when
+	// you are looking for the chat you were just in.
+	//
+	// Empty when the tail window held no typed prompt. A session that ends in a
+	// long run of tool calls can push the last human turn out of the window, and
+	// reporting nothing is the honest answer — the alternative is reading back
+	// far enough to be a full scan of every transcript on the machine.
+	LastPrompt string
 }
 
 // activityLine is the slice of a transcript record this file reads.
@@ -40,6 +51,10 @@ type activityLine struct {
 	Cwd        string `json:"cwd"`
 	GitBranch  string `json:"gitBranch"`
 	Entrypoint string `json:"entrypoint"`
+	Type       string `json:"type"`
+	Message    struct {
+		Content json.RawMessage `json:"content"`
+	} `json:"message"`
 }
 
 // LastActivity reports what a transcript says about itself, reading only its
@@ -126,6 +141,14 @@ func latestIn(buf []byte) (Activity, bool) {
 		if nearest.Entrypoint == "" {
 			nearest.Entrypoint = rec.Entrypoint
 		}
+		// Scanning backwards, so the first typed prompt seen is the last one
+		// said. Filtered through the same predicate as the title, so an IDE-state
+		// injection or a resumed-session caveat never poses as the last word.
+		if nearest.LastPrompt == "" && rec.Type == "user" {
+			if text, hasText := PromptCandidate(rec.Message.Content); hasText && IsHumanPrompt(text) {
+				nearest.LastPrompt = TidyPrompt(text)
+			}
+		}
 		if rec.Timestamp == "" {
 			continue
 		}
@@ -149,5 +172,9 @@ func latestIn(buf []byte) (Activity, bool) {
 	if a.Entrypoint == "" {
 		a.Entrypoint = nearest.Entrypoint
 	}
+	// Always the nearest, never the newest record's: the last timestamped record
+	// is usually a tool result or a queue operation, which carries no prompt at
+	// all, so taking it from `a` would report nothing for almost every session.
+	a.LastPrompt = nearest.LastPrompt
 	return a, true
 }
