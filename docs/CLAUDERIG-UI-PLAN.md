@@ -43,7 +43,7 @@ Chosen over Avalonia and Tauri because:
 4. **Weight.** ~15 MB order-of-magnitude vs a self-contained .NET bundle. Not the deciding
    factor, but it was the objection that reopened the question.
 
-Wails v3 went **beta on 2026-08-02** (latest `v3.0.0-beta.5`, 2026-08-07) after a long
+Wails v3 went **beta on 2026-08-02** (pinned at `v3.0.0-beta.15`) after a long
 alpha. The desktop API is declared stable and in production use; mobile is explicitly
 outside the compatibility promise and we don't want it. v2 is not an option — it has no
 built-in systray at all. See [Risks](#risks-and-open-spikes) for what this costs us.
@@ -403,10 +403,19 @@ Ordered by how much they'd hurt to discover late.
    against a non-root entrypoint. That only matters for packaging, not development —
    `go build ./ui` and `go run ./ui` work today — so it folds into the build-and-release
    work in item 4 rather than blocking Phase 1.
-2. **Beta churn.** Six days into beta after a multi-year alpha. Pin the exact version, don't
-   float, and expect to read changelogs on upgrade. The v2→v3 migration guide is explicit
-   that v3 is a port rather than a version bump — so there is no cheap retreat to v2, and v2
-   has no systray anyway.
+2. **Beta churn.** Days into beta after a multi-year alpha when this was written. Pin the
+   exact version, don't float, and expect to read changelogs on upgrade. The v2→v3 migration
+   guide is explicit that v3 is a port rather than a version bump — so there is no cheap
+   retreat to v2, and v2 has no systray anyway.
+
+   **beta.5 → beta.15 (2026-08-28) was clean**: no source changes, no new linker warnings,
+   the whole suite green. Three things this window leans on were checked directly rather
+   than assumed, because each fails silently rather than loudly: bound methods are still
+   keyed `"<pkg path>.<type>.<method>"` (the frontend calls them by that string, so a
+   change to the scheme would break every call at runtime while every test still passed),
+   the drag hook is still the computed `--wails-draggable` property, and `Show()` still
+   returns early before ordering a window that has never been shown — which is the reason
+   `reveal` re-asserts focus. Check those three again on the next bump.
 3. **macOS template icon vs three-state colour** — see [Tray specifics](#tray-specifics).
    **Answered 2026-08-08, provisionally: colour wins.** The icons are non-template, with
    `SetDarkModeIcon` handling light/dark by hand. Ambient health signalling is the tray's

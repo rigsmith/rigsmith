@@ -4,7 +4,7 @@ The ambient face of clauderig: a menu bar icon that colours itself from real
 sync state, plus a window for the detail. Design and phasing live in
 [docs/CLAUDERIG-UI-PLAN.md](../docs/CLAUDERIG-UI-PLAN.md).
 
-Wails v3 (`v3.0.0-beta.5`, pinned), Go backend, platform webview frontend.
+Wails v3 (`v3.0.0-beta.15`, pinned), Go backend, platform webview frontend.
 
 | | |
 |---|---|

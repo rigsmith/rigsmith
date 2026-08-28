@@ -22,9 +22,9 @@ require (
 	github.com/muesli/roff v0.1.0
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/pflag v1.0.10
-	github.com/wailsapp/wails/v3 v3.0.0-beta.5
-	golang.org/x/sys v0.45.0
-	golang.org/x/term v0.43.0
+	github.com/wailsapp/wails/v3 v3.0.0-beta.15
+	golang.org/x/sys v0.46.0
+	golang.org/x/term v0.44.0
 	golang.org/x/text v0.39.0
 	mvdan.cc/sh/v3 v3.13.1
 )
