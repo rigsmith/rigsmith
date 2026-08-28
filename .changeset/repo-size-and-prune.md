@@ -16,4 +16,6 @@ The kept commits are rebuilt with `commit-tree` rather than replayed with `rebas
 
 Rewriting history other machines share is interactive-only: it confirms in a terminal and refuses outright without one, with no flag to route around that. What it costs you is stated up front — sessions that retention deleted before the cutoff can no longer be recovered by `clauderig ledger backfill`, which reads them out of exactly the history this drops.
 
+It also says when history was last truncated. The oldest reachable commit is not when a repo started if it has ever been squashed — the root is then a commit the squash itself wrote — so reporting that date as the beginning turns discarded history into a repo that merely looks young. A real 2.9 GB repo here claimed to begin the previous morning, because the automatic squash had fired unprompted and nothing said so. A squashed root now reads `squashed <when> — earlier history was discarded` instead of a range.
+
 The window grows a **Repository** panel carrying the same numbers, with the ratio flagged amber once history costs four times the content, and a prune dialog offering a week, a month or three. It will not fold closer than three days: the activity feed's file lists are read out of recent commits, and a prune that left one commit standing would take "what did that sync actually do" away with it.

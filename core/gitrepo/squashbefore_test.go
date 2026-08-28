@@ -148,3 +148,34 @@ func TestStats_ReportsShape(t *testing.T) {
 		t.Errorf("First/Last wrong: %v .. %v", s.First, s.Last)
 	}
 }
+
+// The oldest reachable commit is not when a repo started if history has been
+// squashed — the root is then a commit the squash wrote. Reporting that date as
+// the beginning turns discarded history into a repo that merely looks young,
+// which is exactly how a real 2.9 GB repo came to claim it began yesterday.
+func TestStats_RootSubjectExposesASquashedHistory(t *testing.T) {
+	ctx, r, now := agedRepo(t)
+
+	s, err := r.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(s.RootSubject, "squashed") {
+		t.Errorf("an unsquashed repo reported a squash root: %q", s.RootSubject)
+	}
+
+	if _, err := r.SquashBefore(ctx, now.AddDate(0, 0, -7), "clauderig: squashed history"); err != nil {
+		t.Fatal(err)
+	}
+	s, err = r.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.RootSubject != "clauderig: squashed history" {
+		t.Errorf("RootSubject = %q, want the squash message", s.RootSubject)
+	}
+	// And First is now the squash, not the 40-day-old commit it replaced.
+	if s.First.Before(now.AddDate(0, 0, -11)) {
+		t.Errorf("First = %v, want the squash point, not the original root", s.First)
+	}
+}

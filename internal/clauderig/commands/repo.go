@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -75,8 +76,18 @@ func printRepoStats(out io.Writer, s gitrepo.Stats) {
 		fmt.Fprintf(out, "  %-10s %.1f× the content%s\n", "", ratio, note)
 	}
 	if !s.First.IsZero() {
-		fmt.Fprintf(out, "  %-10s %s → %s\n", "spanning",
-			s.First.Local().Format("2006-01-02"), s.Last.Local().Format("2006-01-02"))
+		// "spanning" would read as how far back the repo goes, and after a squash
+		// that is wrong in the one direction that matters: it makes discarded
+		// history look like a repo that simply has not been running long. Say
+		// which of the two this is.
+		if SquashedRoot(s.RootSubject) {
+			fmt.Fprintf(out, "  %-10s %s %s\n", "squashed",
+				s.First.Local().Format("2006-01-02 15:04"),
+				DimStyle.Render("— earlier history was discarded"))
+		} else {
+			fmt.Fprintf(out, "  %-10s %s → %s\n", "spanning",
+				s.First.Local().Format("2006-01-02"), s.Last.Local().Format("2006-01-02"))
+		}
 	}
 	fmt.Fprintln(out)
 }
@@ -184,4 +195,23 @@ func countOf(n int, one, many string) string {
 		return "1 " + one
 	}
 	return fmt.Sprintf("%d %s", n, many)
+}
+
+// squashRoots are the messages clauderig's own squashes write. A root commit
+// carrying one of them means history was truncated there rather than started
+// there — the automatic size-based squash does this without being asked, so the
+// distinction is not a rare edge case.
+var squashRoots = []string{
+	"clauderig: squashed history",
+	"clauderig: history before",
+}
+
+// SquashedRoot reports whether a root commit's subject is one of ours.
+func SquashedRoot(subject string) bool {
+	for _, p := range squashRoots {
+		if strings.HasPrefix(subject, p) {
+			return true
+		}
+	}
+	return false
 }

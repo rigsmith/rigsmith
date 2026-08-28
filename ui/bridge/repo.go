@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/internal/clauderig/commands"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 )
 
@@ -25,7 +26,12 @@ type RepoStats struct {
 	// few minutes, so this climbs on its own and nobody notices until a push
 	// gets slow.
 	Ratio float64 `json:"ratio"`
-	Error string  `json:"error,omitempty"`
+	// Squashed says the oldest reachable commit is one a squash wrote, so First
+	// is where history was truncated rather than where the repo began. Decided
+	// here rather than in the window: which messages mean "squash" is a fact
+	// about clauderig, not about a date picker.
+	Squashed bool   `json:"squashed"`
+	Error    string `json:"error,omitempty"`
 }
 
 // Repo backs the window's repository panel.
@@ -49,7 +55,7 @@ func (s *Repo) Get(ctx context.Context) (RepoStats, error) {
 	if err != nil {
 		return RepoStats{Error: err.Error()}, nil
 	}
-	out := RepoStats{Stats: st}
+	out := RepoStats{Stats: st, Squashed: commands.SquashedRoot(st.RootSubject)}
 	if st.WorkBytes > 0 {
 		out.Ratio = float64(st.GitBytes) / float64(st.WorkBytes)
 	}

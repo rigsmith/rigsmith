@@ -960,8 +960,21 @@ function renderRepo(v) {
   row('history', hist);
 
   if (v.first && !v.first.startsWith('0001')) {
-    row('spanning', document.createTextNode(
-      `${new Date(v.first).toLocaleDateString()} → ${new Date(v.last).toLocaleDateString()}`));
+    // After a squash the oldest reachable commit is one the squash wrote, so a
+    // range would read as "the repo only goes back this far" — turning history
+    // that was thrown away into a repo that looks young. The automatic
+    // size-based squash does this unprompted, so it is worth saying out loud.
+    if (v.squashed) {
+      const when = new Date(v.first);
+      const n = el('span', null);
+      n.append(document.createTextNode(when.toLocaleDateString() + ' ' +
+        when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
+      n.append(el('span', 'hint', '  — earlier history was discarded'));
+      row('squashed', n);
+    } else {
+      row('spanning', document.createTextNode(
+        `${new Date(v.first).toLocaleDateString()} → ${new Date(v.last).toLocaleDateString()}`));
+    }
   }
 
   const acts = el('div', 'reporow');
