@@ -337,6 +337,16 @@
   .confirmrow label{display:flex;gap:8px;align-items:center;font-size:11px;padding:5px 0;}
   .confirmrow .warn{color:var(--warn);font-size:10px;margin:8px 0 12px;line-height:1.5;}
   .confirmrow .row{display:flex;gap:8px;justify-content:flex-end;}
+  /* The field and its Browse button. align-items:center because the default
+     stretch made the button take the row's full height, and .srch carries a
+     20px top margin from its life as a standalone search box — which grew the
+     row and left the button towering over the field it belongs to. */
+  .pickrow{display:flex;gap:8px;align-items:center;margin:12px 0 4px;}
+  .pickrow .srch{flex:1;margin:0;min-width:0;}
+  .pickrow button{flex:none;}
+  /* Standing explanation, not a warning. Three lines of amber read as something
+     having gone wrong; this is just what the button will do. */
+  .explain{color:var(--muted);font-size:10px;margin:2px 0 12px;line-height:1.55;}
   .note{font-size:10px;color:var(--muted-2);flex-basis:100%;}
 
 
@@ -1622,20 +1632,19 @@ function openRerootModal(d) {
   const box = el('div', 'confirmrow');
   box.append(el('div', 'note', 'Re-file this session under:'));
   const warn = el('div', 'warn');
+  const explain = el('div', 'explain');
 
   // Field plus picker rather than one or the other. Typing is faster when you
   // know the path and can paste it; the picker is the only way to be sure the
   // directory exists, and a typo here files the session somewhere plausible and
   // wrong rather than failing.
-  const pick = el('div', 'row');
-  pick.style.justifyContent = 'stretch';
+  const pick = el('div', 'pickrow');
   const input = document.createElement('input');
   input.className = 'srch';
   input.type = 'text';
   input.placeholder = d.session.cwd || '/absolute/path';
   input.value = d.session.cwd || '';
   input.spellcheck = false;
-  input.style.flex = '1';
   pick.append(input);
 
   const browse = document.createElement('button');
@@ -1656,9 +1665,10 @@ function openRerootModal(d) {
   pick.append(browse);
   box.append(pick);
 
-  warn.textContent = 'Records recorded at the old root are rewritten to point here; '
-    + 'deeper directories are left alone, since those still exist. '
+  explain.textContent = 'Records recorded at the old root are rewritten to point here. '
+    + 'Deeper directories are left alone, since those still exist. '
     + 'The next sync carries the change to your other machines.';
+  box.append(explain);
   box.append(warn);
 
   const row = el('div', 'row');
@@ -1669,7 +1679,7 @@ function openRerootModal(d) {
     const dir = input.value.trim();
     if (!dir) { input.focus(); return; }
     go.disabled = true;
-    warn.textContent = 'Checking…';
+    warn.textContent = 'Checking\u2026';
     try {
       // Dry run first: it costs one pass and turns "did that do anything?"
       // into a number you agreed to before the file was touched.

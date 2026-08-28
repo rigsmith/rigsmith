@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -17,6 +18,19 @@ import (
 // simply filed somewhere else that looks plausible. The system picker only ever
 // returns somewhere that exists.
 type Chooser struct{}
+
+// nativeDialogs counts the system dialogs currently up.
+//
+// The tray window hides when it loses focus, which is what a menu bar window
+// should do — and a native dialog takes focus, so opening the folder picker
+// dismissed the window that asked for it. The window's own auto-hide consults
+// this rather than the picker reaching in and disabling it, so any future
+// dialog gets the same protection by construction.
+var nativeDialogs atomic.Int32
+
+// NativeDialogOpen reports whether a system dialog is up, so the window's
+// auto-hide can stand down while one is.
+func NativeDialogOpen() bool { return nativeDialogs.Load() > 0 }
 
 // NewChooser builds the chooser service.
 func NewChooser() *Chooser { return &Chooser{} }
@@ -32,6 +46,10 @@ func (c *Chooser) Directory(ctx context.Context, title, start string) (string, e
 	if title == "" {
 		title = "Choose a folder"
 	}
+
+	// Held across the prompt, which blocks until the user answers.
+	nativeDialogs.Add(1)
+	defer nativeDialogs.Add(-1)
 
 	d := app.Dialog.OpenFile().
 		SetTitle(title).

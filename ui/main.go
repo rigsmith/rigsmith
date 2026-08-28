@@ -204,6 +204,15 @@ func newWindow(app *application.App) *application.WebviewWindow {
 		if time.Since(lastReveal(w)) < revealGrace {
 			return
 		}
+		// A system dialog takes focus, so the folder picker was dismissing the
+		// window that opened it — and with it the form the answer was going
+		// into. Standing down while one is up is the only correct reading of
+		// "the user clicked away": they did not, they answered a question this
+		// window asked.
+		if bridge.NativeDialogOpen() {
+			markRevealed(w) // fresh grace for the focus bouncing back
+			return
+		}
 		w.Hide()
 	})
 	return w
