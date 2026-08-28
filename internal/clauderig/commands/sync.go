@@ -103,10 +103,11 @@ func NewSyncCmd() *cobra.Command {
 			}
 			rep, serr := engine.Sync(engine.Options{
 				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
-				RetentionDays:   cfg.Retention.HistoryDays,
-				MaxFileBytes:    cfg.Retention.MaxFileBytes,
-				Profiles:        engine.LocalProfileNames(),
-				LiveAccountUUID: liveAcct,
+				RetentionDays:     cfg.Retention.HistoryDays,
+				MaxFileBytes:      cfg.Retention.MaxFileBytes,
+				RedactTranscripts: cfg.RedactTranscripts,
+				Profiles:          engine.LocalProfileNames(),
+				LiveAccountUUID:   liveAcct,
 			})
 			if rep != nil {
 				w := 0

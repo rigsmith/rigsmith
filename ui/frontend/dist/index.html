@@ -99,11 +99,31 @@
   .stale{color:var(--warn);}
   .err{color:var(--err);}
 
+  .ev.can{cursor:pointer;}
+  .files{
+    margin:6px 0 2px;padding-left:1px;
+    font-family:var(--mono);font-size:10px;color:var(--muted);
+  }
+  .files .f{display:flex;gap:8px;padding:1px 0;}
+  .files .f .p{flex:1;min-width:0;overflow-wrap:anywhere;}
+  .files .f .n{flex:none;color:var(--muted);font-variant-numeric:tabular-nums;}
+  /* Amber, the same colour the banner uses for "look at this" — a redaction is
+     not a failure, but it is the line in the list you want to find. */
+  .files .f .r{flex:none;color:var(--warn);}
+  .files .more{color:var(--muted);padding-top:3px;}
+
   /* activity feed — failures and refusals are rows in their own right, not
      footnotes; that they were ever buried in hook stderr is why this exists. */
   .ev{display:flex;gap:12px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--line-soft);font-size:12px;line-height:1.45;}
   .ev:last-child{border-bottom:none;}
-  .ev .tick{width:7px;height:7px;border-radius:50%;flex:none;background:var(--muted-2);align-self:center;}
+  /* align-self:center put the dot halfway down an expanded row, next to a file
+     path it has nothing to do with. It belongs beside the line it marks, so it
+     pins to the top and takes a margin that centres it on that first line
+     ((12px x 1.45) - 7px) / 2. */
+  .ev .tick{
+    width:7px;height:7px;border-radius:50%;flex:none;background:var(--muted-2);
+    align-self:flex-start;margin-top:5px;
+  }
   .ev[data-outcome=failed] .tick{background:var(--err);}
   .ev[data-outcome=refused] .tick{background:var(--warn);}
   .ev .body{flex:1;min-width:0;}
@@ -198,11 +218,32 @@
   }
   .srow:last-child{border-bottom:none;}
   .srow:hover{background:var(--ink-2);}
-  .srow .when{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums;width:44px;flex:none;font-size:11px;}
+  .srow .when{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums;width:30px;flex:none;font-size:11px;}
   .srow .what{flex:1;min-width:0;}
   .srow .t{font-weight:700;font-size:12px;overflow-wrap:anywhere;}
-  .srow .p{color:var(--muted-2);font-size:10px;overflow-wrap:anywhere;margin-top:1px;}
-  .srow .w{font-size:10px;white-space:nowrap;flex:none;color:#34343e;}
+  .srow .p{color:var(--muted);font-size:10px;overflow-wrap:anywhere;margin-top:1px;}
+  /* Colour comes from the letter (see LETTER_HUE), applied inline. These rules
+     are the fallback for a monogram whose letter has no hue. */
+  .mono{
+    display:inline-flex;align-items:center;justify-content:center;
+    min-width:19px;height:19px;border-radius:10px;
+    border:1px solid var(--muted-2);color:var(--muted);
+    font-family:var(--mono);font-size:10px;
+    flex:none;
+    /* Letter-spacing puts its gap AFTER the last character too, so a centred
+       single letter ends up sitting left of centre by half the tracking —
+       dropped, since one or two characters need none. line-height:1 collapses
+       the line box onto the em box, which is what centres the capital
+       vertically; nudging on top of that only pushes it back off. */
+    letter-spacing:0;line-height:1;padding:0 5px;
+  }
+  .srow .cl{
+    color:var(--muted);font-size:10px;white-space:nowrap;flex:none;
+    max-width:11ch;overflow:hidden;text-overflow:ellipsis;text-align:right;
+  }
+  /* Fixed advance per glyph so the three read as a column down the list. */
+  .srow .w{font-size:15px;white-space:nowrap;flex:none;color:var(--muted-2);}
+  .srow .w span{display:inline-block;width:1.3em;text-align:center;}
   .srow .w .on{color:var(--paper);}
   .srow .w .listed{color:var(--muted);}
   .srow .w .risk{color:var(--warn);}
@@ -234,6 +275,12 @@
     width:104px;flex:none;
   }
   .dacts select:hover{border-color:var(--muted-2);}
+  /* appearance:none strips the native look but not the native focus ring, and
+     this control had no focus rule of its own — so it was the one thing in the
+     pane still lighting up in the system accent colour. Keyboard focus keeps a
+     ring, in ours; a mouse click gets none, like the buttons beside it. */
+  .dacts select:focus{outline:none;}
+  .dacts select:focus-visible{outline:1px solid var(--muted);outline-offset:2px;}
   .dacts button.icon{
     display:inline-flex;align-items:center;justify-content:center;
     padding:7px 9px;color:var(--muted);
@@ -245,6 +292,24 @@
   .dacts button.danger{color:var(--err);border-color:#3a2226;margin-left:auto;}
   .dacts button.danger:hover:not(:disabled){border-color:var(--err);}
   .dacts button.ok,.dacts button.ok:hover{color:var(--ok);border-color:var(--ok);}
+  /* The confirm is a modal because the constraint is height, not width: it is
+     several times the height of the row it used to replace, so on a detail of
+     any length it opened below the fold and had to be scrolled to. Centred over
+     a scrim it is always whole, and being modal suits the one action here that
+     cannot be undone. */
+  .modal{
+    position:fixed;inset:0;z-index:50;display:flex;
+    align-items:center;justify-content:center;padding:24px;
+    background:rgba(14,14,18,0.72);
+  }
+  .modal .card{
+    background:var(--ink-2);border:1px solid var(--line);border-radius:8px;
+    padding:18px 20px;max-width:520px;width:100%;max-height:100%;overflow-y:auto;
+    box-shadow:0 18px 44px rgba(0,0,0,0.55);
+  }
+  /* The separator earned its keep when this sat under the action row. */
+  .modal .confirmrow{margin-top:0;padding-top:0;border-top:none;}
+
   /* inline confirm — the pane is full width, so the per-store choice fits here
      rather than being a reason to send you to the other window. */
   .confirmrow{margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft);}
@@ -322,6 +387,7 @@ const ACTIONS_RUN = 'github.com/rigsmith/rigsmith/ui/bridge.Actions.Run';
 const ACTIONS_RUN_WITH = 'github.com/rigsmith/rigsmith/ui/bridge.Actions.RunWith';
 const ACTIONS_BUSY = 'github.com/rigsmith/rigsmith/ui/bridge.Actions.Busy';
 const ACCOUNTS_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.Get';
+const ACTIVITY_FILES = 'github.com/rigsmith/rigsmith/ui/bridge.Activity.Files';
 const WINDOWS_HIDE = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Hide';
 const LIBRARY_LIST = 'github.com/rigsmith/rigsmith/ui/bridge.Library.List';
 const LIBRARY_DETAIL = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Detail';
@@ -345,6 +411,113 @@ const ICON_POPOUT = `<svg ${SVG_ATTRS}><path d="M9 2.75h4.25V7"/><path d="M13.25
 
 const STORES = ['cli', 'desktop', 'repo'];
 const STORE_LABEL = { cli: 'here-cli', desktop: 'here-desk', repo: 'sync' };
+// Glyphs rather than words in the row — same three states on every row, and the
+// column they were costing is worth more spent on the client. The full window's
+// legend names them; the tooltips here carry the words.
+const STORE_ICON = { cli: '\u276F', desktop: '\u25A3', repo: '\u21C5' };
+
+// Account labels are emails, and on one person's machine they are routinely the
+// same person at different organisations — john@brightshore.io beside
+// john@relatecpa.com — so an initial taken from the address would read "J" for
+// both. The letter comes from the domain instead, which is the part that
+// actually names the account.
+//
+// Where two accounts share a domain the local part stands in, and where the
+// chosen source still collides the prefix grows a letter at a time: "BR" and
+// "BU", never a letter plucked from the middle of a word, which reads as a typo
+// rather than as an abbreviation.
+//
+// Computed over every label seen so far rather than the rows currently on
+// screen, so filtering the list can't quietly re-letter a badge.
+const seenAccounts = new Set();
+let monoCache = new Map();
+
+function monogramFor(label) {
+  if (!label) return '';
+  if (!seenAccounts.has(label)) {
+    seenAccounts.add(label);
+    monoCache = buildMonograms([...seenAccounts]);
+  }
+  return monoCache.get(label) || '';
+}
+
+// The badge takes its colour from its own letter — b is blue, r is red, g is
+// green — so the mapping needs no learning and no legend. Letters with no
+// colour that starts the same way get one of the hues left over; those pairings
+// are arbitrary and only have to stay stable and distinct.
+//
+// Tailwind's 400 step throughout: saturated enough to read as a colour at 22px
+// on near-black, light enough not to vibrate against it.
+const LETTER_HUE = {
+  a: '#fbbf24', // amber
+  b: '#60a5fa', // blue
+  c: '#22d3ee', // cyan
+  d: '#fb7185', // rose
+  e: '#34d399', // emerald
+  f: '#e879f9', // fuchsia
+  g: '#4ade80', // green
+  h: '#f472b6', // pink
+  i: '#818cf8', // indigo
+  j: '#94a3b8', // slate
+  k: '#a8a29e', // stone
+  l: '#a3e635', // lime
+  m: '#9ca3af', // gray
+  n: '#a3a3a3', // neutral
+  o: '#fb923c', // orange
+  p: '#c084fc', // purple
+  q: '#fbbf24', // amber
+  r: '#f87171', // red
+  s: '#38bdf8', // sky
+  t: '#2dd4bf', // teal
+  u: '#22d3ee', // cyan
+  v: '#a78bfa', // violet
+  w: '#a78bfa', // violet
+  x: '#a3e635', // lime
+  y: '#facc15', // yellow
+  z: '#a1a1aa', // zinc
+};
+
+function hueFor(mono) {
+  return LETTER_HUE[(mono || '').charAt(0).toLowerCase()] || null;
+}
+
+// Ring and letter in the hue, with the faintest wash behind it. A solid fill
+// would make the badge the loudest thing in a row whose point is the title.
+function paintMono(badge, mono) {
+  const hue = hueFor(mono);
+  if (!hue) return badge;
+  badge.style.color = hue;
+  badge.style.borderColor = hue;
+  badge.style.background = hue + '1a';
+  return badge;
+}
+
+function buildMonograms(labels) {
+  const domain = l => {
+    const at = l.lastIndexOf('@');
+    return at >= 0 ? l.slice(at + 1) : '';
+  };
+  const clean = t => t.replace(/[^a-z0-9]/gi, '');
+  const source = l => {
+    const host = clean((domain(l).split('.')[0] || ''));
+    // A shared domain says nothing about which account this is; the address does.
+    const shared = host && labels.some(o => o !== l && clean((domain(o).split('.')[0] || '')) === host);
+    if (host && !shared) return host;
+    const at = l.lastIndexOf('@');
+    return clean(at >= 0 ? l.slice(0, at) : l) || host || clean(l);
+  };
+  const out = new Map();
+  for (const l of labels) {
+    const src = source(l);
+    if (!src) { out.set(l, '?'); continue; }
+    let n = 1;
+    while (n < src.length && labels.some(o => o !== l &&
+      source(o).slice(0, n).toLowerCase() === src.slice(0, n).toLowerCase())) n++;
+    out.set(l, src.slice(0, n).toUpperCase());
+  }
+  return out;
+}
+
 const COMPACT_LIMIT = 40;
 const ACTIONS_START_EVENT = 'clauderig:action:start';
 const ACTIONS_LINE_EVENT = 'clauderig:action:line';
@@ -394,7 +567,7 @@ function render(snap) {
     sub.append(c);
     sub.append(snap.lastSync ? ' · ' : '');
   }
-  if (snap.lastSync) sub.append(`last sync ${snap.lastSync}`);
+  if (snap.lastSync) sub.append(`last sync ${trimLastSync(snap.lastSync, snap.machine)}`);
 
   const devices = $('devices');
   devices.replaceChildren();
@@ -455,7 +628,49 @@ function collapse(events) {
   return out;
 }
 
+// Which rows are expanded, and what they showed, keyed by the run itself rather
+// than by position — the feed repaints on a timer and rows shift down as newer
+// syncs arrive, so anything keyed by index would reopen the wrong one.
+const filesOpen = new Set();
+const filesCache = new Map();
+const evKey = (ev) => `${ev.machine}\u0000${ev.at}`;
+
+// A commit is immutable, so its file list is worth keeping: reopening a row you
+// have already looked at should not go back to git, and the repaint that used to
+// close the row now redraws it from here without a flicker.
+function paintFiles(box, v, redacted) {
+  const byPath = new Map((redacted || []).map(r => [r.path, r]));
+  box.replaceChildren();
+  if (v.note || !(v.files || []).length) {
+    box.append(el('div', 'more', v.note || 'Nothing recorded for this run.'));
+    return;
+  }
+  for (const f of v.files) {
+    const line = el('div', 'f');
+    line.append(el('div', 'p', f.path));
+    const red = byPath.get(f.path);
+    if (red) {
+      const tag = el('div', 'r', `\u25CF ${red.kinds ? red.kinds.join(', ') : 'redacted'}`);
+      tag.title = `${red.count} value(s) replaced before this file was staged — the copy in ~/.claude is untouched`;
+      line.append(tag);
+    }
+    line.append(el('div', 'n', f.added < 0 ? 'binary' : `+${f.added} \u2212${f.removed}`));
+    box.append(line);
+  }
+  const tail = v.truncated ? `${v.commit} \u00B7 ${v.truncated} more not shown` : v.commit;
+  if (tail) box.append(el('div', 'more', tail));
+}
+
+let lastActivitySig = '';
+
 function renderActivity(events) {
+  // The status poll fires every 5s while the window is open, but the journal
+  // only moves when a sync writes. Rebuilding an unchanged feed threw away
+  // whatever was open in it — and did it four times a minute.
+  const sig = JSON.stringify((events || []).map(e => [e.at, e.machine, e.summary, e.outcome]));
+  if (sig === lastActivitySig) return;
+  lastActivitySig = sig;
+
   const box = $('activity');
   box.replaceChildren();
 
@@ -504,6 +719,38 @@ function renderActivity(events) {
     const when = document.createElement('div');
     when.className = 'when';
     when.textContent = since(ev.at);
+
+    // Each sync is one commit in the staging repo, so "which files" already has
+    // an exact answer — it just needed asking. Folded rows expand on their
+    // newest run; the older ones in the fold are, by definition, the same
+    // summary and not what you clicked for.
+    row.className += ' can';
+    row.title = 'Show the files this run touched';
+    const key = evKey(ev);
+    let files = null;
+
+    const expand = async () => {
+      filesOpen.add(key);
+      if (files) return;
+      files = el('div', 'files');
+      body.append(files);
+      const cached = filesCache.get(key);
+      if (cached) { paintFiles(files, cached, ev.redacted); return; }
+      files.textContent = 'reading the commit…';
+      try {
+        const v = await Call.ByName(ACTIVITY_FILES, ev.at, ev.machine);
+        filesCache.set(key, v);
+        if (files) paintFiles(files, v, ev.redacted);
+      } catch (e) {
+        if (files) files.replaceChildren(el('div', 'more', String(e)));
+      }
+    };
+    const collapse = () => {
+      filesOpen.delete(key);
+      if (files) { files.remove(); files = null; }
+    };
+    row.addEventListener('click', () => (filesOpen.has(key) ? collapse() : expand()));
+    if (filesOpen.has(key)) expand();
 
     row.append(tick, body, when);
     box.append(row);
@@ -564,6 +811,16 @@ const ACTION_LABEL = { sync: 'Sync now', pull: 'Pull', merge: 'Resolve' };
 
 let running = false;
 
+// lastSync arrives as "hash when — subject", and the subject of this machine's
+// own sync is "clauderig sync: <this machine>" — which the banner is already
+// about. Dropped when it names us, kept when it names someone else, because
+// then it is the useful half: the last commit here came from another Mac.
+function trimLastSync(text, machine) {
+  const mine = ` — clauderig sync: ${machine}`;
+  if (text.endsWith(mine)) return text.slice(0, -mine.length);
+  return text.replace(' — clauderig sync: ', ' — from ');
+}
+
 function renderActions(snap) {
   const acts = $('acts');
   acts.replaceChildren();
@@ -572,8 +829,14 @@ function renderActions(snap) {
     const b = document.createElement('button');
     if (i === 0) b.className = 'primary';
     b.textContent = ACTION_LABEL[verb] ?? verb;
-    // The command it stands for, on hover — the banner already says why.
-    if (snap.action) b.title = snap.action;
+    // On a green banner "Sync now" looks redundant — there is nothing local to
+    // push. What it is actually for there is the fetch: Unmerged is read from
+    // the remote-tracking ref and the status gather does no network, so "up to
+    // date" only ever means "as of the last time we looked". Another machine
+    // may have pushed since and nothing here would know.
+    b.title = verb === 'sync' && snap.level === 'green'
+      ? 'Push anything local and fetch what other machines have pushed since the last check'
+      : (snap.action || '');
     b.disabled = running;
     b.dataset.verb = verb;
     b.onclick = () => runAction(verb);
@@ -643,6 +906,8 @@ function renderAccounts(v) {
   }
   v.accounts.forEach(a => {
     const row = el('div', 'acct');
+    const am = monogramFor(a.email || a.id);
+    row.append(paintMono(el('span', 'mono', am), am));
     const who = el('div', 'who', a.email || a.id);
     if (a.subscription) who.append(el('span', 'plan', `  ${a.subscription}`));
     row.append(who);
@@ -750,6 +1015,14 @@ function sessionRow(s) {
   const row = el('div', 'srow');
   row.append(el('div', 'when', shortAge(s.when) + (s.approx ? '~' : '')));
 
+  const acct = s.accountLabel || s.account;
+  if (acct) {
+    const m = monogramFor(acct);
+    const badge = paintMono(el('span', 'mono', m), m);
+    badge.title = acct;
+    row.append(badge);
+  }
+
   const what = el('div', 'what');
   what.append(el('div', 't', s.title || '(untitled session)'));
   const where = homeRel(s.cwd);
@@ -757,16 +1030,46 @@ function sessionRow(s) {
   row.append(what);
 
   // The same three-tier presence the full window shows, just narrower.
+  // Which client last ran it decides what "Open" will do, so it belongs on the
+  // row rather than only in the detail — it is the difference between landing
+  // in a terminal and landing in VS Code.
+  if (s.client) {
+    // The badge already says which account this is, and the client string ends
+    // in that same profile — so the suffix was spending the column on a repeat
+    // of the letter, and truncating exactly where it would have differed.
+    const c = el('div', 'cl', s.client.split('@')[0]);
+    c.title = `Last used from ${s.client}`;
+    row.append(c);
+  }
+
+
+  // Nearly every session is here and synced, and here-desk is grey by design —
+  // Desktop keeps Code-tab transcripts in the shared ~/.claude — so drawing the
+  // three on every row spends a column to say "normal" over and over. They
+  // appear only when this row isn't: never synced, gone from this Mac, or
+  // holding a Desktop transcript of its own. A row with no icons is the common
+  // case, and the ones that show up are the ones worth looking at.
+  //
+  // All three show together rather than only the odd one: with fixed slots a
+  // lone glyph would be ambiguous about which store it stood for.
   const held = new Set(s.sources || []);
-  const w = el('div', 'w');
-  STORES.forEach((src, i) => {
-    if (i) w.append(document.createTextNode(' '));
-    const on = held.has(src);
-    const hasTranscript = on && !!(s.paths || {})[src];
-    const risk = !on && src === 'repo' && held.has('cli');
-    w.append(el('span', hasTranscript ? 'on' : on ? 'listed' : risk ? 'risk' : '', STORE_LABEL[src]));
-  });
-  row.append(w);
+  const paths = s.paths || {};
+  const ordinary = !!paths.cli && !!paths.repo && !paths.desktop;
+  if (!ordinary) {
+    const w = el('div', 'w');
+    STORES.forEach((src) => {
+      const on = held.has(src);
+      const hasTranscript = on && !!paths[src];
+      const risk = !on && src === 'repo' && held.has('cli');
+      const tag = el('span', hasTranscript ? 'on' : on ? 'listed' : risk ? 'risk' : '', STORE_ICON[src]);
+      tag.title = hasTranscript ? `${STORE_LABEL[src]} holds this conversation`
+        : on ? `${STORE_LABEL[src]} lists it, but the transcript is in here-cli`
+        : risk ? 'Not in the synced repo — this session exists only on this Mac'
+        : `Not in ${STORE_LABEL[src]}`;
+      w.append(tag);
+    });
+    row.append(w);
+  }
 
   row.onclick = () => openSession(s.id);
   return row;
@@ -780,7 +1083,11 @@ $('ssearch').addEventListener('input', () => {
 
 // ---- compact detail, in place ------------------------------------------------
 
+// Which session the detail is showing, so reopening the window can re-read it.
+let openSessionID = null;
+
 function showList() {
+  openSessionID = null;
   $('sdetail').hidden = true;
   $('slist').hidden = false;
   $('ssearch').hidden = false;
@@ -791,6 +1098,7 @@ function showList() {
 $('backToList').addEventListener('click', showList);
 
 async function openSession(id) {
+  openSessionID = id;
   $('slist').hidden = true;
   $('ssearch').hidden = true;
   $('sempty').hidden = true;
@@ -859,12 +1167,9 @@ function sessionActions(d) {
   del.title = 'Delete this session';
   del.setAttribute('aria-label', 'Delete this session');
   del.disabled = !(d.session.sources || []).length;
-  del.onclick = () => {
-    acts.replaceChildren(deleteConfirm(d, (deleted) => {
-      if (deleted) { showList(); loadSessions(); }
-      else renderSession(d);
-    }));
-  };
+  del.onclick = () => openDeleteModal(d, (deleted) => {
+    if (deleted) { showList(); loadSessions(); }
+  });
 
   const targets = [{ kind: 'terminal', label: 'Terminal' }];
   if (d.vscode) targets.push({ kind: 'vscode', label: 'VS Code' });
@@ -969,9 +1274,35 @@ function sessionActions(d) {
   return acts;
 }
 
+// Escape and a click on the scrim both cancel, because the safe answer has to
+// be the easy one. Focus lands on Cancel rather than Delete for the same
+// reason — a stray Return should not remove a conversation.
+function openDeleteModal(d, onDone) {
+  const scrim = el('div', 'modal');
+  const card = el('div', 'card');
+  const close = (deleted) => {
+    document.removeEventListener('keydown', onKey, true);
+    scrim.remove();
+    if (deleted) onDone(true);
+  };
+  // Captured, so Escape closes the confirm rather than reaching whatever else
+  // on the page listens for it.
+  const onKey = (e) => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    e.preventDefault();
+    close(false);
+  };
+  card.append(deleteConfirm(d, close));
+  scrim.append(card);
+  scrim.addEventListener('click', (e) => { if (e.target === scrim) close(false); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(scrim);
+  requestAnimationFrame(() => card.querySelector('.row button')?.focus());
+}
+
 // Deleting still asks per store — which copies exist, which to remove, and what
-// a restore would undo. It is an inline confirm rather than a dialog because
-// the pane is already full width; what it must not become is a single click.
+// a restore would undo. What it must not become is a single click.
 function deleteConfirm(d, onDone) {
   const held = (d.session.sources || []).filter(x => STORES.includes(x));
   const box = el('div', 'confirmrow');
@@ -1031,11 +1362,18 @@ function deleteConfirm(d, onDone) {
 // The tray polls anyway; re-read the full snapshot whenever it does, so an open
 // window never drifts from the icon.
 window.addEventListener('focus', () => {
-  if (view === 'sessions') {
-    if ($('sdetail').hidden) loadSessions();
-  } else {
-    refresh();
-  }
+  if (view !== 'sessions') { refresh(); return; }
+  if ($('sdetail').hidden) { loadSessions(); return; }
+  // An open detail went stale too, and it is the pane you are most likely to
+  // have left the window FROM — opening a session in Desktop or VS Code is done
+  // from here, and what those actions change is what this pane is showing. Done
+  // in place, without the "Reading the transcript…" placeholder, so a window
+  // regaining focus doesn't blink.
+  if (!openSessionID || document.querySelector('.modal')) return;
+  const id = openSessionID;
+  Call.ByName(LIBRARY_DETAIL, id)
+    .then(d => { if (openSessionID === id) renderSession(d); })
+    .catch(() => { /* keep what is on screen */ });
 });
 
 // The status read is cheap and now arrives every 5s while the window is open.

@@ -78,7 +78,9 @@
   button:focus-visible,select:focus-visible,input:focus-visible{
     outline:1px solid var(--muted);outline-offset:2px;
   }
-  button:focus:not(:focus-visible){outline:none;}
+  button:focus:not(:focus-visible),
+  select:focus:not(:focus-visible),
+  input:focus:not(:focus-visible){outline:none;}
 
   /* Fixed layout with explicit widths: left to itself the browser gives the
      space to whichever column holds the longest unbreakable token — which is
@@ -132,7 +134,33 @@
      middle case is the norm for here-desk — Desktop files a sidecar and leaves
      the transcript in the shared ~/.claude tree — so it must read as ordinary,
      not as a warning. */
-  .chip{color:#34343e;}
+  /* Fixed advance regardless of the glyph's natural width, so the three line
+     up as a column down the table instead of drifting row to row. */
+  .sicon{
+    display:inline-block;width:1.25em;text-align:center;
+    font-size:16px;color:var(--muted-2);
+  }
+  .sicon.listed{color:var(--muted);}
+  .sicon.on{color:var(--paper);}
+  .sicon.risk{color:var(--warn);}
+  .chipbtn .g{margin-right:5px;font-size:11px;}
+
+  /* Colour comes from the letter (see LETTER_HUE), applied inline. These rules
+     are the fallback for a monogram whose letter has no hue. */
+  .mono{
+    display:inline-flex;align-items:center;justify-content:center;
+    min-width:19px;height:19px;border-radius:10px;
+    border:1px solid var(--muted-2);color:var(--muted);
+    font-family:var(--mono);font-size:10px;
+    flex:none;
+    /* Letter-spacing puts its gap AFTER the last character too, so a centred
+       single letter ends up sitting left of centre by half the tracking —
+       dropped, since one or two characters need none. line-height:1 collapses
+       the line box onto the em box, which is what centres the capital
+       vertically; nudging on top of that only pushes it back off. */
+    letter-spacing:0;line-height:1;padding:0 5px;
+  }
+  .chip{color:var(--muted-2);}
   .chip.listed{color:var(--muted);}
   .chip.on{color:var(--paper);}
   .chip.risk{color:var(--warn);}
@@ -283,9 +311,9 @@
   </div>
   <div class="filters2">
     <label>Where</label>
-    <button class="chipbtn" id="f-cli" aria-pressed="false" title="Only sessions with a transcript in this Mac's ~/.claude">here-cli</button>
-    <button class="chipbtn" id="f-desk" aria-pressed="false" title="Only sessions in this Mac's Claude Desktop tree">here-desk</button>
-    <button class="chipbtn" id="f-sync" aria-pressed="false" title="Only sessions the synced repo holds">sync</button>
+    <button class="chipbtn" id="f-cli" aria-pressed="false" title="Only sessions with a transcript in this Mac's ~/.claude"><span class="g">&#10095;</span>here-cli</button>
+    <button class="chipbtn" id="f-desk" aria-pressed="false" title="Only sessions in this Mac's Claude Desktop tree"><span class="g">&#9635;</span>here-desk</button>
+    <button class="chipbtn" id="f-sync" aria-pressed="false" title="Only sessions the synced repo holds"><span class="g">&#8645;</span>sync</button>
     <button class="chipbtn" id="f-unsynced" data-risk="yes" aria-pressed="false" title="Only sessions on this Mac that have never been synced — the ones that would be lost">never synced</button>
     <label for="account">Account</label>
     <select id="account"><option value="">all accounts</option></select>
@@ -312,9 +340,10 @@
   <div class="empty" id="empty" hidden></div>
   <div class="legend">
     <span><b>Where</b> — <b>bright</b> holds the conversation, <span class="listed">grey</span> only lists it, dark means not there:</span>
-    <span><b>here-cli</b> this Mac's ~/.claude, the copy <code>claude --resume</code> opens</span>
-    <span><b>here-desk</b> this Mac's Claude Desktop tree — Code-tab chats keep their transcript in here-cli, so this is usually grey</span>
-    <span><b>sync</b> the synced repo — <span class="warn">amber</span> when a session here has never been synced</span>
+    <span><b>&#10095; here-cli</b> this Mac's ~/.claude, the copy <code>claude --resume</code> opens</span>
+    <span><b>&#9635; here-desk</b> this Mac's Claude Desktop tree — Code-tab chats keep their transcript in here-cli, so this is usually grey</span>
+    <span><b>Account</b> — the letter is the account's domain, grown until two accounts can't be confused; hover it for the address</span>
+    <span><b>&#8645; sync</b> the synced repo — <span class="warn">amber</span> when a session here has never been synced</span>
   </div>
   <div class="notes" id="notes"></div>
 </div>
@@ -370,6 +399,114 @@ const ICON_CHECK = `<svg ${SVG}><path d="M3 8.5 6.5 12 13 4.5"/></svg>`;
 // raw names read as jargon here, and worse, they hide the distinction that
 // matters: two of these are on THIS machine and one is the sync.
 const SOURCE_LABEL = { cli: 'here-cli', desktop: 'here-desk', repo: 'sync' };
+// Three words per row, on every row, is a lot of column for something that is
+// usually the same three states — so the column carries a glyph and the words
+// stay on the filter chips and the legend, where they are read once. The prompt,
+// the window and the transfer arrows each say what their store is.
+const SOURCE_ICON = { cli: '\u276F', desktop: '\u25A3', repo: '\u21C5' };
+
+// Account labels are emails, and on one person's machine they are routinely the
+// same person at different organisations — john@brightshore.io beside
+// john@relatecpa.com — so an initial taken from the address would read "J" for
+// both. The letter comes from the domain instead, which is the part that
+// actually names the account.
+//
+// Where two accounts share a domain the local part stands in, and where the
+// chosen source still collides the prefix grows a letter at a time: "BR" and
+// "BU", never a letter plucked from the middle of a word, which reads as a typo
+// rather than as an abbreviation.
+//
+// Computed over every label seen so far rather than the rows currently on
+// screen, so filtering the list can't quietly re-letter a badge.
+const seenAccounts = new Set();
+let monoCache = new Map();
+
+function monogramFor(label) {
+  if (!label) return '';
+  if (!seenAccounts.has(label)) {
+    seenAccounts.add(label);
+    monoCache = buildMonograms([...seenAccounts]);
+  }
+  return monoCache.get(label) || '';
+}
+
+// The badge takes its colour from its own letter — b is blue, r is red, g is
+// green — so the mapping needs no learning and no legend. Letters with no
+// colour that starts the same way get one of the hues left over; those pairings
+// are arbitrary and only have to stay stable and distinct.
+//
+// Tailwind's 400 step throughout: saturated enough to read as a colour at 22px
+// on near-black, light enough not to vibrate against it.
+const LETTER_HUE = {
+  a: '#fbbf24', // amber
+  b: '#60a5fa', // blue
+  c: '#22d3ee', // cyan
+  d: '#fb7185', // rose
+  e: '#34d399', // emerald
+  f: '#e879f9', // fuchsia
+  g: '#4ade80', // green
+  h: '#f472b6', // pink
+  i: '#818cf8', // indigo
+  j: '#94a3b8', // slate
+  k: '#a8a29e', // stone
+  l: '#a3e635', // lime
+  m: '#9ca3af', // gray
+  n: '#a3a3a3', // neutral
+  o: '#fb923c', // orange
+  p: '#c084fc', // purple
+  q: '#fbbf24', // amber
+  r: '#f87171', // red
+  s: '#38bdf8', // sky
+  t: '#2dd4bf', // teal
+  u: '#22d3ee', // cyan
+  v: '#a78bfa', // violet
+  w: '#a78bfa', // violet
+  x: '#a3e635', // lime
+  y: '#facc15', // yellow
+  z: '#a1a1aa', // zinc
+};
+
+function hueFor(mono) {
+  return LETTER_HUE[(mono || '').charAt(0).toLowerCase()] || null;
+}
+
+// Ring and letter in the hue, with the faintest wash behind it. A solid fill
+// would make the badge the loudest thing in a row whose point is the title.
+function paintMono(badge, mono) {
+  const hue = hueFor(mono);
+  if (!hue) return badge;
+  badge.style.color = hue;
+  badge.style.borderColor = hue;
+  badge.style.background = hue + '1a';
+  return badge;
+}
+
+function buildMonograms(labels) {
+  const domain = l => {
+    const at = l.lastIndexOf('@');
+    return at >= 0 ? l.slice(at + 1) : '';
+  };
+  const clean = t => t.replace(/[^a-z0-9]/gi, '');
+  const source = l => {
+    const host = clean((domain(l).split('.')[0] || ''));
+    // A shared domain says nothing about which account this is; the address does.
+    const shared = host && labels.some(o => o !== l && clean((domain(o).split('.')[0] || '')) === host);
+    if (host && !shared) return host;
+    const at = l.lastIndexOf('@');
+    return clean(at >= 0 ? l.slice(0, at) : l) || host || clean(l);
+  };
+  const out = new Map();
+  for (const l of labels) {
+    const src = source(l);
+    if (!src) { out.set(l, '?'); continue; }
+    let n = 1;
+    while (n < src.length && labels.some(o => o !== l &&
+      source(o).slice(0, n).toLowerCase() === src.slice(0, n).toLowerCase())) n++;
+    out.set(l, src.slice(0, n).toUpperCase());
+  }
+  return out;
+}
+
 
 // Always rendered in this order, present or not, so the column reads as a
 // checklist rather than a variable-length list you have to parse.
@@ -445,8 +582,16 @@ function row(s) {
   // better than a blank, and "—" is the honest answer for a session synced
   // before attribution was recorded.
   const acct = s.accountLabel || s.account;
-  const acctCell = acct ? el('td', 'acct', acct) : el('td', 'acct none', '—');
-  if (acct) acctCell.title = s.account && s.accountLabel ? `${s.accountLabel} (${s.account})` : acct;
+  const acctCell = el('td', 'acct' + (acct ? '' : ' none'));
+  if (acct) {
+    const m = monogramFor(acct);
+    const badge = paintMono(el('span', 'mono', m), m);
+    badge.title = s.account && s.accountLabel ? `${s.accountLabel} (${s.account})` : acct;
+    acctCell.append(badge);
+  } else {
+    acctCell.textContent = '—';
+    acctCell.title = 'No account recorded for this session';
+  }
   tr.append(acctCell);
 
   const client = el('td', 'client', s.client || '—');
@@ -462,8 +607,7 @@ function row(s) {
     none.title = 'No transcript survives in any store — only the synced ledger still remembers this session';
     where.append(none);
   } else {
-    STORES.forEach((src, i) => {
-      if (i) where.append(document.createTextNode(' '));
+    STORES.forEach((src) => {
       const on = held.has(src);
       // Never synced is the state that loses work, so it is the one absence
       // worth colouring rather than merely dimming.
@@ -474,7 +618,7 @@ function row(s) {
       // here-desk reads as a contradiction, and a marker on every row is noise.
       const hasTranscript = on && !!(s.paths || {})[src];
       const tier = hasTranscript ? ' on' : on ? ' listed' : '';
-      const tag = el('span', 'chip' + tier + (risk ? ' risk' : ''), SOURCE_LABEL[src]);
+      const tag = el('span', 'sicon' + tier + (risk ? ' risk' : ''), SOURCE_ICON[src]);
       tag.title = hasTranscript ? SOURCE_HELP[src]
         : on ? `${SOURCE_LABEL[src]} lists this session, but the transcript itself is in here-cli — Claude Desktop keeps Code-tab conversations in the shared ~/.claude tree`
         : risk ? 'Not in the synced repo — this session exists only on this Mac'
@@ -556,6 +700,7 @@ function whereFilter() {
 let inFlight = 0;
 async function refresh() {
   const seq = ++inFlight;
+  lastRefresh = Date.now();
   if (deepRunning()) $('count').textContent = 'reading transcripts…';
   try {
     const w = whereFilter();
@@ -860,6 +1005,7 @@ $('confirmGo').onclick = async () => {
 };
 
 function closeDrawer() {
+  openDetailID = null;
   $('dhead').replaceChildren();
   $('drawer').dataset.on = 'no';
   $('drawer').setAttribute('aria-hidden', 'true');
@@ -870,6 +1016,7 @@ function closeDrawer() {
 }
 
 async function openDetail(id, tr) {
+  openDetailID = id;
   document.querySelectorAll('tbody tr[data-open]').forEach(x => delete x.dataset.open);
   if (tr) tr.dataset.open = 'yes';
   $('dhead').replaceChildren(el('h2', null, 'Reading the transcript\u2026'));
@@ -972,7 +1119,30 @@ async function takeHandOff() {
     if (id) openDetail(id);
   } catch { /* nothing handed over */ }
 }
-window.addEventListener('focus', takeHandOff);
+// Which session the drawer is showing, so regaining focus can re-read it.
+let openDetailID = null;
+// Listing re-reads transcripts off disk to date them, so a window you alt-tab
+// through must not do it every time. The drawer is one session and is the pane
+// that actually goes stale — you leave this window from it, via Open in Desktop
+// or VS Code, and those change what it is showing.
+const REFRESH_FLOOR = 30_000;
+let lastRefresh = Date.now();
+
+window.addEventListener('focus', async () => {
+  await takeHandOff();
+  if ($('drawer').dataset.on === 'yes') {
+    if (!openDetailID) return;
+    const id = openDetailID;
+    // In place, with no "Reading the transcript…" flash — the drawer is already
+    // showing this session, it is only the facts that may have moved.
+    try {
+      const d = await Call.ByName(LIBRARY_DETAIL, id);
+      if (openDetailID === id) renderDetail(d);
+    } catch { /* keep what is on screen */ }
+    return;
+  }
+  if (Date.now() - lastRefresh > REFRESH_FLOOR) refresh();
+});
 
 // Typing filters as you go, but not on every keystroke — each call re-reads
 // transcripts off disk. This searches what a row SHOWS; to search what was said

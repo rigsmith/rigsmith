@@ -39,10 +39,7 @@ func (r Record) Summary() string {
 	default:
 		// Pruning and size refusals are events in their own right — they happen
 		// to the staged copy whether or not anything new was written — so they
-		// are reported on quiet runs too. Redactions are not: the redactor runs
-		// over every JSON file on every pass, so its count is a property of the
-		// tree rather than of this run, and repeating it on a run that wrote
-		// nothing is the noise that hid the interesting lines.
+		// are reported on quiet runs too.
 		var extra string
 		if r.AgedOut > 0 {
 			extra += fmt.Sprintf(", %d aged out", r.AgedOut)
@@ -111,6 +108,14 @@ func FromSync(machine string, rep *engine.Report, serr error) Record {
 			rec.Files += r.Files
 			rec.Unchanged += r.Unchanged
 			rec.Redactions += r.Redactions
+			for _, fr := range r.Redacted {
+				if len(rec.RedactedFiles) >= MaxRedactedFiles {
+					break
+				}
+				rec.RedactedFiles = append(rec.RedactedFiles, RedactedFile{
+					Path: r.ID + "/" + fr.Rel, Kinds: fr.Kinds, Count: fr.Count,
+				})
+			}
 			rec.TooOld += r.RetentionByAge
 			rec.Skipped += r.SkippedFiles
 			rec.Oversize += len(r.Oversize)

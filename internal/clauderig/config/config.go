@@ -89,6 +89,14 @@ type Config struct {
 	// agents/plans deleted upstream) by default, as if --prune were passed.
 	// `restore --prune=false` overrides it for a single run.
 	AlwaysPrune bool `json:"alwaysPrune,omitempty"`
+	// RedactTranscripts scrubs credential-shaped tokens out of the STAGED copy of
+	// a transcript before it is committed. The live ~/.claude file is never
+	// touched — clauderig backs your machine up, it does not edit it — so the
+	// secret stays where you left it and simply stops leaving the machine.
+	//
+	// Off by default. It rewrites the middle of a conversation, which is a thing
+	// a backup tool should do only because you asked it to.
+	RedactTranscripts bool `json:"redactTranscripts,omitempty"`
 	// AutoRestore makes the SessionStart hook (`clauderig pull`) also restore on a
 	// FRESH machine (no projects yet) — auto-wiring a new computer. It deliberately
 	// never restores over an established machine (would churn/clobber).

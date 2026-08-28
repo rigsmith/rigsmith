@@ -34,7 +34,11 @@ clauderig ui                   # interactive dashboard
 - **Secrets never leave the machine.** Secret-bearing fields are stripped before
   commit; a tripwire fails the sync loudly if one slips past. Restore merges the
   synced config back without clobbering your local secrets — a new machine
-  re-authenticates.
+  re-authenticates. That covers config; a key you *pasted into a conversation*
+  lives in a transcript, which is prose rather than fields. Set
+  `"redactTranscripts": true` to scrub those on the way into the repo — the copy
+  in your `~/.claude` is left exactly as you wrote it, since clauderig backs a
+  machine up and does not edit it.
 - **Private repo, no exceptions.** The remote must be a GitHub repo that `gh`
   confirms is private — created with `gh repo create --private` or an existing
   one verified via `gh repo view`.

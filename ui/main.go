@@ -121,28 +121,43 @@ func main() {
 	// before Run silently does nothing for any window but the first — the
 	// sessions window opened from the tray menu and never from --sessions,
 	// which looked like a broken flag rather than a lifecycle rule.
-	if *showWindow || *showSessions {
-		app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
-			if *showWindow {
-				reveal(window)
-			}
-			if *showSessions {
-				reveal(sessionsWindow)
-			}
-		})
-	}
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		// A transparent backdrop leaves the window itself clear, so it has to be
+		// repainted or the gap before first paint shows the desktop instead of
+		// white. Only reachable now: setting it in the options is undone by the
+		// backdrop, which Wails applies afterwards.
+		window.SetBackgroundColour(inkColour)
+		sessionsWindow.SetBackgroundColour(inkColour)
+
+		if *showWindow {
+			reveal(window)
+		}
+		if *showSessions {
+			reveal(sessionsWindow)
+		}
+	})
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
 }
 
+// inkColour is --ink from the frontend's palette. It has to exist on the Go
+// side too: the window is painted before there is a document to read CSS from.
+var inkColour = application.NewRGB(0x0E, 0x0E, 0x12)
+
 // newWindow builds the detail window. It starts hidden and hides rather than
 // closes, so the tray outlives it — closing the window must not quit the app.
 func newWindow(app *application.App) *application.WebviewWindow {
 	w := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:          "main",
-		Title:         AppName,
+		Name:  "main",
+		Title: AppName,
+		// WKWebView is created opaque and paints its own background until the
+		// document's first paint, and RGBA's zero value is fully transparent —
+		// so an unset colour here means the window has nothing behind that
+		// first frame. Matching --ink keeps the reveal dark end to end.
+		BackgroundColour: application.NewRGB(0x0E, 0x0E, 0x12),
+
 		Width:         720,
 		Height:        560,
 		Hidden:        true,
@@ -150,6 +165,15 @@ func newWindow(app *application.App) *application.WebviewWindow {
 		URL:           "/",
 		Mac: application.MacWindow{
 			TitleBar: application.MacTitleBarHiddenInset,
+			// WKWebView is created opaque white and Wails never sets the
+			// webview's own colour — webviewSetBackgroundColour exists in the
+			// darwin bindings with no caller — so the window colour alone could
+			// not stop the flash. Transparent makes the webview draw nothing,
+			// leaving the window's colour visible until the document paints.
+			//
+			// This also resets the window to clearColor, which is why the
+			// colour is re-applied on ApplicationStarted.
+			Backdrop: application.MacBackdropTransparent,
 		},
 	})
 
@@ -218,15 +242,19 @@ func lastReveal(w *application.WebviewWindow) time.Time {
 // badly.
 func newSessionsWindow(app *application.App) *application.WebviewWindow {
 	w := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:     "sessions",
-		Title:    AppName + " — Sessions",
-		Width:    1200,
-		Height:   700,
-		MinWidth: 900,
-		Hidden:   true,
-		URL:      "/sessions.html",
+		Name:  "sessions",
+		Title: AppName + " — Sessions",
+		// Same reason as the status window: see newWindow.
+		BackgroundColour: application.NewRGB(0x0E, 0x0E, 0x12),
+		Width:            1200,
+		Height:           700,
+		MinWidth:         900,
+		Hidden:           true,
+		URL:              "/sessions.html",
 		Mac: application.MacWindow{
 			TitleBar: application.MacTitleBarHiddenInset,
+			// Same as the status window: see newWindow.
+			Backdrop: application.MacBackdropTransparent,
 		},
 	})
 	// Hide rather than close, exactly as the status window does: the tray is

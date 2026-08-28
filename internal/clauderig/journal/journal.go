@@ -50,6 +50,10 @@ const DirName = "journal"
 // wedges a sync, which oversized files have already done once.
 const MaxRecords = 1000
 
+// MaxRedactedFiles bounds one record's file list. A first sync over a tree full
+// of MCP configs can redact hundreds; the journal is a feed, not an inventory.
+const MaxRedactedFiles = 25
+
 // Op is the operation a record describes.
 type Op string
 
@@ -75,6 +79,13 @@ const (
 )
 
 // Leak is one tripwire finding: a value that looked like a credential.
+// RedactedFile is one file the redactor cleaned on the way into staging.
+type RedactedFile struct {
+	Path  string   `json:"path"`
+	Kinds []string `json:"kinds,omitempty"`
+	Count int      `json:"count,omitempty"`
+}
+
 type Leak struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`
@@ -110,6 +121,14 @@ type Record struct {
 	Projects int `json:"projects,omitempty"`
 
 	Leaks []Leak `json:"leaks,omitempty"`
+
+	// RedactedFiles names the files behind Redactions. The count alone said a
+	// secret was caught but not where, which is the only part anyone can act on.
+	//
+	// Kinds, never values — this is written into a file that syncs. It is a map
+	// of where credentials turned up, which is worth having and is not itself a
+	// credential.
+	RedactedFiles []RedactedFile `json:"redactedFiles,omitempty"`
 }
 
 // OK reports whether the record describes a clean run.

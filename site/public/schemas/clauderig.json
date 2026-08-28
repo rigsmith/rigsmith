@@ -59,6 +59,10 @@
         "floorBytes": { "type": "integer", "description": "Never squash below this byte floor." }
       }
     },
+    "redactTranscripts": {
+      "type": "boolean",
+      "description": "Scrub credential-shaped tokens (API keys, tokens, JWTs) out of the STAGED copy of a transcript before it is committed. Your live ~/.claude file is never modified. Off by default."
+    },
     "alwaysPrune": {
       "type": "boolean",
       "description": "Makes `restore` prune stale config files (deleted upstream) by default."
