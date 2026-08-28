@@ -2,8 +2,15 @@ package bridge
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
@@ -17,6 +24,15 @@ type AccountRow struct {
 	Subscription string `json:"subscription,omitempty"`
 	Org          string `json:"org,omitempty"`
 	Active       bool   `json:"active"`
+	// Profile is the Claude Desktop profile bound to this account, when one
+	// exists. The two logins are independent — clauderig never reads Desktop's
+	// credential — so this is a binding recorded when the profile was made, not
+	// a fact verified against Desktop.
+	Profile string `json:"profile,omitempty"`
+	// ProfileOpen is whether that profile has a window up. Unknown counts as
+	// closed here: the button says "open", and opening one that is already open
+	// focuses it rather than launching a second.
+	ProfileOpen bool `json:"profileOpen,omitempty"`
 }
 
 // LiveSession is one running Claude Code process. `account switch` refuses
@@ -66,12 +82,16 @@ func (a *Accounts) Get(ctx context.Context) (AccountsView, error) {
 		return v, nil
 	}
 	active, _ := st.Active()
+	profiles, openProfiles := desktopProfiles()
 	for _, acc := range all {
-		v.Accounts = append(v.Accounts, AccountRow{
+		row := AccountRow{
 			ID: acc.ID, Email: acc.Email,
 			Subscription: acc.SubscriptionType, Org: acc.OrganizationUUID,
 			Active: acc.ID == active,
-		})
+		}
+		row.Profile = profiles[acc.ID]
+		row.ProfileOpen = row.Profile != "" && openProfiles[row.Profile]
+		v.Accounts = append(v.Accounts, row)
 	}
 
 	// Checked even with no stored accounts: a machine that has never run
@@ -99,4 +119,119 @@ func claudeHome() string {
 		return ""
 	}
 	return filepath.Join(home, ".claude")
+}
+
+// desktopProfiles maps an account id to the Desktop profile bound to it, and
+// reports which of those profiles have a window up.
+//
+// Best-effort throughout: Desktop is a separate application with its own login,
+// and a machine with no profiles at all is the ordinary case. A failure here
+// costs the launch buttons, never the accounts list they sit beside.
+func desktopProfiles() (byAccount map[string]string, open map[string]bool) {
+	byAccount, open = map[string]string{}, map[string]bool{}
+	st, err := desktop.DefaultStore()
+	if err != nil {
+		return byAccount, open
+	}
+	profiles, err := st.List()
+	if err != nil {
+		return byAccount, open
+	}
+	app := desktop.New()
+	for _, p := range profiles {
+		if p.AccountID != "" {
+			byAccount[p.AccountID] = p.Name
+		}
+		// An unreadable process scan is not proof of anything, and treating it
+		// as open would disable the button that would have worked. `desktop
+		// open` focuses an already-open window anyway, so guessing closed is
+		// the harmless direction.
+		if running, rerr := desktop.IsRunning(app, p.DataDir()); rerr == nil && running {
+			open[p.Name] = true
+		}
+	}
+	return byAccount, open
+}
+
+// OpenDesktop launches (or focuses) the Claude Desktop profile bound to an
+// account. The write stays in the CLI: `desktop open` owns the profile
+// directory, the Electron flags and the already-running case, and none of that
+// should exist twice.
+func (a *Accounts) OpenDesktop(ctx context.Context, profile string) error {
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		return errors.New("no Desktop profile is bound to that account")
+	}
+	// Validated by membership, not by pattern: the set is known, so anything
+	// outside it is refused without guessing what a legal name looks like.
+	known, err := managedProfiles()
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(known, profile) {
+		return fmt.Errorf("%q is not a clauderig-managed Desktop profile", profile)
+	}
+	bin, err := resolveCLI()
+	if err != nil {
+		return err
+	}
+	out, err := exec.CommandContext(ctx, bin, "desktop", "open", profile).CombinedOutput()
+	if err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return errors.New(msg)
+		}
+		return err
+	}
+	return nil
+}
+
+// RunCLI opens a terminal running Claude Code as one account.
+//
+// `account run`, not `account switch`: run scopes the credential to that one
+// terminal, so starting a second account does not log the first out and the
+// live-session guard never comes into it. Switching is the machine-wide change
+// and stays where it is, behind its guard.
+func (a *Accounts) RunCLI(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("name an account")
+	}
+	st, err := account.DefaultStore()
+	if err != nil {
+		return err
+	}
+	all, err := st.List()
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(all, func(acc account.Account) bool { return acc.ID == id }) {
+		return fmt.Errorf("no stored account %q", id)
+	}
+	if runtime.GOOS != "darwin" {
+		return errors.New("opening a terminal is macOS-only for now")
+	}
+	bin, err := resolveCLI()
+	if err != nil {
+		return err
+	}
+
+	// A script rather than an argument: it survives quoting, and the terminal is
+	// left sitting there when claude exits instead of vanishing with whatever it
+	// last printed.
+	script := filepath.Join(os.TempDir(), "clauderig-account-"+id+".command")
+	body := "#!/bin/sh\n" + shQuote(bin) + " account run " + shQuote(id) + "\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		return err
+	}
+	app := os.Getenv("CLAUDERIG_TERMINAL")
+	if app == "" {
+		app = "Terminal"
+	}
+	if out, err := exec.CommandContext(ctx, "open", "-a", app, script).CombinedOutput(); err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("could not open %s: %s", app, msg)
+		}
+		return err
+	}
+	return nil
 }
