@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/health"
@@ -144,6 +145,12 @@ func main() {
 	}
 }
 
+// quitting is set before the windows are torn down, so their close hooks stop
+// cancelling and let the WebView2 instances go first. Everything else about the
+// app's lifetime is "hide, never close" — the tray is the app — and this is the
+// single exception.
+var quitting atomic.Bool
+
 // inkColour is --ink from the frontend's palette. It has to exist on the Go
 // side too: the window is painted before there is a document to read CSS from.
 var inkColour = application.NewRGB(0x0E, 0x0E, 0x12)
@@ -205,6 +212,16 @@ func newWindow(app *application.App) *application.WebviewWindow {
 	// RegisterHook, not OnWindowEvent: only the hook runs early enough to
 	// cancel the close. OnWindowEvent fires once the window is already going.
 	w.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		// Shutting down is the one time a close should be allowed through. Both
+		// windows host a WebView2, and cancelling every close means both are
+		// still alive when the process exits — Chromium then tries to unregister
+		// its window class while windows still exist and reports
+		// "Failed to unregister class Chrome_WidgetWin_0. Error = 1412"
+		// (ERROR_CLASS_HAS_WINDOWS). Letting them close first is the ordering it
+		// is asking for.
+		if quitting.Load() {
+			return
+		}
 		e.Cancel()
 		w.Hide()
 	})
@@ -299,6 +316,16 @@ func newSessionsWindow(app *application.App) *application.WebviewWindow {
 	// Hide rather than close, exactly as the status window does: the tray is
 	// the app, and closing either window must not take it down.
 	w.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		// Shutting down is the one time a close should be allowed through. Both
+		// windows host a WebView2, and cancelling every close means both are
+		// still alive when the process exits — Chromium then tries to unregister
+		// its window class while windows still exist and reports
+		// "Failed to unregister class Chrome_WidgetWin_0. Error = 1412"
+		// (ERROR_CLASS_HAS_WINDOWS). Letting them close first is the ordering it
+		// is asking for.
+		if quitting.Load() {
+			return
+		}
 		e.Cancel()
 		w.Hide()
 	})
@@ -350,7 +377,16 @@ func newTray(app *application.App, window, sessions *application.WebviewWindow, 
 	menu.Add("Sync now").OnClick(func(*application.Context) { runFromTray(actions, window, bridge.ActionSync) })
 	menu.Add("Pull").OnClick(func(*application.Context) { runFromTray(actions, window, bridge.ActionPull) })
 	menu.AddSeparator()
-	menu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
+	menu.Add("Quit").OnClick(func(*application.Context) {
+		// Close the windows before quitting, and the sessions window before the
+		// popup: WebView2 holds a window class per environment, and tearing the
+		// process down around live ones is what makes Chromium complain on exit.
+		// Close() is synchronous, so by app.Quit() they are gone.
+		quitting.Store(true)
+		sessions.Close()
+		window.Close()
+		app.Quit()
+	})
 	tray.SetMenu(menu)
 
 	tray.AttachWindow(window).WindowOffset(5).WindowDebounce(200 * time.Millisecond)
