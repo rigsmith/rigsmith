@@ -11,7 +11,14 @@
     --paper:#ECECEE; --muted:#7b7b87; --muted-2:#52525c;
     /* health — core/brand Green/Yellow/Red, dark-background values */
     --ok:#4CB86A; --warn:#E4B750; --err:#EF6661;
-    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    /* Every platform gets a face it actually has. The old stack named only
+       Apple's — ui-monospace and SFMono-Regular mean nothing on Windows or
+       Linux, so both fell through to the generic `monospace`, which is
+       whatever the browser feels like. Cascadia ships with Windows
+       Terminal, Consolas with Windows itself, DejaVu with most Linux. */
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,
+      'Cascadia Mono','Cascadia Code',Consolas,
+      'DejaVu Sans Mono','Liberation Mono',monospace;
   }
   *{box-sizing:border-box;}
   body{
@@ -27,7 +34,20 @@
      38px of top padding clears the inset traffic lights, which are drawn over
      the page with the macOS hidden-inset title bar rather than above it. */
   body{height:100vh;overflow:hidden;display:flex;flex-direction:column;}
+  /* 38px of top padding clears the macOS traffic lights, which sit over the
+     content because the title bar is hidden-inset. Windows is frameless with
+     nothing overlapping, so that space is just a gap — and Linux keeps its
+     native title bar, so it needs none either. */
   .head{flex:none;padding:38px 32px 0;}
+  :root[data-os="windows"] .head,
+  :root[data-os="linux"] .head{padding-top:18px;}
+
+  /* Frameless leaves no way to dismiss the window but clicking away. That is
+     how a tray popover should behave, but "should" is not "discoverable", so
+     Windows gets an explicit close. Hidden elsewhere: macOS has its traffic
+     lights and Linux its title bar. */
+  #closeWin{display:none;}
+  :root[data-os="windows"] #closeWin{display:inline-flex;}
   .scroll{flex:1;min-height:0;overflow-y:auto;padding:0 32px 18px;}
   .eyebrow{
     font-size:11px;letter-spacing:0.22em;text-transform:uppercase;
@@ -359,6 +379,7 @@
     <span class="rule"></span>
     <button id="backToList" hidden title="Back to the session list">← Back</button>
     <button class="iconbtn" id="popOut" title="Open the full sessions window" aria-label="Open the full sessions window"></button>
+    <button class="iconbtn" id="closeWin" title="Close" aria-label="Close"></button>
     <button id="toggleView" title="Switch between sync status and your sessions">
       <span id="lblSessions">Sessions</span><span id="lblStatus" data-off>Status</span>
     </button>
@@ -452,6 +473,7 @@ const ICON_POPOUT = `<svg ${SVG_ATTRS}><path d="M9 2.75h4.25V7"/><path d="M13.25
 
 // A prompt for the CLI and a window for Desktop — the same distinction the
 // store icons draw, so the two panels teach one vocabulary rather than two.
+const ICON_CLOSE = `<svg ${SVG_ATTRS}><path d="M4 4l8 8"/><path d="M12 4l-8 8"/></svg>`;
 const ICON_FOLDER = `<svg ${SVG_ATTRS}><path d="M1.75 4.25A1.5 1.5 0 0 1 3.25 2.75h2.4a1 1 0 0 1 .8.4l.9 1.2h4.4a1.5 1.5 0 0 1 1.5 1.5v5.4a1.5 1.5 0 0 1-1.5 1.5h-8.5a1.5 1.5 0 0 1-1.5-1.5Z"/></svg>`;
 const ICON_TERMINAL = `<svg ${SVG_ATTRS}><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75"/>` +
   '<path d="M4.75 6.25 7 8l-2.25 1.75"/><path d="M8.5 10.25h3"/></svg>';
@@ -601,7 +623,16 @@ const cell = (text, cls) => {
   return td;
 };
 
+// The page styles itself per platform: the header clears macOS traffic lights,
+// Windows is frameless and needs its own close. The snapshot already carries
+// the OS, so nothing new has to be plumbed for it.
+function applyPlatform(os) {
+  const v = String(os || '').toLowerCase();
+  if (v) document.documentElement.dataset.os = v;
+}
+
 function render(snap) {
+  applyPlatform(snap.os);
   $('machine').textContent = `${snap.machine} · ${snap.os}`;
 
   $('banner').dataset.level = snap.level;
@@ -1291,6 +1322,11 @@ function showView(next) {
   // rest of the day.
   if (next === 'sessions' && $('sdetail').hidden) loadSessions();
 }
+
+// Hide, not quit: the tray is the app, and a popover's close means "put it
+// away" — the same thing clicking elsewhere does.
+$('closeWin').innerHTML = ICON_CLOSE;
+$('closeWin').addEventListener('click', () => Call.ByName(WINDOWS_HIDE, 'main'));
 
 $('toggleView').addEventListener('click', () => {
   showView(view === 'status' ? 'sessions' : 'status');

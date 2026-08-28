@@ -10,7 +10,14 @@
     --line:#26262f; --line-soft:#1d1d25;
     --paper:#ECECEE; --muted:#7b7b87; --muted-2:#52525c;
     --ok:#4CB86A; --warn:#E4B750; --err:#EF6661;
-    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    /* Every platform gets a face it actually has. The old stack named only
+       Apple's — ui-monospace and SFMono-Regular mean nothing on Windows or
+       Linux, so both fell through to the generic `monospace`, which is
+       whatever the browser feels like. Cascadia ships with Windows
+       Terminal, Consolas with Windows itself, DejaVu with most Linux. */
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,
+      'Cascadia Mono','Cascadia Code',Consolas,
+      'DejaVu Sans Mono','Liberation Mono',monospace;
   }
   *{box-sizing:border-box;}
   body{

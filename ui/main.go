@@ -131,6 +131,9 @@ func main() {
 		window.SetBackgroundColour(inkColour)
 		sessionsWindow.SetBackgroundColour(inkColour)
 
+		// Now the tray is registered, so Windows will accept an icon.
+		applyLevel(tray, health.Amber)
+
 		if *showWindow {
 			reveal(window)
 		}
@@ -165,6 +168,15 @@ func newWindow(app *application.App) *application.WebviewWindow {
 		Hidden:        true,
 		DisableResize: false,
 		URL:           "/",
+		// Frameless on Windows only. macOS hides the title bar while keeping the
+		// traffic lights (MacTitleBarHiddenInset), which has no Windows
+		// equivalent — a native caption bar on a tray popover looks like a
+		// dialog that wandered out of a settings screen. The header is already
+		// draggable, and clicking away dismisses it, so the bar was carrying no
+		// weight. The sessions window keeps its frame: that one is a real window
+		// you keep open, and taking its minimise and close buttons away to match
+		// would be fidelity for its own sake.
+		Frameless: runtime.GOOS == "windows",
 		Mac: application.MacWindow{
 			TitleBar: application.MacTitleBarHiddenInset,
 			// WKWebView is created opaque white and Wails never sets the
@@ -329,7 +341,14 @@ func newTray(app *application.App, window, sessions *application.WebviewWindow, 
 
 	// Amber until the first poll answers — better an honest "unknown" than a
 	// green icon we have not earned.
-	applyLevel(tray, health.Amber)
+	// NOT here on Windows: the notification area icon is not registered until
+	// the app runs, and setting one first logs "ShellNotifyIcon NIM_MODIFY
+	// failed (icon not registered)" twice on every launch. macOS does not mind,
+	// but there is no reason to do it early on either — the first poll sets the
+	// real level within seconds.
+	if runtime.GOOS != "windows" {
+		applyLevel(tray, health.Amber)
+	}
 	tray.SetTooltip(AppName + " — checking…")
 	return tray
 }

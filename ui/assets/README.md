@@ -4,8 +4,13 @@ Six 44×44 PNGs — the three health states (green / amber / red) × the two men
 bar backgrounds (light / dark). `assets.go` embeds them; `Tray(health.Level)`
 returns the matching pair for `SetIcon` / `SetDarkModeIcon`.
 
-44px is the macOS retina menu bar slot (22pt @2x). Windows wants 16 or 32 and
-downsamples from this cleanly.
+44px is the macOS retina menu bar slot (22pt @2x).
+
+Windows is a separate set at 32px. It draws the notification area icon at 16
+(32 on a high-DPI display) and scales whatever it is handed to fit — from 44
+that is a non-integer ratio and the mark comes out visibly squashed. This file
+used to claim it downsampled cleanly; a screenshot from a real Windows machine
+says otherwise.
 
 ## Source
 
