@@ -33,9 +33,21 @@ const (
 // search never climbs past it to anchor on a manifest / config that lives
 // outside the repository (e.g. a stray solution up in the home directory).
 func Root(start string) string {
+	root, _ := FindRoot(start)
+	return root
+}
+
+// FindRoot is Root, plus whether anything actually anchored it.
+//
+// Root returns the starting directory when it finds no marker, which reads the
+// same as finding one there — so a caller in ~ or C:\Users\John cannot tell
+// "this is the repo root" from "there is no repo here", and goes on to scan a
+// home directory for projects. anchored is false in that case, and the honest
+// response is to do nothing rather than to search the machine.
+func FindRoot(start string) (root string, anchored bool) {
 	dir, err := filepath.Abs(start)
 	if err != nil {
-		return start
+		return start, false
 	}
 	var rigDir, manifestDir, gitDir string
 	for d := dir; ; {
@@ -62,13 +74,13 @@ func Root(start string) string {
 	}
 	switch {
 	case rigDir != "":
-		return rigDir
+		return rigDir, true
 	case manifestDir != "":
-		return manifestDir
+		return manifestDir, true
 	case gitDir != "":
-		return gitDir
+		return gitDir, true
 	}
-	return dir
+	return dir, false
 }
 
 // hasWorkspaceManifest reports whether dir directly contains a workspace-level

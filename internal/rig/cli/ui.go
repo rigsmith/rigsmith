@@ -153,7 +153,16 @@ type menuModel struct {
 	query        string          // the active name filter
 	status       string          // one-line feedback after an exclude/include
 	pending      *pendingExclude // the "just this / whole dir?" prompt
+	// scanning means discovery has not finished. The menu paints its banner and
+	// says what it is doing rather than showing a blank terminal until the
+	// filesystem is done — on a large tree that wait is most of a minute, and
+	// nothing on screen reads as a hang.
+	scanning bool
+	scanDir  string
 }
+
+// menuReadyMsg carries the built menu back from the discovery goroutine.
+type menuReadyMsg struct{ built menuModel }
 
 // projectRow is one project in the menu's picker: its name, ecosystem, repo path,
 // and whether the current .rig.json excludes it.
@@ -200,9 +209,53 @@ var (
 	menuNext     = lipgloss.NewStyle().Bold(true).Foreground(brandGreen)
 )
 
+// newMenu returns a menu that paints immediately and finishes building itself
+// in the background. buildMenu does the actual work.
+//
+// Discovery reads the filesystem, and how long that takes is not knowable in
+// advance — it is someone else's tree. Doing it before the first paint means the
+// banner appears only once it is over, which is precisely backwards: the slower
+// the machine, the longer it looks broken.
 func newMenu() menuModel {
 	cwd, _ := os.Getwd()
-	root := resolveRoot(cwd)
+	return menuModel{
+		scanning: true,
+		scanDir:  cwd,
+		stack:    []frame{{title: "", items: nil}},
+		root:     cwd,
+	}
+}
+
+// Init kicks off discovery. Returning it as a command rather than running it in
+// newMenu is what lets bubbletea paint first.
+func (m menuModel) Init() tea.Cmd {
+	if !m.scanning {
+		return nil
+	}
+	return func() tea.Msg { return menuReadyMsg{built: buildMenu()} }
+}
+
+func buildMenu() menuModel {
+	cwd, _ := os.Getwd()
+	root, anchored := detect.FindRoot(cwd)
+	if rootFlag != "" {
+		// An explicit --root is a statement that this IS the project, so it
+		// anchors by itself.
+		root, anchored = resolveRoot(cwd), true
+	}
+
+	// Nothing anchors a project here — no .rig.json, no manifest, no .git,
+	// anywhere up the tree. Everything below this point searches for projects,
+	// and searching a directory that is not a repository means searching whatever
+	// it happens to contain: run in a home directory it walked the lot, showing
+	// nothing at all until it finished.
+	//
+	// The menu still opens, with every verb and the project picker. It simply
+	// does not go looking.
+	if !anchored {
+		return unanchoredMenu(root)
+	}
+
 	eco, err := resolvePrimary(cwd, root)
 	primary := eco
 	if err != nil {
@@ -325,6 +378,36 @@ func newMenu() menuModel {
 	}
 }
 
+// unanchoredMenu is the menu for a directory that is not a project: no
+// .rig.json, no manifest, no .git, anywhere above it.
+//
+// It offers what still makes sense there — starting a project, and the
+// maintenance verbs that act on the machine rather than on a repo — and says
+// plainly that it found nothing, so the emptiness reads as an answer rather
+// than a failure.
+//
+// The point is what it does NOT do: no ecosystem detection, no capability
+// probe, no walking the tree looking for project files. Run in a home
+// directory, that search is the whole home directory.
+func unanchoredMenu(dir string) menuModel {
+	// Only what still means something here. No worktrees — those act on a
+	// repository, and there isn't one — and no build verbs, which would have
+	// nothing to build. A menu of entries that all error is worse than a short
+	// menu that is honest.
+	top := []menuItem{
+		{label: "init", desc: "scaffold .rig.json and make this a rig project", verb: "init", recommended: true},
+		{label: "doctor", desc: "check the environment", verb: "doctor"},
+		{label: "self-update", desc: "update rig itself", verb: "self-update"},
+	}
+	return menuModel{
+		header: fmt.Sprintf("%s  ·  %s", dir, "no project here"),
+		nextStep: "Nothing rig-related in this directory or above it — " +
+			"`rig init` starts one, or cd into a repository.",
+		stack: []frame{{title: "", items: top}},
+		root:  dir,
+	}
+}
+
 // worktreeMenuItems are the worktree lifecycle actions under the menu's
 // Worktrees group: create / list / open / remove. The new/open/rm wrappers drive
 // the branch-name prompt or worktree picker the arg-taking commands don't, so
@@ -405,8 +488,6 @@ func keepMapped(maps func(string) bool, items []menuItem) []menuItem {
 	}
 	return out
 }
-
-func (m menuModel) Init() tea.Cmd { return nil }
 
 func (m *menuModel) top() *frame { return &m.stack[len(m.stack)-1] }
 
@@ -539,8 +620,21 @@ func (m menuModel) updateMenuFilter(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if ready, ok := msg.(menuReadyMsg); ok {
+		return ready.built, nil
+	}
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
+		return m, nil
+	}
+	// Only ctrl+c and q land while scanning. Everything else acts on a menu that
+	// does not exist yet, and a keystroke that silently does nothing is worse
+	// than one that is ignored on purpose.
+	if m.scanning {
+		switch key.String() {
+		case "ctrl+c", "q", "esc":
+			return m, tea.Quit
+		}
 		return m, nil
 	}
 	cur := m.top()
@@ -657,6 +751,14 @@ func (m menuModel) View() string {
 	// quit, with nothing chosen, keeps the menu in scrollback.)
 	if m.chosen != "" || m.chosenCmd != nil {
 		return ""
+	}
+	// The banner first, always — it is the thing that says the tool started.
+	if m.scanning {
+		var b strings.Builder
+		b.WriteString(brand.RigBanner("") + "\n\n")
+		b.WriteString(dimStyle.Render("  looking for a project in "+m.scanDir) + "\n")
+		b.WriteString(dimStyle.Render("  q to quit") + "\n")
+		return b.String()
 	}
 	cur := m.stack[len(m.stack)-1]
 	var b strings.Builder
