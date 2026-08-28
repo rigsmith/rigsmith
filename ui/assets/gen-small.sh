@@ -36,7 +36,12 @@ SVG
 set -- green:007329:4CB86A amber:9D7200:E4B750 red:B63132:EF6661
 for spec in "$@"; do
   name=${spec%%:*}; rest=${spec#*:}; lightC=${rest%%:*}; darkC=${rest#*:}
-  mark "#$lightC" | rsvg-convert -w 32 -h 32 -o "tray-$name-light-32.png"
-  mark "#$darkC"  | rsvg-convert -w 32 -h 32 -o "tray-$name-dark-32.png"
+  # Rendered at 64 even though the file is named for 32. Windows asks for
+  # SM_CXSMICON — 16, 20, 24 or 32 depending on the display's scaling — and
+  # scales this one image to whatever that is. 64 divides evenly into 16 and 32
+  # and resamples gracefully to the awkward 20 and 24 a 125% or 150% display
+  # asks for, which 32 does not.
+  mark "#$lightC" | rsvg-convert -w 64 -h 64 -o "tray-$name-light-32.png"
+  mark "#$darkC"  | rsvg-convert -w 64 -h 64 -o "tray-$name-dark-32.png"
 done
 echo "regenerated 6 × 32px tray icons"

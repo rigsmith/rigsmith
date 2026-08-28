@@ -174,6 +174,12 @@ func newWindow(app *application.App) *application.WebviewWindow {
 		// you keep open, and taking its minimise and close buttons away to match
 		// would be fidelity for its own sake.
 		Frameless: runtime.GOOS == "windows",
+		// Windows' default is SystemDefault, so on a light-themed machine the
+		// frame and WebView2's own pre-paint background come up light — which is
+		// the white flash, arriving from the one surface CSS cannot reach. This
+		// UI is dark whatever the system says, so declaring it is right on its
+		// own merits and not only as a fix.
+		Windows: application.WindowsWindow{Theme: application.Dark},
 		Mac: application.MacWindow{
 			TitleBar: application.MacTitleBarHiddenInset,
 			// WKWebView is created opaque white and Wails never sets the
@@ -271,6 +277,8 @@ func newSessionsWindow(app *application.App) *application.WebviewWindow {
 		MinWidth:         900,
 		Hidden:           true,
 		URL:              "/sessions.html",
+		// Same as the status window: see newWindow.
+		Windows: application.WindowsWindow{Theme: application.Dark},
 		Mac: application.MacWindow{
 			TitleBar: application.MacTitleBarHiddenInset,
 			// Same as the status window: see newWindow.

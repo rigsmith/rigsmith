@@ -6,11 +6,14 @@ returns the matching pair for `SetIcon` / `SetDarkModeIcon`.
 
 44px is the macOS retina menu bar slot (22pt @2x).
 
-Windows is a separate set at 32px, drawn HEAVIER — regenerate with
+Windows is a separate set, drawn HEAVIER and rendered at 64px (the files keep
+the `-32` name) — regenerate with
 `./gen-small.sh` (needs `rsvg-convert`).
 
-It asks for `GetSystemMetrics(SM_CXSMICON)`, which is 16px at 100% DPI, and
-scales whatever it is handed. Size was only half the problem: the mark's
+It asks for `GetSystemMetrics(SM_CXSMICON)` — 16, 20, 24 or 32 depending on the
+display's scaling — and scales this one image to whatever that is. 64 divides
+evenly into 16 and 32 and resamples gracefully to the awkward sizes a 125% or
+150% display asks for, which 32 does not. Size was only half the problem: the mark's
 published `stroke-width` of 8 on a 100 viewBox is 1.3px at 16, which
 anti-aliases into a smudge, and the spark's four crossed arms span under three
 pixels and merge into a blob. The small set uses the same geometry and the same
