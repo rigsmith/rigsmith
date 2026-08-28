@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -207,31 +206,12 @@ func (a *Accounts) RunCLI(ctx context.Context, id string) error {
 	if !slices.ContainsFunc(all, func(acc account.Account) bool { return acc.ID == id }) {
 		return fmt.Errorf("no stored account %q", id)
 	}
-	if runtime.GOOS != "darwin" {
-		return errors.New("opening a terminal is macOS-only for now")
-	}
 	bin, err := resolveCLI()
 	if err != nil {
 		return err
 	}
-
 	// A script rather than an argument: it survives quoting, and the terminal is
 	// left sitting there when claude exits instead of vanishing with whatever it
 	// last printed.
-	script := filepath.Join(os.TempDir(), "clauderig-account-"+id+".command")
-	body := "#!/bin/sh\n" + shQuote(bin) + " account run " + shQuote(id) + "\n"
-	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
-		return err
-	}
-	app := os.Getenv("CLAUDERIG_TERMINAL")
-	if app == "" {
-		app = "Terminal"
-	}
-	if out, err := exec.CommandContext(ctx, "open", "-a", app, script).CombinedOutput(); err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("could not open %s: %s", app, msg)
-		}
-		return err
-	}
-	return nil
+	return runInTerminal(ctx, "account-"+id, "", []string{bin, "account", "run", id})
 }

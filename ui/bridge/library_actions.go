@@ -118,10 +118,26 @@ func (l *Library) find(id string) (sessions.Row, config.Machine, error) {
 // resumeCommand builds the command that reopens a session in a terminal, shell
 // quoted, matching what `clauderig recent -l` prints.
 func resumeCommand(row sessions.Row) string {
+	// Quoted for the shell of the machine reading it. "Copy command" exists to
+	// be pasted into a terminal, and a POSIX-quoted line pasted into cmd.exe is
+	// not a command, it is a syntax error.
+	if runtime.GOOS == "windows" {
+		if row.Cwd != "" {
+			return "cd /d " + winQuote(row.Cwd) + " && claude --resume " + winQuote(row.ID)
+		}
+		return "claude --resume " + winQuote(row.ID)
+	}
 	if row.Cwd != "" {
 		return "cd " + shQuote(row.Cwd) + " && claude --resume " + shQuote(row.ID)
 	}
 	return "claude --resume " + shQuote(row.ID)
+}
+
+// winQuote wraps a value for a cmd.exe command line. Unlike cmdQuote it does
+// not escape `%`: this is typed at a prompt rather than written into a batch
+// file, and the two expand it differently.
+func winQuote(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 // shQuote wraps a value in single quotes for a POSIX shell.
@@ -210,30 +226,11 @@ func (l *Library) OpenTerminal(ctx context.Context, id string) error {
 		return err
 	}
 	if !row.CLILive {
-		return errors.New("that session's transcript is not on this Mac — restore it first")
+		return errors.New("that session's transcript is not on this machine — restore it first")
 	}
-	if runtime.GOOS != "darwin" {
-		return errors.New("opening a terminal is macOS-only for now — use Copy command")
-	}
-
-	// A script rather than an argument: it survives quoting, and the terminal
-	// is left sitting in the session's directory when claude exits.
-	script := filepath.Join(os.TempDir(), "clauderig-resume-"+row.ID+".command")
-	body := "#!/bin/sh\n" + resumeCommand(row) + "\n"
-	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
-		return err
-	}
-	app := os.Getenv("CLAUDERIG_TERMINAL")
-	if app == "" {
-		app = "Terminal"
-	}
-	if out, err := exec.CommandContext(ctx, "open", "-a", app, script).CombinedOutput(); err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("could not open %s: %s", app, msg)
-		}
-		return err
-	}
-	return nil
+	// A script rather than an argument: it survives quoting, and the shell is
+	// left sitting in the session's directory when claude exits.
+	return runInTerminal(ctx, "resume-"+row.ID, row.Cwd, resumeArgv(row.ID))
 }
 
 // vscodeResumeURL is the deep link the Claude Code VS Code extension registers.
