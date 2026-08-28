@@ -76,6 +76,16 @@ jobs:
           git config --global user.name rigsmith-ci
           git config --global init.defaultBranch main
 
+      # Wails v3 links against GTK 4 and WebKitGTK 6.0 on Linux — not the GTK 3 /
+      # WebKit2GTK 4.1 pairing most guides still name — so `go test ./...` cannot
+      # compile ./ui here without them. The app only ships for macOS, but keeping
+      # it inside ./... means a change that breaks another platform is caught
+      # here rather than by whoever tries to port it.
+      - name: Linux GUI headers (for ./ui)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+
       # CI runs on main/PRs but not on tags, so gate the release on the tests
       # passing at the exact tagged commit — never publish binaries that fail.
       - name: Test
