@@ -161,12 +161,14 @@ func Of(info status.Info, last journal.Record) Report {
 	return r
 }
 
-// Tooltip renders the tray tooltip: the machine name plus the summary, clamped
-// to what Windows accepts.
-func (r Report) Tooltip(machine string) string {
+// Tooltip renders the tray tooltip: label plus the summary, clamped to what
+// Windows accepts. The label identifies which menu bar icon this is — several
+// apps show a similar glyph and the summary alone ("Up to date") says nothing
+// about what is up to date.
+func (r Report) Tooltip(label string) string {
 	s := r.Summary
-	if machine != "" {
-		s = machine + " — " + s
+	if label != "" {
+		s = label + " — " + s
 	}
 	return truncate(s, tooltipMax)
 }

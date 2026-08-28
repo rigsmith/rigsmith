@@ -157,11 +157,11 @@ func TestSingularCommit(t *testing.T) {
 
 func TestTooltip(t *testing.T) {
 	r := Of(synced(), journal.Record{})
-	if got := r.Tooltip("Johns-MacBook-Pro16"); got != "Johns-MacBook-Pro16 — Up to date" {
+	if got := r.Tooltip("claudeRig UI"); got != "claudeRig UI — Up to date" {
 		t.Fatalf("tooltip = %q", got)
 	}
 	if got := r.Tooltip(""); got != "Up to date" {
-		t.Fatalf("machine-less tooltip = %q", got)
+		t.Fatalf("label-less tooltip = %q", got)
 	}
 }
 

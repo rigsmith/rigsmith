@@ -32,6 +32,25 @@ import (
 //go:embed all:frontend/dist
 var frontend embed.FS
 
+const (
+	// AppName is the user-facing name: the macOS menu bar title, the window
+	// title, the About box.
+	//
+	// Lowercase "c" deliberately — `claudeRig` is the wordmark the whole repo
+	// and design/marks.js use, so the app matches its CLI rather than
+	// introducing a second spelling of the same product.
+	AppName = "claudeRig UI"
+
+	// BundleID identifies the macOS/Windows bundle, following the same
+	// dev.rigsmith.<thing> convention as the packaging examples.
+	//
+	// Nothing reads this yet, and being in package main nothing ever can — the
+	// Info.plist and installer configs that need it aren't Go. It sits beside
+	// AppName because that's where someone will look for it; README.md repeats
+	// it for the packaging work to copy.
+	BundleID = "dev.rigsmith.clauderig-ui"
+)
+
 // pollInterval is the tray's refresh cadence. status.Gather is local-only, so
 // this costs a few git plumbing calls and no network.
 const pollInterval = 45 * time.Second
@@ -44,9 +63,10 @@ func main() {
 	flag.Parse()
 
 	statusSvc := bridge.NewStatus()
+	actionsSvc := bridge.NewActions()
 
 	app := application.New(application.Options{
-		Name:        "clauderig",
+		Name:        AppName,
 		Description: "Claude Code sync status",
 		LogLevel:    slog.LevelWarn,
 		Assets: application.AssetOptions{
@@ -55,6 +75,9 @@ func main() {
 		Services: []application.Service{
 			application.NewService(statusSvc),
 			application.NewService(bridge.NewActivity()),
+			application.NewService(actionsSvc),
+			application.NewService(bridge.NewSessions()),
+			application.NewService(bridge.NewAccounts()),
 		},
 		Mac: application.MacOptions{
 			// Accessory keeps it out of the Dock and the app switcher: the
@@ -67,9 +90,15 @@ func main() {
 	})
 
 	window := newWindow(app)
-	tray := newTray(app, window)
+	tray := newTray(app, window, actionsSvc)
 
 	go poll(app, statusSvc, tray, window)
+
+	// An action changes exactly what the tray reports, so repaint the moment
+	// one finishes rather than waiting out the poll interval.
+	app.Event.On(bridge.EventActionDone, func(*application.CustomEvent) {
+		refresh(app.Context(), statusSvc, tray, window)
+	})
 
 	if *showWindow {
 		reveal(window)
@@ -85,7 +114,7 @@ func main() {
 func newWindow(app *application.App) *application.WebviewWindow {
 	w := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:          "main",
-		Title:         "clauderig",
+		Title:         AppName,
 		Width:         720,
 		Height:        560,
 		Hidden:        true,
@@ -115,11 +144,17 @@ func reveal(w *application.WebviewWindow) {
 
 // newTray builds the menu bar icon. Clicking it toggles the window beneath the
 // icon; the menu carries the actions.
-func newTray(app *application.App, window *application.WebviewWindow) *application.SystemTray {
+func newTray(app *application.App, window *application.WebviewWindow, actions *bridge.Actions) *application.SystemTray {
 	tray := app.SystemTray.New()
 
 	menu := app.NewMenu()
-	menu.Add("Open clauderig").OnClick(func(*application.Context) { reveal(window) })
+	menu.Add("Open " + AppName).OnClick(func(*application.Context) { reveal(window) })
+	menu.AddSeparator()
+	// Running an action from the tray opens the window too: the output streams
+	// into the drawer, and a sync that reports a tripwire refusal with nobody
+	// looking is the failure mode this whole project exists to end.
+	menu.Add("Sync now").OnClick(func(*application.Context) { runFromTray(actions, window, bridge.ActionSync) })
+	menu.Add("Pull").OnClick(func(*application.Context) { runFromTray(actions, window, bridge.ActionPull) })
 	menu.AddSeparator()
 	menu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
 	tray.SetMenu(menu)
@@ -129,7 +164,7 @@ func newTray(app *application.App, window *application.WebviewWindow) *applicati
 	// Amber until the first poll answers — better an honest "unknown" than a
 	// green icon we have not earned.
 	applyLevel(tray, health.Amber)
-	tray.SetTooltip("clauderig — checking…")
+	tray.SetTooltip(AppName + " — checking…")
 	return tray
 }
 
@@ -157,16 +192,26 @@ func refresh(ctx context.Context, svc *bridge.Status, tray *application.SystemTr
 	if err != nil {
 		// A snapshot we cannot take is itself a state worth showing.
 		applyLevel(tray, health.Amber)
-		tray.SetTooltip("clauderig — status unavailable")
+		tray.SetTooltip(AppName + " — status unavailable")
 		return
 	}
 
 	applyLevel(tray, rep.Level)
-	tray.SetTooltip(rep.Tooltip(""))
+	tray.SetTooltip(rep.Tooltip(AppName))
 
 	// Let an open window re-render without waiting for its own poll.
 	if window != nil {
 		window.EmitEvent("clauderig:health", rep)
+	}
+}
+
+// runFromTray starts an action and shows the window so its output is visible.
+func runFromTray(actions *bridge.Actions, window *application.WebviewWindow, a bridge.Action) {
+	reveal(window)
+	if err := actions.Run(context.Background(), string(a)); err != nil {
+		// Busy or unresolvable binary — the window is already up, so the
+		// frontend's own error row is the right place for it.
+		window.EmitEvent(bridge.EventActionDone, bridge.Done{Action: string(a), Error: err.Error()})
 	}
 }
 

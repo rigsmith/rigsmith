@@ -95,7 +95,7 @@ func newPeekListCmd() *cobra.Command {
 			for _, s := range shown {
 				title := s.Title
 				if title == "" {
-					title = DimStyle.Render("(no readable prompt)")
+					title = DimStyle.Render("(no typed prompt)")
 				}
 				fmt.Fprintf(out, "  %s  %s\n", OkStyle.Render(shortID(s.ID)), title)
 				fmt.Fprintf(out, "      %s\n", DimStyle.Render(fmt.Sprintf("%s · %s · %s",

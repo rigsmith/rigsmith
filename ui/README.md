@@ -1,10 +1,19 @@
-# clauderig UI
+# claudeRig UI
 
 The ambient face of clauderig: a menu bar icon that colours itself from real
 sync state, plus a window for the detail. Design and phasing live in
 [docs/CLAUDERIG-UI-PLAN.md](../docs/CLAUDERIG-UI-PLAN.md).
 
 Wails v3 (`v3.0.0-beta.5`, pinned), Go backend, platform webview frontend.
+
+| | |
+|---|---|
+| Display name | `claudeRig UI` — lowercase "c", matching the `claudeRig` wordmark |
+| Bundle identifier | `dev.rigsmith.clauderig-ui` |
+| Binary | `clauderig-ui` |
+
+Name and bundle id are `AppName` / `BundleID` in `main.go`. Packaging can't read a Go
+constant, so they're duplicated here deliberately — change both together.
 
 ## Build and run
 

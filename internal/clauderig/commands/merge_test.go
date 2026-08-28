@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,15 +132,22 @@ func TestMergeResolvesEveryPolicy(t *testing.T) {
 		t.Fatal("expected the merge to conflict — the fixture edits the same files on both sides")
 	}
 
-	resolved, residual, err := applyPolicies(ctx, io.Discard, repo)
+	ledger, residual, err := applyPolicies(ctx, repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(residual) != 0 {
 		t.Fatalf("every file has a policy, but these were left: %v", residual)
 	}
-	if resolved != 5 {
-		t.Errorf("resolved %d files, want 5", resolved)
+	if len(ledger) != 5 {
+		t.Errorf("resolved %d files, want 5", len(ledger))
+	}
+	// Every entry names its policy and says what it did — that is the ledger
+	// the Resolve panel renders, and the reason the merge is auditable.
+	for _, r := range ledger {
+		if r.Path == "" || r.Policy == "" || r.Detail == "" {
+			t.Errorf("incomplete ledger entry: %+v", r)
+		}
 	}
 
 	// Both machines survive in every file.
@@ -192,7 +198,7 @@ func TestMergeLeavesUnpoliciedFilesConflicted(t *testing.T) {
 	if _, err := repo.MergeRef(ctx, "origin/main"); err != nil {
 		t.Fatal(err)
 	}
-	resolved, residual, err := applyPolicies(ctx, io.Discard, repo)
+	ledger, residual, err := applyPolicies(ctx, repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,8 +208,8 @@ func TestMergeLeavesUnpoliciedFilesConflicted(t *testing.T) {
 	}
 	// The file it *could* handle still got resolved — a partial merge is
 	// progress, and aborting would throw that away.
-	if resolved != 1 {
-		t.Errorf("resolved%d, want the devices file resolved alongside", resolved)
+	if len(ledger) != 1 {
+		t.Errorf("resolved %d, want the devices file resolved alongside", len(ledger))
 	}
 	// The unresolved file keeps git's markers so a mergetool can open it.
 	if body := readRepo(t, repo.Dir, "skills/thing.md"); !strings.Contains(body, "<<<<<<<") {

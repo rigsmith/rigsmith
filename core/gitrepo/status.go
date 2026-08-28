@@ -50,6 +50,28 @@ func (r *Repo) LogNameOnly(ctx context.Context, ref, format, pathspec string) (s
 	return runGit(ctx, r.Dir, args...)
 }
 
+// TreePaths lists the files present at ref under pathspec — what actually
+// exists there, as opposed to what history mentions. A log walk sees paths from
+// every commit including ones later deleted; this is how a caller tells the two
+// apart.
+func (r *Repo) TreePaths(ctx context.Context, ref, pathspec string) ([]string, error) {
+	args := []string{"ls-tree", "-r", "-z", "--name-only", ref}
+	if pathspec != "" {
+		args = append(args, "--", pathspec)
+	}
+	out, err := runGit(ctx, r.Dir, args...)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
 // Divergence is HEAD's position relative to a tracking ref, as of the last
 // fetch. Ahead/Behind are commit counts; Conflict answers "would merging that
 // ref leave conflicts" without touching the worktree.

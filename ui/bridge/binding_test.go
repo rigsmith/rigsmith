@@ -30,6 +30,13 @@ func TestFrontendCallsMatchBoundMethods(t *testing.T) {
 	called := []string{
 		fqn(&Status{}, "Get"),
 		fqn(&Activity{}, "Recent"),
+		fqn(&Actions{}, "Run"),
+		fqn(&Actions{}, "Busy"),
+		fqn(&Actions{}, "RunWith"),
+		fqn(&Sessions{}, "List"),
+		fqn(&Sessions{}, "Read"),
+		fqn(&Sessions{}, "Machines"),
+		fqn(&Accounts{}, "Get"),
 	}
 	for _, want := range called {
 		if !strings.Contains(html, want) {
@@ -48,6 +55,9 @@ func TestBoundMethodsExist(t *testing.T) {
 	}{
 		{&Status{}, []string{"Get", "Health"}},
 		{&Activity{}, []string{"Recent"}},
+		{&Actions{}, []string{"Run", "Busy", "RunWith"}},
+		{&Sessions{}, []string{"List", "Read", "Machines"}},
+		{&Accounts{}, []string{"Get"}},
 	} {
 		typ := reflect.TypeOf(tc.svc)
 		for _, method := range tc.methods {

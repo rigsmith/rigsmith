@@ -26,6 +26,8 @@ func TestMain(m *testing.M) {
 type syncCommit struct {
 	machine string
 	files   map[string]string
+	// delete removes paths, standing in for a retention prune.
+	delete []string
 }
 
 // remoteRepo builds a repo whose origin/main carries the given sync commits in
@@ -59,6 +61,11 @@ func remoteRepo(t *testing.T, commits ...syncCommit) *gitrepo.Repo {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, rel := range c.delete {
+			if err := os.Remove(filepath.Join(wc, filepath.FromSlash(rel))); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -352,5 +359,135 @@ func TestMachinesAndFilter(t *testing.T) {
 	}
 	if got := FilterMachine(sessions, ""); len(got) != 4 {
 		t.Errorf("empty filter should pass everything, got %d", len(got))
+	}
+}
+
+// The same session can live at more than one path — a project directory
+// renamed, or two machines whose slugs differ for the same cwd. It is still one
+// session, and listing it twice inflates every count derived from the listing.
+// Real data produced the same id four times before this was fixed.
+func TestListDedupesBySessionID(t *testing.T) {
+	ctx := context.Background()
+	const id = "0a0a0a0a-0000-0000-0000-000000000000"
+	repo := remoteRepo(t,
+		syncCommit{machine: "Pro16", files: map[string]string{
+			"cli/projects/-old-slug/" + id + ".jsonl": transcript("before the move"),
+		}},
+		syncCommit{machine: "Air13", files: map[string]string{
+			"cli/projects/-new-slug/" + id + ".jsonl": transcript("after the move"),
+		}},
+	)
+
+	sessions, err := List(ctx, repo, DefaultRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("session listed %d times, want once: %+v", len(sessions), sessions)
+	}
+	// The newest sync wins, so the surviving path is the current one.
+	if sessions[0].Slug != "-new-slug" || sessions[0].Machine != "Air13" {
+		t.Errorf("kept the stale copy: %+v", sessions[0])
+	}
+
+	// Find must therefore report one match, not two.
+	if _, err := Find(sessions, id[:8]); err != nil {
+		t.Errorf("prefix lookup should be unambiguous now: %v", err)
+	}
+}
+
+// Claude Code writes a session's sub-agent output under the session's own
+// directory. Those are not sessions, and because IDFromTranscriptRel maps them
+// to their parent's id, one appearing in a newer sync could shadow the real
+// transcript — the viewer would render an agent's output as the conversation.
+func TestListExcludesSubagentTranscripts(t *testing.T) {
+	ctx := context.Background()
+	const id = "77777777-0000-0000-0000-000000000000"
+	repo := remoteRepo(t,
+		syncCommit{machine: "Pro16", files: map[string]string{
+			"cli/projects/-p/" + id + ".jsonl": transcript("the real conversation"),
+		}},
+		// A later sync carrying only sub-agent output for the same session.
+		syncCommit{machine: "Air13", files: map[string]string{
+			"cli/projects/-p/" + id + "/subagents/agent-abc.jsonl": transcript("agent chatter"),
+		}},
+	)
+
+	sessions, err := List(ctx, repo, DefaultRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want just the real one: %+v", len(sessions), sessions)
+	}
+	if sessions[0].Slug == "subagents" {
+		t.Fatal("a sub-agent file was listed as a session")
+	}
+	// And the surviving path is the conversation, not the agent output.
+	if !strings.HasSuffix(sessions[0].Path, id+".jsonl") {
+		t.Fatalf("wrong path won: %s", sessions[0].Path)
+	}
+	titled := Titles(ctx, repo, DefaultRef, sessions)
+	if titled[0].Title != "the real conversation" {
+		t.Fatalf("viewer would show the wrong transcript: %q", titled[0].Title)
+	}
+}
+
+func TestIsSessionTranscript(t *testing.T) {
+	yes := []string{
+		"cli/projects/-p/aaa.jsonl",
+		"projects/-Users-john-Git-x/bbb.jsonl",
+	}
+	no := []string{
+		"cli/projects/-p/aaa/subagents/agent-x.jsonl",
+		"cli/projects/-p/aaa/subagents/agent-x.meta.json",
+		"cli/projects/-p/aaa.meta.json",
+		"cli/projects/-p",
+		"desktop/whatever.jsonl",
+		"",
+	}
+	for _, rel := range yes {
+		if !isSessionTranscript(rel) {
+			t.Errorf("%q should be a session transcript", rel)
+		}
+	}
+	for _, rel := range no {
+		if isSessionTranscript(rel) {
+			t.Errorf("%q should not be a session transcript", rel)
+		}
+	}
+}
+
+// Retention prunes aged transcripts, so history mentions paths the tree no
+// longer has. Listing those offers sessions that cannot be opened — `git show`
+// fails on them — and their titles come back blank because the blob is gone.
+// On real data 52 of 744 logged paths were in exactly this state.
+func TestListExcludesPrunedSessions(t *testing.T) {
+	ctx := context.Background()
+	const keep = "11112222-0000-0000-0000-000000000000"
+	const pruned = "33334444-0000-0000-0000-000000000000"
+
+	repo := remoteRepo(t,
+		syncCommit{machine: "Pro16", files: map[string]string{
+			"cli/projects/-p/" + keep + ".jsonl":   transcript("still here"),
+			"cli/projects/-p/" + pruned + ".jsonl": transcript("aged out later"),
+		}},
+		// A later sync that removes the aged transcript, as retention does.
+		syncCommit{machine: "Pro16", delete: []string{"cli/projects/-p/" + pruned + ".jsonl"}},
+	)
+
+	sessions, err := List(ctx, repo, DefaultRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want only the surviving one: %+v", len(sessions), sessions)
+	}
+	if sessions[0].ID != keep {
+		t.Fatalf("kept the wrong session: %s", sessions[0].ID)
+	}
+	// And what is listed can actually be read.
+	if _, err := Read(ctx, repo, DefaultRef, sessions[0]); err != nil {
+		t.Fatalf("a listed session was not readable: %v", err)
 	}
 }

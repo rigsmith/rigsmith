@@ -226,14 +226,25 @@ func IsConversationLine(line string) bool {
 	return rec.Type == "user" || rec.Type == "assistant"
 }
 
-// maxHeaderLines bounds the fallback-title scan. The first human prompt is near
-// the top of a transcript but not always at it: a session that opens with a long
-// injected preamble (skill listings, a pasted file, a resumed summary) can push
-// it well past the first few records. Measured over 569 real transcripts, raising
-// this from 60 to 250 took titleless sessions from 53 to 29 and cost nothing
-// measurable — the whole walk went 433ms to 385ms, inside the noise, because the
-// scan stops at the first usable prompt and only the titleless ones read on.
-const maxHeaderLines = 250
+// The fallback-title scan is bounded two ways, because the two things worth
+// bounding are different.
+//
+// maxScanLines caps the work: a transcript body runs to megabytes and must
+// never be parsed whole just to find a title.
+//
+// maxUserRecords is what actually decides when to give up, and it counts
+// *candidates* — user records carrying real text. A line budget alone was too
+// blunt: Claude Code's header carries queue-operations, IDE-state records,
+// attachments and file-history snapshots, and a thick preamble burns 60 lines
+// before the human says anything. Counting every "user" record was still wrong,
+// because tool results are recorded as user records too and would spend the
+// budget on plumbing. On real data these two changes took untitled sessions
+// from 46 to 20 out of 410 — and the 20 that remain genuinely contain no typed
+// human message at all.
+const (
+	maxScanLines   = 4000
+	maxUserRecords = 25
+)
 
 // FirstPrompt derives a short title from a transcript's first genuine human
 // message, for a session with no Desktop sidecar. It skips tool/DOM/system noise
@@ -252,8 +263,9 @@ func FirstPrompt(path string) string {
 // another machine and were never written here — so it needs the reader form.
 func FirstPromptFrom(r io.Reader) string {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 8<<20) // headers are small; cap guards a pathological line
-	for line := 0; line < maxHeaderLines && sc.Scan(); line++ {
+	sc.Buffer(make([]byte, 0, 64*1024), 8<<20) // cap guards a pathological line
+	seenUser := 0
+	for line := 0; line < maxScanLines && seenUser < maxUserRecords && sc.Scan(); line++ {
 		var rec struct {
 			Type    string `json:"type"`
 			Message struct {
@@ -264,6 +276,13 @@ func FirstPromptFrom(r io.Reader) string {
 			continue
 		}
 		text := strings.TrimSpace(textOf(rec.Message.Content))
+		// Only a record carrying real text is a candidate. Tool results are
+		// also recorded as "user" records but hold tool_result blocks, so
+		// textOf yields nothing for them — counting those against the budget
+		// spent it on plumbing before reaching anything a person typed.
+		if text != "" {
+			seenUser++
+		}
 		if text == "" || strings.HasPrefix(text, "<") || strings.HasPrefix(text, "Caveat:") ||
 			strings.Contains(text, "DOM Probe") || strings.HasPrefix(text, "[Request interrupted") {
 			continue

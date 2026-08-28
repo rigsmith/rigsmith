@@ -60,6 +60,19 @@ func List(ctx context.Context, repo *gitrepo.Repo, ref string) ([]Session, error
 		ref = DefaultRef
 	}
 
+	// What actually exists at the ref. The log walk below sees every path any
+	// commit ever touched, including transcripts retention has since pruned —
+	// listing those offers sessions that cannot be opened, because the blob is
+	// gone from the tree even though history remembers it.
+	live, err := repo.TreePaths(ctx, ref, transcriptDir)
+	if err != nil {
+		return nil, err
+	}
+	present := make(map[string]bool, len(live))
+	for _, p := range live {
+		present[p] = true
+	}
+
 	// Newest-first log of every commit touching the transcript tree, each
 	// followed by the files it changed. The first time a path appears is its
 	// most recent sync, which is the one that attributes it.
@@ -70,9 +83,14 @@ func List(ctx context.Context, repo *gitrepo.Repo, ref string) ([]Session, error
 
 	var (
 		sessions []Session
-		seen     = map[string]bool{}
-		machine  string
-		when     time.Time
+		seenPath = map[string]bool{}
+		// Deduped by session id as well as by path: the same session can appear
+		// at more than one path — a project directory renamed, or two machines
+		// whose slugs differ for the same cwd — and it is still one session. On
+		// real data this produced the same id four times in one listing.
+		seenID  = map[string]bool{}
+		machine string
+		when    time.Time
 	)
 	for _, line := range strings.Split(out, "\n") {
 		if rest, ok := strings.CutPrefix(line, commitMarker); ok {
@@ -80,15 +98,25 @@ func List(ctx context.Context, repo *gitrepo.Repo, ref string) ([]Session, error
 			continue
 		}
 		rel := strings.TrimSpace(line)
-		if rel == "" || !strings.HasSuffix(rel, ".jsonl") || seen[rel] {
+		if rel == "" || !strings.HasSuffix(rel, ".jsonl") || seenPath[rel] {
 			continue
 		}
-		seen[rel] = true
+		seenPath[rel] = true
+		if !present[rel] {
+			continue // pruned since; history remembers it, the tree does not
+		}
 
+		if !isSessionTranscript(rel) {
+			continue // sub-agent output or a stray file, not a session
+		}
 		id := session.IDFromTranscriptRel(rel)
 		if id == "" {
-			continue // not a transcript (sub-agent output, stray file)
+			continue
 		}
+		if seenID[id] {
+			continue // already have it from a newer sync
+		}
+		seenID[id] = true
 		sessions = append(sessions, Session{
 			ID: id, Path: rel, Slug: path.Base(path.Dir(rel)),
 			Machine: machine, SyncedAt: when,
@@ -101,6 +129,26 @@ func List(ctx context.Context, repo *gitrepo.Repo, ref string) ([]Session, error
 		return sessions[i].SyncedAt.After(sessions[j].SyncedAt)
 	})
 	return sessions, nil
+}
+
+// isSessionTranscript reports whether rel is a session's own transcript, as
+// opposed to something living underneath one.
+//
+// A session is exactly projects/<slug>/<id>.jsonl. Claude Code also writes
+// projects/<slug>/<id>/subagents/agent-*.jsonl — a session's internal sub-agent
+// output, of which this repo holds over a thousand. Those are not sessions:
+// listing them adds rows nobody asked for, and because IDFromTranscriptRel maps
+// them to their *parent* session id, one could shadow the real transcript and
+// make the viewer render an agent's output in place of the conversation.
+func isSessionTranscript(rel string) bool {
+	parts := strings.Split(rel, "/")
+	for i, p := range parts {
+		if p == "projects" {
+			// slug + file, and nothing deeper.
+			return len(parts) == i+3 && strings.HasSuffix(parts[i+2], ".jsonl")
+		}
+	}
+	return false
 }
 
 // commitMarker prefixes a commit header line in the log output so headers are

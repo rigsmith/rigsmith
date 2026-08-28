@@ -252,26 +252,53 @@ Unchanged in substance; `--json` is no longer blocking (see [Engine seam](#engin
   staleness colouring. (`devices.Registry` + journal.)
 - Activity feed: recent syncs across machines with outcomes; failures and secret-tripwire
   refusals rendered as first-class rows, not buried.
-- "Sync now" / "Pull" actions shelling out, with streamed CLI output in a drawer.
+- ~~"Sync now" / "Pull" actions shelling out, with streamed CLI output in a drawer.~~
+  **Done 2026-08-08.** `ui/bridge` gained `runner.go` (allowlisted verbs → fixed argv,
+  one action at a time, line-streamed, ANSI-stripped) and `actions.go` (the bound
+  service, emitting `clauderig:action:{start,line,done}`). Buttons follow the health
+  reason, so the banner's advice and the button you get are the same thing; the tray
+  carries Sync now / Pull too, and running one from there opens the window so a
+  tripwire refusal can't happen unwatched. **Resolve (merge)** is offered on a diverged
+  state — slightly ahead of the phase line, but `merge` exists and a red banner with no
+  action was worse; Phase 2's work is the structured per-file ledger panel, not the
+  button. Binary resolution prefers a `clauderig` beside the app over PATH, so a
+  packaged bundle drives the CLI it shipped with.
 
 ## Phase 2 — Resolve + browse
 
-- Divergence banner → **Resolve** button → `clauderig merge`, showing the per-file policy
-  ledger (what was unioned, which timestamp won). Residual conflicts get a two-sided
-  picker; never a raw conflict-marker editor.
-- Remote session browser: per-device session lists via `peek`, read-only transcript
-  rendering, **Bring to this Mac** → `materialize`.
-- Search across live + synced sessions (`search` package in-process) with the same viewer.
+- **Resolve button — done 2026-08-08.** The diverged banner offers it, and `merge`
+  grew `--json` so the ledger is data rather than scraped text (`applyPolicies` now
+  returns `[]Resolution`; the styled output and `--json` render one set of facts).
+- **Residual-conflict two-sided picker — NOT built.** Deliberately deferred: it is a
+  data-editing surface, and the only cases reaching it are files no policy understands,
+  where picking a side wholesale is exactly the hazard
+  [CLAUDERIG-MERGE-POLICIES.md](CLAUDERIG-MERGE-POLICIES.md) warns about. Today those
+  files stay conflicted with git's markers intact and the merge exits nonzero naming
+  them, so `git mergetool` handles them safely. Building a picker needs its own design
+  pass on what "pick a side" means per file class.
+- **Remote session browser — done 2026-08-08.** A Sessions tab over `ui/bridge/sessions.go`:
+  machine filter, titles, read-only transcript rendering (bounded at 400 turns and
+  *says so* when it clips), and **Bring to this Mac** → `peek materialize`, greyed out
+  for sessions already here.
+- **Search — partial.** The browser filters the listed sessions by title client-side.
+  Full-text search across live + synced (`search` package in-process, `search --json`
+  shape) is not wired into the window yet; the CLI has it.
 
 ## Phase 3 — Accounts
 
-- UI over `clauderig account`: logins list, active credential, capture, switch, remove.
-- Switch does the **both-halves swap** (Keychain + `oauthAccount`) per
-  [CLAUDERIG-ACCOUNTS.md](CLAUDERIG-ACCOUNTS.md), and refuses while a Claude session is
-  live.
-- Desync detector: the `groveConfigCache`-keys heuristic (see the identity-desync
-  section of [CLAUDERIG-ACCOUNTS.md](CLAUDERIG-ACCOUNTS.md)) as a health check with a
-  "resync" action — catches the artifact-went-to-wrong-account failure before it bites.
+- **Done 2026-08-08**, with one gap. An Accounts tab over `ui/bridge/accounts.go`:
+  logins list with the live one marked, capture (`account add`), and switch.
+- **The switch guard is surfaced, not routed around.** `Get` reports every running
+  Claude Code process, and the switch buttons are disabled while any exist, naming the
+  pids — a swap underneath a live session corrupts its identity, so the UI shows why it
+  can't rather than letting the CLI's refusal look like a bug. The both-halves swap
+  itself stays in the CLI; the UI shells out to it.
+- **Desync detector — surfaced, no resync button.** `Diagnose().InSync` drives a warning
+  banner. The one-click "resync" action isn't built; it points at
+  `clauderig account doctor` instead, which is the tool that actually repairs it.
+- **Remove — not built.** `account remove` is interactive-confirm-only by design
+  (destructive commands here refuse without a terminal), so wiring it needs a
+  confirmation surface in the window first.
 
 ## Risks and open spikes
 
@@ -307,8 +334,13 @@ Ordered by how much they'd hurt to discover late.
 
 ## Open
 
-- **Name.** Still unnamed; "the clauderig UI" until John names it. Needed before the
-  binary, bundle identifier, and icons are settled.
+- ~~**Name.**~~ **Settled 2026-08-08: `claudeRig UI`.** Lowercase "c" to match the
+  wordmark the repo and `design/marks.js` already use everywhere (38 occurrences of
+  `claudeRig`, none of `ClaudeRig`) — the app shouldn't introduce a second spelling of
+  its own product. Bundle identifier `dev.rigsmith.clauderig-ui`, following the
+  `dev.rigsmith.<thing>` convention in the packaging examples. Both are `AppName` /
+  `BundleID` in `ui/main.go`, so packaging reads them rather than re-deciding. Binary
+  name `clauderig-ui`, matching the all-lowercase CLI executables.
 - Frontend framework choice. **Deferred again at scaffold time**: the status window is
   plain HTML/CSS/JS on the `design/` tokens, no framework and no bundler, which keeps CI
   Go-only (see [Build & release](#build--release)). Revisit when the window grows past the
