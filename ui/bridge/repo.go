@@ -69,7 +69,7 @@ func (s *Repo) Get(ctx context.Context) (RepoStats, error) {
 	// Best-effort: a breakdown that cannot be walked must not cost the numbers
 	// above it, which are the ones the panel exists for.
 	if rep, cerr := contents.Scan(staging); cerr == nil {
-		out.Contents = rep.Groups
+		out.Contents = rep.Fold().Groups
 	}
 	if !st.First.IsZero() {
 		out.RetainedDays = time.Since(st.First).Hours() / 24

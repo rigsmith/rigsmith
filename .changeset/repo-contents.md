@@ -21,6 +21,8 @@ A total says the repo is large without saying what it is large *with*, and the t
     transcript backups             118 KB    0%  1 file
 ```
 
+Anything under 2% of the checkout folds into a single `other` row, kept last whatever its size, naming its three largest members and counting the rest. A tail of rows all reading 0% buries the one line worth acting on under its own precision. It only folds when at least two categories qualify — replacing one named row with an `other` containing exactly it loses the name and gains nothing.
+
 Categories are ordered so the specific cases sit above the general ones that would otherwise swallow them: a `.pre-import` backup is a `.jsonl` too, and memory lives under `projects/` exactly like a transcript does. Both would land in "transcripts" under a naïve rule, which is the sort of thing that makes a breakdown quietly wrong rather than visibly broken.
 
 The window shows the same split with a bar per row, because the shape of this data is one line at 97% and everything else rounding to zero — a column of numbers makes you work that out, a bar does not. Hovering a row names what it is and how many files it covers.

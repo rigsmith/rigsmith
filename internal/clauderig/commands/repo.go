@@ -61,7 +61,7 @@ func runRepoStats(ctx context.Context, out io.Writer) error {
 	// on a real repo that would have been the wrong lever — nearly all of it was
 	// conversation, which no squash touches.
 	if rep, cerr := contents.Scan(staging); cerr == nil {
-		printContents(out, rep)
+		printContents(out, rep.Fold())
 	}
 	return nil
 }
@@ -76,9 +76,12 @@ func printContents(out io.Writer, rep contents.Report) {
 		if rep.Bytes > 0 {
 			share = fmt.Sprintf("%3.0f%%", 100*float64(g.Bytes)/float64(rep.Bytes))
 		}
+		note := countOf(g.Files, "file", "files")
+		if g.Name == "other" {
+			note += " — " + g.Detail
+		}
 		fmt.Fprintf(out, "    %-26s %10s  %4s  %s\n",
-			g.Name, humanBytes(g.Bytes), share,
-			DimStyle.Render(countOf(g.Files, "file", "files")))
+			g.Name, humanBytes(g.Bytes), share, DimStyle.Render(note))
 	}
 	fmt.Fprintln(out)
 }

@@ -9,6 +9,7 @@
 package contents
 
 import (
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"sort"
@@ -131,4 +132,53 @@ func Scan(dir string) (Report, error) {
 		return rep.Groups[i].Name < rep.Groups[j].Name
 	})
 	return rep, nil
+}
+
+// MinShare is the share of the checkout a category has to reach to earn a line
+// of its own. Below it the row costs a line to say "rounds to zero".
+const MinShare = 0.02
+
+// Fold collapses categories under MinShare into a single "other" row, kept last
+// whatever its size. The breakdown exists to show which one thing to act on, and
+// a tail of rows all reading 0% buries it under its own precision.
+//
+// Only folds when at least two categories qualify: replacing one named row with
+// an "other" that contains exactly it loses the name and gains nothing.
+func (r Report) Fold() Report {
+	if r.Bytes <= 0 {
+		return r
+	}
+	var kept, small []Group
+	for _, g := range r.Groups {
+		if float64(g.Bytes)/float64(r.Bytes) < MinShare {
+			small = append(small, g)
+			continue
+		}
+		kept = append(kept, g)
+	}
+	if len(small) < 2 {
+		return r
+	}
+
+	other := Group{Name: "other"}
+	names := make([]string, 0, len(small))
+	for _, g := range small {
+		other.Files += g.Files
+		other.Bytes += g.Bytes
+		names = append(names, g.Name)
+	}
+	// Named, but not all of them: ten categories on one line is a row nobody
+	// finishes reading, and the tail of the tail is not what anyone came for.
+	// small is already largest-first, so these are the ones worth naming.
+	const show = 3
+	if len(names) > show {
+		other.Detail = strings.Join(names[:show], ", ") +
+			fmt.Sprintf(" and %d more", len(names)-show)
+	} else {
+		other.Detail = strings.Join(names, ", ")
+	}
+
+	out := r
+	out.Groups = append(kept, other)
+	return out
 }
