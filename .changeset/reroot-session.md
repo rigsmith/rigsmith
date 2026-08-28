@@ -14,4 +14,6 @@ The mechanics are the point. Records recorded at the session's old root are rewr
 
 It refuses to overwrite a transcript already filed at the destination, since that would be the same session filed twice and one conversation would be lost. It refuses while that session is running, matched on session id rather than on directory — several conversations run out of one folder at once, and blocking the move because a *different* chat is open there would be refusing for no reason. `--dry-run` reports how many records would change without touching anything, and the window's dialog always runs one first, so the confirmation names a number you agreed to before a file was written.
 
+The window's dialog offers both a text field and a **Browse…** button onto the system folder picker. Typing is faster when you know the path and can paste it; the picker is the only way to be certain the directory exists, and a typo here does not fail — it files the session somewhere plausible and wrong. The picker opens at the session's current directory, walking up if that folder has since been deleted, so the common case of moving a session one level down opens next to the answer.
+
 The next `clauderig sync` carries the change to your other machines.

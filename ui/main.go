@@ -86,6 +86,7 @@ func main() {
 			application.NewService(statusSvc),
 			application.NewService(bridge.NewActivity()),
 			application.NewService(bridge.NewRepo()),
+			application.NewService(bridge.NewChooser()),
 			application.NewService(actionsSvc),
 			application.NewService(bridge.NewLibrary()),
 			application.NewService(bridge.NewAccounts()),

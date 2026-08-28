@@ -427,6 +427,7 @@ const LIBRARY_MATERIALIZE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Mate
 const LIBRARY_HANDOFF = 'github.com/rigsmith/rigsmith/ui/bridge.Library.HandOff';
 const LIBRARY_DELETE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Delete';
 const LIBRARY_REROOT = 'github.com/rigsmith/rigsmith/ui/bridge.Library.RerootSession';
+const CHOOSE_DIR = 'github.com/rigsmith/rigsmith/ui/bridge.Chooser.Directory';
 
 const SVG_ATTRS = 'viewBox="0 0 16 16" width="12" height="12" fill="none" ' +
   'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"';
@@ -1620,17 +1621,41 @@ function openRerootModal(d) {
 
   const box = el('div', 'confirmrow');
   box.append(el('div', 'note', 'Re-file this session under:'));
+  const warn = el('div', 'warn');
 
+  // Field plus picker rather than one or the other. Typing is faster when you
+  // know the path and can paste it; the picker is the only way to be sure the
+  // directory exists, and a typo here files the session somewhere plausible and
+  // wrong rather than failing.
+  const pick = el('div', 'row');
+  pick.style.justifyContent = 'stretch';
   const input = document.createElement('input');
   input.className = 'srch';
   input.type = 'text';
   input.placeholder = d.session.cwd || '/absolute/path';
   input.value = d.session.cwd || '';
   input.spellcheck = false;
-  input.style.width = '100%';
-  box.append(input);
+  input.style.flex = '1';
+  pick.append(input);
 
-  const warn = el('div', 'warn');
+  const browse = document.createElement('button');
+  browse.textContent = 'Browse…';
+  browse.onclick = async () => {
+    browse.disabled = true;
+    try {
+      const chosen = await Call.ByName(CHOOSE_DIR, 'Re-file this session under…', input.value || d.session.cwd || '');
+      // Cancelling is an answer, not a failure: leave what was typed alone.
+      if (chosen) input.value = chosen;
+    } catch (e) {
+      warn.textContent = String(e);
+    } finally {
+      browse.disabled = false;
+      input.focus();
+    }
+  };
+  pick.append(browse);
+  box.append(pick);
+
   warn.textContent = 'Records recorded at the old root are rewritten to point here; '
     + 'deeper directories are left alone, since those still exist. '
     + 'The next sync carries the change to your other machines.';
