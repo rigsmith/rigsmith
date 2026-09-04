@@ -50,8 +50,8 @@ never the login. Nothing to enable, nothing to run with the windows closed.
 ```console
 $ clauderig desktop list
 Claude Desktop profiles
-● work · john@work.com      open    ↔ john-work-com  9.6 GiB
-  personal · john@home.com  closed  412.3 MiB
+● work · john@work.com      open    ↔ john-work-com  9.6 GB
+  personal · john@home.com  closed  412.3 MB
 each profile is its own login — opening one never signs another out
 chat history is per profile — `clauderig sync` backs each one up separately
 `clauderig desktop prune --dry-run` shows what each profile's size is made of
@@ -117,7 +117,7 @@ and `desktop prune` gives space back in tiers ordered by what they cost:
 
 | Tier | Reclaims | Lost |
 | --- | --- | --- |
-| default | `Cache`, `Code Cache`, `GPUCache`, `Dawn*Cache` | nothing — regenerated as needed |
+| default | `Cache`, `Code Cache`, `GPUCache` and the Dawn GPU caches (`DawnWebGPUCache`, `DawnGraphiteCache`, `GraphiteDawnCache`, `DawnCache`) | nothing — regenerated as needed |
 | `--vm` | also the unpacked VM disks: `rootfs.img` when `rootfs.img.zst` is beside it to re-extract from, and side disks Desktop makes afresh | whatever was created inside the VM and never exported to the host |
 | `--all` | also the compressed image, kernel and initramfs — and a `rootfs.img` with no compressed image beside it, since deleting that means a download | a download on next launch |
 

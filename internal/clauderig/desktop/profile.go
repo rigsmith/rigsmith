@@ -163,14 +163,24 @@ func isDirFollowingLinks(root string, e os.DirEntry) bool {
 	return err == nil && fi.IsDir()
 }
 
-// List returns every saved profile, ordered by name.
+// List returns every saved profile, ordered by name. A directory under the
+// store that does not load as a profile is passed over; ListAll says which.
 func (s *Store) List() ([]Profile, error) {
+	out, _, err := s.ListAll()
+	return out, err
+}
+
+// ListAll is List that also names the directories it passed over — ones
+// that look like profiles but whose profile.json is missing or unreadable —
+// so a verb acting on "every profile" can say what it did not act on rather
+// than report success over a profile it never saw.
+func (s *Store) ListAll() (profiles []Profile, skipped []string, err error) {
 	entries, err := os.ReadDir(s.Root)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var out []Profile
 	for _, e := range entries {
@@ -185,12 +195,17 @@ func (s *Store) List() ([]Profile, error) {
 		}
 		p, lerr := s.Get(e.Name())
 		if lerr != nil {
-			continue // not a profile directory (or unreadable); skip rather than fail the listing
+			// Not a profile directory, or an unreadable one: passed over
+			// rather than failing the listing, and named for callers that
+			// need to know.
+			skipped = append(skipped, e.Name())
+			continue
 		}
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
+	sort.Strings(skipped)
+	return out, skipped, nil
 }
 
 // Get loads one profile by name.

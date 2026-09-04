@@ -24,7 +24,7 @@ func newDesktopPruneCmd() *cobra.Command {
 			"unpacked root filesystem is sparse, provisioned at ~10 GB, and only ever\n" +
 			"grows — deleting files inside the VM never shrinks it on the host.\n\n" +
 			"What each tier reclaims:\n\n" +
-			"  (default)  Electron caches (Cache, Code Cache, GPUCache, Dawn*Cache).\n" +
+			"  (default)  Electron caches (Cache, Code Cache, GPUCache, the Dawn GPU caches).\n" +
 			"             Regenerated as needed; nothing is lost.\n" +
 			"  --vm       also the unpacked VM root filesystem (rootfs.img). Desktop\n" +
 			"             re-extracts it from the compressed image beside it on next\n" +
@@ -58,8 +58,17 @@ func newDesktopPruneCmd() *cobra.Command {
 					return desktopNotFound(rerr, args[0])
 				}
 				targets = []desktop.Profile{p}
-			} else if targets, err = st.List(); err != nil {
-				return err
+			} else {
+				// Every profile — and a word about any directory under the
+				// store that did not load as one, since "every" would
+				// otherwise quietly mean "every one that could be read".
+				var skipped []string
+				if targets, skipped, err = st.ListAll(); err != nil {
+					return err
+				}
+				for _, name := range skipped {
+					fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf("? %s — not a readable profile; left alone", name)))
+				}
 			}
 			if len(targets) == 0 {
 				fmt.Fprintf(out, "%s\n", DimStyle.Render(

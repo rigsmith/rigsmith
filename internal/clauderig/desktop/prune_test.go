@@ -216,3 +216,33 @@ func TestDirSize_StopsWhenTheContextEnds(t *testing.T) {
 		t.Fatal("expired context: want an error, got none")
 	}
 }
+
+// A cache or bundle directory that is a symlink is not the profile's own:
+// Prune would remove the link and leave everything behind it, so Measure
+// does not count what is behind it as reclaimable either.
+func TestMeasure_DoesNotFollowSymlinkedCaches(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs a privilege on Windows")
+	}
+	_, p := pruneFixture(t, true)
+	elsewhere := filepath.Join(t.TempDir(), "gpu")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(elsewhere, "blob"), make([]byte, 1<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(p.DataDir(), "GPUCache")); err != nil {
+		t.Fatal(err)
+	}
+	u, err := Measure(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tierOf(u, "GPUCache"); ok {
+		t.Error("a symlinked cache was offered as reclaimable")
+	}
+	if u.Reclaimable(PruneAll) >= 1<<20 {
+		t.Errorf("reclaimable %d counts the bytes behind the link", u.Reclaimable(PruneAll))
+	}
+}

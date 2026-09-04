@@ -220,3 +220,22 @@ func TestDesktopPrune_CompletesProfiles(t *testing.T) {
 		t.Errorf("a second argument offered completions: %v", more)
 	}
 }
+
+// The no-name form names a directory under the store it could not read as a
+// profile instead of silently leaving it out of "every profile".
+func TestDesktopPrune_NamesUnreadableProfiles(t *testing.T) {
+	st, _ := pruneCommandFixture(t, false)
+	if err := os.MkdirAll(filepath.Join(st.Root, "broken"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(st.Root, "broken", "profile.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runPrune(t, "--dry-run")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "broken") || !strings.Contains(out, "not a readable profile") {
+		t.Errorf("unreadable profile not named:\n%s", out)
+	}
+}

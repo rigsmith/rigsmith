@@ -42,8 +42,9 @@ func (t PruneTier) String() string {
 
 // electronCaches are the directories Chromium/Electron rebuild from nothing.
 // Top-level under the profile's data dir; each is safe to delete while the app
-// is closed. DawnCache is the older name of the two Dawn* directories.
-var electronCaches = []string{"Cache", "Code Cache", "GPUCache", "DawnWebGPUCache", "DawnGraphiteCache", "DawnCache"}
+// is closed. The Dawn GPU cache has gone by several names across Chromium
+// releases; every one of them is listed, as the session search already does.
+var electronCaches = []string{"Cache", "Code Cache", "GPUCache", "DawnWebGPUCache", "DawnGraphiteCache", "GraphiteDawnCache", "DawnCache"}
 
 // vmBundlesDir is where Desktop keeps the Cowork local-agent VM, one bundle
 // directory per image (claudevm.bundle today). Inside, the unpacked disks —
@@ -106,10 +107,13 @@ func MeasureContext(ctx context.Context, p Profile) (Usage, error) {
 	data := p.DataDir()
 	for _, name := range electronCaches {
 		dir := filepath.Join(data, name)
-		if fi, serr := os.Stat(dir); serr != nil || !fi.IsDir() {
+		// A cache that is a symlink is not the profile's own to reclaim:
+		// Prune would remove the link and nothing behind it, so it is not
+		// measured as reclaimable either.
+		if !ownDir(dir) {
 			continue
 		}
-		size, serr := DirSizeContext(ctx, dir)
+		size, serr := dirSize(ctx, dir, false)
 		if serr != nil {
 			return Usage{}, serr
 		}
@@ -117,9 +121,14 @@ func MeasureContext(ctx context.Context, p Profile) (Usage, error) {
 	}
 
 	bundles := filepath.Join(data, vmBundlesDir)
-	entries, rerr := os.ReadDir(bundles)
-	if rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
-		return Usage{}, rerr
+	var entries []os.DirEntry
+	if ownDir(bundles) {
+		// Same rule: a bundles directory that is a symlink is left alone,
+		// since --all would remove the link and leave every disk behind it.
+		var rerr error
+		if entries, rerr = os.ReadDir(bundles); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			return Usage{}, rerr
+		}
 	}
 	var vmTier int64
 	for _, e := range entries {
@@ -161,7 +170,7 @@ func MeasureContext(ctx context.Context, p Profile) (Usage, error) {
 		}
 	}
 	if len(entries) > 0 {
-		size, serr := DirSizeContext(ctx, bundles)
+		size, serr := dirSize(ctx, bundles, false)
 		if serr != nil {
 			return Usage{}, serr
 		}
@@ -209,18 +218,32 @@ func Prune(p Profile, tier PruneTier) ([]PruneEntry, error) {
 
 // DirSize is the on-disk size of a directory tree: allocated blocks where the
 // platform reports them, so sparse files count what they cost rather than what
-// they claim. Symlinks are not followed. A missing directory is zero, not an
-// error — a profile that has never been opened has no data dir yet.
+// they claim. Symlinks are not followed, except the root itself: a profile may
+// be a symlink — relocated to another disk — and its size is its target's. A
+// missing directory is zero, not an error — a profile that has never been
+// opened has no data dir yet.
 func DirSize(dir string) (int64, error) { return DirSizeContext(context.Background(), dir) }
 
 // DirSizeContext is DirSize that gives up with ctx.Err() once the context
 // ends, checked per entry.
-func DirSizeContext(ctx context.Context, dir string) (int64, error) {
-	// A profile may itself be a symlink — relocated to another disk — and
-	// WalkDir does not follow a link handed to it as the root. Resolve only
-	// the root; links inside the tree stay unfollowed.
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = resolved
+func DirSizeContext(ctx context.Context, dir string) (int64, error) { return dirSize(ctx, dir, true) }
+
+// ownDir reports whether path is a directory in its own right — not a
+// symlink to one. What Prune removes is the path itself, so only a directory
+// that is its own is the profile's to reclaim.
+func ownDir(path string) bool {
+	fi, err := os.Lstat(path)
+	return err == nil && fi.IsDir()
+}
+
+// dirSize walks dir. followRoot resolves a root that is itself a symlink —
+// right for a relocated profile, wrong for a cache or bundle directory inside
+// it, where what would be removed is the link and not what it points at.
+func dirSize(ctx context.Context, dir string, followRoot bool) (int64, error) {
+	if followRoot {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = resolved
+		}
 	}
 	var total int64
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, werr error) error {
