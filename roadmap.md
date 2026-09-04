@@ -43,6 +43,60 @@ Open questions to resolve before it's real:
 - Relationship to `clauderig worktree`: does the hub absorb those verbs, or call
   into them (clauderig stays the worktree-mechanics owner, the hub is the view)?
 
+### `rig flight` — what is in flight, and what has been stranded
+
+**The audit half of the worktree hub above, shippable long before the hub is.** The
+hub is a live dashboard you sit in front of; this is one command you run occasionally
+that answers the three questions that actually go wrong, and exits.
+
+Motivated by a real incident (Tweed, Sep 2026). Five or six agents were spawned across
+worktrees, a few tangents were chased, and the repo was set aside for weeks because it
+felt unmanageable. A read-only review found that almost nothing was wrong — but four
+things were genuinely invisible:
+
+- **A branch with 30 commits and no PR.** `pr-review-loop`: finished work, Copilot
+  reviews addressed, pushed — and nothing anywhere pointed at it. A pushed branch with
+  no PR does not appear in any list you look at.
+- **~1,250 uncommitted insertions across four worktrees.** Agents that finished and
+  exited without pushing, so a worktree was the only copy.
+- **A campaign split across two remotes.** Six composer commits landed on three
+  branches across `origin` and a second remote, so it read as missing when it was
+  merely scattered.
+- **Branches tracking nothing.** `git log --branches --not --remotes` looked alarming
+  until 13 of 15 "unpushed" commits turned out to be machine-written session captures.
+
+None of that needs a dashboard to catch. It needs one command:
+
+```
+$ rig flight
+  ⚠ pr-review-loop           30 commits ahead, no PR          brightshore
+  ⚠ send-affordance          509 uncommitted insertions       worktree only
+  ⚠ command-blocks           tracks nothing, 9 dirty
+  · 10 worktrees             machine-generated (tweed/*), clean — ignored
+  ✓ 5 branches               PR open
+```
+
+The checks, each cheap:
+
+- branches ahead of the default branch with **no open PR**
+- worktrees with **uncommitted changes**
+- branches with **no upstream**
+- commits on **no remote at all**, with machine-generated prefixes filtered out
+- work split across **more than one remote** in the same repo
+
+**Why it earns its place separately from the hub.** The hub is a place you go; this is
+a thing that tells you. It suits a weekly habit, a pre-context-switch check, or a CI
+job that comments once a week — and it is a few hundred lines against the hub's
+"fifth rig". It is also the natural first consumer of whatever registry the hub would
+need, so building it informs that design rather than pre-empting it.
+
+Open questions:
+- Repo-local, or does it read the same repo registry the hub would want?
+- Which prefixes count as machine-generated — convention (`tweed/*`), config, or
+  "authored by a bot identity"?
+- Does it grow a `--fix` that parks dirty worktrees onto `wip/` branches and pushes
+  them, or does it stay strictly read-only and print the commands?
+
 ### `clauderig resume` — open the session `search` just found
 
 `search` already ends every result with the action for it, and there are three
