@@ -89,13 +89,22 @@ type Options struct {
 // no session-end signal to hook, only the file going quiet.
 const largeFileSettle = 30 * time.Minute
 
-// deferLarge reports whether a changed transcript should wait: it is over the
-// large-file threshold, a staged copy exists, and the source has neither grown
-// by half the threshold since that copy nor settled. A source SMALLER than the
-// staged copy is never deferred — that is a rewrite, not an append, and the
-// staged copy is simply wrong.
-func deferLarge(rel string, src, staged os.FileInfo, threshold int64, now time.Time) bool {
-	if threshold <= 0 || staged == nil || src.Size() <= threshold || !strings.HasSuffix(rel, ".jsonl") {
+// deferLarge reports whether a changed transcript should wait: it is a
+// project transcript over the large-file threshold, a staged copy exists, and
+// the source has neither grown by half the threshold since that copy nor
+// settled. Only `projects/<slug>/….jsonl` qualifies — the append-only files
+// the throttle is about; a .jsonl under a skill or plugin is ordinary data and
+// syncs on every change. A source SMALLER than the staged copy is never
+// deferred — that is a rewrite, not an append, and the staged copy is simply
+// wrong. Nor is one whose staged copy has aged past the retention cutoff:
+// retention prunes staged files by their mtime later in the same sync, and a
+// live transcript that was just appended must not lose its only copy to a
+// deferral.
+func deferLarge(rel string, src, staged os.FileInfo, threshold int64, cutoff, now time.Time) bool {
+	if threshold <= 0 || staged == nil || src.Size() <= threshold || !isTranscriptRel(rel) {
+		return false
+	}
+	if !cutoff.IsZero() && staged.ModTime().Before(cutoff) {
 		return false
 	}
 	grown := src.Size() - staged.Size()
@@ -103,6 +112,12 @@ func deferLarge(rel string, src, staged os.FileInfo, threshold int64, now time.T
 		return false
 	}
 	return now.Sub(src.ModTime()) < largeFileSettle
+}
+
+// isTranscriptRel reports whether rel is a session transcript: a .jsonl under
+// projects/, memory excluded.
+func isTranscriptRel(rel string) bool {
+	return strings.HasPrefix(rel, "projects/") && strings.HasSuffix(rel, ".jsonl") && !isMemoryRel(rel)
 }
 
 // Sync materialises the allowlisted, redacted file set for each enabled root into
@@ -214,7 +229,7 @@ func Sync(opts Options) (*Report, error) {
 				// repo carries until the next squash. Past LargeFileBytes it waits
 				// for a chunk's worth of new content, or for the session to go
 				// quiet, before it is restaged.
-				if !unchanged && deferLarge(rel, info, staged, opts.LargeFileBytes, time.Now()) {
+				if !unchanged && deferLarge(rel, info, staged, opts.LargeFileBytes, cutoff, time.Now()) {
 					rr.Deferred++
 					continue
 				}

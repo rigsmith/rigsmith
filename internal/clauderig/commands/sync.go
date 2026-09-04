@@ -31,10 +31,17 @@ const pushAttempts = 3
 // redaction is visible, not magic. The tripwire fails the sync loudly if a secret
 // slips past redaction; nothing is pushed in that case.
 func NewSyncCmd() *cobra.Command {
-	var dryRun bool
+	var dryRun, flush bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Snapshot, redact, rewrite, and push your Claude Code setup",
+		Long: "Walks the sync roots, redacts secret-bearing fields, rewrites machine\n" +
+			"paths into a portable form, commits, and pushes.\n\n" +
+			"A long session's transcript is restaged only per chunk of new content or\n" +
+			"once it has gone quiet (retention.largeFileBytes), so the Stop hook does\n" +
+			"not re-commit a 50 MB file every turn. `--flush` restages every changed\n" +
+			"transcript regardless — what the SessionEnd hook runs, so a session's last\n" +
+			"turn never waits for the next session.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
@@ -89,11 +96,17 @@ func NewSyncCmd() *cobra.Command {
 					"⚠ account identity not recorded: %s looks like %s — check what ~/.claude.json holds", f.Path, f.Kind)))
 				liveAcct, liveOrg, liveEmail = "", "", ""
 			}
+			// --flush turns the transcript throttle off for this run: the
+			// session is over, and its tail has nothing to wait for.
+			largeFileBytes := cfg.Retention.LargeFileBytes
+			if flush {
+				largeFileBytes = -1
+			}
 			rep, serr := engine.Sync(engine.Options{
 				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
 				RetentionDays:   cfg.Retention.HistoryDays,
 				MaxFileBytes:    cfg.Retention.MaxFileBytes,
-				LargeFileBytes:  cfg.Retention.LargeFileBytes,
+				LargeFileBytes:  largeFileBytes,
 				Profiles:        engine.LocalProfileNames(),
 				LiveAccountUUID: liveAcct,
 			})
@@ -258,6 +271,7 @@ func NewSyncCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "stage and scan, but don't commit or push")
+	cmd.Flags().BoolVar(&flush, "flush", false, "restage every changed transcript, including large ones the throttle would defer")
 	return cmd
 }
 

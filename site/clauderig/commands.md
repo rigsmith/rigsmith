@@ -41,7 +41,10 @@ it has grown by half that much again, or once it has gone quiet for half an hour
 — an active marathon session costs one blob per chunk of new content instead of
 one per sync, and a finished session's last turn is still captured. Smaller
 transcripts sync on every change, as before, and `sync` reports how many large
-ones are waiting. Set the key negative to restage every change.
+ones are waiting. The SessionEnd hook runs `sync --flush`, which restages every
+changed transcript regardless, so a finished session's tail does not wait for
+the next one; a session that dies without firing it is caught up by the settle
+rule at the next sync. Set the key negative to restage every change.
 
 When a restore brings back Claude **Code** sessions, it reminds you to fully quit
 and reopen Claude Desktop — Desktop only rebuilds its Code-tab list from the
@@ -309,9 +312,11 @@ The profile model this sits on is in
 clauderig hooks install
 ```
 
-Wires two Claude Code hooks: **SessionStart → pull** (so each session starts
-from the latest synced state) and **Stop → sync** (so your work is captured when
-a session ends). Both are portable across OSes and idempotent.
+Wires three Claude Code hooks: **SessionStart → pull** (so each session starts
+from the latest synced state), **Stop → sync** (so your work is captured after
+every turn), and **SessionEnd → sync --flush** (so a long session's last turn,
+which the per-turn sync may defer, is captured when the session ends). All are
+portable across OSes and idempotent.
 
 ## Worktree discipline
 

@@ -159,3 +159,35 @@ func TestDesktopConfigKeepKeysExcludeTheLogin(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_LargeFileBytesDefaultsWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	// A config written before the throttle existed: absent means the default,
+	// since long-lived configs are the ones with long sessions in them.
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
+		[]byte(`{"schema":1,"retention":{"historyDays":30}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Retention.LargeFileBytes != DefaultLargeFileBytes {
+		t.Fatalf("LargeFileBytes = %d, want default %d", c.Retention.LargeFileBytes, DefaultLargeFileBytes)
+	}
+}
+
+func TestLoad_LargeFileBytesNegativeDisables(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
+		[]byte(`{"schema":1,"retention":{"largeFileBytes":-1}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Retention.LargeFileBytes != -1 {
+		t.Fatalf("LargeFileBytes = %d, want -1 kept as an explicit off", c.Retention.LargeFileBytes)
+	}
+}

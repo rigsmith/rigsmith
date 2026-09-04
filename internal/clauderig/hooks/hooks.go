@@ -26,12 +26,16 @@ type Plan struct {
 }
 
 // SyncPlans keep ~/.claude in sync and belong at user scope (`clauderig hooks
-// install`): SessionStart pulls, Stop pushes. Bare `clauderig` keeps them
-// portable — each machine resolves it on PATH.
+// install`): SessionStart pulls, Stop pushes, and SessionEnd pushes once more
+// with every deferred transcript flushed — Stop fires after each turn, so
+// sync throttles a large transcript there, and the session ending is the
+// one moment its last turn must not wait for the next session. Bare
+// `clauderig` keeps them portable — each machine resolves it on PATH.
 func SyncPlans() []Plan {
 	return []Plan{
 		{Event: "SessionStart", Command: "clauderig pull"},
 		{Event: "Stop", Command: "clauderig sync"},
+		{Event: "SessionEnd", Command: "clauderig sync --flush"},
 	}
 }
 

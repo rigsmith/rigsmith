@@ -276,3 +276,70 @@ func TestSync_DefersLargeTranscriptsUntilGrownOrSettled(t *testing.T) {
 		t.Fatalf("small transcript deferred: %+v", r)
 	}
 }
+
+// Only project transcripts are throttled: a large .jsonl anywhere else is
+// ordinary data and syncs on every change.
+func TestSync_DefersOnlyProjectTranscripts(t *testing.T) {
+	const threshold = 4096
+	live, staging := t.TempDir(), t.TempDir()
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	sync := func() RootResult {
+		t.Helper()
+		rep, err := Sync(Options{
+			StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
+			LargeFileBytes: threshold, SourceOverride: override("cli", live),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep.Roots[0]
+	}
+	write(t, live, "skills/big/data.jsonl", strings.Repeat("a", threshold+100))
+	sync()
+	write(t, live, "skills/big/data.jsonl", strings.Repeat("a", threshold+101))
+	if r := sync(); r.Deferred != 0 {
+		t.Fatalf("a skill's data file was deferred: %+v", r)
+	}
+	if got := read(t, filepath.Join(staging, "cli", "skills", "big", "data.jsonl")); len(got) != threshold+101 {
+		t.Fatalf("staged %d bytes, want the latest %d", len(got), threshold+101)
+	}
+}
+
+// A staged copy older than the retention cutoff is about to be pruned by the
+// same sync; deferring the fresh source would hand retention the only copy.
+func TestSync_NeverDefersACopyRetentionWouldPrune(t *testing.T) {
+	const threshold = 4096
+	live, staging := t.TempDir(), t.TempDir()
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	sync := func() RootResult {
+		t.Helper()
+		rep, err := Sync(Options{
+			StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
+			LargeFileBytes: threshold, RetentionDays: 30, SourceOverride: override("cli", live),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep.Roots[0]
+	}
+	src := filepath.Join(live, "projects", "-p", "old.jsonl")
+	write(t, live, "projects/-p/old.jsonl", strings.Repeat("a", threshold+100))
+	sync()
+	// The staged copy carries the source's mtime; age both past the window,
+	// then append a little to the source, as a session picking an old chat
+	// back up would.
+	old := time.Now().AddDate(0, 0, -40)
+	staged := filepath.Join(staging, "cli", "projects", "-p", "old.jsonl")
+	if err := os.Chtimes(staged, old, old); err != nil {
+		t.Fatal(err)
+	}
+	write(t, live, "projects/-p/old.jsonl", strings.Repeat("a", threshold+110))
+	_ = src
+	r := sync()
+	if r.Deferred != 0 {
+		t.Fatalf("deferred a transcript whose staged copy retention was about to prune: %+v", r)
+	}
+	if got := read(t, staged); len(got) != threshold+110 {
+		t.Fatalf("staged %d bytes, want the fresh %d — retention took the only copy", len(got), threshold+110)
+	}
+}

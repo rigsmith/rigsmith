@@ -165,7 +165,7 @@ Syncs `~/.claude` (config, skills, session history) to a **private** git repo wi
 cross-OS path correction and secret stripping, and restores it on any machine.
 
 ```sh
-clauderig init                   # wizard: private repo, machine name, hooks
+clauderig init                   # wizard: private repo, machine name, hooks (SessionStart/Stop/SessionEnd)
 clauderig sync                   # snapshot → redact secrets → rewrite paths → commit → push
 clauderig restore                # pull → rewrite paths for this OS → merge (keeps local secrets)
 clauderig status | doctor        # state / health-check (doctor --fix repairs)

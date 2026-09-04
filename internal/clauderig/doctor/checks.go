@@ -160,8 +160,8 @@ func checkPaths(env Env) Result {
 
 func checkGlobalHooks(env Env) Result {
 	present, _ := hooks.Status(env.UserSettings)
-	if contains(present, "SessionStart") && contains(present, "Stop") {
-		return Result{Name: "global sync hooks", Status: OK, Detail: "SessionStart, Stop"}
+	if contains(present, "SessionStart") && contains(present, "Stop") && contains(present, "SessionEnd") {
+		return Result{Name: "global sync hooks", Status: OK, Detail: "SessionStart, Stop, SessionEnd"}
 	}
 	detail := "not installed"
 	if len(present) > 0 {
