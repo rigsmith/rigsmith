@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
+	"github.com/spf13/cobra"
 )
 
 func pruneCommandFixture(t *testing.T, open bool) (*desktop.Store, desktop.Profile) {
@@ -198,5 +200,23 @@ func TestDesktopPrune_OpenProfileStopsBeforeAnyDeletion(t *testing.T) {
 	}
 	if _, serr := os.Stat(filepath.Join(work.DataDir(), "Cache")); serr != nil {
 		t.Error("work's cache was deleted before the open profile was found")
+	}
+}
+
+// Tab completion offers profile names and emails, never file paths.
+func TestDesktopPrune_CompletesProfiles(t *testing.T) {
+	pruneCommandFixture(t, false)
+	cmd := newDesktopPruneCmd()
+	got, directive := cmd.ValidArgsFunction(cmd, nil, "")
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Errorf("directive = %v, want no file completion", directive)
+	}
+	for _, want := range []string{"work", "work@example.com", "personal"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("completions %v lack %q", got, want)
+		}
+	}
+	if more, _ := cmd.ValidArgsFunction(cmd, []string{"work"}, ""); len(more) != 0 {
+		t.Errorf("a second argument offered completions: %v", more)
 	}
 }

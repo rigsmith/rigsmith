@@ -16,8 +16,9 @@ import (
 func newDesktopPruneCmd() *cobra.Command {
 	var vm, all, dryRun, yes bool
 	cmd := &cobra.Command{
-		Use:   "prune [<name|email>]",
-		Short: "Reclaim a profile's disk space — caches, and optionally the Cowork VM image — without deleting it",
+		Use:               "prune [<name|email>]",
+		ValidArgsFunction: desktopProfileCompletion,
+		Short:             "Reclaim a profile's disk space — caches, and optionally the Cowork VM image — without deleting it",
 		Long: "Frees space a profile is holding while leaving its login and chat history\n" +
 			"untouched. Nearly all of a large profile is the Cowork local-agent VM: its\n" +
 			"unpacked root filesystem is sparse, provisioned at ~10 GB, and only ever\n" +
@@ -186,4 +187,29 @@ func printPruneBreakdown(out io.Writer, p desktop.Profile, u desktop.Usage, tier
 		fmt.Fprintf(out, "  %s\n", DimStyle.Render(strings.TrimSpace(
 			fmt.Sprintf("%s more reclaimable at a higher tier", desktop.HumanSize(kept)))))
 	}
+}
+
+// desktopProfileCompletion offers the saved profiles' names and emails for
+// the one positional argument, and never falls back to file paths: a
+// profile is not a file.
+func desktopProfileCompletion(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	st, err := desktopStore()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	all, err := st.List()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var out []string
+	for _, p := range all {
+		out = append(out, p.Name)
+		if p.Email != "" {
+			out = append(out, p.Email)
+		}
+	}
+	return out, cobra.ShellCompDirectiveNoFileComp
 }
