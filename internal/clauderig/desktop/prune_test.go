@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"os"
+	"runtime"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -165,5 +166,28 @@ func TestHumanSize(t *testing.T) {
 		if got := HumanSize(n); got != want {
 			t.Errorf("HumanSize(%d) = %q, want %q", n, got, want)
 		}
+	}
+}
+
+// A profile relocated to another disk is a symlink at the store root; its size
+// is the target's, not the link's.
+func TestDirSize_FollowsASymlinkedRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs a privilege on Windows")
+	}
+	real := filepath.Join(t.TempDir(), "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "f"), make([]byte, 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	n, err := DirSize(link)
+	if err != nil || n == 0 {
+		t.Fatalf("DirSize(symlinked root) = %d, %v; want the target's size", n, err)
 	}
 }

@@ -789,6 +789,7 @@ type desktopProfileJSON struct {
 	OpenUnknown bool   `json:"openUnknown,omitempty"`
 	DataDir     string `json:"dataDir"`
 	SizeBytes   int64  `json:"sizeBytes"`
+	SizeUnknown bool   `json:"sizeUnknown,omitempty"`
 	CreatedAt   string `json:"createdAt,omitempty"`
 	LastOpened  string `json:"lastOpened,omitempty"`
 }
@@ -818,8 +819,12 @@ func printDesktopJSON(w interface{ Write([]byte) (int, error) }, _ *desktop.Stor
 			CreatedAt:  p.CreatedAt,
 			LastOpened: p.LastOpened,
 		}
+		// A measurement that failed is said so, for the same reason as the
+		// process scan below: zero would read as an empty profile.
 		if size, serr := desktop.DirSize(p.Dir()); serr == nil {
 			row.SizeBytes = size
+		} else {
+			row.SizeUnknown = true
 		}
 		// A failed scan is reported as such rather than as `open: false`, so a
 		// script cannot mistake "could not look" for "not running".

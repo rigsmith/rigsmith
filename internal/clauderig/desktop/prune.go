@@ -138,7 +138,7 @@ func Measure(p Profile) (Usage, error) {
 			// with no image beside it is made afresh by Desktop, as it was the
 			// first time.
 			note := "VM resets to pristine; recreated by Desktop on next launch"
-			if _, zerr := os.Stat(img + ".zst"); zerr == nil {
+			if zfi, zerr := os.Stat(img + ".zst"); zerr == nil && zfi.Mode().IsRegular() {
 				note = "VM resets to pristine; re-extracted from " + d.Name() + ".zst on next launch"
 			}
 			size := diskUsage(img, fi)
@@ -194,6 +194,12 @@ func Prune(p Profile, tier PruneTier) ([]PruneEntry, error) {
 // they claim. Symlinks are not followed. A missing directory is zero, not an
 // error — a profile that has never been opened has no data dir yet.
 func DirSize(dir string) (int64, error) {
+	// A profile may itself be a symlink — relocated to another disk — and
+	// WalkDir does not follow a link handed to it as the root. Resolve only
+	// the root; links inside the tree stay unfollowed.
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	var total int64
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, werr error) error {
 		if werr != nil {
