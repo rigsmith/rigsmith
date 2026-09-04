@@ -100,8 +100,11 @@ func (s Scope) Label() string {
 type Ignored struct {
 	Key   string // the settings key, e.g. "defaultMode"
 	Value string // the value that is ignored at this scope
-	// Where names the scopes that do honour it.
+	// Where names the scopes that do honour it; empty when no scope does.
 	Where string
+	// Fix says what to change when the key itself is the mistake — a
+	// top-level defaultMode, which belongs under permissions.
+	Fix string
 }
 
 func (i Ignored) String() string { return fmt.Sprintf("%s: %q", i.Key, i.Value) }
@@ -113,15 +116,13 @@ func (i Ignored) String() string { return fmt.Sprintf("%s: %q", i.Key, i.Value) 
 var ignoredModes = map[string]bool{"bypassPermissions": true, "auto": true}
 
 // IgnoredAt reports the values in the settings file at path that Claude Code
-// will not honour at scope s — `permissions.defaultMode`, where Claude Code
-// keeps the mode, and a top-level `defaultMode`, which it never reads. A
-// missing or empty file has none. It parses what it needs and nothing else,
-// so an otherwise malformed file is reported as an error rather than as
-// clean; IsParseError tells that apart from a file that could not be read.
+// will not honour at scope s — `permissions.defaultMode` at project or local
+// scope, where Claude Code keeps the mode but reads only some values, and a
+// top-level `defaultMode` at any scope, which it never reads. A missing or
+// empty file has none. It parses what it needs and nothing else, so an
+// otherwise malformed file is reported as an error rather than as clean;
+// IsParseError tells that apart from a file that could not be read.
 func IgnoredAt(s Scope, path string) ([]Ignored, error) {
-	if s == User {
-		return nil, nil
-	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -144,20 +145,26 @@ func IgnoredAt(s Scope, path string) ([]Ignored, error) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		return nil, err
 	}
+	const honoured = "user or managed settings, or --permission-mode on the command line"
 	var out []Ignored
-	if ignoredModes[m.Permissions.DefaultMode] {
-		out = append(out, Ignored{Key: "permissions.defaultMode", Value: m.Permissions.DefaultMode,
-			Where: "user or managed settings, or --permission-mode on the command line"})
+	// User settings honour every mode; the two dropped ones are dropped at
+	// the narrower scopes only.
+	if s != User && ignoredModes[m.Permissions.DefaultMode] {
+		out = append(out, Ignored{Key: "permissions.defaultMode", Value: m.Permissions.DefaultMode, Where: honoured})
 	}
-	// A top-level defaultMode is never read, whatever it says: the key is
-	// permissions.defaultMode. Reported for any value, then, not only the
-	// ones the scope would drop — the person who wrote it meant something.
+	// A top-level defaultMode is never read, at any scope, whatever it
+	// says: the key is permissions.defaultMode. Reported for any value, then,
+	// not only the ones a scope would drop — the person who wrote it meant
+	// something. Where names the scopes that honour the value once it is
+	// under the right key, which for a dropped mode at a narrow scope is
+	// still not this one.
 	if m.DefaultMode != "" {
-		where := "permissions.defaultMode — Claude Code never reads a top-level defaultMode"
-		if ignoredModes[m.DefaultMode] {
-			where += "; and that value is honoured only from user or managed settings, or --permission-mode on the command line"
+		i := Ignored{Key: "defaultMode", Value: m.DefaultMode,
+			Fix: "move it under permissions — Claude Code never reads a top-level defaultMode"}
+		if s != User && ignoredModes[m.DefaultMode] {
+			i.Where = honoured
 		}
-		out = append(out, Ignored{Key: "defaultMode", Value: m.DefaultMode, Where: where})
+		out = append(out, i)
 	}
 	return out, nil
 }

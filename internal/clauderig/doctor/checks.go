@@ -206,20 +206,22 @@ func checkProjectGuard(env Env) Result {
 		}}
 }
 
-// checkIgnoredSettings reports values in the project or local settings.json
-// that Claude Code does not honour at that scope — a `defaultMode` of
-// "bypassPermissions" or "auto" — because Claude Code drops them without a
-// word, and a value that was honoured until the 2026-09-02 release otherwise
-// just stops working. A file that will not parse is reported too, as its
-// own problem: nothing can be said about what it carries. Reported only
-// when there is something to say.
+// checkIgnoredSettings reports values in a settings.json that Claude Code
+// does not honour where they are — a `defaultMode` of "bypassPermissions"
+// or "auto" in the project or local file, or a top-level `defaultMode` in
+// any file — because Claude Code drops them without a word, and a value
+// that was honoured until the 2026-09-02 release otherwise just stops
+// working. A file that will not parse, or cannot be read, is reported too,
+// as its own problem: nothing can be said about what it carries. Reported
+// only when there is something to say, with a hint for each kind of
+// problem found, since fixing one must not hide the advice for another.
 func checkIgnoredSettings(env Env) (Result, bool) {
-	var found, unreadable []string
-	malformed := false
+	var found, broken []string
+	var dropped, misplaced, malformed, unreadable bool
 	for _, tier := range []struct {
 		scope settings.Scope
 		path  string
-	}{{settings.Project, env.ProjectSettings}, {settings.Local, env.LocalSettings}} {
+	}{{settings.User, env.UserSettings}, {settings.Project, env.ProjectSettings}, {settings.Local, env.LocalSettings}} {
 		if tier.path == "" {
 			continue
 		}
@@ -227,33 +229,47 @@ func checkIgnoredSettings(env Env) (Result, bool) {
 		if err != nil {
 			// Said here, because nothing else says it: the guard check reads
 			// the same file and reports a parse failure as "not installed".
-			unreadable = append(unreadable, fmt.Sprintf("%s settings at %s could not be read (%v)", tier.scope, tier.path, err))
-			malformed = malformed || settings.IsParseError(err)
+			if settings.IsParseError(err) {
+				broken = append(broken, fmt.Sprintf("%s settings at %s is not valid JSON (%v)", tier.scope, tier.path, err))
+				malformed = true
+			} else {
+				broken = append(broken, fmt.Sprintf("%s settings at %s could not be read (%v)", tier.scope, tier.path, err))
+				unreadable = true
+			}
 			continue
 		}
 		for _, i := range ignored {
-			found = append(found, fmt.Sprintf("%s in %s (%s settings) — honoured only from %s", i, tier.path, tier.scope, i.Where))
+			line := fmt.Sprintf("%s in %s (%s settings)", i, tier.path, tier.scope)
+			if i.Where != "" {
+				line += " — honoured only from " + i.Where
+				dropped = true
+			}
+			if i.Fix != "" {
+				line += " — " + i.Fix
+				misplaced = true
+			}
+			found = append(found, line)
 		}
 	}
-	if len(found) == 0 && len(unreadable) == 0 {
+	if len(found) == 0 && len(broken) == 0 {
 		return Result{}, false
 	}
-	// The hint is about the ignored values; a file that could not be read
-	// gets its own line, so a failure alone is not told to change a
-	// permission mode it may not even set — and only a file that parsed
-	// badly is told to fix its JSON; one that could not be opened has a
-	// different problem.
-	hint := "Claude Code drops these silently at this scope — pass --permission-mode for the session that needs it, or set it in ~/.claude/settings.json knowing that applies to every project"
-	switch {
-	case len(found) > 0:
-	case malformed:
-		hint = "fix the JSON — Claude Code ignores the whole file until it parses, and nothing in it can be checked"
-	default:
-		hint = "make the file readable — nothing in it can be checked until it is"
+	var hints []string
+	if dropped {
+		hints = append(hints, "Claude Code drops these silently at this scope — pass --permission-mode for the session that needs it, or set it in ~/.claude/settings.json knowing that applies to every project")
+	}
+	if misplaced {
+		hints = append(hints, "a top-level defaultMode is never read — move it under permissions")
+	}
+	if malformed {
+		hints = append(hints, "fix the JSON — Claude Code ignores the whole file until it parses, and nothing in it can be checked")
+	}
+	if unreadable {
+		hints = append(hints, "make the file readable — nothing in it can be checked until it is")
 	}
 	return Result{Name: "ignored settings", Status: Warn,
-		Detail: strings.Join(append(found, unreadable...), "; "),
-		Hint:   hint,
+		Detail: strings.Join(append(found, broken...), "; "),
+		Hint:   strings.Join(hints, "; "),
 	}, true
 }
 

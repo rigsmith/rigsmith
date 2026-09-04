@@ -66,6 +66,14 @@ func TestIgnoredAt(t *testing.T) {
 	if got, err := IgnoredAt(User, path); err != nil || len(got) != 0 {
 		t.Errorf("user scope honours it: got %v, %v", got, err)
 	}
+	// A top-level defaultMode is a mistake at user scope too: the file is
+	// parsed there, and only the nested key is exempt.
+	if err := os.WriteFile(path, []byte(`{"defaultMode": "bypassPermissions"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := IgnoredAt(User, path); err != nil || len(got) != 1 || got[0].Key != "defaultMode" || got[0].Where != "" || got[0].Fix == "" {
+		t.Errorf("user scope, top-level key: got %+v, %v; want it reported with a fix and no other scope named", got, err)
+	}
 	// A top-level defaultMode is a mistake Claude Code never reads, but a
 	// person who wrote it meant the same thing, so it is reported rather than
 	// silently passed over.
@@ -79,8 +87,8 @@ func TestIgnoredAt(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"defaultMode": "acceptEdits"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := IgnoredAt(Local, path); err != nil || len(got) != 1 || got[0].Key != "defaultMode" || !strings.Contains(got[0].Where, "never reads") {
-		t.Errorf("top-level defaultMode with an honoured value: got %v, %v", got, err)
+	if got, err := IgnoredAt(Local, path); err != nil || len(got) != 1 || got[0].Key != "defaultMode" || got[0].Where != "" || !strings.Contains(got[0].Fix, "permissions") {
+		t.Errorf("top-level defaultMode with an honoured value: got %+v, %v", got, err)
 	}
 	if err := os.WriteFile(path, []byte(`{"permissions": {"defaultMode": "acceptEdits"}}`), 0o644); err != nil {
 		t.Fatal(err)

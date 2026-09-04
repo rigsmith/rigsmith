@@ -303,7 +303,9 @@ only. `permissions.defaultMode: "bypassPermissions"` (since the 2026-09-02
 release) and `"auto"` are silently dropped from a project or local file, and
 nothing says so: a repo that committed the value when it worked just finds it
 no longer does. `clauderig doctor` reports such values as *ignored settings*,
-naming the file. For a session that needs the mode, pass `--permission-mode`
+naming the file — and a `defaultMode` written at the top level of any tier's
+file rather than under `permissions`, which Claude Code never reads there.
+For a session that needs the mode, pass `--permission-mode`
 on the command line. Setting it in `~/.claude/settings.json` works too, but
 that applies to every project on the machine — a much wider grant than the one
 repository the project file meant — so reach for it deliberately.

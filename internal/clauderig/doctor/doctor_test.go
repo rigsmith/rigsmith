@@ -318,8 +318,12 @@ func TestCheckIgnoredSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, ok = checkIgnoredSettings(env)
-	if !ok || !strings.Contains(r.Detail, "could not be read") {
+	if !ok || !strings.Contains(r.Detail, "is not valid JSON") {
 		t.Fatalf("malformed project settings: got ok=%v %+v", ok, r)
+	}
+	// Both problems at once get both pieces of advice.
+	if !strings.Contains(r.Hint, "--permission-mode") || !strings.Contains(r.Hint, "JSON") {
+		t.Fatalf("ignored value plus malformed file: hint = %q, want advice for each", r.Hint)
 	}
 	// With only the parse failure left, the advice is about the JSON, not
 	// about a permission mode the file may not even set.
@@ -338,7 +342,20 @@ func TestCheckIgnoredSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, ok = checkIgnoredSettings(env)
-	if !ok || strings.Contains(r.Hint, "JSON") || !strings.Contains(r.Hint, "readable") {
-		t.Fatalf("read failure alone: got ok=%v hint=%q", ok, r.Hint)
+	if !ok || strings.Contains(r.Hint, "JSON") || !strings.Contains(r.Hint, "readable") || !strings.Contains(r.Detail, "could not be read") {
+		t.Fatalf("read failure alone: got ok=%v hint=%q detail=%q", ok, r.Hint, r.Detail)
+	}
+	// A top-level defaultMode in the USER file is a mistake too, with its
+	// own advice and no claim that another scope would honour it.
+	if err := os.RemoveAll(env.ProjectSettings); err != nil {
+		t.Fatal(err)
+	}
+	env.UserSettings = filepath.Join(dir, "user-settings.json")
+	if err := os.WriteFile(env.UserSettings, []byte(`{"defaultMode": "acceptEdits"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, ok = checkIgnoredSettings(env)
+	if !ok || !strings.Contains(r.Detail, "user settings") || strings.Contains(r.Detail, "honoured only") || !strings.Contains(r.Hint, "under permissions") || strings.Contains(r.Hint, "--permission-mode") {
+		t.Fatalf("top-level key in user settings: got ok=%v %+v", ok, r)
 	}
 }
