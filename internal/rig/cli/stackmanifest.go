@@ -256,6 +256,18 @@ func (m *stackManifest) branchPrefix(name string) string {
 	return stackDefaultBranchPrefix
 }
 
+// proposeBranch is sendBranch for a name that may be the one lastPropose
+// offered back: that record is the branch as pushed, prefix and all, and is
+// used as it is — so a branchPrefix changed since the proposal cannot turn
+// stack/read-timeout into feature/stack/read-timeout on the next round. A
+// name typed fresh still takes the current prefix.
+func (m *stackManifest) proposeBranch(name, given string) string {
+	if given != "" && given == m.LastPropose[name] {
+		return given
+	}
+	return m.sendBranch(name, given)
+}
+
 // sendBranch resolves the name given to `propose` into the branch to create.
 // A name that already carries the prefix is left alone, so re-sending by
 // pasting the full branch name back in doesn't stutter it.

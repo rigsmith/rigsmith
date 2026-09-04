@@ -166,3 +166,18 @@ func TestDelete_KeepsTheBOM(t *testing.T) {
 		t.Fatalf("absent path: got %q, %v; want the input back", got, ok)
 	}
 }
+
+// Deleting the only member takes its trailing comment with it, on its own
+// line or beside the brace.
+func TestDelete_OnlyMemberTakesItsComment(t *testing.T) {
+	for in, want := range map[string]string{
+		"{\n  \"a\": 1 // about a\n}\n": "{\n}\n",
+		"{ \"a\": 1 // about a\n}\n":    "{ \n}\n",
+		"{ \"a\": 1 /* a */ }\n":        "{ }\n",
+	} {
+		got, ok := Delete(in, []string{"a"})
+		if !ok || got != want {
+			t.Errorf("Delete(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+}

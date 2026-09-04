@@ -60,6 +60,23 @@ func TestStackSeed(t *testing.T) {
 		t.Errorf("seed manifest names %v", m.names())
 	}
 
+	t.Run("refuses a dirty stackspace", func(t *testing.T) {
+		// The manifest is read from the working tree and the root files
+		// from HEAD; a seed taken while they disagree is no revision at all.
+		if err := os.WriteFile(filepath.Join(root, "Release Notes.md"), []byte("# edited\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		defer mustGitStack(t, root, "checkout", "--", "Release Notes.md")
+		other := filepath.Join(t.TempDir(), "seed")
+		cmd := newStackSeedCmd()
+		cmd.SetContext(context.Background())
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetArgs([]string{other})
+		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "uncommitted") {
+			t.Fatalf("dirty stackspace: err = %v, want a refusal", err)
+		}
+	})
+
 	t.Run("refuses a non-empty destination", func(t *testing.T) {
 		cmd := newStackSeedCmd()
 		cmd.SetContext(context.Background())
@@ -108,6 +125,15 @@ func TestStackForkRefFor(t *testing.T) {
 		ref, err = stackForkRefFor(moved, "lib", true, resolve)
 		if err != nil || ref == nil || ref.Branch != "stack/read-timeout" || ref.Commit != "aaa" {
 			t.Fatalf("prefix changed after the proposal: %+v, %v", ref, err)
+		}
+		// Proposing again to the offered-back branch goes to that branch,
+		// not to one with the new prefix stacked on; a fresh name takes the
+		// new prefix.
+		if got := moved.proposeBranch("lib", "stack/read-timeout"); got != "stack/read-timeout" {
+			t.Errorf("reused record: branch = %q", got)
+		}
+		if got := moved.proposeBranch("lib", "other"); got != "feature/other" {
+			t.Errorf("fresh name: branch = %q", got)
 		}
 		gone := func(string) (string, bool, error) { return "", false, nil }
 		if ref, err := stackForkRefFor(m, "lib", true, gone); err != nil || ref != nil {

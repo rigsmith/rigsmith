@@ -180,9 +180,26 @@ func memberSpans(orig, stripped []byte, nameStart, valueEnd int) [][2]int {
 		}
 		return [][2]int{{k, end}}
 	}
-	// Only member: leave the braces with whatever whitespace framed it.
+	// Only member: leave the braces with whatever whitespace framed it. Its
+	// trailing comment goes with it, and so does its line ending when the
+	// member had the line to itself.
 	start = lineStartIfBlankBefore(stripped, start)
 	start = absorbCommentLinesAbove(orig, stripped, start)
+	j := end
+	for j < len(stripped) && isSpace(stripped[j]) && stripped[j] != '\n' {
+		j++
+	}
+	// Blank in the stripped copy but not in the original: a comment.
+	comment := strings.TrimSpace(string(orig[end:j])) != ""
+	switch {
+	case j < len(stripped) && stripped[j] == '\n':
+		end = j
+		if start == 0 || stripped[start-1] == '\n' {
+			end++
+		}
+	case comment:
+		end = j
+	}
 	return [][2]int{{start, end}}
 }
 

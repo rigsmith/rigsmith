@@ -747,7 +747,7 @@ func newStackSendCmd() *cobra.Command {
 			// The prefix keeps these branches recognisable on a fork that also
 			// carries your own work, and is applied here rather than at the call
 			// sites so the menu and the CLI cannot disagree about it.
-			branch := m.sendBranch(name, typed)
+			branch := m.proposeBranch(name, typed)
 			r := m.Repos[name]
 			if r == nil {
 				if err := m.requireRepos(); err != nil {
@@ -1065,7 +1065,7 @@ func newStackWireCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, err = stackWire(ctx, cmd.OutOrStdout(), m, repo, "")
+			_, err = stackWire(ctx, cmd.OutOrStdout(), m, repo, "", false)
 			return err
 		},
 	}

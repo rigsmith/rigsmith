@@ -99,6 +99,15 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return 0, err
 	}
+	// The manifest in hand came from the working tree; the root files come
+	// from HEAD. An uncommitted edit to either — a member removed from the
+	// manifest but not yet committed, a root file changed — would make the
+	// seed something no revision ever was, so both have to agree first.
+	if dirty, derr := repo.Dirty(ctx); derr != nil {
+		return 0, derr
+	} else if dirty {
+		return 0, fmt.Errorf("stackspace has uncommitted changes — commit them first, so the seed is a revision that exists")
+	}
 	names, err := repo.TopLevelNames(ctx, "HEAD")
 	if err != nil {
 		return 0, fmt.Errorf("reading the stackspace's root: %w", err)

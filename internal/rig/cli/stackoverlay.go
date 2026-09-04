@@ -113,7 +113,7 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 				// Two packages republished under one id cannot both be what a
 				// consumer meant; redirecting to either would be a guess, so
 				// the id is redirected to neither and the clash is reported.
-				if prev, dup := alias[as]; dup && prev != orig {
+				if prev, dup := alias[as]; dup && (prev != orig || aliasBy[as] != m) {
 					ambiguous[as] = true
 					notes = append(notes, fmt.Sprintf("%s is the republished id of both %s (%s) and %s (%s) — neither is redirected until one changes", as, prev, aliasBy[as], orig, m))
 					continue

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -128,7 +129,7 @@ func newStackRemoveCmd() *cobra.Command {
 			// that fail (an overlay somebody wrote by hand is the usual reason)
 			// the manifest and the tracked tree are put back: nothing has been
 			// committed, and a member half-removed is worse than one still in.
-			if touched, err := stackWire(ctx, out, m, repo, "  "); err != nil {
+			if touched, err := stackWire(ctx, out, m, repo, "  ", true); err != nil {
 				if readErr == nil {
 					_ = os.WriteFile(src.File, before, 0o644)
 				}
@@ -290,8 +291,25 @@ func stackRestoreFromHead(ctx context.Context, repo *gitrepo.Repo, rel string) {
 // failed: rm puts them back on failure, since an overlay describing the
 // stackspace without the member, left beside a manifest that still has it,
 // is the half-done state rm exists to avoid.
-func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitrepo.Repo, indent string) (touched []string, err error) {
+//
+// strict makes a failed ecosystem scan an error rather than a note: `wire`
+// on its own can leave that ecosystem's overlay alone and say so, but rm is
+// about to commit a member's removal, and an overlay it could not rewrite
+// may still point into the directory that left.
+func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitrepo.Repo, indent string, strict bool) (touched []string, err error) {
 	byEco, orphans, notes, failed := stackRedirects(ctx, repo.Dir, m.names(), m.publishing())
+	if strict && len(failed) > 0 {
+		names := make([]string, 0, len(failed))
+		for id := range failed {
+			names = append(names, id)
+		}
+		sort.Strings(names)
+		var parts []string
+		for _, id := range names {
+			parts = append(parts, fmt.Sprintf("%s: %v", id, failed[id]))
+		}
+		return nil, fmt.Errorf("could not scan every ecosystem, so an overlay may still point at the member (%s)", strings.Join(parts, "; "))
+	}
 	// Patching a member's own build file is a commit to that repository, and
 	// it travels back through `push` or `send`. Your own repos want that line;
 	// a fork you contribute to should not carry rig plumbing into somebody
@@ -316,6 +334,10 @@ func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitre
 		// is taken away rather than kept pointing at directories that left.
 		resp, err := eco.LocalOverlay(ctx, localOverlayRequest(repo.Dir, links, writable))
 		if err != nil {
+			// An adapter can patch a member's own build file and then fail
+			// on the root overlay; what it patched is touched all the same.
+			touched = append(touched, resp.Fixed...)
+			touched = append(touched, resp.Removed...)
 			return touched, err
 		}
 		for f := range resp.Files {
