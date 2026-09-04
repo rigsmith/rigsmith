@@ -167,7 +167,8 @@ cwd mappings (Q4).
   copy, or once it has been unwritten for 30 minutes — the `SessionEnd` hook
   runs `sync --flush`, which restages the transcript the hook payload names
   (only that one: a short session ending must not restage a long one's
-  transcript mid-chunk), so a session that ends normally has its tail captured
+  transcript mid-chunk, and a payload that names nothing flushes nothing, for
+  the same reason), so a session that ends normally has its tail captured
   at once, and the settle rule catches up a session that died without firing
   it, at the next sync. Small transcripts are unaffected. **Not yet done, and the real fix:**
   storing a transcript as sealed fixed-size parts

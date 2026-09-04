@@ -2,6 +2,7 @@ package commands
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,13 +28,19 @@ const configHistoryMaxCommits = 200
 
 // hookTranscripts reads the Claude Code hook payload from stdin, if one is
 // there, and returns the transcript it names. Every hook event carries
-// `transcript_path`; SessionEnd is the one that runs `sync --flush`. Nothing
-// is read from a terminal — a person running the command has no payload to
-// give — and an unreadable or payload-less stream (a pipe from /dev/null)
-// means "none named", which the caller treats as a flush of everything.
-func hookTranscripts(in io.Reader) []string {
+// `transcript_path`; SessionEnd is the one that runs `sync --flush`.
+//
+// Three outcomes, because the caller does something different with each: a
+// path, to flush that transcript alone; nothing, when there was no payload to
+// read (a terminal, or an empty stream such as /dev/null), which the caller
+// treats as a flush of everything; and an error, when something arrived but
+// named no transcript — malformed, the wrong shape, or a stream that stayed
+// silent past the wait. That last one is not a flush of everything: one bad
+// payload would otherwise restage every long session's transcript mid-chunk,
+// the very growth the throttle exists to stop.
+func hookTranscripts(in io.Reader) ([]string, error) {
 	if f, ok := in.(*os.File); ok && isatty.IsTerminal(f.Fd()) {
-		return nil
+		return nil, nil
 	}
 	// Decoded as a stream, not read to EOF: the payload is one JSON object,
 	// and a hook runner that writes it and keeps the pipe open would
@@ -44,22 +51,30 @@ func hookTranscripts(in io.Reader) []string {
 	type payload struct {
 		TranscriptPath string `json:"transcript_path"`
 	}
-	ch := make(chan payload, 1)
+	type result struct {
+		p   payload
+		err error
+	}
+	ch := make(chan result, 1)
 	go func() {
-		var p payload
-		if err := json.NewDecoder(io.LimitReader(in, 1<<20)).Decode(&p); err != nil {
-			p = payload{}
-		}
-		ch <- p
+		var r result
+		r.err = json.NewDecoder(io.LimitReader(in, 1<<20)).Decode(&r.p)
+		ch <- r
 	}()
 	select {
-	case p := <-ch:
-		if strings.TrimSpace(p.TranscriptPath) == "" {
-			return nil
+	case r := <-ch:
+		if errors.Is(r.err, io.EOF) {
+			return nil, nil // nothing on the stream at all
 		}
-		return []string{p.TranscriptPath}
+		if r.err != nil {
+			return nil, fmt.Errorf("hook payload on stdin is not a JSON object: %w", r.err)
+		}
+		if strings.TrimSpace(r.p.TranscriptPath) == "" {
+			return nil, errors.New("hook payload on stdin names no transcript_path")
+		}
+		return []string{r.p.TranscriptPath}, nil
 	case <-time.After(2 * time.Second):
-		return nil
+		return nil, errors.New("nothing arrived on stdin within 2s")
 	}
 }
 
@@ -85,7 +100,8 @@ func NewSyncCmd() *cobra.Command {
 			"runs `sync --flush`, which restages the ended session's transcript (the\n" +
 			"hook names it on stdin) regardless, so its last turn never waits for the\n" +
 			"next session; other sessions' transcripts keep their throttle. Run by\n" +
-			"hand, `--flush` restages every changed transcript.",
+			"hand, `--flush` restages every changed transcript. A payload on stdin\n" +
+			"that names no transcript flushes nothing, and says so.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
@@ -143,12 +159,22 @@ func NewSyncCmd() *cobra.Command {
 			// --flush: the session is over and its tail has nothing to wait
 			// for. From the SessionEnd hook that is one transcript — the hook
 			// says which — and only that one skips the throttle; run by hand,
-			// with nothing on stdin to say, every transcript does.
+			// with nothing on stdin to say, every transcript does. A payload
+			// that arrived but named nothing is neither: the throttle stays
+			// on, and the sync says why, rather than restaging every long
+			// session's transcript on the strength of a broken hook.
 			largeFileBytes := cfg.Retention.LargeFileBytes
 			var flushPaths []string
 			if flush {
-				if flushPaths = hookTranscripts(cmd.InOrStdin()); len(flushPaths) == 0 {
+				paths, herr := hookTranscripts(cmd.InOrStdin())
+				switch {
+				case herr != nil:
+					fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf(
+						"⚠ --flush: %s — no transcript flushed; the large-file throttle stays on", herr)))
+				case len(paths) == 0:
 					largeFileBytes = -1
+				default:
+					flushPaths = paths
 				}
 			}
 			rep, serr := engine.Sync(engine.Options{

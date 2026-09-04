@@ -62,7 +62,8 @@ the same in the gitignored `.claude/settings.local.json`). See
   a session's transcript is restaged only once it has grown by half that much
   again, or gone quiet for 30 minutes, so the per-turn Stop hook does not
   re-commit a 50 MB file every turn. The SessionEnd hook runs `sync --flush`
-  for the session that just ended, so its last turn is captured at once.
+  for the session that just ended, so its last turn is captured at once; a
+  payload that names no transcript flushes nothing, and the sync says so.
 
 ## Commands
 

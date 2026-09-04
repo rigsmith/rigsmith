@@ -46,7 +46,9 @@ session's transcript regardless (the hook names it), so a finished session's
 tail does not wait for the next one while other sessions' transcripts keep
 their throttle; a session that dies without firing it is caught up by the
 settle rule at the next sync. Run by hand, `sync --flush` restages every
-changed transcript. Set the key negative to restage every change.
+changed transcript; a hook payload that names no transcript flushes nothing,
+and `sync` says so rather than restage every long session's transcript on the
+strength of a broken hook. Set the key negative to restage every change.
 
 When a restore brings back Claude **Code** sessions, it reminds you to fully quit
 and reopen Claude Desktop — Desktop only rebuilds its Code-tab list from the
