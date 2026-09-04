@@ -82,26 +82,35 @@ func TestMeasure_ClassifiesTiers(t *testing.T) {
 	}
 }
 
-// Every unpacked disk is VM state whatever its name or platform: the Windows
-// image is rootfs.vhdx, and a disk with no compressed source is still --vm
-// tier, just made afresh rather than re-extracted.
+// Every unpacked disk is VM state whatever its name or platform, and the
+// Windows root image is rootfs.vhdx. A side disk with no compressed source is
+// still --vm tier, made afresh rather than re-extracted; a ROOT filesystem
+// with none is --all tier, because deleting it means a download, which --vm
+// never promises.
 func TestMeasure_AllUnpackedDisksAreVMTier(t *testing.T) {
 	_, p := pruneFixture(t, false)
 	win := filepath.Join(p.DataDir(), "vm_bundles", "claudevm.bundle", "rootfs.vhdx")
 	if err := os.WriteFile(win, make([]byte, 8192), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A directory named like the archive is not one to re-extract from.
+	if err := os.MkdirAll(filepath.Join(p.DataDir(), "vm_bundles", "claudevm.bundle", "rootfs.vhdx.zst"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	u, err := Measure(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{"vm_bundles/claudevm.bundle/rootfs.img", "vm_bundles/claudevm.bundle/rootfs.vhdx", "vm_bundles/claudevm.bundle/sessiondata.img"} {
-		if tier, ok := tierOf(u, rel); !ok || tier != PruneVM {
-			t.Errorf("%s: tier %v (present=%v), want vm", rel, tier, ok)
+	if tier, ok := tierOf(u, "vm_bundles/claudevm.bundle/sessiondata.img"); !ok || tier != PruneVM {
+		t.Errorf("sessiondata.img: tier %v (present=%v), want vm", tier, ok)
+	}
+	for _, rel := range []string{"vm_bundles/claudevm.bundle/rootfs.img", "vm_bundles/claudevm.bundle/rootfs.vhdx"} {
+		if tier, ok := tierOf(u, rel); !ok || tier != PruneAll {
+			t.Errorf("%s without a compressed image: tier %v (present=%v), want all", rel, tier, ok)
 		}
 	}
 	for _, e := range u.Entries {
-		if e.Tier == PruneVM && strings.Contains(e.Note, "re-extracted") {
+		if strings.Contains(e.Note, "re-extracted") {
 			t.Errorf("%s claims a compressed source it does not have", e.Rel)
 		}
 	}

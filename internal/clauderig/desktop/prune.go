@@ -139,18 +139,23 @@ func MeasureContext(ctx context.Context, p Profile) (Usage, error) {
 			if serr != nil {
 				continue
 			}
-			// Every unpacked disk is VM state, and --vm resets the VM: the
-			// root filesystem comes back from its compressed image, and a disk
-			// with no image beside it is made afresh by Desktop, as it was the
-			// first time.
-			note := "VM resets to pristine; recreated by Desktop on next launch"
-			if zfi, zerr := os.Stat(img + ".zst"); zerr == nil && zfi.Mode().IsRegular() {
+			// Every unpacked disk is VM state, and --vm resets the VM. A side
+			// disk with no image beside it is made afresh by Desktop, as it
+			// was the first time; the ROOT filesystem is not — it comes back
+			// only from its compressed image, so without a real one beside it
+			// deleting it means a download, which is what --all promises and
+			// --vm does not.
+			tier, note := PruneVM, "VM resets to pristine; recreated by Desktop on next launch"
+			switch zfi, zerr := os.Stat(img + ".zst"); {
+			case zerr == nil && zfi.Mode().IsRegular():
 				note = "VM resets to pristine; re-extracted from " + d.Name() + ".zst on next launch"
+			case isRootDisk(d.Name()):
+				tier, note = PruneAll, "no compressed image beside it to re-extract from; re-downloaded on next launch"
 			}
 			size := diskUsage(img, fi)
 			u.Entries = append(u.Entries, PruneEntry{
 				Rel:  filepath.ToSlash(filepath.Join(vmBundlesDir, e.Name(), d.Name())),
-				Size: size, Tier: PruneVM, Note: note,
+				Size: size, Tier: tier, Note: note,
 			})
 			vmTier += size
 		}
@@ -167,6 +172,13 @@ func MeasureContext(ctx context.Context, p Profile) (Usage, error) {
 	}
 	sort.SliceStable(u.Entries, func(i, j int) bool { return u.Entries[i].Tier < u.Entries[j].Tier })
 	return u, nil
+}
+
+// isRootDisk reports whether a VM disk is the root filesystem — rootfs.img on
+// macOS and Linux, rootfs.vhdx on Windows — as opposed to a side disk Desktop
+// creates empty.
+func isRootDisk(name string) bool {
+	return strings.HasPrefix(strings.ToLower(name), "rootfs.")
 }
 
 // Prune removes every reclaimable entry at or below tier and returns what it

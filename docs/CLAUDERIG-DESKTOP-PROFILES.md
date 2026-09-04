@@ -118,8 +118,8 @@ and `desktop prune` gives space back in tiers ordered by what they cost:
 | Tier | Reclaims | Lost |
 | --- | --- | --- |
 | default | `Cache`, `Code Cache`, `GPUCache`, `Dawn*Cache` | nothing — regenerated as needed |
-| `--vm` | also `rootfs.img`, when `rootfs.img.zst` is beside it to re-extract from | whatever was created inside the VM and never exported to the host |
-| `--all` | also the compressed image, kernel and initramfs | a download on next launch |
+| `--vm` | also the unpacked VM disks: `rootfs.img` when `rootfs.img.zst` is beside it to re-extract from, and side disks Desktop makes afresh | whatever was created inside the VM and never exported to the host |
+| `--all` | also the compressed image, kernel and initramfs — and a `rootfs.img` with no compressed image beside it, since deleting that means a download | a download on next launch |
 
 The login and chat history are never touched at any tier. `--vm` and `--all`
 ask first on a terminal and need `--yes` off one; a profile whose window is open

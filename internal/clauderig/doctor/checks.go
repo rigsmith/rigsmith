@@ -59,7 +59,11 @@ func checkRigOnPath(_ context.Context) Result {
 // desktopPruneThreshold is how much a `desktop prune --vm` would have to free
 // before doctor mentions it. The Cowork VM image alone reaches this within
 // days of use, and there is no other signal that it has.
-const desktopPruneThreshold = 4 << 30
+var desktopPruneThreshold int64 = 4 << 30
+
+// desktopStore opens the profile store doctor measures; a variable so a test
+// can point it at a store of its own rather than the real home directory.
+var desktopStore = desktop.DefaultStore
 
 // checkDesktopSize reports when the Desktop profiles are holding space that
 // `desktop prune` could give back — the VM image and caches, never chat
@@ -70,7 +74,7 @@ const desktopPruneThreshold = 4 << 30
 // hold tens of GB, so the walk runs under the doctor's own deadline: past it
 // the check gives up silently rather than hold the report.
 func checkDesktopSize(ctx context.Context) (Result, bool) {
-	st, err := desktop.DefaultStore()
+	st, err := desktopStore()
 	if err != nil {
 		return Result{}, false
 	}
