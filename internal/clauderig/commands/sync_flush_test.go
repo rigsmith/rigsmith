@@ -31,6 +31,7 @@ func TestHookTranscripts(t *testing.T) {
 	}
 	for name, in := range map[string]string{
 		"not json":    "hello",
+		"whitespace":  "\n  \n",
 		"truncated":   `{"transcript_path":"/t/`,
 		"no path":     `{"session_id":"s1"}`,
 		"blank path":  `{"transcript_path":"  "}`,

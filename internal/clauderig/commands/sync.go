@@ -56,14 +56,21 @@ func hookTranscripts(in io.Reader) ([]string, error) {
 		err error
 	}
 	ch := make(chan result, 1)
+	// Counted, so a stream that carried only whitespace — a broken hook
+	// printing a newline — is told apart from one that carried nothing: the
+	// decoder reports EOF for both, and only the second means "no payload".
+	counted := &countingReader{r: io.LimitReader(in, 1<<20)}
 	go func() {
 		var r result
-		r.err = json.NewDecoder(io.LimitReader(in, 1<<20)).Decode(&r.p)
+		r.err = json.NewDecoder(counted).Decode(&r.p)
 		ch <- r
 	}()
 	select {
 	case r := <-ch:
 		if errors.Is(r.err, io.EOF) {
+			if counted.n > 0 {
+				return nil, errors.New("hook payload on stdin is blank")
+			}
 			return nil, nil // nothing on the stream at all
 		}
 		if r.err != nil {
@@ -74,8 +81,26 @@ func hookTranscripts(in io.Reader) ([]string, error) {
 		}
 		return []string{r.p.TranscriptPath}, nil
 	case <-time.After(2 * time.Second):
+		// The read is abandoned by closing what it reads from — nothing in
+		// sync reads stdin after this — so the goroutine ends rather than
+		// sitting on the stream for the rest of the process.
+		if c, ok := in.(io.Closer); ok {
+			_ = c.Close()
+		}
 		return nil, errors.New("nothing arrived on stdin within 2s")
 	}
+}
+
+// countingReader counts the bytes an io.Reader handed out.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // pushAttempts bounds the push/reconcile retry loop. Small on purpose: each round

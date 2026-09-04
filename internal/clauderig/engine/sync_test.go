@@ -409,3 +409,27 @@ func TestSync_FlushIsScopedToTheNamedTranscript(t *testing.T) {
 		}
 	}
 }
+
+// A copy that fails part-way leaves no half-written file behind: the throttle
+// compares the source against whatever is staged, and a truncated copy would
+// pass for a baseline and then be committed as the transcript.
+func TestCopyPreserveMtime_LeavesNothingBehindOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "staged", "t.jsonl")
+	write(t, dir, "staged/t.jsonl", "the previous staged copy")
+	// A directory opens but does not read: the copy fails after the
+	// destination would already have been created.
+	if err := copyPreserveMtime(dir, dst, time.Now()); err == nil {
+		t.Fatal("copying a directory should fail")
+	}
+	if got := read(t, dst); got != "the previous staged copy" {
+		t.Fatalf("staged copy after a failed copy = %q, want the previous one untouched", got)
+	}
+	entries, err := os.ReadDir(filepath.Dir(dst))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("temp file left behind: %v", entries)
+	}
+}

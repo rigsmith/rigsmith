@@ -796,16 +796,34 @@ func copyPreserveMtime(src, dst string, mtime time.Time) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	// Written beside dst and renamed over it, so an interrupted copy leaves
+	// the previous staged file where it was rather than a truncated one in
+	// its place: the large-file throttle compares against the staged copy,
+	// and a truncated copy would pass for a baseline and then be committed.
+	out, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".*.tmp")
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+	tmp := out.Name()
+	fail := func(err error) error {
+		_ = out.Close()
+		_ = os.Remove(tmp)
 		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		return fail(err)
 	}
 	if err := out.Close(); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
-	return os.Chtimes(dst, mtime, mtime)
+	if err := os.Chtimes(tmp, mtime, mtime); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
