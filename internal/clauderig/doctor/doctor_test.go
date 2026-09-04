@@ -318,7 +318,7 @@ func TestCheckIgnoredSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, ok = checkIgnoredSettings(env)
-	if !ok || !strings.Contains(r.Detail, "is not valid JSON") {
+	if !ok || !strings.Contains(r.Detail, "does not parse as settings") {
 		t.Fatalf("malformed project settings: got ok=%v %+v", ok, r)
 	}
 	// Both problems at once get both pieces of advice.

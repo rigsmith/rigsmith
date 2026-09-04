@@ -230,7 +230,7 @@ func checkIgnoredSettings(env Env) (Result, bool) {
 			// Said here, because nothing else says it: the guard check reads
 			// the same file and reports a parse failure as "not installed".
 			if settings.IsParseError(err) {
-				broken = append(broken, fmt.Sprintf("%s settings at %s is not valid JSON (%v)", tier.scope, tier.path, err))
+				broken = append(broken, fmt.Sprintf("%s settings at %s does not parse as settings (%v)", tier.scope, tier.path, err))
 				malformed = true
 			} else {
 				broken = append(broken, fmt.Sprintf("%s settings at %s could not be read (%v)", tier.scope, tier.path, err))
@@ -259,10 +259,10 @@ func checkIgnoredSettings(env Env) (Result, bool) {
 		hints = append(hints, "Claude Code drops these silently at this scope — pass --permission-mode for the session that needs it, or set it in ~/.claude/settings.json knowing that applies to every project")
 	}
 	if misplaced {
-		hints = append(hints, "a top-level defaultMode is never read — move it under permissions")
+		hints = append(hints, "a key Claude Code never reads — a top-level defaultMode goes under permissions, and the spelling is defaultMode exactly")
 	}
 	if malformed {
-		hints = append(hints, "fix the JSON — Claude Code ignores the whole file until it parses, and nothing in it can be checked")
+		hints = append(hints, "fix the file — a JSON syntax error or a value of the wrong type; nothing in it can be checked until it parses as settings")
 	}
 	if unreadable {
 		hints = append(hints, "make the file readable — nothing in it can be checked until it is")

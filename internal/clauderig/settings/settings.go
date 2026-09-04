@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
 // Scope is a Claude Code settings tier.
@@ -133,40 +135,89 @@ func IgnoredAt(s Scope, path string) ([]Ignored, error) {
 	if len(bytes.TrimSpace(b)) == 0 {
 		return nil, nil
 	}
-	// Claude Code keeps the mode under the permissions object; a bare
-	// top-level defaultMode is not a shape it reads, but one people write by
-	// mistake, so it is reported too rather than silently passed over.
-	var m struct {
-		Permissions struct {
-			DefaultMode string `json:"defaultMode"`
-		} `json:"permissions"`
-		DefaultMode string `json:"defaultMode"`
-	}
-	if err := json.Unmarshal(b, &m); err != nil {
+	// Decoded by exact key, not into a struct: encoding/json matches struct
+	// fields case-insensitively, and Claude Code does not — "DefaultMode"
+	// is a key it never reads, and calling it the real setting would send
+	// someone to move it between scopes when the fix is the spelling.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(b, &top); err != nil {
 		return nil, err
 	}
 	const honoured = "user or managed settings, or --permission-mode on the command line"
 	var out []Ignored
-	// User settings honour every mode; the two dropped ones are dropped at
-	// the narrower scopes only.
-	if s != User && ignoredModes[m.Permissions.DefaultMode] {
-		out = append(out, Ignored{Key: "permissions.defaultMode", Value: m.Permissions.DefaultMode, Where: honoured})
+	// Claude Code keeps the mode under the permissions object.
+	if raw, ok := top["permissions"]; ok {
+		var perms map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &perms); err != nil {
+			return nil, err
+		}
+		mode, err := stringAt(perms, "defaultMode")
+		if err != nil {
+			return nil, err
+		}
+		// User settings honour every mode; the two dropped ones are dropped
+		// at the narrower scopes only.
+		if s != User && ignoredModes[mode] {
+			out = append(out, Ignored{Key: "permissions.defaultMode", Value: mode, Where: honoured})
+		}
+		out = append(out, wrongCase(perms, "permissions.")...)
 	}
-	// A top-level defaultMode is never read, at any scope, whatever it
-	// says: the key is permissions.defaultMode. Reported for any value, then,
-	// not only the ones a scope would drop — the person who wrote it meant
-	// something. Where names the scopes that honour the value once it is
-	// under the right key, which for a dropped mode at a narrow scope is
-	// still not this one.
-	if m.DefaultMode != "" {
-		i := Ignored{Key: "defaultMode", Value: m.DefaultMode,
+	// A bare top-level defaultMode is not a shape Claude Code reads, but one
+	// people write by mistake, so it is reported too rather than silently
+	// passed over — at any scope, whatever it says: the key is
+	// permissions.defaultMode, and the person who wrote it meant something.
+	// Where names the scopes that honour the value once it is under the
+	// right key, which for a dropped mode at a narrow scope is still not
+	// this one.
+	mode, err := stringAt(top, "defaultMode")
+	if err != nil {
+		return nil, err
+	}
+	if mode != "" {
+		i := Ignored{Key: "defaultMode", Value: mode,
 			Fix: "move it under permissions — Claude Code never reads a top-level defaultMode"}
-		if s != User && ignoredModes[m.DefaultMode] {
+		if s != User && ignoredModes[mode] {
 			i.Where = honoured
 		}
 		out = append(out, i)
 	}
+	out = append(out, wrongCase(top, "")...)
 	return out, nil
+}
+
+// stringAt decodes the string under key, or "" when the key is absent. A
+// value of another type is an error of the same kind as malformed JSON: the
+// file does not parse as settings.
+func stringAt(m map[string]json.RawMessage, key string) (string, error) {
+	raw, ok := m[key]
+	if !ok {
+		return "", nil
+	}
+	var v string
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return "", err
+	}
+	return v, nil
+}
+
+// wrongCase reports a defaultMode spelled in the wrong case — DefaultMode,
+// defaultmode — which JSON does not equate and Claude Code never reads.
+// prefix is the object it was found in, for the report.
+func wrongCase(m map[string]json.RawMessage, prefix string) []Ignored {
+	var out []Ignored
+	for k, raw := range m {
+		if k == "defaultMode" || !strings.EqualFold(k, "defaultMode") {
+			continue
+		}
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			v = string(raw)
+		}
+		out = append(out, Ignored{Key: prefix + k, Value: v,
+			Fix: "spell it defaultMode — JSON keys are case-sensitive, and Claude Code never reads this one"})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
 
 // IsParseError reports whether an error from IgnoredAt came from the file's

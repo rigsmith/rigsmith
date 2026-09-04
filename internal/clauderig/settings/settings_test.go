@@ -96,6 +96,25 @@ func TestIgnoredAt(t *testing.T) {
 	if got, err := IgnoredAt(Project, path); err != nil || len(got) != 0 {
 		t.Errorf("acceptEdits is honoured everywhere: got %v, %v", got, err)
 	}
+	// JSON keys are case-sensitive and so is Claude Code, though a Go struct
+	// would not be: a DefaultMode is not the setting at any scope, and the
+	// advice is the spelling, not the scope.
+	if err := os.WriteFile(path, []byte(`{"permissions": {"DefaultMode": "bypassPermissions"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []Scope{User, Project} {
+		got, err := IgnoredAt(s, path)
+		if err != nil || len(got) != 1 || got[0].Key != "permissions.DefaultMode" || got[0].Where != "" || !strings.Contains(got[0].Fix, "case-sensitive") {
+			t.Errorf("%s, wrong-case key: got %+v, %v; want it reported as a spelling mistake, not a scope one", s, got, err)
+		}
+	}
+	// A value of the wrong type does not parse as settings either.
+	if err := os.WriteFile(path, []byte(`{"permissions": {"defaultMode": 42}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := IgnoredAt(Project, path); err == nil || !IsParseError(err) {
+		t.Errorf("wrong-typed value: err = %v, want a parse error", err)
+	}
 	if err := os.WriteFile(path, []byte(`{not json`), 0o644); err != nil {
 		t.Fatal(err)
 	}
