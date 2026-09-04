@@ -39,7 +39,10 @@ const configHistoryMaxCommits = 200
 // payload would otherwise restage every long session's transcript mid-chunk,
 // the very growth the throttle exists to stop.
 func hookTranscripts(in io.Reader) ([]string, error) {
-	if f, ok := in.(*os.File); ok && isatty.IsTerminal(f.Fd()) {
+	// A Cygwin/MSYS terminal on Windows is a pipe to the OS and a terminal
+	// to the person; without the second check a by-hand run there would
+	// wait out the timeout and flush nothing.
+	if f, ok := in.(*os.File); ok && (isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())) {
 		return nil, nil
 	}
 	// Decoded as a stream, not read to EOF: the payload is one JSON object,
