@@ -105,6 +105,15 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return 0, err
 	}
+	// git init inside a repository — the stackspace itself, or whatever
+	// repository happens to enclose the destination — adopts that repository
+	// rather than starting one, and the seed's commit would land in it. So
+	// the destination has to be outside every repository, checked at the
+	// nearest directory that exists, since the destination usually does not
+	// yet.
+	if top, inside := stackEnclosingRepo(ctx, dest); inside {
+		return 0, fmt.Errorf("%s is inside the repository at %s — a seed is a repository of its own, so write it somewhere outside", dest, top)
+	}
 	// The manifest in hand came from the working tree; the root files come
 	// from HEAD. An uncommitted edit to either — a member removed from the
 	// manifest but not yet committed, a root file changed — would make the
@@ -130,6 +139,12 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 				return 0, fmt.Errorf("%s has commits that have not left the stackspace — a rebuilt member holds its cursor or proposed branch, not these; `rig stack propose %s <branch>` first, or --force", name, name)
 			case !u.Known:
 				return 0, fmt.Errorf("cannot tell whether %s holds unsent commits (no import commit in this history) — check with `git log -- %s/`, then --force", name, name)
+			case u.Proposed:
+				// A rebuild imports the proposed branch from the fork, so it
+				// had better still be there as pushed.
+				if err := stackProposedOnFork(ctx, repo, m, name); err != nil {
+					return 0, err
+				}
 			}
 		}
 	}
@@ -168,6 +183,36 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 		return 0, err
 	}
 	return len(keep), nil
+}
+
+// stackEnclosingRepo reports the git work tree that would swallow a
+// repository created at dest, walking up from dest to the nearest directory
+// that exists. dest itself being an empty directory counts: a repository
+// there is exactly what the caller is about to create.
+func stackEnclosingRepo(ctx context.Context, dest string) (string, bool) {
+	dir, err := filepath.Abs(dest)
+	if err != nil {
+		return "", false
+	}
+	for {
+		if _, err := os.Stat(dir); err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+	repo, err := gitrepo.Open(ctx, dir)
+	if err != nil {
+		return "", false
+	}
+	top, err := repo.Toplevel(ctx)
+	if err != nil || top == "" {
+		return "", false
+	}
+	return top, true
 }
 
 // untar extracts a tar stream under dest, refusing any entry that would land

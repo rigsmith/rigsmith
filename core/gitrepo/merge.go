@@ -219,21 +219,24 @@ func (r *Repo) UnmergedPaths(ctx context.Context) ([]string, error) { return r.C
 // The merge stays open for the caller to finish or abort.
 func (r *Repo) ResolveOurs(ctx context.Context, paths []string) error {
 	for _, p := range paths {
+		// The paths came out of git verbatim, and go back in as the literal
+		// names they are: `*` or `[` in a filename is not a pattern here.
+		spec := ":(literal)" + p
 		// Stage 2 is ours. Its absence means our side has no such file.
-		stages, err := runGit(ctx, r.Dir, "ls-files", "-u", "-z", "--", p)
+		stages, err := runGit(ctx, r.Dir, "ls-files", "-u", "-z", "--", spec)
 		if err != nil {
 			return err
 		}
 		if strings.Contains(stages, "\t") && hasStage(stages, 2) {
-			if _, err := runGit(ctx, r.Dir, "checkout", "--ours", "--", p); err != nil {
+			if _, err := runGit(ctx, r.Dir, "checkout", "--ours", "--", spec); err != nil {
 				return err
 			}
-			if _, err := runGit(ctx, r.Dir, "add", "--", p); err != nil {
+			if _, err := runGit(ctx, r.Dir, "add", "--", spec); err != nil {
 				return err
 			}
 			continue
 		}
-		if _, err := runGit(ctx, r.Dir, "rm", "-q", "-f", "--cached", "--", p); err != nil {
+		if _, err := runGit(ctx, r.Dir, "rm", "-q", "-f", "--cached", "--", spec); err != nil {
 			return err
 		}
 		// The index no longer knows the file; the working copy git left for

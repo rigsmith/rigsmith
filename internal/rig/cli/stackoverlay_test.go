@@ -227,6 +227,40 @@ func TestStackRedirectsRepublishedIds(t *testing.T) {
 		}
 	})
 
+	t.Run("a project outside every member does not contest an id", func(t *testing.T) {
+		// The root's own build of Foo (a stale copy, a sample) is never a
+		// redirect target, and must not make the member's Foo look ambiguous.
+		root := t.TempDir()
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "samples/Foo", "Foo")
+		csproj(t, root, "app", "Term.App", "Foo")
+		links, _, notes, _ := stackRedirects(ctx, root, []string{"app", "foo"}, nil)
+		if l := links["dotnet"]; len(l) != 1 || l[0].To != "foo" {
+			t.Fatalf("links = %+v", l)
+		}
+		if len(notes) != 0 {
+			t.Fatalf("notes = %v", notes)
+		}
+	})
+
+	t.Run("an id one member builds and another republishes under redirects neither", func(t *testing.T) {
+		// bar really produces Acme.Foo; foo says its Foo is published as
+		// Acme.Foo. The app's reference cannot be wired to one of them
+		// without silently ignoring the other.
+		root := t.TempDir()
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "bar", "Acme.Foo")
+		csproj(t, root, "app", "Term.App", "Acme.Foo")
+		pub := map[string]stackPublishing{"foo": {As: map[string]string{"Foo": "Acme.Foo"}}}
+		links, _, notes, _ := stackRedirects(ctx, root, []string{"app", "bar", "foo"}, pub)
+		if len(links["dotnet"]) != 0 {
+			t.Fatalf("a contested id was redirected: %+v", links)
+		}
+		if len(notes) != 1 || !strings.Contains(notes[0], "produced by bar") || !strings.Contains(notes[0], "republished id of Foo (foo)") {
+			t.Fatalf("notes = %v", notes)
+		}
+	})
+
 	t.Run("a declared id still wins over a republished one", func(t *testing.T) {
 		// The app references Foo directly: nothing about republishing applies.
 		root := t.TempDir()

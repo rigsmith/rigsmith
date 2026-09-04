@@ -141,7 +141,48 @@ func TestDelete(t *testing.T) {
 		}
 	})
 
+	t.Run("a comma-first separator goes with the member", func(t *testing.T) {
+		doc := "{\n  \"a\": 1 // about a\n  , \"b\": 2\n  , \"c\": 3\n}"
+		got, ok := Delete(doc, []string{"a"})
+		if !ok {
+			t.Fatal("Delete returned false")
+		}
+		if got != "{\n  \"b\": 2\n  , \"c\": 3\n}" {
+			t.Fatalf("first member: got %q", got)
+		}
+		got, ok = Delete(doc, []string{"b"})
+		if !ok {
+			t.Fatal("Delete returned false")
+		}
+		if got != "{\n  \"a\": 1 // about a\n  , \"c\": 3\n}" {
+			t.Fatalf("middle member: got %q", got)
+		}
+		// A comma on a line of its own takes the line with it.
+		got, ok = Delete("{\n  \"a\": 1\n  ,\n  \"b\": 2\n}", []string{"a"})
+		if !ok {
+			t.Fatal("Delete returned false")
+		}
+		if got != "{\n  \"b\": 2\n}" {
+			t.Fatalf("comma on its own line: got %q", got)
+		}
+	})
+
+	t.Run("a last member sharing a line takes its trailing comment", func(t *testing.T) {
+		got, ok := Delete("{\n  \"a\": 1, \"b\": 2 // about b\n}", []string{"b"})
+		if !ok {
+			t.Fatal("Delete returned false")
+		}
+		if got != "{\n  \"a\": 1\n}" {
+			t.Fatalf("got %q", got)
+		}
+	})
+
 	t.Run("malformed input and non-object parents are refused", func(t *testing.T) {
+		// An open block comment swallows the closing brace; the stripped
+		// text still parses, which is exactly why it has to be refused.
+		if _, ok := Delete("{\"a\": 1, \"b\": 2} /* never closed", []string{"a"}); ok {
+			t.Error("accepted an unterminated block comment")
+		}
 		if _, ok := Delete(`{"a": `, []string{"a"}); ok {
 			t.Error("accepted malformed input")
 		}

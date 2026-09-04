@@ -508,7 +508,10 @@ work exists nowhere else — the same `unsent changes` and `uncommitted changes`
 that `status` reports, plus the case where the comparison cannot be made at
 all. Commits are counted as sent once `propose` has put them on your fork (it
 keeps the commit it pushed under `refs/rigsmith/propose/<repo>`, and a prefix
-holding exactly that tree has nothing left to send). A directory holding files
+holding exactly that tree has nothing left to send). Before relying on that,
+`rm` asks the fork whether the branch still holds the commit as pushed: a
+branch moved or deleted since, or a fork that cannot be asked, is refused
+rather than guessed about. A directory holding files
 git ignores — build output, a local `.env` — is refused too, naming them: no
 history gets those back. `--force` removes it anyway; `--keep-tree` leaves
 them where they are.
@@ -543,7 +546,8 @@ rig stack wire
 
 A seed carries no member, so a rebuilt one holds its cursor or the branch it
 was last proposed to — and a commit that reached neither is in no seed. `seed`
-refuses a member holding such commits, the same way `rm` does; `propose` them
+refuses a member holding such commits, the same way `rm` does, and asks the
+fork that proposed work is still there as pushed, the same way too; `propose` them
 first, or `--force` to seed anyway.
 
 `init` treats a member with a cursor but no directory as one to **reconstitute**:

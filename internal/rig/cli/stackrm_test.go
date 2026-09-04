@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -226,6 +227,39 @@ func TestStackRm(t *testing.T) {
 		}
 		if _, err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "refs/rigsmith/propose/pty-core").Output(); err == nil {
 			t.Error("the propose ref outlived the member")
+		}
+	})
+
+	t.Run("proposed work is checked against the fork before the tree goes", func(t *testing.T) {
+		srv := newGitServer(t, filepath.Join(t.TempDir(), "srv"))
+		fork := srv.bare(t, "you/pty-core")
+		manifest := strings.Replace(rmManifest, `"github.com/you/pty-core"`, fmt.Sprintf("%q", srv.spec("you/pty-core")), 1)
+		manifest = strings.TrimSuffix(manifest, "}\n") + `, "lastPropose": { "pty-core": "stack/read-timeout" }` + "\n}\n"
+		root := rmStackspace(t, manifest)
+		if err := os.WriteFile(filepath.Join(root, "pty-core", "src", "lib.cs"), []byte("// changed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, root, "add", "-A")
+		mustGitStack(t, root, "commit", "-qm", "change pty-core")
+		tree := strings.TrimSpace(mustGitStack(t, root, "rev-parse", "HEAD:pty-core"))
+		commit := strings.TrimSpace(mustGitStack(t, root, "commit-tree", tree, "-m", "Changes to pty-core"))
+		mustGitStack(t, root, "update-ref", "refs/rigsmith/propose/pty-core", commit)
+		// The ref says it left; the fork has no such branch.
+		if _, err := runRm(t, "pty-core"); err == nil || !strings.Contains(err.Error(), "no longer holds it as pushed") {
+			t.Fatalf("branch missing from the fork: err = %v", err)
+		}
+		// The branch exists, holding something else.
+		mustGitStack(t, root, "push", "-q", fork, "HEAD:refs/heads/stack/read-timeout")
+		if _, err := runRm(t, "pty-core"); err == nil || !strings.Contains(err.Error(), "no longer holds it as pushed") {
+			t.Fatalf("branch moved on the fork: err = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(root, "pty-core")); err != nil {
+			t.Fatal("a refused rm deleted the tree")
+		}
+		// As pushed: the work is where it went, and the tree can go.
+		mustGitStack(t, root, "push", "-qf", fork, commit+":refs/heads/stack/read-timeout")
+		if out, err := runRm(t, "pty-core"); err != nil {
+			t.Fatalf("branch as pushed: %v\n%s", err, out)
 		}
 	})
 

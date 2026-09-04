@@ -108,6 +108,23 @@ func TestStackSeed(t *testing.T) {
 		}
 	})
 
+	t.Run("refuses a destination inside a repository", func(t *testing.T) {
+		// git init there would adopt the enclosing repository, and the
+		// seed's one commit would land in the stackspace's own history.
+		for _, nested := range []string{filepath.Join(root, "seed"), filepath.Join(root, "deeper", "seed")} {
+			cmd := newStackSeedCmd()
+			cmd.SetContext(context.Background())
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetArgs([]string{nested})
+			if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "inside the repository") {
+				t.Fatalf("%s: err = %v", nested, err)
+			}
+			if _, err := os.Stat(nested); !os.IsNotExist(err) {
+				t.Errorf("%s: a refused seed still wrote the destination", nested)
+			}
+		}
+	})
+
 	t.Run("refuses a non-empty destination", func(t *testing.T) {
 		cmd := newStackSeedCmd()
 		cmd.SetContext(context.Background())
@@ -160,16 +177,22 @@ func TestStackForkRefFor(t *testing.T) {
 		// Proposing again to the offered-back branch goes to that branch,
 		// not to one with the new prefix stacked on; a fresh name takes the
 		// new prefix.
-		if got := moved.proposeBranch("lib", "stack/read-timeout"); got != "stack/read-timeout" {
-			t.Errorf("reused record: branch = %q", got)
+		if got, other := moved.proposeBranch("lib", "stack/read-timeout"); got != "stack/read-timeout" || other != "feature/stack/read-timeout" {
+			t.Errorf("reused record: branch = %q, other = %q", got, other)
 		}
-		if got := moved.proposeBranch("lib", "other"); got != "feature/other" {
-			t.Errorf("fresh name: branch = %q", got)
+		if got, other := moved.proposeBranch("lib", "other"); got != "feature/other" || other != "" {
+			t.Errorf("fresh name: branch = %q, other = %q", got, other)
 		}
-		// An older manifest recorded the bare name; that one still takes
-		// the prefix, since the branch it names was pushed with one.
-		if got := m.proposeBranch("lib", "read-timeout"); got != "stack/read-timeout" {
-			t.Errorf("bare record: branch = %q", got)
+		// An older manifest recorded the bare name; that one takes the
+		// prefix first, since the branch it names was pushed with one —
+		// and offers the bare name for the fork to check, since with a
+		// slashless prefix the two records look alike.
+		if got, other := m.proposeBranch("lib", "read-timeout"); got != "stack/read-timeout" || other != "read-timeout" {
+			t.Errorf("bare record: branch = %q, other = %q", got, other)
+		}
+		// A record carrying the current prefix is beyond doubt.
+		if got, other := m.proposeBranch("lib", "stack/read-timeout"); got != "stack/read-timeout" || other != "" {
+			t.Errorf("record with the prefix: branch = %q, other = %q", got, other)
 		}
 		gone := func(string) (string, bool, error) { return "", false, nil }
 		if ref, err := stackForkRefFor(m, "lib", true, gone); err != nil || ref != nil {

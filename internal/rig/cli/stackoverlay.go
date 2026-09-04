@@ -80,25 +80,40 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 		// declaring member builds, not to whichever member happens to build
 		// something of that name. Two members building one id is reported
 		// and redirected to neither, since either would be a guess.
+		//
+		// Only members count as producers. A project at the root, or a
+		// registry sibling outside every prefix, is never redirected to —
+		// and must not make a member's id look contested either.
 		producer := map[string]plugin.Package{}
 		producedBy := map[string]map[string]plugin.Package{}
 		producerIn := map[string]string{}
 		twice := map[string]bool{}
 		for _, p := range resp.Packages {
 			m := member(p.Dir)
+			if m == "" {
+				continue
+			}
 			if prev, seen := producerIn[p.Name]; seen && prev != m {
 				twice[p.Name] = true
 			}
 			producer[p.Name], producerIn[p.Name] = p, m
-			if m != "" {
-				produces[m] = append(produces[m], p.Name)
-				if producedBy[m] == nil {
-					producedBy[m] = map[string]plugin.Package{}
-				}
-				producedBy[m][p.Name] = p
+			produces[m] = append(produces[m], p.Name)
+			if producedBy[m] == nil {
+				producedBy[m] = map[string]plugin.Package{}
 			}
+			producedBy[m][p.Name] = p
 		}
+		// Ids a reference is redirected to neither source of: two members
+		// building one id, and below, an id one member builds outright while
+		// another republishes something under it.
+		suppress := map[string]bool{}
+		names := make([]string, 0, len(twice))
 		for name := range twice {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			suppress[name] = true
 			notes = append(notes, fmt.Sprintf("%s is produced by more than one member here — a reference to it is redirected to neither until one of them republishes under another id", name))
 		}
 		// The ids a member republishes under, resolved to the projects that
@@ -128,6 +143,16 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 					}
 					aliasUsed[m][orig] = true
 				}
+				// An id some member builds outright is not free to be a
+				// republished name too: a consumer of it would be wired to
+				// the direct package, and the republishing rule would never
+				// be reached — silently, which is the failure mode this
+				// whole path exists to stop.
+				if in, direct := producerIn[as]; direct {
+					suppress[as] = true
+					notes = append(notes, fmt.Sprintf("%s is produced by %s and is also the republished id of %s (%s) — neither is redirected until one changes", as, in, orig, m))
+					continue
+				}
 				// Two packages republished under one id cannot both be what a
 				// consumer meant; redirecting to either would be a guess, so
 				// the id is redirected to neither and the clash is reported.
@@ -152,7 +177,7 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 				if !d.ViaRegistry {
 					continue
 				}
-				if twice[d.Name] {
+				if suppress[d.Name] {
 					continue
 				}
 				prod, ok := producer[d.Name]

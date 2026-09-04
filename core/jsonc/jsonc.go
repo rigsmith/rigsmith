@@ -16,7 +16,16 @@ func Unmarshal(data []byte, v any) error {
 // String literals (including escaped quotes) are left untouched. Newlines
 // inside block comments are preserved so line numbers stay accurate.
 func Strip(data []byte) []byte {
-	out := make([]byte, len(data))
+	out, _ := strip(data)
+	return out
+}
+
+// strip is Strip, also reporting whether the text ended inside a block
+// comment. Such a document is not one an editor can act on: the comment
+// swallows everything after it, so what it blanks may include the structure a
+// caller is about to edit around, and json.Valid on the result cannot tell.
+func strip(data []byte) (out []byte, unterminated bool) {
+	out = make([]byte, len(data))
 	copy(out, data)
 
 	const (
@@ -82,5 +91,5 @@ func Strip(data []byte) []byte {
 			}
 		}
 	}
-	return out
+	return out, state == blockComment
 }

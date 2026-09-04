@@ -98,6 +98,13 @@ func newStackRemoveCmd() *cobra.Command {
 					// might hold anything; only a manifest-only entry is safe.
 					return fmt.Errorf("cannot tell whether %s holds unsent changes (no import commit in this history) — check with `git log -- %s/`, then --force", name, name)
 				}
+				// "It left as a proposal" is this history's word alone;
+				// the fork's is the one that counts before the tree goes.
+				if u.Proposed {
+					if err := stackProposedOnFork(ctx, repo, m, name); err != nil {
+						return err
+					}
+				}
 			}
 
 			// Ignored files are the one thing git cannot give back: never
@@ -128,23 +135,14 @@ func newStackRemoveCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "✓ %s removed from %s (entry and cursor)\n", name, src.Origin)
 
-			if keepTree {
-				fmt.Fprintf(out, "  %s/ kept — it is an ordinary directory of this repository now\n", name)
-			} else if err := repo.RemoveTree(ctx, name); err != nil {
-				if readErr == nil {
-					_ = os.WriteFile(src.File, before, 0o644)
-				}
-				return fmt.Errorf("removing %s/: %w (the manifest was put back)", name, err)
-			} else {
-				fmt.Fprintf(out, "  %s/ deleted from the tree\n", name)
-			}
-			// The overlay is rewritten from the members that remain — or removed
-			// outright when nothing crosses between them any more — so no build
-			// file keeps a redirect into the directory that just left. Should
-			// that fail (an overlay somebody wrote by hand is the usual reason)
-			// the manifest and the tracked tree are put back: nothing has been
-			// committed, and a member half-removed is worse than one still in.
-			if touched, err := stackWire(ctx, out, m, repo, "  ", true); err != nil {
+			// Everything up to the commit is undone the same way, whichever
+			// step failed: the manifest's bytes go back, the tracked tree
+			// under the prefix is restored from HEAD (ignored build output
+			// under it is gone, and said so), and any overlay file already
+			// rewritten or removed is put back as HEAD has it. Nothing has
+			// been committed, and a member half-removed is worse than one
+			// still in.
+			undo := func(touched []string) string {
 				if readErr == nil {
 					_ = os.WriteFile(src.File, before, 0o644)
 				}
@@ -154,21 +152,39 @@ func newStackRemoveCmd() *cobra.Command {
 						restored = "the manifest and " + name + "/ were put back (ignored build output under it is gone)"
 					}
 				}
-				// An ecosystem that failed may not have been the first asked:
-				// overlays the earlier ones already rewrote or removed would
-				// otherwise stay describing a stackspace without this member.
 				for _, f := range touched {
 					stackRestoreFromHead(ctx, repo, f)
 				}
 				if len(touched) > 0 {
 					restored += ", and so were the overlay files already rewritten"
 				}
-				return fmt.Errorf("rewriting the build overlay: %w\n%s — fix the overlay, then run `rig stack rm %s` again", err, restored, name)
+				return restored
+			}
+
+			if keepTree {
+				fmt.Fprintf(out, "  %s/ kept — it is an ordinary directory of this repository now\n", name)
+			} else if err := repo.RemoveTree(ctx, name); err != nil {
+				return fmt.Errorf("removing %s/: %w (%s)", name, err, undo(nil))
+			} else {
+				fmt.Fprintf(out, "  %s/ deleted from the tree\n", name)
+			}
+			// The overlay is rewritten from the members that remain — or removed
+			// outright when nothing crosses between them any more — so no build
+			// file keeps a redirect into the directory that just left. An
+			// overlay somebody wrote by hand is the usual reason that fails;
+			// an ecosystem that failed may not have been the first asked, so
+			// what the earlier ones wrote is put back too.
+			touched, err := stackWire(ctx, out, m, repo, "  ", true)
+			if err != nil {
+				return fmt.Errorf("rewriting the build overlay: %w\n%s — fix the overlay, then run `rig stack rm %s` again", err, undo(touched), name)
 			}
 
 			changed, err := repo.Commit(ctx, "stack: remove "+name)
 			if err != nil {
-				return err
+				// A commit that fails — a hook refusing it, say — would leave
+				// the whole removal staged and uncommitted, which is the
+				// half-done state again, only larger.
+				return fmt.Errorf("committing the removal: %w\n%s — run `rig stack rm %s` again once that is fixed", err, undo(touched), name)
 			}
 			// push and propose leave what they exported under refs; nothing
 			// reads them once the member is gone. Dropped only now, after the
@@ -232,9 +248,20 @@ func newStackRemoveMenuCmd() *cobra.Command {
 // records live in top-level maps: a dedicated manifest deletes one member of
 // each, and an inline `stack` block in .rig.json rewrites the whole map — the
 // same way a pull records a cursor there.
-func stackForgetRepo(src *cfgfind.Source, m *stackManifest, name string) error {
+//
+// The file is either wholly edited or wholly as it was: the entry goes first
+// and the records after, each a separate write, so a record that cannot be
+// updated puts the original bytes back rather than leaving the member gone
+// from the file and its cursor still in it.
+func stackForgetRepo(src *cfgfind.Source, m *stackManifest, name string) (err error) {
 	w := confkit.Writer{SchemaURL: stackSchemaURL}
 	embedded := src.Path == ""
+	before, readErr := os.ReadFile(src.File)
+	defer func() {
+		if err != nil && readErr == nil {
+			_ = os.WriteFile(src.File, before, 0o644)
+		}
+	}()
 	entry := []string{"repos", name}
 	if embedded {
 		entry = []string{"stack", "repos", name}

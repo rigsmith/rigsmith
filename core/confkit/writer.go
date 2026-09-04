@@ -129,6 +129,12 @@ func (w Writer) Set(filePath string, path []string, rawValue string) bool {
 // new — never a fragment. os.WriteFile truncates first, and a config file a
 // failure left half-written is worse than one it left alone.
 func writeWhole(filePath string, data []byte) error {
+	// A config that is a symlink — a dotfiles checkout linked into place is
+	// the usual reason — is edited where it really lives: renaming over the
+	// link would replace it with a plain file and quietly detach the two.
+	if resolved, err := filepath.EvalSymlinks(filePath); err == nil {
+		filePath = resolved
+	}
 	dir := filepath.Dir(filePath)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(filePath)+".*.tmp")
 	if err != nil {
@@ -137,6 +143,13 @@ func writeWhole(filePath string, data []byte) error {
 	name := tmp.Name()
 	cleanup := func() { _ = os.Remove(name) }
 	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	// Flushed before the rename: a rename is durable on its own, and without
+	// this it could outlive the content it points at across a power loss.
+	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		cleanup()
 		return err

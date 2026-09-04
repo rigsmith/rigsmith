@@ -29,8 +29,11 @@ func Delete(text string, path []string) (string, bool) {
 		return original, false
 	}
 	orig := []byte(text)
-	stripped := Strip(orig)
-	if !json.Valid(stripped) {
+	// A block comment left open swallows the rest of the document, and the
+	// stripped copy of that can still read as valid JSON: the edit would then
+	// be made around structure that is not really there.
+	stripped, unterminated := strip(orig)
+	if unterminated || !json.Valid(stripped) {
 		return original, false
 	}
 	nameStart, valueEnd, found, ok := locateMember(stripped, path)
@@ -129,26 +132,18 @@ func locateMember(stripped []byte, path []string) (nameStart, valueEnd int, foun
 // blanked too and only the original still shows.
 func memberSpans(orig, stripped []byte, nameStart, valueEnd int) [][2]int {
 	start, end := nameStart, valueEnd
-	// A comma after the value is this member's — whether a separator the
-	// stripped copy shows, or a trailing comma only the original does.
-	i := end
-	for i < len(orig) && isSpace(orig[i]) && orig[i] != '\n' {
-		i++
-	}
+	// A comma after the value on its line is this member's — whether a
+	// separator the stripped copy shows, or a trailing comma only the
+	// original does.
+	i := skipInline(orig, end)
 	comma := i < len(orig) && orig[i] == ','
 	if !comma {
-		i = end
-		for i < len(stripped) && isSpace(stripped[i]) && stripped[i] != '\n' {
-			i++
-		}
+		i = skipInline(stripped, end)
 		comma = i < len(stripped) && stripped[i] == ','
 	}
 	if comma {
 		end = i + 1
-		j := end
-		for j < len(stripped) && isSpace(stripped[j]) && stripped[j] != '\n' {
-			j++
-		}
+		j := skipInline(stripped, end)
 		switch {
 		case j < len(stripped) && stripped[j] == '\n':
 			end = j + 1
@@ -159,9 +154,31 @@ func memberSpans(orig, stripped []byte, nameStart, valueEnd int) [][2]int {
 		}
 		return [][2]int{{start, end}}
 	}
+	// A separator on a later line — comma-first style — is this member's as
+	// well. A member whose own comma heads its line goes with that line, and
+	// the member after it keeps the comma it has; the first member, which has
+	// no comma before it, takes the one after — separately, with the spaces
+	// after it, so the member it introduced keeps its indentation, or with
+	// its whole line when it had one to itself.
+	if c := skipSpace(stripped, end); c < len(stripped) && stripped[c] == ',' {
+		if k := commaBeforeOnLine(stripped, start); k >= 0 {
+			if ls := lineStartIfBlankBefore(stripped, k); ls == 0 || stripped[ls-1] == '\n' {
+				return [][2]int{{absorbCommentLinesAbove(orig, stripped, ls), lineEndAfter(stripped, end)}}
+			}
+			return [][2]int{{k, trailingCommentEnd(orig, stripped, end)}}
+		}
+		commaStart, commaEnd := c, skipInline(stripped, c+1)
+		if ls := lineStartIfBlankBefore(stripped, c); (ls == 0 || stripped[ls-1] == '\n') && commaEnd < len(stripped) && stripped[commaEnd] == '\n' {
+			commaStart, commaEnd = ls, commaEnd+1
+		}
+		lineStart := absorbCommentLinesAbove(orig, stripped, lineStartIfBlankBefore(stripped, start))
+		return [][2]int{{commaStart, commaEnd}, {lineStart, lineEndAfter(stripped, end)}}
+	}
 	// Last member: the comma before it is the one that goes. On its own line
 	// the member's line is cut whole and the comma alone from the line above;
-	// on one line with the previous member, everything from the comma on.
+	// on one line with the previous member, everything from the comma on —
+	// its trailing comment included, which would otherwise be left reading
+	// as the previous member's.
 	k := start - 1
 	for k >= 0 && isSpace(stripped[k]) {
 		k--
@@ -169,26 +186,16 @@ func memberSpans(orig, stripped []byte, nameStart, valueEnd int) [][2]int {
 	if k >= 0 && stripped[k] == ',' {
 		if hasNewline(stripped, k, start) {
 			lineStart := absorbCommentLinesAbove(orig, stripped, lineStartIfBlankBefore(stripped, start))
-			lineEnd := end
-			for lineEnd < len(stripped) && isSpace(stripped[lineEnd]) && stripped[lineEnd] != '\n' {
-				lineEnd++
-			}
-			if lineEnd < len(stripped) && stripped[lineEnd] == '\n' {
-				lineEnd++
-			}
-			return [][2]int{{lineStart, lineEnd}, {k, k + 1}}
+			return [][2]int{{lineStart, lineEndAfter(stripped, end)}, {k, k + 1}}
 		}
-		return [][2]int{{k, end}}
+		return [][2]int{{k, trailingCommentEnd(orig, stripped, end)}}
 	}
 	// Only member: leave the braces with whatever whitespace framed it. Its
 	// trailing comment goes with it, and so does its line ending when the
 	// member had the line to itself.
 	start = lineStartIfBlankBefore(stripped, start)
 	start = absorbCommentLinesAbove(orig, stripped, start)
-	j := end
-	for j < len(stripped) && isSpace(stripped[j]) && stripped[j] != '\n' {
-		j++
-	}
+	j := skipInline(stripped, end)
 	// Blank in the stripped copy but not in the original: a comment.
 	comment := strings.TrimSpace(string(orig[end:j])) != ""
 	switch {
@@ -201,6 +208,56 @@ func memberSpans(orig, stripped []byte, nameStart, valueEnd int) [][2]int {
 		end = j
 	}
 	return [][2]int{{start, end}}
+}
+
+// commaBeforeOnLine is the index of a comma that precedes pos on its own
+// line with only whitespace or comments between, or -1.
+func commaBeforeOnLine(stripped []byte, pos int) int {
+	k := pos - 1
+	for k >= 0 && isSpace(stripped[k]) && stripped[k] != '\n' {
+		k--
+	}
+	if k >= 0 && stripped[k] == ',' {
+		return k
+	}
+	return -1
+}
+
+// lineEndAfter is the index just past the line break that ends the line
+// holding end, or past whatever whitespace follows end when there is none.
+func lineEndAfter(stripped []byte, end int) int {
+	j := skipInline(stripped, end)
+	if j < len(stripped) && stripped[j] == '\n' {
+		j++
+	}
+	return j
+}
+
+// trailingCommentEnd extends end over a comment that finishes the line — blank
+// in the stripped copy, not in the original — and leaves it alone when
+// anything else follows on the line.
+func trailingCommentEnd(orig, stripped []byte, end int) int {
+	j := skipInline(stripped, end)
+	if (j >= len(stripped) || stripped[j] == '\n') && strings.TrimSpace(string(orig[end:j])) != "" {
+		return j
+	}
+	return end
+}
+
+// skipInline advances i over spaces and tabs, stopping at a line break.
+func skipInline(b []byte, i int) int {
+	for i < len(b) && isSpace(b[i]) && b[i] != '\n' {
+		i++
+	}
+	return i
+}
+
+// skipSpace advances i over whitespace, line breaks included.
+func skipSpace(b []byte, i int) int {
+	for i < len(b) && isSpace(b[i]) {
+		i++
+	}
+	return i
 }
 
 // lineStartIfBlankBefore moves pos back to the start of its line when nothing

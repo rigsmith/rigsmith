@@ -401,6 +401,10 @@ type stackUnsent struct {
 	Commits bool // committed work the upstream repository does not have
 	Working bool // edits in the index or the worktree, not yet committed
 	Known   bool // false when the imported baseline cannot be established
+	// Proposed is set when Commits is clear only because propose has put
+	// this tree on the fork — a claim the stackspace's own history cannot
+	// make, and one stackProposedOnFork can check before anything acts on it.
+	Proposed bool
 }
 
 func (u stackUnsent) any() bool { return u.Commits || u.Working }
@@ -438,10 +442,37 @@ func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty
 	// ref, and a prefix holding exactly that tree has nothing left to send.
 	if u.Commits {
 		if sent, err := repo.RevParse(ctx, "refs/rigsmith/propose/"+name+"^{tree}"); err == nil && sent == here {
-			u.Commits = false
+			u.Commits, u.Proposed = false, true
 		}
 	}
 	return u
+}
+
+// stackProposedOnFork confirms that the branch a member was last proposed to
+// still holds, on the fork, the commit propose pushed. The ref under
+// refs/rigsmith/propose says the work left; this says it is still where it
+// went. rm and seed ask before acting as though the work exists elsewhere: a
+// branch moved or deleted since, or a fork that cannot be asked, is an error
+// naming what to check rather than a guess. A manifest with no record of the
+// branch has nothing to look for, and the ref speaks alone.
+func stackProposedOnFork(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) error {
+	branch, r := m.LastPropose[name], m.Repos[name]
+	if branch == "" || r == nil {
+		return nil
+	}
+	want, err := repo.RevParse(ctx, "refs/rigsmith/propose/"+name)
+	if err != nil {
+		return err
+	}
+	ref := "refs/heads/" + branch
+	found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(r.Fork), ref)
+	if err != nil {
+		return fmt.Errorf("%s's work was proposed to %s:%s, and the fork cannot be asked whether it is still there (%s) — check it, then --force", name, r.Fork, branch, stackFirstLine(err))
+	}
+	if found[ref] != want {
+		return fmt.Errorf("%s's work was proposed to %s:%s, which no longer holds it as pushed — if it merged, `rig stack pull %s` first; otherwise check the fork, then --force", name, r.Fork, branch, name)
+	}
+	return nil
 }
 
 // stackResolveUpstream turns a prefix's pin into the upstream commit to import.
@@ -727,6 +758,7 @@ func newStackSendCmd() *cobra.Command {
 			// Ask for what was not given. Only on a terminal: a script with a
 			// missing argument should be told so, not left waiting on a form
 			// nobody is there to answer.
+			reused := false
 			if name == "" || typed == "" {
 				if !stdinStdoutTTY() {
 					// The branch this repo was last proposed on is the one an open
@@ -734,7 +766,7 @@ func newStackSendCmd() *cobra.Command {
 					// ask, reusing it is the useful answer rather than a refusal.
 					if name != "" && m.LastPropose[name] != "" {
 						typed = m.LastPropose[name]
-						fmt.Fprintf(cmd.OutOrStdout(), "proposing to %s again\n", m.sendBranch(name, typed))
+						reused = true
 					} else {
 						missing := "a repo and a new branch name"
 						if name != "" {
@@ -752,16 +784,33 @@ func newStackSendCmd() *cobra.Command {
 					}
 				}
 			}
-			// The prefix keeps these branches recognisable on a fork that also
-			// carries your own work, and is applied here rather than at the call
-			// sites so the menu and the CLI cannot disagree about it.
-			branch := m.proposeBranch(name, typed)
 			r := m.Repos[name]
 			if r == nil {
 				if err := m.requireRepos(); err != nil {
 					return err
 				}
 				return fmt.Errorf("no stack repo %q (have: %s)", name, strings.Join(m.names(), ", "))
+			}
+			// The prefix keeps these branches recognisable on a fork that also
+			// carries your own work, and is applied here rather than at the call
+			// sites so the menu and the CLI cannot disagree about it.
+			branch, other := m.proposeBranch(name, typed)
+			if other != "" {
+				// The remembered branch reads two ways (a prefix changed since
+				// it was recorded); the fork knows which one exists, and that
+				// is the one an open pull request is watching.
+				found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(r.Fork), "refs/heads/"+branch, "refs/heads/"+other)
+				if err != nil {
+					return fmt.Errorf("%s was last proposed to %s or %s, and %s cannot be asked which exists: %w\nname the branch in full to propose without asking", name, branch, other, r.Fork, err)
+				}
+				if _, ok := found["refs/heads/"+branch]; !ok {
+					if _, ok := found["refs/heads/"+other]; ok {
+						branch = other
+					}
+				}
+			}
+			if reused {
+				fmt.Fprintf(cmd.OutOrStdout(), "proposing to %s again\n", branch)
 			}
 			if m.cursor(name) == "" {
 				return fmt.Errorf("%s is not imported yet — run `rig stack init`", name)

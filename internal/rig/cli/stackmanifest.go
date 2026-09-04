@@ -260,14 +260,26 @@ func (m *stackManifest) branchPrefix(name string) string {
 // offered back: that record is the branch as pushed, prefix and all, and is
 // used as it is — so a branchPrefix changed since the proposal cannot turn
 // stack/read-timeout into feature/stack/read-timeout on the next round. A
-// manifest from before the record was kept that way holds the bare name
-// (no slash in it), and that one takes the current prefix, as the rebuild
-// does. A name typed fresh always takes the prefix.
-func (m *stackManifest) proposeBranch(name, given string) string {
-	if given != "" && given == m.LastPropose[name] && strings.Contains(given, "/") {
-		return given
+// name typed fresh always takes the prefix.
+//
+// The record cannot always be read alone. A manifest from before it was kept
+// that way holds the bare name, which took the prefix of its day; a record
+// that does not carry the current prefix is therefore one of two branches,
+// and other names the one branch is not. The fork settles it — the one that
+// exists there is the one an open pull request is watching — and the
+// likelier reading comes first: a slash says "as pushed", none says "bare".
+func (m *stackManifest) proposeBranch(name, given string) (branch, other string) {
+	if given == "" || given != m.LastPropose[name] {
+		return m.sendBranch(name, given), ""
 	}
-	return m.sendBranch(name, given)
+	prefix := m.branchPrefix(name)
+	if prefix == "" || strings.HasPrefix(given, prefix) {
+		return given, ""
+	}
+	if strings.Contains(given, "/") {
+		return given, prefix + given
+	}
+	return prefix + given, given
 }
 
 // sendBranch resolves the name given to `propose` into the branch to create.
