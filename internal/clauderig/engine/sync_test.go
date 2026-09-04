@@ -267,6 +267,14 @@ func TestSync_DefersLargeTranscriptsUntilGrownOrSettled(t *testing.T) {
 	if r := sync(); r.Deferred != 0 || stagedSize() != threshold+1 {
 		t.Fatalf("shrunk: deferred=%d staged=%d", r.Deferred, stagedSize())
 	}
+	// So is one rewritten to the SAME size: no bytes were appended.
+	write(t, live, "projects/-p/long.jsonl", strings.Repeat("c", threshold+1))
+	if r := sync(); r.Deferred != 0 {
+		t.Fatalf("same-size rewrite: deferred=%d, want restaged", r.Deferred)
+	}
+	if got, _ := os.ReadFile(filepath.Join(staging, "cli", "projects", "-p", "long.jsonl")); len(got) == 0 || got[0] != 'c' {
+		t.Fatalf("same-size rewrite: staged copy not refreshed")
+	}
 
 	// Under the threshold, every change is staged as before.
 	write(t, live, "projects/-p/short.jsonl", strings.Repeat("c", 100))

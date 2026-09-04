@@ -37,11 +37,11 @@ func NewSyncCmd() *cobra.Command {
 		Short: "Snapshot, redact, rewrite, and push your Claude Code setup",
 		Long: "Walks the sync roots, redacts secret-bearing fields, rewrites machine\n" +
 			"paths into a portable form, commits, and pushes.\n\n" +
-			"A long session's transcript is restaged only per chunk of new content or\n" +
-			"once it has gone quiet (retention.largeFileBytes), so the Stop hook does\n" +
-			"not re-commit a 50 MB file every turn. `--flush` restages every changed\n" +
-			"transcript regardless — what the SessionEnd hook runs, so a session's last\n" +
-			"turn never waits for the next session.",
+			"A transcript over retention.largeFileBytes is restaged only once it has\n" +
+			"grown by half that again, or once it has gone quiet for 30 minutes, so the\n" +
+			"Stop hook does not re-commit a 50 MB file every turn. `--flush` restages\n" +
+			"every changed transcript regardless; the SessionEnd hook runs it, so a\n" +
+			"session's last turn never waits for the next session.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
@@ -137,7 +137,7 @@ func NewSyncCmd() *cobra.Command {
 						extra += fmt.Sprintf(", %d too large", n)
 					}
 					if r.Deferred > 0 {
-						extra += fmt.Sprintf(", %d large transcript(s) waiting for more content", r.Deferred)
+						extra += fmt.Sprintf(", %d large transcript(s) waiting for more content or to settle", r.Deferred)
 					}
 					fmt.Fprintf(out, "  %-*s %d files, %d secret field(s) redacted%s\n", w, r.ID, r.Files, r.Redactions, extra)
 					// Name what was dropped for size — a silent cap reads as "everything

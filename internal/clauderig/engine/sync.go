@@ -94,9 +94,10 @@ const largeFileSettle = 30 * time.Minute
 // the source has neither grown by half the threshold since that copy nor
 // settled. Only `projects/<slug>/….jsonl` qualifies — the append-only files
 // the throttle is about; a .jsonl under a skill or plugin is ordinary data and
-// syncs on every change. A source SMALLER than the staged copy is never
-// deferred — that is a rewrite, not an append, and the staged copy is simply
-// wrong. Nor is one whose staged copy has aged past the retention cutoff:
+// syncs on every change. A source no LARGER than the staged copy is never
+// deferred — a change that did not add bytes is a rewrite, not an append, and
+// the staged copy is simply wrong. Nor is one whose staged copy has aged past
+// the retention cutoff:
 // retention prunes staged files by their mtime later in the same sync, and a
 // live transcript that was just appended must not lose its only copy to a
 // deferral.
@@ -108,7 +109,7 @@ func deferLarge(rel string, src, staged os.FileInfo, threshold int64, cutoff, no
 		return false
 	}
 	grown := src.Size() - staged.Size()
-	if grown < 0 || grown >= threshold/2 {
+	if grown <= 0 || grown >= threshold/2 {
 		return false
 	}
 	return now.Sub(src.ModTime()) < largeFileSettle
