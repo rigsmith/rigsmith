@@ -65,7 +65,7 @@ func newStackSeedCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "seed even where a member holds commits that have not left the stackspace")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "seed even where a member holds commits that have not left the stackspace")
 	return cmd
 }
 
