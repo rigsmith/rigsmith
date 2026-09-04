@@ -365,10 +365,16 @@ func TestStackRm(t *testing.T) {
 		}
 		chdir(t, root)
 		head := strings.TrimSpace(mustGitStack(t, root, "rev-parse", "HEAD"))
+		// What propose left behind: has to survive the rollback, or a retry
+		// would call the proposed work unsent.
+		mustGitStack(t, root, "update-ref", "refs/rigsmith/propose/gone", head)
 
 		out, err := runRm(t, "gone")
 		if err == nil || !strings.Contains(err.Error(), "rig did not write") || !strings.Contains(err.Error(), "put back") {
 			t.Fatalf("err = %v\n%s", err, out)
+		}
+		if _, perr := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "refs/rigsmith/propose/gone").Output(); perr != nil {
+			t.Error("the propose ref did not survive the rollback")
 		}
 		m, _, lerr := loadStackManifest(root)
 		if lerr != nil || m.Repos["gone"] == nil {

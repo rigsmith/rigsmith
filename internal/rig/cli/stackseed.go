@@ -182,7 +182,13 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 // then puts outside dest.
 func untar(r io.Reader, dest string) error {
 	tr := tar.NewReader(r)
-	root := filepath.Clean(dest)
+	// Absolute from the start: containment is judged by walking paths from
+	// the volume root, and a relative dest (`../my-stack-seed`) would be
+	// walked from the wrong place.
+	root, err := filepath.Abs(dest)
+	if err != nil {
+		return err
+	}
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {

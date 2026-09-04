@@ -241,3 +241,39 @@ func TestUntarRefusesALinkThatEscapesThroughAnotherLink(t *testing.T) {
 		t.Fatalf("in-tree link through a link: %v", err)
 	}
 }
+
+// The documented destination is relative (`../my-stack-seed`); containment is
+// judged from the volume root, so the destination has to be made absolute
+// before anything is compared to it.
+func TestUntarAcceptsARelativeDestination(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{Name: "README.md", Typeflag: tar.TypeReg, Mode: 0o644, Size: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte("# ")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll("seed", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := untar(bytes.NewReader(buf.Bytes()), filepath.Join("..", filepath.Base(mustAbs(t, ".")), "seed")); err != nil {
+		t.Fatalf("relative dest: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("seed", "README.md")); err != nil {
+		t.Error("nothing written under the relative destination")
+	}
+}
+
+func mustAbs(t *testing.T, p string) string {
+	t.Helper()
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return abs
+}

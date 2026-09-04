@@ -138,11 +138,6 @@ func newStackRemoveCmd() *cobra.Command {
 			} else {
 				fmt.Fprintf(out, "  %s/ deleted from the tree\n", name)
 			}
-			// push leaves its filtered export behind under a ref; nothing reads
-			// it once the member is gone.
-			_ = repo.DeleteRef(ctx, "refs/rigsmith/push/"+name)
-			_ = repo.DeleteRef(ctx, "refs/rigsmith/propose/"+name)
-
 			// The overlay is rewritten from the members that remain — or removed
 			// outright when nothing crosses between them any more — so no build
 			// file keeps a redirect into the directory that just left. Should
@@ -175,6 +170,12 @@ func newStackRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// push and propose leave what they exported under refs; nothing
+			// reads them once the member is gone. Dropped only now, after the
+			// commit: a removal rolled back above has to find the propose ref
+			// still there, or the retry would call sent work unsent.
+			_ = repo.DeleteRef(ctx, "refs/rigsmith/push/"+name)
+			_ = repo.DeleteRef(ctx, "refs/rigsmith/propose/"+name)
 			if changed {
 				fmt.Fprintf(out, "  committed: stack: remove %s\n", name)
 			}
