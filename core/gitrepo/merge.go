@@ -207,3 +207,60 @@ func (r *Repo) SideCommitTime(ctx context.Context, ref, path string) (t time.Tim
 	t, err = time.Parse(time.RFC3339, s)
 	return t, err == nil
 }
+
+// UnmergedPaths lists the paths still in conflict in a merge that stopped —
+// what `git status` shows as U-something — slash-separated, sorted as git
+// reports them. Empty when the index is clean.
+func (r *Repo) UnmergedPaths(ctx context.Context) ([]string, error) {
+	out, err := runGit(ctx, r.Dir, "diff", "--name-only", "--diff-filter=U", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
+// ResolveOurs settles each of the given conflicted paths in favour of this
+// side: our version is restored and staged where we have one, and the path is
+// removed where we do not (it was deleted by us, or exists only on theirs).
+// The merge stays open for the caller to finish or abort.
+func (r *Repo) ResolveOurs(ctx context.Context, paths []string) error {
+	for _, p := range paths {
+		// Stage 2 is ours. Its absence means our side has no such file.
+		stages, err := runGit(ctx, r.Dir, "ls-files", "-u", "-z", "--", p)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(stages, "\t") && hasStage(stages, 2) {
+			if _, err := runGit(ctx, r.Dir, "checkout", "--ours", "--", p); err != nil {
+				return err
+			}
+			if _, err := runGit(ctx, r.Dir, "add", "--", p); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := runGit(ctx, r.Dir, "rm", "-q", "-f", "--cached", "--", p); err != nil {
+			return err
+		}
+		_ = os.Remove(filepath.Join(r.Dir, filepath.FromSlash(p)))
+	}
+	return nil
+}
+
+// hasStage reports whether `ls-files -u -z` output carries an entry at the
+// given stage. Each record reads "<mode> <sha> <stage>\t<path>".
+func hasStage(out string, stage int) bool {
+	want := fmt.Sprintf(" %d\t", stage)
+	for _, rec := range strings.Split(out, "\x00") {
+		if strings.Contains(rec, want) {
+			return true
+		}
+	}
+	return false
+}

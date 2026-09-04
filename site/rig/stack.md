@@ -638,6 +638,17 @@ stops after. Pin a version per stackspace with the manifest's
   likely to be tidying up. It reports what has *changed*, not what has reached a
   fork: neither verb leaves a record, so a project stays flagged until upstream's
   own history moves on.
+- **A pull's conflicts are reported where they are, and only the prefix's own
+  are yours.** A history fetched through `:prefix=<repo>` cannot change
+  anything outside `<repo>/`, so a conflict reported elsewhere means the merge
+  base already held that path — the fetched history shares a *stackspace*
+  commit as an ancestor, which a hand-edited manifest or a rough removal and
+  re-add can bring about. `pull` settles those paths as the stackspace's own
+  version and says how many, in which directories, and what it means;
+  `git merge-base HEAD FETCH_HEAD` names the ancestor if you want to see it.
+  Conflicts inside the prefix are real, and `pull` lists the files rather than
+  just the directory. `git merge --abort` steps back; the cursor is not moved
+  until the merge is committed, so a re-run tries again from the same place.
 - **Do not give the stackspace a remote** and push it somewhere. It contains
   several rewritten upstream histories fused together, which is meaningful to
   you and to nobody else. To carry it to another machine, push a

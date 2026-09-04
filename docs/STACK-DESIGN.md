@@ -460,6 +460,22 @@ exactly its own swaps and no others.
 This is the shape `rig stack adopt` should generate, since it is the one a human
 can extend by adding a line.
 
+### Conflicts outside the prefix (2026-09-04, #261)
+
+A pull of one member produced eighty conflicts, every one under a *different*
+member's prefix, and the error named the prefix that was asked for. Two
+findings. The message was simply wrong: `stackPullOne` hardcoded the prefix
+rather than asking git which paths were unmerged; it now lists them. The
+conflicts themselves are impossible for a well-formed pull — a `:prefix=<name>`
+history carries nothing outside `<name>/` — and a `UD` status (ours modified,
+theirs deleted) needs the merge base to hold the path, so the fetched history
+must share a full stackspace commit as an ancestor. How one got there is not
+established (the stackspace had been hand-repaired), but the right answer for
+such paths does not depend on it: a filtered history has no authority outside
+its prefix, so `pull` settles them as the stackspace's own version, reports
+the count by directory and what it implies, and commits the merge when nothing
+inside the prefix remains. Conflicts inside the prefix stay the user's.
+
 ### Reconstitution and seeds (2026-09-04, #260)
 
 A stackspace was a local artifact: moving it meant copying the fused repo,

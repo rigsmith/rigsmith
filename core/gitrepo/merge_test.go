@@ -2,6 +2,7 @@ package gitrepo
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -76,5 +77,57 @@ func TestFetchMerge_ConflictWhenSameFile(t *testing.T) {
 	must(t, b.AbortMerge(ctx))
 	if dirty, _ := b.Dirty(ctx); dirty {
 		t.Error("abort should restore a clean tree")
+	}
+}
+
+// A merge that stops on conflicts can be settled path by path in favour of
+// this side, whichever shape the conflict takes, and then committed.
+func TestResolveOurs(t *testing.T) {
+	ctx, a, b := twoClones(t)
+	// Both sides start from the same base holding both files.
+	for _, f := range []string{"keep.txt", "gone.txt"} {
+		must(t, os.WriteFile(filepath.Join(a.Dir, f), []byte("base\n"), 0o644))
+	}
+	if _, err := a.Commit(ctx, "base"); err != nil {
+		t.Fatal(err)
+	}
+	must(t, a.Push(ctx, "origin", "main"))
+	must(t, b.Pull(ctx, "origin", "main"))
+
+	// Ours modifies both; theirs modifies keep.txt differently and deletes
+	// gone.txt — a UU and a UD.
+	must(t, os.WriteFile(filepath.Join(a.Dir, "keep.txt"), []byte("ours\n"), 0o644))
+	must(t, os.WriteFile(filepath.Join(a.Dir, "gone.txt"), []byte("ours\n"), 0o644))
+	if _, err := a.Commit(ctx, "ours"); err != nil {
+		t.Fatal(err)
+	}
+	must(t, os.WriteFile(filepath.Join(b.Dir, "keep.txt"), []byte("theirs\n"), 0o644))
+	must(t, os.Remove(filepath.Join(b.Dir, "gone.txt")))
+	if _, err := b.Commit(ctx, "theirs"); err != nil {
+		t.Fatal(err)
+	}
+	must(t, b.Push(ctx, "origin", "main"))
+
+	conflicted, err := a.FetchMerge(ctx, "origin", "main")
+	if err != nil || !conflicted {
+		t.Fatalf("conflicted=%v err=%v, want a conflict", conflicted, err)
+	}
+	paths, err := a.UnmergedPaths(ctx)
+	if err != nil || len(paths) != 2 {
+		t.Fatalf("unmerged = %v, %v", paths, err)
+	}
+	must(t, a.ResolveOurs(ctx, paths))
+	if left, _ := a.UnmergedPaths(ctx); len(left) != 0 {
+		t.Fatalf("still unmerged: %v", left)
+	}
+	must(t, a.CommitMerge(ctx))
+	for f, want := range map[string]string{"keep.txt": "ours\n", "gone.txt": "ours\n"} {
+		got, err := os.ReadFile(filepath.Join(a.Dir, f))
+		if err != nil || string(got) != want {
+			t.Errorf("%s = %q, %v; want %q", f, got, err, want)
+		}
+	}
+	if dirty, _ := a.Dirty(ctx); dirty {
+		t.Error("merge not committed cleanly")
 	}
 }

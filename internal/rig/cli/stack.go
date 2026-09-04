@@ -600,7 +600,12 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 		return err
 	}
 	if conflicted {
-		return fmt.Errorf("merge conflicts under %s/ — resolve, commit, then re-run to move the cursor", name)
+		// Conflicts outside the prefix are settled here, in this stackspace's
+		// favour; ones inside it are the user's, and the message names them
+		// rather than the prefix that was asked for.
+		if err := stackSettleConflicts(ctx, out, repo, name); err != nil {
+			return err
+		}
 	}
 
 	// A merge cannot move a prefix backwards. Repin a project to an older tag or
