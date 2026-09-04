@@ -30,6 +30,7 @@ type RootResult struct {
 	RetentionByAge int      // project transcripts dropped as older than the window
 	SkippedFiles   int      // files that vanished/were unreadable mid-sync (live churn)
 	Oversize       []string // rel paths dropped for exceeding MaxFileBytes
+	Deferred       int      // large transcripts changed since staged, but not enough yet to restage (see LargeFileBytes)
 	Disallowed     int      // staged files removed because the allowlist no longer permits them
 	Skipped        bool     // root absent on this machine
 }
@@ -58,6 +59,21 @@ type Options struct {
 	// MaxFileBytes drops any single file larger than this (<= 0 = no cap). Git
 	// hosts reject oversized blobs and take the whole push down with them.
 	MaxFileBytes int64
+	// LargeFileBytes throttles how often a big, append-only transcript is
+	// restaged (<= 0 = every change, as for any other file). A transcript over
+	// this size whose staged copy exists is copied again only once it has grown
+	// by at least half of LargeFileBytes since, or once it has been quiet for
+	// largeFileSettle — so an active marathon session costs one blob per chunk
+	// of new content rather than one per sync, and a finished one is still
+	// captured whole within the settle window.
+	LargeFileBytes int64
+	// Flush names source files the throttle must not defer this run, as
+	// absolute paths — the transcript of the session that just ended, which
+	// the SessionEnd hook passes on. Scoped rather than global on purpose: a
+	// flush of every transcript would restage another session's large one
+	// mid-chunk each time any short session ended, which is the growth the
+	// throttle exists to stop. Symlinks are resolved before comparing.
+	Flush []string
 	// SourceOverride maps a root id to an absolute source dir, used verbatim
 	// instead of resolving the root location via the machine. The machine still
 	// drives path translation (portablize/manifest); this only decouples WHERE the
@@ -72,6 +88,105 @@ type Options struct {
 	// logged in, unreadable) simply leaves those rows unattributed — a guess is
 	// never invented, and a stored attribution is never overwritten by one.
 	LiveAccountUUID string
+}
+
+// largeFileSettle is how long a large transcript has to go unwritten before a
+// change too small to earn a restage on its own is staged anyway. It is the
+// fallback for a session that ended without its SessionEnd hook firing (a
+// crash, a hook not installed): nothing schedules a sync at the deadline —
+// the rule is only evaluated by whatever sync runs next — so it catches the
+// tail up then, rather than never. A session that ends normally does not
+// wait for it: the hook runs `sync --flush` with that session's transcript.
+const largeFileSettle = 30 * time.Minute
+
+// flushSet resolves Options.Flush into a set keyed the way the walk will ask
+// — cleaned, with symlinks resolved where the path exists — so a path the
+// hook reports and the one the walk visits agree whatever the spelling.
+func flushSet(paths []string) flushScope {
+	var f flushScope
+	if len(paths) == 0 {
+		return f
+	}
+	f.files = make(map[string]bool, len(paths))
+	for _, p := range paths {
+		c := canonicalPath(p)
+		f.files[c] = true
+		// A session's sub-agent transcripts live beside it, under a
+		// directory of its own name: projects/<slug>/<id>/subagents/….
+		// They ended with the session, and the hook names only the parent.
+		if dir := strings.TrimSuffix(c, ".jsonl"); dir != c {
+			f.dirs = append(f.dirs, dir+string(filepath.Separator))
+		}
+	}
+	return f
+}
+
+// flushScope is what a flush covers: the transcripts named, and every
+// transcript under the directory a named session keeps its sub-agents in.
+// Nothing else — a flush is one session's, not the machine's.
+type flushScope struct {
+	files map[string]bool
+	dirs  []string
+}
+
+// covers reports whether the flush exempts path from the throttle.
+func (f flushScope) covers(path string) bool {
+	if len(f.files) == 0 {
+		return false
+	}
+	c := canonicalPath(path)
+	if f.files[c] {
+		return true
+	}
+	for _, d := range f.dirs {
+		if strings.HasPrefix(c, d) {
+			return true
+		}
+	}
+	return false
+}
+
+// canonicalPath is a path as the flush set keys it.
+func canonicalPath(p string) string {
+	p = filepath.Clean(p)
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
+}
+
+// deferLarge reports whether a changed transcript should wait: it is a
+// project transcript over the large-file threshold, a staged copy exists, and
+// the source has neither grown by half the threshold since that copy nor
+// settled. Only `projects/<slug>/….jsonl` qualifies — the append-only files
+// the throttle is about; a .jsonl under a skill or plugin is ordinary data and
+// syncs on every change. A source no LARGER than the staged copy is never
+// deferred — a change that did not add bytes is a rewrite, not an append, and
+// the staged copy is simply wrong. Nor is one whose staged copy has aged past
+// the retention cutoff:
+// retention prunes staged files by their mtime later in the same sync, and a
+// live transcript that was just appended must not lose its only copy to a
+// deferral.
+func deferLarge(rel string, src, staged os.FileInfo, threshold int64, cutoff, now time.Time) bool {
+	if threshold <= 0 || staged == nil || src.Size() <= threshold || !isTranscriptRel(rel) {
+		return false
+	}
+	if !cutoff.IsZero() && staged.ModTime().Before(cutoff) {
+		return false
+	}
+	grown := src.Size() - staged.Size()
+	// Half the threshold, rounded up: an odd threshold must not let growth of
+	// just under half through.
+	if grown <= 0 || grown >= (threshold+1)/2 {
+		return false
+	}
+	return now.Sub(src.ModTime()) < largeFileSettle
+}
+
+// isTranscriptRel reports whether rel is a session transcript: a .jsonl under
+// projects/, memory excluded.
+func isTranscriptRel(rel string) bool {
+	return strings.HasPrefix(rel, "projects/") && strings.HasSuffix(rel, ".jsonl") && !isMemoryRel(rel)
 }
 
 // Sync materialises the allowlisted, redacted file set for each enabled root into
@@ -89,6 +204,7 @@ func Sync(opts Options) (*Report, error) {
 	if opts.RetentionDays > 0 {
 		cutoff = time.Now().AddDate(0, 0, -opts.RetentionDays)
 	}
+	flush := flushSet(opts.Flush)
 
 	// Shared-memory symlinks found under the CLI root (worktree slugs linking
 	// memory/ to their main project); recorded in the manifest for restore.
@@ -171,8 +287,21 @@ func Sync(opts Options) (*Report, error) {
 				}
 
 				unchanged := false
-				if d, derr := os.Stat(dstPath); derr == nil && d.Size() == info.Size() && d.ModTime().Equal(info.ModTime()) {
+				staged, derr := os.Stat(dstPath)
+				if derr != nil {
+					staged = nil
+				}
+				if staged != nil && staged.Size() == info.Size() && staged.ModTime().Equal(info.ModTime()) {
 					unchanged = true
+				}
+				// A long session's transcript is the one file that is both large
+				// and rewritten on every sync, and every copy of it is a blob the
+				// repo carries until the next squash. Past LargeFileBytes it waits
+				// for a chunk's worth of new content, or for the session to go
+				// quiet, before it is restaged.
+				if !unchanged && !flush.covers(srcPath) && deferLarge(rel, info, staged, opts.LargeFileBytes, cutoff, time.Now()) {
+					rr.Deferred++
+					continue
 				}
 				if unchanged {
 					// Nothing will be written, so scanning the source separately is safe
@@ -669,16 +798,34 @@ func copyPreserveMtime(src, dst string, mtime time.Time) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	// Written beside dst and renamed over it, so an interrupted copy leaves
+	// the previous staged file where it was rather than a truncated one in
+	// its place: the large-file throttle compares against the staged copy,
+	// and a truncated copy would pass for a baseline and then be committed.
+	out, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".*.tmp")
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+	tmp := out.Name()
+	fail := func(err error) error {
+		_ = out.Close()
+		_ = os.Remove(tmp)
 		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		return fail(err)
 	}
 	if err := out.Close(); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
-	return os.Chtimes(dst, mtime, mtime)
+	if err := os.Chtimes(tmp, mtime, mtime); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
