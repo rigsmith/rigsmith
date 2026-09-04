@@ -279,3 +279,36 @@ func TestPrune_AllRemovesABundleThatIsOnlyDisks(t *testing.T) {
 		t.Errorf("vm_bundles still there after --all: %v", serr)
 	}
 }
+
+// The leaf checks see through nothing above them: a data directory that is
+// itself a symlink would make every cache and bundle behind it look like the
+// profile's own, and Prune would follow the link out of the profile. Nothing
+// under such a directory is offered.
+func TestMeasure_OffersNothingUnderASymlinkedDataDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs a privilege on Windows")
+	}
+	_, p := pruneFixture(t, true)
+	elsewhere := filepath.Join(t.TempDir(), "data")
+	if err := os.Rename(p.DataDir(), elsewhere); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, p.DataDir()); err != nil {
+		t.Fatal(err)
+	}
+	u, err := Measure(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.Entries) != 0 || u.Untouched == "" {
+		t.Fatalf("entries=%+v untouched=%q; want nothing offered, with the reason", u.Entries, u.Untouched)
+	}
+	if removed, err := Prune(p, PruneAll); err != nil || len(removed) != 0 {
+		t.Fatalf("prune through the link: removed=%v err=%v", removed, err)
+	}
+	for _, rel := range []string{"Cache/data_0", "vm_bundles/claudevm.bundle/rootfs.img"} {
+		if _, serr := os.Stat(filepath.Join(elsewhere, filepath.FromSlash(rel))); serr != nil {
+			t.Errorf("%s behind the link was deleted", rel)
+		}
+	}
+}

@@ -77,6 +77,10 @@ type Usage struct {
 	Total int64
 	// Entries are the reclaimable paths, cheapest tier first.
 	Entries []PruneEntry
+	// Untouched says why nothing was offered when the profile was not
+	// measured for reclaiming at all — a data directory that is not the
+	// profile's own — as opposed to one with nothing to reclaim.
+	Untouched string
 }
 
 // Reclaimable is the space the given tier would free.
@@ -105,6 +109,15 @@ func MeasureContext(ctx context.Context, p Profile) (Usage, error) {
 	}
 	u := Usage{Total: total}
 	data := p.DataDir()
+	// The checks below are on the leaves — a cache, a bundle — and see
+	// through nothing above them: with the data directory itself a symlink,
+	// every leaf would look like the profile's own and Prune would follow
+	// the link out of it. Nothing under a data directory that is not a real
+	// directory is offered; one that is not there yet is simply empty.
+	if fi, err := os.Lstat(data); err == nil && !fi.IsDir() {
+		u.Untouched = "the data directory is a symlink, so nothing under it is the profile's own to prune"
+		return u, nil
+	}
 	for _, name := range electronCaches {
 		dir := filepath.Join(data, name)
 		// A cache that is a symlink is not the profile's own to reclaim:

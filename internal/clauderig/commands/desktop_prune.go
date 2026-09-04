@@ -178,7 +178,11 @@ func newDesktopPruneCmd() *cobra.Command {
 func printPruneBreakdown(out io.Writer, p desktop.Profile, u desktop.Usage, tier desktop.PruneTier) {
 	fmt.Fprintf(out, "%s  %s\n", HeaderStyle.Render(p.Label()), DimStyle.Render(desktop.HumanSize(u.Total)+" on disk"))
 	if len(u.Entries) == 0 {
-		fmt.Fprintf(out, "  %s\n", DimStyle.Render("nothing reclaimable"))
+		why := "nothing reclaimable"
+		if u.Untouched != "" {
+			why += " — " + u.Untouched
+		}
+		fmt.Fprintf(out, "  %s\n", DimStyle.Render(why))
 		return
 	}
 	width := 0
