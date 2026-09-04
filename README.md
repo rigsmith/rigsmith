@@ -97,7 +97,9 @@ rig source-install      # or: go run ./scripts/source-install
 This installs to `${RIGSMITH_INSTALL:-$HOME/.local}/bin` (the same prefix as the
 `curl | sh` release installer). Tools are discovered from `cmd/`, so a new
 `cmd/<tool>` installs automatically. Use this when you want stable binaries; use
-`<tool>-dev` (below) when you want them to recompile on every run.
+`<tool>-dev` (below) when you want them to recompile on every run. On Windows,
+the installer requests administrator access only when the chosen destination is
+protected.
 
 ### Running a dev build alongside the installed binaries
 
@@ -112,7 +114,9 @@ rig dev-install         # or: rig run dev-install, or: go run ./scripts/dev-inst
 This writes `rig-dev`, `shiprig-dev`, `clauderig-dev`, … to `~/.local/bin` (sh
 wrappers on macOS/Linux, `.cmd` on Windows). Each recompiles the current source
 on every run, so edits take effect with no reinstall. The launchers are
-discovered from `cmd/`, so a new `cmd/<tool>` gets one automatically.
+discovered from `cmd/`, so a new `cmd/<tool>` gets one automatically. On
+Windows, the installer requests administrator access only when the chosen
+launcher directory is protected.
 
 `rig dev-install` works because rig surfaces helper `main` packages committed
 under `scripts/` (e.g. `dev-install`, `source-install`) as bare `rig <name>`

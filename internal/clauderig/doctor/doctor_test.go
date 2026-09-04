@@ -386,3 +386,32 @@ func TestRun_ChecksUserSettingsOutsideARepo(t *testing.T) {
 		t.Error("the user file's misplaced key went unreported outside a repo")
 	}
 }
+
+func TestCheckRestricted(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_RESTRICTED", "")
+	if _, ok := checkRestricted(); ok {
+		t.Error("unset: expected the restricted-mode check to be skipped")
+	}
+	t.Setenv("CLAUDE_CODE_RESTRICTED", "0")
+	if _, ok := checkRestricted(); ok {
+		t.Error("=0: expected the restricted-mode check to be skipped")
+	}
+	for _, v := range []string{"1", "true", "YES", " on "} {
+		t.Setenv("CLAUDE_CODE_RESTRICTED", v)
+		r, ok := checkRestricted()
+		if !ok || r.Status != Warn {
+			t.Errorf("=%q: got ok=%v %+v, want Warn", v, ok, r)
+		}
+	}
+}
+
+func TestRun_RestrictedAppearsInEnvironment(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_RESTRICTED", "1")
+	sections := Run(context.Background(), Env{UserSettings: filepath.Join(t.TempDir(), "settings.json")})
+	for _, r := range sections[0].Results {
+		if r.Name == "restricted mode" {
+			return
+		}
+	}
+	t.Fatalf("restricted mode check missing from environment section: %+v", sections[0].Results)
+}

@@ -1,0 +1,11 @@
+{
+  "RT_MANIFEST": {
+    "#1": {
+      "0409": {
+        "minimum-os": "win7",
+        "execution-level": "as invoker",
+        "long-path-aware": true
+      }
+    }
+  }
+}

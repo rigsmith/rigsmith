@@ -65,6 +65,9 @@ func Run(ctx context.Context, env Env) []Section {
 		checkClauderigOnPath(ctx),
 		checkRigOnPath(ctx),
 	}}
+	if r, ok := checkRestricted(); ok {
+		environment.Results = append(environment.Results, r)
+	}
 
 	sync := Section{Title: "sync", Results: []Result{
 		checkRemote(ctx, env),
