@@ -144,7 +144,7 @@ func newDesktopPruneCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&vm, "vm", false, "also drop the unpacked Cowork VM image (re-extracted on next launch; VM contents lost)")
-	cmd.Flags().BoolVar(&all, "all", false, "also drop the whole VM bundle (re-downloaded on next launch)")
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "also drop the whole VM bundle (re-downloaded on next launch)")
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show the per-profile breakdown and delete nothing")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation --vm and --all ask for")
 	return cmd
