@@ -114,8 +114,8 @@ func MeasureContext(ctx context.Context, p Profile) (Usage, error) {
 	// every leaf would look like the profile's own and Prune would follow
 	// the link out of it. Nothing under a data directory that is not a real
 	// directory is offered; one that is not there yet is simply empty.
-	if fi, err := os.Lstat(data); err == nil && !fi.IsDir() {
-		u.Untouched = "the data directory is a symlink, so nothing under it is the profile's own to prune"
+	if _, err := os.Lstat(data); err == nil && !ownDir(data) {
+		u.Untouched = "the data directory is a link, so nothing under it is the profile's own to prune"
 		return u, nil
 	}
 	for _, name := range electronCaches {
@@ -251,7 +251,9 @@ func DirSizeContext(ctx context.Context, dir string) (int64, error) { return dir
 // that is its own is the profile's to reclaim.
 func ownDir(path string) bool {
 	fi, err := os.Lstat(path)
-	return err == nil && fi.IsDir()
+	// A Windows junction reports as a directory with ModeIrregular set,
+	// not as a symlink; it points elsewhere all the same.
+	return err == nil && fi.IsDir() && fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) == 0
 }
 
 // dirSize walks dir. followRoot resolves a root that is itself a symlink —

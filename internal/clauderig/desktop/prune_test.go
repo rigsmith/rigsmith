@@ -220,10 +220,17 @@ func TestDirSize_StopsWhenTheContextEnds(t *testing.T) {
 // A cache or bundle directory that is a symlink is not the profile's own:
 // Prune would remove the link and leave everything behind it, so Measure
 // does not count what is behind it as reclaimable either.
-func TestMeasure_DoesNotFollowSymlinkedCaches(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink creation needs a privilege on Windows")
+// mustLinkDir makes link point at the directory target the way the package
+// itself does for a relocated profile: a symlink, or on Windows a junction
+// when symlinks need a privilege.
+func mustLinkDir(t *testing.T, target, link string) {
+	t.Helper()
+	if err := linkDir(target, link); err != nil {
+		t.Fatal(err)
 	}
+}
+
+func TestMeasure_DoesNotFollowSymlinkedCaches(t *testing.T) {
 	_, p := pruneFixture(t, true)
 	elsewhere := filepath.Join(t.TempDir(), "gpu")
 	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
@@ -232,9 +239,7 @@ func TestMeasure_DoesNotFollowSymlinkedCaches(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(elsewhere, "blob"), make([]byte, 1<<20), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(elsewhere, filepath.Join(p.DataDir(), "GPUCache")); err != nil {
-		t.Fatal(err)
-	}
+	mustLinkDir(t, elsewhere, filepath.Join(p.DataDir(), "GPUCache"))
 	u, err := Measure(p)
 	if err != nil {
 		t.Fatal(err)
@@ -285,17 +290,12 @@ func TestPrune_AllRemovesABundleThatIsOnlyDisks(t *testing.T) {
 // profile's own, and Prune would follow the link out of the profile. Nothing
 // under such a directory is offered.
 func TestMeasure_OffersNothingUnderASymlinkedDataDir(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink creation needs a privilege on Windows")
-	}
 	_, p := pruneFixture(t, true)
 	elsewhere := filepath.Join(t.TempDir(), "data")
 	if err := os.Rename(p.DataDir(), elsewhere); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(elsewhere, p.DataDir()); err != nil {
-		t.Fatal(err)
-	}
+	mustLinkDir(t, elsewhere, p.DataDir())
 	u, err := Measure(p)
 	if err != nil {
 		t.Fatal(err)
