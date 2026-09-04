@@ -17,6 +17,7 @@
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md guide block standalone (`--global` targets `~/.claude/CLAUDE.md`, `--path` overrides; `install` previews in a scrollable UI, skipped with `-y` or off a TTY) |
 | `mcp` | `list` (alias `ls`) / `get` / `add` / `remove` (alias `rm`) / `enable` / `disable` MCP servers (`--scope user｜project｜local`, `--transport stdio｜http｜sse`, `--env`, `--header`); bare `mcp` on a TTY opens an interactive screen (mirrors `claude mcp`) |
 | `account` | Manage multiple Claude Code logins: `add` / `list` (alias `ls`/`status`) / `run <id｜email> [-- claude args]` / `switch` / `sessions` (alias `ps`) / `remove` (alias `rm`) / `purge`. `run --no-share` isolates a session; `switch` takes `--dry-run` / `--force` / `--kill` |
+| `desktop` | Several Claude Desktop accounts side by side, each in its own profile: `add` / `open` / `list` / `quit` / `map` / `shortcut` / `prune` / `rm` (alias `app`). `prune` reclaims Electron caches and, with `--vm`, the Cowork VM image without deleting the profile; `--dry-run` shows the breakdown |
 | `config` | `get` / `set` / `show` / `path` / `edit` (`~/.clauderig/config.json`) |
 | `doctor` | Health-check environment + sync + worktree discipline (`--fix` repairs) |
 | `ui` | Interactive dashboard |

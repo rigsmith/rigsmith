@@ -171,6 +171,7 @@ clauderig restore                # pull → rewrite paths for this OS → merge 
 clauderig status | doctor        # state / health-check (doctor --fix repairs)
 clauderig guide install          # install the CLAUDE.md blocks (worktree discipline + rigsmith-tools)
 clauderig mcp list | add <name> <cmd...>   # manage MCP servers (mirrors `claude mcp`)
+clauderig desktop list | open <name> | prune [--vm]   # Desktop profiles per account; prune reclaims caches / the Cowork VM image
 ```
 
 **Why not copy `~/.claude` by hand:** clauderig re-derives project-directory slugs

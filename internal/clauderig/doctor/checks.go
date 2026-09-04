@@ -11,6 +11,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/claudemd"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ghrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/gitignore"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
@@ -53,6 +54,43 @@ func checkRigOnPath(_ context.Context) Result {
 			Hint: "the worktree discipline points at `rig worktree new` — install rig (it ships alongside clauderig) so that guidance works"}
 	}
 	return Result{Name: "rig on PATH", Status: OK, Detail: "resolvable"}
+}
+
+// desktopPruneThreshold is how much a `desktop prune --vm` would have to free
+// before doctor mentions it. The Cowork VM image alone reaches this within
+// days of use, and there is no other signal that it has.
+const desktopPruneThreshold = 4 << 30
+
+// checkDesktopSize reports when the Desktop profiles are holding space that
+// `desktop prune` could give back — the VM image and caches, never chat
+// history. It stays silent below the threshold so a normal machine does not
+// carry a permanent line about disk it is not short of.
+func checkDesktopSize() (Result, bool) {
+	st, err := desktop.DefaultStore()
+	if err != nil {
+		return Result{}, false
+	}
+	profiles, err := st.List()
+	if err != nil || len(profiles) == 0 {
+		return Result{}, false
+	}
+	var total, reclaim int64
+	for _, p := range profiles {
+		u, merr := desktop.Measure(p)
+		if merr != nil {
+			continue
+		}
+		total += u.Total
+		reclaim += u.Reclaimable(desktop.PruneVM)
+	}
+	if reclaim < desktopPruneThreshold {
+		return Result{}, false
+	}
+	return Result{Name: "desktop profiles", Status: Warn,
+		Detail: fmt.Sprintf("%s on disk, %s of it reclaimable (Cowork VM image and caches)",
+			desktop.HumanSize(total), desktop.HumanSize(reclaim)),
+		Hint: "`clauderig desktop prune --dry-run` shows the breakdown; `--vm` resets the VM image, leaving logins and chat history alone",
+	}, true
 }
 
 // --- sync ---
