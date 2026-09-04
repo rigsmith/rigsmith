@@ -33,6 +33,19 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	if len(req.Redirects) == 0 {
 		resp.Skipped = true
 		resp.Reason = "nothing to redirect"
+		// An overlay rig wrote for members that have since gone still swaps
+		// packages for projects at paths that may have left; a check says
+		// so rather than calling an ecosystem with nothing to redirect
+		// healthy.
+		if !req.Write {
+			if existing, err := os.ReadFile(filepath.Join(req.Root, overlayFile)); err == nil && strings.Contains(string(existing), overlayMarker) {
+				resp.Skipped = false
+				resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+					Path:    overlayFile,
+					Message: "left over — no package reference crosses between members any more, so it only redirects to paths that may have left; delete it",
+				})
+			}
+		}
 		return resp, nil
 	}
 
@@ -60,7 +73,7 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 		case err == nil && strings.Contains(string(existing), overlayMarker) && crlfToLF(string(existing)) != crlfToLF(body):
 			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
 				Path:    overlayFile,
-				Message: "out of date — it differs from what the current members and rig would write; re-run `rig stack wire`",
+				Message: "out of date — it differs from what the current members and rig would write; re-run `rig stack wire`, which rewrites the file whole (if you extended it by hand, drop the marker line to make it yours, and keep it current yourself)",
 				Fixable: true,
 			})
 		}

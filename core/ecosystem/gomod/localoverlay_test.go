@@ -103,6 +103,54 @@ func TestGoLocalOverlay(t *testing.T) {
 		}
 	})
 
+	t.Run("a go.work rig wrote before a module was added is out of date", func(t *testing.T) {
+		root := newRoot(t, "1.24", "1.24")
+		if _, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: true}); err != nil {
+			t.Fatal(err)
+		}
+		writeMod(t, filepath.Join(root, "extra"), "example.com/acme/extra", "1.24")
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Problems) != 1 || !strings.Contains(got.Problems[0].Message, "out of date") || !got.Problems[0].Fixable {
+			t.Fatalf("stale go.work: %+v, want one fixable out-of-date problem", got.Problems)
+		}
+		// The same file with CRLF endings is not stale.
+		body, _ := os.ReadFile(filepath.Join(root, workFile))
+		if _, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: true}); err != nil {
+			t.Fatal(err)
+		}
+		body, _ = os.ReadFile(filepath.Join(root, workFile))
+		if err := os.WriteFile(filepath.Join(root, workFile), []byte(strings.ReplaceAll(string(body), "\n", "\r\n")), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects}); len(got.Problems) != 0 {
+			t.Fatalf("CRLF endings reported: %+v", got.Problems)
+		}
+	})
+
+	t.Run("a go.work rig wrote is reported once nothing crosses any more", func(t *testing.T) {
+		root := newRoot(t, "1.24", "1.24")
+		if _, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: true}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Skipped || len(got.Problems) != 1 || !strings.Contains(got.Problems[0].Message, "left over") {
+			t.Fatalf("leftover go.work: skipped=%v %+v, want it reported", got.Skipped, got.Problems)
+		}
+		// A hand-written one is not rig's to call left over.
+		if err := os.WriteFile(filepath.Join(root, workFile), []byte("go 1.24\n\nuse ./app\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root}); !got.Skipped || len(got.Problems) != 0 {
+			t.Fatalf("hand-written go.work with no redirects: skipped=%v %+v", got.Skipped, got.Problems)
+		}
+	})
+
 	t.Run("a hand-written go.work is reported, not rewritten", func(t *testing.T) {
 		// It is authoritative and may say more than rig knows about, so a missing
 		// module is a finding rather than a licence to replace the file.

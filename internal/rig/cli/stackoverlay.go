@@ -191,10 +191,10 @@ func stackCheckOverlay(ctx context.Context, root string, members, writable []str
 	var out []stackOverlayReport
 	byEco, orphans := stackRedirects(ctx, root, members)
 	for _, eco := range ecosystem.Default().All() {
+		// Asked even with nothing to redirect: an overlay left over from
+		// members that have gone is a problem only the adapter can see,
+		// and it is exactly when nothing crosses that it goes unnoticed.
 		links := byEco[eco.Info().ID]
-		if len(links) == 0 {
-			continue
-		}
 		resp, err := eco.LocalOverlay(ctx, plugin.LocalOverlayRequest{
 			Root: root, Redirects: redirectsOf(links), Writable: writable,
 		})

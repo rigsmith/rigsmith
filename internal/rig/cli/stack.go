@@ -1104,7 +1104,11 @@ func newStackDoctorCmd() *cobra.Command {
 				reports, orphans := stackCheckOverlay(ctx, root, m.names(), m.ownedNames())
 				stackReportOrphans(out, m, orphans)
 				for _, rep := range reports {
-					fmt.Fprintf(out, "· %s: %d package(s) cross between members here\n", rep.Eco, len(rep.Links))
+					if len(rep.Links) == 0 {
+						fmt.Fprintf(out, "· %s: no package reference crosses between members here\n", rep.Eco)
+					} else {
+						fmt.Fprintf(out, "· %s: %d package(s) cross between members here\n", rep.Eco, len(rep.Links))
+					}
 					for _, l := range rep.Links {
 						fmt.Fprintf(out, "    %s\n", l.describe())
 					}

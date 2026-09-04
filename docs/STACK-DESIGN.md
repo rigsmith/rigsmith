@@ -469,9 +469,13 @@ the same `UseStackSources` switch as the swaps. Every project under the overlay
 gets it, not only the redirected ones: matching the current project against the
 redirect paths in a condition means separators and casing that differ by
 platform, and a match that fails does so silently — the failure mode the overlay
-exists to prevent — while reference assemblies are a build-time optimisation
-whose absence costs nothing where everything rebuilds together. A generated
+exists to prevent. Reference assemblies are an incremental-build optimisation
+(a dependency's implementation-only change does not recompile its consumers),
+so turning them off costs some rebuilding inside the stackspace; that is the
+accepted trade for a graph that is correct across the member boundary. A generated
 overlay that no longer matches what rig would write is reported by `doctor` as
 out of date, so a stackspace wired before this change learns to re-run `wire`;
 an overlay that was never written is reported the same way, since a check
-that stays quiet about it would leave an unwired stackspace looking healthy.
+that stays quiet about it would leave an unwired stackspace looking healthy —
+as is one left over once no reference crosses between members any more, for
+which `doctor` asks every ecosystem whether it has links or not.

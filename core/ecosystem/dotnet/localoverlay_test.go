@@ -392,3 +392,24 @@ func TestLocalOverlayDisablesReferenceAssemblies(t *testing.T) {
 		}
 	}
 }
+
+// Once nothing crosses between members, an overlay rig wrote earlier is
+// reported by a check rather than passed over as "nothing to redirect"; a
+// hand-written one is not rig's to call left over.
+func TestLocalOverlayLeftOverWhenNothingCrosses(t *testing.T) {
+	ctx := context.Background()
+	a := New()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, overlayFile), overlayMarker+"\n<Project/>\n")
+	got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Skipped || len(got.Problems) != 1 || !strings.Contains(got.Problems[0].Message, "left over") {
+		t.Fatalf("leftover overlay: skipped=%v %+v, want it reported", got.Skipped, got.Problems)
+	}
+	writeFile(t, filepath.Join(root, overlayFile), "<Project><!-- mine --></Project>\n")
+	if got, _ := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root}); !got.Skipped || len(got.Problems) != 0 {
+		t.Fatalf("hand-written overlay with no redirects: skipped=%v %+v", got.Skipped, got.Problems)
+	}
+}

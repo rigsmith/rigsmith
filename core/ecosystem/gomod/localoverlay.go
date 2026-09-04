@@ -39,6 +39,18 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	if len(req.Redirects) == 0 {
 		resp.Skipped = true
 		resp.Reason = "no module in this tree is required by another"
+		// A go.work rig wrote for members that have since gone still lists
+		// directories that may have left; a check says so rather than
+		// calling an ecosystem with nothing to redirect healthy.
+		if !req.Write {
+			if existing, err := os.ReadFile(filepath.Join(req.Root, workFile)); err == nil && strings.Contains(string(existing), workMarker) {
+				resp.Skipped = false
+				resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+					Path:    workFile,
+					Message: "left over — no module in this tree is required by another any more, so it only lists directories that may have left; delete it",
+				})
+			}
+		}
 		return resp, nil
 	}
 
@@ -84,11 +96,21 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	if !req.Write {
 		// No go.work at all is the quietest failure of the lot: every
 		// require on a module in this tree goes to the proxy, and the build
-		// succeeds. A check has to say so.
-		if errors.Is(readErr, fs.ErrNotExist) {
+		// succeeds. One rig wrote before a module was added is the same
+		// failure for that module. A check has to say so either way; the
+		// comparison ignores line endings, which an autocrlf checkout
+		// changes without changing anything.
+		switch {
+		case errors.Is(readErr, fs.ErrNotExist):
 			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
 				Path:    workFile,
 				Message: "not written — a require on a module in this tree is still fetched from the proxy; run `rig stack wire`",
+				Fixable: true,
+			})
+		case generated && crlfToLF(string(existing)) != crlfToLF(body):
+			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+				Path:    workFile,
+				Message: "out of date — it differs from what the modules here and rig would write; re-run `rig stack wire`, which rewrites the file whole",
 				Fixable: true,
 			})
 		}
@@ -181,3 +203,7 @@ func renderWork(goVersion string, mods []string) string {
 	b.WriteString(")\n")
 	return b.String()
 }
+
+// crlfToLF normalises line endings for a comparison that must not see a
+// checkout's autocrlf as a difference.
+func crlfToLF(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
