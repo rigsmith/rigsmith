@@ -7,11 +7,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/confkit"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/claudemd"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ghrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/gitignore"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
@@ -55,6 +57,63 @@ func checkRigOnPath(_ context.Context) Result {
 			Hint: "the worktree discipline points at `rig worktree new` — install rig (it ships alongside clauderig) so that guidance works"}
 	}
 	return Result{Name: "rig on PATH", Status: OK, Detail: "resolvable"}
+}
+
+// desktopPruneThreshold is how much a `desktop prune --vm` would have to free
+// before doctor mentions it. The Cowork VM image alone reaches this within
+// days of use, and there is no other signal that it has.
+var desktopPruneThreshold int64 = 4 << 30
+
+// desktopStore opens the profile store doctor measures; a variable so a test
+// can point it at a store of its own rather than the real home directory.
+var desktopStore = desktop.DefaultStore
+
+// desktopSizeBudget bounds the profile walk on its own, under the doctor's
+// deadline rather than sharing it: the checks after this one — the remote,
+// the staging repo — run on the same context, and a walk that used the
+// whole budget would hand them a cancelled one they would report as a
+// failure of their own.
+const desktopSizeBudget = 3 * time.Second
+
+// checkDesktopSize reports when the Desktop profiles are holding space that
+// `desktop prune` could give back — the VM image and caches, never chat
+// history. It stays silent below the threshold so a normal machine does not
+// carry a permanent line about disk it is not short of.
+//
+// It is the one environment check that walks a filesystem, and a profile can
+// hold tens of GB, so the walk runs under the doctor's own deadline: past it
+// the check gives up silently rather than hold the report.
+func checkDesktopSize(ctx context.Context) (Result, bool) {
+	st, err := desktopStore()
+	if err != nil {
+		return Result{}, false
+	}
+	profiles, err := st.List()
+	if err != nil || len(profiles) == 0 {
+		return Result{}, false
+	}
+	walk, cancel := context.WithTimeout(ctx, desktopSizeBudget)
+	defer cancel()
+	var total, reclaim int64
+	for _, p := range profiles {
+		u, merr := desktop.MeasureContext(walk, p)
+		if walk.Err() != nil {
+			return Result{}, false
+		}
+		if merr != nil {
+			continue
+		}
+		total += u.Total
+		reclaim += u.Reclaimable(desktop.PruneVM)
+	}
+	if reclaim < desktopPruneThreshold {
+		return Result{}, false
+	}
+	return Result{Name: "desktop profiles", Status: Warn,
+		Detail: fmt.Sprintf("%s on disk, %s of it reclaimable (Cowork VM image and caches)",
+			desktop.HumanSize(total), desktop.HumanSize(reclaim)),
+		Hint: "`clauderig desktop prune --dry-run` shows the breakdown; `--vm` resets the VM image, leaving logins and chat history alone",
+	}, true
 }
 
 // checkRestricted flags a session that Claude Code will run with `--restricted`

@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
 )
 
@@ -384,6 +386,73 @@ func TestRun_ChecksUserSettingsOutsideARepo(t *testing.T) {
 	}
 	if !found {
 		t.Error("the user file's misplaced key went unreported outside a repo")
+}
+
+// The profile-size check stays silent until the reclaimable part of the
+// Desktop profiles crosses the threshold, then names the totals and prune.
+func TestCheckDesktopSize(t *testing.T) {
+	st := desktop.NewStore(filepath.Join(t.TempDir(), "desktop"))
+	p, err := st.Create("work", "work@example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rel, n := range map[string]int{
+		"Cache/data_0":                              4096,
+		"vm_bundles/claudevm.bundle/rootfs.img":     8192,
+		"vm_bundles/claudevm.bundle/rootfs.img.zst": 4096,
+	} {
+		path := filepath.Join(p.DataDir(), filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, make([]byte, n), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	u, err := desktop.Measure(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reclaim := u.Reclaimable(desktop.PruneVM)
+	if reclaim == 0 {
+		t.Fatal("fixture has nothing reclaimable at the vm tier")
+	}
+	prevStore, prevThreshold := desktopStore, desktopPruneThreshold
+	desktopStore = func() (*desktop.Store, error) { return st, nil }
+	t.Cleanup(func() { desktopStore, desktopPruneThreshold = prevStore, prevThreshold })
+	ctx := context.Background()
+
+	desktopPruneThreshold = reclaim + 1
+	if r, ok := checkDesktopSize(ctx); ok {
+		t.Fatalf("below the threshold: got %+v, want silence", r)
+	}
+	desktopPruneThreshold = reclaim
+	r, ok := checkDesktopSize(ctx)
+	if !ok || r.Status != Warn {
+		t.Fatalf("at the threshold: got ok=%v %+v, want a Warn", ok, r)
+	}
+	for _, want := range []string{desktop.HumanSize(u.Total), desktop.HumanSize(reclaim), "reclaimable"} {
+		if !strings.Contains(r.Detail, want) {
+			t.Errorf("detail %q lacks %q", r.Detail, want)
+		}
+	}
+	if !strings.Contains(r.Hint, "desktop prune") {
+		t.Errorf("hint %q does not point at prune", r.Hint)
+	}
+	// Past its deadline the walk gives up and the check says nothing rather
+	// than holding the report.
+	expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer cancel()
+	if r, ok := checkDesktopSize(expired); ok {
+		t.Fatalf("expired context: got %+v, want silence", r)
+	}
+	// And the walk's own budget never spends the caller's: the context the
+	// later checks share is still live afterwards.
+	shared, cancelShared := context.WithTimeout(ctx, time.Minute)
+	defer cancelShared()
+	checkDesktopSize(shared)
+	if shared.Err() != nil {
+		t.Fatal("the size check cancelled the shared doctor context")
 	}
 }
 

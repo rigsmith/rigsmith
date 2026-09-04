@@ -1,0 +1,315 @@
+package desktop
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// PruneTier is how much of a profile `desktop prune` may reclaim. Each tier
+// includes the ones below it. The tiers are ordered by what is lost: nothing,
+// then whatever was created inside the Cowork VM, then a download.
+type PruneTier int
+
+const (
+	// PruneCaches reclaims Electron's regenerable caches only. Nothing is lost.
+	PruneCaches PruneTier = iota
+	// PruneVM also drops the unpacked Cowork VM root filesystem, which Desktop
+	// re-extracts from the compressed image beside it on next launch. Anything
+	// created inside the VM and never exported to the host is lost.
+	PruneVM
+	// PruneAll also drops the compressed image, kernel and initramfs — the whole
+	// VM bundle — accepting a re-download on next launch.
+	PruneAll
+)
+
+func (t PruneTier) String() string {
+	switch t {
+	case PruneCaches:
+		return "caches"
+	case PruneVM:
+		return "vm"
+	case PruneAll:
+		return "all"
+	}
+	return fmt.Sprintf("tier(%d)", int(t))
+}
+
+// electronCaches are the directories Chromium/Electron rebuild from nothing.
+// Top-level under the profile's data dir; each is safe to delete while the app
+// is closed. The Dawn GPU cache has gone by several names across Chromium
+// releases; every one of them is listed, as the session search already does.
+var electronCaches = []string{"Cache", "Code Cache", "GPUCache", "DawnWebGPUCache", "DawnGraphiteCache", "GraphiteDawnCache", "DawnCache"}
+
+// vmBundlesDir is where Desktop keeps the Cowork local-agent VM, one bundle
+// directory per image (claudevm.bundle today). Inside, the unpacked disks —
+// rootfs.img on macOS and Linux, rootfs.vhdx on Windows, and any session or
+// data disk beside them — are sparse, provisioned large, and only ever grow,
+// because deleting files inside the VM never shrinks them on the host. A
+// <disk>.zst beside a disk is the pristine compressed image it was unpacked
+// from; a disk without one is created by Desktop on first launch.
+const vmBundlesDir = "vm_bundles"
+
+// vmDiskExts are the extensions an unpacked VM disk carries.
+var vmDiskExts = map[string]bool{".img": true, ".vhdx": true, ".qcow2": true, ".raw": true}
+
+// PruneEntry is one reclaimable path in a profile.
+type PruneEntry struct {
+	// Rel is the path relative to the profile's data directory.
+	Rel string
+	// Size is the space the path takes ON DISK — allocated blocks, not the
+	// logical length — so a sparse VM image reports what it actually costs.
+	Size int64
+	// Tier is the lowest prune tier that reclaims this entry.
+	Tier PruneTier
+	// Note says what happens after it is gone, when that is not obvious.
+	Note string
+}
+
+// Usage is what a profile costs and what prune could give back.
+type Usage struct {
+	// Total is the whole profile directory, on disk.
+	Total int64
+	// Entries are the reclaimable paths, cheapest tier first.
+	Entries []PruneEntry
+	// Untouched says why nothing was offered when the profile was not
+	// measured for reclaiming at all — a data directory that is not the
+	// profile's own — as opposed to one with nothing to reclaim.
+	Untouched string
+}
+
+// Reclaimable is the space the given tier would free.
+func (u Usage) Reclaimable(tier PruneTier) int64 {
+	var n int64
+	for _, e := range u.Entries {
+		if e.Tier <= tier {
+			n += e.Size
+		}
+	}
+	return n
+}
+
+// Measure sizes a profile and classifies what prune could reclaim from it. It
+// reads nothing but metadata, so a 10 GB profile costs a directory walk, not a
+// read. A profile that does not exist yet measures as empty.
+func Measure(p Profile) (Usage, error) { return MeasureContext(context.Background(), p) }
+
+// MeasureContext is Measure under a context: the walk stops with ctx.Err()
+// once the context ends, so a caller with a deadline — doctor, beside checks
+// that take milliseconds — is not held by a profile with a 10 GB tree.
+func MeasureContext(ctx context.Context, p Profile) (Usage, error) {
+	total, err := DirSizeContext(ctx, p.Dir())
+	if err != nil {
+		return Usage{}, err
+	}
+	u := Usage{Total: total}
+	data := p.DataDir()
+	// The checks below are on the leaves — a cache, a bundle — and see
+	// through nothing above them: with the data directory itself a symlink,
+	// every leaf would look like the profile's own and Prune would follow
+	// the link out of it. Nothing under a data directory that is not a real
+	// directory is offered; one that is not there yet is simply empty.
+	if _, err := os.Lstat(data); err == nil && !ownDir(data) {
+		u.Untouched = "the data directory is a link, so nothing under it is the profile's own to prune"
+		return u, nil
+	}
+	for _, name := range electronCaches {
+		dir := filepath.Join(data, name)
+		// A cache that is a symlink is not the profile's own to reclaim:
+		// Prune would remove the link and nothing behind it, so it is not
+		// measured as reclaimable either.
+		if !ownDir(dir) {
+			continue
+		}
+		size, serr := dirSize(ctx, dir, false)
+		if serr != nil {
+			return Usage{}, serr
+		}
+		u.Entries = append(u.Entries, PruneEntry{Rel: name, Size: size, Tier: PruneCaches, Note: "regenerated as needed"})
+	}
+
+	bundles := filepath.Join(data, vmBundlesDir)
+	var entries []os.DirEntry
+	if ownDir(bundles) {
+		// Same rule: a bundles directory that is a symlink is left alone,
+		// since --all would remove the link and leave every disk behind it.
+		var rerr error
+		if entries, rerr = os.ReadDir(bundles); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			return Usage{}, rerr
+		}
+	}
+	var vmTier int64
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		disks, derr := os.ReadDir(filepath.Join(bundles, e.Name()))
+		if derr != nil {
+			continue
+		}
+		for _, d := range disks {
+			if !d.Type().IsRegular() || !vmDiskExts[strings.ToLower(filepath.Ext(d.Name()))] {
+				continue
+			}
+			img := filepath.Join(bundles, e.Name(), d.Name())
+			fi, serr := os.Lstat(img)
+			if serr != nil {
+				continue
+			}
+			// Every unpacked disk is VM state, and --vm resets the VM. A side
+			// disk with no image beside it is made afresh by Desktop, as it
+			// was the first time; the ROOT filesystem is not — it comes back
+			// only from its compressed image, so without a real one beside it
+			// deleting it means a download, which is what --all promises and
+			// --vm does not.
+			tier, note := PruneVM, "VM resets to pristine; recreated by Desktop on next launch"
+			switch zfi, zerr := os.Stat(img + ".zst"); {
+			case zerr == nil && zfi.Mode().IsRegular():
+				note = "VM resets to pristine; re-extracted from " + d.Name() + ".zst on next launch"
+			case isRootDisk(d.Name()):
+				tier, note = PruneAll, "no compressed image beside it to re-extract from; re-downloaded on next launch"
+			}
+			size := diskUsage(img, fi)
+			u.Entries = append(u.Entries, PruneEntry{
+				Rel:  filepath.ToSlash(filepath.Join(vmBundlesDir, e.Name(), d.Name())),
+				Size: size, Tier: tier, Note: note,
+			})
+			vmTier += size
+		}
+	}
+	if len(entries) > 0 {
+		size, serr := dirSize(ctx, bundles, false)
+		if serr != nil {
+			return Usage{}, serr
+		}
+		// The directory itself is always an entry, whatever is left in it
+		// once the disks are counted: --all promises the whole bundle gone,
+		// and a bundle holding nothing but disks would otherwise be pruned
+		// disk by disk and left standing.
+		rest, note := size-vmTier, "compressed image, kernel and initramfs; re-downloaded on next launch"
+		if rest <= 0 {
+			rest, note = 0, "the bundle directory itself; re-downloaded on next launch"
+		}
+		u.Entries = append(u.Entries, PruneEntry{Rel: vmBundlesDir, Size: rest, Tier: PruneAll, Note: note})
+	}
+	sort.SliceStable(u.Entries, func(i, j int) bool { return u.Entries[i].Tier < u.Entries[j].Tier })
+	return u, nil
+}
+
+// isRootDisk reports whether a VM disk is the root filesystem — rootfs.img on
+// macOS and Linux, rootfs.vhdx on Windows — as opposed to a side disk Desktop
+// creates empty.
+func isRootDisk(name string) bool {
+	return strings.HasPrefix(strings.ToLower(name), "rootfs.")
+}
+
+// Prune removes every reclaimable entry at or below tier and returns what it
+// removed. The caller must ensure the profile's window is closed first — a live
+// Electron instance writes into these directories, and the VM image may be
+// mounted by a running Cowork agent.
+//
+// Removal goes cheapest-first, so a failure part-way leaves the profile with
+// the most valuable data still intact. The entries removed before the failure
+// are returned alongside the error.
+func Prune(p Profile, tier PruneTier) ([]PruneEntry, error) {
+	u, err := Measure(p)
+	if err != nil {
+		return nil, err
+	}
+	var done []PruneEntry
+	for _, e := range u.Entries {
+		if e.Tier > tier {
+			continue
+		}
+		if rerr := os.RemoveAll(filepath.Join(p.DataDir(), filepath.FromSlash(e.Rel))); rerr != nil {
+			return done, fmt.Errorf("removing %s: %w", e.Rel, rerr)
+		}
+		done = append(done, e)
+	}
+	return done, nil
+}
+
+// DirSize is the on-disk size of a directory tree: allocated blocks where the
+// platform reports them, so sparse files count what they cost rather than what
+// they claim. Symlinks are not followed, except the root itself: a profile may
+// be a symlink — relocated to another disk — and its size is its target's. A
+// missing directory is zero, not an error — a profile that has never been
+// opened has no data dir yet.
+func DirSize(dir string) (int64, error) { return DirSizeContext(context.Background(), dir) }
+
+// DirSizeContext is DirSize that gives up with ctx.Err() once the context
+// ends, checked per entry.
+func DirSizeContext(ctx context.Context, dir string) (int64, error) { return dirSize(ctx, dir, true) }
+
+// ownDir reports whether path is a directory in its own right — not a
+// symlink to one. What Prune removes is the path itself, so only a directory
+// that is its own is the profile's to reclaim.
+func ownDir(path string) bool {
+	fi, err := os.Lstat(path)
+	// A Windows junction reports as a directory with ModeIrregular set,
+	// not as a symlink; it points elsewhere all the same.
+	return err == nil && fi.IsDir() && fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) == 0
+}
+
+// dirSize walks dir. followRoot resolves a root that is itself a symlink —
+// right for a relocated profile, wrong for a cache or bundle directory inside
+// it, where what would be removed is the link and not what it points at.
+func dirSize(ctx context.Context, dir string, followRoot bool) (int64, error) {
+	if followRoot {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = resolved
+		}
+	}
+	var total int64
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, werr error) error {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
+		if werr != nil {
+			if errors.Is(werr, fs.ErrNotExist) {
+				return nil
+			}
+			return werr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		fi, ierr := d.Info()
+		if ierr != nil {
+			// A live profile's caches churn under the walk; a file that was
+			// unlinked between listing and stat costs nothing now.
+			if errors.Is(ierr, fs.ErrNotExist) {
+				return nil
+			}
+			return ierr
+		}
+		if !fi.Mode().IsRegular() {
+			return nil
+		}
+		total += diskUsage(path, fi)
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	return total, err
+}
+
+// HumanSize renders a byte count in the largest unit that keeps it under 1024.
+func HumanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}

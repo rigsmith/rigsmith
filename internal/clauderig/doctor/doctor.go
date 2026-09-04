@@ -65,6 +65,9 @@ func Run(ctx context.Context, env Env) []Section {
 		checkClauderigOnPath(ctx),
 		checkRigOnPath(ctx),
 	}}
+	if r, ok := checkDesktopSize(ctx); ok {
+		environment.Results = append(environment.Results, r)
+	}
 	if r, ok := checkRestricted(); ok {
 		environment.Results = append(environment.Results, r)
 	}
