@@ -43,7 +43,18 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 		// directories that may have left; a check says so rather than
 		// calling an ecosystem with nothing to redirect healthy.
 		if !req.Write {
-			if existing, err := os.ReadFile(filepath.Join(req.Root, workFile)); err == nil && strings.Contains(string(existing), workMarker) {
+			existing, err := os.ReadFile(filepath.Join(req.Root, workFile))
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+			case err != nil:
+				// Present but unreadable is not healthy, whether or not
+				// anything crosses: go cannot use it either.
+				resp.Skipped = false
+				resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+					Path:    workFile,
+					Message: "cannot be read (" + err.Error() + ") — go cannot use it either; make the file readable",
+				})
+			case strings.Contains(string(existing), workMarker):
 				resp.Skipped = false
 				resp.Problems = append(resp.Problems, plugin.OverlayProblem{
 					Path:    workFile,

@@ -38,7 +38,18 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 		// so rather than calling an ecosystem with nothing to redirect
 		// healthy.
 		if !req.Write {
-			if existing, err := os.ReadFile(filepath.Join(req.Root, overlayFile)); err == nil && strings.Contains(string(existing), overlayMarker) {
+			existing, err := os.ReadFile(filepath.Join(req.Root, overlayFile))
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+			case err != nil:
+				// Present but unreadable is not healthy, whether or not
+				// anything crosses: MSBuild cannot use it either.
+				resp.Skipped = false
+				resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+					Path:    overlayFile,
+					Message: "cannot be read (" + err.Error() + ") — MSBuild cannot use it either; make the file readable",
+				})
+			case strings.Contains(string(existing), overlayMarker):
 				resp.Skipped = false
 				resp.Problems = append(resp.Problems, plugin.OverlayProblem{
 					Path:    overlayFile,

@@ -49,6 +49,20 @@ func TestLocalOverlay(t *testing.T) {
 		}
 	})
 
+	t.Run("an overlay that cannot be read is not healthy even with nothing to redirect", func(t *testing.T) {
+		root := newRoot(t)
+		if err := os.MkdirAll(filepath.Join(root, overlayFile), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Skipped || len(got.Problems) != 1 || !strings.Contains(got.Problems[0].Message, "cannot be read") || got.Problems[0].Fixable {
+			t.Fatalf("unreadable overlay, no redirects: skipped=%v %+v, want one unfixable problem", got.Skipped, got.Problems)
+		}
+	})
+
 	t.Run("describes without writing", func(t *testing.T) {
 		root := newRoot(t)
 		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
