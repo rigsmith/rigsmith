@@ -165,9 +165,11 @@ cwd mappings (Q4).
   in four days). Past `retention.largeFileBytes` (8 MiB) sync copies a
   transcript again only once it has grown by half that much since the staged
   copy, or once it has been unwritten for 30 minutes — the `SessionEnd` hook
-  runs `sync --flush`, which restages every changed transcript, so a session
-  that ends normally has its tail captured at once, and the settle rule catches
-  up a session that died without firing it, at the next sync. Small transcripts are unaffected. **Not yet done, and the real fix:**
+  runs `sync --flush`, which restages the transcript the hook payload names
+  (only that one: a short session ending must not restage a long one's
+  transcript mid-chunk), so a session that ends normally has its tail captured
+  at once, and the settle rule catches up a session that died without firing
+  it, at the next sync. Small transcripts are unaffected. **Not yet done, and the real fix:**
   storing a transcript as sealed fixed-size parts
   (`projects/<slug>/<id>/000001.jsonl …`) so only the growing tail is ever
   rewritten, making the cost linear. It changes the repo layout every reader

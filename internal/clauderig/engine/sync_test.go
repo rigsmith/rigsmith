@@ -351,3 +351,45 @@ func TestSync_NeverDefersACopyRetentionWouldPrune(t *testing.T) {
 		t.Fatalf("staged %d bytes, want the fresh %d — retention took the only copy", len(got), threshold+110)
 	}
 }
+
+// A flush names the transcript of the session that ended: that one is
+// restaged whatever the throttle says, and every other large transcript keeps
+// waiting for its chunk — a short session ending must not restage a long
+// one's 50 MB mid-chunk.
+func TestSync_FlushIsScopedToTheNamedTranscript(t *testing.T) {
+	const threshold = 4096
+	live, staging := t.TempDir(), t.TempDir()
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	sync := func(flush ...string) RootResult {
+		t.Helper()
+		rep, err := Sync(Options{
+			StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
+			LargeFileBytes: threshold, SourceOverride: override("cli", live), Flush: flush,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep.Roots[0]
+	}
+	stagedSize := func(name string) int64 {
+		t.Helper()
+		fi, err := os.Stat(filepath.Join(staging, "cli", "projects", "-p", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fi.Size()
+	}
+	write(t, live, "projects/-p/ended.jsonl", strings.Repeat("a", threshold+100))
+	write(t, live, "projects/-p/running.jsonl", strings.Repeat("b", threshold+100))
+	sync()
+	write(t, live, "projects/-p/ended.jsonl", strings.Repeat("a", threshold+110))
+	write(t, live, "projects/-p/running.jsonl", strings.Repeat("b", threshold+110))
+	if r := sync(); r.Deferred != 2 {
+		t.Fatalf("both small tails: deferred=%d, want 2", r.Deferred)
+	}
+	r := sync(filepath.Join(live, "projects", "-p", "ended.jsonl"))
+	if r.Deferred != 1 || stagedSize("ended.jsonl") != threshold+110 || stagedSize("running.jsonl") != threshold+100 {
+		t.Fatalf("flush of ended.jsonl: deferred=%d ended=%d running=%d; want the named one restaged and the other still waiting",
+			r.Deferred, stagedSize("ended.jsonl"), stagedSize("running.jsonl"))
+	}
+}

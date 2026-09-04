@@ -67,6 +67,13 @@ type Options struct {
 	// of new content rather than one per sync, and a finished one is still
 	// captured whole within the settle window.
 	LargeFileBytes int64
+	// Flush names source files the throttle must not defer this run, as
+	// absolute paths — the transcript of the session that just ended, which
+	// the SessionEnd hook passes on. Scoped rather than global on purpose: a
+	// flush of every transcript would restage another session's large one
+	// mid-chunk each time any short session ended, which is the growth the
+	// throttle exists to stop. Symlinks are resolved before comparing.
+	Flush []string
 	// SourceOverride maps a root id to an absolute source dir, used verbatim
 	// instead of resolving the root location via the machine. The machine still
 	// drives path translation (portablize/manifest); this only decouples WHERE the
@@ -84,10 +91,36 @@ type Options struct {
 }
 
 // largeFileSettle is how long a large transcript has to go unwritten before a
-// change too small to earn a restage on its own is staged anyway. It is what
-// gets a session's final tail into the repo once the session stops — there is
-// no session-end signal to hook, only the file going quiet.
+// change too small to earn a restage on its own is staged anyway. It is the
+// fallback for a session that ended without its SessionEnd hook firing (a
+// crash, a hook not installed): nothing schedules a sync at the deadline —
+// the rule is only evaluated by whatever sync runs next — so it catches the
+// tail up then, rather than never. A session that ends normally does not
+// wait for it: the hook runs `sync --flush` with that session's transcript.
 const largeFileSettle = 30 * time.Minute
+
+// flushSet resolves Options.Flush into a set keyed the way the walk will ask
+// — cleaned, with symlinks resolved where the path exists — so a path the
+// hook reports and the one the walk visits agree whatever the spelling.
+func flushSet(paths []string) map[string]bool {
+	if len(paths) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		set[canonicalPath(p)] = true
+	}
+	return set
+}
+
+// canonicalPath is a path as the flush set keys it.
+func canonicalPath(p string) string {
+	p = filepath.Clean(p)
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
+}
 
 // deferLarge reports whether a changed transcript should wait: it is a
 // project transcript over the large-file threshold, a staged copy exists, and
@@ -136,6 +169,7 @@ func Sync(opts Options) (*Report, error) {
 	if opts.RetentionDays > 0 {
 		cutoff = time.Now().AddDate(0, 0, -opts.RetentionDays)
 	}
+	flush := flushSet(opts.Flush)
 
 	// Shared-memory symlinks found under the CLI root (worktree slugs linking
 	// memory/ to their main project); recorded in the manifest for restore.
@@ -230,7 +264,7 @@ func Sync(opts Options) (*Report, error) {
 				// repo carries until the next squash. Past LargeFileBytes it waits
 				// for a chunk's worth of new content, or for the session to go
 				// quiet, before it is restaged.
-				if !unchanged && deferLarge(rel, info, staged, opts.LargeFileBytes, cutoff, time.Now()) {
+				if !unchanged && !flush[canonicalPath(srcPath)] && deferLarge(rel, info, staged, opts.LargeFileBytes, cutoff, time.Now()) {
 					rr.Deferred++
 					continue
 				}

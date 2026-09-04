@@ -41,10 +41,12 @@ it has grown by half that much again, or once it has gone quiet for half an hour
 — an active marathon session costs one blob per chunk of new content instead of
 one per sync, and a finished session's last turn is still captured. Smaller
 transcripts sync on every change, as before, and `sync` reports how many large
-ones are waiting. The SessionEnd hook runs `sync --flush`, which restages every
-changed transcript regardless, so a finished session's tail does not wait for
-the next one; a session that dies without firing it is caught up by the settle
-rule at the next sync. Set the key negative to restage every change.
+ones are waiting. The SessionEnd hook runs `sync --flush`, which restages that
+session's transcript regardless (the hook names it), so a finished session's
+tail does not wait for the next one while other sessions' transcripts keep
+their throttle; a session that dies without firing it is caught up by the
+settle rule at the next sync. Run by hand, `sync --flush` restages every
+changed transcript. Set the key negative to restage every change.
 
 When a restore brings back Claude **Code** sessions, it reminds you to fully quit
 and reopen Claude Desktop — Desktop only rebuilds its Code-tab list from the

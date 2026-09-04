@@ -1,12 +1,16 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/mattn/go-isatty"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
@@ -20,6 +24,46 @@ import (
 // configHistoryMaxCommits bounds the config-history side branch: once it grows
 // past this, it's squashed to a single commit (it's tiny, so this is generous).
 const configHistoryMaxCommits = 200
+
+// hookTranscripts reads the Claude Code hook payload from stdin, if one is
+// there, and returns the transcript it names. Every hook event carries
+// `transcript_path`; SessionEnd is the one that runs `sync --flush`. Nothing
+// is read from a terminal — a person running the command has no payload to
+// give — and an unreadable or payload-less stream (a pipe from /dev/null)
+// means "none named", which the caller treats as a flush of everything.
+func hookTranscripts(in io.Reader) []string {
+	if f, ok := in.(*os.File); ok && isatty.IsTerminal(f.Fd()) {
+		return nil
+	}
+	// Bounded, and not waited on for long: a stream that never closes must
+	// not hold the sync hostage, and a real payload is a few hundred bytes.
+	type result struct {
+		body []byte
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		b, err := io.ReadAll(io.LimitReader(in, 1<<20))
+		ch <- result{b, err}
+	}()
+	var body []byte
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			return nil
+		}
+		body = r.body
+	case <-time.After(2 * time.Second):
+		return nil
+	}
+	var payload struct {
+		TranscriptPath string `json:"transcript_path"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.TranscriptPath) == "" {
+		return nil
+	}
+	return []string{payload.TranscriptPath}
+}
 
 // pushAttempts bounds the push/reconcile retry loop. Small on purpose: each round
 // is a real fetch+merge, and if the remote is moving faster than that the next
@@ -39,9 +83,11 @@ func NewSyncCmd() *cobra.Command {
 			"paths into a portable form, commits, and pushes.\n\n" +
 			"A transcript over retention.largeFileBytes is restaged only once it has\n" +
 			"grown by half that again, or once it has gone quiet for 30 minutes, so the\n" +
-			"Stop hook does not re-commit a 50 MB file every turn. `--flush` restages\n" +
-			"every changed transcript regardless; the SessionEnd hook runs it, so a\n" +
-			"session's last turn never waits for the next session.",
+			"Stop hook does not re-commit a 50 MB file every turn. The SessionEnd hook\n" +
+			"runs `sync --flush`, which restages the ended session's transcript (the\n" +
+			"hook names it on stdin) regardless, so its last turn never waits for the\n" +
+			"next session; other sessions' transcripts keep their throttle. Run by\n" +
+			"hand, `--flush` restages every changed transcript.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
@@ -96,17 +142,23 @@ func NewSyncCmd() *cobra.Command {
 					"⚠ account identity not recorded: %s looks like %s — check what ~/.claude.json holds", f.Path, f.Kind)))
 				liveAcct, liveOrg, liveEmail = "", "", ""
 			}
-			// --flush turns the transcript throttle off for this run: the
-			// session is over, and its tail has nothing to wait for.
+			// --flush: the session is over and its tail has nothing to wait
+			// for. From the SessionEnd hook that is one transcript — the hook
+			// says which — and only that one skips the throttle; run by hand,
+			// with nothing on stdin to say, every transcript does.
 			largeFileBytes := cfg.Retention.LargeFileBytes
+			var flushPaths []string
 			if flush {
-				largeFileBytes = -1
+				if flushPaths = hookTranscripts(cmd.InOrStdin()); len(flushPaths) == 0 {
+					largeFileBytes = -1
+				}
 			}
 			rep, serr := engine.Sync(engine.Options{
 				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
 				RetentionDays:   cfg.Retention.HistoryDays,
 				MaxFileBytes:    cfg.Retention.MaxFileBytes,
 				LargeFileBytes:  largeFileBytes,
+				Flush:           flushPaths,
 				Profiles:        engine.LocalProfileNames(),
 				LiveAccountUUID: liveAcct,
 			})
@@ -271,7 +323,7 @@ func NewSyncCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "stage and scan, but don't commit or push")
-	cmd.Flags().BoolVar(&flush, "flush", false, "restage every changed transcript, including large ones the throttle would defer")
+	cmd.Flags().BoolVar(&flush, "flush", false, "restage the ended session's transcript (from the hook payload on stdin), or every changed transcript when run by hand, past the large-file throttle")
 	return cmd
 }
 
