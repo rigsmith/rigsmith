@@ -13,16 +13,16 @@ const elevatedEnv = "RIGSMITH_INSTALL_ELEVATED"
 // Windows, a protected destination is retried in a UAC-elevated child.
 // relaunched is true when the child completed the installation.
 func PrepareDir(dir string) (relaunched bool, err error) {
-	if err := ensureWritable(dir); err == nil {
+	if err := writable(dir); err == nil {
 		return false, nil
-	} else if !shouldElevate(err) {
+	} else if !elevate(err) {
 		return false, err
-	} else if os.Getenv(elevatedEnv) != "" {
+	} else if getenv(elevatedEnv) != "" {
 		return false, fmt.Errorf("%s is not writable after elevation: %w", dir, err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Administrator access is required to write to %s; requesting permission...\n", dir)
-	if err := relaunchElevated(); err != nil {
+	if err := relaunch(); err != nil {
 		return false, err
 	}
 	return true, nil

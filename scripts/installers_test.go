@@ -1,6 +1,7 @@
 package scripts
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -21,11 +22,24 @@ func TestInstallerManifestDisablesFilenameElevation(t *testing.T) {
 		t.Fatalf("execution-level = %v, want as invoker so go run is not blocked by Windows installer detection", got)
 	}
 
+	// The checked-in resources are what actually ships, and a stale or
+	// hand-edited one would pass a JSON check while go run stays blocked. The
+	// manifest is embedded as plain XML, so read it back out of each object.
 	for _, installer := range []string{"dev-install", "source-install"} {
 		for _, arch := range []string{"amd64", "arm64"} {
 			path := filepath.Join(installer, "rsrc_windows_"+arch+".syso")
-			if _, err := os.Stat(path); err != nil {
+			data, err := os.ReadFile(path)
+			if err != nil {
 				t.Errorf("%s: %v", path, err)
+				continue
+			}
+			for _, want := range []string{`<requestedExecutionLevel level="asInvoker"`, `<longPathAware`, `>true</longPathAware>`} {
+				if !bytes.Contains(data, []byte(want)) {
+					t.Errorf("%s does not embed %s — regenerate it with go generate in %s", path, want, installer)
+				}
+			}
+			if bytes.Contains(data, []byte(`requireAdministrator`)) || bytes.Contains(data, []byte(`highestAvailable`)) {
+				t.Errorf("%s asks for elevation, which is what the manifest exists to stop", path)
 			}
 		}
 	}
