@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"os"
+	"strings"
 	"path/filepath"
 	"testing"
 )
@@ -27,6 +28,7 @@ func pruneFixture(t *testing.T, withZst bool) (*Store, Profile) {
 	write("Code Cache/js/index", 4096)
 	write("Local Storage/leveldb/000001.log", 4096) // chat state: never reclaimable
 	write("vm_bundles/claudevm.bundle/rootfs.img", 8192)
+	write("vm_bundles/claudevm.bundle/sessiondata.img", 4096) // no compressed source: made afresh
 	write("vm_bundles/claudevm.bundle/vmlinuz", 4096)
 	if withZst {
 		write("vm_bundles/claudevm.bundle/rootfs.img.zst", 4096)
@@ -53,10 +55,11 @@ func TestMeasure_ClassifiesTiers(t *testing.T) {
 		t.Fatal("total = 0, want the profile's size")
 	}
 	want := map[string]PruneTier{
-		"Cache":                                 PruneCaches,
-		"Code Cache":                            PruneCaches,
-		"vm_bundles/claudevm.bundle/rootfs.img": PruneVM,
-		"vm_bundles":                            PruneAll,
+		"Cache":                                      PruneCaches,
+		"Code Cache":                                 PruneCaches,
+		"vm_bundles/claudevm.bundle/rootfs.img":      PruneVM,
+		"vm_bundles/claudevm.bundle/sessiondata.img": PruneVM,
+		"vm_bundles":                                 PruneAll,
 	}
 	for rel, tier := range want {
 		got, ok := tierOf(u, rel)
@@ -76,19 +79,28 @@ func TestMeasure_ClassifiesTiers(t *testing.T) {
 	}
 }
 
-// Without the compressed image beside it, dropping rootfs.img forces a download
-// rather than a re-extract, so it must cost the --all tier, not --vm.
-func TestMeasure_RootfsWithoutZstNeedsAll(t *testing.T) {
+// Every unpacked disk is VM state whatever its name or platform: the Windows
+// image is rootfs.vhdx, and a disk with no compressed source is still --vm
+// tier, just made afresh rather than re-extracted.
+func TestMeasure_AllUnpackedDisksAreVMTier(t *testing.T) {
 	_, p := pruneFixture(t, false)
+	win := filepath.Join(p.DataDir(), "vm_bundles", "claudevm.bundle", "rootfs.vhdx")
+	if err := os.WriteFile(win, make([]byte, 8192), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	u, err := Measure(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := tierOf(u, "vm_bundles/claudevm.bundle/rootfs.img"); ok {
-		t.Error("rootfs.img offered at --vm tier with no rootfs.img.zst to re-extract from")
+	for _, rel := range []string{"vm_bundles/claudevm.bundle/rootfs.img", "vm_bundles/claudevm.bundle/rootfs.vhdx", "vm_bundles/claudevm.bundle/sessiondata.img"} {
+		if tier, ok := tierOf(u, rel); !ok || tier != PruneVM {
+			t.Errorf("%s: tier %v (present=%v), want vm", rel, tier, ok)
+		}
 	}
-	if u.Reclaimable(PruneVM) != u.Reclaimable(PruneCaches) {
-		t.Error("--vm should reclaim nothing beyond caches when the image cannot be re-extracted")
+	for _, e := range u.Entries {
+		if e.Tier == PruneVM && strings.Contains(e.Note, "re-extracted") {
+			t.Errorf("%s claims a compressed source it does not have", e.Rel)
+		}
 	}
 	if tier, ok := tierOf(u, "vm_bundles"); !ok || tier != PruneAll {
 		t.Errorf("vm_bundles tier = %v (present=%v), want all", tier, ok)
@@ -120,8 +132,8 @@ func TestPrune_RespectsTier(t *testing.T) {
 	if _, err := Prune(p, PruneVM); err != nil {
 		t.Fatal(err)
 	}
-	if exists("vm_bundles/claudevm.bundle/rootfs.img") {
-		t.Error("rootfs.img survived --vm")
+	if exists("vm_bundles/claudevm.bundle/rootfs.img") || exists("vm_bundles/claudevm.bundle/sessiondata.img") {
+		t.Error("an unpacked disk survived --vm")
 	}
 	if !exists("vm_bundles/claudevm.bundle/rootfs.img.zst") {
 		t.Error("--vm removed the compressed image it needs to re-extract from")

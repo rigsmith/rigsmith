@@ -124,3 +124,28 @@ func TestDesktopPrune_UnknownProfile(t *testing.T) {
 		t.Fatalf("unknown profile: err = %v", err)
 	}
 }
+
+// With several profiles, an open one anywhere in the list stops the command
+// before anything is deleted from the others.
+func TestDesktopPrune_OpenProfileStopsBeforeAnyDeletion(t *testing.T) {
+	st, work := pruneCommandFixture(t, false)
+	personal, err := st.Get("personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(personal.DataDir(), "Cache", "data_0")
+	if err := os.MkdirAll(filepath.Dir(cache), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cache, make([]byte, 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// work (listed first) is closed and reclaimable; personal (second) is open.
+	newDesktopApp = func() desktop.App { return stubApp{open: map[string]bool{personal.DataDir(): true}} }
+	if _, err := runPrune(t); err == nil || !strings.Contains(err.Error(), "nothing was deleted") {
+		t.Fatalf("err = %v, want a refusal that names the open profile", err)
+	}
+	if _, serr := os.Stat(filepath.Join(work.DataDir(), "Cache")); serr != nil {
+		t.Error("work's cache was deleted before the open profile was found")
+	}
+}

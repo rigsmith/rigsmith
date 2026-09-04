@@ -112,21 +112,29 @@ func newDesktopPruneCmd() *cobra.Command {
 			}
 
 			app := newDesktopApp()
-			var freed int64
+			// Every profile is checked before any is touched: with several to
+			// prune, an open one found after the first had been reset would
+			// leave the command failing halfway through irreversible work.
+			// Same rule as rm: unknown counts as open. The VM image may be
+			// mounted by a running Cowork agent, and the caches are being
+			// written to — deleting either under a live app is a race.
 			for i, p := range targets {
 				if usages[i].Reclaimable(tier) == 0 {
 					continue
 				}
-				// Same rule as rm: unknown counts as open. The VM image may be
-				// mounted by a running Cowork agent, and the caches are being
-				// written to — deleting either under a live app is a race.
 				running, rerr := desktop.IsRunning(app, p.DataDir())
 				if rerr != nil {
 					return fmt.Errorf("could not tell whether %s is open: %w\n"+
 						"Refusing to prune a profile that may still be running — close Claude Desktop and retry", p.Name, rerr)
 				}
 				if running {
-					return fmt.Errorf("%s is open — close it first with `clauderig desktop quit %s`", p.Name, p.Name)
+					return fmt.Errorf("%s is open — close it first with `clauderig desktop quit %s`; nothing was deleted", p.Name, p.Name)
+				}
+			}
+			var freed int64
+			for i, p := range targets {
+				if usages[i].Reclaimable(tier) == 0 {
+					continue
 				}
 				removed, perr := desktop.Prune(p, tier)
 				for _, e := range removed {

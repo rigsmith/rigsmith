@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // PruneTier is how much of a profile `desktop prune` may reclaim. Each tier
@@ -44,16 +45,16 @@ func (t PruneTier) String() string {
 var electronCaches = []string{"Cache", "Code Cache", "GPUCache", "DawnWebGPUCache", "DawnGraphiteCache", "DawnCache"}
 
 // vmBundlesDir is where Desktop keeps the Cowork local-agent VM, one bundle
-// directory per image (claudevm.bundle today). Inside, rootfs.img is the
-// unpacked root filesystem — sparse, provisioned at ~10 GB, and it only ever
-// grows, because deleting files inside the VM never shrinks it on the host.
-// rootfs.img.zst beside it is the pristine compressed image it was unpacked
-// from.
-const (
-	vmBundlesDir = "vm_bundles"
-	vmRootfs     = "rootfs.img"
-	vmRootfsZst  = "rootfs.img.zst"
-)
+// directory per image (claudevm.bundle today). Inside, the unpacked disks —
+// rootfs.img on macOS and Linux, rootfs.vhdx on Windows, and any session or
+// data disk beside them — are sparse, provisioned large, and only ever grow,
+// because deleting files inside the VM never shrinks them on the host. A
+// <disk>.zst beside a disk is the pristine compressed image it was unpacked
+// from; a disk without one is created by Desktop on first launch.
+const vmBundlesDir = "vm_bundles"
+
+// vmDiskExts are the extensions an unpacked VM disk carries.
+var vmDiskExts = map[string]bool{".img": true, ".vhdx": true, ".qcow2": true, ".raw": true}
 
 // PruneEntry is one reclaimable path in a profile.
 type PruneEntry struct {
@@ -119,20 +120,32 @@ func Measure(p Profile) (Usage, error) {
 		if !e.IsDir() {
 			continue
 		}
-		img := filepath.Join(bundles, e.Name(), vmRootfs)
-		fi, serr := os.Lstat(img)
-		if serr != nil || !fi.Mode().IsRegular() {
+		disks, derr := os.ReadDir(filepath.Join(bundles, e.Name()))
+		if derr != nil {
 			continue
 		}
-		size := diskUsage(img, fi)
-		rel := filepath.ToSlash(filepath.Join(vmBundlesDir, e.Name(), vmRootfs))
-		// The unpacked image is only a --vm reclaim when the compressed one is
-		// still beside it: that is what Desktop re-extracts from. Without it the
-		// image is as expensive to replace as the whole bundle, so it costs the
-		// same tier.
-		if _, zerr := os.Stat(filepath.Join(bundles, e.Name(), vmRootfsZst)); zerr == nil {
-			u.Entries = append(u.Entries, PruneEntry{Rel: rel, Size: size, Tier: PruneVM,
-				Note: "VM resets to pristine; re-extracted from " + vmRootfsZst + " on next launch"})
+		for _, d := range disks {
+			if !d.Type().IsRegular() || !vmDiskExts[strings.ToLower(filepath.Ext(d.Name()))] {
+				continue
+			}
+			img := filepath.Join(bundles, e.Name(), d.Name())
+			fi, serr := os.Lstat(img)
+			if serr != nil {
+				continue
+			}
+			// Every unpacked disk is VM state, and --vm resets the VM: the
+			// root filesystem comes back from its compressed image, and a disk
+			// with no image beside it is made afresh by Desktop, as it was the
+			// first time.
+			note := "VM resets to pristine; recreated by Desktop on next launch"
+			if _, zerr := os.Stat(img + ".zst"); zerr == nil {
+				note = "VM resets to pristine; re-extracted from " + d.Name() + ".zst on next launch"
+			}
+			size := diskUsage(img, fi)
+			u.Entries = append(u.Entries, PruneEntry{
+				Rel:  filepath.ToSlash(filepath.Join(vmBundlesDir, e.Name(), d.Name())),
+				Size: size, Tier: PruneVM, Note: note,
+			})
 			vmTier += size
 		}
 	}
@@ -194,6 +207,11 @@ func DirSize(dir string) (int64, error) {
 		}
 		fi, ierr := d.Info()
 		if ierr != nil {
+			// A live profile's caches churn under the walk; a file that was
+			// unlinked between listing and stat costs nothing now.
+			if errors.Is(ierr, fs.ErrNotExist) {
+				return nil
+			}
 			return ierr
 		}
 		if !fi.Mode().IsRegular() {
