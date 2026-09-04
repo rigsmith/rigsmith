@@ -78,7 +78,7 @@ the [CLAUDE.md guide](#clauderig-guide--teach-every-claude-context). `local` doe
 the same in the gitignored `settings.local.json`. The hook command is the bare
 `clauderig guard`, portable across machines.
 
-The **sync** hooks (SessionStart→pull, Stop→sync) are separate and global —
+The **sync** hooks (SessionStart→pull, Stop→sync, SessionEnd→sync --flush) are separate and global —
 `clauderig global install` (aliased `clauderig hooks install`) writes them to
 `~/.claude/settings.json`, where they ride clauderig's own sync.
 

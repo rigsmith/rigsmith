@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
@@ -200,5 +201,235 @@ func TestReconcileStagedRoot_KeepsEmptyFilesWhateverTheLivePathIs(t *testing.T) 
 	}
 	if _, serr := os.Stat(empty); serr != nil {
 		t.Error("another machine's empty file was deleted")
+	}
+}
+
+// A large, append-only transcript is restaged only per chunk of growth or once
+// it has gone quiet — every sync in between would otherwise leave another
+// near-identical multi-megabyte blob in history.
+func TestSync_DefersLargeTranscriptsUntilGrownOrSettled(t *testing.T) {
+	const threshold = 4096
+	live, staging := t.TempDir(), t.TempDir()
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	sync := func() RootResult {
+		t.Helper()
+		rep, err := Sync(Options{
+			StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
+			LargeFileBytes: threshold, SourceOverride: override("cli", live),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep.Roots[0]
+	}
+	stagedSize := func() int64 {
+		t.Helper()
+		fi, err := os.Stat(filepath.Join(staging, "cli", "projects", "-p", "long.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fi.Size()
+	}
+
+	// First sight of a large transcript is staged whole: there is nothing to
+	// defer against.
+	write(t, live, "projects/-p/long.jsonl", strings.Repeat("a", threshold+100))
+	if r := sync(); r.Deferred != 0 || stagedSize() != threshold+100 {
+		t.Fatalf("first sync: deferred=%d staged=%d", r.Deferred, stagedSize())
+	}
+
+	// Grown by less than half the threshold, still being written: wait.
+	write(t, live, "projects/-p/long.jsonl", strings.Repeat("a", threshold+100+threshold/4))
+	if r := sync(); r.Deferred != 1 || stagedSize() != threshold+100 {
+		t.Fatalf("small growth: deferred=%d staged=%d, want deferred with the old copy kept", r.Deferred, stagedSize())
+	}
+
+	// Grown by half the threshold: restage.
+	write(t, live, "projects/-p/long.jsonl", strings.Repeat("a", threshold+100+threshold/2))
+	if r := sync(); r.Deferred != 0 || stagedSize() != threshold+100+threshold/2 {
+		t.Fatalf("chunk growth: deferred=%d staged=%d", r.Deferred, stagedSize())
+	}
+
+	// A small tail on a transcript that has gone quiet is captured anyway — that
+	// is how a finished session's last turn reaches the repo.
+	src := filepath.Join(live, "projects", "-p", "long.jsonl")
+	write(t, live, "projects/-p/long.jsonl", strings.Repeat("a", threshold+100+threshold/2+10))
+	old := time.Now().Add(-largeFileSettle - time.Minute)
+	if err := os.Chtimes(src, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if r := sync(); r.Deferred != 0 || stagedSize() != threshold+100+threshold/2+10 {
+		t.Fatalf("settled: deferred=%d staged=%d", r.Deferred, stagedSize())
+	}
+
+	// A transcript that SHRANK is a rewrite, not an append: never deferred.
+	write(t, live, "projects/-p/long.jsonl", strings.Repeat("b", threshold+1))
+	if r := sync(); r.Deferred != 0 || stagedSize() != threshold+1 {
+		t.Fatalf("shrunk: deferred=%d staged=%d", r.Deferred, stagedSize())
+	}
+	// So is one rewritten to the SAME size: no bytes were appended.
+	write(t, live, "projects/-p/long.jsonl", strings.Repeat("c", threshold+1))
+	if r := sync(); r.Deferred != 0 {
+		t.Fatalf("same-size rewrite: deferred=%d, want restaged", r.Deferred)
+	}
+	if got, _ := os.ReadFile(filepath.Join(staging, "cli", "projects", "-p", "long.jsonl")); len(got) == 0 || got[0] != 'c' {
+		t.Fatalf("same-size rewrite: staged copy not refreshed")
+	}
+
+	// Under the threshold, every change is staged as before.
+	write(t, live, "projects/-p/short.jsonl", strings.Repeat("c", 100))
+	sync()
+	write(t, live, "projects/-p/short.jsonl", strings.Repeat("c", 101))
+	if r := sync(); r.Deferred != 0 {
+		t.Fatalf("small transcript deferred: %+v", r)
+	}
+}
+
+// Only project transcripts are throttled: a large .jsonl anywhere else is
+// ordinary data and syncs on every change.
+func TestSync_DefersOnlyProjectTranscripts(t *testing.T) {
+	const threshold = 4096
+	live, staging := t.TempDir(), t.TempDir()
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	sync := func() RootResult {
+		t.Helper()
+		rep, err := Sync(Options{
+			StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
+			LargeFileBytes: threshold, SourceOverride: override("cli", live),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep.Roots[0]
+	}
+	write(t, live, "skills/big/data.jsonl", strings.Repeat("a", threshold+100))
+	sync()
+	write(t, live, "skills/big/data.jsonl", strings.Repeat("a", threshold+101))
+	if r := sync(); r.Deferred != 0 {
+		t.Fatalf("a skill's data file was deferred: %+v", r)
+	}
+	if got := read(t, filepath.Join(staging, "cli", "skills", "big", "data.jsonl")); len(got) != threshold+101 {
+		t.Fatalf("staged %d bytes, want the latest %d", len(got), threshold+101)
+	}
+}
+
+// A staged copy older than the retention cutoff is about to be pruned by the
+// same sync; deferring the fresh source would hand retention the only copy.
+func TestSync_NeverDefersACopyRetentionWouldPrune(t *testing.T) {
+	const threshold = 4096
+	live, staging := t.TempDir(), t.TempDir()
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	sync := func() RootResult {
+		t.Helper()
+		rep, err := Sync(Options{
+			StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
+			LargeFileBytes: threshold, RetentionDays: 30, SourceOverride: override("cli", live),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep.Roots[0]
+	}
+	src := filepath.Join(live, "projects", "-p", "old.jsonl")
+	write(t, live, "projects/-p/old.jsonl", strings.Repeat("a", threshold+100))
+	sync()
+	// The staged copy carries the source's mtime; age both past the window,
+	// then append a little to the source, as a session picking an old chat
+	// back up would.
+	old := time.Now().AddDate(0, 0, -40)
+	staged := filepath.Join(staging, "cli", "projects", "-p", "old.jsonl")
+	if err := os.Chtimes(staged, old, old); err != nil {
+		t.Fatal(err)
+	}
+	write(t, live, "projects/-p/old.jsonl", strings.Repeat("a", threshold+110))
+	_ = src
+	r := sync()
+	if r.Deferred != 0 {
+		t.Fatalf("deferred a transcript whose staged copy retention was about to prune: %+v", r)
+	}
+	if got := read(t, staged); len(got) != threshold+110 {
+		t.Fatalf("staged %d bytes, want the fresh %d — retention took the only copy", len(got), threshold+110)
+	}
+}
+
+// A flush names the transcript of the session that ended: that one is
+// restaged whatever the throttle says, and every other large transcript keeps
+// waiting for its chunk — a short session ending must not restage a long
+// one's 50 MB mid-chunk.
+func TestSync_FlushIsScopedToTheNamedTranscript(t *testing.T) {
+	const threshold = 4096
+	live, staging := t.TempDir(), t.TempDir()
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	sync := func(flush ...string) RootResult {
+		t.Helper()
+		rep, err := Sync(Options{
+			StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
+			LargeFileBytes: threshold, SourceOverride: override("cli", live), Flush: flush,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep.Roots[0]
+	}
+	stagedSize := func(rel string) int64 {
+		t.Helper()
+		fi, err := os.Stat(filepath.Join(staging, "cli", "projects", "-p", filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fi.Size()
+	}
+	// Each session has a sub-agent transcript beside it, under a directory
+	// of its own name. The hook names only the parent; the sub-agents ended
+	// with it and are flushed with it, and the other session's are not.
+	files := map[string]string{
+		"ended.jsonl": "a", "ended/subagents/agent-1.jsonl": "c",
+		"running.jsonl": "b", "running/subagents/agent-2.jsonl": "d",
+	}
+	for rel, fill := range files {
+		write(t, live, "projects/-p/"+rel, strings.Repeat(fill, threshold+100))
+	}
+	sync()
+	for rel, fill := range files {
+		write(t, live, "projects/-p/"+rel, strings.Repeat(fill, threshold+110))
+	}
+	if r := sync(); r.Deferred != 4 {
+		t.Fatalf("four small tails: deferred=%d, want 4", r.Deferred)
+	}
+	r := sync(filepath.Join(live, "projects", "-p", "ended.jsonl"))
+	if r.Deferred != 2 {
+		t.Fatalf("flush of ended.jsonl: deferred=%d, want the other session's two still waiting", r.Deferred)
+	}
+	for rel, want := range map[string]int64{
+		"ended.jsonl": threshold + 110, "ended/subagents/agent-1.jsonl": threshold + 110,
+		"running.jsonl": threshold + 100, "running/subagents/agent-2.jsonl": threshold + 100,
+	} {
+		if got := stagedSize(rel); got != want {
+			t.Errorf("%s staged at %d, want %d", rel, got, want)
+		}
+	}
+}
+
+// A copy that fails part-way leaves no half-written file behind: the throttle
+// compares the source against whatever is staged, and a truncated copy would
+// pass for a baseline and then be committed as the transcript.
+func TestCopyPreserveMtime_LeavesNothingBehindOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "staged", "t.jsonl")
+	write(t, dir, "staged/t.jsonl", "the previous staged copy")
+	// A directory opens but does not read: the copy fails after the
+	// destination would already have been created.
+	if err := copyPreserveMtime(dir, dst, time.Now()); err == nil {
+		t.Fatal("copying a directory should fail")
+	}
+	if got := read(t, dst); got != "the previous staged copy" {
+		t.Fatalf("staged copy after a failed copy = %q, want the previous one untouched", got)
+	}
+	entries, err := os.ReadDir(filepath.Dir(dst))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("temp file left behind: %v", entries)
 	}
 }

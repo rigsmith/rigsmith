@@ -42,7 +42,7 @@ func TestInstall_FreshAndIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(added)
-	if len(added) != 3 || added[0] != "PreToolUse" || added[1] != "SessionStart" || added[2] != "Stop" {
+	if len(added) != 4 || added[0] != "PreToolUse" || added[1] != "SessionEnd" || added[2] != "SessionStart" || added[3] != "Stop" {
 		t.Fatalf("added = %v", added)
 	}
 	// re-install is a no-op
@@ -51,7 +51,7 @@ func TestInstall_FreshAndIdempotent(t *testing.T) {
 		t.Fatalf("re-install should add nothing, added %v", added2)
 	}
 	present, _ := Status(p)
-	if len(present) != 3 {
+	if len(present) != 4 {
 		t.Fatalf("status = %v", present)
 	}
 	// the guard hook carries its tool-name matcher
@@ -110,7 +110,7 @@ func TestUninstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(removed)
-	if len(removed) != 3 {
+	if len(removed) != 4 {
 		t.Fatalf("removed = %v", removed)
 	}
 	// the non-clauderig hook survives; SessionStart (clauderig-only) is gone

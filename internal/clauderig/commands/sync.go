@@ -1,12 +1,17 @@
 package commands
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/mattn/go-isatty"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
@@ -21,6 +26,86 @@ import (
 // past this, it's squashed to a single commit (it's tiny, so this is generous).
 const configHistoryMaxCommits = 200
 
+// hookTranscripts reads the Claude Code hook payload from stdin, if one is
+// there, and returns the transcript it names. Every hook event carries
+// `transcript_path`; SessionEnd is the one that runs `sync --flush`.
+//
+// Three outcomes, because the caller does something different with each: a
+// path, to flush that transcript alone; nothing, when there was no payload to
+// read (a terminal, or an empty stream such as /dev/null), which the caller
+// treats as a flush of everything; and an error, when something arrived but
+// named no transcript — malformed, the wrong shape, or a stream that stayed
+// silent past the wait. That last one is not a flush of everything: one bad
+// payload would otherwise restage every long session's transcript mid-chunk,
+// the very growth the throttle exists to stop.
+func hookTranscripts(in io.Reader) ([]string, error) {
+	// A Cygwin/MSYS terminal on Windows is a pipe to the OS and a terminal
+	// to the person; without the second check a by-hand run there would
+	// wait out the timeout and flush nothing.
+	if f, ok := in.(*os.File); ok && (isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())) {
+		return nil, nil
+	}
+	// Decoded as a stream, not read to EOF: the payload is one JSON object,
+	// and a hook runner that writes it and keeps the pipe open would
+	// otherwise leave the read waiting for a close that never comes. The
+	// wait is bounded too, so a stream with nothing on it cannot hold the
+	// sync hostage; a real payload is a few hundred bytes and arrives at
+	// once.
+	type payload struct {
+		TranscriptPath string `json:"transcript_path"`
+	}
+	type result struct {
+		p   payload
+		err error
+	}
+	ch := make(chan result, 1)
+	// Counted, so a stream that carried only whitespace — a broken hook
+	// printing a newline — is told apart from one that carried nothing: the
+	// decoder reports EOF for both, and only the second means "no payload".
+	counted := &countingReader{r: io.LimitReader(in, 1<<20)}
+	go func() {
+		var r result
+		r.err = json.NewDecoder(counted).Decode(&r.p)
+		ch <- r
+	}()
+	select {
+	case r := <-ch:
+		if errors.Is(r.err, io.EOF) {
+			if counted.n > 0 {
+				return nil, errors.New("hook payload on stdin is blank")
+			}
+			return nil, nil // nothing on the stream at all
+		}
+		if r.err != nil {
+			return nil, fmt.Errorf("hook payload on stdin is not a JSON object: %w", r.err)
+		}
+		if strings.TrimSpace(r.p.TranscriptPath) == "" {
+			return nil, errors.New("hook payload on stdin names no transcript_path")
+		}
+		return []string{r.p.TranscriptPath}, nil
+	case <-time.After(2 * time.Second):
+		// The read is abandoned by closing what it reads from — nothing in
+		// sync reads stdin after this — so the goroutine ends rather than
+		// sitting on the stream for the rest of the process.
+		if c, ok := in.(io.Closer); ok {
+			_ = c.Close()
+		}
+		return nil, errors.New("nothing arrived on stdin within 2s")
+	}
+}
+
+// countingReader counts the bytes an io.Reader handed out.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
 // pushAttempts bounds the push/reconcile retry loop. Small on purpose: each round
 // is a real fetch+merge, and if the remote is moving faster than that the next
 // scheduled sync is the right place to catch up, not a loop here.
@@ -31,10 +116,20 @@ const pushAttempts = 3
 // redaction is visible, not magic. The tripwire fails the sync loudly if a secret
 // slips past redaction; nothing is pushed in that case.
 func NewSyncCmd() *cobra.Command {
-	var dryRun bool
+	var dryRun, flush bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Snapshot, redact, rewrite, and push your Claude Code setup",
+		Long: "Walks the sync roots, redacts secret-bearing fields, rewrites machine\n" +
+			"paths into a portable form, commits, and pushes.\n\n" +
+			"A transcript over retention.largeFileBytes is restaged only once it has\n" +
+			"grown by half that again, or once it has gone quiet for 30 minutes, so the\n" +
+			"Stop hook does not re-commit a 50 MB file every turn. The SessionEnd hook\n" +
+			"runs `sync --flush`, which restages the ended session's transcript (the\n" +
+			"hook names it on stdin) regardless, so its last turn never waits for the\n" +
+			"next session; other sessions' transcripts keep their throttle. Run by\n" +
+			"hand, `--flush` restages every changed transcript. A payload on stdin\n" +
+			"that names no transcript flushes nothing, and says so.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
@@ -89,10 +184,33 @@ func NewSyncCmd() *cobra.Command {
 					"⚠ account identity not recorded: %s looks like %s — check what ~/.claude.json holds", f.Path, f.Kind)))
 				liveAcct, liveOrg, liveEmail = "", "", ""
 			}
+			// --flush: the session is over and its tail has nothing to wait
+			// for. From the SessionEnd hook that is one transcript — the hook
+			// says which — and only that one skips the throttle; run by hand,
+			// with nothing on stdin to say, every transcript does. A payload
+			// that arrived but named nothing is neither: the throttle stays
+			// on, and the sync says why, rather than restaging every long
+			// session's transcript on the strength of a broken hook.
+			largeFileBytes := cfg.Retention.LargeFileBytes
+			var flushPaths []string
+			if flush {
+				paths, herr := hookTranscripts(cmd.InOrStdin())
+				switch {
+				case herr != nil:
+					fmt.Fprintf(out, "%s\n", WarnStyle.Render(fmt.Sprintf(
+						"⚠ --flush: %s — no transcript flushed; the large-file throttle stays on", herr)))
+				case len(paths) == 0:
+					largeFileBytes = -1
+				default:
+					flushPaths = paths
+				}
+			}
 			rep, serr := engine.Sync(engine.Options{
 				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
 				RetentionDays:   cfg.Retention.HistoryDays,
 				MaxFileBytes:    cfg.Retention.MaxFileBytes,
+				LargeFileBytes:  largeFileBytes,
+				Flush:           flushPaths,
 				Profiles:        engine.LocalProfileNames(),
 				LiveAccountUUID: liveAcct,
 			})
@@ -121,6 +239,9 @@ func NewSyncCmd() *cobra.Command {
 					}
 					if n := len(r.Oversize); n > 0 {
 						extra += fmt.Sprintf(", %d too large", n)
+					}
+					if r.Deferred > 0 {
+						extra += fmt.Sprintf(", %d large transcript(s) waiting for more content or to settle", r.Deferred)
 					}
 					fmt.Fprintf(out, "  %-*s %d files, %d secret field(s) redacted%s\n", w, r.ID, r.Files, r.Redactions, extra)
 					// Name what was dropped for size — a silent cap reads as "everything
@@ -254,6 +375,7 @@ func NewSyncCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "stage and scan, but don't commit or push")
+	cmd.Flags().BoolVar(&flush, "flush", false, "restage the ended session's transcript (from the hook payload on stdin), or every changed transcript when run by hand, past the large-file throttle")
 	return cmd
 }
 
