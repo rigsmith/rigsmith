@@ -39,7 +39,7 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 		csproj(t, root, "core", "Acme.Core")
 		csproj(t, root, "app", "Term.App", "Acme.Lib")
 
-		links, _, _ := stackRedirects(ctx, root, []string{"app", "core", "lib"}, nil)
+		links, _, _, _ := stackRedirects(ctx, root, []string{"app", "core", "lib"}, nil)
 		var got []string
 		for _, l := range links["dotnet"] {
 			got = append(got, l.describe())
@@ -61,7 +61,7 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 		csproj(t, root, "terminal", "Iciclecreek.Avalonia.Terminal")
 		csproj(t, root, "app", "Term.App", "Avalloy.Terminal")
 
-		_, orphans, _ := stackRedirects(ctx, root, []string{"app", "terminal"}, nil)
+		_, orphans, _, _ := stackRedirects(ctx, root, []string{"app", "terminal"}, nil)
 		var found bool
 		for _, o := range orphans {
 			if o.Member == "terminal" {
@@ -81,7 +81,7 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 		csproj(t, root, "lib", "Acme.Lib")
 		csproj(t, root, "app", "Term.App", "Acme.Lib")
 
-		_, orphans, _ := stackRedirects(ctx, root, []string{"app", "lib"}, nil)
+		_, orphans, _, _ := stackRedirects(ctx, root, []string{"app", "lib"}, nil)
 		for _, o := range orphans {
 			if o.Member == "lib" {
 				t.Fatalf("reported a member that is consumed: %+v", o)
@@ -97,7 +97,7 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 		csproj(t, root, "lib", "Acme.Lib")
 		csproj(t, root, "app", "Term.App", "Acme.Lib")
 
-		_, orphans, _ := stackRedirects(ctx, root, []string{"app", "lib"}, nil)
+		_, orphans, _, _ := stackRedirects(ctx, root, []string{"app", "lib"}, nil)
 		var sawApp bool
 		for _, o := range orphans {
 			if o.Member == "app" {
@@ -130,7 +130,7 @@ func TestStackRedirectsRepublishedIds(t *testing.T) {
 		csproj(t, root, "foo", "Foo")
 		csproj(t, root, "app", "Term.App", "Acme.Foo")
 		pub := map[string]stackPublishing{"foo": {As: map[string]string{"Foo": "Acme.Foo"}}}
-		links, orphans, notes := stackRedirects(ctx, root, []string{"app", "foo"}, pub)
+		links, orphans, notes, _ := stackRedirects(ctx, root, []string{"app", "foo"}, pub)
 		if len(links["dotnet"]) != 1 {
 			t.Fatalf("links = %+v", links)
 		}
@@ -157,7 +157,7 @@ func TestStackRedirectsRepublishedIds(t *testing.T) {
 		csproj(t, root, "foo/native", "Foo.Native")
 		csproj(t, root, "app", "Term.App", "Acme.Foo", "Acme.Foo.Native")
 		pub := map[string]stackPublishing{"foo": {Prefix: "Acme."}}
-		links, _, _ := stackRedirects(ctx, root, []string{"app", "foo"}, pub)
+		links, _, _, _ := stackRedirects(ctx, root, []string{"app", "foo"}, pub)
 		var got []string
 		for _, l := range links["dotnet"] {
 			got = append(got, l.Package+"<-"+l.Via)
@@ -172,7 +172,7 @@ func TestStackRedirectsRepublishedIds(t *testing.T) {
 		csproj(t, root, "foo", "Foo")
 		csproj(t, root, "app", "Term.App", "Acme.Fooo")
 		pub := map[string]stackPublishing{"foo": {As: map[string]string{"Fooo": "Acme.Fooo"}}}
-		links, _, notes := stackRedirects(ctx, root, []string{"app", "foo"}, pub)
+		links, _, notes, _ := stackRedirects(ctx, root, []string{"app", "foo"}, pub)
 		if len(links["dotnet"]) != 0 {
 			t.Fatalf("a typo'd rule produced a link: %+v", links)
 		}
@@ -190,7 +190,7 @@ func TestStackRedirectsRepublishedIds(t *testing.T) {
 			"foo": {As: map[string]string{"Foo": "Acme.Lib"}},
 			"bar": {As: map[string]string{"Bar": "Acme.Lib"}},
 		}
-		links, _, notes := stackRedirects(ctx, root, []string{"app", "bar", "foo"}, pub)
+		links, _, notes, _ := stackRedirects(ctx, root, []string{"app", "bar", "foo"}, pub)
 		if len(links["dotnet"]) != 0 {
 			t.Fatalf("an ambiguous id was redirected: %+v", links)
 		}
@@ -205,7 +205,7 @@ func TestStackRedirectsRepublishedIds(t *testing.T) {
 		csproj(t, root, "foo", "Foo")
 		csproj(t, root, "app", "Term.App", "Foo")
 		pub := map[string]stackPublishing{"foo": {As: map[string]string{"Foo": "Acme.Foo"}}}
-		links, _, _ := stackRedirects(ctx, root, []string{"app", "foo"}, pub)
+		links, _, _, _ := stackRedirects(ctx, root, []string{"app", "foo"}, pub)
 		if l := links["dotnet"]; len(l) != 1 || l[0].Package != "Foo" || l[0].Via != "" {
 			t.Fatalf("links = %+v", l)
 		}

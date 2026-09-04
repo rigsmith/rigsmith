@@ -13,7 +13,7 @@ import (
 func TestStackSeed(t *testing.T) {
 	root := rmStackspace(t, rmManifest)
 	// Root files the stackspace owns: kept out of every prefix on purpose.
-	for _, f := range []string{"Directory.Build.rsp", "packaging/pack.sh"} {
+	for _, f := range []string{"Directory.Build.rsp", "packaging/pack.sh", "Release Notes.md"} {
 		p := filepath.Join(root, filepath.FromSlash(f))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
@@ -35,7 +35,7 @@ func TestStackSeed(t *testing.T) {
 		t.Fatalf("%v\n%s", err, buf.String())
 	}
 
-	for _, want := range []string{"rig.stack.jsonc", "Directory.Build.rsp", "packaging/pack.sh", "Directory.Build.targets"} {
+	for _, want := range []string{"rig.stack.jsonc", "Directory.Build.rsp", "packaging/pack.sh", "Directory.Build.targets", "Release Notes.md"} {
 		if _, err := os.Stat(filepath.Join(dest, filepath.FromSlash(want))); err != nil {
 			t.Errorf("seed is missing %s", want)
 		}

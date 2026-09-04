@@ -115,9 +115,21 @@ func newStackRemoveCmd() *cobra.Command {
 
 			// The overlay is rewritten from the members that remain — or removed
 			// outright when nothing crosses between them any more — so no build
-			// file keeps a redirect into the directory that just left.
+			// file keeps a redirect into the directory that just left. Should
+			// that fail (an overlay somebody wrote by hand is the usual reason)
+			// the manifest and the tracked tree are put back: nothing has been
+			// committed, and a member half-removed is worse than one still in.
 			if err := stackWire(ctx, out, m, repo, "  "); err != nil {
-				return fmt.Errorf("rewriting the build overlay: %w", err)
+				if readErr == nil {
+					_ = os.WriteFile(src.File, before, 0o644)
+				}
+				restored := "the manifest was put back"
+				if !keepTree {
+					if rerr := repo.ReplacePath(ctx, "HEAD", name); rerr == nil {
+						restored = "the manifest and " + name + "/ were put back (ignored build output under it is gone)"
+					}
+				}
+				return fmt.Errorf("rewriting the build overlay: %w\n%s — fix the overlay, then run `rig stack rm %s` again", err, restored, name)
 			}
 
 			changed, err := repo.Commit(ctx, "stack: remove "+name)
@@ -245,7 +257,7 @@ func stackIsManifestPath(root string, src *cfgfind.Source, p string) bool {
 // body of `rig stack wire`, shared with rm — which has to rewrite the overlay
 // too, and must not describe it any differently.
 func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitrepo.Repo, indent string) error {
-	byEco, orphans, notes := stackRedirects(ctx, repo.Dir, m.names(), m.publishing())
+	byEco, orphans, notes, failed := stackRedirects(ctx, repo.Dir, m.names(), m.publishing())
 	// Patching a member's own build file is a commit to that repository, and
 	// it travels back through `push` or `send`. Your own repos want that line;
 	// a fork you contribute to should not carry rig plumbing into somebody
@@ -258,6 +270,13 @@ func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitre
 	wired := false
 	for _, eco := range stackEcosystems() {
 		links := byEco[eco.Info().ID]
+		// An ecosystem whose scan failed has not said "nothing crosses"; it
+		// has said nothing. Acting on that as an empty answer would take an
+		// overlay away over a transient failure, so it is left alone (and the
+		// note above says so).
+		if _, bad := failed[eco.Info().ID]; bad {
+			continue
+		}
 		// An ecosystem with nothing to redirect is still asked, with Write set:
 		// that is how an overlay left over from members that have since gone
 		// is taken away rather than kept pointing at directories that left.

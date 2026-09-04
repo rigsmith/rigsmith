@@ -499,11 +499,18 @@ func (r *Repo) MergeBase(ctx context.Context, a, b string) (string, error) {
 
 // TopLevelNames lists the entries directly under a revision's root tree.
 func (r *Repo) TopLevelNames(ctx context.Context, rev string) ([]string, error) {
-	out, err := runGit(ctx, r.Dir, "ls-tree", "--name-only", rev)
+	// -z: a name with a space in it is one entry, and nothing gets quoted.
+	out, err := runGit(ctx, r.Dir, "ls-tree", "--name-only", "-z", rev)
 	if err != nil {
 		return nil, err
 	}
-	return strings.Fields(out), nil
+	var names []string
+	for _, n := range strings.Split(out, "\x00") {
+		if n != "" {
+			names = append(names, n)
+		}
+	}
+	return names, nil
 }
 
 // ArchiveTar renders the given paths of a revision as a tar stream — what

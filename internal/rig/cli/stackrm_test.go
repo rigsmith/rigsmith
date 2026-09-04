@@ -270,6 +270,53 @@ func TestStackRm(t *testing.T) {
 		}
 	})
 
+	t.Run("an overlay that cannot be rewritten puts everything back", func(t *testing.T) {
+		// Three members with a cross-member package reference between the two
+		// that stay, and an overlay somebody wrote by hand at the root: wire
+		// refuses to clobber it, and rm must then leave the stackspace as it
+		// found it rather than half-removed and uncommitted.
+		root := t.TempDir()
+		mustGitStack(t, root, "init", "-q", "-b", "main")
+		mustGitStack(t, root, "config", "user.email", "t@t")
+		mustGitStack(t, root, "config", "user.name", "t")
+		writeStackManifest(t, root, `{"repos": {
+  "app":  {"upstream": "github.com/you/app",  "fork": "github.com/you/app", "owned": true},
+  "lib":  {"upstream": "github.com/acme/lib", "fork": "github.com/you/lib"},
+  "gone": {"upstream": "github.com/acme/gone", "fork": "github.com/you/gone"}
+}}`)
+		csproj(t, root, "lib/src/Acme.Lib", "Acme.Lib")
+		csproj(t, root, "app/src/App", "Term.App", "Acme.Lib")
+		csproj(t, root, "gone/src/Gone", "Acme.Gone")
+		if err := os.WriteFile(filepath.Join(root, "Directory.Build.targets"), []byte("<Project><!-- mine --></Project>\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, root, "add", "-A")
+		mustGitStack(t, root, "commit", "-qm", "stack: stackspace manifest")
+		for _, n := range []string{"app", "lib", "gone"} {
+			mustGitStack(t, root, "commit", "-q", "--allow-empty", "-m", "stack: import "+n+" @ 0123456")
+		}
+		chdir(t, root)
+		head := strings.TrimSpace(mustGitStack(t, root, "rev-parse", "HEAD"))
+
+		out, err := runRm(t, "gone")
+		if err == nil || !strings.Contains(err.Error(), "rig did not write") || !strings.Contains(err.Error(), "put back") {
+			t.Fatalf("err = %v\n%s", err, out)
+		}
+		m, _, lerr := loadStackManifest(root)
+		if lerr != nil || m.Repos["gone"] == nil {
+			t.Fatalf("manifest not put back: %v, %v", m.names(), lerr)
+		}
+		if _, serr := os.Stat(filepath.Join(root, "gone", "src", "Gone", "Gone.csproj")); serr != nil {
+			t.Error("gone/ not put back")
+		}
+		if got := strings.TrimSpace(mustGitStack(t, root, "rev-parse", "HEAD")); got != head {
+			t.Error("a failed rm still committed")
+		}
+		if st := strings.TrimSpace(mustGitStack(t, root, "status", "--porcelain")); st != "" {
+			t.Errorf("failed rm left the tree dirty:\n%s", st)
+		}
+	})
+
 	t.Run("an unknown repo names the ones that exist", func(t *testing.T) {
 		rmStackspace(t, rmManifest)
 		if _, err := runRm(t, "nope"); err == nil || !strings.Contains(err.Error(), "pty-core, term-core") {

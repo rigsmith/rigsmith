@@ -31,8 +31,10 @@ import (
 //
 // The result is keyed by ecosystem id: each writes its own kind of overlay.
 // notes are things worth saying that are neither a link nor an orphan: a
-// republishing rule naming a package nothing here produces.
-func stackRedirects(ctx context.Context, root string, members []string, publishing map[string]stackPublishing) (map[string][]stackLink, []stackOrphan, []string) {
+// republishing rule naming a package nothing here produces. failed names the
+// ecosystems whose scan errored — for those, "no links" is not an answer, and
+// nothing that acts on an empty answer (removing an overlay, say) may do so.
+func stackRedirects(ctx context.Context, root string, members []string, publishing map[string]stackPublishing) (map[string][]stackLink, []stackOrphan, []string, map[string]error) {
 	member := func(rel string) string {
 		rel = filepath.ToSlash(rel)
 		for _, m := range members {
@@ -49,6 +51,7 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 	produces := map[string][]string{}
 	consumed := map[string]bool{}
 	var notes []string
+	failed := map[string]error{}
 	// Every republished id that turned out to name a real package, so a rule
 	// that never matched anything can be reported afterwards.
 	aliasUsed := map[string]map[string]bool{}
@@ -58,11 +61,17 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 		if len(eco.Info().Overlays) > 0 {
 			continue
 		}
-		if ok, err := eco.Detect(ctx, root); err != nil || !ok {
+		ok, err := eco.Detect(ctx, root)
+		if err != nil {
+			failed[eco.Info().ID] = err
+			continue
+		}
+		if !ok {
 			continue
 		}
 		resp, err := eco.Discover(ctx, plugin.DiscoverRequest{RepoRoot: root, SourcePath: ".", IncludeUnversioned: true, IncludeRegistrySiblings: true})
 		if err != nil {
+			failed[eco.Info().ID] = err
 			continue
 		}
 		// Where each package is produced, so a dependency on it can be pointed
@@ -203,7 +212,15 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 			}
 		}
 	}
-	return out, orphans, notes
+	ids := make([]string, 0, len(failed))
+	for id := range failed {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		notes = append(notes, fmt.Sprintf("%s: could not scan the projects (%v) — its overlay is left as it is", id, failed[id]))
+	}
+	return out, orphans, notes, failed
 }
 
 // stackOrphan is a fused repo whose packages nothing else here references.
@@ -289,7 +306,7 @@ type stackOverlayReport struct {
 func stackCheckOverlay(ctx context.Context, root string, m *stackManifest) ([]stackOverlayReport, []stackOrphan, []string) {
 	var out []stackOverlayReport
 	members, writable := m.names(), m.ownedNames()
-	byEco, orphans, notes := stackRedirects(ctx, root, members, m.publishing())
+	byEco, orphans, notes, _ := stackRedirects(ctx, root, members, m.publishing())
 	for _, eco := range ecosystem.Default().All() {
 		links := byEco[eco.Info().ID]
 		if len(links) == 0 {
