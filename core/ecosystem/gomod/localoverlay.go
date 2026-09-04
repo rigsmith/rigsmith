@@ -2,6 +2,7 @@ package gomod
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -43,10 +44,16 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 		// takes rig's own file away. A hand-written one is never touched.
 		if req.Write {
 			dest := filepath.Join(req.Root, workFile)
-			if body, err := os.ReadFile(dest); err == nil && strings.Contains(string(body), workMarker) {
-				if os.Remove(dest) == nil {
-					resp.Removed = []string{workFile}
+			body, err := os.ReadFile(dest)
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+			case err != nil:
+				return resp, fmt.Errorf("reading %s: %w", workFile, err)
+			case strings.Contains(string(body), workMarker):
+				if err := os.Remove(dest); err != nil {
+					return resp, fmt.Errorf("removing stale %s: %w", workFile, err)
 				}
+				resp.Removed = []string{workFile}
 			}
 		}
 		return resp, nil

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -64,7 +65,7 @@ func newStackRemoveCmd() *cobra.Command {
 				return err
 			}
 			for _, p := range dirty {
-				if !strings.HasPrefix(p, name+"/") && !stackIsManifestPath(src, p) {
+				if !strings.HasPrefix(p, name+"/") && !stackIsManifestPath(repo.Dir, src, p) {
 					return fmt.Errorf("stackspace has uncommitted changes outside %s/ — commit or stash them before removing", name)
 				}
 			}
@@ -80,7 +81,10 @@ func newStackRemoveCmd() *cobra.Command {
 					return fmt.Errorf("%s has uncommitted edits — commit and propose them first, or --force to discard them", name)
 				case u.Commits:
 					return fmt.Errorf("%s has commits that have not left the stackspace — `rig stack propose %s <branch>` first, or --force to discard them", name, name)
-				case !u.Known && m.cursor(name) != "":
+				case !u.Known && stackPrefixPresent(ctx, repo, name):
+					// A directory with no import to compare against — a cursor
+					// hand-restored, or a tree committed before any import —
+					// might hold anything; only a manifest-only entry is safe.
 					return fmt.Errorf("cannot tell whether %s holds unsent changes (no import commit in this history) — check with `git log -- %s/`, then --force", name, name)
 				}
 			}
@@ -142,6 +146,9 @@ func newStackRemoveMenuCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			m, _, _, err := stackspace(cmd.Context())
 			if err != nil {
+				return err
+			}
+			if err := m.requireRepos(); err != nil {
 				return err
 			}
 			names := m.names()
@@ -218,10 +225,19 @@ func stackForgetRepo(src *cfgfind.Source, m *stackManifest, name string) error {
 	return nil
 }
 
-// stackIsManifestPath reports whether a dirty path is the manifest file itself,
-// which rm is about to rewrite and commit anyway.
-func stackIsManifestPath(src *cfgfind.Source, p string) bool {
-	return src != nil && src.Path != "" && strings.HasSuffix(src.File, "/"+p)
+// stackIsManifestPath reports whether a dirty path (as git prints it, relative
+// and slash-separated) is the manifest file itself, which rm is about to
+// rewrite and commit anyway. Compared as paths, not as strings: the manifest's
+// path is native, and on Windows that means backslashes.
+func stackIsManifestPath(root string, src *cfgfind.Source, p string) bool {
+	if src == nil || src.Path == "" {
+		return false
+	}
+	rel, err := filepath.Rel(root, src.File)
+	if err != nil {
+		return false
+	}
+	return filepath.ToSlash(rel) == filepath.ToSlash(p)
 }
 
 // stackWire computes the redirects between the members m names and writes each

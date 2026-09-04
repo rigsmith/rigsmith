@@ -2,6 +2,7 @@ package dotnet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -37,7 +38,9 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 		// error at best, and the wrong sources at worst. Only rig's own file is
 		// removed; one somebody wrote stays, whatever it says.
 		if req.Write {
-			resp.Removed = removeGenerated(filepath.Join(req.Root, overlayFile), overlayMarker, overlayFile)
+			removed, err := removeGenerated(filepath.Join(req.Root, overlayFile), overlayMarker, overlayFile)
+			resp.Removed = removed
+			return resp, err
 		}
 		return resp, nil
 	}
@@ -238,14 +241,22 @@ func renderOverlay(redirects []plugin.Redirect) string {
 }
 
 // removeGenerated deletes path when it carries marker and reports the removal
-// under rel. A missing file, or one without the marker, removes nothing.
-func removeGenerated(path, marker, rel string) []string {
+// under rel. A missing file, or one without the marker, removes nothing. A
+// file that carries the marker and cannot be read or removed is an error: a
+// stale overlay left standing silently is the failure this exists to prevent.
+func removeGenerated(path, marker, rel string) ([]string, error) {
 	body, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(body), marker) {
-		return nil
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
 	}
-	if os.Remove(path) != nil {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", rel, err)
 	}
-	return []string{rel}
+	if !strings.Contains(string(body), marker) {
+		return nil, nil
+	}
+	if err := os.Remove(path); err != nil {
+		return nil, fmt.Errorf("removing stale %s: %w", rel, err)
+	}
+	return []string{rel}, nil
 }

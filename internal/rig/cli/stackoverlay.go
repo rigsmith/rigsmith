@@ -79,20 +79,41 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 		// a rule for a package it does not build would redirect a consumer
 		// to nothing, and the overlay would report that as a missing project.
 		alias := map[string]string{} // republished id -> produced id
-		for m, pub := range publishing {
+		aliasBy := map[string]string{}
+		ambiguous := map[string]bool{}
+		members := make([]string, 0, len(publishing))
+		for m := range publishing {
+			members = append(members, m)
+		}
+		sort.Strings(members) // a stable order, so a collision reads the same every run
+		for _, m := range members {
+			pub := publishing[m]
 			for _, orig := range produces[m] {
-				if as, ok := pub.As[orig]; ok {
-					alias[as] = orig
+				as, ok := pub.As[orig]
+				if !ok {
+					if pub.Prefix == "" {
+						continue
+					}
+					as = pub.Prefix + orig
+				} else {
 					if aliasUsed[m] == nil {
 						aliasUsed[m] = map[string]bool{}
 					}
 					aliasUsed[m][orig] = true
+				}
+				// Two packages republished under one id cannot both be what a
+				// consumer meant; redirecting to either would be a guess, so
+				// the id is redirected to neither and the clash is reported.
+				if prev, dup := alias[as]; dup && prev != orig {
+					ambiguous[as] = true
+					notes = append(notes, fmt.Sprintf("%s is the republished id of both %s (%s) and %s (%s) — neither is redirected until one changes", as, prev, aliasBy[as], orig, m))
 					continue
 				}
-				if pub.Prefix != "" {
-					alias[pub.Prefix+orig] = orig
-				}
+				alias[as], aliasBy[as] = orig, m
 			}
+		}
+		for as := range ambiguous {
+			delete(alias, as)
 		}
 		at := map[string]int{}
 		var links []stackLink

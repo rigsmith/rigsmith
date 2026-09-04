@@ -461,8 +461,18 @@ func runGitStdin(ctx context.Context, dir, stdin string, env []string, args ...s
 // goes. A path that is not tracked is not an error: the point is that it is
 // gone.
 func (r *Repo) RemoveTree(ctx context.Context, dir string) error {
-	_, err := runGit(ctx, r.Dir, "rm", "-rqf", "--ignore-unmatch", "--", dir)
-	return err
+	if _, err := runGit(ctx, r.Dir, "rm", "-rqf", "--ignore-unmatch", "--", dir); err != nil {
+		return err
+	}
+	// git rm knows only the index: ignored build output and untracked files
+	// stay behind, and the next commit would stage the untracked ones. The
+	// directory goes too, but only ever a directory inside this repository.
+	full := filepath.Join(r.Dir, filepath.FromSlash(dir))
+	rel, err := filepath.Rel(r.Dir, full)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("refusing to remove %q: not a directory inside the repository", dir)
+	}
+	return os.RemoveAll(full)
 }
 
 // DeleteRef removes a ref if it exists. A ref that is already absent is fine.

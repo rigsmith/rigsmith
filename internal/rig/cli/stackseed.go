@@ -137,8 +137,10 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 }
 
 // untar extracts a tar stream under dest, refusing any entry that would land
-// outside it. Only regular files and directories are written; git archive
-// emits nothing else for a tree of ordinary files.
+// outside it. Regular files, directories and symlinks are written — the three
+// things a git tree holds — and a symlink whose target would leave dest is
+// refused rather than written pointing anywhere. Anything else in the stream
+// is an error, so the seed is never silently incomplete.
 func untar(r io.Reader, dest string) error {
 	tr := tar.NewReader(r)
 	root := filepath.Clean(dest)
@@ -174,6 +176,23 @@ func untar(r io.Reader, dest string) error {
 			if err := f.Close(); err != nil {
 				return err
 			}
+		case tar.TypeSymlink:
+			// Resolved against the link's own directory, and refused if that
+			// leaves dest: a link out of the tree is not the stackspace's own.
+			resolved := filepath.Join(filepath.Dir(target), filepath.FromSlash(hdr.Linkname))
+			if filepath.IsAbs(hdr.Linkname) || (resolved != root && !strings.HasPrefix(resolved, root+string(filepath.Separator))) {
+				return fmt.Errorf("symlink %q points outside the seed (%s)", hdr.Name, hdr.Linkname)
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			if err := os.Symlink(filepath.FromSlash(hdr.Linkname), target); err != nil {
+				return err
+			}
+		case tar.TypeXGlobalHeader, tar.TypeXHeader:
+			// pax metadata git archive writes ahead of the entries; not content.
+		default:
+			return fmt.Errorf("archive entry %q has a type the seed cannot carry", hdr.Name)
 		}
 	}
 }
@@ -185,23 +204,35 @@ func untar(r io.Reader, dest string) error {
 // where work that has left as a proposal and not yet merged lives. nil means
 // upstream, as ever.
 func stackImportFromFork(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string, rebuilding bool) (*stackForkRef, error) {
-	return stackForkRefFor(m, name, rebuilding, func(branch string) (string, bool) {
-		sha, err := repo.LsRemote(ctx, stackRemoteURL(m.Repos[name].Fork), "refs/heads/"+branch)
-		return sha, err == nil
+	return stackForkRefFor(m, name, rebuilding, func(branch string) (string, bool, error) {
+		// A ref that is absent and a fork that could not be asked are
+		// different answers: the first means the work has moved on, the
+		// second must not quietly become "rebuild without it".
+		ref := "refs/heads/" + branch
+		found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(m.Repos[name].Fork), ref)
+		if err != nil {
+			return "", false, err
+		}
+		sha, ok := found[ref]
+		return sha, ok, nil
 	})
 }
 
 // stackForkRefFor is stackImportFromFork with the remote lookup passed in, so
 // the decision is testable without a forge. An explicit trackBranch that does
 // not exist is an error: importing from upstream instead would quietly hand
-// back a stackspace without the work the branch was named to carry.
-func stackForkRefFor(m *stackManifest, name string, rebuilding bool, resolve func(branch string) (string, bool)) (*stackForkRef, error) {
+// back a stackspace without the work the branch was named to carry. So is a
+// fork that cannot be reached at all, for the same reason.
+func stackForkRefFor(m *stackManifest, name string, rebuilding bool, resolve func(branch string) (sha string, found bool, err error)) (*stackForkRef, error) {
 	r := m.Repos[name]
 	if r == nil {
 		return nil, nil
 	}
 	if r.TrackBranch != "" {
-		sha, ok := resolve(r.TrackBranch)
+		sha, ok, err := resolve(r.TrackBranch)
+		if err != nil {
+			return nil, fmt.Errorf("%s: looking up trackBranch %q on %s: %w", name, r.TrackBranch, r.Fork, err)
+		}
 		if !ok {
 			return nil, fmt.Errorf("%s: trackBranch %q is not on %s — push it there, or drop the key to import from %s", name, r.TrackBranch, r.Fork, r.Upstream)
 		}
@@ -213,7 +244,11 @@ func stackForkRefFor(m *stackManifest, name string, rebuilding bool, resolve fun
 	// The proposed branch may have merged and been deleted since; upstream
 	// then already carries it, and the cursor is the right place to rebuild.
 	branch := m.sendBranch(name, m.LastPropose[name])
-	if sha, ok := resolve(branch); ok {
+	sha, ok, err := resolve(branch)
+	if err != nil {
+		return nil, fmt.Errorf("%s: checking whether %s still carries %s: %w\nthat branch may hold work the rebuilt %s/ would otherwise lack", name, r.Fork, branch, err, name)
+	}
+	if ok {
 		return &stackForkRef{Branch: branch, Commit: sha}, nil
 	}
 	return nil, nil

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,7 +81,7 @@ func TestStackForkRefFor(t *testing.T) {
 		LastPropose: map[string]string{"lib": "read-timeout"},
 	}
 	exists := map[string]string{"stack/read-timeout": "aaa", "wip": "bbb"}
-	resolve := func(branch string) (string, bool) { sha, ok := exists[branch]; return sha, ok }
+	resolve := func(branch string) (string, bool, error) { sha, ok := exists[branch]; return sha, ok, nil }
 
 	t.Run("a first import follows upstream unless trackBranch says otherwise", func(t *testing.T) {
 		if ref, err := stackForkRefFor(m, "lib", false, resolve); err != nil || ref != nil {
@@ -96,17 +97,31 @@ func TestStackForkRefFor(t *testing.T) {
 		if err != nil || ref == nil || ref.Branch != "stack/read-timeout" || ref.Commit != "aaa" {
 			t.Fatalf("%+v, %v", ref, err)
 		}
-		gone := func(string) (string, bool) { return "", false }
+		gone := func(string) (string, bool, error) { return "", false, nil }
 		if ref, err := stackForkRefFor(m, "lib", true, gone); err != nil || ref != nil {
 			t.Fatalf("merged-and-deleted branch: %+v, %v — want upstream at the cursor", ref, err)
 		}
 	})
 	t.Run("a trackBranch that is not on the fork is an error, not a fallback", func(t *testing.T) {
-		gone := func(string) (string, bool) { return "", false }
+		gone := func(string) (string, bool, error) { return "", false, nil }
 		if _, err := stackForkRefFor(m, "tracked", false, gone); err == nil || !strings.Contains(err.Error(), `trackBranch "wip"`) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+	t.Run("a fork that cannot be asked is an error, never a silent fallback", func(t *testing.T) {
+		down := func(string) (string, bool, error) { return "", false, errors.New("403") }
+		if _, err := stackForkRefFor(m, "lib", true, down); err == nil || !strings.Contains(err.Error(), "403") {
+			t.Fatalf("rebuild with the fork down: err = %v", err)
+		}
+		if _, err := stackForkRefFor(m, "tracked", false, down); err == nil || !strings.Contains(err.Error(), "403") {
+			t.Fatalf("trackBranch with the fork down: err = %v", err)
+		}
+		// A first import with nothing to look up never asks.
+		if ref, err := stackForkRefFor(m, "lib", false, down); err != nil || ref != nil {
+			t.Fatalf("first import asked the fork: %v, %v", ref, err)
+		}
+	})
+
 	t.Run("trackBranch cannot ride on a pin", func(t *testing.T) {
 		root := t.TempDir()
 		writeStackManifest(t, root, `{"repos": {"t": {"upstream": "h/a/t", "fork": "h/y/t", "trackBranch": "wip", "upstreamTag": "v1"}}}`)

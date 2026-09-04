@@ -1220,6 +1220,15 @@ func TestStackPublishesAs(t *testing.T) {
 			t.Fatalf("publishing = %+v", pub)
 		}
 	})
+	t.Run("two repos publishing under one id are refused", func(t *testing.T) {
+		if _, err := load(t, `{"repos": {
+  "foo": {"upstream": "h/them/foo", "fork": "h/you/foo", "publishesAs": {"Foo": "Acme.Lib"}},
+  "bar": {"upstream": "h/them/bar", "fork": "h/you/bar", "publishesAs": {"Bar": "Acme.Lib"}}
+}}`); err == nil || !strings.Contains(err.Error(), "Acme.Lib") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
 	t.Run("an id mapped to itself is refused", func(t *testing.T) {
 		if _, err := load(t, `{"repos": {"foo": {"upstream": "h/them/foo", "fork": "h/you/foo", "publishesAs": {"Foo": "Foo"}}}}`); err == nil || !strings.Contains(err.Error(), "itself") {
 			t.Fatalf("err = %v", err)

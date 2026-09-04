@@ -34,8 +34,11 @@ func Delete(text string, path []string) (string, bool) {
 	if !found {
 		return text, true
 	}
-	start, end := memberSpan(orig, stripped, nameStart, valueEnd)
-	return string(orig[:start]) + string(orig[end:]), true
+	out := orig
+	for _, sp := range memberSpans(orig, stripped, nameStart, valueEnd) {
+		out = append(append([]byte{}, out[:sp[0]]...), out[sp[1]:]...)
+	}
+	return string(out), true
 }
 
 // locateMember finds the byte span of a member's name and value at any
@@ -109,50 +112,72 @@ func locateMember(stripped []byte, path []string) (nameStart, valueEnd int, foun
 	return 0, 0, false, true
 }
 
-// memberSpan widens [nameStart, valueEnd) to the bytes that should leave with
-// the member: its separating comma, the rest of its line, and the comment
-// lines attached above it. It works on the stripped copy, where comments are
-// blanks, so "only whitespace" there means "whitespace or comment" in the
-// original.
-func memberSpan(orig, stripped []byte, nameStart, valueEnd int) (start, end int) {
-	start, end = nameStart, valueEnd
-	// A following comma is this member's; take it and the rest of its line.
+// memberSpans is the byte ranges that leave with the member, in descending
+// order so the caller can cut them one after another: the member's own line
+// (its value, a trailing comment on the same line, and the comment lines
+// attached above it) and, for a last member, the comma that separated it from
+// the one before — cut separately, so a trailing comment on THAT member's line
+// is kept. It reads the stripped copy, where comments are blanks, so "only
+// whitespace" there means "whitespace or comment" in the original; the one
+// exception is a legal JSONC trailing comma after the value, which Strip has
+// blanked too and only the original still shows.
+func memberSpans(orig, stripped []byte, nameStart, valueEnd int) [][2]int {
+	start, end := nameStart, valueEnd
+	// A comma after the value is this member's — whether a separator the
+	// stripped copy shows, or a trailing comma only the original does.
 	i := end
-	for i < len(stripped) && isSpace(stripped[i]) && stripped[i] != '\n' {
+	for i < len(orig) && isSpace(orig[i]) && orig[i] != '\n' {
 		i++
 	}
-	if i < len(stripped) && stripped[i] == ',' {
+	comma := i < len(orig) && orig[i] == ','
+	if !comma {
+		i = end
+		for i < len(stripped) && isSpace(stripped[i]) && stripped[i] != '\n' {
+			i++
+		}
+		comma = i < len(stripped) && stripped[i] == ','
+	}
+	if comma {
 		end = i + 1
 		j := end
 		for j < len(stripped) && isSpace(stripped[j]) && stripped[j] != '\n' {
 			j++
 		}
-		if j < len(stripped) && stripped[j] == '\n' {
+		switch {
+		case j < len(stripped) && stripped[j] == '\n':
 			end = j + 1
 			start = lineStartIfBlankBefore(stripped, start)
 			start = absorbCommentLinesAbove(orig, stripped, start)
-		} else if j == len(stripped) {
-			end = j
-		} else {
+		default:
 			end = j // single-line object: eat the spaces up to the next member
 		}
-		return start, end
+		return [][2]int{{start, end}}
 	}
-	// Last member: the comma before it is the one that goes.
+	// Last member: the comma before it is the one that goes. On its own line
+	// the member's line is cut whole and the comma alone from the line above;
+	// on one line with the previous member, everything from the comma on.
 	k := start - 1
 	for k >= 0 && isSpace(stripped[k]) {
 		k--
 	}
 	if k >= 0 && stripped[k] == ',' {
-		start = k
-		// Keep a trailing comment on the previous member's line — the comma
-		// sits before it, so only the comma itself is removed from that line.
-		return start, end
+		if hasNewline(stripped, k, start) {
+			lineStart := absorbCommentLinesAbove(orig, stripped, lineStartIfBlankBefore(stripped, start))
+			lineEnd := end
+			for lineEnd < len(stripped) && isSpace(stripped[lineEnd]) && stripped[lineEnd] != '\n' {
+				lineEnd++
+			}
+			if lineEnd < len(stripped) && stripped[lineEnd] == '\n' {
+				lineEnd++
+			}
+			return [][2]int{{lineStart, lineEnd}, {k, k + 1}}
+		}
+		return [][2]int{{k, end}}
 	}
 	// Only member: leave the braces with whatever whitespace framed it.
 	start = lineStartIfBlankBefore(stripped, start)
 	start = absorbCommentLinesAbove(orig, stripped, start)
-	return start, end
+	return [][2]int{{start, end}}
 }
 
 // lineStartIfBlankBefore moves pos back to the start of its line when nothing

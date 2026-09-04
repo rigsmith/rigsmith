@@ -57,6 +57,31 @@ func TestDelete(t *testing.T) {
 		}
 	})
 
+	t.Run("the previous member keeps its trailing comment", func(t *testing.T) {
+		doc := "{\n  \"a\": 1, // about a\n  // about b\n  \"b\": 2\n}"
+		got, ok := Delete(doc, []string{"b"})
+		if !ok {
+			t.Fatal("Delete returned false")
+		}
+		if got != "{\n  \"a\": 1 // about a\n}" {
+			t.Fatalf("got %q", got)
+		}
+	})
+
+	t.Run("a JSONC trailing comma goes with the only member", func(t *testing.T) {
+		got, ok := Delete("{\n  \"repos\": {\n    \"a\": 1,\n  }\n}", []string{"repos", "a"})
+		if !ok {
+			t.Fatal("Delete returned false")
+		}
+		if strings.Contains(got, ",") {
+			t.Fatalf("naked comma left behind: %q", got)
+		}
+		var m map[string]any
+		if err := Unmarshal([]byte(got), &m); err != nil {
+			t.Fatalf("not valid: %v\n%s", err, got)
+		}
+	})
+
 	t.Run("a single-line object stays on one line", func(t *testing.T) {
 		got, ok := Delete(src, []string{"lastSync", "pty-core"})
 		if !ok {

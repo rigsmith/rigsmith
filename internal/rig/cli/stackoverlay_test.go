@@ -181,6 +181,24 @@ func TestStackRedirectsRepublishedIds(t *testing.T) {
 		}
 	})
 
+	t.Run("one republished id claimed by two packages redirects neither", func(t *testing.T) {
+		root := t.TempDir()
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "bar", "Bar")
+		csproj(t, root, "app", "Term.App", "Acme.Lib")
+		pub := map[string]stackPublishing{
+			"foo": {As: map[string]string{"Foo": "Acme.Lib"}},
+			"bar": {As: map[string]string{"Bar": "Acme.Lib"}},
+		}
+		links, _, notes := stackRedirects(ctx, root, []string{"app", "bar", "foo"}, pub)
+		if len(links["dotnet"]) != 0 {
+			t.Fatalf("an ambiguous id was redirected: %+v", links)
+		}
+		if len(notes) == 0 || !strings.Contains(notes[0], "both") {
+			t.Fatalf("clash not reported: %v", notes)
+		}
+	})
+
 	t.Run("a declared id still wins over a republished one", func(t *testing.T) {
 		// The app references Foo directly: nothing about republishing applies.
 		root := t.TempDir()

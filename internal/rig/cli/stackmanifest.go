@@ -282,7 +282,14 @@ func (m *stackManifest) validate() error {
 			return err
 		}
 	}
-	for name, r := range m.Repos {
+	republished := map[string]string{} // republished id -> "<repo>/<produced id>"
+	names := make([]string, 0, len(m.Repos))
+	for name := range m.Repos {
+		names = append(names, name)
+	}
+	sort.Strings(names) // so an error names the same pair every run
+	for _, name := range names {
+		r := m.Repos[name]
 		// The key is both a josh prefix and a `HEAD:<name>` tree path, so it has
 		// to name exactly one directory. Empty resolves to the stackspace root —
 		// `send` would push the whole fused tree to one upstream.
@@ -333,6 +340,16 @@ func (m *stackManifest) validate() error {
 		// prefix pinned to a tag or commit has no branch for it to be based on.
 		if r.TrackBranch != "" && (r.UpstreamTag != "" || r.UpstreamCommit != "") {
 			return fmt.Errorf("stack repo %q sets trackBranch with a pin — a fork branch is based on upstream's branch, so keep upstreamBranch (or nothing) with it", name)
+		}
+		for from, to := range r.PublishesAs {
+			// One republished id can only stand for one package: two would
+			// leave a consumer of that id redirected to whichever was seen
+			// last. A prefix cannot be checked here, since what a member
+			// produces is only known at wire time; wire reports those.
+			if prev, dup := republished[to]; dup && prev != name+"/"+from {
+				return fmt.Errorf("stack repos %s and %q both publish a package as %q — a republished id can stand for one package only", prev, name, to)
+			}
+			republished[to] = name + "/" + from
 		}
 		if p := r.PublishPrefix; p != "" && strings.TrimSpace(p) == "" {
 			return fmt.Errorf("stack repo %q: publishPrefix is blank", name)
