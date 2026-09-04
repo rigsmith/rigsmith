@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
@@ -65,6 +66,13 @@ var desktopPruneThreshold int64 = 4 << 30
 // can point it at a store of its own rather than the real home directory.
 var desktopStore = desktop.DefaultStore
 
+// desktopSizeBudget bounds the profile walk on its own, under the doctor's
+// deadline rather than sharing it: the checks after this one — the remote,
+// the staging repo — run on the same context, and a walk that used the
+// whole budget would hand them a cancelled one they would report as a
+// failure of their own.
+const desktopSizeBudget = 3 * time.Second
+
 // checkDesktopSize reports when the Desktop profiles are holding space that
 // `desktop prune` could give back — the VM image and caches, never chat
 // history. It stays silent below the threshold so a normal machine does not
@@ -82,10 +90,12 @@ func checkDesktopSize(ctx context.Context) (Result, bool) {
 	if err != nil || len(profiles) == 0 {
 		return Result{}, false
 	}
+	walk, cancel := context.WithTimeout(ctx, desktopSizeBudget)
+	defer cancel()
 	var total, reclaim int64
 	for _, p := range profiles {
-		u, merr := desktop.MeasureContext(ctx, p)
-		if ctx.Err() != nil {
+		u, merr := desktop.MeasureContext(walk, p)
+		if walk.Err() != nil {
 			return Result{}, false
 		}
 		if merr != nil {

@@ -355,4 +355,12 @@ func TestCheckDesktopSize(t *testing.T) {
 	if r, ok := checkDesktopSize(expired); ok {
 		t.Fatalf("expired context: got %+v, want silence", r)
 	}
+	// And the walk's own budget never spends the caller's: the context the
+	// later checks share is still live afterwards.
+	shared, cancelShared := context.WithTimeout(ctx, time.Minute)
+	defer cancelShared()
+	checkDesktopSize(shared)
+	if shared.Err() != nil {
+		t.Fatal("the size check cancelled the shared doctor context")
+	}
 }
