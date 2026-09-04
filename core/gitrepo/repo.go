@@ -462,18 +462,37 @@ func runGitStdin(ctx context.Context, dir, stdin string, env []string, args ...s
 // goes. A path that is not tracked is not an error: the point is that it is
 // gone.
 func (r *Repo) RemoveTree(ctx context.Context, dir string) error {
-	if _, err := runGit(ctx, r.Dir, "rm", "-rqf", "--ignore-unmatch", "--", dir); err != nil {
+	// Only ever a directory inside this repository — checked before git rm
+	// runs, not after: "." would empty the index, and ".git" would take the
+	// repository itself.
+	full := filepath.Join(r.Dir, filepath.FromSlash(dir))
+	rel, err := filepath.Rel(r.Dir, full)
+	sep := string(filepath.Separator)
+	switch {
+	case err != nil, rel == ".", rel == "..", strings.HasPrefix(rel, ".."+sep):
+		return fmt.Errorf("refusing to remove %q: not a directory inside the repository", dir)
+	case rel == ".git", strings.HasPrefix(rel, ".git"+sep):
+		return fmt.Errorf("refusing to remove %q: that is the repository's own metadata", dir)
+	}
+	if _, err := runGit(ctx, r.Dir, "rm", "-rqf", "--ignore-unmatch", "--", rel); err != nil {
 		return err
 	}
 	// git rm knows only the index: ignored build output and untracked files
 	// stay behind, and the next commit would stage the untracked ones. The
-	// directory goes too, but only ever a directory inside this repository.
-	full := filepath.Join(r.Dir, filepath.FromSlash(dir))
-	rel, err := filepath.Rel(r.Dir, full)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("refusing to remove %q: not a directory inside the repository", dir)
-	}
+	// directory goes too.
 	return os.RemoveAll(full)
+}
+
+// exitStatus is the exit status behind a runGit error, or -1 when the
+// failure was not git's own (the binary missing, the context cancelled).
+// git tells "no" from "could not answer" by exit status alone: 1 for a
+// question with a negative answer, 128 for one it could not process.
+func exitStatus(err error) int {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
+	return -1
 }
 
 // SetRef points ref at sha, creating it if need be.
@@ -503,7 +522,12 @@ func (r *Repo) IgnoredPaths(ctx context.Context, dir string) ([]string, error) {
 // DeleteRef removes a ref if it exists. A ref that is already absent is fine.
 func (r *Repo) DeleteRef(ctx context.Context, ref string) error {
 	if _, err := runGit(ctx, r.Dir, "rev-parse", "--verify", "--quiet", ref); err != nil {
-		return nil
+		// Exit status 1 is "no such ref", which is the answer wanted;
+		// anything else is git not having answered, which is not.
+		if exitStatus(err) == 1 {
+			return nil
+		}
+		return err
 	}
 	_, err := runGit(ctx, r.Dir, "update-ref", "-d", ref)
 	return err
@@ -514,7 +538,9 @@ func (r *Repo) DeleteRef(ctx context.Context, ref string) error {
 func (r *Repo) MergeBase(ctx context.Context, a, b string) (string, error) {
 	out, err := runGit(ctx, r.Dir, "merge-base", a, b)
 	if err != nil {
-		if strings.Contains(err.Error(), "exit status 1") {
+		// Exit status 1 is git's "no common ancestor"; 128 is a revision
+		// it could not resolve, which must not read as the same answer.
+		if exitStatus(err) == 1 {
 			return "", nil
 		}
 		return "", err

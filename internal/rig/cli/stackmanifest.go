@@ -144,10 +144,13 @@ type stackManifest struct {
 	// a tag would drag the stackspace along, which is the one thing a pin is for.
 	// Machine-written, like LastSync, and absent for a prefix following a branch.
 	LastPin map[string]string `json:"lastPin,omitempty"`
-	// LastPropose maps prefix -> the branch name last given to `propose`, as
-	// typed rather than as prefixed. Proposing again to the same branch is how an
-	// open pull request takes review feedback, so that name is usually wanted
-	// several times and is tedious to retype exactly. Machine-written, like the
+	// LastPropose maps prefix -> the branch `propose` last pushed to, as
+	// pushed: prefix and all, so a rebuild and a re-propose look for exactly
+	// that branch even after branchPrefix changes. Proposing again to the same
+	// branch is how an open pull request takes review feedback, so that name is
+	// usually wanted several times and is tedious to retype exactly. A manifest
+	// from before the record was kept that way holds the bare name as typed;
+	// proposeBranch and stackForkRefFor read both. Machine-written, like the
 	// cursors beside it.
 	LastPropose map[string]string `json:"lastPropose,omitempty"`
 }

@@ -152,11 +152,21 @@ func newStackRemoveCmd() *cobra.Command {
 						restored = "the manifest and " + name + "/ were put back (ignored build output under it is gone)"
 					}
 				}
+				// Overlay files are put back as HEAD has them. One rig
+				// wrote but nobody committed is gone with that — it is
+				// generated, and `rig stack wire` writes it again — but
+				// that is said, not left to be discovered.
+				var uncommitted []string
 				for _, f := range touched {
-					stackRestoreFromHead(ctx, repo, f)
+					if !stackRestoreFromHead(ctx, repo, f) {
+						uncommitted = append(uncommitted, f)
+					}
 				}
 				if len(touched) > 0 {
 					restored += ", and so were the overlay files already rewritten"
+				}
+				if len(uncommitted) > 0 {
+					restored += fmt.Sprintf(" (%s had never been committed and is gone; `rig stack wire` writes it again)", strings.Join(uncommitted, ", "))
 				}
 				return restored
 			}
@@ -320,15 +330,16 @@ func stackIsManifestPath(root string, src *cfgfind.Source, p string) bool {
 }
 
 // stackRestoreFromHead puts one path back as HEAD has it — or removes it,
-// when HEAD never had it — so a file an overlay write created, rewrote or
-// deleted reads as it did before the write. Best effort: this runs on the
-// way out of a failure the caller is about to report.
-func stackRestoreFromHead(ctx context.Context, repo *gitrepo.Repo, rel string) {
+// when HEAD never had it, reporting false — so a file an overlay write
+// created, rewrote or deleted reads as it did before the write. Best effort:
+// this runs on the way out of a failure the caller is about to report.
+func stackRestoreFromHead(ctx context.Context, repo *gitrepo.Repo, rel string) bool {
 	if _, err := repo.RevParse(ctx, "HEAD:"+rel); err != nil {
 		_ = os.Remove(filepath.Join(repo.Dir, filepath.FromSlash(rel)))
-		return
+		return false
 	}
 	_ = repo.ReplacePath(ctx, "HEAD", rel)
+	return true
 }
 
 // stackWire computes the redirects between the members m names and writes each

@@ -8,6 +8,8 @@
 package confkit
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,8 +137,16 @@ func writeWhole(filePath string, data []byte) error {
 	if resolved, err := filepath.EvalSymlinks(filePath); err == nil {
 		filePath = resolved
 	}
-	dir := filepath.Dir(filePath)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(filePath)+".*.tmp")
+	// An existing file keeps its own mode; a new one is created the way
+	// os.WriteFile would create it, 0644 under the process's umask — so a
+	// restrictive umask makes a private config, as it does for every other
+	// file, rather than being overridden here.
+	mode := fs.FileMode(0o644)
+	fresh := true
+	if fi, err := os.Stat(filePath); err == nil {
+		mode, fresh = fi.Mode().Perm(), false
+	}
+	tmp, err := createSibling(filePath, mode)
 	if err != nil {
 		return err
 	}
@@ -158,21 +168,43 @@ func writeWhole(filePath string, data []byte) error {
 		cleanup()
 		return err
 	}
-	// A new file takes the temp file's private mode; an existing one keeps
-	// its own.
-	mode := fs.FileMode(0o644)
-	if fi, err := os.Stat(filePath); err == nil {
-		mode = fi.Mode().Perm()
-	}
-	if err := os.Chmod(name, mode); err != nil {
-		cleanup()
-		return err
+	// The temporary file was created under the umask; an existing file's
+	// exact mode is put back after, since the umask may have masked it.
+	if !fresh {
+		if err := os.Chmod(name, mode); err != nil {
+			cleanup()
+			return err
+		}
 	}
 	if err := os.Rename(name, filePath); err != nil {
 		cleanup()
 		return err
 	}
 	return nil
+}
+
+// createSibling opens a new temporary file beside filePath with the given
+// mode (subject to the umask, as any created file is), trying a few random
+// names so a leftover from an interrupted run is never reused.
+func createSibling(filePath string, mode fs.FileMode) (*os.File, error) {
+	dir, base := filepath.Dir(filePath), filepath.Base(filePath)
+	var err error
+	for i := 0; i < 100; i++ {
+		var buf [6]byte
+		if _, rerr := rand.Read(buf[:]); rerr != nil {
+			return nil, rerr
+		}
+		name := filepath.Join(dir, "."+base+"."+hex.EncodeToString(buf[:])+".tmp")
+		var f *os.File
+		f, err = os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, mode)
+		if err == nil {
+			return f, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return nil, err
+		}
+	}
+	return nil, err
 }
 
 // freshDocument renders a brand-new config file: the $schema header (when set)

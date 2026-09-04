@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -261,5 +262,48 @@ func TestReplacePath(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "other/untouched.txt")); err != nil {
 		t.Error("other/ was touched; only the named path should change")
+	}
+}
+
+// RemoveTree never runs git rm on the repository itself or its metadata, and
+// MergeBase tells "no common ancestor" (exit 1) from "no such revision"
+// (exit 128) by the exit status, not by a substring of it.
+func TestRemoveTreeGuardsAndMergeBaseErrors(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	r, err := Init(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Commit(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{".", "..", ".git", ".git/refs", "../elsewhere"} {
+		if err := r.RemoveTree(ctx, bad); err == nil {
+			t.Errorf("RemoveTree(%q) succeeded", bad)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git", "HEAD")); err != nil {
+		t.Fatal("a refused RemoveTree touched .git")
+	}
+	if out, err := runGit(ctx, dir, "ls-files"); err != nil || strings.TrimSpace(out) != "a.txt" {
+		t.Fatalf("a refused RemoveTree touched the index: %q, %v", out, err)
+	}
+	if _, err := r.MergeBase(ctx, "HEAD", "no-such-revision"); err == nil {
+		t.Error("MergeBase with an unknown revision returned no error")
+	}
+	if base, err := r.MergeBase(ctx, "HEAD", "HEAD"); err != nil || base == "" {
+		t.Errorf("MergeBase(HEAD, HEAD) = %q, %v", base, err)
+	}
+	if err := r.DeleteRef(ctx, "refs/rigsmith/none"); err != nil {
+		t.Errorf("deleting an absent ref: %v", err)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := r.DeleteRef(cancelled, "refs/rigsmith/none"); err == nil {
+		t.Error("a cancelled DeleteRef reported success")
 	}
 }

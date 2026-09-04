@@ -514,7 +514,9 @@ branch moved or deleted since, or a fork that cannot be asked, is refused
 rather than guessed about. A directory holding files
 git ignores — build output, a local `.env` — is refused too, naming them: no
 history gets those back. `--force` removes it anyway; `--keep-tree` leaves
-them where they are.
+them where they are. `--keep-tree` wants a clean prefix, whatever else is
+passed: the removal commit stages the whole tree, so uncommitted edits under a
+directory that stays would ride into it unread — commit or stash them first.
 
 ## Moving a stackspace to another machine {#seed}
 
