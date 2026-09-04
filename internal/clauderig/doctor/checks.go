@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rigsmith/rigsmith/core/confkit"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/claudemd"
@@ -111,6 +112,24 @@ func checkDesktopSize(ctx context.Context) (Result, bool) {
 		Detail: fmt.Sprintf("%s on disk, %s of it reclaimable (Cowork VM image and caches)",
 			desktop.HumanSize(total), desktop.HumanSize(reclaim)),
 		Hint: "`clauderig desktop prune --dry-run` shows the breakdown; `--vm` resets the VM image, leaving logins and chat history alone",
+	}, true
+}
+
+// checkRestricted flags a session that Claude Code will run with `--restricted`
+// semantics. In that mode Claude Code ignores user, project and local
+// settings.json entirely — not just their permission rules — so none of the
+// hooks clauderig installs into those files fire: no sync on SessionStart/Stop,
+// and no PreToolUse guard. The check reports only when the variable is set, so
+// a normal environment does not carry a permanent "not restricted" line.
+func checkRestricted() (Result, bool) {
+	// Read the way Claude Code reads its boolean flags — confkit.Truthy is
+	// that rule (1/true/yes/on, any case), shared rather than repeated.
+	if !confkit.Truthy("CLAUDE_CODE_RESTRICTED") {
+		return Result{}, false
+	}
+	return Result{Name: "restricted mode", Status: Warn,
+		Detail: "CLAUDE_CODE_RESTRICTED is set — Claude Code ignores user, project and local settings.json in this mode",
+		Hint:   "the sync hooks and the guard hook will not run in sessions started from this environment; unset it, or accept that those sessions neither sync nor enforce worktree discipline",
 	}, true
 }
 

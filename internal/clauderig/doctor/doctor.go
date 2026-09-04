@@ -68,6 +68,9 @@ func Run(ctx context.Context, env Env) []Section {
 	if r, ok := checkDesktopSize(ctx); ok {
 		environment.Results = append(environment.Results, r)
 	}
+	if r, ok := checkRestricted(); ok {
+		environment.Results = append(environment.Results, r)
+	}
 
 	sync := Section{Title: "sync", Results: []Result{
 		checkRemote(ctx, env),

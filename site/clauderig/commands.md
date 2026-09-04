@@ -304,6 +304,13 @@ Wires two Claude Code hooks: **SessionStart → pull** (so each session starts
 from the latest synced state) and **Stop → sync** (so your work is captured when
 a session ends). Both are portable across OSes and idempotent.
 
+Both hooks live in settings.json files, and Claude Code's `--restricted` mode
+(or `CLAUDE_CODE_RESTRICTED=1`) ignores every settings.json tier — user, project
+and local — so a restricted session neither syncs nor runs the guard. There is
+nothing clauderig can install that survives that; `clauderig doctor` warns when
+the variable is set in the environment it runs from, so the gap is visible rather
+than silent.
+
 ## Worktree discipline
 
 `clauderig guard` (a PreToolUse hook) and `rig worktree` make worktrees and
