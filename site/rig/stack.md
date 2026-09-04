@@ -239,6 +239,10 @@ declared once, the package name and where its sources are:
     <ProjectReference Include="@(_StackPresent->'$(MSBuildThisFileDirectory)%(Path)')" />
     <PackageReference Remove="@(StackSource)" />
   </ItemGroup>
+
+  <PropertyGroup>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+  </PropertyGroup>
 </Project>
 ```
 
@@ -246,6 +250,18 @@ declared once, the package name and where its sources are:
 project does *not* reference and `_StackPresent` is the complement — exactly the
 swaps that project needs. Only actual consumers get rewired, which is what stops
 `Pty.Core` gaining a reference to itself.
+
+The last block is there for anything that reads a dependency's *internals*. A
+package ships one assembly, and a publicizer such as
+`IgnoresAccessChecksToGenerator` rewrites what the compiler sees. A project
+reference also produces a *reference* assembly, internals stripped, and hands
+the consumer that one — so the publicized copy is built and then ignored, and
+every internal comes back as `CS0122` on members that did not change. Turning
+reference assemblies off inside the stackspace costs nothing, since everything
+rebuilds together anyway, and `wire` writes the property for every project the
+overlay reaches rather than trying to match the redirected ones by path, which
+could fail silently across platforms. `-p:UseStackSources=false` switches it
+off along with the swaps.
 
 What that buys is one unedited project file with two possible resolutions:
 
@@ -316,8 +332,10 @@ missed it.
   `@(ReferencePathWithRefAssemblies)`. Those are the same items for a package and
   *different* for a project reference, which produces a reference assembly. The
   publicized copy is built and then ignored, and every internal it was meant to
-  expose comes back as `CS0122`. Set `ProduceReferenceAssembly` to false on that
-  member.
+  expose comes back as `CS0122`. The overlay `wire` writes turns
+  `ProduceReferenceAssembly` off for exactly this reason; if you hand-wrote
+  yours, add that block, and if yours predates it `rig stack doctor` reports it
+  as out of date.
 - **Nothing warns you when part of an overlay does nothing.** Removing a
   `PackageReference` for something that is actually a `ProjectReference` — a
   vendored copy, say — is valid MSBuild and a silent no-op. Delete blocks that

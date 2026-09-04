@@ -316,3 +316,57 @@ func TestLocalOverlayPatchesShadowing(t *testing.T) {
 		}
 	})
 }
+
+// The swap breaks publicizers unless reference assemblies are off, and the
+// overlay is the one place that can say so without editing a member.
+func TestLocalOverlayDisablesReferenceAssemblies(t *testing.T) {
+	ctx := context.Background()
+	a := New()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "lib/src/Pty.Core/Pty.Core.csproj"), "<Project/>")
+	redirects := []plugin.Redirect{{Package: "Pty.Core", Path: "lib/src/Pty.Core/Pty.Core.csproj"}}
+	got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := got.Files[overlayFile]
+	if !strings.Contains(body, "<ProduceReferenceAssembly>false</ProduceReferenceAssembly>") {
+		t.Fatalf("overlay leaves reference assemblies on:\n%s", body)
+	}
+	// Behind the same switch as the swaps, so the pristine build stays pristine.
+	at := strings.Index(body, "<ProduceReferenceAssembly>")
+	if pg := strings.LastIndex(body[:at], "<PropertyGroup"); pg < 0 || !strings.Contains(body[pg:at], "UseStackSources") {
+		t.Errorf("the property is not conditioned on UseStackSources:\n%s", body)
+	}
+
+	// An overlay from before the property existed is reported as stale by a
+	// check, and rewritten by a write.
+	old := strings.Replace(body, overlayNoRefAssemblies, "", 1)
+	writeFile(t, filepath.Join(root, overlayFile), old)
+	got, err = a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stale bool
+	for _, p := range got.Problems {
+		if p.Path == overlayFile && strings.Contains(p.Message, "out of date") {
+			stale = true
+		}
+	}
+	if !stale {
+		t.Fatalf("stale overlay not reported: %+v", got.Problems)
+	}
+	if _, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: true}); err != nil {
+		t.Fatal(err)
+	}
+	now, _ := os.ReadFile(filepath.Join(root, overlayFile))
+	if string(now) != body {
+		t.Error("write did not bring the overlay up to date")
+	}
+	got, _ = a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+	for _, p := range got.Problems {
+		if strings.Contains(p.Message, "out of date") {
+			t.Error("still reported stale after a rewrite")
+		}
+	}
+}

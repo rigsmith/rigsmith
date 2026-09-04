@@ -453,3 +453,23 @@ exactly its own swaps and no others.
 
 This is the shape `rig stack adopt` should generate, since it is the one a human
 can extend by adding a line.
+
+### Reference assemblies (2026-09-04, #258)
+
+The swap has one more silent failure. A consumer that reads another member's
+internals through a publicizer (`IgnoresAccessChecksToGenerator`) compiles fine
+against the package and fails fused with a wall of `CS0122`, on members that did
+not change. The publicizer rewrites the implementation assembly; a project
+reference hands the consumer the *reference* assembly the SDK produces by
+default, which has internals stripped and was never publicized. Packages ship no
+reference assembly, which is why the same code built before.
+
+`wire` therefore writes `ProduceReferenceAssembly=false` into the overlay, under
+the same `UseStackSources` switch as the swaps. Every project under the overlay
+gets it, not only the redirected ones: matching the current project against the
+redirect paths in a condition means separators and casing that differ by
+platform, and a match that fails does so silently — the failure mode the overlay
+exists to prevent — while reference assemblies are a build-time optimisation
+whose absence costs nothing where everything rebuilds together. A generated
+overlay that no longer matches what rig would write is reported by `doctor` as
+out of date, so a stackspace wired before this change learns to re-run `wire`.

@@ -42,6 +42,17 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	body := renderOverlay(req.Redirects)
 	resp.Files = map[string]string{overlayFile: body}
 	if !req.Write {
+		// An overlay rig wrote earlier that no longer matches what it would
+		// write now — a member added since, or a release that changed the
+		// template — is exactly as silent as a missing one, so a check says so.
+		if existing, err := os.ReadFile(filepath.Join(req.Root, overlayFile)); err == nil &&
+			strings.Contains(string(existing), overlayMarker) && string(existing) != body {
+			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+				Path:    overlayFile,
+				Message: "out of date — it differs from what the current members and rig would write; re-run `rig stack wire`",
+				Fixable: true,
+			})
+		}
 		return resp, nil
 	}
 
@@ -225,7 +236,36 @@ func renderOverlay(redirects []plugin.Redirect) string {
     <PackageReference Remove="@(StackSource)" />
   </ItemGroup>
 
-</Project>
 `)
+	b.WriteString(overlayNoRefAssemblies)
+	b.WriteString("\n</Project>\n")
 	return b.String()
 }
+
+// overlayNoRefAssemblies is the part of the overlay that keeps a swap from
+// breaking anything that reads a dependency's internals.
+//
+// A package ships one assembly, and a publicizer (IgnoresAccessChecksTo and
+// friends) rewrites what the compiler sees. A project reference is different:
+// the SDK also produces a *reference* assembly, internals stripped, and hands
+// the consumer that one — so the publicized copy is built and then ignored,
+// and every internal comes back as CS0122, on members that did not change.
+// Nothing about the code, the versions, or InternalsVisibleTo is involved,
+// which is why it reads like API drift and costs an afternoon.
+//
+// Every project under the overlay gets the property, not only the redirected
+// ones. Matching the current project against the redirect paths would have to
+// be done in a condition, with separators and casing that differ across
+// platforms, and a match that fails does so silently — the very thing this
+// overlay exists to prevent. Reference assemblies are a build-time
+// optimisation, and inside a stackspace, where everything rebuilds together,
+// the cost of not having them is small. The escape hatch is the same one that
+// restores the against-real-packages build.
+const overlayNoRefAssemblies = `  <!-- A project reference hands consumers a reference assembly, internals
+       stripped, that a publicizer (IgnoresAccessChecksTo) never rewrote — so a
+       swap above would turn every internal it exposes into CS0122. Packages ship
+       no reference assembly, which is why the same code compiled before. -->
+  <PropertyGroup Condition="'$(UseStackSources)' != 'false'">
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+  </PropertyGroup>
+`
