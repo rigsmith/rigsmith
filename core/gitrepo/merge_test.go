@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -121,9 +122,10 @@ func TestResolveOurs(t *testing.T) {
 		t.Fatalf("still unmerged: %v", left)
 	}
 	must(t, a.CommitMerge(ctx))
-	for f, want := range map[string]string{"keep.txt": "ours\n", "gone.txt": "ours\n"} {
+	for f, want := range map[string]string{"keep.txt": "ours", "gone.txt": "ours"} {
 		got, err := os.ReadFile(filepath.Join(a.Dir, f))
-		if err != nil || string(got) != want {
+		// Trimmed: a Windows checkout with autocrlf hands the file back CRLF.
+		if err != nil || strings.TrimSpace(string(got)) != want {
 			t.Errorf("%s = %q, %v; want %q", f, got, err, want)
 		}
 	}

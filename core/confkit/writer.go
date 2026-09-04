@@ -159,7 +159,7 @@ func quoteJSON(s string) string {
 	return string(raw)
 }
 
-// Delete removes path (depth 1–2) from the file, preserving comments and
+// Delete removes path (any depth) from the file, preserving comments and
 // formatting the same way Set does. A file that does not exist, or a path that
 // is not in it, is a success that changes nothing. False means the file could
 // not be edited safely and nothing was written.

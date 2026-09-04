@@ -456,10 +456,12 @@ func runGitStdin(ctx context.Context, dir, stdin string, env []string, args ...s
 	return out.String(), nil
 }
 
-// RemoveTree deletes dir from the index and the working tree, recursively. A
-// path that is not tracked is not an error: the point is that it is gone.
+// RemoveTree deletes dir from the index and the working tree, recursively,
+// modified files included — the caller has already decided the directory
+// goes. A path that is not tracked is not an error: the point is that it is
+// gone.
 func (r *Repo) RemoveTree(ctx context.Context, dir string) error {
-	_, err := runGit(ctx, r.Dir, "rm", "-rq", "--ignore-unmatch", "--", dir)
+	_, err := runGit(ctx, r.Dir, "rm", "-rqf", "--ignore-unmatch", "--", dir)
 	return err
 }
 

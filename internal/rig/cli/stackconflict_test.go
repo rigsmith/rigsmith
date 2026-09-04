@@ -79,7 +79,8 @@ func TestStackSettleConflicts(t *testing.T) {
 		}
 		for _, f := range []string{"mermaider/LICENSE.txt", "mermaider/src/x.cs"} {
 			got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(f)))
-			if err != nil || string(got) != "ours\n" {
+			// Trimmed: a Windows checkout with autocrlf hands the file back CRLF.
+			if err != nil || strings.TrimSpace(string(got)) != "ours" {
 				t.Errorf("%s = %q, %v; want ours", f, got, err)
 			}
 		}

@@ -82,6 +82,33 @@ func TestDelete(t *testing.T) {
 		}
 	})
 
+	t.Run("a member three deep, as an inline stack block keeps them", func(t *testing.T) {
+		doc := `{
+  "stack": {
+    "repos": {
+      "pty-core": { "upstream": "a" },
+      "term-core": { "upstream": "b" }
+    },
+    "lastSync": { "pty-core": "abc" }
+  },
+  "repos": { "pty-core": "decoy at the wrong depth" }
+}`
+		got, ok := Delete(doc, []string{"stack", "repos", "pty-core"})
+		if !ok {
+			t.Fatal("Delete returned false")
+		}
+		var m map[string]any
+		if err := Unmarshal([]byte(got), &m); err != nil {
+			t.Fatalf("not valid: %v\n%s", err, got)
+		}
+		repos := m["stack"].(map[string]any)["repos"].(map[string]any)
+		if _, still := repos["pty-core"]; still || repos["term-core"] == nil {
+			t.Fatalf("repos = %v", repos)
+		}
+		mustContain(t, got, `"lastSync": { "pty-core": "abc" }`)
+		mustContain(t, got, `"decoy at the wrong depth"`)
+	})
+
 	t.Run("an absent member is a no-op success", func(t *testing.T) {
 		got, ok := Delete(src, []string{"repos", "nope"})
 		if !ok || got != src {

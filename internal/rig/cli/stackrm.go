@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -84,6 +85,11 @@ func newStackRemoveCmd() *cobra.Command {
 				}
 			}
 
+			// The manifest is edited on disk before the tree goes, so keep its
+			// bytes: a removal that fails after the edit would otherwise leave
+			// the member gone from the file and present in the tree, which is
+			// the half-done state this verb exists to prevent.
+			before, readErr := os.ReadFile(src.File)
 			if err := stackForgetRepo(src, m, name); err != nil {
 				return err
 			}
@@ -92,7 +98,10 @@ func newStackRemoveCmd() *cobra.Command {
 			if keepTree {
 				fmt.Fprintf(out, "  %s/ kept — it is an ordinary directory of this repository now\n", name)
 			} else if err := repo.RemoveTree(ctx, name); err != nil {
-				return fmt.Errorf("removing %s/: %w", name, err)
+				if readErr == nil {
+					_ = os.WriteFile(src.File, before, 0o644)
+				}
+				return fmt.Errorf("removing %s/: %w (the manifest was put back)", name, err)
 			} else {
 				fmt.Fprintf(out, "  %s/ deleted from the tree\n", name)
 			}
@@ -160,10 +169,10 @@ func newStackRemoveMenuCmd() *cobra.Command {
 // (cursor, pin, last proposed branch) from the manifest file, comments and
 // formatting intact, and from m.
 //
-// The entry is deleted in place. The records live in top-level maps, and a
-// dedicated manifest can delete one member of each; an inline `stack` block in
-// .rig.json puts them a level deeper than the editor reaches, so there the
-// whole map is rewritten — the same way a pull records a cursor.
+// The entry is deleted in place at whatever depth the manifest keeps it. The
+// records live in top-level maps: a dedicated manifest deletes one member of
+// each, and an inline `stack` block in .rig.json rewrites the whole map — the
+// same way a pull records a cursor there.
 func stackForgetRepo(src *cfgfind.Source, m *stackManifest, name string) error {
 	w := confkit.Writer{SchemaURL: stackSchemaURL}
 	embedded := src.Path == ""

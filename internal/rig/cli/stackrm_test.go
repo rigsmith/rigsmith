@@ -146,6 +146,63 @@ func TestStackRm(t *testing.T) {
 		}
 	})
 
+	t.Run("--force discards uncommitted edits under the prefix", func(t *testing.T) {
+		root := rmStackspace(t, rmManifest)
+		if err := os.WriteFile(filepath.Join(root, "pty-core", "src", "lib.cs"), []byte("// edited\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := runRm(t, "pty-core", "--force"); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if _, err := os.Stat(filepath.Join(root, "pty-core")); !os.IsNotExist(err) {
+			t.Error("pty-core/ still on disk after --force")
+		}
+		if st := mustGitStack(t, root, "status", "--porcelain"); strings.TrimSpace(st) != "" {
+			t.Errorf("removal not committed:\n%s", st)
+		}
+	})
+
+	t.Run("an inline stack block in .rig.json loses the entry too", func(t *testing.T) {
+		root := t.TempDir()
+		mustGitStack(t, root, "init", "-q", "-b", "main")
+		mustGitStack(t, root, "config", "user.email", "t@t")
+		mustGitStack(t, root, "config", "user.name", "t")
+		if err := os.WriteFile(filepath.Join(root, ".rig.json"), []byte(`{
+  "stack": {
+    "repos": {
+      "pty-core":  { "upstream": "github.com/acme/pty-core", "fork": "github.com/you/pty-core" },
+      "term-core": { "upstream": "github.com/acme/term-core", "fork": "github.com/you/term-core" }
+    },
+    "lastSync": { "pty-core": "0123456789abcdef0123456789abcdef01234567", "term-core": "89abcdef0123456789abcdef0123456789abcdef" }
+  }
+}
+`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range []string{"pty-core/src/lib.cs", "term-core/src/lib.cs"} {
+			p := filepath.Join(root, filepath.FromSlash(f))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("// code\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		mustGitStack(t, root, "add", "-A")
+		mustGitStack(t, root, "commit", "-qm", "stackspace")
+		chdir(t, root)
+		if out, err := runRm(t, "pty-core", "--force"); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		m, _, err := loadStackManifest(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.Repos["pty-core"] != nil || m.Repos["term-core"] == nil || m.LastSync["pty-core"] != "" || m.LastSync["term-core"] == "" {
+			t.Fatalf("after rm: repos=%v lastSync=%v", m.names(), m.LastSync)
+		}
+	})
+
 	t.Run("uncommitted changes elsewhere are refused too", func(t *testing.T) {
 		root := rmStackspace(t, rmManifest)
 		if err := os.WriteFile(filepath.Join(root, "term-core", "src", "lib.cs"), []byte("// edited\n"), 0o644); err != nil {

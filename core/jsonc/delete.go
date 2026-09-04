@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Delete removes the member at path (depth 1 or 2) from the document,
+// Delete removes the member at path (any depth) from the document,
 // preserving everything else byte-for-byte: comments, formatting, key order.
 // The member's own line goes with it — including a trailing comment on that
 // line and any full-line `//` comments directly above it, which Set treats as
@@ -14,12 +14,12 @@ import (
 //
 // It returns the edited document and true on success. A path that is not
 // present is a success that changes nothing. False means the document could
-// not be edited safely — malformed input, an unsupported depth, a root or
-// parent that is not an object — and the input is returned unchanged.
+// not be edited safely — malformed input, an empty path, a root or parent that
+// is not an object — and the input is returned unchanged.
 func Delete(text string, path []string) (string, bool) {
 	original := text
 	text = strings.TrimPrefix(text, "\uFEFF")
-	if len(path) == 0 || len(path) > 2 {
+	if len(path) == 0 {
 		return original, false
 	}
 	orig := []byte(text)
@@ -38,18 +38,22 @@ func Delete(text string, path []string) (string, bool) {
 	return string(orig[:start]) + string(orig[end:]), true
 }
 
-// locateMember finds the byte span of a member's name and value. found is false
-// when the path is absent; ok is false when the document's shape makes the
-// question unanswerable (a non-object root or parent).
+// locateMember finds the byte span of a member's name and value at any
+// depth. found is false when the path is absent; ok is false when the
+// document's shape makes the question unanswerable (a non-object root, or a
+// path segment whose value is not an object).
+//
+// depth counts open containers, so the root object is depth 1. matched is how
+// many leading path segments are currently open: inside the object that is
+// path[k-1]'s value, matched == k, and that object sits at depth k+1. A
+// property is therefore a candidate only at depth matched+1, which keeps a
+// same-named key inside some unrelated nested object from matching.
 func locateMember(stripped []byte, path []string) (nameStart, valueEnd int, found, ok bool) {
-	depth := 0
-	target := len(path)
-	insideParent := target == 1 // depth-1 members are "inside" the root
+	depth, matched := 0, 0
 	awaitingParent, awaitingValue := false, false
-	parentSeen := false
 	rootIsObject := false
-	s := scanner{data: stripped}
 	pendingName := -1
+	s := scanner{data: stripped}
 	for {
 		t, tok := s.next()
 		if !tok {
@@ -65,10 +69,10 @@ func locateMember(stripped []byte, path []string) (nameStart, valueEnd int, foun
 		if awaitingParent {
 			awaitingParent = false
 			if t.kind != tokStartObject {
-				return 0, 0, false, false // parent is not an object
+				return 0, 0, false, false // a segment's value is not an object
 			}
-			insideParent = true
 			depth++
+			matched++
 			continue
 		}
 		switch t.kind {
@@ -81,24 +85,27 @@ func locateMember(stripped []byte, path []string) (nameStart, valueEnd int, foun
 			depth++
 		case tokEndObject, tokEndArray:
 			depth--
-			if target == 2 && insideParent && depth == 1 {
-				insideParent = false
+			// Leaving the innermost matched object drops it from the chain.
+			if depth <= matched {
+				matched = depth - 1
+				if matched < 0 {
+					matched = 0
+				}
 			}
 		case tokPropertyName:
-			switch {
-			case target == 2 && depth == 1 && propertyNameEquals(t.raw, path[0]):
-				parentSeen = true
-				awaitingParent = true
-			case depth == target && insideParent && propertyNameEquals(t.raw, path[target-1]):
-				pendingName = t.start
-				awaitingValue = true
+			if depth == matched+1 && propertyNameEquals(t.raw, path[matched]) {
+				if matched+1 == len(path) {
+					pendingName = t.start
+					awaitingValue = true
+				} else {
+					awaitingParent = true
+				}
 			}
 		}
 	}
 	if !rootIsObject {
 		return 0, 0, false, false
 	}
-	_ = parentSeen
 	return 0, 0, false, true
 }
 

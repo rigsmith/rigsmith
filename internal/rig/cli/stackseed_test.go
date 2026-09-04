@@ -63,6 +63,7 @@ func TestStackSeed(t *testing.T) {
 		cmd := newStackSeedCmd()
 		cmd.SetContext(context.Background())
 		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
 		cmd.SetArgs([]string{dest})
 		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "not empty") {
 			t.Fatalf("err = %v", err)
