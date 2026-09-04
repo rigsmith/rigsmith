@@ -21,6 +21,8 @@ clauderig pull                 # fetch latest into the staging repo (SessionStar
 clauderig account list         # show stored Claude Code logins (alias: ls / status)
 clauderig account run me@x.com # launch Claude Code as another account, isolated session
 clauderig mcp add ctx7 npx -y @upstash/context7-mcp   # manage MCP servers (list/add/remove/enable)
+clauderig desktop open work    # a Claude Desktop window per account, each its own profile
+clauderig desktop prune --vm   # reclaim the Cowork VM image + caches; keeps login and history
 rig worktree new feat/x        # sibling worktree + review window; never moves this session
 clauderig doctor               # health-check env + sync + worktree discipline (--fix repairs)
 clauderig hooks install        # SessionStart→pull, Stop→sync (portable, idempotent)

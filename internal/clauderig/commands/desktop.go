@@ -55,6 +55,7 @@ func NewDesktopCmd() *cobra.Command {
 			"  quit      close a profile's window\n" +
 			"  map       bind a directory to a profile, for a bare `open` there\n" +
 			"  shortcut  make a clickable launcher (desktop icon / app menu entry)\n" +
+			"  prune     reclaim disk space (caches; --vm the Cowork VM image) without deleting\n" +
 			"  rm        delete a profile (logs that account out of Desktop for good)\n\n" +
 			"Separate from `clauderig account`, which switches the Claude Code CLI login.",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -66,7 +67,7 @@ func NewDesktopCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newDesktopAddCmd(), newDesktopOpenCmd(), newDesktopListCmd(),
 		newDesktopQuitCmd(), newDesktopRemoveCmd(), newDesktopMapCmd(), newDesktopUnmapCmd(),
-		newDesktopShortcutCmd())
+		newDesktopShortcutCmd(), newDesktopPruneCmd())
 	return cmd
 }
 
@@ -611,12 +612,22 @@ func newDesktopListCmd() *cobra.Command {
 				if p.AccountID != "" {
 					line += "  " + DimStyle.Render("↔ "+p.AccountID)
 				}
+				// The size is on the line so growth is discoverable without
+				// digging: nearly all of a large profile is the Cowork VM image,
+				// which only ever grows, and `desktop prune` is the lever.
+				if size, serr := desktop.DirSize(p.Dir()); serr == nil {
+					line += "  " + DimStyle.Render(desktop.HumanSize(size))
+				} else {
+					line += "  " + WarnStyle.Render("size unknown")
+				}
 				fmt.Fprintln(out, line)
 			}
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"each profile is its own login — opening one never signs another out"))
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
 				"chat history is per profile — `clauderig sync` backs each one up separately"))
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(
+				"`clauderig desktop prune --dry-run` shows what each profile's size is made of"))
 			return nil
 		},
 	}
@@ -779,6 +790,8 @@ type desktopProfileJSON struct {
 	Open        bool   `json:"open"`
 	OpenUnknown bool   `json:"openUnknown,omitempty"`
 	DataDir     string `json:"dataDir"`
+	SizeBytes   int64  `json:"sizeBytes"`
+	SizeUnknown bool   `json:"sizeUnknown,omitempty"`
 	CreatedAt   string `json:"createdAt,omitempty"`
 	LastOpened  string `json:"lastOpened,omitempty"`
 }
@@ -807,6 +820,13 @@ func printDesktopJSON(w interface{ Write([]byte) (int, error) }, _ *desktop.Stor
 			DataDir:    p.DataDir(),
 			CreatedAt:  p.CreatedAt,
 			LastOpened: p.LastOpened,
+		}
+		// A measurement that failed is said so, for the same reason as the
+		// process scan below: zero would read as an empty profile.
+		if size, serr := desktop.DirSize(p.Dir()); serr == nil {
+			row.SizeBytes = size
+		} else {
+			row.SizeUnknown = true
 		}
 		// A failed scan is reported as such rather than as `open: false`, so a
 		// script cannot mistake "could not look" for "not running".

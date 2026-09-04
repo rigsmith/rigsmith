@@ -50,10 +50,11 @@ never the login. Nothing to enable, nothing to run with the windows closed.
 ```console
 $ clauderig desktop list
 Claude Desktop profiles
-● work · john@work.com      open    ↔ john-work-com
-  personal · john@home.com  closed
+● work · john@work.com      open    ↔ john-work-com  9.6 GB
+  personal · john@home.com  closed  412.3 MB
 each profile is its own login — opening one never signs another out
 chat history is per profile — `clauderig sync` backs each one up separately
+`clauderig desktop prune --dry-run` shows what each profile's size is made of
 ```
 
 ## Why this model, when the last one was withdrawn
@@ -97,12 +98,36 @@ than working around it.
 | `clauderig desktop open [<name\|email>]` | Open the profile's window, or focus it if already open. `--session` opens it on a Claude Code session; `-i` picks one from a list. |
 | `clauderig desktop list` (alias `ls`) | Saved profiles; `●` marks the ones open right now. |
 | `clauderig desktop quit [<name\|email>]` | Close that profile's window (SIGTERM, then firmly, then confirmed). |
+| `clauderig desktop prune [<name\|email>] [--vm\|--all] [--dry-run] [--yes]` | Reclaim disk without deleting the profile: Electron caches by default; `--vm` also the unpacked Cowork VM image (re-extracted next launch, VM contents lost); `--all` the whole bundle (re-downloaded). No name means every profile; `--vm` and `--all` confirm first, and off a terminal need `--yes`. |
 | `clauderig desktop rm <name\|email> [--force]` | Delete the profile. Signs that account out of Desktop for good. |
 | `clauderig desktop map [<name>] [dir]` / `unmap [dir]` | Bind a directory to a profile, so a bare `desktop open` there opens it. Bare `map` lists every binding. |
 | `clauderig desktop shortcut [<name\|email>] [--to desktop\|apps]` | Make a clickable launcher for the profile. `--all` for every profile, `--rm` to delete them. |
 
 `clauderig desktop list --json` emits one machine-readable object — the profiles,
-which are open, and whether Desktop is supported and installed on this platform.
+which are open, their size on disk, and whether Desktop is supported and
+installed on this platform.
+
+### Disk
+
+A profile that has used Cowork grows without an obvious cause: the local-agent
+VM's root filesystem (`data/vm_bundles/claudevm.bundle/rootfs.img`) is a sparse
+image provisioned at ~10 GB that only ever grows, because deleting files inside
+the VM never shrinks it on the host. `desktop list` shows each profile's size,
+and `desktop prune` gives space back in tiers ordered by what they cost:
+
+| Tier | Reclaims | Lost |
+| --- | --- | --- |
+| default | `Cache`, `Code Cache`, `GPUCache` and the Dawn GPU caches (`DawnWebGPUCache`, `DawnGraphiteCache`, `GraphiteDawnCache`, `DawnCache`) | nothing — regenerated as needed |
+| `--vm` | also the unpacked VM disks: `rootfs.img` when `rootfs.img.zst` is beside it to re-extract from, and side disks Desktop makes afresh | whatever was created inside the VM and never exported to the host |
+| `--all` | also the compressed image, kernel and initramfs — and a `rootfs.img` with no compressed image beside it, since deleting that means a download | a download on next launch |
+
+The login and chat history are never touched at any tier. `--vm` and `--all`
+ask first on a terminal and need `--yes` off one; a profile whose window is open
+is refused, the same way `rm` refuses, because Desktop writes into these
+directories while it runs. `--dry-run` prints the breakdown and deletes nothing,
+and `clauderig doctor` mentions the profiles once a `--vm` prune would free more
+than a few gigabytes. None of this touches sync: the VM image is not in the sync
+repo, so this is purely local disk.
 
 Bare `clauderig desktop` on a terminal opens an interactive screen: the profiles,
 `●` against the open ones, and keys to open, close, add and remove. It is also
