@@ -222,7 +222,10 @@ func checkIgnoredSettings(env Env) (Result, bool) {
 		}
 		ignored, err := settings.IgnoredAt(tier.scope, tier.path)
 		if err != nil {
-			continue // an unparseable file is the guard check's problem, not this one's
+			// Said here, because nothing else says it: the guard check reads
+			// the same file and reports a parse failure as "not installed".
+			found = append(found, fmt.Sprintf("%s settings could not be read (%v)", tier.scope, err))
+			continue
 		}
 		for _, i := range ignored {
 			found = append(found, fmt.Sprintf("%s (%s settings) — honoured only from %s", i, tier.scope, i.Where))
@@ -233,7 +236,7 @@ func checkIgnoredSettings(env Env) (Result, bool) {
 	}
 	return Result{Name: "ignored settings", Status: Warn,
 		Detail: strings.Join(found, "; "),
-		Hint:   "Claude Code drops these silently at this scope — move the value to ~/.claude/settings.json or pass it on the command line",
+		Hint:   "Claude Code drops these silently at this scope — pass --permission-mode for the session that needs it, or set it in ~/.claude/settings.json knowing that applies to every project",
 	}, true
 }
 

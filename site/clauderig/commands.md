@@ -308,8 +308,11 @@ from user or managed settings only. `permissions.defaultMode: "bypassPermissions
 (since the 2026-09-02 release) and `"auto"` are silently dropped from a
 project or local `settings.json`, so a repo relying on `clauderig sync` to carry
 that value across machines gets no error from anyone when it stops working.
-`clauderig doctor` reports such values as *ignored settings*; move them to
-`~/.claude/settings.json` or pass `--permission-mode` on the command line.
+`clauderig doctor` reports such values as *ignored settings*. For a session
+that needs the mode, pass `--permission-mode` on the command line. Setting it
+in `~/.claude/settings.json` works too, but that applies to every project on
+the machine — a much wider grant than the one repository the project file
+meant — so reach for it deliberately.
 
 ## Worktree discipline
 
