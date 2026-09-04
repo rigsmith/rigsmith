@@ -208,11 +208,13 @@ func checkProjectGuard(env Env) Result {
 
 // checkIgnoredSettings reports values in the project or local settings.json
 // that Claude Code does not honour at that scope — a `defaultMode` of
-// "bypassPermissions" or "auto" — because a repo relying on clauderig to carry
-// such a value across machines gets no error from anyone when it stops
-// working. Reported only when there is something to say.
+// "bypassPermissions" or "auto" — because Claude Code drops them without a
+// word, and a value that was honoured until the 2026-09-02 release otherwise
+// just stops working. A file that will not parse is reported too, as its
+// own problem: nothing can be said about what it carries. Reported only
+// when there is something to say.
 func checkIgnoredSettings(env Env) (Result, bool) {
-	var found []string
+	var found, unreadable []string
 	for _, tier := range []struct {
 		scope settings.Scope
 		path  string
@@ -224,19 +226,26 @@ func checkIgnoredSettings(env Env) (Result, bool) {
 		if err != nil {
 			// Said here, because nothing else says it: the guard check reads
 			// the same file and reports a parse failure as "not installed".
-			found = append(found, fmt.Sprintf("%s settings could not be read (%v)", tier.scope, err))
+			unreadable = append(unreadable, fmt.Sprintf("%s settings could not be read (%v)", tier.scope, err))
 			continue
 		}
 		for _, i := range ignored {
 			found = append(found, fmt.Sprintf("%s (%s settings) — honoured only from %s", i, tier.scope, i.Where))
 		}
 	}
-	if len(found) == 0 {
+	if len(found) == 0 && len(unreadable) == 0 {
 		return Result{}, false
 	}
+	// The hint is about the ignored values; a file that would not parse
+	// gets its own line, so a parse failure alone is not told to change a
+	// permission mode it may not even set.
+	hint := "Claude Code drops these silently at this scope — pass --permission-mode for the session that needs it, or set it in ~/.claude/settings.json knowing that applies to every project"
+	if len(found) == 0 {
+		hint = "fix the JSON — Claude Code ignores the whole file until it parses, and nothing in it can be checked"
+	}
 	return Result{Name: "ignored settings", Status: Warn,
-		Detail: strings.Join(found, "; "),
-		Hint:   "Claude Code drops these silently at this scope — pass --permission-mode for the session that needs it, or set it in ~/.claude/settings.json knowing that applies to every project",
+		Detail: strings.Join(append(found, unreadable...), "; "),
+		Hint:   hint,
 	}, true
 }
 

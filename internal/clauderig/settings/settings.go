@@ -34,8 +34,8 @@ const (
 // 2026-09-02 release) and `defaultMode: "auto"` are honoured from user or
 // managed settings and ignored, silently, in a project or local file. The
 // narrower tiers therefore cannot always override the broader ones, and a
-// value clauderig faithfully syncs into `.claude/settings.json` may be one
-// Claude Code never reads there. IgnoredAt names those values for a file, and
+// value committed to a repo's `.claude/settings.json` may be one Claude Code
+// never reads there. IgnoredAt names those values for a file, and
 // `clauderig doctor` reports them.
 var All = []Scope{User, Project, Local}
 
@@ -93,9 +93,9 @@ func (s Scope) Label() string {
 // honours at another. The precedence order in All is not the whole story: a
 // few keys are accepted from user or managed settings only, and a project or
 // local file that carries them is silently a no-op for that key. clauderig
-// never writes these itself, but it syncs and restores a repo's own
-// `.claude/settings.json`, so a value a user relies on it to carry across
-// machines can stop working with no error from anyone.
+// never writes these itself, but it is the tool that reads the project
+// tiers on every doctor run — and Claude Code gives no error when a value
+// that used to work there stops being read, so this is where it gets said.
 type Ignored struct {
 	Key   string // the settings key, e.g. "defaultMode"
 	Value string // the value that is ignored at this scope

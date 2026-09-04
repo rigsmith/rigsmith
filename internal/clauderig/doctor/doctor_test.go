@@ -321,4 +321,13 @@ func TestCheckIgnoredSettings(t *testing.T) {
 	if !ok || !strings.Contains(r.Detail, "could not be read") {
 		t.Fatalf("malformed project settings: got ok=%v %+v", ok, r)
 	}
+	// With only the parse failure left, the advice is about the JSON, not
+	// about a permission mode the file may not even set.
+	if err := os.Remove(env.LocalSettings); err != nil {
+		t.Fatal(err)
+	}
+	r, ok = checkIgnoredSettings(env)
+	if !ok || strings.Contains(r.Hint, "--permission-mode") || !strings.Contains(r.Hint, "JSON") {
+		t.Fatalf("parse failure alone: got ok=%v hint=%q", ok, r.Hint)
+	}
 }
