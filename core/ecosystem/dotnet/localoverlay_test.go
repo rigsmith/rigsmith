@@ -369,4 +369,13 @@ func TestLocalOverlayDisablesReferenceAssemblies(t *testing.T) {
 			t.Error("still reported stale after a rewrite")
 		}
 	}
+	// The same overlay with CRLF endings — what an autocrlf checkout hands
+	// back — is not stale.
+	writeFile(t, filepath.Join(root, overlayFile), strings.ReplaceAll(body, "\n", "\r\n"))
+	got, _ = a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+	for _, p := range got.Problems {
+		if strings.Contains(p.Message, "out of date") {
+			t.Error("CRLF line endings reported as staleness")
+		}
+	}
 }

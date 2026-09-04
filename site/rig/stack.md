@@ -240,7 +240,7 @@ declared once, the package name and where its sources are:
     <PackageReference Remove="@(StackSource)" />
   </ItemGroup>
 
-  <PropertyGroup>
+  <PropertyGroup Condition="'$(UseStackSources)' != 'false'">
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
   </PropertyGroup>
 </Project>
