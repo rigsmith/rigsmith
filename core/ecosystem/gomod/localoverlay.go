@@ -39,6 +39,23 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	if len(req.Redirects) == 0 {
 		resp.Skipped = true
 		resp.Reason = "no module in this tree is required by another"
+		// A generated go.work that still lists a directory which has left the
+		// tree fails every go command here, so a Write with nothing to redirect
+		// takes rig's own file away. A hand-written one is never touched.
+		if req.Write {
+			dest := filepath.Join(req.Root, workFile)
+			body, err := os.ReadFile(dest)
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+			case err != nil:
+				return resp, fmt.Errorf("reading %s: %w", workFile, err)
+			case strings.Contains(string(body), workMarker):
+				if err := os.Remove(dest); err != nil {
+					return resp, fmt.Errorf("removing stale %s: %w", workFile, err)
+				}
+				resp.Removed = []string{workFile}
+			}
+		}
 		// A go.work rig wrote for members that have since gone still lists
 		// directories that may have left; a check says so rather than
 		// calling an ecosystem with nothing to redirect healthy.

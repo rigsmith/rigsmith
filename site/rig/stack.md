@@ -284,6 +284,32 @@ Other ecosystems have their own version of this — an npm `workspaces` array,
 a `go.work` file, a linked dependency. Nothing in `rig stack` depends on which
 you choose.
 
+#### A fork republished under your own id
+
+If you publish a fork's patched builds to a private feed — so the app can be
+developed *without* the stackspace — the safe way is under a distinct id,
+`Acme.Foo` rather than `Foo`: it cannot collide with the public package, and a
+consumer's project file says plainly that this is not the stock one. But then
+the app references `Acme.Foo`, and no project in the stackspace declares that
+id, so `wire` has nothing to key a redirect on. The app quietly resolves
+`Acme.Foo` from the feed, inside the stackspace, and the build succeeds without
+testing the fused code.
+
+Say it in the manifest, which is the one place outside every prefix:
+
+```jsonc
+"foo": {
+  "upstream": "github.com/them/foo",
+  "fork": "github.com/you/foo",
+  "publishesAs": { "Foo": "Acme.Foo" }
+}
+```
+
+`wire` then redirects `Acme.Foo` to the project producing `Foo`, and `doctor`
+lists it as `Acme.Foo (Foo, republished)`. `publishPrefix: "Acme."` does the
+same for every package the member produces. See
+[Configuration](./configuration#stack).
+
 #### Checking that it took
 
 `rig stack doctor` reports the same findings `wire` does, without writing
@@ -479,12 +505,109 @@ Moving a pin *backwards* — to a release older than the directory currently hol
 replaced with the pinned revision instead, reported as `moved`, and refused
 outright if it holds changes of its own.
 
+## Taking a repo back out
+
+Not every repo that looks fusable can be *built* fused, and that tends to
+surface only after the import — a consumer that reads another member's
+internals through a publicizer, say, which needs a compiled assembly and finds a
+project reference instead. The honest answer there is that the repo should not
+be a member, and `rm` is how you say so:
+
+```sh
+rig stack rm pty-core
+rig stack rm pty-core --keep-tree    # leave the directory; it just stops being a member
+```
+
+Removal touches three things, and only one of them is visible, so it does all
+three and says which: the manifest entry and its cursor go; the directory is
+deleted from the tree (or kept, with `--keep-tree`, as an ordinary part of this
+repository); and the build overlay is rewritten from the members that remain —
+or removed outright when nothing crosses between them any more — so no build
+file keeps a `ProjectReference` into a directory that is no longer there. The
+result is one commit. Nothing outside the stackspace changes: the upstream and
+your fork are exactly as they were, and `rig stack add` fuses the repo again.
+
+A repo holding work that has not left the stackspace is refused, because that
+work exists nowhere else — the same `unsent changes` and `uncommitted changes`
+that `status` reports, plus the case where the comparison cannot be made at
+all. Commits are counted as sent once `propose` has put them on your fork (it
+keeps the commit it pushed under `refs/rigsmith/propose/<repo>`, and a prefix
+holding exactly that tree has nothing left to send). Before relying on that,
+`rm` asks the fork whether the branch still holds the commit as pushed: a
+branch moved or deleted since, or a fork that cannot be asked, is refused
+rather than guessed about. A directory holding files
+git ignores — build output, a local `.env` — is refused too, naming them: no
+history gets those back. `--force` removes it anyway; `--keep-tree` leaves
+them where they are. `--keep-tree` wants a clean prefix, whatever else is
+passed: the removal commit stages the whole tree, so uncommitted edits under a
+directory that stays would ride into it unread — commit or stash them first.
+
+## Moving a stackspace to another machine {#seed}
+
+A stackspace is a local artifact, and for a while the only thing that
+reproduced one was the fused repo itself — a hundred megabytes carrying three
+upstreams' histories, and a derived artifact under version control, which is the
+kind of thing that drifts. Two things make a smaller seed enough:
+
+- **Everything at the root outside every prefix is the stackspace's own.** The
+  manifest, a `Directory.Build.rsp`, a `packaging/` directory that publishes the
+  members so the app can be developed without the stackspace — anything kept
+  out of the members *because* it would otherwise leave in a pull request.
+  It is committed to the stackspace's own history, and `seed` exports exactly
+  that set.
+- **The manifest remembers what each prefix held.** `lastSync` is the commit
+  each directory was taken from, so a directory that is missing can be rebuilt
+  at that commit rather than at upstream's tip.
+
+```sh
+rig stack seed ../my-stack-seed                  # root files → a new repo, one commit (--force past unsent commits)
+git -C ../my-stack-seed remote add origin <url>
+git -C ../my-stack-seed push -u origin main
+
+# elsewhere
+git clone <url> my-stack && cd my-stack
+rig stack init                                   # rebuilds every member
+rig stack wire
+```
+
+A seed carries no member, so a rebuilt one holds its cursor or the branch it
+was last proposed to — and a commit that reached neither is in no seed. `seed`
+refuses a member holding such commits, the same way `rm` does, and asks the
+fork that proposed work is still there as pushed, the same way too; `propose` them
+first, or `--force` to seed anyway.
+
+`init` treats a member with a cursor but no directory as one to **reconstitute**:
+it imports that member at the cursor, so the stackspace comes back as it was
+left. A member marked `owned` comes back with your commits, because `push`
+fast-forwarded its own branch and the cursor points there. A fork you contribute
+to needs one more thing, because `propose` puts your changes on your fork as a
+`stack/…` branch while the cursor still names the upstream commit it was based
+on — so on its own the rebuilt directory would hold upstream's code and none of
+yours. Two ways to say where the work is:
+
+- **Nothing, in the common case.** `propose` records the branch it last sent
+  each repo to, and when `init` rebuilds a member it checks whether that branch
+  still exists on the fork. If it does, the member is imported *from it*. If the
+  proposal has merged and the branch is gone, upstream already carries the work
+  and the cursor is the right place to rebuild.
+- **`trackBranch`, explicitly.** A branch of `fork` to import this member from,
+  for a branch you made by hand or want to pin regardless of what was proposed
+  last. See [Configuration](./configuration#stack).
+
+Either way, where pull requests go does not change: `upstream` is still what
+`propose` roots its commit on and what `pull` follows. The cursor records the
+upstream commit the fork branch is based on — found by merge-base — so `status`
+compares the right things and a later `pull` merges upstream's movement rather
+than importing it twice.
+
 ## The verbs
 
 | Verb | What it does |
 |---|---|
 | `stack init` | Scaffold the manifest, or import the repos it names that are not imported yet |
 | `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
+| `stack rm <repo>` | Remove a repo: its manifest entry and cursor, its directory, and the overlay redirects into it; refuses while it holds work that has not left (`--force`), `--keep-tree` keeps the directory |
+| `stack seed <dir>` | Export the root files — everything outside every prefix, manifest included — as a small repo that `stack init` rebuilds the members from elsewhere; refuses while a member holds commits that have not left (`--force`) |
 | `stack status` | Each repo's cursor against its upstream branch tip |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch |
@@ -555,6 +678,20 @@ stops after. Pin a version per stackspace with the manifest's
   likely to be tidying up. It reports what has *changed*, not what has reached a
   fork: neither verb leaves a record, so a project stays flagged until upstream's
   own history moves on.
+- **A pull's conflicts are reported where they are, and only the prefix's own
+  are yours.** A history fetched through `:prefix=<repo>` cannot change
+  anything outside `<repo>/`, so a conflict reported elsewhere means the merge
+  base already held that path — the fetched history shares a *stackspace*
+  commit as an ancestor, which a hand-edited manifest or a rough removal and
+  re-add can bring about. `pull` settles those paths as the stackspace's own
+  version and says how many, in which directories, and which commit the two
+  histories share — named before the merge is committed, since afterwards the
+  fetched history is simply part of yours.
+  Conflicts inside the prefix are real, and `pull` lists the files rather than
+  just the directory. `git merge --abort` steps back; the cursor is not moved
+  until the merge is committed, so a re-run tries again from the same place.
 - **Do not give the stackspace a remote** and push it somewhere. It contains
   several rewritten upstream histories fused together, which is meaningful to
-  you and to nobody else.
+  you and to nobody else. To carry it to another machine, push a
+  [seed](#seed) instead — the root files alone — and let `init` rebuild the
+  members there.

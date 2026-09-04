@@ -65,6 +65,45 @@ type stackRepo struct {
 	// upstream whose contribution guide asks for something of its own. A pointer
 	// so that "" is a real answer (no prefix here) rather than "unset".
 	BranchPrefix *string `json:"branchPrefix,omitempty"`
+	// PublishesAs maps a package id this member produces to the id it is
+	// republished under — {"Foo": "Acme.Foo"} for a fork whose patched builds go
+	// to a private feed under a name that cannot collide with the public one.
+	// `wire` keys redirects on the id consumers actually reference, so without
+	// this an app referencing Acme.Foo would resolve it from the feed inside the
+	// stackspace, build fine, and never test the fused code. The manifest is the
+	// right place because it is outside every prefix: nothing here leaves in a
+	// pull request. PublishPrefix is the same thing for every id the member
+	// produces; an explicit map entry wins for the ids it names.
+	PublishesAs   map[string]string `json:"publishesAs,omitempty"`
+	PublishPrefix string            `json:"publishPrefix,omitempty"`
+	// TrackBranch names a branch of Fork this prefix is IMPORTED from, instead
+	// of upstream's branch. Where pull requests go does not change — Upstream
+	// is still where `propose` roots its commit and `pull` follows — but a
+	// stackspace rebuilt on another machine then starts from your fork's
+	// branch, which is where work that has left as a proposal and not yet
+	// merged actually lives. The cursor records the upstream commit that
+	// branch is based on, so status and pull keep measuring against upstream.
+	TrackBranch string `json:"trackBranch,omitempty"`
+}
+
+// stackPublishing is how one member's packages are known to consumers beyond
+// the ids its projects declare: an explicit map, a prefix, or both.
+type stackPublishing struct {
+	As     map[string]string // produced id -> republished id
+	Prefix string            // prepended to every produced id
+}
+
+// publishing collects the republishing rules per member, for the members that
+// have any. An empty map means every package is known by the id it declares.
+func (m *stackManifest) publishing() map[string]stackPublishing {
+	out := map[string]stackPublishing{}
+	for name, r := range m.Repos {
+		if r == nil || (len(r.PublishesAs) == 0 && r.PublishPrefix == "") {
+			continue
+		}
+		out[name] = stackPublishing{As: r.PublishesAs, Prefix: r.PublishPrefix}
+	}
+	return out
 }
 
 // stackPin is what a prefix tracks upstream. A branch moves and `pull` follows
@@ -105,10 +144,13 @@ type stackManifest struct {
 	// a tag would drag the stackspace along, which is the one thing a pin is for.
 	// Machine-written, like LastSync, and absent for a prefix following a branch.
 	LastPin map[string]string `json:"lastPin,omitempty"`
-	// LastPropose maps prefix -> the branch name last given to `propose`, as
-	// typed rather than as prefixed. Proposing again to the same branch is how an
-	// open pull request takes review feedback, so that name is usually wanted
-	// several times and is tedious to retype exactly. Machine-written, like the
+	// LastPropose maps prefix -> the branch `propose` last pushed to, as
+	// pushed: prefix and all, so a rebuild and a re-propose look for exactly
+	// that branch even after branchPrefix changes. Proposing again to the same
+	// branch is how an open pull request takes review feedback, so that name is
+	// usually wanted several times and is tedious to retype exactly. A manifest
+	// from before the record was kept that way holds the bare name as typed;
+	// proposeBranch and stackForkRefFor read both. Machine-written, like the
 	// cursors beside it.
 	LastPropose map[string]string `json:"lastPropose,omitempty"`
 }
@@ -132,8 +174,10 @@ func (m *stackManifest) ownedNames() []string {
 // legitimate state — it is what `stack init` scaffolds, and what `stack add`
 // writes the first entry into — so loading one is not an error; only asking it
 // to do something is.
-// rememberProposed records the branch a prefix was last proposed on, so the
-// next one can offer it back.
+// stackRememberProposed records the branch a prefix was last proposed on —
+// the one that was pushed, prefix and all, so a rebuild can look for exactly
+// that even if branchPrefix changes later — and the next propose offers it
+// back (sendBranch leaves a name that already carries the prefix alone).
 func stackRememberProposed(src *cfgfind.Source, m *stackManifest, prefix, branch string) error {
 	if m.LastPropose == nil {
 		m.LastPropose = map[string]string{}
@@ -215,6 +259,32 @@ func (m *stackManifest) branchPrefix(name string) string {
 	return stackDefaultBranchPrefix
 }
 
+// proposeBranch is sendBranch for a name that may be the one lastPropose
+// offered back: that record is the branch as pushed, prefix and all, and is
+// used as it is — so a branchPrefix changed since the proposal cannot turn
+// stack/read-timeout into feature/stack/read-timeout on the next round. A
+// name typed fresh always takes the prefix.
+//
+// The record cannot always be read alone. A manifest from before it was kept
+// that way holds the bare name, which took the prefix of its day; a record
+// that does not carry the current prefix is therefore one of two branches,
+// and other names the one branch is not. The fork settles it — the one that
+// exists there is the one an open pull request is watching — and the
+// likelier reading comes first: a slash says "as pushed", none says "bare".
+func (m *stackManifest) proposeBranch(name, given string) (branch, other string) {
+	if given == "" || given != m.LastPropose[name] {
+		return m.sendBranch(name, given), ""
+	}
+	prefix := m.branchPrefix(name)
+	if prefix == "" || strings.HasPrefix(given, prefix) {
+		return given, ""
+	}
+	if strings.Contains(given, "/") {
+		return given, prefix + given
+	}
+	return prefix + given, given
+}
+
 // sendBranch resolves the name given to `propose` into the branch to create.
 // A name that already carries the prefix is left alone, so re-sending by
 // pasting the full branch name back in doesn't stutter it.
@@ -243,7 +313,14 @@ func (m *stackManifest) validate() error {
 			return err
 		}
 	}
-	for name, r := range m.Repos {
+	republished := map[string]string{} // republished id -> "<repo>/<produced id>"
+	names := make([]string, 0, len(m.Repos))
+	for name := range m.Repos {
+		names = append(names, name)
+	}
+	sort.Strings(names) // so an error names the same pair every run
+	for _, name := range names {
+		r := m.Repos[name]
 		// The key is both a josh prefix and a `HEAD:<name>` tree path, so it has
 		// to name exactly one directory. Empty resolves to the stackspace root —
 		// `send` would push the whole fused tree to one upstream.
@@ -279,6 +356,34 @@ func (m *stackManifest) validate() error {
 		if len(set) > 1 {
 			return fmt.Errorf("stack repo %q sets %s — a prefix follows one upstream point, so keep the branch to track it or the tag/commit to pin it",
 				name, strings.Join(set, " and "))
+		}
+		// A republished id has to be a different name, or the entry says
+		// nothing; and it cannot be empty, or every reference would match it.
+		for from, to := range r.PublishesAs {
+			if strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
+				return fmt.Errorf("stack repo %q: publishesAs maps a package id to the id it is republished under, and neither side can be empty", name)
+			}
+			if from == to {
+				return fmt.Errorf("stack repo %q: publishesAs maps %q to itself — drop the entry, a package known by its own id needs nothing here", name, from)
+			}
+		}
+		// A fork branch is imported on top of upstream's branch history; a
+		// prefix pinned to a tag or commit has no branch for it to be based on.
+		if r.TrackBranch != "" && (r.UpstreamTag != "" || r.UpstreamCommit != "") {
+			return fmt.Errorf("stack repo %q sets trackBranch with a pin — a fork branch is based on upstream's branch, so keep upstreamBranch (or nothing) with it", name)
+		}
+		for from, to := range r.PublishesAs {
+			// One republished id can only stand for one package: two would
+			// leave a consumer of that id redirected to whichever was seen
+			// last. A prefix cannot be checked here, since what a member
+			// produces is only known at wire time; wire reports those.
+			if prev, dup := republished[to]; dup && prev != name+"/"+from {
+				return fmt.Errorf("stack repos %s and %q both publish a package as %q — a republished id can stand for one package only", prev, name, to)
+			}
+			republished[to] = name + "/" + from
+		}
+		if p := r.PublishPrefix; p != "" && strings.TrimSpace(p) == "" {
+			return fmt.Errorf("stack repo %q: publishPrefix is blank", name)
 		}
 		if c := r.UpstreamCommit; c != "" && !stackIsSHA(c) {
 			return fmt.Errorf("stack repo %q has upstreamCommit %q — that must be a full 40-character commit SHA, since an abbreviation cannot be resolved without fetching the repo first",
@@ -523,6 +628,19 @@ const stackManifestTemplate = `{
     //   // library needs an older release than upstream's tip:
     //   //   "upstreamTag": "v1.4.2"
     //   //   "upstreamCommit": "<full 40-character sha>"
+    //
+    //   // Import this directory from a branch of YOUR FORK instead of from
+    //   // upstream — for rebuilding a stackspace elsewhere with work that has
+    //   // left as a proposal and not yet merged. Pull requests still go to
+    //   // upstream, and pull still follows it.
+    //   //   "trackBranch": "stack/read-timeout"
+    //
+    //   // If you republish this fork's packages under your own id (to a
+    //   // private feed, say), tell wire so a consumer referencing that id
+    //   // still resolves from source here — otherwise it quietly takes the
+    //   // feed's copy and the stackspace never tests the fused code.
+    //   //   "publishesAs": { "Some.Lib": "You.Some.Lib" }
+    //   //   "publishPrefix": "You."        // the same for every id it produces
     // },
 
     // "another-lib": { "upstream": "...", "fork": "..." }

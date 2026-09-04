@@ -79,6 +79,23 @@
             "type": "string",
             "description": "Deprecated name for upstreamBranch. Still read; prefer upstreamBranch, which cannot be confused with the branch `send` creates."
           },
+          "trackBranch": {
+            "type": "string",
+            "description": "A branch of `fork` this directory is IMPORTED from instead of upstream's branch — so a stackspace rebuilt elsewhere (`rig stack seed`, then `rig stack init`) starts from work that has left as a proposal and not yet merged. Where pull requests go does not change, and `pull` still follows `upstream`; the cursor records the upstream commit the branch is based on. Not combinable with a tag or commit pin.",
+            "minLength": 1
+          },
+          "publishesAs": {
+            "type": "object",
+            "description": "Package ids this member produces, mapped to the ids you republish them under — {\"Foo\": \"Acme.Foo\"} for a fork whose patched builds go to a private feed under a name that cannot collide with the public one. `wire` then redirects a reference to the republished id to the project producing the original, so a consumer written against your feed still builds from source inside the stackspace.",
+            "additionalProperties": { "type": "string", "minLength": 1, "pattern": "\\S" },
+            "propertyNames": { "minLength": 1, "pattern": "\\S" }
+          },
+          "publishPrefix": {
+            "type": "string",
+            "description": "Prepended to every package id this member produces to form the id you republish it under (\"Acme.\" makes Foo known as Acme.Foo). The same as publishesAs for every package at once; an explicit publishesAs entry wins for the ids it names. A package mapped to its own id is rejected when the manifest loads — that rule cannot be written here.",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
           "branchPrefix": {
             "type": "string",
             "description": "Overrides the stackspace branchPrefix for this project. Set to \"\" to send bare names to this fork only.",
@@ -143,6 +160,18 @@
                 "branch",
                 "upstreamCommit"
               ]
+            },
+            {
+              "required": [
+                "trackBranch",
+                "upstreamTag"
+              ]
+            },
+            {
+              "required": [
+                "trackBranch",
+                "upstreamCommit"
+              ]
             }
           ]
         }
@@ -166,7 +195,7 @@
     },
     "lastPropose": {
       "type": "object",
-      "description": "Written by `rig stack propose`, not by hand: the branch name each repo was last proposed on, offered back next time so an open pull request can take another round without retyping it.",
+      "description": "Written by `rig stack propose`, not by hand: the branch each repo was last pushed to on its fork, prefix included. Offered back next time so an open pull request can take another round without retyping it, and what `init` looks for when rebuilding a member (see trackBranch).",
       "additionalProperties": {
         "type": "string"
       }

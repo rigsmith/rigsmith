@@ -8,6 +8,8 @@
 package confkit
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -112,7 +114,7 @@ func (w Writer) Set(filePath string, path []string, rawValue string) bool {
 		if !ok {
 			return false
 		}
-		return os.WriteFile(filePath, []byte(edited), 0o644) == nil
+		return writeWhole(filePath, []byte(edited)) == nil
 	}
 
 	// No file (or an empty/whitespace one): safe to write a fresh document.
@@ -121,7 +123,88 @@ func (w Writer) Set(filePath string, path []string, rawValue string) bool {
 			return false
 		}
 	}
-	return os.WriteFile(filePath, []byte(w.freshDocument(path, rawValue)), 0o644) == nil
+	return writeWhole(filePath, []byte(w.freshDocument(path, rawValue))) == nil
+}
+
+// writeWhole replaces the file's content through a sibling temporary file
+// and a rename, so the file is either wholly the old content or wholly the
+// new — never a fragment. os.WriteFile truncates first, and a config file a
+// failure left half-written is worse than one it left alone.
+func writeWhole(filePath string, data []byte) error {
+	// A config that is a symlink — a dotfiles checkout linked into place is
+	// the usual reason — is edited where it really lives: renaming over the
+	// link would replace it with a plain file and quietly detach the two.
+	if resolved, err := filepath.EvalSymlinks(filePath); err == nil {
+		filePath = resolved
+	}
+	// An existing file keeps its own mode; a new one is created the way
+	// os.WriteFile would create it, 0644 under the process's umask — so a
+	// restrictive umask makes a private config, as it does for every other
+	// file, rather than being overridden here.
+	mode := fs.FileMode(0o644)
+	fresh := true
+	if fi, err := os.Stat(filePath); err == nil {
+		mode, fresh = fi.Mode().Perm(), false
+	}
+	tmp, err := createSibling(filePath, mode)
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	cleanup := func() { _ = os.Remove(name) }
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	// Flushed before the rename: a rename is durable on its own, and without
+	// this it could outlive the content it points at across a power loss.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	// The temporary file was created under the umask; an existing file's
+	// exact mode is put back after, since the umask may have masked it.
+	if !fresh {
+		if err := os.Chmod(name, mode); err != nil {
+			cleanup()
+			return err
+		}
+	}
+	if err := os.Rename(name, filePath); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
+}
+
+// createSibling opens a new temporary file beside filePath with the given
+// mode (subject to the umask, as any created file is), trying a few random
+// names so a leftover from an interrupted run is never reused.
+func createSibling(filePath string, mode fs.FileMode) (*os.File, error) {
+	dir, base := filepath.Dir(filePath), filepath.Base(filePath)
+	var err error
+	for i := 0; i < 100; i++ {
+		var buf [6]byte
+		if _, rerr := rand.Read(buf[:]); rerr != nil {
+			return nil, rerr
+		}
+		name := filepath.Join(dir, "."+base+"."+hex.EncodeToString(buf[:])+".tmp")
+		var f *os.File
+		f, err = os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, mode)
+		if err == nil {
+			return f, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return nil, err
+		}
+	}
+	return nil, err
 }
 
 // freshDocument renders a brand-new config file: the $schema header (when set)
@@ -157,4 +240,32 @@ func quoteJSON(s string) string {
 		return `""`
 	}
 	return string(raw)
+}
+
+// Delete removes path (any depth) from the file, preserving comments and
+// formatting the same way Set does. A file that does not exist, or a path that
+// is not in it, is a success that changes nothing. False means the file could
+// not be edited safely and nothing was written.
+func (w Writer) Delete(filePath string, path []string) bool {
+	if len(path) == 0 {
+		return false
+	}
+	existing, err := os.ReadFile(filePath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	if strings.TrimSpace(string(existing)) == "" {
+		return true
+	}
+	edited, ok := jsonc.Delete(string(existing), path)
+	if !ok {
+		return false
+	}
+	if edited == string(existing) {
+		return true
+	}
+	return writeWhole(filePath, []byte(edited)) == nil
 }

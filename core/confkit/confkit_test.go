@@ -160,3 +160,59 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+func TestWriterDelete(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "rig.jsonc")
+	w := Writer{}
+	if !w.Delete(file, []string{"a"}) {
+		t.Fatal("deleting from a missing file should succeed")
+	}
+	if err := os.WriteFile(file, []byte("{\n  // keep me\n  \"a\": { \"x\": 1, \"y\": 2 },\n  \"b\": true\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !w.Delete(file, []string{"a", "x"}) {
+		t.Fatal("Delete returned false")
+	}
+	got, _ := os.ReadFile(file)
+	if !strings.Contains(string(got), "// keep me") || strings.Contains(string(got), `"x"`) || !strings.Contains(string(got), `"y": 2`) {
+		t.Fatalf("unexpected result:\n%s", got)
+	}
+	if !w.Delete(file, []string{"nope"}) {
+		t.Fatal("deleting an absent key should succeed")
+	}
+}
+
+// A config reached through a symlink is edited in place: the link stays a
+// link, and the file it points at is what changes.
+func TestWriterEditsThroughASymlink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "dotfiles", "rig.jsonc")
+	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(real, []byte("{\n  // keep me\n  \"a\": 1,\n  \"b\": 2\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "rig.jsonc")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	w := Writer{}
+	if !w.SetNumber(link, []string{"a"}, 2) {
+		t.Fatal("Set through the link failed")
+	}
+	if !w.Delete(link, []string{"b"}) {
+		t.Fatal("Delete through the link failed")
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was replaced by a file: %v, %v", fi, err)
+	}
+	got, err := os.ReadFile(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "// keep me") || !strings.Contains(string(got), `"a": 2`) || strings.Contains(string(got), `"b"`) {
+		t.Fatalf("the target was not edited:\n%s", got)
+	}
+}

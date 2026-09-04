@@ -235,3 +235,68 @@ func TestGoLocalOverlay(t *testing.T) {
 		}
 	})
 }
+
+// After the last cross-module require leaves, a Write with nothing to
+// redirect removes rig's own go.work — and only rig's own; a check leaves
+// it in place.
+func TestGoLocalOverlayRemovesStaleGeneratedWork(t *testing.T) {
+	ctx := context.Background()
+	a := New()
+	root := t.TempDir()
+	writeMod(t, filepath.Join(root, "app"), "example.com/you/app", "1.24")
+	generated := workMarker + "\ngo 1.24\n\nuse ./app\n"
+
+	t.Run("a generated go.work is removed", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(root, workFile), []byte(generated), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Write: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Removed) != 1 || got.Removed[0] != workFile {
+			t.Fatalf("Removed = %v", got.Removed)
+		}
+		if _, err := os.Stat(filepath.Join(root, workFile)); !os.IsNotExist(err) {
+			t.Error("stale go.work still present")
+		}
+	})
+	t.Run("a hand-written one is not", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(root, workFile), []byte("go 1.24\n\nuse ./app\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Write: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Removed) != 0 {
+			t.Fatalf("Removed = %v", got.Removed)
+		}
+		if _, err := os.Stat(filepath.Join(root, workFile)); err != nil {
+			t.Error("hand-written go.work deleted")
+		}
+	})
+	t.Run("a check removes nothing", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(root, workFile), []byte(generated), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Removed) != 0 {
+			t.Fatalf("Removed = %v on a check", got.Removed)
+		}
+		if _, err := os.Stat(filepath.Join(root, workFile)); err != nil {
+			t.Error("a check deleted the generated go.work")
+		}
+	})
+	t.Run("nothing to remove is not an error", func(t *testing.T) {
+		if err := os.Remove(filepath.Join(root, workFile)); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Write: true}); err != nil || len(got.Removed) != 0 {
+			t.Fatalf("absent go.work: %+v, %v", got, err)
+		}
+	})
+}

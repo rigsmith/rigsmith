@@ -2,7 +2,9 @@ package gitrepo
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,5 +78,77 @@ func TestFetchMerge_ConflictWhenSameFile(t *testing.T) {
 	must(t, b.AbortMerge(ctx))
 	if dirty, _ := b.Dirty(ctx); dirty {
 		t.Error("abort should restore a clean tree")
+	}
+}
+
+// A merge that stops on conflicts can be settled path by path in favour of
+// this side, whichever shape the conflict takes — modified on both sides,
+// deleted by theirs, deleted by ours — and then committed.
+func TestResolveOurs(t *testing.T) {
+	ctx, a, b := twoClones(t)
+	// Both sides start from the same base holding the files.
+	for _, f := range []string{"keep.txt", "gone.txt", "mine-gone.txt"} {
+		must(t, os.WriteFile(filepath.Join(a.Dir, f), []byte("base\n"), 0o644))
+	}
+	if _, err := a.Commit(ctx, "base"); err != nil {
+		t.Fatal(err)
+	}
+	must(t, a.Push(ctx, "origin", "main"))
+	must(t, b.Pull(ctx, "origin", "main"))
+
+	// Ours modifies keep.txt and gone.txt and deletes mine-gone.txt; theirs
+	// modifies keep.txt differently, deletes gone.txt, and modifies
+	// mine-gone.txt — a UU, a UD and a DU.
+	must(t, os.WriteFile(filepath.Join(a.Dir, "keep.txt"), []byte("ours\n"), 0o644))
+	must(t, os.WriteFile(filepath.Join(a.Dir, "gone.txt"), []byte("ours\n"), 0o644))
+	must(t, os.Remove(filepath.Join(a.Dir, "mine-gone.txt")))
+	if _, err := a.Commit(ctx, "ours"); err != nil {
+		t.Fatal(err)
+	}
+	must(t, os.WriteFile(filepath.Join(b.Dir, "keep.txt"), []byte("theirs\n"), 0o644))
+	must(t, os.Remove(filepath.Join(b.Dir, "gone.txt")))
+	must(t, os.WriteFile(filepath.Join(b.Dir, "mine-gone.txt"), []byte("theirs\n"), 0o644))
+	if _, err := b.Commit(ctx, "theirs"); err != nil {
+		t.Fatal(err)
+	}
+	must(t, b.Push(ctx, "origin", "main"))
+
+	conflicted, err := a.FetchMerge(ctx, "origin", "main")
+	if err != nil || !conflicted {
+		t.Fatalf("conflicted=%v err=%v, want a conflict", conflicted, err)
+	}
+	paths, err := a.UnmergedPaths(ctx)
+	if err != nil || len(paths) != 3 {
+		t.Fatalf("unmerged = %v, %v", paths, err)
+	}
+	must(t, a.ResolveOurs(ctx, paths))
+	if left, _ := a.UnmergedPaths(ctx); len(left) != 0 {
+		t.Fatalf("still unmerged: %v", left)
+	}
+	must(t, a.CommitMerge(ctx))
+	for f, want := range map[string]string{"keep.txt": "ours", "gone.txt": "ours"} {
+		got, err := os.ReadFile(filepath.Join(a.Dir, f))
+		// Trimmed: a Windows checkout with autocrlf hands the file back CRLF.
+		if err != nil || strings.TrimSpace(string(got)) != want {
+			t.Errorf("%s = %q, %v; want %q", f, got, err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(a.Dir, "mine-gone.txt")); !os.IsNotExist(err) {
+		t.Errorf("mine-gone.txt: stat err = %v, want the file we deleted to stay deleted", err)
+	}
+	if dirty, _ := a.Dirty(ctx); dirty {
+		t.Error("merge not committed cleanly")
+	}
+}
+
+// The stage is read from the record's metadata, not found anywhere in the
+// line: a path containing " 2\t" must not pass for a stage-2 entry.
+func TestHasStage(t *testing.T) {
+	rec := "100644 0123456789abcdef0123456789abcdef01234567 3\tdir/odd 2\tname.txt\x00"
+	if hasStage(rec, 2) {
+		t.Error("path text taken for the stage field")
+	}
+	if !hasStage(rec, 3) {
+		t.Error("stage 3 not found")
 	}
 }

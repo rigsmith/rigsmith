@@ -33,6 +33,15 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	if len(req.Redirects) == 0 {
 		resp.Skipped = true
 		resp.Reason = "nothing to redirect"
+		// An overlay left over from members that have since gone would keep
+		// pointing packages at projects that are no longer there — a build
+		// error at best, and the wrong sources at worst. Only rig's own file is
+		// removed; one somebody wrote stays, whatever it says.
+		if req.Write {
+			removed, err := removeGenerated(filepath.Join(req.Root, overlayFile), overlayMarker, overlayFile)
+			resp.Removed = removed
+			return resp, err
+		}
 		// An overlay rig wrote for members that have since gone still swaps
 		// packages for projects at paths that may have left; a check says
 		// so rather than calling an ecosystem with nothing to redirect
@@ -282,6 +291,27 @@ func renderOverlay(redirects []plugin.Redirect) string {
 	b.WriteString(overlayNoRefAssemblies)
 	b.WriteString("\n</Project>\n")
 	return b.String()
+}
+
+// removeGenerated deletes path when it carries marker and reports the removal
+// under rel. A missing file, or one without the marker, removes nothing. A
+// file that carries the marker and cannot be read or removed is an error: a
+// stale overlay left standing silently is the failure this exists to prevent.
+func removeGenerated(path, marker, rel string) ([]string, error) {
+	body, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", rel, err)
+	}
+	if !strings.Contains(string(body), marker) {
+		return nil, nil
+	}
+	if err := os.Remove(path); err != nil {
+		return nil, fmt.Errorf("removing stale %s: %w", rel, err)
+	}
+	return []string{rel}, nil
 }
 
 // overlayNoRefAssemblies is the part of the overlay that keeps a swap from

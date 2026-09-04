@@ -15,9 +15,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/cfgfind"
 	"github.com/rigsmith/rigsmith/core/climenu"
-	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
-	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/spf13/cobra"
 )
 
@@ -36,6 +34,8 @@ func newStackCmd() *cobra.Command {
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
 			"  rig stack init                      scaffold the manifest / import the repos\n" +
 			"  rig stack add [upstream]            add a repo and import it (asks if not given)\n" +
+			"  rig stack rm <repo>                 remove a repo: manifest, tree and overlay\n" +
+			"  rig stack seed <dir>                a small repo of just the root files, to rebuild from elsewhere\n" +
 			"  rig stack status                    cursor vs upstream, per repo\n" +
 			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
 			"  rig stack propose [repo] [branch]   a branch on your fork, prefixed stack/ (asks)\n" +
@@ -49,7 +49,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackInitCmd(), newStackAddCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
 	return refuseUnknownVerb(cmd)
 }
 
@@ -112,7 +112,13 @@ func newStackInitCmd() *cobra.Command {
 		Short: "Scaffold the stack manifest, or import its repos into the stackspace",
 		Long: "With no manifest, writes a commented rig.stack.jsonc to fill in. With a\n" +
 			"manifest, imports each repo that has no cursor yet: fetches its upstream\n" +
-			"history through the :prefix filter and merges it in.",
+			"history through the :prefix filter and merges it in.\n\n" +
+			"A repo whose cursor is recorded but whose directory is missing — a clone\n" +
+			"of `rig stack seed`'s output, or of the root files alone — is rebuilt at\n" +
+			"the commit the cursor names, so the stackspace comes back as it was left.\n" +
+			"A repo with `trackBranch` set, or one last proposed to a branch that still\n" +
+			"exists on its fork, is rebuilt from that branch instead, which is where\n" +
+			"work that has left as a proposal and not yet merged actually lives.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -154,10 +160,20 @@ func newStackInitCmd() *cobra.Command {
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), "committed the manifest as the stackspace's root commit")
 			}
-			names := []string{}
+			// Two kinds of member need importing: one with no cursor, which has
+			// never been imported, and one with a cursor but no directory —
+			// a seed (`rig stack seed`) or any clone of the root files alone,
+			// where the manifest remembers what each prefix held and the tree
+			// does not have it. The second is reconstituted at what the manifest
+			// recorded, not at upstream's tip, so it comes back as it was left.
+			names, rebuild := []string{}, map[string]bool{}
 			for _, name := range m.names() {
-				if m.cursor(name) == "" {
+				switch {
+				case m.cursor(name) == "":
 					names = append(names, name)
+				case !stackPrefixPresent(ctx, repo, name):
+					names = append(names, name)
+					rebuild[name] = true
 				}
 			}
 			// Only reach for the engine once there is something to import: on a
@@ -171,7 +187,14 @@ func newStackInitCmd() *cobra.Command {
 			}
 			imported := 0
 			for _, name := range names {
-				if err := stackPullOne(ctx, cmd.OutOrStdout(), repo, bin, src, m, name, true); err != nil {
+				opts := stackPullOpts{initial: true}
+				if rebuild[name] {
+					opts.at = m.cursor(name)
+				}
+				if opts.fork, err = stackImportFromFork(ctx, repo, m, name, rebuild[name]); err != nil {
+					return err
+				}
+				if err := stackPullOne(ctx, cmd.OutOrStdout(), repo, bin, src, m, name, opts); err != nil {
 					return fmt.Errorf("importing %s: %w", name, err)
 				}
 				imported++
@@ -331,7 +354,7 @@ func newStackPullCmd() *cobra.Command {
 				return err
 			}
 			for _, name := range moved {
-				if err := stackPullOne(ctx, cmd.OutOrStdout(), repo, bin, src, m, name, false); err != nil {
+				if err := stackPullOne(ctx, cmd.OutOrStdout(), repo, bin, src, m, name, stackPullOpts{}); err != nil {
 					return fmt.Errorf("pulling %s: %w", name, err)
 				}
 			}
@@ -378,6 +401,10 @@ type stackUnsent struct {
 	Commits bool // committed work the upstream repository does not have
 	Working bool // edits in the index or the worktree, not yet committed
 	Known   bool // false when the imported baseline cannot be established
+	// Proposed is set when Commits is clear only because propose has put
+	// this tree on the fork — a claim the stackspace's own history cannot
+	// make, and one stackProposedOnFork can check before anything acts on it.
+	Proposed bool
 }
 
 func (u stackUnsent) any() bool { return u.Commits || u.Working }
@@ -410,7 +437,42 @@ func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty
 	}
 	u.Known = true
 	u.Commits = imported != here
+	// Work that propose has put on the fork has left, even though nothing in
+	// this history records it: propose keeps the commit it pushed under a
+	// ref, and a prefix holding exactly that tree has nothing left to send.
+	if u.Commits {
+		if sent, err := repo.RevParse(ctx, "refs/rigsmith/propose/"+name+"^{tree}"); err == nil && sent == here {
+			u.Commits, u.Proposed = false, true
+		}
+	}
 	return u
+}
+
+// stackProposedOnFork confirms that the branch a member was last proposed to
+// still holds, on the fork, the commit propose pushed. The ref under
+// refs/rigsmith/propose says the work left; this says it is still where it
+// went. rm and seed ask before acting as though the work exists elsewhere: a
+// branch moved or deleted since, or a fork that cannot be asked, is an error
+// naming what to check rather than a guess. A manifest with no record of the
+// branch has nothing to look for, and the ref speaks alone.
+func stackProposedOnFork(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) error {
+	branch, r := m.LastPropose[name], m.Repos[name]
+	if branch == "" || r == nil {
+		return nil
+	}
+	want, err := repo.RevParse(ctx, "refs/rigsmith/propose/"+name)
+	if err != nil {
+		return err
+	}
+	ref := "refs/heads/" + branch
+	found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(r.Fork), ref)
+	if err != nil {
+		return fmt.Errorf("%s's work was proposed to %s:%s, and the fork cannot be asked whether it is still there (%s) — check it, then --force", name, r.Fork, branch, stackFirstLine(err))
+	}
+	if found[ref] != want {
+		return fmt.Errorf("%s's work was proposed to %s:%s, which no longer holds it as pushed — if it merged, `rig stack pull %s` first; otherwise check the fork, then --force", name, r.Fork, branch, name)
+	}
+	return nil
 }
 
 // stackResolveUpstream turns a prefix's pin into the upstream commit to import.
@@ -470,20 +532,74 @@ func stackResolveUpstream(ctx context.Context, repo *gitrepo.Repo, url string, p
 	}
 }
 
+// stackPullOpts says how stackPullOne should take a prefix in.
+type stackPullOpts struct {
+	// initial marks an import: no cursor short-circuit, and the commit reads
+	// "import" rather than "pull".
+	initial bool
+	// at imports a specific upstream commit rather than the resolved tip —
+	// what reconstituting a prefix from its recorded cursor needs.
+	at string
+	// fork imports the tree from a branch of the fork instead of from
+	// upstream. The cursor then records the upstream commit that branch is
+	// based on, so everything that measures against upstream keeps working.
+	fork *stackForkRef
+}
+
+// stackForkRef is a branch on the member's fork, resolved.
+type stackForkRef struct {
+	Branch string
+	Commit string
+}
+
 // stackPullOne imports or updates one repo's prefix: probe upstream's tip, stop at
 // the cursor (idempotent, the josh-sync NothingToPull check), else fetch that
 // exact SHA through the filter, merge, and commit the moved cursor with it.
-func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin string, src *cfgfind.Source, m *stackManifest, name string, initial bool) error {
+func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin string, src *cfgfind.Source, m *stackManifest, name string, opts stackPullOpts) error {
 	r := m.Repos[name]
-	tip, err := stackUpstreamTip(ctx, repo, m, name)
-	if err != nil {
-		return err
+	initial := opts.initial
+	tip := opts.at
+	// Resolved anew when importing from a fork branch even if a cursor was
+	// given: the branch's base is found against upstream as it is now. A
+	// branch proposed after the cursor moved on is based past it, and a
+	// merge-base against the old cursor would answer with the old cursor —
+	// leaving the rebuilt prefix reporting, and later re-merging, upstream
+	// commits it already holds.
+	if tip == "" || opts.fork != nil {
+		var err error
+		if tip, err = stackUpstreamTip(ctx, repo, m, name); err != nil {
+			return err
+		}
 	}
 	if !initial && tip == m.cursor(name) {
 		fmt.Fprintf(out, "%s: nothing to pull\n", name)
 		return nil
 	}
-	host, path := stackSplitHost(r.Upstream)
+	// What is fetched through the filter, and from where. Upstream, unless
+	// the tree is to come from a branch of the fork — in which case the cursor
+	// is still an upstream commit: the one that branch grew from, found by
+	// merge-base over the unfiltered objects, so that `status` compares the
+	// right things and a later pull merges rather than duplicates.
+	source, fetch := r.Upstream, tip
+	if opts.fork != nil {
+		source, fetch = r.Fork, opts.fork.Commit
+		upstreamURL, forkURL := stackRemoteURL(r.Upstream), stackRemoteURL(r.Fork)
+		if err := repo.FetchObjects(ctx, forkURL, fetch); err != nil {
+			return fmt.Errorf("fetching %s:%s: %w", r.Fork, opts.fork.Branch, err)
+		}
+		if err := repo.FetchObjects(ctx, upstreamURL, tip); err != nil {
+			return err
+		}
+		base, err := repo.MergeBase(ctx, fetch, tip)
+		if err != nil {
+			return err
+		}
+		if base == "" {
+			return fmt.Errorf("%s:%s shares no history with %s — a branch to import from has to be based on upstream's", r.Fork, opts.fork.Branch, r.Upstream)
+		}
+		tip = base
+	}
+	host, path := stackSplitHost(source)
 	proxy, err := startJoshProxy(ctx, bin, host)
 	if err != nil {
 		return err
@@ -494,6 +610,12 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	if initial {
 		verb = "imported"
 		msg = fmt.Sprintf("stack: import %s @ %s", name, short(tip))
+		if opts.at != "" {
+			verb = "reconstituted"
+		}
+		if opts.fork != nil {
+			msg += fmt.Sprintf(" (from %s:%s %s)", r.Fork, opts.fork.Branch, short(fetch))
+		}
 	}
 	// The engine fetches upstream with whatever credentials its own client
 	// presents, so reaching a private repo means forwarding ours to it. This is
@@ -501,7 +623,7 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// the proxy's URL so a redirect cannot carry it anywhere else, and absent
 	// entirely when no helper has one. Whether the repo actually needs it is not
 	// knowable without asking the forge, so it rides along either way.
-	auth, err := gitrepo.CredentialFor(ctx, stackRemoteURL(r.Upstream))
+	auth, err := gitrepo.CredentialFor(ctx, stackRemoteURL(source))
 	if err != nil {
 		return err
 	}
@@ -515,7 +637,7 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	preTree, _ := repo.RevParse(ctx, "HEAD:"+name)
 	preImported, preKnown := stackImportedTree(ctx, repo, name)
 
-	conflicted, err := repo.FetchMergeUnrelated(ctx, proxy.url(path, tip, stackPrefixFilter(name)), "HEAD", msg, auth)
+	conflicted, err := repo.FetchMergeUnrelated(ctx, proxy.url(path, fetch, stackPrefixFilter(name)), "HEAD", msg, auth)
 	if err != nil {
 		if tail := proxy.tail(15); tail != "" {
 			return fmt.Errorf("%w\n--- josh-proxy log:\n%s", err, tail)
@@ -523,7 +645,12 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 		return err
 	}
 	if conflicted {
-		return fmt.Errorf("merge conflicts under %s/ — resolve, commit, then re-run to move the cursor", name)
+		// Conflicts outside the prefix are settled here, in this stackspace's
+		// favour; ones inside it are the user's, and the message names them
+		// rather than the prefix that was asked for.
+		if err := stackSettleConflicts(ctx, out, repo, name); err != nil {
+			return err
+		}
 	}
 
 	// A merge cannot move a prefix backwards. Repin a project to an older tag or
@@ -577,8 +704,18 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 		delete(m.LastSync, name)
 		return err
 	}
-	fmt.Fprintf(out, "%s: %s upstream %s\n", name, verb, short(tip))
+	if opts.fork != nil {
+		fmt.Fprintf(out, "%s: %s from %s:%s (%s), based on upstream %s\n", name, verb, r.Fork, opts.fork.Branch, short(fetch), short(tip))
+	} else {
+		fmt.Fprintf(out, "%s: %s upstream %s\n", name, verb, short(tip))
+	}
 	return nil
+}
+
+// stackPrefixPresent reports whether HEAD has a directory for the prefix.
+func stackPrefixPresent(ctx context.Context, repo *gitrepo.Repo, name string) bool {
+	_, err := repo.RevParse(ctx, "HEAD:"+name)
+	return err == nil
 }
 
 func newStackSendCmd() *cobra.Command {
@@ -621,6 +758,7 @@ func newStackSendCmd() *cobra.Command {
 			// Ask for what was not given. Only on a terminal: a script with a
 			// missing argument should be told so, not left waiting on a form
 			// nobody is there to answer.
+			reused := false
 			if name == "" || typed == "" {
 				if !stdinStdoutTTY() {
 					// The branch this repo was last proposed on is the one an open
@@ -628,7 +766,7 @@ func newStackSendCmd() *cobra.Command {
 					// ask, reusing it is the useful answer rather than a refusal.
 					if name != "" && m.LastPropose[name] != "" {
 						typed = m.LastPropose[name]
-						fmt.Fprintf(cmd.OutOrStdout(), "proposing to %s again\n", m.sendBranch(name, typed))
+						reused = true
 					} else {
 						missing := "a repo and a new branch name"
 						if name != "" {
@@ -646,16 +784,33 @@ func newStackSendCmd() *cobra.Command {
 					}
 				}
 			}
-			// The prefix keeps these branches recognisable on a fork that also
-			// carries your own work, and is applied here rather than at the call
-			// sites so the menu and the CLI cannot disagree about it.
-			branch := m.sendBranch(name, typed)
 			r := m.Repos[name]
 			if r == nil {
 				if err := m.requireRepos(); err != nil {
 					return err
 				}
 				return fmt.Errorf("no stack repo %q (have: %s)", name, strings.Join(m.names(), ", "))
+			}
+			// The prefix keeps these branches recognisable on a fork that also
+			// carries your own work, and is applied here rather than at the call
+			// sites so the menu and the CLI cannot disagree about it.
+			branch, other := m.proposeBranch(name, typed)
+			if other != "" {
+				// The remembered branch reads two ways (a prefix changed since
+				// it was recorded); the fork knows which one exists, and that
+				// is the one an open pull request is watching.
+				found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(r.Fork), "refs/heads/"+branch, "refs/heads/"+other)
+				if err != nil {
+					return fmt.Errorf("%s was last proposed to %s or %s, and %s cannot be asked which exists: %w\nname the branch in full to propose without asking", name, branch, other, r.Fork, err)
+				}
+				if _, ok := found["refs/heads/"+branch]; !ok {
+					if _, ok := found["refs/heads/"+other]; ok {
+						branch = other
+					}
+				}
+			}
+			if reused {
+				fmt.Fprintf(cmd.OutOrStdout(), "proposing to %s again\n", branch)
 			}
 			if m.cursor(name) == "" {
 				return fmt.Errorf("%s is not imported yet — run `rig stack init`", name)
@@ -728,9 +883,15 @@ func newStackSendCmd() *cobra.Command {
 			if err := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), commit, "refs/heads/"+branch); err != nil {
 				return err
 			}
+			// Kept under a local ref as well: this commit's tree is what the
+			// fork now holds, and status and rm compare against it to know the
+			// work has left — nothing in the stackspace's own history says so.
+			if err := repo.SetRef(ctx, "refs/rigsmith/propose/"+name, commit); err != nil {
+				return err
+			}
 			// Remembered after the push, not before: a branch nothing reached is
 			// not the one to offer back next time.
-			if err := stackRememberProposed(src, m, name, typed); err != nil {
+			if err := stackRememberProposed(src, m, name, branch); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "proposed %s — pushed to %s:%s, open the PR against %s\n",
@@ -876,7 +1037,7 @@ func newStackPushCmd() *cobra.Command {
 			// identical to what the stackspace already has, because we just sent it,
 			// so the merge is trivial — and from now on the prefixed commits are
 			// ancestors and later pulls are ordinary.
-			if err := stackPullOne(ctx, io.Discard, repo, proxy, src, m, name, false); err != nil {
+			if err := stackPullOne(ctx, io.Discard, repo, proxy, src, m, name, stackPullOpts{}); err != nil {
 				return fmt.Errorf("%s was pushed to %s:%s, but the stackspace could not take it back: %w\n"+
 					"run `rig stack pull %s` — until then this stackspace still has the change only in its own shape",
 					name, r.Upstream, branch, err, name)
@@ -963,61 +1124,12 @@ func newStackWireCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			out := cmd.OutOrStdout()
 			m, _, repo, err := stackspace(ctx)
 			if err != nil {
 				return err
 			}
-			byEco, orphans, failed := stackRedirects(ctx, repo.Dir, m.names())
-			// Patching a member's own build file is a commit to that repository,
-			// and it travels back through `push` or `send`. Your own repos want
-			// that line; a fork you contribute to should not carry rig plumbing
-			// into somebody else's pull request.
-			writable := m.ownedNames()
-			// Reported before anything is written: a member nothing consumes is
-			// usually why there was less to wire than expected.
-			stackReportOrphans(out, m, orphans)
-			// A scan that failed is reported as such, never as "nothing to wire":
-			// the overlay it would have written is still needed.
-			stackReportScanFailures(out, failed)
-			if len(byEco) == 0 {
-				if len(failed) == 0 {
-					fmt.Fprintln(out, "no package references cross between members — nothing to wire")
-				}
-				return nil
-			}
-			for _, eco := range ecosystem.Default().All() {
-				links := byEco[eco.Info().ID]
-				if len(links) == 0 {
-					continue
-				}
-				resp, err := eco.LocalOverlay(ctx, plugin.LocalOverlayRequest{
-					Root: repo.Dir, Redirects: redirectsOf(links), Write: true, Writable: writable,
-				})
-				if err != nil {
-					return err
-				}
-				if resp.Skipped {
-					fmt.Fprintf(out, "· %s: %s\n", eco.Info().ID, resp.Reason)
-					continue
-				}
-				for f := range resp.Files {
-					fmt.Fprintf(out, "✓ %s — %d package(s) now resolve from this stackspace\n", f, len(links))
-				}
-				for _, l := range links {
-					fmt.Fprintf(out, "    %s\n", l.describe())
-				}
-				for _, f := range resp.Fixed {
-					fmt.Fprintf(out, "✓ %s — patched to stop hiding the overlay from what is under it\n", f)
-				}
-				// Problems the overlay cannot fix by existing. Reported here as
-				// well as in doctor, because a wire that looks like it worked and
-				// silently did not is the thing this whole path exists to stop.
-				for _, p := range resp.Problems {
-					fmt.Fprintf(out, "  ✗ %s — %s\n", p.Path, p.Message)
-				}
-			}
-			return nil
+			_, err = stackWire(ctx, cmd.OutOrStdout(), m, repo, "", false)
+			return err
 		},
 	}
 	return cmd
@@ -1106,8 +1218,9 @@ func newStackDoctorCmd() *cobra.Command {
 			// leaves a build that succeeds against the published package and says
 			// nothing, so checking is the only way anyone finds out.
 			if m != nil {
-				reports, orphans, failed := stackCheckOverlay(ctx, root, m.names(), m.ownedNames())
+				reports, orphans, notes, failed := stackCheckOverlay(ctx, root, m)
 				stackReportOrphans(out, m, orphans)
+				stackReportNotes(out, notes)
 				stackReportScanFailures(out, failed)
 				for _, rep := range reports {
 					if len(rep.Links) == 0 {
@@ -1201,12 +1314,14 @@ func stackMenuItems() []menuItem {
 	return []menuItem{
 		{label: "init", desc: "import any repo the manifest names but has not fused yet", cmd: newStackInitCmd()},
 		{label: "add", desc: "add a repo to this stackspace and import it", cmd: newStackAddCmd()},
+		{label: "rm", desc: "remove a repo from this stackspace — manifest, tree and overlay (pick one)", cmd: newStackRemoveMenuCmd()},
 		{label: "status", desc: "each repo's cursor against its upstream", cmd: newStackStatusCmd()},
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
 		{label: "propose", desc: "a repo's changes to its upstream, via a branch on your fork (asks)", cmd: newStackSendCmd()},
 		{label: "push", desc: "a repo you own back to its own branch, history intact (pick one)", cmd: newStackPushMenuCmd()},
 		{label: "wire", desc: "write the build overlay so members resolve each other from source", cmd: newStackWireCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
+		{label: "seed", desc: "export just the root files as a small repo, to rebuild this stackspace elsewhere (asks where)", cmd: newStackSeedMenuCmd()},
 	}
 }
 

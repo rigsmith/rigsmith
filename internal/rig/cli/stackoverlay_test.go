@@ -42,7 +42,7 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 		csproj(t, root, "core", "Acme.Core")
 		csproj(t, root, "app", "Term.App", "Acme.Lib")
 
-		links, _, _ := stackRedirects(ctx, root, []string{"app", "core", "lib"})
+		links, _, _, _ := stackRedirects(ctx, root, []string{"app", "core", "lib"}, nil)
 		var got []string
 		for _, l := range links["dotnet"] {
 			got = append(got, l.describe())
@@ -64,7 +64,7 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 		csproj(t, root, "terminal", "Iciclecreek.Avalonia.Terminal")
 		csproj(t, root, "app", "Term.App", "Avalloy.Terminal")
 
-		_, orphans, _ := stackRedirects(ctx, root, []string{"app", "terminal"})
+		_, orphans, _, _ := stackRedirects(ctx, root, []string{"app", "terminal"}, nil)
 		var found bool
 		for _, o := range orphans {
 			if o.Member == "terminal" {
@@ -84,7 +84,7 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 		csproj(t, root, "lib", "Acme.Lib")
 		csproj(t, root, "app", "Term.App", "Acme.Lib")
 
-		_, orphans, _ := stackRedirects(ctx, root, []string{"app", "lib"})
+		_, orphans, _, _ := stackRedirects(ctx, root, []string{"app", "lib"}, nil)
 		for _, o := range orphans {
 			if o.Member == "lib" {
 				t.Fatalf("reported a member that is consumed: %+v", o)
@@ -100,7 +100,7 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 		csproj(t, root, "lib", "Acme.Lib")
 		csproj(t, root, "app", "Term.App", "Acme.Lib")
 
-		_, orphans, _ := stackRedirects(ctx, root, []string{"app", "lib"})
+		_, orphans, _, _ := stackRedirects(ctx, root, []string{"app", "lib"}, nil)
 		var sawApp bool
 		for _, o := range orphans {
 			if o.Member == "app" {
@@ -122,6 +122,161 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 	})
 }
 
+// A fork republished under its own id is still the same code: a consumer
+// referencing the republished id has to resolve from the member producing the
+// original, keyed on the id the consumer wrote.
+func TestStackRedirectsRepublishedIds(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("publishesAs redirects the republished id to the producer", func(t *testing.T) {
+		root := t.TempDir()
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "app", "Term.App", "Acme.Foo")
+		pub := map[string]stackPublishing{"foo": {As: map[string]string{"Foo": "Acme.Foo"}}}
+		links, orphans, notes, _ := stackRedirects(ctx, root, []string{"app", "foo"}, pub)
+		if len(links["dotnet"]) != 1 {
+			t.Fatalf("links = %+v", links)
+		}
+		l := links["dotnet"][0]
+		if l.Package != "Acme.Foo" || l.Via != "Foo" || l.To != "foo" || !strings.HasSuffix(l.Path, "foo.csproj") {
+			t.Fatalf("link = %+v", l)
+		}
+		if !strings.Contains(l.describe(), "Acme.Foo (Foo, republished)") {
+			t.Errorf("describe = %q", l.describe())
+		}
+		for _, o := range orphans {
+			if o.Member == "foo" {
+				t.Error("foo reported as an orphan though the app consumes it under its republished id")
+			}
+		}
+		if len(notes) != 0 {
+			t.Errorf("notes = %v", notes)
+		}
+	})
+
+	t.Run("publishPrefix covers every id the member produces", func(t *testing.T) {
+		root := t.TempDir()
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "foo/native", "Foo.Native")
+		csproj(t, root, "app", "Term.App", "Acme.Foo", "Acme.Foo.Native")
+		pub := map[string]stackPublishing{"foo": {Prefix: "Acme."}}
+		links, _, _, _ := stackRedirects(ctx, root, []string{"app", "foo"}, pub)
+		var got []string
+		for _, l := range links["dotnet"] {
+			got = append(got, l.Package+"<-"+l.Via)
+		}
+		if strings.Join(got, " ") != "Acme.Foo<-Foo Acme.Foo.Native<-Foo.Native" {
+			t.Fatalf("links = %v", got)
+		}
+	})
+
+	t.Run("a rule for a package the member does not produce is noted", func(t *testing.T) {
+		root := t.TempDir()
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "app", "Term.App", "Acme.Fooo")
+		pub := map[string]stackPublishing{"foo": {As: map[string]string{"Fooo": "Acme.Fooo"}}}
+		links, _, notes, _ := stackRedirects(ctx, root, []string{"app", "foo"}, pub)
+		if len(links["dotnet"]) != 0 {
+			t.Fatalf("a typo'd rule produced a link: %+v", links)
+		}
+		if len(notes) != 1 || !strings.Contains(notes[0], "produces no package called Fooo") {
+			t.Fatalf("notes = %v", notes)
+		}
+	})
+
+	t.Run("one republished id claimed by two packages redirects neither", func(t *testing.T) {
+		root := t.TempDir()
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "bar", "Bar")
+		csproj(t, root, "app", "Term.App", "Acme.Lib")
+		pub := map[string]stackPublishing{
+			"foo": {As: map[string]string{"Foo": "Acme.Lib"}},
+			"bar": {As: map[string]string{"Bar": "Acme.Lib"}},
+		}
+		links, _, notes, _ := stackRedirects(ctx, root, []string{"app", "bar", "foo"}, pub)
+		if len(links["dotnet"]) != 0 {
+			t.Fatalf("an ambiguous id was redirected: %+v", links)
+		}
+		if len(notes) == 0 || !strings.Contains(notes[0], "both") {
+			t.Fatalf("clash not reported: %v", notes)
+		}
+	})
+
+	t.Run("a republished id resolves within the member that declared it", func(t *testing.T) {
+		// Two members build a Foo; only one republishes it. The republished
+		// id has to reach that member's project, whichever Foo was seen last.
+		root := t.TempDir()
+		csproj(t, root, "bar", "Foo")
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "app", "Term.App", "Acme.Foo")
+		pub := map[string]stackPublishing{"foo": {As: map[string]string{"Foo": "Acme.Foo"}}}
+		links, _, _, _ := stackRedirects(ctx, root, []string{"app", "bar", "foo"}, pub)
+		if l := links["dotnet"]; len(l) != 1 || l[0].To != "foo" || !strings.HasSuffix(l[0].Path, "foo.csproj") {
+			t.Fatalf("links = %+v, want Acme.Foo redirected into foo", l)
+		}
+	})
+
+	t.Run("an id two members produce is redirected to neither", func(t *testing.T) {
+		root := t.TempDir()
+		csproj(t, root, "bar", "Foo")
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "app", "Term.App", "Foo")
+		links, _, notes, _ := stackRedirects(ctx, root, []string{"app", "bar", "foo"}, nil)
+		if len(links["dotnet"]) != 0 {
+			t.Fatalf("an ambiguous producer was redirected: %+v", links)
+		}
+		if len(notes) != 1 || !strings.Contains(notes[0], "more than one member") {
+			t.Fatalf("notes = %v", notes)
+		}
+	})
+
+	t.Run("a project outside every member does not contest an id", func(t *testing.T) {
+		// The root's own build of Foo (a stale copy, a sample) is never a
+		// redirect target, and must not make the member's Foo look ambiguous.
+		root := t.TempDir()
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "samples/Foo", "Foo")
+		csproj(t, root, "app", "Term.App", "Foo")
+		links, _, notes, _ := stackRedirects(ctx, root, []string{"app", "foo"}, nil)
+		if l := links["dotnet"]; len(l) != 1 || l[0].To != "foo" {
+			t.Fatalf("links = %+v", l)
+		}
+		if len(notes) != 0 {
+			t.Fatalf("notes = %v", notes)
+		}
+	})
+
+	t.Run("an id one member builds and another republishes under redirects neither", func(t *testing.T) {
+		// bar really produces Acme.Foo; foo says its Foo is published as
+		// Acme.Foo. The app's reference cannot be wired to one of them
+		// without silently ignoring the other.
+		root := t.TempDir()
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "bar", "Acme.Foo")
+		csproj(t, root, "app", "Term.App", "Acme.Foo")
+		pub := map[string]stackPublishing{"foo": {As: map[string]string{"Foo": "Acme.Foo"}}}
+		links, _, notes, _ := stackRedirects(ctx, root, []string{"app", "bar", "foo"}, pub)
+		if len(links["dotnet"]) != 0 {
+			t.Fatalf("a contested id was redirected: %+v", links)
+		}
+		if len(notes) != 1 || !strings.Contains(notes[0], "produced by bar") || !strings.Contains(notes[0], "republished id of Foo (foo)") {
+			t.Fatalf("notes = %v", notes)
+		}
+	})
+
+	t.Run("a declared id still wins over a republished one", func(t *testing.T) {
+		// The app references Foo directly: nothing about republishing applies.
+		root := t.TempDir()
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "app", "Term.App", "Foo")
+		pub := map[string]stackPublishing{"foo": {As: map[string]string{"Foo": "Acme.Foo"}}}
+		links, _, _, _ := stackRedirects(ctx, root, []string{"app", "foo"}, pub)
+		if l := links["dotnet"]; len(l) != 1 || l[0].Package != "Foo" || l[0].Via != "" {
+			t.Fatalf("links = %+v", l)
+		}
+	})
+}
+
 // An overlay rig wrote is reported once nothing crosses any more — which is
 // exactly when the ecosystem has no links and would otherwise not be asked.
 func TestStackCheckOverlay_ReportsAnOverlayLeftOver(t *testing.T) {
@@ -130,7 +285,7 @@ func TestStackCheckOverlay_ReportsAnOverlayLeftOver(t *testing.T) {
 	csproj(t, root, "app/src/App", "Acme.App", "Acme.Lib")
 	csproj(t, root, "lib/src/Lib", "Acme.Lib")
 
-	reports, _, failed := stackCheckOverlay(ctx, root, []string{"app", "lib"}, []string{"app", "lib"})
+	reports, _, _, failed := stackCheckOverlay(ctx, root, owned("app", "lib"))
 	if len(failed) != 0 {
 		t.Fatalf("scan failed: %v", failed)
 	}
@@ -148,7 +303,7 @@ func TestStackCheckOverlay_ReportsAnOverlayLeftOver(t *testing.T) {
 	}
 	csproj(t, root, "app/src/App", "Acme.App")
 
-	reports, _, failed = stackCheckOverlay(ctx, root, []string{"app", "lib"}, []string{"app", "lib"})
+	reports, _, _, failed = stackCheckOverlay(ctx, root, owned("app", "lib"))
 	if len(failed) != 0 {
 		t.Fatalf("scan failed: %v", failed)
 	}
@@ -168,4 +323,14 @@ func dotnetReport(reports []stackOverlayReport) *stackOverlayReport {
 		}
 	}
 	return nil
+}
+
+// owned is a manifest whose members are all the user's own, so every one of
+// their build files may be patched.
+func owned(names ...string) *stackManifest {
+	m := &stackManifest{Repos: map[string]*stackRepo{}}
+	for _, n := range names {
+		m.Repos[n] = &stackRepo{Owned: true}
+	}
+	return m
 }

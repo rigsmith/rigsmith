@@ -207,3 +207,57 @@ func (r *Repo) SideCommitTime(ctx context.Context, ref, path string) (t time.Tim
 	t, err = time.Parse(time.RFC3339, s)
 	return t, err == nil
 }
+
+// UnmergedPaths lists the paths still in conflict in a merge that stopped —
+// what `git status` shows as U-something — slash-separated, sorted as git
+// reports them. Empty when the index is clean.
+func (r *Repo) UnmergedPaths(ctx context.Context) ([]string, error) { return r.Conflicts(ctx) }
+
+// ResolveOurs settles each of the given conflicted paths in favour of this
+// side: our version is restored and staged where we have one, and the path is
+// removed where we do not (it was deleted by us, or exists only on theirs).
+// The merge stays open for the caller to finish or abort.
+func (r *Repo) ResolveOurs(ctx context.Context, paths []string) error {
+	for _, p := range paths {
+		// The paths came out of git verbatim, and go back in as the literal
+		// names they are: `*` or `[` in a filename is not a pattern here.
+		spec := ":(literal)" + p
+		// Stage 2 is ours. Its absence means our side has no such file.
+		stages, err := runGit(ctx, r.Dir, "ls-files", "-u", "-z", "--", spec)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(stages, "\t") && hasStage(stages, 2) {
+			if _, err := runGit(ctx, r.Dir, "checkout", "--ours", "--", spec); err != nil {
+				return err
+			}
+			if _, err := runGit(ctx, r.Dir, "add", "--", spec); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := runGit(ctx, r.Dir, "rm", "-q", "-f", "--cached", "--", spec); err != nil {
+			return err
+		}
+		// The index no longer knows the file; the working copy git left for
+		// the conflict has to go too, or the next commit would stage it back.
+		if err := os.Remove(filepath.Join(r.Dir, filepath.FromSlash(p))); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// hasStage reports whether `ls-files -u -z` output carries an entry at the
+// given stage. Each record reads "<mode> <sha> <stage>\t<path>"; only the
+// part before the tab is looked at, since a path may itself contain " 2\t".
+func hasStage(out string, stage int) bool {
+	want := fmt.Sprintf(" %d", stage)
+	for _, rec := range strings.Split(out, "\x00") {
+		meta, _, ok := strings.Cut(rec, "\t")
+		if ok && strings.HasSuffix(meta, want) {
+			return true
+		}
+	}
+	return false
+}

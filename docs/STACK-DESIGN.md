@@ -99,6 +99,7 @@ are just branches of one repo), stashes, bisect: all normal git.
 | verb | does |
 |---|---|
 | `rig stack init` | scaffold the manifest; for each repo, import upstream history under its prefix (proxy fetch through `:prefix=<child>`, merge, set cursor); scaffold the ecosystem overlay |
+| `rig stack rm <child>` | the inverse of add, for a repo that turns out not to belong (fusable but not buildable fused is discovered after import): drop its manifest entry and cursors, delete its prefix from the tree (`--keep-tree` to leave it as an ordinary directory), rewrite the overlay from the remaining members — removing rig's own overlay file when nothing crosses any more — and commit. Refuses while the prefix holds unsent or uncommitted work or files git ignores, or when that cannot be determined; `--force` overrides those. Uncommitted changes elsewhere in the stackspace are refused regardless, and so is a dirty prefix with `--keep-tree`, since the removal commit would sweep those edits in |
 | `rig stack pull [child]` | fetch upstream through the filter; `NothingToPull` if the cursor matches; else merge (strategy per child), update cursor. The CI-cronnable direction |
 | `rig stack propose <child> <new-branch>` | commit `<child>/`'s tree onto that project's upstream tip and push it to the **fork** as `branchPrefix + <new-branch>` (default `stack/`): one commit, whose diff is exactly what the stackspace changed. The deliberate direction |
 | `rig stack status` | per child: upstream commits since cursor, local commits touching the prefix not yet sent, cursor SHA |
@@ -236,6 +237,11 @@ it.
 3. `stack init` adopting an existing non-fused stackspace (the sibling-clone
    layout people already have): re-import and keep the overlay, or not worth
    the code?
+   *Partly answered by reconstitution (2026-09-04, #260): `init` now rebuilds
+   any member whose cursor is recorded but whose directory is absent, at that
+   cursor — so a clone of the root files alone (`rig stack seed`) becomes a
+   working stackspace. Adopting sibling clones that were never fused is still
+   open.*
 4. CI template (`stack init --ci github`) in v1 or after the verbs settle?
 
 ## `push`: exporting a member with its history (2026-08-26)
@@ -453,6 +459,72 @@ exactly its own swaps and no others.
 
 This is the shape `rig stack adopt` should generate, since it is the one a human
 can extend by adding a line.
+
+### Conflicts outside the prefix (2026-09-04, #261)
+
+A pull of one member produced eighty conflicts, every one under a *different*
+member's prefix, and the error named the prefix that was asked for. Two
+findings. The message was simply wrong: `stackPullOne` hardcoded the prefix
+rather than asking git which paths were unmerged; it now lists them. The
+conflicts themselves are impossible for a well-formed pull — a `:prefix=<name>`
+history carries nothing outside `<name>/` — and a `UD` status (ours modified,
+theirs deleted) needs the merge base to hold the path, so the fetched history
+must share a full stackspace commit as an ancestor. How one got there is not
+established (the stackspace had been hand-repaired), but the right answer for
+such paths does not depend on it: a filtered history has no authority outside
+its prefix, so `pull` settles them as the stackspace's own version, reports
+the count by directory and what it implies, and commits the merge when nothing
+inside the prefix remains. Conflicts inside the prefix stay the user's.
+
+### Reconstitution and seeds (2026-09-04, #260)
+
+A stackspace was a local artifact: moving it meant copying the fused repo,
+because nothing smaller reproduced it, and the pieces that would have — the
+root files deliberately kept out of every prefix — had nowhere else to live.
+Three decisions:
+
+- **The stackspace's own files are whatever sits at the root outside every
+  prefix.** No new directory convention: that set is already what the
+  stackspace's own commits carry, and `rig stack seed <dir>` exports exactly it
+  (`git archive` of HEAD's root entries minus the member prefixes) as a fresh
+  one-commit repository. A few kilobytes, no upstream history, and nothing
+  derived — the manifest already records what each prefix held. It refuses a
+  member holding commits that have not left, as `rm` does: a rebuild holds the
+  cursor or the proposed branch, and such commits are in neither.
+- **`propose` leaves a local record that the work has left.** Nothing in the
+  stackspace's own history says a prefix was proposed, so `status` and `rm`
+  kept reporting proposed work as unsent. `propose` now keeps the commit it
+  pushed under `refs/rigsmith/propose/<name>`; a prefix holding exactly that
+  tree has nothing left to send. `rm` drops the ref with the member.
+- **`init` reconstitutes.** A member with a cursor but no directory is imported
+  *at the cursor* rather than at upstream's tip, so the rebuilt stackspace
+  matches what was left. `stackPullOne` gained an `at` override for it.
+- **Fork members can be imported from the fork.** `propose` leaves work on a
+  `stack/…` branch of the fork while the cursor names the upstream commit it
+  was based on, so a rebuild from upstream would drop it. `trackBranch` names a
+  fork branch to import from explicitly; without it, a rebuild checks the branch
+  the member was last proposed to (`lastPropose`) and uses it while it exists.
+  The prefix is fetched through the proxy from the fork's path, and the cursor
+  is set to `merge-base(branch, upstream tip)` over the unfiltered objects — an
+  upstream commit, so `status`, `propose`'s guard and `pull` keep measuring
+  against upstream. josh filters are a pure function of the commit graph, so the
+  prefixed history of that base is the same object whichever remote it came
+  through, and a later pull of upstream merges against a shared ancestor.
+
+### Republished ids (2026-09-04, #259)
+
+`wire` keys the overlay on each project's real `PackageId`, deliberately —
+guessing from filenames redirects the wrong package. That leaves no way to
+express a fork that republishes under its own id (`Acme.Foo` for `Foo`, to a
+private feed, so the app builds without the stackspace): the app references an
+id no project declares, and inside the stackspace it resolves from the feed,
+builds, and never tests the fused code. The manifest carries it, since the
+manifest is outside every prefix and nothing there leaves in a PR:
+`publishesAs: {"Foo": "Acme.Foo"}` per member, or `publishPrefix: "Acme."` for
+every id a member produces. `stackRedirects` resolves a reference to a
+republished id back to the project producing the original and emits the
+redirect under the id the consumer wrote, which is what MSBuild matches. A rule
+naming a package the member does not produce is reported, not silently ignored.
 
 ### Reference assemblies (2026-09-04, #258)
 

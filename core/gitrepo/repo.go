@@ -328,8 +328,9 @@ func (r *Repo) LsRemote(ctx context.Context, remote, ref string) (string, error)
 // differ.
 func (r *Repo) ReplacePath(ctx context.Context, commit, dir string) error {
 	// --ignore-unmatch: the path may not exist here at all, which is not an
-	// error when the point is to make it match something else.
-	if _, err := runGit(ctx, r.Dir, "rm", "-rq", "--ignore-unmatch", "--", dir); err != nil {
+	// error when the point is to make it match something else. -f: a local
+	// modification is exactly what is being replaced, not a reason to stop.
+	if _, err := runGit(ctx, r.Dir, "rm", "-rqf", "--ignore-unmatch", "--", dir); err != nil {
 		return err
 	}
 	_, err := runGit(ctx, r.Dir, "checkout", commit, "--", dir)
@@ -454,4 +455,127 @@ func runGitStdin(ctx context.Context, dir, stdin string, env []string, args ...s
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
 	}
 	return out.String(), nil
+}
+
+// RemoveTree deletes dir from the index and the working tree, recursively,
+// modified files included — the caller has already decided the directory
+// goes. A path that is not tracked is not an error: the point is that it is
+// gone.
+func (r *Repo) RemoveTree(ctx context.Context, dir string) error {
+	// Only ever a directory inside this repository — checked before git rm
+	// runs, not after: "." would empty the index, and ".git" would take the
+	// repository itself.
+	full := filepath.Join(r.Dir, filepath.FromSlash(dir))
+	rel, err := filepath.Rel(r.Dir, full)
+	sep := string(filepath.Separator)
+	switch {
+	case err != nil, rel == ".", rel == "..", strings.HasPrefix(rel, ".."+sep):
+		return fmt.Errorf("refusing to remove %q: not a directory inside the repository", dir)
+	case rel == ".git", strings.HasPrefix(rel, ".git"+sep):
+		return fmt.Errorf("refusing to remove %q: that is the repository's own metadata", dir)
+	}
+	if _, err := runGit(ctx, r.Dir, "rm", "-rqf", "--ignore-unmatch", "--", rel); err != nil {
+		return err
+	}
+	// git rm knows only the index: ignored build output and untracked files
+	// stay behind, and the next commit would stage the untracked ones. The
+	// directory goes too.
+	return os.RemoveAll(full)
+}
+
+// exitStatus is the exit status behind a runGit error, or -1 when the
+// failure was not git's own (the binary missing, the context cancelled).
+// git tells "no" from "could not answer" by exit status alone: 1 for a
+// question with a negative answer, 128 for one it could not process.
+func exitStatus(err error) int {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
+	return -1
+}
+
+// SetRef points ref at sha, creating it if need be.
+func (r *Repo) SetRef(ctx context.Context, ref, sha string) error {
+	_, err := runGit(ctx, r.Dir, "update-ref", ref, sha)
+	return err
+}
+
+// IgnoredPaths lists the files under dir that git ignores — build output,
+// local environment files: things git never tracked, which a removal of the
+// directory takes with it and no history gets back. Relative to the
+// repository root, slash-separated.
+func (r *Repo) IgnoredPaths(ctx context.Context, dir string) ([]string, error) {
+	out, err := runGit(ctx, r.Dir, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", dir)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
+// DeleteRef removes a ref if it exists. A ref that is already absent is fine.
+func (r *Repo) DeleteRef(ctx context.Context, ref string) error {
+	if _, err := runGit(ctx, r.Dir, "rev-parse", "--verify", "--quiet", ref); err != nil {
+		// Exit status 1 is "no such ref", which is the answer wanted;
+		// anything else is git not having answered, which is not.
+		if exitStatus(err) == 1 {
+			return nil
+		}
+		return err
+	}
+	_, err := runGit(ctx, r.Dir, "update-ref", "-d", ref)
+	return err
+}
+
+// MergeBase is the best common ancestor of two commits, or "" when they share
+// no history at all — which is an answer, not an error.
+func (r *Repo) MergeBase(ctx context.Context, a, b string) (string, error) {
+	out, err := runGit(ctx, r.Dir, "merge-base", a, b)
+	if err != nil {
+		// Exit status 1 is git's "no common ancestor"; 128 is a revision
+		// it could not resolve, which must not read as the same answer.
+		if exitStatus(err) == 1 {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// TopLevelNames lists the entries directly under a revision's root tree.
+func (r *Repo) TopLevelNames(ctx context.Context, rev string) ([]string, error) {
+	// -z: a name with a space in it is one entry, and nothing gets quoted.
+	out, err := runGit(ctx, r.Dir, "ls-tree", "--name-only", "-z", rev)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, n := range strings.Split(out, "\x00") {
+		if n != "" {
+			names = append(names, n)
+		}
+	}
+	return names, nil
+}
+
+// ArchiveTar renders the given paths of a revision as a tar stream — what
+// `git archive` produces — so a subset of a tree can be materialised elsewhere
+// without a checkout.
+func (r *Repo) ArchiveTar(ctx context.Context, rev string, paths []string) ([]byte, error) {
+	args := append([]string{"archive", "--format=tar", rev, "--"}, paths...)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = r.Dir
+	var errb strings.Builder
+	cmd.Stderr = &errb
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git archive: %w: %s", err, strings.TrimSpace(errb.String()))
+	}
+	return out, nil
 }
