@@ -968,7 +968,7 @@ func newStackWireCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			byEco, orphans := stackRedirects(ctx, repo.Dir, m.names())
+			byEco, orphans, failed := stackRedirects(ctx, repo.Dir, m.names())
 			// Patching a member's own build file is a commit to that repository,
 			// and it travels back through `push` or `send`. Your own repos want
 			// that line; a fork you contribute to should not carry rig plumbing
@@ -977,8 +977,13 @@ func newStackWireCmd() *cobra.Command {
 			// Reported before anything is written: a member nothing consumes is
 			// usually why there was less to wire than expected.
 			stackReportOrphans(out, m, orphans)
+			// A scan that failed is reported as such, never as "nothing to wire":
+			// the overlay it would have written is still needed.
+			stackReportScanFailures(out, failed)
 			if len(byEco) == 0 {
-				fmt.Fprintln(out, "no package references cross between members — nothing to wire")
+				if len(failed) == 0 {
+					fmt.Fprintln(out, "no package references cross between members — nothing to wire")
+				}
 				return nil
 			}
 			for _, eco := range ecosystem.Default().All() {
@@ -1101,8 +1106,9 @@ func newStackDoctorCmd() *cobra.Command {
 			// leaves a build that succeeds against the published package and says
 			// nothing, so checking is the only way anyone finds out.
 			if m != nil {
-				reports, orphans := stackCheckOverlay(ctx, root, m.names(), m.ownedNames())
+				reports, orphans, failed := stackCheckOverlay(ctx, root, m.names(), m.ownedNames())
 				stackReportOrphans(out, m, orphans)
+				stackReportScanFailures(out, failed)
 				for _, rep := range reports {
 					if len(rep.Links) == 0 {
 						fmt.Fprintf(out, "· %s: no package reference crosses between members here\n", rep.Eco)

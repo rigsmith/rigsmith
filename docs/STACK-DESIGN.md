@@ -461,8 +461,9 @@ internals through a publicizer (`IgnoresAccessChecksToGenerator`) compiles fine
 against the package and fails fused with a wall of `CS0122`, on members that did
 not change. The publicizer rewrites the implementation assembly; a project
 reference hands the consumer the *reference* assembly the SDK produces by
-default, which has internals stripped and was never publicized. Packages ship no
-reference assembly, which is why the same code built before.
+default, which has internals stripped and was never publicized. A package
+without a separate `ref/<TFM>` asset — most of them — hands the consumer its
+implementation assembly instead, which is why the same code built before.
 
 `wire` therefore writes `ProduceReferenceAssembly=false` into the overlay, under
 the same `UseStackSources` switch as the swaps. Every project under the overlay

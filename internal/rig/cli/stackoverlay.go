@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -24,7 +25,10 @@ import (
 // the classic way to redirect the wrong package.
 //
 // The result is keyed by ecosystem id: each writes its own kind of overlay.
-func stackRedirects(ctx context.Context, root string, members []string) (map[string][]stackLink, []stackOrphan) {
+// failed names the ecosystems whose scan errored. For those, "no links" is
+// not an answer: nothing that acts on an empty answer — calling an overlay
+// left over, say — may do so, and the failure itself is what to report.
+func stackRedirects(ctx context.Context, root string, members []string) (map[string][]stackLink, []stackOrphan, map[string]error) {
 	member := func(rel string) string {
 		rel = filepath.ToSlash(rel)
 		for _, m := range members {
@@ -40,17 +44,24 @@ func stackRedirects(ctx context.Context, root string, members []string) (map[str
 	// A fused repo nothing here consumes is the quiet mistake this catches.
 	produces := map[string][]string{}
 	consumed := map[string]bool{}
+	failed := map[string]error{}
 	for _, eco := range ecosystem.Default().All() {
 		// Overlay ecosystems re-emit the base language's project rather than
 		// owning it, so asking them would double-count what the base reports.
 		if len(eco.Info().Overlays) > 0 {
 			continue
 		}
-		if ok, err := eco.Detect(ctx, root); err != nil || !ok {
+		ok, err := eco.Detect(ctx, root)
+		if err != nil {
+			failed[eco.Info().ID] = err
+			continue
+		}
+		if !ok {
 			continue
 		}
 		resp, err := eco.Discover(ctx, plugin.DiscoverRequest{RepoRoot: root, SourcePath: ".", IncludeUnversioned: true, IncludeRegistrySiblings: true})
 		if err != nil {
+			failed[eco.Info().ID] = err
 			continue
 		}
 		// Where each package is produced, so a dependency on it can be pointed
@@ -119,7 +130,7 @@ func stackRedirects(ctx context.Context, root string, members []string) (map[str
 		sort.Strings(produces[m])
 		orphans = append(orphans, stackOrphan{Member: m, Produces: produces[m]})
 	}
-	return out, orphans
+	return out, orphans, failed
 }
 
 // stackOrphan is a fused repo whose packages nothing else here references.
@@ -187,10 +198,20 @@ type stackOverlayReport struct {
 
 // stackCheckOverlay asks each ecosystem whether the redirects it needs are in
 // effect, without changing anything.
-func stackCheckOverlay(ctx context.Context, root string, members, writable []string) ([]stackOverlayReport, []stackOrphan) {
+//
+// failed names the ecosystems that could not be scanned, keyed by id; no
+// report is made for those, since an overlay cannot be judged against links
+// that were never found.
+func stackCheckOverlay(ctx context.Context, root string, members, writable []string) ([]stackOverlayReport, []stackOrphan, map[string]error) {
 	var out []stackOverlayReport
-	byEco, orphans := stackRedirects(ctx, root, members)
+	byEco, orphans, failed := stackRedirects(ctx, root, members)
 	for _, eco := range ecosystem.Default().All() {
+		// A scan that errored found no links, which is not the same as there
+		// being none: the overlay it would have needed is still needed, and
+		// calling it left over would be exactly wrong.
+		if failed[eco.Info().ID] != nil {
+			continue
+		}
 		// Asked even with nothing to redirect: an overlay left over from
 		// members that have gone is a problem only the adapter can see,
 		// and it is exactly when nothing crosses that it goes unnoticed.
@@ -204,5 +225,19 @@ func stackCheckOverlay(ctx context.Context, root string, members, writable []str
 		out = append(out, stackOverlayReport{Eco: eco.Info().ID, Links: links, Resp: resp})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Eco < out[j].Eco })
-	return out, orphans
+	return out, orphans, failed
+}
+
+// stackReportScanFailures says which ecosystems could not be scanned, in a
+// stable order. Silence here would read as "nothing crosses", which is the
+// one thing a failed scan cannot say.
+func stackReportScanFailures(out io.Writer, failed map[string]error) {
+	ids := make([]string, 0, len(failed))
+	for id := range failed {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		fmt.Fprintf(out, "✗ %s: could not scan for package references — %v\n", id, failed[id])
+	}
 }

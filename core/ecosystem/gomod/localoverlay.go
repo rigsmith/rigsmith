@@ -85,10 +85,14 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 		return resp, nil
 	}
 
-	// An existing directive wins; otherwise take the highest the modules ask
-	// for. Omitting it is not an option: go.work then defaults to 1.18, and
-	// every module wanting more than that fails to load.
-	if v := goDirective(string(existing)); v != "" {
+	// The directive is the highest the modules ask for, or an existing one
+	// where that is higher still (a toolchain may have raised it). An
+	// existing directive below what a module now needs is not kept: the
+	// workspace would refuse to load that module, and a check comparing
+	// against it would call the broken file current. Omitting the line is not
+	// an option either: go.work then defaults to 1.18, and every module
+	// wanting more than that fails to load.
+	if v := goDirective(string(existing)); higherGoVersion(v, goVersion) {
 		goVersion = v
 	}
 	body := renderWork(goVersion, mods)

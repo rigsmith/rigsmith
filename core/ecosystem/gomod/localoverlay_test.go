@@ -130,6 +130,38 @@ func TestGoLocalOverlay(t *testing.T) {
 		}
 	})
 
+	t.Run("a go.work rig wrote before a module raised its go directive is out of date", func(t *testing.T) {
+		// The existing directive is kept only while it is at least what the
+		// modules ask for; below that the workspace refuses to load the
+		// module, and a check that compared against it would call the broken
+		// file current — and wire would write it again.
+		root := newRoot(t, "1.22", "1.22")
+		if _, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: true}); err != nil {
+			t.Fatal(err)
+		}
+		writeMod(t, filepath.Join(root, "app"), "example.com/you/app", "1.24")
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Problems) != 1 || !strings.Contains(got.Problems[0].Message, "out of date") || !got.Problems[0].Fixable {
+			t.Fatalf("raised directive: %+v, want one fixable out-of-date report", got.Problems)
+		}
+		if !strings.Contains(got.Files[workFile], "go 1.24") {
+			t.Fatalf("rendered with the old directive:\n%s", got.Files[workFile])
+		}
+
+		// Higher than the modules ask for is kept: a toolchain may have
+		// raised it, and lowering it gains nothing.
+		if err := os.WriteFile(filepath.Join(root, workFile), []byte(renderWork("1.25", []string{"app", "lib"})), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+		if len(got.Problems) != 0 || !strings.Contains(got.Files[workFile], "go 1.25") {
+			t.Fatalf("higher existing directive: problems=%+v body:\n%s", got.Problems, got.Files[workFile])
+		}
+	})
+
 	t.Run("a go.work rig wrote is reported once nothing crosses any more", func(t *testing.T) {
 		root := newRoot(t, "1.24", "1.24")
 		if _, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: true}); err != nil {

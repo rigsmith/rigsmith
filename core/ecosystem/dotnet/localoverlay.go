@@ -269,8 +269,9 @@ func renderOverlay(redirects []plugin.Redirect) string {
 // overlayNoRefAssemblies is the part of the overlay that keeps a swap from
 // breaking anything that reads a dependency's internals.
 //
-// A package ships one assembly, and a publicizer (IgnoresAccessChecksTo and
-// friends) rewrites what the compiler sees. A project reference is different:
+// A package with no separate ref/<TFM> asset — most of them — hands the
+// consumer its implementation assembly, and a publicizer (IgnoresAccessChecksTo
+// and friends) rewrites what the compiler sees. A project reference is different:
 // the SDK also produces a *reference* assembly, internals stripped, and hands
 // the consumer that one — so the publicized copy is built and then ignored,
 // and every internal comes back as CS0122, on members that did not change.
@@ -287,8 +288,9 @@ func renderOverlay(redirects []plugin.Redirect) string {
 // restores the against-real-packages build.
 const overlayNoRefAssemblies = `  <!-- A project reference hands consumers a reference assembly, internals
        stripped, that a publicizer (IgnoresAccessChecksTo) never rewrote — so a
-       swap above would turn every internal it exposes into CS0122. Packages ship
-       no reference assembly, which is why the same code compiled before. -->
+       swap above would turn every internal it exposes into CS0122. A package
+       without a separate ref/<TFM> asset hands consumers its implementation
+       assembly instead, which is why the same code compiled before. -->
   <PropertyGroup Condition="'$(UseStackSources)' != 'false'">
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
   </PropertyGroup>

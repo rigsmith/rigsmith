@@ -252,9 +252,10 @@ swaps that project needs. Only actual consumers get rewired, which is what stops
 `Pty.Core` gaining a reference to itself.
 
 The last block is there for anything that reads a dependency's *internals*. A
-package ships one assembly, and a publicizer such as
+package without a separate `ref/<TFM>` asset — most of them — hands the
+consumer its implementation assembly, and a publicizer such as
 `IgnoresAccessChecksToGenerator` rewrites what the compiler sees. A project
-reference also produces a *reference* assembly, internals stripped, and hands
+reference instead produces a *reference* assembly, internals stripped, and hands
 the consumer that one — so the publicized copy is built and then ignored, and
 every internal comes back as `CS0122` on members that did not change. Turning
 reference assemblies off inside the stackspace is a trade: they exist so a
