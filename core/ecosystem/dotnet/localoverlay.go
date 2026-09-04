@@ -2,6 +2,7 @@ package dotnet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -32,6 +33,30 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	if len(req.Redirects) == 0 {
 		resp.Skipped = true
 		resp.Reason = "nothing to redirect"
+		// An overlay rig wrote for members that have since gone still swaps
+		// packages for projects at paths that may have left; a check says
+		// so rather than calling an ecosystem with nothing to redirect
+		// healthy.
+		if !req.Write {
+			existing, err := os.ReadFile(filepath.Join(req.Root, overlayFile))
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+			case err != nil:
+				// Present but unreadable is not healthy, whether or not
+				// anything crosses: MSBuild cannot use it either.
+				resp.Skipped = false
+				resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+					Path:    overlayFile,
+					Message: "cannot be read (" + err.Error() + ") — MSBuild cannot use it either; make the file readable",
+				})
+			case strings.Contains(string(existing), overlayMarker):
+				resp.Skipped = false
+				resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+					Path:    overlayFile,
+					Message: "left over — no package reference crosses between members any more, so it only redirects to paths that may have left; delete it",
+				})
+			}
+		}
 		return resp, nil
 	}
 
@@ -42,6 +67,34 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	body := renderOverlay(req.Redirects)
 	resp.Files = map[string]string{overlayFile: body}
 	if !req.Write {
+		// A missing overlay, and an overlay rig wrote earlier that no longer
+		// matches what it would write now — a member added since, or a
+		// release that changed the template — are equally silent: the build
+		// succeeds against the registry either way. So a check says so.
+		// Staleness is judged with line endings normalised: a checkout with
+		// autocrlf hands the same file back with CRLF, and that is not it.
+		existing, err := os.ReadFile(filepath.Join(req.Root, overlayFile))
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+				Path:    overlayFile,
+				Message: "not written — every project here still resolves these packages from the registry; run `rig stack wire`",
+				Fixable: true,
+			})
+		case err != nil:
+			// Present but unreadable is not healthy: MSBuild cannot use it
+			// either, and rig cannot say what it holds.
+			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+				Path:    overlayFile,
+				Message: "cannot be read (" + err.Error() + ") — MSBuild cannot use it either; make the file readable",
+			})
+		case strings.Contains(string(existing), overlayMarker) && crlfToLF(string(existing)) != crlfToLF(body):
+			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+				Path:    overlayFile,
+				Message: "out of date — it differs from what the current members and rig would write; re-run `rig stack wire`, which rewrites the file whole (if you extended it by hand, drop the marker line to make it yours, and keep it current yourself)",
+				Fixable: true,
+			})
+		}
 		return resp, nil
 	}
 
@@ -225,7 +278,42 @@ func renderOverlay(redirects []plugin.Redirect) string {
     <PackageReference Remove="@(StackSource)" />
   </ItemGroup>
 
-</Project>
 `)
+	b.WriteString(overlayNoRefAssemblies)
+	b.WriteString("\n</Project>\n")
 	return b.String()
 }
+
+// overlayNoRefAssemblies is the part of the overlay that keeps a swap from
+// breaking anything that reads a dependency's internals.
+//
+// A package with no separate ref/<TFM> asset — most of them — hands the
+// consumer its implementation assembly, and a publicizer (IgnoresAccessChecksTo
+// and friends) rewrites what the compiler sees. A project reference is different:
+// the SDK also produces a *reference* assembly, internals stripped, and hands
+// the consumer that one — so the publicized copy is built and then ignored,
+// and every internal comes back as CS0122, on members that did not change.
+// Nothing about the code, the versions, or InternalsVisibleTo is involved,
+// which is why it reads like API drift and costs an afternoon.
+//
+// Every project under the overlay gets the property, not only the redirected
+// ones. Matching the current project against the redirect paths would have to
+// be done in a condition, with separators and casing that differ across
+// platforms, and a match that fails does so silently — the very thing this
+// overlay exists to prevent. Reference assemblies are a build-time
+// optimisation, and inside a stackspace, where everything rebuilds together,
+// the cost of not having them is small. The escape hatch is the same one that
+// restores the against-real-packages build.
+const overlayNoRefAssemblies = `  <!-- A project reference hands consumers a reference assembly, internals
+       stripped, that a publicizer (IgnoresAccessChecksTo) never rewrote — so a
+       swap above would turn every internal it exposes into CS0122. A package
+       without a separate ref/<TFM> asset hands consumers its implementation
+       assembly instead, which is why the same code compiled before. -->
+  <PropertyGroup Condition="'$(UseStackSources)' != 'false'">
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+  </PropertyGroup>
+`
+
+// crlfToLF normalises line endings for comparisons that must not mistake a
+// checkout's autocrlf conversion for a change.
+func crlfToLF(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }

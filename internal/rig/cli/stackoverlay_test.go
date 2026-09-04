@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rigsmith/rigsmith/core/ecosystem/dotnet"
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 // csproj writes a project producing pkg and referencing each of refs as a
@@ -39,7 +42,7 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 		csproj(t, root, "core", "Acme.Core")
 		csproj(t, root, "app", "Term.App", "Acme.Lib")
 
-		links, _ := stackRedirects(ctx, root, []string{"app", "core", "lib"})
+		links, _, _ := stackRedirects(ctx, root, []string{"app", "core", "lib"})
 		var got []string
 		for _, l := range links["dotnet"] {
 			got = append(got, l.describe())
@@ -61,7 +64,7 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 		csproj(t, root, "terminal", "Iciclecreek.Avalonia.Terminal")
 		csproj(t, root, "app", "Term.App", "Avalloy.Terminal")
 
-		_, orphans := stackRedirects(ctx, root, []string{"app", "terminal"})
+		_, orphans, _ := stackRedirects(ctx, root, []string{"app", "terminal"})
 		var found bool
 		for _, o := range orphans {
 			if o.Member == "terminal" {
@@ -81,7 +84,7 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 		csproj(t, root, "lib", "Acme.Lib")
 		csproj(t, root, "app", "Term.App", "Acme.Lib")
 
-		_, orphans := stackRedirects(ctx, root, []string{"app", "lib"})
+		_, orphans, _ := stackRedirects(ctx, root, []string{"app", "lib"})
 		for _, o := range orphans {
 			if o.Member == "lib" {
 				t.Fatalf("reported a member that is consumed: %+v", o)
@@ -97,7 +100,7 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 		csproj(t, root, "lib", "Acme.Lib")
 		csproj(t, root, "app", "Term.App", "Acme.Lib")
 
-		_, orphans := stackRedirects(ctx, root, []string{"app", "lib"})
+		_, orphans, _ := stackRedirects(ctx, root, []string{"app", "lib"})
 		var sawApp bool
 		for _, o := range orphans {
 			if o.Member == "app" {
@@ -117,4 +120,52 @@ func TestStackRedirectsAndOrphans(t *testing.T) {
 			t.Fatalf("reported the owned app:\n%s", out.String())
 		}
 	})
+}
+
+// An overlay rig wrote is reported once nothing crosses any more — which is
+// exactly when the ecosystem has no links and would otherwise not be asked.
+func TestStackCheckOverlay_ReportsAnOverlayLeftOver(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	csproj(t, root, "app/src/App", "Acme.App", "Acme.Lib")
+	csproj(t, root, "lib/src/Lib", "Acme.Lib")
+
+	reports, _, failed := stackCheckOverlay(ctx, root, []string{"app", "lib"}, []string{"app", "lib"})
+	if len(failed) != 0 {
+		t.Fatalf("scan failed: %v", failed)
+	}
+	// With a link, the .NET adapter reports the overlay as not yet written.
+	rep := dotnetReport(reports)
+	if rep == nil || len(rep.Links) != 1 || len(rep.Resp.Problems) != 1 || !strings.Contains(rep.Resp.Problems[0].Message, "not written") {
+		t.Fatalf("with a link: %+v, want one link and a not-written report", reports)
+	}
+
+	// Write the overlay the link asks for, then take the link away.
+	if _, err := dotnet.New().LocalOverlay(ctx, plugin.LocalOverlayRequest{
+		Root: root, Redirects: redirectsOf(rep.Links), Write: true, Writable: []string{"app", "lib"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	csproj(t, root, "app/src/App", "Acme.App")
+
+	reports, _, failed = stackCheckOverlay(ctx, root, []string{"app", "lib"}, []string{"app", "lib"})
+	if len(failed) != 0 {
+		t.Fatalf("scan failed: %v", failed)
+	}
+	rep = dotnetReport(reports)
+	if rep == nil || len(rep.Links) != 0 {
+		t.Fatalf("nothing crossing: %+v, want the .NET adapter still asked, with no links", reports)
+	}
+	if len(rep.Resp.Problems) != 1 || !strings.Contains(rep.Resp.Problems[0].Message, "left over") {
+		t.Fatalf("nothing crossing: %+v, want the overlay reported as left over", rep.Resp.Problems)
+	}
+}
+
+func dotnetReport(reports []stackOverlayReport) *stackOverlayReport {
+	for i := range reports {
+		if reports[i].Eco == "dotnet" {
+			return &reports[i]
+		}
+	}
+	return nil
 }

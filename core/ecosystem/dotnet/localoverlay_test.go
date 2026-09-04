@@ -33,6 +33,36 @@ func TestLocalOverlay(t *testing.T) {
 		}
 	})
 
+	t.Run("an overlay that cannot be read is not healthy", func(t *testing.T) {
+		// A directory where the file should be: present, unreadable, and no
+		// use to MSBuild either. Silence here would call it in effect.
+		root := newRoot(t)
+		if err := os.MkdirAll(filepath.Join(root, overlayFile), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Problems) != 1 || !strings.Contains(got.Problems[0].Message, "cannot be read") || got.Problems[0].Fixable {
+			t.Fatalf("unreadable overlay: %+v, want one unfixable problem", got.Problems)
+		}
+	})
+
+	t.Run("an overlay that cannot be read is not healthy even with nothing to redirect", func(t *testing.T) {
+		root := newRoot(t)
+		if err := os.MkdirAll(filepath.Join(root, overlayFile), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Skipped || len(got.Problems) != 1 || !strings.Contains(got.Problems[0].Message, "cannot be read") || got.Problems[0].Fixable {
+			t.Fatalf("unreadable overlay, no redirects: skipped=%v %+v, want one unfixable problem", got.Skipped, got.Problems)
+		}
+	})
+
 	t.Run("describes without writing", func(t *testing.T) {
 		root := newRoot(t)
 		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
@@ -315,4 +345,101 @@ func TestLocalOverlayPatchesShadowing(t *testing.T) {
 			t.Fatalf("changed it anyway:\n%s", body)
 		}
 	})
+}
+
+// The swap breaks publicizers unless reference assemblies are off, and the
+// overlay is the one place that can say so without editing a member.
+func TestLocalOverlayDisablesReferenceAssemblies(t *testing.T) {
+	ctx := context.Background()
+	a := New()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "lib/src/Pty.Core/Pty.Core.csproj"), "<Project/>")
+	redirects := []plugin.Redirect{{Package: "Pty.Core", Path: "lib/src/Pty.Core/Pty.Core.csproj"}}
+	got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := got.Files[overlayFile]
+	if !strings.Contains(body, "<ProduceReferenceAssembly>false</ProduceReferenceAssembly>") {
+		t.Fatalf("overlay leaves reference assemblies on:\n%s", body)
+	}
+	// Behind the same switch as the swaps, so the pristine build stays pristine.
+	at := strings.Index(body, "<ProduceReferenceAssembly>")
+	if pg := strings.LastIndex(body[:at], "<PropertyGroup"); pg < 0 || !strings.Contains(body[pg:at], "UseStackSources") {
+		t.Errorf("the property is not conditioned on UseStackSources:\n%s", body)
+	}
+
+	// Before anything is written, a check says the overlay is missing: an
+	// unwired stackspace builds fine against the registry and must not
+	// look healthy.
+	var missing bool
+	for _, p := range got.Problems {
+		if p.Path == overlayFile && strings.Contains(p.Message, "not written") && p.Fixable {
+			missing = true
+		}
+	}
+	if !missing {
+		t.Fatalf("missing overlay not reported: %+v", got.Problems)
+	}
+
+	// An overlay from before the property existed is reported as stale by a
+	// check, and rewritten by a write.
+	old := strings.Replace(body, overlayNoRefAssemblies, "", 1)
+	writeFile(t, filepath.Join(root, overlayFile), old)
+	got, err = a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stale bool
+	for _, p := range got.Problems {
+		if p.Path == overlayFile && strings.Contains(p.Message, "out of date") {
+			stale = true
+		}
+	}
+	if !stale {
+		t.Fatalf("stale overlay not reported: %+v", got.Problems)
+	}
+	if _, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: true}); err != nil {
+		t.Fatal(err)
+	}
+	now, _ := os.ReadFile(filepath.Join(root, overlayFile))
+	if string(now) != body {
+		t.Error("write did not bring the overlay up to date")
+	}
+	got, _ = a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+	for _, p := range got.Problems {
+		if strings.Contains(p.Message, "out of date") || strings.Contains(p.Message, "not written") {
+			t.Errorf("still reported after a rewrite: %s", p.Message)
+		}
+	}
+	// The same overlay with CRLF endings — what an autocrlf checkout hands
+	// back — is not stale.
+	writeFile(t, filepath.Join(root, overlayFile), strings.ReplaceAll(body, "\n", "\r\n"))
+	got, _ = a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+	for _, p := range got.Problems {
+		if strings.Contains(p.Message, "out of date") {
+			t.Error("CRLF line endings reported as staleness")
+		}
+	}
+}
+
+// Once nothing crosses between members, an overlay rig wrote earlier is
+// reported by a check rather than passed over as "nothing to redirect"; a
+// hand-written one is not rig's to call left over.
+func TestLocalOverlayLeftOverWhenNothingCrosses(t *testing.T) {
+	ctx := context.Background()
+	a := New()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, overlayFile), overlayMarker+"\n<Project/>\n")
+	got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Skipped || len(got.Problems) != 1 || !strings.Contains(got.Problems[0].Message, "left over") {
+		t.Fatalf("leftover overlay: skipped=%v %+v, want it reported", got.Skipped, got.Problems)
+	}
+	writeFile(t, filepath.Join(root, overlayFile), "<Project><!-- mine --></Project>\n")
+	if got, _ := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root}); !got.Skipped || len(got.Problems) != 0 {
+		t.Fatalf("hand-written overlay with no redirects: skipped=%v %+v", got.Skipped, got.Problems)
+	}
 }
