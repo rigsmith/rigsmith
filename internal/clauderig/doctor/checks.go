@@ -15,6 +15,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/gitignore"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
+	"github.com/rigsmith/rigsmith/internal/clauderig/settings"
 	"github.com/rigsmith/rigsmith/internal/clauderig/status"
 )
 
@@ -203,6 +204,37 @@ func checkProjectGuard(env Env) Result {
 			_, err := hooks.Install(env.ProjectSettings, hooks.GuardPlans())
 			return err
 		}}
+}
+
+// checkIgnoredSettings reports values in the project or local settings.json
+// that Claude Code does not honour at that scope — a `defaultMode` of
+// "bypassPermissions" or "auto" — because a repo relying on clauderig to carry
+// such a value across machines gets no error from anyone when it stops
+// working. Reported only when there is something to say.
+func checkIgnoredSettings(env Env) (Result, bool) {
+	var found []string
+	for _, tier := range []struct {
+		scope settings.Scope
+		path  string
+	}{{settings.Project, env.ProjectSettings}, {settings.Local, env.LocalSettings}} {
+		if tier.path == "" {
+			continue
+		}
+		ignored, err := settings.IgnoredAt(tier.scope, tier.path)
+		if err != nil {
+			continue // an unparseable file is the guard check's problem, not this one's
+		}
+		for _, i := range ignored {
+			found = append(found, fmt.Sprintf("%s (%s settings) — honoured only from %s", i, tier.scope, i.Where))
+		}
+	}
+	if len(found) == 0 {
+		return Result{}, false
+	}
+	return Result{Name: "ignored settings", Status: Warn,
+		Detail: strings.Join(found, "; "),
+		Hint:   "Claude Code drops these silently at this scope — move the value to ~/.claude/settings.json or pass it on the command line",
+	}, true
 }
 
 func checkGuide(env Env) Result {

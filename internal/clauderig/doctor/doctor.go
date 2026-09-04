@@ -84,6 +84,9 @@ func Run(ctx context.Context, env Env) []Section {
 		if r, ok := checkLocalGitignore(env); ok {
 			wt.Results = append(wt.Results, r)
 		}
+		if r, ok := checkIgnoredSettings(env); ok {
+			wt.Results = append(wt.Results, r)
+		}
 	} else {
 		wt.Results = append(wt.Results, Result{
 			Name: "repo checks", Status: Info,

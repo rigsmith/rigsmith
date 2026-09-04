@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -42,5 +43,37 @@ func TestPath(t *testing.T) {
 	}
 	if _, err := User.Path("", root); err == nil {
 		t.Error("User.Path with no home should error")
+	}
+}
+
+func TestIgnoredAt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if got, err := IgnoredAt(Project, path); err != nil || len(got) != 0 {
+		t.Fatalf("missing file: %v, %v", got, err)
+	}
+	if err := os.WriteFile(path, []byte(`{"defaultMode": "bypassPermissions", "hooks": {}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []Scope{Project, Local} {
+		got, err := IgnoredAt(s, path)
+		if err != nil || len(got) != 1 || got[0].Key != "defaultMode" || got[0].Value != "bypassPermissions" {
+			t.Errorf("%s: got %v, %v; want the defaultMode value flagged", s, got, err)
+		}
+	}
+	if got, err := IgnoredAt(User, path); err != nil || len(got) != 0 {
+		t.Errorf("user scope honours it: got %v, %v", got, err)
+	}
+	if err := os.WriteFile(path, []byte(`{"defaultMode": "acceptEdits"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := IgnoredAt(Project, path); err != nil || len(got) != 0 {
+		t.Errorf("acceptEdits is honoured everywhere: got %v, %v", got, err)
+	}
+	if err := os.WriteFile(path, []byte(`{not json`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := IgnoredAt(Project, path); err == nil {
+		t.Error("malformed file reported as clean")
 	}
 }

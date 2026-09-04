@@ -294,3 +294,23 @@ func TestCheckStagingMerge_CleanRepoIsOK(t *testing.T) {
 		t.Fatalf("clean repo: got %+v, want OK with no Fix", r)
 	}
 }
+
+func TestCheckIgnoredSettings(t *testing.T) {
+	dir := t.TempDir()
+	env := Env{RepoRoot: dir,
+		ProjectSettings: filepath.Join(dir, ".claude", "settings.json"),
+		LocalSettings:   filepath.Join(dir, ".claude", "settings.local.json")}
+	if _, ok := checkIgnoredSettings(env); ok {
+		t.Fatal("no settings files: expected the check to be skipped")
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(env.LocalSettings, []byte(`{"defaultMode":"bypassPermissions"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := checkIgnoredSettings(env)
+	if !ok || r.Status != Warn || !strings.Contains(r.Detail, "bypassPermissions") || !strings.Contains(r.Detail, "local") {
+		t.Fatalf("got ok=%v %+v, want a Warn naming the local file's value", ok, r)
+	}
+}

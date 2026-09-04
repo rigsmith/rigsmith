@@ -7,7 +7,10 @@
 package settings
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 )
 
@@ -25,6 +28,15 @@ const (
 
 // All lists the scopes in precedence order (broadest to narrowest), which is also
 // the order to report or sweep them in.
+//
+// Precedence is per key, and not every key takes part. Claude Code reads a few
+// only from the broad tiers: `defaultMode: "bypassPermissions"` (since the
+// 2026-09-02 release) and `defaultMode: "auto"` are honoured from user or
+// managed settings and ignored, silently, in a project or local file. The
+// narrower tiers therefore cannot always override the broader ones, and a
+// value clauderig faithfully syncs into `.claude/settings.json` may be one
+// Claude Code never reads there. IgnoredAt names those values for a file, and
+// `clauderig doctor` reports them.
 var All = []Scope{User, Project, Local}
 
 // Parse turns a flag value into a Scope ("global" is accepted as an alias for
@@ -75,4 +87,58 @@ func (s Scope) Label() string {
 		return "local (.claude/settings.local.json)"
 	}
 	return string(s)
+}
+
+// Ignored is a value Claude Code reads from a settings file at one scope and
+// honours at another. The precedence order in All is not the whole story: a
+// few keys are accepted from user or managed settings only, and a project or
+// local file that carries them is silently a no-op for that key. clauderig
+// never writes these itself, but it syncs and restores a repo's own
+// `.claude/settings.json`, so a value a user relies on it to carry across
+// machines can stop working with no error from anyone.
+type Ignored struct {
+	Key   string // the settings key, e.g. "defaultMode"
+	Value string // the value that is ignored at this scope
+	// Where names the scopes that do honour it.
+	Where string
+}
+
+func (i Ignored) String() string { return fmt.Sprintf("%s: %q", i.Key, i.Value) }
+
+// ignoredModes lists the `defaultMode` values Claude Code drops at project and
+// local scope: "auto" always was, and "bypassPermissions" joined it in the
+// 2026-09-02 release. Both are honoured from user or managed settings, or via
+// `--permission-mode` on the command line.
+var ignoredModes = map[string]bool{"bypassPermissions": true, "auto": true}
+
+// IgnoredAt reports the values in the settings file at path that Claude Code
+// will not honour at scope s. A missing or empty file has none. It parses what
+// it needs and nothing else, so an otherwise malformed file is reported as an
+// error rather than as clean.
+func IgnoredAt(s Scope, path string) ([]Ignored, error) {
+	if s == User {
+		return nil, nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		return nil, nil
+	}
+	var m struct {
+		DefaultMode string `json:"defaultMode"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	var out []Ignored
+	if ignoredModes[m.DefaultMode] {
+		out = append(out, Ignored{Key: "defaultMode", Value: m.DefaultMode,
+			Where: "user or managed settings, or --permission-mode on the command line"})
+	}
+	return out, nil
 }
