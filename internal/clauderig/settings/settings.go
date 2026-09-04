@@ -151,7 +151,7 @@ func IgnoredAt(s Scope, path string) ([]Ignored, error) {
 		if err := json.Unmarshal(raw, &perms); err != nil {
 			return nil, err
 		}
-		mode, err := stringAt(perms, "defaultMode")
+		mode, _, err := stringAt(perms, "defaultMode")
 		if err != nil {
 			return nil, err
 		}
@@ -164,16 +164,16 @@ func IgnoredAt(s Scope, path string) ([]Ignored, error) {
 	}
 	// A bare top-level defaultMode is not a shape Claude Code reads, but one
 	// people write by mistake, so it is reported too rather than silently
-	// passed over — at any scope, whatever it says: the key is
-	// permissions.defaultMode, and the person who wrote it meant something.
-	// Where names the scopes that honour the value once it is under the
-	// right key, which for a dropped mode at a narrow scope is still not
-	// this one.
-	mode, err := stringAt(top, "defaultMode")
+	// passed over — at any scope, whatever it says, an empty string
+	// included: the key is permissions.defaultMode, and the person who
+	// wrote it meant something. Where names the scopes that honour the
+	// value once it is under the right key, which for a dropped mode at a
+	// narrow scope is still not this one.
+	mode, present, err := stringAt(top, "defaultMode")
 	if err != nil {
 		return nil, err
 	}
-	if mode != "" {
+	if present {
 		i := Ignored{Key: "defaultMode", Value: mode,
 			Fix: "move it under permissions — Claude Code never reads a top-level defaultMode"}
 		if s != User && ignoredModes[mode] {
@@ -185,19 +185,20 @@ func IgnoredAt(s Scope, path string) ([]Ignored, error) {
 	return out, nil
 }
 
-// stringAt decodes the string under key, or "" when the key is absent. A
-// value of another type is an error of the same kind as malformed JSON: the
-// file does not parse as settings.
-func stringAt(m map[string]json.RawMessage, key string) (string, error) {
+// stringAt decodes the string under key, reporting whether the key was there
+// at all — an absent key and an empty string are different mistakes. A value
+// of another type is an error of the same kind as malformed JSON: the file
+// does not parse as settings.
+func stringAt(m map[string]json.RawMessage, key string) (string, bool, error) {
 	raw, ok := m[key]
 	if !ok {
-		return "", nil
+		return "", false, nil
 	}
 	var v string
 	if err := json.Unmarshal(raw, &v); err != nil {
-		return "", err
+		return "", true, err
 	}
-	return v, nil
+	return v, true, nil
 }
 
 // wrongCase reports a defaultMode spelled in the wrong case — DefaultMode,

@@ -96,6 +96,13 @@ func TestIgnoredAt(t *testing.T) {
 	if got, err := IgnoredAt(Project, path); err != nil || len(got) != 0 {
 		t.Errorf("acceptEdits is honoured everywhere: got %v, %v", got, err)
 	}
+	// Present and empty is still present: the key is the mistake.
+	if err := os.WriteFile(path, []byte(`{"defaultMode": ""}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := IgnoredAt(Project, path); err != nil || len(got) != 1 || got[0].Key != "defaultMode" || got[0].Fix == "" {
+		t.Errorf("empty top-level defaultMode: got %+v, %v; want it reported", got, err)
+	}
 	// JSON keys are case-sensitive and so is Claude Code, though a Go struct
 	// would not be: a DefaultMode is not the setting at any scope, and the
 	// advice is the spelling, not the scope.
