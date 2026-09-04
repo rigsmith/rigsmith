@@ -211,19 +211,7 @@ func (r *Repo) SideCommitTime(ctx context.Context, ref, path string) (t time.Tim
 // UnmergedPaths lists the paths still in conflict in a merge that stopped —
 // what `git status` shows as U-something — slash-separated, sorted as git
 // reports them. Empty when the index is clean.
-func (r *Repo) UnmergedPaths(ctx context.Context) ([]string, error) {
-	out, err := runGit(ctx, r.Dir, "diff", "--name-only", "--diff-filter=U", "-z")
-	if err != nil {
-		return nil, err
-	}
-	var paths []string
-	for _, p := range strings.Split(out, "\x00") {
-		if p != "" {
-			paths = append(paths, p)
-		}
-	}
-	return paths, nil
-}
+func (r *Repo) UnmergedPaths(ctx context.Context) ([]string, error) { return r.Conflicts(ctx) }
 
 // ResolveOurs settles each of the given conflicted paths in favour of this
 // side: our version is restored and staged where we have one, and the path is
@@ -248,17 +236,23 @@ func (r *Repo) ResolveOurs(ctx context.Context, paths []string) error {
 		if _, err := runGit(ctx, r.Dir, "rm", "-q", "-f", "--cached", "--", p); err != nil {
 			return err
 		}
-		_ = os.Remove(filepath.Join(r.Dir, filepath.FromSlash(p)))
+		// The index no longer knows the file; the working copy git left for
+		// the conflict has to go too, or the next commit would stage it back.
+		if err := os.Remove(filepath.Join(r.Dir, filepath.FromSlash(p))); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }
 
 // hasStage reports whether `ls-files -u -z` output carries an entry at the
-// given stage. Each record reads "<mode> <sha> <stage>\t<path>".
+// given stage. Each record reads "<mode> <sha> <stage>\t<path>"; only the
+// part before the tab is looked at, since a path may itself contain " 2\t".
 func hasStage(out string, stage int) bool {
-	want := fmt.Sprintf(" %d\t", stage)
+	want := fmt.Sprintf(" %d", stage)
 	for _, rec := range strings.Split(out, "\x00") {
-		if strings.Contains(rec, want) {
+		meta, _, ok := strings.Cut(rec, "\t")
+		if ok && strings.HasSuffix(meta, want) {
 			return true
 		}
 	}

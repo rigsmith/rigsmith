@@ -129,6 +129,25 @@ func TestStackRm(t *testing.T) {
 		}
 	})
 
+	t.Run("--keep-tree refuses a dirty prefix even with --force", func(t *testing.T) {
+		root := rmStackspace(t, rmManifest)
+		if err := os.WriteFile(filepath.Join(root, "pty-core", "src", "lib.cs"), []byte("// edited\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{{"pty-core", "--keep-tree"}, {"pty-core", "--keep-tree", "--force"}} {
+			if _, err := runRm(t, args...); err == nil || !strings.Contains(err.Error(), "commit or stash") {
+				t.Fatalf("%v: err = %v, want a refusal", args, err)
+			}
+		}
+		m, _, _ := loadStackManifest(root)
+		if m.Repos["pty-core"] == nil {
+			t.Error("entry removed from the manifest despite the refusal")
+		}
+		if got, _ := os.ReadFile(filepath.Join(root, "pty-core", "src", "lib.cs")); !strings.Contains(string(got), "edited") {
+			t.Error("the edit was lost")
+		}
+	})
+
 	t.Run("a tree with no import commit to compare against needs --force", func(t *testing.T) {
 		withCursor := strings.TrimSuffix(rmManifest, "}\n") +
 			`, "lastSync": { "pty-core": "0123456789abcdef0123456789abcdef01234567", "term-core": "89abcdef0123456789abcdef0123456789abcdef" }` + "\n}\n"

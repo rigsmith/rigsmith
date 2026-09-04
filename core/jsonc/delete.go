@@ -18,7 +18,13 @@ import (
 // is not an object — and the input is returned unchanged.
 func Delete(text string, path []string) (string, bool) {
 	original := text
-	text = strings.TrimPrefix(text, "\uFEFF")
+	// A byte-order mark is set aside for the edit and put back after: the
+	// tokenizer does not expect it, and "everything else byte-for-byte"
+	// includes it.
+	bom := ""
+	if strings.HasPrefix(text, "\uFEFF") {
+		bom, text = "\uFEFF", strings.TrimPrefix(text, "\uFEFF")
+	}
 	if len(path) == 0 {
 		return original, false
 	}
@@ -32,13 +38,13 @@ func Delete(text string, path []string) (string, bool) {
 		return original, false
 	}
 	if !found {
-		return text, true
+		return original, true
 	}
 	out := orig
 	for _, sp := range memberSpans(orig, stripped, nameStart, valueEnd) {
 		out = append(append([]byte{}, out[:sp[0]]...), out[sp[1]:]...)
 	}
-	return string(out), true
+	return bom + string(out), true
 }
 
 // locateMember finds the byte span of a member's name and value at any

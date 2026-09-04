@@ -73,7 +73,16 @@ func newStackRemoveCmd() *cobra.Command {
 			// silently is the one outcome worth a refusal, and "cannot tell" has
 			// to count as unsent: a history rewritten past rig's own markers is
 			// exactly where a wrong guess is unrecoverable.
-			if u := stackUnsentWork(ctx, repo, name, dirty); !force {
+			u := stackUnsentWork(ctx, repo, name, dirty)
+			// --keep-tree keeps the directory, and the removal commit stages
+			// the whole tree: edits under the prefix would ride into "stack:
+			// remove" unread. --force means "discard them", and keeping the
+			// tree discards nothing, so the two do not combine over a dirty
+			// prefix at all.
+			if keepTree && u.Working {
+				return fmt.Errorf("%s has uncommitted edits, which --keep-tree would sweep into the removal commit — commit or stash them first", name)
+			}
+			if !force {
 				switch {
 				case u.Working && u.Commits:
 					return fmt.Errorf("%s has uncommitted edits and commits that have not left the stackspace — `rig stack propose %s <branch>` first, or --force to discard them", name, name)

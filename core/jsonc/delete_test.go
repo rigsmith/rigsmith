@@ -153,3 +153,16 @@ func TestDelete(t *testing.T) {
 		}
 	})
 }
+
+// A byte-order mark survives the edit, and a path that is absent hands the
+// input back untouched, mark included.
+func TestDelete_KeepsTheBOM(t *testing.T) {
+	in := "\uFEFF{\n  \"a\": 1,\n  \"b\": 2\n}\n"
+	got, ok := Delete(in, []string{"b"})
+	if !ok || got != "\uFEFF{\n  \"a\": 1\n}\n" {
+		t.Fatalf("got %q, %v", got, ok)
+	}
+	if got, ok := Delete(in, []string{"zzz"}); !ok || got != in {
+		t.Fatalf("absent path: got %q, %v; want the input back", got, ok)
+	}
+}

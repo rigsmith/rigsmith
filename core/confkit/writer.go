@@ -112,7 +112,7 @@ func (w Writer) Set(filePath string, path []string, rawValue string) bool {
 		if !ok {
 			return false
 		}
-		return os.WriteFile(filePath, []byte(edited), 0o644) == nil
+		return writeWhole(filePath, []byte(edited)) == nil
 	}
 
 	// No file (or an empty/whitespace one): safe to write a fresh document.
@@ -121,7 +121,45 @@ func (w Writer) Set(filePath string, path []string, rawValue string) bool {
 			return false
 		}
 	}
-	return os.WriteFile(filePath, []byte(w.freshDocument(path, rawValue)), 0o644) == nil
+	return writeWhole(filePath, []byte(w.freshDocument(path, rawValue))) == nil
+}
+
+// writeWhole replaces the file's content through a sibling temporary file
+// and a rename, so the file is either wholly the old content or wholly the
+// new — never a fragment. os.WriteFile truncates first, and a config file a
+// failure left half-written is worse than one it left alone.
+func writeWhole(filePath string, data []byte) error {
+	dir := filepath.Dir(filePath)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(filePath)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	cleanup := func() { _ = os.Remove(name) }
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	// A new file takes the temp file's private mode; an existing one keeps
+	// its own.
+	mode := fs.FileMode(0o644)
+	if fi, err := os.Stat(filePath); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	if err := os.Chmod(name, mode); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(name, filePath); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }
 
 // freshDocument renders a brand-new config file: the $schema header (when set)
@@ -184,5 +222,5 @@ func (w Writer) Delete(filePath string, path []string) bool {
 	if edited == string(existing) {
 		return true
 	}
-	return os.WriteFile(filePath, []byte(edited), 0o644) == nil
+	return writeWhole(filePath, []byte(edited)) == nil
 }
