@@ -1065,7 +1065,8 @@ func newStackWireCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return stackWire(ctx, cmd.OutOrStdout(), m, repo, "")
+			_, err = stackWire(ctx, cmd.OutOrStdout(), m, repo, "")
+			return err
 		},
 	}
 	return cmd

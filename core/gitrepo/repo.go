@@ -328,8 +328,9 @@ func (r *Repo) LsRemote(ctx context.Context, remote, ref string) (string, error)
 // differ.
 func (r *Repo) ReplacePath(ctx context.Context, commit, dir string) error {
 	// --ignore-unmatch: the path may not exist here at all, which is not an
-	// error when the point is to make it match something else.
-	if _, err := runGit(ctx, r.Dir, "rm", "-rq", "--ignore-unmatch", "--", dir); err != nil {
+	// error when the point is to make it match something else. -f: a local
+	// modification is exactly what is being replaced, not a reason to stop.
+	if _, err := runGit(ctx, r.Dir, "rm", "-rqf", "--ignore-unmatch", "--", dir); err != nil {
 		return err
 	}
 	_, err := runGit(ctx, r.Dir, "checkout", commit, "--", dir)

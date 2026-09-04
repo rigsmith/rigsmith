@@ -128,7 +128,7 @@ func newStackRemoveCmd() *cobra.Command {
 			// that fail (an overlay somebody wrote by hand is the usual reason)
 			// the manifest and the tracked tree are put back: nothing has been
 			// committed, and a member half-removed is worse than one still in.
-			if err := stackWire(ctx, out, m, repo, "  "); err != nil {
+			if touched, err := stackWire(ctx, out, m, repo, "  "); err != nil {
 				if readErr == nil {
 					_ = os.WriteFile(src.File, before, 0o644)
 				}
@@ -137,6 +137,15 @@ func newStackRemoveCmd() *cobra.Command {
 					if rerr := repo.ReplacePath(ctx, "HEAD", name); rerr == nil {
 						restored = "the manifest and " + name + "/ were put back (ignored build output under it is gone)"
 					}
+				}
+				// An ecosystem that failed may not have been the first asked:
+				// overlays the earlier ones already rewrote or removed would
+				// otherwise stay describing a stackspace without this member.
+				for _, f := range touched {
+					stackRestoreFromHead(ctx, repo, f)
+				}
+				if len(touched) > 0 {
+					restored += ", and so were the overlay files already rewritten"
 				}
 				return fmt.Errorf("rewriting the build overlay: %w\n%s — fix the overlay, then run `rig stack rm %s` again", err, restored, name)
 			}
@@ -261,11 +270,27 @@ func stackIsManifestPath(root string, src *cfgfind.Source, p string) bool {
 	return filepath.ToSlash(rel) == filepath.ToSlash(p)
 }
 
+// stackRestoreFromHead puts one path back as HEAD has it — or removes it,
+// when HEAD never had it — so a file an overlay write created, rewrote or
+// deleted reads as it did before the write. Best effort: this runs on the
+// way out of a failure the caller is about to report.
+func stackRestoreFromHead(ctx context.Context, repo *gitrepo.Repo, rel string) {
+	if _, err := repo.RevParse(ctx, "HEAD:"+rel); err != nil {
+		_ = os.Remove(filepath.Join(repo.Dir, filepath.FromSlash(rel)))
+		return
+	}
+	_ = repo.ReplacePath(ctx, "HEAD", rel)
+}
+
 // stackWire computes the redirects between the members m names and writes each
 // ecosystem's overlay, printing what it did with the given indent. It is the
 // body of `rig stack wire`, shared with rm — which has to rewrite the overlay
-// too, and must not describe it any differently.
-func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitrepo.Repo, indent string) error {
+// too, and must not describe it any differently. touched lists every file an
+// ecosystem wrote, patched or removed, whether or not a later one then
+// failed: rm puts them back on failure, since an overlay describing the
+// stackspace without the member, left beside a manifest that still has it,
+// is the half-done state rm exists to avoid.
+func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitrepo.Repo, indent string) (touched []string, err error) {
 	byEco, orphans, notes, failed := stackRedirects(ctx, repo.Dir, m.names(), m.publishing())
 	// Patching a member's own build file is a commit to that repository, and
 	// it travels back through `push` or `send`. Your own repos want that line;
@@ -291,8 +316,13 @@ func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitre
 		// is taken away rather than kept pointing at directories that left.
 		resp, err := eco.LocalOverlay(ctx, localOverlayRequest(repo.Dir, links, writable))
 		if err != nil {
-			return err
+			return touched, err
 		}
+		for f := range resp.Files {
+			touched = append(touched, f)
+		}
+		touched = append(touched, resp.Removed...)
+		touched = append(touched, resp.Fixed...)
 		for _, f := range resp.Removed {
 			fmt.Fprintf(out, "%s✓ %s removed — nothing crosses between members any more\n", indent, f)
 		}
@@ -323,5 +353,5 @@ func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitre
 	if !wired {
 		fmt.Fprintf(out, "%sno package references cross between members — nothing to wire\n", indent)
 	}
-	return nil
+	return touched, nil
 }
