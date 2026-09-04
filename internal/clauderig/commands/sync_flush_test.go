@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"io"
 	"strings"
 	"testing"
 )
@@ -12,6 +13,14 @@ func TestHookTranscripts(t *testing.T) {
 	got := hookTranscripts(strings.NewReader(`{"session_id":"s1","transcript_path":"/home/u/.claude/projects/-p/s1.jsonl","hook_event_name":"SessionEnd","reason":"exit"}`))
 	if len(got) != 1 || got[0] != "/home/u/.claude/projects/-p/s1.jsonl" {
 		t.Fatalf("payload: got %v", got)
+	}
+	// A hook runner that writes the payload and keeps the pipe open: the
+	// path is still read, at once, without waiting for a close.
+	pr, pw := io.Pipe()
+	go func() { _, _ = pw.Write([]byte(`{"transcript_path":"/t/open.jsonl"}`)) }()
+	defer pw.Close()
+	if got := hookTranscripts(pr); len(got) != 1 || got[0] != "/t/open.jsonl" {
+		t.Fatalf("open pipe: got %v", got)
 	}
 	for name, in := range map[string]string{
 		"empty":       "",

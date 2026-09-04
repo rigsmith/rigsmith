@@ -35,34 +35,32 @@ func hookTranscripts(in io.Reader) []string {
 	if f, ok := in.(*os.File); ok && isatty.IsTerminal(f.Fd()) {
 		return nil
 	}
-	// Bounded, and not waited on for long: a stream that never closes must
-	// not hold the sync hostage, and a real payload is a few hundred bytes.
-	type result struct {
-		body []byte
-		err  error
+	// Decoded as a stream, not read to EOF: the payload is one JSON object,
+	// and a hook runner that writes it and keeps the pipe open would
+	// otherwise leave the read waiting for a close that never comes. The
+	// wait is bounded too, so a stream with nothing on it cannot hold the
+	// sync hostage; a real payload is a few hundred bytes and arrives at
+	// once.
+	type payload struct {
+		TranscriptPath string `json:"transcript_path"`
 	}
-	ch := make(chan result, 1)
+	ch := make(chan payload, 1)
 	go func() {
-		b, err := io.ReadAll(io.LimitReader(in, 1<<20))
-		ch <- result{b, err}
+		var p payload
+		if err := json.NewDecoder(io.LimitReader(in, 1<<20)).Decode(&p); err != nil {
+			p = payload{}
+		}
+		ch <- p
 	}()
-	var body []byte
 	select {
-	case r := <-ch:
-		if r.err != nil {
+	case p := <-ch:
+		if strings.TrimSpace(p.TranscriptPath) == "" {
 			return nil
 		}
-		body = r.body
+		return []string{p.TranscriptPath}
 	case <-time.After(2 * time.Second):
 		return nil
 	}
-	var payload struct {
-		TranscriptPath string `json:"transcript_path"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.TranscriptPath) == "" {
-		return nil
-	}
-	return []string{payload.TranscriptPath}
 }
 
 // pushAttempts bounds the push/reconcile retry loop. Small on purpose: each round
