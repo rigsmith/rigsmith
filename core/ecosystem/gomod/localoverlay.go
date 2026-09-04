@@ -38,6 +38,17 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	if len(req.Redirects) == 0 {
 		resp.Skipped = true
 		resp.Reason = "no module in this tree is required by another"
+		// A generated go.work that still lists a directory which has left the
+		// tree fails every go command here, so a Write with nothing to redirect
+		// takes rig's own file away. A hand-written one is never touched.
+		if req.Write {
+			dest := filepath.Join(req.Root, workFile)
+			if body, err := os.ReadFile(dest); err == nil && strings.Contains(string(body), workMarker) {
+				if os.Remove(dest) == nil {
+					resp.Removed = []string{workFile}
+				}
+			}
+		}
 		return resp, nil
 	}
 

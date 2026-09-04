@@ -206,3 +206,14 @@ func stackCheckOverlay(ctx context.Context, root string, members, writable []str
 	sort.Slice(out, func(i, j int) bool { return out[i].Eco < out[j].Eco })
 	return out, orphans
 }
+
+// stackEcosystems is the adapters an overlay can be written for, in a stable
+// order so output and files come out the same run after run.
+func stackEcosystems() []plugin.Ecosystem { return ecosystem.Default().All() }
+
+// localOverlayRequest is the request wire and rm send an adapter: the
+// stackspace root, the redirects it owns, and which members' files it may
+// patch.
+func localOverlayRequest(root string, links []stackLink, writable []string) plugin.LocalOverlayRequest {
+	return plugin.LocalOverlayRequest{Root: root, Redirects: redirectsOf(links), Write: true, Writable: writable}
+}

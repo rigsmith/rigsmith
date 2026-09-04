@@ -99,6 +99,7 @@ are just branches of one repo), stashes, bisect: all normal git.
 | verb | does |
 |---|---|
 | `rig stack init` | scaffold the manifest; for each repo, import upstream history under its prefix (proxy fetch through `:prefix=<child>`, merge, set cursor); scaffold the ecosystem overlay |
+| `rig stack rm <child>` | the inverse of add, for a repo that turns out not to belong (fusable but not buildable fused is discovered after import): drop its manifest entry and cursors, delete its prefix from the tree (`--keep-tree` to leave it as an ordinary directory), rewrite the overlay from the remaining members — removing rig's own overlay file when nothing crosses any more — and commit. Refuses while the prefix holds unsent or uncommitted work, or when that cannot be determined; `--force` overrides |
 | `rig stack pull [child]` | fetch upstream through the filter; `NothingToPull` if the cursor matches; else merge (strategy per child), update cursor. The CI-cronnable direction |
 | `rig stack propose <child> <new-branch>` | commit `<child>/`'s tree onto that project's upstream tip and push it to the **fork** as `branchPrefix + <new-branch>` (default `stack/`): one commit, whose diff is exactly what the stackspace changed. The deliberate direction |
 | `rig stack status` | per child: upstream commits since cursor, local commits touching the prefix not yet sent, cursor SHA |

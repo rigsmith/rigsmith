@@ -15,9 +15,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/cfgfind"
 	"github.com/rigsmith/rigsmith/core/climenu"
-	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
-	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/spf13/cobra"
 )
 
@@ -36,6 +34,7 @@ func newStackCmd() *cobra.Command {
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
 			"  rig stack init                      scaffold the manifest / import the repos\n" +
 			"  rig stack add [upstream]            add a repo and import it (asks if not given)\n" +
+			"  rig stack rm <repo>                 remove a repo: manifest, tree and overlay\n" +
 			"  rig stack status                    cursor vs upstream, per repo\n" +
 			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
 			"  rig stack propose [repo] [branch]   a branch on your fork, prefixed stack/ (asks)\n" +
@@ -49,7 +48,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackInitCmd(), newStackAddCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
 	return refuseUnknownVerb(cmd)
 }
 
@@ -963,56 +962,11 @@ func newStackWireCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			out := cmd.OutOrStdout()
 			m, _, repo, err := stackspace(ctx)
 			if err != nil {
 				return err
 			}
-			byEco, orphans := stackRedirects(ctx, repo.Dir, m.names())
-			// Patching a member's own build file is a commit to that repository,
-			// and it travels back through `push` or `send`. Your own repos want
-			// that line; a fork you contribute to should not carry rig plumbing
-			// into somebody else's pull request.
-			writable := m.ownedNames()
-			// Reported before anything is written: a member nothing consumes is
-			// usually why there was less to wire than expected.
-			stackReportOrphans(out, m, orphans)
-			if len(byEco) == 0 {
-				fmt.Fprintln(out, "no package references cross between members — nothing to wire")
-				return nil
-			}
-			for _, eco := range ecosystem.Default().All() {
-				links := byEco[eco.Info().ID]
-				if len(links) == 0 {
-					continue
-				}
-				resp, err := eco.LocalOverlay(ctx, plugin.LocalOverlayRequest{
-					Root: repo.Dir, Redirects: redirectsOf(links), Write: true, Writable: writable,
-				})
-				if err != nil {
-					return err
-				}
-				if resp.Skipped {
-					fmt.Fprintf(out, "· %s: %s\n", eco.Info().ID, resp.Reason)
-					continue
-				}
-				for f := range resp.Files {
-					fmt.Fprintf(out, "✓ %s — %d package(s) now resolve from this stackspace\n", f, len(links))
-				}
-				for _, l := range links {
-					fmt.Fprintf(out, "    %s\n", l.describe())
-				}
-				for _, f := range resp.Fixed {
-					fmt.Fprintf(out, "✓ %s — patched to stop hiding the overlay from what is under it\n", f)
-				}
-				// Problems the overlay cannot fix by existing. Reported here as
-				// well as in doctor, because a wire that looks like it worked and
-				// silently did not is the thing this whole path exists to stop.
-				for _, p := range resp.Problems {
-					fmt.Fprintf(out, "  ✗ %s — %s\n", p.Path, p.Message)
-				}
-			}
-			return nil
+			return stackWire(ctx, cmd.OutOrStdout(), m, repo, "")
 		},
 	}
 	return cmd
@@ -1191,6 +1145,7 @@ func stackMenuItems() []menuItem {
 	return []menuItem{
 		{label: "init", desc: "import any repo the manifest names but has not fused yet", cmd: newStackInitCmd()},
 		{label: "add", desc: "add a repo to this stackspace and import it", cmd: newStackAddCmd()},
+		{label: "rm", desc: "remove a repo from this stackspace — manifest, tree and overlay (pick one)", cmd: newStackRemoveMenuCmd()},
 		{label: "status", desc: "each repo's cursor against its upstream", cmd: newStackStatusCmd()},
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
 		{label: "propose", desc: "a repo's changes to its upstream, via a branch on your fork (asks)", cmd: newStackSendCmd()},

@@ -160,3 +160,25 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+func TestWriterDelete(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "rig.jsonc")
+	w := Writer{}
+	if !w.Delete(file, []string{"a"}) {
+		t.Fatal("deleting from a missing file should succeed")
+	}
+	if err := os.WriteFile(file, []byte("{\n  // keep me\n  \"a\": { \"x\": 1, \"y\": 2 },\n  \"b\": true\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !w.Delete(file, []string{"a", "x"}) {
+		t.Fatal("Delete returned false")
+	}
+	got, _ := os.ReadFile(file)
+	if !strings.Contains(string(got), "// keep me") || strings.Contains(string(got), `"x"`) || !strings.Contains(string(got), `"y": 2`) {
+		t.Fatalf("unexpected result:\n%s", got)
+	}
+	if !w.Delete(file, []string{"nope"}) {
+		t.Fatal("deleting an absent key should succeed")
+	}
+}

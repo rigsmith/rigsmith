@@ -455,12 +455,40 @@ Moving a pin *backwards* — to a release older than the directory currently hol
 replaced with the pinned revision instead, reported as `moved`, and refused
 outright if it holds changes of its own.
 
+## Taking a repo back out
+
+Not every repo that looks fusable can be *built* fused, and that tends to
+surface only after the import — a consumer that reads another member's
+internals through a publicizer, say, which needs a compiled assembly and finds a
+project reference instead. The honest answer there is that the repo should not
+be a member, and `rm` is how you say so:
+
+```sh
+rig stack rm pty-core
+rig stack rm pty-core --keep-tree    # leave the directory; it just stops being a member
+```
+
+Removal touches three things, and only one of them is visible, so it does all
+three and says which: the manifest entry and its cursor go; the directory is
+deleted from the tree (or kept, with `--keep-tree`, as an ordinary part of this
+repository); and the build overlay is rewritten from the members that remain —
+or removed outright when nothing crosses between them any more — so no build
+file keeps a `ProjectReference` into a directory that is no longer there. The
+result is one commit. Nothing outside the stackspace changes: the upstream and
+your fork are exactly as they were, and `rig stack add` fuses the repo again.
+
+A repo holding work that has not left the stackspace is refused, because that
+work exists nowhere else — the same `unsent changes` and `uncommitted changes`
+that `status` reports, plus the case where the comparison cannot be made at
+all. `--force` removes it anyway.
+
 ## The verbs
 
 | Verb | What it does |
 |---|---|
 | `stack init` | Scaffold the manifest, or import the repos it names that are not imported yet |
 | `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
+| `stack rm <repo>` | Remove a repo: its manifest entry and cursor, its directory, and the overlay redirects into it; refuses while it holds work that has not left (`--force`), `--keep-tree` keeps the directory |
 | `stack status` | Each repo's cursor against its upstream branch tip |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch |

@@ -455,3 +455,19 @@ func runGitStdin(ctx context.Context, dir, stdin string, env []string, args ...s
 	}
 	return out.String(), nil
 }
+
+// RemoveTree deletes dir from the index and the working tree, recursively. A
+// path that is not tracked is not an error: the point is that it is gone.
+func (r *Repo) RemoveTree(ctx context.Context, dir string) error {
+	_, err := runGit(ctx, r.Dir, "rm", "-rq", "--ignore-unmatch", "--", dir)
+	return err
+}
+
+// DeleteRef removes a ref if it exists. A ref that is already absent is fine.
+func (r *Repo) DeleteRef(ctx context.Context, ref string) error {
+	if _, err := runGit(ctx, r.Dir, "rev-parse", "--verify", "--quiet", ref); err != nil {
+		return nil
+	}
+	_, err := runGit(ctx, r.Dir, "update-ref", "-d", ref)
+	return err
+}

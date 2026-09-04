@@ -23,6 +23,7 @@ can span them in a single commit while each still leaves as itself:
 
 ```sh
 rig stack init                       # scaffold the manifest; run again to import
+rig stack add | rm <repo>            # grow the stackspace, or take a repo back out
 rig stack status                     # who has moved upstream, and what has not left
 rig stack pull some-lib              # take that movement
 rig stack propose some-lib read-timeout -m "Fix the read timeout"   # → stack/read-timeout

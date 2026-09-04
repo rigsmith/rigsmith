@@ -316,3 +316,48 @@ func TestLocalOverlayPatchesShadowing(t *testing.T) {
 		}
 	})
 }
+
+// After the last cross-member reference leaves, a Write with nothing to
+// redirect removes rig's own overlay — and only rig's own.
+func TestLocalOverlayRemovesStaleGeneratedOverlay(t *testing.T) {
+	ctx := context.Background()
+	a := New()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app/src/App/App.csproj"), "<Project/>")
+
+	t.Run("a generated overlay is removed", func(t *testing.T) {
+		writeFile(t, filepath.Join(root, overlayFile), overlayMarker+"\n<Project/>")
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Write: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Removed) != 1 || got.Removed[0] != overlayFile {
+			t.Fatalf("Removed = %v", got.Removed)
+		}
+		if _, err := os.Stat(filepath.Join(root, overlayFile)); !os.IsNotExist(err) {
+			t.Error("stale overlay still present")
+		}
+	})
+	t.Run("a hand-written one is not", func(t *testing.T) {
+		writeFile(t, filepath.Join(root, overlayFile), "<Project><!-- mine --></Project>")
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Write: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Removed) != 0 {
+			t.Fatalf("Removed = %v", got.Removed)
+		}
+		if _, err := os.Stat(filepath.Join(root, overlayFile)); err != nil {
+			t.Error("hand-written overlay deleted")
+		}
+	})
+	t.Run("without Write nothing is touched", func(t *testing.T) {
+		writeFile(t, filepath.Join(root, overlayFile), overlayMarker+"\n<Project/>")
+		if _, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(root, overlayFile)); err != nil {
+			t.Error("a check removed the overlay")
+		}
+	})
+}

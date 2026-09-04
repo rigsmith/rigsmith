@@ -513,6 +513,11 @@ type LocalOverlayResponse struct {
 	// its own overlay. Reported separately because these are edits inside
 	// somebody's project, which the caller may want to say out loud.
 	Fixed []string `json:"fixed,omitempty"`
+	// Removed lists overlay files the adapter deleted because nothing needs
+	// them any more — a Write with no Redirects, after the last member that
+	// crossed to another left the tree. Only files carrying the adapter's own
+	// generated marker are ever removed; a hand-written one is left alone.
+	Removed []string `json:"removed,omitempty"`
 	// Skipped marks an ecosystem with no local-resolution mechanism at all,
 	// which is different from one that has nothing to do.
 	Skipped bool   `json:"skipped,omitempty"`

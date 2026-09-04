@@ -1,0 +1,273 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/charmbracelet/huh"
+	"github.com/rigsmith/rigsmith/core/cfgfind"
+	"github.com/rigsmith/rigsmith/core/confkit"
+	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/spf13/cobra"
+)
+
+// newStackRemoveCmd takes a repo back out of a stackspace: the counterpart of
+// add. Not every repo that looks fusable can be built fused, and that is a
+// normal thing to discover after the import — so removal has to be a verb, and
+// it has to do all three things a member touches (manifest, tree, overlay),
+// because the one people forget by hand is the overlay, which then keeps a
+// ProjectReference to a directory that is no longer there.
+func newStackRemoveCmd() *cobra.Command {
+	var force, keepTree bool
+	cmd := &cobra.Command{
+		Use:               "rm <repo>",
+		Aliases:           []string{"remove"},
+		Short:             "Remove a repo from this stackspace — manifest, tree and overlay",
+		ValidArgsFunction: stackRepoCompletion,
+		Long: "Removes a repo from the stackspace: its manifest entry and cursor go, its\n" +
+			"directory is deleted from the tree, the build overlay is rewritten so nothing\n" +
+			"still points at it, and the result is committed. Nothing outside this\n" +
+			"stackspace changes — the upstream and your fork are untouched.\n\n" +
+			"A repo holding work that has not left the stackspace — commits `status`\n" +
+			"reports as unsent, or uncommitted edits under it — is refused, because that\n" +
+			"work exists nowhere else. `--force` removes it anyway; `--keep-tree` leaves\n" +
+			"the directory in place as an ordinary part of this repository while it\n" +
+			"stops being a member.\n\n" +
+			"  rig stack rm pty-core\n" +
+			"  rig stack rm pty-core --keep-tree",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			out := cmd.OutOrStdout()
+			m, src, repo, err := stackspace(ctx)
+			if err != nil {
+				return err
+			}
+			name := args[0]
+			if m.Repos[name] == nil {
+				if err := m.requireRepos(); err != nil {
+					return err
+				}
+				return fmt.Errorf("no stack repo %q (have: %s)", name, strings.Join(m.names(), ", "))
+			}
+
+			// The removal is a commit that stages the whole tree, so anything
+			// else that is dirty would be swallowed into it — the same rule pull
+			// and init apply. Edits under the prefix are a different matter, and
+			// refused for a different reason, below.
+			dirty, err := repo.DirtyPaths(ctx)
+			if err != nil {
+				return err
+			}
+			for _, p := range dirty {
+				if !strings.HasPrefix(p, name+"/") && !stackIsManifestPath(src, p) {
+					return fmt.Errorf("stackspace has uncommitted changes outside %s/ — commit or stash them before removing", name)
+				}
+			}
+			// Work that has not left the stackspace exists only here. Losing it
+			// silently is the one outcome worth a refusal, and "cannot tell" has
+			// to count as unsent: a history rewritten past rig's own markers is
+			// exactly where a wrong guess is unrecoverable.
+			if u := stackUnsentWork(ctx, repo, name, dirty); !force {
+				switch {
+				case u.Working && u.Commits:
+					return fmt.Errorf("%s has uncommitted edits and commits that have not left the stackspace — `rig stack propose %s <branch>` first, or --force to discard them", name, name)
+				case u.Working:
+					return fmt.Errorf("%s has uncommitted edits — commit and propose them first, or --force to discard them", name)
+				case u.Commits:
+					return fmt.Errorf("%s has commits that have not left the stackspace — `rig stack propose %s <branch>` first, or --force to discard them", name, name)
+				case !u.Known && m.cursor(name) != "":
+					return fmt.Errorf("cannot tell whether %s holds unsent changes (no import commit in this history) — check with `git log -- %s/`, then --force", name, name)
+				}
+			}
+
+			if err := stackForgetRepo(src, m, name); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "✓ %s removed from %s (entry and cursor)\n", name, src.Origin)
+
+			if keepTree {
+				fmt.Fprintf(out, "  %s/ kept — it is an ordinary directory of this repository now\n", name)
+			} else if err := repo.RemoveTree(ctx, name); err != nil {
+				return fmt.Errorf("removing %s/: %w", name, err)
+			} else {
+				fmt.Fprintf(out, "  %s/ deleted from the tree\n", name)
+			}
+			// push leaves its filtered export behind under a ref; nothing reads
+			// it once the member is gone.
+			_ = repo.DeleteRef(ctx, "refs/rigsmith/push/"+name)
+
+			// The overlay is rewritten from the members that remain — or removed
+			// outright when nothing crosses between them any more — so no build
+			// file keeps a redirect into the directory that just left.
+			if err := stackWire(ctx, out, m, repo, "  "); err != nil {
+				return fmt.Errorf("rewriting the build overlay: %w", err)
+			}
+
+			changed, err := repo.Commit(ctx, "stack: remove "+name)
+			if err != nil {
+				return err
+			}
+			if changed {
+				fmt.Fprintf(out, "  committed: stack: remove %s\n", name)
+			}
+			fmt.Fprintf(out, "  the upstream and your fork are untouched; `rig stack add` fuses it again\n")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "remove even if the repo holds work that has not left the stackspace")
+	cmd.Flags().BoolVar(&keepTree, "keep-tree", false, "leave the directory in the tree; only stop treating it as a member")
+	return cmd
+}
+
+// newStackRemoveMenuCmd is rm for the menu, where there is no argument to
+// type: it asks which repo, then runs the real verb.
+func newStackRemoveMenuCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "rm",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+			m, _, _, err := stackspace(cmd.Context())
+			if err != nil {
+				return err
+			}
+			names := m.names()
+			opts := make([]huh.Option[string], 0, len(names))
+			for _, n := range names {
+				opts = append(opts, huh.NewOption(fmt.Sprintf("%s  →  %s", n, m.Repos[n].Upstream), n))
+			}
+			name := names[0]
+			if err := huh.NewSelect[string]().
+				Title("Remove which repo?").
+				Description("its manifest entry, directory and overlay redirects go; upstream and fork are untouched").
+				Options(opts...).Filtering(true).Value(&name).Run(); err != nil {
+				return err
+			}
+			sub := newStackRemoveCmd()
+			sub.SetContext(cmd.Context())
+			sub.SetOut(out)
+			sub.SetErr(cmd.ErrOrStderr())
+			return sub.RunE(sub, []string{name})
+		},
+	}
+}
+
+// stackForgetRepo drops a repo's entry and every machine-written record of it
+// (cursor, pin, last proposed branch) from the manifest file, comments and
+// formatting intact, and from m.
+//
+// The entry is deleted in place. The records live in top-level maps, and a
+// dedicated manifest can delete one member of each; an inline `stack` block in
+// .rig.json puts them a level deeper than the editor reaches, so there the
+// whole map is rewritten — the same way a pull records a cursor.
+func stackForgetRepo(src *cfgfind.Source, m *stackManifest, name string) error {
+	w := confkit.Writer{SchemaURL: stackSchemaURL}
+	embedded := src.Path == ""
+	entry := []string{"repos", name}
+	if embedded {
+		entry = []string{"stack", "repos", name}
+	}
+	if !w.Delete(src.File, entry) {
+		return fmt.Errorf("could not remove %s from %s — take its entry out by hand, then re-run", name, src.File)
+	}
+	delete(m.Repos, name)
+
+	maps := []struct {
+		key string
+		val map[string]string
+	}{{"lastSync", m.LastSync}, {"lastPin", m.LastPin}, {"lastPropose", m.LastPropose}}
+	for _, kv := range maps {
+		if _, has := kv.val[name]; !has {
+			continue
+		}
+		delete(kv.val, name)
+		path := []string{kv.key}
+		if embedded {
+			path = []string{"stack", kv.key}
+		}
+		var ok bool
+		switch {
+		case len(kv.val) == 0:
+			ok = w.Delete(src.File, path)
+		case embedded:
+			raw, err := json.Marshal(kv.val)
+			if err != nil {
+				return err
+			}
+			ok = w.Set(src.File, path, string(raw))
+		default:
+			ok = w.Delete(src.File, append(path, name))
+		}
+		if !ok {
+			return fmt.Errorf("could not update %s in %s", kv.key, src.File)
+		}
+	}
+	return nil
+}
+
+// stackIsManifestPath reports whether a dirty path is the manifest file itself,
+// which rm is about to rewrite and commit anyway.
+func stackIsManifestPath(src *cfgfind.Source, p string) bool {
+	return src != nil && src.Path != "" && strings.HasSuffix(src.File, "/"+p)
+}
+
+// stackWire computes the redirects between the members m names and writes each
+// ecosystem's overlay, printing what it did with the given indent. It is the
+// body of `rig stack wire`, shared with rm — which has to rewrite the overlay
+// too, and must not describe it any differently.
+func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitrepo.Repo, indent string) error {
+	byEco, orphans := stackRedirects(ctx, repo.Dir, m.names())
+	// Patching a member's own build file is a commit to that repository, and
+	// it travels back through `push` or `send`. Your own repos want that line;
+	// a fork you contribute to should not carry rig plumbing into somebody
+	// else's pull request.
+	writable := m.ownedNames()
+	// Reported before anything is written: a member nothing consumes is
+	// usually why there was less to wire than expected.
+	stackReportOrphans(out, m, orphans)
+	wired := false
+	for _, eco := range stackEcosystems() {
+		links := byEco[eco.Info().ID]
+		// An ecosystem with nothing to redirect is still asked, with Write set:
+		// that is how an overlay left over from members that have since gone
+		// is taken away rather than kept pointing at directories that left.
+		resp, err := eco.LocalOverlay(ctx, localOverlayRequest(repo.Dir, links, writable))
+		if err != nil {
+			return err
+		}
+		for _, f := range resp.Removed {
+			fmt.Fprintf(out, "%s✓ %s removed — nothing crosses between members any more\n", indent, f)
+		}
+		if len(links) == 0 {
+			continue
+		}
+		wired = true
+		if resp.Skipped {
+			fmt.Fprintf(out, "%s· %s: %s\n", indent, eco.Info().ID, resp.Reason)
+			continue
+		}
+		for f := range resp.Files {
+			fmt.Fprintf(out, "%s✓ %s — %d package(s) now resolve from this stackspace\n", indent, f, len(links))
+		}
+		for _, l := range links {
+			fmt.Fprintf(out, "%s    %s\n", indent, l.describe())
+		}
+		for _, f := range resp.Fixed {
+			fmt.Fprintf(out, "%s✓ %s — patched to stop hiding the overlay from what is under it\n", indent, f)
+		}
+		// Problems the overlay cannot fix by existing. Reported here as well
+		// as in doctor, because a wire that looks like it worked and silently
+		// did not is the thing this whole path exists to stop.
+		for _, p := range resp.Problems {
+			fmt.Fprintf(out, "%s  ✗ %s — %s\n", indent, p.Path, p.Message)
+		}
+	}
+	if !wired {
+		fmt.Fprintf(out, "%sno package references cross between members — nothing to wire\n", indent)
+	}
+	return nil
+}

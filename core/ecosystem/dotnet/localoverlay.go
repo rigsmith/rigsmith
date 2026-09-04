@@ -32,6 +32,13 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	if len(req.Redirects) == 0 {
 		resp.Skipped = true
 		resp.Reason = "nothing to redirect"
+		// An overlay left over from members that have since gone would keep
+		// pointing packages at projects that are no longer there — a build
+		// error at best, and the wrong sources at worst. Only rig's own file is
+		// removed; one somebody wrote stays, whatever it says.
+		if req.Write {
+			resp.Removed = removeGenerated(filepath.Join(req.Root, overlayFile), overlayMarker, overlayFile)
+		}
 		return resp, nil
 	}
 
@@ -228,4 +235,17 @@ func renderOverlay(redirects []plugin.Redirect) string {
 </Project>
 `)
 	return b.String()
+}
+
+// removeGenerated deletes path when it carries marker and reports the removal
+// under rel. A missing file, or one without the marker, removes nothing.
+func removeGenerated(path, marker, rel string) []string {
+	body, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(body), marker) {
+		return nil
+	}
+	if os.Remove(path) != nil {
+		return nil
+	}
+	return []string{rel}
 }
