@@ -2,8 +2,8 @@ package desktop
 
 import (
 	"os"
-	"runtime"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
