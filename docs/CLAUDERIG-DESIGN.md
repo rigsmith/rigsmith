@@ -158,8 +158,10 @@ cwd mappings (Q4).
   leaving a restored machine with a `MEMORY.md` indexing files it never got. They're
   a few KB each, so they cost nothing to keep. A slug with only memory left survives
   the prune.
-- **Large transcripts are restaged per chunk, not per sync.** A transcript only
-  ever grows, so committing it whole on every turn costs roughly
+- **Large transcripts are restaged per chunk, not per sync.** A live transcript
+  is append-only (a rewrite — one that shrank or stayed the same size — is
+  restaged at once, since the staged copy is simply wrong), so committing it
+  whole on every turn costs roughly
   `syncs × size / 2` of history — quadratic in session length, and worst for
   exactly the sessions worth keeping (one 47 MB session produced ~800 MB of repo
   in four days). Past `retention.largeFileBytes` (8 MiB) sync copies a

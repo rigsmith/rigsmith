@@ -175,7 +175,9 @@ func deferLarge(rel string, src, staged os.FileInfo, threshold int64, cutoff, no
 		return false
 	}
 	grown := src.Size() - staged.Size()
-	if grown <= 0 || grown >= threshold/2 {
+	// Half the threshold, rounded up: an odd threshold must not let growth of
+	// just under half through.
+	if grown <= 0 || grown >= (threshold+1)/2 {
 		return false
 	}
 	return now.Sub(src.ModTime()) < largeFileSettle
