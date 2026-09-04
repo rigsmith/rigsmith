@@ -40,6 +40,8 @@
 // Build-source precedence is RIGSMITH_DEV_SRC env > pinned route > this repo, so
 // a one-off env override or a transient `<tool>-wt [query]` still wins without
 // unpinning.
+//
+//go:generate go run github.com/tc-hib/go-winres@v0.3.3 make --in ../install-winres.json --out rsrc --arch amd64,arm64
 package main
 
 import (
@@ -51,6 +53,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/devroute"
 	"github.com/rigsmith/rigsmith/core/gowork"
+	"github.com/rigsmith/rigsmith/scripts/internal/installutil"
 )
 
 func main() {
@@ -75,8 +78,12 @@ func run() error {
 	}
 
 	bin := installDir()
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		return fmt.Errorf("creating %s: %w", bin, err)
+	relaunched, err := installutil.PrepareDir(bin)
+	if err != nil {
+		return err
+	}
+	if relaunched {
+		return nil
 	}
 
 	var made []string

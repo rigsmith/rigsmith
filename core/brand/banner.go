@@ -26,7 +26,8 @@ var (
 	rigBanner    = banner{AccentRig, "●", "", "rig", "convention-first dev launcher"}
 	changeBanner = banner{AccentChange, "↻", "change", "Rig", "changeset lifecycle"}
 	shipBanner   = banner{AccentShip, "↑", "ship", "Rig", "release front door"}
-	claudeBanner = banner{AccentClaude, "✳", "claude", "Rig", "Claude Code setup sync"}
+	// U+FE0E keeps Windows Terminal from replacing the mark with its green emoji.
+	claudeBanner = banner{AccentClaude, "✳︎", "claude", "Rig", "Claude Code setup sync"}
 )
 
 // RigBanner, ChangeBanner, ShipBanner, and ClaudeBanner render a tool's header
