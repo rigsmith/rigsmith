@@ -617,6 +617,8 @@ func newDesktopListCmd() *cobra.Command {
 				// which only ever grows, and `desktop prune` is the lever.
 				if size, serr := desktop.DirSize(p.Dir()); serr == nil {
 					line += "  " + DimStyle.Render(desktop.HumanSize(size))
+				} else {
+					line += "  " + WarnStyle.Render("size unknown")
 				}
 				fmt.Fprintln(out, line)
 			}

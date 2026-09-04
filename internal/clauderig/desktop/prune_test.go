@@ -1,11 +1,13 @@
 package desktop
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func pruneFixture(t *testing.T, withZst bool) (*Store, Profile) {
@@ -189,5 +191,19 @@ func TestDirSize_FollowsASymlinkedRoot(t *testing.T) {
 	n, err := DirSize(link)
 	if err != nil || n == 0 {
 		t.Fatalf("DirSize(symlinked root) = %d, %v; want the target's size", n, err)
+	}
+}
+
+// A walk under a context that has ended stops with that error instead of
+// finishing the tree.
+func TestDirSize_StopsWhenTheContextEnds(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "f"), make([]byte, 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if _, err := DirSizeContext(ctx, dir); err == nil {
+		t.Fatal("expired context: want an error, got none")
 	}
 }

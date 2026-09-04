@@ -92,7 +92,7 @@ func newDesktopPruneCmd() *cobra.Command {
 			// before anything is deleted — and off a terminal only an explicit
 			// --yes stands in for the answer.
 			if tier > desktop.PruneCaches && !yes {
-				if !Interactive() {
+				if !interactive() {
 					return fmt.Errorf("--%s discards data — pass --yes to confirm off a terminal", tier)
 				}
 				title := fmt.Sprintf("Reset the Cowork VM to pristine? Anything created inside it and never exported to the host is lost (%s).",

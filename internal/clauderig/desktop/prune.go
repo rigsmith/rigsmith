@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -91,8 +92,13 @@ func (u Usage) Reclaimable(tier PruneTier) int64 {
 // Measure sizes a profile and classifies what prune could reclaim from it. It
 // reads nothing but metadata, so a 10 GB profile costs a directory walk, not a
 // read. A profile that does not exist yet measures as empty.
-func Measure(p Profile) (Usage, error) {
-	total, err := DirSize(p.Dir())
+func Measure(p Profile) (Usage, error) { return MeasureContext(context.Background(), p) }
+
+// MeasureContext is Measure under a context: the walk stops with ctx.Err()
+// once the context ends, so a caller with a deadline — doctor, beside checks
+// that take milliseconds — is not held by a profile with a 10 GB tree.
+func MeasureContext(ctx context.Context, p Profile) (Usage, error) {
+	total, err := DirSizeContext(ctx, p.Dir())
 	if err != nil {
 		return Usage{}, err
 	}
@@ -103,7 +109,7 @@ func Measure(p Profile) (Usage, error) {
 		if fi, serr := os.Stat(dir); serr != nil || !fi.IsDir() {
 			continue
 		}
-		size, serr := DirSize(dir)
+		size, serr := DirSizeContext(ctx, dir)
 		if serr != nil {
 			return Usage{}, serr
 		}
@@ -150,7 +156,7 @@ func Measure(p Profile) (Usage, error) {
 		}
 	}
 	if len(entries) > 0 {
-		size, serr := DirSize(bundles)
+		size, serr := DirSizeContext(ctx, bundles)
 		if serr != nil {
 			return Usage{}, serr
 		}
@@ -193,7 +199,11 @@ func Prune(p Profile, tier PruneTier) ([]PruneEntry, error) {
 // platform reports them, so sparse files count what they cost rather than what
 // they claim. Symlinks are not followed. A missing directory is zero, not an
 // error — a profile that has never been opened has no data dir yet.
-func DirSize(dir string) (int64, error) {
+func DirSize(dir string) (int64, error) { return DirSizeContext(context.Background(), dir) }
+
+// DirSizeContext is DirSize that gives up with ctx.Err() once the context
+// ends, checked per entry.
+func DirSizeContext(ctx context.Context, dir string) (int64, error) {
 	// A profile may itself be a symlink — relocated to another disk — and
 	// WalkDir does not follow a link handed to it as the root. Resolve only
 	// the root; links inside the tree stay unfollowed.
@@ -202,6 +212,9 @@ func DirSize(dir string) (int64, error) {
 	}
 	var total int64
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, werr error) error {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		if werr != nil {
 			if errors.Is(werr, fs.ErrNotExist) {
 				return nil

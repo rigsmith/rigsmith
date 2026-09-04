@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,11 +32,61 @@ func pruneCommandFixture(t *testing.T, open bool) (*desktop.Store, desktop.Profi
 			t.Fatal(err)
 		}
 	}
-	prevStore, prevApp := desktopStore, newDesktopApp
+	prevStore, prevApp, prevTTY := desktopStore, newDesktopApp, interactive
 	desktopStore = func() (*desktop.Store, error) { return st, nil }
 	newDesktopApp = func() desktop.App { return stubApp{open: map[string]bool{p.DataDir(): open}} }
-	t.Cleanup(func() { desktopStore, newDesktopApp = prevStore, prevApp })
+	// Off a terminal, whatever `go test` is attached to: the destructive
+	// tiers must fail with the --yes hint, never block on a prompt.
+	interactive = func() bool { return false }
+	t.Cleanup(func() { desktopStore, newDesktopApp, interactive = prevStore, prevApp, prevTTY })
 	return st, p
+}
+
+// `desktop list` shows each profile's size, in the text and as sizeBytes in
+// the JSON, so growth is discoverable without a separate command.
+func TestDesktopList_ShowsSizes(t *testing.T) {
+	_, p := pruneCommandFixture(t, false)
+	size, err := desktop.DirSize(p.Dir())
+	if err != nil || size == 0 {
+		t.Fatalf("fixture size = %d, %v", size, err)
+	}
+	run := func(args ...string) string {
+		t.Helper()
+		var buf bytes.Buffer
+		cmd := newDesktopListCmd()
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("%v\n%s", err, buf.String())
+		}
+		return buf.String()
+	}
+	if out := run(); !strings.Contains(out, desktop.HumanSize(size)) {
+		t.Errorf("text output lacks the size %s:\n%s", desktop.HumanSize(size), out)
+	}
+	var got struct {
+		Profiles []struct {
+			Name        string `json:"name"`
+			SizeBytes   int64  `json:"sizeBytes"`
+			SizeUnknown bool   `json:"sizeUnknown"`
+		} `json:"profiles"`
+	}
+	if err := json.Unmarshal([]byte(run("--json")), &got); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, row := range got.Profiles {
+		if row.Name == "work" {
+			found = true
+			if row.SizeBytes != size || row.SizeUnknown {
+				t.Errorf("work: sizeBytes=%d sizeUnknown=%v, want %d and known", row.SizeBytes, row.SizeUnknown, size)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("work missing from JSON: %+v", got)
+	}
 }
 
 func runPrune(t *testing.T, args ...string) (string, error) {

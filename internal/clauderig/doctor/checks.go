@@ -65,7 +65,11 @@ const desktopPruneThreshold = 4 << 30
 // `desktop prune` could give back — the VM image and caches, never chat
 // history. It stays silent below the threshold so a normal machine does not
 // carry a permanent line about disk it is not short of.
-func checkDesktopSize() (Result, bool) {
+//
+// It is the one environment check that walks a filesystem, and a profile can
+// hold tens of GB, so the walk runs under the doctor's own deadline: past it
+// the check gives up silently rather than hold the report.
+func checkDesktopSize(ctx context.Context) (Result, bool) {
 	st, err := desktop.DefaultStore()
 	if err != nil {
 		return Result{}, false
@@ -76,7 +80,10 @@ func checkDesktopSize() (Result, bool) {
 	}
 	var total, reclaim int64
 	for _, p := range profiles {
-		u, merr := desktop.Measure(p)
+		u, merr := desktop.MeasureContext(ctx, p)
+		if ctx.Err() != nil {
+			return Result{}, false
+		}
 		if merr != nil {
 			continue
 		}

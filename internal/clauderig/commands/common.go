@@ -31,7 +31,9 @@ func openRepo(ctx context.Context) (*gitrepo.Repo, string, error) {
 
 // interactive reports whether we're attached to a terminal (so it's safe to
 // launch git mergetool / prompt). Hooks run non-interactively and must not.
-func interactive() bool { return Interactive() }
+// A variable so a test can pin the answer: a prompt that a test reaches on a
+// developer's terminal blocks on stdin instead of asserting anything.
+var interactive = Interactive
 
 // Interactive reports whether both stdin and stdout are real terminals — the
 // shared gate for any prompt and for landing bare `clauderig` on the dashboard.

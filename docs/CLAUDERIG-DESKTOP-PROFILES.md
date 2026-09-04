@@ -50,10 +50,11 @@ never the login. Nothing to enable, nothing to run with the windows closed.
 ```console
 $ clauderig desktop list
 Claude Desktop profiles
-● work · john@work.com      open    ↔ john-work-com
-  personal · john@home.com  closed
+● work · john@work.com      open    ↔ john-work-com  9.6 GiB
+  personal · john@home.com  closed  412.3 MiB
 each profile is its own login — opening one never signs another out
 chat history is per profile — `clauderig sync` backs each one up separately
+`clauderig desktop prune --dry-run` shows what each profile's size is made of
 ```
 
 ## Why this model, when the last one was withdrawn
