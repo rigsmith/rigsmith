@@ -304,8 +304,8 @@ from the latest synced state) and **Stop → sync** (so your work is captured wh
 a session ends). Both are portable across OSes and idempotent.
 
 The tiers are not a plain precedence order either: Claude Code reads a few keys
-from user or managed settings only. `defaultMode: "bypassPermissions"` (since
-the 2026-09-02 release) and `defaultMode: "auto"` are silently dropped from a
+from user or managed settings only. `permissions.defaultMode: "bypassPermissions"`
+(since the 2026-09-02 release) and `"auto"` are silently dropped from a
 project or local `settings.json`, so a repo relying on `clauderig sync` to carry
 that value across machines gets no error from anyone when it stops working.
 `clauderig doctor` reports such values as *ignored settings*; move them to

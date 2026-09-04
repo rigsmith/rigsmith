@@ -112,7 +112,8 @@ func (i Ignored) String() string { return fmt.Sprintf("%s: %q", i.Key, i.Value) 
 var ignoredModes = map[string]bool{"bypassPermissions": true, "auto": true}
 
 // IgnoredAt reports the values in the settings file at path that Claude Code
-// will not honour at scope s. A missing or empty file has none. It parses what
+// will not honour at scope s — `permissions.defaultMode`, where Claude Code
+// keeps the mode. A missing or empty file has none. It parses what
 // it needs and nothing else, so an otherwise malformed file is reported as an
 // error rather than as clean.
 func IgnoredAt(s Scope, path string) ([]Ignored, error) {
@@ -129,16 +130,26 @@ func IgnoredAt(s Scope, path string) ([]Ignored, error) {
 	if len(bytes.TrimSpace(b)) == 0 {
 		return nil, nil
 	}
+	// Claude Code keeps the mode under the permissions object; a bare
+	// top-level defaultMode is not a shape it reads, but one people write by
+	// mistake, so it is reported too rather than silently passed over.
 	var m struct {
+		Permissions struct {
+			DefaultMode string `json:"defaultMode"`
+		} `json:"permissions"`
 		DefaultMode string `json:"defaultMode"`
 	}
 	if err := json.Unmarshal(b, &m); err != nil {
 		return nil, err
 	}
 	var out []Ignored
+	if ignoredModes[m.Permissions.DefaultMode] {
+		out = append(out, Ignored{Key: "permissions.defaultMode", Value: m.Permissions.DefaultMode,
+			Where: "user or managed settings, or --permission-mode on the command line"})
+	}
 	if ignoredModes[m.DefaultMode] {
 		out = append(out, Ignored{Key: "defaultMode", Value: m.DefaultMode,
-			Where: "user or managed settings, or --permission-mode on the command line"})
+			Where: "user or managed settings, or --permission-mode on the command line (and it belongs under permissions)"})
 	}
 	return out, nil
 }

@@ -52,19 +52,29 @@ func TestIgnoredAt(t *testing.T) {
 	if got, err := IgnoredAt(Project, path); err != nil || len(got) != 0 {
 		t.Fatalf("missing file: %v, %v", got, err)
 	}
-	if err := os.WriteFile(path, []byte(`{"defaultMode": "bypassPermissions", "hooks": {}}`), 0o644); err != nil {
+	// The shape Claude Code actually writes: the mode lives under permissions.
+	if err := os.WriteFile(path, []byte(`{"permissions": {"defaultMode": "bypassPermissions", "allow": ["Bash"]}, "hooks": {}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, s := range []Scope{Project, Local} {
 		got, err := IgnoredAt(s, path)
-		if err != nil || len(got) != 1 || got[0].Key != "defaultMode" || got[0].Value != "bypassPermissions" {
-			t.Errorf("%s: got %v, %v; want the defaultMode value flagged", s, got, err)
+		if err != nil || len(got) != 1 || got[0].Key != "permissions.defaultMode" || got[0].Value != "bypassPermissions" {
+			t.Errorf("%s: got %v, %v; want permissions.defaultMode flagged", s, got, err)
 		}
 	}
 	if got, err := IgnoredAt(User, path); err != nil || len(got) != 0 {
 		t.Errorf("user scope honours it: got %v, %v", got, err)
 	}
-	if err := os.WriteFile(path, []byte(`{"defaultMode": "acceptEdits"}`), 0o644); err != nil {
+	// A top-level defaultMode is a mistake Claude Code never reads, but a
+	// person who wrote it meant the same thing, so it is reported rather than
+	// silently passed over.
+	if err := os.WriteFile(path, []byte(`{"defaultMode": "auto"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := IgnoredAt(Project, path); err != nil || len(got) != 1 || got[0].Key != "defaultMode" {
+		t.Errorf("top-level defaultMode: got %v, %v", got, err)
+	}
+	if err := os.WriteFile(path, []byte(`{"permissions": {"defaultMode": "acceptEdits"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := IgnoredAt(Project, path); err != nil || len(got) != 0 {

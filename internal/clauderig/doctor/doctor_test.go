@@ -306,7 +306,7 @@ func TestCheckIgnoredSettings(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(env.LocalSettings, []byte(`{"defaultMode":"bypassPermissions"}`), 0o644); err != nil {
+	if err := os.WriteFile(env.LocalSettings, []byte(`{"permissions":{"defaultMode":"bypassPermissions"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	r, ok := checkIgnoredSettings(env)
