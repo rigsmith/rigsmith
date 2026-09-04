@@ -58,13 +58,18 @@ the same in the gitignored `.claude/settings.local.json`). See
   size-based history squash — but every session sync has staged keeps a
   permanent row in the ledger, so an aged-out chat stays findable by title,
   project and date.
+- **Large transcripts are throttled.** Past `retention.largeFileBytes` (8 MiB)
+  a session's transcript is restaged only once it has grown by half that much
+  again, or gone quiet for 30 minutes, so the per-turn Stop hook does not
+  re-commit a 50 MB file every turn. The SessionEnd hook runs `sync --flush`
+  for the session that just ended, so its last turn is captured at once.
 
 ## Commands
 
 | Command | What |
 |---|---|
 | `init` | First-run wizard: remote (private), machine identity, roots, hooks |
-| `sync` | Walk → redact → manifest → tripwire → commit → push (`--dry-run`) |
+| `sync` | Walk → redact → manifest → tripwire → commit → push (`--dry-run`; `--flush` restages the ended session's large transcript past the throttle — the SessionEnd hook's job — or every changed transcript when run by hand) |
 | `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
 | `status` | Sync state: remote, last sync, roots, hooks |
