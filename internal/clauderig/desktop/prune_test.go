@@ -2,8 +2,8 @@ package desktop
 
 import (
 	"os"
-	"strings"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -55,11 +55,11 @@ func TestMeasure_ClassifiesTiers(t *testing.T) {
 		t.Fatal("total = 0, want the profile's size")
 	}
 	want := map[string]PruneTier{
-		"Cache":                                      PruneCaches,
-		"Code Cache":                                 PruneCaches,
-		"vm_bundles/claudevm.bundle/rootfs.img":      PruneVM,
+		"Cache":                                 PruneCaches,
+		"Code Cache":                            PruneCaches,
+		"vm_bundles/claudevm.bundle/rootfs.img": PruneVM,
 		"vm_bundles/claudevm.bundle/sessiondata.img": PruneVM,
-		"vm_bundles":                                 PruneAll,
+		"vm_bundles": PruneAll,
 	}
 	for rel, tier := range want {
 		got, ok := tierOf(u, rel)
