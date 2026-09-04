@@ -76,6 +76,14 @@ type stackRepo struct {
 	// produces; an explicit map entry wins for the ids it names.
 	PublishesAs   map[string]string `json:"publishesAs,omitempty"`
 	PublishPrefix string            `json:"publishPrefix,omitempty"`
+	// TrackBranch names a branch of Fork this prefix is IMPORTED from, instead
+	// of upstream's branch. Where pull requests go does not change — Upstream
+	// is still where `propose` roots its commit and `pull` follows — but a
+	// stackspace rebuilt on another machine then starts from your fork's
+	// branch, which is where work that has left as a proposal and not yet
+	// merged actually lives. The cursor records the upstream commit that
+	// branch is based on, so status and pull keep measuring against upstream.
+	TrackBranch string `json:"trackBranch,omitempty"`
 }
 
 // stackPublishing is how one member's packages are known to consumers beyond
@@ -320,6 +328,11 @@ func (m *stackManifest) validate() error {
 			if from == to {
 				return fmt.Errorf("stack repo %q: publishesAs maps %q to itself — drop the entry, a package known by its own id needs nothing here", name, from)
 			}
+		}
+		// A fork branch is imported on top of upstream's branch history; a
+		// prefix pinned to a tag or commit has no branch for it to be based on.
+		if r.TrackBranch != "" && (r.UpstreamTag != "" || r.UpstreamCommit != "") {
+			return fmt.Errorf("stack repo %q sets trackBranch with a pin — a fork branch is based on upstream's branch, so keep upstreamBranch (or nothing) with it", name)
 		}
 		if p := r.PublishPrefix; p != "" && strings.TrimSpace(p) == "" {
 			return fmt.Errorf("stack repo %q: publishPrefix is blank", name)
@@ -567,6 +580,12 @@ const stackManifestTemplate = `{
     //   // library needs an older release than upstream's tip:
     //   //   "upstreamTag": "v1.4.2"
     //   //   "upstreamCommit": "<full 40-character sha>"
+    //
+    //   // Import this directory from a branch of YOUR FORK instead of from
+    //   // upstream — for rebuilding a stackspace elsewhere with work that has
+    //   // left as a proposal and not yet merged. Pull requests still go to
+    //   // upstream, and pull still follows it.
+    //   //   "trackBranch": "stack/read-timeout"
     //
     //   // If you republish this fork's packages under your own id (to a
     //   // private feed, say), tell wire so a consumer referencing that id

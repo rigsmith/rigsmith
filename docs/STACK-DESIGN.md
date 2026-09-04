@@ -237,6 +237,11 @@ it.
 3. `stack init` adopting an existing non-fused stackspace (the sibling-clone
    layout people already have): re-import and keep the overlay, or not worth
    the code?
+   *Partly answered by reconstitution (2026-09-04, #260): `init` now rebuilds
+   any member whose cursor is recorded but whose directory is absent, at that
+   cursor — so a clone of the root files alone (`rig stack seed`) becomes a
+   working stackspace. Adopting sibling clones that were never fused is still
+   open.*
 4. CI template (`stack init --ci github`) in v1 or after the verbs settle?
 
 ## `push`: exporting a member with its history (2026-08-26)
@@ -454,6 +459,34 @@ exactly its own swaps and no others.
 
 This is the shape `rig stack adopt` should generate, since it is the one a human
 can extend by adding a line.
+
+### Reconstitution and seeds (2026-09-04, #260)
+
+A stackspace was a local artifact: moving it meant copying the fused repo,
+because nothing smaller reproduced it, and the pieces that would have — the
+root files deliberately kept out of every prefix — had nowhere else to live.
+Three decisions:
+
+- **The stackspace's own files are whatever sits at the root outside every
+  prefix.** No new directory convention: that set is already what the
+  stackspace's own commits carry, and `rig stack seed <dir>` exports exactly it
+  (`git archive` of HEAD's root entries minus the member prefixes) as a fresh
+  one-commit repository. A few kilobytes, no upstream history, and nothing
+  derived — the manifest already records what each prefix held.
+- **`init` reconstitutes.** A member with a cursor but no directory is imported
+  *at the cursor* rather than at upstream's tip, so the rebuilt stackspace
+  matches what was left. `stackPullOne` gained an `at` override for it.
+- **Fork members can be imported from the fork.** `propose` leaves work on a
+  `stack/…` branch of the fork while the cursor names the upstream commit it
+  was based on, so a rebuild from upstream would drop it. `trackBranch` names a
+  fork branch to import from explicitly; without it, a rebuild checks the branch
+  the member was last proposed to (`lastPropose`) and uses it while it exists.
+  The prefix is fetched through the proxy from the fork's path, and the cursor
+  is set to `merge-base(branch, upstream tip)` over the unfiltered objects — an
+  upstream commit, so `status`, `propose`'s guard and `pull` keep measuring
+  against upstream. josh filters are a pure function of the commit graph, so the
+  prefixed history of that base is the same object whichever remote it came
+  through, and a later pull of upstream merges against a shared ancestor.
 
 ### Republished ids (2026-09-04, #259)
 

@@ -471,3 +471,41 @@ func (r *Repo) DeleteRef(ctx context.Context, ref string) error {
 	_, err := runGit(ctx, r.Dir, "update-ref", "-d", ref)
 	return err
 }
+
+// MergeBase is the best common ancestor of two commits, or "" when they share
+// no history at all — which is an answer, not an error.
+func (r *Repo) MergeBase(ctx context.Context, a, b string) (string, error) {
+	out, err := runGit(ctx, r.Dir, "merge-base", a, b)
+	if err != nil {
+		if strings.Contains(err.Error(), "exit status 1") {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// TopLevelNames lists the entries directly under a revision's root tree.
+func (r *Repo) TopLevelNames(ctx context.Context, rev string) ([]string, error) {
+	out, err := runGit(ctx, r.Dir, "ls-tree", "--name-only", rev)
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(out), nil
+}
+
+// ArchiveTar renders the given paths of a revision as a tar stream — what
+// `git archive` produces — so a subset of a tree can be materialised elsewhere
+// without a checkout.
+func (r *Repo) ArchiveTar(ctx context.Context, rev string, paths []string) ([]byte, error) {
+	args := append([]string{"archive", "--format=tar", rev, "--"}, paths...)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = r.Dir
+	var errb strings.Builder
+	cmd.Stderr = &errb
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git archive: %w: %s", err, strings.TrimSpace(errb.String()))
+	}
+	return out, nil
+}

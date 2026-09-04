@@ -508,6 +508,58 @@ work exists nowhere else — the same `unsent changes` and `uncommitted changes`
 that `status` reports, plus the case where the comparison cannot be made at
 all. `--force` removes it anyway.
 
+## Moving a stackspace to another machine {#seed}
+
+A stackspace is a local artifact, and for a while the only thing that
+reproduced one was the fused repo itself — a hundred megabytes carrying three
+upstreams' histories, and a derived artifact under version control, which is the
+kind of thing that drifts. Two things make a smaller seed enough:
+
+- **Everything at the root outside every prefix is the stackspace's own.** The
+  manifest, a `Directory.Build.rsp`, a `packaging/` directory that publishes the
+  members so the app can be developed without the stackspace — anything kept
+  out of the members *because* it would otherwise leave in a pull request.
+  It is committed to the stackspace's own history, and `seed` exports exactly
+  that set.
+- **The manifest remembers what each prefix held.** `lastSync` is the commit
+  each directory was taken from, so a directory that is missing can be rebuilt
+  at that commit rather than at upstream's tip.
+
+```sh
+rig stack seed ../my-stack-seed                  # root files → a new repo, one commit
+git -C ../my-stack-seed remote add origin <url>
+git -C ../my-stack-seed push -u origin main
+
+# elsewhere
+git clone <url> my-stack && cd my-stack
+rig stack init                                   # rebuilds every member
+rig stack wire
+```
+
+`init` treats a member with a cursor but no directory as one to **reconstitute**:
+it imports that member at the cursor, so the stackspace comes back as it was
+left. A member marked `owned` comes back with your commits, because `push`
+fast-forwarded its own branch and the cursor points there. A fork you contribute
+to needs one more thing, because `propose` puts your changes on your fork as a
+`stack/…` branch while the cursor still names the upstream commit it was based
+on — so on its own the rebuilt directory would hold upstream's code and none of
+yours. Two ways to say where the work is:
+
+- **Nothing, in the common case.** `propose` records the branch it last sent
+  each repo to, and when `init` rebuilds a member it checks whether that branch
+  still exists on the fork. If it does, the member is imported *from it*. If the
+  proposal has merged and the branch is gone, upstream already carries the work
+  and the cursor is the right place to rebuild.
+- **`trackBranch`, explicitly.** A branch of `fork` to import this member from,
+  for a branch you made by hand or want to pin regardless of what was proposed
+  last. See [Configuration](./configuration#stack).
+
+Either way, where pull requests go does not change: `upstream` is still what
+`propose` roots its commit on and what `pull` follows. The cursor records the
+upstream commit the fork branch is based on — found by merge-base — so `status`
+compares the right things and a later `pull` merges upstream's movement rather
+than importing it twice.
+
 ## The verbs
 
 | Verb | What it does |
@@ -515,6 +567,7 @@ all. `--force` removes it anyway.
 | `stack init` | Scaffold the manifest, or import the repos it names that are not imported yet |
 | `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
 | `stack rm <repo>` | Remove a repo: its manifest entry and cursor, its directory, and the overlay redirects into it; refuses while it holds work that has not left (`--force`), `--keep-tree` keeps the directory |
+| `stack seed <dir>` | Export the root files — everything outside every prefix, manifest included — as a small repo that `stack init` rebuilds the members from elsewhere |
 | `stack status` | Each repo's cursor against its upstream branch tip |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch |
@@ -587,4 +640,6 @@ stops after. Pin a version per stackspace with the manifest's
   own history moves on.
 - **Do not give the stackspace a remote** and push it somewhere. It contains
   several rewritten upstream histories fused together, which is meaningful to
-  you and to nobody else.
+  you and to nobody else. To carry it to another machine, push a
+  [seed](#seed) instead — the root files alone — and let `init` rebuild the
+  members there.

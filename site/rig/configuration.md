@@ -232,6 +232,18 @@ upstream that later force-moves or re-cuts that tag does not move your
 stackspace; editing the pin does, because that changes what was recorded. To
 follow a moved tag deliberately, `rig stack pull --repin`.
 
+**`trackBranch`** names a branch of `fork` this directory is *imported* from
+instead of upstream's branch. It exists for rebuilding a stackspace on another
+machine (see [seed](./stack#seed)): a fork member's proposed-but-unmerged work
+lives on a `stack/…` branch of your fork, and importing from upstream would
+leave it out. Where pull requests go does not change — `upstream` is still what
+`propose` roots on and what `pull` follows — and the cursor records the upstream
+commit the branch is based on, so `status` still compares against upstream. A
+`trackBranch` that is not on the fork is an error rather than a silent fallback.
+It cannot be combined with a tag or commit pin. Without it, `init` rebuilding a
+member checks for the branch it was last proposed to and uses that when it
+still exists.
+
 A fork you **republish under your own id** — patched builds pushed to a
 private feed as `Acme.Foo` rather than `Foo`, so they cannot collide with the
 public package — needs one more line, because `wire` keys its redirects on the

@@ -249,6 +249,7 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | `stack init` | Write the manifest, or import the repos it names into this history |
 | `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
 | `stack rm <repo>` | Remove a repo — manifest entry, directory and overlay redirects; refuses while it holds unsent work (`--force`), `--keep-tree` keeps the directory |
+| `stack seed <dir>` | Export the root files as a small repo; `stack init` on a clone of it rebuilds every member at its recorded cursor, or from the fork branch it was last proposed to |
 | `stack status` | Each repo's cursor against its upstream, and whether it holds work that has not left |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch |

@@ -199,6 +199,61 @@ func TestStackFlow(t *testing.T) {
 	if !contains(files, "src/extra.txt") {
 		t.Fatalf("the branch dropped upstream's own file — it would revert it: %v", files)
 	}
+
+	// ---- seed, then rebuild elsewhere ------------------------------------
+	//
+	// The seed is the root files alone. init on a clone of it has to bring
+	// libfoo back FROM THE FORK BRANCH it was last proposed to — that is where
+	// its unmerged v3 lives — and libbar back at its cursor, since nothing of
+	// it ever left.
+
+	seed := filepath.Join(work, "seed")
+	if err := runVerb(ctx, newStackSeedCmd(), seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(seed, "libfoo")); !os.IsNotExist(err) {
+		t.Fatal("seed carries a member directory")
+	}
+	rebuilt := filepath.Join(work, "rebuilt")
+	mustGitStack(t, work, "clone", "-q", seed, rebuilt)
+	mustGitStack(t, rebuilt, "config", "user.email", "t@t")
+	mustGitStack(t, rebuilt, "config", "user.name", "t")
+	chdir(t, rebuilt)
+	out, err = runVerbOut(ctx, newStackInitCmd())
+	if err != nil {
+		t.Fatalf("init on the seed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "libfoo: reconstituted from") || !strings.Contains(out, "stack/after-pull") {
+		t.Fatalf("libfoo was not rebuilt from its proposed branch:\n%s", out)
+	}
+	if !strings.Contains(out, "libbar: reconstituted upstream") {
+		t.Fatalf("libbar was not rebuilt at its cursor:\n%s", out)
+	}
+	if got := strings.TrimSpace(mustGitStack(t, rebuilt, "show", "HEAD:libfoo/src/libfoo.txt")); got != "libfoo v3" {
+		t.Fatalf("rebuilt libfoo holds %q, want the proposed v3", got)
+	}
+	if _, err := os.Stat(filepath.Join(rebuilt, "libfoo", "src", "extra.txt")); err != nil {
+		t.Fatal("rebuilt libfoo lacks upstream's own file")
+	}
+	if got := strings.TrimSpace(mustGitStack(t, rebuilt, "show", "HEAD:libbar/src/libbar.txt")); got != "libbar v1" {
+		t.Fatalf("rebuilt libbar holds %q, want upstream's content", got)
+	}
+	// The cursor is an upstream commit, not the fork branch's tip, so status
+	// and pull keep measuring against upstream: nothing has moved, so nothing
+	// to pull, and a fresh propose is not refused as stale.
+	m, _, err := loadStackManifest(rebuilt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.cursor("libfoo") != newTip {
+		t.Fatalf("libfoo cursor = %s, want upstream tip %s", short(m.cursor("libfoo")), short(newTip))
+	}
+	if out, err := runVerbOut(ctx, newStackPullCmd(), "libfoo"); err != nil || !strings.Contains(out, "nothing to pull") {
+		t.Fatalf("pull after rebuild: %v\n%s", err, out)
+	}
+	if out, err := runVerbOut(ctx, newStackSendCmd(), "libfoo", "after-pull"); err != nil || !strings.Contains(out, "nothing to send") {
+		t.Fatalf("propose after rebuild should be a no-op against the same branch: %v\n%s", err, out)
+	}
 }
 
 // ---- harness ----------------------------------------------------------
