@@ -327,7 +327,18 @@ func TestCheckIgnoredSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, ok = checkIgnoredSettings(env)
-	if !ok || strings.Contains(r.Hint, "--permission-mode") || !strings.Contains(r.Hint, "JSON") {
-		t.Fatalf("parse failure alone: got ok=%v hint=%q", ok, r.Hint)
+	if !ok || strings.Contains(r.Hint, "--permission-mode") || !strings.Contains(r.Hint, "JSON") || !strings.Contains(r.Detail, env.ProjectSettings) {
+		t.Fatalf("parse failure alone: got ok=%v hint=%q detail=%q", ok, r.Hint, r.Detail)
+	}
+	// A file that cannot be opened at all is not told to fix its JSON.
+	if err := os.Remove(env.ProjectSettings); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(env.ProjectSettings, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, ok = checkIgnoredSettings(env)
+	if !ok || strings.Contains(r.Hint, "JSON") || !strings.Contains(r.Hint, "readable") {
+		t.Fatalf("read failure alone: got ok=%v hint=%q", ok, r.Hint)
 	}
 }

@@ -215,6 +215,7 @@ func checkProjectGuard(env Env) Result {
 // when there is something to say.
 func checkIgnoredSettings(env Env) (Result, bool) {
 	var found, unreadable []string
+	malformed := false
 	for _, tier := range []struct {
 		scope settings.Scope
 		path  string
@@ -226,7 +227,8 @@ func checkIgnoredSettings(env Env) (Result, bool) {
 		if err != nil {
 			// Said here, because nothing else says it: the guard check reads
 			// the same file and reports a parse failure as "not installed".
-			unreadable = append(unreadable, fmt.Sprintf("%s settings could not be read (%v)", tier.scope, err))
+			unreadable = append(unreadable, fmt.Sprintf("%s settings at %s could not be read (%v)", tier.scope, tier.path, err))
+			malformed = malformed || settings.IsParseError(err)
 			continue
 		}
 		for _, i := range ignored {
@@ -236,12 +238,18 @@ func checkIgnoredSettings(env Env) (Result, bool) {
 	if len(found) == 0 && len(unreadable) == 0 {
 		return Result{}, false
 	}
-	// The hint is about the ignored values; a file that would not parse
-	// gets its own line, so a parse failure alone is not told to change a
-	// permission mode it may not even set.
+	// The hint is about the ignored values; a file that could not be read
+	// gets its own line, so a failure alone is not told to change a
+	// permission mode it may not even set — and only a file that parsed
+	// badly is told to fix its JSON; one that could not be opened has a
+	// different problem.
 	hint := "Claude Code drops these silently at this scope — pass --permission-mode for the session that needs it, or set it in ~/.claude/settings.json knowing that applies to every project"
-	if len(found) == 0 {
+	switch {
+	case len(found) > 0:
+	case malformed:
 		hint = "fix the JSON — Claude Code ignores the whole file until it parses, and nothing in it can be checked"
+	default:
+		hint = "make the file readable — nothing in it can be checked until it is"
 	}
 	return Result{Name: "ignored settings", Status: Warn,
 		Detail: strings.Join(append(found, unreadable...), "; "),

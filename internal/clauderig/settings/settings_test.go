@@ -3,6 +3,7 @@ package settings
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +75,13 @@ func TestIgnoredAt(t *testing.T) {
 	if got, err := IgnoredAt(Project, path); err != nil || len(got) != 1 || got[0].Key != "defaultMode" {
 		t.Errorf("top-level defaultMode: got %v, %v", got, err)
 	}
+	// Whatever its value: the key itself is never read.
+	if err := os.WriteFile(path, []byte(`{"defaultMode": "acceptEdits"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := IgnoredAt(Local, path); err != nil || len(got) != 1 || got[0].Key != "defaultMode" || !strings.Contains(got[0].Where, "never reads") {
+		t.Errorf("top-level defaultMode with an honoured value: got %v, %v", got, err)
+	}
 	if err := os.WriteFile(path, []byte(`{"permissions": {"defaultMode": "acceptEdits"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +91,11 @@ func TestIgnoredAt(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{not json`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := IgnoredAt(Project, path); err == nil {
-		t.Error("malformed file reported as clean")
+	if _, err := IgnoredAt(Project, path); err == nil || !IsParseError(err) {
+		t.Errorf("malformed file: err = %v, want a parse error", err)
+	}
+	// A path that cannot be read is an error too, but not a parse error.
+	if _, err := IgnoredAt(Project, filepath.Dir(path)); err == nil || IsParseError(err) {
+		t.Errorf("unreadable path: err = %v, want a read error", err)
 	}
 }

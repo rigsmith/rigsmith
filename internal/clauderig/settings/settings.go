@@ -9,6 +9,7 @@ package settings
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,9 +114,10 @@ var ignoredModes = map[string]bool{"bypassPermissions": true, "auto": true}
 
 // IgnoredAt reports the values in the settings file at path that Claude Code
 // will not honour at scope s — `permissions.defaultMode`, where Claude Code
-// keeps the mode. A missing or empty file has none. It parses what
-// it needs and nothing else, so an otherwise malformed file is reported as an
-// error rather than as clean.
+// keeps the mode, and a top-level `defaultMode`, which it never reads. A
+// missing or empty file has none. It parses what it needs and nothing else,
+// so an otherwise malformed file is reported as an error rather than as
+// clean; IsParseError tells that apart from a file that could not be read.
 func IgnoredAt(s Scope, path string) ([]Ignored, error) {
 	if s == User {
 		return nil, nil
@@ -147,9 +149,24 @@ func IgnoredAt(s Scope, path string) ([]Ignored, error) {
 		out = append(out, Ignored{Key: "permissions.defaultMode", Value: m.Permissions.DefaultMode,
 			Where: "user or managed settings, or --permission-mode on the command line"})
 	}
-	if ignoredModes[m.DefaultMode] {
-		out = append(out, Ignored{Key: "defaultMode", Value: m.DefaultMode,
-			Where: "user or managed settings, or --permission-mode on the command line (and it belongs under permissions)"})
+	// A top-level defaultMode is never read, whatever it says: the key is
+	// permissions.defaultMode. Reported for any value, then, not only the
+	// ones the scope would drop — the person who wrote it meant something.
+	if m.DefaultMode != "" {
+		where := "permissions.defaultMode — Claude Code never reads a top-level defaultMode"
+		if ignoredModes[m.DefaultMode] {
+			where += "; and that value is honoured only from user or managed settings, or --permission-mode on the command line"
+		}
+		out = append(out, Ignored{Key: "defaultMode", Value: m.DefaultMode, Where: where})
 	}
 	return out, nil
+}
+
+// IsParseError reports whether an error from IgnoredAt came from the file's
+// content rather than from reading it — the difference between "fix the
+// JSON" and "make the file readable".
+func IsParseError(err error) bool {
+	var syntax *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	return errors.As(err, &syntax) || errors.As(err, &typ)
 }
