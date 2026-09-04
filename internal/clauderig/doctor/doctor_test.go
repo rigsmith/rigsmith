@@ -359,3 +359,30 @@ func TestCheckIgnoredSettings(t *testing.T) {
 		t.Fatalf("top-level key in user settings: got ok=%v %+v", ok, r)
 	}
 }
+
+// The user settings file is checked wherever doctor runs: a misplaced key in
+// it is the same mistake outside a repo as inside one.
+func TestRun_ChecksUserSettingsOutsideARepo(t *testing.T) {
+	user := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(user, []byte(`{"defaultMode": "acceptEdits"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := Env{UserSettings: user}
+	if env.InRepo() {
+		t.Fatal("fixture is unexpectedly in a repo")
+	}
+	var found bool
+	for _, sec := range Run(context.Background(), env) {
+		for _, r := range sec.Results {
+			if r.Name == "ignored settings" {
+				found = true
+				if r.Status != Warn || !strings.Contains(r.Detail, user) {
+					t.Errorf("got %+v, want a Warn naming the user file", r)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("the user file's misplaced key went unreported outside a repo")
+	}
+}
