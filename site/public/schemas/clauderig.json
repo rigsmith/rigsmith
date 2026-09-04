@@ -56,7 +56,9 @@
       "properties": {
         "historyDays": { "type": "integer", "description": "Project-history retention window in days. Applies to transcripts; project memory is exempt and never ages out." },
         "squashFactor": { "type": "number", "description": "Squash the history branch when its footprint exceeds this × the retained working-tree size." },
-        "floorBytes": { "type": "integer", "description": "Never squash below this byte floor." }
+        "floorBytes": { "type": "integer", "description": "Never squash below this byte floor." },
+        "maxFileBytes": { "type": "integer", "description": "Drop any single file larger than this many bytes (git hosts reject oversized blobs). 0 means the default of 50 MiB; negative disables the cap." },
+        "largeFileBytes": { "type": "integer", "description": "Past this many bytes a session transcript is restaged only once it has grown by half this much again, or has been quiet for 30 minutes — so a long session costs one blob per chunk of new content rather than one per sync. 0 means the default of 8 MiB; negative restages every change." }
       }
     },
     "alwaysPrune": {

@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
@@ -200,5 +201,78 @@ func TestReconcileStagedRoot_KeepsEmptyFilesWhateverTheLivePathIs(t *testing.T) 
 	}
 	if _, serr := os.Stat(empty); serr != nil {
 		t.Error("another machine's empty file was deleted")
+	}
+}
+
+// A large, append-only transcript is restaged only per chunk of growth or once
+// it has gone quiet — every sync in between would otherwise leave another
+// near-identical multi-megabyte blob in history.
+func TestSync_DefersLargeTranscriptsUntilGrownOrSettled(t *testing.T) {
+	const threshold = 4096
+	live, staging := t.TempDir(), t.TempDir()
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	sync := func() RootResult {
+		t.Helper()
+		rep, err := Sync(Options{
+			StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
+			LargeFileBytes: threshold, SourceOverride: override("cli", live),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep.Roots[0]
+	}
+	stagedSize := func() int64 {
+		t.Helper()
+		fi, err := os.Stat(filepath.Join(staging, "cli", "projects", "-p", "long.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fi.Size()
+	}
+
+	// First sight of a large transcript is staged whole: there is nothing to
+	// defer against.
+	write(t, live, "projects/-p/long.jsonl", strings.Repeat("a", threshold+100))
+	if r := sync(); r.Deferred != 0 || stagedSize() != threshold+100 {
+		t.Fatalf("first sync: deferred=%d staged=%d", r.Deferred, stagedSize())
+	}
+
+	// Grown by less than half the threshold, still being written: wait.
+	write(t, live, "projects/-p/long.jsonl", strings.Repeat("a", threshold+100+threshold/4))
+	if r := sync(); r.Deferred != 1 || stagedSize() != threshold+100 {
+		t.Fatalf("small growth: deferred=%d staged=%d, want deferred with the old copy kept", r.Deferred, stagedSize())
+	}
+
+	// Grown by half the threshold: restage.
+	write(t, live, "projects/-p/long.jsonl", strings.Repeat("a", threshold+100+threshold/2))
+	if r := sync(); r.Deferred != 0 || stagedSize() != threshold+100+threshold/2 {
+		t.Fatalf("chunk growth: deferred=%d staged=%d", r.Deferred, stagedSize())
+	}
+
+	// A small tail on a transcript that has gone quiet is captured anyway — that
+	// is how a finished session's last turn reaches the repo.
+	src := filepath.Join(live, "projects", "-p", "long.jsonl")
+	write(t, live, "projects/-p/long.jsonl", strings.Repeat("a", threshold+100+threshold/2+10))
+	old := time.Now().Add(-largeFileSettle - time.Minute)
+	if err := os.Chtimes(src, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if r := sync(); r.Deferred != 0 || stagedSize() != threshold+100+threshold/2+10 {
+		t.Fatalf("settled: deferred=%d staged=%d", r.Deferred, stagedSize())
+	}
+
+	// A transcript that SHRANK is a rewrite, not an append: never deferred.
+	write(t, live, "projects/-p/long.jsonl", strings.Repeat("b", threshold+1))
+	if r := sync(); r.Deferred != 0 || stagedSize() != threshold+1 {
+		t.Fatalf("shrunk: deferred=%d staged=%d", r.Deferred, stagedSize())
+	}
+
+	// Under the threshold, every change is staged as before.
+	write(t, live, "projects/-p/short.jsonl", strings.Repeat("c", 100))
+	sync()
+	write(t, live, "projects/-p/short.jsonl", strings.Repeat("c", 101))
+	if r := sync(); r.Deferred != 0 {
+		t.Fatalf("small transcript deferred: %+v", r)
 	}
 }

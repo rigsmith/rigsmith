@@ -33,6 +33,16 @@ repo. `restore` does the inverse on another machine: it pulls, rewrites the
 portable paths into this OS's slugs, and merges — keeping any local secrets in
 place so a new machine simply re-authenticates.
 
+A session transcript is append-only and unbounded, and a long one is the single
+biggest thing a sync moves: committed whole every interval, a 50 MB transcript
+leaves a near-identical 50 MB blob in history each time. So past
+`retention.largeFileBytes` (8 MiB by default) a transcript is restaged only once
+it has grown by half that much again, or once it has gone quiet for half an hour
+— an active marathon session costs one blob per chunk of new content instead of
+one per sync, and a finished session's last turn is still captured. Smaller
+transcripts sync on every change, as before, and `sync` reports how many large
+ones are waiting. Set the key negative to restage every change.
+
 When a restore brings back Claude **Code** sessions, it reminds you to fully quit
 and reopen Claude Desktop — Desktop only rebuilds its Code-tab list from the
 restored session sidecars on startup, so a running app won't show them until it

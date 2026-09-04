@@ -22,6 +22,13 @@ const schemaVersion = 1
 // the cliff. Only runaway transcripts come near it.
 const DefaultMaxFileBytes = 50 << 20
 
+// DefaultLargeFileBytes is where a transcript stops being restaged on every
+// sync. A session transcript is append-only and unbounded, and committing the
+// whole file each interval costs the repo roughly (size × syncs) / 2 — quadratic
+// in session length — so past this size a transcript is restaged only once it
+// has grown by half this much again, or has gone quiet (see engine.Sync).
+const DefaultLargeFileBytes = 8 << 20
+
 // SchemaURL is stamped onto written config.json files, matching the other
 // rigsmith configs (.rig.json, .changeset/config.json).
 const SchemaURL = "https://rigsmith.dev/schemas/clauderig.json"
@@ -67,6 +74,12 @@ type Retention struct {
 	// GitHub warns past 50 MB and refuses past 100 MB, which fails the whole push.
 	// One runaway session must not be able to wedge the sync.
 	MaxFileBytes int64 `json:"maxFileBytes"`
+	// LargeFileBytes is the size past which a transcript is restaged only when
+	// it has grown by at least half this much since the staged copy, or has not
+	// been written for a while (0 = the default; negative = restage every
+	// change). It bounds how many near-identical blobs a long session leaves in
+	// history without delaying small sessions at all.
+	LargeFileBytes int64 `json:"largeFileBytes,omitempty"`
 }
 
 // Root is a sync root: an id, whether it's enabled, and its per-OS location as a
@@ -101,7 +114,7 @@ func Default() *Config {
 		Schema:    schemaVersion,
 		Machines:  map[string]Machine{},
 		Roots:     DefaultRoots(),
-		Retention: Retention{HistoryDays: 90, SquashFactor: 2.0, FloorBytes: 500 << 20, MaxFileBytes: DefaultMaxFileBytes},
+		Retention: Retention{HistoryDays: 90, SquashFactor: 2.0, FloorBytes: 500 << 20, MaxFileBytes: DefaultMaxFileBytes, LargeFileBytes: DefaultLargeFileBytes},
 	}
 }
 
@@ -184,6 +197,11 @@ func Load(dir string) (*Config, error) {
 	// explicit: any negative value.
 	if c.Retention.MaxFileBytes == 0 {
 		c.Retention.MaxFileBytes = DefaultMaxFileBytes
+	}
+	// Same reasoning: the throttle exists for repos that already have long
+	// sessions in them, so absent means the default.
+	if c.Retention.LargeFileBytes == 0 {
+		c.Retention.LargeFileBytes = DefaultLargeFileBytes
 	}
 	return &c, nil
 }

@@ -93,6 +93,7 @@ func NewSyncCmd() *cobra.Command {
 				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
 				RetentionDays:   cfg.Retention.HistoryDays,
 				MaxFileBytes:    cfg.Retention.MaxFileBytes,
+				LargeFileBytes:  cfg.Retention.LargeFileBytes,
 				Profiles:        engine.LocalProfileNames(),
 				LiveAccountUUID: liveAcct,
 			})
@@ -121,6 +122,9 @@ func NewSyncCmd() *cobra.Command {
 					}
 					if n := len(r.Oversize); n > 0 {
 						extra += fmt.Sprintf(", %d too large", n)
+					}
+					if r.Deferred > 0 {
+						extra += fmt.Sprintf(", %d large transcript(s) waiting for more content", r.Deferred)
 					}
 					fmt.Fprintf(out, "  %-*s %d files, %d secret field(s) redacted%s\n", w, r.ID, r.Files, r.Redactions, extra)
 					// Name what was dropped for size — a silent cap reads as "everything

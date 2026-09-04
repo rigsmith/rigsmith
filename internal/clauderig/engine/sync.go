@@ -30,6 +30,7 @@ type RootResult struct {
 	RetentionByAge int      // project transcripts dropped as older than the window
 	SkippedFiles   int      // files that vanished/were unreadable mid-sync (live churn)
 	Oversize       []string // rel paths dropped for exceeding MaxFileBytes
+	Deferred       int      // large transcripts changed since staged, but not enough yet to restage (see LargeFileBytes)
 	Disallowed     int      // staged files removed because the allowlist no longer permits them
 	Skipped        bool     // root absent on this machine
 }
@@ -58,6 +59,14 @@ type Options struct {
 	// MaxFileBytes drops any single file larger than this (<= 0 = no cap). Git
 	// hosts reject oversized blobs and take the whole push down with them.
 	MaxFileBytes int64
+	// LargeFileBytes throttles how often a big, append-only transcript is
+	// restaged (<= 0 = every change, as for any other file). A transcript over
+	// this size whose staged copy exists is copied again only once it has grown
+	// by at least half of LargeFileBytes since, or once it has been quiet for
+	// largeFileSettle — so an active marathon session costs one blob per chunk
+	// of new content rather than one per sync, and a finished one is still
+	// captured whole within the settle window.
+	LargeFileBytes int64
 	// SourceOverride maps a root id to an absolute source dir, used verbatim
 	// instead of resolving the root location via the machine. The machine still
 	// drives path translation (portablize/manifest); this only decouples WHERE the
@@ -72,6 +81,28 @@ type Options struct {
 	// logged in, unreadable) simply leaves those rows unattributed — a guess is
 	// never invented, and a stored attribution is never overwritten by one.
 	LiveAccountUUID string
+}
+
+// largeFileSettle is how long a large transcript has to go unwritten before a
+// change too small to earn a restage on its own is staged anyway. It is what
+// gets a session's final tail into the repo once the session stops — there is
+// no session-end signal to hook, only the file going quiet.
+const largeFileSettle = 30 * time.Minute
+
+// deferLarge reports whether a changed transcript should wait: it is over the
+// large-file threshold, a staged copy exists, and the source has neither grown
+// by half the threshold since that copy nor settled. A source SMALLER than the
+// staged copy is never deferred — that is a rewrite, not an append, and the
+// staged copy is simply wrong.
+func deferLarge(rel string, src, staged os.FileInfo, threshold int64, now time.Time) bool {
+	if threshold <= 0 || staged == nil || src.Size() <= threshold || !strings.HasSuffix(rel, ".jsonl") {
+		return false
+	}
+	grown := src.Size() - staged.Size()
+	if grown < 0 || grown >= threshold/2 {
+		return false
+	}
+	return now.Sub(src.ModTime()) < largeFileSettle
 }
 
 // Sync materialises the allowlisted, redacted file set for each enabled root into
@@ -171,8 +202,21 @@ func Sync(opts Options) (*Report, error) {
 				}
 
 				unchanged := false
-				if d, derr := os.Stat(dstPath); derr == nil && d.Size() == info.Size() && d.ModTime().Equal(info.ModTime()) {
+				staged, derr := os.Stat(dstPath)
+				if derr != nil {
+					staged = nil
+				}
+				if staged != nil && staged.Size() == info.Size() && staged.ModTime().Equal(info.ModTime()) {
 					unchanged = true
+				}
+				// A long session's transcript is the one file that is both large
+				// and rewritten on every sync, and every copy of it is a blob the
+				// repo carries until the next squash. Past LargeFileBytes it waits
+				// for a chunk's worth of new content, or for the session to go
+				// quiet, before it is restaged.
+				if !unchanged && deferLarge(rel, info, staged, opts.LargeFileBytes, time.Now()) {
+					rr.Deferred++
+					continue
 				}
 				if unchanged {
 					// Nothing will be written, so scanning the source separately is safe
