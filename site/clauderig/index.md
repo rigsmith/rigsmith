@@ -22,7 +22,7 @@ clauderig account list         # show stored Claude Code logins (alias: ls / sta
 clauderig account run me@x.com # launch Claude Code as another account, isolated session
 clauderig mcp add ctx7 npx -y @upstash/context7-mcp   # manage MCP servers (list/add/remove/enable)
 rig worktree new feat/x        # sibling worktree + review window; never moves this session
-clauderig doctor               # health-check env + sync + worktree discipline + ignored settings (--fix repairs)
+clauderig doctor               # health-check env + sync + worktree discipline + ignored settings (--fix repairs what it can; ignored settings are advisory)
 clauderig hooks install        # SessionStart→pull, Stop→sync (portable, idempotent)
 clauderig ui                   # interactive dashboard
 ```

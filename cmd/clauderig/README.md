@@ -16,7 +16,7 @@ clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect,
 clauderig status               # remote reachability, last sync, per-root counts, hooks
 clauderig mv old/path new/path # move/rename a dir AND relink its Claude history (-n to preview)
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
-clauderig doctor               # health-check env + sync + worktree discipline + ignored settings (--fix to repair)
+clauderig doctor               # health-check env + sync + worktree discipline + ignored settings (--fix repairs what it can; ignored settings are advisory)
 clauderig global install       # global sync hooks in ~/.claude (alias: clauderig hooks install)
 clauderig project install      # protect THIS repo: guard hook + CLAUDE.md guide (committed)
 clauderig local install        # same, but gitignored to this checkout
