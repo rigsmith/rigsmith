@@ -16,7 +16,7 @@ clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect,
 clauderig status               # remote reachability, last sync, per-root counts, hooks
 clauderig mv old/path new/path # move/rename a dir AND relink its Claude history (-n to preview)
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
-clauderig doctor               # health-check env + sync + worktree discipline (--fix to repair)
+clauderig doctor               # health-check env + sync + worktree discipline + ignored settings (--fix to repair)
 clauderig global install       # global sync hooks in ~/.claude (alias: clauderig hooks install)
 clauderig project install      # protect THIS repo: guard hook + CLAUDE.md guide (committed)
 clauderig local install        # same, but gitignored to this checkout
@@ -82,7 +82,7 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `recent` | Sessions newest first, dated by the newest record inside each transcript, falling back to the Desktop sidecar and then mtime when it carries none; `--since` / `--cwd` / `--account` narrow, `-l` adds full ids and, for the sessions that can be reopened here, the commands to do it (alias: `last`) |
 | `search` | Find a session by title or content, across this machine and every synced one (alias: `grep`) |
 | `mcp` | `list` / `get` / `add` / `remove` / `enable` / `disable` Claude Code MCP servers across local/project/user scopes (`~/.claude.json`, `<dir>/.mcp.json`); CLI mirrors `claude mcp` (same scopes/flags, default scope `local`); bare `mcp` opens the interactive screen |
-| `doctor` | Health-check environment + sync + worktree discipline; `--fix` repairs, or pick fixes interactively |
+| `doctor` | Health-check environment + sync + worktree discipline, and report settings Claude Code silently ignores at project or local scope (`permissions.defaultMode: "bypassPermissions"` / `"auto"`); `--fix` repairs, or pick fixes interactively |
 | `ui` | Interactive dashboard |
 
 See [docs/CLAUDERIG-DESIGN.md](../docs/CLAUDERIG-DESIGN.md) for the design.

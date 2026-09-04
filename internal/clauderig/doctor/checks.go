@@ -230,7 +230,7 @@ func checkIgnoredSettings(env Env) (Result, bool) {
 			continue
 		}
 		for _, i := range ignored {
-			found = append(found, fmt.Sprintf("%s (%s settings) — honoured only from %s", i, tier.scope, i.Where))
+			found = append(found, fmt.Sprintf("%s in %s (%s settings) — honoured only from %s", i, tier.path, tier.scope, i.Where))
 		}
 	}
 	if len(found) == 0 && len(unreadable) == 0 {

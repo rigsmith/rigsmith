@@ -18,7 +18,7 @@
 | `mcp` | `list` (alias `ls`) / `get` / `add` / `remove` (alias `rm`) / `enable` / `disable` MCP servers (`--scope user｜project｜local`, `--transport stdio｜http｜sse`, `--env`, `--header`); bare `mcp` on a TTY opens an interactive screen (mirrors `claude mcp`) |
 | `account` | Manage multiple Claude Code logins: `add` / `list` (alias `ls`/`status`) / `run <id｜email> [-- claude args]` / `switch` / `sessions` (alias `ps`) / `remove` (alias `rm`) / `purge`. `run --no-share` isolates a session; `switch` takes `--dry-run` / `--force` / `--kill` |
 | `config` | `get` / `set` / `show` / `path` / `edit` (`~/.clauderig/config.json`) |
-| `doctor` | Health-check environment + sync + worktree discipline (`--fix` repairs) |
+| `doctor` | Health-check environment + sync + worktree discipline, and report [settings Claude Code ignores](#settings-claude-code-ignores) (`--fix` repairs) |
 | `ui` | Interactive dashboard |
 
 The worktree and prune verbs (`rig worktree`, `rig prune`) live in
@@ -293,6 +293,21 @@ and could file the session under the wrong account. Quit the others, or pass
 The profile model this sits on is in
 [`docs/CLAUDERIG-DESKTOP-PROFILES.md`](https://github.com/rigsmith/rigsmith/blob/main/docs/CLAUDERIG-DESKTOP-PROFILES.md).
 
+## Settings Claude Code ignores
+
+Claude Code reads settings from three tiers — user (`~/.claude/settings.json`),
+project (`.claude/settings.json`, committed) and local
+(`.claude/settings.local.json`, gitignored) — and for most keys the narrower
+tier wins. Not for every key: a few are read from user or managed settings
+only. `permissions.defaultMode: "bypassPermissions"` (since the 2026-09-02
+release) and `"auto"` are silently dropped from a project or local file, and
+nothing says so: a repo that committed the value when it worked just finds it
+no longer does. `clauderig doctor` reports such values as *ignored settings*,
+naming the file. For a session that needs the mode, pass `--permission-mode`
+on the command line. Setting it in `~/.claude/settings.json` works too, but
+that applies to every project on the machine — a much wider grant than the one
+repository the project file meant — so reach for it deliberately.
+
 ## Hooks
 
 ```sh
@@ -302,17 +317,6 @@ clauderig hooks install
 Wires two Claude Code hooks: **SessionStart → pull** (so each session starts
 from the latest synced state) and **Stop → sync** (so your work is captured when
 a session ends). Both are portable across OSes and idempotent.
-
-The tiers are not a plain precedence order either: Claude Code reads a few keys
-from user or managed settings only. `permissions.defaultMode: "bypassPermissions"`
-(since the 2026-09-02 release) and `"auto"` are silently dropped from a
-project or local `settings.json`, and nothing says so: a repo that committed
-the value when it worked just finds it no longer does. `clauderig doctor`
-reports such values as *ignored settings*. For a session
-that needs the mode, pass `--permission-mode` on the command line. Setting it
-in `~/.claude/settings.json` works too, but that applies to every project on
-the machine — a much wider grant than the one repository the project file
-meant — so reach for it deliberately.
 
 ## Worktree discipline
 

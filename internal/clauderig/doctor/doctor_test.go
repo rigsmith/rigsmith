@@ -310,8 +310,8 @@ func TestCheckIgnoredSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, ok := checkIgnoredSettings(env)
-	if !ok || r.Status != Warn || !strings.Contains(r.Detail, "bypassPermissions") || !strings.Contains(r.Detail, "local") {
-		t.Fatalf("got ok=%v %+v, want a Warn naming the local file's value", ok, r)
+	if !ok || r.Status != Warn || !strings.Contains(r.Detail, "bypassPermissions") || !strings.Contains(r.Detail, env.LocalSettings) {
+		t.Fatalf("got ok=%v %+v, want a Warn naming the local file and its value", ok, r)
 	}
 	// A file that will not parse is reported, not skipped: nothing else says it.
 	if err := os.WriteFile(env.ProjectSettings, []byte(`{not json`), 0o644); err != nil {
