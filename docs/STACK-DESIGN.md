@@ -454,3 +454,19 @@ exactly its own swaps and no others.
 
 This is the shape `rig stack adopt` should generate, since it is the one a human
 can extend by adding a line.
+
+### Republished ids (2026-09-04, #259)
+
+`wire` keys the overlay on each project's real `PackageId`, deliberately —
+guessing from filenames redirects the wrong package. That leaves no way to
+express a fork that republishes under its own id (`Acme.Foo` for `Foo`, to a
+private feed, so the app builds without the stackspace): the app references an
+id no project declares, and inside the stackspace it resolves from the feed,
+builds, and never tests the fused code. The manifest carries it, since the
+manifest is outside every prefix and nothing there leaves in a PR:
+`publishesAs: {"Foo": "Acme.Foo"}` per member, or `publishPrefix: "Acme."` for
+every id a member produces. `stackRedirects` resolves a reference to a
+republished id back to the project producing the original and emits the
+redirect under the id the consumer wrote, which is what MSBuild matches. A rule
+naming a package the member does not produce is reported, not silently ignored.
+

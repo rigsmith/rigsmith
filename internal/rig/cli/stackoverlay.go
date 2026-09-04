@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -23,8 +24,15 @@ import (
 // the file name. Those differ often enough that guessing from the filename is
 // the classic way to redirect the wrong package.
 //
+// publishing says how a member's packages may be known beyond the ids they
+// declare — a fork republished under its own id. A reference to such an id is
+// redirected to the project producing the original, and the overlay is keyed
+// on the id the consumer wrote, since that is what MSBuild matches.
+//
 // The result is keyed by ecosystem id: each writes its own kind of overlay.
-func stackRedirects(ctx context.Context, root string, members []string) (map[string][]stackLink, []stackOrphan) {
+// notes are things worth saying that are neither a link nor an orphan: a
+// republishing rule naming a package nothing here produces.
+func stackRedirects(ctx context.Context, root string, members []string, publishing map[string]stackPublishing) (map[string][]stackLink, []stackOrphan, []string) {
 	member := func(rel string) string {
 		rel = filepath.ToSlash(rel)
 		for _, m := range members {
@@ -40,6 +48,10 @@ func stackRedirects(ctx context.Context, root string, members []string) (map[str
 	// A fused repo nothing here consumes is the quiet mistake this catches.
 	produces := map[string][]string{}
 	consumed := map[string]bool{}
+	var notes []string
+	// Every republished id that turned out to name a real package, so a rule
+	// that never matched anything can be reported afterwards.
+	aliasUsed := map[string]map[string]bool{}
 	for _, eco := range ecosystem.Default().All() {
 		// Overlay ecosystems re-emit the base language's project rather than
 		// owning it, so asking them would double-count what the base reports.
@@ -62,6 +74,26 @@ func stackRedirects(ctx context.Context, root string, members []string) (map[str
 				produces[m] = append(produces[m], p.Name)
 			}
 		}
+		// The ids a member republishes under, resolved to the projects that
+		// produce the originals. Only ids the member really produces count —
+		// a rule for a package it does not build would redirect a consumer
+		// to nothing, and the overlay would report that as a missing project.
+		alias := map[string]string{} // republished id -> produced id
+		for m, pub := range publishing {
+			for _, orig := range produces[m] {
+				if as, ok := pub.As[orig]; ok {
+					alias[as] = orig
+					if aliasUsed[m] == nil {
+						aliasUsed[m] = map[string]bool{}
+					}
+					aliasUsed[m][orig] = true
+					continue
+				}
+				if pub.Prefix != "" {
+					alias[pub.Prefix+orig] = orig
+				}
+			}
+		}
 		at := map[string]int{}
 		var links []stackLink
 		for _, p := range resp.Packages {
@@ -73,8 +105,19 @@ func stackRedirects(ctx context.Context, root string, members []string) (map[str
 					continue
 				}
 				prod, ok := producer[d.Name]
+				via := ""
 				if !ok {
-					continue
+					// Not produced under that id here — but perhaps under the
+					// one it was republished from.
+					orig, republished := alias[d.Name]
+					if !republished {
+						continue
+					}
+					prod, ok = producer[orig]
+					if !ok {
+						continue
+					}
+					via = orig
 				}
 				// Within one member the projects already reference each other
 				// directly; only a reference that leaves its member goes through
@@ -99,6 +142,7 @@ func stackRedirects(ctx context.Context, root string, members []string) (map[str
 					Redirect: plugin.Redirect{Package: d.Name, Path: filepath.ToSlash(prod.ManifestPath)},
 					From:     []string{from},
 					To:       to,
+					Via:      via,
 				})
 			}
 		}
@@ -119,7 +163,26 @@ func stackRedirects(ctx context.Context, root string, members []string) (map[str
 		sort.Strings(produces[m])
 		orphans = append(orphans, stackOrphan{Member: m, Produces: produces[m]})
 	}
-	return out, orphans
+	// A republishing rule for a package the member does not produce is
+	// almost always a typo in the id, and it fails the same silent way an
+	// orphan does: the consumer keeps taking the feed's copy.
+	for _, m := range members {
+		pub, ok := publishing[m]
+		if !ok {
+			continue
+		}
+		ids := make([]string, 0, len(pub.As))
+		for orig := range pub.As {
+			ids = append(ids, orig)
+		}
+		sort.Strings(ids)
+		for _, orig := range ids {
+			if !aliasUsed[m][orig] {
+				notes = append(notes, fmt.Sprintf("%s says it publishes %s as %s, but produces no package called %s", m, orig, pub.As[orig], orig))
+			}
+		}
+	}
+	return out, orphans, notes
 }
 
 // stackOrphan is a fused repo whose packages nothing else here references.
@@ -161,12 +224,27 @@ type stackLink struct {
 	plugin.Redirect
 	From []string // members that consume it
 	To   string   // the member that produces it
+	// Via is the id the producing project declares when Package is the one it
+	// is republished under; "" when they are the same.
+	Via string
 }
 
 // describe names the link the way someone looking at their own stackspace
 // thinks of it: which of my repos depends on which.
 func (l stackLink) describe() string {
-	return fmt.Sprintf("%s  %s → %s", l.Package, strings.Join(l.From, ", "), l.To)
+	pkg := l.Package
+	if l.Via != "" {
+		pkg = fmt.Sprintf("%s (%s, republished)", l.Package, l.Via)
+	}
+	return fmt.Sprintf("%s  %s → %s", pkg, strings.Join(l.From, ", "), l.To)
+}
+
+// stackReportNotes prints what stackRedirects noticed beyond links and
+// orphans, one line each.
+func stackReportNotes(out io.Writer, notes []string) {
+	for _, n := range notes {
+		fmt.Fprintf(out, "· %s\n", n)
+	}
 }
 
 // redirectsOf drops the reporting detail the adapters have no use for.
@@ -187,9 +265,10 @@ type stackOverlayReport struct {
 
 // stackCheckOverlay asks each ecosystem whether the redirects it needs are in
 // effect, without changing anything.
-func stackCheckOverlay(ctx context.Context, root string, members, writable []string) ([]stackOverlayReport, []stackOrphan) {
+func stackCheckOverlay(ctx context.Context, root string, m *stackManifest) ([]stackOverlayReport, []stackOrphan, []string) {
 	var out []stackOverlayReport
-	byEco, orphans := stackRedirects(ctx, root, members)
+	members, writable := m.names(), m.ownedNames()
+	byEco, orphans, notes := stackRedirects(ctx, root, members, m.publishing())
 	for _, eco := range ecosystem.Default().All() {
 		links := byEco[eco.Info().ID]
 		if len(links) == 0 {
@@ -204,7 +283,7 @@ func stackCheckOverlay(ctx context.Context, root string, members, writable []str
 		out = append(out, stackOverlayReport{Eco: eco.Info().ID, Links: links, Resp: resp})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Eco < out[j].Eco })
-	return out, orphans
+	return out, orphans, notes
 }
 
 // stackEcosystems is the adapters an overlay can be written for, in a stable

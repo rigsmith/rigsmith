@@ -65,6 +65,37 @@ type stackRepo struct {
 	// upstream whose contribution guide asks for something of its own. A pointer
 	// so that "" is a real answer (no prefix here) rather than "unset".
 	BranchPrefix *string `json:"branchPrefix,omitempty"`
+	// PublishesAs maps a package id this member produces to the id it is
+	// republished under — {"Foo": "Acme.Foo"} for a fork whose patched builds go
+	// to a private feed under a name that cannot collide with the public one.
+	// `wire` keys redirects on the id consumers actually reference, so without
+	// this an app referencing Acme.Foo would resolve it from the feed inside the
+	// stackspace, build fine, and never test the fused code. The manifest is the
+	// right place because it is outside every prefix: nothing here leaves in a
+	// pull request. PublishPrefix is the same thing for every id the member
+	// produces; an explicit map entry wins for the ids it names.
+	PublishesAs   map[string]string `json:"publishesAs,omitempty"`
+	PublishPrefix string            `json:"publishPrefix,omitempty"`
+}
+
+// stackPublishing is how one member's packages are known to consumers beyond
+// the ids its projects declare: an explicit map, a prefix, or both.
+type stackPublishing struct {
+	As     map[string]string // produced id -> republished id
+	Prefix string            // prepended to every produced id
+}
+
+// publishing collects the republishing rules per member, for the members that
+// have any. An empty map means every package is known by the id it declares.
+func (m *stackManifest) publishing() map[string]stackPublishing {
+	out := map[string]stackPublishing{}
+	for name, r := range m.Repos {
+		if r == nil || (len(r.PublishesAs) == 0 && r.PublishPrefix == "") {
+			continue
+		}
+		out[name] = stackPublishing{As: r.PublishesAs, Prefix: r.PublishPrefix}
+	}
+	return out
 }
 
 // stackPin is what a prefix tracks upstream. A branch moves and `pull` follows
@@ -279,6 +310,19 @@ func (m *stackManifest) validate() error {
 		if len(set) > 1 {
 			return fmt.Errorf("stack repo %q sets %s — a prefix follows one upstream point, so keep the branch to track it or the tag/commit to pin it",
 				name, strings.Join(set, " and "))
+		}
+		// A republished id has to be a different name, or the entry says
+		// nothing; and it cannot be empty, or every reference would match it.
+		for from, to := range r.PublishesAs {
+			if strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
+				return fmt.Errorf("stack repo %q: publishesAs maps a package id to the id it is republished under, and neither side can be empty", name)
+			}
+			if from == to {
+				return fmt.Errorf("stack repo %q: publishesAs maps %q to itself — drop the entry, a package known by its own id needs nothing here", name, from)
+			}
+		}
+		if p := r.PublishPrefix; p != "" && strings.TrimSpace(p) == "" {
+			return fmt.Errorf("stack repo %q: publishPrefix is blank", name)
 		}
 		if c := r.UpstreamCommit; c != "" && !stackIsSHA(c) {
 			return fmt.Errorf("stack repo %q has upstreamCommit %q — that must be a full 40-character commit SHA, since an abbreviation cannot be resolved without fetching the repo first",
@@ -523,6 +567,13 @@ const stackManifestTemplate = `{
     //   // library needs an older release than upstream's tip:
     //   //   "upstreamTag": "v1.4.2"
     //   //   "upstreamCommit": "<full 40-character sha>"
+    //
+    //   // If you republish this fork's packages under your own id (to a
+    //   // private feed, say), tell wire so a consumer referencing that id
+    //   // still resolves from source here — otherwise it quietly takes the
+    //   // feed's copy and the stackspace never tests the fused code.
+    //   //   "publishesAs": { "Some.Lib": "You.Some.Lib" }
+    //   //   "publishPrefix": "You."        // the same for every id it produces
     // },
 
     // "another-lib": { "upstream": "...", "fork": "..." }

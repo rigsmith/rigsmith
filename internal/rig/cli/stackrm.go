@@ -220,7 +220,7 @@ func stackIsManifestPath(src *cfgfind.Source, p string) bool {
 // body of `rig stack wire`, shared with rm — which has to rewrite the overlay
 // too, and must not describe it any differently.
 func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitrepo.Repo, indent string) error {
-	byEco, orphans := stackRedirects(ctx, repo.Dir, m.names())
+	byEco, orphans, notes := stackRedirects(ctx, repo.Dir, m.names(), m.publishing())
 	// Patching a member's own build file is a commit to that repository, and
 	// it travels back through `push` or `send`. Your own repos want that line;
 	// a fork you contribute to should not carry rig plumbing into somebody
@@ -229,6 +229,7 @@ func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitre
 	// Reported before anything is written: a member nothing consumes is
 	// usually why there was less to wire than expected.
 	stackReportOrphans(out, m, orphans)
+	stackReportNotes(out, notes)
 	wired := false
 	for _, eco := range stackEcosystems() {
 		links := byEco[eco.Info().ID]

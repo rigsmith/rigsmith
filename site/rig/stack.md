@@ -265,6 +265,32 @@ Other ecosystems have their own version of this — an npm `workspaces` array,
 a `go.work` file, a linked dependency. Nothing in `rig stack` depends on which
 you choose.
 
+#### A fork republished under your own id
+
+If you publish a fork's patched builds to a private feed — so the app can be
+developed *without* the stackspace — the safe way is under a distinct id,
+`Acme.Foo` rather than `Foo`: it cannot collide with the public package, and a
+consumer's project file says plainly that this is not the stock one. But then
+the app references `Acme.Foo`, and no project in the stackspace declares that
+id, so `wire` has nothing to key a redirect on. The app quietly resolves
+`Acme.Foo` from the feed, inside the stackspace, and the build succeeds without
+testing the fused code.
+
+Say it in the manifest, which is the one place outside every prefix:
+
+```jsonc
+"foo": {
+  "upstream": "github.com/them/foo",
+  "fork": "github.com/you/foo",
+  "publishesAs": { "Foo": "Acme.Foo" }
+}
+```
+
+`wire` then redirects `Acme.Foo` to the project producing `Foo`, and `doctor`
+lists it as `Acme.Foo (Foo, republished)`. `publishPrefix: "Acme."` does the
+same for every package the member produces. See
+[Configuration](./configuration#stack).
+
 #### Checking that it took
 
 `rig stack doctor` reports the same findings `wire` does, without writing

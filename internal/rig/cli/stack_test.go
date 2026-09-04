@@ -1198,3 +1198,36 @@ func TestUnknownVerbLeavesTheBareCaseAlone(t *testing.T) {
 		t.Fatalf("bare group errored: %v", err)
 	}
 }
+
+func TestStackPublishesAs(t *testing.T) {
+	load := func(t *testing.T, body string) (*stackManifest, error) {
+		t.Helper()
+		root := t.TempDir()
+		writeStackManifest(t, root, body)
+		m, _, err := loadStackManifest(root)
+		return m, err
+	}
+	t.Run("both forms are read", func(t *testing.T) {
+		m, err := load(t, `{"repos": {
+  "foo": {"upstream": "h/them/foo", "fork": "h/you/foo", "publishesAs": {"Foo": "Acme.Foo"}, "publishPrefix": "Acme."},
+  "bar": {"upstream": "h/them/bar", "fork": "h/you/bar"}
+}}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pub := m.publishing()
+		if len(pub) != 1 || pub["foo"].As["Foo"] != "Acme.Foo" || pub["foo"].Prefix != "Acme." {
+			t.Fatalf("publishing = %+v", pub)
+		}
+	})
+	t.Run("an id mapped to itself is refused", func(t *testing.T) {
+		if _, err := load(t, `{"repos": {"foo": {"upstream": "h/them/foo", "fork": "h/you/foo", "publishesAs": {"Foo": "Foo"}}}}`); err == nil || !strings.Contains(err.Error(), "itself") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("an empty id is refused", func(t *testing.T) {
+		if _, err := load(t, `{"repos": {"foo": {"upstream": "h/them/foo", "fork": "h/you/foo", "publishesAs": {"Foo": ""}}}}`); err == nil {
+			t.Fatal("accepted an empty republished id")
+		}
+	})
+}
