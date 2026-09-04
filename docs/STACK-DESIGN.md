@@ -472,4 +472,6 @@ platform, and a match that fails does so silently — the failure mode the overl
 exists to prevent — while reference assemblies are a build-time optimisation
 whose absence costs nothing where everything rebuilds together. A generated
 overlay that no longer matches what rig would write is reported by `doctor` as
-out of date, so a stackspace wired before this change learns to re-run `wire`.
+out of date, so a stackspace wired before this change learns to re-run `wire`;
+an overlay that was never written is reported the same way, since a check
+that stays quiet about it would leave an unwired stackspace looking healthy.

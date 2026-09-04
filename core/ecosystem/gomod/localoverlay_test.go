@@ -52,6 +52,24 @@ func TestGoLocalOverlay(t *testing.T) {
 		}
 	})
 
+	t.Run("a check reports a go.work that was never written, and stops once it is", func(t *testing.T) {
+		root := newRoot(t, "1.24", "1.24")
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Problems) != 1 || got.Problems[0].Path != workFile || !strings.Contains(got.Problems[0].Message, "not written") || !got.Problems[0].Fixable {
+			t.Fatalf("missing go.work: %+v, want one fixable problem naming it", got.Problems)
+		}
+		if _, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: true}); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+		if len(got.Problems) != 0 {
+			t.Fatalf("after a write: %+v, want nothing reported", got.Problems)
+		}
+	})
+
 	t.Run("nothing required across modules is skipped", func(t *testing.T) {
 		got, _ := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: newRoot(t, "1.24", "1.24")})
 		if !got.Skipped {

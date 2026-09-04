@@ -2,6 +2,7 @@ package gomod
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -81,6 +82,16 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	body := renderWork(goVersion, mods)
 	resp.Files = map[string]string{workFile: body}
 	if !req.Write {
+		// No go.work at all is the quietest failure of the lot: every
+		// require on a module in this tree goes to the proxy, and the build
+		// succeeds. A check has to say so.
+		if errors.Is(readErr, fs.ErrNotExist) {
+			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+				Path:    workFile,
+				Message: "not written — a require on a module in this tree is still fetched from the proxy; run `rig stack wire`",
+				Fixable: true,
+			})
+		}
 		return resp, nil
 	}
 	return resp, os.WriteFile(dest, []byte(body), 0o644)

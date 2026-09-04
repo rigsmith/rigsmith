@@ -2,6 +2,7 @@ package dotnet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -42,13 +43,21 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	body := renderOverlay(req.Redirects)
 	resp.Files = map[string]string{overlayFile: body}
 	if !req.Write {
-		// An overlay rig wrote earlier that no longer matches what it would
-		// write now — a member added since, or a release that changed the
-		// template — is exactly as silent as a missing one, so a check says so.
-		// Compared with line endings normalised: a checkout with autocrlf
-		// hands the same file back with CRLF, and that is not staleness.
-		if existing, err := os.ReadFile(filepath.Join(req.Root, overlayFile)); err == nil &&
-			strings.Contains(string(existing), overlayMarker) && crlfToLF(string(existing)) != crlfToLF(body) {
+		// A missing overlay, and an overlay rig wrote earlier that no longer
+		// matches what it would write now — a member added since, or a
+		// release that changed the template — are equally silent: the build
+		// succeeds against the registry either way. So a check says so.
+		// Staleness is judged with line endings normalised: a checkout with
+		// autocrlf hands the same file back with CRLF, and that is not it.
+		existing, err := os.ReadFile(filepath.Join(req.Root, overlayFile))
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+				Path:    overlayFile,
+				Message: "not written — every project here still resolves these packages from the registry; run `rig stack wire`",
+				Fixable: true,
+			})
+		case err == nil && strings.Contains(string(existing), overlayMarker) && crlfToLF(string(existing)) != crlfToLF(body):
 			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
 				Path:    overlayFile,
 				Message: "out of date — it differs from what the current members and rig would write; re-run `rig stack wire`",

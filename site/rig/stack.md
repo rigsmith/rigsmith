@@ -335,7 +335,8 @@ missed it.
   expose comes back as `CS0122`. The overlay `wire` writes turns
   `ProduceReferenceAssembly` off for exactly this reason; if you hand-wrote
   yours, add that block, and if yours predates it `rig stack doctor` reports it
-  as out of date.
+  as out of date — as it reports an overlay that was never written at all, the
+  other way a stackspace builds cleanly against the registry and says nothing.
 - **Nothing warns you when part of an overlay does nothing.** Removing a
   `PackageReference` for something that is actually a `ProjectReference` — a
   vendored copy, say — is valid MSBuild and a silent no-op. Delete blocks that

@@ -339,6 +339,19 @@ func TestLocalOverlayDisablesReferenceAssemblies(t *testing.T) {
 		t.Errorf("the property is not conditioned on UseStackSources:\n%s", body)
 	}
 
+	// Before anything is written, a check says the overlay is missing: an
+	// unwired stackspace builds fine against the registry and must not
+	// look healthy.
+	var missing bool
+	for _, p := range got.Problems {
+		if p.Path == overlayFile && strings.Contains(p.Message, "not written") && p.Fixable {
+			missing = true
+		}
+	}
+	if !missing {
+		t.Fatalf("missing overlay not reported: %+v", got.Problems)
+	}
+
 	// An overlay from before the property existed is reported as stale by a
 	// check, and rewritten by a write.
 	old := strings.Replace(body, overlayNoRefAssemblies, "", 1)
@@ -365,8 +378,8 @@ func TestLocalOverlayDisablesReferenceAssemblies(t *testing.T) {
 	}
 	got, _ = a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
 	for _, p := range got.Problems {
-		if strings.Contains(p.Message, "out of date") {
-			t.Error("still reported stale after a rewrite")
+		if strings.Contains(p.Message, "out of date") || strings.Contains(p.Message, "not written") {
+			t.Errorf("still reported after a rewrite: %s", p.Message)
 		}
 	}
 	// The same overlay with CRLF endings — what an autocrlf checkout hands
