@@ -135,6 +135,11 @@ func TestStackForkRefFor(t *testing.T) {
 		if got := moved.proposeBranch("lib", "other"); got != "feature/other" {
 			t.Errorf("fresh name: branch = %q", got)
 		}
+		// An older manifest recorded the bare name; that one still takes
+		// the prefix, since the branch it names was pushed with one.
+		if got := m.proposeBranch("lib", "read-timeout"); got != "stack/read-timeout" {
+			t.Errorf("bare record: branch = %q", got)
+		}
 		gone := func(string) (string, bool, error) { return "", false, nil }
 		if ref, err := stackForkRefFor(m, "lib", true, gone); err != nil || ref != nil {
 			t.Fatalf("merged-and-deleted branch: %+v, %v — want upstream at the cursor", ref, err)

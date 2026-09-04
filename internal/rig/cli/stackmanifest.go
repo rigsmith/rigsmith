@@ -260,9 +260,11 @@ func (m *stackManifest) branchPrefix(name string) string {
 // offered back: that record is the branch as pushed, prefix and all, and is
 // used as it is — so a branchPrefix changed since the proposal cannot turn
 // stack/read-timeout into feature/stack/read-timeout on the next round. A
-// name typed fresh still takes the current prefix.
+// manifest from before the record was kept that way holds the bare name
+// (no slash in it), and that one takes the current prefix, as the rebuild
+// does. A name typed fresh always takes the prefix.
 func (m *stackManifest) proposeBranch(name, given string) string {
-	if given != "" && given == m.LastPropose[name] {
+	if given != "" && given == m.LastPropose[name] && strings.Contains(given, "/") {
 		return given
 	}
 	return m.sendBranch(name, given)
