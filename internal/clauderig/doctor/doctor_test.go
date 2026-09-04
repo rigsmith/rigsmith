@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
 )
 
@@ -293,4 +295,193 @@ func TestCheckStagingMerge_CleanRepoIsOK(t *testing.T) {
 	if r.Status != OK || r.Fix != nil {
 		t.Fatalf("clean repo: got %+v, want OK with no Fix", r)
 	}
+}
+
+func TestCheckIgnoredSettings(t *testing.T) {
+	dir := t.TempDir()
+	env := Env{RepoRoot: dir,
+		ProjectSettings: filepath.Join(dir, ".claude", "settings.json"),
+		LocalSettings:   filepath.Join(dir, ".claude", "settings.local.json")}
+	if _, ok := checkIgnoredSettings(env); ok {
+		t.Fatal("no settings files: expected the check to be skipped")
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(env.LocalSettings, []byte(`{"permissions":{"defaultMode":"bypassPermissions"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := checkIgnoredSettings(env)
+	if !ok || r.Status != Warn || !strings.Contains(r.Detail, "bypassPermissions") || !strings.Contains(r.Detail, env.LocalSettings) {
+		t.Fatalf("got ok=%v %+v, want a Warn naming the local file and its value", ok, r)
+	}
+	// A file that will not parse is reported, not skipped: nothing else says it.
+	if err := os.WriteFile(env.ProjectSettings, []byte(`{not json`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, ok = checkIgnoredSettings(env)
+	if !ok || !strings.Contains(r.Detail, "does not parse as settings") {
+		t.Fatalf("malformed project settings: got ok=%v %+v", ok, r)
+	}
+	// Both problems at once get both pieces of advice.
+	if !strings.Contains(r.Hint, "--permission-mode") || !strings.Contains(r.Hint, "JSON") {
+		t.Fatalf("ignored value plus malformed file: hint = %q, want advice for each", r.Hint)
+	}
+	// With only the parse failure left, the advice is about the JSON, not
+	// about a permission mode the file may not even set.
+	if err := os.Remove(env.LocalSettings); err != nil {
+		t.Fatal(err)
+	}
+	r, ok = checkIgnoredSettings(env)
+	if !ok || strings.Contains(r.Hint, "--permission-mode") || !strings.Contains(r.Hint, "JSON") || !strings.Contains(r.Detail, env.ProjectSettings) {
+		t.Fatalf("parse failure alone: got ok=%v hint=%q detail=%q", ok, r.Hint, r.Detail)
+	}
+	// A file that cannot be opened at all is not told to fix its JSON.
+	if err := os.Remove(env.ProjectSettings); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(env.ProjectSettings, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, ok = checkIgnoredSettings(env)
+	if !ok || strings.Contains(r.Hint, "JSON") || !strings.Contains(r.Hint, "readable") || !strings.Contains(r.Detail, "could not be read") {
+		t.Fatalf("read failure alone: got ok=%v hint=%q detail=%q", ok, r.Hint, r.Detail)
+	}
+	// A top-level defaultMode in the USER file is a mistake too, with its
+	// own advice and no claim that another scope would honour it.
+	if err := os.RemoveAll(env.ProjectSettings); err != nil {
+		t.Fatal(err)
+	}
+	env.UserSettings = filepath.Join(dir, "user-settings.json")
+	if err := os.WriteFile(env.UserSettings, []byte(`{"defaultMode": "acceptEdits"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, ok = checkIgnoredSettings(env)
+	if !ok || !strings.Contains(r.Detail, "user settings") || strings.Contains(r.Detail, "honoured only") || !strings.Contains(r.Hint, "under permissions") || strings.Contains(r.Hint, "--permission-mode") {
+		t.Fatalf("top-level key in user settings: got ok=%v %+v", ok, r)
+	}
+}
+
+// The user settings file is checked wherever doctor runs: a misplaced key in
+// it is the same mistake outside a repo as inside one.
+func TestRun_ChecksUserSettingsOutsideARepo(t *testing.T) {
+	user := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(user, []byte(`{"defaultMode": "acceptEdits"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := Env{UserSettings: user}
+	if env.InRepo() {
+		t.Fatal("fixture is unexpectedly in a repo")
+	}
+	var found bool
+	for _, sec := range Run(context.Background(), env) {
+		for _, r := range sec.Results {
+			if r.Name == "ignored settings" {
+				found = true
+				if r.Status != Warn || !strings.Contains(r.Detail, user) {
+					t.Errorf("got %+v, want a Warn naming the user file", r)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("the user file's misplaced key went unreported outside a repo")
+	}
+}
+
+// The profile-size check stays silent until the reclaimable part of the
+// Desktop profiles crosses the threshold, then names the totals and prune.
+func TestCheckDesktopSize(t *testing.T) {
+	st := desktop.NewStore(filepath.Join(t.TempDir(), "desktop"))
+	p, err := st.Create("work", "work@example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rel, n := range map[string]int{
+		"Cache/data_0":                              4096,
+		"vm_bundles/claudevm.bundle/rootfs.img":     8192,
+		"vm_bundles/claudevm.bundle/rootfs.img.zst": 4096,
+	} {
+		path := filepath.Join(p.DataDir(), filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, make([]byte, n), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	u, err := desktop.Measure(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reclaim := u.Reclaimable(desktop.PruneVM)
+	if reclaim == 0 {
+		t.Fatal("fixture has nothing reclaimable at the vm tier")
+	}
+	prevStore, prevThreshold := desktopStore, desktopPruneThreshold
+	desktopStore = func() (*desktop.Store, error) { return st, nil }
+	t.Cleanup(func() { desktopStore, desktopPruneThreshold = prevStore, prevThreshold })
+	ctx := context.Background()
+
+	desktopPruneThreshold = reclaim + 1
+	if r, ok := checkDesktopSize(ctx); ok {
+		t.Fatalf("below the threshold: got %+v, want silence", r)
+	}
+	desktopPruneThreshold = reclaim
+	r, ok := checkDesktopSize(ctx)
+	if !ok || r.Status != Warn {
+		t.Fatalf("at the threshold: got ok=%v %+v, want a Warn", ok, r)
+	}
+	for _, want := range []string{desktop.HumanSize(u.Total), desktop.HumanSize(reclaim), "reclaimable"} {
+		if !strings.Contains(r.Detail, want) {
+			t.Errorf("detail %q lacks %q", r.Detail, want)
+		}
+	}
+	if !strings.Contains(r.Hint, "desktop prune") {
+		t.Errorf("hint %q does not point at prune", r.Hint)
+	}
+	// Past its deadline the walk gives up and the check says nothing rather
+	// than holding the report.
+	expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer cancel()
+	if r, ok := checkDesktopSize(expired); ok {
+		t.Fatalf("expired context: got %+v, want silence", r)
+	}
+	// And the walk's own budget never spends the caller's: the context the
+	// later checks share is still live afterwards.
+	shared, cancelShared := context.WithTimeout(ctx, time.Minute)
+	defer cancelShared()
+	checkDesktopSize(shared)
+	if shared.Err() != nil {
+		t.Fatal("the size check cancelled the shared doctor context")
+	}
+}
+
+func TestCheckRestricted(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_RESTRICTED", "")
+	if _, ok := checkRestricted(); ok {
+		t.Error("unset: expected the restricted-mode check to be skipped")
+	}
+	t.Setenv("CLAUDE_CODE_RESTRICTED", "0")
+	if _, ok := checkRestricted(); ok {
+		t.Error("=0: expected the restricted-mode check to be skipped")
+	}
+	for _, v := range []string{"1", "true", "YES", " on "} {
+		t.Setenv("CLAUDE_CODE_RESTRICTED", v)
+		r, ok := checkRestricted()
+		if !ok || r.Status != Warn {
+			t.Errorf("=%q: got ok=%v %+v, want Warn", v, ok, r)
+		}
+	}
+}
+
+func TestRun_RestrictedAppearsInEnvironment(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_RESTRICTED", "1")
+	sections := Run(context.Background(), Env{UserSettings: filepath.Join(t.TempDir(), "settings.json")})
+	for _, r := range sections[0].Results {
+		if r.Name == "restricted mode" {
+			return
+		}
+	}
+	t.Fatalf("restricted mode check missing from environment section: %+v", sections[0].Results)
 }

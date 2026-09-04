@@ -526,3 +526,29 @@ republished id back to the project producing the original and emits the
 redirect under the id the consumer wrote, which is what MSBuild matches. A rule
 naming a package the member does not produce is reported, not silently ignored.
 
+### Reference assemblies (2026-09-04, #258)
+
+The swap has one more silent failure. A consumer that reads another member's
+internals through a publicizer (`IgnoresAccessChecksToGenerator`) compiles fine
+against the package and fails fused with a wall of `CS0122`, on members that did
+not change. The publicizer rewrites the implementation assembly; a project
+reference hands the consumer the *reference* assembly the SDK produces by
+default, which has internals stripped and was never publicized. A package
+without a separate `ref/<TFM>` asset — most of them — hands the consumer its
+implementation assembly instead, which is why the same code built before.
+
+`wire` therefore writes `ProduceReferenceAssembly=false` into the overlay, under
+the same `UseStackSources` switch as the swaps. Every project under the overlay
+gets it, not only the redirected ones: matching the current project against the
+redirect paths in a condition means separators and casing that differ by
+platform, and a match that fails does so silently — the failure mode the overlay
+exists to prevent. Reference assemblies are an incremental-build optimisation
+(a dependency's implementation-only change does not recompile its consumers),
+so turning them off costs some rebuilding inside the stackspace; that is the
+accepted trade for a graph that is correct across the member boundary. A generated
+overlay that no longer matches what rig would write is reported by `doctor` as
+out of date, so a stackspace wired before this change learns to re-run `wire`;
+an overlay that was never written is reported the same way, since a check
+that stays quiet about it would leave an unwired stackspace looking healthy —
+as is one left over once no reference crosses between members any more, for
+which `doctor` asks every ecosystem whether it has links or not.

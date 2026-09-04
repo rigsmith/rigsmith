@@ -17,8 +17,9 @@
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md guide block standalone (`--global` targets `~/.claude/CLAUDE.md`, `--path` overrides; `install` previews in a scrollable UI, skipped with `-y` or off a TTY) |
 | `mcp` | `list` (alias `ls`) / `get` / `add` / `remove` (alias `rm`) / `enable` / `disable` MCP servers (`--scope user｜project｜local`, `--transport stdio｜http｜sse`, `--env`, `--header`); bare `mcp` on a TTY opens an interactive screen (mirrors `claude mcp`) |
 | `account` | Manage multiple Claude Code logins: `add` / `list` (alias `ls`/`status`) / `run <id｜email> [-- claude args]` / `switch` / `sessions` (alias `ps`) / `remove` (alias `rm`) / `purge`. `run --no-share` isolates a session; `switch` takes `--dry-run` / `--force` / `--kill` |
+| `desktop` (alias `app`) | Several Claude Desktop accounts side by side, each in its own profile: `add` / `open` / `list` / `quit` / `map` / `shortcut` / `prune` / `rm` (alias `remove`). `prune` reclaims Electron caches and, with `--vm` or `--all`, the Cowork VM image or its whole bundle, without deleting the profile; `--dry-run` shows the breakdown |
 | `config` | `get` / `set` / `show` / `path` / `edit` (`~/.clauderig/config.json`) |
-| `doctor` | Health-check environment + sync + worktree discipline (`--fix` repairs) |
+| `doctor` | Health-check environment + sync + worktree discipline, and report [settings Claude Code ignores](#settings-claude-code-ignores) (`--fix` repairs what it can; ignored settings are advisory, fixed by editing the file or passing `--permission-mode`) |
 | `ui` | Interactive dashboard |
 
 The worktree and prune verbs (`rig worktree`, `rig prune`) live in
@@ -32,6 +33,23 @@ machine-specific paths into a portable form, and commits/pushes to your private
 repo. `restore` does the inverse on another machine: it pulls, rewrites the
 portable paths into this OS's slugs, and merges — keeping any local secrets in
 place so a new machine simply re-authenticates.
+
+A session transcript is append-only and unbounded, and a long one is the single
+biggest thing a sync moves: committed whole every interval, a 50 MB transcript
+leaves a near-identical 50 MB blob in history each time. So past
+`retention.largeFileBytes` (8 MiB by default) a transcript is restaged only once
+it has grown by half that much again, or once it has gone quiet for half an hour
+— an active marathon session costs one blob per chunk of new content instead of
+one per sync, and a finished session's last turn is still captured. Smaller
+transcripts sync on every change, as before, and `sync` reports how many large
+ones are waiting. The SessionEnd hook runs `sync --flush`, which restages that
+session's transcript regardless (the hook names it), so a finished session's
+tail does not wait for the next one while other sessions' transcripts keep
+their throttle; a session that dies without firing it is caught up by the
+settle rule at the next sync. Run by hand, `sync --flush` restages every
+changed transcript; a hook payload that names no transcript flushes nothing,
+and `sync` says so rather than restage every long session's transcript on the
+strength of a broken hook. Set the key negative to restage every change.
 
 When a restore brings back Claude **Code** sessions, it reminds you to fully quit
 and reopen Claude Desktop — Desktop only rebuilds its Code-tab list from the
@@ -293,15 +311,42 @@ and could file the session under the wrong account. Quit the others, or pass
 The profile model this sits on is in
 [`docs/CLAUDERIG-DESKTOP-PROFILES.md`](https://github.com/rigsmith/rigsmith/blob/main/docs/CLAUDERIG-DESKTOP-PROFILES.md).
 
+## Settings Claude Code ignores
+
+Claude Code reads settings from three tiers — user (`~/.claude/settings.json`),
+project (`.claude/settings.json`, committed) and local
+(`.claude/settings.local.json`, gitignored) — and for most keys the narrower
+tier wins. Not for every key: a few are read from user or managed settings
+only. `permissions.defaultMode: "bypassPermissions"` (since the 2026-09-02
+release) and `"auto"` are silently dropped from a project or local file, and
+nothing says so: a repo that committed the value when it worked just finds it
+no longer does. `clauderig doctor` reports such values as *ignored settings*,
+naming the file — and a `defaultMode` written at the top level of any tier's
+file rather than under `permissions`, or spelled in another case, which Claude
+Code never reads (JSON keys are case-sensitive).
+For a session that needs the mode, pass `--permission-mode`
+on the command line. Setting it in `~/.claude/settings.json` works too, but
+that applies to every project on the machine — a much wider grant than the one
+repository the project file meant — so reach for it deliberately.
+
 ## Hooks
 
 ```sh
 clauderig hooks install
 ```
 
-Wires two Claude Code hooks: **SessionStart → pull** (so each session starts
-from the latest synced state) and **Stop → sync** (so your work is captured when
-a session ends). Both are portable across OSes and idempotent.
+Wires three Claude Code hooks: **SessionStart → pull** (so each session starts
+from the latest synced state), **Stop → sync** (so your work is captured after
+every turn), and **SessionEnd → sync --flush** (so a long session's last turn,
+which the per-turn sync may defer, is captured when the session ends). All are
+portable across OSes and idempotent.
+
+Both hooks live in settings.json files, and Claude Code's `--restricted` mode
+(or `CLAUDE_CODE_RESTRICTED=1`) ignores every settings.json tier — user, project
+and local — so a restricted session neither syncs nor runs the guard. There is
+nothing clauderig can install that survives that; `clauderig doctor` warns when
+the variable is set in the environment it runs from, so the gap is visible rather
+than silent.
 
 ## Worktree discipline
 

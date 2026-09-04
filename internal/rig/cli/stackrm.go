@@ -378,6 +378,9 @@ func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitre
 	// usually why there was less to wire than expected.
 	stackReportOrphans(out, m, orphans)
 	stackReportNotes(out, notes)
+	// A scan that failed is reported as such, never as "nothing to wire":
+	// the overlay it would have written is still needed.
+	stackReportScanFailures(out, failed)
 	wired := false
 	for _, eco := range stackEcosystems() {
 		links := byEco[eco.Info().ID]
@@ -431,7 +434,7 @@ func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitre
 			fmt.Fprintf(out, "%s  ✗ %s — %s\n", indent, p.Path, p.Message)
 		}
 	}
-	if !wired {
+	if !wired && len(failed) == 0 {
 		fmt.Fprintf(out, "%sno package references cross between members — nothing to wire\n", indent)
 	}
 	return touched, nil

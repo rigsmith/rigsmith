@@ -19,8 +19,9 @@ func TestBannerContent(t *testing.T) {
 		{"rig", RigBanner, "●", "rig", "convention-first dev launcher"},
 		{"change", ChangeBanner, "↻", "changeRig", "changeset lifecycle"},
 		{"ship", ShipBanner, "↑", "shipRig", "release front door"},
-		{"claude", ClaudeBanner, "✳", "claudeRig", "Claude Code setup sync"},
+		{"claude", ClaudeBanner, "✳︎", "claudeRig", "Claude Code setup sync"},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			out := tc.fn("1.4.0")
@@ -33,6 +34,12 @@ func TestBannerContent(t *testing.T) {
 				t.Errorf("banner should be three lines (2 newlines); got %d:\n%s", got, out)
 			}
 		})
+	}
+}
+
+func TestClaudeBannerForcesTextPresentation(t *testing.T) {
+	if !strings.Contains(ClaudeBanner(""), "✳\ufe0e") {
+		t.Fatal("Claude banner mark must force text presentation instead of rendering as an emoji")
 	}
 }
 

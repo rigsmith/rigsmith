@@ -259,14 +259,6 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 			}
 		}
 	}
-	ids := make([]string, 0, len(failed))
-	for id := range failed {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		notes = append(notes, fmt.Sprintf("%s: could not scan the projects (%v) — its overlay is left as it is", id, failed[id]))
-	}
 	return out, orphans, notes, failed
 }
 
@@ -350,15 +342,25 @@ type stackOverlayReport struct {
 
 // stackCheckOverlay asks each ecosystem whether the redirects it needs are in
 // effect, without changing anything.
-func stackCheckOverlay(ctx context.Context, root string, m *stackManifest) ([]stackOverlayReport, []stackOrphan, []string) {
+//
+// failed names the ecosystems that could not be scanned, keyed by id; no
+// report is made for those, since an overlay cannot be judged against links
+// that were never found.
+func stackCheckOverlay(ctx context.Context, root string, m *stackManifest) ([]stackOverlayReport, []stackOrphan, []string, map[string]error) {
 	var out []stackOverlayReport
 	members, writable := m.names(), m.ownedNames()
-	byEco, orphans, notes, _ := stackRedirects(ctx, root, members, m.publishing())
+	byEco, orphans, notes, failed := stackRedirects(ctx, root, members, m.publishing())
 	for _, eco := range ecosystem.Default().All() {
-		links := byEco[eco.Info().ID]
-		if len(links) == 0 {
+		// A scan that errored found no links, which is not the same as there
+		// being none: the overlay it would have needed is still needed, and
+		// calling it left over would be exactly wrong.
+		if failed[eco.Info().ID] != nil {
 			continue
 		}
+		// Asked even with nothing to redirect: an overlay left over from
+		// members that have gone is a problem only the adapter can see,
+		// and it is exactly when nothing crosses that it goes unnoticed.
+		links := byEco[eco.Info().ID]
 		resp, err := eco.LocalOverlay(ctx, plugin.LocalOverlayRequest{
 			Root: root, Redirects: redirectsOf(links), Writable: writable,
 		})
@@ -368,7 +370,21 @@ func stackCheckOverlay(ctx context.Context, root string, m *stackManifest) ([]st
 		out = append(out, stackOverlayReport{Eco: eco.Info().ID, Links: links, Resp: resp})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Eco < out[j].Eco })
-	return out, orphans, notes
+	return out, orphans, notes, failed
+}
+
+// stackReportScanFailures says which ecosystems could not be scanned, in a
+// stable order. Silence here would read as "nothing crosses", which is the
+// one thing a failed scan cannot say.
+func stackReportScanFailures(out io.Writer, failed map[string]error) {
+	ids := make([]string, 0, len(failed))
+	for id := range failed {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		fmt.Fprintf(out, "✗ %s: could not scan for package references — %v\n", id, failed[id])
+	}
 }
 
 // stackEcosystems is the adapters an overlay can be written for, in a stable

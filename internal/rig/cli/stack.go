@@ -1218,11 +1218,16 @@ func newStackDoctorCmd() *cobra.Command {
 			// leaves a build that succeeds against the published package and says
 			// nothing, so checking is the only way anyone finds out.
 			if m != nil {
-				reports, orphans, notes := stackCheckOverlay(ctx, root, m)
+				reports, orphans, notes, failed := stackCheckOverlay(ctx, root, m)
 				stackReportOrphans(out, m, orphans)
 				stackReportNotes(out, notes)
+				stackReportScanFailures(out, failed)
 				for _, rep := range reports {
-					fmt.Fprintf(out, "· %s: %d package(s) cross between members here\n", rep.Eco, len(rep.Links))
+					if len(rep.Links) == 0 {
+						fmt.Fprintf(out, "· %s: no package reference crosses between members here\n", rep.Eco)
+					} else {
+						fmt.Fprintf(out, "· %s: %d package(s) cross between members here\n", rep.Eco, len(rep.Links))
+					}
 					for _, l := range rep.Links {
 						fmt.Fprintf(out, "    %s\n", l.describe())
 					}

@@ -65,6 +65,12 @@ func Run(ctx context.Context, env Env) []Section {
 		checkClauderigOnPath(ctx),
 		checkRigOnPath(ctx),
 	}}
+	if r, ok := checkDesktopSize(ctx); ok {
+		environment.Results = append(environment.Results, r)
+	}
+	if r, ok := checkRestricted(); ok {
+		environment.Results = append(environment.Results, r)
+	}
 
 	sync := Section{Title: "sync", Results: []Result{
 		checkRemote(ctx, env),
@@ -89,6 +95,12 @@ func Run(ctx context.Context, env Env) []Section {
 			Name: "repo checks", Status: Info,
 			Detail: "not in a git repo — run inside one to check the guard/guide",
 		})
+	}
+	// Outside a repo too: the user file is always there to check, and a
+	// misplaced key in it is the same mistake whatever the current directory.
+	// The project and local paths are simply empty outside a repo.
+	if r, ok := checkIgnoredSettings(env); ok {
+		wt.Results = append(wt.Results, r)
 	}
 
 	return []Section{environment, sync, wt}

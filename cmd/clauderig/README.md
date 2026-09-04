@@ -16,7 +16,7 @@ clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect,
 clauderig status               # remote reachability, last sync, per-root counts, hooks
 clauderig mv old/path new/path # move/rename a dir AND relink its Claude history (-n to preview)
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
-clauderig doctor               # health-check env + sync + worktree discipline (--fix to repair)
+clauderig doctor               # health-check env + sync + worktree discipline + ignored settings (--fix repairs what it can; ignored settings are advisory)
 clauderig global install       # global sync hooks in ~/.claude (alias: clauderig hooks install)
 clauderig project install      # protect THIS repo: guard hook + CLAUDE.md guide (committed)
 clauderig local install        # same, but gitignored to this checkout
@@ -58,13 +58,19 @@ the same in the gitignored `.claude/settings.local.json`). See
   size-based history squash — but every session sync has staged keeps a
   permanent row in the ledger, so an aged-out chat stays findable by title,
   project and date.
+- **Large transcripts are throttled.** Past `retention.largeFileBytes` (8 MiB)
+  a session's transcript is restaged only once it has grown by half that much
+  again, or gone quiet for 30 minutes, so the per-turn Stop hook does not
+  re-commit a 50 MB file every turn. The SessionEnd hook runs `sync --flush`
+  for the session that just ended, so its last turn is captured at once; a
+  payload that names no transcript flushes nothing, and the sync says so.
 
 ## Commands
 
 | Command | What |
 |---|---|
 | `init` | First-run wizard: remote (private), machine identity, roots, hooks |
-| `sync` | Walk → redact → manifest → tripwire → commit → push (`--dry-run`) |
+| `sync` | Walk → redact → manifest → tripwire → commit → push (`--dry-run`; `--flush` restages the ended session's large transcript past the throttle — the SessionEnd hook's job — or every changed transcript when run by hand) |
 | `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
 | `status` | Sync state: remote, last sync, roots, hooks |
@@ -78,11 +84,11 @@ the same in the gitignored `.claude/settings.local.json`). See
 | `prune` | One sweep: reap merged/done worktrees, then their branches and other merged (`--gone`) branches; `prune list` previews read-only; always asks at a terminal (no skip flag; fails if non-interactive; `-n` previews); alias `tidy` |
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md blocks standalone (worktree discipline + rigsmith-tools usage; e.g. `--global`). `install` previews the blocks in a scrollable UI before writing — `-y` or a non-TTY skips it |
 | `config` | `get` / `set` / `show` / `path` / `edit` |
-| `desktop` | `add` / `open` / `list` / `quit` / `map` / `shortcut` / `rm` — several Claude Desktop accounts side by side, each in its own profile. `open --session <id-or-text>` opens a window on a Claude Code session and `-i` picks one from a list; both are CLI-only, the `ui` dashboard's Desktop screen opens and closes windows (alias: `app`) |
+| `desktop` | `add` / `open` / `list` / `quit` / `map` / `shortcut` / `prune` / `rm` — several Claude Desktop accounts side by side, each in its own profile. `prune` reclaims caches and, with `--vm`, the Cowork VM image without deleting the profile. `open --session <id-or-text>` opens a window on a Claude Code session and `-i` picks one from a list; both are CLI-only, the `ui` dashboard's Desktop screen opens and closes windows (alias: `app`) |
 | `recent` | Sessions newest first, dated by the newest record inside each transcript, falling back to the Desktop sidecar and then mtime when it carries none; `--since` / `--cwd` / `--account` narrow, `-l` adds full ids and, for the sessions that can be reopened here, the commands to do it (alias: `last`) |
 | `search` | Find a session by title or content, across this machine and every synced one (alias: `grep`) |
 | `mcp` | `list` / `get` / `add` / `remove` / `enable` / `disable` Claude Code MCP servers across local/project/user scopes (`~/.claude.json`, `<dir>/.mcp.json`); CLI mirrors `claude mcp` (same scopes/flags, default scope `local`); bare `mcp` opens the interactive screen |
-| `doctor` | Health-check environment + sync + worktree discipline; `--fix` repairs, or pick fixes interactively |
+| `doctor` | Health-check environment + sync + worktree discipline, and report settings Claude Code silently ignores at project or local scope (`permissions.defaultMode: "bypassPermissions"` / `"auto"`); `--fix` repairs, or pick fixes interactively |
 | `ui` | Interactive dashboard |
 
 See [docs/CLAUDERIG-DESIGN.md](../docs/CLAUDERIG-DESIGN.md) for the design.

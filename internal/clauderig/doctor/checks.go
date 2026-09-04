@@ -7,14 +7,18 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/rigsmith/rigsmith/core/confkit"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/claudemd"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ghrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/gitignore"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
+	"github.com/rigsmith/rigsmith/internal/clauderig/settings"
 	"github.com/rigsmith/rigsmith/internal/clauderig/status"
 )
 
@@ -53,6 +57,81 @@ func checkRigOnPath(_ context.Context) Result {
 			Hint: "the worktree discipline points at `rig worktree new` — install rig (it ships alongside clauderig) so that guidance works"}
 	}
 	return Result{Name: "rig on PATH", Status: OK, Detail: "resolvable"}
+}
+
+// desktopPruneThreshold is how much a `desktop prune --vm` would have to free
+// before doctor mentions it. The Cowork VM image alone reaches this within
+// days of use, and there is no other signal that it has.
+var desktopPruneThreshold int64 = 4 << 30
+
+// desktopStore opens the profile store doctor measures; a variable so a test
+// can point it at a store of its own rather than the real home directory.
+var desktopStore = desktop.DefaultStore
+
+// desktopSizeBudget bounds the profile walk on its own, under the doctor's
+// deadline rather than sharing it: the checks after this one — the remote,
+// the staging repo — run on the same context, and a walk that used the
+// whole budget would hand them a cancelled one they would report as a
+// failure of their own.
+const desktopSizeBudget = 3 * time.Second
+
+// checkDesktopSize reports when the Desktop profiles are holding space that
+// `desktop prune` could give back — the VM image and caches, never chat
+// history. It stays silent below the threshold so a normal machine does not
+// carry a permanent line about disk it is not short of.
+//
+// It is the one environment check that walks a filesystem, and a profile can
+// hold tens of GB, so the walk runs under the doctor's own deadline: past it
+// the check gives up silently rather than hold the report.
+func checkDesktopSize(ctx context.Context) (Result, bool) {
+	st, err := desktopStore()
+	if err != nil {
+		return Result{}, false
+	}
+	profiles, err := st.List()
+	if err != nil || len(profiles) == 0 {
+		return Result{}, false
+	}
+	walk, cancel := context.WithTimeout(ctx, desktopSizeBudget)
+	defer cancel()
+	var total, reclaim int64
+	for _, p := range profiles {
+		u, merr := desktop.MeasureContext(walk, p)
+		if walk.Err() != nil {
+			return Result{}, false
+		}
+		if merr != nil {
+			continue
+		}
+		total += u.Total
+		reclaim += u.Reclaimable(desktop.PruneVM)
+	}
+	if reclaim < desktopPruneThreshold {
+		return Result{}, false
+	}
+	return Result{Name: "desktop profiles", Status: Warn,
+		Detail: fmt.Sprintf("%s on disk, %s of it reclaimable (Cowork VM image and caches)",
+			desktop.HumanSize(total), desktop.HumanSize(reclaim)),
+		Hint: "`clauderig desktop prune --dry-run` shows the breakdown; `--vm` resets the VM image, leaving logins and chat history alone",
+	}, true
+}
+
+// checkRestricted flags a session that Claude Code will run with `--restricted`
+// semantics. In that mode Claude Code ignores user, project and local
+// settings.json entirely — not just their permission rules — so none of the
+// hooks clauderig installs into those files fire: no sync on SessionStart/Stop,
+// and no PreToolUse guard. The check reports only when the variable is set, so
+// a normal environment does not carry a permanent "not restricted" line.
+func checkRestricted() (Result, bool) {
+	// Read the way Claude Code reads its boolean flags — confkit.Truthy is
+	// that rule (1/true/yes/on, any case), shared rather than repeated.
+	if !confkit.Truthy("CLAUDE_CODE_RESTRICTED") {
+		return Result{}, false
+	}
+	return Result{Name: "restricted mode", Status: Warn,
+		Detail: "CLAUDE_CODE_RESTRICTED is set — Claude Code ignores user, project and local settings.json in this mode",
+		Hint:   "the sync hooks and the guard hook will not run in sessions started from this environment; unset it, or accept that those sessions neither sync nor enforce worktree discipline",
+	}, true
 }
 
 // --- sync ---
@@ -160,8 +239,8 @@ func checkPaths(env Env) Result {
 
 func checkGlobalHooks(env Env) Result {
 	present, _ := hooks.Status(env.UserSettings)
-	if contains(present, "SessionStart") && contains(present, "Stop") {
-		return Result{Name: "global sync hooks", Status: OK, Detail: "SessionStart, Stop"}
+	if contains(present, "SessionStart") && contains(present, "Stop") && contains(present, "SessionEnd") {
+		return Result{Name: "global sync hooks", Status: OK, Detail: "SessionStart, Stop, SessionEnd"}
 	}
 	detail := "not installed"
 	if len(present) > 0 {
@@ -203,6 +282,73 @@ func checkProjectGuard(env Env) Result {
 			_, err := hooks.Install(env.ProjectSettings, hooks.GuardPlans())
 			return err
 		}}
+}
+
+// checkIgnoredSettings reports values in a settings.json that Claude Code
+// does not honour where they are — a `defaultMode` of "bypassPermissions"
+// or "auto" in the project or local file, or a top-level `defaultMode` in
+// any file — because Claude Code drops them without a word, and a value
+// that was honoured until the 2026-09-02 release otherwise just stops
+// working. A file that will not parse, or cannot be read, is reported too,
+// as its own problem: nothing can be said about what it carries. Reported
+// only when there is something to say, with a hint for each kind of
+// problem found, since fixing one must not hide the advice for another.
+func checkIgnoredSettings(env Env) (Result, bool) {
+	var found, broken []string
+	var dropped, misplaced, malformed, unreadable bool
+	for _, tier := range []struct {
+		scope settings.Scope
+		path  string
+	}{{settings.User, env.UserSettings}, {settings.Project, env.ProjectSettings}, {settings.Local, env.LocalSettings}} {
+		if tier.path == "" {
+			continue
+		}
+		ignored, err := settings.IgnoredAt(tier.scope, tier.path)
+		if err != nil {
+			// Said here, because nothing else says it: the guard check reads
+			// the same file and reports a parse failure as "not installed".
+			if settings.IsParseError(err) {
+				broken = append(broken, fmt.Sprintf("%s settings at %s does not parse as settings (%v)", tier.scope, tier.path, err))
+				malformed = true
+			} else {
+				broken = append(broken, fmt.Sprintf("%s settings at %s could not be read (%v)", tier.scope, tier.path, err))
+				unreadable = true
+			}
+			continue
+		}
+		for _, i := range ignored {
+			line := fmt.Sprintf("%s in %s (%s settings)", i, tier.path, tier.scope)
+			if i.Where != "" {
+				line += " — honoured only from " + i.Where
+				dropped = true
+			}
+			if i.Fix != "" {
+				line += " — " + i.Fix
+				misplaced = true
+			}
+			found = append(found, line)
+		}
+	}
+	if len(found) == 0 && len(broken) == 0 {
+		return Result{}, false
+	}
+	var hints []string
+	if dropped {
+		hints = append(hints, "Claude Code drops these silently at this scope — pass --permission-mode for the session that needs it, or set it in ~/.claude/settings.json knowing that applies to every project")
+	}
+	if misplaced {
+		hints = append(hints, "a key Claude Code never reads — a top-level defaultMode goes under permissions, and the spelling is defaultMode exactly")
+	}
+	if malformed {
+		hints = append(hints, "fix the file — a JSON syntax error or a value of the wrong type; nothing in it can be checked until it parses as settings")
+	}
+	if unreadable {
+		hints = append(hints, "make the file readable — nothing in it can be checked until it is")
+	}
+	return Result{Name: "ignored settings", Status: Warn,
+		Detail: strings.Join(append(found, broken...), "; "),
+		Hint:   strings.Join(hints, "; "),
+	}, true
 }
 
 func checkGuide(env Env) Result {

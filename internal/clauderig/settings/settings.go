@@ -7,8 +7,15 @@
 package settings
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
 )
 
 // Scope is a Claude Code settings tier.
@@ -25,6 +32,15 @@ const (
 
 // All lists the scopes in precedence order (broadest to narrowest), which is also
 // the order to report or sweep them in.
+//
+// Precedence is per key, and not every key takes part. Claude Code reads a few
+// only from the broad tiers: `defaultMode: "bypassPermissions"` (since the
+// 2026-09-02 release) and `defaultMode: "auto"` are honoured from user or
+// managed settings and ignored, silently, in a project or local file. The
+// narrower tiers therefore cannot always override the broader ones, and a
+// value committed to a repo's `.claude/settings.json` may be one Claude Code
+// never reads there. IgnoredAt names those values for a file, and
+// `clauderig doctor` reports them.
 var All = []Scope{User, Project, Local}
 
 // Parse turns a flag value into a Scope ("global" is accepted as an alias for
@@ -75,4 +91,148 @@ func (s Scope) Label() string {
 		return "local (.claude/settings.local.json)"
 	}
 	return string(s)
+}
+
+// Ignored is a value Claude Code reads from a settings file at one scope and
+// honours at another. The precedence order in All is not the whole story: a
+// few keys are accepted from user or managed settings only, and a project or
+// local file that carries them is silently a no-op for that key. clauderig
+// never writes these itself, but it is the tool that reads the project
+// tiers on every doctor run — and Claude Code gives no error when a value
+// that used to work there stops being read, so this is where it gets said.
+type Ignored struct {
+	Key   string // the settings key, e.g. "defaultMode"
+	Value string // the value that is ignored at this scope
+	// Where names the scopes that do honour it; empty when no scope does.
+	Where string
+	// Fix says what to change when the key itself is the mistake — a
+	// top-level defaultMode, which belongs under permissions.
+	Fix string
+}
+
+func (i Ignored) String() string { return fmt.Sprintf("%s: %q", i.Key, i.Value) }
+
+// ignoredModes lists the `defaultMode` values Claude Code drops at project and
+// local scope: "auto" always was, and "bypassPermissions" joined it in the
+// 2026-09-02 release. Both are honoured from user or managed settings, or via
+// `--permission-mode` on the command line.
+var ignoredModes = map[string]bool{"bypassPermissions": true, "auto": true}
+
+// IgnoredAt reports the values in the settings file at path that Claude Code
+// will not honour at scope s — `permissions.defaultMode` at project or local
+// scope, where Claude Code keeps the mode but reads only some values, and a
+// top-level `defaultMode` at any scope, which it never reads. A missing or
+// empty file has none. It parses what it needs and nothing else, so an
+// otherwise malformed file is reported as an error rather than as clean;
+// IsParseError tells that apart from a file that could not be read.
+func IgnoredAt(s Scope, path string) ([]Ignored, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		return nil, nil
+	}
+	// Decoded by exact key, not into a struct: encoding/json matches struct
+	// fields case-insensitively, and Claude Code does not — "DefaultMode"
+	// is a key it never reads, and calling it the real setting would send
+	// someone to move it between scopes when the fix is the spelling.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(b, &top); err != nil {
+		return nil, err
+	}
+	const honoured = "user or managed settings, or --permission-mode on the command line"
+	var out []Ignored
+	// Claude Code keeps the mode under the permissions object.
+	if raw, ok := top["permissions"]; ok {
+		var perms map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &perms); err != nil {
+			return nil, err
+		}
+		mode, _, err := stringAt(perms, "defaultMode")
+		if err != nil {
+			return nil, err
+		}
+		// User settings honour every mode; the two dropped ones are dropped
+		// at the narrower scopes only.
+		if s != User && ignoredModes[mode] {
+			out = append(out, Ignored{Key: "permissions.defaultMode", Value: mode, Where: honoured})
+		}
+		out = append(out, wrongCase(perms, "permissions.")...)
+	}
+	// A bare top-level defaultMode is not a shape Claude Code reads, but one
+	// people write by mistake, so it is reported too rather than silently
+	// passed over — at any scope, whatever it says, an empty string
+	// included: the key is permissions.defaultMode, and the person who
+	// wrote it meant something. Where names the scopes that honour the
+	// value once it is under the right key, which for a dropped mode at a
+	// narrow scope is still not this one.
+	mode, present, err := stringAt(top, "defaultMode")
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		i := Ignored{Key: "defaultMode", Value: mode,
+			Fix: "move it under permissions — Claude Code never reads a top-level defaultMode"}
+		if s != User && ignoredModes[mode] {
+			i.Where = honoured
+		}
+		out = append(out, i)
+	}
+	out = append(out, wrongCase(top, "")...)
+	return out, nil
+}
+
+// stringAt decodes the string under key, reporting whether the key was there
+// at all — an absent key and an empty string are different mistakes. A value
+// of another type is an error of the same kind as malformed JSON: the file
+// does not parse as settings.
+func stringAt(m map[string]json.RawMessage, key string) (string, bool, error) {
+	raw, ok := m[key]
+	if !ok {
+		return "", false, nil
+	}
+	// json.Unmarshal leaves a string untouched for null, which would pass a
+	// null off as an empty string; a null is not a mode, and is reported the
+	// way any other wrong type is.
+	if string(bytes.TrimSpace(raw)) == "null" {
+		return "", true, &json.UnmarshalTypeError{Value: "null", Type: reflect.TypeOf(""), Field: key}
+	}
+	var v string
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return "", true, err
+	}
+	return v, true, nil
+}
+
+// wrongCase reports a defaultMode spelled in the wrong case — DefaultMode,
+// defaultmode — which JSON does not equate and Claude Code never reads.
+// prefix is the object it was found in, for the report.
+func wrongCase(m map[string]json.RawMessage, prefix string) []Ignored {
+	var out []Ignored
+	for k, raw := range m {
+		if k == "defaultMode" || !strings.EqualFold(k, "defaultMode") {
+			continue
+		}
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			v = string(raw)
+		}
+		out = append(out, Ignored{Key: prefix + k, Value: v,
+			Fix: "spell it defaultMode — JSON keys are case-sensitive, and Claude Code never reads this one"})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}
+
+// IsParseError reports whether an error from IgnoredAt came from the file's
+// content rather than from reading it — the difference between "fix the
+// JSON" and "make the file readable".
+func IsParseError(err error) bool {
+	var syntax *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	return errors.As(err, &syntax) || errors.As(err, &typ)
 }
