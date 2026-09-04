@@ -476,6 +476,30 @@ func (r *Repo) RemoveTree(ctx context.Context, dir string) error {
 	return os.RemoveAll(full)
 }
 
+// SetRef points ref at sha, creating it if need be.
+func (r *Repo) SetRef(ctx context.Context, ref, sha string) error {
+	_, err := runGit(ctx, r.Dir, "update-ref", ref, sha)
+	return err
+}
+
+// IgnoredPaths lists the files under dir that git ignores — build output,
+// local environment files: things git never tracked, which a removal of the
+// directory takes with it and no history gets back. Relative to the
+// repository root, slash-separated.
+func (r *Repo) IgnoredPaths(ctx context.Context, dir string) ([]string, error) {
+	out, err := runGit(ctx, r.Dir, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", dir)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
 // DeleteRef removes a ref if it exists. A ref that is already absent is fine.
 func (r *Repo) DeleteRef(ctx context.Context, ref string) error {
 	if _, err := runGit(ctx, r.Dir, "rev-parse", "--verify", "--quiet", ref); err != nil {

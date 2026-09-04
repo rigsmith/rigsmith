@@ -36,9 +36,10 @@ func newStackRemoveCmd() *cobra.Command {
 			"stackspace changes — the upstream and your fork are untouched.\n\n" +
 			"A repo holding work that has not left the stackspace — commits `status`\n" +
 			"reports as unsent, or uncommitted edits under it — is refused, because that\n" +
-			"work exists nowhere else. `--force` removes it anyway; `--keep-tree` leaves\n" +
-			"the directory in place as an ordinary part of this repository while it\n" +
-			"stops being a member.\n\n" +
+			"work exists nowhere else. So is one holding files git ignores — build\n" +
+			"output, a local .env — which no history gets back once the directory\n" +
+			"goes. `--force` removes it anyway; `--keep-tree` leaves the directory in\n" +
+			"place as an ordinary part of this repository while it stops being a member.\n\n" +
 			"  rig stack rm pty-core\n" +
 			"  rig stack rm pty-core --keep-tree",
 		Args: cobra.ExactArgs(1),
@@ -99,6 +100,24 @@ func newStackRemoveCmd() *cobra.Command {
 				}
 			}
 
+			// Ignored files are the one thing git cannot give back: never
+			// tracked, so no history holds them, and the removal takes the
+			// directory whole. Named, so what is about to go is not a surprise;
+			// --keep-tree leaves them where they are.
+			if !force && !keepTree {
+				ignored, ierr := repo.IgnoredPaths(ctx, name)
+				if ierr != nil {
+					return ierr
+				}
+				if len(ignored) > 0 {
+					sample := ignored
+					if len(sample) > 3 {
+						sample = sample[:3]
+					}
+					return fmt.Errorf("%s/ holds %d file(s) git ignores (%s) that go with the directory and no history gets back — move what matters, then --force, or --keep-tree", name, len(ignored), strings.Join(sample, ", "))
+				}
+			}
+
 			// The manifest is edited on disk before the tree goes, so keep its
 			// bytes: a removal that fails after the edit would otherwise leave
 			// the member gone from the file and present in the tree, which is
@@ -122,6 +141,7 @@ func newStackRemoveCmd() *cobra.Command {
 			// push leaves its filtered export behind under a ref; nothing reads
 			// it once the member is gone.
 			_ = repo.DeleteRef(ctx, "refs/rigsmith/push/"+name)
+			_ = repo.DeleteRef(ctx, "refs/rigsmith/propose/"+name)
 
 			// The overlay is rewritten from the members that remain — or removed
 			// outright when nothing crosses between them any more — so no build

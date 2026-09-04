@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"errors"
@@ -74,6 +75,36 @@ func TestStackSeed(t *testing.T) {
 		cmd.SetArgs([]string{other})
 		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "uncommitted") {
 			t.Fatalf("dirty stackspace: err = %v, want a refusal", err)
+		}
+	})
+
+	t.Run("refuses a member with commits that have not left", func(t *testing.T) {
+		// A seed carries no member: a rebuilt one holds its cursor or its
+		// proposed branch, and a commit that reached neither is in no seed.
+		if err := os.WriteFile(filepath.Join(root, "pty-core", "src", "lib.cs"), []byte("// unsent\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, root, "add", "-A")
+		mustGitStack(t, root, "commit", "-qm", "local change to pty-core")
+		defer func() {
+			mustGitStack(t, root, "reset", "-q", "--hard", "HEAD~1")
+		}()
+		other := filepath.Join(t.TempDir(), "seed")
+		run := func(args ...string) error {
+			cmd := newStackSeedCmd()
+			cmd.SetContext(context.Background())
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetArgs(args)
+			return cmd.Execute()
+		}
+		if err := run(other); err == nil || !strings.Contains(err.Error(), "pty-core has commits that have not left") {
+			t.Fatalf("unsent commits: err = %v, want a refusal naming the member", err)
+		}
+		if _, err := os.Stat(other); !os.IsNotExist(err) {
+			t.Error("a refused seed still wrote the destination")
+		}
+		if err := run(other, "--force"); err != nil {
+			t.Fatalf("--force: %v", err)
 		}
 	})
 
@@ -172,4 +203,41 @@ func TestStackForkRefFor(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+}
+
+// A link's target is judged through the links already written. Once `a -> .`
+// exists, `a/../outside` is dest's sibling, not a child, though a lexical
+// clean of the path would say otherwise.
+func TestUntarRefusesALinkThatEscapesThroughAnotherLink(t *testing.T) {
+	entries := func(links ...[2]string) []byte {
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		for _, l := range links {
+			if err := tw.WriteHeader(&tar.Header{Name: l[0], Typeflag: tar.TypeSymlink, Linkname: l[1], Mode: 0o777}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := tw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+	dest := filepath.Join(t.TempDir(), "seed")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".", filepath.Join(dest, "probe")); err != nil {
+		t.Skipf("symlinks unavailable here: %v", err)
+	}
+	err := untar(bytes.NewReader(entries([2]string{"a", "."}, [2]string{"b", "a/../outside"})), dest)
+	if err == nil || !strings.Contains(err.Error(), "outside the seed") {
+		t.Fatalf("err = %v, want the escaping link refused", err)
+	}
+	if _, serr := os.Lstat(filepath.Join(dest, "b")); !os.IsNotExist(serr) {
+		t.Error("the escaping link was written")
+	}
+	// A link that stays inside, through another link, is fine.
+	if err := untar(bytes.NewReader(entries([2]string{"c", "a/README.md"})), dest); err != nil {
+		t.Fatalf("in-tree link through a link: %v", err)
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -177,6 +178,54 @@ func TestStackRm(t *testing.T) {
 		}
 		if _, err := runRm(t, "pty-core"); err == nil || !strings.Contains(err.Error(), "uncommitted edits") {
 			t.Fatalf("err = %v, want a refusal for uncommitted work", err)
+		}
+	})
+
+	t.Run("ignored files under the prefix need --force, and --keep-tree keeps them", func(t *testing.T) {
+		root := rmStackspace(t, rmManifest)
+		p := filepath.Join(root, "pty-core", ".env")
+		if err := os.WriteFile(p, []byte("SECRET=1"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".env\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, root, "add", ".gitignore")
+		mustGitStack(t, root, "commit", "-qm", "ignore env")
+		if _, err := runRm(t, "pty-core"); err == nil || !strings.Contains(err.Error(), "git ignores") || !strings.Contains(err.Error(), "pty-core/.env") {
+			t.Fatalf("err = %v, want a refusal naming the ignored file", err)
+		}
+		if _, serr := os.Stat(p); serr != nil {
+			t.Fatal("a refused rm deleted the ignored file")
+		}
+		if out, err := runRm(t, "pty-core", "--keep-tree"); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if _, serr := os.Stat(p); serr != nil {
+			t.Error("--keep-tree deleted the ignored file")
+		}
+	})
+
+	t.Run("work that propose has sent is no longer unsent", func(t *testing.T) {
+		root := rmStackspace(t, rmManifest)
+		if err := os.WriteFile(filepath.Join(root, "pty-core", "src", "lib.cs"), []byte("// changed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, root, "add", "-A")
+		mustGitStack(t, root, "commit", "-qm", "change pty-core")
+		if _, err := runRm(t, "pty-core"); err == nil || !strings.Contains(err.Error(), "have not left") {
+			t.Fatalf("err = %v, want a refusal for unsent commits", err)
+		}
+		// What propose leaves behind: the commit it pushed, holding exactly
+		// this prefix's tree, under refs/rigsmith/propose/<name>.
+		tree := strings.TrimSpace(mustGitStack(t, root, "rev-parse", "HEAD:pty-core"))
+		commit := strings.TrimSpace(mustGitStack(t, root, "commit-tree", tree, "-m", "Changes to pty-core"))
+		mustGitStack(t, root, "update-ref", "refs/rigsmith/propose/pty-core", commit)
+		if out, err := runRm(t, "pty-core"); err != nil {
+			t.Fatalf("after propose: %v\n%s", err, out)
+		}
+		if _, err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "refs/rigsmith/propose/pty-core").Output(); err == nil {
+			t.Error("the propose ref outlived the member")
 		}
 	})
 

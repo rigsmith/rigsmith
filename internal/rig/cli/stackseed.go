@@ -28,6 +28,7 @@ import (
 // under version control drifts. The seed is a few kilobytes and derives
 // nothing: the manifest already records which commit each prefix held.
 func newStackSeedCmd() *cobra.Command {
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "seed <dir>",
 		Short: "Export the root files as a small repo that `rig stack init` rebuilds the stackspace from",
@@ -41,6 +42,9 @@ func newStackSeedCmd() *cobra.Command {
 			"that commit — or, for a repo with `trackBranch` set or one last proposed\n" +
 			"to a branch still on its fork, from that branch, so work that has left as\n" +
 			"a proposal and not yet merged comes back too.\n\n" +
+			"A member holding commits that have not left the stackspace is refused:\n" +
+			"a rebuild holds its cursor or its proposed branch, and those commits would\n" +
+			"be in neither. `rig stack propose` them first, or --force to seed anyway.\n\n" +
 			"  rig stack seed ../my-stack-seed\n" +
 			"  git -C ../my-stack-seed remote add origin <url> && git -C ../my-stack-seed push -u origin main",
 		Args: cobra.ExactArgs(1),
@@ -52,7 +56,7 @@ func newStackSeedCmd() *cobra.Command {
 				return err
 			}
 			dest := args[0]
-			written, err := stackSeed(ctx, repo, m, dest)
+			written, err := stackSeed(ctx, repo, m, dest, force)
 			if err != nil {
 				return err
 			}
@@ -61,6 +65,7 @@ func newStackSeedCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&force, "force", false, "seed even where a member holds commits that have not left the stackspace")
 	return cmd
 }
 
@@ -92,8 +97,9 @@ func newStackSeedMenuCmd() *cobra.Command {
 
 // stackSeed materialises HEAD's root entries that are not member prefixes into
 // dest as a fresh repository with one commit, and reports how many entries
-// were written. dest must not exist or must be empty.
-func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest string) (int, error) {
+// were written. dest must not exist or must be empty. force seeds past a
+// member whose commits have not left the stackspace.
+func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest string, force bool) (int, error) {
 	if entries, err := os.ReadDir(dest); err == nil && len(entries) > 0 {
 		return 0, fmt.Errorf("%s exists and is not empty — a seed needs a new or empty directory", dest)
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -107,6 +113,25 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 		return 0, derr
 	} else if dirty {
 		return 0, fmt.Errorf("stackspace has uncommitted changes — commit them first, so the seed is a revision that exists")
+	}
+	// A seed carries no member, so a rebuilt one holds its cursor or the
+	// branch it was last proposed to — and commits that reached neither are
+	// in no seed. The same refusal rm makes, for the same reason: that work
+	// exists nowhere else, and a seed that looks complete and is not would
+	// be found out only on the other machine.
+	if !force {
+		for _, name := range m.names() {
+			if !stackPrefixPresent(ctx, repo, name) {
+				continue
+			}
+			u := stackUnsentWork(ctx, repo, name, nil)
+			switch {
+			case u.Commits:
+				return 0, fmt.Errorf("%s has commits that have not left the stackspace — a rebuilt member holds its cursor or proposed branch, not these; `rig stack propose %s <branch>` first, or --force", name, name)
+			case !u.Known:
+				return 0, fmt.Errorf("cannot tell whether %s holds unsent commits (no import commit in this history) — check with `git log -- %s/`, then --force", name, name)
+			}
+		}
 	}
 	names, err := repo.TopLevelNames(ctx, "HEAD")
 	if err != nil {
@@ -150,6 +175,11 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 // things a git tree holds — and a symlink whose target would leave dest is
 // refused rather than written pointing anywhere. Anything else in the stream
 // is an error, so the seed is never silently incomplete.
+//
+// Containment is judged through the links already written, not on the path
+// alone: once `a -> .` exists, `a/../x` is x's parent's sibling, not x, and a
+// check that collapsed the `..` lexically would pass an entry the filesystem
+// then puts outside dest.
 func untar(r io.Reader, dest string) error {
 	tr := tar.NewReader(r)
 	root := filepath.Clean(dest)
@@ -164,6 +194,9 @@ func untar(r io.Reader, dest string) error {
 		target := filepath.Join(root, filepath.FromSlash(hdr.Name))
 		if target != root && !strings.HasPrefix(target, root+string(filepath.Separator)) {
 			return fmt.Errorf("archive entry %q escapes %s", hdr.Name, dest)
+		}
+		if !insideRoot(root, filepath.Dir(target)) {
+			return fmt.Errorf("archive entry %q escapes %s through a link", hdr.Name, dest)
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -186,10 +219,12 @@ func untar(r io.Reader, dest string) error {
 				return err
 			}
 		case tar.TypeSymlink:
-			// Resolved against the link's own directory, and refused if that
-			// leaves dest: a link out of the tree is not the stackspace's own.
-			resolved := filepath.Join(filepath.Dir(target), filepath.FromSlash(hdr.Linkname))
-			if filepath.IsAbs(hdr.Linkname) || (resolved != root && !strings.HasPrefix(resolved, root+string(filepath.Separator))) {
+			// Resolved against the link's own directory, through whatever
+			// links are already there, and refused if that leaves dest: a link
+			// out of the tree is not the stackspace's own. Not cleaned first —
+			// the `..` has to be walked, not collapsed.
+			resolved := filepath.Dir(target) + string(filepath.Separator) + filepath.FromSlash(hdr.Linkname)
+			if filepath.IsAbs(hdr.Linkname) || !insideRoot(root, resolved) {
 				return fmt.Errorf("symlink %q points outside the seed (%s)", hdr.Name, hdr.Linkname)
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -204,6 +239,43 @@ func untar(r io.Reader, dest string) error {
 			return fmt.Errorf("archive entry %q has a type the seed cannot carry", hdr.Name)
 		}
 	}
+}
+
+// insideRoot reports whether path, once every symlink already on disk along
+// it is followed, is root or under it. Components that do not exist yet are
+// taken as written, after the existing prefix has been resolved — so a `..`
+// past a link is judged against where the link goes, not where it sits.
+func insideRoot(root, path string) bool {
+	real, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	resolved := realPath(path)
+	return resolved == real || strings.HasPrefix(resolved, real+string(filepath.Separator))
+}
+
+// realPath walks path one component at a time, following each symlink that
+// already exists on disk and taking what does not exist yet as written. A
+// `..` is applied to the resolved prefix, never to the spelling — which is
+// the whole difference from filepath.Clean.
+func realPath(path string) string {
+	vol := filepath.VolumeName(path)
+	cur := vol + string(filepath.Separator)
+	for _, part := range strings.Split(strings.TrimPrefix(path, vol), string(filepath.Separator)) {
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, part)
+		if r, err := filepath.EvalSymlinks(next); err == nil {
+			next = r
+		}
+		cur = next
+	}
+	return cur
 }
 
 // stackImportFromFork decides whether a member is imported from a branch of

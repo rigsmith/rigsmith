@@ -76,12 +76,30 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 		}
 		// Where each package is produced, so a dependency on it can be pointed
 		// at the project rather than at the registry.
+		// Per member too: a republished id is resolved to the package the
+		// declaring member builds, not to whichever member happens to build
+		// something of that name. Two members building one id is reported
+		// and redirected to neither, since either would be a guess.
 		producer := map[string]plugin.Package{}
+		producedBy := map[string]map[string]plugin.Package{}
+		producerIn := map[string]string{}
+		twice := map[string]bool{}
 		for _, p := range resp.Packages {
-			producer[p.Name] = p
-			if m := member(p.Dir); m != "" {
-				produces[m] = append(produces[m], p.Name)
+			m := member(p.Dir)
+			if prev, seen := producerIn[p.Name]; seen && prev != m {
+				twice[p.Name] = true
 			}
+			producer[p.Name], producerIn[p.Name] = p, m
+			if m != "" {
+				produces[m] = append(produces[m], p.Name)
+				if producedBy[m] == nil {
+					producedBy[m] = map[string]plugin.Package{}
+				}
+				producedBy[m][p.Name] = p
+			}
+		}
+		for name := range twice {
+			notes = append(notes, fmt.Sprintf("%s is produced by more than one member here — a reference to it is redirected to neither until one of them republishes under another id", name))
 		}
 		// The ids a member republishes under, resolved to the projects that
 		// produce the originals. Only ids the member really produces count —
@@ -134,16 +152,20 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 				if !d.ViaRegistry {
 					continue
 				}
+				if twice[d.Name] {
+					continue
+				}
 				prod, ok := producer[d.Name]
 				via := ""
 				if !ok {
 					// Not produced under that id here — but perhaps under the
-					// one it was republished from.
+					// one it was republished from, by the member that declared
+					// the republishing.
 					orig, republished := alias[d.Name]
 					if !republished {
 						continue
 					}
-					prod, ok = producer[orig]
+					prod, ok = producedBy[aliasBy[d.Name]][orig]
 					if !ok {
 						continue
 					}

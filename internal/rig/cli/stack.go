@@ -433,6 +433,14 @@ func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty
 	}
 	u.Known = true
 	u.Commits = imported != here
+	// Work that propose has put on the fork has left, even though nothing in
+	// this history records it: propose keeps the commit it pushed under a
+	// ref, and a prefix holding exactly that tree has nothing left to send.
+	if u.Commits {
+		if sent, err := repo.RevParse(ctx, "refs/rigsmith/propose/"+name+"^{tree}"); err == nil && sent == here {
+			u.Commits = false
+		}
+	}
 	return u
 }
 
@@ -824,6 +832,12 @@ func newStackSendCmd() *cobra.Command {
 			// impossible to update an open PR. Replace under a lease instead, so
 			// the push still fails if someone else moved the branch meanwhile.
 			if err := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), commit, "refs/heads/"+branch); err != nil {
+				return err
+			}
+			// Kept under a local ref as well: this commit's tree is what the
+			// fork now holds, and status and rm compare against it to know the
+			// work has left — nothing in the stackspace's own history says so.
+			if err := repo.SetRef(ctx, "refs/rigsmith/propose/"+name, commit); err != nil {
 				return err
 			}
 			// Remembered after the push, not before: a branch nothing reached is

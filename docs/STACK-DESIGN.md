@@ -488,7 +488,14 @@ Three decisions:
   stackspace's own commits carry, and `rig stack seed <dir>` exports exactly it
   (`git archive` of HEAD's root entries minus the member prefixes) as a fresh
   one-commit repository. A few kilobytes, no upstream history, and nothing
-  derived — the manifest already records what each prefix held.
+  derived — the manifest already records what each prefix held. It refuses a
+  member holding commits that have not left, as `rm` does: a rebuild holds the
+  cursor or the proposed branch, and such commits are in neither.
+- **`propose` leaves a local record that the work has left.** Nothing in the
+  stackspace's own history says a prefix was proposed, so `status` and `rm`
+  kept reporting proposed work as unsent. `propose` now keeps the commit it
+  pushed under `refs/rigsmith/propose/<name>`; a prefix holding exactly that
+  tree has nothing left to send. `rm` drops the ref with the member.
 - **`init` reconstitutes.** A member with a cursor but no directory is imported
   *at the cursor* rather than at upstream's tip, so the rebuilt stackspace
   matches what was left. `stackPullOne` gained an `at` override for it.

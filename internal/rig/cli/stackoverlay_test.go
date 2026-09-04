@@ -199,6 +199,34 @@ func TestStackRedirectsRepublishedIds(t *testing.T) {
 		}
 	})
 
+	t.Run("a republished id resolves within the member that declared it", func(t *testing.T) {
+		// Two members build a Foo; only one republishes it. The republished
+		// id has to reach that member's project, whichever Foo was seen last.
+		root := t.TempDir()
+		csproj(t, root, "bar", "Foo")
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "app", "Term.App", "Acme.Foo")
+		pub := map[string]stackPublishing{"foo": {As: map[string]string{"Foo": "Acme.Foo"}}}
+		links, _, _, _ := stackRedirects(ctx, root, []string{"app", "bar", "foo"}, pub)
+		if l := links["dotnet"]; len(l) != 1 || l[0].To != "foo" || !strings.HasSuffix(l[0].Path, "foo.csproj") {
+			t.Fatalf("links = %+v, want Acme.Foo redirected into foo", l)
+		}
+	})
+
+	t.Run("an id two members produce is redirected to neither", func(t *testing.T) {
+		root := t.TempDir()
+		csproj(t, root, "bar", "Foo")
+		csproj(t, root, "foo", "Foo")
+		csproj(t, root, "app", "Term.App", "Foo")
+		links, _, notes, _ := stackRedirects(ctx, root, []string{"app", "bar", "foo"}, nil)
+		if len(links["dotnet"]) != 0 {
+			t.Fatalf("an ambiguous producer was redirected: %+v", links)
+		}
+		if len(notes) != 1 || !strings.Contains(notes[0], "more than one member") {
+			t.Fatalf("notes = %v", notes)
+		}
+	})
+
 	t.Run("a declared id still wins over a republished one", func(t *testing.T) {
 		// The app references Foo directly: nothing about republishing applies.
 		root := t.TempDir()

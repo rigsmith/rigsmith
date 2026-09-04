@@ -506,7 +506,12 @@ your fork are exactly as they were, and `rig stack add` fuses the repo again.
 A repo holding work that has not left the stackspace is refused, because that
 work exists nowhere else — the same `unsent changes` and `uncommitted changes`
 that `status` reports, plus the case where the comparison cannot be made at
-all. `--force` removes it anyway.
+all. Commits are counted as sent once `propose` has put them on your fork (it
+keeps the commit it pushed under `refs/rigsmith/propose/<repo>`, and a prefix
+holding exactly that tree has nothing left to send). A directory holding files
+git ignores — build output, a local `.env` — is refused too, naming them: no
+history gets those back. `--force` removes it anyway; `--keep-tree` leaves
+them where they are.
 
 ## Moving a stackspace to another machine {#seed}
 
@@ -526,7 +531,7 @@ kind of thing that drifts. Two things make a smaller seed enough:
   at that commit rather than at upstream's tip.
 
 ```sh
-rig stack seed ../my-stack-seed                  # root files → a new repo, one commit
+rig stack seed ../my-stack-seed                  # root files → a new repo, one commit (--force past unsent commits)
 git -C ../my-stack-seed remote add origin <url>
 git -C ../my-stack-seed push -u origin main
 
@@ -535,6 +540,11 @@ git clone <url> my-stack && cd my-stack
 rig stack init                                   # rebuilds every member
 rig stack wire
 ```
+
+A seed carries no member, so a rebuilt one holds its cursor or the branch it
+was last proposed to — and a commit that reached neither is in no seed. `seed`
+refuses a member holding such commits, the same way `rm` does; `propose` them
+first, or `--force` to seed anyway.
 
 `init` treats a member with a cursor but no directory as one to **reconstitute**:
 it imports that member at the cursor, so the stackspace comes back as it was
@@ -567,7 +577,7 @@ than importing it twice.
 | `stack init` | Scaffold the manifest, or import the repos it names that are not imported yet |
 | `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
 | `stack rm <repo>` | Remove a repo: its manifest entry and cursor, its directory, and the overlay redirects into it; refuses while it holds work that has not left (`--force`), `--keep-tree` keeps the directory |
-| `stack seed <dir>` | Export the root files — everything outside every prefix, manifest included — as a small repo that `stack init` rebuilds the members from elsewhere |
+| `stack seed <dir>` | Export the root files — everything outside every prefix, manifest included — as a small repo that `stack init` rebuilds the members from elsewhere; refuses while a member holds commits that have not left (`--force`) |
 | `stack status` | Each repo's cursor against its upstream branch tip |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch |
