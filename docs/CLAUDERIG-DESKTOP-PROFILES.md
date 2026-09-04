@@ -98,7 +98,7 @@ than working around it.
 | `clauderig desktop open [<name\|email>]` | Open the profile's window, or focus it if already open. `--session` opens it on a Claude Code session; `-i` picks one from a list. |
 | `clauderig desktop list` (alias `ls`) | Saved profiles; `●` marks the ones open right now. |
 | `clauderig desktop quit [<name\|email>]` | Close that profile's window (SIGTERM, then firmly, then confirmed). |
-| `clauderig desktop prune [<name\|email>] [--vm\|--all] [--dry-run]` | Reclaim disk without deleting the profile: Electron caches by default; `--vm` also the unpacked Cowork VM image (re-extracted next launch, VM contents lost); `--all` the whole bundle (re-downloaded). No name means every profile. |
+| `clauderig desktop prune [<name\|email>] [--vm\|--all] [--dry-run] [--yes]` | Reclaim disk without deleting the profile: Electron caches by default; `--vm` also the unpacked Cowork VM image (re-extracted next launch, VM contents lost); `--all` the whole bundle (re-downloaded). No name means every profile; `--vm` and `--all` confirm first, and off a terminal need `--yes`. |
 | `clauderig desktop rm <name\|email> [--force]` | Delete the profile. Signs that account out of Desktop for good. |
 | `clauderig desktop map [<name>] [dir]` / `unmap [dir]` | Bind a directory to a profile, so a bare `desktop open` there opens it. Bare `map` lists every binding. |
 | `clauderig desktop shortcut [<name\|email>] [--to desktop\|apps]` | Make a clickable launcher for the profile. `--all` for every profile, `--rm` to delete them. |

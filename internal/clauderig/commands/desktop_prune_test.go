@@ -179,9 +179,11 @@ func TestDesktopPrune_UnknownProfile(t *testing.T) {
 }
 
 // With several profiles, an open one anywhere in the list stops the command
-// before anything is deleted from the others.
+// before anything is deleted from the others. Profiles are visited in name
+// order, so the open one is work, visited after personal: a single pass
+// that pruned as it went would have emptied personal's cache first.
 func TestDesktopPrune_OpenProfileStopsBeforeAnyDeletion(t *testing.T) {
-	st, work := pruneCommandFixture(t, false)
+	st, work := pruneCommandFixture(t, true)
 	personal, err := st.Get("personal")
 	if err != nil {
 		t.Fatal(err)
@@ -193,13 +195,23 @@ func TestDesktopPrune_OpenProfileStopsBeforeAnyDeletion(t *testing.T) {
 	if err := os.WriteFile(cache, make([]byte, 4096), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// work (listed first) is closed and reclaimable; personal (second) is open.
-	newDesktopApp = func() desktop.App { return stubApp{open: map[string]bool{personal.DataDir(): true}} }
-	if _, err := runPrune(t); err == nil || !strings.Contains(err.Error(), "nothing was deleted") {
+	if _, err := runPrune(t); err == nil || !strings.Contains(err.Error(), "work is open") || !strings.Contains(err.Error(), "nothing was deleted") {
 		t.Fatalf("err = %v, want a refusal that names the open profile", err)
 	}
+	if _, serr := os.Stat(cache); serr != nil {
+		t.Error("personal's cache was deleted before the open profile after it was found")
+	}
 	if _, serr := os.Stat(filepath.Join(work.DataDir(), "Cache")); serr != nil {
-		t.Error("work's cache was deleted before the open profile was found")
+		t.Error("the open profile's cache was deleted")
+	}
+}
+
+// --vm and --all name different things to lose; both at once is refused
+// rather than silently taking the larger.
+func TestDesktopPrune_RefusesBothTiers(t *testing.T) {
+	pruneCommandFixture(t, false)
+	if _, err := runPrune(t, "--vm", "--all", "--yes"); err == nil || !strings.Contains(err.Error(), "vm") || !strings.Contains(err.Error(), "all") {
+		t.Fatalf("err = %v, want a refusal naming both flags", err)
 	}
 }
 

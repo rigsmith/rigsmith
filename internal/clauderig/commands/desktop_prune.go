@@ -165,6 +165,10 @@ func newDesktopPruneCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "also drop the whole VM bundle (re-downloaded on next launch)")
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show the per-profile breakdown and delete nothing")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation --vm and --all ask for")
+	// One tier per run: --vm and --all name different things to lose, and
+	// silently taking the larger when both are given is not what either
+	// asked for.
+	cmd.MarkFlagsMutuallyExclusive("vm", "all")
 	return cmd
 }
 

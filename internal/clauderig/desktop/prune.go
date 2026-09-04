@@ -174,10 +174,15 @@ func MeasureContext(ctx context.Context, p Profile) (Usage, error) {
 		if serr != nil {
 			return Usage{}, serr
 		}
-		if rest := size - vmTier; rest > 0 {
-			u.Entries = append(u.Entries, PruneEntry{Rel: vmBundlesDir, Size: rest, Tier: PruneAll,
-				Note: "compressed image, kernel and initramfs; re-downloaded on next launch"})
+		// The directory itself is always an entry, whatever is left in it
+		// once the disks are counted: --all promises the whole bundle gone,
+		// and a bundle holding nothing but disks would otherwise be pruned
+		// disk by disk and left standing.
+		rest, note := size-vmTier, "compressed image, kernel and initramfs; re-downloaded on next launch"
+		if rest <= 0 {
+			rest, note = 0, "the bundle directory itself; re-downloaded on next launch"
 		}
+		u.Entries = append(u.Entries, PruneEntry{Rel: vmBundlesDir, Size: rest, Tier: PruneAll, Note: note})
 	}
 	sort.SliceStable(u.Entries, func(i, j int) bool { return u.Entries[i].Tier < u.Entries[j].Tier })
 	return u, nil

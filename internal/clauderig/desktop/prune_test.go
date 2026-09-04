@@ -87,7 +87,7 @@ func TestMeasure_ClassifiesTiers(t *testing.T) {
 // still --vm tier, made afresh rather than re-extracted; a ROOT filesystem
 // with none is --all tier, because deleting it means a download, which --vm
 // never promises.
-func TestMeasure_AllUnpackedDisksAreVMTier(t *testing.T) {
+func TestMeasure_DiskTierFollowsItsCompressedSource(t *testing.T) {
 	_, p := pruneFixture(t, false)
 	win := filepath.Join(p.DataDir(), "vm_bundles", "claudevm.bundle", "rootfs.vhdx")
 	if err := os.WriteFile(win, make([]byte, 8192), 0o644); err != nil {
@@ -244,5 +244,38 @@ func TestMeasure_DoesNotFollowSymlinkedCaches(t *testing.T) {
 	}
 	if u.Reclaimable(PruneAll) >= 1<<20 {
 		t.Errorf("reclaimable %d counts the bytes behind the link", u.Reclaimable(PruneAll))
+	}
+}
+
+// --all promises the whole bundle gone. A bundle holding nothing but disks has
+// nothing left over once they are counted, and used to be pruned disk by disk
+// with the directory left standing.
+func TestPrune_AllRemovesABundleThatIsOnlyDisks(t *testing.T) {
+	st := NewStore(filepath.Join(t.TempDir(), "desktop"))
+	p, err := st.Create("work", "work@example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(p.DataDir(), "vm_bundles", "claudevm.bundle")
+	if err := os.MkdirAll(bundle, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"rootfs.img", "sessiondata.img"} {
+		if err := os.WriteFile(filepath.Join(bundle, name), make([]byte, 4096), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	u, err := Measure(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tier, ok := tierOf(u, "vm_bundles"); !ok || tier != PruneAll {
+		t.Fatalf("vm_bundles tier = %v (present=%v), want all even with nothing but disks inside", tier, ok)
+	}
+	if _, err := Prune(p, PruneAll); err != nil {
+		t.Fatal(err)
+	}
+	if _, serr := os.Stat(filepath.Join(p.DataDir(), "vm_bundles")); !os.IsNotExist(serr) {
+		t.Errorf("vm_bundles still there after --all: %v", serr)
 	}
 }
