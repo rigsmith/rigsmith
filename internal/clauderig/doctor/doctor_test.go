@@ -386,6 +386,7 @@ func TestRun_ChecksUserSettingsOutsideARepo(t *testing.T) {
 	}
 	if !found {
 		t.Error("the user file's misplaced key went unreported outside a repo")
+	}
 }
 
 // The profile-size check stays silent until the reclaimable part of the
