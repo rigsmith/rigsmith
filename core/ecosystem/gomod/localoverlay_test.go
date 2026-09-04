@@ -52,6 +52,20 @@ func TestGoLocalOverlay(t *testing.T) {
 		}
 	})
 
+	t.Run("a go.work that cannot be read is not healthy", func(t *testing.T) {
+		root := newRoot(t, "1.24", "1.24")
+		if err := os.MkdirAll(filepath.Join(root, workFile), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Problems) != 1 || !strings.Contains(got.Problems[0].Message, "cannot be read") || got.Problems[0].Fixable {
+			t.Fatalf("unreadable go.work: %+v, want one unfixable problem", got.Problems)
+		}
+	})
+
 	t.Run("a check reports a go.work that was never written, and stops once it is", func(t *testing.T) {
 		root := newRoot(t, "1.24", "1.24")
 		got, err := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root, Redirects: redirects})

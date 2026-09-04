@@ -70,7 +70,14 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 				Message: "not written — every project here still resolves these packages from the registry; run `rig stack wire`",
 				Fixable: true,
 			})
-		case err == nil && strings.Contains(string(existing), overlayMarker) && crlfToLF(string(existing)) != crlfToLF(body):
+		case err != nil:
+			// Present but unreadable is not healthy: MSBuild cannot use it
+			// either, and rig cannot say what it holds.
+			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+				Path:    overlayFile,
+				Message: "cannot be read (" + err.Error() + ") — MSBuild cannot use it either; make the file readable",
+			})
+		case strings.Contains(string(existing), overlayMarker) && crlfToLF(string(existing)) != crlfToLF(body):
 			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
 				Path:    overlayFile,
 				Message: "out of date — it differs from what the current members and rig would write; re-run `rig stack wire`, which rewrites the file whole (if you extended it by hand, drop the marker line to make it yours, and keep it current yourself)",

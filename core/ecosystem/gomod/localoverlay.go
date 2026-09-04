@@ -111,6 +111,13 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 				Message: "not written — a require on a module in this tree is still fetched from the proxy; run `rig stack wire`",
 				Fixable: true,
 			})
+		case readErr != nil:
+			// Present but unreadable is not healthy: go cannot use it
+			// either, and rig cannot say what it holds.
+			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
+				Path:    workFile,
+				Message: "cannot be read (" + readErr.Error() + ") — go cannot use it either; make the file readable",
+			})
 		case generated && crlfToLF(string(existing)) != crlfToLF(body):
 			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
 				Path:    workFile,
