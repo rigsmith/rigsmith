@@ -115,6 +115,13 @@ func TestIgnoredAt(t *testing.T) {
 			t.Errorf("%s, wrong-case key: got %+v, %v; want it reported as a spelling mistake, not a scope one", s, got, err)
 		}
 	}
+	// A null is not a mode either, and must not pass for an empty string.
+	if err := os.WriteFile(path, []byte(`{"permissions": {"defaultMode": null}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := IgnoredAt(Project, path); err == nil || !IsParseError(err) {
+		t.Errorf("null value: err = %v, want a parse error", err)
+	}
 	// A value of the wrong type does not parse as settings either.
 	if err := os.WriteFile(path, []byte(`{"permissions": {"defaultMode": 42}}`), 0o644); err != nil {
 		t.Fatal(err)

@@ -19,7 +19,7 @@
 | `account` | Manage multiple Claude Code logins: `add` / `list` (alias `ls`/`status`) / `run <id｜email> [-- claude args]` / `switch` / `sessions` (alias `ps`) / `remove` (alias `rm`) / `purge`. `run --no-share` isolates a session; `switch` takes `--dry-run` / `--force` / `--kill` |
 | `desktop` (alias `app`) | Several Claude Desktop accounts side by side, each in its own profile: `add` / `open` / `list` / `quit` / `map` / `shortcut` / `prune` / `rm` (alias `remove`). `prune` reclaims Electron caches and, with `--vm` or `--all`, the Cowork VM image or its whole bundle, without deleting the profile; `--dry-run` shows the breakdown |
 | `config` | `get` / `set` / `show` / `path` / `edit` (`~/.clauderig/config.json`) |
-| `doctor` | Health-check environment + sync + worktree discipline, and report [settings Claude Code ignores](#settings-claude-code-ignores) (`--fix` repairs) |
+| `doctor` | Health-check environment + sync + worktree discipline, and report [settings Claude Code ignores](#settings-claude-code-ignores) (`--fix` repairs what it can; ignored settings are advisory, fixed by editing the file or passing `--permission-mode`) |
 | `ui` | Interactive dashboard |
 
 The worktree and prune verbs (`rig worktree`, `rig prune`) live in

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -193,6 +194,12 @@ func stringAt(m map[string]json.RawMessage, key string) (string, bool, error) {
 	raw, ok := m[key]
 	if !ok {
 		return "", false, nil
+	}
+	// json.Unmarshal leaves a string untouched for null, which would pass a
+	// null off as an empty string; a null is not a mode, and is reported the
+	// way any other wrong type is.
+	if string(bytes.TrimSpace(raw)) == "null" {
+		return "", true, &json.UnmarshalTypeError{Value: "null", Type: reflect.TypeOf(""), Field: key}
 	}
 	var v string
 	if err := json.Unmarshal(raw, &v); err != nil {
