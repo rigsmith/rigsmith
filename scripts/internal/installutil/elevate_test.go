@@ -14,17 +14,21 @@ import (
 // apostrophes in paths survive.
 func TestElevatedCommandCarriesTheContext(t *testing.T) {
 	environ := []string{
-		"PATH=/usr/bin",
+		"PATH=C:\\Go\\bin;C:\\Windows",
 		"RIGSMITH_INSTALL=C:\\Program Files\\rig's tools",
-		"RIGSMITH_DEV_BIN=D:\\bin",
-		elevatedEnv + "=stale", // never forwarded as-is: the child sets it to 1 itself
+		"rigsmith_dev_bin=D:\\bin", // Windows names have no case; the installer's own Getenv reads this
+		elevatedEnv + "=stale",     // never forwarded as-is: the child sets it to 1 itself
+		strings.ToLower(elevatedEnv) + "=stale",
 		"HOME=/home/x",
+		"RIGSMITH_X; Remove-Item C:\\ -Recurse=1", // not a name: an injection, dropped
+		"RIGSMITH_Y\n& calc=1",
 	}
 	got := elevatedCommand(`C:\Users\me\AppData\Local\go-build\exe\source-install.exe`, `C:\src\rigsmith`, environ)
 	for _, want := range []string{
 		"$env:" + elevatedEnv + " = '1'\n",
 		"$env:RIGSMITH_INSTALL = 'C:\\Program Files\\rig''s tools'\n",
-		"$env:RIGSMITH_DEV_BIN = 'D:\\bin'\n",
+		"$env:rigsmith_dev_bin = 'D:\\bin'\n",
+		"$env:PATH = 'C:\\Go\\bin;C:\\Windows'\n",
 		"Set-Location -LiteralPath 'C:\\src\\rigsmith'\n",
 		"& 'C:\\Users\\me\\AppData\\Local\\go-build\\exe\\source-install.exe'\n",
 		"exit $LASTEXITCODE\n",
@@ -33,9 +37,16 @@ func TestElevatedCommandCarriesTheContext(t *testing.T) {
 			t.Errorf("script missing %q:\n%s", want, got)
 		}
 	}
-	for _, leak := range []string{"PATH", "HOME", "stale"} {
+	for _, leak := range []string{"HOME", "stale", "Remove-Item", "calc", "RIGSMITH_X", "RIGSMITH_Y"} {
 		if strings.Contains(got, leak) {
 			t.Errorf("script forwards %q, which is not the installer's:\n%s", leak, got)
+		}
+	}
+	// Every line the script sets is a plain assignment: nothing from the
+	// environment reached the left-hand side unvalidated.
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "$env:") && !envName.MatchString(strings.TrimSuffix(strings.SplitN(line[len("$env:"):], " = ", 2)[0], " ")) {
+			t.Errorf("assignment with an unvalidated name: %q", line)
 		}
 	}
 	// The marker is set before the installer runs, not after.

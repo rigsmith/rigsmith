@@ -17,7 +17,17 @@ import (
 // for it, and hand its exit code back. The encoded command is the one thing
 // crossing the elevation boundary, and it carries everything the installer
 // needs — see elevatedCommand.
-const elevationScript = `$ErrorActionPreference = 'Stop'; try { $p = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $env:RIGSMITH_INSTALL_CMD) -Verb RunAs -Wait -PassThru -ErrorAction Stop; if ($null -eq $p) { exit 1 }; exit $p.ExitCode } catch { Write-Error $_; exit 1 }`
+var elevationScript = elevationScriptFor("powershell.exe", "RunAs")
+
+// elevationScriptFor renders elevationScript for a given host and
+// Start-Process verb, so a test can run the real script without the consent
+// prompt RunAs raises — and against a host that does not exist, to see a
+// launch failure reported as one.
+func elevationScriptFor(host, verb string) string {
+	return "$ErrorActionPreference = 'Stop'; try { $p = Start-Process -FilePath " + psQuote(host) +
+		" -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $env:RIGSMITH_INSTALL_CMD)" +
+		" -Verb " + verb + " -Wait -PassThru -ErrorAction Stop; if ($null -eq $p) { exit 1 }; exit $p.ExitCode } catch { Write-Error $_; exit 1 }"
+}
 
 func shouldElevate(err error) bool {
 	return errors.Is(err, fs.ErrPermission) || errors.Is(err, windows.ERROR_ELEVATION_REQUIRED)

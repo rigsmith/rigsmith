@@ -3,6 +3,7 @@ package installutil
 import (
 	"encoding/base64"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf16"
@@ -11,8 +12,22 @@ import (
 // forwardedEnvPrefix selects the environment the elevated installer has to see:
 // every RIGSMITH_* variable, which is where a custom prefix (RIGSMITH_INSTALL,
 // RIGSMITH_DEV_BIN), a build source (RIGSMITH_DEV_SRC) and the elevation marker
-// itself all live.
+// itself all live. Matched without regard to case: Windows variable names
+// have none, and `$env:rigsmith_install` reaches the installer's own
+// os.Getenv just the same.
 const forwardedEnvPrefix = "RIGSMITH_"
+
+// forwardedAlways names the variables forwarded whatever their prefix. PATH
+// is the one: the elevated child starts from the machine's registry PATH,
+// and the toolchain that built the launcher — `go` from a version manager,
+// an IDE terminal, a profile script — is often only on the session's.
+var forwardedAlways = map[string]bool{"PATH": true}
+
+// envName is the shape a variable name may take to be written into the
+// script. Names come from the caller's environment, and a name is spliced
+// into PowerShell syntax unquoted — so one carrying `;`, a newline or a
+// brace is not a variable, it is an injection, and is dropped.
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // elevatedCommand renders the PowerShell the elevated child runs.
 //
@@ -28,7 +43,11 @@ func elevatedCommand(exe, cwd string, environ []string) string {
 	vars := map[string]string{elevatedEnv: "1"}
 	for _, kv := range environ {
 		k, v, ok := strings.Cut(kv, "=")
-		if !ok || !strings.HasPrefix(k, forwardedEnvPrefix) || k == elevatedEnv {
+		if !ok || !envName.MatchString(k) || strings.EqualFold(k, elevatedEnv) {
+			continue
+		}
+		upper := strings.ToUpper(k)
+		if !strings.HasPrefix(upper, forwardedEnvPrefix) && !forwardedAlways[upper] {
 			continue
 		}
 		vars[k] = v

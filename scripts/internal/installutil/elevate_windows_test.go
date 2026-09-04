@@ -3,6 +3,7 @@
 package installutil
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,10 +34,23 @@ func TestEncodedCommandRunsAndReportsFailure(t *testing.T) {
 	}
 }
 
-func TestElevationScriptFailsWhenProcessCannotStart(t *testing.T) {
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", elevationScript)
-	cmd.Env = append(os.Environ(), "RIGSMITH_INSTALL_CMD=")
-	if err := cmd.Run(); err == nil {
-		t.Fatal("PowerShell launch failure must not be reported as a successful elevation")
+// The launcher script, run without RunAs so no consent prompt appears:
+// the child's exit code comes back as the launcher's, and a host that
+// cannot start is a failure, not a silent success.
+func TestElevationScriptReportsTheChildsOutcome(t *testing.T) {
+	run := func(host string, encoded string) error {
+		cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", elevationScriptFor(host, "Open"))
+		cmd.Env = append(os.Environ(), "RIGSMITH_INSTALL_CMD="+encoded)
+		return cmd.Run()
+	}
+	if err := run("powershell.exe", encodeCommand("exit 0")); err != nil {
+		t.Fatalf("a child that succeeded was reported as a failure: %v", err)
+	}
+	var exit *exec.ExitError
+	if err := run("powershell.exe", encodeCommand("exit 3")); !errors.As(err, &exit) || exit.ExitCode() != 3 {
+		t.Fatalf("child exit code not handed back: %v", err)
+	}
+	if err := run(filepath.Join(t.TempDir(), "no-such-host.exe"), encodeCommand("exit 0")); err == nil {
+		t.Fatal("a host that cannot start must not be reported as a successful elevation")
 	}
 }
