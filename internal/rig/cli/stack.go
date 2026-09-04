@@ -520,7 +520,13 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	r := m.Repos[name]
 	initial := opts.initial
 	tip := opts.at
-	if tip == "" {
+	// Resolved anew when importing from a fork branch even if a cursor was
+	// given: the branch's base is found against upstream as it is now. A
+	// branch proposed after the cursor moved on is based past it, and a
+	// merge-base against the old cursor would answer with the old cursor —
+	// leaving the rebuilt prefix reporting, and later re-merging, upstream
+	// commits it already holds.
+	if tip == "" || opts.fork != nil {
 		var err error
 		if tip, err = stackUpstreamTip(ctx, repo, m, name); err != nil {
 			return err
@@ -822,7 +828,7 @@ func newStackSendCmd() *cobra.Command {
 			}
 			// Remembered after the push, not before: a branch nothing reached is
 			// not the one to offer back next time.
-			if err := stackRememberProposed(src, m, name, typed); err != nil {
+			if err := stackRememberProposed(src, m, name, branch); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "proposed %s — pushed to %s:%s, open the PR against %s\n",

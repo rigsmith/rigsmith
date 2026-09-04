@@ -171,8 +171,10 @@ func (m *stackManifest) ownedNames() []string {
 // legitimate state — it is what `stack init` scaffolds, and what `stack add`
 // writes the first entry into — so loading one is not an error; only asking it
 // to do something is.
-// rememberProposed records the branch a prefix was last proposed on, so the
-// next one can offer it back.
+// stackRememberProposed records the branch a prefix was last proposed on —
+// the one that was pushed, prefix and all, so a rebuild can look for exactly
+// that even if branchPrefix changes later — and the next propose offers it
+// back (sendBranch leaves a name that already carries the prefix alone).
 func stackRememberProposed(src *cfgfind.Source, m *stackManifest, prefix, branch string) error {
 	if m.LastPropose == nil {
 		m.LastPropose = map[string]string{}

@@ -97,6 +97,18 @@ func TestStackForkRefFor(t *testing.T) {
 		if err != nil || ref == nil || ref.Branch != "stack/read-timeout" || ref.Commit != "aaa" {
 			t.Fatalf("%+v, %v", ref, err)
 		}
+		// The record is the branch as pushed; a prefix changed since the
+		// proposal does not send the lookup to a branch that never existed.
+		feature := "feature/"
+		moved := &stackManifest{
+			BranchPrefix: &feature,
+			Repos:        map[string]*stackRepo{"lib": {Upstream: "h/acme/lib", Fork: "h/you/lib"}},
+			LastPropose:  map[string]string{"lib": "stack/read-timeout"},
+		}
+		ref, err = stackForkRefFor(moved, "lib", true, resolve)
+		if err != nil || ref == nil || ref.Branch != "stack/read-timeout" || ref.Commit != "aaa" {
+			t.Fatalf("prefix changed after the proposal: %+v, %v", ref, err)
+		}
 		gone := func(string) (string, bool, error) { return "", false, nil }
 		if ref, err := stackForkRefFor(m, "lib", true, gone); err != nil || ref != nil {
 			t.Fatalf("merged-and-deleted branch: %+v, %v — want upstream at the cursor", ref, err)

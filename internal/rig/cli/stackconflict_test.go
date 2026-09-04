@@ -68,11 +68,16 @@ func conflictedStackspace(t *testing.T, touchPrefix bool) (*gitrepo.Repo, string
 func TestStackSettleConflicts(t *testing.T) {
 	t.Run("conflicts outside the prefix are settled as ours and the merge is committed", func(t *testing.T) {
 		repo, root := conflictedStackspace(t, false)
+		// The ancestor is named by its commit, found before the merge is
+		// committed — afterwards `merge-base HEAD MERGE_HEAD` would answer
+		// with the fetched tip, which is not the commit that explains
+		// anything.
+		base := strings.TrimSpace(mustGitStack(t, root, "merge-base", "main", "fetched"))
 		var out bytes.Buffer
 		if err := stackSettleConflicts(context.Background(), &out, repo, "tweed"); err != nil {
 			t.Fatalf("%v\n%s", err, out.String())
 		}
-		for _, want := range []string{"2 conflict(s) outside tweed/", "mermaider/ (2)", "merge-base HEAD FETCH_HEAD"} {
+		for _, want := range []string{"2 conflict(s) outside tweed/", "mermaider/ (2)", "has stackspace commit " + short(base) + " as an ancestor"} {
 			if !strings.Contains(out.String(), want) {
 				t.Errorf("output missing %q:\n%s", want, out.String())
 			}

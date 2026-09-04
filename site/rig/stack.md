@@ -644,8 +644,9 @@ stops after. Pin a version per stackspace with the manifest's
   base already held that path — the fetched history shares a *stackspace*
   commit as an ancestor, which a hand-edited manifest or a rough removal and
   re-add can bring about. `pull` settles those paths as the stackspace's own
-  version and says how many, in which directories, and what it means;
-  `git merge-base HEAD FETCH_HEAD` names the ancestor if you want to see it.
+  version and says how many, in which directories, and which commit the two
+  histories share — named before the merge is committed, since afterwards the
+  fetched history is simply part of yours.
   Conflicts inside the prefix are real, and `pull` lists the files rather than
   just the directory. `git merge --abort` steps back; the cursor is not moved
   until the merge is committed, so a re-run tries again from the same place.

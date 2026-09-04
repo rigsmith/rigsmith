@@ -194,7 +194,7 @@
     },
     "lastPropose": {
       "type": "object",
-      "description": "Written by `rig stack propose`, not by hand: the branch name each repo was last proposed on, offered back next time so an open pull request can take another round without retyping it.",
+      "description": "Written by `rig stack propose`, not by hand: the branch each repo was last pushed to on its fork, prefix included. Offered back next time so an open pull request can take another round without retyping it, and what `init` looks for when rebuilding a member (see trackBranch).",
       "additionalProperties": {
         "type": "string"
       }

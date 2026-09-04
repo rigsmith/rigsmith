@@ -243,13 +243,24 @@ func stackForkRefFor(m *stackManifest, name string, rebuilding bool, resolve fun
 	}
 	// The proposed branch may have merged and been deleted since; upstream
 	// then already carries it, and the cursor is the right place to rebuild.
-	branch := m.sendBranch(name, m.LastPropose[name])
-	sha, ok, err := resolve(branch)
-	if err != nil {
-		return nil, fmt.Errorf("%s: checking whether %s still carries %s: %w\nthat branch may hold work the rebuilt %s/ would otherwise lack", name, r.Fork, branch, err, name)
+	//
+	// The record is the branch as pushed, looked up as it is. A manifest from
+	// before it was recorded that way holds the bare name, so the current
+	// prefix is tried after — which finds the branch unless the prefix has
+	// changed since, the case recording the full name exists to cover.
+	last := m.LastPropose[name]
+	candidates := []string{last}
+	if full := m.sendBranch(name, last); full != last {
+		candidates = append(candidates, full)
 	}
-	if ok {
-		return &stackForkRef{Branch: branch, Commit: sha}, nil
+	for _, branch := range candidates {
+		sha, ok, err := resolve(branch)
+		if err != nil {
+			return nil, fmt.Errorf("%s: checking whether %s still carries %s: %w\nthat branch may hold work the rebuilt %s/ would otherwise lack", name, r.Fork, branch, err, name)
+		}
+		if ok {
+			return &stackForkRef{Branch: branch, Commit: sha}, nil
+		}
 	}
 	return nil, nil
 }

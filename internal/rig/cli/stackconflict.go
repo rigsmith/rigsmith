@@ -38,13 +38,20 @@ func stackSettleConflicts(ctx context.Context, out io.Writer, repo *gitrepo.Repo
 		}
 	}
 	if len(outside) > 0 {
+		// Named now, while HEAD is still the pre-merge commit: once the merge
+		// is committed the fetched history is an ancestor of HEAD, and the
+		// same question answers with the fetched tip instead.
+		ancestor := "a stackspace commit"
+		if base, err := repo.MergeBase(ctx, "HEAD", "MERGE_HEAD"); err == nil && base != "" {
+			ancestor = "stackspace commit " + short(base)
+		}
 		if err := repo.ResolveOurs(ctx, outside); err != nil {
 			return fmt.Errorf("settling conflicts outside %s/: %w", name, err)
 		}
 		fmt.Fprintf(out, "%s: %d conflict(s) outside %s/ settled as this stackspace's version — %s\n",
 			name, len(outside), name, stackConflictDirs(outside))
 		fmt.Fprintf(out, "  a history filtered to %s/ cannot change anything outside it, so those were never upstream's to decide;\n"+
-			"  their appearing at all means the fetched history shares a stackspace commit as an ancestor — `git merge-base HEAD FETCH_HEAD` names it\n", name)
+			"  their appearing at all means the fetched history has %s as an ancestor\n", name, ancestor)
 	}
 	if len(inside) > 0 {
 		shown := inside
