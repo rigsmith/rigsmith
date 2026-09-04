@@ -18,6 +18,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/gitignore"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
+	"github.com/rigsmith/rigsmith/internal/clauderig/settings"
 	"github.com/rigsmith/rigsmith/internal/clauderig/status"
 )
 
@@ -281,6 +282,73 @@ func checkProjectGuard(env Env) Result {
 			_, err := hooks.Install(env.ProjectSettings, hooks.GuardPlans())
 			return err
 		}}
+}
+
+// checkIgnoredSettings reports values in a settings.json that Claude Code
+// does not honour where they are — a `defaultMode` of "bypassPermissions"
+// or "auto" in the project or local file, or a top-level `defaultMode` in
+// any file — because Claude Code drops them without a word, and a value
+// that was honoured until the 2026-09-02 release otherwise just stops
+// working. A file that will not parse, or cannot be read, is reported too,
+// as its own problem: nothing can be said about what it carries. Reported
+// only when there is something to say, with a hint for each kind of
+// problem found, since fixing one must not hide the advice for another.
+func checkIgnoredSettings(env Env) (Result, bool) {
+	var found, broken []string
+	var dropped, misplaced, malformed, unreadable bool
+	for _, tier := range []struct {
+		scope settings.Scope
+		path  string
+	}{{settings.User, env.UserSettings}, {settings.Project, env.ProjectSettings}, {settings.Local, env.LocalSettings}} {
+		if tier.path == "" {
+			continue
+		}
+		ignored, err := settings.IgnoredAt(tier.scope, tier.path)
+		if err != nil {
+			// Said here, because nothing else says it: the guard check reads
+			// the same file and reports a parse failure as "not installed".
+			if settings.IsParseError(err) {
+				broken = append(broken, fmt.Sprintf("%s settings at %s does not parse as settings (%v)", tier.scope, tier.path, err))
+				malformed = true
+			} else {
+				broken = append(broken, fmt.Sprintf("%s settings at %s could not be read (%v)", tier.scope, tier.path, err))
+				unreadable = true
+			}
+			continue
+		}
+		for _, i := range ignored {
+			line := fmt.Sprintf("%s in %s (%s settings)", i, tier.path, tier.scope)
+			if i.Where != "" {
+				line += " — honoured only from " + i.Where
+				dropped = true
+			}
+			if i.Fix != "" {
+				line += " — " + i.Fix
+				misplaced = true
+			}
+			found = append(found, line)
+		}
+	}
+	if len(found) == 0 && len(broken) == 0 {
+		return Result{}, false
+	}
+	var hints []string
+	if dropped {
+		hints = append(hints, "Claude Code drops these silently at this scope — pass --permission-mode for the session that needs it, or set it in ~/.claude/settings.json knowing that applies to every project")
+	}
+	if misplaced {
+		hints = append(hints, "a key Claude Code never reads — a top-level defaultMode goes under permissions, and the spelling is defaultMode exactly")
+	}
+	if malformed {
+		hints = append(hints, "fix the file — a JSON syntax error or a value of the wrong type; nothing in it can be checked until it parses as settings")
+	}
+	if unreadable {
+		hints = append(hints, "make the file readable — nothing in it can be checked until it is")
+	}
+	return Result{Name: "ignored settings", Status: Warn,
+		Detail: strings.Join(append(found, broken...), "; "),
+		Hint:   strings.Join(hints, "; "),
+	}, true
 }
 
 func checkGuide(env Env) Result {

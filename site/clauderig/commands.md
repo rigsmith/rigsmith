@@ -19,7 +19,7 @@
 | `account` | Manage multiple Claude Code logins: `add` / `list` (alias `ls`/`status`) / `run <id｜email> [-- claude args]` / `switch` / `sessions` (alias `ps`) / `remove` (alias `rm`) / `purge`. `run --no-share` isolates a session; `switch` takes `--dry-run` / `--force` / `--kill` |
 | `desktop` (alias `app`) | Several Claude Desktop accounts side by side, each in its own profile: `add` / `open` / `list` / `quit` / `map` / `shortcut` / `prune` / `rm` (alias `remove`). `prune` reclaims Electron caches and, with `--vm` or `--all`, the Cowork VM image or its whole bundle, without deleting the profile; `--dry-run` shows the breakdown |
 | `config` | `get` / `set` / `show` / `path` / `edit` (`~/.clauderig/config.json`) |
-| `doctor` | Health-check environment + sync + worktree discipline (`--fix` repairs) |
+| `doctor` | Health-check environment + sync + worktree discipline, and report [settings Claude Code ignores](#settings-claude-code-ignores) (`--fix` repairs what it can; ignored settings are advisory, fixed by editing the file or passing `--permission-mode`) |
 | `ui` | Interactive dashboard |
 
 The worktree and prune verbs (`rig worktree`, `rig prune`) live in
@@ -310,6 +310,24 @@ and could file the session under the wrong account. Quit the others, or pass
 
 The profile model this sits on is in
 [`docs/CLAUDERIG-DESKTOP-PROFILES.md`](https://github.com/rigsmith/rigsmith/blob/main/docs/CLAUDERIG-DESKTOP-PROFILES.md).
+
+## Settings Claude Code ignores
+
+Claude Code reads settings from three tiers — user (`~/.claude/settings.json`),
+project (`.claude/settings.json`, committed) and local
+(`.claude/settings.local.json`, gitignored) — and for most keys the narrower
+tier wins. Not for every key: a few are read from user or managed settings
+only. `permissions.defaultMode: "bypassPermissions"` (since the 2026-09-02
+release) and `"auto"` are silently dropped from a project or local file, and
+nothing says so: a repo that committed the value when it worked just finds it
+no longer does. `clauderig doctor` reports such values as *ignored settings*,
+naming the file — and a `defaultMode` written at the top level of any tier's
+file rather than under `permissions`, or spelled in another case, which Claude
+Code never reads (JSON keys are case-sensitive).
+For a session that needs the mode, pass `--permission-mode`
+on the command line. Setting it in `~/.claude/settings.json` works too, but
+that applies to every project on the machine — a much wider grant than the one
+repository the project file meant — so reach for it deliberately.
 
 ## Hooks
 

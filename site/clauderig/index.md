@@ -24,7 +24,7 @@ clauderig mcp add ctx7 npx -y @upstash/context7-mcp   # manage MCP servers (list
 clauderig desktop open work    # a Claude Desktop window per account, each its own profile
 clauderig desktop prune --vm   # reclaim the Cowork VM image + caches; keeps login and history
 rig worktree new feat/x        # sibling worktree + review window; never moves this session
-clauderig doctor               # health-check env + sync + worktree discipline (--fix repairs)
+clauderig doctor               # health-check env + sync + worktree discipline + ignored settings (--fix repairs what it can; ignored settings are advisory)
 clauderig hooks install        # SessionStart→pull, Stop→sync, SessionEnd→sync --flush
 clauderig ui                   # interactive dashboard
 ```

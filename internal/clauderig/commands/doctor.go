@@ -27,7 +27,7 @@ func NewDoctorCmd(version string) *cobra.Command {
 	var fixAll bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Health-check claudeRig: environment, sync, worktree discipline (--fix to repair)",
+		Short: "Health-check claudeRig: environment, sync, worktree discipline, settings Claude Code ignores (--fix repairs what it can; ignored settings are advisory)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runDoctor(cmd, version, fixAll)

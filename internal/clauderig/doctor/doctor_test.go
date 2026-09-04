@@ -297,6 +297,98 @@ func TestCheckStagingMerge_CleanRepoIsOK(t *testing.T) {
 	}
 }
 
+func TestCheckIgnoredSettings(t *testing.T) {
+	dir := t.TempDir()
+	env := Env{RepoRoot: dir,
+		ProjectSettings: filepath.Join(dir, ".claude", "settings.json"),
+		LocalSettings:   filepath.Join(dir, ".claude", "settings.local.json")}
+	if _, ok := checkIgnoredSettings(env); ok {
+		t.Fatal("no settings files: expected the check to be skipped")
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(env.LocalSettings, []byte(`{"permissions":{"defaultMode":"bypassPermissions"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := checkIgnoredSettings(env)
+	if !ok || r.Status != Warn || !strings.Contains(r.Detail, "bypassPermissions") || !strings.Contains(r.Detail, env.LocalSettings) {
+		t.Fatalf("got ok=%v %+v, want a Warn naming the local file and its value", ok, r)
+	}
+	// A file that will not parse is reported, not skipped: nothing else says it.
+	if err := os.WriteFile(env.ProjectSettings, []byte(`{not json`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, ok = checkIgnoredSettings(env)
+	if !ok || !strings.Contains(r.Detail, "does not parse as settings") {
+		t.Fatalf("malformed project settings: got ok=%v %+v", ok, r)
+	}
+	// Both problems at once get both pieces of advice.
+	if !strings.Contains(r.Hint, "--permission-mode") || !strings.Contains(r.Hint, "JSON") {
+		t.Fatalf("ignored value plus malformed file: hint = %q, want advice for each", r.Hint)
+	}
+	// With only the parse failure left, the advice is about the JSON, not
+	// about a permission mode the file may not even set.
+	if err := os.Remove(env.LocalSettings); err != nil {
+		t.Fatal(err)
+	}
+	r, ok = checkIgnoredSettings(env)
+	if !ok || strings.Contains(r.Hint, "--permission-mode") || !strings.Contains(r.Hint, "JSON") || !strings.Contains(r.Detail, env.ProjectSettings) {
+		t.Fatalf("parse failure alone: got ok=%v hint=%q detail=%q", ok, r.Hint, r.Detail)
+	}
+	// A file that cannot be opened at all is not told to fix its JSON.
+	if err := os.Remove(env.ProjectSettings); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(env.ProjectSettings, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, ok = checkIgnoredSettings(env)
+	if !ok || strings.Contains(r.Hint, "JSON") || !strings.Contains(r.Hint, "readable") || !strings.Contains(r.Detail, "could not be read") {
+		t.Fatalf("read failure alone: got ok=%v hint=%q detail=%q", ok, r.Hint, r.Detail)
+	}
+	// A top-level defaultMode in the USER file is a mistake too, with its
+	// own advice and no claim that another scope would honour it.
+	if err := os.RemoveAll(env.ProjectSettings); err != nil {
+		t.Fatal(err)
+	}
+	env.UserSettings = filepath.Join(dir, "user-settings.json")
+	if err := os.WriteFile(env.UserSettings, []byte(`{"defaultMode": "acceptEdits"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, ok = checkIgnoredSettings(env)
+	if !ok || !strings.Contains(r.Detail, "user settings") || strings.Contains(r.Detail, "honoured only") || !strings.Contains(r.Hint, "under permissions") || strings.Contains(r.Hint, "--permission-mode") {
+		t.Fatalf("top-level key in user settings: got ok=%v %+v", ok, r)
+	}
+}
+
+// The user settings file is checked wherever doctor runs: a misplaced key in
+// it is the same mistake outside a repo as inside one.
+func TestRun_ChecksUserSettingsOutsideARepo(t *testing.T) {
+	user := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(user, []byte(`{"defaultMode": "acceptEdits"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := Env{UserSettings: user}
+	if env.InRepo() {
+		t.Fatal("fixture is unexpectedly in a repo")
+	}
+	var found bool
+	for _, sec := range Run(context.Background(), env) {
+		for _, r := range sec.Results {
+			if r.Name == "ignored settings" {
+				found = true
+				if r.Status != Warn || !strings.Contains(r.Detail, user) {
+					t.Errorf("got %+v, want a Warn naming the user file", r)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("the user file's misplaced key went unreported outside a repo")
+	}
+}
+
 // The profile-size check stays silent until the reclaimable part of the
 // Desktop profiles crosses the threshold, then names the totals and prune.
 func TestCheckDesktopSize(t *testing.T) {
