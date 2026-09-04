@@ -371,25 +371,41 @@ func TestSync_FlushIsScopedToTheNamedTranscript(t *testing.T) {
 		}
 		return rep.Roots[0]
 	}
-	stagedSize := func(name string) int64 {
+	stagedSize := func(rel string) int64 {
 		t.Helper()
-		fi, err := os.Stat(filepath.Join(staging, "cli", "projects", "-p", name))
+		fi, err := os.Stat(filepath.Join(staging, "cli", "projects", "-p", filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return fi.Size()
 	}
-	write(t, live, "projects/-p/ended.jsonl", strings.Repeat("a", threshold+100))
-	write(t, live, "projects/-p/running.jsonl", strings.Repeat("b", threshold+100))
+	// Each session has a sub-agent transcript beside it, under a directory
+	// of its own name. The hook names only the parent; the sub-agents ended
+	// with it and are flushed with it, and the other session's are not.
+	files := map[string]string{
+		"ended.jsonl": "a", "ended/subagents/agent-1.jsonl": "c",
+		"running.jsonl": "b", "running/subagents/agent-2.jsonl": "d",
+	}
+	for rel, fill := range files {
+		write(t, live, "projects/-p/"+rel, strings.Repeat(fill, threshold+100))
+	}
 	sync()
-	write(t, live, "projects/-p/ended.jsonl", strings.Repeat("a", threshold+110))
-	write(t, live, "projects/-p/running.jsonl", strings.Repeat("b", threshold+110))
-	if r := sync(); r.Deferred != 2 {
-		t.Fatalf("both small tails: deferred=%d, want 2", r.Deferred)
+	for rel, fill := range files {
+		write(t, live, "projects/-p/"+rel, strings.Repeat(fill, threshold+110))
+	}
+	if r := sync(); r.Deferred != 4 {
+		t.Fatalf("four small tails: deferred=%d, want 4", r.Deferred)
 	}
 	r := sync(filepath.Join(live, "projects", "-p", "ended.jsonl"))
-	if r.Deferred != 1 || stagedSize("ended.jsonl") != threshold+110 || stagedSize("running.jsonl") != threshold+100 {
-		t.Fatalf("flush of ended.jsonl: deferred=%d ended=%d running=%d; want the named one restaged and the other still waiting",
-			r.Deferred, stagedSize("ended.jsonl"), stagedSize("running.jsonl"))
+	if r.Deferred != 2 {
+		t.Fatalf("flush of ended.jsonl: deferred=%d, want the other session's two still waiting", r.Deferred)
+	}
+	for rel, want := range map[string]int64{
+		"ended.jsonl": threshold + 110, "ended/subagents/agent-1.jsonl": threshold + 110,
+		"running.jsonl": threshold + 100, "running/subagents/agent-2.jsonl": threshold + 100,
+	} {
+		if got := stagedSize(rel); got != want {
+			t.Errorf("%s staged at %d, want %d", rel, got, want)
+		}
 	}
 }

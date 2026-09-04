@@ -102,15 +102,48 @@ const largeFileSettle = 30 * time.Minute
 // flushSet resolves Options.Flush into a set keyed the way the walk will ask
 // — cleaned, with symlinks resolved where the path exists — so a path the
 // hook reports and the one the walk visits agree whatever the spelling.
-func flushSet(paths []string) map[string]bool {
+func flushSet(paths []string) flushScope {
+	var f flushScope
 	if len(paths) == 0 {
-		return nil
+		return f
 	}
-	set := make(map[string]bool, len(paths))
+	f.files = make(map[string]bool, len(paths))
 	for _, p := range paths {
-		set[canonicalPath(p)] = true
+		c := canonicalPath(p)
+		f.files[c] = true
+		// A session's sub-agent transcripts live beside it, under a
+		// directory of its own name: projects/<slug>/<id>/subagents/….
+		// They ended with the session, and the hook names only the parent.
+		if dir := strings.TrimSuffix(c, ".jsonl"); dir != c {
+			f.dirs = append(f.dirs, dir+string(filepath.Separator))
+		}
 	}
-	return set
+	return f
+}
+
+// flushScope is what a flush covers: the transcripts named, and every
+// transcript under the directory a named session keeps its sub-agents in.
+// Nothing else — a flush is one session's, not the machine's.
+type flushScope struct {
+	files map[string]bool
+	dirs  []string
+}
+
+// covers reports whether the flush exempts path from the throttle.
+func (f flushScope) covers(path string) bool {
+	if len(f.files) == 0 {
+		return false
+	}
+	c := canonicalPath(path)
+	if f.files[c] {
+		return true
+	}
+	for _, d := range f.dirs {
+		if strings.HasPrefix(c, d) {
+			return true
+		}
+	}
+	return false
 }
 
 // canonicalPath is a path as the flush set keys it.
@@ -264,7 +297,7 @@ func Sync(opts Options) (*Report, error) {
 				// repo carries until the next squash. Past LargeFileBytes it waits
 				// for a chunk's worth of new content, or for the session to go
 				// quiet, before it is restaged.
-				if !unchanged && !flush[canonicalPath(srcPath)] && deferLarge(rel, info, staged, opts.LargeFileBytes, cutoff, time.Now()) {
+				if !unchanged && !flush.covers(srcPath) && deferLarge(rel, info, staged, opts.LargeFileBytes, cutoff, time.Now()) {
 					rr.Deferred++
 					continue
 				}
