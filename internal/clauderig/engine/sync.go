@@ -18,6 +18,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
+	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
@@ -666,6 +667,9 @@ func Sync(opts Options) (*Report, error) {
 		}
 	}
 
+	if err := backupgit.Ensure(opts.StagingDir); err != nil {
+		return rep, err
+	}
 	if audit, err := Audit(opts.StagingDir); err != nil {
 		return rep, err
 	} else {

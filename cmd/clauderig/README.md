@@ -67,6 +67,10 @@ the same in the gitignored `.claude/settings.local.json`). See
   changed tail is captured. Restore reconstructs native JSONL. Set the key false
   to convert back, or auto to follow the repo. See
   [storage and scanning](../../docs/CLAUDERIG-TRANSCRIPT-STORAGE.md).
+- **Preserve backup bytes through Git.** Committed attributes prevent line-ending,
+  encoding and filter conversions. Existing indexes are refreshed on upgrade;
+  conflicting attribute overrides refuse publication. Already damaged historical
+  chunks still require recovery from an intact source.
 - **Plain large transcripts are throttled.** Past `retention.largeFileBytes` (8 MiB)
   a session's transcript is restaged only once it has grown by half that much
   again, or gone quiet for 30 minutes, so the per-turn Stop hook does not
