@@ -113,7 +113,7 @@
           },
           "section": {
             "type": "string",
-            "description": "Changelog section heading, e.g. \"🚀 Enhancements\"."
+            "description": "Changelog section heading, e.g. \"\ud83d\ude80 Enhancements\"."
           },
           "bump": {
             "type": "string",
@@ -147,7 +147,7 @@
     "contributors": {
       "type": "object",
       "additionalProperties": true,
-      "description": "Configures the trailing \"❤️ Contributors\" changelog section.",
+      "description": "Configures the trailing \"\u2764\ufe0f Contributors\" changelog section.",
       "properties": {
         "enabled": {
           "type": "boolean",
@@ -274,7 +274,7 @@
         },
         "auth": {
           "type": "string",
-          "description": "Registry credential as a secret ref: \"op://…\", \"env:NAME\", or \"cmd:…\"."
+          "description": "Registry credential as a secret ref: \"op://\u2026\", \"env:NAME\", or \"cmd:\u2026\"."
         },
         "oidc": {
           "type": "string",
