@@ -53,11 +53,20 @@ var (
 	// GlobalPackageReference in a Directory.Packages.props under Central
 	// Package Management — or any of the MinVer* properties that tune it
 	// (MinVerTagPrefix, MinVerMinimumMajorMinor, …) in a props file.
-	minVerRe        = regexp.MustCompile(`<(?:Global)?PackageReference[^>]*\bInclude\s*=\s*"MinVer"|<MinVer[A-Za-z]*[\s>]`)
-	projectRefRe    = regexp.MustCompile(`<ProjectReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
-	packageRefRe    = regexp.MustCompile(`<PackageReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
-	propertyGroupRe = regexp.MustCompile(`<PropertyGroup[^>]*>`)
-	conditionAttrRe = regexp.MustCompile(`\bCondition\s*=`)
+	minVerRe         = regexp.MustCompile(`<(?:Global)?PackageReference[^>]*\bInclude\s*=\s*"MinVer"|<MinVer[A-Za-z]*[\s>]`)
+	projectRefRe     = regexp.MustCompile(`<ProjectReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
+	packageRefRe     = regexp.MustCompile(`<PackageReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
+	propertyGroupRe  = regexp.MustCompile(`<PropertyGroup[^>]*>`)
+	conditionAttrRe  = regexp.MustCompile(`\bCondition\s*=`)
+	conditionValueRe = regexp.MustCompile(`(?s)\bCondition\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+	// One MSBuild string predicate on a well-known project property, in the
+	// spellings a props file actually uses: the property on its own, wrapped in
+	// [System.String]::Copy(...), and with or without a .Replace() normalising
+	// separators first.
+	pathPredicateRe = regexp.MustCompile(
+		`^\$\(\s*(?:\[System\.String\]::Copy\(\s*\$\()?\s*(MSBuildProjectDirectory|MSBuildProjectName)\s*\)?\s*\)?` +
+			`(?:\.Replace\((?:'[^']*'|"[^"]*")\s*,\s*(?:'[^']*'|"[^"]*")\))?` +
+			`\.(Contains|StartsWith|EndsWith)\(\s*(?:'([^']*)'|"([^"]*)")\s*\)\s*\)$`)
 	// An <Import> whose Project names Directory.Packages.props outright. The
 	// other way to write it, GetPathOfFileAbove, resolves into a property first
 	// and is looked for by name; see importsPackagesPropsAbove.
@@ -545,8 +554,12 @@ func packable(csprojPath, csprojText string) bool {
 	conditionalTrue := false
 	for _, text := range texts {
 		for _, a := range isPackableAssignments(text) {
-			if a.conditional {
+			applies, undecided := a.decide(csprojPath)
+			if undecided {
 				conditionalTrue = conditionalTrue || a.value
+				continue
+			}
+			if !applies {
 				continue
 			}
 			v := a.value
@@ -604,12 +617,104 @@ func importsPackagesPropsAbove(text string) bool {
 	return strings.Contains(text, "<Import")
 }
 
+// conditionAttr returns the value of a Condition attribute on a tag.
+func conditionAttr(tag string) (string, bool) {
+	m := conditionValueRe.FindStringSubmatch(tag)
+	if m == nil {
+		return "", false
+	}
+	if m[1] != "" {
+		return m[1], true
+	}
+	return m[2], true
+}
+
+// decideCondition evaluates the one family of MSBuild conditions that decides
+// whether a project packs and is answerable from the project's path alone:
+// a test on MSBuildProjectDirectory or MSBuildProjectName. It is what a shared
+// props file uses to say "everything under src/ packs, nothing else does", so
+// evaluating it is the difference between listing a repo's two libraries and
+// listing its tests and benchmarks alongside them.
+//
+// Only a single predicate is read, optionally negated. Anything else — a
+// comparison, a compound of several, a reference to a property whose value is
+// not known here — is left undecided for the caller to be tolerant about.
+func decideCondition(cond, csprojPath string) (result bool, ok bool) {
+	cond = strings.TrimSpace(cond)
+	negated := false
+	for strings.HasPrefix(cond, "!") {
+		negated = !negated
+		cond = strings.TrimSpace(cond[1:])
+	}
+	m := pathPredicateRe.FindStringSubmatch(cond)
+	if m == nil {
+		return false, false
+	}
+	// The whole condition must be the predicate; a compound is not decided here.
+	if m[0] != cond {
+		return false, false
+	}
+	subject := m[1]
+	method := m[2]
+	arg := m[3]
+	if arg == "" {
+		arg = m[4]
+	}
+
+	var value string
+	switch subject {
+	case "MSBuildProjectDirectory":
+		value = filepath.Dir(csprojPath)
+	case "MSBuildProjectName":
+		value = strings.TrimSuffix(filepath.Base(csprojPath), filepath.Ext(csprojPath))
+	default:
+		return false, false
+	}
+	// MSBuild compares the platform's separators; a props file normalises with
+	// .Replace('\\','/') so the same rule reads on both. Compare in one form.
+	value = filepath.ToSlash(value)
+	arg = strings.ReplaceAll(arg, "\\", "/")
+
+	switch method {
+	case "Contains":
+		result = strings.Contains(value, arg)
+	case "StartsWith":
+		result = strings.HasPrefix(value, arg)
+	case "EndsWith":
+		result = strings.HasSuffix(value, arg)
+	default:
+		return false, false
+	}
+	if negated {
+		result = !result
+	}
+	return result, true
+}
+
+// decide resolves an assignment's conditions against the project path. A
+// condition that is decidable and false means the assignment does not happen at
+// all; several conditions (one on the element, one on its group) must all hold.
+// undecided is true when any condition could not be read.
+func (a isPackableAssignment) decide(csprojPath string) (applies bool, undecided bool) {
+	for _, c := range a.conditions {
+		result, ok := decideCondition(c, csprojPath)
+		if !ok {
+			return false, true
+		}
+		if !result {
+			return false, false
+		}
+	}
+	return true, false
+}
+
 // isPackableAssignment is one <IsPackable> element inside a PropertyGroup:
-// its boolean value, and whether a Condition on the element or on its group
-// makes it one that text alone cannot settle.
+// its boolean value, and the Conditions on the element and on its group — the
+// text of each, so a condition that turns out to be decidable can be decided
+// rather than merely noted.
 type isPackableAssignment struct {
-	value       bool
-	conditional bool
+	value      bool
+	conditions []string
 }
 
 // isPackableAssignments lists the <IsPackable> assignments in a document, in
@@ -628,10 +733,13 @@ func isPackableAssignments(text string) []isPackableAssignment {
 				// start of its value.
 				elementTag := text[m[0]:m[2]]
 				groupTag := text[g.open[0]:g.open[1]]
-				out = append(out, isPackableAssignment{
-					value:       v == "true",
-					conditional: conditionAttrRe.MatchString(elementTag) || conditionAttrRe.MatchString(groupTag),
-				})
+				var conditions []string
+				for _, tag := range []string{elementTag, groupTag} {
+					if c, ok := conditionAttr(tag); ok {
+						conditions = append(conditions, c)
+					}
+				}
+				out = append(out, isPackableAssignment{value: v == "true", conditions: conditions})
 			}
 			break
 		}
