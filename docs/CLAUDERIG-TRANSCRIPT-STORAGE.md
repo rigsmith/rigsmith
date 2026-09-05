@@ -60,6 +60,22 @@ use an updated binary to read or restore those revisions.
 
 ## Layout and guarantees
 
+The backup's committed `.gitattributes` disables Git line-ending, encoding,
+keyword and clean/smudge conversions for stored files. This preserves native
+transcripts and chunk hashes even with `core.autocrlf=true`, including during a
+fresh clone. Sync installs the rules in existing backups and refreshes cached
+Git blobs using the current staged working files. Unrelated attribute rules
+remain intact. Overriding conversion rules in nested `.gitattributes` or
+`.git/info/attributes` must be removed before publication can proceed.
+
+Upgrade and sync from a machine with intact source transcripts first. These
+rules prevent future conversions; they do not reconstruct bytes already lost
+from historical Git blobs. Existing checkouts whose chunks were converted still
+fail integrity checks until replaced with verified bytes. Sync can rebuild this
+machine's chunks from its live transcripts; remote-only damaged copies require
+an intact source or verified backup. Do not bypass hash checks or replace the
+recorded hashes to make damaged chunks appear valid.
+
 `cli/projects/<slug>/<id>.jsonl` becomes a version-1 JSON index describing the
 original byte length and an ordered list of SHA-256 hashes and part lengths.
 Its chunks live beside it, in `<id>.jsonl.chunks/<hash>.part`. Each full part is
