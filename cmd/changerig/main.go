@@ -17,6 +17,12 @@ import (
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 )
 
+// version is stamped at release time via -ldflags "-X main.version=...". Without
+// it a released binary falls through to fang's source-build description, so
+// every published changerig used to introduce itself as a build from someone
+// else's machine.
+var version = "dev"
+
 func main() {
 	if err := run(context.Background()); err != nil {
 		os.Exit(1)
@@ -33,5 +39,5 @@ func run(ctx context.Context) error {
 	if len(os.Args) == 1 && commands.Interactive() {
 		root.SetArgs([]string{"ui"})
 	}
-	return fang.Execute(ctx, root, fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentChange)), fang.WithBanner(brand.ChangeBanner))
+	return fang.Execute(ctx, root, fang.WithVersion(version), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentChange)), fang.WithBanner(brand.ChangeBanner))
 }
