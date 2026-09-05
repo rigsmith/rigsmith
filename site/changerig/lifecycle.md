@@ -169,7 +169,13 @@ break that assumption:
   CI-stamped build — carries no number in the tree at all. Such a project is
   still discovered as a package (a `.NET` project is, when it is `IsPackable`,
   declares a `PackageId`, or references MinVer), listed as *no version in the
-  tree*;
+  tree*. `IsPackable` is taken as true when any `PropertyGroup` in the project
+  or an ancestor `Directory.Build.props` sets it true — conditions are not
+  evaluated, so a shared props file that sets it false for everything and true
+  again under `Condition="…Contains('/src/')"` counts as true — and an explicit
+  false with no true anywhere excludes the project. A MinVer reference counts
+  whether it is a `PackageReference` in the project or a
+  `GlobalPackageReference` in an ancestor `Directory.Packages.props`;
 - one whose manifest is **not this repository's to write** — a member of a
   [stackspace](/rig/stack), whose directory leaves in pull requests to its
   upstream, where a stamped version would be a bump nobody asked for.

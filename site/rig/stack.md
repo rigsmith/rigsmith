@@ -615,7 +615,11 @@ manifest — and changes three things without being told:
   in the release pipeline. The member's changelog goes to the root
   `CHANGELOG.md`, one section per member. A member whose version is computed at
   build time (MinVer) is discovered as a package all the same, with no version
-  in the tree until a release records one.
+  in the tree until a release records one — whether MinVer is a
+  `PackageReference` in the project or a `GlobalPackageReference` in an
+  ancestor `Directory.Packages.props`, and whether the project's `IsPackable`
+  is set true inline or in any `PropertyGroup` of an ancestor
+  `Directory.Build.props`, conditions not evaluated.
 - **`tag` and `push` do nothing.** A tag on a fused history names nothing an
   upstream knows, and the history — three rewritten upstreams fused together —
   must never reach a remote. The forge `release` step is skipped with them.

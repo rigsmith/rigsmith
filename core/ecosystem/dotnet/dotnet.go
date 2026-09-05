@@ -34,6 +34,11 @@ var _ plugin.Ecosystem = (*Adapter)(nil)
 // propsFileName is the shared props file MSBuild walks ancestors for.
 const propsFileName = "Directory.Build.props"
 
+// packagesPropsFileName is the Central Package Management file, found by the
+// same ancestor walk. A package every project takes — MinVer, say — is declared
+// once there as a GlobalPackageReference, and no csproj mentions it.
+const packagesPropsFileName = "Directory.Packages.props"
+
 // Element-matching regexes. They are namespace-agnostic and tolerate attributes
 // (e.g. Condition) on the element, matching the C# Descendants().LocalName scan.
 var (
@@ -42,9 +47,11 @@ var (
 	packageIDRe     = regexp.MustCompile(`(?s)<PackageId>(.*?)</PackageId>`)
 	isPackableRe    = regexp.MustCompile(`(?s)<IsPackable[^>]*>(.*?)</IsPackable>`)
 	// A project whose version is MinVer's to compute says so in one of two
-	// ways: the package reference, or any of the MinVer* properties that tune
-	// it (MinVerTagPrefix, MinVerMinimumMajorMinor, …) in a props file.
-	minVerRe        = regexp.MustCompile(`<PackageReference[^>]*\bInclude\s*=\s*"MinVer"|<MinVer[A-Za-z]*[\s>]`)
+	// ways: the package reference — a PackageReference in the project, or a
+	// GlobalPackageReference in a Directory.Packages.props under Central
+	// Package Management — or any of the MinVer* properties that tune it
+	// (MinVerTagPrefix, MinVerMinimumMajorMinor, …) in a props file.
+	minVerRe        = regexp.MustCompile(`<(?:Global)?PackageReference[^>]*\bInclude\s*=\s*"MinVer"|<MinVer[A-Za-z]*[\s>]`)
 	projectRefRe    = regexp.MustCompile(`<ProjectReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
 	packageRefRe    = regexp.MustCompile(`<PackageReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
 	propertyGroupRe = regexp.MustCompile(`<PropertyGroup[^>]*>`)
@@ -495,8 +502,17 @@ func fromText(text, filePath string, shared bool) (resolvedVersion, bool) {
 // packable reports whether a project with no version in the tree still
 // produces a package: it says so (`IsPackable` true, or a `PackageId`, which
 // nobody declares for a project that never packs), or it hands its version to
-// MinVer, in the project itself or in a Directory.Build.props above it. An
-// explicit `IsPackable` false is the last word, whatever else is declared.
+// MinVer — referenced in the project itself, declared globally in a
+// Directory.Packages.props above it, or tuned in a Directory.Build.props.
+//
+// Every `IsPackable` in the chain counts, not just the first. A shared props
+// file commonly sets it false for everything and then true again in a later
+// PropertyGroup under a Condition ("only projects under src/"); conditions are
+// not evaluated here, so any `true` in the csproj or an ancestor
+// Directory.Build.props makes the project packable. The cost of guessing wrong
+// is asymmetric — a false positive is a package listed with no version, a
+// false negative is a real package silently left out. An explicit `false` with
+// no `true` anywhere is still the last word, whatever else is declared.
 func packable(csprojPath, csprojText string) bool {
 	texts := []string{csprojText}
 	for _, props := range ancestorPropsFiles(csprojPath) {
@@ -504,21 +520,34 @@ func packable(csprojPath, csprojText string) bool {
 			texts = append(texts, string(content))
 		}
 	}
-	claimed := false
+	sawTrue, sawFalse := false, false
 	for _, text := range texts {
-		if m := findInPropertyGroup(text, isPackableRe); m != nil {
+		for _, m := range findAllInPropertyGroups(text, isPackableRe) {
 			switch strings.ToLower(strings.TrimSpace(text[m[2]:m[3]])) {
-			case "false":
-				return false
 			case "true":
-				claimed = true
+				sawTrue = true
+			case "false":
+				sawFalse = true
 			}
 		}
+	}
+	if sawTrue {
+		return true
+	}
+	if sawFalse {
+		return false
+	}
+	for _, text := range texts {
 		if packageID(text) != "" || minVerRe.MatchString(text) {
-			claimed = true
+			return true
 		}
 	}
-	return claimed
+	for _, props := range ancestorFiles(csprojPath, packagesPropsFileName) {
+		if content, err := os.ReadFile(props); err == nil && minVerRe.MatchString(string(content)) {
+			return true
+		}
+	}
+	return false
 }
 
 // propertyGroupSpans returns the [start,end) byte range of the INNER text of each
@@ -548,24 +577,44 @@ func propertyGroupSpans(text string) [][2]int {
 // lying inside a <PropertyGroup>, or nil when there is none. Read and write share
 // it so they always target the same element.
 func findInPropertyGroup(text string, re *regexp.Regexp) []int {
+	if all := findAllInPropertyGroups(text, re); len(all) > 0 {
+		return all[0]
+	}
+	return nil
+}
+
+// findAllInPropertyGroups returns FindStringSubmatchIndex for every match of re
+// lying inside a <PropertyGroup>, in document order. A property set in several
+// groups — once unconditionally, once again under a Condition — shows up once
+// per group.
+func findAllInPropertyGroups(text string, re *regexp.Regexp) [][]int {
 	spans := propertyGroupSpans(text)
+	var out [][]int
 	for _, m := range re.FindAllStringSubmatchIndex(text, -1) {
 		for _, s := range spans {
 			if m[0] >= s[0] && m[1] <= s[1] {
-				return m
+				out = append(out, m)
+				break
 			}
 		}
 	}
-	return nil
+	return out
 }
 
 // ancestorPropsFiles yields existing Directory.Build.props files walking up from
 // the csproj's directory, nearest first.
 func ancestorPropsFiles(csprojPath string) []string {
+	return ancestorFiles(csprojPath, propsFileName)
+}
+
+// ancestorFiles yields the existing files called name walking up from the
+// csproj's directory to the filesystem root, nearest first — the walk MSBuild
+// makes for Directory.Build.props and Directory.Packages.props alike.
+func ancestorFiles(csprojPath, name string) []string {
 	var out []string
 	dir := filepath.Dir(csprojPath)
 	for {
-		candidate := filepath.Join(dir, propsFileName)
+		candidate := filepath.Join(dir, name)
 		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
 			out = append(out, candidate)
 		}
