@@ -4,15 +4,34 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
+	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
 )
+
+// projectDir is the directory the fixture sessions ran in, and projectSlug the
+// folder they are filed under. It has to be absolute *on this platform*: a
+// transcript records the path its own machine used, and the resolver normalises
+// separators, so a POSIX path under Windows comes back re-slashed and then
+// matches neither the assertions nor a search for it.
+var (
+	projectDir  = fixtureDir()
+	projectSlug = project.Flatten(projectDir)
+)
+
+func fixtureDir() string {
+	if runtime.GOOS == "windows" {
+		return `C:\work\api`
+	}
+	return "/work/api"
+}
 
 func testMachine(home string) config.Machine {
 	return config.Machine{Name: "test", OS: config.OSToken(), Home: home}
@@ -33,7 +52,7 @@ func write(t *testing.T, dir, rel, body string) string {
 // turn builds one transcript record.
 func turn(role, text, ts string) string {
 	b, _ := json.Marshal(map[string]any{
-		"type": role, "timestamp": ts, "cwd": "/work/api", "gitBranch": "feat/x",
+		"type": role, "timestamp": ts, "cwd": projectDir, "gitBranch": "feat/x",
 		"entrypoint": "cli",
 		"message":    map[string]any{"role": role, "content": text},
 	})
@@ -43,7 +62,7 @@ func turn(role, text, ts string) string {
 func writeSidecar(t *testing.T, base, acct, id, title string, lastActivity int64) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{
-		"cliSessionId": id, "title": title, "lastActivityAt": lastActivity, "cwd": "/work/api",
+		"cliSessionId": id, "title": title, "lastActivityAt": lastActivity, "cwd": projectDir,
 	})
 	write(t, base, filepath.ToSlash(filepath.Join("claude-code-sessions", acct, "org", "local_"+id+".json")), string(body))
 }
@@ -66,8 +85,8 @@ func TestList_MergesEveryPlaceASessionLives(t *testing.T) {
 	body := turn("user", "set up the database", "2026-08-20T09:00:00Z") +
 		turn("assistant", "done", "2026-08-20T09:01:00Z") +
 		turn("user", "now add the migration", "2026-08-20T09:02:00Z")
-	write(t, live, "projects/-work-api/"+id+".jsonl", body)
-	write(t, repo, "projects/-work-api/"+id+".jsonl", body)
+	write(t, live, "projects/"+projectSlug+"/"+id+".jsonl", body)
+	write(t, repo, "projects/"+projectSlug+"/"+id+".jsonl", body)
 	writeSidecar(t, desk, "acct-1", id, "Database work", 1000)
 
 	rows, rep := List(Options{
@@ -93,8 +112,8 @@ func TestList_MergesEveryPlaceASessionLives(t *testing.T) {
 	if r.Approx {
 		t.Error("Approx = true for a transcript-dated session")
 	}
-	if r.Cwd != "/work/api" {
-		t.Errorf("Cwd = %q, want /work/api", r.Cwd)
+	if r.Cwd != projectDir {
+		t.Errorf("Cwd = %q, want %q", r.Cwd, projectDir)
 	}
 	if r.Branch != "feat/x" {
 		t.Errorf("Branch = %q, want feat/x", r.Branch)
@@ -236,7 +255,7 @@ func TestList_LedgerOnlySessionSurvives(t *testing.T) {
 func TestList_DesktopSidecarCountsAsPresence(t *testing.T) {
 	live, desk := t.TempDir(), t.TempDir()
 	id := "eeeeeeee-1111-4111-8111-eeeeeeeeeeee"
-	write(t, live, "projects/-work-api/"+id+".jsonl", turn("user", "hello", "2026-08-20T09:00:00Z"))
+	write(t, live, "projects/"+projectSlug+"/"+id+".jsonl", turn("user", "hello", "2026-08-20T09:00:00Z"))
 	writeSidecar(t, desk, "acct-1", id, "Filed by Desktop", 1000)
 
 	rows, _ := List(Options{
@@ -271,11 +290,11 @@ func TestList_TextSearchesEveryVisibleField(t *testing.T) {
 		"prompt": "22222222-2222-4222-8222-222222222222",
 		"other":  "33333333-3333-4333-8333-333333333333",
 	}
-	write(t, live, "projects/-work-api/"+ids["title"]+".jsonl", turn("user", "hello", "2026-08-20T09:00:00Z"))
+	write(t, live, "projects/"+projectSlug+"/"+ids["title"]+".jsonl", turn("user", "hello", "2026-08-20T09:00:00Z"))
 	writeSidecar(t, desk, "acct", ids["title"], "The billing migration", 1000)
-	write(t, live, "projects/-work-api/"+ids["prompt"]+".jsonl",
+	write(t, live, "projects/"+projectSlug+"/"+ids["prompt"]+".jsonl",
 		turn("user", "check the billing totals", "2026-08-20T09:00:00Z"))
-	write(t, live, "projects/-work-api/"+ids["other"]+".jsonl", turn("user", "unrelated work", "2026-08-20T09:00:00Z"))
+	write(t, live, "projects/"+projectSlug+"/"+ids["other"]+".jsonl", turn("user", "unrelated work", "2026-08-20T09:00:00Z"))
 
 	run := func(text string) []Row {
 		rows, _ := List(Options{
@@ -294,10 +313,10 @@ func TestList_TextSearchesEveryVisibleField(t *testing.T) {
 	}
 	// The project directory, as the Project column renders it — the resolved
 	// path, not the flattened slug the transcript is filed under.
-	if rows := run("work/api"); len(rows) != 3 {
+	if rows := run(filepath.Join("work", "api")); len(rows) != 3 {
 		t.Errorf("searching the project gave %d rows, want all three", len(rows))
 	}
-	if rows := run("-work-api"); len(rows) != 0 {
+	if rows := run(projectSlug); len(rows) != 0 {
 		t.Error("the on-disk slug is not shown anywhere, so it should not match")
 	}
 	// And an id, which is what you have when you copied it from somewhere else.
@@ -367,16 +386,16 @@ func TestList_SearchMatchesRowOrBody(t *testing.T) {
 	live := t.TempDir()
 	// Matches on its title, which is the first human turn.
 	byTitle := "aaaaaaaa-1111-4111-8111-000000000001"
-	write(t, live, "projects/-work-api/"+byTitle+".jsonl",
+	write(t, live, "projects/"+projectSlug+"/"+byTitle+".jsonl",
 		turn("user", "pelican migration notes", "2026-08-20T09:00:00Z")+
 			turn("assistant", "nothing else here", "2026-08-20T09:01:00Z"))
 	// Matches only deep in the body.
 	byBody := "aaaaaaaa-1111-4111-8111-000000000002"
-	write(t, live, "projects/-work-api/"+byBody+".jsonl",
+	write(t, live, "projects/"+projectSlug+"/"+byBody+".jsonl",
 		turn("user", "unrelated heading", "2026-08-20T10:00:00Z")+
 			turn("assistant", "deep inside we discuss pelican habits", "2026-08-20T10:01:00Z"))
 	// Matches nowhere.
-	write(t, live, "projects/-work-api/aaaaaaaa-1111-4111-8111-000000000003.jsonl",
+	write(t, live, "projects/"+projectSlug+"/aaaaaaaa-1111-4111-8111-000000000003.jsonl",
 		turn("user", "unrelated heading", "2026-08-20T11:00:00Z"))
 
 	rows, _ := List(Options{

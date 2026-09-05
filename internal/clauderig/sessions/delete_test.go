@@ -145,10 +145,10 @@ func TestListThenDelete_RemovesOnlyTheChosenStore(t *testing.T) {
 	id := "abcdef01-2345-4678-89ab-cdef01234567"
 	body := turn("user", "set up the database", "2026-08-20T09:00:00Z")
 
-	livePath := write(t, live, "projects/-work-api/"+id+".jsonl", body)
-	subagent := write(t, live, "projects/-work-api/"+id+"/subagents/a.jsonl", body)
-	neighbour := write(t, live, "projects/-work-api/other.jsonl", body)
-	repoPath := write(t, repo, "projects/-work-api/"+id+".jsonl", body)
+	livePath := write(t, live, "projects/"+projectSlug+"/"+id+".jsonl", body)
+	subagent := write(t, live, "projects/"+projectSlug+"/"+id+"/subagents/a.jsonl", body)
+	neighbour := write(t, live, "projects/"+projectSlug+"/other.jsonl", body)
+	repoPath := write(t, repo, "projects/"+projectSlug+"/"+id+".jsonl", body)
 	writeSidecar(t, desk, "acct-1", id, "Database work", 1000)
 	sidecar := filepath.Join(desk, "claude-code-sessions", "acct-1", "org", "local_"+id+".json")
 

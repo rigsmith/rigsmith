@@ -4,11 +4,29 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 )
+
+// abs makes a fixture directory absolute on this platform. A transcript records
+// the path its own machine used, and MoveSession requires an absolute
+// destination — which "/a" is not on Windows.
+func abs(p string) string {
+	if runtime.GOOS != "windows" {
+		return p
+	}
+	return filepath.Join(`C:\`, filepath.FromSlash(p))
+}
+
+// quoted is a path as it appears inside a transcript: JSON-escaped, which on
+// Windows means doubled separators.
+func quoted(p string) string {
+	b, _ := json.Marshal(p)
+	return string(b)
+}
 
 // sessionTree builds a projects dir holding one session filed under filed, whose
 // records carry the given cwds in order.
@@ -35,8 +53,8 @@ func sessionTree(t *testing.T, filed, id string, cwds []string) string {
 
 func TestMoveSession_RefilesAndRewritesTheRoot(t *testing.T) {
 	const id = "abc"
-	old, want := "/Users/john/Git", "/Users/john/Git/thing"
-	projects := sessionTree(t, old, id, []string{old, old, want, "/Users/john/Git/other"})
+	old, want := abs("/Users/john/Git"), abs("/Users/john/Git/thing")
+	projects := sessionTree(t, old, id, []string{old, old, want, abs("/Users/john/Git/other")})
 
 	mv, err := MoveSession(projects, id, want, false)
 	if err != nil {
@@ -65,11 +83,11 @@ func TestMoveSession_RefilesAndRewritesTheRoot(t *testing.T) {
 	}
 	// Records that were deeper name directories that never moved and must be
 	// untouched — this is a re-root, not a rebase.
-	if !strings.Contains(string(body), `"/Users/john/Git/other"`) {
+	if !strings.Contains(string(body), quoted(abs("/Users/john/Git/other"))) {
 		t.Error("a deeper cwd was rewritten; it names a directory that still exists")
 	}
-	if strings.Contains(string(body), `"cwd":"/Users/john/Git",`) ||
-		strings.Contains(string(body), `"cwd":"/Users/john/Git"}`) {
+	if strings.Contains(string(body), `"cwd":`+quoted(old)+",") ||
+		strings.Contains(string(body), `"cwd":`+quoted(old)+"}") {
 		t.Errorf("the old root survived:\n%s", body)
 	}
 }
@@ -77,7 +95,7 @@ func TestMoveSession_RefilesAndRewritesTheRoot(t *testing.T) {
 // A dry run has to answer the question without touching anything.
 func TestMoveSession_DryRunChangesNothing(t *testing.T) {
 	const id = "abc"
-	old, want := "/a", "/b"
+	old, want := abs("/a"), abs("/b")
 	projects := sessionTree(t, old, id, []string{old, old, old})
 	before, err := os.ReadFile(filepath.Join(projects, project.Flatten(old), id+".jsonl"))
 	if err != nil {
@@ -103,7 +121,7 @@ func TestMoveSession_DryRunChangesNothing(t *testing.T) {
 // Overwriting would lose a conversation.
 func TestMoveSession_RefusesToClobberAnExistingTranscript(t *testing.T) {
 	const id = "abc"
-	old, want := "/a", "/b"
+	old, want := abs("/a"), abs("/b")
 	projects := sessionTree(t, old, id, []string{old})
 	dest := filepath.Join(projects, project.Flatten(want))
 	if err := os.MkdirAll(dest, 0o755); err != nil {
@@ -122,19 +140,19 @@ func TestMoveSession_RefusesToClobberAnExistingTranscript(t *testing.T) {
 }
 
 func TestMoveSession_Rejects(t *testing.T) {
-	projects := sessionTree(t, "/a", "abc", []string{"/a"})
+	projects := sessionTree(t, abs("/a"), "abc", []string{abs("/a")})
 	if _, err := MoveSession(projects, "abc", "relative/path", false); err == nil {
 		t.Error("a relative destination was accepted")
 	}
-	if _, err := MoveSession(projects, "nope", "/b", false); err == nil {
+	if _, err := MoveSession(projects, "nope", abs("/b"), false); err == nil {
 		t.Error("an unknown session id was accepted")
 	}
 }
 
 // Re-rooting to where it already is is a no-op, not an error.
 func TestMoveSession_SameRootIsANoOp(t *testing.T) {
-	projects := sessionTree(t, "/a", "abc", []string{"/a", "/a"})
-	mv, err := MoveSession(projects, "abc", "/a", false)
+	projects := sessionTree(t, abs("/a"), "abc", []string{abs("/a"), abs("/a")})
+	mv, err := MoveSession(projects, "abc", abs("/a"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
