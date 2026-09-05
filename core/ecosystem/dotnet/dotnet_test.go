@@ -913,6 +913,22 @@ func TestPackableDecidesPathConditions(t *testing.T) {
   <PropertyGroup Condition="!$(MSBuildProjectDirectory.Contains('/tests/'))"><IsPackable>true</IsPackable></PropertyGroup>
 </Project>`, []string{"tests", "T"}, false},
 
+		// Both an element condition and a group condition must hold. One that is
+		// decidably false settles it even where the other cannot be read at all,
+		// and whichever order they happen to be looked at in.
+		{"unreadable element condition under a false group condition", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/'))">
+    <IsPackable Condition="'$(Configuration)'=='Release'">true</IsPackable>
+  </PropertyGroup>
+</Project>`, []string{"tests", "T"}, false},
+		{"unreadable element condition under a true group condition stays tolerated", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/'))">
+    <IsPackable Condition="'$(Configuration)'=='Release'">true</IsPackable>
+  </PropertyGroup>
+</Project>`, []string{"src", "Lib"}, true},
+
 		// Not the decidable family: tolerated as before rather than guessed at.
 		{"compound condition stays tolerated", `<Project>
   <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>

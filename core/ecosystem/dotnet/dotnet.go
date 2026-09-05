@@ -706,19 +706,27 @@ func decideCondition(cond, csprojPath string) (result bool, ok bool) {
 	return result, true
 }
 
-// decide resolves an assignment's conditions against the project path. A
-// condition that is decidable and false means the assignment does not happen at
-// all; several conditions (one on the element, one on its group) must all hold.
-// undecided is true when any condition could not be read.
+// decide resolves an assignment's conditions against the project path. Several
+// conditions (one on the element, one on its group) must all hold, so one that
+// is decidably false settles the assignment as not happening — no matter what
+// the others are, or which order they were read in. undecided is reported only
+// where nothing settles it that way and a condition could not be read.
 func (a isPackableAssignment) decide(csprojPath string) (applies bool, undecided bool) {
+	sawUndecided := false
 	for _, c := range a.conditions {
 		result, ok := decideCondition(c, csprojPath)
 		if !ok {
-			return false, true
+			sawUndecided = true
+			continue
 		}
 		if !result {
+			// Decidably false settles it whatever the others say, and whichever
+			// order they were read in: the assignment cannot happen.
 			return false, false
 		}
+	}
+	if sawUndecided {
+		return false, true
 	}
 	return true, false
 }
