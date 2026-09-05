@@ -24,8 +24,8 @@ import (
 // It cannot prove the Electron app itself resumes — that's a manual check
 // (see docs/CLAUDERIG-DESIGN.md Q4) — but it proves the rewrite is *complete*.
 func TestE2E_DesktopRewriteCompleteOnRealData(t *testing.T) {
-	if os.Getenv("CLAUDERIG_E2E") == "" {
-		t.Skip("gated: set CLAUDERIG_E2E=1 to check Desktop rewrite completeness on real data")
+	if os.Getenv("CLAUDERIG_REAL_DATA_E2E") != "1" {
+		t.Skip("gated: set CLAUDERIG_REAL_DATA_E2E=1 to check Desktop rewrite completeness on real data")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
