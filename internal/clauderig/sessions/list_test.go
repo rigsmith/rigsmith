@@ -212,7 +212,7 @@ func TestList_WindowHidesAndReportsWhy(t *testing.T) {
 	if r, ok := rowByID(rows, undated); ok && !r.Approx {
 		t.Error("an mtime-dated session was not marked approximate")
 	}
-	if rep.Skipped == 0 && rep.Hidden == 0 {
+	if rep.Hidden == 0 {
 		t.Error("nothing was reported as excluded, but a session was")
 	}
 }

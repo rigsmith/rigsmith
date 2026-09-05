@@ -77,6 +77,10 @@ func Materialize(ctx context.Context, repo *gitrepo.Repo, ref string, s Session,
 		werr = cerr
 	}
 	if werr != nil {
+		// A half-written transcript left behind is not the session, and the
+		// stat above would report it as one — leaving no way to materialize
+		// the session again short of deleting the file by hand.
+		_ = os.Remove(dst)
 		return Materialized{}, fmt.Errorf("write %s: %w", dst, werr)
 	}
 

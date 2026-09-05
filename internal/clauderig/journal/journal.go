@@ -35,6 +35,7 @@ package journal
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -159,6 +160,13 @@ func Append(dir string, rec Record) error {
 		return err
 	}
 
+	// The journal lives in a repo that is cloned from elsewhere, so its contents
+	// arrive from another machine. A symlink checked out here would have this
+	// append follow it and write outside the staging tree entirely.
+	if info, lerr := os.Lstat(path); lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("journal %s is a symlink — refusing to write through it", path)
+	}
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
@@ -241,10 +249,86 @@ func readFile(path string) ([]Record, error) {
 // compact trims path to the newest MaxRecords lines. It rewrites via a temp
 // file and rename so a crash mid-compaction leaves the original intact.
 func compact(path string) error {
-	f, err := os.Open(path)
+	lines, err := readLines(path)
 	if err != nil {
 		return err
 	}
+	if len(lines) <= MaxRecords {
+		return nil
+	}
+
+	// Rewriting the file is the one operation here that can lose a record: an
+	// append that lands between the read above and the rename below is not in
+	// what gets written, and the rename drops it. Appends themselves are
+	// O_APPEND single lines and do not interleave, so it is enough that only one
+	// compaction runs at a time — and if another already holds it, skipping is
+	// free. The file stays a few records over the cap until the next append.
+	unlock, ok := lockCompaction(path)
+	if !ok {
+		return nil
+	}
+	defer unlock()
+
+	// Re-read under the lock: the count above was taken without it.
+	lines, err = readLines(path)
+	if err != nil || len(lines) <= MaxRecords {
+		return err
+	}
+
+	// A unique temp file, not a fixed path+".tmp" — two machines compacting the
+	// same shared checkout would otherwise write the same file at once.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".journal-*")
+	if err != nil {
+		return err
+	}
+	body := strings.Join(lines[len(lines)-MaxRecords:], "\n") + "\n"
+	_, werr := tmp.WriteString(body)
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+		return werr
+	}
+	if rerr := os.Rename(tmp.Name(), path); rerr != nil {
+		_ = os.Remove(tmp.Name())
+		return rerr
+	}
+	return nil
+}
+
+// lockCompaction takes an exclusive marker for one journal file. O_EXCL rather
+// than flock so the same code holds on Windows. A lock older than a minute is
+// broken: compaction is a read and a rename, and one that has been held longer
+// than that belongs to a process that is gone.
+//
+// Outside the staging repo, beside .sync.lock. Everything inside that tree gets
+// committed and pushed, and a lock file caught mid-sync would be published to
+// every machine.
+func lockCompaction(path string) (func(), bool) {
+	staging := filepath.Dir(filepath.Dir(path)) // <staging>/journal/<machine>.jsonl
+	lock := filepath.Join(filepath.Dir(staging), "."+filepath.Base(path)+".lock")
+	f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		if info, serr := os.Stat(lock); serr == nil && time.Since(info.ModTime()) > time.Minute {
+			_ = os.Remove(lock)
+			f, err = os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		}
+		if err != nil {
+			return nil, false
+		}
+	}
+	_ = f.Close()
+	return func() { _ = os.Remove(lock) }, true
+}
+
+// readLines returns the journal's non-empty lines.
+func readLines(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
 	var lines []string
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -253,21 +337,7 @@ func compact(path string) error {
 			lines = append(lines, line)
 		}
 	}
-	scanErr := sc.Err()
-	f.Close()
-	if scanErr != nil {
-		return scanErr
-	}
-	if len(lines) <= MaxRecords {
-		return nil
-	}
-
-	tmp := path + ".tmp"
-	body := strings.Join(lines[len(lines)-MaxRecords:], "\n") + "\n"
-	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return lines, sc.Err()
 }
 
 // fileName maps a machine name to its journal file, keeping the result a single

@@ -36,13 +36,15 @@ type Plan struct {
 func SyncPlans() []Plan {
 	return []Plan{
 		{Event: "SessionStart", Command: "clauderig pull"},
-		{Event: "Stop", Command: "clauderig sync"},
-		{Event: "SessionEnd", Command: "clauderig sync --flush"},
-		// --hook, not a bare sync: this fires at the end of every turn in every
+		// --hook, not a bare sync: Stop fires at the end of every turn in every
 		// open chat, so it debounces and takes a lock rather than walking the
 		// whole tree several times a minute. A sync typed by hand still runs
-		// immediately.
+		// immediately. This REPLACES the bare `clauderig sync` that used to be
+		// here — two plans for one event can never both be satisfied, and an
+		// install that writes one of them reports drift against the other for
+		// ever after.
 		{Event: "Stop", Command: "clauderig sync --hook"},
+		{Event: "SessionEnd", Command: "clauderig sync --flush"},
 	}
 }
 

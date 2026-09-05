@@ -117,8 +117,14 @@ type Row struct {
 type Report struct {
 	// Read is how many transcripts were opened.
 	Read int
-	// Skipped is transcripts whose mtime put them wholly outside the window, so
-	// they were never opened at all.
+	// Skipped is retained at zero. Transcripts used to be excluded on mtime
+	// alone when it predated the window, on the reasoning that a write can push
+	// mtime forward but never back. That does not hold here: a restore rewrites
+	// whole trees and the mtimes it leaves say when the restore ran, not when
+	// the conversation happened — one machine's tree had 541 transcripts
+	// stamped within the same minute. A session hidden from the listing is
+	// exactly the failure the listing exists to diagnose, and the read it saved
+	// is a bounded tail read the Stat had already half paid for.
 	Skipped int
 	// Hidden is sessions the filters excluded, of which Undated and
 	// Unattributed are the ones excluded for lacking the information the filter
@@ -277,16 +283,6 @@ func List(opts Options) ([]Row, Report) {
 
 		var act session.Activity
 		if row.Path != "" {
-			// mtime is untrustworthy in one direction only: a write can push it
-			// forward but never back, so it is a valid upper bound. A file whose
-			// mtime predates the window cannot hold a record inside it, and drift
-			// only ever costs a needless read.
-			if !sc.Since.IsZero() && opts.OnlyID == "" {
-				if info, serr := os.Stat(row.Path); serr == nil && info.ModTime().Before(sc.Since) {
-					rep.Skipped++
-					continue
-				}
-			}
 			rep.Read++
 			act, _ = session.LastActivity(row.Path)
 			row.LastPrompt = act.LastPrompt

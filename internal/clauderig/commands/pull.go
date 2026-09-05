@@ -42,8 +42,12 @@ func NewPullCmd() *cobra.Command {
 			if cfg.Remote != "" {
 				if _, err := os.Stat(filepath.Join(staging, ".git")); err != nil {
 					if _, err := gitrepo.Clone(ctx, cfg.Remote, staging); err != nil {
+						// Reported, not journalled. There is no repository yet to
+						// carry the record, and writing one would create the
+						// staging directory — which git then refuses to clone
+						// into, turning one failed clone into every future one
+						// failing too.
 						fmt.Fprintf(out, "clauderig pull: clone skipped: %v\n", err)
-						_ = journal.Append(staging, journal.Failed(me.Name, journal.OpPull, err))
 					}
 				} else if repo, err := gitrepo.Open(ctx, staging); err == nil {
 					// An unfinished merge makes the ff-only pull below fail on every

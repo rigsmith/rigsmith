@@ -72,8 +72,18 @@ func Delete(row Row, stores []string, claudeHome string) (Deletion, error) {
 
 	// A live session is refused outright rather than partially honoured: if the
 	// process is still appending, no part of this is safe to do.
+	//
+	// And refused too when the check itself could not be completed. The scan
+	// reports an unreadable process table rather than an empty one, and "no
+	// running session found" from a check that did not run is exactly the
+	// answer that deletes a conversation being written. Deleting is not
+	// reversible; refusing is.
 	if claudeHome != "" && (want[CLISource] || want[DesktopSource]) {
-		for _, inst := range account.RunningInstances(claudeHome) {
+		running, serr := account.RunningInstancesScan(claudeHome)
+		if serr != nil {
+			return d, fmt.Errorf("cannot tell whether that session is running (%w) — close Claude Code and try again", serr)
+		}
+		for _, inst := range running {
 			if inst.SessionID != "" && session.CanonicalID(inst.SessionID) == session.CanonicalID(row.ID) {
 				return d, &ErrSessionLive{PID: inst.PID, Cwd: inst.Cwd}
 			}
@@ -132,19 +142,23 @@ func removeSessionPath(path, id string) error {
 	default:
 		return fmt.Errorf("refusing to delete %q: its name does not identify session %s", filepath.Base(path), id)
 	}
-	if err := os.Remove(path); err != nil {
-		if os.IsNotExist(err) {
-			return nil // already gone is the state we wanted
-		}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	// Sub-agent transcripts live in a sibling directory named for the session.
-	// Removed only after the transcript itself, so a failure there never
-	// orphans the directory.
+	// Attempted even when the transcript was already gone: an earlier run that
+	// removed the transcript and then failed here would otherwise report success
+	// forever while the sub-agent conversations stayed on disk.
+	//
+	// The failure is returned rather than swallowed. It is conversation content,
+	// and "deleted" while a copy survives is the answer that costs someone their
+	// assumption.
 	if strings.HasSuffix(base, ".jsonl") {
 		sub := filepath.Join(filepath.Dir(path), filepath.Base(path[:len(path)-len(".jsonl")]))
-		if info, err := os.Stat(sub); err == nil && info.IsDir() {
-			_ = os.RemoveAll(sub)
+		if info, serr := os.Stat(sub); serr == nil && info.IsDir() {
+			if rerr := os.RemoveAll(sub); rerr != nil {
+				return rerr
+			}
 		}
 	}
 	return nil
