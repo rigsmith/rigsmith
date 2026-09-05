@@ -539,11 +539,11 @@ func isSymlink(p string) bool {
 }
 
 func copyFile(src, dst string, pm perm) error {
-	if strings.HasSuffix(src, ".jsonl") {
-		return transcript.Materialize(src, dst, pm.file)
-	}
 	if err := os.MkdirAll(filepath.Dir(dst), pm.dir); err != nil {
 		return err
+	}
+	if strings.HasSuffix(src, ".jsonl") {
+		return transcript.Materialize(src, dst, pm.file)
 	}
 	in, err := os.Open(src)
 	if err != nil {
