@@ -420,27 +420,39 @@ func Sync(opts Options) (*Report, error) {
 					case errors.Is(rerr, errPrivateKeyInTranscript):
 						noteFinding(&redact.Finding{Path: rel, Kind: "private-key"})
 						continue
+					case errors.Is(rerr, errBinaryContent):
+						// Binary after a text-looking head. Fall through to the
+						// ordinary copy below, which carries it byte for byte —
+						// the audit still reads it, so a credential in there is
+						// refused rather than quietly rewritten.
+						scrub = false
 					case os.IsNotExist(rerr):
 						rr.SkippedFiles++
 						continue
 					case rerr != nil:
 						return nil, rerr
 					}
-					dropped, err := dropOversizeSnapshot()
-					if err != nil {
-						return nil, err
-					}
-					if dropped {
+					// Only when the rewrite actually happened. Binary content
+					// clears the flag above and falls through to the copy below;
+					// counting it here would record a file as staged that this
+					// branch never wrote.
+					if scrub {
+						dropped, err := dropOversizeSnapshot()
+						if err != nil {
+							return nil, err
+						}
+						if dropped {
+							continue
+						}
+						if len(hits) > 0 {
+							rr.Redactions += len(hits)
+							rr.Redacted = append(rr.Redacted, FileRedaction{
+								Rel: rel, Kinds: kindsOf(hits), Count: len(hits),
+							})
+						}
+						rr.Files++
 						continue
 					}
-					if len(hits) > 0 {
-						rr.Redactions += len(hits)
-						rr.Redacted = append(rr.Redacted, FileRedaction{
-							Rel: rel, Kinds: kindsOf(hits), Count: len(hits),
-						})
-					}
-					rr.Files++
-					continue
 				}
 
 				// Scan the EXACT bytes being staged. Reading for the scan and then

@@ -75,6 +75,11 @@ func scrubbable(rel, src string) bool {
 // The staged file keeps the source's mtime so the incremental skip still
 // recognises it next time, and is written via a temp file so an interrupted sync
 // cannot leave a half-scrubbed transcript in staging.
+// errBinaryContent means the file turned out to be binary partway through, so
+// no rewrite of it can be safe. Not a failure: the caller copies the file as it
+// stands, which is what would have happened had the head given it away.
+var errBinaryContent = errors.New("binary content: not scrubbable")
+
 func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, err error) {
 	in, err := os.Open(src)
 	if err != nil {
@@ -105,6 +110,14 @@ func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, 
 	for {
 		line, rerr := r.ReadBytes('\n')
 		if len(line) > 0 {
+			// The head said text, but only the head was read. A file can be
+			// clean for 8 KB and binary after it, and rewriting a byte sequence
+			// inside the binary part is damage: the bytes are not a credential,
+			// they are pixels. Abandon the rewrite and let the caller copy the
+			// file through untouched.
+			if redact.LooksBinary(line) {
+				return nil, errBinaryContent
+			}
 			if redact.HasPrivateKey(line) {
 				return nil, errPrivateKeyInTranscript
 			}

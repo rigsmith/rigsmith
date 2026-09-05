@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -586,5 +587,32 @@ func TestSync_ScrubDecidedByContentNotExtension(t *testing.T) {
 	}
 	if string(b) != png {
 		t.Error("a binary named .md was rewritten, which is damage rather than redaction")
+	}
+}
+
+// The head-of-file check reads 8 KB. A file can be clean text for longer than
+// that and binary after it, and rewriting a byte sequence inside the binary
+// part is damage — those bytes are not a credential, they are pixels. The
+// rewrite is abandoned as soon as the binary appears, and nothing half-written
+// is left at the destination for the caller's plain copy to trip over.
+func TestRedactTranscript_AbandonsARewriteWhenContentTurnsBinary(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "mixed.log")
+	var b strings.Builder
+	for b.Len() < 12<<10 {
+		b.WriteString("ordinary log output, nothing to see here\n")
+	}
+	b.WriteString("\x00\x00 binary payload sk-ant-api03-" + strings.Repeat("z", 60) + "\n")
+	if err := os.WriteFile(src, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(dir, "staged.log")
+	_, err := redactTranscript(dst, src, time.Now())
+	if !errors.Is(err, errBinaryContent) {
+		t.Fatalf("err = %v, want errBinaryContent so the caller copies it instead", err)
+	}
+	if _, serr := os.Stat(dst); !os.IsNotExist(serr) {
+		t.Error("a half-rewritten file was left at the destination")
 	}
 }
