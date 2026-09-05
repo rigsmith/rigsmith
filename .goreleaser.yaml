@@ -58,7 +58,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w  # add a version seam in shiprig/main when shiprig needs self-update
+      - -s -w -X github.com/rigsmith/rigsmith/internal/shiprig/cli.version={{.Version}}
     hooks:
       post:
         - cmd: sh ./scripts/sign-windows.sh "{{ .Path }}" "{{ .Os }}"
@@ -94,7 +94,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w  # no self-version var: changerig's `version` acts on the user's packages
+      - -s -w -X main.version={{.Version}}
     hooks:
       post:
         - cmd: sh ./scripts/sign-windows.sh "{{ .Path }}" "{{ .Os }}"

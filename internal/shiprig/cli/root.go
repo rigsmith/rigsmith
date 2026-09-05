@@ -15,6 +15,13 @@ import (
 )
 
 // Execute builds the command tree and runs it through fang.
+// version is stamped at release time via
+// -ldflags "-X github.com/rigsmith/rigsmith/internal/shiprig/cli.version=...".
+// It lives here rather than in cmd/shiprig because this is where fang is
+// called, the same way rig keeps its own. Without it a released binary falls
+// through to fang's source-build description and reports itself as unversioned.
+var version = "dev"
+
 func Execute(ctx context.Context) error {
 	root := newRootCmd()
 	// Bare, interactive `shiprig` (no verb/flag) lands on the menu. Routing
@@ -24,7 +31,7 @@ func Execute(ctx context.Context) error {
 	if len(os.Args) == 1 && commands.Interactive() {
 		root.SetArgs([]string{"ui"})
 	}
-	return fang.Execute(ctx, root, fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentShip)), fang.WithBanner(brand.ShipBanner))
+	return fang.Execute(ctx, root, fang.WithVersion(version), fang.WithColorSchemeFunc(brand.ColorSchemeFunc(brand.AccentShip)), fang.WithBanner(brand.ShipBanner))
 }
 
 // NewRootCmd returns shiprig's full command tree without the bare-TTY menu
