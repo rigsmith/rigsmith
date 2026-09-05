@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"time"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // Session recency comes from the records, not from the file. A restore, a
@@ -61,7 +62,7 @@ type activityLine struct {
 // tail. False means nothing datable was found near the end, so callers fall back
 // rather than being handed a guess.
 func LastActivity(path string) (Activity, bool) {
-	f, err := os.Open(path)
+	f, err := transcript.Open(path)
 	if err != nil {
 		return Activity{}, false
 	}

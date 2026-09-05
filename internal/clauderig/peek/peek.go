@@ -23,6 +23,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	transcriptstore "github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // DefaultRef is the remote branch clauderig syncs against.
@@ -254,21 +255,46 @@ func Read(ctx context.Context, repo *gitrepo.Repo, ref string, s Session) ([]byt
 	if ref == "" {
 		ref = DefaultRef
 	}
-	return repo.ShowFile(ctx, ref, s.Path)
+	b, err := repo.ShowFile(ctx, ref, s.Path)
+	if err != nil {
+		return nil, err
+	}
+	return transcriptstore.ReadStored(s.Path, b, func(p string) ([]byte, error) { return repo.ShowFile(ctx, ref, p) }, 0)
 }
 
 // Titles fills in Title for the given sessions by reading each blob's header.
 // Callers pass only the slice they're about to display — this costs one blob
-// read per session.
+// header read per session; chunked sessions fetch only the needed parts.
 func Titles(ctx context.Context, repo *gitrepo.Repo, ref string, sessions []Session) []Session {
 	out := make([]Session, len(sessions))
 	copy(out, sessions)
 	for i := range out {
-		blob, err := Read(ctx, repo, ref, out[i])
+		blob, err := readTitlePrefix(ctx, repo, ref, out[i])
 		if err != nil {
 			continue
 		}
 		out[i].Title = session.FirstPromptFrom(strings.NewReader(string(blob)))
 	}
 	return out
+}
+
+// A title is a preview: bound native blob reads as well as chunk reassembly.
+const titlePrefixBytes = 1 << 20
+
+func readTitlePrefix(ctx context.Context, repo *gitrepo.Repo, ref string, s Session) ([]byte, error) {
+	if ref == "" {
+		ref = DefaultRef
+	}
+	b, err := repo.ShowPrefix(ctx, ref, s.Path, titlePrefixBytes)
+	if err != nil {
+		return nil, err
+	}
+	if transcriptstore.IsIndex(b) && len(b) == titlePrefixBytes {
+		// The index may itself exceed the title budget; it must decode in full.
+		b, err = repo.ShowPrefix(ctx, ref, s.Path, transcriptstore.MaxIndexSize+1)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return transcriptstore.ReadStored(s.Path, b, func(p string) ([]byte, error) { return repo.ShowFile(ctx, ref, p) }, titlePrefixBytes)
 }

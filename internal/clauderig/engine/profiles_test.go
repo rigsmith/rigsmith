@@ -177,6 +177,8 @@ func TestRestore_ProfileFilesKeepTheStoresPermissions(t *testing.T) {
 	staging := t.TempDir()
 	write(t, filepath.Join(staging, "desktop@work"), "profile.json", `{"name":"work"}`)
 	write(t, filepath.Join(staging, "desktop@work"), "data/claude-code-sessions/acct/org/local_a.json", `{"cliSessionId":"s1"}`)
+	// Sorts before the other data so only this JSONL path creates its parents.
+	write(t, filepath.Join(staging, "desktop@work"), "data/aaa/s.jsonl", "native transcript\n")
 	target := filepath.Join(t.TempDir(), "work")
 
 	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
@@ -191,6 +193,10 @@ func TestRestore_ProfileFilesKeepTheStoresPermissions(t *testing.T) {
 		path string
 		want os.FileMode
 	}{
+		{target, 0o700},
+		{filepath.Join(target, "data"), 0o700},
+		{filepath.Join(target, "data", "aaa"), 0o700},
+		{filepath.Join(target, "data", "aaa", "s.jsonl"), 0o600},
 		{filepath.Join(target, "profile.json"), 0o600},
 		{filepath.Join(target, "data", "claude-code-sessions", "acct", "org", "local_a.json"), 0o600},
 		{filepath.Join(target, "data", "claude-code-sessions", "acct"), 0o700},

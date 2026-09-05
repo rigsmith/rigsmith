@@ -12,6 +12,8 @@ func TestClassify(t *testing.T) {
 		rel, want string
 	}{
 		{"cli/projects/-p/abc.jsonl", "transcripts"},
+		{"cli/projects/-p/foo.jsonl.chunks/abc.part", "transcripts"},
+		{"cli/projects/-p.jsonl.chunks/abc.part", "attachments & tool output"},
 		{"cli/projects/-p/abc.jsonl.pre-import", "transcript backups"},
 		{"cli/projects/-p/memory/note.md", "memory"},
 		{"cli/projects/-p/MEMORY.md", "memory"},

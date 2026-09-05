@@ -119,7 +119,11 @@ detection and OS-aware case comparison. Two fidelities, both v1:
   and rewrite any string value that resolves under a *known mapped prefix*
   (`$HOME`, mapped repo roots), leaving unmapped/system paths (`/tmp`) untouched.
   Robust to fields beyond `cwd`/`originCwd` — a census found `planPath`, permission
-  `ruleContent`, and added `directories[]` also carry paths (see Q4).
+  `ruleContent`, and added `directories[]` also carry paths (see Q4). Desktop
+  also embeds paths in `alwaysAllowedReasons` as
+  `tool<NUL>reason<NUL>file_path:path`. The Desktop adapter rewrites only that
+  path argument, preserving the delimiters, tool and reason. This format stays
+  out of the shared `core/pathmap` layer.
 
 Default mapping is the **home convention** (`~/Git` ⇄ `C:\Users\You\Git`, tail
 identical = halyard's "portable" case). Overridable: custom home dir + explicit
@@ -158,28 +162,22 @@ cwd mappings (Q4).
   leaving a restored machine with a `MEMORY.md` indexing files it never got. They're
   a few KB each, so they cost nothing to keep. A slug with only memory left survives
   the prune.
-- **Large transcripts are restaged per chunk, not per sync.** A live transcript
-  is append-only (a rewrite — one that shrank or stayed the same size — is
-  restaged at once, since the staged copy is simply wrong), so committing it
-  whole on every turn costs roughly
-  `syncs × size / 2` of history — quadratic in session length, and worst for
-  exactly the sessions worth keeping (one 47 MB session produced ~800 MB of repo
-  in four days). Past `retention.largeFileBytes` (8 MiB) sync copies a
-  transcript again only once it has grown by half that much since the staged
-  copy, or once it has been unwritten for 30 minutes — the `SessionEnd` hook
-  runs `sync --flush`, which restages the transcript the hook payload names
-  (only that one: a short session ending must not restage a long one's
-  transcript mid-chunk, and a payload that names nothing flushes nothing, for
-  the same reason), so a session that ends normally has its tail captured
-  at once, and the settle rule catches up a session that died without firing
-  it, at the next sync. Small transcripts are unaffected. **Not yet done, and the real fix:**
-  storing a transcript as sealed fixed-size parts
-  (`projects/<slug>/<id>/000001.jsonl …`) so only the growing tail is ever
-  rewritten, making the cost linear. It changes the repo layout every reader
-  depends on — restore reassembly, search, the ledger, sidecars, retention by
-  file mtime — and an older clauderig restoring a chunked repo would hand Claude
-  Code a directory where it expects a file, so it needs a layout version and a
-  migration, not a quiet switch.
+- **Large transcript storage is versioned and on for new configs.** Existing
+  configs without the key use auto, following the repository mode. An explicit
+  false opts out. Plain storage retains
+  the existing `retention.largeFileBytes` throttle and `sync --flush` behavior.
+  Set `chunkTranscripts` to true to migrate staged transcripts larger than 8 MiB
+  to a JSON index plus content-addressed 4 MiB parts. Every changed tail is
+  captured on the next sync; completed parts are reused. All readers understand
+  this format, restore reconstructs native JSONL, and false converts back.
+  Upgrade all participating clients before enabling it. See
+  [Transcript storage](./CLAUDERIG-TRANSCRIPT-STORAGE.md) for rollout, rollback,
+  integrity checks, conflict behavior and scanning limits.
+- **Publication scanning covers complete staged text.** Credential signatures
+  are checked through bounded overlapping reads, including large transcripts,
+  unchanged and remote-only files. Optional transcript scrubbing runs first;
+  recognized credentials that remain stop publication. This does not sanitize
+  existing Git history or identify arbitrary secrets.
 - **Two branches**: `main` = config (precious, tiny, full history kept);
   `history` = **orphan branch** for `projects/`, squashed to a single root commit
   so `.git` never grows past the working tree. Transcript sync history is
@@ -437,7 +435,7 @@ mirror — no path correction, manual excludes.
 4. **Q4 — `claude-code-sessions` resume fidelity.** *Approach decided (2026-06-12
    census), now **BUILT**.* The rewrite surface is broader than `cwd`/`originCwd` —
    also `planPath`, permission `ruleContent`, and added `directories[]` — so the
-   rewriter is **value-based**: `pathmap.PortablizeJSONValues` (sync) rewrites any
+   common rewriter is **value-based**: `pathmap.PortablizeJSONValues` (sync) rewrites any
    string under a known mapped prefix to `$HOME/…`; `pathmap.ResolveJSONValues`
    (restore) resolves `$`-templates to the target, leaving unmapped/system paths
    (`/tmp`) and non-path values untouched. Applied to every `.json` in both roots
@@ -447,6 +445,11 @@ mirror — no path correction, manual excludes.
    and asserts **zero** values retain a source-home path. That test *found* a real
    gap — a permission `ruleContent` written as `//Users/you/Git/x/**` — now fixed
    (`Portablize` collapses a leading slash-run, so the `//`-prefixed glob matches);
-   re-run shows 0 residual across all session files. **Still manual (non-blocking):**
+   a subsequent run found paths embedded in NUL-delimited `alwaysAllowedReasons`.
+   `desktop.PortablizeJSONPaths` / `desktop.ResolveJSONPaths` now wrap the common
+   transform with an adapter for those records. Sync, restore and the real-data
+   test use the same wrappers. Synthetic Git round trips test the permission
+   reason format in both macOS → Windows and Windows → macOS directions.
+   Re-run shows 0 residual across all session files. **Still manual (non-blocking):**
    whether the Electron app itself resumes after rewrite — drive it by hand; the
    data-completeness half is automated.

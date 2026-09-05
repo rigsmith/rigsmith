@@ -27,8 +27,7 @@ func isTranscript(rel string) bool {
 // reports what it took out.
 //
 // Streamed line by line rather than read whole: transcripts run to hundreds of
-// megabytes, which is also why the 64 KB content-scan limit skips them entirely
-// today — a pasted key in a real conversation has never been examined at all.
+// megabytes. The final streaming audit independently verifies the result.
 // JSONL makes this natural, one record per line.
 //
 // The staged file keeps the source's mtime so the incremental skip still

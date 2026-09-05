@@ -29,7 +29,7 @@ func saveConfig(cfg *config.Config) error {
 
 // configKeys documents the settable keys for `config set <key> <value>`, in the
 // order shown by an unknown-key error.
-var configKeys = []string{"remote", "alwaysPrune", "autoRestore"}
+var configKeys = []string{"remote", "alwaysPrune", "autoRestore", "chunkTranscripts", "redactTranscripts"}
 
 // NewConfigCmd builds the uniform `config` command group: get / set / path /
 // edit (and the legacy-friendly `show`). `set remote` enforces the same
@@ -122,7 +122,9 @@ func newConfigSetCmd() *cobra.Command {
 		Long: "Set a claudeRig setting. Known keys:\n" +
 			"  remote             sync remote URL (verified private via gh/glab)\n" +
 			"  alwaysPrune        prune stale config on `restore` by default (bool)\n" +
-			"  autoRestore        auto-restore on a fresh machine via SessionStart (bool)",
+			"  autoRestore        auto-restore on a fresh machine via SessionStart (bool)\n" +
+			"  chunkTranscripts   migrate large staged transcripts to chunks (on by default for new configs; bool or auto)\n" +
+			"  redactTranscripts  scrub detected tokens in staged transcripts (bool)",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], args[1]
@@ -179,6 +181,21 @@ func newConfigEditCmd() *cobra.Command {
 // false/yes/no/on/off.
 func applyConfigSet(cmd *cobra.Command, cfg *config.Config, key, value string) (string, error) {
 	switch key {
+	case "chunkTranscripts", "redactTranscripts":
+		if key == "chunkTranscripts" && value == "auto" {
+			cfg.ChunkTranscripts = nil
+			return "chunkTranscripts = auto (follows repository; applies on the next sync)", nil
+		}
+		on, err := parseBoolArg(value)
+		if err != nil {
+			return "", err
+		}
+		if key == "chunkTranscripts" {
+			cfg.ChunkTranscripts = &on
+		} else {
+			cfg.RedactTranscripts = on
+		}
+		return fmt.Sprintf("%s = %v (applies on the next sync)", key, on), nil
 	case "remote":
 		if err := ghrepo.EnsurePrivate(cmd.Context(), value); err != nil {
 			return "", err
@@ -207,6 +224,13 @@ func applyConfigSet(cmd *cobra.Command, cfg *config.Config, key, value string) (
 // configValue renders the current value of a known key for `config get`.
 func configValue(cfg *config.Config, key string) (string, bool) {
 	switch key {
+	case "chunkTranscripts":
+		if cfg.ChunkTranscripts == nil {
+			return "auto", true
+		}
+		return fmt.Sprint(*cfg.ChunkTranscripts), true
+	case "redactTranscripts":
+		return fmt.Sprint(cfg.RedactTranscripts), true
 	case "remote":
 		return cfg.Remote, true
 	case "alwaysPrune":

@@ -291,3 +291,12 @@ func TestSearch_SkipsGitDir(t *testing.T) {
 		t.Fatalf("expected only real.txt, got %+v", got)
 	}
 }
+
+func TestProjectWithChunkSuffixIsSearchable(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "root.jsonl.chunks")
+	writeFile(t, root, "cli/projects/-project.jsonl.chunks/s.jsonl", []byte("find my conversation\n"))
+	got, _, err := collect([]Target{{Dir: root}}, Options{Query: "find my conversation", ChatsOnly: true})
+	if err != nil || len(got) != 1 {
+		t.Fatalf("suffix-named project skipped: %v, %v", got, err)
+	}
+}

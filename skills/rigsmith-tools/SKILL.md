@@ -171,6 +171,16 @@ the choice changes the whole contribution flow.
 Syncs `~/.claude` (config, skills, session history) to a **private** git repo with
 cross-OS path correction and secret stripping, and restores it on any machine.
 
+
+New configs default to chunking on; omitted keys in existing configs mean auto
+(follow the repo). For existing backups, upgrade all participating clients before running
+`clauderig config set chunkTranscripts true` and `clauderig sync`. The next sync
+migrates existing backups; restore reconstructs native JSONL. Set false and sync
+to convert back (very large native blobs may exceed host limits), or set auto to
+follow the repo. Complete staged-text secret scanning is always on. Set
+`redactTranscripts true` to scrub supported signatures from staged copies first;
+never edit live transcripts to work around a publication refusal.
+
 ```sh
 clauderig init                   # wizard: private repo, machine name, hooks (SessionStart/Stop/SessionEnd)
 clauderig sync                   # snapshot → redact secrets → rewrite paths → commit → push

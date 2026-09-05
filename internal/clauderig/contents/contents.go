@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // Group is one category of file, with what it costs.
@@ -60,7 +62,7 @@ func classify(rel string) (name, detail string) {
 			return "transcript backups", "copies Claude Code kept before moving a session"
 		case strings.Contains(slash, "/memory/") || base == "MEMORY.md":
 			return "memory", "durable notes, exempt from retention"
-		case strings.HasSuffix(base, ".jsonl"):
+		case strings.HasSuffix(base, ".jsonl") || transcript.IsPartPath(slash):
 			return "transcripts", "the conversations themselves"
 		}
 		return "attachments & tool output", "files a session produced or was given"

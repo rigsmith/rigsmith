@@ -29,10 +29,9 @@ import (
 // What actually identifies these files is their NAME. That is the primary rule
 // below; content rules are a small, near-zero-false-positive supplement.
 
-// scanContentLimit caps how much of a file is examined. Credential files are
-// small by nature — a key, a PEM block, a dotenv — while the big non-JSON files
-// under an allowed tree are transcripts, which are exactly what must not trip the
-// wire. Skipping large files is a deliberate FP guard, not an optimisation.
+// scanContentLimit caps the legacy whole-file heuristics in ScanFile. The
+// publication path uses ScanReader for complete credential-signature scanning;
+// it does not apply entropy guesses to large conversation bodies.
 const scanContentLimit = 64 << 10
 
 // keyMaterialNames are basenames whose whole reason to exist is to hold a key.
