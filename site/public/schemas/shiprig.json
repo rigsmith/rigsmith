@@ -92,7 +92,7 @@
       }
     },
     "varSpec": {
-      "description": "A variable: a bare string literal, or an object taking exactly one form — value, command (or a per-OS os map), script, or secret.",
+      "description": "A variable: a bare string literal, or an object taking one form — value, script, secret, or a captured command (command, os, or os with command as the fallback for an OS not listed). Setting two forms is a config error.",
       "oneOf": [
         { "type": "string" },
         {
