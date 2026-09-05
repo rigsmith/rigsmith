@@ -798,15 +798,41 @@ function paintFiles(box, v, redacted) {
   if (tail) box.append(el('div', 'more', tail));
 }
 
-let lastActivitySig = '';
+// ---- repaint guard ---------------------------------------------------------
+
+// A panel is rebuilt only when the thing it shows has actually changed.
+//
+// The status poll runs every five seconds while the window is open, and most of
+// these panels answer questions that move far more slowly than that. Repainting
+// regardless tears down whatever the reader is in the middle of — an expanded
+// row, a flashed confirmation, a button mid-operation — and it did exactly that
+// three separate times here before this existed: the activity feed, the session
+// detail, and the split-session list.
+//
+// The caller passes a PROJECTION rather than the whole payload. Most of these
+// objects carry something that churns — a byte count, a timestamp — and
+// comparing everything would report a change on every poll, which is the bug
+// this prevents wearing a disguise.
+//
+// force skips the check, for when a panel's own action changed the data and the
+// repaint is the entire point.
+const paintedSig = new Map();
+
+function changed(key, projection, force) {
+  const sig = JSON.stringify(projection);
+  if (!force && paintedSig.get(key) === sig) return false;
+  paintedSig.set(key, sig);
+  return true;
+}
+
+// repaint forgets a panel's last signature, so the next render rebuilds even
+// though its data did not move. For the case where something OUTSIDE the data
+// invalidated what is on screen.
+function repaint(key) { paintedSig.delete(key); }
 
 function renderActivity(events) {
-  // The status poll fires every 5s while the window is open, but the journal
-  // only moves when a sync writes. Rebuilding an unchanged feed threw away
-  // whatever was open in it — and did it four times a minute.
-  const sig = JSON.stringify((events || []).map(e => [e.at, e.machine, e.summary, e.outcome]));
-  if (sig === lastActivitySig) return;
-  lastActivitySig = sig;
+  // The journal only moves when a sync writes; the poll fires every 5s.
+  if (!changed('activity', (events || []).map(e => [e.at, e.machine, e.summary, e.outcome]))) return;
 
   const box = $('activity');
   box.replaceChildren();
@@ -1078,14 +1104,13 @@ function repoChanged(rewrote) {
     filesCache.clear();
     filesOpen.clear();
   }
-  lastActivitySig = '';   // force the feed to repaint even though the journal did not move
+  repaint('activity');   // the journal did not move, but the shas underneath it did
   refresh();
 }
 
 // Sessions filed in two places, and Desktop sidecars pointing at the wrong one.
 // Silent until something is wrong: a panel that says "all good" every time is a
 // panel people stop reading, and this one has to be noticed the once it matters.
-let lastFilingSig = '';
 let filingOpen = false;
 
 function renderFiling(v, force) {
@@ -1096,9 +1121,7 @@ function renderFiling(v, force) {
   // changes when a session is filed or fixed. Rebuilding regardless threw away
   // the expanded list underneath whoever had just opened it — the same fault
   // the activity feed had, for the same reason.
-  const sig = JSON.stringify([v?.error || '', splits.map(s => s.id), stale.map(s => s.id)]);
-  if (!force && sig === lastFilingSig) return;
-  lastFilingSig = sig;
+  if (!changed('filing', [v?.error || '', splits.map(s => s.id), stale.map(s => s.id)], force)) return;
   filingOpen = false;
 
   box.replaceChildren();
@@ -1203,7 +1226,18 @@ function splitRow(s, box) {
   return row;
 }
 
-function renderRepo(v) {
+function renderRepo(v, force) {
+  // The byte counts move constantly — a sync writes and .git grows — so the
+  // projection is deliberately coarse: the numbers as DISPLAYED. A repack that
+  // reclaims 2 GB changes them; a commit that adds a few KB does not, and a
+  // panel that rebuilds under a button someone is pressing is the bug this
+  // guard exists for.
+  if (!changed('repo', [
+    v?.error || '', v?.commits, v?.files, v?.squashed,
+    bytes(v?.workBytes), bytes(v?.gitBytes), bytes(v?.looseBytes),
+    (v?.contents || []).map(g => [g.name, bytes(g.bytes)]),
+  ], force)) return;
+
   const box = $('repo');
   box.replaceChildren();
   if (!v || v.error) {
@@ -1299,7 +1333,7 @@ function renderRepo(v) {
       : 'Repacking\u2026';
     try {
       const res = await Call.ByName(REPO_REPACK);
-      renderRepo(res.after);
+      renderRepo(res.after, true);
       repoChanged(false);
       note(res.reclaimed > 0
         ? `Reclaimed ${bytes(res.reclaimed)}, every commit kept`
@@ -1364,7 +1398,7 @@ function openPruneModal(stats) {
       const res = await Call.ByName(REPO_PRUNE, days);
       close();
       if (res.folded) {
-        renderRepo(res.after);
+        renderRepo(res.after, true);
         repoChanged(true);
         note(`Folded ${res.folded.toLocaleString()} commits, reclaimed ${bytes(res.reclaimed)}`);
       } else {
@@ -1409,6 +1443,15 @@ function note(text) {
 }
 
 function renderAccounts(v) {
+  // Guarded because these rows carry transient state the poll would erase: the
+  // tick a launch button flashes for two seconds, and the disabled Switch while
+  // Claude Code is running.
+  if (!changed('accounts', [
+    v.error || '', v.desynced, v.switchBlocked,
+    (v.accounts || []).map(a => [a.id, a.active, a.profile, a.profileOpen]),
+    (v.live || []).map(l => l.pid),
+  ])) return;
+
   const box = $('accounts');
   box.replaceChildren();
   if (v.error) {
