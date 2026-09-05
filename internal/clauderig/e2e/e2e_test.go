@@ -36,6 +36,7 @@ func TestE2E_RoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	fixtureGit(t)
 	ctx := t.Context()
 
 	// ---- source machine: a synthetic ~/.claude ----
@@ -54,7 +55,7 @@ func TestE2E_RoundTrip(t *testing.T) {
 	write(t, claudeSrc, "statsig/cache", "machine-local junk")         // must NOT sync
 	write(t, claudeSrc, "projects/"+srcSlug+"/file-history/snap", "x") // carve-out, must NOT sync
 
-	srcMachine := config.Machine{Name: "src", OS: pathmap.OSMacOS, Home: srcHome}
+	srcMachine := config.Machine{Name: "src", OS: config.OSToken(), Home: srcHome}
 
 	// ---- sync into staging A, push to a local bare remote ----
 	stagingA := t.TempDir()
@@ -76,8 +77,8 @@ func TestE2E_RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	must(t, repoA.SetRemote(ctx, "origin", bare))
-	if _, err := repoA.Commit(ctx, "sync from src"); err != nil {
-		t.Fatal(err)
+	if changed, err := repoA.Commit(ctx, "sync from src"); err != nil || !changed {
+		t.Fatalf("source fixture did not create a commit: changed=%t, err=%v", changed, err)
 	}
 	must(t, repoA.Push(ctx, "origin", "main"))
 
@@ -95,7 +96,7 @@ func TestE2E_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tgtMachine := config.Machine{Name: "tgt", OS: pathmap.OSMacOS, Home: tgtHome}
+	tgtMachine := config.Machine{Name: "tgt", OS: config.OSToken(), Home: tgtHome}
 	if _, err := engine.Restore(engine.RestoreOptions{
 		StagingDir: stagingB, Config: cliOnly(claudeTgt), Machine: tgtMachine, Manifest: man,
 	}); err != nil {
@@ -153,6 +154,16 @@ func TestE2E_RoundTrip(t *testing.T) {
 }
 
 // --- helpers ---
+
+// Byte-preserving Git transport is an explicit fixture precondition, matching
+// the baseline harness. See the documented core.autocrlf compatibility gap;
+// this does not change or assert production handling of user Git filters.
+func fixtureGit(t *testing.T) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.autocrlf")
+	t.Setenv("GIT_CONFIG_VALUE_0", "false")
+}
 
 func cliOnly(claudeDir string) *config.Config {
 	c := config.Default()

@@ -25,6 +25,7 @@ func TestE2E_CrossOSPortability(t *testing.T) {
 	if os.Getenv("CLAUDERIG_E2E") == "" {
 		t.Skip("gated: set CLAUDERIG_E2E=1 to run cross-OS portability")
 	}
+	fixtureGit(t)
 	ctx := t.Context()
 
 	cases := []struct {

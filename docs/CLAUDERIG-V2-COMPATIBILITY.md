@@ -79,3 +79,26 @@ comparison; they do not prove that either vendor's GUI can resume every session.
 
 Before extracting a workflow not covered by these scenarios, add its observable
 contract here. Keep each extraction independently reviewable and reversible.
+
+## Known baseline gap: Git line-ending conversion
+
+A separate probe during this milestone reproduced a production compatibility
+gap with `core.autocrlf=true`: a raw transcript restored after Git clone gained
+CRLF line endings, and a chunked transcript's title could no longer be read
+after clone. Git can treat `.part` files as text and change their bytes, which
+invalidates the hashes recorded in the transcript index. The normal comparison
+and synthetic fixtures explicitly set `core.autocrlf=false`; green results do
+not establish safety with text-converting Git settings.
+
+This needs a separate fix before service extraction, including byte-preserving
+attributes for stored chunks, existing-repository handling, and a regression
+that enables `core.autocrlf=true` through sync, clone, history reads and restore.
+Do not relax chunk integrity checks or silently regenerate hashes for changed
+payloads. Other clean/smudge filters also need consideration when defining that
+storage contract.
+
+The probe used the unmodified production code at this milestone and temporary
+fixtures only. It was equivalent to running the round-trip tests with
+`GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=core.autocrlf`, and
+`GIT_CONFIG_VALUE_0=true`, before adding the explicit `fixtureGit` setup. To
+reproduce after this PR, override that setup in an isolated test checkout.
