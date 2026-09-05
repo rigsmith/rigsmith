@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -90,6 +92,34 @@ func TestHeldLockIsTouchedWhileHeld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Meanwhile, ask "still ours?" as fast as we can: a touch is a Chtimes
+	// followed by a re-stat, and a check landing between the two once saw the
+	// new mtime against the old stamp and called our own refresh a takeover.
+	stopAsking := make(chan struct{})
+	var everLost atomic.Bool
+	var asking sync.WaitGroup
+	asking.Add(1)
+	go func() {
+		defer asking.Done()
+		for {
+			select {
+			case <-stopAsking:
+				return
+			default:
+			}
+			if !h.stillOurs() {
+				everLost.Store(true)
+				return
+			}
+		}
+	}()
+	defer func() {
+		close(stopAsking)
+		asking.Wait()
+		if everLost.Load() {
+			t.Fatal("stillOurs reported the lock lost while we held it and nobody else touched it")
+		}
+	}()
 	deadline := time.Now().Add(2*touchInterval + 2*time.Second)
 	for time.Now().Before(deadline) {
 		fi, serr := os.Stat(dir)
