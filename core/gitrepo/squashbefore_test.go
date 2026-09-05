@@ -227,3 +227,45 @@ func TestRepack_ReclaimsLooseObjectsWithoutLosingHistory(t *testing.T) {
 		t.Errorf(".git did not shrink: %d → %d", before.GitBytes, after.GitBytes)
 	}
 }
+
+// Commit dates run backwards here and there: machines sync on their own clocks,
+// and a merge lands commits dated whenever the other machine wrote them. A
+// commit inside the retention window must survive one of those sitting after it.
+func TestSquashBefore_KeepsRecentCommitsOutOfOrderDatesFollow(t *testing.T) {
+	ctx := context.Background()
+	r, err := Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	commitAt(t, ctx, r, "f.txt", "one", now.AddDate(0, 0, -40))
+	commitAt(t, ctx, r, "f.txt", "two", now.AddDate(0, 0, -35))
+	// Inside the window...
+	commitAt(t, ctx, r, "f.txt", "keep me", now.AddDate(0, 0, -2))
+	// ...and then one from a machine whose clock, or whose backlog, is behind.
+	commitAt(t, ctx, r, "f.txt", "late arrival", now.AddDate(0, 0, -33))
+	commitAt(t, ctx, r, "f.txt", "five", now.AddDate(0, 0, -1))
+
+	folded, err := r.SquashBefore(ctx, now.AddDate(0, 0, -30), "base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two leading commits become one base, so one commit goes away.
+	if folded != 1 {
+		t.Errorf("folded %d, want only the leading run that is wholly outside the window", folded)
+	}
+	out, err := runGit(ctx, r.Dir, "log", "--format=%s", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "sync f.txt") {
+		t.Fatalf("history reads: %s", out)
+	}
+	body, err := runGit(ctx, r.Dir, "show", "HEAD~2:f.txt")
+	if err != nil {
+		t.Fatalf("the in-window commit was folded away: %v", err)
+	}
+	if strings.TrimSpace(body) != "keep me" {
+		t.Errorf("HEAD~2 holds %q, want the in-window commit", strings.TrimSpace(body))
+	}
+}

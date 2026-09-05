@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -107,5 +108,50 @@ func TestHookInterval_ConfigurableWithADisableEscape(t *testing.T) {
 		if got := c.HookInterval(); got != tc.want {
 			t.Errorf("%s: HookInterval() = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// A holder whose lock was broken for running too long must not delete the lock
+// that replaced it — the run holding that one is still going.
+func TestSyncLock_ReleaseOnlyDropsItsOwn(t *testing.T) {
+	staging := filepath.Join(t.TempDir(), "repo")
+	first, got, err := acquireSyncLock(staging)
+	if err != nil || !got {
+		t.Fatalf("first acquire: %v %v", got, err)
+	}
+	// Age it past maxLockHold so the next caller breaks it, as a killed sync
+	// would leave it.
+	path := filepath.Join(filepath.Dir(staging), ".sync.lock")
+	old := fmt.Sprintf("%d %d\n", os.Getpid(), time.Now().Add(-2*maxLockHold).Unix())
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, got, err := acquireSyncLock(staging)
+	if err != nil || !got {
+		t.Fatalf("stale lock was not broken: %v %v", got, err)
+	}
+
+	first.Release() // the original holder, finishing late
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("releasing a broken lock deleted the replacement")
+	}
+	second.Release()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("the holder could not release its own lock")
+	}
+}
+
+// A second sync gets nothing while the first holds the lock, and the wait form
+// gives up rather than proceeding alongside it.
+func TestSyncLock_WaitGivesUpRatherThanOverlap(t *testing.T) {
+	staging := filepath.Join(t.TempDir(), "repo")
+	held, got, err := acquireSyncLock(staging)
+	if err != nil || !got {
+		t.Fatalf("acquire: %v %v", got, err)
+	}
+	defer held.Release()
+
+	if _, got, err := acquireSyncLockWait(staging, 300*time.Millisecond); err != nil || got {
+		t.Errorf("a second sync took the lock: got=%v err=%v", got, err)
 	}
 }

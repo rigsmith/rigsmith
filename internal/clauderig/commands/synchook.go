@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,21 +17,32 @@ import (
 // altogether — which is a worse failure than two syncs overlapping.
 const maxLockHold = 20 * time.Minute
 
+// flushLockWait is how long a flush waits for a sync already in progress. A
+// flush comes from a session that is ending: there is no later hook of its own
+// to defer to, so it waits rather than skipping. Long enough to outlast a small
+// sync, short enough not to hold up the shell someone is closing.
+const flushLockWait = 15 * time.Second
+
 // syncLock is a cross-platform advisory lock over the staging tree. It lives
 // beside the repo rather than inside it, so it never shows up as an uncommitted
 // change or has to be gitignored.
-type syncLock struct{ path string }
+//
+// token is what this holder wrote into the file. A lock held past maxLockHold
+// is broken and retaken by someone else, and the original holder must not then
+// delete the replacement on its way out.
+type syncLock struct {
+	path  string
+	token string
+}
 
 // acquireSyncLock takes the lock, reporting whether it was free. O_EXCL rather
 // than flock: the same code has to hold on Windows, and this needs no build tags
 // and no dependency.
 func acquireSyncLock(staging string) (*syncLock, bool, error) {
 	path := filepath.Join(filepath.Dir(staging), ".sync.lock")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	lock, err := writeLock(path)
 	if err == nil {
-		fmt.Fprintf(f, "%d %d\n", os.Getpid(), time.Now().Unix())
-		f.Close()
-		return &syncLock{path: path}, true, nil
+		return lock, true, nil
 	}
 	if !os.IsExist(err) {
 		return nil, false, err
@@ -41,19 +53,57 @@ func acquireSyncLock(staging string) (*syncLock, bool, error) {
 	// Break it and take it. A race here means two syncs run, which git's own
 	// index.lock will sort out — the same outcome as before this existed.
 	_ = os.Remove(path)
-	f, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	lock, err = writeLock(path)
 	if err != nil {
 		return nil, false, nil
 	}
-	fmt.Fprintf(f, "%d %d\n", os.Getpid(), time.Now().Unix())
-	f.Close()
-	return &syncLock{path: path}, true, nil
+	return lock, true, nil
+}
+
+// acquireSyncLockWait takes the lock, waiting up to d for a run already in
+// progress to finish. An ordinary hook passes 0: another sync is walking the
+// same tree and will capture the same work, so there is nothing to wait for.
+func acquireSyncLockWait(staging string, d time.Duration) (*syncLock, bool, error) {
+	deadline := time.Now().Add(d)
+	for {
+		lock, got, err := acquireSyncLock(staging)
+		if err != nil || got {
+			return lock, got, err
+		}
+		if !time.Now().Before(deadline) {
+			return nil, false, nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// writeLock creates the lock file, failing if it is already there.
+func writeLock(path string) (*syncLock, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	token := fmt.Sprintf("%d %d", os.Getpid(), time.Now().UnixNano())
+	_, werr := fmt.Fprintln(f, token)
+	cerr := f.Close()
+	if werr != nil || cerr != nil {
+		_ = os.Remove(path)
+		return nil, cmp.Or(werr, cerr)
+	}
+	return &syncLock{path: path, token: token}, nil
 }
 
 // Release drops the lock. Safe to call on a nil lock, so callers can defer it
 // without first checking whether they got one.
 func (l *syncLock) Release() {
 	if l == nil {
+		return
+	}
+	// Only if this is still our lock. A run that overran maxLockHold has had it
+	// broken and retaken, and removing the file then would drop a lock someone
+	// else is relying on.
+	b, err := os.ReadFile(l.path)
+	if err != nil || strings.TrimSpace(string(b)) != l.token {
 		return
 	}
 	_ = os.Remove(l.path)

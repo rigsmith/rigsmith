@@ -57,13 +57,23 @@ func (r *Repo) SquashBefore(ctx context.Context, cutoff time.Time, msg string) (
 		return 0, nil
 	}
 
-	// The split point: the last commit older than cutoff. Its tree becomes the
-	// base, so nothing it contained is lost — only the steps that produced it.
+	// The split point: the end of the leading run of commits that are ALL older
+	// than the cutoff. Its tree becomes the base, so nothing it contained is
+	// lost — only the steps that produced it.
+	//
+	// Not the last old commit anywhere in the list. Commit dates are not
+	// monotonic here: machines sync on their own clocks, and a merge brings in
+	// commits dated around whenever the other machine wrote them. Folding up to
+	// a stray old commit that lands after a recent one would fold the recent one
+	// away too, inside the window it was promised. Stopping at the first commit
+	// in the window keeps more than strictly necessary, which is the safe way to
+	// be wrong.
 	split := -1
 	for i, c := range all {
-		if c.at.Before(cutoff) {
-			split = i
+		if !c.at.Before(cutoff) {
+			break
 		}
+		split = i
 	}
 	// Nothing old enough, or only the root is old enough and folding one commit
 	// into one commit achieves nothing.

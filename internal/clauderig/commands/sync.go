@@ -164,8 +164,16 @@ func NewSyncCmd() *cobra.Command {
 			// and pushing. On one real machine that was 37 syncs with a median
 			// gap of 163s and a minimum of 7s — for one conversation, and three
 			// landing in the same second once several were open.
-			if (hook || !Interactive()) && !flush {
-				lock, got, lerr := acquireSyncLock(staging)
+			if hook || !Interactive() {
+				// A flush skips the DEBOUNCE, not the lock: two sessions ending
+				// together would otherwise stage, commit and push the same tree
+				// at the same time. It waits for the lock instead of passing on
+				// the work, having no later run of its own to defer to.
+				wait := time.Duration(0)
+				if flush {
+					wait = flushLockWait
+				}
+				lock, got, lerr := acquireSyncLockWait(staging, wait)
 				if lerr != nil {
 					return lerr
 				}
@@ -178,7 +186,7 @@ func NewSyncCmd() *cobra.Command {
 				}
 				defer lock.Release()
 
-				if iv := cfg.HookInterval(); iv > 0 {
+				if iv := cfg.HookInterval(); iv > 0 && !flush {
 					if last, ok := lastSuccessfulSync(staging, me.Name); ok {
 						if since := time.Since(last); since < iv {
 							fmt.Fprintf(out, "  %s\n", DimStyle.Render(fmt.Sprintf(

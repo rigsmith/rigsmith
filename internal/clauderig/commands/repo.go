@@ -218,6 +218,33 @@ func newRepoPruneCmd() *cobra.Command {
 					"most of this is unpacked, not old — run `clauderig repo gc` first; it costs no history"))
 			}
 
+			// What the remote is at right now, checked BEFORE anything is
+			// rewritten. Another machine that has pushed since this one last
+			// fetched holds commits this history does not, and force-pushing
+			// over them would delete them — silently, and from every machine.
+			// The same sha becomes the lease on the push itself, so a machine
+			// that pushes during the confirm prompt is rejected rather than
+			// overwritten.
+			remote := repo.HasRemote(cmd.Context(), "origin")
+			tip := ""
+			if remote {
+				if err := repo.Fetch(cmd.Context(), "origin", "main"); err != nil {
+					return fmt.Errorf("fetch before rewriting history: %w", err)
+				}
+				if tip, err = repo.RevParse(cmd.Context(), "origin/main"); err != nil {
+					return fmt.Errorf("read origin/main: %w", err)
+				}
+				_, behind, known, aerr := repo.AheadBehind(cmd.Context(), "origin", "main")
+				if aerr != nil {
+					return aerr
+				}
+				if known && behind > 0 {
+					return fmt.Errorf(
+						"origin/main has %s this machine does not — run `clauderig sync` first, then prune",
+						countOf(behind, "commit", "commits"))
+				}
+			}
+
 			// Rewriting shared history is not something to do because a script
 			// felt like it. Interactive only, and no --yes to route around it.
 			if !Interactive() {
@@ -242,8 +269,14 @@ func newRepoPruneCmd() *cobra.Command {
 				fmt.Fprintln(out, DimStyle.Render("  nothing older than the cutoff — repo unchanged"))
 				return nil
 			}
-			if err := repo.ForcePush(cmd.Context(), "origin", "main"); err != nil {
-				return fmt.Errorf("force-push after prune: %w", err)
+			if remote {
+				if err := repo.ForcePushWithLease(cmd.Context(), "origin", "main", tip); err != nil {
+					return fmt.Errorf(
+						"the history here was folded, but publishing it failed — another machine pushed in the meantime.\n"+
+							"Run `clauderig sync` to take their work, then prune again: %w", err)
+				}
+			} else {
+				fmt.Fprintln(out, DimStyle.Render("  no origin — folded locally only"))
 			}
 
 			now, err := repo.Stats(cmd.Context())

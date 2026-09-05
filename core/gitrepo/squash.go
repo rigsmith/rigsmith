@@ -41,6 +41,21 @@ func (r *Repo) ForcePush(ctx context.Context, remote, branch string) error {
 	return err
 }
 
+// ForcePushWithLease replaces the remote branch only if it is still at expect.
+// A plain force-push deletes whatever another machine pushed in the meantime;
+// the lease turns that silent loss into a rejected push.
+//
+// expect is a sha the caller has actually seen — read it from the remote, not
+// from a remote-tracking ref that may be older than the last fetch.
+func (r *Repo) ForcePushWithLease(ctx context.Context, remote, branch, expect string) error {
+	lease := "--force-with-lease=" + branch
+	if expect != "" {
+		lease += ":" + expect
+	}
+	_, err := runGit(ctx, r.Dir, "push", lease, remote, "HEAD:"+branch)
+	return err
+}
+
 // WorkTreeBytes is the on-disk size of the working tree, excluding .git — the
 // "retained working-tree size" the squash threshold is measured against.
 func (r *Repo) WorkTreeBytes(ctx context.Context) (int64, error) {
