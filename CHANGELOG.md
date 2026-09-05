@@ -1,5 +1,16 @@
 # github.com/rigsmith/rigsmith
 
+## 1.12.0
+### 🚀 Enhancements
+
+- **shiprig:** three `release.jsonc` `vars` snags, all fixed. `fail(msg)` is in scope for a computed var (and an `if` gate), so `{ "script": "ctx.env.BUILD ? … : fail('set BUILD')" }` refuses with its own message instead of an unresolved-reference compile error — and the dry run says so up front. `${env.NAME}` inside a literal var's value now expands from the release environment the way it does in a step, rather than passing through to the shell unexpanded. And a captured var no longer needs `sh -c 'if …'` to differ by machine: `{ "os": { "macos": "…", "windows": "…", "linux": "…" } }` picks the command for the OS the release runs on (with `command` as the fallback for one not listed), and `{ "secret": "op://…" | "env:NAME" | "cmd:…" }` resolves a credential through the same resolver the publish `auth` config uses, masked either way.
+- **shiprig:** a release can be cut from a `rig stack` stackspace. `shiprig` reads the stack manifest and treats every path under a member prefix as not its to write: `version` still computes the numbers, cascades them, consumes the changesets and writes the changelogs, but stamps nothing into a member's manifest — the number is recorded in `.changeset/versions.json`, read back as the current version next time, and handed to the build as `${version.<pkg>}` — and a member's notes go to the root `CHANGELOG.md`, one section per member. `tag`, `push` and the forge `release` are skipped in the plan, with the reason: a fused history is never tagged or pushed. `version --no-stamp` (or `"versioning": { "stamp": false }`) records instead of stamping anywhere.
+
+### 🩹 Fixes
+
+- **rig:** a config file that is a dangling symlink — `rig.stack.jsonc`, `.rig.json`, `.changeset/release.jsonc`, any file the tools find by probing — is an error naming the file, not "no config here". Reading it followed the link, found nothing, and fell back to defaults; for a stack manifest that meant a release would stamp every member as its own. The stack manifest's member keys are now also checked on read by the same rule `rig stack` applies on write, so a hand-edited `"./lib"` is refused rather than matching nothing.
+- **shiprig:** a .NET project whose version is computed at build time — MinVer from git tags, a CI-stamped build — is discovered as a package. It declares no `<Version>`, and discovery used to take that as "not a package"; a project that is `IsPackable`, declares a `PackageId`, or references MinVer now comes back with no version in the tree, which `info` and `status` say, and the version a release computes for it is recorded in `.changeset/versions.json` and bumped from next time.
+
 ## 1.11.0
 ### 🚀 Enhancements
 
