@@ -79,6 +79,9 @@ func acquireSyncLockWait(staging string, d time.Duration) (*syncLock, bool, erro
 
 // writeLock creates the lock file, failing if it is already there.
 func writeLock(path string) (*syncLock, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, err

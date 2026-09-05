@@ -108,11 +108,14 @@ func NewMergeCmd() *cobra.Command {
 				say("  %s\n", DimStyle.Render(fmt.Sprintf(
 					"merging origin/main — %s, %s", commits(d.Ahead, "ahead"), commits(d.Behind, "behind"))))
 
-				conflicted, err := repo.MergeRef(ctx, "origin/main")
+				conflicted, err := repo.MergeRefUncommitted(ctx, "origin/main")
 				if err != nil {
 					return err
 				}
 				if !conflicted {
+					if err := finishAuditedMerge(ctx, repo); err != nil {
+						return err
+					}
 					doc.Merged = true
 					say("%s\n", OkStyle.Render("  ✓ merged cleanly — no policies needed"))
 					_ = journal.Append(staging, journal.Succeeded(me.Name, journal.OpMerge))
@@ -142,7 +145,7 @@ func NewMergeCmd() *cobra.Command {
 					say("    %s\n", p)
 				}
 				say("  %s\n", DimStyle.Render(
-					"Resolve them, `git -C "+staging+" commit`, or run `clauderig merge --abort`."))
+					"Resolve and stage them, then re-run `clauderig merge`, or run `clauderig merge --abort`."))
 				err := fmt.Errorf("%d unresolved conflict(s)", len(residual))
 				_ = journal.Append(staging, journal.Failed(me.Name, journal.OpMerge, err))
 				if asJSON {
@@ -157,7 +160,7 @@ func NewMergeCmd() *cobra.Command {
 				return err
 			}
 
-			if err := repo.CommitMerge(ctx); err != nil {
+			if err := finishAuditedMerge(ctx, repo); err != nil {
 				return fmt.Errorf("commit merge: %w", err)
 			}
 			doc.Merged = true

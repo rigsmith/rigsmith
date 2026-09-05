@@ -1,7 +1,6 @@
 package sessions
 
 import (
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // Row is one session, assembled from every place it leaves a trace. Fields are
@@ -476,7 +476,7 @@ func SessionTime(act session.Activity, meta session.Meta, path string) time.Time
 		return meta.LastActivity
 	}
 	if path != "" {
-		if info, err := os.Stat(path); err == nil {
+		if info, err := transcript.Stat(path); err == nil {
 			return info.ModTime().UTC()
 		}
 	}

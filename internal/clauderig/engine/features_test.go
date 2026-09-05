@@ -421,23 +421,22 @@ func TestSync_RedactsTranscriptsWithoutTouchingTheLiveFile(t *testing.T) {
 
 // Off by default: rewriting the middle of somebody's conversation is not a thing
 // a backup tool does uninvited.
-func TestSync_LeavesTranscriptsAloneByDefault(t *testing.T) {
+func TestSync_RefusesSecretsWithoutRewritingLiveTranscripts(t *testing.T) {
 	live := t.TempDir()
 	key := "sk-ant-api03-" + strings.Repeat("z", 60)
-	write(t, live, "projects/-p/s.jsonl", `{"type":"user","text":"`+key+`"}`+"\n")
+	body := `{"type":"user","text":"` + key + `"}` + "\n"
+	write(t, live, "projects/-p/s.jsonl", body)
 	staging := t.TempDir()
 	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
-
-	if _, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
-		SourceOverride: override("cli", live)}); err != nil {
-		t.Fatal(err)
+	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, SourceOverride: override("cli", live)})
+	if err == nil || len(rep.Findings) == 0 {
+		t.Fatal("expected secret refusal")
 	}
-	staged, err := os.ReadFile(filepath.Join(staging, "cli", "projects", "-p", "s.jsonl"))
-	if err != nil {
-		t.Fatal(err)
+	if strings.Contains(err.Error(), key) {
+		t.Fatal("error disclosed credential")
 	}
-	if !strings.Contains(string(staged), key) {
-		t.Error("a transcript was scrubbed without being asked")
+	if got := read(t, filepath.Join(live, "projects/-p/s.jsonl")); got != body {
+		t.Fatal("live transcript changed")
 	}
 }
 
@@ -460,8 +459,10 @@ func TestSync_EnablingRedactionScrubsWhatIsAlreadyStaged(t *testing.T) {
 	base := Options{StagingDir: staging, Config: cfg, Machine: m, SourceOverride: override("cli", live)}
 	stagedPath := filepath.Join(staging, "cli", "projects", "-p", "s.jsonl")
 
-	// Staged before anyone thought to turn redaction on.
-	if _, err := Sync(base); err != nil {
+	// Simulate an older client staging a transcript without scanning its body.
+	write(t, staging, "cli/projects/-p/s.jsonl", body.String())
+	st, _ := os.Stat(filepath.Join(live, "projects/-p/s.jsonl"))
+	if err := os.Chtimes(stagedPath, st.ModTime(), st.ModTime()); err != nil {
 		t.Fatal(err)
 	}
 	if b, err := os.ReadFile(stagedPath); err != nil {

@@ -9,6 +9,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // recordLedger walks the STAGED transcript tree and records every session it
@@ -90,7 +91,7 @@ func recordLedger(stagingDir, device, liveAccount string, mine map[string]bool) 
 				// inference — the Desktop sidecar is what settles it properly.
 				acct, src = liveAccount, ledger.AccountFromSync
 			}
-			info, serr := os.Stat(p)
+			info, serr := transcript.Stat(p)
 			if serr != nil {
 				return nil
 			}
