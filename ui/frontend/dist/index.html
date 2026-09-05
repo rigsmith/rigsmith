@@ -222,6 +222,15 @@
   }
   #filing .hint{color:var(--muted);font-family:var(--mono);font-size:10px;}
   #filing .hint.warn{color:var(--warn);}
+  .chk{display:flex;gap:8px;align-items:baseline;font-size:11px;padding:3px 0;}
+  .chk .dot{flex:none;width:6px;height:6px;border-radius:50%;transform:translateY(-1px);}
+  .chk .dot.ok{background:var(--ok);} .chk .dot.warn{background:var(--warn);}
+  .chk .dot.fail{background:var(--err);} .chk .dot.info{background:var(--muted-2);}
+  .chk .nm{flex:none;min-width:150px;color:var(--paper);}
+  .chk .dt{flex:1;min-width:0;color:var(--muted);overflow-wrap:anywhere;}
+  .chk button{flex:none;}
+  .dsec{margin-top:10px;}
+  .dsec .h{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-2);}
   .splits{display:flex;flex-direction:column;gap:12px;margin-top:6px;}
   .split{border-top:1px solid var(--line);padding-top:10px;}
   .split .t{color:var(--paper);font-size:12px;font-weight:700;overflow-wrap:anywhere;}
@@ -462,6 +471,9 @@
 
   <div id="filing"></div>
 
+  <div class="seclabel"><span>Health</span><span class="rule"></span></div>
+  <div id="doctor"></div>
+
   <div class="seclabel"><span>Repository</span><span class="rule"></span></div>
   <div id="repo"></div>
 
@@ -500,6 +512,8 @@ const ACCOUNTS_DESKTOP = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.OpenDe
 const ACCOUNTS_RUNCLI = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.RunCLI';
 const ACTIVITY_FILES = 'github.com/rigsmith/rigsmith/ui/bridge.Activity.Files';
 const REPO_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Get';
+const DOCTOR_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Doctor.Get';
+const DOCTOR_FIX = 'github.com/rigsmith/rigsmith/ui/bridge.Doctor.Fix';
 const FILING_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Get';
 const FILING_SPLITS = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Splits';
 const FILING_FIX = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Consolidate';
@@ -1112,6 +1126,103 @@ function repoChanged(rewrote) {
 // Silent until something is wrong: a panel that says "all good" every time is a
 // panel people stop reading, and this one has to be noticed the once it matters.
 let filingOpen = false;
+
+// The doctor pane. Deliberately NOT on the status poll: the checks shell out to
+// git and gh, look for binaries on PATH and size the Desktop store, which is
+// far too much to repeat every five seconds for an answer that changes when
+// somebody changes something. Run when the window opens, after a fix, and when
+// asked.
+let doctorAll = false;   // "show the passing ones too"
+let doctorBusy = false;
+
+async function loadDoctor(force) {
+  const box = $('doctor');
+  if (!box.hasChildNodes()) box.append(el('div', 'empty', 'checking…'));
+  try {
+    renderDoctor(await Call.ByName(DOCTOR_GET), force);
+  } catch (e) {
+    repaint('doctor');
+    box.replaceChildren(el('div', 'empty err', `Could not run the checks: ${e}`));
+  }
+}
+
+function renderDoctor(v, force) {
+  const box = $('doctor');
+  const sections = v?.sections || [];
+
+  // Same guard as everywhere else: rebuilding regardless would close the
+  // "show all" list underneath whoever had just opened it.
+  const sig = sections.map(sec => [sec.title, (sec.checks || []).map(c => [c.id, c.status, c.detail])]);
+  if (!changed('doctor', [v?.error || '', doctorAll, sig], force)) return;
+
+  box.replaceChildren();
+  if (v?.error) box.append(el('div', 'empty err', v.error));
+
+  // The summary first, because it is the only line most people need. Naming the
+  // machine matters: this window can be open while you are thinking about a
+  // different one.
+  const head = el('div', 'reporow');
+  const subject = [v?.machine, v?.repo].filter(Boolean).join(' · ');
+  let verdict = 'everything looks fine';
+  if (v?.fails) verdict = `${v.fails} failing`;
+  else if (v?.warns) verdict = `${v.warns} warning${v.warns === 1 ? '' : 's'}`;
+  head.append(el('div', 'grow', subject ? `${verdict} — ${subject}` : verdict));
+
+  const shown = [];
+  for (const sec of sections) {
+    const keep = (sec.checks || []).filter(c => doctorAll || c.status !== 'ok');
+    if (keep.length) shown.push([sec.title, keep]);
+  }
+  const hidden = sections.reduce((n, sec) => n + (sec.checks || []).filter(c => c.status === 'ok').length, 0);
+
+  if (hidden) {
+    const t = el('button', null, doctorAll ? `Hide the ${hidden} passing` : `Show all ${hidden} passing`);
+    t.onclick = () => { doctorAll = !doctorAll; repaint('doctor'); renderDoctor(v, true); };
+    head.append(t);
+  }
+  const again = el('button', null, 'Re-check');
+  again.onclick = () => { again.disabled = true; repaint('doctor'); loadDoctor(true); };
+  head.append(again);
+  box.append(head);
+
+  for (const [title, checks] of shown) {
+    const sec = el('div', 'dsec');
+    sec.append(el('div', 'h', title));
+    for (const c of checks) sec.append(checkRow(c, v));
+    box.append(sec);
+  }
+}
+
+function checkRow(c, v) {
+  const row = el('div', 'chk');
+  row.append(el('span', `dot ${c.status}`));
+  row.append(el('span', 'nm', c.name || c.id));
+  // The hint is what to do about it when nothing here can do it for you, so it
+  // is worth as much screen as the detail.
+  row.append(el('span', 'dt', [c.detail, c.hint].filter(Boolean).join(' — ')));
+  if (c.fixable) {
+    const b = el('button', null, c.fixLabel || 'Fix');
+    b.disabled = doctorBusy;
+    b.onclick = async () => {
+      doctorBusy = true;
+      b.disabled = true;
+      b.textContent = 'fixing…';
+      try {
+        // Fix returns a freshly run report, so the pane shows the state after
+        // the repair rather than the one that prompted it.
+        repaint('doctor');
+        renderDoctor(await Call.ByName(DOCTOR_FIX, c.id), true);
+      } catch (e) {
+        repaint('doctor');
+        renderDoctor({ ...v, error: String(e) }, true);
+      } finally {
+        doctorBusy = false;
+      }
+    };
+    row.append(b);
+  }
+  return row;
+}
 
 function renderFiling(v, force) {
   const box = $('filing');
@@ -2190,6 +2301,8 @@ Events.On('clauderig:health', () => {
 // than offering to start a second one.
 Call.ByName(ACTIONS_BUSY).then(setRunning).catch(() => {});
 refresh();
+// Once, on open. See loadDoctor: these checks are too expensive to poll.
+loadDoctor();
 </script>
 </body>
 </html>

@@ -34,6 +34,11 @@ import (
 //go:embed all:frontend/dist
 var frontend embed.FS
 
+// version is stamped at release time via -ldflags "-X main.version=...", the
+// same seam every other rigsmith binary carries. The doctor pane reports it, so
+// a report can say which build produced it.
+var version = "dev"
+
 const (
 	// AppName is the user-facing name: the macOS menu bar title, the window
 	// title, the About box.
@@ -88,6 +93,7 @@ func main() {
 			application.NewService(bridge.NewActivity()),
 			application.NewService(bridge.NewRepo()),
 			application.NewService(bridge.NewFiling()),
+			application.NewService(bridge.NewDoctor(version)),
 			application.NewService(bridge.NewChooser()),
 			application.NewService(actionsSvc),
 			application.NewService(bridge.NewLibrary()),
