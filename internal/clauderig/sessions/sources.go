@@ -27,6 +27,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // Source labels. CLISource is the live ~/.claude root — the only one
@@ -176,7 +177,7 @@ func newestTranscript(list []string) string {
 			at = act.At
 		}
 		var size int64
-		if info, err := os.Stat(p); err == nil {
+		if info, err := transcript.Stat(p); err == nil {
 			size = info.Size()
 		}
 		switch {

@@ -21,6 +21,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // FileRedaction names one file the redactor changed on the way into staging,
@@ -72,10 +73,12 @@ type Report struct {
 
 // Options configure a sync.
 type Options struct {
-	StagingDir    string
-	Config        *config.Config
-	Machine       config.Machine
-	ClaudeVersion string
+	// ChunkTranscripts uses versioned staging chunks for large transcripts.
+	ChunkTranscripts bool
+	StagingDir       string
+	Config           *config.Config
+	Machine          config.Machine
+	ClaudeVersion    string
 	// RetentionDays drops project transcripts older than this many days (0 = keep
 	// all). Now() is the reference; the cutoff is computed once per sync.
 	RetentionDays int
@@ -218,9 +221,20 @@ func isTranscriptRel(rel string) bool {
 
 // Sync materialises the allowlisted, redacted file set for each enabled root into
 // StagingDir/<root-id>/…, writes the project manifest, and runs the tripwire over
-// the config JSON it wrote. A tripwire hit fails the sync loudly (a secret slipped
-// past redaction) — that is the safety property; nothing is pushed in that case.
+// all staged text, including complete transcripts. A tripwire hit fails the
+// sync loudly; nothing is pushed in that case.
 func Sync(opts Options) (*Report, error) {
+	if _, err := transcript.Enabled(opts.StagingDir); err != nil {
+		return nil, err
+	}
+	if opts.ChunkTranscripts && opts.MaxFileBytes > 0 && opts.MaxFileBytes < transcript.ChunkSize {
+		return nil, fmt.Errorf("chunkTranscripts requires retention.maxFileBytes of at least %d bytes or no cap", transcript.ChunkSize)
+	}
+	if !opts.ChunkTranscripts {
+		if err := transcript.CheckNativeLimit(opts.StagingDir, opts.MaxFileBytes); err != nil {
+			return nil, err
+		}
+	}
 	rep := &Report{}
 	// Findings from whole files, tracked apart from JSON-value findings because the
 	// two need different remedies in the error message.
@@ -297,7 +311,7 @@ func Sync(opts Options) (*Report, error) {
 			// the host and fails the entire push, so drop it here. Remove any copy an
 			// earlier, uncapped sync staged — otherwise the cap can never dig a repo
 			// out of the hole it was added to fix.
-			if opts.MaxFileBytes > 0 && info.Size() > opts.MaxFileBytes {
+			if opts.MaxFileBytes > 0 && info.Size() > opts.MaxFileBytes && !(opts.ChunkTranscripts && isTranscriptRel(rel) && info.Size() > 2*transcript.ChunkSize) {
 				rr.Oversize = append(rr.Oversize, rel)
 				_ = os.Remove(dstPath)
 				continue
@@ -328,7 +342,7 @@ func Sync(opts Options) (*Report, error) {
 				// it alone already means "staged from this version of this file".
 				scrub := opts.RedactTranscripts && isTranscript(rel)
 				unchanged := false
-				staged, derr := os.Stat(dstPath)
+				staged, derr := transcript.Stat(dstPath)
 				if derr != nil {
 					staged = nil
 				}
@@ -342,14 +356,13 @@ func Sync(opts Options) (*Report, error) {
 				// repo carries until the next squash. Past LargeFileBytes it waits
 				// for a chunk's worth of new content, or for the session to go
 				// quiet, before it is restaged.
-				if !unchanged && !flush.covers(srcPath) && deferLarge(rel, info, staged, opts.LargeFileBytes, cutoff, time.Now()) {
+				if !opts.ChunkTranscripts && !rescrub && !unchanged && !flush.covers(srcPath) && deferLarge(rel, info, staged, opts.LargeFileBytes, cutoff, time.Now()) {
 					rr.Deferred++
 					continue
 				}
 				if unchanged {
-					// Nothing will be written, so scanning the source separately is safe
-					// here — there is no staged copy for it to disagree with.
-					if f := scanNonJSON(srcPath, rel, info.Size()); f != nil {
+					// Check the bytes that will actually be published.
+					if f := scanNonJSON(dstPath, rel); f != nil {
 						noteFinding(f)
 						continue
 					}
@@ -357,11 +370,8 @@ func Sync(opts Options) (*Report, error) {
 					continue
 				}
 
-				// Scrubbing replaces the scan for transcripts: the content rules
-				// above never reach them anyway (they are far past the 64 KB scan
-				// limit), and what this stages is by construction the cleaned
-				// bytes. A private key block is the exception — it cannot be
-				// rewritten safely, so it falls through to the tripwire.
+				// Optional scrubbing cleans the staged copy. The final audit still
+				// checks its complete contents before publication.
 				if scrub {
 					hits, rerr := redactTranscript(dstPath, srcPath, info.ModTime())
 					switch {
@@ -387,9 +397,8 @@ func Sync(opts Options) (*Report, error) {
 				// Scan the EXACT bytes being staged. Reading for the scan and then
 				// re-opening to copy would leave a window in which a live ~/.claude
 				// replaces a benign file with a credential after it was cleared, staging
-				// content that was never scanned. Files past the scan limit have no
-				// content rules applied at all (see redact.ScanContentLimit), so for
-				// those there is nothing to diverge and a streaming copy is fine.
+				// content that was never scanned. Large files are copied as streams
+				// and checked by the complete staged-tree audit below.
 				if info.Size() > 0 && info.Size() <= int64(redact.ScanContentLimit()) {
 					data, rerr := os.ReadFile(srcPath)
 					if rerr != nil {
@@ -405,7 +414,7 @@ func Sync(opts Options) (*Report, error) {
 					if err := writeFileMtime(dstPath, data, info.ModTime()); err != nil {
 						return nil, err
 					}
-				} else if err := copyPreserveMtime(srcPath, dstPath, info.ModTime()); err != nil {
+				} else if err := copyTranscriptSnapshot(srcPath, dstPath, info.ModTime(), opts.ChunkTranscripts && isTranscriptRel(rel) && info.Size() > 2*transcript.ChunkSize); err != nil {
 					if os.IsNotExist(err) {
 						rr.SkippedFiles++
 						continue
@@ -492,6 +501,10 @@ func Sync(opts Options) (*Report, error) {
 		rr.Disallowed = disallowed
 
 		rep.Roots = append(rep.Roots, rr)
+	}
+
+	if err := transcript.ConvertTree(opts.StagingDir, opts.ChunkTranscripts); err != nil {
+		return rep, err
 	}
 
 	// Record every staged session in the permanent ledger BEFORE retention runs.
@@ -604,6 +617,20 @@ func Sync(opts Options) (*Report, error) {
 		}
 	}
 
+	if audit, err := Audit(opts.StagingDir); err != nil {
+		return rep, err
+	} else {
+		seen := make(map[redact.Finding]bool)
+		for _, f := range rep.Findings {
+			seen[f] = true
+		}
+		for _, f := range audit {
+			if !seen[f] {
+				rep.Findings = append(rep.Findings, f)
+				seen[f] = true
+			}
+		}
+	}
 	if len(rep.Findings) > 0 {
 		// The two halves of the wire need different remedies, so say which one
 		// fired: a JSON value means the redactor's key rules missed something, a
@@ -718,26 +745,18 @@ func applyKeepFilter(rootID, rel string, v any) any {
 	return out
 }
 
-// scanNonJSON runs the non-JSON tripwire over one file, reading only as much of
-// it as redact.ScanFile will actually look at — the name rules need no content,
-// and anything past the content limit is a transcript-sized file the scan skips
-// by design. A file that can't be read is not reported: it is the same churn case
-// the copy path already tolerates, and inventing a finding would abort the sync
-// over a file that merely vanished.
-func scanNonJSON(srcPath, rel string, size int64) *redact.Finding {
-	var data []byte
-	if size > 0 && size <= int64(redact.ScanContentLimit()) {
-		f, err := os.Open(srcPath)
-		if err != nil {
-			return nil
-		}
-		data, _ = io.ReadAll(io.LimitReader(f, int64(redact.ScanContentLimit())))
-		f.Close()
+// scanNonJSON checks the entire staged stream and fails closed on read errors.
+func scanNonJSON(srcPath, rel string) *redact.Finding {
+	f, err := transcript.Open(srcPath)
+	if err != nil {
+		return &redact.Finding{Path: rel, Kind: "unreadable"}
 	}
-	if found := redact.ScanFile(rel, data); len(found) > 0 {
-		return &found[0]
+	defer f.Close()
+	found, err := redact.ScanReader(rel, f)
+	if err != nil {
+		return &redact.Finding{Path: rel, Kind: "unreadable"}
 	}
-	return nil
+	return found
 }
 
 func dirExists(p string) bool {
@@ -805,7 +824,13 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 		var kept int
 		// remove aged files, deepest first so dirs can be cleaned afterwards
 		filepath.WalkDir(slugDir, func(p string, d os.DirEntry, werr error) error {
-			if werr != nil || d.IsDir() {
+			if werr != nil {
+				return nil
+			}
+			if d.IsDir() {
+				if transcript.IsPartPath(p) {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			info, e := d.Info()
@@ -818,6 +843,9 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 			}
 			if info.ModTime().Before(cutoff) {
 				if os.Remove(p) == nil {
+					if strings.HasSuffix(p, ".jsonl") {
+						_ = os.RemoveAll(p + transcript.Suffix)
+					}
 					pruned++
 				}
 			} else {
@@ -963,4 +991,18 @@ func copyPreserveMtime(src, dst string, mtime time.Time) error {
 		return err
 	}
 	return nil
+}
+
+// copyTranscriptSnapshot writes large transcripts directly as chunks, publishing
+// the index only after all parts are complete. Live sources remain native JSONL.
+func copyTranscriptSnapshot(src, dst string, mtime time.Time, chunked bool) error {
+	if !chunked {
+		return copyPreserveMtime(src, dst, mtime)
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	return transcript.Write(dst, in, mtime)
 }

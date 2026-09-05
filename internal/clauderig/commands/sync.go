@@ -19,6 +19,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 	"github.com/spf13/cobra"
 )
 
@@ -122,7 +123,14 @@ func NewSyncCmd() *cobra.Command {
 		Short: "Snapshot, redact, rewrite, and push your Claude Code setup",
 		Long: "Walks the sync roots, redacts secret-bearing fields, rewrites machine\n" +
 			"paths into a portable form, commits, and pushes.\n\n" +
-			"A transcript over retention.largeFileBytes is restaged only once it has\n" +
+			"Complete staged-text scanning refuses recognized credentials before publication.\n" +
+			"Set redactTranscripts true to scrub supported signatures from staged transcripts.\n\n" +
+			"Chunking defaults on in new configs; omitted keys in existing configs mean auto.\n" +
+			"Set chunkTranscripts true to migrate transcripts larger than 8 MiB to reusable\n" +
+			"4 MiB chunks on the next sync; restore reconstructs native JSONL. Upgrade every\n" +
+			"participating client first. Set false to convert back, or auto to follow the repo.\n" +
+			"Chunk mode captures every changed tail and bypasses the large-file throttle.\n\n" +
+			"With plain storage, a transcript over retention.largeFileBytes is restaged once it has\n" +
 			"grown by half that again, or once it has gone quiet for 30 minutes, so the\n" +
 			"Stop hook does not re-commit a 50 MB file every turn. The SessionEnd hook\n" +
 			"runs `sync --flush`, which restages the ended session's transcript (the\n" +
@@ -144,49 +152,36 @@ func NewSyncCmd() *cobra.Command {
 				return err
 			}
 
-			// Automated runs debounce and serialise; a sync typed by hand always
-			// does the work, because someone asking for it now means now.
-			//
-			// Never a flush. That one comes from the SessionEnd hook, which has
-			// no terminal and would otherwise be debounced away — and a flush is
-			// a session ending saying "stage this now", with no later run to
-			// defer to.
-			//
-			// Keyed on whether there is a terminal, not only on --hook. "Typed
-			// by hand" is a property of how the command was invoked, and every
-			// install that already exists has a bare `clauderig sync` written
-			// into its settings — a flag would have left all of them thrashing
-			// until their owner happened to re-run a command nobody knows they
-			// need. --hook stays as the explicit form for scripts.
-			//
-			// The Stop hook fires at the end of every turn in EVERY open chat,
-			// and the work is walking the whole tree, redacting every JSON file
-			// and pushing. On one real machine that was 37 syncs with a median
-			// gap of 163s and a minimum of 7s — for one conversation, and three
-			// landing in the same second once several were open.
-			if hook || !Interactive() {
-				// A flush skips the DEBOUNCE, not the lock: two sessions ending
-				// together would otherwise stage, commit and push the same tree
-				// at the same time. It waits for the lock instead of passing on
-				// the work, having no later run of its own to defer to.
-				wait := time.Duration(0)
-				if flush {
-					wait = flushLockWait
-				}
-				lock, got, lerr := acquireSyncLockWait(staging, wait)
-				if lerr != nil {
-					return lerr
-				}
-				if !got {
-					// Another sync is mid-run. It is walking the same tree and
-					// will capture the same work, so there is nothing useful to
-					// do here and failing would only make the hook noisy.
-					fmt.Fprintln(out, DimStyle.Render("  another sync is running — skipping"))
-					return nil
-				}
-				defer lock.Release()
+			storedChunkMode, err := transcript.Enabled(staging)
+			if err != nil {
+				return err
+			}
+			migrationPending := cfg.ChunkTranscripts != nil && *cfg.ChunkTranscripts != storedChunkMode
 
-				if iv := cfg.HookInterval(); iv > 0 && !flush {
+			// Every sync holds the staging lock: chunk cleanup and publication must
+			// not race another writer. Manual runs wait and are never debounced.
+			automated := hook || !Interactive()
+			wait := time.Duration(0)
+			if flush || !automated {
+				wait = flushLockWait
+			}
+			lock, got, lerr := acquireSyncLockWait(staging, wait)
+			if lerr != nil {
+				return lerr
+			}
+			if !got {
+				if !automated || flush {
+					return fmt.Errorf("another sync is still running; retry after it finishes")
+				}
+				fmt.Fprintln(out, DimStyle.Render("  another sync is running — skipping"))
+				return nil
+			}
+			defer lock.Release()
+
+			// Legacy hooks invoke bare `sync` without a terminal. Keep recognizing
+			// those. Flushes and explicit storage-mode changes bypass the debounce.
+			if automated {
+				if iv := cfg.HookInterval(); iv > 0 && !flush && !migrationPending {
 					if last, ok := lastSuccessfulSync(staging, me.Name); ok {
 						if since := time.Since(last); since < iv {
 							fmt.Fprintf(out, "  %s\n", DimStyle.Render(fmt.Sprintf(
@@ -272,8 +267,16 @@ func NewSyncCmd() *cobra.Command {
 					flushPaths = paths
 				}
 			}
+			chunked, cerr := transcript.Enabled(staging)
+			if cerr != nil {
+				return cerr
+			}
+			if cfg.ChunkTranscripts != nil {
+				chunked = *cfg.ChunkTranscripts
+			}
 			rep, serr := engine.Sync(engine.Options{
-				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
+				ChunkTranscripts: chunked,
+				StagingDir:       staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
 				RetentionDays:     cfg.Retention.HistoryDays,
 				MaxFileBytes:      cfg.Retention.MaxFileBytes,
 				LargeFileBytes:    largeFileBytes,
@@ -397,6 +400,9 @@ func NewSyncCmd() *cobra.Command {
 					return err
 				}
 			}
+			if err := engine.CheckPublish(staging); err != nil {
+				return err
+			}
 			changed, err := repo.Commit(ctx, "clauderig sync: "+me.Name)
 			if err != nil {
 				return err
@@ -416,6 +422,9 @@ func NewSyncCmd() *cobra.Command {
 			// can land a push while this one is still merging. Failing there would
 			// report a broken sync for a race that resolves itself on the retry.
 			for attempt := 0; ; attempt++ {
+				if err := engine.CheckPublish(staging); err != nil {
+					return err
+				}
 				perr := repo.Push(ctx, "origin", "main")
 				if perr == nil {
 					break

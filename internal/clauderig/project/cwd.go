@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // maxHeaderLines bounds how far into a transcript we scan for the cwd. The cwd
@@ -29,7 +30,7 @@ type transcriptLine struct {
 // (sub-agent) records are skipped so we get the session's own cwd. ok is false
 // when no cwd is found within the header bound.
 func CwdFromTranscript(path string) (cwd string, ok bool, err error) {
-	f, err := os.Open(path)
+	f, err := transcript.Open(path)
 	if err != nil {
 		return "", false, err
 	}

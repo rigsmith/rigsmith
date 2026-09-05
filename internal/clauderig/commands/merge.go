@@ -10,6 +10,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 	"github.com/rigsmith/rigsmith/internal/clauderig/merge"
 	"github.com/spf13/cobra"
@@ -157,6 +158,9 @@ func NewMergeCmd() *cobra.Command {
 				return err
 			}
 
+			if err := engine.CheckPublish(staging); err != nil {
+				return err
+			}
 			if err := repo.CommitMerge(ctx); err != nil {
 				return fmt.Errorf("commit merge: %w", err)
 			}

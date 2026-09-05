@@ -57,8 +57,8 @@
         "historyDays": { "type": "integer", "description": "Project-history retention window in days. Applies to transcripts; project memory is exempt and never ages out." },
         "squashFactor": { "type": "number", "description": "Squash the history branch when its footprint exceeds this × the retained working-tree size." },
         "floorBytes": { "type": "integer", "description": "Never squash below this byte floor." },
-        "maxFileBytes": { "type": "integer", "description": "Drop any single file larger than this many bytes (git hosts reject oversized blobs). 0 means the default of 50 MiB; negative disables the cap." },
-        "largeFileBytes": { "type": "integer", "description": "Past this many bytes a session transcript is restaged only once it has grown by half this much again, or has been quiet for 30 minutes — so a long session costs one blob per chunk of new content rather than one per sync. 0 means the default of 8 MiB; negative restages every change." },
+        "maxFileBytes": { "type": "integer", "description": "Drop any single file larger than this many bytes (git hosts reject oversized blobs). 0 means the default of 50 MiB; negative disables the cap. In chunk mode, large logical transcripts are exempt, but the cap must allow a 4 MiB chunk." },
+        "largeFileBytes": { "type": "integer", "description": "Past this many bytes a session transcript is restaged only once it has grown by half this much again, or has been quiet for 30 minutes — so a long session costs one blob per chunk of new content rather than one per sync. 0 means the default of 8 MiB; negative restages every change. Ignored when chunkTranscripts is enabled." },
         "squashKeepDays": { "type": "integer", "description": "Whole days of sync history the automatic squash leaves standing (default 30). It repacks first and only squashes if .git is still oversized." }
       }
     },
@@ -66,9 +66,13 @@
       "type": "integer",
       "description": "Minutes a hook-driven sync waits before doing the work again. The Stop hook fires at the end of every turn in every open chat. Omit for the default of 5; set 0 to turn the debounce off and sync every turn. `clauderig sync` typed by hand is never debounced."
     },
+    "chunkTranscripts": {
+      "type": "boolean",
+      "description": "Override repository transcript storage mode. New configurations default to true; an omitted key in existing configurations means auto (follow the repository). true converts staged transcripts larger than 8 MiB to verified 4 MiB chunks on the next sync; false reconstructs native JSONL. Omit to follow the repository setting. Upgrade every syncing/restoring machine before enabling; older binaries cannot read chunk indexes."
+    },
     "redactTranscripts": {
       "type": "boolean",
-      "description": "Scrub credential-shaped tokens (API keys, tokens, JWTs) out of the STAGED copy of a transcript before it is committed. Your live ~/.claude file is never modified. Off by default."
+      "description": "Scrub credential-shaped tokens (API keys, tokens, JWTs) out of the STAGED copy of a transcript before it is committed. Your live ~/.claude file is never modified. Off by default; complete staged-text scanning is always on and refuses recognized credentials that remain."
     },
     "alwaysPrune": {
       "type": "boolean",

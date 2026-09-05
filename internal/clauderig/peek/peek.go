@@ -23,6 +23,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	transcriptstore "github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // DefaultRef is the remote branch clauderig syncs against.
@@ -254,7 +255,11 @@ func Read(ctx context.Context, repo *gitrepo.Repo, ref string, s Session) ([]byt
 	if ref == "" {
 		ref = DefaultRef
 	}
-	return repo.ShowFile(ctx, ref, s.Path)
+	b, err := repo.ShowFile(ctx, ref, s.Path)
+	if err != nil {
+		return nil, err
+	}
+	return transcriptstore.ReadStored(s.Path, b, func(p string) ([]byte, error) { return repo.ShowFile(ctx, ref, p) }, 0)
 }
 
 // Titles fills in Title for the given sessions by reading each blob's header.
