@@ -616,8 +616,9 @@ manifest — and changes three things without being told:
   `CHANGELOG.md`, one section per member. A member whose version is computed at
   build time (MinVer) is discovered as a package all the same, with no version
   in the tree until a release records one — whether MinVer is a
-  `PackageReference` in the project or a `GlobalPackageReference` in an
-  ancestor `Directory.Packages.props`, and whether the project's `IsPackable`
+  `PackageReference` in the project or a `GlobalPackageReference` in the
+  nearest `Directory.Packages.props` (an outer one only where the nearer file
+  imports it), and whether the project's `IsPackable`
   is set true inline or in any `PropertyGroup` of an ancestor
   `Directory.Build.props`, conditions not evaluated.
 - **`tag` and `push` do nothing.** A tag on a fused history names nothing an

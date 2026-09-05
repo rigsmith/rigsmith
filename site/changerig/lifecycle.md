@@ -175,7 +175,9 @@ break that assumption:
   again under `Condition="…Contains('/src/')"` counts as true — and an explicit
   false with no true anywhere excludes the project. A MinVer reference counts
   whether it is a `PackageReference` in the project or a
-  `GlobalPackageReference` in an ancestor `Directory.Packages.props`;
+  `GlobalPackageReference` in the nearest `Directory.Packages.props` (an outer
+  one is read only where the nearer file imports it, as restore does).
+  Commented-out elements are ignored throughout;
 - one whose manifest is **not this repository's to write** — a member of a
   [stackspace](/rig/stack), whose directory leaves in pull requests to its
   upstream, where a stamped version would be a bump nobody asked for.

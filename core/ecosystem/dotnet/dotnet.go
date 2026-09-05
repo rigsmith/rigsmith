@@ -34,9 +34,11 @@ var _ plugin.Ecosystem = (*Adapter)(nil)
 // propsFileName is the shared props file MSBuild walks ancestors for.
 const propsFileName = "Directory.Build.props"
 
-// packagesPropsFileName is the Central Package Management file, found by the
-// same ancestor walk. A package every project takes — MinVer, say — is declared
-// once there as a GlobalPackageReference, and no csproj mentions it.
+// packagesPropsFileName is the Central Package Management file. A package every
+// project takes — MinVer, say — is declared once there as a
+// GlobalPackageReference, and no csproj mentions it. Unlike Directory.Build.props
+// only the NEAREST one is read: restore imports the first it finds walking up,
+// and an outer one is seen only if the nearer file imports it itself.
 const packagesPropsFileName = "Directory.Packages.props"
 
 // Element-matching regexes. They are namespace-agnostic and tolerate attributes
@@ -55,6 +57,10 @@ var (
 	projectRefRe    = regexp.MustCompile(`<ProjectReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
 	packageRefRe    = regexp.MustCompile(`<PackageReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
 	propertyGroupRe = regexp.MustCompile(`<PropertyGroup[^>]*>`)
+	// An <Import> whose Project names Directory.Packages.props outright. The
+	// other way to write it, GetPathOfFileAbove, resolves into a property first
+	// and is looked for by name; see importsPackagesPropsAbove.
+	packagesImportRe = regexp.MustCompile(`<Import[^>]*\bProject\s*=\s*"[^"]*Directory\.Packages\.props"`)
 )
 
 // versionElement records which element holds a project's bumpable number.
@@ -502,8 +508,8 @@ func fromText(text, filePath string, shared bool) (resolvedVersion, bool) {
 // packable reports whether a project with no version in the tree still
 // produces a package: it says so (`IsPackable` true, or a `PackageId`, which
 // nobody declares for a project that never packs), or it hands its version to
-// MinVer — referenced in the project itself, declared globally in a
-// Directory.Packages.props above it, or tuned in a Directory.Build.props.
+// MinVer — referenced in the project itself, declared globally in the nearest
+// Directory.Packages.props, or tuned in a Directory.Build.props.
 //
 // Every `IsPackable` in the chain counts, not just the first. A shared props
 // file commonly sets it false for everything and then true again in a later
@@ -513,11 +519,16 @@ func fromText(text, filePath string, shared bool) (resolvedVersion, bool) {
 // is asymmetric — a false positive is a package listed with no version, a
 // false negative is a real package silently left out. An explicit `false` with
 // no `true` anywhere is still the last word, whatever else is declared.
+//
+// Comments are stripped before any of this is read, so an `IsPackable` or a
+// MinVer reference someone commented out does not count as live. The stripping
+// stays here, on copies: findInPropertyGroup's offsets are what SetVersion
+// splices the new number in at, and stripping would shift them.
 func packable(csprojPath, csprojText string) bool {
-	texts := []string{csprojText}
+	texts := []string{stripXMLComments(csprojText)}
 	for _, props := range ancestorPropsFiles(csprojPath) {
 		if content, err := os.ReadFile(props); err == nil {
-			texts = append(texts, string(content))
+			texts = append(texts, stripXMLComments(string(content)))
 		}
 	}
 	sawTrue, sawFalse := false, false
@@ -542,12 +553,44 @@ func packable(csprojPath, csprojText string) bool {
 			return true
 		}
 	}
+	// Only the nearest Directory.Packages.props is auto-imported; an outer one
+	// is shadowed unless the nearer file imports it, so the walk continues
+	// upward only while each file says it does.
 	for _, props := range ancestorFiles(csprojPath, packagesPropsFileName) {
-		if content, err := os.ReadFile(props); err == nil && minVerRe.MatchString(string(content)) {
+		content, err := os.ReadFile(props)
+		if err != nil {
+			break
+		}
+		text := stripXMLComments(string(content))
+		if minVerRe.MatchString(text) {
 			return true
+		}
+		if !importsPackagesPropsAbove(text) {
+			break
 		}
 	}
 	return false
+}
+
+// importsPackagesPropsAbove reports whether a Directory.Packages.props imports
+// the one above it, which is what stops it shadowing an outer file. Detected
+// textually, the way continuesWalkUp does for targets: an <Import> whose
+// Project names Directory.Packages.props outright, or a
+// GetPathOfFileAbove('Directory.Packages.props', …) — usually resolved into a
+// property on the line above — together with an <Import>. Where the import
+// actually points is not resolved; the next Directory.Packages.props up the
+// tree is taken to be the one it means, which is what GetPathOfFileAbove finds
+// and what a hand-written `..\Directory.Packages.props` nearly always is. The
+// text must already have had its comments stripped.
+func importsPackagesPropsAbove(text string) bool {
+	if packagesImportRe.MatchString(text) {
+		return true
+	}
+	if !strings.Contains(text, "GetPathOfFileAbove('Directory.Packages.props'") &&
+		!strings.Contains(text, `GetPathOfFileAbove("Directory.Packages.props"`) {
+		return false
+	}
+	return strings.Contains(text, "<Import")
 }
 
 // propertyGroupSpans returns the [start,end) byte range of the INNER text of each
