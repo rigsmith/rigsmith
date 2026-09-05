@@ -440,3 +440,55 @@ func TestSync_LeavesTranscriptsAloneByDefault(t *testing.T) {
 		t.Error("a transcript was scrubbed without being asked")
 	}
 }
+
+// Turning redaction on has to reach what is already staged. Nothing about those
+// transcripts changes when the setting does, so the incremental skip kept
+// handing back the copy holding the key.
+func TestSync_EnablingRedactionScrubsWhatIsAlreadyStaged(t *testing.T) {
+	live := t.TempDir()
+	key := "sk-ant-api03-" + strings.Repeat("z", 60)
+	var body strings.Builder
+	body.WriteString(`{"type":"user","cwd":"/p","text":"my key is ` + key + `"}` + "\n")
+	for body.Len() < 80<<10 {
+		body.WriteString(`{"type":"assistant","text":"` + strings.Repeat("filler ", 40) + `"}` + "\n")
+	}
+	write(t, live, "projects/-p/s.jsonl", body.String())
+
+	staging := t.TempDir()
+	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
+	cfg := cliOnlyConfig(live)
+	base := Options{StagingDir: staging, Config: cfg, Machine: m, SourceOverride: override("cli", live)}
+	stagedPath := filepath.Join(staging, "cli", "projects", "-p", "s.jsonl")
+
+	// Staged before anyone thought to turn redaction on.
+	if _, err := Sync(base); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(stagedPath); err != nil {
+		t.Fatal(err)
+	} else if !strings.Contains(string(b), key) {
+		t.Fatal("the fixture did not stage the key — nothing is being tested")
+	}
+
+	on := base
+	on.RedactTranscripts = true
+	if _, err := Sync(on); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(stagedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), key) {
+		t.Error("the key staged before redaction was enabled is still there")
+	}
+
+	// And it settles: the run after that has nothing left to do.
+	rep, err := Sync(on)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Roots[0].Files != 0 {
+		t.Errorf("a third run restaged %d files, want none", rep.Roots[0].Files)
+	}
+}

@@ -30,7 +30,19 @@ var textSecretRe = regexp.MustCompile(strings.Join([]string{
 	`ya29\.[A-Za-z0-9_\-]{8,}`,
 	// A JWT, anchored on its header rather than on the whole string.
 	`eyJ[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}`,
+	// An opaque bearer token. LooksSecret already calls one of these a
+	// credential when it judges a config value, and leaving it in a transcript
+	// while redacting it from settings is the inconsistency, not the rule.
+	// Bounded hard, because `Bearer` also appears in every API example ever
+	// pasted into a chat: the RFC 6750 token charset, at least 24 characters,
+	// and placeholders are dropped below.
+	`Bearer\s+[A-Za-z0-9\-._~+/]{24,}={0,2}`,
 }, "|"))
+
+// screamingRe matches a bearer token that is really a placeholder —
+// YOUR_ACCESS_TOKEN, REPLACE_ME_WITH_TOKEN. Real tokens are mixed case; the
+// things people paste into examples are not.
+var screamingRe = regexp.MustCompile(`^Bearer\s+[A-Z0-9_]+={0,2}$`)
 
 // TextHit is one credential found in free text.
 type TextHit struct {
@@ -62,12 +74,18 @@ func RedactText(data []byte) (out []byte, hits []TextHit, changed bool) {
 	prev := 0
 	for _, loc := range locs {
 		match := string(data[loc[0]:loc[1]])
+		if screamingRe.MatchString(match) {
+			continue // a placeholder in an example, not a credential
+		}
 		b.Write(data[prev:loc[0]])
 		b.WriteString(Placeholder)
 		prev = loc[1]
 		hits = append(hits, TextHit{Kind: kindOf(match), Hint: hint(match)})
 	}
 	b.Write(data[prev:])
+	if len(hits) == 0 {
+		return data, nil, false
+	}
 	return []byte(b.String()), hits, true
 }
 

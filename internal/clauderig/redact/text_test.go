@@ -89,3 +89,35 @@ func TestRedactText_IsIdempotent(t *testing.T) {
 		t.Errorf("second pass changed cleaned content: %+v", hits)
 	}
 }
+
+// LooksSecret calls an opaque bearer token a credential when it judges a config
+// value; a transcript must not be the one place it survives.
+func TestRedactText_BearerToken(t *testing.T) {
+	in := []byte("curl -H 'Authorization: Bearer 8xLOxBtZp8kFqz5mNvQ2wRt7yHjKlPoI'\n")
+	out, hits, changed := RedactText(in)
+	if !changed {
+		t.Fatal("a bearer token was left in the transcript")
+	}
+	if strings.Contains(string(out), "8xLOxBtZp8kFqz5mNvQ2wRt7yHjKlPoI") {
+		t.Errorf("the token survived: %s", out)
+	}
+	if len(hits) != 1 || hits[0].Kind != "bearer" {
+		t.Errorf("hits = %+v, want one bearer", hits)
+	}
+}
+
+// `Bearer` appears in every API example ever pasted into a chat. Rewriting the
+// middle of somebody's documentation is the cost of guessing wrong here, and
+// the original is not kept.
+func TestRedactText_LeavesBearerPlaceholders(t *testing.T) {
+	for _, s := range []string{
+		"Authorization: Bearer YOUR_ACCESS_TOKEN_GOES_HERE",
+		"Authorization: Bearer $ANTHROPIC_API_KEY",
+		"Authorization: Bearer <your-token>",
+		"Authorization: Bearer abc123",
+	} {
+		if out, _, changed := RedactText([]byte(s)); changed {
+			t.Errorf("rewrote an example: %q became %q", s, out)
+		}
+	}
+}

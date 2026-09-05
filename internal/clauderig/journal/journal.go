@@ -84,6 +84,9 @@ const (
 type RedactedFile struct {
 	Path  string   `json:"path"`
 	Kinds []string `json:"kinds,omitempty"`
+	// Paths is the same map for structured files, which are redacted by field:
+	// dotted JSON paths, never values.
+	Paths []string `json:"paths,omitempty"`
 	Count int      `json:"count,omitempty"`
 }
 

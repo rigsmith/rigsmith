@@ -28,8 +28,15 @@ import (
 // which is synced, so it has to be a map of where secrets were rather than a
 // second copy of them.
 type FileRedaction struct {
-	Rel   string   `json:"rel"`
-	Kinds []string `json:"kinds"`
+	Rel string `json:"rel"`
+	// Kinds names what was taken out — "anthropic-key", "bearer" — for the
+	// transcript scrubber, which classifies each hit as it finds it.
+	Kinds []string `json:"kinds,omitempty"`
+	// Paths names WHERE it was, as dotted JSON field paths, for structured
+	// files. The JSON redactor works by field and has no notion of kind, and
+	// reporting `env.API_KEY` as a kind made the two halves of this report
+	// disagree about what the field meant.
+	Paths []string `json:"paths,omitempty"`
 	Count int      `json:"count"`
 }
 
@@ -226,6 +233,14 @@ func Sync(opts Options) (*Report, error) {
 	}
 	flush := flushSet(opts.Flush)
 
+	// Turning redaction ON has to reach the transcripts an earlier sync already
+	// staged unscrubbed. Nothing about those files changes when the setting
+	// does — same mtime, same source — so the incremental skip below would keep
+	// handing back the copy that still holds the secret, until the live
+	// transcript happened to change. The first run after it is enabled restages
+	// every transcript instead.
+	rescrub := opts.RedactTranscripts && !redactedLastRun(opts.StagingDir)
+
 	// Shared-memory symlinks found under the CLI root (worktree slugs linking
 	// memory/ to their main project); recorded in the manifest for restore.
 	var cliLinks []allowlist.Link
@@ -318,7 +333,8 @@ func Sync(opts Options) (*Report, error) {
 					staged = nil
 				}
 				if staged != nil && staged.ModTime().Equal(info.ModTime()) &&
-					(scrub || staged.Size() == info.Size()) {
+					(scrub || staged.Size() == info.Size()) &&
+					!(scrub && rescrub) {
 					unchanged = true
 				}
 				// A long session's transcript is the one file that is both large
@@ -456,7 +472,7 @@ func Sync(opts Options) (*Report, error) {
 			rr.Redactions += len(paths)
 			if len(paths) > 0 {
 				rr.Redacted = append(rr.Redacted, FileRedaction{
-					Rel: rel, Kinds: paths, Count: len(paths),
+					Rel: rel, Paths: paths, Count: len(paths),
 				})
 			}
 		}
@@ -602,7 +618,47 @@ func Sync(opts Options) (*Report, error) {
 			return rep, fmt.Errorf("secret tripwire: %d value(s) look like credentials and were not redacted; refusing to sync", len(rep.Findings))
 		}
 	}
+	// Recorded only on the way out: a run that failed part-way has not scrubbed
+	// everything, and the next one has to try again.
+	noteRedactionSetting(opts.StagingDir, opts.RedactTranscripts)
 	return rep, nil
+}
+
+// redactionStatePath is where the last run's redactTranscripts setting is kept.
+// Beside the staging repo rather than inside it: it describes what THIS machine
+// has staged, and everything in the tree is committed and shared.
+func redactionStatePath(staging string) string {
+	if staging == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(staging), ".redaction-state")
+}
+
+// redactedLastRun reports whether the previous sync scrubbed transcripts. An
+// absent or unreadable marker reads as "no", which costs one restage of the
+// transcripts and never the other way around.
+func redactedLastRun(staging string) bool {
+	p := redactionStatePath(staging)
+	if p == "" {
+		return false
+	}
+	b, err := os.ReadFile(p)
+	return err == nil && strings.TrimSpace(string(b)) == "1"
+}
+
+// noteRedactionSetting records the setting this sync ran with. Best-effort: a
+// marker that cannot be written costs a needless restage next time, which is
+// the harmless direction.
+func noteRedactionSetting(staging string, on bool) {
+	p := redactionStatePath(staging)
+	if p == "" {
+		return
+	}
+	v := []byte("0\n")
+	if on {
+		v = []byte("1\n")
+	}
+	_ = os.WriteFile(p, v, 0o644)
 }
 
 // sourceLoc resolves where a root's files are read from: the explicit override if

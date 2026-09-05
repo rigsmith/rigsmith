@@ -113,7 +113,7 @@ func FromSync(machine string, rep *engine.Report, serr error) Record {
 					break
 				}
 				rec.RedactedFiles = append(rec.RedactedFiles, RedactedFile{
-					Path: r.ID + "/" + fr.Rel, Kinds: fr.Kinds, Count: fr.Count,
+					Path: r.ID + "/" + fr.Rel, Kinds: fr.Kinds, Paths: fr.Paths, Count: fr.Count,
 				})
 			}
 			rec.TooOld += r.RetentionByAge
