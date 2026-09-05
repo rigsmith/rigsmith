@@ -40,4 +40,6 @@ paths = [
   '''internal/clauderig/redact/scan_test\.go''',
   '''internal/clauderig/redact/scanfile\.go''',
   '''internal/clauderig/redact/scanfile_test\.go''',
+  '''internal/clauderig/redact/text\.go''',
+  '''internal/clauderig/redact/text_test\.go''',
 ]

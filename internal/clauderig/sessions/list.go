@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -437,8 +438,12 @@ func matchesText(row Row, text string) bool {
 	if text == "" {
 		return true
 	}
+	// Separators normalised on both sides. A project directory is rendered in
+	// this machine's own form — `C:\work\api` on Windows — and nobody types a
+	// path search with backslashes.
+	text = filepath.ToSlash(text)
 	for _, field := range []string{row.Title, row.LastPrompt, row.Cwd, row.Branch, row.ID, row.Client} {
-		if field != "" && strings.Contains(strings.ToLower(field), text) {
+		if field != "" && strings.Contains(filepath.ToSlash(strings.ToLower(field)), text) {
 			return true
 		}
 	}

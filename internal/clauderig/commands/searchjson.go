@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
-	"github.com/rigsmith/rigsmith/internal/clauderig/session"
 )
 
 // SearchHit is one matching session in `search --json`.
@@ -47,10 +46,7 @@ func emitSearchJSON(out io.Writer, me config.Machine, query string, results []*s
 	doc := SearchJSON{Query: query, Sessions: make([]SearchHit, 0, len(results)), Scanned: scanned, Skipped: skipped}
 
 	for _, r := range results {
-		title := r.meta.Title
-		if title == "" && r.path != "" {
-			title = session.FirstPrompt(r.path)
-		}
+		title := sessionTitle(r)
 		hit := SearchHit{
 			// r.cwd, not a fresh resolve: it carries the ledger fallback for a
 			// session whose transcript has aged out, and without it the resume

@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -209,10 +210,17 @@ func Read(dir string, limit int) ([]Record, error) {
 		if err != nil {
 			continue
 		}
+		// Reversed into newest-first before merging. One machine's file is
+		// append-only, so its line order IS its chronological order — and that
+		// is the only thing that can order two records stamped in the same
+		// clock tick, which on Windows is a 15ms window that two syncs in a row
+		// land inside routinely.
+		slices.Reverse(recs)
 		out = append(out, recs...)
 	}
 
-	// Newest first; ties broken by machine so the order is stable across reads.
+	// Newest first; ties broken by machine so the order is stable across reads,
+	// and within a machine the stable sort leaves the file order above intact.
 	sort.SliceStable(out, func(i, j int) bool {
 		if !out[i].At.Equal(out[j].At) {
 			return out[i].At.After(out[j].At)

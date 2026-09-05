@@ -136,7 +136,13 @@ func lockIsStale(path string) bool {
 // Failures do not count. Debouncing on a failed run would leave a machine that
 // cannot push waiting out the interval before it is allowed to try again.
 func lastSuccessfulSync(staging, machine string) (time.Time, bool) {
-	recs, err := journal.Read(staging, 40)
+	// The whole feed, not the newest 40 of it. Read merges every machine's file
+	// and applies the limit after merging, so on a machine syncing alongside
+	// two others the newest 40 records can hold none of its own — and a
+	// debounce that cannot find its last sync stops debouncing entirely, which
+	// is the thrashing it exists to prevent. Already bounded: MaxRecords per
+	// machine file.
+	recs, err := journal.Read(staging, 0)
 	if err != nil {
 		return time.Time{}, false
 	}

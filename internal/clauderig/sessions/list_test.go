@@ -313,7 +313,7 @@ func TestList_TextSearchesEveryVisibleField(t *testing.T) {
 	}
 	// The project directory, as the Project column renders it — the resolved
 	// path, not the flattened slug the transcript is filed under.
-	if rows := run(filepath.Join("work", "api")); len(rows) != 3 {
+	if rows := run("work/api"); len(rows) != 3 {
 		t.Errorf("searching the project gave %d rows, want all three", len(rows))
 	}
 	if rows := run(projectSlug); len(rows) != 0 {

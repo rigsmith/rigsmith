@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 )
 
 func TestSyncLock_SecondCallerIsTurnedAway(t *testing.T) {
@@ -153,5 +154,37 @@ func TestSyncLock_WaitGivesUpRatherThanOverlap(t *testing.T) {
 
 	if _, got, err := acquireSyncLockWait(staging, 300*time.Millisecond); err != nil || got {
 		t.Errorf("a second sync took the lock: got=%v err=%v", got, err)
+	}
+}
+
+// Read merges every machine's file and caps afterwards, so on a busy shared repo
+// the newest records can be entirely other machines'. A debounce that cannot
+// find its own last sync stops debouncing, which is the thrashing it is for.
+func TestLastSuccessfulSync_FoundBehindOtherMachinesRecords(t *testing.T) {
+	staging := t.TempDir()
+	mine := time.Now().Add(-2 * time.Minute)
+	if err := journal.Append(staging, journal.Record{
+		At: mine, Machine: "mine", Op: journal.OpSync, Outcome: journal.OutcomeOK,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Two other machines burying it.
+	for i := range 60 {
+		for _, m := range []string{"other-a", "other-b"} {
+			if err := journal.Append(staging, journal.Record{
+				At:      time.Now().Add(-time.Duration(60-i) * time.Second),
+				Machine: m, Op: journal.OpSync, Outcome: journal.OutcomeOK,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	at, ok := lastSuccessfulSync(staging, "mine")
+	if !ok {
+		t.Fatal("this machine's own last sync was not found, so it would never debounce")
+	}
+	if at.Sub(mine).Abs() > time.Second {
+		t.Errorf("found %s, want %s", at, mine)
 	}
 }

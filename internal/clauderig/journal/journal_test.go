@@ -327,3 +327,26 @@ func mustAppend(t *testing.T, dir string, rec Record) {
 		t.Fatal(err)
 	}
 }
+
+// Two records stamped inside the same clock tick — which on Windows is a 15ms
+// window two syncs in a row land inside routinely — still read newest-first.
+// The file is append-only, so its line order is the only thing left to order
+// them by.
+func TestRead_SameTimestampKeepsAppendOrder(t *testing.T) {
+	dir := t.TempDir()
+	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	if err := Append(dir, Record{At: at, Machine: "air", Op: OpSync, Outcome: OutcomeOK}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Append(dir, Record{At: at, Machine: "air", Op: OpPull, Outcome: OutcomeOK}); err != nil {
+		t.Fatal(err)
+	}
+
+	recs, err := Read(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 || recs[0].Op != OpPull {
+		t.Errorf("got %+v, want the later append first", recs)
+	}
+}

@@ -483,6 +483,26 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	return nil
 }
 
+// sessionTitle walks the title ladder: the Desktop sidecar's own title, the
+// session's first prompt, then the ledger's copy of it — which is the only one
+// left once a transcript has aged out of the synced window. One resolver for
+// both output paths, because the JSON had its own shorter ladder and a
+// ledger-only session came back untitled there while the styled output named it.
+func sessionTitle(r *sessResult) string {
+	if r.meta.Title != "" {
+		return r.meta.Title
+	}
+	if r.path != "" {
+		if t := session.FirstPrompt(r.path); t != "" {
+			return t
+		}
+	}
+	if r.hasLed {
+		return r.led.Title
+	}
+	return ""
+}
+
 // renderSession prints one grouped SEARCH result: title, id/date/model/project/
 // source line, why it matched, the resume command, and a preview snippet when
 // there was a content hit.
@@ -497,13 +517,7 @@ func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machin
 // renderSessionAs is renderSession with the match explanation supplied by the
 // caller. An empty why omits that column, for a listing that ran no query.
 func renderSessionAs(out interface{ Write([]byte) (int, error) }, me config.Machine, r *sessResult, why string) {
-	title := r.meta.Title
-	if title == "" && r.path != "" {
-		title = session.FirstPrompt(r.path)
-	}
-	if title == "" && r.hasLed {
-		title = r.led.Title
-	}
+	title := sessionTitle(r)
 	if title == "" {
 		title = "(untitled session)"
 	}

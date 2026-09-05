@@ -230,7 +230,11 @@ func ProfileByAccount() (byAccount map[string]string, complete bool) {
 			// field existed. Without this fallback the map comes back empty for
 			// older accounts, and does so silently.
 			if raw, oerr := as.OAuth(a.ID); oerr == nil {
-				uuid = account.ProfileAccountUUID(raw)
+				// Lowercased like the field above it: the lookup this feeds is
+				// keyed on a lowercased uuid, so a mixed-case one here would
+				// leave exactly the older accounts this fallback exists for
+				// still unresolved.
+				uuid = strings.ToLower(account.ProfileAccountUUID(raw))
 			}
 		}
 		if uuid != "" {
