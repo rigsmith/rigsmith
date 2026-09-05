@@ -83,7 +83,7 @@ func writeLock(path string) (*syncLock, error) {
 	if err != nil {
 		return nil, err
 	}
-	token := fmt.Sprintf("%d %d", os.Getpid(), time.Now().UnixNano())
+	token := lockToken(os.Getpid(), time.Now())
 	_, werr := fmt.Fprintln(f, token)
 	cerr := f.Close()
 	if werr != nil || cerr != nil {
@@ -109,6 +109,14 @@ func (l *syncLock) Release() {
 	_ = os.Remove(l.path)
 }
 
+// lockToken is a lock file's entire contents: who holds it, and when they took
+// it. One definition, used by writeLock and by the tests — the parser below and
+// the writer disagreeing about the unit is exactly the bug this exists to stop
+// coming back, and a test that builds its own fixture cannot catch that.
+func lockToken(pid int, at time.Time) string {
+	return fmt.Sprintf("%d %d", pid, at.UnixNano())
+}
+
 // lockIsStale reports whether a lock file is old enough to disbelieve. An
 // unreadable or malformed lock counts as stale: it cannot be interpreted, and
 // refusing to sync forever over a file nobody can parse helps no one.
@@ -121,11 +129,24 @@ func lockIsStale(path string) bool {
 	if len(fields) < 2 {
 		return true
 	}
-	sec, err := strconv.ParseInt(fields[1], 10, 64)
+	stamp, err := strconv.ParseInt(fields[1], 10, 64)
 	if err != nil {
 		return true
 	}
-	return time.Since(time.Unix(sec, 0)) > maxLockHold
+	// Nanoseconds since v1.13.0, seconds before it. Both have to be read: a lock
+	// written by either version can be sitting on disk right now, and reading
+	// nanoseconds as seconds puts the lock tens of thousands of years in the
+	// future — time.Since goes negative, nothing is ever stale, and one
+	// interrupted sync stops the machine syncing for good.
+	//
+	// 1e12 separates them with room to spare: epoch seconds are around 1.8e9
+	// and will not reach 1e12 for thirty thousand years, while epoch
+	// nanoseconds passed 1e12 in 1970.
+	at := time.Unix(stamp, 0)
+	if stamp > 1e12 {
+		at = time.Unix(0, stamp)
+	}
+	return time.Since(at) > maxLockHold
 }
 
 // lastSuccessfulSync is when this machine last completed a sync, read from the

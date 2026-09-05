@@ -188,3 +188,63 @@ func TestLastSuccessfulSync_FoundBehindOtherMachinesRecords(t *testing.T) {
 		t.Errorf("found %s, want %s", at, mine)
 	}
 }
+
+// The lock a sync actually writes has to be recognised as stale once it is old
+// enough. Built with lockToken — the function writeLock uses — because the
+// original bug was precisely that the writer and the parser disagreed about the
+// unit, and every test here hand-wrote its fixture with seconds while
+// production wrote nanoseconds. A fixture that cannot drift is the fix.
+func TestLockIsStale_ReadsTheTokenWriteLockWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".sync.lock")
+	for _, tc := range []struct {
+		age  time.Duration
+		want bool
+	}{
+		{0, false},
+		{maxLockHold / 2, false},
+		{2 * maxLockHold, true},
+		{72 * time.Hour, true},
+	} {
+		token := lockToken(os.Getpid(), time.Now().Add(-tc.age))
+		if err := os.WriteFile(path, []byte(token+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := lockIsStale(path); got != tc.want {
+			t.Errorf("a lock held for %v: stale=%v, want %v (token %q)", tc.age, got, tc.want, token)
+		}
+	}
+}
+
+// Locks written by v1.13.0's predecessors carry seconds. One of those can be on
+// disk during the upgrade, and it still has to be breakable.
+func TestLockIsStale_StillReadsTheOlderSecondsToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".sync.lock")
+	old := fmt.Sprintf("%d %d", os.Getpid(), time.Now().Add(-2*maxLockHold).Unix())
+	if err := os.WriteFile(path, []byte(old+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !lockIsStale(path) {
+		t.Error("a seconds-format lock from an older clauderig was not breakable")
+	}
+}
+
+// The whole point, end to end: a sync that was killed must not lock the machine
+// out of syncing for good.
+func TestAcquireSyncLock_BreaksTheLockAKilledSyncLeftBehind(t *testing.T) {
+	staging := filepath.Join(t.TempDir(), "repo")
+	if _, got, err := acquireSyncLock(staging); err != nil || !got {
+		t.Fatalf("first acquire: %v %v", got, err)
+	}
+	// The killed sync never released it. Age it past maxLockHold using the same
+	// token the holder wrote.
+	path := filepath.Join(filepath.Dir(staging), ".sync.lock")
+	if err := os.WriteFile(path, []byte(lockToken(99999, time.Now().Add(-2*maxLockHold))+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lock, got, err := acquireSyncLock(staging)
+	if err != nil || !got {
+		t.Fatal("the abandoned lock was never broken — this machine would stop syncing for good")
+	}
+	lock.Release()
+}
