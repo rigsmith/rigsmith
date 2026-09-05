@@ -74,7 +74,15 @@ func TestRedactText_IgnoresBareMentions(t *testing.T) {
 // added to one and not the other is a silent hole.
 func TestTextRulesCoverKnownPrefixes(t *testing.T) {
 	for _, p := range knownPrefixes {
+		// Shaped like the real credential, not merely long enough. An AWS access
+		// key id is exactly twenty characters, and the text rule now says so —
+		// open-ended, it matched any shouted phrase containing those four
+		// letters. A fixture that is unrealistic in that way would force the
+		// rule to stay loose to satisfy it.
 		body := strings.Repeat("A", 24)
+		if p.prefix == "AKIA" || p.prefix == "ASIA" {
+			body = strings.Repeat("A", 16)
+		}
 		if _, _, changed := RedactText([]byte("x " + p.prefix + body + " y")); !changed {
 			t.Errorf("knownPrefixes has %q (%s) but the text rules miss it", p.prefix, p.kind)
 		}
@@ -118,6 +126,52 @@ func TestRedactText_LeavesBearerPlaceholders(t *testing.T) {
 	} {
 		if out, _, changed := RedactText([]byte(s)); changed {
 			t.Errorf("rewrote an example: %q became %q", s, out)
+		}
+	}
+}
+
+// The rules run over conversation prose, so they must not fire inside ordinary
+// words. `sk-` is the tail of "task-", "risk-" and "desk-"; AKIA and ASIA sit
+// inside longer uppercase and base64 runs. On one real machine this was 96 of
+// 134 findings, and every one of them refused a sync that should have run.
+func TestRedactText_DoesNotMatchInsideWords(t *testing.T) {
+	for _, s := range []string{
+		"the global-task-runner-configuration is fine",
+		"a risk-assessment-matrix-worksheet",
+		"see the desk-allocation-spreadsheet-2026",
+		"deployed to ASIAPACIFICREGIONSETTINGS today",
+		"the token KA2AwiASIAQQQQQQQQQQQQQQQQ was rotated",
+	} {
+		if out, hits, changed := RedactText([]byte(s)); changed {
+			t.Errorf("rewrote ordinary text %q → %q (%+v)", s, out, hits)
+		}
+	}
+}
+
+// Anchored, but the prefixes still begin real words. A conversation about this
+// very tool is full of hyphenated lowercase phrases.
+func TestRedactText_LeavesHyphenatedProse(t *testing.T) {
+	for _, s := range []string{
+		"sk-a-single-line-of-explanation",
+		"sk-the-window-has-no-repository",
+		"glpat-a-name-someone-chose",
+	} {
+		if out, _, changed := RedactText([]byte(s)); changed {
+			t.Errorf("rewrote a phrase %q → %q", s, out)
+		}
+	}
+}
+
+// And none of that may cost a real credential.
+func TestRedactText_StillCatchesRealShapes(t *testing.T) {
+	for _, s := range []string{
+		"key sk-ant-api03-" + strings.Repeat("Aa1", 20),
+		"AKIA" + strings.Repeat("A", 16),
+		"ghp_" + strings.Repeat("a1", 18),
+		"Authorization: Bearer 8xLOxBtZp8kFqz5mNvQ2wRt7yHjKlPoI",
+	} {
+		if _, _, changed := RedactText([]byte(s)); !changed {
+			t.Errorf("missed a real credential shape: %q", s)
 		}
 	}
 }
