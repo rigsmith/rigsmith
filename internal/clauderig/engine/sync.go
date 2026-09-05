@@ -19,6 +19,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
@@ -448,7 +449,7 @@ func Sync(opts Options) (*Report, error) {
 			// It belongs to the files this run actually staged.
 			red, paths := redact.Redact(v, policy)
 			v = red
-			v, _ = pathmap.PortablizeJSONValues(v, opts.Machine.Folders(), opts.Machine.OS)
+			v, _ = desktop.PortablizeJSONPaths(v, opts.Machine.Folders(), opts.Machine.OS)
 			out, e := json.MarshalIndent(v, "", "  ")
 			if e != nil {
 				rr.SkippedFiles++

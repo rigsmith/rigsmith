@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 )
 
 // TestE2E_DesktopRewriteCompleteOnRealData is the automatable half of Q4: it
@@ -16,7 +17,9 @@ import (
 // — portablize on this OS, then resolve onto a *different* machine — and asserts
 // that NO value still contains the source home. A residual source path means a
 // path-bearing field the value-based rewriter missed (e.g. a `//`-prefixed
-// permission ruleContent), which would break resume on the target.
+// permission ruleContent or a NUL-delimited alwaysAllowedReasons record),
+// which would break resume on the target. Uses the same transforms as sync and
+// restore, including the Desktop format adapter.
 //
 // It cannot prove the Electron app itself resumes — that's a manual check
 // (see docs/CLAUDERIG-DESIGN.md Q4) — but it proves the rewrite is *complete*.
@@ -50,8 +53,8 @@ func TestE2E_DesktopRewriteCompleteOnRealData(t *testing.T) {
 			if json.Unmarshal(data, &v) != nil {
 				return nil
 			}
-			pv, _ := pathmap.PortablizeJSONValues(v, srcFolders, pathmap.OSMacOS)
-			rv, _ := pathmap.ResolveJSONValues(pv, target)
+			pv, _ := desktop.PortablizeJSONPaths(v, srcFolders, pathmap.OSMacOS)
+			rv, _ := desktop.ResolveJSONPaths(pv, target)
 			out, _ := json.Marshal(rv)
 			checked++
 			if strings.Contains(string(out), home) {
