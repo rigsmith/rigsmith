@@ -9,6 +9,11 @@ pure shell-out to **hybrid** (import for reads, shell out for writes). Rationale
 [Stack](#stack). Everything in [Why](#why-what-the-incident-proved) is unchanged — the
 incident analysis drove the feature set, not the toolkit.*
 
+*Superseded in part 2026-09-05: the window is built and shipping. What happens next —
+the doctor pane, the sessions browser, and moving `ui/` to its own repository — is in
+[CLAUDERIG-UI-ROADMAP.md](CLAUDERIG-UI-ROADMAP.md). This document remains the record of
+why the app exists and how it is shaped.*
+
 ## Shape
 
 A Wails v3 app with two faces:
