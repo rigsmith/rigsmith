@@ -167,9 +167,20 @@ break that assumption:
 
 - one whose version is **computed at build time** — MinVer reading git tags, a
   CI-stamped build — carries no number in the tree at all. Such a project is
-  still discovered as a package (a `.NET` project is, when it is `IsPackable`,
-  declares a `PackageId`, or references MinVer), listed as *no version in the
-  tree*;
+  still discovered as a package (a `.NET` project is, when its effective
+  `IsPackable` is true — or, when `IsPackable` is not set to false, when it
+  declares a `PackageId` or references MinVer), listed as *no version in the
+  tree*. The effective `IsPackable` is read across the project and its
+  ancestor `Directory.Build.props` files in import order: the last
+  unconditional assignment wins, as in MSBuild, and since conditions are not
+  evaluated a conditional `true` anywhere counts as true — so a shared props
+  file that sets it false for everything and true again under
+  `Condition="…Contains('/src/')"` makes every project beneath it packable —
+  while a conditional `false` is ignored. A MinVer reference counts whether it
+  is a `PackageReference` in the project or a `GlobalPackageReference` in the
+  nearest `Directory.Packages.props` (an outer one is read only where the
+  nearer file imports it, as restore does). Commented-out elements are ignored
+  throughout;
 - one whose manifest is **not this repository's to write** — a member of a
   [stackspace](/rig/stack), whose directory leaves in pull requests to its
   upstream, where a stamped version would be a bump nobody asked for.

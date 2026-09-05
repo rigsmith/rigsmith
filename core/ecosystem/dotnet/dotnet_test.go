@@ -204,6 +204,283 @@ func TestDiscoverIncludesPackableProjectsWithComputedVersions(t *testing.T) {
 	}
 }
 
+// Two shapes of "this project packs" that discovery used to miss. A shared
+// props file sets IsPackable false for everything and true again in a later
+// PropertyGroup under a Condition — the first IsPackable found is not the last
+// word, and conditions are not evaluated, so any true in the chain counts. And
+// under Central Package Management MinVer is declared once, as a
+// GlobalPackageReference in Directory.Packages.props, with no csproj naming it.
+// An IsPackable false with no true anywhere still keeps a project out.
+func TestDiscoverPackableFromConditionalPropsAndGlobalMinVer(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a", "src", "AInline", "AInline.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "b", "Directory.Build.props"), `<Project>
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Replace('\','/').Contains('/src/'))">
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "b", "src", "BCond", "BCond.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "c", "Directory.Packages.props"), `<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <GlobalPackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" />
+  </ItemGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "c", "src", "CMinVer", "CMinVer.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "d", "Directory.Build.props"), `<Project>
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "d", "src", "DNever", "DNever.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Never.Packed</PackageId>
+  </PropertyGroup>
+</Project>`)
+
+	resp, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, p := range resp.Packages {
+		got[p.Name] = p.Version
+	}
+	for _, want := range []string{"AInline", "BCond", "CMinVer"} {
+		if v, ok := got[want]; !ok || v != "" {
+			t.Errorf("%s: present=%v version=%q; want present with no version", want, ok, v)
+		}
+	}
+	for _, unwanted := range []string{"DNever", "Never.Packed"} {
+		if _, ok := got[unwanted]; ok {
+			t.Errorf("%s discovered as a package despite IsPackable false and no true anywhere", unwanted)
+		}
+	}
+}
+
+// packable's IsPackable rule: every IsPackable inside a PropertyGroup is read,
+// in import order (ancestor props, then the csproj); the last unconditional
+// assignment wins, a conditional true anywhere wins over that, a conditional
+// false is ignored, and one outside any PropertyGroup (item metadata) is not a
+// property at all. `props`, when set, is an ancestor Directory.Build.props.
+func TestPackableReadsEveryIsPackable(t *testing.T) {
+	cases := []struct {
+		name  string
+		props string
+		text  string
+		want  bool
+	}{
+		{"false then conditional true", "", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'"><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, true},
+		{"unconditional true then unconditional false", "", `<Project>
+  <PropertyGroup><IsPackable>true</IsPackable></PropertyGroup>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+</Project>`, false},
+		{"condition on the element itself", "", `<Project>
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsPackable Condition="'$(Configuration)'=='Release'">true</IsPackable>
+  </PropertyGroup>
+</Project>`, true},
+		{"conditional false is ignored", "", `<Project>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'"><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup><PackageId>X</PackageId></PropertyGroup>
+</Project>`, true},
+		{"ancestor unconditional false, csproj unconditional true", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+</Project>`, `<Project>
+  <PropertyGroup><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, true},
+		{"ancestor unconditional true, csproj unconditional false", `<Project>
+  <PropertyGroup><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable><PackageId>X</PackageId></PropertyGroup>
+</Project>`, false},
+		{"csproj unconditional false, ancestor conditional true", `<Project>
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/'))"><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+</Project>`, true},
+		{"ancestor unconditional false, conditional true between, csproj unconditional false", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/'))"><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+</Project>`, true},
+		{"false only, with PackageId", "", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable><PackageId>X</PackageId></PropertyGroup>
+</Project>`, false},
+		{"true outside a PropertyGroup", "", `<Project>
+  <ItemGroup><Thing Include="x"><IsPackable>true</IsPackable></Thing></ItemGroup>
+</Project>`, false},
+		{"commented-out true after a live false", "", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <!-- <PropertyGroup><IsPackable>true</IsPackable></PropertyGroup> -->
+</Project>`, false},
+		{"commented-out false, live true", "", `<Project>
+  <PropertyGroup>
+    <!-- <IsPackable>false</IsPackable> -->
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+</Project>`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.props != "" {
+				writeFile(t, filepath.Join(root, "Directory.Build.props"), tc.props)
+			}
+			path := filepath.Join(root, "src", "P", "P.csproj")
+			if got := packable(path, tc.text); got != tc.want {
+				t.Errorf("packable = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A commented-out element is not a live one. IsPackable true left in a comment
+// after a live false must not make the project packable, and a commented-out
+// GlobalPackageReference to MinVer is not a MinVer project. A live IsPackable
+// true beside them proves discovery is otherwise working.
+func TestDiscoverIgnoresCommentedOutPackableElements(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "x", "Directory.Build.props"), `<Project>
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <!--
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/'))">
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+  -->
+</Project>`)
+	writeFile(t, filepath.Join(root, "x", "src", "XCommented", "XCommented.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "y", "Directory.Packages.props"), `<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- <GlobalPackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" /> -->
+  </ItemGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "y", "src", "YCommented", "YCommented.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "z", "src", "ZLive", "ZLive.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+</Project>`)
+
+	resp, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, p := range resp.Packages {
+		got[p.Name] = p.Version
+	}
+	if v, ok := got["ZLive"]; !ok || v != "" {
+		t.Errorf("ZLive: present=%v version=%q; want present with no version", ok, v)
+	}
+	for _, unwanted := range []string{"XCommented", "YCommented"} {
+		if _, ok := got[unwanted]; ok {
+			t.Errorf("%s discovered as a package on the strength of a commented-out element", unwanted)
+		}
+	}
+}
+
+// Restore auto-imports only the nearest Directory.Packages.props: a nested one
+// shadows the root file unless it imports it. A project under a nested file
+// that does not name MinVer is not a MinVer package, even though the shadowed
+// root file is; one under a nested file that imports the one above is; and
+// the nearest file naming MinVer itself still counts.
+func TestDiscoverReadsOnlyNearestPackagesProps(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "Directory.Packages.props"), `<Project>
+  <ItemGroup>
+    <GlobalPackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" />
+  </ItemGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "shadow", "Directory.Packages.props"), `<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "shadow", "src", "Shadowed", "Shadowed.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "chained", "Directory.Packages.props"), `<Project>
+  <PropertyGroup>
+    <ParentPackages>$([MSBuild]::GetPathOfFileAbove('Directory.Packages.props', '$(MSBuildThisFileDirectory)../'))</ParentPackages>
+  </PropertyGroup>
+  <Import Project="$(ParentPackages)" Condition="'$(ParentPackages)' != ''" />
+</Project>`)
+	writeFile(t, filepath.Join(root, "chained", "src", "Chained", "Chained.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "nearest", "Directory.Packages.props"), `<Project>
+  <ItemGroup>
+    <GlobalPackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" />
+  </ItemGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "nearest", "src", "Nearest", "Nearest.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "src", "AtRoot", "AtRoot.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>`)
+
+	resp, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, p := range resp.Packages {
+		got[p.Name] = p.Version
+	}
+	for _, want := range []string{"AtRoot", "Nearest", "Chained"} {
+		if v, ok := got[want]; !ok || v != "" {
+			t.Errorf("%s: present=%v version=%q; want present with no version", want, ok, v)
+		}
+	}
+	if _, ok := got["Shadowed"]; ok {
+		t.Error("Shadowed discovered as a package from a root Directory.Packages.props its nearer one shadows")
+	}
+}
+
 func TestSetVersionWritesPrefixLeavesSuffix(t *testing.T) {
 	root := t.TempDir()
 	manifest := filepath.Join(root, "P.csproj")
