@@ -155,6 +155,62 @@ func TestSecretVarResolvesAndMasks(t *testing.T) {
 	}
 }
 
+// The default secret resolver reads the release, not the parent process:
+// env: finds a key that lives only in .env.local, cmd: runs through the
+// pipeline's runner (the release environment and repository it carries), and
+// a blank result is a failure.
+func TestSecretResolverReadsTheRelease(t *testing.T) {
+	runner := &recordingRunner{responder: func(c recordedCommand) ([]string, int) {
+		if !c.shell || !strings.Contains(c.args[0], "op item get feedz") {
+			t.Errorf("cmd: ran %v, want the ref's command through the runner", c.args)
+		}
+		return []string{"from-cmd"}, 0
+	}}
+	env := map[string]string{"FEEDZ_API_KEY": "from-dotenv-local", "BLANK": "  "}
+	envRef, cmdRef, blankRef := "env:FEEDZ_API_KEY", "cmd:op item get feedz --field credential", "env:BLANK"
+	v := newVariables(map[string]*VarSpec{
+		"key": {Secret: &envRef}, "cmd": {Secret: &cmdRef}, "blank": {Secret: &blankRef},
+	}, runner.run, NewSecretMasker(), "/tmp/repo", env, nil)
+	if res := v.resolve("key"); !res.ok || res.value != "from-dotenv-local" {
+		t.Errorf("env: resolution = %+v, want the release environment's value", res)
+	}
+	if res := v.resolve("cmd"); !res.ok || res.value != "from-cmd" {
+		t.Errorf("cmd: resolution = %+v, want the runner's output", res)
+	}
+	if res := v.resolve("blank"); res.ok || !strings.Contains(res.err, "BLANK is not set") {
+		t.Errorf("blank env: resolution = %+v, want a failure naming the variable", res)
+	}
+}
+
+// A lazy var that cannot be resolved fails the step with its reason on the
+// output, not just an exit code.
+func TestLazyVarFailureIsReported(t *testing.T) {
+	restore := currentOSToken
+	t.Cleanup(func() { currentOSToken = restore })
+	currentOSToken = func() string { return "windows" }
+	config := &Config{
+		Order: []string{"push"},
+		Vars:  map[string]*VarSpec{"key": {OS: map[string]CommandSpec{"macos": ShellCommand("security")}, Lazy: true}},
+		Steps: map[string]*StepConfig{"push": {Run: CommandList{ShellCommand("push ${vars.key}")}}},
+	}
+	reporter := &outputReporter{}
+	p := New((&recordingRunner{}).run, reporter, NewSecretMasker(), &stubPrompter{answer: true}, "/tmp/repo", nil, nil, nil)
+	if p.Run(mustResolve(t, config, ResolveOptions{}), config, false) {
+		t.Fatal("run should fail")
+	}
+	if got := strings.Join(reporter.output, "\n"); !strings.Contains(got, "no command for windows") {
+		t.Errorf("output does not carry the reason: %q", got)
+	}
+}
+
+// outputReporter records CommandOutput lines on top of the recording double.
+type outputReporter struct {
+	recordingReporter
+	output []string
+}
+
+func (r *outputReporter) CommandOutput(lines []string) { r.output = append(r.output, lines...) }
+
 // The config accepts each form once and refuses a mix or an unknown OS key.
 func TestVarFormsValidation(t *testing.T) {
 	for _, good := range []string{
@@ -170,6 +226,9 @@ func TestVarFormsValidation(t *testing.T) {
 		`{ "vars": { "k": { "secret": "env:X", "command": "a" } } }`,
 		`{ "vars": { "k": { "os": { "plan9": "a" } } } }`,
 		`{ "vars": { "k": { "value": "a", "secret": "env:X" } } }`,
+		`{ "vars": { "k": { "secret": "env:X", "os": {} } } }`,
+		`{ "vars": { "k": { "os": {} } } }`,
+		`{ "vars": { "k": { "secret": "  " } } }`,
 	} {
 		if _, err := parseConfig(t, bad); err == nil {
 			t.Errorf("%s: accepted", bad)

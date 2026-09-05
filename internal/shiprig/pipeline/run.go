@@ -389,6 +389,12 @@ func (p *Pipeline) runCommands(label string, commands []CommandSpec) bool {
 		for _, name := range extractVarRefs(command) {
 			resolution := p.vars.resolve(name)
 			if !resolution.ok {
+				// The reason is the actionable part — "FEEDZ_API_KEY is not
+				// set", "no command for windows" — and an exit code alone
+				// would bury it.
+				if resolution.err != "" {
+					p.reporter.CommandOutput([]string{resolution.err})
+				}
 				p.reporter.CommandFailed(fmt.Sprintf("%s (vars.%s)", label, name), resolution.exitCode)
 				return false
 			}

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -65,12 +66,45 @@ var currentOSToken = func() string {
 	}
 }
 
-// resolveSecret is the default secret resolver: the same reference forms and
-// resolver the publish `auth` config uses.
-func resolveSecret(ref string, masker *SecretMasker) (string, error) {
-	cred, err := auth.Resolve(context.Background(), auth.Request{Ref: ref, Masker: masker})
+// resolveSecret is the default secret resolver: the reference forms the
+// publish `auth` config takes, read against the release. `env:NAME` looks in
+// the layered release environment (.env/.env.local under the ambient shell),
+// where a key that lives only in .env.local is found; `cmd:…` runs through the
+// pipeline's own runner, in the repository with that same environment, rather
+// than a bare `sh -c` in the parent's; `op://…` goes to the shared 1Password
+// resolver. An empty result is a failure, never a silent empty variable.
+func (v *variables) resolveSecret(ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	switch {
+	case strings.HasPrefix(ref, "env:"):
+		name := strings.TrimPrefix(ref, "env:")
+		value := ""
+		if v.env != nil {
+			value, _ = envstack.Lookup(v.env, name)
+		} else {
+			value = os.Getenv(name)
+		}
+		if strings.TrimSpace(value) == "" {
+			return "", fmt.Errorf("%s is not set in the release environment", name)
+		}
+		return strings.TrimSpace(value), nil
+	case strings.HasPrefix(ref, "cmd:"):
+		output, code := dispatch(v.runner, ShellCommand(strings.TrimPrefix(ref, "cmd:")), v.workDir)
+		if code != 0 {
+			return "", fmt.Errorf("command exited %d", code)
+		}
+		value := strings.TrimSpace(strings.Join(output, "\n"))
+		if value == "" {
+			return "", errors.New("command printed nothing")
+		}
+		return value, nil
+	}
+	cred, err := auth.Resolve(context.Background(), auth.Request{Ref: ref, Masker: v.masker})
 	if err != nil {
 		return "", err
+	}
+	if !cred.Resolved() {
+		return "", fmt.Errorf("%q resolved to nothing", ref)
 	}
 	return cred.Token, nil
 }
@@ -84,7 +118,6 @@ func newVariables(specs map[string]*VarSpec, runner Runner, masker *SecretMasker
 		cache:      map[string]string{},
 		env:        env,
 		scriptEval: scriptEval,
-		secrets:    func(ref string) (string, error) { return resolveSecret(ref, masker) },
 		osToken:    currentOSToken(),
 	}
 }
@@ -202,9 +235,16 @@ func (v *variables) resolve(name string) varResolution {
 	// A secret goes through the credential resolver the publish auth config
 	// uses — op://, env:, cmd: — which masks what it finds.
 	if spec.Secret != nil {
-		value, err := v.secrets(*spec.Secret)
+		resolve := v.secrets
+		if resolve == nil {
+			resolve = v.resolveSecret
+		}
+		value, err := resolve(*spec.Secret)
 		if err != nil {
 			return varFailure(fmt.Sprintf("secret for variable '%s': %v", name, err), -1)
+		}
+		if value == "" {
+			return varFailure(fmt.Sprintf("secret for variable '%s' resolved to an empty value", name), -1)
 		}
 		v.masker.Add(value)
 		v.cache[name] = value
@@ -213,7 +253,7 @@ func (v *variables) resolve(name string) varResolution {
 
 	command, ok := v.commandFor(spec)
 	if !ok {
-		if len(spec.OS) > 0 {
+		if spec.OS != nil {
 			return varFailure(fmt.Sprintf("variable '%s' has no command for %s (its 'os' map lists %s, and no 'command' fallback)", name, v.osToken, strings.Join(osKeys(spec), ", ")), -1)
 		}
 		return varFailure(fmt.Sprintf("variable '%s' is not defined", name), -1)

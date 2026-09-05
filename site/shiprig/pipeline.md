@@ -131,9 +131,12 @@ URL). These also appear on the script `ctx` (`ctx.version`, `ctx.lastVersion`,
   branch by hand.
 - **Secret** — `{ "secret": "op://…" | "env:NAME" | "cmd:…" }`: the same
   references the [publish `auth` config](#publish-authentication) takes,
-  resolved through the same resolver (1Password, an environment variable, a
-  command) and masked. `lazy` applies as for a captured value. Prefer this for
-  a credential; it is what a credential is for.
+  read against the release — `env:NAME` from the [layered environment](#environment-env)
+  (so a key that lives only in `.env.local` is found), `cmd:…` through the
+  portable shell in the repository with that environment, `op://…` via the
+  1Password CLI — and masked. A reference that resolves to nothing fails the
+  var rather than handing a step an empty value. `lazy` applies as for a
+  captured value. Prefer this for a credential; it is what a credential is for.
 - **Computed** — `{ "script": "<tengo-expr>" }` evaluated over the script
   context. Not masked. `fail(msg)` is in scope, so a value that cannot be
   computed — an environment variable that must be set, say — refuses with a

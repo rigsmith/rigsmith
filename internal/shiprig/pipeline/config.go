@@ -350,7 +350,7 @@ type VarSpec struct {
 // These are the values that are masked, that `lazy` defers, and that a dry
 // build leaves alone.
 func (s *VarSpec) Captured() bool {
-	return s != nil && (s.Command != nil || len(s.OS) > 0 || s.Secret != nil)
+	return s != nil && (s.Command != nil || s.OS != nil || s.Secret != nil)
 }
 
 // UnmarshalJSON accepts the bare-string shorthand ("x" ⇒ a literal value) as
@@ -490,7 +490,7 @@ func validateVars(vars map[string]*VarSpec) error {
 			return fmt.Errorf("variable '%s' must set one of 'value', 'command' (or 'os'), 'script', or 'secret'", name)
 		}
 		n := 0
-		for _, set := range []bool{spec.Value != nil, spec.Command != nil || len(spec.OS) > 0, spec.Script != nil, spec.Secret != nil} {
+		for _, set := range []bool{spec.Value != nil, spec.Command != nil || spec.OS != nil, spec.Script != nil, spec.Secret != nil} {
 			if set {
 				n++
 			}
@@ -498,10 +498,16 @@ func validateVars(vars map[string]*VarSpec) error {
 		if n != 1 {
 			return fmt.Errorf("variable '%s' must set exactly one of 'value', 'command' (or 'os'), 'script', or 'secret'", name)
 		}
+		if spec.OS != nil && len(spec.OS) == 0 && spec.Command == nil {
+			return fmt.Errorf("variable '%s': 'os' lists no OS; add %s entries, or a 'command' fallback", name, strings.Join(osTokens, "/"))
+		}
 		for osName := range spec.OS {
 			if !slices.Contains(osTokens, osName) {
 				return fmt.Errorf("variable '%s': unknown os %q (want %s)", name, osName, strings.Join(osTokens, ", "))
 			}
+		}
+		if spec.Secret != nil && strings.TrimSpace(*spec.Secret) == "" {
+			return fmt.Errorf("variable '%s': 'secret' is blank; want op://…, env:NAME, or cmd:…", name)
 		}
 	}
 	return nil
