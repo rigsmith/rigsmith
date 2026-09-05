@@ -221,6 +221,16 @@
     display:flex;flex-direction:column;gap:6px;
   }
   #filing .hint{color:var(--muted);font-family:var(--mono);font-size:10px;}
+  #filing .hint.warn{color:var(--warn);}
+  .splits{display:flex;flex-direction:column;gap:12px;margin-top:6px;}
+  .split{border-top:1px solid var(--line);padding-top:10px;}
+  .split .t{color:var(--paper);font-size:12px;font-weight:700;overflow-wrap:anywhere;}
+  .split .cp{display:flex;gap:10px;align-items:baseline;font-size:10px;margin-top:4px;}
+  .split .cp .k{
+    flex:none;width:42px;color:var(--muted-2);text-transform:uppercase;letter-spacing:0.08em;
+  }
+  .split .cp .p{flex:1;min-width:0;color:var(--muted);overflow-wrap:anywhere;}
+  .split .cp .n{flex:none;color:var(--muted);font-variant-numeric:tabular-nums;}
   /* ---- two views in one window ------------------------------------------
      The popup is where you glance; the full sessions window is where you work.
      Both views live here so the tray icon reaches either without a second
@@ -491,6 +501,8 @@ const ACCOUNTS_RUNCLI = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.RunCLI'
 const ACTIVITY_FILES = 'github.com/rigsmith/rigsmith/ui/bridge.Activity.Files';
 const REPO_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Get';
 const FILING_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Get';
+const FILING_SPLITS = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Splits';
+const FILING_FIX = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Consolidate';
 const REPO_PRUNE = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Prune';
 const REPO_REPACK = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Repack';
 const WINDOWS_HIDE = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Hide';
@@ -1090,10 +1102,83 @@ function renderFiling(v) {
     card.append(el('div', null, `${stale.length} Claude Desktop sidecar${stale.length === 1 ? '' : 's'} `
       + 'name a directory that no longer holds the transcript, so Desktop opens an older copy.'));
   }
-  const how = el('div', 'hint');
-  how.textContent = 'clauderig doctor lists them; clauderig reroot <session> <dir> re-files one.';
-  card.append(how);
+  if (splits.length) {
+    const show = el('button', null, 'Show them');
+    show.onclick = () => { show.disabled = true; loadSplits(box, card); };
+    const row = el('div', 'reporow');
+    row.append(el('div', 'grow'));
+    row.append(show);
+    card.append(row);
+  }
   box.append(card);
+}
+
+// The list, once asked for. Not loaded with the banner: describing a split
+// reads BOTH transcripts of every one to compare them record by record, which
+// is not something to do on a status refresh.
+async function loadSplits(box, card) {
+  const list = el('div', 'splits');
+  list.textContent = 'reading both copies of each…';
+  card.append(list);
+  try {
+    const splits = await Call.ByName(FILING_SPLITS);
+    list.replaceChildren();
+    for (const s of splits || []) list.append(splitRow(s, box));
+  } catch (e) {
+    list.textContent = String(e);
+  }
+}
+
+function splitRow(s, box) {
+  const row = el('div', 'split');
+  row.append(el('div', 't', s.title || '(untitled session)'));
+  row.append(el('div', 'hint', s.id));
+
+  for (const c of s.copies || []) {
+    const line = el('div', 'cp');
+    line.append(el('span', 'k', c.keep ? 'keep' : 'older'));
+    line.append(el('span', 'p', c.slug));
+    const span = [c.first, c.last]
+      .map(t => (t && !String(t).startsWith('0001')) ? new Date(t).toLocaleDateString() : '')
+      .filter(Boolean);
+    line.append(el('span', 'n', `${(c.lines || 0).toLocaleString()} records`
+      + (span.length ? `  ${span[0]} → ${span[span.length - 1]}` : '')
+      + (c.only ? `  · ${c.only} only here` : '')));
+    row.append(line);
+  }
+
+  const acts = el('div', 'reporow');
+  const status = el('div', 'grow hint');
+  acts.append(status);
+  if (s.safe) {
+    const fix = el('button', null, 'Keep newest, park the older');
+    fix.title = 'Moves the older copy into ~/.clauderig/parked. Nothing is deleted, and it is '
+      + 'parked outside ~/.claude so the next sync cannot bring it back.';
+    fix.onclick = async () => {
+      fix.disabled = true;
+      status.textContent = 'parking…';
+      try {
+        const res = await Call.ByName(FILING_FIX, s.id);
+        row.replaceChildren(el('div', 'hint',
+          `Parked ${res.files.length} copy(ies) in ${res.dir}`));
+        // The banner counted this one; re-read so the count is honest.
+        try { renderFiling(await Call.ByName(FILING_GET)); } catch { /* leave it */ }
+      } catch (e) {
+        status.className = 'grow hint warn';
+        status.textContent = String(e);
+        fix.disabled = false;
+      }
+    };
+    acts.append(fix);
+  } else {
+    // Refused, and said so rather than hidden: a missing button is a mystery,
+    // and this is the case where a person genuinely has to look.
+    status.className = 'grow hint warn';
+    status.textContent = `${s.diverged} record(s) exist only in the older copy — `
+      + 'open both before choosing; nothing here can pick for you.';
+  }
+  row.append(acts);
+  return row;
 }
 
 function renderRepo(v) {

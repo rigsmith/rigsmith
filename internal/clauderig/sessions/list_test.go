@@ -521,3 +521,73 @@ func TestCheckHealth_QuietWhenEverythingIsFiledOnce(t *testing.T) {
 		t.Errorf("healthy machine reported problems: %+v", h)
 	}
 }
+
+// Parking a copy is destructive, so the safety judgement is the important part:
+// a copy wholly contained in the one being kept can go, and one holding turns
+// of its own cannot.
+func TestDescribeAndConsolidate(t *testing.T) {
+	newRecord := func(uuid, text, ts string) string {
+		b, _ := json.Marshal(map[string]any{
+			"type": "user", "uuid": uuid, "timestamp": ts, "cwd": "/p",
+			"isSidechain": false,
+			"message":     map[string]any{"role": "user", "content": text},
+		})
+		return string(b) + "\n"
+	}
+
+	t.Run("contained copy is safe to park", func(t *testing.T) {
+		live := t.TempDir()
+		id := "aaaaaaaa-1111-4111-8111-0b0b0b0b0b0b"
+		old := newRecord("u1", "one", "2026-08-20T09:00:00Z")
+		new := old + newRecord("u2", "two", "2026-09-04T18:00:00Z")
+		oldPath := write(t, live, "projects/-aaa-old/"+id+".jsonl", old)
+		newPath := write(t, live, "projects/-zzz-new/"+id+".jsonl", new)
+
+		d := Describe(Split{ID: id, Keep: newPath, Others: []string{oldPath}})
+		if !d.Safe || d.Diverged != 0 {
+			t.Fatalf("a prefix copy was called unsafe: %+v", d)
+		}
+		if len(d.Copies) != 2 || d.Copies[0].Lines != 2 || d.Copies[1].Lines != 1 {
+			t.Errorf("copies described wrong: %+v", d.Copies)
+		}
+
+		park := filepath.Join(t.TempDir(), "parked")
+		got, err := Consolidate(Split{ID: id, Keep: newPath, Others: []string{oldPath}}, park)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("parked %v, want one file", got)
+		}
+		if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+			t.Error("the older copy is still in place")
+		}
+		if _, err := os.Stat(got[0]); err != nil {
+			t.Error("the older copy was deleted rather than moved — the whole fault this repairs " +
+				"is a conversation that appeared to vanish")
+		}
+		if _, err := os.Stat(newPath); err != nil {
+			t.Error("the kept copy was disturbed")
+		}
+	})
+
+	t.Run("diverged copies are refused", func(t *testing.T) {
+		live := t.TempDir()
+		id := "aaaaaaaa-1111-4111-8111-0c0c0c0c0c0c"
+		// Both branch from a shared start; each then has a turn the other lacks.
+		base := newRecord("u1", "one", "2026-08-20T09:00:00Z")
+		a := write(t, live, "projects/-aaa-old/"+id+".jsonl", base+newRecord("uA", "only here", "2026-08-21T09:00:00Z"))
+		b := write(t, live, "projects/-zzz-new/"+id+".jsonl", base+newRecord("uB", "only there", "2026-09-04T18:00:00Z"))
+
+		s := Split{ID: id, Keep: b, Others: []string{a}}
+		if d := Describe(s); d.Safe || d.Diverged != 1 {
+			t.Fatalf("diverged copies were called safe: %+v", d)
+		}
+		if _, err := Consolidate(s, filepath.Join(t.TempDir(), "parked")); err == nil {
+			t.Fatal("Consolidate parked a copy holding turns of its own")
+		}
+		if _, err := os.Stat(a); err != nil {
+			t.Error("the refused copy was moved anyway")
+		}
+	})
+}

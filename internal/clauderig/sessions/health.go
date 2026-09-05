@@ -1,8 +1,13 @@
 package sessions
 
 import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
@@ -103,4 +108,128 @@ func CheckHealth(targets []search.Target, roots []session.Root) Health {
 		h.Stale = stale
 	}
 	return h
+}
+
+// Copy is one transcript of a split session, with enough to judge it by.
+type Copy struct {
+	Path  string    `json:"path"`
+	Slug  string    `json:"slug"`
+	Lines int       `json:"lines"`
+	Bytes int64     `json:"bytes"`
+	First time.Time `json:"first"`
+	Last  time.Time `json:"last"`
+	// Only is how many records this copy holds that the kept one does not.
+	// Zero means nothing would be lost by setting it aside.
+	Only int  `json:"only"`
+	Keep bool `json:"keep"`
+}
+
+// SplitDetail is a split session with both copies described, and whether the
+// older ones can be set aside without losing anything.
+type SplitDetail struct {
+	ID     string `json:"id"`
+	Copies []Copy `json:"copies"`
+	// Safe is true when every copy that is not kept is wholly contained in the
+	// one that is. When false, the copies have genuinely diverged and choosing
+	// between them loses turns — which is a decision for a person, not a repair
+	// for a tool.
+	Safe bool `json:"safe"`
+	// Diverged counts the records that exist only in copies not being kept.
+	Diverged int `json:"diverged"`
+}
+
+// Describe reads both sides of a split and reports what each holds.
+//
+// Records are compared by uuid rather than by offset or length: an append-only
+// transcript usually makes the older copy a prefix of the newer, but a session
+// resumed twice from the same point does not, and "shorter" is not the same as
+// "contained".
+func Describe(s Split) SplitDetail {
+	out := SplitDetail{ID: s.ID, Safe: true}
+	keep, keepIDs := describeCopy(s.Keep)
+	keep.Keep = true
+	out.Copies = append(out.Copies, keep)
+
+	for _, p := range s.Others {
+		c, ids := describeCopy(p)
+		for id := range ids {
+			if !keepIDs[id] {
+				c.Only++
+			}
+		}
+		if c.Only > 0 {
+			out.Safe = false
+			out.Diverged += c.Only
+		}
+		out.Copies = append(out.Copies, c)
+	}
+	return out
+}
+
+// describeCopy reads one transcript's shape and the record ids it holds.
+func describeCopy(path string) (Copy, map[string]bool) {
+	c := Copy{Path: path, Slug: filepath.Base(filepath.Dir(path))}
+	ids := map[string]bool{}
+	f, err := os.Open(path)
+	if err != nil {
+		return c, ids
+	}
+	defer f.Close()
+	if info, serr := f.Stat(); serr == nil {
+		c.Bytes = info.Size()
+	}
+	r := bufio.NewReaderSize(f, 1<<20)
+	for {
+		line, rerr := r.ReadBytes('\n')
+		if len(line) > 0 {
+			var probe struct {
+				UUID string    `json:"uuid"`
+				At   time.Time `json:"timestamp"`
+			}
+			if json.Unmarshal(line, &probe) == nil {
+				c.Lines++
+				if probe.UUID != "" {
+					ids[probe.UUID] = true
+				}
+				if !probe.At.IsZero() {
+					if c.First.IsZero() {
+						c.First = probe.At
+					}
+					c.Last = probe.At
+				}
+			}
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	return c, ids
+}
+
+// Consolidate moves every copy of a split session except the kept one into
+// parkDir, and reports where they went.
+//
+// Moved, never deleted. The whole fault this repairs is a conversation that
+// appeared to vanish; answering it by actually deleting one would be a poor
+// joke. Refuses outright when the copies have diverged — Describe decides that,
+// and a caller must not override it, because "this copy has three turns the
+// other lacks" has no safe automatic answer.
+func Consolidate(s Split, parkDir string) (parked []string, err error) {
+	d := Describe(s)
+	if !d.Safe {
+		return nil, fmt.Errorf("these copies have diverged: %d record(s) exist only in the older one — "+
+			"open both before choosing", d.Diverged)
+	}
+	if err := os.MkdirAll(parkDir, 0o755); err != nil {
+		return nil, err
+	}
+	for _, p := range s.Others {
+		// Named for where it came from, so a parked file can be put back.
+		dest := filepath.Join(parkDir, filepath.Base(filepath.Dir(p))+"__"+filepath.Base(p))
+		if err := os.Rename(p, dest); err != nil {
+			return parked, fmt.Errorf("could not park %s: %w", p, err)
+		}
+		parked = append(parked, dest)
+	}
+	return parked, nil
 }
