@@ -71,7 +71,7 @@ func Find(spec Spec) (*Source, error) {
 			for _, ext := range []string{".jsonc", ".json"} {
 				p := filepath.Join(dn.Dir, name+ext)
 				data, err := os.ReadFile(p)
-				if errors.Is(err, fs.ErrNotExist) {
+				if absent(p, err) {
 					continue // simply not present
 				}
 				if err != nil {
@@ -116,6 +116,21 @@ func Find(spec Spec) (*Source, error) {
 	}
 }
 
+// absent reports whether err, from reading path, means there is nothing at
+// path at all — as opposed to something that is there but cannot be read. A
+// dangling symlink is the case that blurs the two: ReadFile follows the link
+// and reports its target missing, while the entry itself sits in the
+// directory. A config that is there and unreadable has to be loud, not read
+// as "not present" — for a stack manifest that would put writes exactly where
+// they must not go.
+func absent(path string, err error) bool {
+	if !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	_, lerr := os.Lstat(path)
+	return errors.Is(lerr, fs.ErrNotExist)
+}
+
 // keysFrom reads the JSONC object at path and returns one candidate per present,
 // non-null key in keys (in order). A missing file yields nothing; an unreadable
 // or unparseable one is a loud error. The candidate's Path is left empty (the
@@ -124,7 +139,7 @@ func Find(spec Spec) (*Source, error) {
 func keysFrom(path, baseDir string, keys []string) ([]candidate, error) {
 	data, err := os.ReadFile(path)
 	switch {
-	case errors.Is(err, fs.ErrNotExist):
+	case absent(path, err):
 		return nil, nil // simply not present
 	case err != nil:
 		return nil, fmt.Errorf("reading %s: %w", path, err)

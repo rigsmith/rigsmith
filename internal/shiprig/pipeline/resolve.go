@@ -192,7 +192,25 @@ type ResolveOptions struct {
 	// the registry). When non-nil, a step listing an id outside this set is a
 	// config error. nil skips that validation.
 	KnownEcosystems []string
+
+	// FusedHistory says the repository is a rig stackspace: several upstream
+	// histories fused into one, each member under a prefix, and the whole
+	// deliberately never pushed anywhere. The built-in `tag`, `push` and
+	// `release` steps are skipped there — a tag on a fused history names
+	// nothing an upstream knows, the history must never reach a remote, and a
+	// forge release wants the tag on one — while `version`, `commit`, `build`
+	// and `publish` run as usual. A step the config replaced with its own
+	// `run` or `script` is the user's, and runs.
+	FusedHistory bool
 }
+
+// fusedHistorySteps are the built-in steps a stackspace never runs: each one
+// puts this history, or a name for it, somewhere outside the machine.
+var fusedHistorySteps = []string{"tag", "push", "release"}
+
+// FusedHistorySkipReason is the plan's reason for a built-in step a stackspace
+// leaves out.
+const FusedHistorySkipReason = "stackspace: a fused history is not tagged, pushed or released"
 
 // Resolve merges config and built-in defaults into the concrete ordered list
 // of steps, applying the only/skip filters and the from/to range. It returns
@@ -511,6 +529,10 @@ func skipReasonFor(
 	}
 	if stepConfig != nil && stepConfig.Enabled != nil && !*stepConfig.Enabled {
 		return "disabled"
+	}
+	if opts.FusedHistory && slices.Contains(fusedHistorySteps, name) &&
+		(stepConfig == nil || (stepConfig.Run == nil && stepConfig.Script == nil)) {
+		return FusedHistorySkipReason
 	}
 	if reason := ecosystemSkipReason(stepConfig, opts.Ecosystems); reason != "" {
 		return reason

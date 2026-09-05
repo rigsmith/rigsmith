@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -69,6 +70,11 @@ func newReleaseCmd() *cobra.Command {
 			if cfg.Tool == "" {
 				cfg.Tool = "shiprig"
 			}
+			if ws.Stackspace != nil {
+				if err := requireStackAwareTool(cfg); err != nil {
+					return err
+				}
+			}
 
 			// Ecosystem targeting (steps with an "ecosystems" filter) needs to know
 			// which ecosystems this release touches and which ids are valid. Only
@@ -87,6 +93,10 @@ func newReleaseCmd() *cobra.Command {
 			steps, err := pipeline.Resolve(cfg, pipeline.ResolveOptions{
 				Only: only, Skip: skip, From: from, To: to, DryBuild: dryBuild, Local: local, Rehearse: rehearse,
 				Ecosystems: presentEcos, KnownEcosystems: knownEcos,
+				// A stackspace is a fused history: its members' manifests are not
+				// stamped (the version step knows), and nothing about it is
+				// tagged, pushed or released — those steps are skipped in the plan.
+				FusedHistory: ws.Stackspace != nil,
 			})
 			if err != nil {
 				return err
@@ -778,4 +788,39 @@ func execForgeRunner(cmd *cobra.Command, env []string) forge.Runner {
 		out, err := c.CombinedOutput()
 		return string(out), err
 	}
+}
+
+// requireStackAwareTool refuses a stackspace release whose built-in `version`
+// step would run a tool that does not know what a stackspace is. Only
+// rigsmith's own engines leave a member's manifest alone; `npx changeset`
+// would stamp every one it found, and the plan's skipped tag and push would
+// then be guarding a history already changed. A version step given its own
+// `run` or `script` is the user's, and passes.
+func requireStackAwareTool(cfg *pipeline.Config) error {
+	if step := cfg.Steps["version"]; step != nil && (step.Run != nil || step.Script != nil) {
+		return nil
+	}
+	if stackAwareTool(cfg.Tool) {
+		return nil
+	}
+	return fmt.Errorf("stackspace: the version step would run %q, which does not know a member's manifest is not this repository's to write — set \"tool\" to shiprig or changerig, or give the version step its own \"run\"", cfg.Tool)
+}
+
+// stackAwareTool reports whether a `tool` setting names one of rigsmith's own
+// engines, invoked directly (not through npx and the like).
+func stackAwareTool(tool string) bool {
+	fields := strings.Fields(tool)
+	if len(fields) == 0 {
+		return false
+	}
+	// A Windows path may be configured from any platform, so both separators
+	// count, whatever this host uses.
+	name := strings.ToLower(path.Base(strings.ReplaceAll(fields[0], `\`, "/")))
+	name = strings.TrimSuffix(name, ".exe")
+	name = strings.TrimSuffix(name, "-dev")
+	switch name {
+	case "shiprig", "changerig", "changeset":
+		return true
+	}
+	return false
 }

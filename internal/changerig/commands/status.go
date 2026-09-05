@@ -157,6 +157,9 @@ func NewStatusCmd() *cobra.Command {
 				return nil
 			}
 			PrintPlan(cmd.OutOrStdout(), plan, verbose)
+			// A package with no version in the tree and none recorded plans
+			// from 0.0.0, and the plan line cannot say that on its own.
+			printUnversionedNote(cmd.OutOrStdout(), pkgs)
 			// After the plan: the nudge is about how the changelogs will READ,
 			// which only makes sense once you can see what is about to release.
 			// The same set the plan was built from: a changeset a prerelease has
@@ -208,8 +211,9 @@ func printEmptyStatusPanel(cmd *cobra.Command, ws *Workspace, pkgs []plugin.Pack
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
 	fmt.Fprintf(out, "\n%s\n", HeaderStyle.Render(fmt.Sprintf("Packages (%d)", len(sorted))))
 	for _, p := range sorted {
-		fmt.Fprintf(out, "  %s %s %s\n", p.Name, DimStyle.Render(p.Version), DimStyle.Render("["+ecoOf[p.Name]+"]"))
+		fmt.Fprintf(out, "  %s %s %s\n", p.Name, DimStyle.Render(versionLabel(p.Version)), DimStyle.Render("["+ecoOf[p.Name]+"]"))
 	}
+	printUnversionedNote(out, sorted)
 
 	fmt.Fprintf(out, "\n%s\n", DimStyle.Render("Nothing to release yet."))
 	printSetupNextStep(cmd, ws)

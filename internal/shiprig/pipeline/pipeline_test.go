@@ -1017,3 +1017,28 @@ func TestInterpolateEnvFromLayeredMap(t *testing.T) {
 		t.Errorf("missing env var = %q, want empty (placeholder consumed)", got)
 	}
 }
+
+// A stackspace runs version/commit/build/publish and skips tag, push and the
+// forge release — unless the config replaced one with its own action.
+func TestResolveFusedHistorySkipsTagPushRelease(t *testing.T) {
+	run := CommandList{ShellCommand("echo mine")}
+	cfg := &Config{Steps: map[string]*StepConfig{"push": {Run: run}}}
+	steps, err := Resolve(cfg, ResolveOptions{FusedHistory: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reason := map[string]string{}
+	for _, s := range steps {
+		reason[s.Name] = s.SkipReason
+	}
+	for _, name := range []string{"tag", "release"} {
+		if reason[name] != FusedHistorySkipReason {
+			t.Errorf("%s: skip reason = %q, want the fused-history reason", name, reason[name])
+		}
+	}
+	for _, name := range []string{"version", "commit", "build", "publish", "push"} {
+		if reason[name] != "" {
+			t.Errorf("%s: skipped with %q, want to run", name, reason[name])
+		}
+	}
+}

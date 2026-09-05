@@ -552,3 +552,34 @@ an overlay that was never written is reported the same way, since a check
 that stays quiet about it would leave an unwired stackspace looking healthy —
 as is one left over once no reference crosses between members any more, for
 which `doctor` asks every ecosystem whether it has links or not.
+
+### Releasing from a stackspace (2026-09-05, #268, #269)
+
+A stackspace is also where its fused build is released from, and the release
+engine assumed every package's version lives in its manifest. Under a member
+prefix that is the one place it must not be written: the file leaves in a
+`propose`, and the upstream gets a version bump it never asked for. Decisions:
+
+- **shiprig reads the stack manifest** (`core/stackspace`, the same two
+  locations `rig stack` reads) and treats every path under a member prefix as
+  not this repository's to write. `version` still computes, cascades, consumes
+  changesets and writes changelogs; it stamps only the stackspace's own
+  packages. `tag`, `push` and the forge `release` are skipped in the plan with
+  the reason — a tag on a fused history names nothing, and the history must
+  never reach a remote. A step the config replaced with its own `run` is the
+  user's and runs.
+- **A version that is not written anywhere is recorded.**
+  `.changeset/versions.json` (`core/versionstate`) holds the number a release
+  computed for any package it did not stamp — a member, a `--no-stamp` run,
+  `versioning.stamp: false` — and discovery reads it as the current version
+  when the manifest is not the version's home. Without it a resumed pipeline
+  (`--from pack`) had nothing to read back, and the next plan bumped from a
+  stale number.
+- **A packable project with no version in the tree is a package.** MinVer and
+  CI-stamped projects declare no number; discovery used to skip them as not
+  packages. `IsPackable`, a `PackageId` or a MinVer reference now counts, with
+  an empty version the record fills in.
+- **A member's changelog is a section of the root `CHANGELOG.md`**, since its
+  own directory is not the stackspace's either. One file, `# <package>`
+  sections, newest entry on top within each.
+

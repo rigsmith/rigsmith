@@ -138,6 +138,13 @@ shiprig release                  # the configurable step pipeline (.changeset/re
 
 Pipeline order: `version → commit → publish → tag → push → release → artifacts`.
 
+In a `rig stack` stackspace, `shiprig` stamps no member manifest (the versions go
+to `.changeset/versions.json` and `${version.<pkg>}`), and `tag`/`push`/`release`
+are skipped automatically — do not add `order` omissions or `--no-git-tag` for
+that. `shiprig version --no-stamp` computes and records without writing manifests
+anywhere; a MinVer project shows as "no version in the tree" until a release
+records one.
+
 > **Do not run `publish` / `release` unless explicitly asked** — they push tags and
 > hit live registries. `publish` is idempotent and confirm-gated, but treat it as
 > outward-facing: confirm first.

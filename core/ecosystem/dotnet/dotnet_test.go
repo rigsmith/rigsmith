@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -141,6 +142,65 @@ func TestDiscoverSkipsProjectWithNoVersion(t *testing.T) {
 	}
 	if len(resp.Packages) != 0 {
 		t.Errorf("expected no packages, got %+v", resp.Packages)
+	}
+}
+
+// A project whose version is computed at build time — MinVer from git tags, a
+// CI stamp — carries no number in the tree, but it is a package all the same:
+// it comes back with an empty Version rather than not at all. A project that is
+// merely unversioned (no package, no MinVer) stays out, and IsPackable false
+// keeps one out whatever else it declares.
+func TestDiscoverIncludesPackableProjectsWithComputedVersions(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "mermaider", "Directory.Build.props"), `<Project>
+  <PropertyGroup>
+    <MinVerMinimumMajorMinor>0.12</MinVerMinimumMajorMinor>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "mermaider", "src", "Mermaider", "Mermaider.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "live", "src", "LiveMarkdown", "LiveMarkdown.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "live", "src", "Ref", "Ref.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="MinVer" Version="5.0.0" PrivateAssets="all" />
+  </ItemGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "live", "tests", "Ref.Tests", "Ref.Tests.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <PackageId>Never.Packed</PackageId>
+  </PropertyGroup>
+</Project>`)
+	writeFile(t, filepath.Join(root, "tools", "Tool", "Tool.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+</Project>`)
+
+	resp, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, p := range resp.Packages {
+		got[p.Name] = p.Version
+	}
+	for _, want := range []string{"Mermaider", "LiveMarkdown", "Ref"} {
+		if v, ok := got[want]; !ok || v != "" {
+			t.Errorf("%s: present=%v version=%q; want present with no version", want, ok, v)
+		}
+	}
+	for _, unwanted := range []string{"Ref.Tests", "Never.Packed", "Tool"} {
+		if _, ok := got[unwanted]; ok {
+			t.Errorf("%s discovered as a package", unwanted)
+		}
 	}
 }
 
@@ -392,6 +452,37 @@ func TestArtifactsDryRun(t *testing.T) {
 	}
 	if resp.Built || resp.Skipped || resp.Message != "dry-run: would dotnet pack Acme.Lib@1.0.0" {
 		t.Errorf("dry-run artifacts = %+v, want a would-dotnet-pack message", resp)
+	}
+}
+
+// A pack carries the release's version on the command line, so a project
+// whose version is computed at build time packs under the name the release
+// then looks for.
+func TestPackPassesTheResolvedVersion(t *testing.T) {
+	restore := packRunner
+	t.Cleanup(func() { packRunner = restore })
+	var got [][]string
+	packRunner = func(ctx context.Context, dir, name string, args ...string) (string, string, error) {
+		got = append(got, append([]string{name}, args...))
+		return "", "", nil
+	}
+	out := t.TempDir()
+	resp, err := New().Artifacts(context.Background(), plugin.ArtifactsRequest{
+		RepoRoot:  t.TempDir(),
+		OutputDir: out,
+		Package:   plugin.Package{Name: "Mermaider", Version: "0.12.3", Dir: "src/Mermaider", ManifestPath: "src/Mermaider/Mermaider.csproj"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0][0] != "dotnet" || got[0][1] != "pack" || !slices.Contains(got[0], "-p:Version=0.12.3") {
+		t.Fatalf("pack command = %v, want dotnet pack … -p:Version=0.12.3", got)
+	}
+	if want := filepath.Join(out, "Mermaider.0.12.3.nupkg"); len(resp.Artifacts) != 1 || resp.Artifacts[0].Path != want {
+		t.Fatalf("artifacts = %+v, want the nupkg the version names", resp.Artifacts)
+	}
+	if args := packArgs("A.csproj", "dist", ""); slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "-p:Version=") }) {
+		t.Errorf("no version, yet -p:Version passed: %v", args)
 	}
 }
 

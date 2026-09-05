@@ -251,6 +251,11 @@
               "description": "Bump for the collapsed first release (default \"minor\")."
             }
           }
+        },
+        "stamp": {
+          "type": "boolean",
+          "default": true,
+          "description": "When false, `version` computes the new versions, consumes the changesets and writes the changelogs, but writes nothing into the manifests; the numbers are recorded in .changeset/versions.json for the release pipeline (${version.<pkg>}) and the build. For manifests that are not this repository's to write (a stackspace's members) or versions computed at build time (MinVer)."
         }
       }
     },

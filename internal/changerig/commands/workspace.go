@@ -15,6 +15,9 @@ import (
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/semver"
+	"github.com/rigsmith/rigsmith/core/stackspace"
+	"github.com/rigsmith/rigsmith/core/versionstate"
 )
 
 // Workspace is the resolved context for a command invocation.
@@ -23,6 +26,43 @@ type Workspace struct {
 	ChangesetDir string
 	Config       *config.Config
 	Registry     *plugin.Registry
+	// Stackspace is set when the repo is a rig stackspace: upstream repos fused
+	// in under prefixes, which are their upstreams' to write and not this
+	// repository's. nil for an ordinary repo.
+	Stackspace *stackspace.Stackspace
+	// computed names the packages discovery found with no version in the
+	// tree — a number computed at build time (MinVer, a CI stamp). Their
+	// manifests are never stamped: the version lives in the record beside the
+	// changesets, and a `<Version>` inserted into such a project would fight
+	// the tool that owns it. Filled by Discover.
+	computed map[string]bool
+}
+
+// Stamps reports whether `version` may write a version into pkg's manifest:
+// stamping is on in the config, the package carries a version in its tree
+// to begin with, and the manifest (and the shared version file it may defer
+// to) is this repository's own — not a stackspace member's, whose files leave
+// in pull requests to an upstream that never asked for the bump.
+func (w *Workspace) Stamps(pkg plugin.Package) bool {
+	if w.Config != nil && !w.Config.StampEnabled() {
+		return false
+	}
+	if w.computed[pkg.Name] {
+		return false
+	}
+	if w.Stackspace == nil {
+		return true
+	}
+	if w.Stackspace.Owns(pkg.ManifestPath) {
+		return false
+	}
+	return pkg.VersionFile == "" || !w.Stackspace.Owns(pkg.VersionFile)
+}
+
+// MemberOf names the stackspace member pkg belongs to, or "" when the package
+// is the repository's own (always "" outside a stackspace).
+func (w *Workspace) MemberOf(pkg plugin.Package) string {
+	return w.Stackspace.MemberOf(pkg.ManifestPath)
 }
 
 // FindRoot walks up from start to the directory containing a .changeset folder,
@@ -72,12 +112,19 @@ func Open() (*Workspace, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
+	// A stackspace changes what a release may write; a manifest that is there
+	// but unreadable must not read as "not a stackspace".
+	stack, err := stackspace.Find(root)
+	if err != nil {
+		return nil, fmt.Errorf("loading the stack manifest: %w", err)
+	}
 
 	return &Workspace{
 		Root:         root,
 		ChangesetDir: changesetDir,
 		Config:       cfg,
 		Registry:     ecosystem.Default(),
+		Stackspace:   stack,
 	}, nil
 }
 
@@ -148,14 +195,48 @@ func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]
 
 	found = w.reconcileOverlays(found)
 
+	// Where the manifest is not the version's home, the record beside the
+	// changesets is: a package with no number in the tree (computed at build
+	// time), and one whose manifest the release does not stamp (a stackspace
+	// member, stamping off), both read their current version from there.
+	recorded, err := versionstate.Read(w.ChangesetDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading %s: %w", filepath.Join(w.ChangesetDir, versionstate.FileName), err)
+	}
+
 	all := make([]plugin.Package, 0, len(found))
 	ecoOf := map[string]string{}
+	w.computed = map[string]bool{}
 	for _, d := range found {
+		if d.pkg.Version == "" {
+			w.computed[d.pkg.Name] = true
+		}
+		// The record wins over the manifest when the manifest is not the
+		// version's home — and also when it is but the record is newer: a
+		// one-off `--no-stamp` release left the manifest behind, and the next
+		// stamped run bumps from the release that happened, not the one the
+		// file remembers (and then reconciles the record away).
+		if v := recorded.Get(d.pkg.Name); v != "" && (d.pkg.Version == "" || !w.Stamps(d.pkg) || newerVersion(v, d.pkg.Version)) {
+			d.pkg.Version = v
+		}
 		all = append(all, d.pkg)
 		ecoOf[d.pkg.Name] = d.ecoID
 	}
 	return all, ecoOf, nil
 }
+
+// newerVersion reports whether a is a later semver than b; an unparseable
+// side never wins.
+func newerVersion(a, b string) bool {
+	av, aok := semver.Parse(a)
+	bv, bok := semver.Parse(b)
+	return aok && bok && semver.Compare(av, bv) > 0
+}
+
+// ComputedVersion reports whether name's version is computed at build time —
+// discovery found none in the tree — so a release records it rather than
+// stamping it.
+func (w *Workspace) ComputedVersion(name string) bool { return w.computed[name] }
 
 // reconcileOverlays drops base-ecosystem packages that an overlay ecosystem has
 // claimed by directory. For every discovered package whose ecosystem declares

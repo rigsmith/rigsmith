@@ -37,6 +37,13 @@ shiprig version            # bump + changelog, with dependency cascade
 shiprig info
 ```
 
+In a `rig stack` stackspace the pipeline adjusts itself: `version` stamps
+nothing into a member's manifest (the number is recorded in
+`.changeset/versions.json` and reaches the build as `${version.<pkg>}`), and
+`tag`, `push` and `release` are skipped — a fused history is never tagged or
+pushed. `shiprig version --no-stamp` (or `versioning.stamp: false`) does the
+same anywhere.
+
 `version` runs the shared engine in `rigsmith/core`: it parses changesets,
 cascades bumps to dependents, applies linked/fixed/lockstep grouping, stamps the
 new versions into each ecosystem's manifest, and writes `CHANGELOG.md`.

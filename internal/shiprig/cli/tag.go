@@ -36,11 +36,18 @@ func newTagCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			out := cmd.OutOrStdout()
+			// A stackspace's history is several upstreams' fused together; a
+			// tag on it names nothing any of them knows, and the history is
+			// never pushed for one to be found. Nothing to do, and said so.
+			if ws.Stackspace != nil {
+				fmt.Fprintln(out, commands.DimStyle.Render("stackspace: a fused history is not tagged — nothing to do"))
+				return nil
+			}
 			pkgs, ecoOf, err := ws.Discover(cmd.Context())
 			if err != nil {
 				return err
 			}
-			out := cmd.OutOrStdout()
 			solo := singleApp(pkgs)
 			created, skipped := 0, 0
 			// Distinct tags, not packages: a `tagTemplate` like "v${version}"

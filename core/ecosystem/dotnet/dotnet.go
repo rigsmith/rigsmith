@@ -40,6 +40,11 @@ var (
 	versionRe       = regexp.MustCompile(`(?s)(<Version>)(.*?)(</Version>)`)
 	versionPrefixRe = regexp.MustCompile(`(?s)(<VersionPrefix>)(.*?)(</VersionPrefix>)`)
 	packageIDRe     = regexp.MustCompile(`(?s)<PackageId>(.*?)</PackageId>`)
+	isPackableRe    = regexp.MustCompile(`(?s)<IsPackable[^>]*>(.*?)</IsPackable>`)
+	// A project whose version is MinVer's to compute says so in one of two
+	// ways: the package reference, or any of the MinVer* properties that tune
+	// it (MinVerTagPrefix, MinVerMinimumMajorMinor, …) in a props file.
+	minVerRe        = regexp.MustCompile(`<PackageReference[^>]*\bInclude\s*=\s*"MinVer"|<MinVer[A-Za-z]*[\s>]`)
 	projectRefRe    = regexp.MustCompile(`<ProjectReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
 	packageRefRe    = regexp.MustCompile(`<PackageReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
 	propertyGroupRe = regexp.MustCompile(`<PropertyGroup[^>]*>`)
@@ -174,11 +179,14 @@ func (a *Adapter) Discover(ctx context.Context, req plugin.DiscoverRequest) (plu
 
 		// Resolve the version: inline first, else from an ancestor props file. A
 		// project with no version anywhere is skipped (matches the C# original) —
-		// unless the caller asked for identity rather than release readiness, in
-		// which case it comes back with an empty Version.
+		// unless it is packable all the same, its number computed at build time
+		// (MinVer from git tags, a CI-stamped build), or the caller asked for
+		// identity rather than release readiness. Either way it comes back with
+		// an empty Version: the release records the number it computes for such
+		// a package beside the changesets, since the tree holds none.
 		resolved, ok := resolveVersion(path, text)
 		if !ok {
-			if !req.IncludeUnversioned {
+			if !req.IncludeUnversioned && !packable(path, text) {
 				return nil
 			}
 			resolved = resolvedVersion{}
@@ -277,7 +285,7 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	defer os.RemoveAll(tmpDir)
 
 	manifest := filepath.Join(req.RepoRoot, req.Package.ManifestPath)
-	if _, _, err := runCmd(ctx, "", "dotnet", "pack", manifest, "-c", "Release", "-o", tmpDir); err != nil {
+	if _, _, err := packRunner(ctx, "", "dotnet", packArgs(manifest, tmpDir, req.Package.Version)...); err != nil {
 		return plugin.PublishResponse{}, fmt.Errorf("dotnet pack: %w", err)
 	}
 
@@ -354,7 +362,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet pack: mkdir %s: %w", req.OutputDir, err)
 	}
 	manifest := filepath.Join(req.RepoRoot, req.Package.ManifestPath)
-	if _, _, err := runCmd(ctx, req.RepoRoot, "dotnet", "pack", manifest, "-c", "Release", "-o", req.OutputDir); err != nil {
+	if _, _, err := packRunner(ctx, req.RepoRoot, "dotnet", packArgs(manifest, req.OutputDir, req.Package.Version)...); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet pack: %w", err)
 	}
 	// dotnet pack names the package <PackageId>.<version>.nupkg; PackageId is the
@@ -413,6 +421,25 @@ func runCmd(ctx context.Context, dir, name string, args ...string) (stdout, stde
 	return stdout, stderr, err
 }
 
+// packRunner runs `dotnet pack`; a variable so tests can see the arguments
+// without a toolchain.
+var packRunner = runCmd
+
+// packArgs is the `dotnet pack` command line for a project, packing into
+// outDir. The version is passed explicitly: the .nupkg is looked for under the
+// name the version implies, and a project whose number is computed at build
+// time (MinVer from git tags, a CI stamp) would otherwise pack under whatever
+// it computed — a file that is not there. A global property on the command
+// line is one no target can override, so the release's number wins even
+// there; for a project stamped in its manifest it merely repeats the file.
+func packArgs(manifest, outDir, version string) []string {
+	args := []string{"pack", manifest, "-c", "Release", "-o", outDir}
+	if version != "" {
+		args = append(args, "-p:Version="+version)
+	}
+	return args
+}
+
 // resolvedVersion is where a project's version lives and its current value.
 type resolvedVersion struct {
 	version  string
@@ -463,6 +490,35 @@ func fromText(text, filePath string, shared bool) (resolvedVersion, bool) {
 		}
 	}
 	return resolvedVersion{}, false
+}
+
+// packable reports whether a project with no version in the tree still
+// produces a package: it says so (`IsPackable` true, or a `PackageId`, which
+// nobody declares for a project that never packs), or it hands its version to
+// MinVer, in the project itself or in a Directory.Build.props above it. An
+// explicit `IsPackable` false is the last word, whatever else is declared.
+func packable(csprojPath, csprojText string) bool {
+	texts := []string{csprojText}
+	for _, props := range ancestorPropsFiles(csprojPath) {
+		if content, err := os.ReadFile(props); err == nil {
+			texts = append(texts, string(content))
+		}
+	}
+	claimed := false
+	for _, text := range texts {
+		if m := findInPropertyGroup(text, isPackableRe); m != nil {
+			switch strings.ToLower(strings.TrimSpace(text[m[2]:m[3]])) {
+			case "false":
+				return false
+			case "true":
+				claimed = true
+			}
+		}
+		if packageID(text) != "" || minVerRe.MatchString(text) {
+			claimed = true
+		}
+	}
+	return claimed
 }
 
 // propertyGroupSpans returns the [start,end) byte range of the INNER text of each

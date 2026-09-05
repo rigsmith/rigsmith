@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/planner"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/prestate"
+	"github.com/rigsmith/rigsmith/core/versionstate"
 	"github.com/spf13/cobra"
 )
 
@@ -32,6 +34,7 @@ func NewVersionCmd() *cobra.Command {
 		snapshotTemplate string
 		independent      bool
 		yes              bool
+		noStamp          bool
 	)
 	cmd := &cobra.Command{
 		Use:   "version",
@@ -59,6 +62,15 @@ func NewVersionCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			pkgByName := make(map[string]plugin.Package, len(pkgs))
+			for _, p := range pkgs {
+				pkgByName[p.Name] = p
+			}
+			// Whether the new versions are written into manifests at all. Off by
+			// flag or config, the numbers are computed, cascaded and recorded
+			// beside the changesets instead; and a stackspace member's manifest
+			// is never written, whatever the flag says (ws.Stamps).
+			stamp := !noStamp && ws.Config.StampEnabled()
 			changesets, fromCommits, err := ws.LoadChangesets(cmd.Context(), pkgs)
 			if err != nil {
 				return err
@@ -242,8 +254,33 @@ func NewVersionCmd() *cobra.Command {
 			// time from the already-bumped versions.
 			txn := newFileTxn()
 			var changelogPaths []string
+			// The versions the run computed but did not write anywhere in the
+			// tree — no stamping, or a manifest that is not this repository's
+			// to write — go to .changeset/versions.json, where the next plan
+			// reads them back. A snapshot is throwaway and records nothing.
+			recorded, err := versionstate.Read(ws.ChangesetDir)
+			if err != nil {
+				return fmt.Errorf("reading %s: %w", filepath.Join(ws.ChangesetDir, versionstate.FileName), err)
+			}
+			var unstamped []string
+			stateChanged := false
+			rootChangelog := filepath.Join(ws.Root, changelog.FileName)
 			for _, m := range plan {
-				if eco, ok := ws.EcosystemFor(ecoOf[m.Name]); ok {
+				pkg := pkgByName[m.Name]
+				eco, ok := ws.EcosystemFor(ecoOf[m.Name])
+				switch {
+				case !ok:
+				case !(stamp && ws.Stamps(pkg)):
+					// Not written into the tree: the number is recorded instead,
+					// and named below so nobody looks for it in the manifest.
+					if !m.RangeOnly {
+						if mode != planner.ModeSnapshot {
+							recorded.Set(m.Name, m.ResolvedVersion())
+							stateChanged = true
+						}
+						unstamped = append(unstamped, m.Name)
+					}
+				default:
 					// Guard both candidate version targets (a shared VersionFile and
 					// the manifest) before mutating either.
 					if err := txn.guard(filepath.Join(ws.Root, m.ManifestPath)); err != nil {
@@ -266,6 +303,14 @@ func NewVersionCmd() *cobra.Command {
 						txn.rollback()
 						return fmt.Errorf("set version for %s: %w", m.Name, err)
 					}
+					// The manifest is the version's home again: a record left
+					// by an earlier unstamped run has been bumped from and is
+					// reconciled away, so the two cannot disagree later. A
+					// snapshot stamps a throwaway number and keeps the record.
+					if mode != planner.ModeSnapshot && recorded.Get(m.Name) != "" {
+						recorded.Delete(m.Name)
+						stateChanged = true
+					}
 				}
 				if m.RangeOnly {
 					continue // "none" release: ranges rewritten, no version bump, no changelog
@@ -275,8 +320,31 @@ func NewVersionCmd() *cobra.Command {
 					txn.rollback()
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
 				}
+				// A stackspace member's directory is its upstream's, so its
+				// notes go to the stackspace root instead — one CHANGELOG.md
+				// with a section per member, the file the stackspace owns. A
+				// package of the stackspace's own that lives at the root
+				// shares that file, and so writes a section too: a title-based
+				// write there would land under whichever member came first.
 				pkgDir := filepath.Dir(filepath.Join(ws.Root, m.ManifestPath))
 				changelogPath := filepath.Join(pkgDir, changelog.FileName)
+				if ws.MemberOf(pkg) != "" {
+					changelogPath = rootChangelog
+				}
+				if ws.Stackspace != nil && changelogPath == rootChangelog {
+					if err := txn.guard(changelogPath); err != nil {
+						txn.rollback()
+						return fmt.Errorf("changelog for %s: %w", m.Name, err)
+					}
+					if err := changelog.WriteSection(changelogPath, m.DisplayName, entry); err != nil {
+						txn.rollback()
+						return fmt.Errorf("changelog for %s: %w", m.Name, err)
+					}
+					if !slices.Contains(changelogPaths, changelogPath) {
+						changelogPaths = append(changelogPaths, changelogPath)
+					}
+					continue
+				}
 				if err := txn.guard(changelogPath); err != nil {
 					txn.rollback()
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
@@ -286,6 +354,17 @@ func NewVersionCmd() *cobra.Command {
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
 				}
 				changelogPaths = append(changelogPaths, changelogPath)
+			}
+			if stateChanged {
+				statePath := filepath.Join(ws.ChangesetDir, versionstate.FileName)
+				if err := txn.guard(statePath); err != nil {
+					txn.rollback()
+					return fmt.Errorf("recording versions: %w", err)
+				}
+				if err := versionstate.Write(ws.ChangesetDir, recorded); err != nil {
+					txn.rollback()
+					return fmt.Errorf("recording versions: %w", err)
+				}
 			}
 
 			// Formatting pass over the touched changelogs, per the `format`
@@ -331,6 +410,20 @@ func NewVersionCmd() *cobra.Command {
 			if len(kept) > 0 {
 				fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("kept %d changeset(s) naming only ignored packages.", len(kept))))
 			}
+			if len(unstamped) > 0 {
+				why := "--no-stamp"
+				switch {
+				case !ws.Config.StampEnabled():
+					why = "versioning.stamp is off"
+				case stamp:
+					why = "no version in the tree, or a stackspace member's manifest"
+				}
+				where := "recorded in .changeset/" + versionstate.FileName
+				if mode == planner.ModeSnapshot {
+					where = "not recorded (snapshot)"
+				}
+				fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("not stamped (%s): %s — %s.", why, strings.Join(unstamped, ", "), where)))
+			}
 
 			// Auto-commit the version bumps + changelogs + changeset deletions when
 			// the `commit` config key is enabled. Snapshot runs are throwaway (their
@@ -355,6 +448,7 @@ func NewVersionCmd() *cobra.Command {
 	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")
 	f.BoolVar(&independent, "independent", false, "version each package on its own changesets, writing inline (overrides a shared version file)")
 	f.BoolVarP(&yes, "yes", "y", false, "accept the computed versions; skip the interactive version-override prompt")
+	f.BoolVar(&noStamp, "no-stamp", false, "compute and record the versions (.changeset/versions.json) without writing them into any manifest")
 	return cmd
 }
 

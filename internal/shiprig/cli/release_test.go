@@ -39,3 +39,24 @@ func TestDistinctEcosystemsSortedDedupedNonNil(t *testing.T) {
 		t.Error("distinctEcosystems(empty) must be non-nil")
 	}
 }
+
+// Only rigsmith's own engines may run the version step of a stackspace release;
+// a custom run for the step is the user's business.
+func TestRequireStackAwareTool(t *testing.T) {
+	for tool, ok := range map[string]bool{
+		"shiprig": true, "changerig": true, "changeset": true, "shiprig-dev": true,
+		"/usr/local/bin/shiprig": true, `C:\tools\shiprig.exe`: true,
+		"npx changeset": false, "pnpm changeset": false, "": false, "release-it": false,
+	} {
+		if got := stackAwareTool(tool); got != ok {
+			t.Errorf("stackAwareTool(%q) = %v, want %v", tool, got, ok)
+		}
+	}
+	if err := requireStackAwareTool(&pipeline.Config{Tool: "npx changeset"}); err == nil {
+		t.Error("npx changeset accepted in a stackspace")
+	}
+	run := pipeline.CommandList{pipeline.ShellCommand("./my-version.sh")}
+	if err := requireStackAwareTool(&pipeline.Config{Tool: "npx changeset", Steps: map[string]*pipeline.StepConfig{"version": {Run: run}}}); err != nil {
+		t.Errorf("a custom version run should pass: %v", err)
+	}
+}
