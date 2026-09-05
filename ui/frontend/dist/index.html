@@ -1085,11 +1085,24 @@ function repoChanged(rewrote) {
 // Sessions filed in two places, and Desktop sidecars pointing at the wrong one.
 // Silent until something is wrong: a panel that says "all good" every time is a
 // panel people stop reading, and this one has to be noticed the once it matters.
-function renderFiling(v) {
+let lastFilingSig = '';
+let filingOpen = false;
+
+function renderFiling(v, force) {
   const box = $('filing');
+  const splits = v?.splits || [], stale = v?.stale || [];
+
+  // The status poll runs every 5s while the window is open, and this data only
+  // changes when a session is filed or fixed. Rebuilding regardless threw away
+  // the expanded list underneath whoever had just opened it — the same fault
+  // the activity feed had, for the same reason.
+  const sig = JSON.stringify([v?.error || '', splits.map(s => s.id), stale.map(s => s.id)]);
+  if (!force && sig === lastFilingSig) return;
+  lastFilingSig = sig;
+  filingOpen = false;
+
   box.replaceChildren();
   if (!v || v.error) return;
-  const splits = v.splits || [], stale = v.stale || [];
   if (!splits.length && !stale.length) return;
 
   const card = el('div', 'warnrow');
@@ -1104,7 +1117,11 @@ function renderFiling(v) {
   }
   if (splits.length) {
     const show = el('button', null, 'Show them');
-    show.onclick = () => { show.disabled = true; loadSplits(box, card); };
+    show.onclick = () => { show.disabled = true; filingOpen = true; loadSplits(box, card); };
+    if (filingOpen) {
+      show.disabled = true;
+      loadSplits(box, card);
+    }
     const row = el('div', 'reporow');
     row.append(el('div', 'grow'));
     row.append(show);
@@ -1161,8 +1178,13 @@ function splitRow(s, box) {
         const res = await Call.ByName(FILING_FIX, s.id);
         row.replaceChildren(el('div', 'hint',
           `Parked ${res.files.length} copy(ies) in ${res.dir}`));
-        // The banner counted this one; re-read so the count is honest.
-        try { renderFiling(await Call.ByName(FILING_GET)); } catch { /* leave it */ }
+        // The banner counted this one; re-read so the count is honest. Forced,
+        // and with the list re-expanded: collapsing it the moment you fix one
+        // of four is not a reward for fixing it.
+        try {
+          filingOpen = true;
+          renderFiling(await Call.ByName(FILING_GET), true);
+        } catch { /* leave it */ }
       } catch (e) {
         status.className = 'grow hint warn';
         status.textContent = String(e);
