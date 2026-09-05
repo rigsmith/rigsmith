@@ -65,7 +65,8 @@ original byte length and an ordered list of SHA-256 hashes and part lengths.
 Its chunks live beside it, in `<id>.jsonl.chunks/<hash>.part`. Each full part is
 4 MiB; the last part can be shorter. Boundaries are byte offsets and may split a
 JSON record or UTF-8 character. Reassembly preserves the exact original bytes,
-including a last record with no newline.
+including a last record with no newline. Project names remain ordinary directory
+names even when they end in `.jsonl.chunks`.
 
 Completed chunks are reused when a transcript grows. The short tail is replaced,
 and newly completed chunks are added. Git can still retain previous tails in
@@ -81,11 +82,14 @@ previous snapshot readable. Conversion can be rerun after interruption. Readers
 verify part sizes and hashes; restore writes a temporary native file and replaces
 the destination only after successful reassembly. A corrupt or missing part fails
 that restore without truncating the existing destination. Retention and session
-deletion remove a transcript and its chunks together.
+deletion remove a transcript and its chunks together. Session consolidation
+verifies and parks a chunked copy as self-contained native JSONL before removing
+its old index and parts.
 
 Search, session titles/activity, the ledger, peek, historical ledger recovery,
 and restore read the logical transcript. Git history readers load indexes and
-parts from the same revision. Divergent chunk indexes, including native/chunk
+parts from the same revision. `peek list` reads a bounded 1 MiB title preview;
+full transcript reads and materialization still require every part. Divergent chunk indexes, including native/chunk
 conflicts during migration, remain unresolved instead of being line-unioned.
 Resolve or abort those merges before syncing again. Plain transcript merge
 policies are unchanged.
@@ -96,7 +100,7 @@ Sync scans complete staged text streams with bounded memory, including large
 transcripts, unchanged files, remote-only files and stored chunks. It recognizes
 credential prefixes, JWTs, bearer tokens, PEM private-key headers and common
 ASCII JSON escapes. Overlapping reads cover signatures split across scan or
-storage boundaries. Raw index bytes are also scanned, including fields ignored
+storage boundaries, including long JWTs encoded with ASCII JSON escapes. Raw index bytes are also scanned, including fields ignored
 by JSON decoding. Referenced parts are checked through their logical transcript
 once per audit; unreferenced part files are still scanned separately. Existing credential-filename and auth-config rules also
 apply. Read and chunk-integrity failures stop publication. The command checks
@@ -116,7 +120,9 @@ clauderig config set redactTranscripts true
 clauderig sync
 ```
 
-Live transcripts are never edited. Private-key blocks and signatures the scrubber
+Live transcripts are never edited. If redaction produces a native snapshot
+below the chunking threshold but above `retention.maxFileBytes`, it is reported
+as oversized and excluded just like any other native file above that cap. Private-key blocks and signatures the scrubber
 cannot safely rewrite still cause refusal. Scanning uses known patterns, not
 entropy guesses over conversation prose; it cannot recognize every possible
 secret or decode arbitrary binary/encrypted content. It audits the current

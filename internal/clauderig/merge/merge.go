@@ -107,6 +107,9 @@ func Resolve(s Sides) (Result, bool) {
 	}
 	if transcript.IsIndex(s.Ours) || transcript.IsIndex(s.Theirs) {
 		if bytes.Equal(s.Ours, s.Theirs) {
+			if _, err := transcript.Decode(s.Ours); err != nil {
+				return Result{}, false
+			}
 			return Result{Content: s.Ours, Policy: "chunk-index-identical", Detail: "identical chunk snapshots"}, true
 		}
 		return Result{}, false

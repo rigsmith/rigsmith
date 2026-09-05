@@ -347,7 +347,8 @@ func listFiles(root string, keep func(rel string) bool, pruneDir func(name strin
 			return nil // unreadable dir/file — skip, don't abort
 		}
 		if d.IsDir() {
-			if transcript.IsPartPath(p) || d.Name() == ".git" || (pruneDir != nil && pruneDir(d.Name())) {
+			rel, _ := filepath.Rel(root, p)
+			if transcript.IsPartPath(rel) || d.Name() == ".git" || (pruneDir != nil && pruneDir(d.Name())) {
 				return filepath.SkipDir
 			}
 			return nil

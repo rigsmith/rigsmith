@@ -74,3 +74,21 @@ func TestPermissionReasonsOnlyRewriteKnownPathFields(t *testing.T) {
 		t.Fatal("nested permission glob not rewritten")
 	}
 }
+
+func TestMalformedPermissionFieldsRemainUntouched(t *testing.T) {
+	for _, reasons := range []any{
+		"/Users/you/path", "$HOME/path",
+		[]any{"/Users/you/path", "$HOME/path", map[string]any{"cwd": "/Users/you/path"}},
+		map[string]any{"nested": "$HOME/path"},
+	} {
+		v := map[string]any{"alwaysAllowedReasons": reasons, "cwd": "/Users/you/project"}
+		vAny, n := PortablizeJSONPaths(v, map[string]string{"HOME": "/Users/you"}, pathmap.OSMacOS)
+		if n != 1 || !reflect.DeepEqual(v["alwaysAllowedReasons"], reasons) {
+			t.Fatal("generic walk changed unsupported reasons")
+		}
+		_, n = ResolveJSONPaths(vAny, pathmap.NewResolver(pathmap.MapFolders{"HOME": "/Users/other"}, pathmap.OSMacOS, nil))
+		if n != 1 || !reflect.DeepEqual(v["alwaysAllowedReasons"], reasons) {
+			t.Fatal("generic resolution changed unsupported reasons")
+		}
+	}
+}

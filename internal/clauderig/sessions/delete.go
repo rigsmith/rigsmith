@@ -162,7 +162,7 @@ func removeSessionPath(path, id string) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if strings.HasSuffix(path, ".jsonl") {
+	if strings.EqualFold(filepath.Ext(path), ".jsonl") {
 		if err := os.RemoveAll(path + transcript.Suffix); err != nil {
 			return err
 		}

@@ -339,6 +339,26 @@ func Sync(opts Options) (*Report, error) {
 					})
 					credentialFiles++
 				}
+				// Redaction can shrink a chunk-eligible source into a native
+				// snapshot. Apply the physical-file cap to those resulting bytes.
+				dropOversizeSnapshot := func() (bool, error) {
+					st, err := os.Stat(dstPath)
+					if err != nil {
+						return false, err
+					}
+					if opts.MaxFileBytes <= 0 || st.Size() <= opts.MaxFileBytes ||
+						(opts.ChunkTranscripts && isTranscriptRel(rel) && st.Size() > 2*transcript.ChunkSize) {
+						return false, nil
+					}
+					if err := os.Remove(dstPath); err != nil {
+						return false, err
+					}
+					if err := os.RemoveAll(dstPath + transcript.Suffix); err != nil {
+						return false, err
+					}
+					rr.Oversize = append(rr.Oversize, OversizeFile{Rel: rel, Bytes: st.Size()})
+					return true, nil
+				}
 				// The name rule needs no content, so it runs on EVERY file, including
 				// ones the incremental skip below won't recopy: a credential staged by
 				// an earlier sync (or before this check existed) must keep failing until
@@ -374,6 +394,15 @@ func Sync(opts Options) (*Report, error) {
 					continue
 				}
 				if unchanged {
+					if scrub {
+						dropped, err := dropOversizeSnapshot()
+						if err != nil {
+							return nil, err
+						}
+						if dropped {
+							continue
+						}
+					}
 					// Check the bytes that will actually be published.
 					if f := scanNonJSON(dstPath, rel); f != nil {
 						noteFinding(f)
@@ -396,6 +425,13 @@ func Sync(opts Options) (*Report, error) {
 						continue
 					case rerr != nil:
 						return nil, rerr
+					}
+					dropped, err := dropOversizeSnapshot()
+					if err != nil {
+						return nil, err
+					}
+					if dropped {
+						continue
 					}
 					if len(hits) > 0 {
 						rr.Redactions += len(hits)
@@ -841,7 +877,8 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 				return nil
 			}
 			if d.IsDir() {
-				if transcript.IsPartPath(p) {
+				rel, _ := filepath.Rel(projectsDir, p)
+				if transcript.IsPartPath("projects/" + filepath.ToSlash(rel)) {
 					return filepath.SkipDir
 				}
 				return nil

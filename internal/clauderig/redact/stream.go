@@ -26,6 +26,7 @@ func ScanReader(rel string, r io.Reader) (*Finding, error) {
 	var small []byte
 	var total int64
 	var jwt jwtStream
+	var escapedJWT escapedJWTStream
 	for {
 		n, err := io.ReadFull(r, buf[kept:kept+block])
 		data := buf[:kept+n]
@@ -49,7 +50,7 @@ func ScanReader(rel string, r io.Reader) (*Finding, error) {
 			small = nil
 		}
 		total += int64(n)
-		if jwt.feed(buf[kept : kept+n]) {
+		if jwt.feed(buf[kept:kept+n]) || escapedJWT.feed(buf[kept:kept+n]) {
 			return &Finding{Path: rel, Kind: "jwt"}, nil
 		}
 		if finding := scanText(rel, data); finding != nil {
@@ -136,6 +137,58 @@ func (s *jwtStream) feed(data []byte) bool {
 		} else {
 			s.phase = 0
 			s.count = 0
+		}
+	}
+	return false
+}
+
+// escapedJWTStream normalizes the supported ASCII JSON escapes before feeding
+// the stateful JWT detector. At most one six-byte escape spans input blocks.
+type escapedJWTStream struct {
+	jwt     jwtStream
+	pending [6]byte
+	n       int
+}
+
+func (s *escapedJWTStream) feed(data []byte) bool {
+	for _, c := range data {
+		if s.n == 0 {
+			if c == '\\' {
+				s.pending[0], s.n = c, 1
+				continue
+			}
+			if s.jwt.feed([]byte{c}) {
+				return true
+			}
+			continue
+		}
+		s.pending[s.n] = c
+		s.n++
+		if s.n == 2 && c == '/' {
+			s.n = 0
+			if s.jwt.feed([]byte{'/'}) {
+				return true
+			}
+			continue
+		}
+		valid := true
+		if s.n <= 4 {
+			valid = c == `\u00`[s.n-1]
+		} else {
+			valid = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+		}
+		if !valid {
+			pending, n := s.pending, s.n
+			s.n = 0
+			if s.jwt.feed(pending[:1]) || s.feed(pending[1:n]) {
+				return true
+			}
+		} else if s.n == 6 {
+			decoded, _ := strconv.ParseUint(string(s.pending[4:6]), 16, 8)
+			s.n = 0
+			if s.jwt.feed([]byte{byte(decoded)}) {
+				return true
+			}
 		}
 	}
 	return false

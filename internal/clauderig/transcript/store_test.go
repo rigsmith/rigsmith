@@ -27,7 +27,7 @@ func snapshot(t *testing.T, p string, b []byte) *Index {
 }
 
 func TestRoundTripAppendAndReadAt(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "session.jsonl")
+	p := filepath.Join(t.TempDir(), "project", "session.jsonl")
 	// Includes arbitrary bytes, a split UTF-8 character, and a record larger than
 	// a chunk. Chunk boundaries must never alter the original byte stream.
 	data := append(bytes.Repeat([]byte("a"), ChunkSize-1), []byte("🌍\n")...)
@@ -60,7 +60,7 @@ func TestRoundTripAppendAndReadAt(t *testing.T) {
 	if first.Parts[0] != next.Parts[0] || first.Parts[1] != next.Parts[1] || first.Parts[2] == next.Parts[2] {
 		t.Fatal("sealed chunks not reused")
 	}
-	if err := Clean(filepath.Dir(p)); err != nil {
+	if err := Clean(filepath.Dir(filepath.Dir(p))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(p+Suffix, first.Parts[2].Hash+".part")); !os.IsNotExist(err) {
@@ -195,7 +195,7 @@ func TestStoredRevisionAndPrefix(t *testing.T) {
 }
 
 func TestChunkSymlinkRejected(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "s.jsonl")
+	p := filepath.Join(t.TempDir(), "project", "s.jsonl")
 	idx := snapshot(t, p, []byte("body\n"))
 	part := filepath.Join(p+Suffix, idx.Parts[0].Hash+".part")
 	other := filepath.Join(t.TempDir(), "outside")
@@ -211,7 +211,7 @@ func TestChunkSymlinkRejected(t *testing.T) {
 	if _, err := ReadFile(p); err == nil {
 		t.Fatal("read followed chunk symlink")
 	}
-	if err := Clean(filepath.Dir(p)); err == nil {
+	if err := Clean(filepath.Dir(filepath.Dir(p))); err == nil {
 		t.Fatal("cleanup followed chunk symlink")
 	}
 }
@@ -274,7 +274,11 @@ func TestFailedInPlaceMaterializePreservesIndex(t *testing.T) {
 }
 
 func TestCleanNativeAndMissingOwners(t *testing.T) {
-	root := t.TempDir()
+	projects := t.TempDir()
+	root := filepath.Join(projects, "project")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	native := filepath.Join(root, "native.jsonl")
 	f, err := os.Create(native)
 	if err != nil {
@@ -295,7 +299,7 @@ func TestCleanNativeAndMissingOwners(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := Clean(root); err != nil {
+	if err := Clean(projects); err != nil {
 		t.Fatal(err)
 	}
 	for _, owner := range []string{native, filepath.Join(root, "missing.jsonl")} {
@@ -305,5 +309,50 @@ func TestCleanNativeAndMissingOwners(t *testing.T) {
 	}
 	if st, err := os.Stat(native); err != nil || st.Size() != 64<<20 {
 		t.Fatalf("native owner changed: %v", err)
+	}
+}
+
+func TestChunkSuffixInProjectSlugIsPreserved(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "backup.jsonl.chunks")
+	slug := "-home-project.jsonl.chunks"
+	dir := filepath.Join(root, "cli", "projects", slug)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "s.jsonl")
+	data := bytes.Repeat([]byte("native record\n"), 700000)
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, on := range []bool{true, false} {
+		if err := ConvertTree(root, on); err != nil {
+			t.Fatal(err)
+		}
+		got, err := ReadFile(p)
+		if err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("project lost during mode %t: %v", on, err)
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil || IsIndex(raw) != on {
+			t.Fatalf("project skipped during mode %t: %v", on, err)
+		}
+		if on && CheckNativeLimit(root, ChunkSize) == nil {
+			t.Fatal("rollback cap skipped suffix-named project")
+		}
+	}
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"cli/projects/" + slug, false},
+		{"projects/" + slug + "/s.jsonl", false},
+		{"projects/" + slug + "/s.jsonl.chunks", true},
+		{"cli/projects/" + slug + "/s.jsonl.chunks/hash.part", true},
+		{"projects/p/session/subagents/agent.jsonl.chunks/hash.part", true},
+		{"projects/p/memory/notes.jsonl.chunks/note.md", false},
+	} {
+		if got := IsPartPath(tc.path); got != tc.want {
+			t.Errorf("%s part=%v, want %v", tc.path, got, tc.want)
+		}
 	}
 }

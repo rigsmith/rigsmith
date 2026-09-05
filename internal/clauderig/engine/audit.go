@@ -32,7 +32,7 @@ func audit(root string, open func(string) (transcript.File, error)) ([]redact.Fi
 			return e
 		}
 		if d.IsDir() {
-			if p == filepath.Join(root, ".git") {
+			if d.Name() == ".git" {
 				return filepath.SkipDir
 			}
 			return nil

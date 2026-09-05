@@ -12,3 +12,19 @@ func TestChunkIndexesNeverLineUnion(t *testing.T) {
 		t.Fatal("mixed native/chunk conflict must remain unresolved")
 	}
 }
+
+func TestIdenticalChunkIndexesMustBeValid(t *testing.T) {
+	for _, raw := range []string{
+		`{"clauderig_chunked_transcript":1`,
+		`{"clauderig_chunked_transcript":2,"size":0,"parts":[]}`,
+		`{"clauderig_chunked_transcript":1,"size":1,"parts":[]}`,
+	} {
+		if _, ok := Resolve(Sides{Path: "s.jsonl", Ours: []byte(raw), Theirs: []byte(raw)}); ok {
+			t.Fatal("invalid identical index accepted")
+		}
+	}
+	raw := []byte(`{"clauderig_chunked_transcript":1,"size":0,"parts":[]}`)
+	if _, ok := Resolve(Sides{Path: "s.jsonl", Ours: raw, Theirs: raw}); !ok {
+		t.Fatal("valid identical index rejected")
+	}
+}

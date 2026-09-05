@@ -82,10 +82,11 @@ require resolution; they are never combined as JSONL records.
 Updated clients follow the repository setting unless locally overridden.
 `clauderig config set chunkTranscripts auto` removes the local override.
 To convert back, run `clauderig config set chunkTranscripts false` followed by
-`clauderig sync`, and clear other machines' true overrides. Rollback refuses before changing the tree if a chunked snapshot exceeds the
-configured native-file cap. Increasing that cap can exceed the remote's blob limit. Chunk mode requires
-`retention.maxFileBytes` of at least 4 MiB or no cap. Historical chunked revisions
-still require an updated binary after rollback.
+`clauderig sync`, and clear other machines' true overrides. Rollback refuses
+before changing the tree if a chunked snapshot exceeds the configured
+native-file cap. Increasing that cap can exceed the remote's blob limit. Chunk
+mode requires `retention.maxFileBytes` of at least 4 MiB or no cap. Historical
+chunked revisions still require an updated binary after rollback.
 
 Scanning checks complete staged text even when scrubbing is off. A recognized
 credential stops publication. `clauderig config set redactTranscripts true`

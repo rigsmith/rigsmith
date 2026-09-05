@@ -65,3 +65,17 @@ func TestAuditReadsReferencedPartsOnlyThroughOwner(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditSkipsNestedGitMetadataOnly(t *testing.T) {
+	stage := t.TempDir()
+	secret := "ghp_" + strings.Repeat("z", 40)
+	write(t, stage, "cli/plugins/nested/.git/config", secret)
+	write(t, stage, "cli/plugins/nested/readme.md", "ordinary prose\n")
+	if err := CheckPublish(stage); err != nil {
+		t.Fatalf("unpublished metadata scanned: %v", err)
+	}
+	write(t, stage, "cli/plugins/nested/readme.md", secret)
+	if err := CheckPublish(stage); err == nil {
+		t.Fatal("nested working files escaped audit")
+	}
+}

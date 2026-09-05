@@ -1,7 +1,9 @@
 package redact
 
 import (
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -71,5 +73,34 @@ func TestStreamLongJWTAndLegacyBareToken(t *testing.T) {
 	f, err = ScanReader("opaque-token", strings.NewReader(bare))
 	if err != nil || f == nil {
 		t.Fatalf("legacy 32–64 KiB token: %v %v", f, err)
+	}
+}
+
+func TestStreamLongEscapedJWT(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256"}`)) + "." + strings.Repeat("abcdef", 12000) + ".signature"
+	var escaped strings.Builder
+	for _, c := range []byte(token) {
+		fmt.Fprintf(&escaped, `\u%04x`, c)
+	}
+	for _, pad := range []int{0, 32762, 32763, 32764, 32765, 32766, 32767} {
+		input := strings.Repeat(" ", pad) + `{"message":"` + escaped.String() + `"}`
+		f, err := ScanReader("s.jsonl", strings.NewReader(input))
+		if err != nil || f == nil || f.Kind != "jwt" {
+			t.Fatalf("escaped JWT offset %d missed: %v %v", pad, f, err)
+		}
+	}
+	// Malformed escapes must break a candidate rather than silently join it.
+	invalid := `eyJhbGciOiJIUzI1NiJ9.abcde\u00zz` + strings.Repeat("abcdef", 12000) + ".signature"
+	if f, err := ScanReader("s.jsonl", strings.NewReader(invalid)); err != nil || f != nil {
+		t.Fatalf("invalid escape: %v %v", f, err)
+	}
+}
+
+func TestStreamBearerKindsIgnoreSchemeCase(t *testing.T) {
+	for _, scheme := range []string{"Bearer", "bearer", "bEaReR"} {
+		f, err := ScanReader("s.jsonl", strings.NewReader(scheme+" "+strings.Repeat("aB3d", 10)))
+		if err != nil || f == nil || f.Kind != "bearer" {
+			t.Fatalf("scheme %s: %v %v", scheme, f, err)
+		}
 	}
 }

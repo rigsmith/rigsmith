@@ -19,7 +19,9 @@ import (
 const ChunkSize = 4 << 20
 const marker = `{"clauderig_chunked_transcript":`
 const Suffix = ".chunks"
-const maxIndex = 16 << 20
+
+// MaxIndexSize bounds both filesystem and Git-backed index reads.
+const MaxIndexSize = 16 << 20
 
 type Index struct {
 	Version int    `json:"clauderig_chunked_transcript"`
@@ -32,9 +34,17 @@ type Part struct {
 }
 
 func IsIndex(b []byte) bool { return bytes.HasPrefix(bytes.TrimSpace(b), []byte(marker)) }
-func IsPartPath(p string) bool {
-	for _, s := range strings.Split(filepath.ToSlash(p), "/") {
-		if strings.HasSuffix(s, ".jsonl"+Suffix) {
+
+// IsPartPath accepts a CLI-root or staging-root relative path. The project
+// slug is data, even when it ends in .jsonl.chunks; only descendants can be parts.
+func IsPartPath(rel string) bool {
+	rel = strings.TrimPrefix(filepath.ToSlash(rel), "cli/")
+	parts := strings.Split(rel, "/")
+	if len(parts) < 3 || parts[0] != "projects" || parts[2] == "memory" {
+		return false
+	}
+	for _, name := range parts[2:] {
+		if strings.HasSuffix(strings.ToLower(name), ".jsonl"+Suffix) {
 			return true
 		}
 	}
@@ -45,7 +55,7 @@ func Decode(b []byte) (*Index, error) {
 		return nil, nil
 	}
 	var idx Index
-	if len(b) > maxIndex {
+	if len(b) > MaxIndexSize {
 		return nil, fmt.Errorf("chunk index too large")
 	}
 	if err := json.Unmarshal(b, &idx); err != nil {
@@ -148,7 +158,7 @@ func Open(path string) (File, error) {
 	if e != nil {
 		return nil, e
 	}
-	if !strings.HasSuffix(path, ".jsonl") {
+	if !strings.EqualFold(filepath.Ext(path), ".jsonl") {
 		return f, nil
 	}
 	var head [512]byte
@@ -165,7 +175,7 @@ func Open(path string) (File, error) {
 		f.Close()
 		return nil, e
 	}
-	b, e := io.ReadAll(io.LimitReader(f, maxIndex+1))
+	b, e := io.ReadAll(io.LimitReader(f, MaxIndexSize+1))
 	f.Close()
 	if e != nil {
 		return nil, e
@@ -302,7 +312,7 @@ func writeChunks(dst string, src io.Reader, mtime time.Time) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(b)+1 > maxIndex {
+	if len(b)+1 > MaxIndexSize {
 		return nil, fmt.Errorf("chunk index too large")
 	}
 	return append(b, '\n'), nil
@@ -365,7 +375,8 @@ func atomicWriteFunc(dst string, write func(io.Writer) error, mtime time.Time, m
 	return os.Rename(name, dst)
 }
 
-// Clean removes unreferenced chunk objects only after an index is complete.
+// Clean walks a projects directory, preserving its arbitrary project slugs.
+// It removes unreferenced chunk objects only after an index is complete.
 // Their mtimes follow the owning snapshot so retention never ages sealed chunks
 // out of a still-active conversation. Orphan directories are also removed.
 func Clean(root string) error {
@@ -376,7 +387,11 @@ func Clean(root string) error {
 		if e != nil {
 			return e
 		}
-		if !d.IsDir() || !strings.HasSuffix(d.Name(), ".jsonl"+Suffix) {
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() || !IsPartPath("projects/"+filepath.ToSlash(rel)) {
 			return nil
 		}
 		owner := strings.TrimSuffix(p, Suffix)
@@ -466,7 +481,11 @@ func ConvertTree(root string, enabled bool) error {
 			return e
 		}
 		if d.IsDir() {
-			if IsPartPath(p) {
+			rel, err := filepath.Rel(root, p)
+			if err != nil {
+				return err
+			}
+			if IsPartPath(rel) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -474,7 +493,7 @@ func ConvertTree(root string, enabled bool) error {
 		if !d.Type().IsRegular() {
 			return fmt.Errorf("invalid staged file: %s", p)
 		}
-		if !strings.HasSuffix(p, ".jsonl") {
+		if !strings.EqualFold(filepath.Ext(p), ".jsonl") {
 			return nil
 		}
 		f, e := Open(p)
@@ -536,12 +555,16 @@ func CheckNativeLimit(root string, limit int64) error {
 			return err
 		}
 		if d.IsDir() {
-			if IsPartPath(p) {
+			rel, err := filepath.Rel(root, p)
+			if err != nil {
+				return err
+			}
+			if IsPartPath(rel) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !strings.HasSuffix(p, ".jsonl") {
+		if !strings.EqualFold(filepath.Ext(p), ".jsonl") {
 			return nil
 		}
 		f, err := Open(p)

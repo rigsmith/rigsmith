@@ -461,7 +461,10 @@ func TestSync_EnablingRedactionScrubsWhatIsAlreadyStaged(t *testing.T) {
 
 	// Simulate an older client staging a transcript without scanning its body.
 	write(t, staging, "cli/projects/-p/s.jsonl", body.String())
-	st, _ := os.Stat(filepath.Join(live, "projects/-p/s.jsonl"))
+	st, err := os.Stat(filepath.Join(live, "projects/-p/s.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chtimes(stagedPath, st.ModTime(), st.ModTime()); err != nil {
 		t.Fatal(err)
 	}

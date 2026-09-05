@@ -10,14 +10,14 @@ import (
 // embedded permission-reason format. Both transforms modify the parsed document
 // in place; callers serialize the result into staging, never over the live file.
 func PortablizeJSONPaths(v any, folders map[string]string, srcOS string) (any, int) {
-	v, n := pathmap.PortablizeJSONValues(v, folders, srcOS)
+	v, n := rewriteOtherPaths(v, func(value any) (any, int) { return pathmap.PortablizeJSONValues(value, folders, srcOS) })
 	n += rewritePermissionReasons(v, func(p string) (string, bool) { return pathmap.Portablize(p, folders, srcOS) })
 	return v, n
 }
 
 // ResolveJSONPaths resolves the same path surfaces onto the destination machine.
 func ResolveJSONPaths(v any, target *pathmap.Resolver) (any, int) {
-	v, n := pathmap.ResolveJSONValues(v, target)
+	v, n := rewriteOtherPaths(v, func(value any) (any, int) { return pathmap.ResolveJSONValues(value, target) })
 	n += rewritePermissionReasons(v, func(p string) (string, bool) {
 		if !strings.HasPrefix(p, "$") {
 			return p, false
@@ -70,4 +70,30 @@ func rewritePermissionReasons(v any, rewrite func(string) (string, bool)) int {
 		}
 	}
 	return n
+}
+
+// Keep the entire permission-reason field out of the generic transform; only
+// its exact-format adapter may modify it, including when the field is malformed.
+func rewriteOtherPaths(v any, leaf func(any) (any, int)) (any, int) {
+	n := 0
+	switch node := v.(type) {
+	case map[string]any:
+		for key, value := range node {
+			if key == "alwaysAllowedReasons" {
+				continue
+			}
+			rewritten, count := rewriteOtherPaths(value, leaf)
+			node[key] = rewritten
+			n += count
+		}
+	case []any:
+		for i, value := range node {
+			rewritten, count := rewriteOtherPaths(value, leaf)
+			node[i] = rewritten
+			n += count
+		}
+	default:
+		return leaf(v)
+	}
+	return v, n
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
@@ -153,5 +154,51 @@ func TestScrubbingAndChunkingTogether(t *testing.T) {
 	}
 	if original := read(t, filepath.Join(live, "projects/-p/s.jsonl")); original != body {
 		t.Fatal("live transcript changed")
+	}
+}
+
+func TestRedactionCannotLeaveNativeSnapshotAboveCap(t *testing.T) {
+	for _, unchanged := range []bool{false, true} {
+		live, stage := t.TempDir(), t.TempDir()
+		safe := strings.Repeat("ordinary prose\n", 450000)
+		body := safe + "ghp_" + strings.Repeat("z", 3<<20) + "\n"
+		rel := "projects/-p/s.jsonl"
+		write(t, live, rel, body)
+		opts := Options{StagingDir: stage, Config: cliOnlyConfig(live), Machine: config.Machine{OS: pathmap.OSMacOS, Home: "/Users/test"}, SourceOverride: override("cli", live), ChunkTranscripts: true, RedactTranscripts: true, MaxFileBytes: transcript.ChunkSize}
+		if unchanged {
+			// A snapshot emitted before post-redaction cap enforcement.
+			noteRedactionSetting(stage, true)
+			if !redactedLastRun(stage) {
+				t.Fatal("redaction-state fixture missing")
+			}
+			write(t, stage, "cli/"+rel, safe)
+			st, err := os.Stat(filepath.Join(live, rel))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(filepath.Join(stage, "cli", rel), st.ModTime(), st.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		rep, err := Sync(opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rep.Roots[0].Oversize) != 1 {
+			t.Fatalf("oversize result not reported: %+v", rep.Roots[0])
+		}
+		wantBytes := int64(len(safe))
+		if !unchanged {
+			wantBytes += int64(len(redact.Placeholder) + 1)
+		}
+		if got := rep.Roots[0].Oversize[0]; got.Rel != rel || got.Bytes != wantBytes {
+			t.Fatalf("oversize report = %+v, want %s with %d scrubbed bytes", got, rel, wantBytes)
+		}
+		if _, err := os.Stat(filepath.Join(stage, "cli", rel)); !os.IsNotExist(err) {
+			t.Fatal("oversize native snapshot left staged")
+		}
+		if got := read(t, filepath.Join(live, rel)); got != body {
+			t.Fatal("live transcript changed")
+		}
 	}
 }

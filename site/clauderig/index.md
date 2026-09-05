@@ -45,7 +45,7 @@ clauderig ui                   # interactive dashboard
   `redactTranscripts` to true to scrub supported signatures from staged
   transcripts first. Live files are never edited. These checks do not sanitize
   existing Git history or identify every possible secret.
-- **Transcript chunking.** On in new configurations; existing configs without
+- **Transcript chunking.** On for new configurations; existing configs without
   the key use auto and follow the repository. Large backups use reusable 4 MiB chunks
   while restore writes native JSONL. Existing backups migrate on the next sync.
   Upgrade every participating client before enabling it. See

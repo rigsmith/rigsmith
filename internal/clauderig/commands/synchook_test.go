@@ -255,5 +255,8 @@ func TestSyncLockCreatesConfigDirectory(t *testing.T) {
 	if err != nil || !got {
 		t.Fatalf("first sync cannot lock a new config directory: %v", err)
 	}
+	if st, err := os.Stat(filepath.Dir(staging)); err != nil || !st.IsDir() {
+		t.Fatalf("config directory missing: %v", err)
+	}
 	lock.Release()
 }
