@@ -348,6 +348,17 @@ func TestLogRange(t *testing.T) {
 		t.Fatalf("SHA %q is not a full id", got[1].SHA)
 	}
 
+	// A subject is any bytes but a newline, control characters included: the
+	// framing must not hand part of one back as the separator.
+	write(t, dir, "d", "4")
+	odd := "unit\x1fseparator\x1f inside"
+	if _, err := r.Commit(ctx, odd); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.LogRange(ctx, head, "HEAD"); err != nil || len(got) != 1 || got[0].Subject != odd {
+		t.Fatalf("LogRange with an odd subject = %+v, %v; want subject %q intact", got, err, odd)
+	}
+
 	// Nothing between a commit and itself: an empty list, not an error.
 	if same, err := r.LogRange(ctx, "HEAD", "HEAD"); err != nil || len(same) != 0 {
 		t.Fatalf("LogRange(HEAD, HEAD) = %+v, %v", same, err)

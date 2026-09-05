@@ -275,18 +275,19 @@ type LogEntry struct {
 // carry before it carries it: base is what the remote already has, head is
 // what it would be moved to.
 func (r *Repo) LogRange(ctx context.Context, base, head string) ([]LogEntry, error) {
-	// A separator no subject can hold: git strips newlines from %s, and a
-	// unit separator has no business in a commit message.
-	out, err := runGit(ctx, r.Dir, "log", "--format=%H%x1f%s", base+".."+head)
+	// Framed on the first space: a full id never holds one, and git strips
+	// newlines from %s, so any byte a subject can carry survives — no
+	// separator that a message could happen to contain.
+	out, err := runGit(ctx, r.Dir, "log", "--format=%H %s", base+".."+head)
 	if err != nil {
 		return nil, err
 	}
 	var entries []LogEntry
 	for _, line := range strings.Split(out, "\n") {
-		sha, subject, ok := strings.Cut(line, "\x1f")
-		if !ok {
+		if line == "" {
 			continue
 		}
+		sha, subject, _ := strings.Cut(line, " ")
 		entries = append(entries, LogEntry{SHA: sha, Subject: subject})
 	}
 	return entries, nil

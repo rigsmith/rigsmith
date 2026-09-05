@@ -502,6 +502,20 @@ func TestStackPushDryRun(t *testing.T) {
 	if dirty := strings.TrimSpace(mustGitStack(t, ws, "status", "--porcelain")); dirty != "" {
 		t.Fatalf("dry run left the worktree dirty:\n%s", dirty)
 	}
+	// Nor the filtered ref behind: the preview is read off it, and then it goes.
+	if refExists(t, ws, "refs/rigsmith/push/app") {
+		t.Fatal("dry run left refs/rigsmith/push/app behind")
+	}
+
+	// A ref that was there before a dry run — a real push's leftover — is put
+	// back to what it held, not deleted.
+	mustGitStack(t, ws, "update-ref", "refs/rigsmith/push/app", headBefore)
+	if out, err := runVerbOut(context.Background(), newStackPushCmd(), "app"); err != nil || !strings.Contains(out, "would push app") {
+		t.Fatalf("second dry run: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(mustGitStack(t, ws, "rev-parse", "refs/rigsmith/push/app")); got != headBefore {
+		t.Fatalf("dry run left refs/rigsmith/push/app at %s, was %s", short(got), short(headBefore))
+	}
 }
 
 // TestStackProposeDryRun needs no engine: propose is plain git, so the only
