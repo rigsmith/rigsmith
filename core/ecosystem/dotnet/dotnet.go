@@ -57,6 +57,7 @@ var (
 	projectRefRe    = regexp.MustCompile(`<ProjectReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
 	packageRefRe    = regexp.MustCompile(`<PackageReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
 	propertyGroupRe = regexp.MustCompile(`<PropertyGroup[^>]*>`)
+	conditionAttrRe = regexp.MustCompile(`\bCondition\s*=`)
 	// An <Import> whose Project names Directory.Packages.props outright. The
 	// other way to write it, GetPathOfFileAbove, resolves into a property first
 	// and is looked for by name; see importsPackagesPropsAbove.
@@ -511,41 +512,51 @@ func fromText(text, filePath string, shared bool) (resolvedVersion, bool) {
 // MinVer — referenced in the project itself, declared globally in the nearest
 // Directory.Packages.props, or tuned in a Directory.Build.props.
 //
-// Every `IsPackable` in the chain counts, not just the first. A shared props
-// file commonly sets it false for everything and then true again in a later
-// PropertyGroup under a Condition ("only projects under src/"); conditions are
-// not evaluated here, so any `true` in the csproj or an ancestor
-// Directory.Build.props makes the project packable. The cost of guessing wrong
-// is asymmetric — a false positive is a package listed with no version, a
-// false negative is a real package silently left out. An explicit `false` with
-// no `true` anywhere is still the last word, whatever else is declared.
+// `IsPackable` is read the way MSBuild assigns it, as far as text allows. The
+// files are taken in import order — outermost Directory.Build.props first,
+// down to the nearest, the csproj last — and of the UNCONDITIONAL assignments
+// (neither the element nor its PropertyGroup carries a Condition) the last one
+// wins, as it does in an evaluation. Conditions are not evaluated, so a
+// conditional assignment is handled by tolerance instead: a conditional `true`
+// anywhere makes the project packable, a conditional `false` is ignored. A
+// shared props file commonly sets false for everything and true again under
+// `Condition="…Contains('/src/')"`, and the cost of guessing wrong there is
+// asymmetric — a false positive is a package listed with no version, a false
+// negative is a real package silently left out. So: packable when the last
+// unconditional value is true or any conditional one is; not packable when the
+// last unconditional value is false and no conditional true exists, whatever
+// else is declared; with no `IsPackable` at all, `PackageId` and MinVer decide.
 //
 // Comments are stripped before any of this is read, so an `IsPackable` or a
 // MinVer reference someone commented out does not count as live. The stripping
 // stays here, on copies: findInPropertyGroup's offsets are what SetVersion
 // splices the new number in at, and stripping would shift them.
 func packable(csprojPath, csprojText string) bool {
-	texts := []string{stripXMLComments(csprojText)}
-	for _, props := range ancestorPropsFiles(csprojPath) {
-		if content, err := os.ReadFile(props); err == nil {
+	props := ancestorPropsFiles(csprojPath) // nearest first
+	var texts []string
+	for i := len(props) - 1; i >= 0; i-- {
+		if content, err := os.ReadFile(props[i]); err == nil {
 			texts = append(texts, stripXMLComments(string(content)))
 		}
 	}
-	sawTrue, sawFalse := false, false
+	texts = append(texts, stripXMLComments(csprojText))
+
+	var last *bool
+	conditionalTrue := false
 	for _, text := range texts {
-		for _, m := range findAllInPropertyGroups(text, isPackableRe) {
-			switch strings.ToLower(strings.TrimSpace(text[m[2]:m[3]])) {
-			case "true":
-				sawTrue = true
-			case "false":
-				sawFalse = true
+		for _, a := range isPackableAssignments(text) {
+			if a.conditional {
+				conditionalTrue = conditionalTrue || a.value
+				continue
 			}
+			v := a.value
+			last = &v
 		}
 	}
-	if sawTrue {
+	if conditionalTrue || (last != nil && *last) {
 		return true
 	}
-	if sawFalse {
+	if last != nil {
 		return false
 	}
 	for _, text := range texts {
@@ -593,11 +604,52 @@ func importsPackagesPropsAbove(text string) bool {
 	return strings.Contains(text, "<Import")
 }
 
-// propertyGroupSpans returns the [start,end) byte range of the INNER text of each
-// <PropertyGroup> block. PropertyGroups do not nest, so pairing each open tag with
-// the next close tag is exact.
-func propertyGroupSpans(text string) [][2]int {
-	var spans [][2]int
+// isPackableAssignment is one <IsPackable> element inside a PropertyGroup:
+// its boolean value, and whether a Condition on the element or on its group
+// makes it one that text alone cannot settle.
+type isPackableAssignment struct {
+	value       bool
+	conditional bool
+}
+
+// isPackableAssignments lists the <IsPackable> assignments in a document, in
+// order. One whose value is neither true nor false (a property reference, say)
+// is left out.
+func isPackableAssignments(text string) []isPackableAssignment {
+	groups := propertyGroups(text)
+	var out []isPackableAssignment
+	for _, m := range isPackableRe.FindAllStringSubmatchIndex(text, -1) {
+		for _, g := range groups {
+			if m[0] < g.inner[0] || m[1] > g.inner[1] {
+				continue
+			}
+			if v := strings.ToLower(strings.TrimSpace(text[m[2]:m[3]])); v == "true" || v == "false" {
+				// The element's own open tag runs from the match start to the
+				// start of its value.
+				elementTag := text[m[0]:m[2]]
+				groupTag := text[g.open[0]:g.open[1]]
+				out = append(out, isPackableAssignment{
+					value:       v == "true",
+					conditional: conditionAttrRe.MatchString(elementTag) || conditionAttrRe.MatchString(groupTag),
+				})
+			}
+			break
+		}
+	}
+	return out
+}
+
+// propertyGroup locates one <PropertyGroup> block: the [start,end) byte range
+// of its open tag, and of the INNER text between the tags.
+type propertyGroup struct {
+	open, inner [2]int
+}
+
+// propertyGroups returns each <PropertyGroup> block in the document.
+// PropertyGroups do not nest, so pairing each open tag with the next close tag
+// is exact.
+func propertyGroups(text string) []propertyGroup {
+	var groups []propertyGroup
 	for _, open := range propertyGroupRe.FindAllStringIndex(text, -1) {
 		// A self-closing <PropertyGroup ... /> contains nothing.
 		if open[1] >= 2 && text[open[1]-2] == '/' {
@@ -608,10 +660,21 @@ func propertyGroupSpans(text string) [][2]int {
 		if end < 0 {
 			// Unterminated (truncated or malformed file): treat the remainder as the
 			// group rather than dropping properties that really are inside one.
-			spans = append(spans, [2]int{open[1], len(text)})
+			groups = append(groups, propertyGroup{open: [2]int{open[0], open[1]}, inner: [2]int{open[1], len(text)}})
 			break
 		}
-		spans = append(spans, [2]int{open[1], open[1] + end})
+		groups = append(groups, propertyGroup{open: [2]int{open[0], open[1]}, inner: [2]int{open[1], open[1] + end}})
+	}
+	return groups
+}
+
+// propertyGroupSpans returns the [start,end) byte range of the INNER text of each
+// <PropertyGroup> block.
+func propertyGroupSpans(text string) [][2]int {
+	groups := propertyGroups(text)
+	spans := make([][2]int, 0, len(groups))
+	for _, g := range groups {
+		spans = append(spans, g.inner)
 	}
 	return spans
 }

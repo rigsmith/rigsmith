@@ -274,34 +274,68 @@ func TestDiscoverPackableFromConditionalPropsAndGlobalMinVer(t *testing.T) {
 	}
 }
 
-// packable's IsPackable rule, one text at a time: every IsPackable inside a
-// PropertyGroup is read, a true anywhere wins, a false with no true excludes,
-// and one outside any PropertyGroup (item metadata) is not a property at all.
+// packable's IsPackable rule: every IsPackable inside a PropertyGroup is read,
+// in import order (ancestor props, then the csproj); the last unconditional
+// assignment wins, a conditional true anywhere wins over that, a conditional
+// false is ignored, and one outside any PropertyGroup (item metadata) is not a
+// property at all. `props`, when set, is an ancestor Directory.Build.props.
 func TestPackableReadsEveryIsPackable(t *testing.T) {
 	cases := []struct {
-		name string
-		text string
-		want bool
+		name  string
+		props string
+		text  string
+		want  bool
 	}{
-		{"false then conditional true", `<Project>
+		{"false then conditional true", "", `<Project>
   <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Release'"><IsPackable>true</IsPackable></PropertyGroup>
 </Project>`, true},
-		{"true then false", `<Project>
+		{"unconditional true then unconditional false", "", `<Project>
   <PropertyGroup><IsPackable>true</IsPackable></PropertyGroup>
   <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+</Project>`, false},
+		{"condition on the element itself", "", `<Project>
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsPackable Condition="'$(Configuration)'=='Release'">true</IsPackable>
+  </PropertyGroup>
 </Project>`, true},
-		{"false only, with PackageId", `<Project>
+		{"conditional false is ignored", "", `<Project>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'"><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup><PackageId>X</PackageId></PropertyGroup>
+</Project>`, true},
+		{"ancestor unconditional false, csproj unconditional true", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+</Project>`, `<Project>
+  <PropertyGroup><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, true},
+		{"ancestor unconditional true, csproj unconditional false", `<Project>
+  <PropertyGroup><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, `<Project>
   <PropertyGroup><IsPackable>false</IsPackable><PackageId>X</PackageId></PropertyGroup>
 </Project>`, false},
-		{"true outside a PropertyGroup", `<Project>
+		{"csproj unconditional false, ancestor conditional true", `<Project>
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/'))"><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+</Project>`, true},
+		{"ancestor unconditional false, conditional true between, csproj unconditional false", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/'))"><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+</Project>`, true},
+		{"false only, with PackageId", "", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable><PackageId>X</PackageId></PropertyGroup>
+</Project>`, false},
+		{"true outside a PropertyGroup", "", `<Project>
   <ItemGroup><Thing Include="x"><IsPackable>true</IsPackable></Thing></ItemGroup>
 </Project>`, false},
-		{"commented-out true after a live false", `<Project>
+		{"commented-out true after a live false", "", `<Project>
   <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
   <!-- <PropertyGroup><IsPackable>true</IsPackable></PropertyGroup> -->
 </Project>`, false},
-		{"commented-out false, live true", `<Project>
+		{"commented-out false, live true", "", `<Project>
   <PropertyGroup>
     <!-- <IsPackable>false</IsPackable> -->
     <IsPackable>true</IsPackable>
@@ -310,7 +344,11 @@ func TestPackableReadsEveryIsPackable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "P.csproj")
+			root := t.TempDir()
+			if tc.props != "" {
+				writeFile(t, filepath.Join(root, "Directory.Build.props"), tc.props)
+			}
+			path := filepath.Join(root, "src", "P", "P.csproj")
 			if got := packable(path, tc.text); got != tc.want {
 				t.Errorf("packable = %v, want %v", got, tc.want)
 			}

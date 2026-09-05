@@ -618,9 +618,10 @@ manifest — and changes three things without being told:
   in the tree until a release records one — whether MinVer is a
   `PackageReference` in the project or a `GlobalPackageReference` in the
   nearest `Directory.Packages.props` (an outer one only where the nearer file
-  imports it), and whether the project's `IsPackable`
-  is set true inline or in any `PropertyGroup` of an ancestor
-  `Directory.Build.props`, conditions not evaluated.
+  imports it) — provided its `IsPackable` is not set to false: the last
+  unconditional assignment in the project or an ancestor
+  `Directory.Build.props` wins, and a conditional `true` anywhere counts as
+  true, since conditions are not evaluated.
 - **`tag` and `push` do nothing.** A tag on a fused history names nothing an
   upstream knows, and the history — three rewritten upstreams fused together —
   must never reach a remote. The forge `release` step is skipped with them.
