@@ -110,15 +110,27 @@ func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
 		p.vars.secrets = func(ref string) (string, error) { return resolver(ref, p.masker) }
 	}
 
+	var hooks Hooks
+	if config.Hooks != nil {
+		hooks = *config.Hooks
+	}
+
 	if dryRun {
-		return p.runDry(steps)
+		return p.runDry(steps, hooks)
 	}
 
 	p.reporter.Plan(steps, false)
 
-	var hooks Hooks
-	if config.Hooks != nil {
-		hooks = *config.Hooks
+	// A captured var whose command names an env var the release does not set
+	// fails here, before a hook or a step runs — a lazy one included when a
+	// step in the plan or a hook refers to it, since a masked credential
+	// lookup would otherwise fail at the push step after the build, with
+	// nothing to look at. Reported directly rather than through fail(): the
+	// pipeline has not started, so there is nothing for onError to clean up,
+	// and running it would break the promise that no hook ran.
+	if err := p.vars.checkEnvRefs(referencedVars(steps, hooks)); err != nil {
+		p.reporter.RunCompleted(false, err.Error())
+		return false
 	}
 
 	if !p.runCommands("hooks (before)", hooks.Before) {
@@ -195,10 +207,10 @@ func (p *Pipeline) fail(hooks Hooks, message string) bool {
 // executes only the commands a step opted into with "dryRun" (Part B). Confirm
 // gates are not prompted and native handlers never fire — a native step runs in
 // a dry run only if it carries explicit "dryRun" commands.
-func (p *Pipeline) runDry(steps []ResolvedStep) bool {
+func (p *Pipeline) runDry(steps []ResolvedStep, hooks Hooks) bool {
 	// Fail fast on config errors a real run would hit, rather than hiding them
-	// behind a successful-looking plan: a malformed `if` expression or a broken
-	// computed-var script.
+	// behind a successful-looking plan: a malformed `if` expression, a broken
+	// computed-var script, or a captured var naming an env var that is not set.
 	for _, step := range steps {
 		if step.Enabled() {
 			if _, reason, ok := p.evalStepIf(step); !ok {
@@ -208,6 +220,10 @@ func (p *Pipeline) runDry(steps []ResolvedStep) bool {
 		}
 	}
 	if err := p.vars.evalScriptVars(); err != nil {
+		p.reporter.RunCompleted(false, "dry run: "+err.Error())
+		return false
+	}
+	if err := p.vars.checkEnvRefs(referencedVars(steps, hooks)); err != nil {
 		p.reporter.RunCompleted(false, "dry run: "+err.Error())
 		return false
 	}
@@ -249,6 +265,39 @@ func (p *Pipeline) runDry(steps []ResolvedStep) bool {
 
 	p.reporter.RunCompleted(true, "dry run - plan previewed, only dryRun-marked commands ran")
 	return true
+}
+
+// referencedVars collects the ${vars.NAME} names this run can ask for: those
+// in the commands of every enabled step (before/action/after, and the dry-run
+// alternate) and in the global hooks, which run whatever the plan. A step
+// disabled statically — enabled:false, --skip, --to, not in `order` — is left
+// out, so a lazy var only it refers to is never resolved and need not be
+// resolvable; an `if`-gated step still counts, since the gate is decided at
+// run time and the step may run. A script step and an `if` expression cannot
+// reach a var (the script ctx carries no `vars`, and the script host's sh()
+// runs its text verbatim), so they contribute nothing.
+func referencedVars(steps []ResolvedStep, hooks Hooks) map[string]bool {
+	referenced := map[string]bool{}
+	collect := func(commands []CommandSpec) {
+		for _, command := range commands {
+			for _, name := range extractVarRefs(command) {
+				referenced[name] = true
+			}
+		}
+	}
+	collect(hooks.Before)
+	collect(hooks.After)
+	collect(hooks.OnError)
+	for _, step := range steps {
+		if !step.Enabled() {
+			continue
+		}
+		collect(step.Before)
+		collect(step.Action)
+		collect(step.After)
+		collect(step.DryRunAction)
+	}
+	return referenced
 }
 
 // evalStepIf evaluates a step's `if` gate against the script ctx. It returns

@@ -42,7 +42,8 @@ type variables struct {
 	masker  *SecretMasker
 	workDir string
 	cache   map[string]string
-	// env is the layered release environment, for ${env.NAME} inside a literal.
+	// env is the layered release environment, for ${env.NAME} inside a
+	// literal's value or a capture command.
 	env map[string]string
 	// scriptEval evaluates a "script" variable's Tengo expression to a string.
 	scriptEval func(expr string) (string, error)
@@ -157,6 +158,58 @@ func (v *variables) commandFor(spec *VarSpec) (CommandSpec, bool) {
 	return CommandSpec{}, false
 }
 
+// checkEnvRefs fails, before anything runs, when a captured var's command —
+// the one commandFor picks for this OS — names a ${env.NAME} the release
+// environment does not set. Only the vars this run will resolve are checked:
+// every eager one (the eager loop captures those whether or not a step uses
+// them) and every lazy one in `referenced` — the names the enabled steps and
+// the global hooks refer to. A lazy var nothing in the plan reads never ran
+// before and does not fail now, so an optional credential behind a disabled
+// step stays optional. For the rest, that is the point: a masked credential
+// lookup that would otherwise fail at the push step, after the whole build,
+// with nothing to look at but an exit code, is caught up front for the price
+// of a map lookup. A literal value is not checked — an unset name there
+// expands to "" (documented). Names are visited sorted for a deterministic
+// first error.
+func (v *variables) checkEnvRefs(referenced map[string]bool) error {
+	names := make([]string, 0, len(v.specs))
+	for name, spec := range v.specs {
+		if spec == nil || (spec.Command == nil && spec.OS == nil) {
+			continue
+		}
+		if spec.Lazy && !referenced[name] {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		command, ok := v.commandFor(v.specs[name])
+		if !ok {
+			continue // no command for this OS: resolve reports that itself
+		}
+		for _, key := range extractRefs(command) {
+			envName, isEnv := strings.CutPrefix(key, "env.")
+			if !isEnv {
+				continue
+			}
+			if _, set := v.lookupEnv(envName); !set {
+				return fmt.Errorf("variable '%s' refers to ${env.%s}, which is not set in the release environment", name, envName)
+			}
+		}
+	}
+	return nil
+}
+
+// lookupEnv reads the release environment the way resolveKey does: the
+// layered map when there is one, the process environment when nil.
+func (v *variables) lookupEnv(name string) (string, bool) {
+	if v.env != nil {
+		return envstack.Lookup(v.env, name)
+	}
+	return os.LookupEnv(name)
+}
+
 // evalScriptVars resolves every computed (script) variable once, surfacing a
 // malformed expression as an error. The dry run calls this so a broken
 // vars.*.script is reported up front instead of silently degrading to a
@@ -258,6 +311,12 @@ func (v *variables) resolve(name string) varResolution {
 		}
 		return varFailure(fmt.Sprintf("variable '%s' is not defined", name), -1)
 	}
+
+	// ${env.NAME} in the capture command expands from the release environment
+	// the way it does in a literal's value and a step's command — shell string
+	// and argv alike — so `security … -a ${env.USER}` looks up the user, not
+	// the placeholder. A nil context leaves every other placeholder as it is.
+	command = interpolateCommand(nil, v.env, command)
 
 	output, exitCode := dispatch(v.runner, command, v.workDir)
 	if exitCode != 0 {
