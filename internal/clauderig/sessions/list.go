@@ -164,6 +164,14 @@ type Options struct {
 	// SAID in a session is `clauderig search`, which scans every line of every
 	// transcript and ranks the hits; this is a filter over an assembled list.
 	Text string
+	// Search matches a row's own fields OR the transcript's body — one box, the
+	// whole session. Text and Content are the halves, and they AND together:
+	// passing a word to both asks for sessions whose title AND body contain it,
+	// which is not what typing a word into a search box means.
+	//
+	// The cheap half runs first and the body is only opened for rows it missed,
+	// so a term that matches a title costs nothing extra.
+	Search string
 	// Account keeps only sessions belonging to that accountUuid. Distinct from
 	// Scope.Account, which answers the CLI's --account against the ledger alone
 	// and reports what it could not attribute; this one matches whatever
@@ -343,6 +351,26 @@ func List(opts Options) ([]Row, Report) {
 			rep.Approx++
 		}
 		rows = append(rows, row)
+	}
+
+	if opts.Search != "" && opts.OnlyID == "" {
+		kept := rows[:0]
+		for _, row := range rows {
+			if matchesText(row, opts.Search) {
+				kept = append(kept, row)
+				continue
+			}
+			hits, snippet := contentHits(row.Path, opts.Search, opts.CaseSensitive)
+			if hits == 0 {
+				rep.Hidden++
+				continue
+			}
+			// The hit is why the row is here, so it replaces the last prompt in
+			// the display — the caller shows Snippet when Matches is non-zero.
+			row.Matches, row.Snippet = hits, snippet
+			kept = append(kept, row)
+		}
+		rows = kept
 	}
 
 	if opts.Content != "" && opts.OnlyID == "" {

@@ -263,6 +263,8 @@
   .srow .what{flex:1;min-width:0;}
   .srow .t{font-weight:700;font-size:12px;overflow-wrap:anywhere;}
   .srow .p{color:var(--muted);font-size:10px;overflow-wrap:anywhere;margin-top:1px;}
+  .srow .p.hit{color:var(--paper);}
+  .srow .p.hit .n{color:var(--warn);font-variant-numeric:tabular-nums;}
   /* Colour comes from the letter (see LETTER_HUE), applied inline. These rules
      are the fallback for a monogram whose letter has no hue. */
   .mono{
@@ -1365,6 +1367,20 @@ let listSeq = 0;
 async function loadSessions() {
   const seq = ++listSeq;
   lastListLoad = Date.now();
+  // Searching now opens transcripts for anything the row fields miss, so it is
+  // no longer instant. Say so: a list that sits there unchanged reads as a
+  // search that found nothing, which is the one answer it must not give by
+  // accident. Only when there is a term — an unfiltered reload is fast and
+  // flashing "searching" at every poll would be noise.
+  const term = $('ssearch').value.trim();
+  let spinner;
+  if (term) {
+    spinner = setTimeout(() => {
+      if (seq !== listSeq) return;
+      $('sempty').hidden = false;
+      $('sempty').textContent = `Searching sessions and transcripts for “${term}”…`;
+    }, 150);
+  }
   try {
     const v = await Call.ByName(LIBRARY_LIST, {
       since: '30d', text: $('ssearch').value, limit: COMPACT_LIMIT,
@@ -1373,14 +1389,16 @@ async function loadSessions() {
     if (v.error) throw new Error(v.error);
     $('slist').replaceChildren(...v.sessions.map(sessionRow));
     $('sempty').hidden = v.sessions.length > 0;
-    $('sempty').textContent = $('ssearch').value.trim()
-      ? 'Nothing matching in the last 30 days.'
+    $('sempty').textContent = term
+      ? `Nothing in the last 30 days mentions “${term}”.`
       : 'No sessions in the last 30 days.';
   } catch (e) {
     if (seq !== listSeq) return;
     $('slist').replaceChildren();
     $('sempty').hidden = false;
     $('sempty').textContent = `Could not list sessions: ${e}`;
+  } finally {
+    clearTimeout(spinner);
   }
 }
 
@@ -1398,8 +1416,19 @@ function sessionRow(s) {
 
   const what = el('div', 'what');
   what.append(el('div', 't', s.title || '(untitled session)'));
-  const where = homeRel(s.cwd);
-  if (where) what.append(el('div', 'p', where));
+  // A body match shows what was found and how often, the way `clauderig search`
+  // reports it — the hit is why the row is here, so it earns the line the
+  // project would otherwise have.
+  if (s.matches) {
+    const hit = el('div', 'p hit');
+    hit.append(el('span', 'n', `${s.matches}×`));
+    hit.append(document.createTextNode(' ' + (s.snippet || '')));
+    hit.title = homeRel(s.cwd) || '';
+    what.append(hit);
+  } else {
+    const where = homeRel(s.cwd);
+    if (where) what.append(el('div', 'p', where));
+  }
   row.append(what);
 
   // The same three-tier presence the full window shows, just narrower.

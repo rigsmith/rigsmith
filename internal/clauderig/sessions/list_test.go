@@ -358,3 +358,57 @@ func TestList_ContentSearchesTranscriptBodies(t *testing.T) {
 		t.Error("a session without the term survived a content search")
 	}
 }
+
+// One box, the whole session. Text and Content AND together, so passing a word
+// to both asks for sessions whose title AND body contain it — which is not what
+// typing a word into a search box means.
+func TestList_SearchMatchesRowOrBody(t *testing.T) {
+	live := t.TempDir()
+	// Matches on its title, which is the first human turn.
+	byTitle := "aaaaaaaa-1111-4111-8111-000000000001"
+	write(t, live, "projects/-work-api/"+byTitle+".jsonl",
+		turn("user", "pelican migration notes", "2026-08-20T09:00:00Z")+
+			turn("assistant", "nothing else here", "2026-08-20T09:01:00Z"))
+	// Matches only deep in the body.
+	byBody := "aaaaaaaa-1111-4111-8111-000000000002"
+	write(t, live, "projects/-work-api/"+byBody+".jsonl",
+		turn("user", "unrelated heading", "2026-08-20T10:00:00Z")+
+			turn("assistant", "deep inside we discuss pelican habits", "2026-08-20T10:01:00Z"))
+	// Matches nowhere.
+	write(t, live, "projects/-work-api/aaaaaaaa-1111-4111-8111-000000000003.jsonl",
+		turn("user", "unrelated heading", "2026-08-20T11:00:00Z"))
+
+	rows, _ := List(Options{
+		Machine: testMachine(t.TempDir()),
+		Targets: []search.Target{{Label: CLISource, Dir: live}},
+		Scope:   Scope{Now: time.Now()},
+		Search:  "pelican",
+	})
+
+	if len(rows) != 2 {
+		var got []string
+		for _, r := range rows {
+			got = append(got, r.Title)
+		}
+		t.Fatalf("Search returned %d rows (%v), want the title match and the body match", len(rows), got)
+	}
+	var sawBodyHit, sawTitleHit bool
+	for _, r := range rows {
+		switch r.ID {
+		case byBody:
+			sawBodyHit = true
+			if r.Matches == 0 || r.Snippet == "" {
+				t.Errorf("the body match carries no hit count or snippet, so the row cannot explain itself: %+v", r)
+			}
+		case byTitle:
+			sawTitleHit = true
+			// A term found in the title must not cost a transcript read.
+			if r.Matches != 0 {
+				t.Error("the body was searched even though the title already matched")
+			}
+		}
+	}
+	if !sawBodyHit || !sawTitleHit {
+		t.Errorf("wrong rows came back: body=%v title=%v", sawBodyHit, sawTitleHit)
+	}
+}

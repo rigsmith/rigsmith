@@ -144,6 +144,9 @@ type ListRequest struct {
 	// Since accepts what the CLI accepts — a day, a timestamp, or an age like
 	// 7d — and "all" removes the lower bound.
 	Since string `json:"since"`
+	// Text narrows to sessions matching it anywhere in the session — the row's
+	// own fields and the transcript body. Was fields-only; see List.
+	//
 	// Text narrows to sessions matching it anywhere a row shows — title, last
 	// prompt, project, branch, id, client.
 	Text string
@@ -185,9 +188,17 @@ func (l *Library) List(ctx context.Context, req ListRequest) (LibraryView, error
 	// One box, two meanings: deep search sends it to the bodies, plain search to
 	// the row fields. Never both — a term that matches a row but not its body
 	// would otherwise vanish the moment deep search was switched on.
-	text, content := req.Text, ""
+	// One box searches the whole session: the row's own fields and the
+	// transcript's body. Deep used to be the only way to reach the body, and it
+	// went the other way — sending the term to the body INSTEAD of the fields —
+	// so a word in a title and a word in a conversation needed different
+	// searches, and you had to know which.
+	//
+	// Deep survives as "body only", which is still worth having when a common
+	// word matches half the titles.
+	search, content := req.Text, ""
 	if req.Deep {
-		text, content = "", req.Text
+		search, content = "", req.Text
 	}
 
 	limit := req.Limit
@@ -199,7 +210,7 @@ func (l *Library) List(ctx context.Context, req ListRequest) (LibraryView, error
 		Roots:    sessions.Roots(cfg, me, false, false),
 		Targets:  sessions.Targets(cfg, me, false, false),
 		Scope:    scope,
-		Text:     text,
+		Search:   search,
 		Content:  content,
 		Stores:   req.Stores,
 		Unsynced: req.Unsynced,
