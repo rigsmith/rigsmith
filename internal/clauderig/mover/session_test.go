@@ -160,3 +160,90 @@ func TestMoveSession_SameRootIsANoOp(t *testing.T) {
 		t.Errorf("no-op did work: %+v", mv)
 	}
 }
+
+// Records carry more than one path-valued field. Rewriting the first quoted
+// match edited whichever came first and left cwd itself stale.
+func TestMoveSession_RewritesCwdNotTheFirstMatch(t *testing.T) {
+	const id = "abc"
+	old, want := abs("/a"), abs("/b")
+	projects := t.TempDir()
+	dir := filepath.Join(projects, project.Flatten(old))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A sibling field holding the same directory, written before cwd. Struct
+	// field order is the record's key order, and it is what the old
+	// first-quoted-match rewrite hit instead of cwd.
+	rec := struct {
+		Type        string `json:"type"`
+		OriginalCwd string `json:"originalCwd"`
+		Cwd         string `json:"cwd"`
+	}{"user", old, old}
+	body, _ := json.Marshal(rec)
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), append(body, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mv, err := MoveSession(projects, id, want, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := os.ReadFile(mv.NewPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Cwd         string `json:"cwd"`
+		OriginalCwd string `json:"originalCwd"`
+	}
+	if err := json.Unmarshal(moved, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Cwd != want {
+		t.Errorf("cwd = %q, want %q — the wrong field was rewritten", got.Cwd, want)
+	}
+	if got.OriginalCwd != old {
+		t.Errorf("originalCwd = %q, want it left alone at %q", got.OriginalCwd, old)
+	}
+}
+
+// An id typed or pasted in another casing names the same session.
+func TestMoveSession_IDIsCaseInsensitive(t *testing.T) {
+	const id = "abcdef12-1111-4111-8111-aaaaaaaaaaaa"
+	old, want := abs("/a"), abs("/b")
+	projects := sessionTree(t, old, id, []string{old})
+
+	mv, err := MoveSession(projects, strings.ToUpper(id), want, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := filepath.Base(mv.NewPath); got != id+".jsonl" {
+		t.Errorf("filed as %q, want the canonical lowercase id", got)
+	}
+}
+
+// The source is the only complete copy until the destination is written, so a
+// destination that already exists must not be touched and the source must stay.
+func TestMoveSession_LeavesTheSourceWhenTheDestinationIsTaken(t *testing.T) {
+	const id = "abc"
+	old, want := abs("/a"), abs("/b")
+	projects := sessionTree(t, old, id, []string{old})
+	dest := filepath.Join(projects, project.Flatten(want))
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, id+".jsonl"), []byte("someone else\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := MoveSession(projects, id, want, false); err == nil {
+		t.Fatal("clobbered an existing transcript")
+	}
+	if _, err := os.Stat(filepath.Join(projects, project.Flatten(old), id+".jsonl")); err != nil {
+		t.Errorf("the source was removed anyway: %v", err)
+	}
+	body, _ := os.ReadFile(filepath.Join(dest, id+".jsonl"))
+	if string(body) != "someone else\n" {
+		t.Error("the existing transcript was modified")
+	}
+}

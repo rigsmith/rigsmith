@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -182,10 +184,51 @@ func rebaseOneTranscript(path, oldCwd, newCwd string, dryRun bool) (int, error) 
 	return changed, nil
 }
 
-// rebaseLineCwd rewrites the top-level cwd of one JSON record. It decodes only
-// the cwd field, and when that value rebases under oldCwd it textually replaces
-// the first occurrence of the quoted old value with the quoted new value — the
-// cwd is among the first keys, so the first quoted-path match is it.
+// setTopLevelCwd replaces the value of the record's own cwd field, leaving every
+// other byte of the record exactly as it was.
+//
+// Not a textual replace of the quoted path: a record carries more than one
+// path-valued field, and replacing the first occurrence rewrote whichever came
+// first while cwd itself stayed stale. Walking the top-level keys finds the
+// field, and json.RawMessage hands back the value's exact source bytes, so the
+// span to overwrite is known rather than guessed.
+func setTopLevelCwd(line, newQ []byte) ([]byte, bool) {
+	dec := json.NewDecoder(bytes.NewReader(line))
+	tok, err := dec.Token()
+	if err != nil || tok != json.Delim('{') {
+		return line, false
+	}
+	for dec.More() {
+		key, kerr := dec.Token()
+		if kerr != nil {
+			return line, false
+		}
+		name, _ := key.(string)
+		var raw json.RawMessage
+		if derr := dec.Decode(&raw); derr != nil {
+			return line, false
+		}
+		if name != "cwd" {
+			continue
+		}
+		// InputOffset is the end of the value just decoded, and RawMessage is
+		// its verbatim source, so the value starts len(raw) bytes before it.
+		end := int(dec.InputOffset())
+		start := end - len(raw)
+		if start < 0 || end > len(line) {
+			return line, false
+		}
+		out := make([]byte, 0, len(line)-len(raw)+len(newQ))
+		out = append(out, line[:start]...)
+		out = append(out, newQ...)
+		out = append(out, line[end:]...)
+		return out, true
+	}
+	return line, false
+}
+
+// rebaseLineCwd rewrites the top-level cwd of one JSON record when that cwd
+// rebases under oldCwd.
 func rebaseLineCwd(line []byte, oldCwd, newCwd string) ([]byte, bool) {
 	var probe struct {
 		Cwd string `json:"cwd"`
@@ -197,9 +240,8 @@ func rebaseLineCwd(line []byte, oldCwd, newCwd string) ([]byte, bool) {
 	if !under {
 		return line, false
 	}
-	oldQ, _ := json.Marshal(probe.Cwd)
 	newQ, _ := json.Marshal(rebased)
-	return bytes.Replace(line, oldQ, newQ, 1), true
+	return setTopLevelCwd(line, newQ)
 }
 
 // rebaseJSONFile rewrites every string value in a JSON file that is a path under
@@ -283,27 +325,51 @@ func fileReferencesSrc(path, src string) bool {
 // anything under oldCwd, because there the directory moved and everything below
 // it moved too. Here nothing moved, so a record naming /a/sub still names a real
 // directory that is still there and must not be edited.
-func rewriteExactCwd(path, oldCwd, newCwd string, dryRun bool) (int, error) {
+func rewriteExactCwd(path, dest, oldCwd, newCwd string, dryRun bool) (changed int, err error) {
 	in, err := os.Open(path)
 	if err != nil {
 		return 0, err
 	}
 	defer in.Close()
 
+	// With a dest the rewritten copy IS the move: it is written straight into
+	// the new project directory and the caller drops the source once this
+	// returns. Without one the transcript is rewritten where it lies.
+	moving := dest != ""
+
 	br := bufio.NewReaderSize(in, 1<<20)
-	changed := 0
 	var out *bufio.Writer
-	var tmp *os.File
+	var w *os.File
 	if !dryRun {
-		tmp, err = os.CreateTemp(filepath.Dir(path), ".clauderig-reroot-*")
-		if err != nil {
-			return 0, err
+		if moving {
+			// O_EXCL, not a Stat beforehand: a Stat reports what was true a
+			// moment ago, and overwriting here would lose a conversation.
+			w, err = os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+			if err != nil {
+				if errors.Is(err, fs.ErrExist) {
+					return 0, fmt.Errorf("%s already exists — that session is already filed there", dest)
+				}
+				return 0, err
+			}
+			// A half-written transcript at the destination is worse than none:
+			// it is not the conversation, and it blocks the retry that would
+			// produce the real one.
+			defer func() {
+				if err != nil {
+					_ = w.Close()
+					_ = os.Remove(dest)
+				}
+			}()
+		} else {
+			w, err = os.CreateTemp(filepath.Dir(path), ".clauderig-reroot-*")
+			if err != nil {
+				return 0, err
+			}
+			defer func() { _ = os.Remove(w.Name()) }() // no-op once renamed
 		}
-		defer func() { _ = os.Remove(tmp.Name()) }() // no-op once renamed
-		out = bufio.NewWriterSize(tmp, 1<<20)
+		out = bufio.NewWriterSize(w, 1<<20)
 	}
 
-	oldQ, _ := json.Marshal(oldCwd)
 	newQ, _ := json.Marshal(newCwd)
 	for {
 		line, rerr := br.ReadBytes('\n')
@@ -312,8 +378,10 @@ func rewriteExactCwd(path, oldCwd, newCwd string, dryRun bool) (int, error) {
 				Cwd string `json:"cwd"`
 			}
 			if json.Unmarshal(bytes.TrimSpace(line), &probe) == nil && probe.Cwd == oldCwd {
-				line = bytes.Replace(line, oldQ, newQ, 1)
-				changed++
+				if rewritten, ok := setTopLevelCwd(line, newQ); ok {
+					line = rewritten
+					changed++
+				}
 			}
 			if out != nil {
 				if _, werr := out.Write(line); werr != nil {
@@ -329,22 +397,29 @@ func rewriteExactCwd(path, oldCwd, newCwd string, dryRun bool) (int, error) {
 		}
 	}
 
-	if dryRun || changed == 0 {
-		if tmp != nil {
-			_ = tmp.Close()
+	// Nothing to write back: a dry run, or a rewrite in place that changed
+	// nothing. A move still has to land its copy even when no record named the
+	// old root.
+	if dryRun || (!moving && changed == 0) {
+		if w != nil {
+			_ = w.Close()
 		}
 		return changed, nil
 	}
-	if err := out.Flush(); err != nil {
+	if err = out.Flush(); err != nil {
 		return changed, err
 	}
-	if err := tmp.Close(); err != nil {
+	if err = w.Close(); err != nil {
 		return changed, err
+	}
+	if moving {
+		return changed, nil
 	}
 	// Close the input before replacing it: Windows refuses to rename over a
 	// file that is still open.
-	if err := in.Close(); err != nil {
+	if err = in.Close(); err != nil {
 		return changed, err
 	}
-	return changed, os.Rename(tmp.Name(), path)
+	err = os.Rename(w.Name(), path)
+	return changed, err
 }

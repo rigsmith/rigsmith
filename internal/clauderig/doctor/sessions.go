@@ -47,7 +47,7 @@ func checkSessionFiling(_ context.Context, env Env) Result {
 				fmt.Fprintf(&b, "\n    … and %d more", n-3)
 				break
 			}
-			fmt.Fprintf(&b, "\n    %s  also in %s", s.ID[:8], strings.Join(slugsOf(s.Others), ", "))
+			fmt.Fprintf(&b, "\n    %s  also in %s", shortID(s.ID), strings.Join(slugsOf(s.Others), ", "))
 		}
 	}
 	if n := len(h.Stale); n > 0 {
@@ -61,7 +61,7 @@ func checkSessionFiling(_ context.Context, env Env) Result {
 				fmt.Fprintf(&b, "\n    … and %d more", n-3)
 				break
 			}
-			fmt.Fprintf(&b, "\n    %s  says %s", s.ID[:8], s.Says)
+			fmt.Fprintf(&b, "\n    %s  says %s", shortID(s.ID), s.Says)
 		}
 	}
 	return Result{
@@ -88,4 +88,14 @@ func countOf(n int, one, many string) string {
 		return "1 " + one
 	}
 	return fmt.Sprintf("%d %s", n, many)
+}
+
+// shortID is the leading chunk of a session id, enough to recognise one without
+// filling the line. Ids come off disk, so a truncated or hand-edited one can be
+// shorter than the eight characters a uuid always has.
+func shortID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
 }
