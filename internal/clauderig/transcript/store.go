@@ -234,26 +234,36 @@ func ReadStored(path string, b []byte, load func(string) ([]byte, error), limit 
 // Write publishes chunks before the index, so interruption leaves the old
 // snapshot readable. Content-addressed sealed chunks are reused on append.
 func Write(dst string, src io.Reader, mtime time.Time) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	b, err := writeChunks(dst, src, mtime)
+	if err != nil {
 		return err
+	}
+	return atomicWrite(dst, bytes.NewReader(b), mtime, 0o644)
+}
+
+// writeChunks prepares a complete index without replacing its owner. An in-place
+// conversion must close the native source before publishing this index on Windows.
+func writeChunks(dst string, src io.Reader, mtime time.Time) ([]byte, error) {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return nil, err
 	}
 	dir := dst + Suffix
 	if st, e := os.Lstat(dir); e == nil {
 		if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("invalid chunk directory")
+			return nil, fmt.Errorf("invalid chunk directory")
 		}
 	} else if !os.IsNotExist(e) {
-		return e
+		return nil, e
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+		return nil, err
 	}
 	idx := Index{Version: 1, Parts: []Part{}}
 	buf := make([]byte, ChunkSize)
 	for {
 		n, err := io.ReadFull(src, buf)
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-			return err
+			return nil, err
 		}
 		if n > 0 {
 			data := buf[:n]
@@ -267,7 +277,7 @@ func Write(dst string, src io.Reader, mtime time.Time) error {
 			}
 			if e != nil || !bytes.Equal(existing, data) {
 				if e = atomicWrite(p, bytes.NewReader(data), mtime, 0o644); e != nil {
-					return e
+					return nil, e
 				}
 			}
 			idx.Parts = append(idx.Parts, Part{hash, n})
@@ -279,12 +289,12 @@ func Write(dst string, src io.Reader, mtime time.Time) error {
 	}
 	b, err := json.Marshal(idx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(b)+1 > maxIndex {
-		return fmt.Errorf("chunk index too large")
+		return nil, fmt.Errorf("chunk index too large")
 	}
-	return atomicWrite(dst, bytes.NewReader(append(b, '\n')), mtime, 0o644)
+	return append(b, '\n'), nil
 }
 
 // Materialize verifies chunks as it copies and atomically replaces only after
@@ -299,9 +309,24 @@ func Materialize(src, dst string, mode os.FileMode) error {
 	if e != nil {
 		return e
 	}
-	return atomicWrite(dst, f, st.ModTime(), mode)
+	return atomicWriteFunc(dst, func(w io.Writer) error {
+		_, err := io.Copy(w, f)
+		closeErr := f.Close()
+		if err != nil {
+			return err
+		}
+		return closeErr
+	}, st.ModTime(), mode)
 }
-func atomicWrite(dst string, r io.Reader, mtime time.Time, mode os.FileMode) (err error) {
+func atomicWrite(dst string, r io.Reader, mtime time.Time, mode os.FileMode) error {
+	return atomicWriteFunc(dst, func(w io.Writer) error {
+		_, err := io.Copy(w, r)
+		return err
+	}, mtime, mode)
+}
+
+// The writer finishes (including closing any owned source) before publication.
+func atomicWriteFunc(dst string, write func(io.Writer) error, mtime time.Time, mode os.FileMode) (err error) {
 	if err = os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -311,7 +336,7 @@ func atomicWrite(dst string, r io.Reader, mtime time.Time, mode os.FileMode) (er
 	}
 	name := f.Name()
 	defer func() { f.Close(); os.Remove(name) }()
-	if _, err = io.Copy(f, r); err != nil {
+	if err = write(f); err != nil {
 		return err
 	}
 	if err = f.Chmod(mode); err != nil {
@@ -344,7 +369,7 @@ func Clean(root string) error {
 			return nil
 		}
 		owner := strings.TrimSuffix(p, Suffix)
-		b, e := os.ReadFile(owner)
+		f, e := Open(owner)
 		if os.IsNotExist(e) {
 			if e = os.RemoveAll(p); e != nil {
 				return e
@@ -354,11 +379,12 @@ func Clean(root string) error {
 		if e != nil {
 			return e
 		}
-		idx, e := Decode(b)
-		if e != nil {
+		// Open sniffs only 512 bytes for native owners, even after a large rollback.
+		packed, ok := f.(*chunkFile)
+		if e = f.Close(); e != nil {
 			return e
 		}
-		if idx == nil {
+		if !ok {
 			if e = os.RemoveAll(p); e != nil {
 				return e
 			}
@@ -369,7 +395,7 @@ func Clean(root string) error {
 			return e
 		}
 		keep := map[string]bool{}
-		for _, part := range idx.Parts {
+		for _, part := range packed.index.Parts {
 			keep[part.Hash+".part"] = true
 		}
 		entries, e := os.ReadDir(p)
@@ -451,7 +477,18 @@ func ConvertTree(root string, enabled bool) error {
 		}
 		_, packed := f.(*chunkFile)
 		if enabled && !packed && st.Size() > 2*ChunkSize {
-			return Write(p, f, st.ModTime())
+			index, err := writeChunks(p, f, st.ModTime())
+			if err != nil {
+				return err
+			}
+			// Windows cannot replace a file while its source handle is open.
+			if err = f.Close(); err != nil {
+				return err
+			}
+			return atomicWrite(p, bytes.NewReader(index), st.ModTime(), st.Mode().Perm())
+		}
+		if e = f.Close(); e != nil {
+			return e
 		}
 		if !enabled && packed {
 			return Materialize(p, p, st.Mode().Perm())

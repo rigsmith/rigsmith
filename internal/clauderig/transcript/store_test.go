@@ -215,3 +215,95 @@ func TestChunkSymlinkRejected(t *testing.T) {
 		t.Fatal("cleanup followed chunk symlink")
 	}
 }
+
+// Same-path calls must close native source handles before replacement on Windows.
+func TestMaterializeInPlace(t *testing.T) {
+	for _, packed := range []bool{false, true} {
+		name := "native"
+		if packed {
+			name = "chunked"
+		}
+		t.Run(name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "s.jsonl")
+			data := append(bytes.Repeat([]byte("record\n"), 700000), []byte("last record without newline")...)
+			if packed {
+				snapshot(t, p, data)
+			} else if err := os.WriteFile(p, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Materialize(p, p, before.Mode().Perm()); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(p)
+			if err != nil || !bytes.Equal(got, data) {
+				t.Fatalf("in-place materialization changed bytes: %v", err)
+			}
+			after, err := os.Stat(p)
+			if err != nil || !after.ModTime().Equal(before.ModTime()) {
+				t.Fatalf("mtime changed: %v", err)
+			}
+		})
+	}
+}
+
+func TestFailedInPlaceMaterializePreservesIndex(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	idx := snapshot(t, p, bytes.Repeat([]byte("x"), ChunkSize+1))
+	before, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(p+Suffix, idx.Parts[1].Hash+".part")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Materialize(p, p, 0o644); err == nil {
+		t.Fatal("accepted missing final chunk")
+	}
+	after, err := os.ReadFile(p)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("failed materialization replaced index: %v", err)
+	}
+	temps, err := filepath.Glob(filepath.Join(filepath.Dir(p), ".clauderig-chunk-*"))
+	if err != nil || len(temps) != 0 {
+		t.Fatalf("temporary files left behind: %v, %v", temps, err)
+	}
+}
+
+func TestCleanNativeAndMissingOwners(t *testing.T) {
+	root := t.TempDir()
+	native := filepath.Join(root, "native.jsonl")
+	f, err := os.Create(native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(64 << 20); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, owner := range []string{native, filepath.Join(root, "missing.jsonl")} {
+		if err := os.Mkdir(owner+Suffix, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(owner+Suffix, "unused.part"), []byte("orphan"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Clean(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, owner := range []string{native, filepath.Join(root, "missing.jsonl")} {
+		if _, err := os.Stat(owner + Suffix); !os.IsNotExist(err) {
+			t.Fatalf("orphan directory remains: %v", err)
+		}
+	}
+	if st, err := os.Stat(native); err != nil || st.Size() != 64<<20 {
+		t.Fatalf("native owner changed: %v", err)
+	}
+}

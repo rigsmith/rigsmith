@@ -11,9 +11,13 @@ write native JSONL.
 Upgrade **every machine sharing the backup repository** to a clauderig release
 that supports `chunkTranscripts` before migrating it. New configurations start
 with it enabled, so also check this before connecting a freshly configured
-client to a legacy shared backup. Older binaries do not
-understand chunk indexes and can restore an index as though it were a transcript.
+client to a legacy shared backup. **v1.13.0 does not refuse the new format or
+report an upgrade error.** An isolated restore test against that release confirms
+it silently copies the index into the live `.jsonl` file and copies the `.chunks`
+directory alongside it. Claude cannot use that index as the original conversation.
 Do not let an older client's sync or restore hooks operate on a chunked backup.
+The version check protects updated readers from unknown future formats; it cannot
+retroactively protect clients released before this storage format existed.
 
 ```sh
 clauderig config set chunkTranscripts true
