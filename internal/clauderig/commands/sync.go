@@ -316,8 +316,9 @@ func NewSyncCmd() *cobra.Command {
 					fmt.Fprintf(out, "  %-*s %d files, %d secret field(s) redacted%s\n", w, r.ID, r.Files, r.Redactions, extra)
 					// Name what was dropped for size — a silent cap reads as "everything
 					// synced" when it didn't, and these are whole conversations.
-					for _, rel := range r.Oversize {
-						fmt.Fprintf(out, "    %s %s\n", DimStyle.Render("too large:"), DimStyle.Render(rel))
+					for _, o := range r.Oversize {
+						fmt.Fprintf(out, "    %s %s\n", DimStyle.Render("too large:"),
+							DimStyle.Render(fmt.Sprintf("%s (%s)", o.Rel, humanBytes(o.Bytes))))
 					}
 				}
 				fmt.Fprintf(out, "  manifest  %d projects\n", rep.ManifestProjects)

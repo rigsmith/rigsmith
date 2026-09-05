@@ -91,6 +91,12 @@ type RedactedFile struct {
 	Count int      `json:"count,omitempty"`
 }
 
+// OversizeFile is one file the size cap left out, and how big it was.
+type OversizeFile struct {
+	Path  string `json:"path"`
+	Bytes int64  `json:"bytes,omitempty"`
+}
+
 type Leak struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`
@@ -122,8 +128,14 @@ type Record struct {
 	// prune indistinguishable from the constant.
 	TooOld   int `json:"tooOld,omitempty"`
 	Oversize int `json:"oversize,omitempty"`
-	Skipped  int `json:"skipped,omitempty"`
-	Projects int `json:"projects,omitempty"`
+	// OversizeFiles names the files behind Oversize. "2 files too large" is
+	// unanswerable an hour later, and the whole point of this record is that a
+	// sync's outcome survives the process that produced it. Bounded like
+	// RedactedFiles: a first sync over a tree of marathon transcripts must not
+	// write a record longer than the feed can show.
+	OversizeFiles []OversizeFile `json:"oversizeFiles,omitempty"`
+	Skipped       int            `json:"skipped,omitempty"`
+	Projects      int            `json:"projects,omitempty"`
 
 	Leaks []Leak `json:"leaks,omitempty"`
 

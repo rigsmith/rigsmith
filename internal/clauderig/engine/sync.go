@@ -40,6 +40,18 @@ type FileRedaction struct {
 	Count int      `json:"count"`
 }
 
+// OversizeFile is one file left out of the sync for exceeding MaxFileBytes,
+// with the size that got it dropped.
+//
+// The size is carried because "too large" invites exactly one question, and the
+// answer decides what to do: a transcript a little over the cap is an argument
+// for raising it, one at ten times the cap is an argument for leaving it behind.
+// A report that cannot answer that leaves the reader with nothing to act on.
+type OversizeFile struct {
+	Rel   string `json:"rel"`
+	Bytes int64  `json:"bytes"`
+}
+
 // RootResult summarises one root's contribution to a sync.
 type RootResult struct {
 	ID         string
@@ -50,12 +62,12 @@ type RootResult struct {
 	// how many; the only useful follow-up is which, and the count alone could
 	// not be acted on.
 	Redacted       []FileRedaction
-	RetentionByAge int      // project transcripts dropped as older than the window
-	SkippedFiles   int      // files that vanished/were unreadable mid-sync (live churn)
-	Oversize       []string // rel paths dropped for exceeding MaxFileBytes
-	Deferred       int      // large transcripts changed since staged, but not enough yet to restage (see LargeFileBytes)
-	Disallowed     int      // staged files removed because the allowlist no longer permits them
-	Skipped        bool     // root absent on this machine
+	RetentionByAge int            // project transcripts dropped as older than the window
+	SkippedFiles   int            // files that vanished/were unreadable mid-sync (live churn)
+	Oversize       []OversizeFile // files dropped for exceeding MaxFileBytes
+	Deferred       int            // large transcripts changed since staged, but not enough yet to restage (see LargeFileBytes)
+	Disallowed     int            // staged files removed because the allowlist no longer permits them
+	Skipped        bool           // root absent on this machine
 }
 
 // Report is the outcome of a sync into the staging dir.
@@ -298,7 +310,7 @@ func Sync(opts Options) (*Report, error) {
 			// earlier, uncapped sync staged — otherwise the cap can never dig a repo
 			// out of the hole it was added to fix.
 			if opts.MaxFileBytes > 0 && info.Size() > opts.MaxFileBytes {
-				rr.Oversize = append(rr.Oversize, rel)
+				rr.Oversize = append(rr.Oversize, OversizeFile{Rel: rel, Bytes: info.Size()})
 				_ = os.Remove(dstPath)
 				continue
 			}

@@ -119,6 +119,13 @@ func FromSync(machine string, rep *engine.Report, serr error) Record {
 			rec.TooOld += r.RetentionByAge
 			rec.Skipped += r.SkippedFiles
 			rec.Oversize += len(r.Oversize)
+			for _, o := range r.Oversize {
+				if len(rec.OversizeFiles) >= MaxRedactedFiles {
+					break
+				}
+				rec.OversizeFiles = append(rec.OversizeFiles,
+					OversizeFile{Path: r.ID + "/" + o.Rel, Bytes: o.Bytes})
+			}
 		}
 		for _, f := range rep.Findings {
 			rec.Leaks = append(rec.Leaks, Leak{Path: f.Path, Kind: f.Kind})

@@ -4,7 +4,6 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -130,9 +129,14 @@ func TestSync_DropsOversizeFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(staging, "cli", "projects", "-p", "small.jsonl")); err != nil {
 		t.Error("under-cap transcript should still sync")
 	}
-	want := []string{"projects/-p/marathon.jsonl"}
-	if !reflect.DeepEqual(rep.Roots[0].Oversize, want) {
-		t.Errorf("Oversize = %v, want %v", rep.Roots[0].Oversize, want)
+	got := rep.Roots[0].Oversize
+	if len(got) != 1 || got[0].Rel != "projects/-p/marathon.jsonl" {
+		t.Fatalf("Oversize = %v, want the marathon transcript named", got)
+	}
+	// The size is what makes the report actionable: it decides whether the
+	// answer is to raise the cap or to leave the file behind.
+	if got[0].Bytes == 0 {
+		t.Error("Oversize carries no size, so nothing can say how far over the cap it was")
 	}
 }
 
