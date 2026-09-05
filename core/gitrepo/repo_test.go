@@ -307,3 +307,53 @@ func TestRemoveTreeGuardsAndMergeBaseErrors(t *testing.T) {
 		t.Error("a cancelled DeleteRef reported success")
 	}
 }
+
+func TestLogRange(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	r, err := Init(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "a", "1")
+	if _, err := r.Commit(ctx, "first"); err != nil {
+		t.Fatal(err)
+	}
+	base, err := r.Head(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "b", "2")
+	if _, err := r.Commit(ctx, "second: with a subject that has spaces"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "c", "3")
+	if _, err := r.Commit(ctx, "third"); err != nil {
+		t.Fatal(err)
+	}
+	head, err := r.Head(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.LogRange(ctx, base, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Newest first, the base itself excluded, the whole subject kept.
+	if len(got) != 2 || got[0].SHA != head || got[0].Subject != "third" || got[1].Subject != "second: with a subject that has spaces" {
+		t.Fatalf("LogRange = %+v", got)
+	}
+	if len(got[1].SHA) != 40 {
+		t.Fatalf("SHA %q is not a full id", got[1].SHA)
+	}
+
+	// Nothing between a commit and itself: an empty list, not an error.
+	if same, err := r.LogRange(ctx, "HEAD", "HEAD"); err != nil || len(same) != 0 {
+		t.Fatalf("LogRange(HEAD, HEAD) = %+v, %v", same, err)
+	}
+	// An unknown base is an error the caller sees, not an empty answer.
+	if _, err := r.LogRange(ctx, strings.Repeat("0", 40), "HEAD"); err == nil {
+		t.Fatal("LogRange accepted a base git does not have")
+	}
+}

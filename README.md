@@ -54,6 +54,7 @@ rig stack init                              # scaffold rig.stack.jsonc; run agai
 rig stack status / pull [repo]              # what upstream did, and taking it
 rig stack propose some-lib read-timeout        # → stack/read-timeout on your fork, PR-ready
 rig stack push my-app                       # → your own repo, fast-forwarded, history intact
+rig stack push my-app --dry-run             # what would go — target, branch, commits — touching no remote
 ```
 
 The release engine — changeset parsing, the dependency **cascade** (a dependent

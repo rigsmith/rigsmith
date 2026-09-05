@@ -29,6 +29,7 @@ rig stack status                     # who has moved upstream, and what has not 
 rig stack pull some-lib              # take that movement
 rig stack propose some-lib read-timeout -m "Fix the read timeout"   # → stack/read-timeout
 rig stack push my-app                # a repo you own: its own branch, history intact
+rig stack push my-app --dry-run      # the target, branch and commits that would go; touches no remote
 rig stack seed ../seed               # root files as a small repo; init on a clone rebuilds the members
 ```
 

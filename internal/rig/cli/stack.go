@@ -736,7 +736,9 @@ func newStackSendCmd() *cobra.Command {
 			"The name is prefixed with `stack/` so these branches stay recognisable\n" +
 			"among your own work on the same fork: `propose lib read-timeout` creates\n" +
 			"stack/read-timeout. Change it with the manifest's branchPrefix, or set\n" +
-			"that to \"\" for bare names.",
+			"that to \"\" for bare names.\n\n" +
+			"With --dry-run, says what it would push and where, and stops there:\n" +
+			"nothing reaches the fork, and nothing local records a proposal.",
 		Args:              cobra.MaximumNArgs(2),
 		ValidArgsFunction: stackRepoCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -874,6 +876,16 @@ func newStackSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A dry run stops here, with the commit built and nothing sent. The
+			// object stays in the local store unreferenced, which is harmless;
+			// the ref under refs/rigsmith/propose and the manifest's memory of
+			// the branch both record a push, so neither is written for a push
+			// that did not happen.
+			if dryRun {
+				fmt.Fprintf(cmd.OutOrStdout(), "would push %s to %s:%s (proposing to %s)\n",
+					short(commit), r.Fork, branch, r.Upstream)
+				return nil
+			}
 
 			// Each send synthesizes a fresh commit parented on the upstream tip,
 			// so a second send to the same branch is a sibling of the first and a
@@ -920,7 +932,10 @@ func newStackPushCmd() *cobra.Command {
 			"<repo>/ do not appear at all.\n\n" +
 			"`send` is the verb for someone else's project: it proposes one squashed\n" +
 			"commit on a branch of your fork, which is what a reviewer wants and the\n" +
-			"wrong thing entirely for a repository that is yours.",
+			"wrong thing entirely for a repository that is yours.\n\n" +
+			"With --dry-run, prints the target, the branch and the commits that would\n" +
+			"go, and stops there: nothing reaches the remote, and nothing local\n" +
+			"records a push.",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: stackRepoCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1014,6 +1029,22 @@ func newStackPushCmd() *cobra.Command {
 			}
 			if head == tip {
 				fmt.Fprintf(out, "%s: nothing to push — it matches %s\n", name, r.Upstream)
+				return nil
+			}
+
+			// A dry run has done its work by now: the filter ran locally, and what
+			// sits between upstream's tip and the filtered head is exactly what a
+			// push would carry. Say so and stop — before the push, and before the
+			// take-back below, which records a push that has not happened.
+			if dryRun {
+				commits, err := repo.LogRange(ctx, tip, head)
+				if err != nil {
+					return fmt.Errorf("listing what would be pushed to %s:%s: %w", r.Upstream, branch, err)
+				}
+				fmt.Fprintf(out, "would push %s to %s:%s (%s)\n", name, r.Upstream, branch, short(head))
+				for _, c := range commits {
+					fmt.Fprintf(out, "  %s %s\n", short(c.SHA), c.Subject)
+				}
 				return nil
 			}
 

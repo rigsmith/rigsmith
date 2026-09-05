@@ -418,6 +418,18 @@ rig stack push            # the same, when only one repo here is yours
 # pushed term-app to you/term-app:main (0b001bd3)
 ```
 
+`--dry-run` shows the target, the branch and the commits that would go, one per
+line, and stops there: nothing reaches the remote, and nothing local records a
+push. It is the way to see what a repository is about to receive before it does.
+
+```sh
+rig stack push term-app --dry-run
+
+# would push term-app to you/term-app:main (0b001bd3)
+#   0b001bd3 term-app: handle the new timeout
+#   9c4e21a0 cross-cutting: bump the pty version
+```
+
 Nothing is squashed. Each commit arrives with its own message, parented on what
 the repo already had — so a change spanning your app and a library lands as a
 matching commit in each, and commits that touched nothing in that directory do
@@ -458,6 +470,10 @@ around. Open the PR from your fork as usual.
 `<new-branch>` is a branch you are creating on *your fork*, named per change.
 Nothing reads it from the manifest, because it is a property of the change
 rather than of the project — which is also why the `rig ui` flow asks for it.
+
+`--dry-run` says which commit it would push, to which branch of the fork, and
+which upstream it is for, and stops there: nothing reaches the fork, and nothing
+local records a proposal.
 
 What you type is prefixed with **`stack/`**, so `read-timeout` becomes
 `stack/read-timeout`. Your fork also carries your own branches; the prefix keeps
@@ -636,8 +652,8 @@ the step-by-step.
 | `stack seed <dir>` | Export the root files — everything outside every prefix, manifest included — as a small repo that `stack init` rebuilds the members from elsewhere; refuses while a member holds commits that have not left (`--force`) |
 | `stack status` | Each repo's cursor against its upstream branch tip |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
-| `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch |
-| `stack push [repo]` | Fast-forward a repo you own with this stackspace's commits, history intact; inferred when only one is yours |
+| `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch; `--dry-run` says what would go and touches no remote |
+| `stack push [repo]` | Fast-forward a repo you own with this stackspace's commits, history intact; inferred when only one is yours; `--dry-run` lists the commits that would go and touches no remote |
 | `stack wire` | Write the build overlay so members resolve each other from source |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
