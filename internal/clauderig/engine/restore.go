@@ -13,6 +13,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
@@ -437,7 +438,7 @@ func restoreJSON(src, dst string, resolver *pathmap.Resolver, pm perm) error {
 	if err := json.Unmarshal(synced, &v); err != nil {
 		return copyBytes(dst, synced, pm) // not JSON after all — copy raw
 	}
-	v, _ = pathmap.ResolveJSONValues(v, resolver)
+	v, _ = desktop.ResolveJSONPaths(v, resolver)
 	resolved, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return copyBytes(dst, synced, pm)

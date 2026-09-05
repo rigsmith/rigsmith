@@ -119,7 +119,11 @@ detection and OS-aware case comparison. Two fidelities, both v1:
   and rewrite any string value that resolves under a *known mapped prefix*
   (`$HOME`, mapped repo roots), leaving unmapped/system paths (`/tmp`) untouched.
   Robust to fields beyond `cwd`/`originCwd` — a census found `planPath`, permission
-  `ruleContent`, and added `directories[]` also carry paths (see Q4).
+  `ruleContent`, and added `directories[]` also carry paths (see Q4). Desktop
+  also embeds paths in `alwaysAllowedReasons` as
+  `tool<NUL>reason<NUL>file_path:path`. The Desktop adapter rewrites only that
+  path argument, preserving the delimiters, tool and reason. This format stays
+  out of the shared `core/pathmap` layer.
 
 Default mapping is the **home convention** (`~/Git` ⇄ `C:\Users\You\Git`, tail
 identical = halyard's "portable" case). Overridable: custom home dir + explicit
@@ -431,7 +435,7 @@ mirror — no path correction, manual excludes.
 4. **Q4 — `claude-code-sessions` resume fidelity.** *Approach decided (2026-06-12
    census), now **BUILT**.* The rewrite surface is broader than `cwd`/`originCwd` —
    also `planPath`, permission `ruleContent`, and added `directories[]` — so the
-   rewriter is **value-based**: `pathmap.PortablizeJSONValues` (sync) rewrites any
+   common rewriter is **value-based**: `pathmap.PortablizeJSONValues` (sync) rewrites any
    string under a known mapped prefix to `$HOME/…`; `pathmap.ResolveJSONValues`
    (restore) resolves `$`-templates to the target, leaving unmapped/system paths
    (`/tmp`) and non-path values untouched. Applied to every `.json` in both roots
@@ -441,6 +445,11 @@ mirror — no path correction, manual excludes.
    and asserts **zero** values retain a source-home path. That test *found* a real
    gap — a permission `ruleContent` written as `//Users/you/Git/x/**` — now fixed
    (`Portablize` collapses a leading slash-run, so the `//`-prefixed glob matches);
-   re-run shows 0 residual across all session files. **Still manual (non-blocking):**
+   a subsequent run found paths embedded in NUL-delimited `alwaysAllowedReasons`.
+   `desktop.PortablizeJSONPaths` / `desktop.ResolveJSONPaths` now wrap the common
+   transform with an adapter for those records. Sync, restore and the real-data
+   test use the same wrappers. Synthetic Git round trips test the permission
+   reason format in both macOS → Windows and Windows → macOS directions.
+   Re-run shows 0 residual across all session files. **Still manual (non-blocking):**
    whether the Electron app itself resumes after rewrite — drive it by hand; the
    data-completeness half is automated.

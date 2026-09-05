@@ -44,7 +44,8 @@ the same in the gitignored `.claude/settings.local.json`). See
 
 - **Cross-OS path correction.** A session captured at `/Users/john/Git/x` resumes
   at `C:\Users\John\Git\x`. Project directory slugs and path values inside config
-  are re-derived for the target machine (`core/pathmap`).
+  are re-derived for the target machine (`core/pathmap`). Desktop’s embedded
+  permission-reason paths are translated by its format adapter as well.
 - **Secret redaction and publication checks.** Secret-bearing fields are stripped before
   commit; complete staged-text scanning refuses recognized credentials, including
   ones in large transcripts. Optional `redactTranscripts` scrubs the staged copy. Restore merges the
