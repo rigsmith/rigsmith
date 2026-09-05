@@ -12,39 +12,40 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/sessions"
 )
 
 func TestParseWhen(t *testing.T) {
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 
-	day, err := parseWhen("2026-08-17", now, false)
+	day, err := sessions.ParseWhen("2026-08-17", now, false)
 	if err != nil || !day.Equal(time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("day = %v %v", day, err)
 	}
 	// A day given to --until means the WHOLE day, or `--since X --until X` would
 	// span one nanosecond and match nothing.
-	end, err := parseWhen("2026-08-17", now, true)
+	end, err := sessions.ParseWhen("2026-08-17", now, true)
 	if err != nil || !end.After(time.Date(2026, 8, 17, 23, 59, 59, 0, time.UTC)) ||
 		!end.Before(time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("end-of-day = %v %v", end, err)
 	}
-	ts, err := parseWhen("2026-08-17T14:30:00Z", now, false)
+	ts, err := sessions.ParseWhen("2026-08-17T14:30:00Z", now, false)
 	if err != nil || !ts.Equal(time.Date(2026, 8, 17, 14, 30, 0, 0, time.UTC)) {
 		t.Errorf("timestamp = %v %v", ts, err)
 	}
 	// Ages count back from the supplied now, days included (time.ParseDuration
 	// has no day unit).
-	age, err := parseWhen("3d", now, false)
+	age, err := sessions.ParseWhen("3d", now, false)
 	if err != nil || !age.Equal(now.Add(-72*time.Hour)) {
 		t.Errorf("age 3d = %v %v", age, err)
 	}
-	if h, err := parseWhen("36h", now, false); err != nil || !h.Equal(now.Add(-36*time.Hour)) {
+	if h, err := sessions.ParseWhen("36h", now, false); err != nil || !h.Equal(now.Add(-36*time.Hour)) {
 		t.Errorf("age 36h = %v %v", h, err)
 	}
-	if z, err := parseWhen("", now, false); err != nil || !z.IsZero() {
+	if z, err := sessions.ParseWhen("", now, false); err != nil || !z.IsZero() {
 		t.Errorf("empty should be the zero time: %v %v", z, err)
 	}
-	if _, err := parseWhen("last tuesday", now, false); err == nil {
+	if _, err := sessions.ParseWhen("last tuesday", now, false); err == nil {
 		t.Error("unparseable value should error")
 	}
 }
@@ -74,8 +75,8 @@ func TestSearchSessions_TimeWindowFilters(t *testing.T) {
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 
 	var out, errw bytes.Buffer
-	sc := sessionScope{since: time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC), now: now}
-	if err := searchSessions(&out, &errw, testMachine(t.TempDir()), targets, nil, "migration", sc); err != nil {
+	sc := sessions.Scope{Since: time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC), Now: now}
+	if err := searchSessions(&out, &errw, testMachine(t.TempDir()), targets, nil, "migration", sc, false); err != nil {
 		t.Fatal(err)
 	}
 	got := stripANSI(out.String())
@@ -91,8 +92,8 @@ func TestSearchSessions_TimeWindowFilters(t *testing.T) {
 
 	// The mirror case: --until keeps only the older one.
 	out.Reset()
-	sc = sessionScope{until: time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC), now: now}
-	if err := searchSessions(&out, &errw, testMachine(t.TempDir()), targets, nil, "migration", sc); err != nil {
+	sc = sessions.Scope{Until: time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC), Now: now}
+	if err := searchSessions(&out, &errw, testMachine(t.TempDir()), targets, nil, "migration", sc, false); err != nil {
 		t.Fatal(err)
 	}
 	got = stripANSI(out.String())
@@ -112,13 +113,13 @@ func TestSearchSessions_UndatedDroppedAndNamed(t *testing.T) {
 		`{"cliSessionId":"sess-undated","title":"Rocket science notes"}`)
 
 	var out, errw bytes.Buffer
-	sc := sessionScope{
-		since: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
-		now:   time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC),
+	sc := sessions.Scope{
+		Since: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+		Now:   time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC),
 	}
 	err := searchSessions(&out, &errw, testMachine(t.TempDir()),
 		[]search.Target{{Label: "cli", Dir: live}},
-		[]session.Root{{Label: "desktop", Base: desk}}, "rocket", sc)
+		[]session.Root{{Label: "desktop", Base: desk}}, "rocket", sc, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,9 +142,9 @@ func TestSearchSessions_CwdFilter(t *testing.T) {
 	writeTestFile(t, live, "projects/-Users-x-Git-halyard/sess-b.jsonl", line("/Users/x/Git/halyard"))
 
 	var out, errw bytes.Buffer
-	sc := sessionScope{cwd: "tweed", now: time.Now()}
+	sc := sessions.Scope{Cwd: "tweed", Now: time.Now()}
 	if err := searchSessions(&out, &errw, testMachine(t.TempDir()),
-		[]search.Target{{Label: "cli", Dir: live}}, nil, "migration", sc); err != nil {
+		[]search.Target{{Label: "cli", Dir: live}}, nil, "migration", sc, false); err != nil {
 		t.Fatal(err)
 	}
 	got := stripANSI(out.String())
@@ -164,7 +165,7 @@ func TestRenderCoverage(t *testing.T) {
 	// A machine that hasn't synced in days is exactly the case where "no results"
 	// is not the same as "no such chat" — say so, and say since when.
 	var out bytes.Buffer
-	renderCoverage(&out, sessionScope{devices: []devices.Device{me, stale}, me: "mbp", now: now, liveInScope: true})
+	renderCoverage(&out, sessions.Scope{Devices: []devices.Device{me, stale}, Me: "mbp", Now: now, LiveInScope: true})
 	got := stripANSI(out.String())
 	if !strings.Contains(got, "air has not synced since 2026-08-16 12:00 UTC") {
 		t.Errorf("stale device should be named with its last sync:\n%s", got)
@@ -178,7 +179,7 @@ func TestRenderCoverage(t *testing.T) {
 
 	// A device that synced this morning hides nothing — list it, don't warn.
 	out.Reset()
-	renderCoverage(&out, sessionScope{devices: []devices.Device{me, fresh}, me: "mbp", now: now, liveInScope: true})
+	renderCoverage(&out, sessions.Scope{Devices: []devices.Device{me, fresh}, Me: "mbp", Now: now, LiveInScope: true})
 	got = stripANSI(out.String())
 	if strings.Contains(got, "has not synced") {
 		t.Errorf("fresh device should not be warned about:\n%s", got)
@@ -189,7 +190,7 @@ func TestRenderCoverage(t *testing.T) {
 
 	// One machine means there is no elsewhere for a chat to be — print nothing.
 	out.Reset()
-	renderCoverage(&out, sessionScope{devices: []devices.Device{me}, me: "mbp", now: now, liveInScope: true})
+	renderCoverage(&out, sessions.Scope{Devices: []devices.Device{me}, Me: "mbp", Now: now, LiveInScope: true})
 	if s := out.String(); s != "" {
 		t.Errorf("single-device registry should print no footer, got:\n%s", s)
 	}
@@ -203,7 +204,7 @@ func TestRenderCoverage_RepoOnlyDoesNotExemptThisMachine(t *testing.T) {
 	meStale := devices.Device{Name: "mbp", OS: "macos", LastSync: now.Add(-3 * 24 * time.Hour)}
 
 	var out bytes.Buffer
-	renderCoverage(&out, sessionScope{devices: []devices.Device{meStale}, me: "mbp", now: now, liveInScope: false})
+	renderCoverage(&out, sessions.Scope{Devices: []devices.Device{meStale}, Me: "mbp", Now: now, LiveInScope: false})
 	got := stripANSI(out.String())
 	if !strings.Contains(got, "mbp has not synced since") {
 		t.Errorf("under --repo this machine's own sync age bounds the search:\n%s", got)
@@ -214,7 +215,7 @@ func TestRenderCoverage_RepoOnlyDoesNotExemptThisMachine(t *testing.T) {
 
 	// With the live roots back in scope the same machine is exempt.
 	out.Reset()
-	renderCoverage(&out, sessionScope{devices: []devices.Device{meStale}, me: "mbp", now: now, liveInScope: true})
+	renderCoverage(&out, sessions.Scope{Devices: []devices.Device{meStale}, Me: "mbp", Now: now, LiveInScope: true})
 	if s := stripANSI(out.String()); s != "" {
 		t.Errorf("live-scoped single device should print nothing, got:\n%s", s)
 	}
@@ -224,7 +225,7 @@ func TestRenderCoverage_RepoOnlyDoesNotExemptThisMachine(t *testing.T) {
 // those mean opposite things and the output was identical.
 func TestRenderCoverage_UnavailableRegistrySaysSo(t *testing.T) {
 	var out bytes.Buffer
-	renderCoverage(&out, sessionScope{devicesUnavailable: true, me: "mbp", now: time.Now(), liveInScope: true})
+	renderCoverage(&out, sessions.Scope{DevicesUnavailable: true, Me: "mbp", Now: time.Now(), LiveInScope: true})
 	got := stripANSI(out.String())
 	if !strings.Contains(got, "device coverage unavailable") {
 		t.Errorf("a failed registry read should say so:\n%s", got)
@@ -236,11 +237,11 @@ func TestRenderCoverage_UnavailableRegistrySaysSo(t *testing.T) {
 // like a perfectly ordinary flag.
 func TestParseAge_RejectsOverflowingDayCounts(t *testing.T) {
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
-	if _, err := parseWhen("106752d", now, false); err == nil {
+	if _, err := sessions.ParseWhen("106752d", now, false); err == nil {
 		t.Error("an overflowing day count should be rejected, not silently wrapped")
 	}
 	// Just inside the range still works, and is still in the past.
-	got, err := parseWhen("106751d", now, false)
+	got, err := sessions.ParseWhen("106751d", now, false)
 	if err != nil {
 		t.Fatalf("106751d should parse: %v", err)
 	}
@@ -288,15 +289,15 @@ func TestSearchSessions_TitleOnlyMatchIsDatedFromItsTranscript(t *testing.T) {
 	writeTestFile(t, desk, "claude-code-sessions/o/u/local_t.json",
 		`{"cliSessionId":"sess-t","title":"Rocket science notes"}`)
 
-	sc := sessionScope{
-		since: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
-		cwd:   "tweed",
-		now:   time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC),
+	sc := sessions.Scope{
+		Since: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		Cwd:   "tweed",
+		Now:   time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC),
 	}
 	var out, errw bytes.Buffer
 	if err := searchSessions(&out, &errw, testMachine(t.TempDir()),
 		[]search.Target{{Label: "cli", Dir: live}},
-		[]session.Root{{Label: "desktop", Base: desk}}, "rocket", sc); err != nil {
+		[]session.Root{{Label: "desktop", Base: desk}}, "rocket", sc, false); err != nil {
 		t.Fatal(err)
 	}
 	got := stripANSI(out.String())
@@ -329,10 +330,10 @@ func TestTranscriptPaths_FindsBothRootDepthsAndSkipsSubagents(t *testing.T) {
 
 	targets := []search.Target{{Label: "cli", Dir: live}, {Label: "repo", Dir: repo}}
 
-	if got := transcriptPaths(targets, "cli"); len(got) != 1 || got["sess-live"] == "" {
+	if got := sessions.TranscriptPaths(targets, "cli"); len(got) != 1 || got["sess-live"] == "" {
 		t.Errorf("live root: %v", got)
 	}
-	got := transcriptPaths(targets, "repo")
+	got := sessions.TranscriptPaths(targets, "repo")
 	if len(got) != 1 || got["sess-repo"] == "" {
 		t.Errorf("repo root should be found at its own depth: %v", got)
 	}

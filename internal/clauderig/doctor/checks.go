@@ -26,37 +26,37 @@ import (
 
 func checkGit(ctx context.Context) Result {
 	if !look("git") {
-		return Result{Name: "git", Status: Fail, Detail: "not found", Hint: "install git"}
+		return Result{ID: "git", Name: "git", Status: Fail, Detail: "not found", Hint: "install git"}
 	}
 	v, _ := runOut(ctx, "git", "--version")
-	return Result{Name: "git", Status: OK, Detail: strings.TrimSpace(strings.TrimPrefix(firstLine(v), "git version "))}
+	return Result{ID: "git", Name: "git", Status: OK, Detail: strings.TrimSpace(strings.TrimPrefix(firstLine(v), "git version "))}
 }
 
 func checkGh(ctx context.Context) Result {
 	if !look("gh") {
-		return Result{Name: "gh", Status: Warn, Detail: "not installed",
+		return Result{ID: "gh", Name: "gh", Status: Warn, Detail: "not installed",
 			Hint: "needed to verify the sync remote is private and to open PRs — https://cli.github.com"}
 	}
 	if _, err := runCombined(ctx, "gh", "auth", "status"); err != nil {
-		return Result{Name: "gh", Status: Warn, Detail: "not authenticated", Hint: "run `gh auth login`"}
+		return Result{ID: "gh", Name: "gh", Status: Warn, Detail: "not authenticated", Hint: "run `gh auth login`"}
 	}
-	return Result{Name: "gh", Status: OK, Detail: "authenticated"}
+	return Result{ID: "gh", Name: "gh", Status: OK, Detail: "authenticated"}
 }
 
 func checkClauderigOnPath(_ context.Context) Result {
 	if !look("clauderig") {
-		return Result{Name: "clauderig on PATH", Status: Fail, Detail: "NOT on PATH",
+		return Result{ID: "clauderig-on-path", Name: "clauderig on PATH", Status: Fail, Detail: "NOT on PATH",
 			Hint: "hooks call bare `clauderig` and will silently no-op — install clauderig so it resolves on PATH"}
 	}
-	return Result{Name: "clauderig on PATH", Status: OK, Detail: "resolvable"}
+	return Result{ID: "clauderig-on-path", Name: "clauderig on PATH", Status: OK, Detail: "resolvable"}
 }
 
 func checkRigOnPath(_ context.Context) Result {
 	if !look("rig") {
-		return Result{Name: "rig on PATH", Status: Warn, Detail: "not on PATH",
+		return Result{ID: "rig-on-path", Name: "rig on PATH", Status: Warn, Detail: "not on PATH",
 			Hint: "the worktree discipline points at `rig worktree new` — install rig (it ships alongside clauderig) so that guidance works"}
 	}
-	return Result{Name: "rig on PATH", Status: OK, Detail: "resolvable"}
+	return Result{ID: "rig-on-path", Name: "rig on PATH", Status: OK, Detail: "resolvable"}
 }
 
 // desktopPruneThreshold is how much a `desktop prune --vm` would have to free
@@ -109,7 +109,7 @@ func checkDesktopSize(ctx context.Context) (Result, bool) {
 	if reclaim < desktopPruneThreshold {
 		return Result{}, false
 	}
-	return Result{Name: "desktop profiles", Status: Warn,
+	return Result{ID: "desktop-profiles", Name: "desktop profiles", Status: Warn,
 		Detail: fmt.Sprintf("%s on disk, %s of it reclaimable (Cowork VM image and caches)",
 			desktop.HumanSize(total), desktop.HumanSize(reclaim)),
 		Hint: "`clauderig desktop prune --dry-run` shows the breakdown; `--vm` resets the VM image, leaving logins and chat history alone",
@@ -138,37 +138,37 @@ func checkRestricted() (Result, bool) {
 
 func checkRemote(ctx context.Context, env Env) Result {
 	if env.Cfg == nil || env.Cfg.Remote == "" {
-		return Result{Name: "remote", Status: Warn, Detail: "not configured",
+		return Result{ID: "remote", Name: "remote", Status: Warn, Detail: "not configured",
 			Hint: "run `clauderig config set remote <url>` (must be a PRIVATE repo)"}
 	}
 	remote := env.Cfg.Remote
 	if !gitrepo.Reachable(ctx, remote) {
-		return Result{Name: "remote", Status: Warn, Detail: "unreachable: " + remote,
+		return Result{ID: "remote", Name: "remote", Status: Warn, Detail: "unreachable: " + remote,
 			Hint: "check the URL, your network, or auth (the remote may still be fine)"}
 	}
 	if !ghrepo.Available() {
-		return Result{Name: "remote", Status: Warn, Detail: "reachable; privacy unverified",
+		return Result{ID: "remote", Name: "remote", Status: Warn, Detail: "reachable; privacy unverified",
 			Hint: "install gh so claudeRig can confirm the remote is private"}
 	}
 	if err := ghrepo.EnsurePrivate(ctx, remote); err != nil {
-		return Result{Name: "remote", Status: Fail, Detail: "NOT private (or unverifiable): " + remote,
+		return Result{ID: "remote", Name: "remote", Status: Fail, Detail: "NOT private (or unverifiable): " + remote,
 			Hint: "clauderig only syncs to a private repo — make it private or change the remote"}
 	}
-	return Result{Name: "remote", Status: OK, Detail: "private · reachable"}
+	return Result{ID: "remote", Name: "remote", Status: OK, Detail: "private · reachable"}
 }
 
 func checkLastSync(ctx context.Context, env Env) Result {
 	if env.Cfg == nil {
-		return Result{Name: "last sync", Status: Info, Detail: "no config"}
+		return Result{ID: "last-sync", Name: "last sync", Status: Info, Detail: "no config"}
 	}
 	info := status.Gather(ctx, env.Cfg, env.Machine, env.Staging, env.UserSettings)
 	if !info.HasStaging || info.LastSync == "" {
-		return Result{Name: "last sync", Status: Warn, Detail: "never synced", Hint: "run `clauderig sync`"}
+		return Result{ID: "last-sync", Name: "last sync", Status: Warn, Detail: "never synced", Hint: "run `clauderig sync`"}
 	}
 	if info.Dirty {
-		return Result{Name: "last sync", Status: Warn, Detail: info.LastSync + " (staging has uncommitted changes)"}
+		return Result{ID: "last-sync", Name: "last sync", Status: Warn, Detail: info.LastSync + " (staging has uncommitted changes)"}
 	}
-	return Result{Name: "last sync", Status: OK, Detail: info.LastSync}
+	return Result{ID: "last-sync", Name: "last sync", Status: OK, Detail: info.LastSync}
 }
 
 // checkPushed asks the question `last sync` cannot: did any of it leave the
@@ -181,40 +181,40 @@ func checkLastSync(ctx context.Context, env Env) Result {
 // warning: a backup tool that is not backing up is broken, not untidy.
 func checkPushed(ctx context.Context, env Env) Result {
 	if env.Cfg == nil {
-		return Result{Name: "pushed", Status: Info, Detail: "no config"}
+		return Result{ID: "pushed", Name: "pushed", Status: Info, Detail: "no config"}
 	}
 	info := status.Gather(ctx, env.Cfg, env.Machine, env.Staging, env.UserSettings)
 	if !info.HasStaging {
-		return Result{Name: "pushed", Status: Info, Detail: "no staging repo yet"}
+		return Result{ID: "pushed", Name: "pushed", Status: Info, Detail: "no staging repo yet"}
 	}
 	if !info.TrackingKnown {
 		if info.Remote == "" {
-			return Result{Name: "pushed", Status: Info, Detail: "no remote configured"}
+			return Result{ID: "pushed", Name: "pushed", Status: Info, Detail: "no remote configured"}
 		}
-		return Result{Name: "pushed", Status: Warn,
+		return Result{ID: "pushed", Name: "pushed", Status: Warn,
 			Detail: "never pushed to this remote",
 			Hint:   "run `clauderig sync`"}
 	}
 	switch {
 	case info.Unpushed > 0 && info.Unmerged > 0:
-		return Result{Name: "pushed", Status: Fail,
+		return Result{ID: "pushed", Name: "pushed", Status: Fail,
 			Detail: fmt.Sprintf("%d commit(s) never pushed; remote has %d this machine lacks", info.Unpushed, info.Unmerged),
 			Hint:   "the remote diverged — run `clauderig sync` to reconcile"}
 	case info.Unpushed > 0:
-		return Result{Name: "pushed", Status: Fail,
+		return Result{ID: "pushed", Name: "pushed", Status: Fail,
 			Detail: fmt.Sprintf("%d commit(s) never reached the remote", info.Unpushed),
 			Hint:   "run `clauderig sync`"}
 	case info.Unmerged > 0:
-		return Result{Name: "pushed", Status: Warn,
+		return Result{ID: "pushed", Name: "pushed", Status: Warn,
 			Detail: fmt.Sprintf("%d commit(s) on the remote are not here yet", info.Unmerged),
 			Hint:   "run `clauderig pull`"}
 	}
-	return Result{Name: "pushed", Status: OK, Detail: "up to date with origin/main"}
+	return Result{ID: "pushed", Name: "pushed", Status: OK, Detail: "up to date with origin/main"}
 }
 
 func checkPaths(env Env) Result {
 	if env.Cfg == nil {
-		return Result{Name: "path resolution", Status: Info, Detail: "no config"}
+		return Result{ID: "path-resolution", Name: "path resolution", Status: Info, Detail: "no config"}
 	}
 	var unresolved []string
 	total := 0
@@ -228,11 +228,11 @@ func checkPaths(env Env) Result {
 		}
 	}
 	if len(unresolved) > 0 {
-		return Result{Name: "path resolution", Status: Warn,
+		return Result{ID: "path-resolution", Name: "path resolution", Status: Warn,
 			Detail: fmt.Sprintf("%d/%d roots resolve; unmapped: %s", total-len(unresolved), total, strings.Join(unresolved, ", ")),
 			Hint:   "add a machine map for the unmapped folders via `clauderig config`"}
 	}
-	return Result{Name: "path resolution", Status: OK, Detail: fmt.Sprintf("%d roots resolve for %s", total, env.Machine.OS)}
+	return Result{ID: "path-resolution", Name: "path resolution", Status: OK, Detail: fmt.Sprintf("%d roots resolve for %s", total, env.Machine.OS)}
 }
 
 // --- worktree discipline ---
@@ -240,13 +240,13 @@ func checkPaths(env Env) Result {
 func checkGlobalHooks(env Env) Result {
 	present, _ := hooks.Status(env.UserSettings)
 	if contains(present, "SessionStart") && contains(present, "Stop") && contains(present, "SessionEnd") {
-		return Result{Name: "global sync hooks", Status: OK, Detail: "SessionStart, Stop, SessionEnd"}
+		return Result{ID: "global-hooks", Name: "global sync hooks", Status: OK, Detail: "SessionStart, Stop, SessionEnd"}
 	}
 	detail := "not installed"
 	if len(present) > 0 {
 		detail = "partial: " + strings.Join(present, ", ")
 	}
-	return Result{Name: "global sync hooks", Status: Warn, Detail: detail,
+	return Result{ID: "global-hooks", Name: "global sync hooks", Status: Warn, Detail: detail,
 		FixLabel: "install global sync hooks (~/.claude/settings.json)",
 		Fix: func(ctx context.Context) error {
 			_, err := hooks.Install(env.UserSettings, hooks.SyncPlans())
@@ -266,7 +266,7 @@ func checkProjectGuard(env Env) Result {
 		// guard runs for, so a hook written by an older release quietly stops
 		// covering whatever tools have been added since.
 		if drift, derr := hooks.Drift(settings, hooks.GuardPlans()); derr == nil && len(drift) > 0 {
-			return Result{Name: "guard hook", Status: Warn,
+			return Result{ID: "guard-hook", Name: "guard hook", Status: Warn,
 				Detail:   "installed (" + where + ") but out of date — it does not cover every tool it should",
 				FixLabel: "update the guard hook (" + where + " settings.json)",
 				Fix: func(ctx context.Context) error {
@@ -274,9 +274,9 @@ func checkProjectGuard(env Env) Result {
 					return err
 				}}
 		}
-		return Result{Name: "guard hook", Status: OK, Detail: "installed (" + where + ")"}
+		return Result{ID: "guard-hook", Name: "guard hook", Status: OK, Detail: "installed (" + where + ")"}
 	}
-	return Result{Name: "guard hook", Status: Warn, Detail: "not installed in this repo",
+	return Result{ID: "guard-hook", Name: "guard hook", Status: Warn, Detail: "not installed in this repo",
 		FixLabel: "install project guard (.claude/settings.json)",
 		Fix: func(ctx context.Context) error {
 			_, err := hooks.Install(env.ProjectSettings, hooks.GuardPlans())
@@ -345,7 +345,7 @@ func checkIgnoredSettings(env Env) (Result, bool) {
 	if unreadable {
 		hints = append(hints, "make the file readable — nothing in it can be checked until it is")
 	}
-	return Result{Name: "ignored settings", Status: Warn,
+	return Result{ID: "ignored-settings", Name: "ignored settings", Status: Warn,
 		Detail: strings.Join(append(found, broken...), "; "),
 		Hint:   strings.Join(hints, "; "),
 	}, true
@@ -354,9 +354,9 @@ func checkIgnoredSettings(env Env) (Result, bool) {
 func checkGuide(env Env) Result {
 	ok, _ := claudemd.AllPresent(env.ClaudeMd)
 	if ok {
-		return Result{Name: "CLAUDE.md guide", Status: OK, Detail: "present"}
+		return Result{ID: "claude-md-guide", Name: "CLAUDE.md guide", Status: OK, Detail: "present"}
 	}
-	return Result{Name: "CLAUDE.md guide", Status: Warn, Detail: "block missing",
+	return Result{ID: "claude-md-guide", Name: "CLAUDE.md guide", Status: Warn, Detail: "block missing",
 		FixLabel: "add CLAUDE.md guide blocks",
 		Fix: func(ctx context.Context) error {
 			_, err := claudemd.InstallAll(env.ClaudeMd)
@@ -372,9 +372,9 @@ func checkLocalGitignore(env Env) (Result, bool) {
 	}
 	const entry = ".claude/settings.local.json"
 	if repo, err := gitrepo.Open(context.Background(), env.RepoRoot); err == nil && repo.IsIgnored(context.Background(), entry) {
-		return Result{Name: "local settings gitignored", Status: OK, Detail: "ignored"}, true
+		return Result{ID: "local-gitignored", Name: "local settings gitignored", Status: OK, Detail: "ignored"}, true
 	}
-	return Result{Name: "local settings gitignored", Status: Warn, Detail: entry + " is not gitignored",
+	return Result{ID: "local-gitignored", Name: "local settings gitignored", Status: Warn, Detail: entry + " is not gitignored",
 		FixLabel: "gitignore .claude/settings.local.json",
 		Fix: func(ctx context.Context) error {
 			return ensureIgnored(env.RepoRoot, entry)
@@ -435,18 +435,18 @@ func contains(ss []string, v string) bool {
 // from this machine is being backed up.
 func checkStagingMerge(ctx context.Context, env Env) Result {
 	if env.Cfg == nil || env.Staging == "" {
-		return Result{Name: "staging repo", Status: Info, Detail: "no config"}
+		return Result{ID: "staging-repo", Name: "staging repo", Status: Info, Detail: "no config"}
 	}
 	repo, err := gitrepo.Open(ctx, env.Staging)
 	if err != nil {
-		return Result{Name: "staging repo", Status: Info, Detail: "no staging repo yet"}
+		return Result{ID: "staging-repo", Name: "staging repo", Status: Info, Detail: "no staging repo yet"}
 	}
 	if !repo.InMerge(ctx) {
-		return Result{Name: "staging repo", Status: OK, Detail: "clean (no merge in progress)"}
+		return Result{ID: "staging-repo", Name: "staging repo", Status: OK, Detail: "clean (no merge in progress)"}
 	}
 	conflicts, _ := repo.Conflicts(ctx)
 	return Result{
-		Name:   "staging repo",
+		ID: "staging-repo", Name: "staging repo",
 		Status: Fail,
 		Detail: fmt.Sprintf("a merge was left in progress (%d conflicted file(s)) — sync is blocked", len(conflicts)),
 		Hint:   "clauderig can settle it with its merge policies",

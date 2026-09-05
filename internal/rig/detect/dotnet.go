@@ -7,12 +7,14 @@ package detect
 
 import (
 	"encoding/xml"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	dotnetadapter "github.com/rigsmith/rigsmith/core/ecosystem/dotnet"
 )
@@ -365,14 +367,38 @@ var ProjectFileExts = dotnetadapter.ProjectFileExts
 // list them), unlike a Go or PHP vendor tree; `exclude` hides one that isn't.
 var scanSkipDirs = dotnetadapter.SkippedScanDirs
 
+// scanBudget bounds project discovery. Generous enough that a normal repository
+// finishes long before it, short enough that a mistake — running in a home
+// directory, a mounted network share — costs a moment rather than the session.
+const scanBudget = 2 * time.Second
+
+// errScanBudget stops the walk. filepath.WalkDir has no other way out, and the
+// error never escapes scanForProjects.
+var errScanBudget = errors.New("scan budget exhausted")
+
 // scanForProjects finds every project file under root. This is the default
 // discovery path (see DiscoverDotNet), so it is the superset a solution would
 // otherwise carve up — anything unwanted is trimmed by the `exclude` globs.
 func scanForProjects(root string) []string {
 	var paths []string
+	// A budget, because discovery must not be able to hang the tool. Even inside
+	// a real repository a tree can be enormous, and the menu waits on this before
+	// it paints anything at all — an unbounded walk means a blank terminal for as
+	// long as the filesystem takes. Stopping early finds fewer projects, which is
+	// a worse menu; not stopping finds them eventually, which is no menu.
+	deadline := time.Now().Add(scanBudget)
+	seen := 0
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // unreadable subtree — skip, discovery is best-effort
+		}
+		// Every entry counts toward the budget, not only directories: the clock
+		// call is the expensive part, so it still happens once per 64 — but a
+		// tree that is one directory holding a million files would otherwise
+		// never reach the check at all, and the two-second bound is what the
+		// menu is waiting on.
+		if seen++; seen%64 == 0 && time.Now().After(deadline) {
+			return errScanBudget
 		}
 		if d.IsDir() {
 			for _, skip := range scanSkipDirs {

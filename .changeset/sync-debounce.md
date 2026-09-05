@@ -1,0 +1,25 @@
+---
+type: fix
+scope: clauderig
+"github.com/rigsmith/rigsmith"
+---
+
+Hook-driven syncs now debounce and take a lock, instead of running at the end of every turn in every chat.
+
+The `Stop` hook fires when a turn ends, and it fired a full sync each time: walk the tree, redact every JSON file, commit, push. Measured on a real machine with **one** conversation open — 37 syncs, a median gap of 163 seconds, and a minimum gap of **7 seconds** — to write one changed file against 3,260 unchanged ones. Several chats at once multiplied that and raced each other on the same git repo.
+
+It applies whenever there is no terminal attached, which is what a hook is. "Typed by hand" is a property of how the command was invoked, not of a flag — and keying it to one would have left every install that already exists thrashing until its owner happened to re-run a command nobody knows they need. `--hook` remains as the explicit form for scripts that want the behaviour with a terminal present.
+
+A run that debounces does two things a bare sync does not. It takes a lock beside the staging repo, so a second sync that starts while one is running steps aside rather than contending — the run already in flight is walking the same tree and will capture the same work. And it skips if a sync completed within `hookIntervalMinutes` (default 5).
+
+`clauderig sync` typed by hand is never debounced and never skipped. Someone asking for a sync now means now.
+
+The interval is a trade and it is worth stating: the last turn before you walk away may not be backed up until something triggers the next sync. That is why the default is five minutes rather than an hour, and why `hookIntervalMinutes: 0` turns the debounce off entirely and restores the old every-turn behaviour.
+
+The key is a pointer internally so that omitting it and writing `0` mean different things — omitted is the default, `0` is off. A plain integer cannot tell someone who wrote zero from someone who wrote nothing, which is exactly the distinction an "off" switch needs.
+
+The last-sync time is read from the journal rather than a stamp file of its own — the journal already records exactly this, is already bounded, and cannot drift from what `clauderig status` reports. Failed syncs do not count toward the interval, so a machine that cannot push is never made to wait before being allowed to try again.
+
+The lock lives beside the repo rather than inside it, so it never shows up as an uncommitted change, and a lock older than twenty minutes is broken and taken: a sync killed mid-run must not stop syncing forever, and two overlapping syncs are something git's own `index.lock` already handles.
+
+`clauderig global install` rewrites the hook to the explicit `clauderig sync --hook`, but existing installs get the debounce either way.

@@ -68,9 +68,18 @@ func TestMenu_WTogglesWatch(t *testing.T) {
 // erroring out. Guards the removal of the old resolvePrimary gate in newUICmd.
 func TestMenu_OpensWithoutAnEcosystem(t *testing.T) {
 	isolateGlobalConfig(t)
-	t.Chdir(t.TempDir())
+	// An actual repo, which is what this test says it is about. The fixture used
+	// to be a bare temp dir and passed anyway, because nothing could tell a
+	// repository with no ecosystem from a directory that was not a repository at
+	// all — which is exactly the confusion that had rig searching home
+	// directories for projects.
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
 
-	m := newMenu()
+	m := buildMenu()
 	if !strings.Contains(m.header, "no recognized ecosystem") {
 		t.Errorf("header = %q, want it to surface the unresolved primary", m.header)
 	}
@@ -90,7 +99,7 @@ func TestMenu_ConfigEntryMirrorsInit(t *testing.T) {
 
 	// No .rig.json yet → init present, config absent.
 	t.Chdir(t.TempDir())
-	m := newMenu()
+	m := buildMenu()
 	if !menuHasVerb(m.top().items, "init") {
 		t.Error("want init offered when no .rig.json exists")
 	}
@@ -104,7 +113,7 @@ func TestMenu_ConfigEntryMirrorsInit(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
-	m = newMenu()
+	m = buildMenu()
 	it := findItem(m.top().items, "config")
 	if it == nil {
 		t.Fatal("want a top-level config entry once .rig.json exists")
@@ -509,5 +518,63 @@ func TestMenu_NextStepHiddenInSubmenu(t *testing.T) {
 	}
 	if got := m.View(); strings.Contains(got, "SHOULD-NOT-APPEAR") {
 		t.Errorf("next-step line must not show in a submenu\n%s", got)
+	}
+}
+
+// A directory that anchors nothing — no .rig.json, no manifest, no .git, all
+// the way up — is not a project, and everything the full menu does next
+// searches for one. Run in a home directory that search is the home directory,
+// which is why bare `rig` there showed nothing at all for a very long time.
+func TestMenu_UnanchoredDirectoryDoesNotSearch(t *testing.T) {
+	isolateGlobalConfig(t)
+	dir := t.TempDir()
+	// A project file deep inside, to prove it is not being looked for. The old
+	// menu walked the tree and would have found this.
+	deep := filepath.Join(dir, "a", "b", "c")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deep, "Thing.csproj"), []byte("<Project/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	m := buildMenu()
+	if !strings.Contains(m.header, "no project here") {
+		t.Errorf("header = %q, want it to say there is no project", m.header)
+	}
+	// Build verbs would have nothing to act on; offering them is how a menu
+	// becomes a list of things that error.
+	for _, verb := range []string{"run", "build", "test"} {
+		if menuHasVerb(m.top().items, verb) {
+			t.Errorf("%q offered in a directory with no project", verb)
+		}
+	}
+	// What is left has to be worth having.
+	if !menuHasVerb(m.top().items, "init") {
+		t.Error("init not offered — it is the one thing that fixes this state")
+	}
+	if m.nextStep == "" {
+		t.Error("no next step — an empty menu with no explanation reads as a failure")
+	}
+}
+
+// newMenu must return without touching the filesystem: it is what bubbletea
+// paints first, and any work done here happens before the banner appears.
+// Discovery is Init's job.
+func TestNewMenu_PaintsBeforeItSearches(t *testing.T) {
+	isolateGlobalConfig(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	m := newMenu()
+	if !m.scanning {
+		t.Fatal("newMenu did the work itself — the banner cannot paint until it finishes")
+	}
+	if v := m.View(); !strings.Contains(v, "looking for a project") {
+		t.Errorf("the scanning view does not say what it is doing:\n%s", v)
+	}
+	if m.Init() == nil {
+		t.Error("Init returns no command, so discovery never runs")
 	}
 }

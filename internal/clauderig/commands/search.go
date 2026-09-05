@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,12 +15,10 @@ import (
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
-	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
-	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
-	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/sessions"
 	"github.com/spf13/cobra"
 )
 
@@ -47,6 +44,7 @@ func NewSearchCmd() *cobra.Command {
 		until         string
 		cwdFilter     string
 		accountFilter string
+		asJSON        bool
 	)
 	cmd := &cobra.Command{
 		Use:     "search <text>",
@@ -87,18 +85,18 @@ func NewSearchCmd() *cobra.Command {
 			}
 			// Flag validation runs before any config or filesystem read, so a bad
 			// --since is one immediate error rather than an error after a scan.
-			sc := sessionScope{caseSensitive: caseSensitive, now: time.Now()}
+			sc := sessions.Scope{CaseSensitive: caseSensitive, Now: time.Now()}
 			var err error
-			if sc.since, err = parseWhen(since, sc.now, false); err != nil {
+			if sc.Since, err = sessions.ParseWhen(since, sc.Now, false); err != nil {
 				return err
 			}
-			if sc.until, err = parseWhen(until, sc.now, true); err != nil {
+			if sc.Until, err = sessions.ParseWhen(until, sc.Now, true); err != nil {
 				return err
 			}
-			if !sc.since.IsZero() && !sc.until.IsZero() && sc.until.Before(sc.since) {
+			if !sc.Since.IsZero() && !sc.Until.IsZero() && sc.Until.Before(sc.Since) {
 				return fmt.Errorf("--until is before --since — nothing can match that window")
 			}
-			sc.cwd = strings.ToLower(strings.TrimSpace(cwdFilter))
+			sc.Cwd = strings.ToLower(strings.TrimSpace(cwdFilter))
 			// Trimmed here, once, so the raw/all guard and the resolver agree.
 			// resolveAccountFilter trims internally, so `--account "  "` used to
 			// resolve to nothing while the guard still saw a non-empty flag —
@@ -108,11 +106,11 @@ func NewSearchCmd() *cobra.Command {
 			// The filters narrow SESSIONS — a date and a project directory are
 			// properties of a session, not of a grep line — so refuse rather than
 			// silently ignore them.
-			// accountFilter, not sc.account: the flag is resolved further down, so
-			// sc.filtering() is still false here when --account is the only one
+			// accountFilter, not sc.Account: the flag is resolved further down, so
+			// sc.Filtering() is still false here when --account is the only one
 			// set — and --account --raw would then sail past this check and
 			// return matches the account filter never touched.
-			if (raw || all) && (sc.filtering() || accountFilter != "") {
+			if (raw || all) && (sc.Filtering() || accountFilter != "") {
 				return fmt.Errorf("--since/--until/--cwd/--account narrow grouped sessions and can't be combined with --raw/--all")
 			}
 
@@ -121,16 +119,16 @@ func NewSearchCmd() *cobra.Command {
 				return err
 			}
 			me := config.Detect(machineName(cfg))
-			targets := buildTargets(cfg, me, liveOnly, repoOnly)
-			sc.me = me.Name
-			sc.liveInScope = !repoOnly
+			targets := sessions.Targets(cfg, me, liveOnly, repoOnly)
+			sc.Me = me.Name
+			sc.LiveInScope = !repoOnly
 			// --live takes the synced repo out of scope, and with it any claim about
 			// other machines: no registry read, no footer.
 			if !liveOnly {
 				var ok bool
-				sc.devices, ok = loadDevices()
-				sc.devicesUnavailable = !ok
-				sc.ledger = loadLedger()
+				sc.Devices, ok = sessions.LoadDevices()
+				sc.DevicesUnavailable = !ok
+				sc.Ledger = sessions.LoadLedger()
 			}
 			// Resolved after the ledger loads, because the ledger is what says
 			// which accounts exist to be named — and --account is meaningless
@@ -143,19 +141,34 @@ func NewSearchCmd() *cobra.Command {
 				if serr != nil {
 					return serr
 				}
-				if sc.account, err = resolveAccountFilter(accountFilter, staging, sc.ledger); err != nil {
+				if sc.Account, err = resolveAccountFilter(accountFilter, staging, sc.Ledger); err != nil {
 					return err
 				}
 			}
 
-			fmt.Fprintf(out, "%s %q\n", HeaderStyle.Render("clauderig search"), query)
+			// --raw and --all emit grep-style lines, which is not a document.
+			// Refused rather than silently honoured: a consumer that asked for
+			// JSON and got text has no way to tell that is what happened.
+			if asJSON && (raw || all) {
+				which := "--raw"
+				if all {
+					which = "--all"
+				}
+				return fmt.Errorf("--json groups by session, which %s does not — pick one", which)
+			}
+
+			// Under --json, stdout carries the document and nothing else — a
+			// banner ahead of it breaks every consumer that pipes this.
+			if !asJSON {
+				fmt.Fprintf(out, "%s %q\n", HeaderStyle.Render("clauderig search"), query)
+			}
 
 			// --all can't be session-grouped (config/file-history aren't sessions), so
 			// it falls back to raw line output.
 			if raw || all {
 				return runRawSearch(cmd, targets, query, caseSensitive, all, sc)
 			}
-			return runSessionSearch(cmd, cfg, me, targets, query, sc, liveOnly, repoOnly)
+			return runSessionSearch(cmd, cfg, me, targets, query, sc, liveOnly, repoOnly, asJSON)
 		},
 	}
 	cmd.Flags().BoolVarP(&caseSensitive, "case-sensitive", "s", false, "match case exactly (default: case-insensitive)")
@@ -167,6 +180,7 @@ func NewSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&until, "until", "", "only sessions last used on/before this day, timestamp, or age (7d)")
 	cmd.Flags().StringVar(&cwdFilter, "cwd", "", "only sessions whose project directory contains this text")
 	cmd.Flags().StringVar(&accountFilter, "account", "", "only sessions belonging to this account (alias, email, or accountUuid prefix); reads the synced ledger, so not with --live")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit matching sessions as JSON (implies grouped sessions, not --raw)")
 	return cmd
 }
 
@@ -253,32 +267,13 @@ func (r *sessResult) activity() session.Activity {
 	return r.act
 }
 
-// sessionTime ranks three answers by trust: the transcript's own last record,
-// then the Desktop sidecar, then mtime. The transcript leads because it is the
-// only one a copy cannot move; the sidecar still beats mtime for a transcript
-// that cannot answer at all.
-func sessionTime(r *sessResult) time.Time {
-	if a := r.activity(); !a.At.IsZero() {
-		return a.At
-	}
-	if !r.meta.LastActivity.IsZero() {
-		return r.meta.LastActivity
-	}
-	if r.path != "" {
-		if info, err := os.Stat(r.path); err == nil {
-			return info.ModTime().UTC()
-		}
-	}
-	return time.Time{}
-}
-
 // Target labels. cli is the live ~/.claude root (the only one `claude --resume`
 // reads); desktop is the Claude Desktop app-support tree (cowork transcripts);
 // repo is the synced staging copy.
 const (
-	cliTarget     = "cli"
-	desktopTarget = "desktop"
-	repoTarget    = "repo"
+	cliTarget     = sessions.CLISource
+	desktopTarget = sessions.DesktopSource
+	repoTarget    = sessions.RepoSource
 )
 
 // chatHitKey identifies a transcript line independent of which copy it was found
@@ -300,19 +295,19 @@ func chatHitKey(rel string, line int) string {
 // runSessionSearch is the default mode: content + title search grouped into named
 // sessions, ranked by relevance (title hit, then match count, then recency), each
 // with a resume command.
-func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine, targets []search.Target, query string, sc sessionScope, liveOnly, repoOnly bool) error {
-	roots := sessionRoots(cfg, me, liveOnly, repoOnly)
-	return searchSessions(cmd.OutOrStdout(), cmd.ErrOrStderr(), me, targets, roots, query, sc)
+func runSessionSearch(cmd *cobra.Command, cfg *config.Config, me config.Machine, targets []search.Target, query string, sc sessions.Scope, liveOnly, repoOnly, asJSON bool) error {
+	roots := sessions.Roots(cfg, me, liveOnly, repoOnly)
+	return searchSessions(cmd.OutOrStdout(), cmd.ErrOrStderr(), me, targets, roots, query, sc, asJSON)
 }
 
 // searchSessions is the grouped-session search, decoupled from cobra/config for
 // testing: it takes explicit search targets and sidecar roots and writes to out
 // (results) and errw (progress + warnings).
-func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, query string, sc sessionScope) error {
-	caseSensitive := sc.caseSensitive
+func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, query string, sc sessions.Scope, asJSON bool) error {
+	caseSensitive := sc.CaseSensitive
 	idx := session.Build(roots)
-	byAcct, acctComplete := profileByAccount()
-	reprofile(idx, byAcct, acctComplete)
+	byAcct, acctComplete := sessions.ProfileByAccount()
+	sessions.Reprofile(idx, byAcct, acctComplete)
 
 	hits := map[string]*sessResult{}
 	get := func(id string) *sessResult {
@@ -359,7 +354,7 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	// Ledger title matches: a session sync recorded, whose transcript may since have
 	// aged out of the window. Only the title is searchable for those — the body
 	// isn't here to scan — so this cannot be folded into the content pass above.
-	for id, e := range sc.ledger {
+	for id, e := range sc.Ledger {
 		r := hits[id]
 		if r == nil {
 			hay := e.Title
@@ -378,10 +373,10 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	// A session is resumable here iff a transcript for it lives in the live CLI root
 	// — even a title-only match (query not in the body) is resumable if its
 	// transcript exists there, so track presence independently of content hits.
-	livePaths := transcriptPaths(targets, cliTarget)
+	livePaths := sessions.TranscriptPaths(targets, cliTarget)
 	// Repo paths matter for the ledger too: a session whose body sits unmatched in
 	// the synced repo is present, not aged out, and must not be told it is gone.
-	repoPaths := transcriptPaths(targets, repoTarget)
+	repoPaths := sessions.TranscriptPaths(targets, repoTarget)
 
 	results := make([]*sessResult, 0, len(hits))
 	var hidden, undated, unattributed int
@@ -396,7 +391,7 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 				r.path = p
 			}
 		}
-		r.when = sessionTime(r)
+		r.when = sessions.SessionTime(r.activity(), r.meta, r.path)
 		r.cwd = resolveCwd(me, r)
 		_, inLive := livePaths[r.id]
 		_, inRepo := repoPaths[r.id]
@@ -410,15 +405,15 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 				r.when = r.led.End
 			}
 			if r.cwd == "" && r.led.Cwd != "" {
-				r.cwd = resolvePath(me, r.led.Cwd)
+				r.cwd = sessions.ResolvePath(me, r.led.Cwd)
 			}
 		}
-		if keep, why := sc.keep(r); !keep {
+		if keep, why := sc.Keep(r.when, r.cwd, r.led.Account); !keep {
 			hidden++
 			switch why {
-			case droppedUndated:
+			case sessions.DroppedUndated:
 				undated++
-			case droppedUnattributed:
+			case sessions.DroppedUnattributed:
 				unattributed++
 			}
 			continue
@@ -439,6 +434,10 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 		return a.when.After(b.when)
 	})
 
+	if asJSON {
+		return emitSearchJSON(out, me, query, results, stats.FilesScanned, stats.FilesSkipped)
+	}
+
 	for _, r := range results {
 		renderSession(out, me, r)
 	}
@@ -451,7 +450,7 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 			// when --account did the excluding sends the user to widen the wrong
 			// flag, and --account is the one whose exclusions are least visible.
 			fmt.Fprintf(out, "%s\n", DimStyle.Render(
-				"(every match was excluded by "+strings.Join(sc.activeFilters(), "/")+" — widen them)"))
+				"(every match was excluded by "+strings.Join(sc.ActiveFilters(), "/")+" — widen them)"))
 		}
 		fmt.Fprintln(out, DimStyle.Render("(try --raw for line-level hits, or --all to include config/file-history)"))
 		fmt.Fprintln(out, DimStyle.Render("(Desktop 'Chat' tab chats are server-side and never appear here — check claude.ai)"))
@@ -484,6 +483,26 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	return nil
 }
 
+// sessionTitle walks the title ladder: the Desktop sidecar's own title, the
+// session's first prompt, then the ledger's copy of it — which is the only one
+// left once a transcript has aged out of the synced window. One resolver for
+// both output paths, because the JSON had its own shorter ladder and a
+// ledger-only session came back untitled there while the styled output named it.
+func sessionTitle(r *sessResult) string {
+	if r.meta.Title != "" {
+		return r.meta.Title
+	}
+	if r.path != "" {
+		if t := session.FirstPrompt(r.path); t != "" {
+			return t
+		}
+	}
+	if r.hasLed {
+		return r.led.Title
+	}
+	return ""
+}
+
 // renderSession prints one grouped SEARCH result: title, id/date/model/project/
 // source line, why it matched, the resume command, and a preview snippet when
 // there was a content hit.
@@ -498,13 +517,7 @@ func renderSession(out interface{ Write([]byte) (int, error) }, me config.Machin
 // renderSessionAs is renderSession with the match explanation supplied by the
 // caller. An empty why omits that column, for a listing that ran no query.
 func renderSessionAs(out interface{ Write([]byte) (int, error) }, me config.Machine, r *sessResult, why string) {
-	title := r.meta.Title
-	if title == "" && r.path != "" {
-		title = session.FirstPrompt(r.path)
-	}
-	if title == "" && r.hasLed {
-		title = r.led.Title
-	}
+	title := sessionTitle(r)
 	if title == "" {
 		title = "(untitled session)"
 	}
@@ -675,59 +688,6 @@ func resumeHint(r *sessResult, cwd string) string {
 	}
 }
 
-// transcriptPaths maps session id to a transcript path under the target with this
-// label, enumerating filenames only (no content read) — cheap even on the whole
-// synced tree.
-//
-// The path matters beyond mere presence. A title-only match never records a hit,
-// so without a path such a session has no file to take its date, cwd or fallback
-// title from: a time filter would drop it as undated, and `--cwd` as pathless,
-// with its transcript sitting right there.
-func transcriptPaths(targets []search.Target, label string) map[string]string {
-	paths := map[string]string{}
-	for _, t := range targets {
-		if t.Label != label || t.Dir == "" {
-			continue
-		}
-		filepath.WalkDir(t.Dir, func(p string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
-			}
-			rel, rerr := filepath.Rel(t.Dir, p)
-			if rerr != nil {
-				return nil
-			}
-			rel = filepath.ToSlash(rel)
-			if !strings.HasSuffix(rel, ".jsonl") || !isSessionTranscriptRel(rel) {
-				return nil
-			}
-			if id := session.IDFromTranscriptRel(rel); id != "" {
-				if _, seen := paths[id]; !seen {
-					paths[id] = p
-				}
-			}
-			return nil
-		})
-	}
-	return paths
-}
-
-// isSessionTranscriptRel reports whether rel names a session's OWN transcript,
-// projects/<slug>/<id>.jsonl, rather than a subagent file nested under it — those
-// resolve to the same session id and are not what a date or a fallback title
-// should come from.
-//
-// Measured from the "projects/" segment, never by counting slashes from the
-// target root: the live root's paths start at projects/, the synced repo's start
-// at cli/projects/, and a fixed depth silently matches nothing in the repo.
-func isSessionTranscriptRel(rel string) bool {
-	i := strings.Index(rel, "projects/")
-	if i < 0 {
-		return false
-	}
-	return strings.Count(rel[i+len("projects/"):], "/") == 1
-}
-
 // shQuote renders s as a single POSIX shell word (bash/zsh — the mac/Linux shells
 // this resume line targets), single-quoting anything with whitespace or shell
 // metacharacters so paths with spaces and any injected characters stay literal.
@@ -741,28 +701,10 @@ func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// resolvePath maps a path recorded on some machine onto this one, falling back
-// to the literal path when it maps nowhere (a project this machine has never
-// had). Shared by the sidecar cwd and the ledger's.
-func resolvePath(me config.Machine, p string) string {
-	if res := me.Resolver().Resolve(p); res.Path != "" {
-		return res.Path
-	}
-	return p
-}
-
 // resolveCwd returns a usable working directory for the session: the sidecar cwd
 // resolved for this machine, or the transcript's recorded cwd as a fallback.
 func resolveCwd(me config.Machine, r *sessResult) string {
-	if r.meta.Cwd != "" {
-		return resolvePath(me, r.meta.Cwd)
-	}
-	if r.path != "" {
-		if cwd, ok, _ := project.CwdFromTranscript(r.path); ok {
-			return cwd
-		}
-	}
-	return ""
+	return sessions.ResolveCwd(me, r.meta, r.path)
 }
 
 // sessionDate is the session's last-used day, from the precomputed recency time
@@ -799,128 +741,18 @@ func sourceLabel(r *sessResult) string {
 	return strings.Join(labels, "+")
 }
 
-// clientLabel renders an entrypoint as the app a person would name: vscode,
-// desktop, cli, sdk-cs. The sdk-* variants keep their language, which is worth
-// telling apart when hunting a session.
-//
-// Distinct from sourceLabel despite both saying "desktop": that reports which
-// STORE a transcript was found in, this which CLIENT wrote it.
-func clientLabel(entrypoint string) string {
-	return strings.TrimPrefix(entrypoint, "claude-")
-}
-
-// profileByAccount maps accountUuid to Desktop profile name via the clauderig
-// account each profile is linked to. An empty NAME marks an account two profiles
-// both claim.
-//
-// complete reports that every profile resolved. Linking a profile to an account
-// is optional, so without it an account missing from the map does not mean "no
-// profile owns this" — and reprofile must not act as though it did.
-func profileByAccount() (byAccount map[string]string, complete bool) {
-	st, err := desktop.DefaultStore()
-	if err != nil {
-		return nil, false
-	}
-	profiles, err := st.List()
-	if err != nil || len(profiles) == 0 {
-		return nil, false
-	}
-	as, err := account.DefaultStore()
-	if err != nil {
-		return nil, false
-	}
-	accounts, err := as.List()
-	if err != nil {
-		return nil, false
-	}
-	uuidByID := map[string]string{}
-	for _, a := range accounts {
-		uuid := strings.ToLower(a.AccountUUID)
-		if uuid == "" {
-			// meta.json carries the uuid only for accounts captured after that
-			// field existed. Without this fallback the map comes back empty for
-			// older accounts, and does so silently.
-			if raw, oerr := as.OAuth(a.ID); oerr == nil {
-				uuid = account.ProfileAccountUUID(raw)
-			}
-		}
-		if uuid != "" {
-			uuidByID[a.ID] = uuid
-		}
-	}
-	out := map[string]string{}
-	complete = true
-	for _, p := range profiles {
-		uuid := uuidByID[p.AccountID]
-		if uuid == "" {
-			complete = false // unlinked profile: its sessions are unresolvable here
-			continue
-		}
-		// Two profiles on one account would make the label a coin flip.
-		if prev, dup := out[uuid]; dup && prev != p.Name {
-			out[uuid] = ""
-			continue
-		}
-		out[uuid] = p.Name
-	}
-	return out, complete
-}
-
-// reprofile takes each session's owning profile from the account its sidecar is
-// filed under rather than from the tree it was found in. A sidecar copied
-// between installs keeps its account path but lands in the other profile's
-// directory, so the tree is not ownership.
-//
-// complete gates the one case that removes information: an account absent from a
-// COMPLETE map belongs to no profile, so a label on it came from a stray copy.
-// Absent from a partial map means only that we cannot tell, and the tree stands.
-func reprofile(idx session.Index, byAccount map[string]string, complete bool) {
-	if len(byAccount) == 0 {
-		return
-	}
-	for id, m := range idx {
-		if m.Account == "" {
-			continue
-		}
-		name, known := byAccount[strings.ToLower(m.Account)]
-		switch {
-		case known:
-			// Includes the empty name two profiles share: a label nobody can
-			// justify is worse than none, since it decides where the user is sent.
-			m.Profile = name
-		case complete:
-			m.Profile = ""
-		default:
-			continue
-		}
-		idx[session.CanonicalID(id)] = m
-	}
-}
-
 // clientWithProfile qualifies the client with the Desktop profile that owns the
 // session: "desktop@work" rather than a bare "desktop". Several Desktop installs
 // can share a machine and all write entrypoint "claude-desktop", so the
 // entrypoint alone does not say which app to open.
 func clientWithProfile(r *sessResult) string {
-	c := clientLabel(r.activity().Entrypoint)
-	if r.meta.Profile == "" {
-		return c
-	}
-	if c == "" {
-		// No readable transcript, but the sidecar still says which Desktop filed
-		// it — the useful half.
-		return desktopTarget + "@" + r.meta.Profile
-	}
-	return c + "@" + r.meta.Profile
+	return sessions.ClientWithProfile(sessions.ClientLabel(r.activity().Entrypoint), r.meta.Profile)
 }
 
 // sessionBranch is the branch a session ended on, or "" when it names nothing.
 // "HEAD" is what a detached checkout or a non-repo cwd records.
 func sessionBranch(r *sessResult) string {
-	if b := r.activity().GitBranch; b != "HEAD" {
-		return b
-	}
-	return ""
+	return sessions.Branch(r.activity())
 }
 
 func shortID(id string) string {
@@ -934,7 +766,7 @@ func shortID(id string) string {
 }
 
 // runRawSearch is the grep-style path (--raw / --all): line hits grouped by file.
-func runRawSearch(cmd *cobra.Command, targets []search.Target, query string, caseSensitive, all bool, sc sessionScope) error {
+func runRawSearch(cmd *cobra.Command, targets []search.Target, query string, caseSensitive, all bool, sc sessions.Scope) error {
 	out := cmd.OutOrStdout()
 	lastFile := ""
 	matchedFiles := map[string]bool{}
@@ -970,64 +802,6 @@ func runRawSearch(cmd *cobra.Command, targets []search.Target, query string, cas
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s\n", WarnStyle.Render("some files could not be read: "+serr.Error()))
 	}
 	return nil
-}
-
-// buildTargets resolves which roots to scan. Default is live roots + the synced
-// repo; --live and --repo narrow it. Absent roots are dropped by the search.
-func buildTargets(cfg *config.Config, me config.Machine, liveOnly, repoOnly bool) []search.Target {
-	var targets []search.Target
-	if !repoOnly {
-		for _, r := range cfg.Roots {
-			if !r.Enabled {
-				continue
-			}
-			if loc, _ := cfg.RootLocation(r.ID, me); loc != "" {
-				targets = append(targets, search.Target{Label: r.ID, Dir: loc})
-			}
-		}
-	}
-	if !liveOnly {
-		if staging, err := config.StagingDir(); err == nil {
-			targets = append(targets, search.Target{Label: "repo", Dir: staging})
-		}
-	}
-	return targets
-}
-
-// sessionRoots is where session.Build looks for Desktop sidecars.
-//
-// Plural because every clauderig-managed Desktop profile is a separate install
-// with its own session list; only the machine-wide one lives at the configured
-// `desktop` root. Scanning that alone leaves profile-run sessions with no title
-// and no way to tell which install owns them. The staged side is enumerated the
-// same way, so profiles that exist only on another machine are covered too.
-func sessionRoots(cfg *config.Config, me config.Machine, liveOnly, repoOnly bool) []session.Root {
-	var roots []session.Root
-	if !repoOnly {
-		if loc, _ := cfg.RootLocation("desktop", me); loc != "" {
-			roots = append(roots, session.Root{Label: desktopTarget, Base: loc})
-		}
-		if store, err := desktop.DefaultStore(); err == nil {
-			profiles, _ := store.List() // absent store → no profiles, not an error
-			for _, p := range profiles {
-				roots = append(roots, session.Root{
-					Label: desktopTarget, Base: p.DataDir(), Profile: p.Name})
-			}
-		}
-	}
-	if !liveOnly {
-		if staging, err := config.StagingDir(); err == nil {
-			roots = append(roots, session.Root{Label: repoTarget, Base: filepath.Join(staging, "desktop")})
-			// Shared with `restore` rather than re-scanned here: one definition
-			// of which profiles are staged, and it validates the name before it
-			// becomes a path.
-			for _, name := range engine.StagedProfileNames(staging) {
-				roots = append(roots, session.Root{
-					Label: repoTarget, Base: engine.StagedProfileDataDir(staging, name), Profile: name})
-			}
-		}
-	}
-	return roots
 }
 
 // progressReporter returns a live status callback for search.Options.Progress and

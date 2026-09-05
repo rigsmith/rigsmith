@@ -70,11 +70,16 @@ the same in the gitignored `.claude/settings.local.json`). See
 | Command | What |
 |---|---|
 | `init` | First-run wizard: remote (private), machine identity, roots, hooks |
-| `sync` | Walk → redact → manifest → tripwire → commit → push (`--dry-run`; `--flush` restages the ended session's large transcript past the throttle — the SessionEnd hook's job — or every changed transcript when run by hand) |
+| `sync` | Walk → redact → manifest → tripwire → commit → push. `--dry-run`; `--hook` debounces and takes the lock, for the Stop hook that fires every turn; `--flush` restages the ended session's large transcript past the throttle — the SessionEnd hook's job — or every changed transcript when run by hand |
 | `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
 | `status` | Sync state: remote, last sync, roots, hooks |
+| `merge` | Reconcile a diverged staging repo using clauderig's merge policies; `--abort` backs one out, `--json` emits the resolution ledger |
+| `peek` | Read another machine's sessions straight from the remote without merging: `peek list`, `peek show <id>`, `peek materialize <id>` |
+| `device` | Inspect and clean up the synced device registry: `device list`, `device remove <name>` |
+| `repo` | Repo size, files, commits and history-vs-content ratio; `repo gc` repacks (no history lost), `repo prune --before 2026-08-01` folds older history into one commit |
 | `mv` | Move/rename a directory and relink its Claude history (slug dirs + transcript cwds + Desktop/settings paths); guards live sessions; `-n`/`--dry-run` previews |
+| `reroot` | Re-file one session under a directory you name (`-n`/`--dry-run` previews) |
 | `global` | `install` / `uninstall` / `status` the global sync hooks in ~/.claude (alias: `hooks`) |
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |

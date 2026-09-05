@@ -39,6 +39,18 @@ type Meta struct {
 	// for the machine-wide one. The only thing that says which Desktop to reopen
 	// a session in — its transcript lands in the shared tree either way.
 	Profile string
+	// Sidecars are every sidecar file found for this session, with the store
+	// each was found in. A session filed by two Desktop installs has two, and a
+	// caller deleting it has to remove all of them — the display fields below
+	// come from whichever was fresher, which says nothing about where the files
+	// actually are.
+	Sidecars []SidecarRef
+}
+
+// SidecarRef is one Desktop sidecar file and which store holds it.
+type SidecarRef struct {
+	Label string // the Root label it was scanned under: "desktop" or "repo"
+	Path  string
 }
 
 // Index maps cliSessionId → Meta.
@@ -147,8 +159,13 @@ func scanSidecars(idx Index, dir, label, profile string) {
 		if sc.LastActivityAt > 0 {
 			m.LastActivity = time.UnixMilli(sc.LastActivityAt).UTC()
 		}
+		m.Sidecars = []SidecarRef{{Label: label, Path: p}}
 		if prev, ok := idx[m.ID]; ok {
 			sources := appendUnique(prev.Sources, label)
+			// Unioned for the same reason as Sources, and kept out of the
+			// fresher-wins swap below: every copy's path has to survive, or a
+			// delete silently leaves one behind.
+			sidecars := appendSidecar(prev.Sidecars, SidecarRef{Label: label, Path: p})
 			// Ownership is settled BEFORE the fresher-sidecar swap. Only one copy
 			// can name a profile, and reading it off the survivor loses it whenever
 			// the survivor is the machine-wide one — the common case, since that
@@ -173,6 +190,7 @@ func scanSidecars(idx Index, dir, label, profile string) {
 				m = prev
 			}
 			m.Sources = sources
+			m.Sidecars = sidecars
 			m.Profile, m.Account = profile, acct
 		} else {
 			m.Sources = []string{label}
@@ -226,14 +244,25 @@ func IsConversationLine(line string) bool {
 	return rec.Type == "user" || rec.Type == "assistant"
 }
 
-// maxHeaderLines bounds the fallback-title scan. The first human prompt is near
-// the top of a transcript but not always at it: a session that opens with a long
-// injected preamble (skill listings, a pasted file, a resumed summary) can push
-// it well past the first few records. Measured over 569 real transcripts, raising
-// this from 60 to 250 took titleless sessions from 53 to 29 and cost nothing
-// measurable — the whole walk went 433ms to 385ms, inside the noise, because the
-// scan stops at the first usable prompt and only the titleless ones read on.
-const maxHeaderLines = 250
+// The fallback-title scan is bounded two ways, because the two things worth
+// bounding are different.
+//
+// maxScanLines caps the work: a transcript body runs to megabytes and must
+// never be parsed whole just to find a title.
+//
+// maxUserRecords is what actually decides when to give up, and it counts
+// *candidates* — user records carrying real text. A line budget alone was too
+// blunt: Claude Code's header carries queue-operations, IDE-state records,
+// attachments and file-history snapshots, and a thick preamble burns 60 lines
+// before the human says anything. Counting every "user" record was still wrong,
+// because tool results are recorded as user records too and would spend the
+// budget on plumbing. On real data these two changes took untitled sessions
+// from 46 to 20 out of 410 — and the 20 that remain genuinely contain no typed
+// human message at all.
+const (
+	maxScanLines   = 4000
+	maxUserRecords = 25
+)
 
 // FirstPrompt derives a short title from a transcript's first genuine human
 // message, for a session with no Desktop sidecar. It skips tool/DOM/system noise
@@ -247,12 +276,14 @@ func FirstPrompt(path string) string {
 	return FirstPromptFrom(f)
 }
 
-// FirstPromptFrom is FirstPrompt over an already-open stream, for a transcript
-// that isn't a file on disk — a blob read out of git history, say.
+// FirstPromptFrom is FirstPrompt over an already-open transcript. `peek` reads
+// transcripts out of git blobs rather than the filesystem — they belong to
+// another machine and were never written here — so it needs the reader form.
 func FirstPromptFrom(r io.Reader) string {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 8<<20) // headers are small; cap guards a pathological line
-	for line := 0; line < maxHeaderLines && sc.Scan(); line++ {
+	sc.Buffer(make([]byte, 0, 64*1024), 8<<20) // cap guards a pathological line
+	seenUser := 0
+	for line := 0; line < maxScanLines && seenUser < maxUserRecords && sc.Scan(); line++ {
 		var rec struct {
 			Type    string `json:"type"`
 			Message struct {
@@ -262,20 +293,89 @@ func FirstPromptFrom(r io.Reader) string {
 		if json.Unmarshal(sc.Bytes(), &rec) != nil || rec.Type != "user" {
 			continue
 		}
-		text := strings.TrimSpace(textOf(rec.Message.Content))
-		if text == "" || strings.HasPrefix(text, "<") || strings.HasPrefix(text, "Caveat:") ||
-			strings.Contains(text, "DOM Probe") || strings.HasPrefix(text, "[Request interrupted") {
+		text, hasText := PromptCandidate(rec.Message.Content)
+		// Only a record carrying real text is a candidate. Tool results are
+		// also recorded as "user" records but hold tool_result blocks, so
+		// textOf yields nothing for them — counting those against the budget
+		// spent it on plumbing before reaching anything a person typed.
+		if hasText {
+			seenUser++
+		}
+		if !hasText || !IsHumanPrompt(text) {
 			continue
 		}
-		text = strings.ReplaceAll(text, "\n", " ")
-		// Truncate by runes, not bytes — a byte cut can split a multibyte character
-		// and yield an invalid-UTF-8 title.
-		if utf8.RuneCountInString(text) > 70 {
-			text = string([]rune(text)[:70]) + "…"
-		}
-		return text
+		return TidyPrompt(text)
 	}
 	return ""
+}
+
+// PromptCandidate pulls the trimmed text out of a user record's content and
+// reports whether there was any. False means the record carries no text at all
+// — a tool result, an attachment — as opposed to text that turned out to be
+// machine-written, which is [IsHumanPrompt]'s question.
+func PromptCandidate(raw json.RawMessage) (text string, hasText bool) {
+	text = strings.TrimSpace(textOf(raw))
+	return text, text != ""
+}
+
+// IsHumanPrompt reports whether text a "user" record carries was actually typed
+// by a person. Claude Code files several kinds of injected message under the
+// same record type: IDE state and DOM probes (angle-bracket tags), the caveat
+// prepended to a resumed session, and the marker left when a turn is
+// interrupted. None of them is something the user said, and any of them read as
+// a session's title or its last words would be actively misleading.
+//
+// Shared by [FirstPromptFrom] and the tail scan behind [Activity.LastPrompt] so
+// the first and last prompt of a session can never disagree about what counts.
+func IsHumanPrompt(text string) bool {
+	if text == "" {
+		return false
+	}
+	return !strings.HasPrefix(text, "<") && !strings.HasPrefix(text, "Caveat:") &&
+		!strings.Contains(text, "DOM Probe") && !strings.HasPrefix(text, "[Request interrupted")
+}
+
+// TidyPrompt flattens a prompt to one line and bounds its length, so a
+// multi-line paste renders as a title rather than reflowing the whole list.
+func TidyPrompt(text string) string {
+	text = strings.ReplaceAll(text, "\n", " ")
+	// Truncate by runes, not bytes — a byte cut can split a multibyte character
+	// and yield an invalid-UTF-8 title.
+	if utf8.RuneCountInString(text) > 70 {
+		text = string([]rune(text)[:70]) + "…"
+	}
+	return text
+}
+
+// MessageText decodes one transcript line into its speaker and plain text.
+// ok is false for records that carry no readable message — tool plumbing,
+// harness bookkeeping, anything unparseable — so a caller rendering a
+// conversation can simply skip them.
+//
+// `peek show` uses this to print a readable conversation instead of raw JSONL.
+func MessageText(line string) (role, text string, ok bool) {
+	var rec struct {
+		Type    string `json:"type"`
+		Message struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal([]byte(line), &rec) != nil {
+		return "", "", false
+	}
+	if rec.Type != "user" && rec.Type != "assistant" {
+		return "", "", false
+	}
+	role = rec.Message.Role
+	if role == "" {
+		role = rec.Type
+	}
+	text = strings.TrimSpace(textOf(rec.Message.Content))
+	if text == "" {
+		return "", "", false
+	}
+	return role, text, true
 }
 
 // textOf pulls the plain text out of a user message's content, which Claude Code
@@ -302,6 +402,17 @@ func textOf(raw json.RawMessage) string {
 		return b.String()
 	}
 	return ""
+}
+
+// appendSidecar adds a sidecar reference unless that exact file is already
+// recorded — the same tree can be scanned under more than one root.
+func appendSidecar(xs []SidecarRef, x SidecarRef) []SidecarRef {
+	for _, e := range xs {
+		if e.Path == x.Path {
+			return xs
+		}
+	}
+	return append(append([]SidecarRef(nil), xs...), x)
 }
 
 func appendUnique(xs []string, x string) []string {

@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/confkit"
 	"github.com/rigsmith/rigsmith/core/jsonc"
@@ -80,6 +82,56 @@ type Retention struct {
 	// change). It bounds how many near-identical blobs a long session leaves in
 	// history without delaying small sessions at all.
 	LargeFileBytes int64 `json:"largeFileBytes,omitempty"`
+	// SquashKeepDays is how many whole days of sync history the automatic squash
+	// leaves standing. 0 means the default (DefaultSquashKeepDays).
+	//
+	// The squash used to collapse everything to a single commit, so the moment
+	// it fired became the beginning of recorded history — at whatever o'clock
+	// that happened to be. Keeping a week means there is still something to read
+	// afterwards, and cutting on a day boundary means the answer to "how far
+	// back do I go" is a date rather than a timestamp.
+	SquashKeepDays int `json:"squashKeepDays,omitempty"`
+}
+
+// HookInterval is HookIntervalMinutes as a duration: unset means the default,
+// 0 means no debounce at all. A negative value is read as 0 rather than
+// rejected — someone who wrote -1 meant "off", and refusing to sync over a sign
+// would be a poor way to tell them.
+func (c *Config) HookInterval() time.Duration {
+	if c.HookIntervalMinutes == nil {
+		return DefaultHookInterval
+	}
+	if *c.HookIntervalMinutes <= 0 {
+		return 0
+	}
+	return time.Duration(*c.HookIntervalMinutes) * time.Minute
+}
+
+// DefaultHookIntervalMinutes is the debounce applied to hook-driven syncs when
+// the config does not say otherwise.
+const DefaultHookIntervalMinutes = 5
+
+// DefaultHookInterval is DefaultHookIntervalMinutes as a duration.
+const DefaultHookInterval = DefaultHookIntervalMinutes * time.Minute
+
+// DefaultSquashKeepDays is the history the automatic squash retains when the
+// config does not say.
+//
+// Generous on purpose. Once loose objects are packed before the size is judged,
+// the squash almost never fires — a repo whose .git looked like 2.9 GB was 559
+// MB of actual history against a 3.2 GB threshold — so when it does fire the
+// right instinct is to keep a month rather than to cut to the bone. If a month
+// is not enough relief, nothing is folded again and the ratio simply stays
+// visible, which is a better outcome than a tool quietly eating history until
+// the number looks nice.
+const DefaultSquashKeepDays = 30
+
+// KeepDays is SquashKeepDays with the default applied.
+func (r Retention) KeepDays() int {
+	if r.SquashKeepDays <= 0 {
+		return DefaultSquashKeepDays
+	}
+	return r.SquashKeepDays
 }
 
 // Root is a sync root: an id, whether it's enabled, and its per-OS location as a
@@ -101,6 +153,31 @@ type Config struct {
 	// agents/plans deleted upstream) by default, as if --prune were passed.
 	// `restore --prune=false` overrides it for a single run.
 	AlwaysPrune bool `json:"alwaysPrune,omitempty"`
+	// HookIntervalMinutes is how long a hook-driven sync waits before doing the
+	// work again. The Stop hook fires at the end of every turn in every chat, so
+	// several open conversations meant the same tree walked, redacted and pushed
+	// several times a minute to write one changed file.
+	//
+	// Minutes because that is the unit the decision is made in — "sync at most
+	// every few minutes" — and seconds invited a number precise enough to imply
+	// a control this does not have.
+	//
+	// 0 turns the debounce off and syncs on every turn, which is what happened
+	// before this existed. A POINTER because "0" and "absent" have to mean
+	// different things: unset is the default interval, and a plain int cannot
+	// tell someone who wrote 0 from someone who wrote nothing.
+	//
+	// Only hook-driven runs are affected — `clauderig sync` typed by hand always
+	// does the work.
+	HookIntervalMinutes *int `json:"hookIntervalMinutes,omitempty"`
+	// RedactTranscripts scrubs credential-shaped tokens out of the STAGED copy of
+	// a transcript before it is committed. The live ~/.claude file is never
+	// touched — clauderig backs your machine up, it does not edit it — so the
+	// secret stays where you left it and simply stops leaving the machine.
+	//
+	// Off by default. It rewrites the middle of a conversation, which is a thing
+	// a backup tool should do only because you asked it to.
+	RedactTranscripts bool `json:"redactTranscripts,omitempty"`
 	// AutoRestore makes the SessionStart hook (`clauderig pull`) also restore on a
 	// FRESH machine (no projects yet) — auto-wiring a new computer. It deliberately
 	// never restores over an established machine (would churn/clobber).
@@ -153,6 +230,58 @@ func (r Root) ResolveOn(m Machine) (string, pathmap.Status) {
 func Detect(name string) Machine {
 	home, _ := os.UserHomeDir()
 	return Machine{Name: name, OS: OSToken(), Home: home}
+}
+
+// DetectFor builds a Machine for this host, named by ResolveName — the form
+// every caller wants, and the one that keeps the CLI and the UI agreeing about
+// which registry entry is "this machine".
+func DetectFor(cfg *Config) Machine { return Detect(ResolveName(cfg)) }
+
+// UnresolvedName is the placeholder used when this machine has no stable
+// identity — no matching config entry and no usable hostname.
+//
+// It is load-bearing history: a hostname that failed to resolve once registered
+// a ghost device literally named "this", which sat in the synced registry from
+// June 2026 until it was removed by hand on 2026-08-07. Display paths still
+// need *some* name, so the placeholder stays — but anything that *writes* an
+// identity must check IdentityResolved first and decline.
+const UnresolvedName = "this"
+
+// ResolveName picks this machine's name: an existing config entry matching this
+// OS+home, else the hostname, else UnresolvedName.
+func ResolveName(cfg *Config) string {
+	name, _ := resolveName(cfg)
+	return name
+}
+
+// IdentityResolved reports whether this machine has a real, stable identity —
+// false when ResolveName fell all the way through to UnresolvedName.
+//
+// Registration is gated on this: writing a placeholder into the synced device
+// registry creates a ghost every other machine then has to look at.
+func IdentityResolved(cfg *Config) bool {
+	_, ok := resolveName(cfg)
+	return ok
+}
+
+func resolveName(cfg *Config) (string, bool) {
+	localOS := OSToken()
+	home, _ := os.UserHomeDir()
+
+	names := make([]string, 0, len(cfg.Machines))
+	for name := range cfg.Machines {
+		names = append(names, name)
+	}
+	sort.Strings(names) // deterministic order if several entries somehow match
+	for _, name := range names {
+		if m := cfg.Machines[name]; m.OS == localOS && m.Home == home {
+			return name, true
+		}
+	}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return host, true
+	}
+	return UnresolvedName, false
 }
 
 // OSToken maps runtime.GOOS to the pathmap OS token.

@@ -368,3 +368,45 @@ func TestLogRange(t *testing.T) {
 		t.Fatal("LogRange accepted a base git does not have")
 	}
 }
+
+// DirtyExcluding lets a caller keep bookkeeping subtrees out of the "is there
+// unfinished work" question, without going blind to real changes beside them.
+func TestDirtyExcluding(t *testing.T) {
+	ctx := context.Background()
+	r, err := Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, r.Dir, "tracked.txt", "base\n")
+	if _, err := r.Commit(ctx, "base"); err != nil {
+		t.Fatal(err)
+	}
+
+	if dirty, err := r.Dirty(ctx); err != nil || dirty {
+		t.Fatalf("clean tree reported dirty=%v err=%v", dirty, err)
+	}
+
+	// An untracked file in the excluded subtree doesn't count...
+	write(t, r.Dir, "bookkeeping/log.jsonl", "{}\n")
+	dirty, err := r.DirtyExcluding(ctx, "bookkeeping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirty {
+		t.Error("excluded subtree still counted as dirty")
+	}
+	// ...but plain Dirty still sees it, so the exclusion is opt-in.
+	if dirty, err := r.Dirty(ctx); err != nil || !dirty {
+		t.Errorf("Dirty should still see the untracked file: dirty=%v err=%v", dirty, err)
+	}
+
+	// A real change alongside it must still register.
+	write(t, r.Dir, "tracked.txt", "changed\n")
+	dirty, err = r.DirtyExcluding(ctx, "bookkeeping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dirty {
+		t.Error("a real change next to the excluded subtree was missed")
+	}
+}

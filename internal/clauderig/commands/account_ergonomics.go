@@ -75,6 +75,11 @@ func toAccountJSON(st account.StoredStatus) accountJSON {
 type accountListJSON struct {
 	Active   string        `json:"active"`
 	Accounts []accountJSON `json:"accounts"`
+	// Desynced is carried as a field rather than left to the styled warning:
+	// the live credential disagreeing with ~/.claude.json is the failure this
+	// listing exists to surface, and a script reading JSON must not be the one
+	// consumer that misses it.
+	Desynced bool `json:"desynced"`
 }
 
 // emitJSON writes one indented object and a trailing newline.
@@ -93,7 +98,11 @@ func printAccountsJSON(w interface{ Write([]byte) (int, error) }, st *account.St
 		return err
 	}
 	active, _ := st.Active()
-	out := accountListJSON{Active: active, Accounts: make([]accountJSON, 0, len(statuses))}
+	out := accountListJSON{
+		Active:   active,
+		Accounts: make([]accountJSON, 0, len(statuses)),
+		Desynced: !st.Diagnose().InSync,
+	}
 	for _, s := range statuses {
 		out.Accounts = append(out.Accounts, toAccountJSON(s))
 	}
