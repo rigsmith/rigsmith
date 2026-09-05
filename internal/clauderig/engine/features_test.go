@@ -496,3 +496,49 @@ func TestSync_EnablingRedactionScrubsWhatIsAlreadyStaged(t *testing.T) {
 		t.Errorf("a third run restaged %d files, want none", rep.Roots[0].Files)
 	}
 }
+
+// A credential lands wherever the conversation put it. Scrubbing only .jsonl
+// left tool results beside the transcript carrying bearer tokens, which the
+// tripwire then refused — the setting was on and the sync still would not run.
+func TestSync_ScrubsToolResultsAndNotesBesideTheTranscript(t *testing.T) {
+	live := t.TempDir()
+	key := "sk-ant-api03-" + strings.Repeat("z", 60)
+	write(t, live, "projects/-p/s.jsonl", `{"type":"user","cwd":"/p","text":"my key is `+key+`"}`+"\n")
+	write(t, live, "projects/-p/s/tool-results/out.txt", "Authorization: Bearer "+strings.Repeat("Aa1b2", 13)+"\n")
+	write(t, live, "projects/-p/memory/notes.md", "the key was "+key+"\n")
+	// Not text, and must be carried across byte for byte. It holds no
+	// credential: one that did could not be scrubbed without corrupting the
+	// file, so it would block the sync outright — which is the honest outcome,
+	// and a different problem from this one.
+	const binary = "\xff\xd8\xff\xe0 JFIF binary payload\n"
+	write(t, live, "projects/-p/shot.jpg", binary)
+
+	staging := t.TempDir()
+	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
+	if _, err := Sync(Options{
+		StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
+		RedactTranscripts: true, SourceOverride: override("cli", live),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{"projects/-p/s.jsonl", "projects/-p/s/tool-results/out.txt", "projects/-p/memory/notes.md"} {
+		b, err := os.ReadFile(filepath.Join(staging, "cli", filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("%s: %v", rel, err)
+		}
+		if strings.Contains(string(b), key) || strings.Contains(string(b), "Aa1b2Aa1b2") {
+			t.Errorf("%s still holds a credential after scrubbing", rel)
+		}
+	}
+	// The live files are never edited — clauderig backs a machine up.
+	if b, _ := os.ReadFile(filepath.Join(live, "projects/-p/memory/notes.md")); !strings.Contains(string(b), key) {
+		t.Error("the live note was rewritten; only the staged copy may be")
+	}
+	// A binary is copied, not rewritten.
+	if b, err := os.ReadFile(filepath.Join(staging, "cli", "projects", "-p", "shot.jpg")); err != nil {
+		t.Errorf("the binary did not sync: %v", err)
+	} else if string(b) != binary {
+		t.Error("a binary was rewritten, which is damage rather than redaction")
+	}
+}

@@ -72,7 +72,7 @@
     },
     "redactTranscripts": {
       "type": "boolean",
-      "description": "Scrub credential-shaped tokens (API keys, tokens, JWTs) out of the STAGED copy of a transcript before it is committed. Your live ~/.claude file is never modified. Off by default; complete staged-text scanning is always on and refuses recognized credentials that remain."
+      "description": "Scrub credential-shaped tokens (API keys, tokens, JWTs) out of the STAGED copy of a conversation before it is committed — the transcript, the tool results written beside it, and notes under memory/. Your live ~/.claude file is never modified. Off by default; complete staged-text scanning is always on and refuses recognized credentials that remain."
     },
     "alwaysPrune": {
       "type": "boolean",
