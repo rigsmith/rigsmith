@@ -116,6 +116,22 @@ func pathsFor(row Row, store string) []string {
 	if p := row.Paths[store]; p != "" {
 		out = append(out, p)
 	}
+	// Every live copy, not just the newest. A session filed under two project
+	// slugs has more than one transcript on this machine, and removing only the
+	// chosen one leaves the session listed and resumable — which is not what
+	// "delete it from here" meant.
+	//
+	// Deliberately unlike Consolidate, which parks these instead: that is a
+	// repair, run on a session someone wants to keep, and it refuses outright
+	// when the copies have diverged. This is an explicit request to remove the
+	// session, already refused while it is running and confirmed before it runs.
+	if store == CLISource {
+		for _, dup := range row.Duplicates {
+			if dup != "" && dup != row.Paths[store] {
+				out = append(out, dup)
+			}
+		}
+	}
 	for _, sc := range row.Meta.Sidecars {
 		// A sidecar scanned under "repo" belongs to the synced copy even though
 		// it is a Desktop file; the label records where it was found, which is
@@ -145,18 +161,22 @@ func removeSessionPath(path, id string) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	// Sub-agent transcripts live in a sibling directory named for the session.
-	// Attempted even when the transcript was already gone: an earlier run that
-	// removed the transcript and then failed here would otherwise report success
-	// forever while the sub-agent conversations stayed on disk.
+	// Both file shapes have a sibling directory of the same name without the
+	// extension, and both hold session-owned data:
 	//
-	// The failure is returned rather than swallowed. It is conversation content,
-	// and "deleted" while a copy survives is the answer that costs someone their
-	// assumption.
-	if strings.HasSuffix(base, ".jsonl") {
-		sub := filepath.Join(filepath.Dir(path), filepath.Base(path[:len(path)-len(".jsonl")]))
-		if info, serr := os.Stat(sub); serr == nil && info.IsDir() {
-			if rerr := os.RemoveAll(sub); rerr != nil {
+	//   <id>.jsonl        → <id>/         sub-agent transcripts
+	//   local_<id>.json   → local_<id>/   the Cowork sandbox — uploads, outputs,
+	//                                     audit.jsonl, a nested .claude. One
+	//                                     measured here was 14 MB.
+	//
+	// Leaving either behind means "deleted" was not true. Attempted even when
+	// the file itself was already gone: an earlier run that removed the file and
+	// then failed here would otherwise report success for ever while the data
+	// stayed on disk. The failure is returned rather than swallowed, for the
+	// same reason.
+	if owned := strings.TrimSuffix(path, filepath.Ext(path)); owned != path {
+		if info, serr := os.Stat(owned); serr == nil && info.IsDir() {
+			if rerr := os.RemoveAll(owned); rerr != nil {
 				return rerr
 			}
 		}

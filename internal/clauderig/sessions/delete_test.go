@@ -211,3 +211,79 @@ func TestListThenDelete_RemovesOnlyTheChosenStore(t *testing.T) {
 		t.Error("a path was reported for a store that no longer holds the session")
 	}
 }
+
+// A Cowork sidecar has a sibling directory holding the session's uploads,
+// outputs and audit log — one on this machine was 14 MB. Removing the sidecar
+// and leaving that behind is not the delete the caller asked for.
+func TestDelete_TakesTheCoworkSandboxWithTheSidecar(t *testing.T) {
+	desk := t.TempDir()
+	id := "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+	tree := filepath.Join(desk, "local-agent-mode-sessions", "acct", "org")
+	if err := os.MkdirAll(filepath.Join(tree, "local_"+id, "uploads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sidecar := filepath.Join(tree, "local_"+id+".json")
+	if err := os.WriteFile(sidecar, []byte(`{"cliSessionId":"`+id+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	upload := filepath.Join(tree, "local_"+id, "uploads", "spreadsheet.xlsx")
+	if err := os.WriteFile(upload, []byte("attached by the user"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A neighbouring session's sandbox, which must not be touched.
+	other := filepath.Join(tree, "local_bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	row := Row{ID: id, Paths: map[string]string{}, Meta: session.Meta{
+		Sidecars: []session.SidecarRef{{Label: DesktopSource, Path: sidecar}},
+	}}
+	d, err := Delete(row, []string{DesktopSource}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Failed) != 0 {
+		t.Fatalf("failed: %+v", d.Failed)
+	}
+	if _, serr := os.Stat(filepath.Join(tree, "local_"+id)); !os.IsNotExist(serr) {
+		t.Error("the sandbox directory survived the delete")
+	}
+	if _, serr := os.Stat(other); serr != nil {
+		t.Error("another session's sandbox was removed")
+	}
+}
+
+// A session filed under two project slugs has two transcripts here. Removing
+// only the newest leaves the session listed and resumable, which is not what
+// deleting it from this machine meant.
+func TestDelete_TakesEveryLiveCopy(t *testing.T) {
+	live := t.TempDir()
+	id := "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+	body := `{"type":"user","uuid":"u1"}` + "\n"
+	newest := write(t, live, "projects/-work-api/"+id+".jsonl", body)
+	older := write(t, live, "projects/-work/"+id+".jsonl", body)
+
+	row := Row{
+		ID:         id,
+		Paths:      map[string]string{CLISource: newest},
+		Duplicates: []string{older},
+	}
+	d, err := Delete(row, []string{CLISource}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Failed) != 0 {
+		t.Fatalf("failed: %+v", d.Failed)
+	}
+	for _, p := range []string{newest, older} {
+		if _, serr := os.Stat(p); !os.IsNotExist(serr) {
+			t.Errorf("%s survived the delete", p)
+		}
+	}
+	for _, s := range d.Remaining {
+		if s == CLISource {
+			t.Error("the live store is still reported as holding a copy")
+		}
+	}
+}
