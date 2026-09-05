@@ -53,6 +53,32 @@ type SplitView struct {
 	// Title is the session's own title where one is known, so the row names a
 	// conversation rather than a hex string.
 	Title string `json:"title,omitempty"`
+	// Split is false when the session asked about is not filed in more than one
+	// place — the ordinary answer, and not an error. Carried in the document
+	// rather than as a second return value: every other call across this bridge
+	// returns one value and an error, and this is not the place to find out how
+	// the runtime marshals a third.
+	Split bool `json:"split"`
+}
+
+// Describe reads one split session, for a drawer that is already open on it.
+//
+// Splits does the same for every split at once, which means reading both
+// transcripts of each — far too much to do because somebody clicked a row. This
+// reads the one they clicked. ok is false when that session is not split, which
+// is the ordinary answer and not an error.
+func (f *Filing) Describe(ctx context.Context, id string) (SplitView, error) {
+	h, err := f.Get(ctx)
+	if err != nil {
+		return SplitView{}, err
+	}
+	for _, s := range h.Splits {
+		if s.ID != id {
+			continue
+		}
+		return SplitView{SplitDetail: sessions.Describe(s), Split: true}, nil
+	}
+	return SplitView{}, nil
 }
 
 // Splits describes every split session: what each copy holds, and whether the

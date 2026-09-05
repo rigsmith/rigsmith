@@ -170,6 +170,7 @@
   .ev[data-outcome=refused] .text{color:var(--warn);}
   .ev .meta{color:var(--muted-2);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;}
   .ev .leak{color:var(--warn);font-size:11px;margin-top:3px;overflow-wrap:anywhere;}
+  .srow .dup{flex:none;color:var(--warn);font-size:12px;line-height:1;padding:0 2px;}
   .ev .toobig{color:var(--warn);font-size:11px;margin-top:3px;overflow-wrap:anywhere;}
   .ev .when{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums;}
   .empty{color:var(--muted-2);font-size:12px;padding:6px 0;line-height:1.5;}
@@ -517,6 +518,7 @@ const DOCTOR_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Doctor.Get';
 const DOCTOR_FIX = 'github.com/rigsmith/rigsmith/ui/bridge.Doctor.Fix';
 const FILING_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Get';
 const FILING_SPLITS = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Splits';
+const FILING_DESCRIBE = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Describe';
 const FILING_FIX = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Consolidate';
 const REPO_PRUNE = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Prune';
 const REPO_REPACK = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Repack';
@@ -1813,6 +1815,18 @@ function sessionRow(s) {
   //
   // All three show together rather than only the odd one: with fixed slots a
   // lone glyph would be ambiguous about which store it stood for.
+  // Filed in more than one project directory. Marked here because this is
+  // where someone is already looking for the session that "lost a week" — the
+  // health pane says the same thing, but only to someone who thought to go and
+  // ask it. Same rule as the store icons below: shown only when true.
+  if (s.duplicates?.length) {
+    const n = s.duplicates.length + 1;
+    const tag = el('div', 'dup', '⑂');
+    tag.title = `Filed in ${n} project directories — anything resolving by directory `
+      + 'can open the older copy, which reads as this session losing everything after it split.';
+    row.append(tag);
+  }
+
   const held = new Set(s.sources || []);
   const paths = s.paths || {};
   const ordinary = !!paths.cli && !!paths.repo && !paths.desktop;
@@ -1928,6 +1942,11 @@ function renderSession(d) {
   field('Client', s.client);
   box.append(meta);
 
+  // The filing check, in the drawer for the session it is about. The status
+  // pane lists every split at once; someone looking at one conversation should
+  // not have to go there, work out which row is theirs, and come back.
+  if (s.duplicates?.length) box.append(splitPanel(s.id));
+
   // Above the prompts: you came here from a search, so the first thing to
   // answer is why this session came back.
   const hits = renderHits(d);
@@ -1945,6 +1964,75 @@ function renderSession(d) {
   }
 
   box.append(sessionActions(d));
+}
+
+// splitPanel describes this session's copies and offers the repair, loading
+// lazily: describing a split reads BOTH transcripts to compare them record by
+// record, which is not something to do while a drawer is opening.
+function splitPanel(id) {
+  const box = el('div', 'gap');
+  box.append(el('b', null, 'Filed in more than one place'));
+  const body = el('div', 'hint', 'comparing the copies…');
+  box.append(body);
+
+  (async () => {
+    let d;
+    try {
+      d = await Call.ByName(FILING_DESCRIBE, id);
+    } catch (e) {
+      body.textContent = String(e);
+      return;
+    }
+    if (!d?.split) {
+      // Fixed since the list was read, most likely by the status pane.
+      body.textContent = 'no longer split.';
+      return;
+    }
+    body.replaceChildren();
+    for (const c of d.copies || []) {
+      const line = el('div', 'cp');
+      line.append(el('span', 'k', c.keep ? 'keep' : 'older'));
+      line.append(el('span', 'p', c.slug));
+      line.append(el('span', 'n', `${(c.lines || 0).toLocaleString()} records`
+        + (c.only ? `  · ${c.only} only here` : '')));
+      body.append(line);
+    }
+
+    const acts = el('div', 'reporow');
+    const status = el('div', 'grow hint');
+    acts.append(status);
+    if (d.safe) {
+      const fix = el('button', null, 'Keep newest, park the older');
+      fix.title = 'Moves the older copy into ~/.clauderig/parked. Nothing is deleted, and it is '
+        + 'parked outside ~/.claude so the next sync cannot bring it back.';
+      fix.onclick = async () => {
+        fix.disabled = true;
+        status.textContent = 'parking…';
+        try {
+          const res = await Call.ByName(FILING_FIX, id);
+          box.replaceChildren(el('div', 'hint',
+            `Parked ${res.files.length} copy(ies) in ${res.dir}`));
+          repaint('filing');
+          loadSessions();
+        } catch (e) {
+          status.className = 'grow hint warn';
+          status.textContent = String(e);
+          fix.disabled = false;
+        }
+      };
+      acts.append(fix);
+    } else {
+      // Not a button that fails: the copies genuinely differ, and choosing
+      // between them loses turns. That is a decision for the person who was
+      // there, which is why the tool declines to make it.
+      status.className = 'grow hint warn';
+      status.textContent = `${d.diverged} record(s) exist only in the older copy — `
+        + 'open both before choosing. clauderig will not pick for you.';
+    }
+    box.append(acts);
+  })();
+
+  return box;
 }
 
 function turnEl(p) {

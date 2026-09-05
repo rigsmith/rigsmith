@@ -51,10 +51,17 @@ type LibrarySession struct {
 	Paths map[string]string `json:"paths"`
 	// CLILive says a transcript is in the live ~/.claude — the copy
 	// `claude --resume` opens, so the only one resuming here can act on.
-	CLILive bool   `json:"cliLive"`
-	InRepo  bool   `json:"inRepo"`
-	Present bool   `json:"present"`
-	Profile string `json:"profile,omitempty"`
+	// Duplicates are the OTHER transcripts on this machine carrying this same
+	// session id — a session filed under two project directories, because work
+	// continued somewhere else. Carried on the row so the list can say so where
+	// someone is already looking, rather than only in a health pane they would
+	// have to know to visit. This is the shape of the fault that reads as a
+	// session losing a week of work.
+	Duplicates []string `json:"duplicates,omitempty"`
+	CLILive    bool     `json:"cliLive"`
+	InRepo     bool     `json:"inRepo"`
+	Present    bool     `json:"present"`
+	Profile    string   `json:"profile,omitempty"`
 }
 
 // LibraryView is the whole sessions window.
@@ -256,6 +263,7 @@ func toLibrarySession(r sessions.Row) LibrarySession {
 		Matches: r.Matches, Snippet: r.Snippet,
 		Branch: r.Branch, Sources: r.Sources, Paths: r.Paths, CLILive: r.CLILive,
 		InRepo: r.InRepo, Present: r.Present, Profile: r.Profile,
+		Duplicates: r.Duplicates,
 	}
 }
 
