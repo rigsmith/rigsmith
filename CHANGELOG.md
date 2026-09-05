@@ -1,5 +1,25 @@
 # github.com/rigsmith/rigsmith
 
+## 1.14.0
+### 🚀 Enhancements
+
+- **clauderig:** Add transcript chunking, on for new configurations and auto for existing ones, with immediate migration and native restore; scan complete staged text for credential signatures before publication; audit raw chunk indexes and clean/resumed merges before committing, avoid duplicate referenced-part scans, and preserve private profile directory modes on transcript restore
+  
+  Preserve project names that resemble chunk storage, detect long escaped JWTs, bound title previews, keep parked chunked sessions readable, and enforce native size limits after redaction.
+
+### 🩹 Fixes
+
+- **clauderig:** Translate embedded Desktop permission-reason paths during sync and restore across machines
+- **clauderig:** The sync journal now records **which** files the size cap left out, and how big they were.
+  
+  A row in the activity feed reading `Synced 5 files, 2 files too large` names a conversation that did not get backed up without saying which one. `clauderig sync` prints the paths as it runs, but the journal — the record that exists so an outcome survives the process that produced it — kept only a tally, so an hour later there was no way to find out. That is worse than the equivalent gap in the redaction count, because a redacted file is still in the repo and an oversized one is not there at all.
+  
+  The size comes with it. "Too large" invites exactly one question, and the answer decides what to do: a transcript a little over `maxFileBytes` is an argument for raising the cap, one at ten times the cap is an argument for leaving it behind.
+  
+  The list is capped at 25 files per record, like the redaction list, so a first sync over a tree of marathon transcripts cannot write a record longer than anything will show. The count stays the true total.
+- **shiprig:** a library that describes the package it produces is discovered as one, even where nothing declares `IsPackable`, a `PackageId` or a version. A project carrying `PackageTags`, `PackageLicenseExpression`, `PackageProjectUrl`, `PackageIcon`, `PackageReadmeFile` or an item marked `Pack="true"` is saying what goes in its package; plenty of libraries say only that and let CI supply the version on the pack command line, and those were being skipped — in one workspace, five published libraries were invisible beside the demo apps and tests that correctly were. Read from the project itself, never an ancestor props file — repo-wide licence and author metadata says nothing about which projects beneath it pack. `IsPackable` false still wins, and assembly metadata that a non-packing project carries quite legitimately — `Title`, `Authors`, `Description`, `RepositoryUrl` — is not read as packaging intent.
+- **shiprig:** a props file that sets `IsPackable` false for everything and true again under a condition on the project's path is now read rather than tolerated. That rule is how a repo says "what is under src/ packs, what sits beside it does not", and since the condition went unevaluated, every project inheriting the props file came back packable — a workspace listed a repo's tests, benchmarks, gallery and AOT smoke test alongside the two libraries it ships. A condition testing `MSBuildProjectDirectory` or `MSBuildProjectName` with Contains, StartsWith or EndsWith, optionally negated, is now evaluated against the project's own path. Anything else — a comparison, a compound, a property not known here — is tolerated as a true exactly as before.
+
 ## 1.13.1
 ### 🩹 Fixes
 
