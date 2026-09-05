@@ -186,7 +186,10 @@ func (s *sandbox) run(label, input string, code int, message string, args ...str
 			s.t.Fatal(err)
 		}
 	}
-	if got != code || !strings.Contains(stdout.String()+stderr.String(), message) {
+	// Fang wraps error paragraphs to terminal width. A longer temporary path
+	// can put adjacent diagnostic words on different lines on another OS.
+	diagnostic := strings.Join(strings.Fields(stdout.String()+" "+stderr.String()), " ")
+	if got != code || !strings.Contains(diagnostic, message) {
 		s.t.Fatalf("%s: exit %d (want %d), expected %q\n%s\n%s", label, got, code, message, &stdout, &stderr)
 	}
 	s.observations[label+"/exit"] = fmt.Sprint(got)
