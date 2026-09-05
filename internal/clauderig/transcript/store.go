@@ -193,6 +193,17 @@ func Open(path string) (File, error) {
 	}
 	return &chunkFile{index: idx, info: info, load: load}, nil
 }
+
+// StoredParts returns the validated references of an opened chunk index. Native
+// files return false. The copy keeps callers from changing the reader's index.
+func StoredParts(f File) ([]Part, bool) {
+	packed, ok := f.(*chunkFile)
+	if !ok {
+		return nil, false
+	}
+	return append([]Part(nil), packed.index.Parts...), true
+}
+
 func Stat(path string) (os.FileInfo, error) {
 	f, e := Open(path)
 	if e != nil {

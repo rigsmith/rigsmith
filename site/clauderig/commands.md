@@ -437,3 +437,12 @@ for the guard rules and the full model.
 See the [design doc](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/CLAUDERIG-DESIGN.md)
 for the full picture.
 :::
+
+### Merge publication checks
+
+`clauderig merge` and automatic reconciliation audit clean and conflicted merge
+results before committing, including a merge that could fast-forward. A secret
+refusal leaves the merge in progress. Clean and stage the affected files, then
+retry `clauderig merge` or `clauderig sync`, or use `clauderig merge --abort`.
+Unstaged tracked edits must be staged before retrying so the audit checks the
+bytes Git will commit. These checks do not remove secrets from existing history.

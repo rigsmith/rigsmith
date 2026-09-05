@@ -96,9 +96,16 @@ Sync scans complete staged text streams with bounded memory, including large
 transcripts, unchanged files, remote-only files and stored chunks. It recognizes
 credential prefixes, JWTs, bearer tokens, PEM private-key headers and common
 ASCII JSON escapes. Overlapping reads cover signatures split across scan or
-storage boundaries. Existing credential-filename and auth-config rules also
+storage boundaries. Raw index bytes are also scanned, including fields ignored
+by JSON decoding. Referenced parts are checked through their logical transcript
+once per audit; unreferenced part files are still scanned separately. Existing credential-filename and auth-config rules also
 apply. Read and chunk-integrity failures stop publication. The command checks
 the staged tree again before committing and pushing, including after merges.
+Clean and conflicted merges both stop before creating a merge commit, including
+merges that could fast-forward. A refusal leaves the merge available to abort or
+resume: clean and stage the affected files, then re-run `clauderig merge` or
+`clauderig sync`. Unstaged tracked edits must be staged first so the audited
+working files match what Git will commit. Already integrated refs remain a no-op.
 Diagnostics report file paths and finding kinds, not credential values.
 
 Scanning is always on. Without scrubbing, recognized credentials cause a refusal.
