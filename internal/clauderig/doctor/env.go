@@ -56,6 +56,25 @@ func NewEnv(ctx context.Context, version string) Env {
 	return env
 }
 
+// NewMachineEnv is NewEnv with every repository-scoped field left empty, for a
+// caller that has no repository to speak of.
+//
+// The window is the case this exists for. `clauderig doctor` is run from inside
+// the repo you mean, so its working directory is the answer; a tray application
+// has no such directory — it inherits whatever the launcher happened to use,
+// which is the shell's cwd from a terminal and the filesystem root from Finder.
+// Reporting worktree discipline for a repository nobody chose, that changes
+// depending on how the application was started, is worse than not reporting it.
+//
+// The checks themselves already handle an absent repository: they say so and
+// carry on, which is what makes this safe to ask for.
+func NewMachineEnv(ctx context.Context, version string) Env {
+	env := NewEnv(ctx, version)
+	env.RepoRoot, env.RepoName = "", ""
+	env.ProjectSettings, env.LocalSettings, env.ClaudeMd = "", "", ""
+	return env
+}
+
 // RepoRoot is the top level of the repository the process is standing in, or ""
 // when it is not in one. Not being in a repository is an ordinary state — the
 // window is usually launched from nowhere in particular — so it is reported as

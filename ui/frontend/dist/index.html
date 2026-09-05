@@ -1191,6 +1191,12 @@ function renderDoctor(v, force) {
     for (const c of checks) sec.append(checkRow(c, v));
     box.append(sec);
   }
+
+  // Said once, at the bottom, rather than as a row per missing check. The
+  // window has no repository: it is launched from the tray and inherits
+  // whatever directory the launcher used, so it checks this machine and leaves
+  // per-repository discipline to the command run from inside the repo you mean.
+  box.append(el('div', 'hint', 'Checks this machine. Worktree discipline is per-repository — run `clauderig doctor` inside one.'));
 }
 
 function checkRow(c, v) {

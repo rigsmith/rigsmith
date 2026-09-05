@@ -62,7 +62,7 @@ func NewDoctor(version string) *Doctor { return &Doctor{version: version} }
 // Get runs every check and returns the report. Local only: the checks read
 // files, look for binaries on PATH and inspect the staging repo.
 func (d *Doctor) Get(ctx context.Context) (DoctorReport, error) {
-	env := doctor.NewEnv(ctx, d.version)
+	env := doctor.NewMachineEnv(ctx, d.version)
 	return report(doctor.Run(ctx, env), env), nil
 }
 
@@ -73,7 +73,7 @@ func (d *Doctor) Get(ctx context.Context) (DoctorReport, error) {
 // has somewhere to put a message, and a failed repair still wants the rest of
 // the report drawn.
 func (d *Doctor) Fix(ctx context.Context, id string) (DoctorReport, error) {
-	env := doctor.NewEnv(ctx, d.version)
+	env := doctor.NewMachineEnv(ctx, d.version)
 	err := doctor.Fix(ctx, env, id)
 	rep := report(doctor.Run(ctx, env), env)
 	switch {
@@ -89,6 +89,12 @@ func (d *Doctor) Fix(ctx context.Context, id string) (DoctorReport, error) {
 	return rep, nil
 }
 
+// repoPlaceholder is the check that stands in for the repository-scoped ones
+// when there is no repository. Named rather than inferred: if it is ever
+// renamed the row comes back, which is visible and harmless, where a guess at
+// "looks like a placeholder" could silently swallow a real check.
+const repoPlaceholder = "repo-checks"
+
 // report converts a run into the window's shape.
 func report(sections []doctor.Section, env doctor.Env) DoctorReport {
 	fails, warns, fixable := doctor.Counts(sections)
@@ -100,11 +106,21 @@ func report(sections []doctor.Section, env doctor.Env) DoctorReport {
 	for _, s := range sections {
 		sec := DoctorSection{Title: s.Title, Checks: make([]DoctorCheck, 0, len(s.Results))}
 		for _, r := range s.Results {
+			// The placeholder a repo-scoped check leaves when there is no repo.
+			// It is advice for someone at a terminal — "run inside one" — and
+			// the window is not somewhere that can be done, so it is noise here
+			// rather than information.
+			if r.ID == repoPlaceholder {
+				continue
+			}
 			sec.Checks = append(sec.Checks, DoctorCheck{
 				ID: r.ID, Name: r.Name, Status: statusName(r.Status),
 				Detail: r.Detail, Hint: r.Hint,
 				Fixable: r.Fix != nil && r.ID != "", FixLabel: r.FixLabel,
 			})
+		}
+		if len(sec.Checks) == 0 {
+			continue
 		}
 		out.Sections = append(out.Sections, sec)
 	}

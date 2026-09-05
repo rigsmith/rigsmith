@@ -80,3 +80,30 @@ func TestReport_NamesItsSubject(t *testing.T) {
 		t.Errorf("report does not name its subject: %+v", got)
 	}
 }
+
+// The window has no repository, so the repo-scoped checks do not run and leave
+// a placeholder telling a terminal user to go and stand in one. That advice
+// cannot be followed in a window, so it is noise there — and a section left
+// holding nothing but the placeholder should not appear at all.
+func TestReport_DropsTheNoRepoPlaceholder(t *testing.T) {
+	sections := []doctor.Section{
+		{Title: "worktree discipline", Results: []doctor.Result{
+			{ID: "global-hooks", Name: "global sync hooks", Status: doctor.Warn, Detail: "partial"},
+			{ID: repoPlaceholder, Name: "repo checks", Status: doctor.Info, Detail: "not in a git repo"},
+		}},
+		{Title: "nothing but advice", Results: []doctor.Result{
+			{ID: repoPlaceholder, Status: doctor.Info},
+		}},
+	}
+
+	got := report(sections, doctor.Env{})
+	if len(got.Sections) != 1 {
+		t.Fatalf("got %d sections, want the empty one dropped: %+v", len(got.Sections), got.Sections)
+	}
+	if n := len(got.Sections[0].Checks); n != 1 {
+		t.Fatalf("got %d checks, want the placeholder dropped", n)
+	}
+	if got.Sections[0].Checks[0].ID != "global-hooks" {
+		t.Errorf("kept the wrong check: %+v", got.Sections[0].Checks[0])
+	}
+}
