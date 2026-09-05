@@ -23,8 +23,11 @@
 package merge
 
 import (
+	"bytes"
 	"path"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // Sides are the three versions git records for a conflicted file: the common
@@ -100,6 +103,12 @@ func Resolve(s Sides) (Result, bool) {
 	// other machine deleted (or dropping one it kept) is a judgment call, not a
 	// mechanical one.
 	if s.Ours == nil || s.Theirs == nil {
+		return Result{}, false
+	}
+	if transcript.IsIndex(s.Ours) || transcript.IsIndex(s.Theirs) {
+		if bytes.Equal(s.Ours, s.Theirs) {
+			return Result{Content: s.Ours, Policy: "chunk-index-identical", Detail: "identical chunk snapshots"}, true
+		}
 		return Result{}, false
 	}
 	for _, p := range policies {

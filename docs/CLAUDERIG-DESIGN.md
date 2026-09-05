@@ -158,28 +158,22 @@ cwd mappings (Q4).
   leaving a restored machine with a `MEMORY.md` indexing files it never got. They're
   a few KB each, so they cost nothing to keep. A slug with only memory left survives
   the prune.
-- **Large transcripts are restaged per chunk, not per sync.** A live transcript
-  is append-only (a rewrite — one that shrank or stayed the same size — is
-  restaged at once, since the staged copy is simply wrong), so committing it
-  whole on every turn costs roughly
-  `syncs × size / 2` of history — quadratic in session length, and worst for
-  exactly the sessions worth keeping (one 47 MB session produced ~800 MB of repo
-  in four days). Past `retention.largeFileBytes` (8 MiB) sync copies a
-  transcript again only once it has grown by half that much since the staged
-  copy, or once it has been unwritten for 30 minutes — the `SessionEnd` hook
-  runs `sync --flush`, which restages the transcript the hook payload names
-  (only that one: a short session ending must not restage a long one's
-  transcript mid-chunk, and a payload that names nothing flushes nothing, for
-  the same reason), so a session that ends normally has its tail captured
-  at once, and the settle rule catches up a session that died without firing
-  it, at the next sync. Small transcripts are unaffected. **Not yet done, and the real fix:**
-  storing a transcript as sealed fixed-size parts
-  (`projects/<slug>/<id>/000001.jsonl …`) so only the growing tail is ever
-  rewritten, making the cost linear. It changes the repo layout every reader
-  depends on — restore reassembly, search, the ledger, sidecars, retention by
-  file mtime — and an older clauderig restoring a chunked repo would hand Claude
-  Code a directory where it expects a file, so it needs a layout version and a
-  migration, not a quiet switch.
+- **Large transcript storage is versioned and on for new configs.** Existing
+  configs without the key use auto, following the repository mode. An explicit
+  false opts out. Plain storage retains
+  the existing `retention.largeFileBytes` throttle and `sync --flush` behavior.
+  Set `chunkTranscripts` to true to migrate staged transcripts larger than 8 MiB
+  to a JSON index plus content-addressed 4 MiB parts. Every changed tail is
+  captured on the next sync; completed parts are reused. All readers understand
+  this format, restore reconstructs native JSONL, and false converts back.
+  Upgrade all participating clients before enabling it. See
+  [Transcript storage](./CLAUDERIG-TRANSCRIPT-STORAGE.md) for rollout, rollback,
+  integrity checks, conflict behavior and scanning limits.
+- **Publication scanning covers complete staged text.** Credential signatures
+  are checked through bounded overlapping reads, including large transcripts,
+  unchanged and remote-only files. Optional transcript scrubbing runs first;
+  recognized credentials that remain stop publication. This does not sanitize
+  existing Git history or identify arbitrary secrets.
 - **Two branches**: `main` = config (precious, tiny, full history kept);
   `history` = **orphan branch** for `projects/`, squashed to a single root commit
   so `.git` never grows past the working tree. Transcript sync history is

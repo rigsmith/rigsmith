@@ -30,6 +30,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // Policy names how a path was resolved, for the report sync prints.
@@ -84,6 +85,13 @@ func Resolve(ctx context.Context, repo *gitrepo.Repo) (Report, error) {
 }
 
 func resolveOne(ctx context.Context, repo *gitrepo.Repo, p string) (Resolution, bool) {
+	if strings.HasSuffix(p, ".jsonl") {
+		ours, _ := repo.ConflictStage(ctx, p, 2)
+		theirs, _ := repo.ConflictStage(ctx, p, 3)
+		if transcript.IsIndex(ours) || transcript.IsIndex(theirs) {
+			return Resolution{}, false
+		}
+	}
 	switch {
 	case p == manifest.FileName:
 		if note, ok := unionManifest(ctx, repo, p); ok {

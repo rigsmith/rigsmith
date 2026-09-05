@@ -13,6 +13,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // Split is one session whose transcript exists under more than one project
@@ -171,7 +172,7 @@ func Describe(s Split) SplitDetail {
 func describeCopy(path string) (Copy, map[string]bool) {
 	c := Copy{Path: path, Slug: filepath.Base(filepath.Dir(path))}
 	ids := map[string]bool{}
-	f, err := os.Open(path)
+	f, err := transcript.Open(path)
 	if err != nil {
 		return c, ids
 	}

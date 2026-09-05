@@ -35,7 +35,7 @@ repo. `restore` does the inverse on another machine: it pulls, rewrites the
 portable paths into this OS's slugs, and merges — keeping any local secrets in
 place so a new machine simply re-authenticates.
 
-A session transcript is append-only and unbounded, and a long one is the single
+With plain storage (legacy backups or explicit opt-out), a session transcript is append-only and unbounded, and a long one is the single
 biggest thing a sync moves: committed whole every interval, a 50 MB transcript
 leaves a near-identical 50 MB blob in history each time. So past
 `retention.largeFileBytes` (8 MiB by default) a transcript is restaged only once
@@ -56,6 +56,42 @@ When a restore brings back Claude **Code** sessions, it reminds you to fully qui
 and reopen Claude Desktop — Desktop only rebuilds its Code-tab list from the
 restored session sidecars on startup, so a running app won't show them until it
 restarts.
+
+### Transcript chunking
+
+New configurations default to chunking on. Existing configs without the key use
+auto: they follow the repository, leaving an unversioned legacy backup plain
+until it is migrated. Explicit false opts out.
+
+Upgrade every machine sharing the backup to a version supporting chunking first.
+Older clients can mistake a chunk index for a native transcript during restore.
+Then enable it and run a sync:
+
+```sh
+clauderig config set chunkTranscripts true
+clauderig sync
+```
+
+The next sync migrates existing staged transcripts larger than 8 MiB, including
+other machines' backups, into verified 4 MiB chunks. Completed chunks are reused;
+the changed tail is captured on every sync. Hook debounce still applies. Smaller
+transcripts stay native, and restore always reconstructs native JSONL. Search,
+peek and the ledger understand both formats. Divergent chunk-index conflicts
+require resolution; they are never combined as JSONL records.
+
+Updated clients follow the repository setting unless locally overridden.
+`clauderig config set chunkTranscripts auto` removes the local override.
+To convert back, run `clauderig config set chunkTranscripts false` followed by
+`clauderig sync`, and clear other machines' true overrides. Rollback refuses before changing the tree if a chunked snapshot exceeds the
+configured native-file cap. Increasing that cap can exceed the remote's blob limit. Chunk mode requires
+`retention.maxFileBytes` of at least 4 MiB or no cap. Historical chunked revisions
+still require an updated binary after rollback.
+
+Scanning checks complete staged text even when scrubbing is off. A recognized
+credential stops publication. `clauderig config set redactTranscripts true`
+scrubs supported signatures from staged transcripts before that check; private
+keys or signatures it cannot safely rewrite still cause refusal. Live files are
+never modified, and existing Git history is not sanitized by either setting.
 
 ## Finding a session
 

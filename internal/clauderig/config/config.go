@@ -144,11 +144,14 @@ type Root struct {
 
 // Config is the clauderig configuration document.
 type Config struct {
-	Schema    int                `json:"schema"`
-	Remote    string             `json:"remote,omitempty"`
-	Machines  map[string]Machine `json:"machines"`
-	Roots     []Root             `json:"roots"`
-	Retention Retention          `json:"retention"`
+	// ChunkTranscripts overrides repository storage mode. New configs default
+	// to true; an omitted key in existing configs means auto (follow the repo).
+	ChunkTranscripts *bool              `json:"chunkTranscripts,omitempty"`
+	Schema           int                `json:"schema"`
+	Remote           string             `json:"remote,omitempty"`
+	Machines         map[string]Machine `json:"machines"`
+	Roots            []Root             `json:"roots"`
+	Retention        Retention          `json:"retention"`
 	// AlwaysPrune makes `restore` prune stale config files (skills/commands/
 	// agents/plans deleted upstream) by default, as if --prune were passed.
 	// `restore --prune=false` overrides it for a single run.
@@ -173,7 +176,8 @@ type Config struct {
 	// RedactTranscripts scrubs credential-shaped tokens out of the STAGED copy of
 	// a transcript before it is committed. The live ~/.claude file is never
 	// touched — clauderig backs your machine up, it does not edit it — so the
-	// secret stays where you left it and simply stops leaving the machine.
+	// secret stays where you left it. The publication scan runs whether or not
+	// this scrubber is enabled, refusing recognized credentials that remain.
 	//
 	// Off by default. It rewrites the middle of a conversation, which is a thing
 	// a backup tool should do only because you asked it to.
@@ -187,11 +191,13 @@ type Config struct {
 // Default returns a config with the standard roots and retention, no machines or
 // remote yet (init fills those).
 func Default() *Config {
+	chunked := true
 	return &Config{
-		Schema:    schemaVersion,
-		Machines:  map[string]Machine{},
-		Roots:     DefaultRoots(),
-		Retention: Retention{HistoryDays: 90, SquashFactor: 2.0, FloorBytes: 500 << 20, MaxFileBytes: DefaultMaxFileBytes, LargeFileBytes: DefaultLargeFileBytes},
+		ChunkTranscripts: &chunked,
+		Schema:           schemaVersion,
+		Machines:         map[string]Machine{},
+		Roots:            DefaultRoots(),
+		Retention:        Retention{HistoryDays: 90, SquashFactor: 2.0, FloorBytes: 500 << 20, MaxFileBytes: DefaultMaxFileBytes, LargeFileBytes: DefaultLargeFileBytes},
 	}
 }
 

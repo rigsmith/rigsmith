@@ -12,6 +12,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 	"github.com/spf13/cobra"
 )
 
@@ -167,7 +168,17 @@ func (g gitHistory) LastCommitTime(ctx context.Context, rev, path string) (time.
 }
 
 func (g gitHistory) ShowPrefix(ctx context.Context, rev, path string, max int) ([]byte, error) {
-	return g.repo.ShowPrefix(ctx, rev, path, max)
+	b, err := g.repo.ShowPrefix(ctx, rev, path, max)
+	if err != nil {
+		return nil, err
+	}
+	if transcript.IsIndex(b) {
+		b, err = g.repo.ShowFile(ctx, rev, path)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return transcript.ReadStored(path, b, func(p string) ([]byte, error) { return g.repo.ShowFile(ctx, rev, p) }, int64(max))
 }
 
 // bytesReader is a fresh reader over the same head bytes — the two parsers each

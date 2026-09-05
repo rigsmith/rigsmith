@@ -45,8 +45,9 @@ the same in the gitignored `.claude/settings.local.json`). See
 - **Cross-OS path correction.** A session captured at `/Users/john/Git/x` resumes
   at `C:\Users\John\Git\x`. Project directory slugs and path values inside config
   are re-derived for the target machine (`core/pathmap`).
-- **Secrets never leave the machine.** Secret-bearing fields are stripped before
-  commit; a tripwire fails the sync loudly if one slips past. Restore merges the
+- **Secret redaction and publication checks.** Secret-bearing fields are stripped before
+  commit; complete staged-text scanning refuses recognized credentials, including
+  ones in large transcripts. Optional `redactTranscripts` scrubs the staged copy. Restore merges the
   synced config back without clobbering your local secrets — a new machine
   re-authenticates.
 - **Private repo, no exceptions.** The remote must be a GitHub repo that `gh`
@@ -58,7 +59,14 @@ the same in the gitignored `.claude/settings.local.json`). See
   size-based history squash — but every session sync has staged keeps a
   permanent row in the ledger, so an aged-out chat stays findable by title,
   project and date.
-- **Large transcripts are throttled.** Past `retention.largeFileBytes` (8 MiB)
+- **Chunk large transcripts by default in new configurations.** Existing configs
+  without the key use auto and follow the repository. Upgrade all participating clients, then
+  run `clauderig config set chunkTranscripts true` and `clauderig sync`. Existing
+  backups migrate immediately; completed 4 MiB chunks are reused and every
+  changed tail is captured. Restore reconstructs native JSONL. Set the key false
+  to convert back, or auto to follow the repo. See
+  [storage and scanning](../../docs/CLAUDERIG-TRANSCRIPT-STORAGE.md).
+- **Plain large transcripts are throttled.** Past `retention.largeFileBytes` (8 MiB)
   a session's transcript is restaged only once it has grown by half that much
   again, or gone quiet for 30 minutes, so the per-turn Stop hook does not
   re-commit a 50 MB file every turn. The SessionEnd hook runs `sync --flush`
@@ -70,7 +78,7 @@ the same in the gitignored `.claude/settings.local.json`). See
 | Command | What |
 |---|---|
 | `init` | First-run wizard: remote (private), machine identity, roots, hooks |
-| `sync` | Walk → redact → manifest → tripwire → commit → push. `--dry-run`; `--hook` debounces and takes the lock, for the Stop hook that fires every turn; `--flush` restages the ended session's large transcript past the throttle — the SessionEnd hook's job — or every changed transcript when run by hand |
+| `sync` | Walk → redact → manifest → tripwire → commit → push. `--dry-run`; all syncs take the staging lock; `--hook` also debounces the Stop hook that fires every turn; `--flush` restages the ended session's large transcript past the throttle — the SessionEnd hook's job — or every changed transcript when run by hand |
 | `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
 | `status` | Sync state: remote, last sync, roots, hooks |

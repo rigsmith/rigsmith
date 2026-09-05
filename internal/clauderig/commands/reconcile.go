@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
 )
 
@@ -67,6 +68,13 @@ func reconcile(ctx context.Context, out io.Writer, repo *gitrepo.Repo, remote, b
 			_ = repo.AbortMerge(ctx)
 			return fmt.Errorf("mergetool: %w", err)
 		}
+	}
+	root, err := repo.Toplevel(ctx)
+	if err != nil {
+		return err
+	}
+	if err = engine.CheckPublish(root); err != nil {
+		return err
 	}
 	return repo.CommitMerge(ctx)
 }

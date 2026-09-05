@@ -36,13 +36,13 @@ var textSecretRe = regexp.MustCompile(strings.Join([]string{
 	// Bounded hard, because `Bearer` also appears in every API example ever
 	// pasted into a chat: the RFC 6750 token charset, at least 24 characters,
 	// and placeholders are dropped below.
-	`Bearer\s+[A-Za-z0-9\-._~+/]{24,}={0,2}`,
+	`(?i:Bearer)\s+[A-Za-z0-9\-._~+/]{24,}={0,2}`,
 }, "|"))
 
 // screamingRe matches a bearer token that is really a placeholder —
 // YOUR_ACCESS_TOKEN, REPLACE_ME_WITH_TOKEN. Real tokens are mixed case; the
 // things people paste into examples are not.
-var screamingRe = regexp.MustCompile(`^Bearer\s+[A-Z0-9_]+={0,2}$`)
+var screamingRe = regexp.MustCompile(`^(?i:Bearer)\s+[A-Z0-9_]+={0,2}$`)
 
 // TextHit is one credential found in free text.
 type TextHit struct {

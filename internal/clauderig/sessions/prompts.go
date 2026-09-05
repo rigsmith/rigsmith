@@ -3,13 +3,13 @@ package sessions
 import (
 	"bufio"
 	"encoding/json"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // promptMax bounds one prompt's rendered length. Longer than the 70 runes a
@@ -48,7 +48,7 @@ func Prompts(path string, n int) (Conversation, error) {
 	if path == "" || n <= 0 {
 		return c, nil
 	}
-	f, err := os.Open(path)
+	f, err := transcript.Open(path)
 	if err != nil {
 		return c, err
 	}

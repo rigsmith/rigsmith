@@ -16,6 +16,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // RestoreRootResult summarises one root's restore.
@@ -127,6 +128,9 @@ type RestoreOptions struct {
 // redacted config so the machine's real secrets are never clobbered by a
 // placeholder. Caller handles target-non-empty safety (backup/abort) first.
 func Restore(opts RestoreOptions) (*RestoreReport, error) {
+	if _, err := transcript.Enabled(opts.StagingDir); err != nil {
+		return nil, err
+	}
 	rep := &RestoreReport{}
 	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
@@ -174,6 +178,9 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			return nil, err
 		}
 		for _, rel := range files {
+			if transcript.IsPartPath(rel) {
+				continue
+			}
 			targetRel := rel
 			if r.ID == "cli" && strings.HasPrefix(rel, "projects/") {
 				newRel, srcSlug, did := rewriteProjectRel(rel, slugMap)
@@ -531,6 +538,9 @@ func isSymlink(p string) bool {
 }
 
 func copyFile(src, dst string, pm perm) error {
+	if strings.HasSuffix(src, ".jsonl") {
+		return transcript.Materialize(src, dst, pm.file)
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), pm.dir); err != nil {
 		return err
 	}

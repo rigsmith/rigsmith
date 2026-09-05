@@ -16,6 +16,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // binarySniffBytes is how many leading bytes we read to decide a file is binary
@@ -166,7 +168,7 @@ func ScanFile(path string, opts Options, emit func(Match)) (int, error) {
 // whether the file was actually scanned (false ⇒ skipped as binary) and the
 // number of matches. A NUL byte in the header marks the file binary and skips it.
 func scanFile(t Target, path, needle string, caseSensitive bool, accept func(string) bool, emit func(Match)) (scanned bool, matches int, err error) {
-	f, err := os.Open(path)
+	f, err := transcript.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) || os.IsPermission(err) {
 			return false, 0, nil // vanished mid-walk / unreadable — skip quietly
@@ -345,7 +347,7 @@ func listFiles(root string, keep func(rel string) bool, pruneDir func(name strin
 			return nil // unreadable dir/file — skip, don't abort
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || (pruneDir != nil && pruneDir(d.Name())) {
+			if transcript.IsPartPath(p) || d.Name() == ".git" || (pruneDir != nil && pruneDir(d.Name())) {
 				return filepath.SkipDir
 			}
 			return nil

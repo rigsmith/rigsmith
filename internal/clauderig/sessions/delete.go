@@ -8,6 +8,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // Deletion reports what removing a session actually did. Partial outcomes are
@@ -160,6 +161,11 @@ func removeSessionPath(path, id string) error {
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	if strings.HasSuffix(path, ".jsonl") {
+		if err := os.RemoveAll(path + transcript.Suffix); err != nil {
+			return err
+		}
 	}
 	// Both file shapes have a sibling directory of the same name without the
 	// extension, and both hold session-owned data:
