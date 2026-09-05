@@ -1,5 +1,215 @@
 # github.com/rigsmith/rigsmith
 
+## 1.13.0
+### 🚀 Enhancements
+
+- **clauderig:** Three verbs that were only reachable from code are now on the command line: `clauderig merge`, `clauderig peek` and `clauderig device`.
+  
+  `merge` reconciles a staging repo that has diverged, using clauderig's own merge policies rather than asking you to hand-resolve a conflict between two machines' transcripts. `--abort` backs one out; `--json` emits what each file was resolved by, which is the record of a decision nobody was present for.
+  
+  `peek` reads another machine's sessions straight from the remote without merging anything into this one — `peek list`, `peek show <id>`, and `peek materialize <id>` to bring a single conversation over. Useful when you want one session from the desktop upstairs and not its entire tree.
+  
+  `device list` and `device remove <name>` inspect and clean up the synced device registry, which otherwise accumulates a row for every machine that ever synced, including the ones that no longer exist.
+- **clauderig:** `clauderig repo` now says what the repo is made of, not just how big it is.
+  
+  A total says the repo is large without saying what it is large *with*, and the two have entirely different remedies: transcripts answer to retention, attachments to the allowlist, backups to not keeping them, history to a prune. Reading "1.62 GB" and reaching for a prune is the obvious move and, on this repo, the wrong one — 97% of the checkout is conversation, which no amount of squashing touches.
+  
+  ```
+    what it holds
+      transcripts                   1.58 GB   97%  1112 files
+      attachments & tool output     28.9 MB    2%  1073 files
+      plugins                        5.5 MB    0%  461 files
+      Desktop session index          4.7 MB    0%  93 files
+      memory                         1.7 MB    0%  501 files
+      skills, commands & agents      922 KB    0%  59 files
+      clauderig records              558 KB    0%  6 files
+      Desktop config                 504 KB    0%  82 files
+      transcript backups             118 KB    0%  1 file
+  ```
+  
+  Anything under 2% of the checkout folds into a single `other` row, kept last whatever its size, naming its three largest members and counting the rest. A tail of rows all reading 0% buries the one line worth acting on under its own precision. It only folds when at least two categories qualify — replacing one named row with an `other` containing exactly it loses the name and gains nothing.
+  
+  Categories are ordered so the specific cases sit above the general ones that would otherwise swallow them: a `.pre-import` backup is a `.jsonl` too, and memory lives under `projects/` exactly like a transcript does. Both would land in "transcripts" under a naïve rule, which is the sort of thing that makes a breakdown quietly wrong rather than visibly broken.
+  
+  The walk reads metadata only, so it costs a stat per file rather than a byte of I/O per byte stored, and `.git` is skipped: history is reported separately and is not part of what the repo is keeping.
+- **clauderig:** `clauderig repo` reports what the sync repo costs, and `clauderig repo prune` makes it smaller.
+  
+  The staging repo is the one part of clauderig that grows without anyone deciding it should. Transcripts are append-only and sync every few minutes, so each run stores another copy of a file that only got longer: history outgrows the content it is history *of*, steadily and invisibly, and the first sign is usually a push getting slow. There has been a size-triggered squash for a while, but it fires on a ratio nobody can see and answers a question nobody got to ask.
+  
+  `clauderig repo` prints the checkout size and file count, the size and number of commits behind it, the ratio between them, and the span of history still reachable. The ratio is the number worth watching and the one nobody works out by eye — on a real repo here it reads `1.62 GB across 3,391 files` against `2.91 GB in 285 commits`, or 1.8× the content.
+  
+  `clauderig repo gc` repacks loose objects, reclaiming space without touching a single commit — the remedy to try first, and usually the only one needed. `clauderig repo prune --before 2026-08-01` folds every commit older than that into a single base commit and keeps the ones after it, unchanged — same trees, same messages, same authors and dates. **The checkout does not change**: the files stay exactly as they are and only the record of how they got there is dropped. It rewrites the branch and force-pushes, which is what the automatic squash has always done, so other machines pick the new history up on their next sync.
+  
+  The kept commits are rebuilt with `commit-tree` rather than replayed with `rebase`. Each carries its exact tree across, so nothing is diffed, there is no conflict to resolve, and a replayed commit cannot end up with a tree that differs from the one it recorded. It also costs time proportional to the number of commits rather than to their content, which matters when a week of syncing is a couple of thousand of them.
+  
+  Rewriting history other machines share is interactive-only: it confirms in a terminal and refuses outright without one, with no flag to route around that. What it costs you is stated up front — sessions that retention deleted before the cutoff can no longer be recovered by `clauderig ledger backfill`, which reads them out of exactly the history this drops.
+  
+  It also says when history was last truncated. The oldest reachable commit is not when a repo started if it has ever been squashed — the root is then a commit the squash itself wrote — so reporting that date as the beginning turns discarded history into a repo that merely looks young. A real 2.9 GB repo here claimed to begin the previous morning, because the automatic squash had fired unprompted and nothing said so. A squashed root now reads `squashed <when> — earlier history was discarded` instead of a range.
+  
+  It also answers the question worth asking — how far back can I go — as a span rather than a date. `retained 28 hours` is read at a glance; `2026-08-27 08:18` makes the reader do arithmetic, and after a squash the answer is usually "less than you think", which is exactly when nobody does it. It will not fold closer than three days: the activity feed's file lists are read out of recent commits, and a prune that left one commit standing would take "what did that sync actually do" away with it.
+- **clauderig:** `clauderig reroot <session-id> <dir>` re-files one session under a directory you name.
+  
+  Claude Code files a session under the directory it was launched in. Start in a folder that merely holds your projects, work in one of them, and the conversation is filed under the folder — so `claude --resume` opens it in the wrong place and it shows up in the wrong project's history. Measured here, 65 of 120 recent transcripts recorded more than one working directory.
+  
+  You name the session and you name the directory. Nothing is inferred, suggested or defaulted: which directory a conversation belongs to is a judgement only the person who was there can make.
+  
+  The mechanics are the point. Records recorded at the session's old root are rewritten to the new one, and the transcript moves into the project directory that root flattens to. **Records from deeper directories are left alone** — this is a re-root, not a rebase: nothing moved on disk, so a record naming `~/Git/thing/src` still names a real directory that is still there. `mv` remains the command for when a directory has genuinely moved and everything under it moved with it.
+  
+  It refuses to overwrite a transcript already filed at the destination, since that would be the same session filed twice and one conversation would be lost. It refuses while that session is running, matched on session id rather than on directory — several conversations run out of one folder at once, and blocking the move because a *different* chat is open there would be refusing for no reason. `--dry-run` reports how many records would change without touching anything.
+  
+  The next `clauderig sync` carries the change to your other machines.
+- **clauderig:** clauderig now notices when a session is filed in two places, and says so.
+  
+  A conversation that continues in a different directory gets a **second transcript**: Claude Code files by working directory, so it opens a new one under the new slug while the first stays frozen at the moment the work moved. Both are real files with the same id. Anything resolving by directory — Claude Desktop, in particular — can open the frozen one, which looks exactly like the session losing everything after that date.
+  
+  **The tool was making this worse.** `TranscriptPaths` kept whichever copy the directory walk reached first and discarded the rest silently:
+  
+  ```go
+  if _, seen := paths[id]; !seen {
+      paths[id] = p        // first in walk order wins
+  }
+  ```
+  
+  That is alphabetical luck. A session whose stale copy sorted first was reported from the day it split, with nothing to indicate a complete copy existed. On a real machine this went the right way only because an uppercase directory name happened to sort before a lowercase one.
+  
+  The winner is now the copy whose **last record is newest**, ties broken on size and then path so two runs never disagree. The extra read only happens on the rare id that has more than one file, so the ordinary case costs nothing.
+  
+  The copies not chosen are **kept and reported** rather than dropped. `sessions.CheckHealth` finds both this and the fault it presents as — a Desktop sidecar naming a directory that no longer holds the transcript — and all three front ends call it:
+  
+  - **`clauderig doctor`** — a `session filing` check naming the sessions and the slugs holding them
+  - **The dashboard** (`clauderig` with no arguments) — a warning line, only when there is something to say
+  
+  One implementation behind both, because two would eventually disagree, and disagreeing about whether a conversation is intact is the worst thing they could differ on.
+  
+  Parked, never deleted, into `~/.clauderig/parked/<timestamp>/` — and deliberately outside `~/.claude`, because a file parked there would be picked up by the next sync and handed back by the next restore, which is how the copy returns.
+  
+  It reports and never repairs by itself. Which copy is wanted is usually obvious and occasionally not: when two have genuinely diverged, each holding turns the other lacks, discarding either loses a conversation. When they have diverged the button is absent and the row says why, with the count of records that exist only in the older copy — a missing button is a mystery, and this is precisely the case where a person has to look. There is no flag to override it: "this copy holds three turns the other lacks" has no safe automatic answer, and offering one in a window is how somebody loses a conversation by clicking. `clauderig reroot <session> <dir>` re-files one deliberately.
+  
+  Found four such sessions on the machine it was written on.
+- **clauderig:** Secrets pasted into a conversation can now be scrubbed out of the synced copy, and every sync says which files it redacted.
+  
+  A key in `settings.json` is a field, and the redactor has always caught those. A key you pasted into a chat is prose in the middle of a `.jsonl` transcript, and nothing caught it: the content rules stop at 64 KB and real transcripts run to megabytes, so they were never examined at all — the whole-file test also requires the file to be a single bare token, which no conversation is. A live key could reach the repo verbatim.
+  
+  Set `"redactTranscripts": true` in `.clauderig.json` and credential-shaped tokens are replaced with a placeholder on the way into staging. **Your `~/.claude` is never modified** — clauderig backs a machine up, it does not edit it — so the secret stays exactly where you left it and simply stops leaving the machine. Off by default, because rewriting the middle of somebody's conversation is not something a backup tool should do uninvited.
+  
+  The scrub is deliberately narrow: known vendor prefixes (Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google) and JWTs, matched anywhere in a line. The generic high-entropy heuristic that backs the config redactor is *not* used here — a false positive there costs a redacted field nobody reads, while here it would rewrite the middle of a conversation with no copy of the original kept. A PEM private key is reported rather than rewritten: it spans a structure that cannot be edited safely, and half a scrubbed key is worse than a refusal that names the file. Transcripts are streamed line by line, so a 500 MB conversation costs a line of memory rather than 500 MB.
+  
+  Separately, `N secrets redacted` now means what it says. Every JSON file is redacted on every pass, and the count was tallied at redaction time, so it reported the whole tree's total on every row — `21 secrets redacted` sat beside syncs that had written a single file, and beside the row above and below. It now counts only the files a run actually staged, so most rows say nothing about secrets and the ones that do are worth reading.
+  
+  And the count names its files: the journal records which files were redacted and what kind of credential was found in each — paths and kinds only, never values. It is a map of where credentials turned up, which is worth having and is not itself a credential.
+
+### 🩹 Fixes
+
+- **rig:** `rig` starts immediately, and stops searching directories that are not projects.
+  
+  Run in a large directory — a home directory, a mounted share — bare `rig` showed nothing at all for a long time and then opened a menu. Two separate faults, both of which had to go.
+  
+  **It searched places that hold no project.** `detect.Root` walks up looking for `.rig.json`, a workspace manifest or `.git`, and returns the starting directory when it finds none — which reads exactly like finding one there. So in `~` or `C:\Users\John`, rig concluded the home directory *was* the repo root and went looking for projects in it, which means walking the whole thing.
+  
+  There is now `detect.FindRoot`, which also reports whether anything actually anchored the root. When nothing does, the menu says so and offers what still makes sense — `init`, `doctor`, `self-update` — and does no searching at all. No ecosystem detection, no capability probe, no tree walk. Build verbs are left out on purpose: they would have nothing to act on, and a menu whose entries all error is worse than a short menu that is honest.
+  
+  **And it did all of that before painting anything.** Discovery ran inside `newMenu`, so the banner appeared only once the filesystem was done — the slower the machine, the longer the tool looked broken. `newMenu` now returns immediately and discovery runs as a bubbletea command, so the banner is on screen at once with a line naming the directory being searched. Only `q` and `ctrl+c` are accepted while it works: a keystroke that silently does nothing is worse than one ignored on purpose.
+  
+  Project discovery also takes a two-second budget. Even inside a real repository a tree can be enormous, and the menu waits on it — stopping early finds fewer projects, which is a worse menu, while not stopping finds them eventually, which is no menu.
+  
+  One existing test claimed to cover "a repo with no recognized ecosystem" while its fixture was a bare temp directory that was never a repo. It passed because nothing could tell those two apart — the confusion this change is about. Its fixture now creates the `.git` its comment always implied.
+- **rig:** `stack push --dry-run` is dry. The global `--dry-run` flag is accepted by every verb, and the stack verbs ignored it — so `rig stack push <repo> --dry-run` did the real push, fast-forwarding a repository you own with history you had asked only to see, and reported `pushed …` with the remote already moved. Now it runs the local filter, prints `would push <repo> to <upstream>:<branch>` and the commits that would go, one per line, and stops: nothing reaches the remote, and nothing local records a push — no take-back merge, no cursor move. `stack propose --dry-run` stops the same way, saying which commit it would push to which branch of your fork, without touching the fork, the `refs/rigsmith/propose/<repo>` ref, or the manifest's memory of the branch. No other stack verb writes to a remote.
+- **clauderig:** Deleting a session now removes all of it.
+  
+  A Cowork session's sidecar sits beside a directory of the same name holding that session's uploads, outputs and audit log — one measured on a real machine was 14 MB. Only the sidecar was removed, so the session disappeared from every listing while its data stayed on disk. The same is true of a session filed under two project directories, which has two transcripts here: removing the newer one left the session still listed and still resumable.
+  
+  Both are now taken with the session. This is deliberately unlike `doctor`'s repair of a split session, which *parks* the extra copies rather than deleting them — that runs on a session you want to keep, and refuses outright when the copies have diverged. Deleting is something you asked for explicitly, having already been refused while the session was running and asked to confirm.
+- **clauderig:** `clauderig device remove` now survives the next merge.
+  
+  When two machines' registries diverged, the merge combined them by taking every row from both sides. That cannot distinguish "the other machine never had this row" from "this machine deleted it", so a removed device came back from the other side's untouched copy — on the next sync, and every sync after that.
+  
+  The merge now reads the common ancestor: a row that one side dropped and the other left exactly as it was stays dropped, in either direction. A machine that has synced since the removal still comes back, because that one is a live machine again rather than the stale row you meant to clear out. With no common ancestor to compare against, both sides are kept as before — keeping too much is the safe way to be wrong about a registry.
+- **clauderig:** Three ways a conflicted sync could quietly lose data, all fixed.
+  
+  A conflicted manifest was round-tripped through a struct that did not model `links`, so restore lost its record of which worktree project directories share a `memory/` directory with their main project. Links are merged from both machines now, and a test fails if the manifest ever grows another field the merge does not carry — the trap was never specific to links.
+  
+  A conflicted transcript had the local side deduplicated against itself before the remote's tail was appended. Two records that serialise identically are rare but not impossible, and the merge is not the place to decide someone's conversation contained one fewer turn than it does. The local file is carried over exactly as it was.
+  
+  The device and manifest mergers matched on filename alone, so a synced project of your own containing a file called `clauderig-devices.json` would be run through a merger that understands a different format entirely and rewritten as one. They match at the repo root now.
+  
+  Also: `clauderig repo prune` preserves merge commits inside the retained window rather than flattening them into a straight line, and moves the branch only if it is still where the rebuild started — so a sync that commits while history is being rebuilt is not discarded.
+- **clauderig:** `clauderig repo prune` no longer force-pushes over work another machine pushed.
+  
+  It rewrites history and publishes the result, and it did that without ever looking at what the remote was actually at. A machine that had synced since this one last fetched held commits this history did not, and the force-push deleted them — from the remote, and so from every machine, with nothing to say it had happened.
+  
+  It now fetches before rewriting anything, refuses outright while origin holds commits this machine does not have (run `clauderig sync` first, then prune), and pushes with a lease against the sha it actually saw — so a machine that syncs during the confirmation prompt gets a rejected push instead of being overwritten. With no remote configured it folds locally and says so, rather than failing after the rewrite.
+  
+  Two related fixes to which commits it folds: it repacks-then-measures rather than trusting loose objects, and it folds only the leading run of commits that are wholly outside the retention window. Commit dates here are not monotonic — machines sync on their own clocks — and a commit inside your retained window could previously be folded away by an older one that arrived after it.
+- **clauderig:** A sync that changed nothing now says so, instead of reporting the same file count as every other sync.
+  
+  JSON files can't be skipped on timestamp the way plain copies can — each one is read, redacted, portablized and re-marshalled on every pass, so there is no cheap way to know up front whether the result will differ. They were therefore written and counted every time, whether or not a byte moved. That made the "files synced" figure a property of the tree rather than of the run: it barely changed between syncs, so `clauderig status` and the UI's activity feed showed an unbroken column of one identical line, and the runs that did something were invisible among them. The produced bytes are now compared against the staged copy, and an identical result is left alone.
+  
+  So the journal records what a run did rather than what it looked at. Quiet runs — the common case, since syncs fire every few minutes against a tree that only moves when you are working — read `No changes — 1,035 files already current`. Redaction totals are no longer repeated on them, for the same reason they were noise: the redactor runs over the whole tree every pass, so its count says nothing about this run. Pruning and oversize refusals are still reported either way, because those happen to the staged copy whether or not anything new was written.
+  
+  It also stops rewriting a couple of thousand files an hour to produce identical output.
+- **clauderig:** Turning `redactTranscripts` on now scrubs the transcripts that were already synced.
+  
+  It only ever applied to transcripts staged after the setting was enabled. Nothing about an already-staged copy changes when a setting does — same source, same timestamp — so the incremental skip declared it current and kept handing the unredacted copy back out on every restore, until the live transcript happened to change. Anyone who turned redaction on after noticing a key in a conversation was left with that key still in the repo. The first sync after it is enabled restages transcripts.
+  
+  An opaque `Bearer` token is now redacted from transcripts too. clauderig already treated one as a credential when it found it in a settings file; a transcript was the one place it survived. The rule is bounded deliberately — token charset, at least 24 characters, and obvious placeholders like `Bearer YOUR_ACCESS_TOKEN` left alone — because `Bearer` appears in every API example anyone has pasted into a chat, and a wrong guess rewrites their conversation with no copy kept.
+- **clauderig:** The journal no longer sums two different retention numbers into one.
+  
+  `aged out` was `RetentionPruned + RetentionByAge`. The first is a deletion — staged files removed because they passed the window — and is an event, normally zero. The second is a file in the live tree that the sync declined to stage because it is already too old. clauderig never deletes from `~/.claude`, so those files stay where they are and are declined again on every run: the count is a standing property of your tree, not something that happened. Added together, the constant swamped the event, and a sync that genuinely pruned something looked identical to the thousands that didn't.
+  
+  They are now separate. `agedOut` is the prune, and is what gets reported. `tooOld` is recorded but kept out of the summary line, for the same reason the unchanged-file count is: it would repeat forever without ever meaning anything new.
+  
+  `clauderig sync` renames the per-root figure from `N aged out` to `N too old`, alongside the existing `N too large`. Nothing is aged *out* at that point — the file is simply left where it is. The separate `retention N aged file(s) pruned from staging` line was already the real deletion and is unchanged.
+- **clauderig:** The session listing no longer hides sessions, and deleting one no longer reports success it did not achieve.
+  
+  Transcripts whose file timestamp fell outside the window were excluded without being read, on the reasoning that a timestamp moves forward and never back. That does not hold here: a restore rewrites whole trees and stamps them with the time it ran — one machine's tree had 541 transcripts inside the same minute — and the session hidden that way is the one you opened the listing to find. Every transcript in scope is now read; it was already a bounded read of the file's tail.
+  
+  `clauderig sessions delete` discarded the error from removing a session's sub-agent transcripts and reported the store fully cleared, leaving conversations on disk under a session the listing said was gone. It now reports the failure, and retries the directory even when the transcript itself is already absent — the state a previous half-failed delete leaves behind. It also refuses when it cannot determine whether the session is running, rather than reading a check that did not complete as "nothing is running".
+  
+  `clauderig reroot` accepts a session id in any casing, and rewrites the record's own `cwd` rather than the first path-shaped value in it — a record carries several, and rewriting the wrong one left the session filed exactly where it was.
+  
+  `clauderig search --json` now refuses `--raw` and `--all` instead of quietly emitting grep output to a caller expecting a document, and a session known only from the ledger keeps its project directory in that document, so the `resume` command it hands you does not run wherever you happen to be standing.
+- **clauderig:** The automatic history squash was discarding history it never needed to, and saying nothing about it.
+  
+  `sync` squashes when `.git` outgrows the working tree by `squashFactor`. It measured `.git` as it found it — and every sync writes its objects **loose and undeltified**. Transcripts are append-only, so each version is nearly identical to the last and packs down to almost nothing, but only once packed. On a real repo here `.git` measured 2.93 GB of which **2.39 GB was loose**; the actual history was 559 MB, and GitHub reported the same repo as 562 MB. The squash fired on the inflated figure, collapsed a month of history to a single commit, and force-pushed it — buying nothing that `git gc` would not have given back for free.
+  
+  Sync now repacks first and re-measures before deciding. On that repo the threshold was 3.24 GB and a repack lands `.git` near 0.9 GB, so the squash simply does not fire.
+  
+  When it does fire it no longer collapses everything. It keeps whole days — 30 by default, `retention.squashKeepDays` — and cuts on a **day boundary** rather than at the moment the threshold happened to trip. The old behaviour left the root commit at whatever o'clock the sync ran, so a repo reported that its history began at 08:18 on a Tuesday, with the first kept commit eleven minutes later. "Everything before this date" is what the cut is supposed to mean.
+  
+  If a month is not enough relief, nothing further is folded and the ratio stays visible in `clauderig repo`. That is deliberate: a tool that keeps eating history until the number looks acceptable is how a month went missing without anyone being asked.
+  
+  `clauderig repo gc` runs the repack on demand, and `repo prune` points at it when most of `.git` turns out to be unpacked rather than old — refusing to trade history for something free.
+  
+  Existing repos cannot recover what earlier squashes discarded; this stops it happening again.
+- **clauderig:** Hook-driven syncs now debounce and take a lock, instead of running at the end of every turn in every chat.
+  
+  The `Stop` hook fires when a turn ends, and it fired a full sync each time: walk the tree, redact every JSON file, commit, push. Measured on a real machine with **one** conversation open — 37 syncs, a median gap of 163 seconds, and a minimum gap of **7 seconds** — to write one changed file against 3,260 unchanged ones. Several chats at once multiplied that and raced each other on the same git repo.
+  
+  It applies whenever there is no terminal attached, which is what a hook is. "Typed by hand" is a property of how the command was invoked, not of a flag — and keying it to one would have left every install that already exists thrashing until its owner happened to re-run a command nobody knows they need. `--hook` remains as the explicit form for scripts that want the behaviour with a terminal present.
+  
+  A run that debounces does two things a bare sync does not. It takes a lock beside the staging repo, so a second sync that starts while one is running steps aside rather than contending — the run already in flight is walking the same tree and will capture the same work. And it skips if a sync completed within `hookIntervalMinutes` (default 5).
+  
+  `clauderig sync` typed by hand is never debounced and never skipped. Someone asking for a sync now means now.
+  
+  The interval is a trade and it is worth stating: the last turn before you walk away may not be backed up until something triggers the next sync. That is why the default is five minutes rather than an hour, and why `hookIntervalMinutes: 0` turns the debounce off entirely and restores the old every-turn behaviour.
+  
+  The key is a pointer internally so that omitting it and writing `0` mean different things — omitted is the default, `0` is off. A plain integer cannot tell someone who wrote zero from someone who wrote nothing, which is exactly the distinction an "off" switch needs.
+  
+  The last-sync time is read from the journal rather than a stamp file of its own — the journal already records exactly this, is already bounded, and cannot drift from what `clauderig status` reports. Failed syncs do not count toward the interval, so a machine that cannot push is never made to wait before being allowed to try again.
+  
+  The lock lives beside the repo rather than inside it, so it never shows up as an uncommitted change, and a lock older than twenty minutes is broken and taken: a sync killed mid-run must not stop syncing forever, and two overlapping syncs are something git's own `index.lock` already handles.
+  
+  `clauderig global install` rewrites the hook to the explicit `clauderig sync --hook`, but existing installs get the debounce either way.
+- **clauderig:** Two sessions ending at the same moment no longer sync on top of each other.
+  
+  `clauderig sync --flush` is meant to skip the debounce — a session that is ending has no later turn to defer to — but it skipped the lock along with it, so two SessionEnd hooks firing together could stage, commit and push the same tree at once. The lock is now taken by every automated sync and only the interval check is skipped; a flush waits briefly for a sync already in progress rather than running beside it.
+  
+  A sync that overran the lock's twenty-minute lifetime also used to delete whichever lock had replaced its own on the way out, letting a third run overlap after all. Each holder now removes only the lock it wrote.
+  
+  Related: `clauderig hooks install` listed two commands for the `Stop` event, so an install could only ever satisfy one of them and `clauderig doctor` reported drift against the other for ever after. And a failed first clone no longer creates the staging directory it was cloning into — git refuses to clone into a non-empty directory, which turned one transient network failure into every subsequent pull failing too.
+- **shiprig:** two shapes of .NET project that pack were not discovered. When a shared `Directory.Build.props` set `<IsPackable>false</IsPackable>` for everything and a later `PropertyGroup` under a `Condition` set it `true` again, the first value was taken as the last word, so every project beneath it was left out. Discovery now reads every `IsPackable` in the project and its ancestor props files: the last unconditional value wins, as in MSBuild, and a conditional `true` anywhere makes the project packable since conditions are not evaluated; a commented-out element counts for nothing. And MinVer declared once as a `GlobalPackageReference` in the nearest `Directory.Packages.props` (an outer one is read only where the nearer file imports it, as restore does), with no csproj naming it, now counts as a build-time version, so such a project is discovered rather than skipped.
+- **shiprig:** `${env.NAME}` now expands inside a captured var's command — `command` or any `os` entry, argv list or shell string — from the release environment, the way it already did in a literal's value and a step's `run`. It used to reach the command verbatim, so `["security", "find-generic-password", "-a", "${env.USER}", …]` asked the keychain for a user called `${env.USER}` and exited 44; with the var lazy and its value masked, that surfaced only at the push step, after the whole build, as "capture command for variable 'key' failed (exit code 44)" and nothing to look at. And a captured var whose command names an env var the release does not set now fails the release before any hook or step runs, in the dry run too, with a message naming both: `variable 'key' refers to ${env.USER}, which is not set in the release environment`. The check covers the captured vars the release will resolve — the eager ones, and the lazy ones a step in the plan or a hook refers to — so a lazy credential behind a disabled step stays optional, as before. A literal value is unchanged: an unset name there still expands to empty.
+
 ## 1.12.0
 ### 🚀 Enhancements
 
