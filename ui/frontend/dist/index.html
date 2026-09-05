@@ -285,6 +285,7 @@
   .srow .p.hit{color:var(--paper);}
   .srow .p.hit .n{color:var(--warn);font-variant-numeric:tabular-nums;}
   .lbl{color:var(--muted);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px;}
+  .note.err button{margin-top:8px;}
   .exlist{display:flex;flex-direction:column;gap:6px;}
   .ex{
     font-size:11px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere;
@@ -1662,16 +1663,30 @@ function sessionActions(d) {
     primary = targets.find(t => t.kind === 'vscode') || primary;
   }
 
-  async function open(target, node) {
+  async function open(target, node, anyway) {
     note.textContent = '';
+    note.className = 'note';
     try {
-      if (target.kind === 'desktop') await Call.ByName(LIBRARY_DESKTOP, d.session.id, target.profile);
+      if (target.kind === 'desktop') await Call.ByName(LIBRARY_DESKTOP, d.session.id, target.profile, !!anyway);
       else if (target.kind === 'vscode') await Call.ByName(LIBRARY_VSCODE, d.session.id);
       else await Call.ByName(LIBRARY_TERMINAL, d.session.id);
       flash(node);
     } catch (e) {
       note.className = 'note err';
       note.textContent = String(e);
+      // The routing refusal is the one failure with a way forward: another
+      // Desktop window is open, and a deep link goes to whichever the OS picks.
+      // Offer to send it regardless — usually that IS the open window, which is
+      // what you wanted — while saying plainly that it is the OS's choice, not
+      // ours. Not offered after an override has already been used: a second
+      // identical attempt has nothing new to try.
+      if (target.kind === 'desktop' && !anyway && /another claude desktop window is open/i.test(String(e))) {
+        const go = el('button', 'danger', 'Send anyway');
+        go.title = 'Send it without the guard. The OS decides which open Desktop window receives it — '
+          + 'usually the one already in front, but it is not guaranteed.';
+        go.onclick = () => { go.remove(); open(target, node, true); };
+        note.append(document.createElement('br'), go);
+      }
     }
   }
 

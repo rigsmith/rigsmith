@@ -167,6 +167,8 @@
        vertically; nudging on top of that only pushes it back off. */
     letter-spacing:0;line-height:1;padding:0 5px;
   }
+  .note.err button{margin-top:8px;}
+  .toast button{margin-top:8px;}
   .exlist{display:flex;flex-direction:column;gap:6px;margin-top:6px;}
   .ex{
     font-size:11px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere;
@@ -893,10 +895,10 @@ function renderActions(d) {
     setTimeout(() => node.classList.remove('ok'), 2200);
   };
 
-  async function open(target, node) {
+  async function open(target, node, anyway) {
     say('');
     try {
-      if (target.kind === 'desktop') await Call.ByName(LIBRARY_DESKTOP, d.session.id, target.profile);
+      if (target.kind === 'desktop') await Call.ByName(LIBRARY_DESKTOP, d.session.id, target.profile, !!anyway);
       else if (target.kind === 'vscode') await Call.ByName(LIBRARY_VSCODE, d.session.id);
       else await Call.ByName(LIBRARY_TERMINAL, d.session.id);
       flash(node);
@@ -904,6 +906,18 @@ function renderActions(d) {
       // The CLI's own refusal is the useful message — "other profiles are open"
       // is guidance, not a failure of the button.
       say('failed — hover for details', 'err', String(e));
+      // That particular refusal is the one with a way forward: another Desktop
+      // window is open, and a deep link goes to whichever the OS picks. Offer
+      // to send it regardless — usually that IS the open window, which is what
+      // you wanted. Not offered twice: a second identical attempt has nothing
+      // new to try.
+      if (target.kind === 'desktop' && !anyway && /another claude desktop window is open/i.test(String(e))) {
+        const go = el('button', 'danger', 'Send anyway');
+        go.title = 'Send it without the guard. The OS decides which open Desktop window receives it — '
+          + 'usually the one already in front, but it is not guaranteed.';
+        go.onclick = () => { go.remove(); open(target, node, true); };
+        toast.append(document.createElement('br'), go);
+      }
     }
   }
 

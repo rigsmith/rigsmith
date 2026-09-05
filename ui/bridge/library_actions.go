@@ -190,7 +190,19 @@ func managedProfiles() ([]string, error) {
 // refusal when several profile windows are open (the OS would pick which one
 // receives it, crossing an account boundary), and the check that the transcript
 // is somewhere Desktop can read. This only names the profile and reports back.
-func (l *Library) OpenDesktop(ctx context.Context, id, profile string) error {
+// OpenDesktop sends a session to one Claude Desktop profile.
+//
+// anyway drops the routing guard. With more than one Desktop window open the
+// CLI refuses, because a deep link is routed by SCHEME rather than to a
+// particular window — the OS picks which one receives it, and picking wrong
+// files somebody's conversation under the wrong account. anyway says send it
+// regardless, which is the right answer when the window you want is the one
+// that is already open, and the only answer available when closing the others
+// is not practical.
+//
+// It is deliberately not phrased as "open it in the window that is open": that
+// is the usual outcome, not a guarantee, and the mechanism cannot promise it.
+func (l *Library) OpenDesktop(ctx context.Context, id, profile string, anyway bool) error {
 	if strings.TrimSpace(profile) == "" {
 		return errors.New("name which Desktop profile to open it in")
 	}
@@ -219,7 +231,11 @@ func (l *Library) OpenDesktop(ctx context.Context, id, profile string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, bin, "desktop", "open", profile, "--session", id)
+	args := []string{"desktop", "open", profile, "--session", id}
+	if anyway {
+		args = append(args, "--anyway")
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// The CLI's own refusal is the useful message — "other profiles are
