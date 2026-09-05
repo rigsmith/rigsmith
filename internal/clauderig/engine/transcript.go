@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -21,6 +22,30 @@ var errPrivateKeyInTranscript = errors.New("transcript contains a private key bl
 // needs it, while a secret in a transcript is there because somebody pasted it.
 func isTranscript(rel string) bool {
 	return strings.HasPrefix(rel, "projects/") && strings.HasSuffix(rel, ".jsonl")
+}
+
+// conversationText reports whether a staged file is text belonging to a
+// conversation, and so gets scrubbed when redactTranscripts is on.
+//
+// Wider than the transcript itself, because a pasted credential lands wherever
+// the conversation put it: in the transcript, in a tool result written beside
+// it, in a note under memory/. Scrubbing only .jsonl left four files on one
+// real machine holding bearer tokens — the setting was on, the tripwire refused
+// them anyway, and the sync stayed blocked with nothing left to try.
+//
+// .json is excluded deliberately: structured files go through the field-level
+// redactor, which knows where a value ends. Images and other binaries are
+// excluded because a byte-level rewrite of one is not a redaction, it is
+// damage.
+func conversationText(rel string) bool {
+	if !strings.HasPrefix(rel, "projects/") {
+		return false
+	}
+	switch strings.ToLower(path.Ext(rel)) {
+	case ".jsonl", ".txt", ".md", ".html":
+		return true
+	}
+	return false
 }
 
 // redactTranscript streams src to dst, replacing credential-shaped tokens, and

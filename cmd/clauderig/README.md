@@ -48,7 +48,7 @@ the same in the gitignored `.claude/settings.local.json`). See
   permission-reason paths are translated by its format adapter as well.
 - **Secret redaction and publication checks.** Secret-bearing fields are stripped before
   commit; complete staged-text scanning refuses recognized credentials, including
-  ones in large transcripts. Optional `redactTranscripts` scrubs the staged copy. Restore merges the
+  ones in large transcripts. Optional `redactTranscripts` scrubs the staged copy of a conversation: the transcript, the tool results written beside it, and notes under `memory/`. Restore merges the
   synced config back without clobbering your local secrets — a new machine
   re-authenticates.
 - **Private repo, no exceptions.** The remote must be a GitHub repo that `gh`
