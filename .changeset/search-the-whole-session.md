@@ -1,6 +1,6 @@
 ---
 type: feat
-scope: clauderig
+scope: clauderig-ui
 "github.com/rigsmith/rigsmith"
 ---
 

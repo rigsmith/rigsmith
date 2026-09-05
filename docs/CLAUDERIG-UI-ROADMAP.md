@@ -43,18 +43,13 @@ not need to; hook syncs with no debounce or lock), three counters that reported 
 of the tree as properties of a run, and the session-filing checks. This is the bulk of the
 release and it is done.
 
-**1.2 — A public surface for the UI.** The decision to make, before any code:
-
-- *Promote the thirteen packages* to a public path. Simple, and thirteen packages of
-  public API is a large promise for one consumer.
-- *One curated facade* — `clauderig/api` or similar — re-exporting exactly what the bridge
-  uses, with type aliases so the rich types (`sessions.Row`, `status.Info`) stay usable
-  while their packages stay internal. Smaller promise, one place to version, one place to
-  see what the UI actually depends on.
-
-Recommended: **the facade**. The bridge is the only consumer and its needs are already
-enumerated — thirteen imports, most of them for a handful of types each. A facade also
-makes the coupling legible, which thirteen scattered imports do not.
+**1.2 — A public surface for the UI.** *Dropped, 2026-09-05.* Public API is a maintenance
+promise that outlives the reason for making it, and the only reason here was a repository
+move nobody has committed to. The UI stays in this repository, on one module, importing
+`internal/` as it does today. Nothing else in this roadmap depends on the decision, so it
+can be taken later — with the difference that Phase 2 will have shown whether the UI's
+release cadence actually diverges from rigsmith's, which is the only fact that would
+justify the promise.
 
 **1.3 — Doctor, callable rather than printable.** `doctor.Run` returns `[]Section` whose
 `Result.Fix` is a `func(context.Context) error`. A function cannot cross the bridge, so a
@@ -83,9 +78,14 @@ sessions without knowing the words "split session".
 
 ## Phase 3 — the move
 
-Only after Phase 1 has shipped and Phase 2 has settled.
+*Not scheduled.* Kept here as the record of what it would cost, not as a plan. Revisit only
+if the UI's releases start wanting a cadence of their own; until then one repository and one
+module is strictly less work, and the API promise above is the price of changing that.
 
-1. New repository, `require github.com/rigsmith/rigsmith vX.Y.Z` against a released tag.
+If it ever happens:
+
+1. New repository, `require github.com/rigsmith/rigsmith vX.Y.Z` against a released tag,
+   which requires 1.2 above.
 2. Move `ui/`, its packaging script, its cask publisher, and the macOS job.
 3. Delete `ui/` here; the `clauderig-ui` build and archive leave `.goreleaser.yaml` with it.
 4. Its own release lane, its own version.

@@ -12,6 +12,8 @@ package doctor
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	coredoctor "github.com/rigsmith/rigsmith/core/doctor"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
@@ -87,10 +89,54 @@ func Run(ctx context.Context, env Env) []Section {
 		}
 	} else {
 		wt.Results = append(wt.Results, Result{
-			Name: "repo checks", Status: Info,
+			ID: "repo-checks", Name: "repo checks", Status: Info,
 			Detail: "not in a git repo — run inside one to check the guard/guide",
 		})
 	}
 
 	return []Section{environment, sync, wt}
+}
+
+// ErrNoSuchCheck is returned when nothing answers to an id.
+var ErrNoSuchCheck = errors.New("no such check")
+
+// ErrNotFixable is returned for a check that reports but cannot repair. Distinct
+// from ErrNoSuchCheck on purpose: "there is no such check" and "that check has
+// no fix" send a caller in different directions.
+var ErrNotFixable = errors.New("that check has no automatic fix")
+
+// Find returns the check with this id from a fresh run.
+func Find(ctx context.Context, env Env, id string) (Result, error) {
+	for _, sec := range Run(ctx, env) {
+		for _, r := range sec.Results {
+			if r.ID != "" && r.ID == id {
+				return r, nil
+			}
+		}
+	}
+	return Result{}, fmt.Errorf("%w: %q", ErrNoSuchCheck, id)
+}
+
+// Fix runs one check's repair, named by id.
+//
+// It re-runs the checks rather than taking a Result: a Fix is a closure over the
+// state the check found, and state read minutes ago in some other process is
+// exactly the state you must not repair against. Re-running also means a problem
+// already resolved reports as much instead of being "fixed" a second time.
+//
+// This exists so the repairs `doctor --fix` offers are reachable from somewhere
+// other than a terminal. A Fix is a func and cannot cross a process boundary;
+// an id can.
+func Fix(ctx context.Context, env Env, id string) error {
+	r, err := Find(ctx, env, id)
+	if err != nil {
+		return err
+	}
+	if r.Fix == nil {
+		return fmt.Errorf("%w: %q", ErrNotFixable, id)
+	}
+	if r.Status == OK {
+		return nil // already resolved between the report and the request
+	}
+	return r.Fix(ctx)
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/contents"
 	"github.com/rigsmith/rigsmith/internal/clauderig/sessions"
+	"github.com/rigsmith/rigsmith/internal/clauderig/status"
 )
 
 // NewRepoCmd is the staging repo itself: how big it has got, and how to make it
@@ -119,7 +120,7 @@ func printRepoStats(out io.Writer, s gitrepo.Stats) {
 	// think", which is precisely when nobody does the subtraction.
 	if !s.First.IsZero() {
 		age := humanSpan(time.Since(s.First))
-		if SquashedRoot(s.RootSubject) {
+		if status.SquashedRoot(s.RootSubject) {
 			fmt.Fprintf(out, "  %-10s %s %s\n", "retained", age,
 				DimStyle.Render("— squashed "+s.First.Local().Format("2006-01-02 15:04")+", earlier history discarded"))
 		} else {
@@ -281,25 +282,6 @@ func countOf(n int, one, many string) string {
 		return "1 " + one
 	}
 	return fmt.Sprintf("%d %s", n, many)
-}
-
-// squashRoots are the messages clauderig's own squashes write. A root commit
-// carrying one of them means history was truncated there rather than started
-// there — the automatic size-based squash does this without being asked, so the
-// distinction is not a rare edge case.
-var squashRoots = []string{
-	"clauderig: squashed history",
-	"clauderig: history before",
-}
-
-// SquashedRoot reports whether a root commit's subject is one of ours.
-func SquashedRoot(subject string) bool {
-	for _, p := range squashRoots {
-		if strings.HasPrefix(subject, p) {
-			return true
-		}
-	}
-	return false
 }
 
 // humanSpan renders a duration the way the question is asked — "do I have a

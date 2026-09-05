@@ -1,6 +1,6 @@
 ---
 type: fix
-scope: clauderig
+scope: clauderig-ui
 "github.com/rigsmith/rigsmith"
 ---
 

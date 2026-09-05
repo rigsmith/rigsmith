@@ -28,13 +28,7 @@ The copies not chosen are **kept and reported** rather than dropped. `sessions.C
 
 One implementation, because three would eventually disagree, and disagreeing about whether a conversation is intact is the worst thing they could differ on.
 
-In the window the banner expands: **Show them** lists each split session by title, with both copies side by side — the project each sits in, how many records it holds, its date range, and how many records exist *only* in the older one. Where the older copy is wholly contained in the newer, one button parks it.
-
 Parked, never deleted, into `~/.clauderig/parked/<timestamp>/` — and deliberately outside `~/.claude`, because a file parked there would be picked up by the next sync and handed back by the next restore, which is how the copy returns.
-
-The panel is only rebuilt when the finding actually changes. The status poll runs every five seconds while the window is open, and this data moves only when a session is filed or fixed — repainting regardless threw the expanded list away underneath whoever had just opened it. Fixing one keeps the list open, since collapsing it the moment you resolve one of four is not a reward for resolving it.
-
-Describing a split reads *both* transcripts and compares them record by record, so it is not done on the status refresh — the banner is cheap, the list is asked for.
 
 It reports and never repairs by itself. Which copy is wanted is usually obvious and occasionally not: when two have genuinely diverged, each holding turns the other lacks, discarding either loses a conversation. When they have diverged the button is absent and the row says why, with the count of records that exist only in the older copy — a missing button is a mystery, and this is precisely the case where a person has to look. There is no flag to override it: "this copy holds three turns the other lacks" has no safe automatic answer, and offering one in a window is how somebody loses a conversation by clicking. `clauderig reroot <session> <dir>` re-files one deliberately.
 

@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
-	"github.com/rigsmith/rigsmith/internal/clauderig/commands"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/contents"
+	"github.com/rigsmith/rigsmith/internal/clauderig/status"
 )
 
 // MinPruneDays is the closest to now this will fold history. Keeping a few days
@@ -65,7 +65,7 @@ func (s *Repo) Get(ctx context.Context) (RepoStats, error) {
 	if err != nil {
 		return RepoStats{Error: err.Error()}, nil
 	}
-	out := RepoStats{Stats: st, Squashed: commands.SquashedRoot(st.RootSubject)}
+	out := RepoStats{Stats: st, Squashed: status.SquashedRoot(st.RootSubject)}
 	// Best-effort: a breakdown that cannot be walked must not cost the numbers
 	// above it, which are the ones the panel exists for.
 	if rep, cerr := contents.Scan(staging); cerr == nil {

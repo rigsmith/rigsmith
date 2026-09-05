@@ -22,20 +22,20 @@ import (
 // obvious and occasionally not — when two have genuinely diverged, discarding
 // either loses a conversation — so there is no Fix here on purpose.
 func checkSessionFiling(_ context.Context, env Env) Result {
-	const name = "session filing"
+	const id, name = "session-filing", "session filing"
 	if env.Cfg == nil {
-		return Result{Name: name, Status: Info, Detail: "no config"}
+		return Result{ID: id, Name: name, Status: Info, Detail: "no config"}
 	}
 	home, _ := env.Cfg.RootLocation("cli", env.Machine)
 	if home == "" {
-		return Result{Name: name, Status: Info, Detail: "no ~/.claude on this machine"}
+		return Result{ID: id, Name: name, Status: Info, Detail: "no ~/.claude on this machine"}
 	}
 	h := sessions.CheckHealth(
 		[]search.Target{{Label: sessions.CLISource, Dir: home}},
 		sessions.Roots(env.Cfg, env.Machine, false, false),
 	)
 	if h.OK() {
-		return Result{Name: name, Status: OK, Detail: "every session is filed in one place"}
+		return Result{ID: id, Name: name, Status: OK, Detail: "every session is filed in one place"}
 	}
 
 	var b strings.Builder
@@ -65,7 +65,7 @@ func checkSessionFiling(_ context.Context, env Env) Result {
 		}
 	}
 	return Result{
-		Name: name, Status: Warn, Detail: b.String(),
+		ID: id, Name: name, Status: Warn, Detail: b.String(),
 		Hint: "Claude Desktop opens the copy in the directory its sidecar names, which may be an " +
 			"older one — `clauderig reroot <session> <dir>` re-files a session where the work is",
 	}
