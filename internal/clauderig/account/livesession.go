@@ -137,6 +137,36 @@ func RunningInstancesScan(claudeHome string) ([]Instance, error) {
 	return out, nil
 }
 
+// UnaccountedProcesses counts Claude Code processes using this ~/.claude that
+// neither sessions/ nor ide/ records, and reports ok=false when the process
+// table could not be read at all.
+//
+// These are the ones a transcript guard cannot see. It protects the file a
+// running session is appending to by reading that session's id out of the
+// registry, so a process the registry does not list contributes no protected
+// path and reads, silently, as though nothing were running. Counting them is
+// what lets a caller say so instead.
+//
+// An IDE bridge counts as accounted for: it appears in ide/ and has no
+// transcript of its own to protect.
+func UnaccountedProcesses(claudeHome string) (int, bool) {
+	procs, ok := liveClaudeProcesses(claudeHome)
+	if !ok {
+		return 0, false
+	}
+	known := map[int]bool{}
+	for _, inst := range RunningInstances(claudeHome) {
+		known[inst.PID] = true
+	}
+	n := 0
+	for _, p := range procs {
+		if !known[p.PID] {
+			n++
+		}
+	}
+	return n, true
+}
+
 // Indirected so tests can supply a process table instead of the machine's own —
 // a guard this important needs its logic covered, not just its plumbing.
 var (

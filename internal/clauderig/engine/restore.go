@@ -79,6 +79,13 @@ var prunableDirs = []string{"skills", "commands", "agents", "plans"}
 // RestoreReport is the outcome of a restore.
 type RestoreReport struct {
 	Roots []RestoreRootResult
+	// Unaccounted counts Claude Code processes using this ~/.claude that the
+	// session registry does not list. The live-transcript guard identifies what
+	// to protect by reading session ids out of that registry, so a process
+	// missing from it protects nothing — and looks exactly like no session
+	// running at all. Reported so the command layer can say the guard had a
+	// blind spot, rather than leaving the restore looking wholly guarded.
+	Unaccounted int
 }
 
 // LiveSkips lists every transcript skipped because a Claude Code session was
@@ -158,6 +165,9 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 		// question is always "is anything writing to the tree I'm about to
 		// overwrite", not "is Claude running somewhere".
 		live := liveTranscripts(target)
+		if n, ok := account.UnaccountedProcesses(target); ok {
+			rep.Unaccounted = max(rep.Unaccounted, n)
+		}
 
 		files, err := listFiles(stageRoot)
 		if err != nil {

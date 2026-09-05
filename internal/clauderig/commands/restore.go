@@ -214,6 +214,16 @@ func NewRestoreCmd() *cobra.Command {
 				fmt.Fprintf(out, "  %s\n", DimStyle.Render(
 					"Quit those sessions and re-run restore if you meant to overwrite them."))
 			}
+			// The guard reads which transcripts to protect out of the session
+			// registry, so a running session missing from it was never
+			// protected — and says nothing on its way past.
+			if rep.Unaccounted > 0 {
+				fmt.Fprintf(out, "  %s\n", WarnStyle.Render(fmt.Sprintf(
+					"%d Claude Code process(es) are running that the session registry does not list.",
+					rep.Unaccounted)))
+				fmt.Fprintf(out, "  %s\n", DimStyle.Render(
+					"Their transcripts could not be identified, so they were not protected — quit them and re-run if anything looks wrong."))
+			}
 			if man.ClaudeVersion != "" {
 				fmt.Fprintf(out, "  %s\n", DimStyle.Render("synced from Claude Code "+man.ClaudeVersion))
 			}
