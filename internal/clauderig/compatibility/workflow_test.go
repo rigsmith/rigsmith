@@ -2,6 +2,7 @@ package compatibility
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +22,11 @@ const (
 
 func TestWorkflowCompatibility(t *testing.T) {
 	base, next := binaries(t)
-	for _, tc := range []struct {
+	// Keep the descriptive subtest name out of physical paths. Desktop's two
+	// UUID directories otherwise exceed Git for Windows' default path limit
+	// merely because testing.TempDir embeds the full subtest name.
+	fixtures := t.TempDir()
+	for i, tc := range []struct {
 		name string
 		run  func(*sandbox)
 	}{
@@ -33,7 +38,7 @@ func TestWorkflowCompatibility(t *testing.T) {
 		{"fresh-machine-pull", freshPull},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := filepath.Join(fixtures, fmt.Sprintf("%02d", i))
 			// Equal-length paths keep original transcript byte counts comparable.
 			a := newSandbox(t, filepath.Join(root, "base"), base)
 			b := newSandbox(t, filepath.Join(root, "next"), next)
