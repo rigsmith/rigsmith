@@ -48,7 +48,7 @@ the same in the gitignored `.claude/settings.local.json`). See
   permission-reason paths are translated by its format adapter as well.
 - **Secret redaction and publication checks.** Secret-bearing fields are stripped before
   commit; complete staged-text scanning refuses recognized credentials, including
-  ones in large transcripts. Optional `redactTranscripts` scrubs the staged copy of a conversation: the transcript, the tool results written beside it, and notes under `memory/`. Restore merges the
+  ones in large transcripts. Optional `redactTranscripts` scrubs the staged copy of a conversation: the transcript, the tool results written beside it, and notes under `memory/`. Upgrading redaction restages these files once. Restore merges the
   synced config back without clobbering your local secrets — a new machine
   re-authenticates.
 - **Private repo, no exceptions.** The remote must be a GitHub repo that `gh`
@@ -68,7 +68,8 @@ the same in the gitignored `.claude/settings.local.json`). See
   to convert back, or auto to follow the repo. See
   [storage and scanning](../../docs/CLAUDERIG-TRANSCRIPT-STORAGE.md).
 - **Preserve backup bytes through Git.** Committed attributes prevent line-ending,
-  encoding and filter conversions. The Git index is refreshed on upgrade;
+  encoding and filter conversions. Required attributes are staged even when Git
+  excludes them, and the Git index is refreshed on upgrade;
   conflicting attribute overrides refuse publication. Already damaged historical
   chunks still require recovery from an intact source.
 - **Plain large transcripts are throttled.** Past `retention.largeFileBytes` (8 MiB)

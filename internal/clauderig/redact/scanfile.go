@@ -257,6 +257,12 @@ func ScanFile(rel string, data []byte) []Finding {
 	// code — not a bare token — so it is left alone.
 	s := strings.TrimSpace(string(data))
 	if s != "" && !strings.ContainsAny(s, "\n\r") {
+		// A complete signature match still uses the shared prose decision.
+		// Otherwise the small-file fallback would re-flag a phrase that the
+		// stream scanner and rewriter both intentionally left alone.
+		if textSecretRe.FindString(s) == s && !IsCredentialMatch(s) {
+			return nil
+		}
 		if kind, ok := LooksSecret(s); ok {
 			return []Finding{{Path: rel, Kind: kind}}
 		}

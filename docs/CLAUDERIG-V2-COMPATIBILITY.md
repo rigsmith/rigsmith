@@ -100,3 +100,15 @@ sets hostile global encoding, keyword and filter attributes, then verifies LF
 and CRLF data, append history, fresh clone, integrity checks and native restore.
 It runs as part of v2's existing synthetic end-to-end CI gate on all three OSes.
 There is no need for a second invocation of the same regression in that workflow.
+
+## Review corrections after the pinned baseline
+
+PR #295 keeps the fixed v1 baseline pinned while correcting additional defects:
+scanner and redactor classification now agree; the `sk-proj-` prefix is removed
+before testing a key body for prose; older redaction markers trigger one restage;
+and required backup attributes are staged even when Git excludes them. Focused
+regressions assert these intentional improvements. The existing workflow
+comparisons still require identical output for their unchanged scenarios.
+
+The redaction marker is local cache state outside the backup tree, so changing
+its version does not change the published backup format.

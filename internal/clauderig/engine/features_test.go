@@ -542,3 +542,50 @@ func TestSync_ScrubsToolResultsAndNotesBesideTheTranscript(t *testing.T) {
 		t.Error("a binary was rewritten, which is damage rather than redaction")
 	}
 }
+
+func TestSync_UpgradesLegacyRedactionState(t *testing.T) {
+	live := t.TempDir()
+	staging := filepath.Join(t.TempDir(), "repo")
+	key := "sk-proj-" + strings.Repeat("a", 48)
+	body := "the key was " + key + "\n"
+	rels := []string{"projects/-p/s/tool-results/out.txt", "projects/-p/memory/notes.md"}
+	for _, rel := range rels {
+		write(t, live, rel, body)
+		write(t, staging, "cli/"+rel, body)
+		st, err := os.Stat(filepath.Join(live, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(filepath.Join(staging, "cli", filepath.FromSlash(rel)), st.ModTime(), st.ModTime()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The old client already had redaction on, but did not cover these files.
+	if err := os.WriteFile(redactionStatePath(staging), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{StagingDir: staging, Config: cliOnlyConfig(live),
+		Machine:           config.Machine{OS: pathmap.OSMacOS, Home: "/Users/fixture"},
+		RedactTranscripts: true, SourceOverride: override("cli", live)}
+	if _, err := Sync(opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range rels {
+		if got := read(t, filepath.Join(staging, "cli", filepath.FromSlash(rel))); strings.Contains(got, key) || !strings.Contains(got, redact.Placeholder) {
+			t.Fatalf("%s was not scrubbed during upgrade", rel)
+		}
+		if got := read(t, filepath.Join(live, filepath.FromSlash(rel))); got != body {
+			t.Fatalf("%s: live source changed", rel)
+		}
+	}
+	if got := read(t, redactionStatePath(staging)); got != redactionVersion+"\n" {
+		t.Fatalf("marker not upgraded: %q", got)
+	}
+	rep, err := Sync(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Roots[0].Files != 0 || rep.Roots[0].Redactions != 0 {
+		t.Fatalf("upgrade did not settle: %+v", rep.Roots[0])
+	}
+}

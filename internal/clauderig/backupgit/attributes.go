@@ -79,7 +79,7 @@ func Prepare(ctx context.Context, root string) error {
 			return err
 		}
 	}
-	_, err = git(ctx, root, nil, "add", "--", ".gitattributes")
+	_, err = git(ctx, root, nil, "add", "--force", "--", ".gitattributes")
 	return err
 }
 

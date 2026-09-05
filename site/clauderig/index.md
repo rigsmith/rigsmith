@@ -44,7 +44,7 @@ clauderig ui                   # interactive dashboard
   in transcripts and other staged files, regardless of size. Set
   `redactTranscripts` to true to scrub supported signatures from the staged copy of a
   conversation — the transcript, the tool results beside it, and memory notes —
-  transcripts first. Live files are never edited. These checks do not sanitize
+  first. Live files are never edited. These checks do not sanitize
   existing Git history or identify every possible secret.
 - **Transcript chunking.** On for new configurations; existing configs without
   the key use auto and follow the repository. Large backups use reusable 4 MiB chunks

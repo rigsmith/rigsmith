@@ -94,11 +94,8 @@ func RedactText(data []byte) (out []byte, hits []TextHit, changed bool) {
 	prev := 0
 	for _, loc := range locs {
 		match := string(data[loc[0]:loc[1]])
-		if screamingRe.MatchString(match) {
-			continue // a placeholder in an example, not a credential
-		}
-		if isKebabProse(match) {
-			continue // a hyphenated phrase that happens to start with a prefix
+		if !IsCredentialMatch(match) {
+			continue
 		}
 		b.Write(data[prev:loc[0]])
 		b.WriteString(Placeholder)
@@ -138,12 +135,18 @@ func hint(s string) string {
 // than a refusal that says what it found.
 func HasPrivateKey(line []byte) bool { return pemRe.Match(line) }
 
+// IsCredentialMatch is shared by the rewriter and publication scanner so both
+// classify placeholders and prose the same way. The input must be a regex hit.
+func IsCredentialMatch(match string) bool {
+	return !screamingRe.MatchString(match) && !isKebabProse(match)
+}
+
 // isKebabProse reports whether a match is a hyphenated lowercase phrase rather
 // than a credential. Judged on the body, after the vendor prefix: "sk-" is
 // followed by a key in every real case and by English in the false ones.
 func isKebabProse(match string) bool {
 	body := match
-	for _, prefix := range []string{"sk-ant-", "sk-", "glpat-", "xox"} {
+	for _, prefix := range []string{"sk-ant-", "sk-proj-", "sk-", "glpat-", "xox"} {
 		if rest, ok := strings.CutPrefix(match, prefix); ok {
 			body = rest
 			break
