@@ -391,3 +391,193 @@ func contains(haystack []string, want string) bool {
 	}
 	return false
 }
+
+// ---- dry runs ---------------------------------------------------------
+
+// A dry run of a verb that writes to a remote has one job: to write nothing.
+// Both tests below stand up a real (loopback) git server so that "nothing
+// reached the remote" is a fact about a repository, not about a mock.
+
+// stackDryRun flips the global --dry-run for one test.
+func stackDryRun(t *testing.T) {
+	t.Helper()
+	prev := dryRun
+	dryRun = true
+	t.Cleanup(func() { dryRun = prev })
+}
+
+// TestStackPushDryRun needs the filter engine on disk: the dry run runs it,
+// since the filtered history is what tells the user what would go. It is
+// skipped, not downloaded, when the engine is missing — `rig stack doctor
+// --fix` (or RIG_STACK_E2E=1 on TestEnsureJoshFilterDownloads) installs it.
+func TestStackPushDryRun(t *testing.T) {
+	for _, tool := range []string{toolFilter, toolProxy} {
+		bin, err := stackJoshToolBin(stackJoshVersion, tool)
+		if err != nil || stackJoshInstalled(bin) != nil {
+			t.Skipf("no %s installed; run `rig stack doctor --fix` first", tool)
+		}
+	}
+	filter, _ := stackJoshToolBin(stackJoshVersion, toolFilter)
+
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "you/app", "app")
+	upstream := srv.path("you/app")
+	tip := strings.TrimSpace(mustGitStack(t, upstream, "rev-parse", "main"))
+
+	// A stackspace shaped the way init makes one, without the proxy: the
+	// upstream history run through the same :prefix filter, merged in under
+	// the prefix with --no-ff, and the cursor recorded at the tip.
+	ws := filepath.Join(work, "stackspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "init", "-q", "-b", "main")
+	mustGitStack(t, ws, "config", "user.email", "t@t")
+	mustGitStack(t, ws, "config", "user.name", "t")
+	writeStackManifest(t, ws, fmt.Sprintf(`{
+  "repos": { "app": { "upstream": %[1]q, "fork": %[1]q, "upstreamBranch": "main", "owned": true } },
+  "lastSync": { "app": %[2]q }
+}`, srv.spec("you/app"), tip))
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "manifest")
+	mustGitStack(t, ws, "fetch", "-q", "--no-tags", upstream, "main")
+	prefixed := exec.Command(filter, stackPrefixFilter("app"), "--update", "refs/rigsmith/test/import", "FETCH_HEAD")
+	prefixed.Dir = ws
+	if out, err := prefixed.CombinedOutput(); err != nil {
+		t.Fatalf("josh-filter :prefix=app: %v\n%s", err, out)
+	}
+	mustGitStack(t, ws, "merge", "-q", "--allow-unrelated-histories", "--no-ff", "-m",
+		"stack: import app @ "+short(tip), "refs/rigsmith/test/import")
+
+	// Two stackspace commits, one of which touches app/ and would go.
+	if err := os.WriteFile(filepath.Join(ws, "src-app.txt"), []byte("outside every prefix\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "root: not app's business")
+	if err := os.WriteFile(filepath.Join(ws, "app", "src", "app.txt"), []byte("app v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "commit", "-qam", "app: v2")
+
+	chdir(t, ws)
+	stackDryRun(t)
+	headBefore := strings.TrimSpace(mustGitStack(t, ws, "rev-parse", "HEAD"))
+	manifestBefore, err := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runVerbOut(context.Background(), newStackPushCmd(), "app")
+	if err != nil {
+		t.Fatalf("push --dry-run: %v\n%s", err, out)
+	}
+
+	// Says what would go, in the future tense, and which commits.
+	if !strings.Contains(out, "would push app to "+srv.spec("you/app")+":main (") {
+		t.Fatalf("dry run did not name the target and branch:\n%s", out)
+	}
+	if strings.Contains(out, "pushed ") {
+		t.Fatalf("dry run claims to have pushed:\n%s", out)
+	}
+	if !strings.Contains(out, " app: v2") {
+		t.Fatalf("dry run did not list the commit that would go:\n%s", out)
+	}
+	if strings.Contains(out, "not app's business") || strings.Contains(out, "app: initial") {
+		t.Fatalf("dry run lists commits a push would not carry:\n%s", out)
+	}
+
+	// The remote is where it was.
+	if got := strings.TrimSpace(mustGitStack(t, upstream, "rev-parse", "main")); got != tip {
+		t.Fatalf("dry run moved the remote: %s, was %s", short(got), short(tip))
+	}
+	// And nothing local records a push: no take-back merge, no cursor move.
+	if got := strings.TrimSpace(mustGitStack(t, ws, "rev-parse", "HEAD")); got != headBefore {
+		t.Fatalf("dry run committed to the stackspace: HEAD %s, was %s", short(got), short(headBefore))
+	}
+	if manifestAfter, _ := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc")); string(manifestAfter) != string(manifestBefore) {
+		t.Fatalf("dry run rewrote the manifest:\n%s", manifestAfter)
+	}
+	if dirty := strings.TrimSpace(mustGitStack(t, ws, "status", "--porcelain")); dirty != "" {
+		t.Fatalf("dry run left the worktree dirty:\n%s", dirty)
+	}
+	// Nor the filtered ref behind: the preview is read off it, and then it goes.
+	if refExists(t, ws, "refs/rigsmith/push/app") {
+		t.Fatal("dry run left refs/rigsmith/push/app behind")
+	}
+
+	// A ref that was there before a dry run — a real push's leftover — is put
+	// back to what it held, not deleted.
+	mustGitStack(t, ws, "update-ref", "refs/rigsmith/push/app", headBefore)
+	if out, err := runVerbOut(context.Background(), newStackPushCmd(), "app"); err != nil || !strings.Contains(out, "would push app") {
+		t.Fatalf("second dry run: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(mustGitStack(t, ws, "rev-parse", "refs/rigsmith/push/app")); got != headBefore {
+		t.Fatalf("dry run left refs/rigsmith/push/app at %s, was %s", short(got), short(headBefore))
+	}
+}
+
+// TestStackProposeDryRun needs no engine: propose is plain git, so the only
+// requirement is the loopback server the harness provides.
+func TestStackProposeDryRun(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	tip := strings.TrimSpace(mustGitStack(t, srv.path("acme/lib"), "rev-parse", "main"))
+
+	// The prefix holds upstream's tree with one file changed; propose reads the
+	// tree, not the history, so how it got there does not matter here.
+	ws := filepath.Join(work, "stackspace")
+	if err := os.MkdirAll(filepath.Join(ws, "lib", "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "init", "-q", "-b", "main")
+	mustGitStack(t, ws, "config", "user.email", "t@t")
+	mustGitStack(t, ws, "config", "user.name", "t")
+	writeStackManifest(t, ws, fmt.Sprintf(`{
+  "branchPrefix": "stack/",
+  "repos": { "lib": { "upstream": %q, "fork": %q, "upstreamBranch": "main" } },
+  "lastSync": { "lib": %q }
+}`, srv.spec("acme/lib"), srv.spec("you/lib"), tip))
+	if err := os.WriteFile(filepath.Join(ws, "lib", "src", "lib.txt"), []byte("lib v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "lib: v2")
+
+	chdir(t, ws)
+	stackDryRun(t)
+	manifestBefore, err := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runVerbOut(context.Background(), newStackSendCmd(), "lib", "fix")
+	if err != nil {
+		t.Fatalf("propose --dry-run: %v\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "would push ") || !strings.Contains(out, " to "+srv.spec("you/lib")+":stack/fix (proposing to "+srv.spec("acme/lib")+")") {
+		t.Fatalf("dry run did not say what it would push and where:\n%s", out)
+	}
+	if strings.Contains(out, "proposed ") || strings.Contains(out, "pushed ") {
+		t.Fatalf("dry run claims to have proposed:\n%s", out)
+	}
+
+	// The fork never heard of the branch.
+	if refExists(t, fork, "refs/heads/stack/fix") {
+		t.Fatal("dry run pushed the branch to the fork")
+	}
+	// And nothing local claims it did: no propose ref, no remembered branch.
+	if refExists(t, ws, "refs/rigsmith/propose/lib") {
+		t.Fatal("dry run recorded the proposal under refs/rigsmith/propose")
+	}
+	if manifestAfter, _ := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc")); string(manifestAfter) != string(manifestBefore) {
+		t.Fatalf("dry run rewrote the manifest:\n%s", manifestAfter)
+	}
+	if dirty := strings.TrimSpace(mustGitStack(t, ws, "status", "--porcelain")); dirty != "" {
+		t.Fatalf("dry run left the worktree dirty:\n%s", dirty)
+	}
+}

@@ -264,6 +264,35 @@ func (r *Repo) CommitTree(ctx context.Context, tree, parent, message string) (st
 	return strings.TrimSpace(out), nil
 }
 
+// LogEntry is one commit of a log: its full id and its subject line.
+type LogEntry struct {
+	SHA     string
+	Subject string
+}
+
+// LogRange lists the commits reachable from head but not from base, newest
+// first — `git log base..head`, subjects only. For saying what a push would
+// carry before it carries it: base is what the remote already has, head is
+// what it would be moved to.
+func (r *Repo) LogRange(ctx context.Context, base, head string) ([]LogEntry, error) {
+	// Framed on the first space: a full id never holds one, and git strips
+	// newlines from %s, so any byte a subject can carry survives — no
+	// separator that a message could happen to contain.
+	out, err := runGit(ctx, r.Dir, "log", "--format=%H %s", base+".."+head)
+	if err != nil {
+		return nil, err
+	}
+	var entries []LogEntry
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		sha, subject, _ := strings.Cut(line, " ")
+		entries = append(entries, LogEntry{SHA: sha, Subject: subject})
+	}
+	return entries, nil
+}
+
 // PushRef pushes an arbitrary commit to a remote ref.
 func (r *Repo) PushRef(ctx context.Context, remote, commit, ref string) error {
 	_, err := runGit(ctx, r.Dir, "push", remote, commit+":"+ref)
