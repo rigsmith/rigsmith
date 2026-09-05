@@ -18,7 +18,7 @@ The interval is a trade and it is worth stating: the last turn before you walk a
 
 The key is a pointer internally so that omitting it and writing `0` mean different things — omitted is the default, `0` is off. A plain integer cannot tell someone who wrote zero from someone who wrote nothing, which is exactly the distinction an "off" switch needs.
 
-The last-sync time is read from the journal rather than a stamp file of its own — the journal already records exactly this, is already bounded, and cannot drift from what the activity feed shows. Failed syncs do not count toward the interval, so a machine that cannot push is never made to wait before being allowed to try again.
+The last-sync time is read from the journal rather than a stamp file of its own — the journal already records exactly this, is already bounded, and cannot drift from what `clauderig status` reports. Failed syncs do not count toward the interval, so a machine that cannot push is never made to wait before being allowed to try again.
 
 The lock lives beside the repo rather than inside it, so it never shows up as an uncommitted change, and a lock older than twenty minutes is broken and taken: a sync killed mid-run must not stop syncing forever, and two overlapping syncs are something git's own `index.lock` already handles.
 

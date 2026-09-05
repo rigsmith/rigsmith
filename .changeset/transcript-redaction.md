@@ -14,4 +14,4 @@ The scrub is deliberately narrow: known vendor prefixes (Anthropic, OpenAI, GitH
 
 Separately, `N secrets redacted` now means what it says. Every JSON file is redacted on every pass, and the count was tallied at redaction time, so it reported the whole tree's total on every row — `21 secrets redacted` sat beside syncs that had written a single file, and beside the row above and below. It now counts only the files a run actually staged, so most rows say nothing about secrets and the ones that do are worth reading.
 
-And the count names its files. Clicking a row in the window's Sync Activity feed lists what that run touched, with redacted files marked and the kind of credential found in each. The journal records paths and kinds only, never values — it is a map of where credentials turned up, which is worth having and is not itself a credential.
+And the count names its files: the journal records which files were redacted and what kind of credential was found in each — paths and kinds only, never values. It is a map of where credentials turned up, which is worth having and is not itself a credential.

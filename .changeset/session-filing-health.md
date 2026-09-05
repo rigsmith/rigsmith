@@ -4,7 +4,7 @@ scope: clauderig
 "github.com/rigsmith/rigsmith"
 ---
 
-clauderig now notices when a session is filed in two places, and says so in all three front ends.
+clauderig now notices when a session is filed in two places, and says so.
 
 A conversation that continues in a different directory gets a **second transcript**: Claude Code files by working directory, so it opens a new one under the new slug while the first stays frozen at the moment the work moved. Both are real files with the same id. Anything resolving by directory — Claude Desktop, in particular — can open the frozen one, which looks exactly like the session losing everything after that date.
 
@@ -24,9 +24,8 @@ The copies not chosen are **kept and reported** rather than dropped. `sessions.C
 
 - **`clauderig doctor`** — a `session filing` check naming the sessions and the slugs holding them
 - **The dashboard** (`clauderig` with no arguments) — a warning line, only when there is something to say
-- **The window** — a banner above the Repository panel, silent otherwise
 
-One implementation, because three would eventually disagree, and disagreeing about whether a conversation is intact is the worst thing they could differ on.
+One implementation behind both, because two would eventually disagree, and disagreeing about whether a conversation is intact is the worst thing they could differ on.
 
 Parked, never deleted, into `~/.clauderig/parked/<timestamp>/` — and deliberately outside `~/.claude`, because a file parked there would be picked up by the next sync and handed back by the next restore, which is how the copy returns.
 

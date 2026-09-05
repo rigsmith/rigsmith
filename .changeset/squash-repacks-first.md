@@ -12,8 +12,8 @@ Sync now repacks first and re-measures before deciding. On that repo the thresho
 
 When it does fire it no longer collapses everything. It keeps whole days — 30 by default, `retention.squashKeepDays` — and cuts on a **day boundary** rather than at the moment the threshold happened to trip. The old behaviour left the root commit at whatever o'clock the sync ran, so a repo reported that its history began at 08:18 on a Tuesday, with the first kept commit eleven minutes later. "Everything before this date" is what the cut is supposed to mean.
 
-If a month is not enough relief, nothing further is folded and the ratio stays visible in `clauderig repo` and the window. That is deliberate: a tool that keeps eating history until the number looks acceptable is how a month went missing without anyone being asked.
+If a month is not enough relief, nothing further is folded and the ratio stays visible in `clauderig repo`. That is deliberate: a tool that keeps eating history until the number looks acceptable is how a month went missing without anyone being asked.
 
-`clauderig repo gc` runs the repack on demand, and both `repo prune` and the window's prune dialog point at it when most of `.git` turns out to be unpacked rather than old — refusing to trade history for something free.
+`clauderig repo gc` runs the repack on demand, and `repo prune` points at it when most of `.git` turns out to be unpacked rather than old — refusing to trade history for something free.
 
 Existing repos cannot recover what earlier squashes discarded; this stops it happening again.

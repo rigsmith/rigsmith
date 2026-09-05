@@ -10,6 +10,4 @@ JSON files can't be skipped on timestamp the way plain copies can — each one i
 
 So the journal records what a run did rather than what it looked at. Quiet runs — the common case, since syncs fire every few minutes against a tree that only moves when you are working — read `No changes — 1,035 files already current`. Redaction totals are no longer repeated on them, for the same reason they were noise: the redactor runs over the whole tree every pass, so its count says nothing about this run. Pruning and oversize refusals are still reported either way, because those happen to the staged copy whether or not anything new was written.
 
-In the activity feed, consecutive identical runs from the same machine fold into one row with a count. Failures and tripwire refusals never fold — each one is its own event, and those are the rows the feed exists for.
-
 It also stops rewriting a couple of thousand files an hour to produce identical output.
