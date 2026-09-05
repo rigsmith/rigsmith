@@ -175,3 +175,32 @@ func TestRedactText_StillCatchesRealShapes(t *testing.T) {
 		}
 	}
 }
+
+// The rewriter and the tripwire have to agree about what a credential is. When
+// only the rewriter learned to skip hyphenated prose, the tripwire kept
+// refusing the phrases the rewriter had decided to leave alone — a sync blocked
+// with the scrubber already on and nothing left for its owner to try.
+func TestScanAndRedactAgreeOnWhatCountsAsACredential(t *testing.T) {
+	cases := []struct {
+		text   string
+		secret bool
+	}{
+		{"sk-a-single-line-of-explanation", false},
+		{"the global-task-runner-configuration", false},
+		{"Authorization: Bearer YOUR_ACCESS_TOKEN_GOES_HERE", false},
+		{"key sk-ant-api03-" + strings.Repeat("Aa1", 20), true},
+		{"AKIA" + strings.Repeat("A", 16), true},
+		{"Authorization: Bearer 8xLOxBtZp8kFqz5mNvQ2wRt7yHjKlPoI", true},
+	}
+	for _, tc := range cases {
+		_, _, rewrote := RedactText([]byte(tc.text))
+		refused := scanText("projects/-p/s.jsonl", []byte(tc.text)) != nil
+		if rewrote != refused {
+			t.Errorf("%q: rewriter says credential=%v, tripwire says %v — they must agree",
+				tc.text, rewrote, refused)
+		}
+		if refused != tc.secret {
+			t.Errorf("%q: treated as credential=%v, want %v", tc.text, refused, tc.secret)
+		}
+	}
+}
