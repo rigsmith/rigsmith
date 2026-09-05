@@ -72,6 +72,7 @@ func Run(ctx context.Context, env Env) []Section {
 		checkLastSync(ctx, env),
 		checkPushed(ctx, env),
 		checkPaths(env),
+		checkSessionFiling(ctx, env),
 	}}
 
 	wt := Section{Title: "worktree discipline"}

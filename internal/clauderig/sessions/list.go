@@ -91,6 +91,13 @@ type Row struct {
 	// Matches counts hits inside the transcript when a content search ran, and
 	// Snippet is the first of them. Zero and empty otherwise — a plain listing
 	// never opens a transcript body.
+	// Duplicates are the OTHER transcripts on this machine carrying this same
+	// session id — a session filed under two project slugs, which happens when
+	// work continues in a different directory. Path is the newest of them; these
+	// are the ones not chosen, and they are carried rather than dropped because
+	// a copy silently discarded is how a session appears to lose a week.
+	Duplicates []string
+
 	Matches int
 	Snippet string
 	// Meta is the Desktop sidecar record behind Title, Cwd, Model and Profile;
@@ -200,7 +207,7 @@ func List(opts Options) ([]Row, Report) {
 	Reprofile(idx, byAcct, acctComplete)
 	labels := AccountLabels()
 
-	livePaths := TranscriptPaths(opts.Targets, CLISource)
+	livePaths, liveDupes := TranscriptPathsAll(opts.Targets, CLISource)
 	deskPaths := TranscriptPaths(opts.Targets, DesktopSource)
 	repoPaths := TranscriptPaths(opts.Targets, RepoSource)
 
@@ -236,6 +243,7 @@ func List(opts Options) ([]Row, Report) {
 			Meta: meta, HasMeta: hasMeta, Ledger: led, HasLedger: hasLed,
 		}
 		row.CLILive = livePaths[id] != ""
+		row.Duplicates = liveDupes[id]
 		row.InRepo = repoPaths[id] != ""
 		row.Paths = map[string]string{}
 		held := map[string]bool{}

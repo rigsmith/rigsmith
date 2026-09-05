@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -410,5 +411,113 @@ func TestList_SearchMatchesRowOrBody(t *testing.T) {
 	}
 	if !sawBodyHit || !sawTitleHit {
 		t.Errorf("wrong rows came back: body=%v title=%v", sawBodyHit, sawTitleHit)
+	}
+}
+
+// A session filed under two project slugs is one session with two transcripts.
+// Choosing between them by directory-walk order is alphabetical luck: the copy
+// frozen at the moment the work moved sorts first about half the time, and then
+// the tool reports a state from that day with no sign a complete copy exists.
+// That is how a week of work appeared lost.
+func TestTranscriptPathsAll_PrefersTheNewestCopy(t *testing.T) {
+	live := t.TempDir()
+	id := "aaaaaaaa-1111-4111-8111-cccccccccccc"
+
+	// "aaa" sorts before "zzz", so walk order would pick the stale one.
+	write(t, live, "projects/-aaa-old/"+id+".jsonl",
+		turn("user", "started here", "2026-08-20T09:00:00Z"))
+	write(t, live, "projects/-zzz-new/"+id+".jsonl",
+		turn("user", "started here", "2026-08-20T09:00:00Z")+
+			turn("assistant", "and kept going", "2026-09-04T18:00:00Z"))
+
+	targets := []search.Target{{Label: CLISource, Dir: live}}
+	paths, extra := TranscriptPathsAll(targets, CLISource)
+
+	if got := paths[id]; !strings.Contains(got, "-zzz-new") {
+		t.Errorf("chose %q, want the copy whose last record is newest", got)
+	}
+	if len(extra[id]) != 1 || !strings.Contains(extra[id][0], "-aaa-old") {
+		t.Errorf("extra = %v, want the copy that was not chosen", extra[id])
+	}
+}
+
+// The ordinary case must not pay for the rare one: a session with one
+// transcript is reported with no duplicates and no extra reads.
+func TestTranscriptPathsAll_SingleCopyHasNoDuplicates(t *testing.T) {
+	live := t.TempDir()
+	id := "aaaaaaaa-1111-4111-8111-dddddddddddd"
+	write(t, live, "projects/-p/"+id+".jsonl", turn("user", "hello", "2026-08-20T09:00:00Z"))
+
+	paths, extra := TranscriptPathsAll(
+		[]search.Target{{Label: CLISource, Dir: live}}, CLISource)
+	if paths[id] == "" {
+		t.Fatal("the only copy was not found")
+	}
+	if len(extra) != 0 {
+		t.Errorf("extra = %v, want none", extra)
+	}
+}
+
+// A row has to carry the copies it did not choose, or nothing downstream can
+// report them and the discard stays silent.
+func TestList_RowCarriesDuplicates(t *testing.T) {
+	live := t.TempDir()
+	id := "aaaaaaaa-1111-4111-8111-eeeeeeeeeeee"
+	write(t, live, "projects/-aaa-old/"+id+".jsonl",
+		turn("user", "started here", "2026-08-20T09:00:00Z"))
+	write(t, live, "projects/-zzz-new/"+id+".jsonl",
+		turn("user", "started here", "2026-08-20T09:00:00Z")+
+			turn("assistant", "and kept going", "2026-09-04T18:00:00Z"))
+
+	rows, _ := List(Options{
+		Machine: testMachine(t.TempDir()),
+		Targets: []search.Target{{Label: CLISource, Dir: live}},
+		Scope:   Scope{Now: time.Now()},
+	})
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want the session listed once", len(rows))
+	}
+	if len(rows[0].Duplicates) != 1 {
+		t.Errorf("Duplicates = %v, want the one copy that was not chosen", rows[0].Duplicates)
+	}
+}
+
+// The three front ends must not each decide for themselves whether a session is
+// filed correctly — disagreeing about whether a conversation is intact is the
+// worst thing they could differ on. CheckHealth is the one answer they share.
+func TestCheckHealth_ReportsSplitsWithoutProposingARepair(t *testing.T) {
+	live := t.TempDir()
+	id := "aaaaaaaa-1111-4111-8111-ffffffffffff"
+	write(t, live, "projects/-aaa-old/"+id+".jsonl",
+		turn("user", "started here", "2026-08-20T09:00:00Z"))
+	write(t, live, "projects/-zzz-new/"+id+".jsonl",
+		turn("user", "started here", "2026-08-20T09:00:00Z")+
+			turn("assistant", "and kept going", "2026-09-04T18:00:00Z"))
+
+	h := CheckHealth([]search.Target{{Label: CLISource, Dir: live}}, nil)
+	if h.OK() {
+		t.Fatal("a session filed in two places was reported as healthy")
+	}
+	if len(h.Splits) != 1 {
+		t.Fatalf("Splits = %+v, want one", h.Splits)
+	}
+	if !strings.Contains(h.Splits[0].Keep, "-zzz-new") {
+		t.Errorf("Keep = %q, want the newest copy", h.Splits[0].Keep)
+	}
+	if len(h.Splits[0].Others) != 1 || !strings.Contains(h.Splits[0].Others[0], "-aaa-old") {
+		t.Errorf("Others = %v, want the older copy", h.Splits[0].Others)
+	}
+}
+
+// A machine where nothing has split must say so, and cheaply — no false alarm
+// on the ordinary case is what makes the warning worth reading.
+func TestCheckHealth_QuietWhenEverythingIsFiledOnce(t *testing.T) {
+	live := t.TempDir()
+	write(t, live, "projects/-p/aaaaaaaa-1111-4111-8111-0a0a0a0a0a0a.jsonl",
+		turn("user", "hello", "2026-08-20T09:00:00Z"))
+
+	h := CheckHealth([]search.Target{{Label: CLISource, Dir: live}}, nil)
+	if !h.OK() {
+		t.Errorf("healthy machine reported problems: %+v", h)
 	}
 }

@@ -17,7 +17,9 @@ package sessions
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
@@ -94,7 +96,28 @@ func Targets(cfg *config.Config, me config.Machine, liveOnly, repoOnly bool) []s
 // first copy found wins, so callers scan live-first when they want the copy
 // `claude --resume` would open.
 func TranscriptPaths(targets []search.Target, label string) map[string]string {
-	paths := map[string]string{}
+	paths, _ := TranscriptPathsAll(targets, label)
+	return paths
+}
+
+// TranscriptPathsAll is TranscriptPaths, plus the copies it did not choose.
+//
+// One session can be filed under two project slugs — start in one directory,
+// continue in another, and Claude Code writes a second transcript under the new
+// slug while the first stays frozen at the moment you moved. Both are real
+// files with the same id.
+//
+// This used to keep whichever the directory walk reached first and discard the
+// rest silently. That is filesystem order, which is to say alphabetical luck: a
+// session whose stale copy happened to sort first showed its state from the day
+// it split, with no indication that a complete copy existed. It is how a week of
+// work looked lost.
+//
+// The winner is now the transcript whose last record is newest, and the losers
+// come back so a caller can report them instead of pretending they are not
+// there.
+func TranscriptPathsAll(targets []search.Target, label string) (paths map[string]string, extra map[string][]string) {
+	found := map[string][]string{}
 	for _, t := range targets {
 		if t.Label != label || t.Dir == "" {
 			continue
@@ -112,14 +135,59 @@ func TranscriptPaths(targets []search.Target, label string) map[string]string {
 				return nil
 			}
 			if id := session.IDFromTranscriptRel(rel); id != "" {
-				if _, seen := paths[id]; !seen {
-					paths[id] = p
-				}
+				found[id] = append(found[id], p)
 			}
 			return nil
 		})
 	}
-	return paths
+
+	paths, extra = map[string]string{}, map[string][]string{}
+	for id, list := range found {
+		if len(list) == 1 {
+			paths[id] = list[0]
+			continue
+		}
+		// Only here does the extra read happen. Duplicates are rare — one in
+		// several hundred on a working machine — so dating every candidate
+		// costs nothing in the ordinary case and is the only way to be right in
+		// the case that matters.
+		best := newestTranscript(list)
+		paths[id] = best
+		for _, p := range list {
+			if p != best {
+				extra[id] = append(extra[id], p)
+			}
+		}
+		sort.Strings(extra[id])
+	}
+	return paths, extra
+}
+
+// newestTranscript picks the copy whose last record is latest.
+//
+// Ties break on size and then on path: a transcript that cannot be dated must
+// not make the choice depend on walk order again, and two identical files have
+// to resolve the same way on every run or the UI flickers between them.
+func newestTranscript(list []string) string {
+	best, bestAt, bestSize := "", time.Time{}, int64(-1)
+	for _, p := range list {
+		var at time.Time
+		if act, ok := session.LastActivity(p); ok {
+			at = act.At
+		}
+		var size int64
+		if info, err := os.Stat(p); err == nil {
+			size = info.Size()
+		}
+		switch {
+		case best == "",
+			at.After(bestAt),
+			at.Equal(bestAt) && size > bestSize,
+			at.Equal(bestAt) && size == bestSize && p < best:
+			best, bestAt, bestSize = p, at, size
+		}
+	}
+	return best
 }
 
 // IsSessionTranscriptRel reports whether a projects-relative path is a session's

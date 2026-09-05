@@ -3,6 +3,8 @@ package commands
 import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/search"
+	"github.com/rigsmith/rigsmith/internal/clauderig/sessions"
 	"github.com/rigsmith/rigsmith/internal/clauderig/status"
 	"github.com/rigsmith/rigsmith/internal/clauderig/tui"
 	"github.com/spf13/cobra"
@@ -26,7 +28,15 @@ func NewUICmd() *cobra.Command {
 			settings, _ := settingsPath()
 			info := status.Gather(ctx, cfg, me, staging, settings)
 
-			res, err := tea.NewProgram(tui.New(info)).Run()
+			// Gathered here rather than inside status.Gather: it walks the
+			// transcript tree, and Gather is on the tray's five-second poll.
+			home, _ := cfg.RootLocation("cli", me)
+			filing := sessions.CheckHealth(
+				[]search.Target{{Label: sessions.CLISource, Dir: home}},
+				sessions.Roots(cfg, me, false, false),
+			)
+
+			res, err := tea.NewProgram(tui.New(info).WithFiling(filing)).Run()
 			if err != nil {
 				return err
 			}

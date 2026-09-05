@@ -215,6 +215,12 @@
   .acct .live{color:var(--ok);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;}
   .acct .plan{color:var(--muted-2);font-size:10px;}
   .warnrow{color:var(--warn);font-size:11px;margin-top:10px;}
+  #filing .warnrow{
+    margin:0 0 18px;padding:10px 12px;line-height:1.5;
+    border:1px solid var(--warn);border-radius:6px;
+    display:flex;flex-direction:column;gap:6px;
+  }
+  #filing .hint{color:var(--muted);font-family:var(--mono);font-size:10px;}
   /* ---- two views in one window ------------------------------------------
      The popup is where you glance; the full sessions window is where you work.
      Both views live here so the tray icon reaches either without a second
@@ -444,6 +450,8 @@
   <table><thead><tr><th>Root</th><th>Files</th><th>State</th></tr></thead>
     <tbody id="roots"></tbody></table>
 
+  <div id="filing"></div>
+
   <div class="seclabel"><span>Repository</span><span class="rule"></span></div>
   <div id="repo"></div>
 
@@ -482,6 +490,7 @@ const ACCOUNTS_DESKTOP = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.OpenDe
 const ACCOUNTS_RUNCLI = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.RunCLI';
 const ACTIVITY_FILES = 'github.com/rigsmith/rigsmith/ui/bridge.Activity.Files';
 const REPO_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Get';
+const FILING_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Get';
 const REPO_PRUNE = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Prune';
 const REPO_REPACK = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Repack';
 const WINDOWS_HIDE = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Hide';
@@ -890,6 +899,12 @@ async function refresh() {
   } catch (e) {
     $('accounts').replaceChildren(el('div', 'empty err', `Could not read accounts: ${e}`));
   }
+  // Independent: a filing problem must not blank the panels, and a failure to
+  // check must not either — it is a warning about other data, not this one.
+  try {
+    renderFiling(await Call.ByName(FILING_GET));
+  } catch { /* leave the row empty */ }
+
   // Independent again: walking the checkout to size it is the slowest read here,
   // and it must not be able to blank the panels above it.
   try {
@@ -1053,6 +1068,32 @@ function repoChanged(rewrote) {
   }
   lastActivitySig = '';   // force the feed to repaint even though the journal did not move
   refresh();
+}
+
+// Sessions filed in two places, and Desktop sidecars pointing at the wrong one.
+// Silent until something is wrong: a panel that says "all good" every time is a
+// panel people stop reading, and this one has to be noticed the once it matters.
+function renderFiling(v) {
+  const box = $('filing');
+  box.replaceChildren();
+  if (!v || v.error) return;
+  const splits = v.splits || [], stale = v.stale || [];
+  if (!splits.length && !stale.length) return;
+
+  const card = el('div', 'warnrow');
+  if (splits.length) {
+    card.append(el('div', null, `${splits.length} session${splits.length === 1 ? ' is' : 's are'} `
+      + 'filed in more than one project directory — anything resolving by directory can open the '
+      + 'older copy, which reads as the session losing everything after it split.'));
+  }
+  if (stale.length) {
+    card.append(el('div', null, `${stale.length} Claude Desktop sidecar${stale.length === 1 ? '' : 's'} `
+      + 'name a directory that no longer holds the transcript, so Desktop opens an older copy.'));
+  }
+  const how = el('div', 'hint');
+  how.textContent = 'clauderig doctor lists them; clauderig reroot <session> <dir> re-files one.';
+  card.append(how);
+  box.append(card);
 }
 
 function renderRepo(v) {
