@@ -933,3 +933,74 @@ func TestPackableDecidesPathConditions(t *testing.T) {
 		})
 	}
 }
+
+// A library that describes the package it produces — licence, icon, readme,
+// tags — is a package, even where nothing says IsPackable and the version is
+// supplied by CI on the pack command line. DearVa/LiveMarkdown.Avalonia is the
+// case this came from: five such libraries beside five demo apps and a test
+// project, and only the five carry any of this.
+func TestPackableReadsPackageMetadata(t *testing.T) {
+	cases := []struct {
+		name  string
+		props string
+		text  string
+		want  bool
+	}{
+		{"tags alone", "", `<Project>
+  <PropertyGroup><PackageTags>markdown;avalonia</PackageTags></PropertyGroup>
+</Project>`, true},
+		{"licence and project url", "", `<Project>
+  <PropertyGroup>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://example.invalid/x</PackageProjectUrl>
+  </PropertyGroup>
+</Project>`, true},
+		{"an item packed into the package", "", `<Project>
+  <ItemGroup><None Include="..\README.md" Pack="true" PackagePath="README.md"/></ItemGroup>
+</Project>`, true},
+
+		// Assembly metadata is not package metadata: a console app or a test
+		// project carries these quite legitimately.
+		{"title, authors and description are not enough", "", `<Project>
+  <PropertyGroup>
+    <Title>Demo</Title><Authors>Someone</Authors><Description>A demo app.</Description>
+    <RepositoryUrl>https://example.invalid/x</RepositoryUrl>
+  </PropertyGroup>
+</Project>`, false},
+
+		{"IsPackable false still wins over metadata", "", `<Project>
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <PackageTags>x</PackageTags>
+  </PropertyGroup>
+</Project>`, false},
+
+		// Repo-wide licence/author metadata in a shared props file says nothing
+		// about which projects beneath it pack.
+		{"metadata in an ancestor props does not carry", `<Project>
+  <PropertyGroup><PackageLicenseExpression>Apache-2.0</PackageLicenseExpression></PropertyGroup>
+</Project>`, `<Project>
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+</Project>`, false},
+
+		{"a bare project is still not a package", "", `<Project>
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+</Project>`, false},
+		{"commented-out metadata counts for nothing", "", `<Project>
+  <!-- <PropertyGroup><PackageTags>x</PackageTags></PropertyGroup> -->
+</Project>`, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.props != "" {
+				writeFile(t, filepath.Join(root, "Directory.Build.props"), tc.props)
+			}
+			path := filepath.Join(root, "src", "P", "P.csproj")
+			if got := packable(path, tc.text); got != tc.want {
+				t.Errorf("packable = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

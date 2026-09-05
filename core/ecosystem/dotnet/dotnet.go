@@ -48,6 +48,12 @@ var (
 	versionPrefixRe = regexp.MustCompile(`(?s)(<VersionPrefix>)(.*?)(</VersionPrefix>)`)
 	packageIDRe     = regexp.MustCompile(`(?s)<PackageId>(.*?)</PackageId>`)
 	isPackableRe    = regexp.MustCompile(`(?s)<IsPackable[^>]*>(.*?)</IsPackable>`)
+	// Properties that exist only to describe a NuGet package, and an item marked
+	// to go into one. Deliberately none of Title/Authors/Description/Copyright/
+	// RepositoryUrl: those are assembly metadata and SourceLink too, and a
+	// project that never packs carries them quite legitimately.
+	packageMetadataRe = regexp.MustCompile(`<Package(?:ProjectUrl|LicenseExpression|LicenseFile|LicenseUrl|Icon|IconUrl|ReadmeFile|Tags|ReleaseNotes|Description|RequireLicenseAcceptance)\s*>` +
+		`|\bPack\s*=\s*"[Tt]rue"`)
 	// A project whose version is MinVer's to compute says so in one of two
 	// ways: the package reference — a PackageReference in the project, or a
 	// GlobalPackageReference in a Directory.Packages.props under Central
@@ -576,6 +582,15 @@ func packable(csprojPath, csprojText string) bool {
 		if packageID(text) != "" || minVerRe.MatchString(text) {
 			return true
 		}
+	}
+	// A project that describes the package it produces — its licence, icon,
+	// readme, tags — is one, whatever it leaves unsaid about versions. Read from
+	// the project itself and not its ancestors: a shared props file carrying
+	// repo-wide licence and author metadata says nothing about which of the
+	// projects beneath it pack, and reading it as if it did would sweep in the
+	// tests sitting alongside them.
+	if packageMetadataRe.MatchString(texts[len(texts)-1]) {
+		return true
 	}
 	// Only the nearest Directory.Packages.props is auto-imported; an outer one
 	// is shadowed unless the nearer file imports it, so the walk continues
