@@ -108,16 +108,27 @@ func newStackSeedMenuCmd() *cobra.Command {
 // to ../rigstack-livemarkdown-2.4. Only a suggestion — the prompt is editable,
 // and the argument form takes whatever you type.
 func defaultSeedDir(ctx context.Context) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = ""
+	}
 	_, _, repo, err := stackspace(ctx)
 	if err != nil {
-		return seedDirFor(nil)
+		return seedDirFor(nil, cwd)
 	}
-	return seedDirFor(repo)
+	return seedDirFor(repo, cwd)
 }
 
 // seedDirFor applies the naming rule to a stackspace, or offers the bare
 // convention when there is no name to take.
-func seedDirFor(repo *gitrepo.Repo) string {
+//
+// The suggestion is anchored beside the stackspace, not beside the caller: a
+// seed has to land outside every repository, and `rig stack` runs from any
+// directory within one — so a bare "../name" typed from a member prefix would
+// point back inside the stackspace and be refused. It is rendered relative to
+// the caller where that is expressible, since "../rigstack-acme" reads better
+// in a prompt than an absolute path, and absolute otherwise.
+func seedDirFor(repo *gitrepo.Repo, cwd string) string {
 	const fallback = "../" + seedPrefix + "seed"
 	if repo == nil {
 		return fallback
@@ -126,7 +137,21 @@ func seedDirFor(repo *gitrepo.Repo) string {
 	if name == "" || name == "." || name == string(filepath.Separator) {
 		return fallback
 	}
-	return "../" + seedPrefix + strings.TrimPrefix(name, seedPrefix)
+	target := filepath.Join(filepath.Dir(repo.Dir), seedPrefix+strings.TrimPrefix(name, seedPrefix))
+	// Trimming keeps the usual case tidy, but a stackspace already called
+	// rigstack-acme would trim and re-prefix back to its own directory — the one
+	// place the seed may not go.
+	if target == filepath.Clean(repo.Dir) {
+		target += "-seed"
+	}
+	if cwd == "" {
+		return target
+	}
+	rel, err := filepath.Rel(cwd, target)
+	if err != nil {
+		return target
+	}
+	return rel
 }
 
 // stackSeed materialises HEAD's root entries that are not member prefixes into
