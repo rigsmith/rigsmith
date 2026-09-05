@@ -104,15 +104,46 @@ func (h *heldLock) mark() error {
 }
 
 // stillOurs reports whether the lock directory is the one we are holding: it
-// exists, and its mtime is the one we last set.
+// exists, and its mtime is the one we last set. The stat happens under the
+// mutex so a check never straddles a touch: the mtime it reads is compared
+// against the stamp that was current when it read it.
 func (h *heldLock) stillOurs() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	fi, err := os.Stat(h.dir)
 	if err != nil {
 		return false
 	}
+	return fi.ModTime().Equal(h.stamp)
+}
+
+// touch refreshes the directory's mtime and records what landed, all under
+// the mutex, so no concurrent stillOurs can see the new mtime against the old
+// stamp and judge our own refresh a takeover. It reports false when the
+// directory is no longer ours (or is gone), in which case nothing is touched.
+func (h *heldLock) touch() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return fi.ModTime().Equal(h.stamp)
+	// Verify identity BEFORE touching: refreshing a directory that is no
+	// longer ours would keep another holder's lock alive on its behalf and
+	// hide the takeover from us.
+	fi, err := os.Stat(h.dir)
+	if err != nil || !fi.ModTime().Equal(h.stamp) {
+		return false
+	}
+	now := time.Now()
+	if err := os.Chtimes(h.dir, now, now); err != nil {
+		return false // stolen or removed; nothing left to keep alive
+	}
+	// Re-read what actually landed: this becomes the stamp the next check
+	// compares against. Read back rather than assumed: filesystems vary in
+	// the precision they keep.
+	fi, err = os.Stat(h.dir)
+	if err != nil {
+		return false
+	}
+	h.stamp = fi.ModTime()
+	return true
 }
 
 // compromised reports that ownership was lost while held — the caller must not
@@ -186,21 +217,7 @@ func acquireLock(dir string, stale, timeout time.Duration) (*heldLock, error) {
 			case <-h.stop:
 				return
 			case <-t.C:
-				// Verify identity BEFORE touching: refreshing a directory that is
-				// no longer ours would keep another holder's lock alive on its
-				// behalf and hide the takeover from us.
-				if !h.stillOurs() {
-					h.lost.Store(true)
-					return
-				}
-				now := time.Now()
-				if err := os.Chtimes(h.dir, now, now); err != nil {
-					h.lost.Store(true)
-					return // stolen or removed; nothing left to keep alive
-				}
-				// Re-read what actually landed: this becomes the stamp the next
-				// check compares against.
-				if err := h.mark(); err != nil {
+				if !h.touch() {
 					h.lost.Store(true)
 					return
 				}
