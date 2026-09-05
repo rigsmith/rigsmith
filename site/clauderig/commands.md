@@ -80,9 +80,10 @@ peek and the ledger understand both formats. Divergent chunk-index conflicts
 require resolution; they are never combined as JSONL records.
 
 Committed backup attributes prevent Git line-ending, encoding and filter
-conversions, including with `core.autocrlf=true`. Sync upgrades existing indexes;
-overriding conversion attributes refuse publication. Previously damaged chunk
-history still needs an intact source or verified backup—hash checks remain strict.
+conversions, including with `core.autocrlf=true`. Sync refreshes the Git index
+when installing those rules; overriding conversion attributes refuse
+publication. Previously damaged chunk history still needs an intact source or
+verified backup; hash checks remain strict.
 
 Updated clients follow the repository setting unless locally overridden.
 `clauderig config set chunkTranscripts auto` removes the local override.

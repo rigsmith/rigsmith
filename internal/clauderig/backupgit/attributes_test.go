@@ -48,11 +48,17 @@ func TestPrepareRefreshesLegacyIndexWithoutChangingWorkingBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	staged, err := git(t.Context(), root, nil, "show", ":s.jsonl")
-	if err != nil || !bytes.Equal(staged, data) {
-		t.Fatalf("legacy index retained converted bytes: %q %v", staged, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(staged, data) {
+		t.Fatalf("legacy index retained converted bytes: %q", staged)
 	}
 	working, err := os.ReadFile(filepath.Join(root, "s.jsonl"))
-	if err != nil || !bytes.Equal(working, data) {
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(working, data) {
 		t.Fatal("migration changed working bytes")
 	}
 	attrs, err := os.ReadFile(filepath.Join(root, ".gitattributes"))
