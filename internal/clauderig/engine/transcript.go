@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -38,14 +37,32 @@ func isTranscript(rel string) bool {
 // excluded because a byte-level rewrite of one is not a redaction, it is
 // damage.
 func conversationText(rel string) bool {
-	if !strings.HasPrefix(rel, "projects/") {
+	return strings.HasPrefix(rel, "projects/")
+}
+
+// scrubbable reports whether a staged file should be scrubbed: it belongs to a
+// conversation, and its content is text.
+//
+// Judged on content rather than on the extension. An allowlist gets both ends
+// wrong: tool output written to a .log, or to a file with no extension at all,
+// is text that would keep a credential and keep the sync refused; and a PNG
+// somebody named .md would be handed to the rewriter, which would edit bytes
+// inside an image. The head of the file answers the question directly.
+func scrubbable(rel, src string) bool {
+	if !conversationText(rel) {
 		return false
 	}
-	switch strings.ToLower(path.Ext(rel)) {
-	case ".jsonl", ".txt", ".md", ".html":
-		return true
+	f, err := os.Open(src)
+	if err != nil {
+		return false // unreadable here means the copy will fail anyway
 	}
-	return false
+	defer f.Close()
+	var head [8000]byte
+	n, rerr := f.Read(head[:])
+	if rerr != nil && n == 0 {
+		return false
+	}
+	return !redact.LooksBinary(head[:n])
 }
 
 // redactTranscript streams src to dst, replacing credential-shaped tokens, and
@@ -58,6 +75,11 @@ func conversationText(rel string) bool {
 // The staged file keeps the source's mtime so the incremental skip still
 // recognises it next time, and is written via a temp file so an interrupted sync
 // cannot leave a half-scrubbed transcript in staging.
+// errBinaryContent means the file turned out to be binary partway through, so
+// no rewrite of it can be safe. Not a failure: the caller copies the file as it
+// stands, which is what would have happened had the head given it away.
+var errBinaryContent = errors.New("binary content: not scrubbable")
+
 func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, err error) {
 	in, err := os.Open(src)
 	if err != nil {
@@ -88,6 +110,14 @@ func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, 
 	for {
 		line, rerr := r.ReadBytes('\n')
 		if len(line) > 0 {
+			// The head said text, but only the head was read. A file can be
+			// clean for 8 KB and binary after it, and rewriting a byte sequence
+			// inside the binary part is damage: the bytes are not a credential,
+			// they are pixels. Abandon the rewrite and let the caller copy the
+			// file through untouched.
+			if redact.LooksBinary(line) {
+				return nil, errBinaryContent
+			}
 			if redact.HasPrivateKey(line) {
 				return nil, errPrivateKeyInTranscript
 			}
