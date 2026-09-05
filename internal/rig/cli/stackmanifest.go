@@ -17,6 +17,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/cfgfind"
 	"github.com/rigsmith/rigsmith/core/confkit"
 	"github.com/rigsmith/rigsmith/core/jsonc"
+	corestack "github.com/rigsmith/rigsmith/core/stackspace"
 )
 
 const (
@@ -441,22 +442,9 @@ func stackValidBranchPrefix(prefix, where string) error {
 	return nil
 }
 
-// stackValidPrefix rejects the keys that would escape their own directory.
-func stackValidPrefix(name string) error {
-	switch {
-	case name == "":
-		return fmt.Errorf("stack manifest has a repo with an empty name")
-	case name == "." || name == "..":
-		return fmt.Errorf("stack repo %q: the name is a directory in the stackspace, not a path", name)
-	case strings.EqualFold(name, ".git"):
-		return fmt.Errorf("stack repo %q: git reserves that name, and the import would be rejected", name)
-	case strings.ContainsAny(name, "/\\"), strings.ContainsAny(name, " \t"):
-		return fmt.Errorf("stack repo %q: the name must be a single directory, without separators or spaces", name)
-	case strings.HasPrefix(name, "-"):
-		return fmt.Errorf("stack repo %q: the name must not start with a dash", name)
-	}
-	return nil
-}
+// stackValidPrefix rejects the keys that would escape their own directory —
+// the one rule, shared with the release tools that read the manifest.
+func stackValidPrefix(name string) error { return corestack.ValidPrefix(name) }
 
 // stackSpec is the cfgfind spec for the stack manifest: a dedicated rig.stack.jsonc/.json
 // at the stackspace root, or a `stack` key inline in .rig.json.

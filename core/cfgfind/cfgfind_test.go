@@ -221,3 +221,27 @@ func TestFind_AmbiguousFileAndRigKey(t *testing.T) {
 		t.Fatalf("a file + a .rig.json key should be ambiguous and name both: %v", err)
 	}
 }
+
+// A config file that is a dangling symlink is there but unreadable: loud,
+// never "use defaults".
+func TestFind_DanglingSymlinkSurfacesError(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".changeset"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, ".changeset", "release.jsonc")
+	if err := os.Symlink(filepath.Join(root, "nowhere.jsonc"), link); err != nil {
+		t.Skipf("symlinks unavailable here: %v", err)
+	}
+	if _, err := Find(spec(root)); err == nil || !strings.Contains(err.Error(), "release.jsonc") {
+		t.Fatalf("a dangling config symlink should surface an error naming it, got %v", err)
+	}
+	// The same for a keyed file: a dangling .rig.json is not "no .rig.json".
+	other := t.TempDir()
+	if err := os.Symlink(filepath.Join(other, "gone.json"), filepath.Join(other, ".rig.json")); err != nil {
+		t.Skipf("symlinks unavailable here: %v", err)
+	}
+	if _, err := Find(spec(other)); err == nil || !strings.Contains(err.Error(), ".rig.json") {
+		t.Fatalf("a dangling .rig.json symlink should surface an error naming it, got %v", err)
+	}
+}

@@ -3,6 +3,7 @@ package stackspace
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -16,7 +17,7 @@ func TestFind(t *testing.T) {
 
 	t.Run("a dedicated manifest names the members", func(t *testing.T) {
 		root := t.TempDir()
-		body := "{\n  // jsonc\n  \"repos\": { \"pty-core\": { \"upstream\": \"h/a/pty\" }, \"term-core/\": {} },\n}\n"
+		body := "{\n  // jsonc\n  \"repos\": { \"pty-core\": { \"upstream\": \"h/a/pty\" }, \"term-core\": {} },\n}\n"
 		if err := os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -68,4 +69,20 @@ func TestFind(t *testing.T) {
 			t.Fatal("nil stackspace owned a path")
 		}
 	})
+}
+
+// A key the manifest rule rejects — a path, not a directory name — is an
+// error, not a member that quietly matches nothing.
+func TestFindRejectsPathLikeMemberKeys(t *testing.T) {
+	for _, key := range []string{"./lib", "lib/", "lib/sub", `lib\\sub`, "..", ".git", "-lib", "my lib"} {
+		root := t.TempDir()
+		body := "{ \"repos\": { \"" + strings.ReplaceAll(key, `\\`, `\\\\`) + "\": {} } }"
+		if err := os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		s, err := Find(root)
+		if err == nil || !strings.Contains(err.Error(), "rig.stack.jsonc") {
+			t.Errorf("key %q: Find = %+v, %v; want an error naming the manifest", key, s, err)
+		}
+	}
 }

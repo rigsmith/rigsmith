@@ -126,6 +126,12 @@ func (w Writer) Set(filePath string, path []string, rawValue string) bool {
 	return writeWhole(filePath, []byte(w.freshDocument(path, rawValue))) == nil
 }
 
+// WriteFile replaces filePath's content whole-or-nothing — through a sibling
+// temporary file, synced, then renamed into place — for the small state files
+// beside a config that a release must never leave half-written. An existing
+// file keeps its mode; a symlink is written where it points.
+func WriteFile(filePath string, data []byte) error { return writeWhole(filePath, data) }
+
 // writeWhole replaces the file's content through a sibling temporary file
 // and a rename, so the file is either wholly the old content or wholly the
 // new — never a fragment. os.WriteFile truncates first, and a config file a

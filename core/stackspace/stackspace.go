@@ -59,12 +59,38 @@ func Find(root string) (*Stackspace, error) {
 	}
 	s := &Stackspace{Origin: src.Origin}
 	for name := range m.Repos {
-		if name = strings.Trim(filepath.ToSlash(name), "/"); name != "" {
-			s.Members = append(s.Members, name)
+		// The same rule `rig stack` applies when it writes the manifest. A
+		// hand-edited key like "./lib" or "lib/" would never match the paths
+		// discovery hands MemberOf, and the member's files would be stamped
+		// as the stackspace's own — so a key the rule rejects is an error
+		// here too, not a member silently dropped or mis-spelled.
+		if err := ValidPrefix(name); err != nil {
+			return nil, fmt.Errorf("%s: %w", src.Origin, err)
 		}
+		s.Members = append(s.Members, name)
 	}
 	sort.Strings(s.Members)
 	return s, nil
+}
+
+// ValidPrefix is the rule for a member's key in the manifest: one directory
+// name, directly under the stackspace root, that cannot escape it or collide
+// with git's own. `rig stack` applies it when writing the manifest and Find
+// when reading one, so the two cannot disagree about what a member is.
+func ValidPrefix(name string) error {
+	switch {
+	case name == "":
+		return fmt.Errorf("stack manifest has a repo with an empty name")
+	case name == "." || name == "..":
+		return fmt.Errorf("stack repo %q: the name is a directory in the stackspace, not a path", name)
+	case strings.EqualFold(name, ".git"):
+		return fmt.Errorf("stack repo %q: git reserves that name, and the import would be rejected", name)
+	case strings.ContainsAny(name, "/\\"), strings.ContainsAny(name, " \t"):
+		return fmt.Errorf("stack repo %q: the name must be a single directory, without separators or spaces", name)
+	case strings.HasPrefix(name, "-"):
+		return fmt.Errorf("stack repo %q: the name must not start with a dash", name)
+	}
+	return nil
 }
 
 // MemberOf returns the member whose prefix holds rel — a repo-relative path,

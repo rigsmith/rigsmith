@@ -16,6 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/rigsmith/rigsmith/core/confkit"
 )
 
 // FileName is the state file's name inside the changeset directory.
@@ -60,7 +62,9 @@ func Write(changesetDir string, s *State) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(changesetDir, FileName), append(data, '\n'), 0o644)
+	// Whole or nothing: a release interrupted mid-write must leave the record
+	// as it was, not as a fragment the next plan cannot parse.
+	return confkit.WriteFile(filepath.Join(changesetDir, FileName), append(data, '\n'))
 }
 
 // Get returns the recorded version for name, or "".
