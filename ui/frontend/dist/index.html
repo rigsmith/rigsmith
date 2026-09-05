@@ -250,7 +250,26 @@
   .srch::placeholder{color:var(--muted-2);}
   .srch::-webkit-search-decoration,.srch::-webkit-search-cancel-button{-webkit-appearance:none;}
   .srch:focus-visible{outline:1px solid var(--muted);outline-offset:2px;}
+  /* The indicator lives on the box, not in the empty state: searching with
+     results on screen still needs to say it is working, and the empty state is
+     hidden exactly then. */
+  .srchwrap{position:relative;}
+  .srchwrap .spin{
+    position:absolute;left:0;right:0;bottom:-1px;height:1px;
+    background:var(--line);overflow:hidden;opacity:0;transition:opacity .12s;
+  }
+  .srchwrap .spin::after{
+    content:"";position:absolute;inset:0;width:40%;background:var(--warn);
+    transform:translateX(-100%);
+  }
+  .srchwrap[data-busy] .spin{opacity:1;}
+  .srchwrap[data-busy] .spin::after{animation:sweep 900ms linear infinite;}
+  @keyframes sweep{to{transform:translateX(350%);}}
   .slist{margin-top:4px;}
+  /* The rows on screen answer the PREVIOUS term. Leaving them at full strength
+     while a new search runs is the same lie as showing nothing — it just looks
+     more confident. */
+  .slist[data-busy]{opacity:.45;transition:opacity .12s;}
   /* Size is set here rather than inherited: body copy is ~16px, which turns a
      scannable list into headlines. */
   .srow{
@@ -423,7 +442,10 @@
   </div><!-- /statusView -->
 
   <div class="view" id="sessionsView" hidden>
-    <input class="srch" id="ssearch" type="search" placeholder="search your sessions…" autocomplete="off">
+    <div class="srchwrap" id="ssearchwrap">
+      <input class="srch" id="ssearch" type="search" placeholder="search your sessions…" autocomplete="off">
+      <span class="spin" aria-hidden="true"></span>
+    </div>
     <div class="slist" id="slist"></div>
     <div class="empty" id="sempty" hidden></div>
     <div id="sdetail" hidden></div>
@@ -1324,7 +1346,13 @@ function showView(next) {
   // Reload every time, not just the first: this window is usually reopened
   // rather than reloaded, so a list rendered once would stay as it was for the
   // rest of the day.
-  if (next === 'sessions' && $('sdetail').hidden) loadSessions();
+  if (next === 'sessions' && $('sdetail').hidden) {
+    loadSessions();
+    // Switching to Sessions is almost always the first half of looking for one.
+    // Focused after the frame, so the field is actually on screen when it takes
+    // the caret.
+    requestAnimationFrame(() => $('ssearch').focus());
+  }
 }
 
 // Hide, not quit: the tray is the app, and a popover's close means "put it
@@ -1377,8 +1405,8 @@ async function loadSessions() {
   if (term) {
     spinner = setTimeout(() => {
       if (seq !== listSeq) return;
-      $('sempty').hidden = false;
-      $('sempty').textContent = `Searching sessions and transcripts for “${term}”…`;
+      $('ssearchwrap').dataset.busy = '';
+      $('slist').dataset.busy = '';
     }, 150);
   }
   try {
@@ -1399,6 +1427,8 @@ async function loadSessions() {
     $('sempty').textContent = `Could not list sessions: ${e}`;
   } finally {
     clearTimeout(spinner);
+    delete $('ssearchwrap').dataset.busy;
+    delete $('slist').dataset.busy;
   }
 }
 
@@ -1492,7 +1522,7 @@ function showList() {
   openSessionID = null;
   $('sdetail').hidden = true;
   $('slist').hidden = false;
-  $('ssearch').hidden = false;
+  $('ssearchwrap').hidden = false;
   $('sempty').hidden = !!$('slist').childElementCount;
   $('backToList').hidden = true;
 }
@@ -1502,7 +1532,7 @@ $('backToList').addEventListener('click', showList);
 async function openSession(id) {
   openSessionID = id;
   $('slist').hidden = true;
-  $('ssearch').hidden = true;
+  $('ssearchwrap').hidden = true;
   $('sempty').hidden = true;
   const box = $('sdetail');
   box.hidden = false;
