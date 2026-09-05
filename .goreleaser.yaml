@@ -81,26 +81,6 @@ builds:
       post:
         - cmd: sh ./scripts/sign-windows.sh "{{ .Path }}" "{{ .Os }}"
 
-  # The UI on Windows. Wails v3 reaches WebView2 through syscall rather than
-  # cgo there, so it cross-compiles from the Linux runner like everything else
-  # and Authenticode-signs through the same script — no separate job, unlike
-  # macOS where the .app needs a bundle and codesign.
-  - id: clauderig-ui
-    main: ./ui
-    binary: clauderigUi
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    ldflags:
-      - -s -w -X main.version={{.Version}}
-    hooks:
-      post:
-        - cmd: sh ./scripts/sign-windows.sh "{{ .Path }}" "{{ .Os }}"
-
   - id: changerig
     main: ./cmd/changerig
     binary: changerig
@@ -191,16 +171,6 @@ archives:
   # entry (winget RigSmith.Rigsmith, scoop rigsmith, the rigsmith cask) installs
   # the whole toolchain in one command. The per-tool archives above still ship for
   # anyone who wants just one.
-  # Its own archive rather than riding in the bundle: someone installing the
-  # four CLIs has not asked for a desktop app, and the macOS build of the same
-  # thing is a separate download for the same reason.
-  - id: clauderig-ui
-    ids:
-      - clauderig-ui
-    name_template: "clauderigUi_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    formats:
-      - zip
-
   - id: rigsmith
     ids:
       - rig
