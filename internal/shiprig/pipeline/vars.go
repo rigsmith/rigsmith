@@ -160,18 +160,27 @@ func (v *variables) commandFor(spec *VarSpec) (CommandSpec, bool) {
 
 // checkEnvRefs fails, before anything runs, when a captured var's command —
 // the one commandFor picks for this OS — names a ${env.NAME} the release
-// environment does not set. Lazy vars are checked too: that is the point. A
-// masked credential lookup that would otherwise fail at the push step, after
-// the whole build, with nothing to look at but an exit code, is caught up
-// front for the price of a map lookup. A literal value is not checked — an
-// unset name there expands to "" (documented). Names are visited sorted for
-// a deterministic first error.
-func (v *variables) checkEnvRefs() error {
+// environment does not set. Only the vars this run will resolve are checked:
+// every eager one (the eager loop captures those whether or not a step uses
+// them) and every lazy one in `referenced` — the names the enabled steps and
+// the global hooks refer to. A lazy var nothing in the plan reads never ran
+// before and does not fail now, so an optional credential behind a disabled
+// step stays optional. For the rest, that is the point: a masked credential
+// lookup that would otherwise fail at the push step, after the whole build,
+// with nothing to look at but an exit code, is caught up front for the price
+// of a map lookup. A literal value is not checked — an unset name there
+// expands to "" (documented). Names are visited sorted for a deterministic
+// first error.
+func (v *variables) checkEnvRefs(referenced map[string]bool) error {
 	names := make([]string, 0, len(v.specs))
 	for name, spec := range v.specs {
-		if spec != nil && (spec.Command != nil || spec.OS != nil) {
-			names = append(names, name)
+		if spec == nil || (spec.Command == nil && spec.OS == nil) {
+			continue
 		}
+		if spec.Lazy && !referenced[name] {
+			continue
+		}
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {

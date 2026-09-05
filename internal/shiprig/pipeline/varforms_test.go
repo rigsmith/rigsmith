@@ -299,9 +299,10 @@ func TestCapturedVarExpandsEnvInShellCommand(t *testing.T) {
 
 // A captured var whose command names an env var the release does not set
 // fails the run before any hook or step runs — lazy or not — with a message
-// naming the variable and the env var. The dry run refuses the same way. Set,
-// even to an empty string, it passes; and with no layered environment the
-// process environment is what counts.
+// naming the variable and the env var, and without the onError hook firing:
+// nothing started, so there is nothing to clean up. The dry run refuses the
+// same way. Set, even to an empty string, it passes; and with no layered
+// environment the process environment is what counts.
 func TestCapturedVarUnsetEnvFailsUpFront(t *testing.T) {
 	restore := currentOSToken
 	t.Cleanup(func() { currentOSToken = restore })
@@ -313,7 +314,7 @@ func TestCapturedVarUnsetEnvFailsUpFront(t *testing.T) {
 			OS:   map[string]CommandSpec{"linux": ArgvCommand("secret-tool", "lookup", "account", "${env.NOPE}")},
 			Lazy: true,
 		}},
-		Hooks: &Hooks{Before: CommandList{ShellCommand("echo before")}},
+		Hooks: &Hooks{Before: CommandList{ShellCommand("echo before")}, OnError: CommandList{ShellCommand("echo cleanup")}},
 		Steps: map[string]*StepConfig{
 			"build": {Run: CommandList{ShellCommand("dotnet build")}},
 			"push":  {Run: CommandList{ShellCommand("nuget push --api-key ${vars.key}")}},
@@ -328,7 +329,7 @@ func TestCapturedVarUnsetEnvFailsUpFront(t *testing.T) {
 		t.Fatal("run should fail on an unset ${env.NOPE} in a lazy captured var")
 	}
 	if len(runner.calls) != 0 {
-		t.Errorf("nothing should run before the check, but ran %v", runner.lines())
+		t.Errorf("nothing should run before the check — no step, no before hook, no onError hook — but ran %v", runner.lines())
 	}
 	for _, want := range []string{"variable 'key'", "${env.NOPE}", "not set in the release environment"} {
 		if !strings.Contains(reporter.message, want) {
@@ -382,6 +383,114 @@ func TestCapturedVarUnsetEnvFailsUpFront(t *testing.T) {
 	}
 	if got := strings.Join(literalRunner.lines(), "\n"); got != "sh -c echo build=" {
 		t.Errorf("literal should expand the unset name to empty: %q", got)
+	}
+}
+
+// unsetEnvVarConfig is a release with a lazy captured var whose command names
+// ${env.NOPE}, referenced only by the `push` step; `NOPE` is never set. Tests
+// vary which steps are in the plan to show which vars the check covers.
+func unsetEnvVarConfig(t *testing.T, pushStep *StepConfig) *Config {
+	t.Helper()
+	return &Config{
+		Order: []string{"build", "push"},
+		Vars: map[string]*VarSpec{"key": {
+			OS:   map[string]CommandSpec{"linux": ArgvCommand("secret-tool", "lookup", "account", "${env.NOPE}")},
+			Lazy: true,
+		}},
+		Steps: map[string]*StepConfig{
+			"build": {Run: CommandList{ShellCommand("dotnet build")}},
+			"push":  pushStep,
+		},
+	}
+}
+
+// runUnsetEnv runs config for real and as a dry run with NOPE unset, returning
+// both outcomes and their messages.
+func runUnsetEnv(t *testing.T, config *Config, opts ResolveOptions) (run, dry bool, runMsg, dryMsg string) {
+	t.Helper()
+	env := map[string]string{"OTHER": "x"}
+	reporter := &recordingReporter{}
+	p := New((&recordingRunner{}).run, reporter, NewSecretMasker(), &stubPrompter{answer: true}, "/tmp/repo", env, nil, nil)
+	run = p.Run(mustResolve(t, config, opts), config, false)
+	dryReporter := &recordingReporter{}
+	d := New((&recordingRunner{}).run, dryReporter, NewSecretMasker(), &stubPrompter{answer: true}, "/tmp/repo", env, nil, nil)
+	dry = d.Run(mustResolve(t, config, opts), config, true)
+	return run, dry, reporter.message, dryReporter.message
+}
+
+// A lazy var referenced only by a step that is disabled — enabled:false, or
+// cut from the plan by --skip — is never resolved, so an unset ${env.NAME} in
+// its command is not this run's problem: the release goes ahead, as it did
+// before the check existed. An optional credential stays optional.
+func TestLazyVarBehindDisabledStepIsNotChecked(t *testing.T) {
+	restore := currentOSToken
+	t.Cleanup(func() { currentOSToken = restore })
+	currentOSToken = func() string { return "linux" }
+
+	off := false
+	disabled := unsetEnvVarConfig(t, &StepConfig{Run: CommandList{ShellCommand("nuget push --api-key ${vars.key}")}, Enabled: &off})
+	if run, dry, runMsg, dryMsg := runUnsetEnv(t, disabled, ResolveOptions{}); !run || !dry {
+		t.Errorf("enabled:false: run=%v (%q) dry=%v (%q), want both to succeed", run, runMsg, dry, dryMsg)
+	}
+
+	skipped := unsetEnvVarConfig(t, &StepConfig{Run: CommandList{ShellCommand("nuget push --api-key ${vars.key}")}})
+	if run, dry, runMsg, dryMsg := runUnsetEnv(t, skipped, ResolveOptions{Skip: []string{"push"}}); !run || !dry {
+		t.Errorf("--skip push: run=%v (%q) dry=%v (%q), want both to succeed", run, runMsg, dry, dryMsg)
+	}
+}
+
+// An `if`-gated step is enabled — the gate is decided at run time and the
+// step may run — so a lazy var it references is checked and the run still
+// fails up front.
+func TestLazyVarBehindIfGatedStepIsChecked(t *testing.T) {
+	restore := currentOSToken
+	t.Cleanup(func() { currentOSToken = restore })
+	currentOSToken = func() string { return "linux" }
+
+	config := unsetEnvVarConfig(t, &StepConfig{Run: CommandList{ShellCommand("nuget push --api-key ${vars.key}")}, If: ptr(`ctx.env.PUBLISH == "yes"`)})
+	run, dry, runMsg, dryMsg := runUnsetEnv(t, config, ResolveOptions{})
+	if run || dry {
+		t.Fatalf("run=%v dry=%v, want both to fail up front behind an if-gated step", run, dry)
+	}
+	for _, msg := range []string{runMsg, dryMsg} {
+		if !strings.Contains(msg, "variable 'key'") || !strings.Contains(msg, "${env.NOPE}") {
+			t.Errorf("message %q should name the var and the env var", msg)
+		}
+	}
+}
+
+// A lazy var nothing in the plan references is never resolved, so it is not
+// checked: defining it costs nothing.
+func TestUnreferencedLazyVarIsNotChecked(t *testing.T) {
+	restore := currentOSToken
+	t.Cleanup(func() { currentOSToken = restore })
+	currentOSToken = func() string { return "linux" }
+
+	config := unsetEnvVarConfig(t, &StepConfig{Run: CommandList{ShellCommand("nuget push --api-key from-elsewhere")}})
+	if run, dry, runMsg, dryMsg := runUnsetEnv(t, config, ResolveOptions{}); !run || !dry {
+		t.Errorf("run=%v (%q) dry=%v (%q), want both to succeed with the var unreferenced", run, runMsg, dry, dryMsg)
+	}
+}
+
+// An eager (non-lazy) var is captured up front whether or not a step uses it —
+// the eager loop resolves every one — so its command would run and fail on the
+// placeholder regardless. The check covers it even with no reference, so that
+// failure is named up front instead of surfacing as an exit code.
+func TestUnreferencedEagerVarIsChecked(t *testing.T) {
+	restore := currentOSToken
+	t.Cleanup(func() { currentOSToken = restore })
+	currentOSToken = func() string { return "linux" }
+
+	config := unsetEnvVarConfig(t, &StepConfig{Run: CommandList{ShellCommand("nuget push --api-key from-elsewhere")}})
+	config.Vars["key"].Lazy = false
+	run, dry, runMsg, dryMsg := runUnsetEnv(t, config, ResolveOptions{})
+	if run || dry {
+		t.Fatalf("run=%v dry=%v, want both to fail: an eager var is resolved whether or not it is referenced", run, dry)
+	}
+	for _, msg := range []string{runMsg, dryMsg} {
+		if !strings.Contains(msg, "variable 'key'") || !strings.Contains(msg, "${env.NOPE}") {
+			t.Errorf("message %q should name the var and the env var", msg)
+		}
 	}
 }
 

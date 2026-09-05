@@ -139,8 +139,12 @@ URL). These also appear on the script `ctx` (`ctx.version`, `ctx.lastVersion`,
   environment, so `["security", "find-generic-password", "-a", "${env.USER}", "-w"]`
   looks up the user rather than the placeholder. And an env var a capture
   command names that the release environment does not set fails the release
-  up front, before any hook or step runs, lazy or not — a masked credential
-  lookup cannot fail late, after the build, over a placeholder.
+  up front, before any hook or step runs — for every captured var the release
+  will resolve: the eager ones, and the lazy ones a step in the plan (or a
+  hook) refers to — so a masked credential lookup cannot fail late, after the
+  build, over a placeholder. A lazy var nothing in the plan references is
+  left alone, as it always was; an optional credential behind a disabled
+  step stays optional.
 - **Secret** — `{ "secret": "op://…" | "env:NAME" | "cmd:…" }`: the same
   references the [publish `auth` config](#publish-authentication) takes,
   read against the release — `env:NAME` from the [layered environment](#environment-env)
