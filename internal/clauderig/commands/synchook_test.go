@@ -188,3 +188,33 @@ func TestLastSuccessfulSync_FoundBehindOtherMachinesRecords(t *testing.T) {
 		t.Errorf("found %s, want %s", at, mine)
 	}
 }
+
+func TestSyncLockStaleNanosecondTokens(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".sync.lock")
+	for _, age := range []time.Duration{0, 2 * maxLockHold} {
+		token := fmt.Sprintf("%d %d\n", os.Getpid(), time.Now().Add(-age).UnixNano())
+		if err := os.WriteFile(path, []byte(token), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := lockIsStale(path); got != (age > maxLockHold) {
+			t.Fatalf("age %v stale=%v", age, got)
+		}
+	}
+}
+
+func TestSyncLockRecoversAbandonedProductionToken(t *testing.T) {
+	staging := filepath.Join(t.TempDir(), "repo")
+	path := filepath.Join(filepath.Dir(staging), ".sync.lock")
+	token := fmt.Sprintf("999999 %d\n", time.Now().Add(-maxLockHold-time.Minute).UnixNano())
+	if err := os.WriteFile(path, []byte(token), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lock, got, err := acquireSyncLock(staging)
+	if err != nil || !got {
+		t.Fatalf("abandoned production token blocked sync: got=%v err=%v", got, err)
+	}
+	defer lock.Release()
+	if _, got, err := acquireSyncLock(staging); err != nil || got {
+		t.Fatalf("replacement lock was not respected: got=%v err=%v", got, err)
+	}
+}

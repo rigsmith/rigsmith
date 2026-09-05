@@ -125,7 +125,13 @@ func lockIsStale(path string) bool {
 	if err != nil {
 		return true
 	}
-	return time.Since(time.Unix(sec, 0)) > maxLockHold
+	// Current lock tokens use UnixNano for uniqueness; older clients used
+	// seconds. Reading nanos as seconds makes an abandoned lock immortal.
+	at := time.Unix(sec, 0)
+	if sec > 1e12 {
+		at = time.Unix(0, sec)
+	}
+	return time.Since(at) > maxLockHold
 }
 
 // lastSuccessfulSync is when this machine last completed a sync, read from the
