@@ -4,11 +4,13 @@
 // invariants (slugs rewritten, secrets stripped, transcripts preserved, junk
 // excluded, no placeholder leakage).
 //
-// It is GATED behind CLAUDERIG_E2E=1 so a normal `go test ./...` skips it — it
+// It is GATED behind CLAUDERIG_E2E=1 (enabled in CI) so a normal `go test ./...` skips it — it
 // shells git and copies a tree. It uses a LOCAL bare remote (no GitHub/gh/network)
 // so it can run at any point:
 //
-//	CLAUDERIG_E2E=1 go test ./clauderig/internal/e2e/ -run E2E -v
+//	CLAUDERIG_E2E=1 go test ./internal/clauderig/e2e/ -run E2E -v
+//
+// The separate real-user Desktop scan requires CLAUDERIG_REAL_DATA_E2E=1.
 package e2e
 
 import (
