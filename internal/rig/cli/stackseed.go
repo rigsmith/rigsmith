@@ -27,6 +27,10 @@ import (
 // itself, ~100 MB carrying every upstream's history, and a derived artifact
 // under version control drifts. The seed is a few kilobytes and derives
 // nothing: the manifest already records which commit each prefix held.
+// seedPrefix marks a repository as a stackspace seed rather than something you
+// clone and work in — `rig stack init` rebuilds the members from it.
+const seedPrefix = "rigstack-"
+
 func newStackSeedCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
@@ -45,8 +49,12 @@ func newStackSeedCmd() *cobra.Command {
 			"A member holding commits that have not left the stackspace is refused:\n" +
 			"a rebuild holds its cursor or its proposed branch, and those commits would\n" +
 			"be in neither. `rig stack propose` them first, or --force to seed anyway.\n\n" +
-			"  rig stack seed ../my-stack-seed\n" +
-			"  git -C ../my-stack-seed remote add origin <url> && git -C ../my-stack-seed push -u origin main",
+			"By convention the directory — and the repository you push it to — is\n" +
+			"named rigstack-<something>. A seed is not a project you clone and work\n" +
+			"in; it is the few kilobytes `rig stack init` rebuilds a stackspace from,\n" +
+			"and the prefix says so at a glance in a list of repositories.\n\n" +
+			"  rig stack seed ../rigstack-acme\n" +
+			"  git -C ../rigstack-acme remote add origin <url> && git -C ../rigstack-acme push -u origin main",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -76,7 +84,7 @@ func newStackSeedMenuCmd() *cobra.Command {
 		Use:    "seed",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			dest := "../stack-seed"
+			dest := defaultSeedDir(cmd.Context())
 			if err := huh.NewInput().
 				Title("Write the seed repository where?").
 				Description("a new or empty directory; it gets one commit holding the root files").
@@ -93,6 +101,32 @@ func newStackSeedMenuCmd() *cobra.Command {
 			return sub.RunE(sub, []string{dest})
 		},
 	}
+}
+
+// defaultSeedDir offers a name following the rigstack- convention, taken from
+// the stackspace's own directory: a stackspace in livemarkdown-2.4/ is seeded
+// to ../rigstack-livemarkdown-2.4. Only a suggestion — the prompt is editable,
+// and the argument form takes whatever you type.
+func defaultSeedDir(ctx context.Context) string {
+	_, _, repo, err := stackspace(ctx)
+	if err != nil {
+		return seedDirFor(nil)
+	}
+	return seedDirFor(repo)
+}
+
+// seedDirFor applies the naming rule to a stackspace, or offers the bare
+// convention when there is no name to take.
+func seedDirFor(repo *gitrepo.Repo) string {
+	const fallback = "../" + seedPrefix + "seed"
+	if repo == nil {
+		return fallback
+	}
+	name := strings.TrimSpace(filepath.Base(repo.Dir))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return fallback
+	}
+	return "../" + seedPrefix + strings.TrimPrefix(name, seedPrefix)
 }
 
 // stackSeed materialises HEAD's root entries that are not member prefixes into

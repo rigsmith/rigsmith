@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rigsmith/rigsmith/core/gitrepo"
 )
 
 func TestStackSeed(t *testing.T) {
@@ -299,4 +301,37 @@ func mustAbs(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return abs
+}
+
+// The seed directory offered by the menu follows the rigstack- convention,
+// derived from the stackspace's own directory name so the two read as a pair.
+func TestDefaultSeedDirFollowsTheConvention(t *testing.T) {
+	cases := []struct {
+		name    string
+		dirName string
+		want    string
+	}{
+		{"derives from the stackspace directory", "acme-2.4", "../rigstack-acme-2.4"},
+		{"does not double the prefix", "rigstack-acme", "../rigstack-acme"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), tc.dirName)
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			repo := &gitrepo.Repo{Dir: root}
+			if got := seedDirFor(repo); got != tc.want {
+				t.Errorf("seedDirFor = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// With no stackspace to read a name from, the offer is still a rigstack- one
+// rather than something the convention would not recognise.
+func TestDefaultSeedDirFallsBackToTheConvention(t *testing.T) {
+	if got := seedDirFor(nil); got != "../rigstack-seed" {
+		t.Errorf("seedDirFor(nil) = %q, want ../rigstack-seed", got)
+	}
 }
