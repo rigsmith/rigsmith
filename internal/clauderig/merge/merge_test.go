@@ -312,3 +312,85 @@ func TestEveryResultExplainsItself(t *testing.T) {
 		}
 	}
 }
+
+// dev is one registry row, so a three-way case reads as what each side did to
+// the same starting point.
+func dev(name, lastSync string) string {
+	return `"` + name + `":{"name":"` + name + `","os":"macos","lastSync":"` + lastSync + `"}`
+}
+
+func registry(entries ...string) string {
+	return `{"schema":1,"devices":{` + strings.Join(entries, ",") + `}}`
+}
+
+func resolve3(t *testing.T, path, base, ours, theirs string) Result {
+	t.Helper()
+	res, ok := Resolve(Sides{Path: path, Base: []byte(base), Ours: []byte(ours), Theirs: []byte(theirs)})
+	if !ok {
+		t.Fatalf("no policy resolved %s", path)
+	}
+	return res
+}
+
+func devicesIn(t *testing.T, res Result) map[string]json.RawMessage {
+	t.Helper()
+	var got deviceRegistry
+	if err := json.Unmarshal(res.Content, &got); err != nil {
+		t.Fatal(err)
+	}
+	return got.Devices
+}
+
+// `clauderig device remove` has to survive the next merge. Without the common
+// ancestor, a union cannot tell "they never had this row" from "we deleted it",
+// and the removed machine reappears on every sync for ever.
+func TestDevicesRemovalIsNotResurrected(t *testing.T) {
+	old := dev("Retired", "2026-08-01T09:00:00Z")
+	base := registry(dev("Pro16", "2026-08-08T12:00:00Z"), old)
+	ours := registry(dev("Pro16", "2026-08-09T12:00:00Z")) // removed here
+	theirs := registry(dev("Pro16", "2026-08-08T12:00:00Z"), old)
+
+	got := devicesIn(t, resolve3(t, "clauderig-devices.json", base, ours, theirs))
+	if _, back := got["Retired"]; back {
+		t.Error("the removed machine came back from the remote's untouched copy")
+	}
+	if _, ok := got["Pro16"]; !ok {
+		t.Error("lost the machine that is still here")
+	}
+}
+
+// The other direction: a machine removed on the remote must not be resurrected
+// by this machine's untouched copy either.
+func TestDevicesRemovalOnTheRemoteStands(t *testing.T) {
+	old := dev("Retired", "2026-08-01T09:00:00Z")
+	base := registry(dev("Pro16", "2026-08-08T12:00:00Z"), old)
+	ours := registry(dev("Pro16", "2026-08-08T12:00:00Z"), old)
+	theirs := registry(dev("Pro16", "2026-08-09T12:00:00Z")) // removed there
+
+	if _, back := devicesIn(t, resolve3(t, "clauderig-devices.json", base, ours, theirs))["Retired"]; back {
+		t.Error("a machine removed on the remote came back")
+	}
+}
+
+// A machine that has synced since the removal is a live machine again, not the
+// stale row someone meant to clear out.
+func TestDevicesRemovalYieldsToAMachineThatCameBack(t *testing.T) {
+	base := registry(dev("Pro16", "2026-08-08T12:00:00Z"), dev("Air13", "2026-08-01T09:00:00Z"))
+	ours := registry(dev("Pro16", "2026-08-09T12:00:00Z")) // Air13 removed here
+	theirs := registry(dev("Pro16", "2026-08-08T12:00:00Z"), dev("Air13", "2026-08-10T09:00:00Z"))
+
+	if _, ok := devicesIn(t, resolve3(t, "clauderig-devices.json", base, ours, theirs))["Air13"]; !ok {
+		t.Error("a machine that synced after the removal was still dropped")
+	}
+}
+
+// With no common ancestor there is nothing to distinguish a removal from an
+// absence, and keeping too much is the safe way to be wrong.
+func TestDevicesWithNoBaseStillUnions(t *testing.T) {
+	ours := registry(dev("Pro16", "2026-08-09T12:00:00Z"))
+	theirs := registry(dev("Air13", "2026-08-08T09:00:00Z"))
+
+	if n := len(devicesIn(t, resolve(t, "clauderig-devices.json", ours, theirs))); n != 2 {
+		t.Errorf("got %d devices, want both kept when there is no base", n)
+	}
+}

@@ -1,6 +1,7 @@
 package merge
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -29,14 +30,44 @@ func mergeDevices(s Sides) ([]byte, string, error) {
 		return nil, "", err
 	}
 
+	// The common ancestor is what separates "the other side never had this" from
+	// "this side removed it". Without it every union re-adds whatever `device
+	// remove` just took out, on the next merge, for ever. An unreadable or
+	// absent base (an add/add with no ancestor) reads as empty, which is the
+	// old union behaviour and the safe direction: keep too much.
+	var base deviceRegistry
+	if len(s.Base) > 0 {
+		_ = json.Unmarshal(s.Base, &base)
+	}
+	inBaseUnchanged := func(name string, side map[string]json.RawMessage) bool {
+		b, ok := base.Devices[name]
+		if !ok {
+			return false
+		}
+		cur, ok := side[name]
+		return ok && bytes.Equal(normalizeJSON(b), normalizeJSON(cur))
+	}
+
 	out := deviceRegistry{Schema: max(ours.Schema, theirs.Schema), Devices: map[string]json.RawMessage{}}
+	var added, refreshed, removed int
 	for name, d := range ours.Devices {
+		// They dropped it and we left it alone: their removal stands.
+		if _, still := theirs.Devices[name]; !still && inBaseUnchanged(name, ours.Devices) {
+			removed++
+			continue
+		}
 		out.Devices[name] = d
 	}
-	var added, refreshed int
 	for name, theirDev := range theirs.Devices {
-		ourDev, have := out.Devices[name]
+		ourDev, have := ours.Devices[name]
 		if !have {
+			// We dropped it. It comes back only if they have since changed it —
+			// that machine synced after the removal, so it is a live machine
+			// again rather than the row we meant to clear out.
+			if inBaseUnchanged(name, theirs.Devices) {
+				removed++
+				continue
+			}
 			out.Devices[name] = theirDev
 			added++
 			continue
@@ -51,8 +82,27 @@ func mergeDevices(s Sides) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return body, fmt.Sprintf("%d device(s) kept, %d added from remote, %d refreshed to a newer sync",
-		len(ours.Devices), added, refreshed), nil
+	detail := fmt.Sprintf("%d device(s) kept, %d added from remote, %d refreshed to a newer sync",
+		len(out.Devices), added, refreshed)
+	if removed > 0 {
+		detail += fmt.Sprintf(", %d left removed", removed)
+	}
+	return body, detail, nil
+}
+
+// normalizeJSON re-encodes a raw entry so two spellings of the same object —
+// different key order or indentation, which is all a re-serialisation changes —
+// compare equal. An unparseable entry falls back to its bytes.
+func normalizeJSON(raw json.RawMessage) []byte {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return raw
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return raw
+	}
+	return b
 }
 
 // deviceRegistry mirrors clauderig-devices.json loosely: entries stay raw so an
