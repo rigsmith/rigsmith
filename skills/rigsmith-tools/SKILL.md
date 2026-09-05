@@ -178,7 +178,8 @@ New configs default to chunking on; omitted keys in existing configs mean auto
 migrates existing backups; restore reconstructs native JSONL. Set false and sync
 to convert back (very large native blobs may exceed host limits), or set auto to
 follow the repo. Complete staged-text secret scanning is always on. Set
-`redactTranscripts true` to scrub supported signatures from staged copies first;
+`redactTranscripts true` to scrub supported signatures from staged conversations —
+transcripts, tool results and memory notes — first;
 never edit live transcripts to work around a publication refusal.
 
 ```sh

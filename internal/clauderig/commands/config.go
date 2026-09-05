@@ -124,7 +124,8 @@ func newConfigSetCmd() *cobra.Command {
 			"  alwaysPrune        prune stale config on `restore` by default (bool)\n" +
 			"  autoRestore        auto-restore on a fresh machine via SessionStart (bool)\n" +
 			"  chunkTranscripts   migrate large staged transcripts to chunks (on by default for new configs; bool or auto)\n" +
-			"  redactTranscripts  scrub detected tokens in staged transcripts (bool)",
+			"  redactTranscripts  scrub detected tokens from staged conversations — transcripts,\n" +
+			"                     tool results and memory notes (bool)",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], args[1]

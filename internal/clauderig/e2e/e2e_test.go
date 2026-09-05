@@ -155,14 +155,13 @@ func TestE2E_RoundTrip(t *testing.T) {
 
 // --- helpers ---
 
-// Byte-preserving Git transport is an explicit fixture precondition, matching
-// the baseline harness. See the documented core.autocrlf compatibility gap;
-// this does not change or assert production handling of user Git filters.
+// Exercise the byte-preservation contract with automatic text conversion on.
+// Committed backup attributes must override it, including on first clone.
 func fixtureGit(t *testing.T) {
 	t.Helper()
 	t.Setenv("GIT_CONFIG_COUNT", "1")
 	t.Setenv("GIT_CONFIG_KEY_0", "core.autocrlf")
-	t.Setenv("GIT_CONFIG_VALUE_0", "false")
+	t.Setenv("GIT_CONFIG_VALUE_0", "true")
 }
 
 func cliOnly(claudeDir string) *config.Config {

@@ -173,6 +173,11 @@ cwd mappings (Q4).
   Upgrade all participating clients before enabling it. See
   [Transcript storage](./CLAUDERIG-TRANSCRIPT-STORAGE.md) for rollout, rollback,
   integrity checks, conflict behavior and scanning limits.
+- **Git transports the serialized backup bytes unchanged.** A committed root
+  attributes rule disables text, encoding, keyword and filter conversions.
+  Sync refreshes legacy indexes when adopting it, and publication checks reject
+  higher-priority conversion overrides. This prevents invalidating chunk hashes
+  after the scan; it does not repair previously altered historical blobs.
 - **Publication scanning covers complete staged text.** Credential signatures
   are checked through bounded overlapping reads, including large transcripts,
   unchanged and remote-only files. Optional transcript scrubbing runs first;

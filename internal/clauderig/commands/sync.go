@@ -14,6 +14,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
+	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
@@ -401,6 +402,9 @@ func NewSyncCmd() *cobra.Command {
 					return err
 				}
 			}
+			if err := backupgit.Prepare(ctx, staging); err != nil {
+				return err
+			}
 			if err := engine.CheckPublish(staging); err != nil {
 				return err
 			}
@@ -423,6 +427,9 @@ func NewSyncCmd() *cobra.Command {
 			// can land a push while this one is still merging. Failing there would
 			// report a broken sync for a race that resolves itself on the retry.
 			for attempt := 0; ; attempt++ {
+				if err := backupgit.Validate(ctx, staging); err != nil {
+					return err
+				}
 				if err := engine.CheckPublish(staging); err != nil {
 					return err
 				}

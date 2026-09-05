@@ -18,6 +18,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
+	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
@@ -373,7 +374,7 @@ func Sync(opts Options) (*Report, error) {
 				// it would never match and the file would be re-scrubbed on every
 				// sync forever. The mtime is copied from the source exactly, so
 				// it alone already means "staged from this version of this file".
-				scrub := opts.RedactTranscripts && isTranscript(rel)
+				scrub := opts.RedactTranscripts && conversationText(rel)
 				unchanged := false
 				staged, derr := transcript.Stat(dstPath)
 				if derr != nil {
@@ -666,6 +667,9 @@ func Sync(opts Options) (*Report, error) {
 		}
 	}
 
+	if err := backupgit.Ensure(opts.StagingDir); err != nil {
+		return rep, err
+	}
 	if audit, err := Audit(opts.StagingDir); err != nil {
 		return rep, err
 	} else {
