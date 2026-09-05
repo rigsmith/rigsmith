@@ -275,10 +275,12 @@ func TestDiscoverPackableFromConditionalPropsAndGlobalMinVer(t *testing.T) {
 }
 
 // packable's IsPackable rule: every IsPackable inside a PropertyGroup is read,
-// in import order (ancestor props, then the csproj); the last unconditional
-// assignment wins, a conditional true anywhere wins over that, a conditional
-// false is ignored, and one outside any PropertyGroup (item metadata) is not a
-// property at all. `props`, when set, is an ancestor Directory.Build.props.
+// in import order (ancestor props, then the csproj); the last assignment that
+// APPLIES wins, a condition that cannot be read is tolerated as a true, and one
+// outside any PropertyGroup (item metadata) is not a property at all. A
+// condition on the project's own path is read rather than tolerated — see
+// TestPackableDecidesPathConditions. `props`, when set, is an ancestor
+// Directory.Build.props, and the project sits at src/P/P.csproj.
 func TestPackableReadsEveryIsPackable(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -314,14 +316,19 @@ func TestPackableReadsEveryIsPackable(t *testing.T) {
 </Project>`, `<Project>
   <PropertyGroup><IsPackable>false</IsPackable><PackageId>X</PackageId></PropertyGroup>
 </Project>`, false},
-		{"csproj unconditional false, ancestor conditional true", `<Project>
+		{"csproj unconditional false beats an ancestor's applying path condition", `<Project>
   <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/'))"><IsPackable>true</IsPackable></PropertyGroup>
 </Project>`, `<Project>
   <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
-</Project>`, true},
-		{"ancestor unconditional false, conditional true between, csproj unconditional false", `<Project>
+</Project>`, false},
+		{"csproj unconditional false beats an applying path condition between two falses", `<Project>
   <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
   <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/'))"><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+</Project>`, false},
+		{"an unreadable condition is still tolerated over a csproj false", `<Project>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'"><IsPackable>true</IsPackable></PropertyGroup>
 </Project>`, `<Project>
   <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
 </Project>`, true},
@@ -853,5 +860,163 @@ func TestDetectIgnoresBuildOutput(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("a project file under obj/ was treated as a real project")
+	}
+}
+
+// A shared props file that sets IsPackable false for everything and true again
+// under a condition on the project's path is how a repo says "what is under
+// src/ packs, what is beside it does not". The condition is the whole of that
+// statement, so reading it is the difference between finding a repo's libraries
+// and finding its tests, benchmarks and samples alongside them.
+//
+// nullean/mermaider is the case this came from: one such rule in its root
+// Directory.Build.props, and nine projects beneath it of which two ship.
+func TestPackableDecidesPathConditions(t *testing.T) {
+	const srcOnly = `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Replace('\','/').Contains('/src/'))">
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+</Project>`
+
+	cases := []struct {
+		name  string
+		props string
+		dir   []string
+		want  bool
+	}{
+		{"library under src packs", srcOnly, []string{"src", "Lib"}, true},
+		{"tests beside it do not", srcOnly, []string{"tests", "Lib.Tests"}, false},
+		{"benchmarks beside it do not", srcOnly, []string{"benchmarks", "Lib.Benchmarks"}, false},
+
+		{"plain MSBuildProjectDirectory, no Replace", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/'))"><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, []string{"tests", "T"}, false},
+
+		{"System.String::Copy spelling", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="$([System.String]::Copy($(MSBuildProjectDirectory)).Contains('/src/'))"><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, []string{"tests", "T"}, false},
+
+		{"project name EndsWith excludes tests", `<Project>
+  <PropertyGroup><IsPackable>true</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))"><IsPackable>false</IsPackable></PropertyGroup>
+</Project>`, []string{"src", "Lib.Tests"}, false},
+		{"project name EndsWith leaves the library alone", `<Project>
+  <PropertyGroup><IsPackable>true</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))"><IsPackable>false</IsPackable></PropertyGroup>
+</Project>`, []string{"src", "Lib"}, true},
+
+		{"negation", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="!$(MSBuildProjectDirectory.Contains('/tests/'))"><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, []string{"tests", "T"}, false},
+
+		// Both an element condition and a group condition must hold. One that is
+		// decidably false settles it even where the other cannot be read at all,
+		// and whichever order they happen to be looked at in.
+		{"unreadable element condition under a false group condition", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/'))">
+    <IsPackable Condition="'$(Configuration)'=='Release'">true</IsPackable>
+  </PropertyGroup>
+</Project>`, []string{"tests", "T"}, false},
+		{"unreadable element condition under a true group condition stays tolerated", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/'))">
+    <IsPackable Condition="'$(Configuration)'=='Release'">true</IsPackable>
+  </PropertyGroup>
+</Project>`, []string{"src", "Lib"}, true},
+
+		// Not the decidable family: tolerated as before rather than guessed at.
+		{"compound condition stays tolerated", `<Project>
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/src/')) AND '$(Configuration)'=='Release'"><IsPackable>true</IsPackable></PropertyGroup>
+</Project>`, []string{"tests", "T"}, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "Directory.Build.props"), tc.props)
+			parts := append([]string{root}, tc.dir...)
+			name := tc.dir[len(tc.dir)-1] + ".csproj"
+			path := filepath.Join(append(parts, name)...)
+			if got := packable(path, `<Project><PropertyGroup/></Project>`); got != tc.want {
+				t.Errorf("packable = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A library that describes the package it produces — licence, icon, readme,
+// tags — is a package, even where nothing says IsPackable and the version is
+// supplied by CI on the pack command line. DearVa/LiveMarkdown.Avalonia is the
+// case this came from: five such libraries beside five demo apps and a test
+// project, and only the five carry any of this.
+func TestPackableReadsPackageMetadata(t *testing.T) {
+	cases := []struct {
+		name  string
+		props string
+		text  string
+		want  bool
+	}{
+		{"tags alone", "", `<Project>
+  <PropertyGroup><PackageTags>markdown;avalonia</PackageTags></PropertyGroup>
+</Project>`, true},
+		{"licence and project url", "", `<Project>
+  <PropertyGroup>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://example.invalid/x</PackageProjectUrl>
+  </PropertyGroup>
+</Project>`, true},
+		{"an item packed into the package", "", `<Project>
+  <ItemGroup><None Include="..\README.md" Pack="true" PackagePath="README.md"/></ItemGroup>
+</Project>`, true},
+
+		// Assembly metadata is not package metadata: a console app or a test
+		// project carries these quite legitimately.
+		{"title, authors and description are not enough", "", `<Project>
+  <PropertyGroup>
+    <Title>Demo</Title><Authors>Someone</Authors><Description>A demo app.</Description>
+    <RepositoryUrl>https://example.invalid/x</RepositoryUrl>
+  </PropertyGroup>
+</Project>`, false},
+
+		{"IsPackable false still wins over metadata", "", `<Project>
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <PackageTags>x</PackageTags>
+  </PropertyGroup>
+</Project>`, false},
+
+		// Repo-wide licence/author metadata in a shared props file says nothing
+		// about which projects beneath it pack.
+		{"metadata in an ancestor props does not carry", `<Project>
+  <PropertyGroup><PackageLicenseExpression>Apache-2.0</PackageLicenseExpression></PropertyGroup>
+</Project>`, `<Project>
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+</Project>`, false},
+
+		{"a bare project is still not a package", "", `<Project>
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+</Project>`, false},
+		{"commented-out metadata counts for nothing", "", `<Project>
+  <!-- <PropertyGroup><PackageTags>x</PackageTags></PropertyGroup> -->
+</Project>`, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.props != "" {
+				writeFile(t, filepath.Join(root, "Directory.Build.props"), tc.props)
+			}
+			path := filepath.Join(root, "src", "P", "P.csproj")
+			if got := packable(path, tc.text); got != tc.want {
+				t.Errorf("packable = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
