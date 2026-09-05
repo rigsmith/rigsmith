@@ -42,7 +42,7 @@ func divergedRepos(t *testing.T, files map[string][3]string) *gitrepo.Repo {
 	}
 
 	bare := filepath.Join(root, "remote.git")
-	run(root, "init", "-q", "--bare", bare)
+	run(root, "init", "-q", "--bare", "-b", "main", bare)
 
 	remoteWC := filepath.Join(root, "remote-wc")
 	run(root, "clone", "-q", bare, remoteWC)
