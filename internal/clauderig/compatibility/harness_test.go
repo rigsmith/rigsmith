@@ -139,6 +139,7 @@ func (s *sandbox) put(rel, body string) {
 	p := filepath.Join(s.root, filepath.FromSlash(rel))
 	must(s.t, os.MkdirAll(filepath.Dir(p), 0o755))
 	must(s.t, os.WriteFile(p, []byte(body), 0o644))
+	must(s.t, os.Chmod(p, 0o644))
 	s.writes++
 	stamp := fixtureTime.Add(time.Duration(s.writes) * time.Second)
 	must(s.t, os.Chtimes(p, stamp, stamp))
@@ -192,10 +193,6 @@ func (s *sandbox) run(label, input string, code int, message string, args ...str
 	if got != code || !strings.Contains(diagnostic, message) {
 		s.t.Fatalf("%s: exit %d (want %d), expected %q\n%s\n%s", label, got, code, message, &stdout, &stderr)
 	}
-	s.observations[label+"/exit"] = fmt.Sprint(got)
-	// Compare the meaningful diagnostic contract, not Git's progress/commit IDs
-	// or terminal line wrapping (which depends on temporary path lengths).
-	s.observations[label+"/message"] = message
 }
 
 func (s *sandbox) snapshot(label string) {

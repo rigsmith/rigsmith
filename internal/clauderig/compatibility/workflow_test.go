@@ -188,8 +188,7 @@ func mergeRecovery(s *sandbox) {
 	s.git(s.stage, "add", ".")
 	s.git(s.stage, "commit", "-m", "local settings")
 	// Leave a genuine conflicted index for the command to repair on entry.
-	cmd := execMerge(s)
-	if cmd == nil {
+	if err := execMerge(s); err == nil {
 		s.t.Fatal("fixture did not create a conflicted merge")
 	}
 	if _, err := os.Stat(filepath.Join(s.stage, ".git", "MERGE_HEAD")); err != nil {
