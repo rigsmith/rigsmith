@@ -94,11 +94,8 @@ func RedactText(data []byte) (out []byte, hits []TextHit, changed bool) {
 	prev := 0
 	for _, loc := range locs {
 		match := string(data[loc[0]:loc[1]])
-		if screamingRe.MatchString(match) {
-			continue // a placeholder in an example, not a credential
-		}
-		if isKebabProse(match) {
-			continue // a hyphenated phrase that happens to start with a prefix
+		if !IsCredentialMatch(match) {
+			continue
 		}
 		b.Write(data[prev:loc[0]])
 		b.WriteString(Placeholder)
@@ -137,6 +134,20 @@ func hint(s string) string {
 // spans a structure this cannot safely edit, and half a scrubbed key is worse
 // than a refusal that says what it found.
 func HasPrivateKey(line []byte) bool { return pemRe.Match(line) }
+
+// IsCredentialMatch reports whether a regex hit is really a credential rather
+// than something merely shaped like one.
+//
+// Shared deliberately. RedactText uses it to decide what to rewrite and the
+// stream scanner to decide what to refuse, and if the two disagree the tool
+// either rewrites something it will still refuse — leaving a sync blocked with
+// the scrubber already on and nothing left to try — or refuses something it has
+// already cleaned. Both were live: the prose exclusion landed in the rewriter
+// only, so the tripwire kept refusing the phrases the rewriter had decided to
+// leave alone.
+func IsCredentialMatch(match string) bool {
+	return !screamingRe.MatchString(match) && !isKebabProse(match)
+}
 
 // isKebabProse reports whether a match is a hyphenated lowercase phrase rather
 // than a credential. Judged on the body, after the vendor prefix: "sk-" is

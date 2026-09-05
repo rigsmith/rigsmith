@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -38,14 +37,32 @@ func isTranscript(rel string) bool {
 // excluded because a byte-level rewrite of one is not a redaction, it is
 // damage.
 func conversationText(rel string) bool {
-	if !strings.HasPrefix(rel, "projects/") {
+	return strings.HasPrefix(rel, "projects/")
+}
+
+// scrubbable reports whether a staged file should be scrubbed: it belongs to a
+// conversation, and its content is text.
+//
+// Judged on content rather than on the extension. An allowlist gets both ends
+// wrong: tool output written to a .log, or to a file with no extension at all,
+// is text that would keep a credential and keep the sync refused; and a PNG
+// somebody named .md would be handed to the rewriter, which would edit bytes
+// inside an image. The head of the file answers the question directly.
+func scrubbable(rel, src string) bool {
+	if !conversationText(rel) {
 		return false
 	}
-	switch strings.ToLower(path.Ext(rel)) {
-	case ".jsonl", ".txt", ".md", ".html":
-		return true
+	f, err := os.Open(src)
+	if err != nil {
+		return false // unreadable here means the copy will fail anyway
 	}
-	return false
+	defer f.Close()
+	var head [8000]byte
+	n, rerr := f.Read(head[:])
+	if rerr != nil && n == 0 {
+		return false
+	}
+	return !redact.LooksBinary(head[:n])
 }
 
 // redactTranscript streams src to dst, replacing credential-shaped tokens, and

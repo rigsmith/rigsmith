@@ -373,7 +373,7 @@ func Sync(opts Options) (*Report, error) {
 				// it would never match and the file would be re-scrubbed on every
 				// sync forever. The mtime is copied from the source exactly, so
 				// it alone already means "staged from this version of this file".
-				scrub := opts.RedactTranscripts && conversationText(rel)
+				scrub := opts.RedactTranscripts && scrubbable(rel, srcPath)
 				unchanged := false
 				staged, derr := transcript.Stat(dstPath)
 				if derr != nil {

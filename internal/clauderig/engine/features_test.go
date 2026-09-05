@@ -532,7 +532,11 @@ func TestSync_ScrubsToolResultsAndNotesBesideTheTranscript(t *testing.T) {
 		}
 	}
 	// The live files are never edited — clauderig backs a machine up.
-	if b, _ := os.ReadFile(filepath.Join(live, "projects/-p/memory/notes.md")); !strings.Contains(string(b), key) {
+	b, err := os.ReadFile(filepath.Join(live, "projects/-p/memory/notes.md"))
+	if err != nil {
+		t.Fatalf("reading the live note: %v", err)
+	}
+	if !strings.Contains(string(b), key) {
 		t.Error("the live note was rewritten; only the staged copy may be")
 	}
 	// A binary is copied, not rewritten.
@@ -540,5 +544,47 @@ func TestSync_ScrubsToolResultsAndNotesBesideTheTranscript(t *testing.T) {
 		t.Errorf("the binary did not sync: %v", err)
 	} else if string(b) != binary {
 		t.Error("a binary was rewritten, which is damage rather than redaction")
+	}
+}
+
+// Classifying by extension gets both ends wrong. Tool output written to a .log
+// or to a file with no extension is text that would keep its credential and
+// keep the sync refused; a PNG somebody named .md would be handed to the
+// rewriter, which would edit bytes inside an image.
+func TestSync_ScrubDecidedByContentNotExtension(t *testing.T) {
+	live := t.TempDir()
+	key := "sk-ant-api03-" + strings.Repeat("z", 60)
+	write(t, live, "projects/-p/s.jsonl", `{"type":"user","cwd":"/p"}`+"\n")
+	write(t, live, "projects/-p/s/tool-results/out.log", "printed "+key+"\n")
+	write(t, live, "projects/-p/s/tool-results/README", "also "+key+"\n")
+	const png = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR not text at all\n"
+	write(t, live, "projects/-p/s/tool-results/shot.md", png)
+
+	staging := t.TempDir()
+	if _, err := Sync(Options{
+		StagingDir: staging, Config: cliOnlyConfig(live),
+		Machine:           config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"},
+		RedactTranscripts: true, SourceOverride: override("cli", live),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Text, whatever it is called, gets scrubbed.
+	for _, rel := range []string{"projects/-p/s/tool-results/out.log", "projects/-p/s/tool-results/README"} {
+		b, err := os.ReadFile(filepath.Join(staging, "cli", filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("%s: %v", rel, err)
+		}
+		if strings.Contains(string(b), key) {
+			t.Errorf("%s kept its credential — it would refuse the sync with nothing left to try", rel)
+		}
+	}
+	// A binary is carried byte for byte, whatever it is called.
+	b, err := os.ReadFile(filepath.Join(staging, "cli", "projects", "-p", "s", "tool-results", "shot.md"))
+	if err != nil {
+		t.Fatalf("the binary did not sync: %v", err)
+	}
+	if string(b) != png {
+		t.Error("a binary named .md was rewritten, which is damage rather than redaction")
 	}
 }
