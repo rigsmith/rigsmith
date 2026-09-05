@@ -284,6 +284,15 @@
   .srow .p{color:var(--muted);font-size:10px;overflow-wrap:anywhere;margin-top:1px;}
   .srow .p.hit{color:var(--paper);}
   .srow .p.hit .n{color:var(--warn);font-variant-numeric:tabular-nums;}
+  .lbl{color:var(--muted);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px;}
+  .exlist{display:flex;flex-direction:column;gap:6px;}
+  .ex{
+    font-size:11px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere;
+    padding-left:9px;border-left:2px solid var(--line);
+  }
+  /* The term itself, not a highlight box — a filled background at this size
+     swallows the words either side, which are the context. */
+  .ex mark{background:none;color:var(--warn);font-weight:700;}
   /* Colour comes from the letter (see LETTER_HUE), applied inline. These rules
      are the fallback for a monogram whose letter has no hue. */
   .mono{
@@ -1539,10 +1548,42 @@ async function openSession(id) {
   $('backToList').hidden = false;
   box.replaceChildren(el('div', 'gap', 'Reading the transcript…'));
   try {
-    renderSession(await Call.ByName(LIBRARY_DETAIL, id));
+    renderSession(await Call.ByName(LIBRARY_DETAIL, id, $('ssearch').value.trim()));
   } catch (e) {
     box.replaceChildren(el('div', 'empty err', `Could not open that session: ${e}`));
   }
+}
+
+// A hit, with the term marked. Built as nodes rather than innerHTML because the
+// text is a transcript: it is someone's conversation, and pasting it into the
+// DOM as markup would execute whatever they happened to have written down.
+function excerptLine(text, at, len) {
+  const line = el('div', 'ex');
+  if (at < 0 || len <= 0 || at + len > text.length) {
+    line.textContent = text;
+    return line;
+  }
+  line.append(document.createTextNode(text.slice(0, at)));
+  line.append(el('mark', null, text.slice(at, at + len)));
+  line.append(document.createTextNode(text.slice(at + len)));
+  return line;
+}
+
+// Where the term appears, above the first/last prompts. The prompts say what a
+// session was FOR; when you arrived here from a search, this says why it came
+// back — which is the thing you clicked to find out.
+function renderHits(d) {
+  if (!d.hits?.length) return null;
+  const box = el('div', 'gap');
+  const total = d.session?.matches || d.hits.length;
+  const shown = d.hits.length;
+  box.append(el('div', 'lbl', shown < total
+    ? `“${d.search}” — showing ${shown} of ${total}`
+    : `“${d.search}” — ${total} ${total === 1 ? 'match' : 'matches'}`));
+  const list = el('div', 'exlist');
+  for (const h of d.hits) list.append(excerptLine(h.text || '', h.at ?? -1, h.len ?? 0));
+  box.append(list);
+  return box;
 }
 
 function renderSession(d) {
@@ -1566,6 +1607,11 @@ function renderSession(d) {
   field('Account', s.accountLabel || s.account);
   field('Client', s.client);
   box.append(meta);
+
+  // Above the prompts: you came here from a search, so the first thing to
+  // answer is why this session came back.
+  const hits = renderHits(d);
+  if (hits) box.append(hits);
 
   if (d.prompts) {
     box.append(el('b', null, 'Opened with'));
@@ -1908,7 +1954,7 @@ window.addEventListener('focus', () => {
   // regaining focus doesn't blink.
   if (!openSessionID || document.querySelector('.modal')) return;
   const id = openSessionID;
-  Call.ByName(LIBRARY_DETAIL, id)
+  Call.ByName(LIBRARY_DETAIL, id, $('ssearch').value.trim())
     .then(d => { if (openSessionID === id) renderSession(d); })
     .catch(() => { /* keep what is on screen */ });
 });

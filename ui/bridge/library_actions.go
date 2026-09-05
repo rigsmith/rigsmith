@@ -38,6 +38,14 @@ type SessionDetail struct {
 	Session LibrarySession `json:"session"`
 	First   []Prompt       `json:"first"`
 	Last    []Prompt       `json:"last"`
+	// Search is the term the list was filtered by, echoed back so the pane can
+	// title the excerpts with it rather than the frontend restating what it
+	// asked for.
+	Search string `json:"search,omitempty"`
+	// Hits are where that term appears in the transcript, capped at
+	// maxExcerpts. The list says a session matched and how often; this is the
+	// follow-up, which is what it actually said.
+	Hits []sessions.Excerpt `json:"hits,omitempty"`
 	// Prompts is every human turn, so the panel can say how much sits between
 	// the two ends rather than implying it is showing all of them.
 	Prompts int `json:"prompts"`
@@ -61,7 +69,15 @@ type SessionDetail struct {
 
 // Detail reads one session in full: its row, the ends of its conversation, and
 // everything the actions below need to be offered honestly.
-func (l *Library) Detail(ctx context.Context, id string) (SessionDetail, error) {
+// maxExcerpts bounds how many places a term is shown in one transcript. Enough
+// to see the shape of the conversation around it, few enough that the pane
+// stays a summary rather than becoming a second transcript viewer.
+const maxExcerpts = 12
+
+// Detail describes one session. search, when set, is the term the list was
+// filtered by: the pane then leads with where that term appears, which is the
+// follow-up to "this session matched" and the reason the row was clicked.
+func (l *Library) Detail(ctx context.Context, id, search string) (SessionDetail, error) {
 	var d SessionDetail
 	row, _, err := l.find(id)
 	if err != nil {
@@ -74,6 +90,10 @@ func (l *Library) Detail(ctx context.Context, id string) (SessionDetail, error) 
 	d.Profiles, _ = managedProfiles()
 	d.VSCode = vscodeInstalled()
 
+	if row.Path != "" && strings.TrimSpace(search) != "" {
+		d.Search = search
+		d.Hits = sessions.Excerpts(row.Path, search, false, maxExcerpts)
+	}
 	if row.Path != "" {
 		c, perr := sessions.Prompts(row.Path, promptsShown)
 		if perr != nil {

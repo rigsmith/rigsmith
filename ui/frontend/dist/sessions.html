@@ -167,6 +167,15 @@
        vertically; nudging on top of that only pushes it back off. */
     letter-spacing:0;line-height:1;padding:0 5px;
   }
+  .exlist{display:flex;flex-direction:column;gap:6px;margin-top:6px;}
+  .ex{
+    font-size:11px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere;
+    padding-left:9px;border-left:2px solid var(--line);
+  }
+  /* The term itself, not a highlight box — a filled background at this size
+     swallows the words either side, which are the context. */
+  .ex mark{background:none;color:var(--warn);font-weight:700;}
+
   .chip{color:var(--muted-2);}
   .chip.listed{color:var(--muted);}
   .chip.on{color:var(--paper);}
@@ -757,6 +766,35 @@ function turn(p, cls) {
   return d;
 }
 
+// A hit, with the term marked. Nodes rather than innerHTML because the text is
+// a transcript: it is someone's conversation, and pasting it into the DOM as
+// markup would execute whatever they happened to have written down.
+function excerptLine(text, at, len) {
+  const line = el('div', 'ex');
+  if (at < 0 || len <= 0 || at + len > text.length) {
+    line.textContent = text;
+    return line;
+  }
+  line.append(document.createTextNode(text.slice(0, at)));
+  line.append(el('mark', null, text.slice(at, at + len)));
+  line.append(document.createTextNode(text.slice(at + len)));
+  return line;
+}
+
+function renderHits(d) {
+  if (!d.hits?.length) return null;
+  const box = el('div', 'gap');
+  const total = d.session?.matches || d.hits.length;
+  const shown = d.hits.length;
+  box.append(el('b', null, shown < total
+    ? `\u201C${d.search}\u201D — showing ${shown} of ${total}`
+    : `\u201C${d.search}\u201D — ${total} ${total === 1 ? 'match' : 'matches'}`));
+  const list = el('div', 'exlist');
+  for (const h of d.hits) list.append(excerptLine(h.text || '', h.at ?? -1, h.len ?? 0));
+  box.append(list);
+  return box;
+}
+
 function renderDetail(d) {
   current = d;
   const s = d.session;
@@ -783,6 +821,11 @@ function renderDetail(d) {
   box.append(meta);
 
   if (d.error) box.append(el('div', 'toast err', d.error));
+
+  // Above the prompts: you came here from a search, so the first thing to
+  // answer is why this session came back.
+  const hits = renderHits(d);
+  if (hits) box.append(hits);
 
   if (d.prompts) {
     box.append(el('b', null, 'Opened with'));
@@ -877,7 +920,7 @@ function renderActions(d) {
         await Call.ByName(LIBRARY_MATERIALIZE, d.session.id);
         flash(bring);
         await refresh();                       // its Where column changes
-        renderDetail(await Call.ByName(LIBRARY_DETAIL, d.session.id));
+        renderDetail(await Call.ByName(LIBRARY_DETAIL, d.session.id, term()));
       } catch (e) {
         bring.disabled = false;
         say('failed — hover for details', 'err', String(e));
@@ -1022,6 +1065,9 @@ function closeDrawer() {
   document.querySelectorAll('tbody tr[data-open]').forEach(tr => delete tr.dataset.open);
 }
 
+// The term the list is filtered by, which the detail pane leads with.
+function term() { return $('q').value.trim(); }
+
 async function openDetail(id, tr) {
   openDetailID = id;
   document.querySelectorAll('tbody tr[data-open]').forEach(x => delete x.dataset.open);
@@ -1032,7 +1078,7 @@ async function openDetail(id, tr) {
   $('drawer').dataset.on = 'yes';
   $('scrim').dataset.on = 'yes';
   try {
-    renderDetail(await Call.ByName(LIBRARY_DETAIL, id));
+    renderDetail(await Call.ByName(LIBRARY_DETAIL, id, term()));
   } catch (e) {
     $('dhead').replaceChildren(el('h2', null, 'Could not open that session'));
     $('detail').replaceChildren(el('div', 'toast err', String(e)));
@@ -1143,7 +1189,7 @@ window.addEventListener('focus', async () => {
     // In place, with no "Reading the transcript…" flash — the drawer is already
     // showing this session, it is only the facts that may have moved.
     try {
-      const d = await Call.ByName(LIBRARY_DETAIL, id);
+      const d = await Call.ByName(LIBRARY_DETAIL, id, term());
       if (openDetailID === id) renderDetail(d);
     } catch { /* keep what is on screen */ }
     return;

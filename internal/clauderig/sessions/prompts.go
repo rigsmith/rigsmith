@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/rigsmith/rigsmith/internal/clauderig/search"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
 )
 
@@ -102,4 +103,40 @@ func trimPrompt(s string) string {
 		s = string([]rune(s)[:promptMax]) + "…"
 	}
 	return s
+}
+
+// Excerpt is one place a search term appears in a transcript, with enough of
+// the line around it to be read.
+type Excerpt struct {
+	Line int    `json:"line"`
+	Text string `json:"text"`
+	// At and Len locate the term inside Text, so a caller can mark it without
+	// searching again — and without guessing at case, which a second search
+	// would get wrong for a case-insensitive match.
+	At  int `json:"at"`
+	Len int `json:"len"`
+}
+
+// Excerpts returns up to max places query appears in a transcript.
+//
+// The list already says a session matched and how often; this is the follow-up
+// question, which is what it actually said. Bounded because a term can appear
+// hundreds of times in a long conversation and nobody reads the hundredth.
+func Excerpts(path, query string, caseSensitive bool, max int) []Excerpt {
+	if path == "" || strings.TrimSpace(query) == "" || max <= 0 {
+		return nil
+	}
+	var out []Excerpt
+	_, err := search.ScanFile(path, search.Options{
+		Query: query, CaseSensitive: caseSensitive, Accept: session.IsConversationLine,
+	}, func(m search.Match) {
+		if len(out) >= max {
+			return
+		}
+		out = append(out, Excerpt{Line: m.Line, Text: m.Snippet, At: m.MatchAt, Len: m.MatchLen})
+	})
+	if err != nil {
+		return nil
+	}
+	return out
 }
