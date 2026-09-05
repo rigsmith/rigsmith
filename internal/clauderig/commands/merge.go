@@ -229,6 +229,12 @@ func applyPolicies(ctx context.Context, repo *gitrepo.Repo) (ledger []Resolution
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return nil, nil, err
 		}
+		// The conflicted path was checked out from a repo another machine
+		// wrote. A symlink there would have this resolution written through it,
+		// landing wherever it points — outside the staging tree entirely.
+		if info, lerr := os.Lstat(dst); lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return nil, nil, fmt.Errorf("%s is a symlink — refusing to write a resolution through it", rel)
+		}
 		if err := os.WriteFile(dst, res.Content, 0o644); err != nil {
 			return nil, nil, err
 		}

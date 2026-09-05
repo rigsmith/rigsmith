@@ -30,20 +30,33 @@ func (r *Repo) SquashBefore(ctx context.Context, cutoff time.Time, msg string) (
 	if err != nil {
 		return 0, err
 	}
+	// The tip this rebuild is based on. The ref is only moved if it is still
+	// here at the end: a sync committing while this runs would otherwise have
+	// its commit dropped by the update-ref below.
+	was, err := r.Head(ctx)
+	if err != nil {
+		return 0, err
+	}
 	// Oldest-first, so the rebuild below can walk parents forward.
-	out, err := runGit(ctx, r.Dir, "rev-list", "--reverse", "--format=%H %cI", "--no-commit-header", "HEAD")
+	out, err := runGit(ctx, r.Dir, "rev-list", "--reverse", "--format=%H%x1f%cI%x1f%P", "--no-commit-header", "HEAD")
 	if err != nil {
 		return 0, err
 	}
 	type commit struct {
-		sha string
-		at  time.Time
+		sha     string
+		at      time.Time
+		parents []string
 	}
 	var all []commit
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		sha, iso, ok := strings.Cut(strings.TrimSpace(line), " ")
-		if !ok {
+		fields := strings.Split(strings.TrimSpace(line), "\x1f")
+		if len(fields) < 2 {
 			continue
+		}
+		sha, iso := fields[0], fields[1]
+		var parents []string
+		if len(fields) > 2 {
+			parents = strings.Fields(fields[2])
 		}
 		at, perr := time.Parse(time.RFC3339, iso)
 		if perr != nil {
@@ -51,7 +64,7 @@ func (r *Repo) SquashBefore(ctx context.Context, cutoff time.Time, msg string) (
 			// away — treat it as recent and keep it.
 			at = time.Now()
 		}
-		all = append(all, commit{sha: sha, at: at})
+		all = append(all, commit{sha: sha, at: at, parents: parents})
 	}
 	if len(all) == 0 {
 		return 0, nil
@@ -90,7 +103,15 @@ func (r *Repo) SquashBefore(ctx context.Context, cutoff time.Time, msg string) (
 		return 0, err
 	}
 	parent = strings.TrimSpace(parent)
+	base := parent
 
+	// Old sha → its rebuilt copy, so a merge commit inside the retained window
+	// keeps every parent. Rebuilding each commit with a single parent flattens
+	// those merges, and the history that survives a prune then no longer
+	// describes how the machines actually reconciled — which is the question
+	// the retained window exists to answer, and what a later merge-base has to
+	// read.
+	rebuilt := map[string]string{}
 	for _, c := range all[split+1:] {
 		t, terr := runGit(ctx, r.Dir, "rev-parse", c.sha+"^{tree}")
 		if terr != nil {
@@ -106,16 +127,26 @@ func (r *Repo) SquashBefore(ctx context.Context, cutoff time.Time, msg string) (
 		if eerr != nil {
 			return 0, eerr
 		}
-		next, cerr := runGitStdin(ctx, r.Dir, subj, env,
-			"commit-tree", strings.TrimSpace(t), "-p", parent, "-F", "-")
+		// A parent that was folded away resolves to the base commit, which
+		// holds its tree — so the ancestry still leads somewhere real.
+		args := []string{"commit-tree", strings.TrimSpace(t)}
+		for _, p := range mappedParents(c.parents, rebuilt, base) {
+			args = append(args, "-p", p)
+		}
+		args = append(args, "-F", "-")
+		next, cerr := runGitStdin(ctx, r.Dir, subj, env, args...)
 		if cerr != nil {
 			return 0, cerr
 		}
 		parent = strings.TrimSpace(next)
+		rebuilt[c.sha] = parent
 	}
 
-	if _, err = runGit(ctx, r.Dir, "update-ref", "refs/heads/"+branch, parent); err != nil {
-		return 0, err
+	// Compare-and-swap. A sync that committed while this was rebuilding leaves
+	// the branch somewhere this rebuild never saw, and moving the ref anyway
+	// would delete that commit.
+	if _, err = runGit(ctx, r.Dir, "update-ref", "refs/heads/"+branch, parent, was); err != nil {
+		return 0, fmt.Errorf("the branch moved while history was being rebuilt — nothing was changed: %w", err)
 	}
 	// Reclaiming the space is the entire point; without this the old objects are
 	// still on disk and the repo has not got any smaller.
@@ -138,4 +169,29 @@ func commitIdentity(ctx context.Context, dir, sha string) ([]string, error) {
 		"GIT_AUTHOR_NAME=" + f[0], "GIT_AUTHOR_EMAIL=" + f[1], "GIT_AUTHOR_DATE=" + f[2],
 		"GIT_COMMITTER_NAME=" + f[3], "GIT_COMMITTER_EMAIL=" + f[4], "GIT_COMMITTER_DATE=" + f[5],
 	}, nil
+}
+
+// mappedParents translates a commit's parents into the rebuilt history: a parent
+// that was itself rebuilt maps to its copy, and one that was folded away maps to
+// the base commit holding its tree. Order is preserved (git treats the first
+// parent as the mainline) and duplicates are dropped, which is what several
+// folded parents collapse into.
+func mappedParents(parents []string, rebuilt map[string]string, base string) []string {
+	if len(parents) == 0 {
+		return []string{base}
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range parents {
+		mapped, ok := rebuilt[p]
+		if !ok {
+			mapped = base
+		}
+		if seen[mapped] {
+			continue
+		}
+		seen[mapped] = true
+		out = append(out, mapped)
+	}
+	return out
 }

@@ -247,3 +247,19 @@ func TestMoveSession_LeavesTheSourceWhenTheDestinationIsTaken(t *testing.T) {
 		t.Error("the existing transcript was modified")
 	}
 }
+
+// The id is interpolated into a glob pattern and into a path. A wildcard would
+// select somebody else's transcript for rewriting and moving; a separator would
+// reach outside the projects tree.
+func TestFindSession_RejectsAnythingThatIsNotOneID(t *testing.T) {
+	projects := sessionTree(t, abs("/a"), "abcdef12-1111-4111-8111-aaaaaaaaaaaa", []string{abs("/a")})
+
+	for _, id := range []string{"*", "abc*", "a?c", "a[bc]", "../../etc/passwd", "sub/abc", ""} {
+		if _, _, err := FindSession(projects, id); err == nil {
+			t.Errorf("FindSession accepted %q", id)
+		}
+		if _, err := MoveSession(projects, id, abs("/b"), false); err == nil {
+			t.Errorf("MoveSession accepted %q", id)
+		}
+	}
+}

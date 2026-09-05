@@ -97,7 +97,12 @@ func (r *Repo) UnmergedFiles(ctx context.Context) ([]string, error) {
 // an error — absence is a meaningful state to a resolver, not a failure.
 func (r *Repo) ConflictStages(ctx context.Context, path string) (base, ours, theirs []byte, err error) {
 	// ls-files -u lists one line per stage: "<mode> <sha> <stage>\t<path>".
-	out, err := runGit(ctx, r.Dir, "ls-files", "-u", "-z", "--", path)
+	//
+	// :(literal) because the argument after -- is still a pathspec, and a
+	// conflicted filename containing *, ? or [ would otherwise match other
+	// files — handing this resolver another file's stages under the name it
+	// asked about, and writing that content into it.
+	out, err := runGit(ctx, r.Dir, "ls-files", "-u", "-z", "--", ":(literal)"+path)
 	if err != nil {
 		return nil, nil, nil, err
 	}

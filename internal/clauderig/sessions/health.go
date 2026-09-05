@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
@@ -225,11 +226,43 @@ func Consolidate(s Split, parkDir string) (parked []string, err error) {
 	}
 	for _, p := range s.Others {
 		// Named for where it came from, so a parked file can be put back.
-		dest := filepath.Join(parkDir, filepath.Base(filepath.Dir(p))+"__"+filepath.Base(p))
+		dest, rerr := reserveParkName(parkDir, filepath.Base(filepath.Dir(p))+"__"+filepath.Base(p))
+		if rerr != nil {
+			return parked, fmt.Errorf("could not park %s: %w", p, rerr)
+		}
 		if err := os.Rename(p, dest); err != nil {
+			_ = os.Remove(dest)
 			return parked, fmt.Errorf("could not park %s: %w", p, err)
 		}
 		parked = append(parked, dest)
 	}
 	return parked, nil
+}
+
+// reserveParkName claims a free filename in parkDir and returns it, having
+// created an empty file to hold the name.
+//
+// Rename overwrites its destination, and the destination here is a transcript
+// parked by an earlier run — the only surviving copy of a conversation, since
+// this function moves rather than deletes. A session that splits into the same
+// project directory twice generates the same name twice, and the second park
+// would silently destroy the first. Suffixed instead: -2, -3, and so on.
+func reserveParkName(parkDir, name string) (string, error) {
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	for n := 1; n < 1000; n++ {
+		candidate := filepath.Join(parkDir, stem+ext)
+		if n > 1 {
+			candidate = filepath.Join(parkDir, fmt.Sprintf("%s-%d%s", stem, n, ext))
+		}
+		f, err := os.OpenFile(candidate, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			_ = f.Close()
+			return candidate, nil
+		}
+		if !os.IsExist(err) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("no free name for %s in %s", name, parkDir)
 }

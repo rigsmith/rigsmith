@@ -158,19 +158,50 @@ func mergeManifest(s Sides) ([]byte, string, error) {
 		}
 	}
 
+	// Links are per-machine facts about the same tree, unioned like projects.
+	// Ours wins a genuine disagreement: a symlink recorded here was observed
+	// here, and restore only recreates one whose target actually exists.
+	linksAdded := 0
+	for rel, target := range ours.Links {
+		if out.Links == nil {
+			out.Links = map[string]string{}
+		}
+		out.Links[rel] = target
+	}
+	for rel, target := range theirs.Links {
+		if _, have := out.Links[rel]; have {
+			continue
+		}
+		if out.Links == nil {
+			out.Links = map[string]string{}
+		}
+		out.Links[rel] = target
+		linksAdded++
+	}
+
 	body, err := marshalIndent(out)
 	if err != nil {
 		return nil, "", err
 	}
-	return body, fmt.Sprintf("%d project(s) kept, %d added from remote, claudeVersion %s",
-		len(ours.Projects), added, orNone(out.ClaudeVersion)), nil
+	detail := fmt.Sprintf("%d project(s) kept, %d added from remote, claudeVersion %s",
+		len(ours.Projects), added, orNone(out.ClaudeVersion))
+	if len(out.Links) > 0 {
+		detail += fmt.Sprintf(", %d link(s) kept, %d added", len(out.Links)-linksAdded, linksAdded)
+	}
+	return body, detail, nil
 }
 
+// manifestDoc must model EVERY field of manifest.Manifest. This merge
+// round-trips the file through this struct, so a field missing here is dropped
+// from the manifest the moment two machines conflict on it — which is how
+// `links` went missing, taking restore's ability to recreate shared-memory
+// symlinks with it. TestManifestDocCoversTheManifest fails when the two drift.
 type manifestDoc struct {
 	Schema        int                        `json:"schema"`
 	ClaudeVersion string                     `json:"claudeVersion,omitempty"`
 	SourceOS      string                     `json:"sourceOS"`
 	Projects      map[string]json.RawMessage `json:"projects"`
+	Links         map[string]string          `json:"links,omitempty"`
 }
 
 // mergeJSONL takes the superset of an append-only transcript: our lines in
@@ -180,18 +211,21 @@ type manifestDoc struct {
 // tails; the union keeps both, local side first. Exact-line identity is the
 // right key because these files are append-only — a line is never rewritten, so
 // two identical lines are the same event.
+//
+// The local side is carried over verbatim, duplicates included. Deduplicating it
+// against itself would delete a line from somebody's transcript on the strength
+// of a rule about the remote's tail, and a merge is not the place to decide a
+// conversation contained one fewer turn than it does.
 func mergeJSONL(s Sides) ([]byte, string, error) {
 	ourLines := splitLines(s.Ours)
 	theirLines := splitLines(s.Theirs)
 
 	seen := make(map[string]bool, len(ourLines))
-	out := make([]string, 0, len(ourLines)+len(theirLines))
 	for _, l := range ourLines {
-		if !seen[l] {
-			seen[l] = true
-			out = append(out, l)
-		}
+		seen[l] = true
 	}
+	out := make([]string, 0, len(ourLines)+len(theirLines))
+	out = append(out, ourLines...)
 	added := 0
 	for _, l := range theirLines {
 		if !seen[l] {

@@ -58,14 +58,19 @@ type policy struct {
 // policies are tried in order; the first match wins. Ordered most specific
 // first, so the named registry files beat the generic JSON rules.
 var policies = []policy{
+	// The two registries are matched at the repo root exactly, not by basename.
+	// A synced project of someone's own containing a file with one of these
+	// names would otherwise be run through a merger that understands a
+	// different format entirely, and rewritten as one. MEMORY.md below is
+	// basename-matched on purpose — those genuinely live all over the tree.
 	{
 		name:  "devices-union",
-		match: func(rel string) bool { return path.Base(rel) == devicesFile },
+		match: func(rel string) bool { return rel == devicesFile },
 		apply: mergeDevices,
 	},
 	{
 		name:  "manifest-union",
-		match: func(rel string) bool { return path.Base(rel) == manifestFile },
+		match: func(rel string) bool { return rel == manifestFile },
 		apply: mergeManifest,
 	},
 	{

@@ -2,8 +2,11 @@ package merge
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 )
 
 func resolve(t *testing.T, path, ours, theirs string) Result {
@@ -392,5 +395,79 @@ func TestDevicesWithNoBaseStillUnions(t *testing.T) {
 
 	if n := len(devicesIn(t, resolve(t, "clauderig-devices.json", ours, theirs))); n != 2 {
 		t.Errorf("got %d devices, want both kept when there is no base", n)
+	}
+}
+
+// This merge round-trips the manifest through manifestDoc, so any field of
+// manifest.Manifest that manifestDoc does not model is dropped from the file the
+// moment two machines conflict on it. That is not a hypothetical: `links` was
+// missing, and a conflicted manifest lost restore's record of which worktree
+// slugs share a memory/ directory.
+func TestManifestDocCoversTheManifest(t *testing.T) {
+	jsonNames := func(v any) map[string]bool {
+		out := map[string]bool{}
+		rt := reflect.TypeOf(v)
+		for i := range rt.NumField() {
+			tag := rt.Field(i).Tag.Get("json")
+			if name, _, _ := strings.Cut(tag, ","); name != "" && name != "-" {
+				out[name] = true
+			}
+		}
+		return out
+	}
+	real, modelled := jsonNames(manifest.Manifest{}), jsonNames(manifestDoc{})
+	for name := range real {
+		if !modelled[name] {
+			t.Errorf("manifest.Manifest has %q and manifestDoc does not — a conflicted merge would drop it", name)
+		}
+	}
+}
+
+// Both machines record the symlinks they saw; a conflict must not lose either's.
+func TestManifestKeepsLinksFromBothSides(t *testing.T) {
+	ours := `{"schema":1,"sourceOS":"macos","projects":{},"links":{"-a/memory":"../-main/memory"}}`
+	theirs := `{"schema":1,"sourceOS":"macos","projects":{},"links":{"-b/memory":"../-main/memory"}}`
+
+	res := resolve(t, "clauderig-manifest.json", ours, theirs)
+
+	var got manifestDoc
+	if err := json.Unmarshal(res.Content, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Links) != 2 {
+		t.Errorf("links = %v, want both machines' entries", got.Links)
+	}
+}
+
+// A transcript is somebody's conversation. Whatever the remote's tail looks
+// like, every line that was here must still be here afterwards — including two
+// that happen to serialise identically.
+func TestJSONLKeepsEveryLocalLine(t *testing.T) {
+	dup := `{"type":"summary","text":"resumed"}`
+	ours := dup + "\n" + `{"type":"user","uuid":"u1"}` + "\n" + dup + "\n"
+	theirs := dup + "\n" + `{"type":"user","uuid":"u2"}` + "\n"
+
+	res := resolve(t, "cli/projects/-p/abc.jsonl", ours, theirs)
+
+	got := strings.Count(string(res.Content), dup)
+	if got != 2 {
+		t.Errorf("the duplicated local line appears %d time(s), want both kept:\n%s", got, res.Content)
+	}
+	if !strings.Contains(string(res.Content), `"u1"`) || !strings.Contains(string(res.Content), `"u2"`) {
+		t.Errorf("lost a divergent tail:\n%s", res.Content)
+	}
+}
+
+// A synced project of someone's own can hold a file named like one of the
+// registries. Running it through a merger that understands a different format
+// would rewrite it as that format.
+func TestReservedPoliciesOnlyMatchAtTheRepoRoot(t *testing.T) {
+	nested := `{"schema":1,"devices":{"mine":{"name":"mine"}},"note":"not the registry"}`
+	res, ok := Resolve(Sides{
+		Path: "cli/projects/-p/clauderig-devices.json",
+		Ours: []byte(nested), Theirs: []byte(nested),
+	})
+	if ok && res.Policy == "devices-union" {
+		t.Error("a nested file was merged as the device registry because of its basename")
 	}
 }

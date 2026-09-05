@@ -35,6 +35,9 @@ func FindSession(projectsDir, id string) (path, cwd string, err error) {
 	// case-sensitively even where the filesystem would not. An id pasted from
 	// somewhere that upper-cased it has to find the same session.
 	id = session.CanonicalID(id)
+	if err := validSessionID(id); err != nil {
+		return "", "", err
+	}
 	matches, err := filepath.Glob(filepath.Join(projectsDir, "*", id+".jsonl"))
 	if err != nil {
 		return "", "", err
@@ -135,4 +138,21 @@ func MoveSession(projectsDir, id, newCwd string, dryRun bool) (SessionMove, erro
 		return mv, err
 	}
 	return mv, nil
+}
+
+// validSessionID rejects anything that would not name exactly one file. The id
+// is interpolated into a glob pattern and into a path, so a separator could
+// reach outside the projects tree and a wildcard could select somebody else's
+// transcript — which this then rewrites and moves.
+func validSessionID(id string) error {
+	if id == "" {
+		return errors.New("no session id given")
+	}
+	if strings.ContainsAny(id, `/\`) || id == "." || id == ".." {
+		return fmt.Errorf("%q is not a session id", id)
+	}
+	if strings.ContainsAny(id, "*?[]") {
+		return fmt.Errorf("%q is not a session id — name one session, not a pattern", id)
+	}
+	return nil
 }

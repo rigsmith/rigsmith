@@ -269,3 +269,74 @@ func TestSquashBefore_KeepsRecentCommitsOutOfOrderDatesFollow(t *testing.T) {
 		t.Errorf("HEAD~2 holds %q, want the in-window commit", strings.TrimSpace(body))
 	}
 }
+
+// A merge inside the retained window has to stay a merge. The history that
+// survives a prune is what says how two machines reconciled, and rebuilding
+// every commit with one parent quietly turns that into a straight line.
+func TestSquashBefore_KeepsMergesInTheRetainedWindow(t *testing.T) {
+	ctx := context.Background()
+	r, err := Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	commitAt(t, ctx, r, "f.txt", "old one", now.AddDate(0, 0, -40))
+	commitAt(t, ctx, r, "f.txt", "old two", now.AddDate(0, 0, -35))
+
+	// A second machine's line of work, merged back in — the shape a reconcile
+	// leaves behind.
+	if _, err := runGitEnv(ctx, r.Dir, nil, "checkout", "-b", "other"); err != nil {
+		t.Fatal(err)
+	}
+	commitAt(t, ctx, r, "other.txt", "theirs", now.AddDate(0, 0, -3))
+	if _, err := runGitEnv(ctx, r.Dir, nil, "checkout", "main"); err != nil {
+		t.Fatal(err)
+	}
+	commitAt(t, ctx, r, "mine.txt", "ours", now.AddDate(0, 0, -2))
+	stamp := now.AddDate(0, 0, -1).Format(time.RFC3339)
+	if _, err := runGitEnv(ctx, r.Dir,
+		[]string{"GIT_AUTHOR_DATE=" + stamp, "GIT_COMMITTER_DATE=" + stamp},
+		"merge", "--no-ff", "-m", "reconcile", "other"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := r.SquashBefore(ctx, now.AddDate(0, 0, -30), "base"); err != nil {
+		t.Fatal(err)
+	}
+
+	parents, err := runGit(ctx, r.Dir, "rev-list", "--parents", "-n", "1", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(strings.Fields(parents)) - 1; n != 2 {
+		t.Errorf("HEAD has %d parent(s), want the merge's two: %s", n, parents)
+	}
+	// And both sides' content is still reachable.
+	for _, f := range []string{"other.txt", "mine.txt"} {
+		if _, err := runGit(ctx, r.Dir, "show", "HEAD:"+f); err != nil {
+			t.Errorf("%s is gone from the merged tree: %v", f, err)
+		}
+	}
+}
+
+// SquashBefore ends by moving the branch to the history it rebuilt, and passes
+// the tip it started from as update-ref's expected old value so a sync that
+// committed meanwhile is not dropped. Simulating that race inside SquashBefore
+// would mean racing it, so what is covered here is the guard's foundation: that
+// this git, on this platform, does enforce the expected-value argument. Without
+// that the whole approach is decoration.
+func TestUpdateRefEnforcesTheExpectedOldValue(t *testing.T) {
+	ctx, r, now := agedRepo(t)
+	commitAt(t, ctx, r, "late.txt", "a sync landed", now)
+	head, err := r.Head(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runGitEnv(ctx, r.Dir, nil, "update-ref", "refs/heads/main", head, head); err != nil {
+		t.Fatalf("the compare-and-swap form is not supported here: %v", err)
+	}
+	if _, err := runGitEnv(ctx, r.Dir, nil, "update-ref", "refs/heads/main", head, strings.Repeat("0", 40)); err == nil {
+		t.Error("update-ref accepted a stale expected value, so the guard would not hold")
+	}
+}
