@@ -1,12 +1,15 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/auth"
 	"github.com/rigsmith/rigsmith/core/envstack"
 )
 
@@ -38,33 +41,87 @@ type variables struct {
 	masker  *SecretMasker
 	workDir string
 	cache   map[string]string
+	// env is the layered release environment, for ${env.NAME} inside a literal.
+	env map[string]string
 	// scriptEval evaluates a "script" variable's Tengo expression to a string.
 	scriptEval func(expr string) (string, error)
+	// secrets resolves a "secret" reference to its value; the pipeline wires
+	// the shared credential resolver, tests a stub.
+	secrets func(ref string) (string, error)
+	// osToken names the OS the release runs on, in the `os` map's vocabulary.
+	osToken string
 }
 
-func newVariables(specs map[string]*VarSpec, runner Runner, masker *SecretMasker, workDir string, scriptEval func(string) (string, error)) *variables {
+// currentOSToken is the running OS in the vocabulary a per-OS command map uses
+// (macos / windows / linux); a variable so tests can run every branch.
+var currentOSToken = func() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "macos"
+	case "windows":
+		return "windows"
+	default:
+		return "linux"
+	}
+}
+
+// resolveSecret is the default secret resolver: the same reference forms and
+// resolver the publish `auth` config uses.
+func resolveSecret(ref string, masker *SecretMasker) (string, error) {
+	cred, err := auth.Resolve(context.Background(), auth.Request{Ref: ref, Masker: masker})
+	if err != nil {
+		return "", err
+	}
+	return cred.Token, nil
+}
+
+func newVariables(specs map[string]*VarSpec, runner Runner, masker *SecretMasker, workDir string, env map[string]string, scriptEval func(string) (string, error)) *variables {
 	return &variables{
 		specs:      specs,
 		runner:     runner,
 		masker:     masker,
 		workDir:    workDir,
 		cache:      map[string]string{},
+		env:        env,
 		scriptEval: scriptEval,
+		secrets:    func(ref string) (string, error) { return resolveSecret(ref, masker) },
+		osToken:    currentOSToken(),
 	}
 }
 
-// eagerNames lists the command-backed variables that opt out of lazy resolution
-// and should be captured up front (sorted for a deterministic capture order).
-// Literals need no capture, so they are not included.
+// eagerNames lists the captured variables (command, per-OS command, secret)
+// that opt out of lazy resolution and should be captured up front (sorted for
+// a deterministic capture order). Literals need no capture, so they are not
+// included.
 func (v *variables) eagerNames() []string {
 	var names []string
 	for name, spec := range v.specs {
-		if spec != nil && spec.Command != nil && !spec.Lazy {
+		if spec.Captured() && !spec.Lazy {
 			names = append(names, name)
 		}
 	}
 	sort.Strings(names)
 	return names
+}
+
+// literal expands ${env.NAME} inside a literal value from the release
+// environment — the one place a placeholder used to pass through unexpanded,
+// to be mangled by whatever shell saw it next. Other placeholders are left
+// as they are.
+func (v *variables) literal(value string) string {
+	return interpolate(nil, v.env, value)
+}
+
+// commandFor picks the capture command for this OS: the `os` map's entry when
+// it has one, else `command`. False when neither applies.
+func (v *variables) commandFor(spec *VarSpec) (CommandSpec, bool) {
+	if c, ok := spec.OS[v.osToken]; ok {
+		return c, true
+	}
+	if spec.Command != nil {
+		return *spec.Command, true
+	}
+	return CommandSpec{}, false
 }
 
 // evalScriptVars resolves every computed (script) variable once, surfacing a
@@ -101,7 +158,7 @@ func (v *variables) previewValue(name string) (string, bool) {
 		return "", false
 	}
 	if spec.Value != nil {
-		return *spec.Value, true
+		return v.literal(*spec.Value), true
 	}
 	if spec.Script != nil && v.scriptEval != nil {
 		if val, err := v.scriptEval(*spec.Script); err == nil {
@@ -124,8 +181,9 @@ func (v *variables) resolve(name string) varResolution {
 	// A literal resolves with no process and is not masked (it is config, not a
 	// secret).
 	if spec.Value != nil {
-		v.cache[name] = *spec.Value
-		return varSuccess(*spec.Value)
+		value := v.literal(*spec.Value)
+		v.cache[name] = value
+		return varSuccess(value)
 	}
 
 	// A computed (script) var evaluates a Tengo expression; pure, so not masked.
@@ -141,11 +199,27 @@ func (v *variables) resolve(name string) varResolution {
 		return varSuccess(value)
 	}
 
-	if spec.Command == nil {
+	// A secret goes through the credential resolver the publish auth config
+	// uses — op://, env:, cmd: — which masks what it finds.
+	if spec.Secret != nil {
+		value, err := v.secrets(*spec.Secret)
+		if err != nil {
+			return varFailure(fmt.Sprintf("secret for variable '%s': %v", name, err), -1)
+		}
+		v.masker.Add(value)
+		v.cache[name] = value
+		return varSuccess(value)
+	}
+
+	command, ok := v.commandFor(spec)
+	if !ok {
+		if len(spec.OS) > 0 {
+			return varFailure(fmt.Sprintf("variable '%s' has no command for %s (its 'os' map lists %s, and no 'command' fallback)", name, v.osToken, strings.Join(osKeys(spec), ", ")), -1)
+		}
 		return varFailure(fmt.Sprintf("variable '%s' is not defined", name), -1)
 	}
 
-	output, exitCode := dispatch(v.runner, *spec.Command, v.workDir)
+	output, exitCode := dispatch(v.runner, command, v.workDir)
 	if exitCode != 0 {
 		return varFailure(fmt.Sprintf("capture command for variable '%s' failed", name), exitCode)
 	}
@@ -158,6 +232,16 @@ func (v *variables) resolve(name string) varResolution {
 	v.masker.Add(value)
 	v.cache[name] = value
 	return varSuccess(value)
+}
+
+// osKeys lists a per-OS map's keys, sorted, for a message.
+func osKeys(spec *VarSpec) []string {
+	keys := make([]string, 0, len(spec.OS))
+	for k := range spec.OS {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // varRefPattern finds the ${vars.NAME} references inside a command so they

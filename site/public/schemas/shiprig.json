@@ -92,17 +92,28 @@
       }
     },
     "varSpec": {
-      "description": "A variable: a bare string literal, or an object setting exactly one of value/command/script.",
+      "description": "A variable: a bare string literal, or an object taking exactly one form — value, command (or a per-OS os map), script, or secret.",
       "oneOf": [
         { "type": "string" },
         {
           "type": "object",
           "additionalProperties": true,
           "properties": {
-            "value": { "type": "string", "description": "A literal value (not masked)." },
-            "command": { "description": "A command whose trimmed stdout becomes the value (masked).", "type": ["string", "array"] },
-            "script": { "type": "string", "description": "A Tengo expression evaluated against the script ctx." },
-            "lazy": { "type": "boolean", "description": "Defer capture until first reference (keeps a time-limited secret fresh)." }
+            "value": { "type": "string", "description": "A literal value (not masked). ${env.NAME} inside it expands from the release environment." },
+            "command": { "description": "A command whose trimmed stdout becomes the value (masked). With `os`, the fallback for an OS not listed.", "type": ["string", "array"] },
+            "os": {
+              "type": "object",
+              "description": "The capture command per OS the release runs on — the keys a .rig.json custom command takes. Masked like `command`'s value.",
+              "additionalProperties": false,
+              "properties": {
+                "macos": { "type": ["string", "array"], "description": "The command on macOS." },
+                "windows": { "type": ["string", "array"], "description": "The command on Windows." },
+                "linux": { "type": ["string", "array"], "description": "The command on Linux." }
+              }
+            },
+            "secret": { "type": "string", "description": "A secret reference — op://…, env:NAME, or cmd:… — resolved through the same resolver as the publish `auth` config and masked." },
+            "script": { "type": "string", "description": "A Tengo expression evaluated against the script ctx. fail(msg) is in scope to refuse with a message." },
+            "lazy": { "type": "boolean", "description": "Defer a captured or secret value until first reference (keeps a time-limited secret fresh)." }
           }
         }
       ]

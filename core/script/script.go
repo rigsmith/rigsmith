@@ -228,6 +228,11 @@ func (h *runnerHost) Report(line string) { h.report(line) }
 // Eval evaluates a Tengo expression against ctx and returns the resulting
 // variable. The expression is wrapped in an assignment so a bare expression
 // (the common case for `if`/computed vars) is what callers write.
+//
+// An expression has no side effects, so none of the side-effecting builtins
+// are in scope — except fail(msg), which only ever aborts: a computed value
+// that cannot be computed (an env var that must be set, say) is a failure the
+// expression should be able to name, the same way a script step can.
 func Eval(expr string, ctx map[string]interface{}) (*tengo.Variable, error) {
 	s := tengo.NewScript([]byte("__out__ := (" + expr + ")"))
 	s.SetImports(stdlib.GetModuleMap(Modules...))
@@ -235,6 +240,9 @@ func Eval(expr string, ctx map[string]interface{}) (*tengo.Variable, error) {
 		if mod, ok := stdlib.BuiltinModules[name]; ok {
 			_ = s.Add(name, &tengo.ImmutableMap{Value: mod})
 		}
+	}
+	if err := s.Add("fail", &tengo.UserFunction{Name: "fail", Value: failFunc}); err != nil {
+		return nil, err
 	}
 	if err := s.Add("ctx", ctx); err != nil {
 		return nil, err

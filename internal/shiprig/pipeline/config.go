@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/jsonc"
@@ -318,20 +319,38 @@ type Hooks struct {
 //
 //   - a literal value — `{ "value": "x" }`, or the shorthand `"x"` (a bare
 //     string). Literals resolve with no process and are NOT masked, so they suit
-//     reusable config like a base path or a channel name.
+//     reusable config like a base path or a channel name. `${env.NAME}` inside a
+//     literal is expanded from the release environment, as it is in a step.
 //   - a captured value — `{ "command": … }`, whose trimmed stdout becomes the
-//     value. Captured values ARE masked in all output (secret-safe), and `lazy`
-//     defers the capture until first reference so a time-limited secret (an OTP)
-//     stays fresh.
+//     value; or `{ "os": { "macos": …, "windows": …, "linux": … } }` to pick
+//     the command by the OS the release runs on (with `command`, when also
+//     set, as the fallback for an OS not listed). Captured values ARE masked in
+//     all output (secret-safe), and `lazy` defers the capture until first
+//     reference so a time-limited secret (an OTP) stays fresh.
+//   - a secret — `{ "secret": "op://…" | "env:NAME" | "cmd:…" }`, the same
+//     references the publish `auth` config takes, resolved through the shared
+//     credential resolver and masked. `lazy` applies as for a captured value.
 //   - a computed value — `{ "script": "<tengo expr>" }`, evaluated against the
-//     script ctx (e.g. `ctx.version` ? "next" : "latest"). Not masked.
+//     script ctx (e.g. `ctx.version` ? "next" : "latest"). Not masked. fail(msg)
+//     is in scope, so a value that cannot be computed can say why.
 //
-// Exactly one of Value / Command / Script must be set (enforced by LoadConfig).
+// Exactly one form must be set (enforced by LoadConfig): value, command/os,
+// script, or secret.
 type VarSpec struct {
-	Value   *string      `json:"value"`
-	Command *CommandSpec `json:"command"`
-	Script  *string      `json:"script"`
-	Lazy    bool         `json:"lazy"`
+	Value   *string                `json:"value"`
+	Command *CommandSpec           `json:"command"`
+	OS      map[string]CommandSpec `json:"os"`
+	Script  *string                `json:"script"`
+	Secret  *string                `json:"secret"`
+	Lazy    bool                   `json:"lazy"`
+}
+
+// Captured reports whether resolving the variable runs something — a capture
+// command or a secret lookup — as opposed to a literal or a pure expression.
+// These are the values that are masked, that `lazy` defers, and that a dry
+// build leaves alone.
+func (s *VarSpec) Captured() bool {
+	return s != nil && (s.Command != nil || len(s.OS) > 0 || s.Secret != nil)
 }
 
 // UnmarshalJSON accepts the bare-string shorthand ("x" ⇒ a literal value) as
@@ -463,25 +482,34 @@ func loadStepScripts(config *Config, baseDir string) error {
 	return nil
 }
 
-// validateVars enforces that every variable sets exactly one of
-// value/command/script.
+// validateVars enforces that every variable takes exactly one form: value,
+// command (with or without a per-OS `os` map), script, or secret.
 func validateVars(vars map[string]*VarSpec) error {
 	for name, spec := range vars {
 		if spec == nil {
-			return fmt.Errorf("variable '%s' must set one of 'value', 'command', or 'script'", name)
+			return fmt.Errorf("variable '%s' must set one of 'value', 'command' (or 'os'), 'script', or 'secret'", name)
 		}
 		n := 0
-		for _, set := range []bool{spec.Value != nil, spec.Command != nil, spec.Script != nil} {
+		for _, set := range []bool{spec.Value != nil, spec.Command != nil || len(spec.OS) > 0, spec.Script != nil, spec.Secret != nil} {
 			if set {
 				n++
 			}
 		}
 		if n != 1 {
-			return fmt.Errorf("variable '%s' must set exactly one of 'value', 'command', or 'script'", name)
+			return fmt.Errorf("variable '%s' must set exactly one of 'value', 'command' (or 'os'), 'script', or 'secret'", name)
+		}
+		for osName := range spec.OS {
+			if !slices.Contains(osTokens, osName) {
+				return fmt.Errorf("variable '%s': unknown os %q (want %s)", name, osName, strings.Join(osTokens, ", "))
+			}
 		}
 	}
 	return nil
 }
+
+// osTokens are the keys a per-OS command map takes — the same ones a .rig.json
+// custom command takes.
+var osTokens = []string{"macos", "windows", "linux"}
 
 // ShellPortable and ShellSystem are the two values for Config.Shell.
 const (

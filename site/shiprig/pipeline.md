@@ -99,24 +99,46 @@ the release is moving off (handy for a `v${lastVersion}...v${version}` compare
 URL). These also appear on the script `ctx` (`ctx.version`, `ctx.lastVersion`,
 `ctx.nextVersion`).
 
-**User-defined `vars`** come in three forms:
+**User-defined `vars`** come in four forms:
 
 ```jsonc
 "vars": {
   "basePath": "dist/pkg",                 // literal: reusable config, not masked
-  "basePath2": { "value": "dist/pkg" },   // explicit literal form
+  "build": "${env.AVALLOY_BUILD}",        // literal: ${env.NAME} expands here too
   "otp": { "command": "op item get npm --otp", "lazy": true },  // captured: stdout, masked, lazy
+  "key": {                                // captured, per OS: the same keys a .rig.json command takes
+    "os": { "macos": "security find-generic-password -s feedz -w", "linux": "secret-tool lookup service feedz" },
+    "command": "cat .feedz-key",          // fallback for an OS not listed (optional)
+    "lazy": true
+  },
+  "token": { "secret": "op://Release/feedz/credential", "lazy": true },  // secret ref, masked
   "channel": { "script": "ctx.version ? 'next' : 'latest'" },   // computed: Tengo expr
+  "ver": { "script": "ctx.env.BUILD ? '0.12.' + ctx.env.BUILD : fail('set BUILD')" },  // or refuse
 }
 ```
 
 - **Literal** — a bare string or `{ "value": "…" }`. No side effects, not masked
   (it's config, not a secret) — ideal for paths reused across steps.
+  `${env.NAME}` inside it expands from the release environment, exactly as it
+  does in a step's command, so a value never reaches the shell unexpanded.
 - **Captured** — `{ "command": "…" }`. The command's trimmed stdout becomes the
   value and is **masked** from logs. Add `"lazy": true` to defer it until first
-  use (fresh, time-limited secrets like an OTP).
+  use (fresh, time-limited secrets like an OTP). A capture that differs by
+  machine takes `"os": { "macos": …, "windows": …, "linux": … }` instead — the
+  release picks the entry for the OS it runs on, with `command` (when also
+  set) as the fallback for one not listed; an OS with neither fails the var,
+  naming both. That keeps the portable shell portable: no `sh -c 'if …'` to
+  branch by hand.
+- **Secret** — `{ "secret": "op://…" | "env:NAME" | "cmd:…" }`: the same
+  references the [publish `auth` config](#publish-authentication) takes,
+  resolved through the same resolver (1Password, an environment variable, a
+  command) and masked. `lazy` applies as for a captured value. Prefer this for
+  a credential; it is what a credential is for.
 - **Computed** — `{ "script": "<tengo-expr>" }` evaluated over the script
-  context. Not masked.
+  context. Not masked. `fail(msg)` is in scope, so a value that cannot be
+  computed — an environment variable that must be set, say — refuses with a
+  message of its own instead of leaving a step to trip over an empty value; the
+  dry run reports it up front.
 
 ## Tengo scripting
 
@@ -134,8 +156,10 @@ embedded language that runs identically on every OS. Steps gate on `if`:
 ```
 
 Available modules/globals: `text`, `fmt`, `math`, `times`, `rand`, `json`,
-`base64`, `hex`. Side-effecting helpers: `sh(cmd)`, `cp(...)`, `mv(...)`,
-`rm(...)`, `mkdir(...)`, `log(msg)`, `fail(msg)`.
+`base64`, `hex`. Side-effecting helpers, in a step's `script`: `sh(cmd)`,
+`cp(...)`, `mv(...)`, `rm(...)`, `mkdir(...)`, `log(msg)`, `fail(msg)`. An
+expression — a computed var, an `if` gate — has no side effects and so gets
+none of those except `fail(msg)`, which only ever aborts with the message.
 
 The script context `ctx` exposes `dryRun`, `env`, `packages`, `versions`,
 `tags`, `issues`, and — for single-package releases — the scalars `ctx.version`,
