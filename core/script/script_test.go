@@ -153,3 +153,17 @@ func TestRunnerHostShNonZeroAborts(t *testing.T) {
 		t.Error("a non-zero sh() should abort the script")
 	}
 }
+
+// fail() is in scope for an expression too: a computed value that cannot be
+// computed names why, and the message is the error.
+func TestEvalFailNamesTheReason(t *testing.T) {
+	ctx := map[string]interface{}{"env": map[string]interface{}{}}
+	_, err := EvalString(`ctx.env.BUILD ? "0.1." + ctx.env.BUILD : fail("set BUILD")`, ctx)
+	if err == nil || !strings.Contains(err.Error(), "set BUILD") {
+		t.Fatalf("err = %v, want the fail() message", err)
+	}
+	ctx["env"] = map[string]interface{}{"BUILD": "7"}
+	if got, err := EvalString(`ctx.env.BUILD ? "0.1." + ctx.env.BUILD : fail("set BUILD")`, ctx); err != nil || got != "0.1.7" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}

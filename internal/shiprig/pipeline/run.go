@@ -61,6 +61,9 @@ type Pipeline struct {
 	// scriptDryRun previews a script step's side effects (sh/cp/…) instead of
 	// executing them.
 	scriptDryRun bool
+	// secretResolver resolves a var's "secret" reference; nil uses the shared
+	// credential resolver (op://, env:, cmd:). Tests substitute one.
+	secretResolver func(ref string, masker *SecretMasker) (string, error)
 }
 
 // New builds a Pipeline. env is the layered release environment
@@ -101,7 +104,11 @@ func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
 	p.scriptCtx = buildScriptCtx(p.relctx, p.env, dryRun)
 	p.scriptDryRun = dryRun
 	scriptEval := func(expr string) (string, error) { return evalScriptString(expr, p.scriptCtx) }
-	p.vars = newVariables(config.Vars, p.runner, p.masker, p.workDir, scriptEval)
+	p.vars = newVariables(config.Vars, p.runner, p.masker, p.workDir, p.env, scriptEval)
+	if p.secretResolver != nil {
+		resolver := p.secretResolver
+		p.vars.secrets = func(ref string) (string, error) { return resolver(ref, p.masker) }
+	}
 
 	if dryRun {
 		return p.runDry(steps)
@@ -382,6 +389,12 @@ func (p *Pipeline) runCommands(label string, commands []CommandSpec) bool {
 		for _, name := range extractVarRefs(command) {
 			resolution := p.vars.resolve(name)
 			if !resolution.ok {
+				// The reason is the actionable part — "FEEDZ_API_KEY is not
+				// set", "no command for windows" — and an exit code alone
+				// would bury it.
+				if resolution.err != "" {
+					p.reporter.CommandOutput([]string{resolution.err})
+				}
 				p.reporter.CommandFailed(fmt.Sprintf("%s (vars.%s)", label, name), resolution.exitCode)
 				return false
 			}
