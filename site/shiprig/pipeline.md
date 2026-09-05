@@ -447,8 +447,17 @@ or the `stack` key in `.rig.json`) and adjusts, with no `order` to write:
 
 The versions reach the build the way they always do: `${version.<pkg>}` is the
 computed number, whether or not it was written anywhere, so a pack step is
-`dotnet pack member/src/Lib -p:Version=${version.Lib}`. Nothing here depends on
-the stackspace having a remote, and nothing tries to give it one.
+`dotnet pack member/src/Lib -p:Version=${version.Lib}` — and the built-in .NET
+`build` and `publish` already pack with `-p:Version=` set to it, so a project
+whose version is computed at build time packs under the name the release then
+looks for. Nothing here depends on the stackspace having a remote, and nothing
+tries to give it one.
+
+One thing is required: the `version` step has to run an engine that knows what
+a stackspace is. `tool` may be `shiprig` or `changerig` (the default is
+`shiprig`); a stackspace release with `"tool": "npx changeset"` is refused,
+since that engine would stamp every member it found. A `version` step given
+its own `run` or `script` is yours and passes.
 
 ## Local rehearsal: `--dry-run`, `--dry-build`, `--local`, `--rehearse`
 

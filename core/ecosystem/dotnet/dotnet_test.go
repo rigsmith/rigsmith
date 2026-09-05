@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -451,6 +452,37 @@ func TestArtifactsDryRun(t *testing.T) {
 	}
 	if resp.Built || resp.Skipped || resp.Message != "dry-run: would dotnet pack Acme.Lib@1.0.0" {
 		t.Errorf("dry-run artifacts = %+v, want a would-dotnet-pack message", resp)
+	}
+}
+
+// A pack carries the release's version on the command line, so a project
+// whose version is computed at build time packs under the name the release
+// then looks for.
+func TestPackPassesTheResolvedVersion(t *testing.T) {
+	restore := packRunner
+	t.Cleanup(func() { packRunner = restore })
+	var got [][]string
+	packRunner = func(ctx context.Context, dir, name string, args ...string) (string, string, error) {
+		got = append(got, append([]string{name}, args...))
+		return "", "", nil
+	}
+	out := t.TempDir()
+	resp, err := New().Artifacts(context.Background(), plugin.ArtifactsRequest{
+		RepoRoot:  t.TempDir(),
+		OutputDir: out,
+		Package:   plugin.Package{Name: "Mermaider", Version: "0.12.3", Dir: "src/Mermaider", ManifestPath: "src/Mermaider/Mermaider.csproj"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0][0] != "dotnet" || got[0][1] != "pack" || !slices.Contains(got[0], "-p:Version=0.12.3") {
+		t.Fatalf("pack command = %v, want dotnet pack … -p:Version=0.12.3", got)
+	}
+	if want := filepath.Join(out, "Mermaider.0.12.3.nupkg"); len(resp.Artifacts) != 1 || resp.Artifacts[0].Path != want {
+		t.Fatalf("artifacts = %+v, want the nupkg the version names", resp.Artifacts)
+	}
+	if args := packArgs("A.csproj", "dist", ""); slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "-p:Version=") }) {
+		t.Errorf("no version, yet -p:Version passed: %v", args)
 	}
 }
 

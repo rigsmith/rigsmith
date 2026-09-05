@@ -263,6 +263,8 @@ func NewVersionCmd() *cobra.Command {
 				return fmt.Errorf("reading %s: %w", filepath.Join(ws.ChangesetDir, versionstate.FileName), err)
 			}
 			var unstamped []string
+			stateChanged := false
+			rootChangelog := filepath.Join(ws.Root, changelog.FileName)
 			for _, m := range plan {
 				pkg := pkgByName[m.Name]
 				eco, ok := ws.EcosystemFor(ecoOf[m.Name])
@@ -274,6 +276,7 @@ func NewVersionCmd() *cobra.Command {
 					if !m.RangeOnly {
 						if mode != planner.ModeSnapshot {
 							recorded.Set(m.Name, m.ResolvedVersion())
+							stateChanged = true
 						}
 						unstamped = append(unstamped, m.Name)
 					}
@@ -300,6 +303,14 @@ func NewVersionCmd() *cobra.Command {
 						txn.rollback()
 						return fmt.Errorf("set version for %s: %w", m.Name, err)
 					}
+					// The manifest is the version's home again: a record left
+					// by an earlier unstamped run has been bumped from and is
+					// reconciled away, so the two cannot disagree later. A
+					// snapshot stamps a throwaway number and keeps the record.
+					if mode != planner.ModeSnapshot && recorded.Get(m.Name) != "" {
+						recorded.Delete(m.Name)
+						stateChanged = true
+					}
 				}
 				if m.RangeOnly {
 					continue // "none" release: ranges rewritten, no version bump, no changelog
@@ -311,9 +322,16 @@ func NewVersionCmd() *cobra.Command {
 				}
 				// A stackspace member's directory is its upstream's, so its
 				// notes go to the stackspace root instead — one CHANGELOG.md
-				// with a section per member, the file the stackspace owns.
-				if member := ws.MemberOf(pkg); member != "" {
-					changelogPath := filepath.Join(ws.Root, changelog.FileName)
+				// with a section per member, the file the stackspace owns. A
+				// package of the stackspace's own that lives at the root
+				// shares that file, and so writes a section too: a title-based
+				// write there would land under whichever member came first.
+				pkgDir := filepath.Dir(filepath.Join(ws.Root, m.ManifestPath))
+				changelogPath := filepath.Join(pkgDir, changelog.FileName)
+				if ws.MemberOf(pkg) != "" {
+					changelogPath = rootChangelog
+				}
+				if ws.Stackspace != nil && changelogPath == rootChangelog {
 					if err := txn.guard(changelogPath); err != nil {
 						txn.rollback()
 						return fmt.Errorf("changelog for %s: %w", m.Name, err)
@@ -327,8 +345,6 @@ func NewVersionCmd() *cobra.Command {
 					}
 					continue
 				}
-				pkgDir := filepath.Dir(filepath.Join(ws.Root, m.ManifestPath))
-				changelogPath := filepath.Join(pkgDir, changelog.FileName)
 				if err := txn.guard(changelogPath); err != nil {
 					txn.rollback()
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
@@ -339,7 +355,7 @@ func NewVersionCmd() *cobra.Command {
 				}
 				changelogPaths = append(changelogPaths, changelogPath)
 			}
-			if len(unstamped) > 0 && mode != planner.ModeSnapshot {
+			if stateChanged {
 				statePath := filepath.Join(ws.ChangesetDir, versionstate.FileName)
 				if err := txn.guard(statePath); err != nil {
 					txn.rollback()
@@ -400,7 +416,7 @@ func NewVersionCmd() *cobra.Command {
 				case !ws.Config.StampEnabled():
 					why = "versioning.stamp is off"
 				case stamp:
-					why = "their manifests belong to stackspace members"
+					why = "no version in the tree, or a stackspace member's manifest"
 				}
 				where := "recorded in .changeset/" + versionstate.FileName
 				if mode == planner.ModeSnapshot {

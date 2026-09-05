@@ -285,7 +285,7 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	defer os.RemoveAll(tmpDir)
 
 	manifest := filepath.Join(req.RepoRoot, req.Package.ManifestPath)
-	if _, _, err := runCmd(ctx, "", "dotnet", "pack", manifest, "-c", "Release", "-o", tmpDir); err != nil {
+	if _, _, err := packRunner(ctx, "", "dotnet", packArgs(manifest, tmpDir, req.Package.Version)...); err != nil {
 		return plugin.PublishResponse{}, fmt.Errorf("dotnet pack: %w", err)
 	}
 
@@ -362,7 +362,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet pack: mkdir %s: %w", req.OutputDir, err)
 	}
 	manifest := filepath.Join(req.RepoRoot, req.Package.ManifestPath)
-	if _, _, err := runCmd(ctx, req.RepoRoot, "dotnet", "pack", manifest, "-c", "Release", "-o", req.OutputDir); err != nil {
+	if _, _, err := packRunner(ctx, req.RepoRoot, "dotnet", packArgs(manifest, req.OutputDir, req.Package.Version)...); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet pack: %w", err)
 	}
 	// dotnet pack names the package <PackageId>.<version>.nupkg; PackageId is the
@@ -419,6 +419,25 @@ func runCmd(ctx context.Context, dir, name string, args ...string) (stdout, stde
 		err = fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, cmderr.Detail(stdout, stderr))
 	}
 	return stdout, stderr, err
+}
+
+// packRunner runs `dotnet pack`; a variable so tests can see the arguments
+// without a toolchain.
+var packRunner = runCmd
+
+// packArgs is the `dotnet pack` command line for a project, packing into
+// outDir. The version is passed explicitly: the .nupkg is looked for under the
+// name the version implies, and a project whose number is computed at build
+// time (MinVer from git tags, a CI stamp) would otherwise pack under whatever
+// it computed — a file that is not there. A global property on the command
+// line is one no target can override, so the release's number wins even
+// there; for a project stamped in its manifest it merely repeats the file.
+func packArgs(manifest, outDir, version string) []string {
+	args := []string{"pack", manifest, "-c", "Release", "-o", outDir}
+	if version != "" {
+		args = append(args, "-p:Version="+version)
+	}
+	return args
 }
 
 // resolvedVersion is where a project's version lives and its current value.

@@ -188,6 +188,12 @@ directory is not the stackspace's either.
 A package with no version anywhere yet — nothing in the tree, nothing recorded —
 plans from `0.0.0`; seed `.changeset/versions.json` with its real current
 version, or type the exact version at the override prompt, and it is remembered.
+A package with no version in the tree is never stamped, whatever the config
+says: a `<Version>` inserted into a MinVer project would fight the tool that
+owns the number. The record and the manifest never disagree for long, either:
+a later stamped run bumps from whichever is newer and, having written the
+manifest, drops the record — so a one-off `--no-stamp` release is not repeated
+by the next ordinary one.
 
 Changelog generators are **pluggable** — the built-in renderer dogfoods the same
 JSON contract external plugins speak. Set `"changelog": "<plugin>"` in config to

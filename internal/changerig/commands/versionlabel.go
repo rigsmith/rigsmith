@@ -3,6 +3,8 @@ package commands
 import (
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/versionstate"
@@ -19,17 +21,20 @@ func versionLabel(version string) string {
 	return version
 }
 
-// printUnversionedNote says, under a package listing, where the version of a
-// package with none in the tree comes from and where the release puts it.
+// printUnversionedNote names, under a listing or a plan, the packages with no
+// version anywhere yet — none in the tree (computed at build time) and none
+// recorded — so a plan that starts them from 0.0.0 is not mistaken for a
+// package that really is at 0.0.0, and says where the number comes from.
 func printUnversionedNote(out io.Writer, pkgs []plugin.Package) {
-	n := 0
+	var names []string
 	for _, p := range pkgs {
 		if p.Version == "" {
-			n++
+			names = append(names, p.Name)
 		}
 	}
-	if n == 0 {
+	if len(names) == 0 {
 		return
 	}
-	fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("  %d package(s) carry no version in the tree (computed at build time); `version` records the number it computes in .changeset/%s, and bumps from there next time.", n, versionstate.FileName)))
+	sort.Strings(names)
+	fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("  no version in the tree and none recorded for %s (computed at build time): a plan starts from 0.0.0 — seed .changeset/%s with the current version, or type it at the override prompt; `version` records what it computes there from then on.", strings.Join(names, ", "), versionstate.FileName)))
 }

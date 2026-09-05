@@ -29,6 +29,11 @@ func TestReadWrite(t *testing.T) {
 	if names := again.Names(); len(names) != 2 || names[0] != "Acme.Lib" {
 		t.Fatalf("Names = %v", names)
 	}
+	again.Delete("Acme.Lib")
+	again.Delete("never-there")
+	if names := again.Names(); len(names) != 1 || names[0] != "Mermaider" {
+		t.Fatalf("after Delete: %v", names)
+	}
 	if err := os.WriteFile(filepath.Join(dir, FileName), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/semver"
 	"github.com/rigsmith/rigsmith/core/stackspace"
 	"github.com/rigsmith/rigsmith/core/versionstate"
 )
@@ -29,14 +30,24 @@ type Workspace struct {
 	// in under prefixes, which are their upstreams' to write and not this
 	// repository's. nil for an ordinary repo.
 	Stackspace *stackspace.Stackspace
+	// computed names the packages discovery found with no version in the
+	// tree — a number computed at build time (MinVer, a CI stamp). Their
+	// manifests are never stamped: the version lives in the record beside the
+	// changesets, and a `<Version>` inserted into such a project would fight
+	// the tool that owns it. Filled by Discover.
+	computed map[string]bool
 }
 
 // Stamps reports whether `version` may write a version into pkg's manifest:
-// stamping is on in the config, and the manifest (and the shared version file
-// it may defer to) is this repository's own — not a stackspace member's, whose
-// files leave in pull requests to an upstream that never asked for the bump.
+// stamping is on in the config, the package carries a version in its tree
+// to begin with, and the manifest (and the shared version file it may defer
+// to) is this repository's own — not a stackspace member's, whose files leave
+// in pull requests to an upstream that never asked for the bump.
 func (w *Workspace) Stamps(pkg plugin.Package) bool {
 	if w.Config != nil && !w.Config.StampEnabled() {
+		return false
+	}
+	if w.computed[pkg.Name] {
 		return false
 	}
 	if w.Stackspace == nil {
@@ -195,8 +206,17 @@ func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]
 
 	all := make([]plugin.Package, 0, len(found))
 	ecoOf := map[string]string{}
+	w.computed = map[string]bool{}
 	for _, d := range found {
-		if v := recorded.Get(d.pkg.Name); v != "" && (d.pkg.Version == "" || !w.Stamps(d.pkg)) {
+		if d.pkg.Version == "" {
+			w.computed[d.pkg.Name] = true
+		}
+		// The record wins over the manifest when the manifest is not the
+		// version's home — and also when it is but the record is newer: a
+		// one-off `--no-stamp` release left the manifest behind, and the next
+		// stamped run bumps from the release that happened, not the one the
+		// file remembers (and then reconciles the record away).
+		if v := recorded.Get(d.pkg.Name); v != "" && (d.pkg.Version == "" || !w.Stamps(d.pkg) || newerVersion(v, d.pkg.Version)) {
 			d.pkg.Version = v
 		}
 		all = append(all, d.pkg)
@@ -204,6 +224,19 @@ func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]
 	}
 	return all, ecoOf, nil
 }
+
+// newerVersion reports whether a is a later semver than b; an unparseable
+// side never wins.
+func newerVersion(a, b string) bool {
+	av, aok := semver.Parse(a)
+	bv, bok := semver.Parse(b)
+	return aok && bok && semver.Compare(av, bv) > 0
+}
+
+// ComputedVersion reports whether name's version is computed at build time —
+// discovery found none in the tree — so a release records it rather than
+// stamping it.
+func (w *Workspace) ComputedVersion(name string) bool { return w.computed[name] }
 
 // reconcileOverlays drops base-ecosystem packages that an overlay ecosystem has
 // claimed by directory. For every discovered package whose ecosystem declares

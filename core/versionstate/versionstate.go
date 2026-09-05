@@ -79,6 +79,13 @@ func (s *State) Set(name, version string) {
 	s.Packages[name] = version
 }
 
+// Delete drops name's record — a stamped run reconciled it into the tree.
+func (s *State) Delete(name string) {
+	if s != nil {
+		delete(s.Packages, name)
+	}
+}
+
 // Names lists the recorded packages, sorted.
 func (s *State) Names() []string {
 	if s == nil {
