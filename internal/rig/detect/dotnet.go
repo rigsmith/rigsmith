@@ -392,12 +392,13 @@ func scanForProjects(root string) []string {
 		if err != nil {
 			return nil // unreadable subtree — skip, discovery is best-effort
 		}
-		// Checked per directory rather than per file: the clock call is the
-		// expensive part of an otherwise trivial callback.
-		if d.IsDir() {
-			if seen++; seen%64 == 0 && time.Now().After(deadline) {
-				return errScanBudget
-			}
+		// Every entry counts toward the budget, not only directories: the clock
+		// call is the expensive part, so it still happens once per 64 — but a
+		// tree that is one directory holding a million files would otherwise
+		// never reach the check at all, and the two-second bound is what the
+		// menu is waiting on.
+		if seen++; seen%64 == 0 && time.Now().After(deadline) {
+			return errScanBudget
 		}
 		if d.IsDir() {
 			for _, skip := range scanSkipDirs {

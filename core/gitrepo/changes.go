@@ -25,25 +25,43 @@ type FileChange struct {
 // record is made. The commit therefore always lands a moment after its own
 // record, never before, and "the first one at or after" is exact.
 //
-// A second of slack absorbs filesystem timestamp granularity; ok is false when
-// nothing matches, which is the ordinary state of a record whose sync has not
-// committed yet.
+// ok is false when nothing matches, which is the ordinary state of a record
+// whose sync has not committed yet.
+//
+// The window is opened a second early and then closed again on the commit's own
+// timestamp. Git records commit times to the second while a journal record
+// carries fractions, so a commit made 300ms after its record reads as EARLIER
+// than it — the slack is what stops that one being missed, and comparing
+// against the record's second is what stops a genuinely older commit with the
+// same subject being taken instead.
 func (r *Repo) CommitAt(ctx context.Context, t time.Time, subject string) (sha string, ok bool, err error) {
+	// --reverse, so the first match is the earliest commit at or after t. Not
+	// --max-count: git applies the cap before the ordering, so a cap here would
+	// keep the NEWEST commits since t and drop the very one being looked for
+	// whenever a record is more than a few hundred syncs old.
 	out, err := runGit(ctx, r.Dir,
 		"log", "--since="+t.Add(-time.Second).Format(time.RFC3339),
-		"--format=%H%x1f%s", "--max-count=200")
+		"--reverse", "--format=%H%x1f%cI%x1f%s")
 	if err != nil {
 		return "", false, err
 	}
-	// Newest first, so the last match is the earliest commit at or after t.
+	floor := t.Truncate(time.Second)
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		h, s, found := strings.Cut(strings.TrimSpace(line), "\x1f")
-		if !found || s != subject {
+		h, rest, found := strings.Cut(strings.TrimSpace(line), "\x1f")
+		if !found {
 			continue
 		}
-		sha = h
+		iso, subj, found := strings.Cut(rest, "\x1f")
+		if !found || subj != subject {
+			continue
+		}
+		at, perr := time.Parse(time.RFC3339, iso)
+		if perr != nil || at.Before(floor) {
+			continue
+		}
+		return h, true, nil
 	}
-	return sha, sha != "", nil
+	return "", false, nil
 }
 
 // CommitFiles lists what a commit touched. The counts come from --numstat, which

@@ -52,7 +52,10 @@ func emitSearchJSON(out io.Writer, me config.Machine, query string, results []*s
 			title = session.FirstPrompt(r.path)
 		}
 		hit := SearchHit{
-			ID: r.id, Title: title, Cwd: resolveCwd(me, r), Model: r.meta.Model,
+			// r.cwd, not a fresh resolve: it carries the ledger fallback for a
+			// session whose transcript has aged out, and without it the resume
+			// command below runs wherever the caller happens to be standing.
+			ID: r.id, Title: title, Cwd: r.cwd, Model: r.meta.Model,
 			Matches: r.matches, TitleMatch: r.titleMatch, Source: sourceLabel(r),
 			LastUsed: r.when, Resumable: r.cliLive,
 		}

@@ -487,18 +487,6 @@ func captureCurrent(st *account.Store) (account.Account, bool, error) {
 	return st.CaptureLive(cred, oauth)
 }
 
-// AccountsJSON is the `account list --json` document.
-//
-// Desynced is carried as a field rather than left to the styled warning: the
-// live credential disagreeing with ~/.claude.json is the failure this listing
-// exists to surface, and a script reading JSON must not be the one consumer
-// that misses it.
-type AccountsJSON struct {
-	Accounts []account.Account `json:"accounts"`
-	Active   string            `json:"active,omitempty"`
-	Desynced bool              `json:"desynced"`
-}
-
 func newAccountListCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
@@ -526,16 +514,6 @@ func newAccountListCmd() *cobra.Command {
 			// so check BEFORE the early return: a machine that has never run
 			// `account add` can still have a live login whose two halves disagree.
 			desynced := !st.Diagnose().InSync
-			if asJSON {
-				active, _ := st.Active()
-				enc := json.NewEncoder(out)
-				enc.SetIndent("", "  ")
-				return enc.Encode(AccountsJSON{
-					Accounts: append([]account.Account{}, all...),
-					Active:   active,
-					Desynced: desynced,
-				})
-			}
 			warnDesync := func() {
 				if desynced {
 					fmt.Fprintf(out, "\n%s %s\n", ErrStyle.Render("✗"), WarnStyle.Render(

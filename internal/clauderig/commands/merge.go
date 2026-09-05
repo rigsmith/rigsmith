@@ -72,9 +72,13 @@ func NewMergeCmd() *cobra.Command {
 
 			// Resume a merge already in progress rather than starting another —
 			// a half-finished merge is exactly the state someone runs this in.
-			resuming := false
-			if unmerged, _ := repo.UnmergedFiles(ctx); len(unmerged) > 0 {
-				resuming = true
+			//
+			// Keyed on MERGE_HEAD, not on unresolved files. Someone who has
+			// resolved every conflict but not yet committed is still mid-merge,
+			// and starting a fresh fetch and merge there is something git
+			// refuses outright.
+			resuming := repo.InMerge(ctx)
+			if resuming {
 				say("  %s\n", DimStyle.Render("resuming the merge already in progress"))
 			}
 

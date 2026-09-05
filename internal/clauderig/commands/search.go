@@ -146,6 +146,17 @@ func NewSearchCmd() *cobra.Command {
 				}
 			}
 
+			// --raw and --all emit grep-style lines, which is not a document.
+			// Refused rather than silently honoured: a consumer that asked for
+			// JSON and got text has no way to tell that is what happened.
+			if asJSON && (raw || all) {
+				which := "--raw"
+				if all {
+					which = "--all"
+				}
+				return fmt.Errorf("--json groups by session, which %s does not — pick one", which)
+			}
+
 			// Under --json, stdout carries the document and nothing else — a
 			// banner ahead of it breaks every consumer that pipes this.
 			if !asJSON {
