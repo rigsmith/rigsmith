@@ -170,6 +170,7 @@
   .ev[data-outcome=refused] .text{color:var(--warn);}
   .ev .meta{color:var(--muted-2);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;}
   .ev .leak{color:var(--warn);font-size:11px;margin-top:3px;overflow-wrap:anywhere;}
+  .ev .toobig{color:var(--warn);font-size:11px;margin-top:3px;overflow-wrap:anywhere;}
   .ev .when{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums;}
   .empty{color:var(--muted-2);font-size:12px;padding:6px 0;line-height:1.5;}
   /* actions — the buttons follow the banner's advice, so the reason you are
@@ -881,6 +882,16 @@ function renderActivity(events) {
       const l = document.createElement('div');
       l.className = 'leak';
       l.textContent = leak;
+      body.append(l);
+    }
+
+    // Named, not counted. "2 files too large" says a conversation was not
+    // backed up without saying which, and unlike everything else in this feed
+    // there is no copy anywhere to go and look at.
+    for (const o of ev.oversize ?? []) {
+      const l = document.createElement('div');
+      l.className = 'toobig';
+      l.textContent = `too large: ${o.path}${o.bytes ? ` (${bytes(o.bytes)})` : ''}`;
       body.append(l);
     }
 

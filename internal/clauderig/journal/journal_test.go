@@ -246,7 +246,7 @@ func TestFromSyncSumsRoots(t *testing.T) {
 		ManifestProjects: 42,
 		RetentionPruned:  3,
 		Roots: []engine.RootResult{
-			{ID: "cli", Files: 100, Redactions: 4, RetentionByAge: 2, SkippedFiles: 1, Oversize: []string{"a", "b"}},
+			{ID: "cli", Files: 100, Redactions: 4, RetentionByAge: 2, SkippedFiles: 1, Oversize: []engine.OversizeFile{{Rel: "a"}, {Rel: "b"}}},
 			{ID: "desktop", Files: 20, Redactions: 1},
 			{ID: "absent", Files: 999, Skipped: true}, // must not count
 		},

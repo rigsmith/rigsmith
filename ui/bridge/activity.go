@@ -33,6 +33,11 @@ type Event struct {
 	// Redacted names the files this run cleaned, so the expanded file list can
 	// mark them. "21 secrets redacted" was never actionable without the where.
 	Redacted []journal.RedactedFile `json:"redacted,omitempty"`
+	// Oversize names the files the size cap left out, with the size that did
+	// it. "2 files too large" is the row saying a conversation did not get
+	// backed up without saying which one — the same fault the redaction count
+	// had, and it is worse here because nothing was saved at all.
+	Oversize []journal.OversizeFile `json:"oversize,omitempty"`
 	This     bool                   `json:"this"`
 }
 
@@ -81,6 +86,7 @@ func toEvent(r journal.Record, thisMachine string) Event {
 		Summary:  r.Summary(),
 		Error:    r.Error,
 		Redacted: r.RedactedFiles,
+		Oversize: r.OversizeFiles,
 		This:     r.Machine == thisMachine,
 	}
 	for _, l := range r.Leaks {
