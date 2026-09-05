@@ -1,0 +1,2195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>clauderig</title>
+<style>
+  /* Tokens lifted from design/RigSmith Brand.html — the brand page is the source. */
+  :root{
+    --ink:#0E0E12; --ink-2:#15151b; --ink-3:#1c1c24;
+    --line:#26262f; --line-soft:#1d1d25;
+    --paper:#ECECEE; --muted:#7b7b87; --muted-2:#52525c;
+    /* health — core/brand Green/Yellow/Red, dark-background values */
+    --ok:#4CB86A; --warn:#E4B750; --err:#EF6661;
+    /* Every platform gets a face it actually has. The old stack named only
+       Apple's — ui-monospace and SFMono-Regular mean nothing on Windows or
+       Linux, so both fell through to the generic `monospace`, which is
+       whatever the browser feels like. Cascadia ships with Windows
+       Terminal, Consolas with Windows itself, DejaVu with most Linux. */
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,
+      'Cascadia Mono','Cascadia Code',Consolas,
+      'DejaVu Sans Mono','Liberation Mono',monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;background:var(--ink);color:var(--paper);
+    font-family:var(--mono);font-weight:400;line-height:1.6;
+    -webkit-font-smoothing:antialiased;font-feature-settings:"liga" 0;
+    user-select:none;
+  }
+  /* A fixed head over a scrolling body, so the machine name and the two
+     controls beside it stay put in all three panes — status, the session list,
+     and a session's detail. Scrolling a list until you cannot see which
+     machine you are looking at, or reach the pop-out, is the failure here.
+     38px of top padding clears the inset traffic lights, which are drawn over
+     the page with the macOS hidden-inset title bar rather than above it. */
+  body{height:100vh;overflow:hidden;display:flex;flex-direction:column;}
+  /* 38px of top padding clears the macOS traffic lights, which sit over the
+     content because the title bar is hidden-inset. Windows is frameless with
+     nothing overlapping, so that space is just a gap — and Linux keeps its
+     native title bar, so it needs none either. */
+  .head{flex:none;padding:38px 32px 0;}
+  :root[data-os="windows"] .head,
+  :root[data-os="linux"] .head{padding-top:18px;}
+
+  /* Frameless leaves no way to dismiss the window but clicking away. That is
+     how a tray popover should behave, but "should" is not "discoverable", so
+     Windows gets an explicit close. Hidden elsewhere: macOS has its traffic
+     lights and Linux its title bar. */
+  #closeWin{display:none;}
+  :root[data-os="windows"] #closeWin{display:inline-flex;}
+  .scroll{flex:1;min-height:0;overflow-y:auto;padding:0 32px 18px;}
+  .eyebrow{
+    font-size:11px;letter-spacing:0.22em;text-transform:uppercase;
+    color:var(--muted);font-weight:500;
+    display:flex;align-items:center;gap:14px;
+    /* Drag the window by its header — the title bar is hidden-inset, so there
+       is almost nothing else to grab. The button opts out below. */
+    --wails-draggable:drag;
+  }
+
+  .eyebrow .rule{flex:1;height:1px;background:var(--line);}
+  /* Reaching the sessions window should not require finding the tray icon —
+     the tray is the app, but once a window is open the other one is the
+     obvious next place to go. */
+  .eyebrow button{
+    background:var(--ink-3);color:var(--paper);border:1px solid var(--line);
+    border-radius:5px;padding:5px 10px;cursor:pointer;
+    font-family:var(--mono);font-size:10px;letter-spacing:0.12em;
+    text-transform:uppercase;
+  }
+  .eyebrow button:hover{border-color:var(--muted-2);}
+  /* The default ring draws inside the control and gets clipped by its own
+     border radius, which reads as a stray highlight across the label. */
+  .eyebrow button:focus-visible{outline:1px solid var(--muted);outline-offset:2px;}
+  .eyebrow button:focus:not(:focus-visible){outline:none;}
+  .seclabel{
+    display:flex;align-items:center;gap:14px;
+    font-size:11px;letter-spacing:0.18em;text-transform:uppercase;
+    color:var(--muted);margin:32px 0 16px;font-weight:500;
+  }
+  .seclabel .rule{flex:1;height:1px;background:var(--line);}
+  .seclabel.first{margin-top:20px;}
+
+  /* banner — the health readout */
+  .banner{
+    display:flex;align-items:center;gap:14px;
+    background:var(--ink-2);border:1px solid var(--line);
+    border-left-width:3px;border-radius:6px;padding:16px 18px;
+  }
+  .banner[data-level=green]{border-left-color:var(--ok);}
+  .banner[data-level=amber]{border-left-color:var(--warn);}
+  .banner[data-level=red]{border-left-color:var(--err);}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none;}
+  .banner[data-level=green] .dot{background:var(--ok);}
+  .banner[data-level=amber] .dot{background:var(--warn);}
+  .banner[data-level=red]   .dot{background:var(--err);}
+  .summary{font-size:15px;font-weight:700;letter-spacing:-0.01em;line-height:1.3;}
+  .sub{color:var(--muted);font-size:12px;margin-top:5px;}
+  code{
+    background:var(--ink-3);border:1px solid var(--line);border-radius:4px;
+    padding:1px 6px;font-family:var(--mono);font-size:11px;color:var(--paper);
+  }
+
+  table{width:100%;border-collapse:collapse;font-size:12px;}
+  th{
+    text-align:left;font-weight:500;font-size:10px;letter-spacing:0.14em;
+    text-transform:uppercase;color:var(--muted-2);
+    padding:0 12px 8px 0;border-bottom:1px solid var(--line-soft);
+  }
+  td{padding:9px 12px 9px 0;border-bottom:1px solid var(--line-soft);vertical-align:top;}
+  tr:last-child td{border-bottom:none;}
+  .name{font-weight:700;}
+  /* Matches the healthy tray icon: this row is the machine you're looking at.
+     Green, not a warm hue — amber/yellow/red are reserved for "needs
+     attention", and an identity marker must never compete with them. */
+  .this{color:var(--ok);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;}
+  .dim{color:var(--muted);}
+  .num{font-variant-numeric:tabular-nums;}
+  .stale{color:var(--warn);}
+  .err{color:var(--err);}
+
+  .repo{display:flex;gap:10px;align-items:baseline;font-size:12px;padding:2px 0;}
+  .repo .k{color:var(--muted);width:74px;flex:none;}
+  .repo .v{flex:1;min-width:0;}
+  .repo .v b{font-weight:700;}
+  .repo .hint{color:var(--muted);font-size:11px;}
+  .repo .hint.warn{color:var(--warn);}
+  .holds{margin:8px 0 2px;}
+  .holds .h{display:flex;gap:10px;align-items:baseline;font-size:11px;padding:1px 0;}
+  .holds .h .n{flex:1;min-width:0;color:var(--muted);overflow-wrap:anywhere;}
+  .holds .h .b{flex:none;font-variant-numeric:tabular-nums;}
+  .holds .h .p{flex:none;width:34px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;}
+  /* The bar is the point: one line is 97% and the rest are noise, which a
+     column of numbers makes you work out and a bar does not. */
+  .holds .bar{flex:none;width:56px;height:4px;border-radius:2px;background:var(--ink-3);overflow:hidden;}
+  .holds .bar i{display:block;height:100%;background:var(--muted);}
+  .reporow{display:flex;gap:8px;align-items:center;margin-top:10px;}
+  .reporow .grow{flex:1;}
+
+  .ev.can{cursor:pointer;}
+  .files{
+    margin:6px 0 2px;padding-left:1px;
+    font-family:var(--mono);font-size:10px;color:var(--muted);
+  }
+  .files .f{display:flex;gap:8px;padding:1px 0;}
+  .files .f .p{flex:1;min-width:0;overflow-wrap:anywhere;}
+  .files .f .n{flex:none;color:var(--muted);font-variant-numeric:tabular-nums;}
+  /* Amber, the same colour the banner uses for "look at this" — a redaction is
+     not a failure, but it is the line in the list you want to find. */
+  .files .f .r{flex:none;color:var(--warn);}
+  .files .more{color:var(--muted);padding-top:3px;}
+
+  /* activity feed — failures and refusals are rows in their own right, not
+     footnotes; that they were ever buried in hook stderr is why this exists. */
+  .ev{display:flex;gap:12px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--line-soft);font-size:12px;line-height:1.45;}
+  .ev:last-child{border-bottom:none;}
+  /* align-self:center put the dot halfway down an expanded row, next to a file
+     path it has nothing to do with. It belongs beside the line it marks, so it
+     pins to the top and takes a margin that centres it on that first line
+     ((12px x 1.45) - 7px) / 2. */
+  .ev .tick{
+    width:7px;height:7px;border-radius:50%;flex:none;background:var(--muted-2);
+    align-self:flex-start;margin-top:5px;
+  }
+  .ev[data-outcome=failed] .tick{background:var(--err);}
+  .ev[data-outcome=refused] .tick{background:var(--warn);}
+  .ev .body{flex:1;min-width:0;}
+  .ev .text{overflow-wrap:anywhere;}
+  .ev[data-outcome=failed] .text{color:var(--err);}
+  .ev[data-outcome=refused] .text{color:var(--warn);}
+  .ev .meta{color:var(--muted-2);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;}
+  .ev .leak{color:var(--warn);font-size:11px;margin-top:3px;overflow-wrap:anywhere;}
+  .ev .when{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums;}
+  .empty{color:var(--muted-2);font-size:12px;padding:6px 0;line-height:1.5;}
+  /* actions — the buttons follow the banner's advice, so the reason you are
+     shown and the button you get are the same thing. */
+  /* Inside the banner, hard right: the buttons ARE the banner's advice, so they
+     belong beside it rather than costing a row of their own underneath. */
+  .bannertext{flex:1;min-width:0;}
+  .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;flex:none;}
+  button{
+    background:var(--ink-3);color:var(--paper);border:1px solid var(--line);
+    border-radius:5px;padding:7px 11px;font-family:var(--mono);font-size:11px;cursor:pointer;
+  }
+  button:hover:not(:disabled){border-color:var(--muted-2);}
+  button:disabled{color:var(--muted-2);cursor:not-allowed;opacity:.65;}
+  button.primary{border-color:var(--muted-2);}
+  button:focus-visible{outline:1px solid var(--muted);outline-offset:2px;}
+  button:focus:not(:focus-visible){outline:none;}
+  button.ok,button.ok:hover{color:var(--ok);border-color:var(--ok);}
+  /* Streamed CLI output. It exists because a sync that refuses on a secret
+     tripwire used to say so only in hook stderr, where nobody saw it. */
+  .out{
+    margin-top:12px;background:var(--ink-2);border:1px solid var(--line);
+    border-radius:6px;padding:10px 12px;font-size:11px;line-height:1.55;
+    max-height:190px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;
+  }
+  .out:empty{display:none;}
+  .out .e{color:var(--err);}
+  .out .head{color:var(--muted-2);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;}
+
+  /* accounts */
+  /* align-items:center so the Switch button does not stretch the row, and
+     tighter padding — the button's own height was setting the rhythm. */
+  .acct{
+    display:flex;gap:12px;align-items:center;padding:5px 0;
+    border-bottom:1px solid var(--line-soft);font-size:12px;
+  }
+  .acct button{padding:4px 10px;font-size:10px;}
+  /* The launch buttons are icons, so they must not inherit the Switch button's
+     text padding — that made two square glyphs into two wide slabs. */
+  .acct button.icon{padding:4px 6px;}
+  .acct:last-child{border-bottom:none;}
+  .acct .who{flex:1;min-width:0;overflow-wrap:anywhere;}
+  .acct .live{color:var(--ok);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;}
+  .acct .plan{color:var(--muted-2);font-size:10px;}
+  .warnrow{color:var(--warn);font-size:11px;margin-top:10px;}
+  #filing .warnrow{
+    margin:0 0 18px;padding:10px 12px;line-height:1.5;
+    border:1px solid var(--warn);border-radius:6px;
+    display:flex;flex-direction:column;gap:6px;
+  }
+  #filing .hint{color:var(--muted);font-family:var(--mono);font-size:10px;}
+  #filing .hint.warn{color:var(--warn);}
+  .splits{display:flex;flex-direction:column;gap:12px;margin-top:6px;}
+  .split{border-top:1px solid var(--line);padding-top:10px;}
+  .split .t{color:var(--paper);font-size:12px;font-weight:700;overflow-wrap:anywhere;}
+  .split .cp{display:flex;gap:10px;align-items:baseline;font-size:10px;margin-top:4px;}
+  .split .cp .k{
+    flex:none;width:42px;color:var(--muted-2);text-transform:uppercase;letter-spacing:0.08em;
+  }
+  .split .cp .p{flex:1;min-width:0;color:var(--muted);overflow-wrap:anywhere;}
+  .split .cp .n{flex:none;color:var(--muted);font-variant-numeric:tabular-nums;}
+  /* ---- two views in one window ------------------------------------------
+     The popup is where you glance; the full sessions window is where you work.
+     Both views live here so the tray icon reaches either without a second
+     window appearing behind this one. */
+  .view[hidden]{display:none;}
+  /* After the rule, which is flex:1 — so showing this shrinks the rule rather
+     than pushing the two controls on its right, and they never move. */
+  #backToList{padding:5px 10px;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;}
+  /* Both labels occupy the same grid cell, so the button is always as wide as
+     the longer of them and never resizes when it swaps. A min-width would have
+     to be guessed — and guessed against padding, border and letter-spacing,
+     which is how the first attempt ended up smaller than the button's natural
+     size and did nothing at all. This measures itself. */
+  #toggleView{display:grid;place-items:center;}
+  #toggleView span{grid-area:1 / 1;}
+  #toggleView span[data-off]{visibility:hidden;}
+  .iconbtn{
+    background:var(--ink-3);color:var(--muted);border:1px solid var(--line);
+    border-radius:5px;padding:5px 7px;cursor:pointer;display:inline-flex;
+    align-items:center;justify-content:center;
+  }
+  .iconbtn:hover{color:var(--paper);border-color:var(--muted-2);}
+
+  /* compact session list */
+  /* Inputs inherit nothing — without this the box renders as the platform's
+     white search pill against a dark page. */
+  .srch{
+    width:100%;margin:20px 0 2px;-webkit-appearance:none;appearance:none;
+    background:var(--ink-3);color:var(--paper);
+    border:1px solid var(--line);border-radius:5px;padding:7px 10px;
+    font-family:var(--mono);font-size:12px;
+  }
+  .srch::placeholder{color:var(--muted-2);}
+  .srch::-webkit-search-decoration,.srch::-webkit-search-cancel-button{-webkit-appearance:none;}
+  .srch:focus-visible{outline:1px solid var(--muted);outline-offset:2px;}
+  /* The indicator lives on the box, not in the empty state: searching with
+     results on screen still needs to say it is working, and the empty state is
+     hidden exactly then. */
+  .srchwrap{position:relative;}
+  .srchwrap .spin{
+    position:absolute;left:0;right:0;bottom:-1px;height:1px;
+    background:var(--line);overflow:hidden;opacity:0;transition:opacity .12s;
+  }
+  .srchwrap .spin::after{
+    content:"";position:absolute;inset:0;width:40%;background:var(--warn);
+    transform:translateX(-100%);
+  }
+  .srchwrap[data-busy] .spin{opacity:1;}
+  .srchwrap[data-busy] .spin::after{animation:sweep 900ms linear infinite;}
+  @keyframes sweep{to{transform:translateX(350%);}}
+  .slist{margin-top:4px;}
+  /* The rows on screen answer the PREVIOUS term. Leaving them at full strength
+     while a new search runs is the same lie as showing nothing — it just looks
+     more confident. */
+  .slist[data-busy]{opacity:.45;transition:opacity .12s;}
+  /* Size is set here rather than inherited: body copy is ~16px, which turns a
+     scannable list into headlines. */
+  .srow{
+    display:flex;gap:12px;align-items:baseline;padding:7px 0;cursor:pointer;
+    border-bottom:1px solid var(--line-soft);font-size:12px;line-height:1.45;
+  }
+  .srow:last-child{border-bottom:none;}
+  .srow:hover{background:var(--ink-2);}
+  .srow .when{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums;width:30px;flex:none;font-size:11px;}
+  .srow .what{flex:1;min-width:0;}
+  .srow .t{font-weight:700;font-size:12px;overflow-wrap:anywhere;}
+  .srow .p{color:var(--muted);font-size:10px;overflow-wrap:anywhere;margin-top:1px;}
+  .srow .p.hit{color:var(--paper);}
+  .srow .p.hit .n{color:var(--warn);font-variant-numeric:tabular-nums;}
+  .lbl{color:var(--muted);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px;}
+  .note.err button{margin-top:8px;}
+  .exlist{display:flex;flex-direction:column;gap:6px;}
+  .ex{
+    font-size:11px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere;
+    padding-left:9px;border-left:2px solid var(--line);
+  }
+  /* The term itself, not a highlight box — a filled background at this size
+     swallows the words either side, which are the context. */
+  .ex mark{background:none;color:var(--warn);font-weight:700;}
+  /* Colour comes from the letter (see LETTER_HUE), applied inline. These rules
+     are the fallback for a monogram whose letter has no hue. */
+  .mono{
+    display:inline-flex;align-items:center;justify-content:center;
+    min-width:19px;height:19px;border-radius:10px;
+    border:1px solid var(--muted-2);color:var(--muted);
+    font-family:var(--mono);font-size:10px;
+    flex:none;
+    /* Letter-spacing puts its gap AFTER the last character too, so a centred
+       single letter ends up sitting left of centre by half the tracking —
+       dropped, since one or two characters need none. line-height:1 collapses
+       the line box onto the em box, which is what centres the capital
+       vertically; nudging on top of that only pushes it back off. */
+    letter-spacing:0;line-height:1;padding:0 5px;
+  }
+  .srow .cl{
+    color:var(--muted);font-size:10px;white-space:nowrap;flex:none;
+    max-width:11ch;overflow:hidden;text-overflow:ellipsis;text-align:right;
+  }
+  /* Fixed advance per glyph so the three read as a column down the list. */
+  .srow .w{font-size:15px;white-space:nowrap;flex:none;color:var(--muted-2);}
+  .srow .w span{display:inline-block;width:1.3em;text-align:center;}
+  .srow .w .on{color:var(--paper);}
+  .srow .w .listed{color:var(--muted);}
+  .srow .w .risk{color:var(--warn);}
+
+  /* compact detail — replaces the list rather than covering it, because a
+     460px drawer against a 720px window leaves neither side usable. */
+  .dtitle{font-size:14px;font-weight:700;line-height:1.35;overflow-wrap:anywhere;}
+  .did{font-size:10px;color:var(--muted-2);overflow-wrap:anywhere;margin-top:2px;}
+  .dmeta{color:var(--muted);font-size:11px;margin-top:10px;overflow-wrap:anywhere;}
+  .dmeta b{color:var(--muted-2);font-weight:500;letter-spacing:0.1em;
+    text-transform:uppercase;font-size:9px;display:block;margin-top:8px;}
+  .turn{
+    border-left:2px solid var(--line);padding:2px 0 2px 11px;margin:8px 0;
+    font-size:11px;overflow-wrap:anywhere;line-height:1.5;
+  }
+  .turn .at{display:block;color:var(--muted-2);font-size:9px;margin-top:3px;}
+  .gap{color:var(--muted-2);font-size:10px;margin:10px 0 4px;letter-spacing:0.08em;}
+  .dacts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px;
+    padding-top:12px;border-top:1px solid var(--line-soft);}
+  /* Matched to the buttons beside it: a native select is a different height,
+     font and radius, which read as a control from a different app. */
+  .dacts select{
+    -webkit-appearance:none;appearance:none;
+    padding:7px 26px 7px 11px;background:var(--ink-3);color:var(--paper);
+    border:1px solid var(--line);border-radius:5px;
+    font-family:var(--mono);font-size:11px;line-height:normal;cursor:pointer;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237b7b87' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 9px center;background-size:9px;
+    width:104px;flex:none;
+  }
+  .dacts select:hover{border-color:var(--muted-2);}
+  /* appearance:none strips the native look but not the native focus ring, and
+     this control had no focus rule of its own — so it was the one thing in the
+     pane still lighting up in the system accent colour. Keyboard focus keeps a
+     ring, in ours; a mouse click gets none, like the buttons beside it. */
+  .dacts select:focus{outline:none;}
+  .dacts select:focus-visible{outline:1px solid var(--muted);outline-offset:2px;}
+  .dacts button.icon{
+    display:inline-flex;align-items:center;justify-content:center;
+    padding:7px 9px;color:var(--muted);
+  }
+  .dacts button.icon:hover:not(:disabled){color:var(--paper);}
+  /* Hard right, away from the things you reach for often — and the same end of
+     the row it sits at in the full window, so the destructive button is in one
+     place across both surfaces. */
+  .dacts button.danger{color:var(--err);border-color:#3a2226;margin-left:auto;}
+  .dacts button.danger:hover:not(:disabled){border-color:var(--err);}
+  .dacts button.ok,.dacts button.ok:hover{color:var(--ok);border-color:var(--ok);}
+  /* The confirm is a modal because the constraint is height, not width: it is
+     several times the height of the row it used to replace, so on a detail of
+     any length it opened below the fold and had to be scrolled to. Centred over
+     a scrim it is always whole, and being modal suits the one action here that
+     cannot be undone. */
+  .modal{
+    position:fixed;inset:0;z-index:50;display:flex;
+    align-items:center;justify-content:center;padding:24px;
+    background:rgba(14,14,18,0.72);
+  }
+  .modal .card{
+    background:var(--ink-2);border:1px solid var(--line);border-radius:8px;
+    padding:18px 20px;max-width:520px;width:100%;max-height:100%;overflow-y:auto;
+    box-shadow:0 18px 44px rgba(0,0,0,0.55);
+  }
+  /* The separator earned its keep when this sat under the action row. */
+  .modal .confirmrow{margin-top:0;padding-top:0;border-top:none;}
+
+  /* inline confirm — the pane is full width, so the per-store choice fits here
+     rather than being a reason to send you to the other window. */
+  .confirmrow{margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft);}
+  .confirmrow label{display:flex;gap:8px;align-items:center;font-size:11px;padding:5px 0;}
+  .confirmrow .warn{color:var(--warn);font-size:10px;margin:8px 0 12px;line-height:1.5;}
+  .confirmrow .row{display:flex;gap:8px;justify-content:flex-end;}
+  /* The field and its Browse button. align-items:center because the default
+     stretch made the button take the row's full height, and .srch carries a
+     20px top margin from its life as a standalone search box — which grew the
+     row and left the button towering over the field it belongs to. */
+  .pickrow{display:flex;gap:8px;align-items:center;margin:12px 0 4px;}
+  .pickrow .srch{flex:1;margin:0;min-width:0;}
+  .pickrow button{flex:none;}
+  /* Standing explanation, not a warning. Three lines of amber read as something
+     having gone wrong; this is just what the button will do. */
+  .explain{color:var(--muted);font-size:10px;margin:2px 0 12px;line-height:1.55;}
+  .note{font-size:10px;color:var(--muted-2);flex-basis:100%;}
+
+
+</style>
+</head>
+<body>
+<div class="head">
+  <div class="eyebrow">
+    <span id="machine">—</span>
+    <span class="rule"></span>
+    <button id="backToList" hidden title="Back to the session list">← Back</button>
+    <button class="iconbtn" id="popOut" title="Open the full sessions window" aria-label="Open the full sessions window"></button>
+    <button id="toggleView" title="Switch between sync status and your sessions">
+      <span id="lblSessions">Sessions</span><span id="lblStatus" data-off>Status</span>
+    </button>
+    <!-- Last, so it lands where a close belongs on Windows: the far right,
+         where the caption buttons would have been. -->
+    <button class="iconbtn" id="closeWin" title="Close" aria-label="Close"></button>
+  </div>
+</div>
+
+<div class="scroll">
+
+  <div class="view" id="statusView">
+  <div class="seclabel first"><span>Sync</span><span class="rule"></span></div>
+  <div class="banner" id="banner" data-level="amber">
+    <div class="dot"></div>
+    <div class="bannertext">
+      <div class="summary" id="summary">Checking…</div>
+      <div class="sub" id="sub"></div>
+    </div>
+    <div class="acts" id="acts"></div>
+  </div>
+  <div class="out" id="out"></div>
+
+  <div class="seclabel"><span>Accounts</span><span class="rule"></span></div>
+  <div id="accounts"></div>
+
+  <div class="seclabel"><span>Devices</span><span class="rule"></span></div>
+  <table><thead><tr><th>Machine</th><th>OS</th><th>Claude</th><th>Last sync</th></tr></thead>
+    <tbody id="devices"></tbody></table>
+
+  <div class="seclabel"><span>Roots</span><span class="rule"></span></div>
+  <table><thead><tr><th>Root</th><th>Files</th><th>State</th></tr></thead>
+    <tbody id="roots"></tbody></table>
+
+  <div id="filing"></div>
+
+  <div class="seclabel"><span>Repository</span><span class="rule"></span></div>
+  <div id="repo"></div>
+
+  <div class="seclabel"><span>Sync Activity</span><span class="rule"></span></div>
+  <div id="activity"></div>
+  </div><!-- /statusView -->
+
+  <div class="view" id="sessionsView" hidden>
+    <div class="srchwrap" id="ssearchwrap">
+      <input class="srch" id="ssearch" type="search" placeholder="search your sessions…" autocomplete="off">
+      <span class="spin" aria-hidden="true"></span>
+    </div>
+    <div class="slist" id="slist"></div>
+    <div class="empty" id="sempty" hidden></div>
+    <div id="sdetail" hidden></div>
+  </div>
+</div>
+
+<script type="module">
+import { Call, Events } from '/wails/runtime.js';
+
+const $ = id => document.getElementById(id);
+
+// Wails keys bound methods by "<go import path>.<type>.<method>". Spelled out
+// because we call the runtime directly rather than running `wails3 generate
+// bindings` — that would add a Node step to a Go-only CI. Keep in sync with
+// ui/bridge; ui/bridge/binding_test.go fails if this drifts.
+const STATUS_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Status.Get';
+const ACTIVITY_RECENT = 'github.com/rigsmith/rigsmith/ui/bridge.Activity.Recent';
+const WINDOWS_OPEN = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Open';
+const ACTIONS_RUN = 'github.com/rigsmith/rigsmith/ui/bridge.Actions.Run';
+const ACTIONS_RUN_WITH = 'github.com/rigsmith/rigsmith/ui/bridge.Actions.RunWith';
+const ACTIONS_BUSY = 'github.com/rigsmith/rigsmith/ui/bridge.Actions.Busy';
+const ACCOUNTS_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.Get';
+const ACCOUNTS_DESKTOP = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.OpenDesktop';
+const ACCOUNTS_RUNCLI = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.RunCLI';
+const ACTIVITY_FILES = 'github.com/rigsmith/rigsmith/ui/bridge.Activity.Files';
+const REPO_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Get';
+const FILING_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Get';
+const FILING_SPLITS = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Splits';
+const FILING_FIX = 'github.com/rigsmith/rigsmith/ui/bridge.Filing.Consolidate';
+const REPO_PRUNE = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Prune';
+const REPO_REPACK = 'github.com/rigsmith/rigsmith/ui/bridge.Repo.Repack';
+const WINDOWS_HIDE = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Hide';
+const LIBRARY_LIST = 'github.com/rigsmith/rigsmith/ui/bridge.Library.List';
+const LIBRARY_DETAIL = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Detail';
+const LIBRARY_TERMINAL = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenTerminal';
+const LIBRARY_DESKTOP = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenDesktop';
+const LIBRARY_VSCODE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenVSCode';
+const LIBRARY_MATERIALIZE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Materialize';
+const LIBRARY_HANDOFF = 'github.com/rigsmith/rigsmith/ui/bridge.Library.HandOff';
+const LIBRARY_DELETE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Delete';
+const LIBRARY_REROOT = 'github.com/rigsmith/rigsmith/ui/bridge.Library.RerootSession';
+const CHOOSE_DIR = 'github.com/rigsmith/rigsmith/ui/bridge.Chooser.Directory';
+
+const SVG_ATTRS = 'viewBox="0 0 16 16" width="12" height="12" fill="none" ' +
+  'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"';
+const ICON_COPY = `<svg ${SVG_ATTRS}><rect x="5.75" y="5.75" width="8.5" height="8.5" rx="1.5"/>` +
+  '<path d="M11 3.75A1.75 1.75 0 0 0 9.25 2h-5.5A1.75 1.75 0 0 0 2 3.75v5.5c0 .97.78 1.75 1.75 1.75"/></svg>';
+const ICON_CHECK = `<svg ${SVG_ATTRS}><path d="M3 8.5 6.5 12 13 4.5"/></svg>`;
+const ICON_TRASH = `<svg ${SVG_ATTRS}><path d="M2.75 4.25h10.5"/>` +
+  '<path d="M6.25 4.25V3a1 1 0 0 1 1-1h1.5a1 1 0 0 1 1 1v1.25"/>' +
+  '<path d="M4 4.25 4.6 13a1 1 0 0 0 1 .95h4.8a1 1 0 0 0 1-.95L12 4.25"/></svg>';
+const ICON_POPOUT = `<svg ${SVG_ATTRS}><path d="M9 2.75h4.25V7"/><path d="M13.25 2.75 8 8"/>` +
+  '<path d="M12.5 9.75v2.5a1.75 1.75 0 0 1-1.75 1.75h-7A1.75 1.75 0 0 1 2 12.25v-7A1.75 1.75 0 0 1 3.75 3.5h2.5"/></svg>';
+
+// A prompt for the CLI and a window for Desktop — the same distinction the
+// store icons draw, so the two panels teach one vocabulary rather than two.
+const ICON_CLOSE = `<svg ${SVG_ATTRS}><path d="M4 4l8 8"/><path d="M12 4l-8 8"/></svg>`;
+const ICON_FOLDER = `<svg ${SVG_ATTRS}><path d="M1.75 4.25A1.5 1.5 0 0 1 3.25 2.75h2.4a1 1 0 0 1 .8.4l.9 1.2h4.4a1.5 1.5 0 0 1 1.5 1.5v5.4a1.5 1.5 0 0 1-1.5 1.5h-8.5a1.5 1.5 0 0 1-1.5-1.5Z"/></svg>`;
+const ICON_TERMINAL = `<svg ${SVG_ATTRS}><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75"/>` +
+  '<path d="M4.75 6.25 7 8l-2.25 1.75"/><path d="M8.5 10.25h3"/></svg>';
+const ICON_DESKTOP = `<svg ${SVG_ATTRS}><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75"/>` +
+  '<path d="M1.75 5.75h12.5"/></svg>';
+
+const STORES = ['cli', 'desktop', 'repo'];
+const STORE_LABEL = { cli: 'here-cli', desktop: 'here-desk', repo: 'sync' };
+// Glyphs rather than words in the row — same three states on every row, and the
+// column they were costing is worth more spent on the client. The full window's
+// legend names them; the tooltips here carry the words.
+const STORE_ICON = { cli: '\u276F', desktop: '\u25A3', repo: '\u21C5' };
+
+// Account labels are emails, and on one person's machine they are routinely the
+// same person at different organisations — john@brightshore.io beside
+// john@relatecpa.com — so an initial taken from the address would read "J" for
+// both. The letter comes from the domain instead, which is the part that
+// actually names the account.
+//
+// Where two accounts share a domain the local part stands in, and where the
+// chosen source still collides the prefix grows a letter at a time: "BR" and
+// "BU", never a letter plucked from the middle of a word, which reads as a typo
+// rather than as an abbreviation.
+//
+// Computed over every label seen so far rather than the rows currently on
+// screen, so filtering the list can't quietly re-letter a badge.
+const seenAccounts = new Set();
+let monoCache = new Map();
+
+function monogramFor(label) {
+  if (!label) return '';
+  if (!seenAccounts.has(label)) {
+    seenAccounts.add(label);
+    monoCache = buildMonograms([...seenAccounts]);
+  }
+  return monoCache.get(label) || '';
+}
+
+// The badge takes its colour from its own letter — b is blue, r is red, g is
+// green — so the mapping needs no learning and no legend. Letters with no
+// colour that starts the same way get one of the hues left over; those pairings
+// are arbitrary and only have to stay stable and distinct.
+//
+// Tailwind's 400 step throughout: saturated enough to read as a colour at 22px
+// on near-black, light enough not to vibrate against it.
+const LETTER_HUE = {
+  a: '#fbbf24', // amber
+  b: '#60a5fa', // blue
+  c: '#22d3ee', // cyan
+  d: '#fb7185', // rose
+  e: '#34d399', // emerald
+  f: '#e879f9', // fuchsia
+  g: '#4ade80', // green
+  h: '#f472b6', // pink
+  i: '#818cf8', // indigo
+  j: '#94a3b8', // slate
+  k: '#a8a29e', // stone
+  l: '#a3e635', // lime
+  m: '#9ca3af', // gray
+  n: '#a3a3a3', // neutral
+  o: '#fb923c', // orange
+  p: '#c084fc', // purple
+  q: '#fbbf24', // amber
+  r: '#f87171', // red
+  s: '#38bdf8', // sky
+  t: '#2dd4bf', // teal
+  u: '#22d3ee', // cyan
+  v: '#a78bfa', // violet
+  w: '#a78bfa', // violet
+  x: '#a3e635', // lime
+  y: '#facc15', // yellow
+  z: '#a1a1aa', // zinc
+};
+
+function hueFor(mono) {
+  return LETTER_HUE[(mono || '').charAt(0).toLowerCase()] || null;
+}
+
+// Ring and letter in the hue, with the faintest wash behind it. A solid fill
+// would make the badge the loudest thing in a row whose point is the title.
+function paintMono(badge, mono) {
+  const hue = hueFor(mono);
+  if (!hue) return badge;
+  badge.style.color = hue;
+  badge.style.borderColor = hue;
+  badge.style.background = hue + '1a';
+  return badge;
+}
+
+function buildMonograms(labels) {
+  const domain = l => {
+    const at = l.lastIndexOf('@');
+    return at >= 0 ? l.slice(at + 1) : '';
+  };
+  const clean = t => t.replace(/[^a-z0-9]/gi, '');
+  const source = l => {
+    const host = clean((domain(l).split('.')[0] || ''));
+    // A shared domain says nothing about which account this is; the address does.
+    const shared = host && labels.some(o => o !== l && clean((domain(o).split('.')[0] || '')) === host);
+    if (host && !shared) return host;
+    const at = l.lastIndexOf('@');
+    return clean(at >= 0 ? l.slice(0, at) : l) || host || clean(l);
+  };
+  const out = new Map();
+  for (const l of labels) {
+    const src = source(l);
+    if (!src) { out.set(l, '?'); continue; }
+    let n = 1;
+    while (n < src.length && labels.some(o => o !== l &&
+      source(o).slice(0, n).toLowerCase() === src.slice(0, n).toLowerCase())) n++;
+    out.set(l, src.slice(0, n).toUpperCase());
+  }
+  return out;
+}
+
+const COMPACT_LIMIT = 40;
+const ACTIONS_START_EVENT = 'clauderig:action:start';
+const ACTIONS_LINE_EVENT = 'clauderig:action:line';
+const ACTIONS_DONE_EVENT = 'clauderig:action:done';
+
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+
+// Coarse relative time, matching how `clauderig status` phrases it.
+function since(iso) {
+  if (!iso || iso.startsWith('0001-01-01')) return 'never';
+  const mins = Math.floor((Date.now() - new Date(iso)) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+  return `${Math.floor(mins / 1440)}d ago`;
+}
+
+// A machine silent for over a day is worth flagging — that is how long the
+// 2026-08-07 divergence went unnoticed.
+const STALE_MINUTES = 24 * 60;
+const isStale = iso => iso && (Date.now() - new Date(iso)) / 60000 > STALE_MINUTES;
+
+const cell = (text, cls) => {
+  const td = document.createElement('td');
+  td.textContent = text;
+  if (cls) td.className = cls;
+  return td;
+};
+
+// The page styles itself per platform: the header clears macOS traffic lights,
+// Windows is frameless and needs its own close. The snapshot already carries
+// the OS, so nothing new has to be plumbed for it.
+function applyPlatform(os) {
+  const v = String(os || '').toLowerCase();
+  if (v) document.documentElement.dataset.os = v;
+}
+
+function render(snap) {
+  applyPlatform(snap.os);
+  $('machine').textContent = `${snap.machine} · ${snap.os}`;
+
+  $('banner').dataset.level = snap.level;
+  $('summary').textContent = snap.summary;
+
+  const sub = $('sub');
+  sub.replaceChildren();
+  if (snap.action) {
+    sub.append('Run ');
+    const c = document.createElement('code');
+    c.textContent = snap.action;
+    sub.append(c);
+    sub.append(snap.lastSync ? ' · ' : '');
+  }
+  if (snap.lastSync) sub.append(`last sync ${trimLastSync(snap.lastSync, snap.machine)}`);
+
+  const devices = $('devices');
+  devices.replaceChildren();
+  for (const d of snap.devices ?? []) {
+    const tr = document.createElement('tr');
+    const name = cell(d.name, 'name');
+    if (d.this) {
+      const tag = document.createElement('span');
+      tag.className = 'this';
+      tag.textContent = ' this';
+      name.append(tag);
+    }
+    tr.append(
+      name,
+      cell(d.os, 'dim'),
+      cell(d.claudeVersion || '—', 'dim'),
+      cell(since(d.lastSync), isStale(d.lastSync) ? 'stale num' : 'dim num'),
+    );
+    devices.append(tr);
+  }
+
+  const roots = $('roots');
+  roots.replaceChildren();
+  for (const r of snap.roots ?? []) {
+    const tr = document.createElement('tr');
+    tr.append(
+      cell(r.id, 'name'),
+      cell(r.present ? r.files.toLocaleString() : '—', 'num dim'),
+      cell(r.present ? 'present' : 'absent here', 'dim'),
+    );
+    roots.append(tr);
+  }
+}
+
+// Syncs fire every few minutes whether or not anything moved, so a run of rows
+// saying the same thing about the same machine is the normal case, not news.
+// Folding them into one row with a count keeps the runs that actually did
+// something visible instead of scrolled off the bottom.
+//
+// Only clean rows fold. A failure or a refusal is its own event every time it
+// happens — collapsing three refusals into "×3" would hide two of them, and
+// those are the rows the feed exists for.
+function collapse(events) {
+  const out = [];
+  for (const ev of events) {
+    const last = out[out.length - 1];
+    const foldable = ev.outcome === 'ok' && !ev.leaks?.length;
+    if (
+      foldable && last?.foldable &&
+      last.summary === ev.summary && last.op === ev.op && last.machine === ev.machine
+    ) {
+      last.count++;
+      last.oldest = ev.at;   // events arrive newest first
+      continue;
+    }
+    out.push({ ...ev, foldable, count: 1, oldest: ev.at });
+  }
+  return out;
+}
+
+// Which rows are expanded, and what they showed, keyed by the run itself rather
+// than by position — the feed repaints on a timer and rows shift down as newer
+// syncs arrive, so anything keyed by index would reopen the wrong one.
+const filesOpen = new Set();
+const filesCache = new Map();
+const evKey = (ev) => `${ev.machine}\u0000${ev.at}`;
+
+// A commit is immutable, so its file list is worth keeping: reopening a row you
+// have already looked at should not go back to git, and the repaint that used to
+// close the row now redraws it from here without a flicker.
+function paintFiles(box, v, redacted) {
+  const byPath = new Map((redacted || []).map(r => [r.path, r]));
+  box.replaceChildren();
+  if (v.note || !(v.files || []).length) {
+    box.append(el('div', 'more', v.note || 'Nothing recorded for this run.'));
+    return;
+  }
+  for (const f of v.files) {
+    const line = el('div', 'f');
+    line.append(el('div', 'p', f.path));
+    const red = byPath.get(f.path);
+    if (red) {
+      const tag = el('div', 'r', `\u25CF ${red.kinds ? red.kinds.join(', ') : 'redacted'}`);
+      tag.title = `${red.count} value(s) replaced before this file was staged — the copy in ~/.claude is untouched`;
+      line.append(tag);
+    }
+    line.append(el('div', 'n', f.added < 0 ? 'binary' : `+${f.added} \u2212${f.removed}`));
+    box.append(line);
+  }
+  const tail = v.truncated ? `${v.commit} \u00B7 ${v.truncated} more not shown` : v.commit;
+  if (tail) box.append(el('div', 'more', tail));
+}
+
+// ---- repaint guard ---------------------------------------------------------
+
+// A panel is rebuilt only when the thing it shows has actually changed.
+//
+// The status poll runs every five seconds while the window is open, and most of
+// these panels answer questions that move far more slowly than that. Repainting
+// regardless tears down whatever the reader is in the middle of — an expanded
+// row, a flashed confirmation, a button mid-operation — and it did exactly that
+// three separate times here before this existed: the activity feed, the session
+// detail, and the split-session list.
+//
+// The caller passes a PROJECTION rather than the whole payload. Most of these
+// objects carry something that churns — a byte count, a timestamp — and
+// comparing everything would report a change on every poll, which is the bug
+// this prevents wearing a disguise.
+//
+// force skips the check, for when a panel's own action changed the data and the
+// repaint is the entire point.
+const paintedSig = new Map();
+
+function changed(key, projection, force) {
+  const sig = JSON.stringify(projection);
+  if (!force && paintedSig.get(key) === sig) return false;
+  paintedSig.set(key, sig);
+  return true;
+}
+
+// repaint forgets a panel's last signature, so the next render rebuilds even
+// though its data did not move. For the case where something OUTSIDE the data
+// invalidated what is on screen.
+function repaint(key) { paintedSig.delete(key); }
+
+function renderActivity(events) {
+  // The journal only moves when a sync writes; the poll fires every 5s.
+  if (!changed('activity', (events || []).map(e => [e.at, e.machine, e.summary, e.outcome]))) return;
+
+  const box = $('activity');
+  box.replaceChildren();
+
+  if (!events?.length) {
+    const p = document.createElement('div');
+    p.className = 'empty';
+    p.textContent = 'Nothing recorded yet — the next sync will show up here.';
+    box.append(p);
+    return;
+  }
+
+  for (const ev of collapse(events)) {
+    const row = document.createElement('div');
+    row.className = 'ev';
+    row.dataset.outcome = ev.outcome;
+
+    const tick = document.createElement('div');
+    tick.className = 'tick';
+
+    const body = document.createElement('div');
+    body.className = 'body';
+
+    const text = document.createElement('div');
+    text.className = 'text';
+    text.textContent = ev.summary;
+    body.append(text);
+
+    // A refusal names what it caught. "Refused" alone reads as a malfunction;
+    // the paths are what make it read as a save.
+    for (const leak of ev.leaks ?? []) {
+      const l = document.createElement('div');
+      l.className = 'leak';
+      l.textContent = leak;
+      body.append(l);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = ev.this ? ev.op : `${ev.op} · ${ev.machine}`;
+    if (ev.count > 1) {
+      meta.textContent += ` · ×${ev.count}`;
+      meta.title = `${ev.count} identical runs, oldest ${since(ev.oldest)}`;
+    }
+    body.append(meta);
+
+    const when = document.createElement('div');
+    when.className = 'when';
+    when.textContent = since(ev.at);
+
+    // Each sync is one commit in the staging repo, so "which files" already has
+    // an exact answer — it just needed asking. Folded rows expand on their
+    // newest run; the older ones in the fold are, by definition, the same
+    // summary and not what you clicked for.
+    row.className += ' can';
+    row.title = 'Show the files this run touched';
+    const key = evKey(ev);
+    let files = null;
+
+    const expand = async () => {
+      filesOpen.add(key);
+      if (files) return;
+      files = el('div', 'files');
+      body.append(files);
+      const cached = filesCache.get(key);
+      if (cached) { paintFiles(files, cached, ev.redacted); return; }
+      files.textContent = 'reading the commit…';
+      try {
+        const v = await Call.ByName(ACTIVITY_FILES, ev.at, ev.machine);
+        filesCache.set(key, v);
+        if (files) paintFiles(files, v, ev.redacted);
+      } catch (e) {
+        if (files) files.replaceChildren(el('div', 'more', String(e)));
+      }
+    };
+    const collapse = () => {
+      filesOpen.delete(key);
+      if (files) { files.remove(); files = null; }
+    };
+    row.addEventListener('click', () => (filesOpen.has(key) ? collapse() : expand()));
+    if (filesOpen.has(key)) expand();
+
+    row.append(tick, body, when);
+    box.append(row);
+  }
+}
+
+async function refresh() {
+  try {
+    const snap = await Call.ByName(STATUS_GET);
+    render(snap);
+    renderActions(snap);
+  } catch (e) {
+    $('banner').dataset.level = 'red';
+    $('summary').textContent = 'Could not read sync status';
+    $('sub').textContent = String(e);
+  }
+  // Independent of the status call: a broken accounts store must not blank the
+  // status panel, and vice versa.
+  try {
+    renderAccounts(await Call.ByName(ACCOUNTS_GET));
+  } catch (e) {
+    $('accounts').replaceChildren(el('div', 'empty err', `Could not read accounts: ${e}`));
+  }
+  // Independent: a filing problem must not blank the panels, and a failure to
+  // check must not either — it is a warning about other data, not this one.
+  try {
+    renderFiling(await Call.ByName(FILING_GET));
+  } catch { /* leave the row empty */ }
+
+  // Independent again: walking the checkout to size it is the slowest read here,
+  // and it must not be able to blank the panels above it.
+  try {
+    renderRepo(await Call.ByName(REPO_GET));
+  } catch (e) {
+    $('repo').replaceChildren(el('div', 'empty err', `Could not read the repo: ${e}`));
+  }
+
+  // Independent of the status call: a broken journal must not blank the
+  // status panel, and vice versa.
+  try {
+    renderActivity(await Call.ByName(ACTIVITY_RECENT, 50));
+  } catch (e) {
+    const box = $('activity');
+    box.replaceChildren();
+    const p = document.createElement('div');
+    p.className = 'empty err';
+    p.textContent = `Could not read the journal: ${e}`;
+    box.append(p);
+  }
+}
+
+// ---- actions ---------------------------------------------------------------
+
+// Which verbs to offer for a given health reason. The banner already says what
+// is wrong and what to run; these are the same advice, clickable — so the two
+// can never disagree.
+const ACTIONS_FOR = {
+  synced:             ['sync'],
+  unconfigured:       [],
+  'never-fetched':    ['pull', 'sync'],
+  uncommitted:        ['sync'],
+  ahead:              ['sync'],
+  behind:             ['pull'],
+  diverged:           ['merge', 'pull'],
+  conflict:           ['merge'],
+  merging:            ['merge'],
+  'last-run-failed':  ['sync', 'pull'],
+  'last-run-refused': ['sync'],
+};
+const ACTION_LABEL = { sync: 'Sync now', pull: 'Pull', merge: 'Resolve' };
+
+let running = false;
+
+// lastSync arrives as "hash when — subject", and the subject of this machine's
+// own sync is "clauderig sync: <this machine>" — which the banner is already
+// about. Dropped when it names us, kept when it names someone else, because
+// then it is the useful half: the last commit here came from another Mac.
+function trimLastSync(text, machine) {
+  const mine = ` — clauderig sync: ${machine}`;
+  if (text.endsWith(mine)) return text.slice(0, -mine.length);
+  return text.replace(' — clauderig sync: ', ' — from ');
+}
+
+function renderActions(snap) {
+  const acts = $('acts');
+  acts.replaceChildren();
+  const verbs = ACTIONS_FOR[snap.reason] ?? ['sync'];
+  verbs.forEach((verb, i) => {
+    const b = document.createElement('button');
+    if (i === 0) b.className = 'primary';
+    b.textContent = ACTION_LABEL[verb] ?? verb;
+    // On a green banner "Sync now" looks redundant — there is nothing local to
+    // push. What it is actually for there is the fetch: Unmerged is read from
+    // the remote-tracking ref and the status gather does no network, so "up to
+    // date" only ever means "as of the last time we looked". Another machine
+    // may have pushed since and nothing here would know.
+    b.title = verb === 'sync' && snap.level === 'green'
+      ? 'Push anything local and fetch what other machines have pushed since the last check'
+      : (snap.action || '');
+    b.disabled = running;
+    b.dataset.verb = verb;
+    b.onclick = () => runAction(verb);
+    acts.append(b);
+  });
+}
+
+function setRunning(on) {
+  running = on;
+  document.querySelectorAll('.acts button').forEach(b => { b.disabled = on; });
+}
+
+async function runAction(verb, arg) {
+  const out = $('out');
+  out.replaceChildren();
+  setRunning(true);
+  try {
+    if (arg === undefined) await Call.ByName(ACTIONS_RUN, verb);
+    else await Call.ByName(ACTIONS_RUN_WITH, verb, arg);
+  } catch (e) {
+    // A rejected action never reaches the done event, so report it here.
+    setRunning(false);
+    appendLine(String(e), 'stderr');
+  }
+}
+
+function appendLine(text, stream) {
+  const out = $('out');
+  const line = document.createElement('div');
+  if (stream === 'stderr') line.className = 'e';
+  line.textContent = text;
+  out.append(line);
+  out.scrollTop = out.scrollHeight;
+}
+
+Events.On(ACTIONS_START_EVENT, (e) => {
+  setRunning(true);
+  const head = document.createElement('div');
+  head.className = 'head';
+  head.textContent = `clauderig ${e?.data?.action ?? ''}`;
+  $('out').append(head);
+});
+Events.On(ACTIONS_LINE_EVENT, (e) => {
+  const d = e?.data ?? {};
+  appendLine(d.text ?? '', d.stream);
+});
+Events.On(ACTIONS_DONE_EVENT, (e) => {
+  const d = e?.data ?? {};
+  setRunning(false);
+  if (d.error) appendLine(d.error, 'stderr');
+  // The tray repaints from the same snapshot, so pull the window back in step.
+  refresh();
+});
+
+// ---- accounts ---------------------------------------------------------------
+
+// ---- repository ------------------------------------------------------------
+
+function bytes(n) {
+  if (!n || n < 0) return '0 B';
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${Math.round(n / 1024)} KB`;
+  if (n < 1073741824) return `${(n / 1048576).toFixed(1)} MB`;
+  return `${(n / 1073741824).toFixed(2)} GB`;
+}
+
+// The repo is the one thing here that grows without anyone deciding it should:
+// transcripts only ever get longer and sync every few minutes, so each run
+// stores another copy. The ratio is the number that says so, and it is not one
+// anyone works out by eye.
+// The answer as it is asked — "a month or a day?" — not as a timestamp.
+function span(days) {
+  if (days < 1.5) return `${Math.round(days * 24)} hours`;
+  if (days < 60) return `${Math.round(days)} days`;
+  return `${Math.round(days / 30)} months`;
+}
+
+// Repacking and pruning both move ground the rest of the window is standing on,
+// and neither is something the poll will notice: the journal is unchanged, so
+// the activity feed's signature check would keep the stale render, and the
+// status panel's last-sync line is read from a commit that a prune has just
+// replaced.
+//
+// rewrote says whether commit ids changed. A repack keeps every sha, so its
+// cached file lists stay valid; a prune rebuilds every commit above the cutoff,
+// which makes every cached sha a lie and every expanded row unopenable.
+function repoChanged(rewrote) {
+  if (rewrote) {
+    filesCache.clear();
+    filesOpen.clear();
+  }
+  repaint('activity');   // the journal did not move, but the shas underneath it did
+  refresh();
+}
+
+// Sessions filed in two places, and Desktop sidecars pointing at the wrong one.
+// Silent until something is wrong: a panel that says "all good" every time is a
+// panel people stop reading, and this one has to be noticed the once it matters.
+let filingOpen = false;
+
+function renderFiling(v, force) {
+  const box = $('filing');
+  const splits = v?.splits || [], stale = v?.stale || [];
+
+  // The status poll runs every 5s while the window is open, and this data only
+  // changes when a session is filed or fixed. Rebuilding regardless threw away
+  // the expanded list underneath whoever had just opened it — the same fault
+  // the activity feed had, for the same reason.
+  if (!changed('filing', [v?.error || '', splits.map(s => s.id), stale.map(s => s.id)], force)) return;
+  filingOpen = false;
+
+  box.replaceChildren();
+  if (!v || v.error) return;
+  if (!splits.length && !stale.length) return;
+
+  const card = el('div', 'warnrow');
+  if (splits.length) {
+    card.append(el('div', null, `${splits.length} session${splits.length === 1 ? ' is' : 's are'} `
+      + 'filed in more than one project directory — anything resolving by directory can open the '
+      + 'older copy, which reads as the session losing everything after it split.'));
+  }
+  if (stale.length) {
+    card.append(el('div', null, `${stale.length} Claude Desktop sidecar${stale.length === 1 ? '' : 's'} `
+      + 'name a directory that no longer holds the transcript, so Desktop opens an older copy.'));
+  }
+  if (splits.length) {
+    const show = el('button', null, 'Show them');
+    show.onclick = () => { show.disabled = true; filingOpen = true; loadSplits(box, card); };
+    if (filingOpen) {
+      show.disabled = true;
+      loadSplits(box, card);
+    }
+    const row = el('div', 'reporow');
+    row.append(el('div', 'grow'));
+    row.append(show);
+    card.append(row);
+  }
+  box.append(card);
+}
+
+// The list, once asked for. Not loaded with the banner: describing a split
+// reads BOTH transcripts of every one to compare them record by record, which
+// is not something to do on a status refresh.
+async function loadSplits(box, card) {
+  const list = el('div', 'splits');
+  list.textContent = 'reading both copies of each…';
+  card.append(list);
+  try {
+    const splits = await Call.ByName(FILING_SPLITS);
+    list.replaceChildren();
+    for (const s of splits || []) list.append(splitRow(s, box));
+  } catch (e) {
+    list.textContent = String(e);
+  }
+}
+
+function splitRow(s, box) {
+  const row = el('div', 'split');
+  row.append(el('div', 't', s.title || '(untitled session)'));
+  row.append(el('div', 'hint', s.id));
+
+  for (const c of s.copies || []) {
+    const line = el('div', 'cp');
+    line.append(el('span', 'k', c.keep ? 'keep' : 'older'));
+    line.append(el('span', 'p', c.slug));
+    const span = [c.first, c.last]
+      .map(t => (t && !String(t).startsWith('0001')) ? new Date(t).toLocaleDateString() : '')
+      .filter(Boolean);
+    line.append(el('span', 'n', `${(c.lines || 0).toLocaleString()} records`
+      + (span.length ? `  ${span[0]} → ${span[span.length - 1]}` : '')
+      + (c.only ? `  · ${c.only} only here` : '')));
+    row.append(line);
+  }
+
+  const acts = el('div', 'reporow');
+  const status = el('div', 'grow hint');
+  acts.append(status);
+  if (s.safe) {
+    const fix = el('button', null, 'Keep newest, park the older');
+    fix.title = 'Moves the older copy into ~/.clauderig/parked. Nothing is deleted, and it is '
+      + 'parked outside ~/.claude so the next sync cannot bring it back.';
+    fix.onclick = async () => {
+      fix.disabled = true;
+      status.textContent = 'parking…';
+      try {
+        const res = await Call.ByName(FILING_FIX, s.id);
+        row.replaceChildren(el('div', 'hint',
+          `Parked ${res.files.length} copy(ies) in ${res.dir}`));
+        // The banner counted this one; re-read so the count is honest. Forced,
+        // and with the list re-expanded: collapsing it the moment you fix one
+        // of four is not a reward for fixing it.
+        try {
+          filingOpen = true;
+          renderFiling(await Call.ByName(FILING_GET), true);
+        } catch { /* leave it */ }
+      } catch (e) {
+        status.className = 'grow hint warn';
+        status.textContent = String(e);
+        fix.disabled = false;
+      }
+    };
+    acts.append(fix);
+  } else {
+    // Refused, and said so rather than hidden: a missing button is a mystery,
+    // and this is the case where a person genuinely has to look.
+    status.className = 'grow hint warn';
+    status.textContent = `${s.diverged} record(s) exist only in the older copy — `
+      + 'open both before choosing; nothing here can pick for you.';
+  }
+  row.append(acts);
+  return row;
+}
+
+function renderRepo(v, force) {
+  // The byte counts move constantly — a sync writes and .git grows — so the
+  // projection is deliberately coarse: the numbers as DISPLAYED. A repack that
+  // reclaims 2 GB changes them; a commit that adds a few KB does not, and a
+  // panel that rebuilds under a button someone is pressing is the bug this
+  // guard exists for.
+  if (!changed('repo', [
+    v?.error || '', v?.commits, v?.files, v?.squashed,
+    bytes(v?.workBytes), bytes(v?.gitBytes), bytes(v?.looseBytes),
+    (v?.contents || []).map(g => [g.name, bytes(g.bytes)]),
+  ], force)) return;
+
+  const box = $('repo');
+  box.replaceChildren();
+  if (!v || v.error) {
+    box.append(el('div', 'empty err', v?.error || 'Could not read the repo'));
+    return;
+  }
+  const row = (k, node) => {
+    const r = el('div', 'repo');
+    r.append(el('div', 'k', k));
+    const val = el('div', 'v');
+    val.append(node);
+    r.append(val);
+    box.append(r);
+  };
+
+  const content = el('span', null);
+  content.append(el('b', null, bytes(v.workBytes)));
+  content.append(document.createTextNode(` across ${(v.files || 0).toLocaleString()} files`));
+  row('content', content);
+
+  const hist = el('span', null);
+  hist.append(el('b', null, bytes(v.gitBytes)));
+  hist.append(document.createTextNode(` in ${(v.commits || 0).toLocaleString()} commits`));
+  if (v.ratio) {
+    const r = el('span', 'hint' + (v.ratio >= 4 ? ' warn' : ''), `  ${v.ratio.toFixed(1)}× the content`);
+    if (v.ratio >= 4) r.title = 'History costs several times the files it is history of — pruning reclaims most of it';
+    hist.append(r);
+  }
+  row('history', hist);
+
+  // Loose objects are not a long history and do not have a history's remedy.
+  // Offered before the prune, and phrased as what it costs: nothing.
+  if (v.looseBytes > 0 && v.gitBytes > 0 && v.looseBytes > 0.4 * v.gitBytes) {
+    const n = el('span', 'hint warn',
+      `${bytes(v.looseBytes)} in ${(v.looseObjects || 0).toLocaleString()} objects not yet packed`);
+    n.title = 'Repacking reclaims this and keeps every commit — try it before pruning anything';
+    row('unpacked', n);
+  }
+
+  // The question the panel exists to answer: how far back can I go?
+  if (v.retainedDays > 0) {
+    const n = el('span', null);
+    n.append(el('b', null, span(v.retainedDays)));
+    n.append(el('span', 'hint', v.squashed
+      ? `  — squashed ${new Date(v.first).toLocaleDateString()}, earlier history discarded`
+      : `  — since ${new Date(v.first).toLocaleDateString()}`));
+    row('retained', n);
+  }
+
+
+
+  // What it is large WITH. A total invites pruning history, and on a real repo
+  // that is the wrong lever — nearly all of it is conversation, which no squash
+  // touches.
+  if (v.contents?.length) {
+    const holds = el('div', 'holds');
+    const top = v.contents[0]?.bytes || 1;
+    for (const g of v.contents) {
+      if (!g.bytes) continue;
+      const h = el('div', 'h');
+      const bar = el('div', 'bar');
+      const fill = document.createElement('i');
+      fill.style.width = `${Math.max(2, Math.round(100 * g.bytes / top))}%`;
+      bar.append(fill);
+      h.append(bar);
+      h.append(el('div', 'p', v.workBytes ? `${Math.round(100 * g.bytes / v.workBytes)}%` : ''));
+      const n = el('div', 'n', g.name);
+      n.title = `${g.detail} — ${g.files.toLocaleString()} files`;
+      h.append(n);
+      h.append(el('div', 'b', bytes(g.bytes)));
+      holds.append(h);
+    }
+    box.append(holds);
+  }
+
+  const acts = el('div', 'reporow');
+  // Progress goes here rather than in the banner's sub-line at the top of the
+  // pane: repacking gigabytes takes a minute, and a message that far from the
+  // panel you are looking at is a message nobody sees. Silence for a minute
+  // reads as a button that did nothing.
+  const status = el('div', 'grow hint');
+  acts.append(status);
+
+  const pack = document.createElement('button');
+  pack.textContent = 'Repack';
+  pack.title = 'Delta-compress loose objects. Reclaims space and keeps every commit.';
+  pack.disabled = running;
+  pack.onclick = async () => {
+    pack.disabled = true;
+    prune.disabled = true;
+    status.textContent = v.looseBytes
+      ? `Packing ${bytes(v.looseBytes)}\u2026 this can take a minute`
+      : 'Repacking\u2026';
+    try {
+      const res = await Call.ByName(REPO_REPACK);
+      renderRepo(res.after, true);
+      repoChanged(false);
+      note(res.reclaimed > 0
+        ? `Reclaimed ${bytes(res.reclaimed)}, every commit kept`
+        : 'Already packed — nothing to reclaim');
+    } catch (e) {
+      status.className = 'grow hint warn';
+      status.textContent = String(e);
+      pack.disabled = false;
+      prune.disabled = false;
+    }
+  };
+  acts.append(pack);
+
+  const prune = document.createElement('button');
+  prune.textContent = 'Prune history…';
+  prune.title = 'Fold older history into one commit. The files are kept exactly as they are.';
+  prune.disabled = running;
+  prune.onclick = () => openPruneModal(v);
+  acts.append(prune);
+  box.append(acts);
+}
+
+// Same shape as the delete confirm, for the same reason: this rewrites history
+// that other machines share, so it has to be a decision rather than a click.
+// The CLI refuses to do it without a terminal on purpose; this dialog is the
+// window's equivalent of standing there, not a way around it.
+function openPruneModal(stats) {
+  const scrim = el('div', 'modal');
+  const card = el('div', 'card');
+  const close = () => { document.removeEventListener('keydown', onKey, true); scrim.remove(); };
+  const onKey = (e) => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation(); e.preventDefault(); close();
+  };
+
+  const box = el('div', 'confirmrow');
+  box.append(el('div', 'note', 'Fold sync history older than:'));
+
+  let days = 30;
+  const choices = el('div', 'row');
+  choices.style.justifyContent = 'flex-start';
+  [[7, 'a week'], [30, 'a month'], [90, 'three months']].forEach(([d, label]) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.dataset.days = String(d);
+    b.onclick = () => { days = d; paint(); };
+    choices.append(b);
+  });
+  box.append(choices);
+
+  const warn = el('div', 'warn');
+  box.append(warn);
+
+  const row = el('div', 'row');
+  const cancel = el('button', null, 'Cancel');
+  cancel.onclick = close;
+  const go = el('button', 'danger', 'Prune');
+  go.onclick = async () => {
+    go.disabled = true;
+    warn.textContent = 'Folding history and force-pushing…';
+    try {
+      const res = await Call.ByName(REPO_PRUNE, days);
+      close();
+      if (res.folded) {
+        renderRepo(res.after, true);
+        repoChanged(true);
+        note(`Folded ${res.folded.toLocaleString()} commits, reclaimed ${bytes(res.reclaimed)}`);
+      } else {
+        note('Nothing older than that — the repo is unchanged');
+      }
+    } catch (e) {
+      warn.textContent = String(e);
+      go.disabled = false;
+    }
+  };
+  row.append(cancel, go);
+  box.append(row);
+
+  function paint() {
+    choices.querySelectorAll('button').forEach(b => {
+      b.className = Number(b.dataset.days) === days ? 'primary' : '';
+    });
+    // Say what is lost, not just what is saved. Backfill reads deleted sessions
+    // out of history, and that is exactly what this throws away.
+    warn.textContent =
+      `Everything before ${new Date(Date.now() - days * 864e5).toLocaleDateString()} becomes one commit. ` +
+      `Your files do not change. Other machines pick the new history up on their next sync. ` +
+      `Sessions that retention deleted before then can no longer be recovered with \u0060ledger backfill\u0060.`;
+  }
+  paint();
+
+  card.append(box);
+  scrim.append(card);
+  scrim.addEventListener('click', (e) => { if (e.target === scrim) close(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(scrim);
+  requestAnimationFrame(() => cancel.focus());
+}
+
+// A one-line result, shown where the banner sub-line lives so it is read.
+function note(text) {
+  const sub = $('sub');
+  if (!sub) return;
+  const prev = sub.textContent;
+  sub.textContent = text;
+  setTimeout(() => { if (sub.textContent === text) sub.textContent = prev; }, 6000);
+}
+
+function renderAccounts(v) {
+  // Guarded because these rows carry transient state the poll would erase: the
+  // tick a launch button flashes for two seconds, and the disabled Switch while
+  // Claude Code is running.
+  if (!changed('accounts', [
+    v.error || '', v.desynced, v.switchBlocked,
+    (v.accounts || []).map(a => [a.id, a.active, a.profile, a.profileOpen]),
+    (v.live || []).map(l => l.pid),
+  ])) return;
+
+  const box = $('accounts');
+  box.replaceChildren();
+  if (v.error) {
+    box.append(el('div', 'empty err', v.error));
+    return;
+  }
+  if (!v.accounts || !v.accounts.length) {
+    box.append(el('div', 'empty', 'No accounts captured yet — run `clauderig account add`.'));
+    return;
+  }
+  v.accounts.forEach(a => {
+    const row = el('div', 'acct');
+    const am = monogramFor(a.email || a.id);
+    row.append(paintMono(el('span', 'mono', am), am));
+    const who = el('div', 'who', a.email || a.id);
+    if (a.subscription) who.append(el('span', 'plan', `  ${a.subscription}`));
+    row.append(who);
+
+    // Launching is not switching. `account run` scopes the credential to the
+    // terminal it opens, and a Desktop profile is a separate login altogether —
+    // so starting either one leaves the machine-wide account alone, and both
+    // stay available while a session is running.
+    const launch = (title, label, fn) => {
+      const b = document.createElement('button');
+      b.className = 'icon';
+      b.innerHTML = label;
+      b.title = title;
+      b.setAttribute('aria-label', title);
+      b.onclick = async (e) => {
+        e.stopPropagation();
+        b.disabled = true;
+        try {
+          await fn();
+          b.classList.add('ok');
+          setTimeout(() => { b.classList.remove('ok'); b.disabled = false; }, 2200);
+        } catch (err) {
+          note(String(err));
+          b.disabled = false;
+        }
+      };
+      row.append(b);
+    };
+
+    launch(`Open a terminal running Claude Code as ${a.email || a.id}`, ICON_TERMINAL,
+      () => Call.ByName(ACCOUNTS_RUNCLI, a.id));
+    if (a.profile) {
+      launch(a.profileOpen
+        ? `Focus the Claude Desktop window for ${a.profile}`
+        : `Open Claude Desktop as ${a.profile}`, ICON_DESKTOP,
+        () => Call.ByName(ACCOUNTS_DESKTOP, a.profile));
+    }
+
+    if (a.active) row.append(el('span', 'live', 'live'));
+    else {
+      const b = document.createElement('button');
+      b.textContent = 'Switch';
+      // The guard is surfaced, never routed around: swapping the credential
+      // under a running session corrupts its identity, so the CLI refuses and
+      // the window says why instead of letting that refusal look like a bug.
+      b.disabled = running || v.switchBlocked;
+      b.title = v.switchBlocked
+        ? `Claude Code is running (${(v.live || []).map(l => l.pid).join(', ')}) — close it first`
+        : `Make ${a.email || a.id} the machine-wide login`;
+      b.onclick = () => runAction('account-switch', a.id);
+      row.append(b);
+    }
+    box.append(row);
+  });
+  if (v.desynced) {
+    box.append(el('div', 'warnrow',
+      'The live credential and ~/.claude.json name different organizations — run `clauderig account doctor`.'));
+  }
+}
+
+// ---- the popup's two views --------------------------------------------------
+
+// Sessions live here as well as in the full window so the tray icon reaches
+// them without a second window appearing — the ordering of two windows was
+// never reliable, and glancing at recent sessions does not need 1200px.
+let view = 'status';
+
+function showView(next) {
+  view = next;
+  $('statusView').hidden = next !== 'status';
+  $('sessionsView').hidden = next !== 'sessions';
+  // Only ever meaningful over a session's detail.
+  const onDetail = next === 'sessions' && !$('sdetail').hidden;
+  $('backToList').hidden = !onDetail;
+  // Both labels stay in the DOM; only their visibility changes, so the button
+  // keeps the width of the wider one.
+  $('lblSessions').toggleAttribute('data-off', next !== 'status');
+  $('lblStatus').toggleAttribute('data-off', next === 'status');
+  // Reload every time, not just the first: this window is usually reopened
+  // rather than reloaded, so a list rendered once would stay as it was for the
+  // rest of the day.
+  if (next === 'sessions' && $('sdetail').hidden) {
+    loadSessions();
+    // Switching to Sessions is almost always the first half of looking for one.
+    // Focused after the frame, so the field is actually on screen when it takes
+    // the caret.
+    requestAnimationFrame(() => $('ssearch').focus());
+  }
+}
+
+// Hide, not quit: the tray is the app, and a popover's close means "put it
+// away" — the same thing clicking elsewhere does.
+$('closeWin').innerHTML = ICON_CLOSE;
+$('closeWin').addEventListener('click', () => Call.ByName(WINDOWS_HIDE, 'main'));
+
+$('toggleView').addEventListener('click', () => {
+  showView(view === 'status' ? 'sessions' : 'status');
+});
+
+$('popOut').innerHTML = ICON_POPOUT;
+$('popOut').addEventListener('click', async () => {
+  try {
+    await Call.ByName(WINDOWS_OPEN, 'sessions');
+    await Call.ByName(WINDOWS_HIDE, 'main');
+  } catch (e) {
+    $('sub').textContent = `Could not open the sessions window: ${e}`;
+  }
+});
+
+// ---- compact session list ---------------------------------------------------
+
+const shortAge = (iso) => {
+  if (!iso || iso.startsWith('0001-01-01')) return '—';
+  const mins = Math.floor((Date.now() - new Date(iso)) / 60000);
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m`;
+  if (mins < 1440) return `${Math.floor(mins / 60)}h`;
+  const days = Math.floor(mins / 1440);
+  return days < 90 ? `${days}d` : `${Math.floor(days / 30)}mo`;
+};
+const homeRel = (p) => {
+  if (!p) return '';
+  const m = p.match(/^\/(?:Users|home)\/[^/]+(\/.*)?$/);
+  return m ? '~' + (m[1] || '') : p;
+};
+
+let listSeq = 0;
+async function loadSessions() {
+  const seq = ++listSeq;
+  lastListLoad = Date.now();
+  // Searching now opens transcripts for anything the row fields miss, so it is
+  // no longer instant. Say so: a list that sits there unchanged reads as a
+  // search that found nothing, which is the one answer it must not give by
+  // accident. Only when there is a term — an unfiltered reload is fast and
+  // flashing "searching" at every poll would be noise.
+  const term = $('ssearch').value.trim();
+  let spinner;
+  if (term) {
+    spinner = setTimeout(() => {
+      if (seq !== listSeq) return;
+      $('ssearchwrap').dataset.busy = '';
+      $('slist').dataset.busy = '';
+    }, 150);
+  }
+  try {
+    const v = await Call.ByName(LIBRARY_LIST, {
+      since: '30d', text: $('ssearch').value, limit: COMPACT_LIMIT,
+    });
+    if (seq !== listSeq) return;
+    if (v.error) throw new Error(v.error);
+    $('slist').replaceChildren(...v.sessions.map(sessionRow));
+    $('sempty').hidden = v.sessions.length > 0;
+    $('sempty').textContent = term
+      ? `Nothing in the last 30 days mentions “${term}”.`
+      : 'No sessions in the last 30 days.';
+  } catch (e) {
+    if (seq !== listSeq) return;
+    $('slist').replaceChildren();
+    $('sempty').hidden = false;
+    $('sempty').textContent = `Could not list sessions: ${e}`;
+  } finally {
+    clearTimeout(spinner);
+    delete $('ssearchwrap').dataset.busy;
+    delete $('slist').dataset.busy;
+  }
+}
+
+function sessionRow(s) {
+  const row = el('div', 'srow');
+  row.append(el('div', 'when', shortAge(s.when) + (s.approx ? '~' : '')));
+
+  const acct = s.accountLabel || s.account;
+  if (acct) {
+    const m = monogramFor(acct);
+    const badge = paintMono(el('span', 'mono', m), m);
+    badge.title = acct;
+    row.append(badge);
+  }
+
+  const what = el('div', 'what');
+  what.append(el('div', 't', s.title || '(untitled session)'));
+  // A body match shows what was found and how often, the way `clauderig search`
+  // reports it — the hit is why the row is here, so it earns the line the
+  // project would otherwise have.
+  if (s.matches) {
+    const hit = el('div', 'p hit');
+    hit.append(el('span', 'n', `${s.matches}×`));
+    hit.append(document.createTextNode(' ' + (s.snippet || '')));
+    hit.title = homeRel(s.cwd) || '';
+    what.append(hit);
+  } else {
+    const where = homeRel(s.cwd);
+    if (where) what.append(el('div', 'p', where));
+  }
+  row.append(what);
+
+  // The same three-tier presence the full window shows, just narrower.
+  // Which client last ran it decides what "Open" will do, so it belongs on the
+  // row rather than only in the detail — it is the difference between landing
+  // in a terminal and landing in VS Code.
+  if (s.client) {
+    // The badge already says which account this is, and the client string ends
+    // in that same profile — so the suffix was spending the column on a repeat
+    // of the letter, and truncating exactly where it would have differed.
+    const c = el('div', 'cl', s.client.split('@')[0]);
+    c.title = `Last used from ${s.client}`;
+    row.append(c);
+  }
+
+
+  // Nearly every session is here and synced, and here-desk is grey by design —
+  // Desktop keeps Code-tab transcripts in the shared ~/.claude — so drawing the
+  // three on every row spends a column to say "normal" over and over. They
+  // appear only when this row isn't: never synced, gone from this Mac, or
+  // holding a Desktop transcript of its own. A row with no icons is the common
+  // case, and the ones that show up are the ones worth looking at.
+  //
+  // All three show together rather than only the odd one: with fixed slots a
+  // lone glyph would be ambiguous about which store it stood for.
+  const held = new Set(s.sources || []);
+  const paths = s.paths || {};
+  const ordinary = !!paths.cli && !!paths.repo && !paths.desktop;
+  if (!ordinary) {
+    const w = el('div', 'w');
+    STORES.forEach((src) => {
+      const on = held.has(src);
+      const hasTranscript = on && !!paths[src];
+      const risk = !on && src === 'repo' && held.has('cli');
+      const tag = el('span', hasTranscript ? 'on' : on ? 'listed' : risk ? 'risk' : '', STORE_ICON[src]);
+      tag.title = hasTranscript ? `${STORE_LABEL[src]} holds this conversation`
+        : on ? `${STORE_LABEL[src]} lists it, but the transcript is in here-cli`
+        : risk ? 'Not in the synced repo — this session exists only on this Mac'
+        : `Not in ${STORE_LABEL[src]}`;
+      w.append(tag);
+    });
+    row.append(w);
+  }
+
+  row.onclick = () => openSession(s.id);
+  return row;
+}
+
+let searchDebounce;
+$('ssearch').addEventListener('input', () => {
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(loadSessions, 250);
+});
+
+// ---- compact detail, in place ------------------------------------------------
+
+// Which session the detail is showing, so reopening the window can re-read it.
+let openSessionID = null;
+
+function showList() {
+  openSessionID = null;
+  $('sdetail').hidden = true;
+  $('slist').hidden = false;
+  $('ssearchwrap').hidden = false;
+  $('sempty').hidden = !!$('slist').childElementCount;
+  $('backToList').hidden = true;
+}
+
+$('backToList').addEventListener('click', showList);
+
+async function openSession(id) {
+  openSessionID = id;
+  $('slist').hidden = true;
+  $('ssearchwrap').hidden = true;
+  $('sempty').hidden = true;
+  const box = $('sdetail');
+  box.hidden = false;
+  $('backToList').hidden = false;
+  box.replaceChildren(el('div', 'gap', 'Reading the transcript…'));
+  try {
+    renderSession(await Call.ByName(LIBRARY_DETAIL, id, $('ssearch').value.trim()));
+  } catch (e) {
+    box.replaceChildren(el('div', 'empty err', `Could not open that session: ${e}`));
+  }
+}
+
+// A hit, with the term marked. Built as nodes rather than innerHTML because the
+// text is a transcript: it is someone's conversation, and pasting it into the
+// DOM as markup would execute whatever they happened to have written down.
+function excerptLine(text, at, len) {
+  const line = el('div', 'ex');
+  if (at < 0 || len <= 0 || at + len > text.length) {
+    line.textContent = text;
+    return line;
+  }
+  line.append(document.createTextNode(text.slice(0, at)));
+  line.append(el('mark', null, text.slice(at, at + len)));
+  line.append(document.createTextNode(text.slice(at + len)));
+  return line;
+}
+
+// Where the term appears, above the first/last prompts. The prompts say what a
+// session was FOR; when you arrived here from a search, this says why it came
+// back — which is the thing you clicked to find out.
+function renderHits(d) {
+  if (!d.hits?.length) return null;
+  const box = el('div', 'gap');
+  const total = d.session?.matches || d.hits.length;
+  const shown = d.hits.length;
+  box.append(el('div', 'lbl', shown < total
+    ? `“${d.search}” — showing ${shown} of ${total}`
+    : `“${d.search}” — ${total} ${total === 1 ? 'match' : 'matches'}`));
+  const list = el('div', 'exlist');
+  for (const h of d.hits) list.append(excerptLine(h.text || '', h.at ?? -1, h.len ?? 0));
+  box.append(list);
+  return box;
+}
+
+function renderSession(d) {
+  const s = d.session;
+  const box = $('sdetail');
+  box.replaceChildren();
+
+  box.append(el('div', 'dtitle', s.title || '(untitled session)'));
+  box.append(el('div', 'did', s.id));
+
+  const meta = el('div', 'dmeta');
+  const field = (label, value) => {
+    if (!value) return;
+    meta.append(el('b', null, label));
+    meta.append(el('div', null, value));
+  };
+  field('When', s.when && !s.when.startsWith('0001-01-01')
+    ? new Date(s.when).toLocaleString() + (s.approx ? '  (approximate)' : '') : '');
+  field('Project', homeRel(s.cwd));
+  field('Branch', s.branch);
+  field('Account', s.accountLabel || s.account);
+  field('Client', s.client);
+  box.append(meta);
+
+  // Above the prompts: you came here from a search, so the first thing to
+  // answer is why this session came back.
+  const hits = renderHits(d);
+  if (hits) box.append(hits);
+
+  if (d.prompts) {
+    box.append(el('b', null, 'Opened with'));
+    (d.first || []).forEach(p => box.append(turnEl(p)));
+    const shown = (d.first || []).length + (d.last || []).length;
+    if (d.prompts > shown) box.append(el('div', 'gap', `\u22ef ${d.prompts - shown} more prompt(s) \u22ef`));
+    if ((d.last || []).length) {
+      box.append(el('b', null, 'Last said'));
+      d.last.forEach(p => box.append(turnEl(p)));
+    }
+  }
+
+  box.append(sessionActions(d));
+}
+
+function turnEl(p) {
+  const t = el('div', 'turn', p.text);
+  if (p.at && !String(p.at).startsWith('0001-01-01')) {
+    t.append(el('span', 'at', new Date(p.at).toLocaleString()));
+  }
+  return t;
+}
+
+function sessionActions(d) {
+  const acts = el('div', 'dacts');
+  const note = el('div', 'note');
+  const flash = (n) => { n.classList.add('ok'); setTimeout(() => n.classList.remove('ok'), 2200); };
+
+  const del = el('button', 'danger icon');
+  del.innerHTML = ICON_TRASH;
+  del.title = 'Delete this session';
+  del.setAttribute('aria-label', 'Delete this session');
+  del.disabled = !(d.session.sources || []).length;
+  del.onclick = () => openDeleteModal(d, (deleted) => {
+    if (deleted) { showList(); loadSessions(); }
+  });
+
+  const targets = [{ kind: 'terminal', label: 'Terminal' }];
+  if (d.vscode) targets.push({ kind: 'vscode', label: 'VS Code' });
+  (d.profiles || []).forEach(p => targets.push({ kind: 'desktop', profile: p, label: `Desktop · ${p}` }));
+
+  const client = (d.session.client || '').toLowerCase();
+  let primary = targets[0];
+  if (client.startsWith('desktop')) {
+    const profile = (d.session.client.split('@')[1] || '').trim();
+    primary = targets.find(t => t.kind === 'desktop' && t.profile === profile) || primary;
+  } else if (client.includes('vscode') && d.vscode) {
+    primary = targets.find(t => t.kind === 'vscode') || primary;
+  }
+
+  async function open(target, node, anyway) {
+    note.textContent = '';
+    note.className = 'note';
+    try {
+      if (target.kind === 'desktop') await Call.ByName(LIBRARY_DESKTOP, d.session.id, target.profile, !!anyway);
+      else if (target.kind === 'vscode') await Call.ByName(LIBRARY_VSCODE, d.session.id);
+      else await Call.ByName(LIBRARY_TERMINAL, d.session.id);
+      flash(node);
+    } catch (e) {
+      note.className = 'note err';
+      note.textContent = String(e);
+      // The routing refusal is the one failure with a way forward: another
+      // Desktop window is open, and a deep link goes to whichever the OS picks.
+      // Offer to send it regardless — usually that IS the open window, which is
+      // what you wanted — while saying plainly that it is the OS's choice, not
+      // ours. Not offered after an override has already been used: a second
+      // identical attempt has nothing new to try.
+      if (target.kind === 'desktop' && !anyway && /another claude desktop window is open/i.test(String(e))) {
+        const go = el('button', 'danger', 'Send anyway');
+        go.title = 'Send it without the guard. The OS decides which open Desktop window receives it — '
+          + 'usually the one already in front, but it is not guaranteed.';
+        go.onclick = () => { go.remove(); open(target, node, true); };
+        note.append(document.createElement('br'), go);
+      }
+      // These errors are several lines long and land at the very bottom of a
+      // pane you have usually scrolled. Unscrolled, the message is clipped
+      // mid-sentence and anything under it — the override button — is simply
+      // not on screen. Bring the whole thing into view once it has laid out.
+      requestAnimationFrame(() => note.scrollIntoView({ block: 'end', behavior: 'smooth' }));
+    }
+  }
+
+  if (!d.resumable && (d.session.sources || []).includes('repo')) {
+    const bring = el('button', 'primary', 'Bring to this Mac');
+    bring.onclick = async () => {
+      bring.disabled = true;
+      try {
+        await Call.ByName(LIBRARY_MATERIALIZE, d.session.id);
+        flash(bring);
+        openSession(d.session.id);
+      } catch (e) {
+        bring.disabled = false;
+        note.className = 'note err';
+        note.textContent = String(e);
+      }
+    };
+    acts.append(bring);
+  } else {
+    const go = el('button', 'primary', `Open in ${primary.label}`);
+    go.disabled = !d.resumable;
+    go.title = d.resumable ? 'Where this session was last used'
+      : 'Not on this Mac — restore it from the sync first';
+    go.onclick = () => open(primary, go);
+    acts.append(go);
+
+    if (targets.length > 1) {
+      const pick = document.createElement('select');
+      pick.disabled = !d.resumable;
+      const head = document.createElement('option');
+      head.textContent = 'Other…'; head.value = '';
+      pick.append(head);
+      targets.forEach((t, i) => {
+        if (t === primary) return;
+        const o = document.createElement('option');
+        o.value = String(i); o.textContent = t.label;
+        pick.append(o);
+      });
+      pick.onchange = () => {
+        const t = targets[Number(pick.value)];
+        pick.value = '';
+        if (t) open(t, pick);
+      };
+      acts.append(pick);
+    }
+  }
+
+  const copy = el('button', 'icon');
+  copy.innerHTML = ICON_COPY;
+  copy.title = 'Copy the resume command';
+  copy.setAttribute('aria-label', 'Copy the resume command');
+  copy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(d.resumeCommand);
+      copy.innerHTML = ICON_CHECK;
+      flash(copy);
+      setTimeout(() => { copy.innerHTML = ICON_COPY; }, 2200);
+    } catch { note.textContent = d.resumeCommand; }
+  };
+  acts.append(copy);
+
+  const root = el('button', 'icon');
+  root.innerHTML = ICON_FOLDER;
+  root.title = 'Re-file this session under a different directory';
+  root.setAttribute('aria-label', 'Re-file this session under a different directory');
+  root.onclick = () => openRerootModal(d);
+  acts.append(root);
+
+  const more = el('button', 'icon');
+  more.innerHTML = ICON_POPOUT;
+  more.title = 'Open this session in the full window';
+  more.setAttribute('aria-label', 'Open this session in the full window');
+  more.onclick = async () => {
+    // Hand the session across first, so the full window opens on what you were
+    // reading rather than at the top of a list you have already scrolled past.
+    try { await Call.ByName(LIBRARY_HANDOFF, d.session.id); } catch { /* opens at the list */ }
+    await Call.ByName(WINDOWS_OPEN, 'sessions');
+    await Call.ByName(WINDOWS_HIDE, 'main');
+  };
+  acts.append(more);
+
+  // Appended last so it sits at the right-hand end of the row.
+  acts.append(del);
+  acts.append(note);
+  return acts;
+}
+
+// Re-filing asks for the directory and nothing else. Claude Code files a session
+// where it was launched, which is often a folder that merely holds projects
+// rather than the one the work happened in — and only the person who was there
+// knows which. Nothing is suggested, guessed or defaulted.
+function openRerootModal(d) {
+  const scrim = el('div', 'modal');
+  const card = el('div', 'card');
+  const close = () => { document.removeEventListener('keydown', onKey, true); scrim.remove(); };
+  const onKey = (e) => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation(); e.preventDefault(); close();
+  };
+
+  const box = el('div', 'confirmrow');
+  box.append(el('div', 'note', 'Re-file this session under:'));
+  const warn = el('div', 'warn');
+  const explain = el('div', 'explain');
+
+  // Field plus picker rather than one or the other. Typing is faster when you
+  // know the path and can paste it; the picker is the only way to be sure the
+  // directory exists, and a typo here files the session somewhere plausible and
+  // wrong rather than failing.
+  const pick = el('div', 'pickrow');
+  const input = document.createElement('input');
+  input.className = 'srch';
+  input.type = 'text';
+  input.placeholder = d.session.cwd || '/absolute/path';
+  input.value = d.session.cwd || '';
+  input.spellcheck = false;
+  pick.append(input);
+
+  const browse = document.createElement('button');
+  browse.textContent = 'Browse…';
+  browse.onclick = async () => {
+    browse.disabled = true;
+    try {
+      // The window name is what lets the picker attach as a sheet on this
+      // window rather than opening behind it.
+      const chosen = await Call.ByName(CHOOSE_DIR, 'main',
+        'Re-file this session under\u2026', input.value || d.session.cwd || '');
+      // Cancelling is an answer, not a failure: leave what was typed alone.
+      if (chosen) input.value = chosen;
+    } catch (e) {
+      warn.textContent = String(e);
+    } finally {
+      browse.disabled = false;
+      input.focus();
+    }
+  };
+  pick.append(browse);
+  box.append(pick);
+
+  explain.textContent = 'Records recorded at the old root are rewritten to point here. '
+    + 'Deeper directories are left alone, since those still exist. '
+    + 'The next sync carries the change to your other machines.';
+  box.append(explain);
+  box.append(warn);
+
+  const row = el('div', 'row');
+  const cancel = el('button', null, 'Cancel');
+  cancel.onclick = close;
+  const go = el('button', 'primary', 'Re-file');
+  go.onclick = async () => {
+    const dir = input.value.trim();
+    if (!dir) { input.focus(); return; }
+    go.disabled = true;
+    warn.textContent = 'Checking\u2026';
+    try {
+      // Dry run first: it costs one pass and turns "did that do anything?"
+      // into a number you agreed to before the file was touched.
+      const plan = await Call.ByName(LIBRARY_REROOT, d.session.id, dir, true);
+      if (plan.oldCwd === plan.newCwd) {
+        warn.textContent = 'Already filed there.';
+        go.disabled = false;
+        return;
+      }
+      const res = await Call.ByName(LIBRARY_REROOT, d.session.id, dir, false);
+      close();
+      note(`Re-filed under ${res.newCwd} — ${res.records} record(s) rewritten`);
+      showList();
+      loadSessions();
+    } catch (e) {
+      warn.className = 'warn';
+      warn.textContent = String(e);
+      go.disabled = false;
+    }
+  };
+  row.append(cancel, go);
+  box.append(row);
+
+  card.append(box);
+  scrim.append(card);
+  scrim.addEventListener('click', (e) => { if (e.target === scrim) close(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(scrim);
+  requestAnimationFrame(() => { input.focus(); input.select(); });
+}
+
+// Escape and a click on the scrim both cancel, because the safe answer has to
+// be the easy one. Focus lands on Cancel rather than Delete for the same
+// reason — a stray Return should not remove a conversation.
+function openDeleteModal(d, onDone) {
+  const scrim = el('div', 'modal');
+  const card = el('div', 'card');
+  const close = (deleted) => {
+    document.removeEventListener('keydown', onKey, true);
+    scrim.remove();
+    if (deleted) onDone(true);
+  };
+  // Captured, so Escape closes the confirm rather than reaching whatever else
+  // on the page listens for it.
+  const onKey = (e) => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    e.preventDefault();
+    close(false);
+  };
+  card.append(deleteConfirm(d, close));
+  scrim.append(card);
+  scrim.addEventListener('click', (e) => { if (e.target === scrim) close(false); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(scrim);
+  requestAnimationFrame(() => card.querySelector('.row button')?.focus());
+}
+
+// Deleting still asks per store — which copies exist, which to remove, and what
+// a restore would undo. What it must not become is a single click.
+function deleteConfirm(d, onDone) {
+  const held = (d.session.sources || []).filter(x => STORES.includes(x));
+  const box = el('div', 'confirmrow');
+  box.append(el('div', 'note', `Delete “${d.session.title || d.session.id}” from:`));
+
+  const boxes = [];
+  held.forEach(store => {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = store;
+    cb.checked = store === 'cli';   // the copy a restore can always bring back
+    label.append(cb, el('span', null, `${STORE_LABEL[store]} — ${(d.paths || {})[store] || 'sidecar only'}`));
+    box.append(label);
+    boxes.push(cb);
+    cb.addEventListener('change', update);
+  });
+
+  const warn = el('div', 'warn');
+  box.append(warn);
+
+  const row = el('div', 'row');
+  const cancel = el('button', null, 'Cancel');
+  cancel.onclick = () => onDone(false);
+  const go = el('button', 'danger', 'Delete');
+  go.onclick = async () => {
+    const stores = boxes.filter(b => b.checked).map(b => b.value);
+    go.disabled = true;
+    try {
+      const res = await Call.ByName(LIBRARY_DELETE, d.session.id, stores);
+      if (res.error) throw new Error(res.error);
+      onDone(true);
+    } catch (e) {
+      warn.textContent = String(e);
+      go.disabled = false;
+    }
+  };
+  row.append(cancel, go);
+  box.append(row);
+  update();
+  return box;
+
+  function update() {
+    const picked = boxes.filter(b => b.checked).map(b => b.value);
+    const left = held.filter(x => !picked.includes(x));
+    warn.textContent = !picked.length
+      ? 'Nothing selected — this would delete nothing.'
+      : left.includes('repo')
+        ? 'The synced copy is being kept, so a later restore can bring this session back here.'
+        : picked.includes('repo')
+          ? 'Deleting the synced copy propagates to your other machines on the next sync.'
+          : '';
+    go.disabled = !picked.length;
+  }
+}
+
+// The tray polls anyway; re-read the full snapshot whenever it does, so an open
+// window never drifts from the icon.
+window.addEventListener('focus', () => {
+  if (view !== 'sessions') { refresh(); return; }
+  if ($('sdetail').hidden) { loadSessions(); return; }
+  // An open detail went stale too, and it is the pane you are most likely to
+  // have left the window FROM — opening a session in Desktop or VS Code is done
+  // from here, and what those actions change is what this pane is showing. Done
+  // in place, without the "Reading the transcript…" placeholder, so a window
+  // regaining focus doesn't blink.
+  if (!openSessionID || document.querySelector('.modal')) return;
+  const id = openSessionID;
+  Call.ByName(LIBRARY_DETAIL, id, $('ssearch').value.trim())
+    .then(d => { if (openSessionID === id) renderSession(d); })
+    .catch(() => { /* keep what is on screen */ });
+});
+
+// The status read is cheap and now arrives every 5s while the window is open.
+// The session list is not — it opens transcripts to date them — so it keeps its
+// own slower floor rather than reloading six times a minute.
+const LIST_MIN_INTERVAL = 30_000;
+let lastListLoad = 0;
+
+Events.On('clauderig:health', () => {
+  refresh();
+  // Only when the list is what is on screen: reloading underneath an open
+  // session, or mid-search, would move the ground under you.
+  if (view === 'sessions' && $('sdetail').hidden && document.activeElement !== $('ssearch')
+      && Date.now() - lastListLoad > LIST_MIN_INTERVAL) {
+    loadSessions();
+  }
+});
+
+// A window reopened mid-action must come back with its buttons disabled rather
+// than offering to start a second one.
+Call.ByName(ACTIONS_BUSY).then(setRunning).catch(() => {});
+refresh();
+</script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+#!/bin/sh
+# Regenerate the 32px Windows tray icons from the claudeRig mark, drawn heavier.
+#
+# The mark at its published weights is built for the macOS menu bar's 44px slot.
+# Windows asks GetSystemMetrics(SM_CXSMICON) — 16px at 100% DPI — and stroke-width
+# 8 on a 100 viewBox is 1.3px there, which anti-aliases into a smudge. Same
+# geometry and same colours, thicker strokes, so it survives the size it is
+# actually drawn at.
+#
+# Colours are the ones the existing 44px icons use, sampled rather than guessed.
+set -eu
+cd "$(dirname "$0")"
+command -v rsvg-convert >/dev/null || { echo "needs rsvg-convert (brew install librsvg)" >&2; exit 1; }
+
+mark() { # $1 = colour
+  # Cropped to the artwork. The mark is drawn 21..79 in a 100 box, so a third of
+  # a 16px icon was empty margin — fine in a macOS menu bar, wasteful in a
+  # notification area slot this small. The strokes overhang their path by half
+  # their width (7.5), so the real extent is 13.5..86.5; two units of air either
+  # side keeps the round caps off the edge.
+  cat <<SVG
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="11.5 11.5 77 77" width="100" height="100">
+<path d="M38 21 L23 21 L23 79 L38 79" fill="none" stroke="$1" stroke-width="15"
+      stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M62 21 L77 21 L77 79 L62 79" fill="none" stroke="$1" stroke-width="15"
+      stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="50" cy="50" r="11" fill="$1"/>
+</svg>
+SVG
+}
+
+# The spark is a dot at this size. Its four crossed arms span ±14 of a 100 box —
+# under three pixels at 16 — so they merge into a blob that reads as neither a
+# spark nor anything else. A dot is what the spark looks like when it is too
+# small to be a spark, which is the honest reduction.
+set -- green:007329:4CB86A amber:9D7200:E4B750 red:B63132:EF6661
+for spec in "$@"; do
+  name=${spec%%:*}; rest=${spec#*:}; lightC=${rest%%:*}; darkC=${rest#*:}
+  # Rendered at 64 even though the file is named for 32. Windows asks for
+  # SM_CXSMICON — 16, 20, 24 or 32 depending on the display's scaling — and
+  # scales this one image to whatever that is. 64 divides evenly into 16 and 32
+  # and resamples gracefully to the awkward 20 and 24 a 125% or 150% display
+  # asks for, which 32 does not.
+  mark "#$lightC" | rsvg-convert -w 64 -h 64 -o "tray-$name-light-32.png"
+  mark "#$darkC"  | rsvg-convert -w 64 -h 64 -o "tray-$name-dark-32.png"
+done
+echo "regenerated 6 × 32px tray icons"
