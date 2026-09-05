@@ -90,3 +90,41 @@ func TestWriteEntryGeneratesTwoChangelogsForMultipleProjects(t *testing.T) {
 		}
 	}
 }
+
+// One file, a section per package: a new package appends its section, an
+// existing one takes the entry directly under its title, and the first write
+// reads exactly like a single-package changelog.
+func TestWriteSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
+	if err := WriteSection(path, "pkg-a", entryV2); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "# pkg-a\n\n"+entryV2 {
+		t.Fatalf("first section:\n%s", got)
+	}
+	entryB := "## 0.2.0\n### Minor Changes\n\n- B grew\n"
+	if err := WriteSection(path, "pkg-b", entryB); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(path)
+	if string(got) != "# pkg-a\n\n"+entryV2+"\n# pkg-b\n\n"+entryB {
+		t.Fatalf("appended section:\n%s", got)
+	}
+	entryA3 := "## 3.0.0\n### Major Changes\n\n- Again\n"
+	if err := WriteSection(path, "pkg-a", entryA3); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(path)
+	if string(got) != "# pkg-a\n\n"+entryA3+"\n"+entryV2+"\n# pkg-b\n\n"+entryB {
+		t.Fatalf("newest on top within its section:\n%s", got)
+	}
+	// A title that merely contains another's name is not that section.
+	if err := WriteSection(path, "pkg", "## 1.0.0\n\n- first\n"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(path)
+	if !strings.HasSuffix(string(got), "\n# pkg\n\n## 1.0.0\n\n- first\n") {
+		t.Fatalf("prefix-named package got its own section:\n%s", got)
+	}
+}

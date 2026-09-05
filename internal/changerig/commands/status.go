@@ -208,8 +208,9 @@ func printEmptyStatusPanel(cmd *cobra.Command, ws *Workspace, pkgs []plugin.Pack
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
 	fmt.Fprintf(out, "\n%s\n", HeaderStyle.Render(fmt.Sprintf("Packages (%d)", len(sorted))))
 	for _, p := range sorted {
-		fmt.Fprintf(out, "  %s %s %s\n", p.Name, DimStyle.Render(p.Version), DimStyle.Render("["+ecoOf[p.Name]+"]"))
+		fmt.Fprintf(out, "  %s %s %s\n", p.Name, DimStyle.Render(versionLabel(p.Version)), DimStyle.Render("["+ecoOf[p.Name]+"]"))
 	}
+	printUnversionedNote(out, sorted)
 
 	fmt.Fprintf(out, "\n%s\n", DimStyle.Render("Nothing to release yet."))
 	printSetupNextStep(cmd, ws)

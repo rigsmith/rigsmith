@@ -87,6 +87,10 @@ func newReleaseCmd() *cobra.Command {
 			steps, err := pipeline.Resolve(cfg, pipeline.ResolveOptions{
 				Only: only, Skip: skip, From: from, To: to, DryBuild: dryBuild, Local: local, Rehearse: rehearse,
 				Ecosystems: presentEcos, KnownEcosystems: knownEcos,
+				// A stackspace is a fused history: its members' manifests are not
+				// stamped (the version step knows), and nothing about it is
+				// tagged, pushed or released — those steps are skipped in the plan.
+				FusedHistory: ws.Stackspace != nil,
 			})
 			if err != nil {
 				return err

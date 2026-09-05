@@ -36,6 +36,12 @@ be reordered, disabled, replaced, or have custom steps slotted between them.
 out to `tool`, default `shiprig`); `build`, `sign`, `release`, and `issues` are
 native handlers.
 
+In a [stackspace](/rig/stack) — several upstream repos fused into one history —
+the plan looks different without any configuration: `tag`, `push` and `release`
+are skipped, because a fused history is never tagged, pushed or released, and
+`version` stamps nothing into a member's manifest. See
+[Releasing from a stackspace](#releasing-from-a-stackspace).
+
 ## `.changeset/release.jsonc`
 
 The pipeline file is JSONC (comments + trailing commas welcome). Top-level keys:
@@ -422,6 +428,27 @@ raw secret on a command line that gets logged.
 Pass `--no-env` to drop the `.env`/`.env.local` layer for a run (the ambient
 shell environment still flows through) — handy when a stray local `.env` would
 otherwise shadow what you've exported.
+
+## Releasing from a stackspace
+
+A [stackspace](/rig/stack) publishes too: an app and the forks it depends on,
+built from source together and pushed to a private feed as one release. But
+every path under a member's prefix leaves in a pull request to that member's
+upstream, and the history is three rewritten upstreams fused together, which
+must never reach a remote. `shiprig` reads the stack manifest (`rig.stack.jsonc`,
+or the `stack` key in `.rig.json`) and adjusts, with no `order` to write:
+
+| Step | In a stackspace |
+|------|-----------------|
+| `version` | Computes, cascades, consumes changesets and writes changelogs as ever, but **stamps nothing into a member's manifest**. A member's number is recorded in `.changeset/versions.json` and its notes go to the root `CHANGELOG.md`, one section per member ([details](/changerig/lifecycle#no-stamp)). The stackspace's own packages are stamped normally |
+| `commit` | Commits the root files: the consumed changesets, the record, the changelog |
+| `build`, `publish` | Run as usual — the feed push is the whole point |
+| `tag`, `push`, `release` | Skipped, with the reason in the plan. A step you replaced with your own `run` or `script` still runs |
+
+The versions reach the build the way they always do: `${version.<pkg>}` is the
+computed number, whether or not it was written anywhere, so a pack step is
+`dotnet pack member/src/Lib -p:Version=${version.Lib}`. Nothing here depends on
+the stackspace having a remote, and nothing tries to give it one.
 
 ## Local rehearsal: `--dry-run`, `--dry-build`, `--local`, `--rehearse`
 

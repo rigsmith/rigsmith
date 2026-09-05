@@ -40,6 +40,11 @@ var (
 	versionRe       = regexp.MustCompile(`(?s)(<Version>)(.*?)(</Version>)`)
 	versionPrefixRe = regexp.MustCompile(`(?s)(<VersionPrefix>)(.*?)(</VersionPrefix>)`)
 	packageIDRe     = regexp.MustCompile(`(?s)<PackageId>(.*?)</PackageId>`)
+	isPackableRe    = regexp.MustCompile(`(?s)<IsPackable[^>]*>(.*?)</IsPackable>`)
+	// A project whose version is MinVer's to compute says so in one of two
+	// ways: the package reference, or any of the MinVer* properties that tune
+	// it (MinVerTagPrefix, MinVerMinimumMajorMinor, …) in a props file.
+	minVerRe        = regexp.MustCompile(`<PackageReference[^>]*\bInclude\s*=\s*"MinVer"|<MinVer[A-Za-z]*[\s>]`)
 	projectRefRe    = regexp.MustCompile(`<ProjectReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
 	packageRefRe    = regexp.MustCompile(`<PackageReference[^>]*\bInclude\s*=\s*"([^"]*)"`)
 	propertyGroupRe = regexp.MustCompile(`<PropertyGroup[^>]*>`)
@@ -174,11 +179,14 @@ func (a *Adapter) Discover(ctx context.Context, req plugin.DiscoverRequest) (plu
 
 		// Resolve the version: inline first, else from an ancestor props file. A
 		// project with no version anywhere is skipped (matches the C# original) —
-		// unless the caller asked for identity rather than release readiness, in
-		// which case it comes back with an empty Version.
+		// unless it is packable all the same, its number computed at build time
+		// (MinVer from git tags, a CI-stamped build), or the caller asked for
+		// identity rather than release readiness. Either way it comes back with
+		// an empty Version: the release records the number it computes for such
+		// a package beside the changesets, since the tree holds none.
 		resolved, ok := resolveVersion(path, text)
 		if !ok {
-			if !req.IncludeUnversioned {
+			if !req.IncludeUnversioned && !packable(path, text) {
 				return nil
 			}
 			resolved = resolvedVersion{}
@@ -463,6 +471,35 @@ func fromText(text, filePath string, shared bool) (resolvedVersion, bool) {
 		}
 	}
 	return resolvedVersion{}, false
+}
+
+// packable reports whether a project with no version in the tree still
+// produces a package: it says so (`IsPackable` true, or a `PackageId`, which
+// nobody declares for a project that never packs), or it hands its version to
+// MinVer, in the project itself or in a Directory.Build.props above it. An
+// explicit `IsPackable` false is the last word, whatever else is declared.
+func packable(csprojPath, csprojText string) bool {
+	texts := []string{csprojText}
+	for _, props := range ancestorPropsFiles(csprojPath) {
+		if content, err := os.ReadFile(props); err == nil {
+			texts = append(texts, string(content))
+		}
+	}
+	claimed := false
+	for _, text := range texts {
+		if m := findInPropertyGroup(text, isPackableRe); m != nil {
+			switch strings.ToLower(strings.TrimSpace(text[m[2]:m[3]])) {
+			case "false":
+				return false
+			case "true":
+				claimed = true
+			}
+		}
+		if packageID(text) != "" || minVerRe.MatchString(text) {
+			claimed = true
+		}
+	}
+	return claimed
 }
 
 // propertyGroupSpans returns the [start,end) byte range of the INNER text of each

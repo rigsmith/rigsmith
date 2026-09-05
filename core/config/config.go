@@ -82,6 +82,20 @@ type Versioning struct {
 	// one with no prior release tag, where commit mode would otherwise log the
 	// entire history. The zero value preserves that full-history behavior.
 	InitialRelease InitialRelease `json:"initialRelease,omitempty"`
+	// Stamp, when false, keeps `version` from writing the new versions into the
+	// manifests: it still computes them, cascades, consumes the changesets and
+	// writes the changelogs, and records the numbers in .changeset/versions.json
+	// for the build to read (${version.<pkg>} in the release pipeline). For a
+	// tree whose manifests are not this repository's to write — a stackspace's
+	// members — or one whose versions are computed at build time. Absent means
+	// true, the historical behavior.
+	Stamp *bool `json:"stamp,omitempty"`
+}
+
+// StampEnabled reports whether `version` writes versions into manifests
+// (`versioning.stamp`; absent is true).
+func (c *Config) StampEnabled() bool {
+	return c.Versioning.Stamp == nil || *c.Versioning.Stamp
 }
 
 // InitialRelease tunes how a package's first release (no prior tag) renders

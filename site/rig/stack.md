@@ -600,6 +600,32 @@ upstream commit the fork branch is based on — found by merge-base — so `stat
 compares the right things and a later `pull` merges upstream's movement rather
 than importing it twice.
 
+## Publishing from a stackspace {#publish}
+
+The stackspace is where the fused build lives, so it is also where a release of
+it is cut: the app and its patched forks packed together and pushed to a
+private feed. [`shiprig`](/shiprig/) knows it is in one — it reads the same
+manifest — and changes three things without being told:
+
+- **`version` does not stamp a member.** Everything under a prefix leaves in a
+  pull request to the member's upstream, and a version written into its
+  `Directory.Build.props` would go with it. The number is still computed and
+  cascaded; it is recorded in `.changeset/versions.json` instead, read back as
+  the current version next time, and handed to the build as `${version.<pkg>}`
+  in the release pipeline. The member's changelog goes to the root
+  `CHANGELOG.md`, one section per member. A member whose version is computed at
+  build time (MinVer) is discovered as a package all the same, with no version
+  in the tree until a release records one.
+- **`tag` and `push` do nothing.** A tag on a fused history names nothing an
+  upstream knows, and the history — three rewritten upstreams fused together —
+  must never reach a remote. The forge `release` step is skipped with them.
+- **`publish` pushes to the feed and stops.** No tag, no push, as above.
+
+So a `release.jsonc` in a stackspace needs no `order` that leaves those steps
+out; the default plan already does, and says why. See
+[Releasing from a stackspace](/shiprig/pipeline#releasing-from-a-stackspace) for
+the step-by-step.
+
 ## The verbs
 
 | Verb | What it does |

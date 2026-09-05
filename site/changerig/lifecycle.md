@@ -156,8 +156,38 @@ Consumes the pending changesets and:
 Flags: `-n, --dry-run` (plan only), `--snapshot [tag]` and `--snapshot-template`
 (`{tag}`/`{commit}`/`{datetime}`/`{timestamp}` suffix) for snapshot releases,
 `--independent` to version each package separately instead of via a shared
-version file, and `-y, --yes` to accept the computed versions without the
-interactive override prompt.
+version file, `-y, --yes` to accept the computed versions without the
+interactive override prompt, and `--no-stamp` to write nothing into any
+manifest.
+
+### Versions that do not live in the tree {#no-stamp}
+
+Step 4 assumes the manifest is where the version lives. Two kinds of package
+break that assumption:
+
+- one whose version is **computed at build time** — MinVer reading git tags, a
+  CI-stamped build — carries no number in the tree at all. Such a project is
+  still discovered as a package (a `.NET` project is, when it is `IsPackable`,
+  declares a `PackageId`, or references MinVer), listed as *no version in the
+  tree*;
+- one whose manifest is **not this repository's to write** — a member of a
+  [stackspace](/rig/stack), whose directory leaves in pull requests to its
+  upstream, where a stamped version would be a bump nobody asked for.
+
+For both, `version` still computes the number, cascades it to dependents,
+consumes the changesets and writes the changelog — and instead of stamping the
+manifest it records the result in `.changeset/versions.json`. Discovery reads
+that record as the package's current version from then on, so the next plan
+bumps from it, and the release pipeline's `${version.<pkg>}` hands it to the
+build (`-p:Version=` for dotnet, say). A stackspace member gets this without
+asking; `--no-stamp` asks for it on one run, and `"versioning": { "stamp": false }`
+in the config asks for it on every run. A member's changelog goes to the
+stackspace root's `CHANGELOG.md`, one section per member, since its own
+directory is not the stackspace's either.
+
+A package with no version anywhere yet — nothing in the tree, nothing recorded —
+plans from `0.0.0`; seed `.changeset/versions.json` with its real current
+version, or type the exact version at the override prompt, and it is remembered.
 
 Changelog generators are **pluggable** — the built-in renderer dogfoods the same
 JSON contract external plugins speak. Set `"changelog": "<plugin>"` in config to

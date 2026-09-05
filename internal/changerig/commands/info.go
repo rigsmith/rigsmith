@@ -51,8 +51,9 @@ func NewInfoCmd() *cobra.Command {
 			sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].Name < pkgs[j].Name })
 			fmt.Fprintf(out, "\n%s\n", HeaderStyle.Render(fmt.Sprintf("Packages (%d)", len(pkgs))))
 			for _, p := range pkgs {
-				fmt.Fprintf(out, "  %s %s %s\n", p.Name, DimStyle.Render(p.Version), DimStyle.Render("["+ecoOf[p.Name]+"]"))
+				fmt.Fprintf(out, "  %s %s %s\n", p.Name, DimStyle.Render(versionLabel(p.Version)), DimStyle.Render("["+ecoOf[p.Name]+"]"))
 			}
+			printUnversionedNote(out, pkgs)
 
 			changesets, _ := changeset.Dir(ws.ChangesetDir, "")
 			fmt.Fprintf(out, "\n%s %d\n", HeaderStyle.Render("Changesets:"), len(changesets))

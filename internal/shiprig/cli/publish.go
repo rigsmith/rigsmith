@@ -127,6 +127,12 @@ func newPublishCmd() *cobra.Command {
 			if noGitTag {
 				return nil
 			}
+			// A stackspace's fused history is neither tagged nor pushed: the
+			// registry push above is the whole publish there.
+			if ws.Stackspace != nil {
+				fmt.Fprintln(out, commands.DimStyle.Render("\nstackspace: a fused history is not tagged — registry push only"))
+				return nil
+			}
 			remote := ""
 			if !noPush {
 				remote = gitutil.DefaultRemote(cmd.Context(), ws.Root)
