@@ -24,6 +24,11 @@ const (
 // FixLabel is the one-line description shown in the fix selector. Hint is manual
 // remediation shown when Fix is nil — the report-only path.
 type Result struct {
+	// ID names the check for anything that is not a person reading a terminal:
+	// a UI listing them, a caller asking for one to be fixed. Optional, and
+	// separate from Name because Name is display text — rewording a label must
+	// not change what a caller is allowed to ask for.
+	ID       string
 	Name     string
 	Status   Status
 	Detail   string

@@ -16,40 +16,51 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
+	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 )
 
 // RootInfo is one root's local state.
 type RootInfo struct {
-	ID      string
-	Files   int
-	Present bool
+	ID      string `json:"id"`
+	Files   int    `json:"files"`
+	Present bool   `json:"present"`
 }
+
+// TrackingRef is the ref the staging repo syncs against. sync and pull both
+// hardcode origin/main; divergence is measured against the same pair.
+const TrackingRef = "origin/main"
 
 // Info is the gathered snapshot.
 type Info struct {
-	Machine    config.Machine
-	Remote     string
-	HasStaging bool
-	LastSync   string // "hash when — subject", or "" when never
-	Dirty      bool
+	Machine    config.Machine `json:"machine"`
+	Remote     string         `json:"remote"`
+	HasStaging bool           `json:"hasStaging"`
+	LastSync   string         `json:"lastSync"` // "hash when — subject", or "" when never
+	Dirty      bool           `json:"dirty"`
+	// Divergence is this machine's position against TrackingRef as of the last
+	// fetch — ahead, behind, and whether an unresolved merge is sitting in the
+	// repo. It is the full picture the tray and the UI render.
+	Divergence gitrepo.Divergence `json:"divergence"`
 	// Unpushed counts staging commits the remote does not have — work that only
 	// exists on this machine. THE number to look at: `LastSync` is the last local
 	// commit, which keeps advancing happily while every push is rejected, so a
 	// green "last sync 2 minutes ago" says nothing about whether anything was
-	// backed up.
-	Unpushed int
+	// backed up. Divergence.Ahead under the name the text output uses.
+	Unpushed int `json:"unpushed"`
 	// Unmerged counts commits the remote has that this machine does not. A lower
 	// bound — read from the remote-tracking ref, so only as fresh as the last
-	// fetch (Gather does no network).
-	Unmerged int
+	// fetch (Gather does no network). Divergence.Behind.
+	Unmerged int `json:"unmerged"`
 	// TrackingKnown reports whether Unpushed/Unmerged mean anything. False when
 	// there is no remote-tracking ref: a remote may be configured and simply
 	// never reached, which must not be reported as being up to date with it.
-	TrackingKnown bool
-	Roots         []RootInfo
-	Hooks         []string
-	Devices       []devices.Device
-	Account       AccountInfo
+	// Divergence.Tracked.
+	TrackingKnown bool `json:"trackingKnown"`
+
+	Roots   []RootInfo       `json:"roots"`
+	Hooks   []string         `json:"hooks"`
+	Devices []devices.Device `json:"devices"`
+	Account AccountInfo      `json:"account"`
 }
 
 // AccountInfo is who the machine-wide Claude Code CLI is logged in as.
@@ -99,8 +110,20 @@ func Gather(ctx context.Context, cfg *config.Config, me config.Machine, staging,
 			if h, subj, when, err := repo.LastCommit(ctx); err == nil {
 				info.LastSync = h + " " + when + " — " + subj
 			}
-			info.Dirty, _ = repo.Dirty(ctx)
-			info.Unpushed, info.Unmerged, info.TrackingKnown, _ = repo.AheadBehind(ctx, "origin", "main")
+			// The journal is excluded on purpose. Dirty means "a sync started
+			// and didn't finish" — loose synced content. A pending journal line
+			// isn't that: it's append-only bookkeeping the next sync sweeps up
+			// on its own. Counting it would leave the tray amber after every
+			// restore, which is the same species of misleading indicator this
+			// work set out to remove.
+			info.Dirty, _ = repo.DirtyExcluding(ctx, journal.DirName)
+			// Reads the object store only — no fetch — so this stays local and
+			// safe to poll. It therefore reports divergence as of the last fetch,
+			// which is exactly what a stale registry could not express.
+			info.Divergence, _ = repo.DivergenceFrom(ctx, TrackingRef)
+			// Ahead/behind under the names the text `status` output uses —
+			// read off the same local comparison rather than a second git call.
+			info.Unpushed, info.Unmerged, info.TrackingKnown = info.Divergence.Ahead, info.Divergence.Behind, info.Divergence.Tracked
 		}
 	}
 

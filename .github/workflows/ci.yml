@@ -24,6 +24,17 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      # Wails v3 links against GTK 4 and WebKitGTK 6.0 on Linux — not the GTK 3 /
+      # WebKit2GTK 4.1 pairing most guides still name — so `go test ./...` cannot
+      # compile ./ui here without them. The app only ships for macOS, but keeping
+      # it inside ./... means a change that breaks another platform is caught
+      # here rather than by whoever tries to port it.
+      - name: Linux GUI headers (for ./ui)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+
       # The parity/cmdtest harnesses create real git repos; give git an identity
       # and quiet the default-branch hint on every runner.
       - name: Configure git for tests

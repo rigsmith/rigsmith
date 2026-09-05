@@ -11,7 +11,8 @@
   "baseBranch": "main",
   "changelogScopes": [
     "rig",
-    "clauderig"
+    "clauderig",
+    "clauderig-ui"
   ],
   "access": "restricted",
   "updateInternalDependencies": "patch",

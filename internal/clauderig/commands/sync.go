@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 	"github.com/spf13/cobra"
 )
@@ -116,7 +116,7 @@ const pushAttempts = 3
 // redaction is visible, not magic. The tripwire fails the sync loudly if a secret
 // slips past redaction; nothing is pushed in that case.
 func NewSyncCmd() *cobra.Command {
-	var dryRun, flush bool
+	var dryRun, flush, hook bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Snapshot, redact, rewrite, and push your Claude Code setup",
@@ -130,7 +130,7 @@ func NewSyncCmd() *cobra.Command {
 			"next session; other sessions' transcripts keep their throttle. Run by\n" +
 			"hand, `--flush` restages every changed transcript. A payload on stdin\n" +
 			"that names no transcript flushes nothing, and says so.",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (rerr error) {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 
@@ -143,6 +143,65 @@ func NewSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// Automated runs debounce and serialise; a sync typed by hand always
+			// does the work, because someone asking for it now means now.
+			//
+			// Never a flush. That one comes from the SessionEnd hook, which has
+			// no terminal and would otherwise be debounced away — and a flush is
+			// a session ending saying "stage this now", with no later run to
+			// defer to.
+			//
+			// Keyed on whether there is a terminal, not only on --hook. "Typed
+			// by hand" is a property of how the command was invoked, and every
+			// install that already exists has a bare `clauderig sync` written
+			// into its settings — a flag would have left all of them thrashing
+			// until their owner happened to re-run a command nobody knows they
+			// need. --hook stays as the explicit form for scripts.
+			//
+			// The Stop hook fires at the end of every turn in EVERY open chat,
+			// and the work is walking the whole tree, redacting every JSON file
+			// and pushing. On one real machine that was 37 syncs with a median
+			// gap of 163s and a minimum of 7s — for one conversation, and three
+			// landing in the same second once several were open.
+			if (hook || !Interactive()) && !flush {
+				lock, got, lerr := acquireSyncLock(staging)
+				if lerr != nil {
+					return lerr
+				}
+				if !got {
+					// Another sync is mid-run. It is walking the same tree and
+					// will capture the same work, so there is nothing useful to
+					// do here and failing would only make the hook noisy.
+					fmt.Fprintln(out, DimStyle.Render("  another sync is running — skipping"))
+					return nil
+				}
+				defer lock.Release()
+
+				if iv := cfg.HookInterval(); iv > 0 {
+					if last, ok := lastSuccessfulSync(staging, me.Name); ok {
+						if since := time.Since(last); since < iv {
+							fmt.Fprintf(out, "  %s\n", DimStyle.Render(fmt.Sprintf(
+								"synced %s ago — next in %s (hookIntervalMinutes)",
+								since.Round(time.Second), (iv-since).Round(time.Second))))
+							return nil
+						}
+					}
+				}
+			}
+
+			// Once the commit is made, any later failure is a git-phase one —
+			// a rejected push, a failed reconcile. Those can't ride the commit
+			// they failed to make, so they're journalled here instead and wait
+			// for the next sync to carry them. Before this point the engine
+			// record has already been written (and committed), so journalling
+			// again would double-count.
+			inGitPhase := false
+			defer func() {
+				if rerr != nil && inGitPhase {
+					_ = journal.Append(staging, journal.Failed(me.Name, journal.OpSync, rerr))
+				}
+			}()
 
 			fmt.Fprintln(out, HeaderStyle.Render("clauderig sync"))
 			// Settle any merge an earlier run abandoned before the snapshot writes
@@ -207,12 +266,13 @@ func NewSyncCmd() *cobra.Command {
 			}
 			rep, serr := engine.Sync(engine.Options{
 				StagingDir: staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
-				RetentionDays:   cfg.Retention.HistoryDays,
-				MaxFileBytes:    cfg.Retention.MaxFileBytes,
-				LargeFileBytes:  largeFileBytes,
-				Flush:           flushPaths,
-				Profiles:        engine.LocalProfileNames(),
-				LiveAccountUUID: liveAcct,
+				RetentionDays:     cfg.Retention.HistoryDays,
+				MaxFileBytes:      cfg.Retention.MaxFileBytes,
+				LargeFileBytes:    largeFileBytes,
+				Flush:             flushPaths,
+				RedactTranscripts: cfg.RedactTranscripts,
+				Profiles:          engine.LocalProfileNames(),
+				LiveAccountUUID:   liveAcct,
 			})
 			if rep != nil {
 				w := 0
@@ -229,7 +289,9 @@ func NewSyncCmd() *cobra.Command {
 						extra += fmt.Sprintf(", %d unchanged", r.Unchanged)
 					}
 					if r.RetentionByAge > 0 {
-						extra += fmt.Sprintf(", %d aged out", r.RetentionByAge)
+						// "aged out" read as a deletion; nothing is deleted here. These
+						// files stay in ~/.claude and are declined again every run.
+						extra += fmt.Sprintf(", %d too old", r.RetentionByAge)
 					}
 					if r.SkippedFiles > 0 {
 						extra += fmt.Sprintf(", %d skipped (churn)", r.SkippedFiles)
@@ -264,6 +326,16 @@ func NewSyncCmd() *cobra.Command {
 					fmt.Fprintf(out, "  sidecars  %d orphaned session(s) pruned from staging\n", rep.SidecarsPruned)
 				}
 			}
+			// Journal what the engine did *before* committing, so the record
+			// travels in this sync's own commit. Written afterwards it would
+			// leave the tree dirty until the next run and make `status` report
+			// uncommitted changes forever. A dry run is deliberately not
+			// recorded — it's a preview, and a feed that claims previews
+			// happened to your data is worse than no feed.
+			if !dryRun {
+				_ = journal.Append(staging, journal.FromSync(me.Name, rep, serr))
+			}
+
 			if serr != nil {
 				if rep != nil {
 					for _, f := range rep.Findings {
@@ -276,13 +348,21 @@ func NewSyncCmd() *cobra.Command {
 				fmt.Fprintln(out, DimStyle.Render("\n  dry-run: staged + scanned, not committing"))
 				return nil
 			}
+			inGitPhase = true
 
 			// Record this machine in the synced device registry, together with the
 			// account it synced as — identity only (see devices.Account), and the
 			// only account provenance anything in the repo carries. Best-effort:
 			// an unreadable identity leaves the previous record standing and never
 			// costs anyone a sync.
-			if reg, err := devices.Load(staging); err == nil {
+			//
+			// Gated on a resolved machine name: registering the placeholder is what
+			// put a ghost device named "this" into the registry for two months; it
+			// syncs, so every other machine inherits the confusion.
+			if !config.IdentityResolved(cfg) {
+				fmt.Fprintf(out, "  %s\n", WarnStyle.Render(
+					"machine name unresolved — syncing, but not registering this device"))
+			} else if reg, err := devices.Load(staging); err == nil {
 				var acct *devices.Account
 				// Both halves required, from the ONE read above. An `||` gate
 				// built a non-nil record from any single field, so a partial
@@ -358,17 +438,42 @@ func NewSyncCmd() *cobra.Command {
 				}
 			}
 
-			// Size-based squash: bound .git when transcript history has bloated it.
+			// Size-based maintenance: bound .git when it has outgrown the content.
+			//
+			// Repack FIRST, and re-measure. Every sync writes its objects loose
+			// and undeltified, and append-only transcripts compress to almost
+			// nothing once packed — on a real repo 2.4 GB of a 2.9 GB .git was
+			// simply unpacked. Squashing to escape that traded a month of
+			// history for something a gc would have given back for free.
 			gitBytes, _ := repo.GitDirBytes(ctx)
 			wtBytes, _ := repo.WorkTreeBytes(ctx)
 			if gitrepo.ShouldSquash(gitBytes, wtBytes, cfg.Retention.FloorBytes, cfg.Retention.SquashFactor) {
-				fmt.Fprintf(out, "  %s history squash (.git %dMB > %.0f× worktree)\n",
+				fmt.Fprintf(out, "  %s repacking (.git %dMB > %.0f× worktree)\n",
 					DimStyle.Render("⟳"), gitBytes>>20, cfg.Retention.SquashFactor)
-				if err := repo.Squash(ctx, "clauderig: squashed history"); err != nil {
+				if err := repo.Repack(ctx); err != nil {
+					return fmt.Errorf("repack: %w", err)
+				}
+				gitBytes, _ = repo.GitDirBytes(ctx)
+			}
+
+			// Only history's length can still be the problem here, so now it is
+			// fair to drop some. Keep whole days, cut on a day boundary: the
+			// squash used to fire at whatever o'clock it tripped, which is how a
+			// repo came to report that its history began at 08:18 on a Tuesday.
+			if gitrepo.ShouldSquash(gitBytes, wtBytes, cfg.Retention.FloorBytes, cfg.Retention.SquashFactor) {
+				keep := cfg.Retention.KeepDays()
+				cutoff := startOfDay(time.Now().AddDate(0, 0, -keep))
+				folded, err := repo.SquashBefore(ctx, cutoff,
+					"clauderig: history before "+cutoff.Format("2006-01-02"))
+				if err != nil {
 					return fmt.Errorf("squash: %w", err)
 				}
-				if err := repo.ForcePush(ctx, "origin", "main"); err != nil {
-					return fmt.Errorf("force-push after squash: %w", err)
+				if folded > 0 {
+					fmt.Fprintf(out, "  %s folded %d commit(s) before %s, kept the last %d days\n",
+						DimStyle.Render("⟳"), folded, cutoff.Format("2006-01-02"), keep)
+					if err := repo.ForcePush(ctx, "origin", "main"); err != nil {
+						return fmt.Errorf("force-push after squash: %w", err)
+					}
 				}
 			}
 			return nil
@@ -376,6 +481,8 @@ func NewSyncCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "stage and scan, but don't commit or push")
 	cmd.Flags().BoolVar(&flush, "flush", false, "restage the ended session's transcript (from the hook payload on stdin), or every changed transcript when run by hand, past the large-file throttle")
+	cmd.Flags().BoolVar(&hook, "hook", false,
+		"force the debounce on even with a terminal attached (it is automatic without one)")
 	return cmd
 }
 
@@ -385,25 +492,7 @@ func NewSyncCmd() *cobra.Command {
 // machine resolves deterministically to the right one instead of flipping with
 // Go's randomized map iteration. Falls back to the OS hostname, then "this",
 // when no registered machine matches this host.
-func machineName(cfg *config.Config) string {
-	localOS := config.OSToken()
-	home, _ := os.UserHomeDir()
-
-	names := make([]string, 0, len(cfg.Machines))
-	for name := range cfg.Machines {
-		names = append(names, name)
-	}
-	sort.Strings(names) // deterministic order if several entries somehow match
-	for _, name := range names {
-		if m := cfg.Machines[name]; m.OS == localOS && m.Home == home {
-			return name
-		}
-	}
-	if host, err := os.Hostname(); err == nil && host != "" {
-		return host
-	}
-	return "this"
-}
+func machineName(cfg *config.Config) string { return config.ResolveName(cfg) }
 
 // emailShape is a deliberately conservative check: one @, no spaces or control
 // characters, a dot in the domain. It is not RFC-complete and does not need to

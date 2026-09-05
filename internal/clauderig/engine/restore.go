@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
@@ -38,7 +39,10 @@ type RestoreRootResult struct {
 	// Code-tab list from these on startup, so the command layer uses this to nudge
 	// a restart when new sessions land.
 	DesktopSessions int
-	Skipped         bool
+	// LiveSkipped holds the target-relative transcripts left alone because a
+	// running Claude Code session is appending to them.
+	LiveSkipped []string
+	Skipped     bool
 }
 
 // DesktopSessions totals the Desktop Code-session sidecars written across all
@@ -75,6 +79,17 @@ var prunableDirs = []string{"skills", "commands", "agents", "plans"}
 // RestoreReport is the outcome of a restore.
 type RestoreReport struct {
 	Roots []RestoreRootResult
+}
+
+// LiveSkips lists every transcript skipped because a Claude Code session was
+// writing to it, across all roots. The command layer names these: a guard that
+// silently drops files reads as "everything restored" when it didn't.
+func (r *RestoreReport) LiveSkips() []string {
+	var out []string
+	for _, root := range r.Roots {
+		out = append(out, root.LiveSkipped...)
+	}
+	return out
 }
 
 // RestoreOptions configure a restore.
@@ -138,6 +153,11 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 		protected := map[string]bool{}
 		links := linkCache{}
 		pm := permFor(r.ID)
+		// Transcripts a live session is mid-write on. Computed against the
+		// target, so a --dir restore into a scratch folder finds none — the
+		// question is always "is anything writing to the tree I'm about to
+		// overwrite", not "is Claude running somewhere".
+		live := liveTranscripts(target)
 
 		files, err := listFiles(stageRoot)
 		if err != nil {
@@ -152,6 +172,15 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 					rewritten[srcSlug] = true
 				}
 			}
+			// The staged copy of a session that is still running is a stale
+			// snapshot from the last sync. Writing it back truncates the live
+			// transcript to whatever it looked like then, silently losing every
+			// turn since — so the live file always wins.
+			if live[targetRel] {
+				rr.LiveSkipped = append(rr.LiveSkipped, targetRel)
+				continue
+			}
+
 			src := filepath.Join(stageRoot, filepath.FromSlash(rel))
 			dst := filepath.Join(target, filepath.FromSlash(targetRel))
 
@@ -260,6 +289,37 @@ func restoreLinks(target string, manifestLinks map[string]string, slugMap map[st
 		}
 	}
 	return n
+}
+
+// liveTranscripts returns the target-relative transcript paths that running
+// Claude Code sessions are appending to, as a set of slash-relative paths like
+// "projects/-Users-john-Git-foo/<session-id>.jsonl".
+//
+// This is restore's half of the guard `account switch` already has. Before it,
+// restore copied every staged file unconditionally — no newer-than check, no
+// skip-if-exists — so a session active since the last sync had its transcript
+// rolled back over the top, losing the conversation since that sync.
+//
+// The match is per-session, not per-project: only the file actually in flight is
+// protected, so other sessions in the same project still restore normally.
+// claudeHome is the CLI root being written to; a home with no sessions/ (a fresh
+// machine, or a --dir scratch target) yields an empty set.
+//
+// A protected path need not exist yet. A session that has registered but not
+// flushed its first turn is precisely the one that must not have a stale copy
+// dropped underneath it, or it appends its next turns onto resurrected content.
+// Checked against a real ~/.claude: of 17 live sessions, 3 had no transcript on
+// disk yet.
+func liveTranscripts(claudeHome string) map[string]bool {
+	live := map[string]bool{}
+	for _, inst := range account.RunningInstances(claudeHome) {
+		// IDE bridge locks have no transcript of their own.
+		if inst.SessionID == "" || inst.Cwd == "" {
+			continue
+		}
+		live[path.Join("projects", project.Flatten(inst.Cwd), inst.SessionID+".jsonl")] = true
+	}
+	return live
 }
 
 // pruneConfigDirs removes files under the authoritative config dirs that aren't in

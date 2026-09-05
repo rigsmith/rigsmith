@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/internal/clauderig/sessions"
 	"github.com/rigsmith/rigsmith/internal/clauderig/status"
 )
 
@@ -44,6 +45,19 @@ type Model struct {
 	cursor int
 	hint   string
 	Chosen string
+
+	// filing is how sessions are filed on this machine: split transcripts and
+	// Desktop sidecars pointing at the wrong copy. Set separately rather than
+	// gathered with the rest, because finding it walks the transcript tree and
+	// status.Gather is on the tray's five-second poll.
+	filing sessions.Health
+}
+
+// WithFiling attaches the session-filing check. Optional: a dashboard without
+// it is the same dashboard, one row shorter.
+func (m Model) WithFiling(h sessions.Health) Model {
+	m.filing = h
+	return m
 }
 
 // New builds a dashboard over a gathered status snapshot, assembling the action
@@ -223,6 +237,21 @@ func (m Model) statusPanel() string {
 	}
 	if m.info.Unmerged > 0 {
 		b.WriteString("            " + dim.Render(fmt.Sprintf("%d on the remote not here yet", m.info.Unmerged)) + "\n")
+	}
+
+	// Loud, and only when there is something to say. A conversation that appears
+	// to have lost a week is the worst thing this tool can fail to mention, and
+	// a line that appears every time is a line nobody reads.
+	if n := len(m.filing.Splits); n > 0 {
+		b.WriteString("  filing    " + warnC.Render(fmt.Sprintf(
+			"%d session(s) filed in more than one project directory", n)) + "\n")
+	}
+	if n := len(m.filing.Stale); n > 0 {
+		b.WriteString("  filing    " + warnC.Render(fmt.Sprintf(
+			"%d Desktop sidecar(s) name a directory that no longer holds the transcript", n)) + "\n")
+	}
+	if !m.filing.OK() {
+		b.WriteString("            " + dim.Render("`clauderig doctor` lists them") + "\n")
 	}
 
 	b.WriteString(dim.Render("  roots:") + "\n")

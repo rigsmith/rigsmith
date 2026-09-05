@@ -212,3 +212,58 @@ func keysOf(idx Index) []string {
 	}
 	return out
 }
+
+// Real transcripts bury the first typed prompt behind a thick preamble —
+// queue-operations, IDE-state records, attachments, file-history snapshots —
+// and behind tool results, which Claude Code also records as "user" records.
+// A scan bounded by raw lines, or one that counts tool results as candidates,
+// misses the prompt entirely and the session lists as untitled.
+func TestFirstPromptPastAThickPreamble(t *testing.T) {
+	var b strings.Builder
+	// Preamble: the kinds of record that sit in front of a real prompt.
+	for range 40 {
+		b.WriteString(`{"type":"queue-operation"}` + "\n")
+		b.WriteString(`{"type":"attachment","attachment":{"x":1}}` + "\n")
+		b.WriteString(`{"type":"file-history-snapshot"}` + "\n")
+	}
+	// An IDE-state record, which looks like a user message but is skipped.
+	b.WriteString(`{"type":"user","message":{"role":"user","content":"<ide_opened_file>/tmp/x</ide_opened_file>"}}` + "\n")
+	// Tool results — recorded as user records, but carrying no typed text.
+	for range 20 {
+		b.WriteString(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"out"}]}}` + "\n")
+	}
+	// Finally, the thing the human actually typed.
+	b.WriteString(`{"type":"user","message":{"role":"user","content":"Lets try option #1"}}` + "\n")
+
+	if got := FirstPromptFrom(strings.NewReader(b.String())); got != "Lets try option #1" {
+		t.Fatalf("FirstPromptFrom = %q, want the typed prompt", got)
+	}
+}
+
+// A session with no typed human message anywhere has no title, and that is the
+// correct answer rather than a failure — IDE-opened-file and tool-driven
+// sessions genuinely contain nothing a person wrote.
+func TestFirstPromptEmptyWhenNothingWasTyped(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"type":"user","message":{"role":"user","content":"<ide_opened_file>/tmp/x</ide_opened_file>"}}` + "\n")
+	for range 30 {
+		b.WriteString(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"out"}]}}` + "\n")
+		b.WriteString(`{"type":"assistant","message":{"role":"assistant","content":"working"}}` + "\n")
+	}
+	if got := FirstPromptFrom(strings.NewReader(b.String())); got != "" {
+		t.Fatalf("FirstPromptFrom = %q, want empty", got)
+	}
+}
+
+// The scan stays bounded: a transcript body runs to megabytes and must never be
+// parsed whole just to find a title.
+func TestFirstPromptStaysBounded(t *testing.T) {
+	var b strings.Builder
+	for range maxScanLines + 500 {
+		b.WriteString(`{"type":"assistant","message":{"role":"assistant","content":"filler"}}` + "\n")
+	}
+	b.WriteString(`{"type":"user","message":{"role":"user","content":"far too deep to count"}}` + "\n")
+	if got := FirstPromptFrom(strings.NewReader(b.String())); got != "" {
+		t.Fatalf("scan ran past its line budget: %q", got)
+	}
+}

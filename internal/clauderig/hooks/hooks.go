@@ -38,6 +38,11 @@ func SyncPlans() []Plan {
 		{Event: "SessionStart", Command: "clauderig pull"},
 		{Event: "Stop", Command: "clauderig sync"},
 		{Event: "SessionEnd", Command: "clauderig sync --flush"},
+		// --hook, not a bare sync: this fires at the end of every turn in every
+		// open chat, so it debounces and takes a lock rather than walking the
+		// whole tree several times a minute. A sync typed by hand still runs
+		// immediately.
+		{Event: "Stop", Command: "clauderig sync --hook"},
 	}
 }
 

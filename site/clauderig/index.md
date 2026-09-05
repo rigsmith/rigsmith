@@ -15,6 +15,10 @@ clauderig sync                 # snapshot → redact secrets → rewrite paths �
 clauderig restore              # pull → rewrite slugs for this OS → merge (keeps local secrets)
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)
 clauderig status               # remote reachability, last sync, per-root counts, hooks
+clauderig reroot <id> ~/Git/p  # re-file a session under the directory it really belongs to
+clauderig repo                 # what the sync repo costs: size, files, commits, history ratio
+clauderig repo gc              # repack: reclaims space, keeps every commit — try this first
+clauderig repo prune --before 2026-08-01  # fold everything before a date into one commit
 clauderig recent                  # sessions you actually worked on, newest first
 clauderig search "auth refactor"  # find a session by title/content, with a resume command
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
@@ -37,7 +41,11 @@ clauderig ui                   # interactive dashboard
 - **Secrets never leave the machine.** Secret-bearing fields are stripped before
   commit; a tripwire fails the sync loudly if one slips past. Restore merges the
   synced config back without clobbering your local secrets — a new machine
-  re-authenticates.
+  re-authenticates. That covers config; a key you *pasted into a conversation*
+  lives in a transcript, which is prose rather than fields. Set
+  `"redactTranscripts": true` to scrub those on the way into the repo — the copy
+  in your `~/.claude` is left exactly as you wrote it, since clauderig backs a
+  machine up and does not edit it.
 - **Private repo, no exceptions.** The remote must be a GitHub repo that `gh`
   confirms is private — created with `gh repo create --private` or an existing
   one verified via `gh repo view`.

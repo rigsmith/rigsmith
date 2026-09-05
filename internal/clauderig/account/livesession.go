@@ -17,6 +17,11 @@ type Instance struct {
 	Kind   string // entrypoint/ide name, e.g. "cli", "claude-vscode", "VS Code"
 	Source string // "session" | "ide"
 	Cwd    string // session working directory (sessions only; "" for ide locks)
+	// SessionID names the transcript this process is appending to:
+	// projects/<flattened cwd>/<SessionID>.jsonl. Empty for ide locks, which
+	// have no transcript of their own. restore's live-session guard uses it to
+	// protect exactly the file in flight rather than the whole project.
+	SessionID string
 }
 
 // sessionFile mirrors ~/.claude/sessions/{pid}.json (only the fields we read).
@@ -25,6 +30,7 @@ type sessionFile struct {
 	Entrypoint string `json:"entrypoint"`
 	Kind       string `json:"kind"`
 	Cwd        string `json:"cwd"`
+	SessionID  string `json:"sessionId"`
 }
 
 // ideLock mirrors ~/.claude/ide/{port}.lock (only the fields we read).
@@ -58,7 +64,7 @@ func RunningInstances(claudeHome string) []Instance {
 			if kind == "" {
 				kind = s.Kind
 			}
-			seen[s.PID] = Instance{PID: s.PID, Kind: kind, Source: "session", Cwd: s.Cwd}
+			seen[s.PID] = Instance{PID: s.PID, Kind: kind, Source: "session", Cwd: s.Cwd, SessionID: s.SessionID}
 		}
 	}
 

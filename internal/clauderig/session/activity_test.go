@@ -210,3 +210,72 @@ func TestLastActivity_ContextFallsBackWhenNewestHasNone(t *testing.T) {
 		t.Errorf("got %q/%q, want the fallback /work and main", a.Cwd, a.GitBranch)
 	}
 }
+
+// The last prompt is what makes a row recognisable when you are hunting for the
+// chat you were just in — so it must be the LAST thing typed, not the first.
+func TestLastActivity_LastPromptIsTheNewestTypedOne(t *testing.T) {
+	p := writeTranscript(t,
+		`{"type":"user","timestamp":"2026-08-06T09:00:00Z","message":{"role":"user","content":"set up the database"}}`+"\n"+
+			`{"type":"assistant","timestamp":"2026-08-06T09:01:00Z","message":{"role":"assistant","content":"done"}}`+"\n"+
+			`{"type":"user","timestamp":"2026-08-06T09:02:00Z","message":{"role":"user","content":"now add the migration"}}`+"\n")
+	a, ok := LastActivity(p)
+	if !ok {
+		t.Fatal("!ok")
+	}
+	if a.LastPrompt != "now add the migration" {
+		t.Errorf("LastPrompt = %q, want the newest typed prompt", a.LastPrompt)
+	}
+}
+
+// A session almost never ends on a human turn: the tail is tool results, queue
+// operations and IDE state, all filed as "user" records. Taking the record
+// nearest the end would report plumbing as the last thing said.
+func TestLastActivity_LastPromptSkipsPlumbing(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"type":"user","timestamp":"2026-08-06T10:00:00Z","message":{"role":"user","content":"why is the build red"}}` + "\n")
+	for i := 0; i < 5; i++ {
+		b.WriteString(`{"type":"user","timestamp":"2026-08-06T10:01:00Z","message":{"role":"user","content":[{"type":"tool_result","content":"out"}]}}` + "\n")
+	}
+	b.WriteString(`{"type":"user","timestamp":"2026-08-06T10:02:00Z","message":{"role":"user","content":"<ide_opened_file>/tmp/x</ide_opened_file>"}}` + "\n")
+	b.WriteString(`{"type":"user","timestamp":"2026-08-06T10:03:00Z","message":{"role":"user","content":"Caveat: this session was resumed"}}` + "\n")
+	b.WriteString(`{"type":"queue-operation","timestamp":"2026-08-06T10:04:00Z"}` + "\n")
+
+	a, ok := LastActivity(writeTranscript(t, b.String()))
+	if !ok {
+		t.Fatal("!ok")
+	}
+	if a.LastPrompt != "why is the build red" {
+		t.Errorf("LastPrompt = %q, want the typed prompt behind the plumbing", a.LastPrompt)
+	}
+}
+
+// Nothing typed is a real state — a tool-driven or IDE-opened session — and the
+// honest answer is silence rather than the nearest machine-written line.
+func TestLastActivity_LastPromptEmptyWhenNothingTyped(t *testing.T) {
+	p := writeTranscript(t,
+		`{"type":"user","timestamp":"2026-08-06T11:00:00Z","message":{"role":"user","content":"<ide_opened_file>/tmp/x</ide_opened_file>"}}`+"\n"+
+			`{"type":"assistant","timestamp":"2026-08-06T11:01:00Z","message":{"role":"assistant","content":"working"}}`+"\n")
+	a, ok := LastActivity(p)
+	if !ok {
+		t.Fatal("!ok")
+	}
+	if a.LastPrompt != "" {
+		t.Errorf("LastPrompt = %q, want empty", a.LastPrompt)
+	}
+}
+
+// A pasted stack trace is one "prompt". Rendered raw it would reflow the whole
+// list, so it arrives flattened and bounded, exactly as a title does.
+func TestLastActivity_LastPromptIsFlattenedAndBounded(t *testing.T) {
+	long := "please fix " + strings.Repeat("this ", 40)
+	p := writeTranscript(t,
+		`{"type":"user","timestamp":"2026-08-06T12:00:00Z","message":{"role":"user","content":"first\nsecond"}}`+"\n"+
+			`{"type":"user","timestamp":"2026-08-06T12:01:00Z","message":{"role":"user","content":"`+long+`"}}`+"\n")
+	a, _ := LastActivity(p)
+	if strings.Contains(a.LastPrompt, "\n") {
+		t.Errorf("LastPrompt kept a newline: %q", a.LastPrompt)
+	}
+	if n := len([]rune(a.LastPrompt)); n > 71 {
+		t.Errorf("LastPrompt is %d runes, want it bounded like a title", n)
+	}
+}

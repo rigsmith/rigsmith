@@ -92,7 +92,22 @@ func (r *Repo) StageAll(ctx context.Context) error {
 
 // Dirty reports whether the working tree differs from HEAD (staged or not).
 func (r *Repo) Dirty(ctx context.Context) (bool, error) {
-	out, err := runGit(ctx, r.Dir, "status", "--porcelain")
+	return r.DirtyExcluding(ctx)
+}
+
+// DirtyExcluding is Dirty with the given paths ignored — for trees that carry
+// bookkeeping the caller doesn't consider "changes", so an untracked line there
+// doesn't read as unfinished work. Paths are relative to the repo root and
+// exclude whole subtrees.
+func (r *Repo) DirtyExcluding(ctx context.Context, exclude ...string) (bool, error) {
+	args := []string{"status", "--porcelain"}
+	if len(exclude) > 0 {
+		args = append(args, "--", ".")
+		for _, p := range exclude {
+			args = append(args, ":(exclude)"+p)
+		}
+	}
+	out, err := runGit(ctx, r.Dir, args...)
 	if err != nil {
 		return false, err
 	}

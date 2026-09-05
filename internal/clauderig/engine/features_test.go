@@ -3,11 +3,13 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
 
 func fexists(p string) bool { _, err := os.Stat(p); return err == nil }
@@ -271,5 +273,170 @@ func TestRestore_NoPruneByDefault(t *testing.T) {
 	}
 	if !fexists(filepath.Join(target, "skills", "stale", "SKILL.md")) {
 		t.Error("without --prune, stale file must remain")
+	}
+}
+
+// JSON is regenerated on every sync — read, redacted, portablized, re-marshalled
+// — so unlike the plain-copy path it can't be skipped on mtime. It was therefore
+// counted as written every single time, which made Files a constant floor rather
+// than a measure of change and left the activity feed repeating one identical
+// line forever. The comparison happens on the produced bytes instead.
+func TestSync_UnchangedJSONIsNotCountedAsWritten(t *testing.T) {
+	live := t.TempDir()
+	write(t, live, "settings.json", `{"theme":"dark"}`)
+	staging := t.TempDir()
+	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
+	cfg := cliOnlyConfig(live)
+
+	r1, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, SourceOverride: override("cli", live)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1.Roots[0].Files != 1 {
+		t.Fatalf("first sync Files = %d, want 1", r1.Roots[0].Files)
+	}
+
+	r2, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, SourceOverride: override("cli", live)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2.Roots[0].Files != 0 {
+		t.Errorf("second sync Files = %d, want 0 — nothing changed", r2.Roots[0].Files)
+	}
+	if r2.Roots[0].Unchanged != 1 {
+		t.Errorf("second sync Unchanged = %d, want 1", r2.Roots[0].Unchanged)
+	}
+
+	// And a real edit still gets through.
+	write(t, live, "settings.json", `{"theme":"light"}`)
+	r3, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, SourceOverride: override("cli", live)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r3.Roots[0].Files != 1 {
+		t.Errorf("edited JSON: Files = %d, want 1", r3.Roots[0].Files)
+	}
+	got, err := os.ReadFile(filepath.Join(staging, "cli", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "light") {
+		t.Errorf("staged copy did not pick up the edit: %s", got)
+	}
+}
+
+// "21 secrets redacted" appeared on every row of the activity feed, beside
+// syncs that had written a single file. Every JSON file is redacted on every
+// pass — that is how the JSON path works — so counting at redaction time
+// reported the whole tree's secrets as though they were this run's. The count
+// belongs to the files actually staged.
+func TestSync_RedactionsCountOnlyWhatWasWritten(t *testing.T) {
+	live := t.TempDir()
+	write(t, live, "settings.json", `{"env":{"API_KEY":"sk-ant-api03-`+strings.Repeat("x", 40)+`"}}`)
+	staging := t.TempDir()
+	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
+	cfg := cliOnlyConfig(live)
+
+	r1, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, SourceOverride: override("cli", live)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1.Roots[0].Redactions == 0 {
+		t.Fatal("first sync redacted nothing — the fixture is not exercising the redactor")
+	}
+
+	// Nothing changed, so nothing was staged, so this run redacted nothing —
+	// even though the redactor ran over the same file again to find that out.
+	r2, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: m, SourceOverride: override("cli", live)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2.Roots[0].Redactions != 0 {
+		t.Errorf("second sync Redactions = %d, want 0 — it staged no files", r2.Roots[0].Redactions)
+	}
+}
+
+// A key pasted into a conversation was never examined: the content rules stop at
+// 64 KB and every real transcript is bigger, so it reached the synced repo
+// verbatim. With redaction on, the staged copy is scrubbed and the live file is
+// left exactly as it was — clauderig backs a machine up, it does not edit it.
+func TestSync_RedactsTranscriptsWithoutTouchingTheLiveFile(t *testing.T) {
+	live := t.TempDir()
+	key := "sk-ant-api03-" + strings.Repeat("z", 60)
+	// Padded past the content-scan limit, which is what a real transcript is.
+	var body strings.Builder
+	body.WriteString(`{"type":"user","cwd":"/p","text":"my key is ` + key + `"}` + "\n")
+	for body.Len() < 80<<10 {
+		body.WriteString(`{"type":"assistant","text":"` + strings.Repeat("filler ", 40) + `"}` + "\n")
+	}
+	write(t, live, "projects/-p/s.jsonl", body.String())
+
+	staging := t.TempDir()
+	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
+	cfg := cliOnlyConfig(live)
+	opts := Options{StagingDir: staging, Config: cfg, Machine: m,
+		RedactTranscripts: true, SourceOverride: override("cli", live)}
+
+	rep, err := Sync(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := os.ReadFile(filepath.Join(staging, "cli", "projects", "-p", "s.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(staged), key) {
+		t.Error("the key reached staging")
+	}
+	if !strings.Contains(string(staged), redact.Placeholder) {
+		t.Error("nothing was redacted")
+	}
+	// The rest of the conversation has to come through untouched.
+	if !strings.Contains(string(staged), "filler") || !strings.Contains(string(staged), `"type":"assistant"`) {
+		t.Error("the transcript was damaged")
+	}
+
+	// The live file is the point: it must be exactly as the user left it.
+	orig, err := os.ReadFile(filepath.Join(live, "projects", "-p", "s.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(orig), key) {
+		t.Error("the LIVE transcript was modified — clauderig must never edit ~/.claude")
+	}
+
+	// And the run says which file it was, not merely how many values.
+	var found bool
+	for _, r := range rep.Roots {
+		for _, fr := range r.Redacted {
+			if fr.Rel == "projects/-p/s.jsonl" && len(fr.Kinds) > 0 {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("the redaction was counted but not attributed to a file: %+v", rep.Roots[0])
+	}
+}
+
+// Off by default: rewriting the middle of somebody's conversation is not a thing
+// a backup tool does uninvited.
+func TestSync_LeavesTranscriptsAloneByDefault(t *testing.T) {
+	live := t.TempDir()
+	key := "sk-ant-api03-" + strings.Repeat("z", 60)
+	write(t, live, "projects/-p/s.jsonl", `{"type":"user","text":"`+key+`"}`+"\n")
+	staging := t.TempDir()
+	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
+
+	if _, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
+		SourceOverride: override("cli", live)}); err != nil {
+		t.Fatal(err)
+	}
+	staged, err := os.ReadFile(filepath.Join(staging, "cli", "projects", "-p", "s.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(staged), key) {
+		t.Error("a transcript was scrubbed without being asked")
 	}
 }
