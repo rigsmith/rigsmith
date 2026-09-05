@@ -236,4 +236,153 @@ func TestVarFormsValidation(t *testing.T) {
 	}
 }
 
+// ${env.NAME} inside a captured var's command expands from the release
+// environment before the command runs — in an `os` argv entry, token by token,
+// so `security` is asked for the user, not for the literal placeholder.
+func TestCapturedVarExpandsEnvInArgv(t *testing.T) {
+	restore := currentOSToken
+	t.Cleanup(func() { currentOSToken = restore })
+	currentOSToken = func() string { return "macos" }
+
+	config := &Config{
+		Order: []string{"push"},
+		Vars: map[string]*VarSpec{"key": {
+			OS:   map[string]CommandSpec{"macos": ArgvCommand("security", "find-generic-password", "-a", "${env.USER}", "-s", "feedz-push", "-w")},
+			Lazy: true,
+		}},
+		Steps: map[string]*StepConfig{"push": {Run: CommandList{ShellCommand("nuget push --api-key ${vars.key}")}}},
+	}
+	runner := &recordingRunner{responder: func(c recordedCommand) ([]string, int) {
+		if c.hasArg("jcamp") {
+			return []string{"s3cret"}, 0
+		}
+		if !c.shell {
+			return []string{"could not find user"}, 44
+		}
+		return nil, 0
+	}}
+	p := New(runner.run, &recordingReporter{}, NewSecretMasker(), &stubPrompter{answer: true}, "/tmp/repo", map[string]string{"USER": "jcamp"}, nil, nil)
+	if !p.Run(mustResolve(t, config, ResolveOptions{}), config, false) {
+		t.Fatal("run should succeed once ${env.USER} expands in the capture command")
+	}
+	if len(runner.calls) < 1 || runner.calls[0].shell {
+		t.Fatalf("capture should run as argv first, got %v", runner.lines())
+	}
+	if got := runner.calls[0].args; !runner.calls[0].hasArg("jcamp") || runner.calls[0].hasArg("${env.USER}") {
+		t.Errorf("argv capture did not expand ${env.USER}: %q", got)
+	}
+	if got := strings.Join(runner.lines(), "\n"); !strings.Contains(got, "--api-key s3cret") {
+		t.Errorf("captured value not interpolated: %q", got)
+	}
+}
+
+// The same expansion applies to a `command` given as a shell string.
+func TestCapturedVarExpandsEnvInShellCommand(t *testing.T) {
+	config := &Config{
+		Order: []string{"push"},
+		Vars:  map[string]*VarSpec{"key": {Command: ptr(ShellCommand("security find-generic-password -a ${env.FEEDZ_ACCOUNT} -w"))}},
+		Steps: map[string]*StepConfig{"push": {Run: CommandList{ShellCommand("nuget push --api-key ${vars.key}")}}},
+	}
+	runner := &recordingRunner{responder: func(recordedCommand) ([]string, int) { return []string{"s3cret"}, 0 }}
+	p := New(runner.run, &recordingReporter{}, NewSecretMasker(), &stubPrompter{answer: true}, "/tmp/repo", map[string]string{"FEEDZ_ACCOUNT": "release-bot"}, nil, nil)
+	if !p.Run(mustResolve(t, config, ResolveOptions{}), config, false) {
+		t.Fatal("run should succeed")
+	}
+	got := strings.Join(runner.lines(), "\n")
+	if !strings.Contains(got, "sh -c security find-generic-password -a release-bot -w") {
+		t.Errorf("shell capture did not expand ${env}: %q", got)
+	}
+	if strings.Contains(got, "${env.") {
+		t.Errorf("a placeholder reached the shell: %q", got)
+	}
+}
+
+// A captured var whose command names an env var the release does not set
+// fails the run before any hook or step runs — lazy or not — with a message
+// naming the variable and the env var. The dry run refuses the same way. Set,
+// even to an empty string, it passes; and with no layered environment the
+// process environment is what counts.
+func TestCapturedVarUnsetEnvFailsUpFront(t *testing.T) {
+	restore := currentOSToken
+	t.Cleanup(func() { currentOSToken = restore })
+	currentOSToken = func() string { return "linux" }
+
+	config := &Config{
+		Order: []string{"build", "push"},
+		Vars: map[string]*VarSpec{"key": {
+			OS:   map[string]CommandSpec{"linux": ArgvCommand("secret-tool", "lookup", "account", "${env.NOPE}")},
+			Lazy: true,
+		}},
+		Hooks: &Hooks{Before: CommandList{ShellCommand("echo before")}},
+		Steps: map[string]*StepConfig{
+			"build": {Run: CommandList{ShellCommand("dotnet build")}},
+			"push":  {Run: CommandList{ShellCommand("nuget push --api-key ${vars.key}")}},
+		},
+	}
+	unset := map[string]string{"OTHER": "x"}
+
+	runner := &recordingRunner{}
+	reporter := &recordingReporter{}
+	p := New(runner.run, reporter, NewSecretMasker(), &stubPrompter{answer: true}, "/tmp/repo", unset, nil, nil)
+	if p.Run(mustResolve(t, config, ResolveOptions{}), config, false) {
+		t.Fatal("run should fail on an unset ${env.NOPE} in a lazy captured var")
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("nothing should run before the check, but ran %v", runner.lines())
+	}
+	for _, want := range []string{"variable 'key'", "${env.NOPE}", "not set in the release environment"} {
+		if !strings.Contains(reporter.message, want) {
+			t.Errorf("failure message %q should contain %q", reporter.message, want)
+		}
+	}
+
+	dryRunner := &recordingRunner{}
+	dryReporter := &recordingReporter{}
+	dry := New(dryRunner.run, dryReporter, NewSecretMasker(), &stubPrompter{answer: true}, "/tmp/repo", unset, nil, nil)
+	if dry.Run(mustResolve(t, config, ResolveOptions{}), config, true) {
+		t.Fatal("dry run should fail on the same unset env var")
+	}
+	if len(dryRunner.calls) != 0 {
+		t.Errorf("dry run should run nothing, but ran %v", dryRunner.lines())
+	}
+	if !strings.HasPrefix(dryReporter.message, "dry run: ") || !strings.Contains(dryReporter.message, "variable 'key'") || !strings.Contains(dryReporter.message, "${env.NOPE}") {
+		t.Errorf("dry-run message = %q, want the check's message with the dry-run prefix", dryReporter.message)
+	}
+
+	// Set — even empty — passes the check; the value then expands as usual.
+	for _, value := range []string{"acct", ""} {
+		setRunner := &recordingRunner{responder: func(recordedCommand) ([]string, int) { return []string{"s3cret"}, 0 }}
+		set := New(setRunner.run, &recordingReporter{}, NewSecretMasker(), &stubPrompter{answer: true}, "/tmp/repo", map[string]string{"NOPE": value}, nil, nil)
+		if !set.Run(mustResolve(t, config, ResolveOptions{}), config, false) {
+			t.Fatalf("NOPE=%q: run should succeed once the env var is set", value)
+		}
+		if got := strings.Join(setRunner.lines(), "\n"); !strings.Contains(got, "secret-tool lookup account "+value) || strings.Contains(got, "${env.NOPE}") {
+			t.Errorf("NOPE=%q: capture command should carry the value: %q", value, got)
+		}
+	}
+
+	// No layered environment: the process environment is read instead.
+	t.Setenv("NOPE", "from-process")
+	nilEnv := New((&recordingRunner{responder: func(recordedCommand) ([]string, int) { return []string{"s3cret"}, 0 }}).run, &recordingReporter{}, NewSecretMasker(), &stubPrompter{answer: true}, "/tmp/repo", nil, nil, nil)
+	if !nilEnv.Run(mustResolve(t, config, ResolveOptions{}), config, false) {
+		t.Fatal("with a nil env the process environment should satisfy the check")
+	}
+
+	// A literal's unset ${env.NAME} still expands to "" rather than failing.
+	literal := "${env.NOPE_LITERAL}"
+	literalConfig := &Config{
+		Order: []string{"pack"},
+		Vars:  map[string]*VarSpec{"build": {Value: &literal}},
+		Steps: map[string]*StepConfig{"pack": {Run: CommandList{ShellCommand("echo build=${vars.build}")}}},
+	}
+	literalRunner := &recordingRunner{}
+	lp := New(literalRunner.run, &recordingReporter{}, NewSecretMasker(), &stubPrompter{answer: true}, "/tmp/repo", unset, nil, nil)
+	if !lp.Run(mustResolve(t, literalConfig, ResolveOptions{}), literalConfig, false) {
+		t.Fatal("a literal naming an unset env var is not an error")
+	}
+	if got := strings.Join(literalRunner.lines(), "\n"); got != "sh -c echo build=" {
+		t.Errorf("literal should expand the unset name to empty: %q", got)
+	}
+}
+
 func ptr[T any](v T) *T { return &v }

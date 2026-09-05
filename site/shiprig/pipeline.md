@@ -134,7 +134,13 @@ URL). These also appear on the script `ctx` (`ctx.version`, `ctx.lastVersion`,
   release picks the entry for the OS it runs on, with `command` (when also
   set) as the fallback for one not listed; an OS with neither fails the var,
   naming both. That keeps the portable shell portable: no `sh -c 'if …'` to
-  branch by hand.
+  branch by hand. `${env.NAME}` expands inside the capture command too —
+  argv list or shell string, `command` or an `os` entry — from the release
+  environment, so `["security", "find-generic-password", "-a", "${env.USER}", "-w"]`
+  looks up the user rather than the placeholder. And an env var a capture
+  command names that the release environment does not set fails the release
+  up front, before any hook or step runs, lazy or not — a masked credential
+  lookup cannot fail late, after the build, over a placeholder.
 - **Secret** — `{ "secret": "op://…" | "env:NAME" | "cmd:…" }`: the same
   references the [publish `auth` config](#publish-authentication) takes,
   read against the release — `env:NAME` from the [layered environment](#environment-env)

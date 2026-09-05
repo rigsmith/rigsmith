@@ -121,6 +121,14 @@ func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
 		hooks = *config.Hooks
 	}
 
+	// A captured var whose command names an env var the release does not set
+	// fails here, before a hook or a step runs — lazy ones included, since a
+	// masked credential lookup would otherwise fail at the push step after the
+	// build, with nothing to look at.
+	if err := p.vars.checkEnvRefs(); err != nil {
+		return p.fail(hooks, err.Error())
+	}
+
 	if !p.runCommands("hooks (before)", hooks.Before) {
 		return p.fail(hooks, "global before hook failed")
 	}
@@ -197,8 +205,8 @@ func (p *Pipeline) fail(hooks Hooks, message string) bool {
 // a dry run only if it carries explicit "dryRun" commands.
 func (p *Pipeline) runDry(steps []ResolvedStep) bool {
 	// Fail fast on config errors a real run would hit, rather than hiding them
-	// behind a successful-looking plan: a malformed `if` expression or a broken
-	// computed-var script.
+	// behind a successful-looking plan: a malformed `if` expression, a broken
+	// computed-var script, or a captured var naming an env var that is not set.
 	for _, step := range steps {
 		if step.Enabled() {
 			if _, reason, ok := p.evalStepIf(step); !ok {
@@ -208,6 +216,10 @@ func (p *Pipeline) runDry(steps []ResolvedStep) bool {
 		}
 	}
 	if err := p.vars.evalScriptVars(); err != nil {
+		p.reporter.RunCompleted(false, "dry run: "+err.Error())
+		return false
+	}
+	if err := p.vars.checkEnvRefs(); err != nil {
 		p.reporter.RunCompleted(false, "dry run: "+err.Error())
 		return false
 	}
