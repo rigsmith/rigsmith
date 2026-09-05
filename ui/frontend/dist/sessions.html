@@ -918,6 +918,9 @@ function renderActions(d) {
         go.onclick = () => { go.remove(); open(target, node, true); };
         toast.append(document.createElement('br'), go);
       }
+      // Same as the popup: the message is long, it lands at the bottom of a
+      // scrolled pane, and anything under it is off screen.
+      requestAnimationFrame(() => toast.scrollIntoView({ block: 'end', behavior: 'smooth' }));
     }
   }
 

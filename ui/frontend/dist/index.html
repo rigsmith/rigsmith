@@ -1687,6 +1687,11 @@ function sessionActions(d) {
         go.onclick = () => { go.remove(); open(target, node, true); };
         note.append(document.createElement('br'), go);
       }
+      // These errors are several lines long and land at the very bottom of a
+      // pane you have usually scrolled. Unscrolled, the message is clipped
+      // mid-sentence and anything under it — the override button — is simply
+      // not on screen. Bring the whole thing into view once it has laid out.
+      requestAnimationFrame(() => note.scrollIntoView({ block: 'end', behavior: 'smooth' }));
     }
   }
 
