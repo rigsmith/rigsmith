@@ -30,6 +30,7 @@ func TestSealedCaptureReuseMetadataAndRoundTrip(t *testing.T) {
 	build := func(ctx context.Context, dir string, meta *Metadata) error {
 		calls++
 		meta.BaseReference = "retained-seed-commit"
+		meta.SeedReference = "retained-seed-artifact"
 		if err := os.Mkdir(filepath.Join(dir, "nested"), 0700); err != nil {
 			return err
 		}
@@ -44,7 +45,7 @@ func TestSealedCaptureReuseMetadataAndRoundTrip(t *testing.T) {
 		t.Fatalf("reused: %s %d %v", again, calls, err)
 	}
 	meta, err := s.Metadata(t.Context(), ref)
-	if err != nil || meta.BaseReference != "retained-seed-commit" {
+	if err != nil || (meta.BaseReference != "retained-seed-commit" || meta.SeedReference != "retained-seed-artifact") {
 		t.Fatalf("metadata %+v %v", meta, err)
 	}
 	dest := filepath.Join(t.TempDir(), "new-tree")

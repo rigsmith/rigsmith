@@ -14,6 +14,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
+	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
@@ -94,7 +95,7 @@ func captureBinding(req SyncRequest, profiles []string, resolvedMode *bool) (que
 		Config   any
 		Machine  any
 		Profiles []string
-	}{"claude-sealed-capture-v1", chunked, req.Config, req.Machine, profiles})
+	}{"claude-sealed-capture-v2", chunked, req.Config, req.Machine, profiles})
 	if err != nil {
 		return queue.Binding{}, err
 	}
@@ -179,6 +180,14 @@ func (s Service) CaptureArtifact(ctx context.Context, req ArtifactCaptureRequest
 			}
 		} else if !os.IsNotExist(err) {
 			return err
+		}
+		if meta.BaseReference != "" {
+			// Persist ancestry before the capture can refer to it. Canonical
+			// staging stays leased until both the source tree and seed are fixed.
+			meta.SeedReference, err = commitartifact.RetainSeed(ctx, req.Store, stage, meta.BaseReference)
+			if err != nil {
+				return err
+			}
 		}
 		budget := req.Store.MaxBytes
 		if budget == 0 {

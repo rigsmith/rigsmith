@@ -3,6 +3,7 @@ package service_test
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,7 +110,7 @@ func TestCommitArtifactRejectsInvalidBatchAndMissingSeed(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "missing-seed":
-				if err := os.RemoveAll(req.Capture.Sync.StagingDir); err != nil {
+				if err := os.RemoveAll(commitartifact.SeedStore(req.Capture.Store).Dir); err != nil {
 					t.Fatal(err)
 				}
 			case "overlap":
@@ -164,5 +165,55 @@ func TestCommitArtifactAutoModeRetryWithoutStorageMarker(t *testing.T) {
 	input.Capture.Sync.Config.Remote = "different destination"
 	if _, err := (service.Service{}).CommitArtifact(t.Context(), input); !errors.Is(err, queue.ErrBinding) {
 		t.Fatalf("changed config accepted: %v", err)
+	}
+}
+
+func TestFirstCommitUsesRetainedSeedAfterCanonicalHistoryDisappears(t *testing.T) {
+	for _, mode := range []string{"repository-deleted", "seed-pruned"} {
+		t.Run(mode, func(t *testing.T) {
+			req := capturedCommitFixture(t, true)
+			stage := req.Capture.Sync.StagingDir
+			seed := git(t, stage, "rev-parse", "HEAD")
+			meta, err := req.Capture.Store.Metadata(t.Context(), req.Capture.Work.CaptureRef)
+			if err != nil || meta.BaseReference != seed || meta.SeedReference == "" {
+				t.Fatalf("capture did not retain seed: %+v %v", meta, err)
+			}
+			if err := os.RemoveAll(filepath.Join(req.Capture.Sync.Machine.Home, ".claude")); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "repository-deleted" {
+				if err := os.RemoveAll(stage); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				git(t, stage, "checkout", "--orphan", "replacement")
+				git(t, stage, "rm", "-rf", ".")
+				put(t, stage, "replacement.txt", "unrelated replacement history")
+				git(t, stage, "add", "replacement.txt")
+				git(t, stage, "commit", "-m", "replacement root")
+				git(t, stage, "branch", "-D", "main")
+				git(t, stage, "reflog", "expire", "--expire=now", "--all")
+				git(t, stage, "gc", "--prune=now")
+				probe := exec.Command("git", "cat-file", "-e", seed+"^{commit}")
+				probe.Dir = stage
+				if err := probe.Run(); err == nil {
+					t.Fatal("fixture did not prune original seed")
+				}
+			}
+			ref, err := (service.Service{}).CommitArtifact(t.Context(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := commitartifact.Open(t.Context(), req.Commits, ref, filepath.Join(t.TempDir(), "opened"))
+			if err != nil || info.Parent != seed {
+				t.Fatalf("lost retained parent: %+v %v", info, err)
+			}
+			clone := filepath.Join(t.TempDir(), "clone.git")
+			git(t, filepath.Dir(clone), "init", "--bare", clone)
+			git(t, clone, "fetch", info.BundlePath, commitartifact.RefName+":refs/heads/main")
+			if got := git(t, clone, "show", info.Commit+":cli/projects/-workspace-acme/s.jsonl"); !strings.Contains(got, "sealed queued bytes") {
+				t.Fatal("lost captured bytes")
+			}
+		})
 	}
 }

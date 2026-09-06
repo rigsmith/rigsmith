@@ -14,10 +14,11 @@ step.
 `internal/agentrig/artifact` stores a complete archive under a SHA-256 key derived
 from the binding and sealed event membership. The reference contains both that
 key and the checksum of the archive. Its versioned header includes a bounded seed
-reference; Claude records canonical staging's current HEAD when present. This
-records the reference, but does not pin Git objects against later garbage
-collection. The commit adapter now retains complete ancestry once its bundle is sealed.
-Capture-time seed retention and publication/merge recovery remain pending.
+reference; Claude records canonical staging's current HEAD when present. Before
+the capture is sealed, its complete seed ancestry is retained in a private
+bundle and its immutable artifact reference is recorded in `SeedReference`. See
+[retained commits](CLAUDERIG-V2-RETAINED-COMMITS.md) for the dependency contract.
+Publication/merge recovery remains pending.
 
 A build runs in a private workspace, then streams regular files and directories
 into one archive. Source symlinks, devices and Git metadata are not allowed in the
@@ -77,8 +78,9 @@ device registry with an old event identity; it retains the seeded registry.
 
 The artifact builder takes staging ownership with the original context, verifies
 the binding again, refuses an unsettled canonical merge, and copies the canonical
-staging tree excluding Git metadata. It records HEAD in the archive header. The
-canonical checkout, index and refs are not changed.
+staging tree excluding Git metadata. It records HEAD and a durable seed-bundle
+reference in the archive header. Seed retention must succeed before capture can
+be acknowledged. The canonical checkout, index and refs are not changed.
 
 Allowed source files are copied into private frozen roots before Claude's engine
 runs. These temporary inputs may contain raw transcript/config credentials, so
@@ -101,7 +103,8 @@ Retention/space cleanup moves to a later publication/lifecycle policy; synchrono
 capture keeps its existing retention and throttle behavior.
 
 Lock order is worker ownership (when used by the driver), artifact-store ownership,
-canonical staging ownership, then private capture ownership. Original contexts
+canonical staging ownership, seed-store ownership while retaining ancestry, then
+private capture ownership. Original contexts
 are used for independent stores; derived contexts are only borrowed by operations
 on the same store. The future concrete adapter must follow this order rather than
 holding canonical staging ownership before calling CaptureArtifact.
@@ -118,7 +121,8 @@ ownership locks is a rollout gate. Successful and ordinarily failed builds attem
 up their own workspace. Unknown versions and corrupted captures fail closed.
 
 The [commit adapter](CLAUDERIG-V2-RETAINED-COMMITS.md) now seals retained Git
-bundles. Next: retain seeds before commit, integrate Push and define merge/manual-sync
+bundles, and captures now retain seeds before acknowledgement. Next: integrate Push
+and define merge/manual-sync
 coverage, and own child processes before exposing queued execution. Local-only
 completion, artifact/receipt cleanup, status and capacity remedies also remain
 rollout gates. A mutable extracted working copy or recorded seed SHA alone does
@@ -126,6 +130,7 @@ not satisfy those requirements.
 
 Validation uses synthetic sources: byte/mtime/chunk round trips, immutable reuse,
 metadata, corruption, traversal/link refusal, build failure/cancellation/capacity,
-source deletion, secret refusal/scrubbing, retention protection, scoped attribution,
+source deletion, secret refusal/scrubbing, retention protection, seed dependency
+persistence before capture acknowledgement, scoped attribution,
 binding changes and unchanged canonical staging. The unchanged six-scenario Claude
 compatibility baseline continues to guard existing sync behavior.

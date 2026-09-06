@@ -6,8 +6,9 @@ adds a shared one-batch phase driver and separates Claude capture from publicati
 Durable capture artifacts and the capture/sealing portion of the Claude adapter
 are now implemented; see [capture artifacts](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md).
 Retained commit bundles and Claude commit/sealing are also implemented; see
-[retained commits](CLAUDERIG-V2-RETAINED-COMMITS.md). Push integration, capture-time
-seed retention, a worker command and hook activation are still pending.
+[retained commits](CLAUDERIG-V2-RETAINED-COMMITS.md). Capture-time seed retention
+now keeps ancestry available before the first commit. Push integration, a worker
+command and hook activation are still pending.
 This internal foundation has no end-user changeset because shipped commands
 behave as before.
 
@@ -183,9 +184,9 @@ compatibility baseline remains the gate for synchronous behavior.
 - Recompute and validate canonical store/root/remote/configuration identity and
   source provenance before execution. Reject changed bindings rather than use a
   mutable config pointer or the worker's current login.
-- Durable captures and retained commit bundles now preserve completed phases
-  independently of staging. Still retain seed objects during the capture-to-commit
-  interval and integrate verified commit references with Push/recovery.
+- Durable captures, capture-time seed bundles and retained commits now preserve
+  their dependencies independently of staging. Integrate verified commit
+  references with Push/recovery and define safe artifact cleanup.
 - Protect requested sources from retention until captured; handle deletion and
   unavailable source attribution explicitly, without acknowledging missing data.
 - Integrate manual sync acknowledgements only for the exact events its capture

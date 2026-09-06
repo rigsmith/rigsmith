@@ -27,7 +27,7 @@ type ArtifactCommitRequest struct {
 // staging, pushes, or updates the queue. After success the caller may persist the
 // returned reference as the batch's committed phase. A caller already holding a
 // committed reference uses commitartifact.Open; it must never rebuild a missing
-// committed artifact. Capture-to-commit seed retention remains a rollout gate.
+// committed artifact. Seed objects come only from the capture's retained bundle.
 func (s Service) CommitArtifact(ctx context.Context, input ArtifactCommitRequest) (string, error) {
 	req, key, err := prepareArtifactRequest(input.Capture, queue.Captured)
 	if err != nil {
@@ -80,7 +80,7 @@ func (s Service) CommitArtifact(ctx context.Context, input ArtifactCommitRequest
 	input.Commits.Dir = commits
 	return commitartifact.Build(ctx, commitartifact.Request{
 		Captures: req.Store, Commits: input.Commits, CaptureRef: req.Work.CaptureRef,
-		ParentDir: stage, PolicyID: "claude-retained-commit-v1",
+		PolicyID:   "claude-retained-commit-v1",
 		Message:    adapter.PublicationPlan(req.Sync.Machine.Name, req.Sync.Config.Retention).SnapshotMessage,
 		AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
 		Time:    req.Work.Events[len(req.Work.Events)-1].EnqueuedAt,

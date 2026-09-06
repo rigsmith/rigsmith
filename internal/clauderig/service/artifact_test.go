@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
+	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
@@ -318,5 +319,41 @@ func TestCaptureBindingPinsResolvedAutoChunking(t *testing.T) {
 	req.Binding = before
 	if _, err = (service.Service{}).CaptureArtifact(t.Context(), req); !errors.Is(err, queue.ErrBinding) {
 		t.Fatal("accepted changed storage mode", err)
+	}
+}
+
+func TestCaptureCannotSealBeforeSeedRetentionSucceeds(t *testing.T) {
+	for _, mode := range []string{"capacity", "blocked-store"} {
+		t.Run(mode, func(t *testing.T) {
+			req := artifactCaptureFixture(t, "seed must be durable first")
+			svc := service.Service{ReadIdentity: func() (service.Identity, error) { return req.Identity, nil }}
+			if _, err := svc.Sync(t.Context(), req.Sync); err != nil {
+				t.Fatal(err)
+			}
+			head := git(t, req.Sync.StagingDir, "rev-parse", "HEAD")
+			if mode == "capacity" {
+				req.Store.MaxBytes = 512 // Too small for the complete seed bundle.
+			} else {
+				if err := os.MkdirAll(req.Store.Dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(commitartifact.SeedStore(req.Store).Dir, []byte("blocked"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ref, err := svc.CaptureArtifact(t.Context(), req)
+			if err == nil || ref != "" {
+				t.Fatalf("capture acknowledged failed seed retention: %s %v", ref, err)
+			}
+			if mode == "capacity" && !errors.Is(err, artifact.ErrTooLarge) {
+				t.Fatal(err)
+			}
+			if paths, _ := filepath.Glob(filepath.Join(req.Store.Dir, "*.capture")); len(paths) != 0 {
+				t.Fatal("capture sealed before seed", paths)
+			}
+			if got := git(t, req.Sync.StagingDir, "rev-parse", "HEAD"); got != head {
+				t.Fatal("failed seed retention changed canonical HEAD")
+			}
+		})
 	}
 }
