@@ -60,12 +60,23 @@ func under(prefix string, r Rule) Rule {
 // + the project transcripts (retention is applied separately by mtime, not here).
 // Everything else — caches, statsig, sessions registry, shell snapshots, locks,
 // telemetry, file-history, credentials — is denied by default.
-// vendored are dependency trees that can appear anywhere inside an otherwise
-// allowed tree — a skill with npm deps, a Cowork session that ran a build in its
-// outputs dir. They're reinstallable from the lockfile, enormous, and pure churn,
-// so they're pruned by name at any depth rather than carved out per-site.
+// vendored are things that can appear anywhere inside an otherwise allowed tree
+// and should never travel: they are reinstallable, and pruning them by name at
+// any depth is simpler than carving them out per-site.
+//
+// node_modules is the obvious one — a skill with npm deps, a Cowork session that
+// ran a build in its outputs dir. Enormous, and pure churn.
+//
+// .gitattributes is subtler and matters more. The backup IS a Git repository, so
+// a .gitattributes arriving as ordinary content stops being content and starts
+// governing how the backup stores every file beside it. One ships inside a
+// plugin marketplace clone reading `* text=auto eol=lf`, which re-enables the
+// byte conversion the backup exists to prevent — publication then refuses, and
+// deleting the file does not help, because the next plugin update brings it
+// back. What is lost by pruning it is a vendored file a marketplace re-clone
+// regenerates; what is kept is a backup that can publish at all.
 func vendored() []Rule {
-	return []Rule{exc(anyDepth + "node_modules")}
+	return []Rule{exc(anyDepth + "node_modules"), exc(anyDepth + ".gitattributes")}
 }
 
 func CLI() List {

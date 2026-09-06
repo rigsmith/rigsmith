@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -12,8 +13,9 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
 
-// errPrivateKeyInTranscript stops the scrub for a file carrying a PEM block, so
-// the caller can fall back to refusing it rather than staging a mangled copy.
+// errPrivateKeyInTranscript stops the scrub for a file carrying a PEM block the
+// text rules cannot remove whole, so the caller can fall back to refusing it
+// rather than staging a mangled copy.
 var errPrivateKeyInTranscript = errors.New("transcript contains a private key block")
 
 // isTranscript reports whether rel is a conversation rather than config. Only
@@ -48,6 +50,14 @@ func conversationText(rel string) bool {
 // is text that would keep a credential and keep the sync refused; and a PNG
 // somebody named .md would be handed to the rewriter, which would edit bytes
 // inside an image. The head of the file answers the question directly.
+// isJSONRecord reports a transcript line that is one JSON object, which is what
+// every line of a conversation transcript is. It bounds what a rewrite can
+// reach: a credential inside it is a string value, and cannot continue onto the
+// next line.
+func isJSONRecord(line []byte) bool {
+	return bytes.HasPrefix(bytes.TrimLeft(line, " \t"), []byte("{"))
+}
+
 func scrubbable(rel, src string) bool {
 	if !conversationText(rel) {
 		return false
@@ -85,7 +95,11 @@ func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, 
 	if err != nil {
 		return nil, err
 	}
-	defer in.Close()
+	defer func() {
+		if in != nil {
+			in.Close()
+		}
+	}()
 
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return nil, err
@@ -118,13 +132,28 @@ func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, 
 			if redact.LooksBinary(line) {
 				return nil, errBinaryContent
 			}
-			if redact.HasPrivateKey(line) {
+			// Inside a JSON record the key is a string value, and the text rule
+			// stops at the closing quote — so the whole block goes, footer or
+			// no footer. That matters: a key quoted in a conversation is
+			// usually truncated and has no footer at all, which is why testing
+			// for one rejected the very files this was meant to clear.
+			//
+			// Anything else is raw text, where the body runs on into lines this
+			// loop copies through untouched and the scanner (which matches only
+			// the header) would not notice. Still refused.
+			if redact.HasPrivateKey(line) && !isJSONRecord(line) {
 				return nil, errPrivateKeyInTranscript
 			}
 			out, found, changed := redact.RedactText(line)
 			if changed {
 				hits = append(hits, found...)
 				line = out
+			}
+			// Belt and braces on the case just allowed through: if a marker
+			// survived the rewrite, the rule did not span what it looked like
+			// it spanned, and the rest of the key may still be here.
+			if redact.HasPrivateKey(line) {
+				return nil, errPrivateKeyInTranscript
 			}
 			if _, werr := w.Write(line); werr != nil {
 				return nil, werr
@@ -146,6 +175,13 @@ func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, 
 	if err = os.Chtimes(tmpName, mtime, mtime); err != nil {
 		return nil, err
 	}
+	// Release the source before the rename. The orphan sweep scrubs a staged
+	// file in place, so src and dst are the same path there — and Windows will
+	// not rename over a file that is still open, where POSIX does not care.
+	if err = in.Close(); err != nil {
+		return nil, err
+	}
+	in = nil
 	if err = os.Rename(tmpName, dst); err != nil {
 		return nil, err
 	}

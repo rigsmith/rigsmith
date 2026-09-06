@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,6 +79,7 @@ type Report struct {
 	Roots            []RootResult
 	ManifestProjects int
 	RetentionPruned  int              // staged transcript files removed as aged-out
+	OrphansScrubbed  int              // staged transcripts scrubbed with no live source left
 	LedgerAdded      int              // sessions newly recorded (or re-fingerprinted) in the ledger
 	LedgerTotal      int              // sessions the ledger remembers, including aged-out ones
 	SidecarsPruned   int              // staged Desktop sidecars removed as orphaned
@@ -278,6 +280,13 @@ func Sync(opts Options) (*Report, error) {
 	// presence there would have the first machine to sync claim sessions it
 	// never ran — permanently, since attribution is sticky.
 	var cliSessionIDs map[string]bool
+	// Staged paths this run's walk reached, keyed by absolute staged path. What
+	// is NOT in here after every root has run is a staged file with no live
+	// source behind it any more — see sweepOrphanedTranscripts.
+	visited := map[string]bool{}
+	// What the last audit read and found clean, so the unchanged path below can
+	// skip re-reading bytes nothing has touched since. Never written here.
+	audited := newAuditCache(opts.StagingDir)
 
 	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
@@ -305,6 +314,10 @@ func Sync(opts Options) (*Report, error) {
 			srcPath := filepath.Join(loc, filepath.FromSlash(rel))
 			dstPath := filepath.Join(stageRoot, filepath.FromSlash(rel))
 			isJSON := strings.HasSuffix(rel, ".json")
+			// Whatever this run decides to do with it — copy, skip, defer,
+			// refuse — the walk has seen it, and the orphan sweep below must
+			// not go over it a second time.
+			visited[dstPath] = true
 
 			info, err := os.Stat(srcPath)
 			if err != nil {
@@ -404,10 +417,23 @@ func Sync(opts Options) (*Report, error) {
 							continue
 						}
 					}
-					// Check the bytes that will actually be published.
-					if f := scanNonJSON(dstPath, rel); f != nil {
-						noteFinding(f)
-						continue
+					// Check the bytes that will actually be published — unless the
+					// audit already read exactly these bytes and found them
+					// clean. Without that, every sync re-read the whole staged
+					// tree here as well as in the audit: two full passes over
+					// gigabytes to conclude that three files had moved.
+					//
+					// Read-only: the audit writes those verdicts, and only when
+					// it finds nothing anywhere. So this skips a file that has
+					// been read at this exact size and mtime, and nothing else —
+					// a credential staged by an older clauderig still fails here
+					// until it is dealt with.
+					if st, serr := os.Stat(dstPath); serr != nil ||
+						!audited.wasClean(r.ID+"/"+rel, auditEntry{size: st.Size(), mod: st.ModTime().UnixNano()}) {
+						if f := scanNonJSON(dstPath, rel); f != nil {
+							noteFinding(f)
+							continue
+						}
 					}
 					rr.Unchanged++
 					continue
@@ -679,6 +705,23 @@ func Sync(opts Options) (*Report, error) {
 		}
 	}
 
+	// A staged transcript whose live source is gone is never walked again, so it
+	// keeps whatever it held when it was staged. Staged before redaction was
+	// turned on, that is a credential the tripwire finds on every sync from here
+	// to forever — and turning the setting on cannot clear it, because there is
+	// no source left to re-scrub from. Scrub the staged copy itself instead.
+	//
+	// Only on the run that turns redaction on, which is the run that owes the
+	// tree a full pass anyway. Orphans staged while it was already on were
+	// scrubbed on the way in.
+	if rescrub {
+		swept, err := sweepOrphanedTranscripts(opts.StagingDir, visited)
+		if err != nil {
+			return nil, err
+		}
+		rep.OrphansScrubbed = swept
+	}
+
 	if err := backupgit.Ensure(opts.StagingDir); err != nil {
 		return rep, err
 	}
@@ -696,6 +739,14 @@ func Sync(opts Options) (*Report, error) {
 			}
 		}
 	}
+	// Recorded here rather than past the tripwire: by this point the staging
+	// pass has finished, so every transcript in staging was written under this
+	// run's setting whatever the tripwire goes on to say. A refusal is about
+	// what may be published, not about what was scrubbed — and leaving the
+	// marker stale would make the next run redo the whole scrub, and the one
+	// after that, for as long as anything in the tree is refused. A run that
+	// genuinely stopped part-way returns above this and still re-scrubs.
+	noteRedactionSetting(opts.StagingDir, opts.RedactTranscripts)
 	if len(rep.Findings) > 0 {
 		// The two halves of the wire need different remedies, so say which one
 		// fired: a JSON value means the redactor's key rules missed something, a
@@ -710,9 +761,6 @@ func Sync(opts Options) (*Report, error) {
 			return rep, fmt.Errorf("secret tripwire: %d value(s) look like credentials and were not redacted; refusing to sync", len(rep.Findings))
 		}
 	}
-	// Recorded only on the way out: a run that failed part-way has not scrubbed
-	// everything, and the next one has to try again.
-	noteRedactionSetting(opts.StagingDir, opts.RedactTranscripts)
 	return rep, nil
 }
 
@@ -866,6 +914,64 @@ func projectIn(m *manifest.Manifest, slug string) bool {
 func isMemoryRel(rel string) bool {
 	parts := strings.Split(rel, "/")
 	return len(parts) > 3 && parts[0] == "projects" && parts[2] == "memory"
+}
+
+// sweepOrphanedTranscripts scrubs staged transcripts the walk never reached.
+// visited holds every staged path this run looked at; anything under a root's
+// projects/ tree that is missing from it has no live source any more — a deleted
+// worktree, an archived project — and will never be restaged, so the staged
+// bytes are the only copy there is and the only place a scrub can happen.
+//
+// Best-effort per file: one that cannot be scrubbed whole (a key block spanning
+// lines, content that turns binary) is left exactly as it was, and the tripwire
+// still refuses it by name. Silently rewriting half of it would be worse.
+func sweepOrphanedTranscripts(stagingDir string, visited map[string]bool) (int, error) {
+	swept := 0
+	roots, err := os.ReadDir(stagingDir)
+	if err != nil {
+		return 0, err
+	}
+	for _, root := range roots {
+		if !root.IsDir() {
+			continue
+		}
+		stageRoot := filepath.Join(stagingDir, root.Name())
+		projects := filepath.Join(stageRoot, "projects")
+		if !dirExists(projects) {
+			continue
+		}
+		err := filepath.WalkDir(projects, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || visited[path] {
+				return nil
+			}
+			rel, rerr := filepath.Rel(stageRoot, path)
+			if rerr != nil || !isTranscriptRel(filepath.ToSlash(rel)) {
+				return nil
+			}
+			info, ierr := d.Info()
+			if ierr != nil {
+				return nil
+			}
+			// src == dst: redactTranscript reads through an open handle and
+			// renames its temp over the top at the end, so the file rewrites
+			// itself. The staged mtime is kept, because the incremental check
+			// on the next run compares it against a source that no longer
+			// exists only for files that DO exist — and churning it here would
+			// make every later sync restage this file for no reason.
+			hits, rerr := redactTranscript(path, path, info.ModTime())
+			if rerr != nil {
+				return nil // left as it was; the tripwire will say so
+			}
+			if len(hits) > 0 {
+				swept++
+			}
+			return nil
+		})
+		if err != nil {
+			return swept, err
+		}
+	}
+	return swept, nil
 }
 
 // pruneAgedStagedProjects removes files under projectsDir older than cutoff and
