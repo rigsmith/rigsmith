@@ -21,10 +21,13 @@ merged in [#310](https://github.com/rigsmith/rigsmith/pull/310) as `3bd0d8fe`.
 **Completed:** capture-time seed retention in
 [#317](https://github.com/rigsmith/rigsmith/pull/317) as `4ebcd852`
 ([contract](CLAUDERIG-V2-RETAINED-COMMITS.md)).
-**In review:** shared retained publication in [#318](https://github.com/rigsmith/rigsmith/pull/318), with private merges and fresh remote
-confirmation ([contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md)). Claude Push policy
-and production transport integration, process ownership, queued hooks and CodexRig
-remain planned.
+**Completed:** shared retained publication merged in [#318](https://github.com/rigsmith/rigsmith/pull/318)
+as `151a4d47`, with private merges and fresh remote confirmation.
+**In review:** Claude retained publication policy in [#319](https://github.com/rigsmith/rigsmith/pull/319): committed-batch bindings,
+explicit transport destination checks, settled local HEAD, raw-tree native
+attributes and secret auditing ([contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md)).
+Production transport, native conflict recovery, process ownership, queued hooks
+and CodexRig remain planned.
 
 | Milestone | Status | Evidence / remaining work |
 | --- | --- | --- |
@@ -36,7 +39,7 @@ remain planned.
 | 5. Shared session/metadata and Git publication boundaries | Merged in v2 | [#307](https://github.com/rigsmith/rigsmith/pull/307). Shared recording/query and audited publication workflows; Claude retains native formats and policies. Local synthetic suite, six baseline compatibility scenarios and vet passed. |
 | 6a. Store coordination | Merged in v2: [#308](https://github.com/rigsmith/rigsmith/pull/308) | OS-owned locks across staging workflows. Linux, macOS and Windows CI passed. [Contract](CLAUDERIG-V2-COORDINATION.md). |
 | 6b.1. Durable queue storage and recovery | Merged in v2: [#309](https://github.com/rigsmith/rigsmith/pull/309) | Persist events, coalesce pending flushes, preserve new generations during capture, track phases/retries and recover exclusive worker ownership. [Contract](CLAUDERIG-V2-QUEUE.md). |
-| 6b.2. Worker and Claude service integration | Driver/service split merged in [#310](https://github.com/rigsmith/rigsmith/pull/310); capture artifacts merged in [#311](https://github.com/rigsmith/rigsmith/pull/311) | Durable archives, frozen Claude sources and pinned attribution: [contract](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md). Retained commit bundles and Claude commit integration merged in [#315](https://github.com/rigsmith/rigsmith/pull/315): [contract](CLAUDERIG-V2-RETAINED-COMMITS.md). Capture-time seed retention merged in [#317](https://github.com/rigsmith/rigsmith/pull/317). Shared retained publication is in review in [#318](https://github.com/rigsmith/rigsmith/pull/318): [contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md). Next: Claude Push policy/transport, native conflict recovery, child-process ownership, exact manual-sync coverage and lifecycle/capacity remedies. |
+| 6b.2. Worker and Claude service integration | Driver/service split merged in [#310](https://github.com/rigsmith/rigsmith/pull/310); capture artifacts merged in [#311](https://github.com/rigsmith/rigsmith/pull/311) | Durable archives, frozen Claude sources and pinned attribution: [contract](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md). Retained commit bundles and Claude commit integration merged in [#315](https://github.com/rigsmith/rigsmith/pull/315): [contract](CLAUDERIG-V2-RETAINED-COMMITS.md). Capture-time seed retention merged in [#317](https://github.com/rigsmith/rigsmith/pull/317). Shared retained publication merged in [#318](https://github.com/rigsmith/rigsmith/pull/318): [contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md). Claude retained publication policy is in review in [#319](https://github.com/rigsmith/rigsmith/pull/319). Next: production transport, native conflict recovery, child-process ownership, exact manual-sync coverage and lifecycle/capacity remedies. |
 | 7. Opt-in queued Claude hooks | Planned | Validate worker lifecycle, startup, draining/rollback, and convergence with synchronous sync. |
 | Codex adapter and separate `codexrig` executable | Planned | Consume the proven shared layers without moving Claude account/Desktop internals into them. |
 
@@ -170,6 +173,6 @@ cmd/clauderig -> Claude commands/composition -> shared services <- Codex command
 
 The composition code passes adapter implementations into narrow interfaces owned by the shared services. Shared packages import neither vendor package. Keep these interfaces internal until both vendors validate them; a public SDK or external plugin ABI would freeze guesses too early.
 
-Milestones 1–5 are merged; milestone 5 landed in v2 through #307. Milestone 6a merged in #308. Milestone 6b.1 merged in #309; 6b.2 has the shared execution driver and Claude service split merged in #310; durable artifacts and capture/sealing merged in #311. Retained commit bundles and the Claude commit adapter merged in #315. Capture-time seed retention merged in #317. Shared retained publication is in review in #318, followed by Claude Push policy/transport and lifecycle integration before opt-in hooks. Milestones 3–5 establish the shared foundation; milestones 6–7 deliver the queue as a separately controlled feature. `codexrig` can begin using the proven boundaries without requiring Claude account/Desktop internals to move.
+Milestones 1–5 are merged; milestone 5 landed in v2 through #307. Milestone 6a merged in #308. Milestone 6b.1 merged in #309; 6b.2 has the shared execution driver and Claude service split merged in #310; durable artifacts and capture/sealing merged in #311. Retained commit bundles and the Claude commit adapter merged in #315. Capture-time seed retention merged in #317. Shared retained publication merged in #318. Claude retained publication policy is in review in [#319](https://github.com/rigsmith/rigsmith/pull/319), followed by production transport, native conflict recovery and lifecycle integration before opt-in hooks. Milestones 3–5 establish the shared foundation; milestones 6–7 deliver the queue as a separately controlled feature. `codexrig` can begin using the proven boundaries without requiring Claude account/Desktop internals to move.
 
 Baseline check during this roadmap: `CLAUDERIG_E2E=1 go test ./internal/clauderig/e2e -run '^TestE2E_(RoundTrip|CrossOSPortability)$' -count=1 -v` passed, including both macOS→Windows and Windows→macOS path-mapping cases on this macOS host. These are synthetic fixtures and local bare remotes, not tests of live Claude resume on Windows. No implementation or runtime configuration was changed.

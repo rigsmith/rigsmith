@@ -4,8 +4,9 @@ Milestone 6b.2 now has an internal shared publication engine in
 `internal/agentrig/commitartifact.Publish`. It consumes the durable commit bundles
 from #315/#317, merges committed history in a private repository, and confirms
 remote ancestry before returning success. This is a library boundary with real
-local-Git transport tests. Claude's concrete queue Push adapter, native policy
-wiring, production transport and process ownership are still next steps. No
+local-Git transport tests. Claude now supplies an internal `Service.PublishArtifact`
+policy adapter with an explicitly injected bound transport. Production transport,
+queue execution wiring and process ownership are still next steps. No
 command or hook calls this engine, and synchronous publication is unchanged.
 There is no end-user changeset for this internal step.
 
@@ -46,8 +47,7 @@ merge-tree mode; failure is surfaced, with no fallback to a checkout merge.
 
 Conflicts fail closed with ErrConflict. Unrelated history, invalid object formats
 and Git execution failures also stop publication. There is no automatic choice of
-one vendor's side, native conflict resolver or interactive mergetool yet. The
-Claude adapter must add its native policy and recovery path before activation.
+one vendor's side, native conflict resolver or interactive mergetool yet. Claude native conflict recovery must be added before activation.
 
 Private Git runs disable inherited Git overrides, global/system configuration,
 system/global attributes, templates, hooks, replacement objects and automatic
@@ -89,9 +89,55 @@ This detects changed files and extra/missing entries without starting per-file
 Git processes or rewriting objects. A policy cannot clean inspected files while
 leaving unsafe original blobs to publish. Executable modes stay attached to the
 original candidate independently of host filesystem permissions.
-Claude's existing checkout-based attributes validator cannot simply be passed to
-this API: a native validator for the materialized tree is a required integration
-step, along with the existing secret/transcript audit.
+Claude uses `backupgit.ValidateTree` for this boundary, followed by the existing
+`engine.CheckPublishContext` secret/transcript audit. The synchronous checkout
+validator stays unchanged.
+
+## Claude retained publication adapter
+
+`Service.PublishArtifact` consumes an `ArtifactPublishRequest` containing the
+committed batch and an explicit `ArtifactTransport`. It detaches request values,
+checks the configured roots/staging/remote, producer identity, sealed event
+membership, capture reference key and committed phase. The commit reference must
+carry the exact artifact key derived from the same policy request used by
+`CommitArtifact`: capture reference, policy version, message, author name/email
+and sealed timestamp. A valid bundle for the same capture built with different
+commit policy or identity is refused before opening it or calling transport.
+The verified bundle must also name that exact capture. Missing or corrupt
+artifacts fail without recapture or rebuilding.
+
+The transport must report its immutable destination and branch. Both must exactly
+match the bound Claude configuration and the native publication plan (`main`),
+and an empty configured remote is refused. This is a contract for trusted injected
+code, not validation of arbitrary transport implementations. There is no default
+transport, credential discovery, worker-login read or network activation.
+
+The adapter revalidates bindings under the canonical staging lease and holds it
+through publication, confirmation and cleanup. A protected read of settled HEAD
+selects only committed local history; staged and unstaged files are untouched.
+An absent checkout or confirmed unborn branch contributes no local history.
+Unfinished merges, cherry-picks, reverts, rebases and sequencers, unmerged index
+entries, malformed Git state and other read failures stop the attempt. Inherited
+Git environment cannot redirect HEAD inspection. Auto chunk mode remains pinned
+by the sealed binding even after the live marker or staging checkout disappears.
+
+The native tree validator delegates attribute evaluation to Git in a new empty
+private repository outside the raw tree. It checks every regular file, including
+ignored files, using the actual root/nested attribute and macro syntax. `text`,
+`eol`, `filter`, `ident` and `working-tree-encoding` must all be explicitly unset.
+Host global/system/info attributes cannot override this check. No checkout or
+filter runs and no `.git` is added to the audited directory. A single streamed
+`check-attr` process verifies bounded NUL-delimited response fields against each
+requested path/attribute pair. Path input is limited to 64 MiB and one million
+files; the publisher already bounds and validates tree metadata before invoking
+this policy. Failure and cancellation reap the process before returning.
+
+Claude supplies its native snapshot label, fixed queued author identity, sealed
+event timestamp and four push/confirmation attempts. The committed store's byte
+limit also bounds materialized publication trees. A returned `Publication` is
+only evidence for persisting the pushed phase; this adapter does not update queue
+state. Config-history, retention, local-only completion, native merge recovery and
+production transport are not implemented here. Synchronous behavior is unchanged.
 
 ## Confirmation and retries
 
@@ -136,3 +182,14 @@ batch output, empty directories,
 cancellation and missing artifacts. Trace-based tests assert that a many-file
 audit uses only a tree-listing process and one blob batch, in both hash formats. No real vendor data or
 network credentials are used.
+
+Claude adapter tests additionally cover invalid bindings/provenance/phases,
+wrong destination/branch, missing/corrupt/foreign committed artifacts (including
+each policy/identity field changed for the same capture), auto-mode
+recovery after live inputs disappear, staging ownership during transport,
+byte-for-byte preservation of canonical index/config/worktree, newer local commits,
+lost-response replay, SHA-256 publication, cancellation cleanup, and native
+attribute/secret rejection on both local candidates and already-published remote
+trees. The shared attribute validator tests macros, nested overrides for all five
+attributes, ignored paths, inherited Git overrides and streamed responses larger
+than the ordinary command-output cap.

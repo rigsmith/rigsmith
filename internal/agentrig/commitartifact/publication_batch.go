@@ -42,30 +42,37 @@ func (r gitRepo) materializeBlobs(ctx context.Context, root string, files []*pub
 	if len(files) == 0 {
 		return nil
 	}
+	return r.stream(ctx, &batchRequests{files: files}, func(input io.Reader) error {
+		return materializeBatch(ctx, input, root, files)
+	}, "cat-file", "--batch")
+}
+
+// stream drains bounded protocol records and reaps the child before returning.
+func (r gitRepo) stream(ctx context.Context, input io.Reader, consume func(io.Reader) error, args ...string) (err error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := r.command(childCtx, "cat-file", "--batch")
-	cmd.Stdin = &batchRequests{files: files}
+	cmd := r.command(childCtx, args...)
+	cmd.Stdin = input
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
 	}
 	if err = cmd.Start(); err != nil {
 		stdout.Close()
-		return fmt.Errorf("retained commit git cat-file: %w", err)
+		return fmt.Errorf("retained commit git stream: %w", err)
 	}
 	defer func() {
 		if err != nil {
 			cancel()
 		}
-		waitErr := cmd.Wait() // Reap the batch process before releasing its workspace.
+		waitErr := cmd.Wait()
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		} else if err == nil && waitErr != nil {
-			err = fmt.Errorf("retained commit git cat-file: %w", waitErr)
+			err = fmt.Errorf("retained commit git stream: %w", waitErr)
 		}
 	}()
-	return materializeBatch(ctx, stdout, root, files)
+	return consume(stdout)
 }
 
 func materializeBatch(ctx context.Context, input io.Reader, root string, files []*publicationFile) error {

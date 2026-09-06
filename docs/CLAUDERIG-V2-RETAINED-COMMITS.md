@@ -115,10 +115,10 @@ Queue operations continue to use the original cancellation context.
 
 - The [shared retained publication engine](CLAUDERIG-V2-RETAINED-PUBLICATION.md)
   now merges newer committed histories and requires fresh remote confirmation.
-  Wire Claude Push with bound production transport and native conflict recovery.
-  The engine leaves canonical staging untouched.
-- Validate native Git attributes and audit the materialized publication tree at
-  the publication boundary, as synchronous Publish already does.
+  Claude's `Service.PublishArtifact` now checks batch/destination bindings and
+  applies native Git attributes and secret auditing to the raw publication tree.
+  Wire production transport and native conflict recovery next. The engine and
+  adapter leave canonical staging untouched.
 - Own Git and merge-tool process trees across cancellation and parent death.
   Command cancellation and a bounded pipe wait do not establish that ownership.
 - Add exact manual-sync event coverage, local-only completion policy, queue/status

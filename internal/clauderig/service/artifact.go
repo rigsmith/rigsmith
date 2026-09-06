@@ -564,7 +564,7 @@ func prepareArtifactRequest(req ArtifactCaptureRequest, phase queue.Phase) (Arti
 // resolved values against that digest while still validating every current
 // configuration/path/provenance input. Do not read the now-irrelevant live marker.
 func artifactPhaseBinding(req ArtifactCaptureRequest, phase queue.Phase) (queue.Binding, error) {
-	if phase != queue.Captured {
+	if phase != queue.Captured && phase != queue.Committed {
 		return CaptureBinding(req.Sync, req.Profiles)
 	}
 	for _, mode := range []bool{false, true} {

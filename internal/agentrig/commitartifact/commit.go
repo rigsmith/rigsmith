@@ -49,6 +49,13 @@ func objectID(s string) bool {
 	return err == nil && (len(b) == 20 || len(b) == 32) && s == strings.ToLower(s)
 }
 
+// RequestKey derives Build's exact artifact key without accessing stores or
+// invoking callbacks. Publication adapters use it to bind a retained reference
+// to the same capture, policy, commit identity, message and timestamp as Build.
+// The archive must still be opened and verified; matching a key is not an
+// integrity check. PolicyID identifies callback behavior, not function pointers.
+func RequestKey(r Request) (string, error) { return requestKey(r) }
+
 func requestKey(r Request) (string, error) {
 	if r.Prepare == nil || r.Audit == nil || strings.TrimSpace(r.PolicyID) == "" ||
 		strings.TrimSpace(r.Message) == "" || len(r.Message) > 4096 || strings.ContainsRune(r.Message, 0) ||
