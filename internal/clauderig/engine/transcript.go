@@ -95,7 +95,11 @@ func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, 
 	if err != nil {
 		return nil, err
 	}
-	defer in.Close()
+	defer func() {
+		if in != nil {
+			in.Close()
+		}
+	}()
 
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return nil, err
@@ -171,6 +175,13 @@ func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, 
 	if err = os.Chtimes(tmpName, mtime, mtime); err != nil {
 		return nil, err
 	}
+	// Release the source before the rename. The orphan sweep scrubs a staged
+	// file in place, so src and dst are the same path there — and Windows will
+	// not rename over a file that is still open, where POSIX does not care.
+	if err = in.Close(); err != nil {
+		return nil, err
+	}
+	in = nil
 	if err = os.Rename(tmpName, dst); err != nil {
 		return nil, err
 	}
