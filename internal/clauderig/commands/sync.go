@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mattn/go-isatty"
+	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/service"
 	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
@@ -107,6 +108,8 @@ func NewSyncCmd() *cobra.Command {
 		Short: "Snapshot, redact, rewrite, and push your Claude Code setup",
 		Long: "Walks the sync roots, redacts secret-bearing fields, rewrites machine\n" +
 			"paths into a portable form, commits, and pushes.\n\n" +
+			"Coordinates with other staging operations: ordinary hooks skip a busy store;\n" +
+			"manual sync and --flush wait up to 15 seconds before asking you to retry.\n\n" +
 			"Complete staged-text scanning refuses recognized credentials before publication.\n" +
 			"Set redactTranscripts true to scrub supported signatures from staged transcripts.\n\n" +
 			"Chunking defaults on in new configs; omitted keys in existing configs mean auto.\n" +
@@ -136,12 +139,6 @@ func NewSyncCmd() *cobra.Command {
 				return err
 			}
 
-			storedChunkMode, err := transcript.Enabled(staging)
-			if err != nil {
-				return err
-			}
-			migrationPending := cfg.ChunkTranscripts != nil && *cfg.ChunkTranscripts != storedChunkMode
-
 			// Every sync holds the staging lock: chunk cleanup and publication must
 			// not race another writer. Manual runs wait and are never debounced.
 			automated := hook || !Interactive()
@@ -149,7 +146,17 @@ func NewSyncCmd() *cobra.Command {
 			if flush || !automated {
 				wait = flushLockWait
 			}
-			lock, got, lerr := acquireSyncLockWait(staging, wait)
+			lockDeadline := time.Now().Add(wait)
+			ctx, release, lerr := storelock.Acquire(ctx, staging, wait)
+			if errors.Is(lerr, storelock.ErrBusy) && automated && !flush {
+				fmt.Fprintln(out, DimStyle.Render("  another operation is using the staging store — skipping"))
+				return nil
+			}
+			if lerr != nil {
+				return lerr
+			}
+			defer release()
+			lock, got, lerr := acquireSyncLockWaitContext(ctx, staging, max(0, time.Until(lockDeadline)))
 			if lerr != nil {
 				return lerr
 			}
@@ -161,6 +168,12 @@ func NewSyncCmd() *cobra.Command {
 				return nil
 			}
 			defer lock.Release()
+
+			storedChunkMode, err := transcript.Enabled(staging)
+			if err != nil {
+				return err
+			}
+			migrationPending := cfg.ChunkTranscripts != nil && *cfg.ChunkTranscripts != storedChunkMode
 
 			// Legacy hooks invoke bare `sync` without a terminal. Keep recognizing
 			// those. Flushes and explicit storage-mode changes bypass the debounce.

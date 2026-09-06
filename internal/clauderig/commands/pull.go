@@ -12,7 +12,7 @@ import (
 func NewPullCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "pull",
-		Short: "Fetch latest into the local staging repo (no write to ~/.claude)",
+		Short: "Fetch latest, with configured fresh-machine restore; skip a busy staging repo",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()

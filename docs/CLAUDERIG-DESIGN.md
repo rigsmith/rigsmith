@@ -22,6 +22,13 @@ at `/Users/you/Git/x` resumes at `C:\Users\You\Git\x`. Config lives on a normal
 branch (precious, tiny); bulky session history lives on an **orphan branch** that
 is periodically squashed so the repo stays bounded.
 
+## V2 local operation coordination
+
+Sync, pull, restore, merge and staging maintenance now share OS-owned store locks.
+See [the coordination contract](CLAUDERIG-V2-COORDINATION.md) for ownership,
+contention, crash release, supported filesystems and legacy-client limitations.
+Installed hooks remain synchronous; durable work is the next milestone.
+
 ## Roots (claudeRig is multi-root)
 
 Each root is `{ os-resolved location, allowlist, rewrite rules }`. The location is

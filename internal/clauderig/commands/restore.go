@@ -238,7 +238,7 @@ func NewRestoreCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "restore over an existing ~/.claude without prompting")
 	cmd.Flags().StringVar(&dir, "dir", "", "restore the CLI payload into this folder instead of ~/.claude (test/inspect)")
 	cmd.Flags().BoolVar(&prune, "prune", false, "remove config files (skills/commands/agents/plans) deleted upstream; never touches projects")
-	return cmd
+	return coordinatedCommand(cmd)
 }
 
 func nonEmptyDir(dir string) bool {

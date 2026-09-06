@@ -134,7 +134,7 @@ func printRepoStats(out io.Writer, s gitrepo.Stats) {
 // newRepoGCCmd is the remedy to reach for first, and the reason `prune` should
 // rarely be needed: it costs no history at all.
 func newRepoGCCmd() *cobra.Command {
-	return &cobra.Command{
+	return coordinatedCommand(&cobra.Command{
 		Use:   "gc",
 		Short: "Repack the sync repo, reclaiming space without losing any history",
 		Long: "Delta-compresses loose objects into the pack and drops unreachable ones.\n\n" +
@@ -172,7 +172,7 @@ func newRepoGCCmd() *cobra.Command {
 			printRepoStats(out, now)
 			return nil
 		},
-	}
+	})
 }
 
 func newRepoPruneCmd() *cobra.Command {
@@ -291,7 +291,7 @@ func newRepoPruneCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&before, "before", "30d",
 		"fold everything before this date, or this age (2026-08-01, 7d, 90d)")
-	return cmd
+	return coordinatedCommand(cmd)
 }
 
 // humanBytes renders a size the way someone reading a report wants it, not the

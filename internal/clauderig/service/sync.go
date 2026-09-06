@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
@@ -29,7 +30,7 @@ type FlushIntent struct {
 }
 
 // SyncRequest supplies resolved configuration and paths. Config must be non-nil.
-// The caller must hold its existing store lock through the complete operation.
+// Sync acquires store ownership, or borrows it from the operation context.
 // ResolveFlush, when supplied, is called once instead of using Flush, after
 // merge repair and identity capture. This keeps CLI stdin decoding at its old
 // point in the workflow; a worker can provide a decoded Flush value directly.
@@ -50,11 +51,16 @@ type SyncResult struct {
 }
 
 // Sync repairs, captures, scans, records metadata/journal entries and publishes.
-// Lock acquisition, debounce and terminal input remain caller responsibilities.
+// Debounce and terminal input remain caller responsibilities.
 func (s Service) Sync(ctx context.Context, req SyncRequest) (result SyncResult, rerr error) {
 	if req.Config == nil {
 		return result, fmt.Errorf("sync requires a configuration")
 	}
+	ctx, release, err := storelock.Acquire(ctx, req.StagingDir, StoreWait)
+	if err != nil {
+		return result, err
+	}
+	defer release()
 	cfg, me, staging, dryRun := req.Config, req.Machine, req.StagingDir, req.DryRun
 	// Capture errors have their own record below. After capture succeeds, a
 	// publication-phase failure needs a separate record, even when it occurs

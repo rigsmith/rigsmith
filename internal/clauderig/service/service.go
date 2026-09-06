@@ -2,8 +2,8 @@
 // rendering. It initially retains Claude's existing policy and backup formats;
 // vendor-neutral mechanics and adapters are separate extractions.
 //
-// Services do not acquire store locks. Callers retain their existing operation
-// coordination; a future worker must supply it rather than racing CLI writers.
+// Services coordinate staging operations through the shared store lock. Pass the
+// operation context to sequential nested services to reuse that ownership.
 package service
 
 import (
@@ -13,6 +13,10 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
+
+// StoreWait bounds contention for requested operations; SessionStart pull tries
+// once. The lock remains owned for the entire operation after acquisition.
+const StoreWait = 15 * time.Second
 
 // Service delivers synchronous progress to an optional observer. Observers must
 // not mutate the store, event payloads or reenter a workflow. A nil observer

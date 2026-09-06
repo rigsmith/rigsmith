@@ -143,7 +143,7 @@ func newLedgerBackfillCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "report what would be recovered without writing")
-	return cmd
+	return coordinatedCommand(cmd)
 }
 
 // gitHistory adapts the repo to the ledger's History port. The two Deletion

@@ -4,7 +4,7 @@
 |---|---|
 | `init` | First-run wizard: remote (private), machine identity, roots, hooks |
 | `sync` | Walk → redact → manifest → tripwire → commit → push (`--dry-run`, `--hook` debounces) |
-| `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
+| `pull` | Fetch latest; optionally restore a fresh machine when `autoRestore` is enabled; skip a busy staging repo |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`); nudges a Desktop restart when Code sessions come back |
 | `status` | Sync state: remote, last sync, roots, hooks |
 | `repo` | Repo size, files, commits and history-vs-content ratio; `repo gc` repacks (no history lost), `repo prune --before 2026-08-01` folds older history into one commit |
@@ -26,6 +26,14 @@
 The worktree and prune verbs (`rig worktree`, `rig prune`) live in
 [`rig`](/rig/verbs) — claudeRig wires the *guard* that makes them the default
 path. See [Worktree discipline](#worktree-discipline) below.
+
+Backup operations coordinate on each local staging repo. Sync, restore, merge,
+repository maintenance, ledger backfill and device removal wait up to 15 seconds
+for another operation to finish. Ordinary sync hooks and SessionStart pull skip
+a busy repo; `sync --flush` waits. A running operation keeps ownership until it
+finishes or exits, even if it takes longer than the wait limit. No background
+worker or queue is enabled. Use the same v2 client for operations sharing a
+local backup; older clients do not participate in this coordination.
 
 ## The sync → restore loop
 

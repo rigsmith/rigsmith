@@ -72,7 +72,7 @@ func newDeviceListCmd() *cobra.Command {
 }
 
 func newDeviceRemoveCmd() *cobra.Command {
-	return &cobra.Command{
+	return coordinatedCommand(&cobra.Command{
 		Use:     "remove <name>",
 		Aliases: []string{"rm"},
 		Short:   "Drop a machine from the synced registry",
@@ -120,7 +120,7 @@ func newDeviceRemoveCmd() *cobra.Command {
 			fmt.Fprintln(out, DimStyle.Render("Run `clauderig sync` to push the change to your other machines."))
 			return nil
 		},
-	}
+	})
 }
 
 // loadRegistry reads the synced registry plus this machine's name, so callers

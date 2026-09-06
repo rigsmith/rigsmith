@@ -79,13 +79,21 @@ the same in the gitignored `.claude/settings.local.json`). See
   for the session that just ended, so its last turn is captured at once; a
   payload that names no transcript flushes nothing, and the sync says so.
 
+Backup operations coordinate on each local staging repo. Sync, restore, merge,
+repository maintenance, ledger backfill and device removal wait up to 15 seconds
+for another operation to finish. Ordinary sync hooks and SessionStart pull skip
+a busy repo; `sync --flush` waits. A running operation keeps ownership until it
+finishes or exits, even if it takes longer than the wait limit. No background
+worker or queue is enabled. Use the same v2 client for operations sharing a
+local backup; older clients do not participate in this coordination.
+
 ## Commands
 
 | Command | What |
 |---|---|
 | `init` | First-run wizard: remote (private), machine identity, roots, hooks |
 | `sync` | Walk → redact → manifest → tripwire → commit → push. `--dry-run`; all syncs take the staging lock; `--hook` also debounces the Stop hook that fires every turn; `--flush` restages the ended session's large transcript past the throttle — the SessionEnd hook's job — or every changed transcript when run by hand |
-| `pull` | Fetch latest into the staging repo (no write to `~/.claude`) |
+| `pull` | Fetch latest; optionally restore a fresh machine when `autoRestore` is enabled; skip a busy staging repo |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
 | `status` | Sync state: remote, last sync, roots, hooks |
 | `merge` | Reconcile a diverged staging repo using clauderig's merge policies; `--abort` backs one out, `--json` emits the resolution ledger |
