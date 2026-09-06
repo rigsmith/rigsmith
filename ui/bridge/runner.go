@@ -24,15 +24,16 @@ const cliName = "clauderig"
 type Action string
 
 const (
-	ActionSync          Action = "sync"
-	ActionPull          Action = "pull"
-	ActionMerge         Action = "merge"
-	ActionMaterialize   Action = "materialize"
-	ActionAccountSwitch Action = "account-switch"
-	ActionAccountAdd    Action = "account-add"
-	ActionDoctor        Action = "doctor"
-	ActionDoctorFix     Action = "doctor-fix"
-	ActionAccountDoctor Action = "account-doctor"
+	ActionSync             Action = "sync"
+	ActionPull             Action = "pull"
+	ActionMerge            Action = "merge"
+	ActionMaterialize      Action = "materialize"
+	ActionAccountSwitch    Action = "account-switch"
+	ActionAccountAdd       Action = "account-add"
+	ActionDoctor           Action = "doctor"
+	ActionDoctorFix        Action = "doctor-fix"
+	ActionAccountDoctor    Action = "account-doctor"
+	ActionAccountDoctorFix Action = "account-doctor-fix"
 )
 
 // idRule is the only shape an action argument may take: a session uuid or an
@@ -67,6 +68,11 @@ var specs = map[Action]spec{
 	ActionDoctor:        {args: []string{"doctor"}},
 	ActionDoctorFix:     {args: []string{"doctor", "--fix"}},
 	ActionAccountDoctor: {args: []string{"account", "doctor"}},
+	// --fix rewrites ~/.claude.json's profile block to match the live
+	// credential. It never touches the credential itself, so nothing is logged
+	// out: it makes the window name the account the server is already
+	// authenticating you as.
+	ActionAccountDoctorFix: {args: []string{"account", "doctor", "--fix"}},
 }
 
 // Allowed reports whether a is a runnable action.

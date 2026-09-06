@@ -231,7 +231,7 @@ func TestResolvePrefersSibling(t *testing.T) {
 // window offers have to exist in the allowlist — a button wired to a verb the
 // runner rejects is worse than the prose it replaced.
 func TestWarningActionsAreRunnable(t *testing.T) {
-	for _, a := range []Action{ActionDoctor, ActionDoctorFix, ActionAccountDoctor, ActionAccountAdd} {
+	for _, a := range []Action{ActionDoctor, ActionDoctorFix, ActionAccountDoctor, ActionAccountDoctorFix, ActionAccountAdd} {
 		if !Allowed(a) {
 			t.Errorf("%s is offered by a warning but not runnable", a)
 		}

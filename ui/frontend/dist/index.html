@@ -1210,10 +1210,11 @@ function renderDoctor(v, force) {
 // The button says what it will do rather than "Fix", because some of these
 // mend the problem and some only look into it, and a button labelled Fix that
 // merely diagnoses is a small lie.
-function warnRow(text, act) {
+function warnRow(text, ...acts) {
   const row = el('div', 'warnrow');
   row.append(el('span', null, text));
-  if (act) {
+  for (const act of acts) {
+    if (!act) continue;
     const b = el('button', 'warnfix', act.label);
     b.title = act.title || '';
     b.onclick = () => runAction(act.verb, act.arg);
@@ -1670,11 +1671,22 @@ function renderAccounts(v) {
     box.append(row);
   });
   if (v.desynced) {
+    // Two different remedies, and which one is right depends on what you meant.
+    // Aligning makes the window name the account the server is already
+    // authenticating you as — nothing is logged out, and the artifacts keep
+    // landing where they have been landing. Switching moves the credential
+    // instead, and that is on the account rows above. Neither is obviously the
+    // one you want, so the window offers both and says what each does.
     box.append(warnRow(
-      'The live credential and ~/.claude.json name different organizations.',
-      {verb: 'account-doctor', label: 'Diagnose',
-       title: 'Runs `clauderig account doctor`, which says which account is really being used. ' +
-              'The remedy is to switch to the one you meant, on the rows above.'}));
+      'The live credential and ~/.claude.json name different organizations, so requests ' +
+      'authenticate as one account while everything on screen names the other.',
+      {verb: 'account-doctor-fix', label: 'Align the display',
+       title: 'Runs `clauderig account doctor --fix`: rewrites ~/.claude.json to name the ' +
+              'account the credential belongs to. Never touches the credential, so nothing ' +
+              'is logged out. Use this when the credential is the account you meant.'},
+      {verb: 'account-doctor', label: 'Explain',
+       title: 'Runs `clauderig account doctor`: prints which account each side names, and ' +
+              'where usage and artifacts are actually landing.'}));
   }
 }
 
