@@ -59,7 +59,8 @@ jobs:
     name: gitleaks
     runs-on: ubuntu-latest
     steps:
-      # Full history so the scan covers every commit, not just the tip.
+      # Full history of the tested revision, not just its tip. The checkout also
+      # fetches other branches; those must not change this revision's verdict.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -70,8 +71,8 @@ jobs:
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
             | tar -xz -C /usr/local/bin gitleaks
           gitleaks version
-      - name: Scan full history
-        run: gitleaks git --no-banner -v -c .gitleaks.toml
+      - name: Scan tested revision history
+        run: gitleaks git --no-banner -v -c .gitleaks.toml --log-opts=HEAD
 
   vulncheck:
     name: govulncheck
