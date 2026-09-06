@@ -1,0 +1,273 @@
+package service_test
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
+	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
+	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
+	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
+	"github.com/rigsmith/rigsmith/internal/clauderig/service"
+)
+
+type artifactRemote struct {
+	dir, branch     string
+	fetches, pushes int
+	pushErr         error
+	beforeFetch     func()
+}
+
+func (r *artifactRemote) Destination() (string, string) { return r.dir, r.branch }
+func remoteGit(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	b, err := cmd.Output()
+	return strings.TrimSpace(string(b)), err
+}
+func (r *artifactRemote) Fetch(ctx context.Context, dir, ref string) (string, error) {
+	r.fetches++
+	if r.beforeFetch != nil {
+		r.beforeFetch()
+	}
+	sha, err := remoteGit(ctx, r.dir, "for-each-ref", "--format=%(objectname)", "refs/heads/main")
+	if err != nil || sha == "" {
+		return sha, err
+	}
+	_, err = remoteGit(ctx, dir, "fetch", "--no-tags", "--", r.dir, "refs/heads/main:"+ref)
+	return sha, err
+}
+func (r *artifactRemote) Push(ctx context.Context, dir, commit string) error {
+	r.pushes++
+	if _, err := remoteGit(ctx, dir, "push", "--", r.dir, commit+":refs/heads/main"); err != nil {
+		return err
+	}
+	return r.pushErr
+}
+func publicationFixture(t *testing.T, seeded, auto bool) (service.ArtifactPublishRequest, *artifactRemote) {
+	t.Helper()
+	req := artifactCaptureFixture(t, "sealed publication bytes")
+	if seeded {
+		svc := service.Service{ReadIdentity: func() (service.Identity, error) { return req.Identity, nil }}
+		if _, err := svc.Sync(t.Context(), req.Sync); err != nil {
+			t.Fatal(err)
+		}
+	}
+	remote := &artifactRemote{dir: filepath.Join(t.TempDir(), "remote.git"), branch: "main"}
+	git(t, filepath.Dir(remote.dir), "init", "--bare", remote.dir)
+	req.Sync.Config.Remote = remote.dir
+	if auto {
+		req.Sync.Config.ChunkTranscripts = nil
+		put(t, req.Sync.StagingDir, "clauderig-storage.json", `{"version":1,"chunkedTranscripts":true}`)
+	}
+	var err error
+	req.Binding, err = service.CaptureBinding(req.Sync, req.Profiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Work.CaptureRef, err = (service.Service{}).CaptureArtifact(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Work.Phase = queue.Captured
+	input := service.ArtifactCommitRequest{Capture: req, Commits: artifact.Store{Dir: filepath.Join(t.TempDir(), "commits")}}
+	input.Capture.Work.CommitRef, err = (service.Service{}).CommitArtifact(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Capture.Work.Phase = queue.Committed
+	return service.ArtifactPublishRequest{Commit: input, Remote: remote}, remote
+}
+
+func TestPublishArtifactPreservesCanonicalWorkAndConfirmsReplay(t *testing.T) {
+	input, remote := publicationFixture(t, true, false)
+	stage := input.Commit.Capture.Sync.StagingDir
+	put(t, stage, "newer.txt", "newer committed work")
+	git(t, stage, "add", "newer.txt")
+	git(t, stage, "commit", "-m", "newer")
+	head := git(t, stage, "rev-parse", "HEAD")
+	put(t, stage, "pending.txt", "pending index")
+	git(t, stage, "add", "pending.txt")
+	put(t, stage, "pending.txt", "pending worktree")
+	read := func(rel string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(stage, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	index, config, work := read(".git/index"), read(".git/config"), read("pending.txt")
+	remote.pushErr = errors.New("lost push response")
+	remote.beforeFetch = func() {
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		defer cancel()
+		_, release, err := storelock.Acquire(ctx, stage, time.Second)
+		if err == nil {
+			release()
+			t.Fatal("staging lease not held during transport")
+		}
+	}
+	svc := service.Service{ReadIdentity: func() (service.Identity, error) { t.Fatal("read worker login"); return service.Identity{}, nil }}
+	result, err := svc.PublishArtifact(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CaptureCommit == "" || result.RemoteCommit == "" || remote.pushes != 1 {
+		t.Fatalf("unconfirmed: %+v %+v", result, remote)
+	}
+	if got := git(t, remote.dir, "show", "main:newer.txt"); got != "newer committed work" {
+		t.Fatal(got)
+	}
+	if got := git(t, remote.dir, "ls-tree", "--name-only", "main"); strings.Contains(got, "pending.txt") {
+		t.Fatal("published pending changes")
+	}
+	if read(".git/index") != index || read(".git/config") != config || read("pending.txt") != work || git(t, stage, "rev-parse", "HEAD") != head {
+		t.Fatal("canonical state changed")
+	}
+	// Retained publication survives source/capture/staging removal and a lost queue marker.
+	remote.beforeFetch = nil
+	for _, dir := range []string{stage, input.Commit.Capture.Store.Dir, filepath.Join(input.Commit.Capture.Sync.Machine.Home, ".claude")} {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	again, err := svc.PublishArtifact(t.Context(), input)
+	if err != nil || again != result || remote.pushes != 1 {
+		t.Fatalf("replay: %+v %v pushes=%d", again, err, remote.pushes)
+	}
+}
+
+func TestPublishArtifactAutoRecoveryWithoutLiveInputs(t *testing.T) {
+	input, remote := publicationFixture(t, false, true)
+	for _, dir := range []string{input.Commit.Capture.Sync.StagingDir, input.Commit.Capture.Store.Dir, filepath.Join(input.Commit.Capture.Sync.Machine.Home, ".claude")} {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := (service.Service{}).PublishArtifact(t.Context(), input); err != nil || remote.pushes != 1 {
+		t.Fatalf("auto recovery: %v", err)
+	}
+}
+
+func TestPublishArtifactRejectsInvalidWorkBeforeTransport(t *testing.T) {
+	for _, mode := range []string{"binding", "provenance", "phase", "capture-key", "missing-commit", "other-commit", "other-batch", "corrupt-commit", "overlap", "remote", "branch", "no-remote", "merge"} {
+		t.Run(mode, func(t *testing.T) {
+			input, remote := publicationFixture(t, true, false)
+			switch mode {
+			case "binding":
+				input.Commit.Capture.Sync.Config.Remote = "changed"
+			case "provenance":
+				input.Commit.Capture.Identity = service.Identity{}
+			case "phase":
+				input.Commit.Capture.Work.Phase = queue.Captured
+			case "capture-key":
+				input.Commit.Capture.Work.CaptureRef = artifact.Key([]byte("other")) + ":" + strings.Repeat("0", 64)
+			case "missing-commit":
+				if err := os.RemoveAll(input.Commit.Commits.Dir); err != nil {
+					t.Fatal(err)
+				}
+			case "other-commit":
+				input.Commit.Capture.Work.CommitRef = artifact.Key([]byte("other")) + ":" + strings.Repeat("0", 64)
+			case "other-batch":
+				other, _ := publicationFixture(t, false, false)
+				input.Commit.Commits = other.Commit.Commits
+				input.Commit.Capture.Work.CommitRef = other.Commit.Capture.Work.CommitRef
+			case "corrupt-commit":
+				paths, err := filepath.Glob(filepath.Join(input.Commit.Commits.Dir, "*.capture"))
+				if err != nil || len(paths) != 1 {
+					t.Fatalf("artifact fixture: %v %v", paths, err)
+				}
+				if err := os.WriteFile(paths[0], []byte("corrupt artifact"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "overlap":
+				input.Commit.Commits.Dir = input.Commit.Capture.Store.Dir
+			case "remote":
+				remote.dir = t.TempDir()
+			case "branch":
+				remote.branch = "other"
+			case "no-remote":
+				input.Remote = nil
+			case "merge":
+				put(t, input.Commit.Capture.Sync.StagingDir, ".git/MERGE_HEAD", git(t, input.Commit.Capture.Sync.StagingDir, "rev-parse", "HEAD")+"\n")
+			}
+			result, err := (service.Service{}).PublishArtifact(t.Context(), input)
+			if err == nil || result != (commitartifact.Publication{}) || remote.fetches != 0 || remote.pushes != 0 {
+				t.Fatalf("accepted invalid work: %+v %v %+v", result, err, remote)
+			}
+		})
+	}
+}
+
+func TestPublishArtifactRejectsUnsafeLocalAndRemoteTrees(t *testing.T) {
+	for _, mode := range []string{"local-attributes", "local-secret", "remote-attributes", "remote-secret"} {
+		t.Run(mode, func(t *testing.T) {
+			input, remote := publicationFixture(t, true, false)
+			svc := service.Service{}
+			if strings.HasPrefix(mode, "remote") {
+				if _, err := svc.PublishArtifact(t.Context(), input); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stage := input.Commit.Capture.Sync.StagingDir
+			if strings.HasPrefix(mode, "remote") {
+				stage = filepath.Join(t.TempDir(), "clone")
+				git(t, filepath.Dir(stage), "clone", "--branch", "main", remote.dir, stage)
+				git(t, stage, "config", "user.name", "fixture")
+				git(t, stage, "config", "user.email", "fixture@example.com")
+			}
+			if strings.HasSuffix(mode, "attributes") {
+				put(t, stage, "unsafe/.gitattributes", "* text\n")
+				put(t, stage, "unsafe/file.txt", "bytes")
+			} else {
+				put(t, stage, "unsafe.txt", "token=ghp_"+strings.Repeat("a", 36)+"\n")
+			}
+			git(t, stage, "add", ".")
+			git(t, stage, "commit", "-m", "unsafe fixture")
+			if strings.HasPrefix(mode, "remote") {
+				git(t, stage, "push", "origin", "HEAD:main")
+			}
+			pushes := remote.pushes
+			result, err := svc.PublishArtifact(t.Context(), input)
+			if err == nil || result != (commitartifact.Publication{}) || remote.pushes != pushes {
+				t.Fatalf("unsafe tree published/acknowledged: %+v %v", result, err)
+			}
+		})
+	}
+}
+
+func TestPublishArtifactSHA256(t *testing.T) {
+	t.Setenv("GIT_DEFAULT_HASH", "sha256")
+	input, remote := publicationFixture(t, true, false)
+	result, err := (service.Service{}).PublishArtifact(t.Context(), input)
+	if err != nil || len(result.CaptureCommit) != 64 || len(result.RemoteCommit) != 64 || remote.pushes != 1 {
+		t.Fatalf("SHA-256: %+v %v", result, err)
+	}
+}
+
+func TestPublishArtifactCancellationReleasesStaging(t *testing.T) {
+	input, remote := publicationFixture(t, true, false)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	remote.beforeFetch = cancel
+	result, err := (service.Service{}).PublishArtifact(ctx, input)
+	if !errors.Is(err, context.Canceled) || result != (commitartifact.Publication{}) || remote.pushes != 0 {
+		t.Fatalf("cancellation: %+v %v", result, err)
+	}
+	_, release, err := storelock.Acquire(t.Context(), input.Commit.Capture.Sync.StagingDir, time.Second)
+	if err != nil {
+		t.Fatal("staging lease retained", err)
+	}
+	release()
+	work, err := filepath.Glob(filepath.Join(input.Commit.Commits.Dir, ".publication-*"))
+	if err != nil || len(work) != 0 {
+		t.Fatalf("private workspace retained: %v %v", work, err)
+	}
+}

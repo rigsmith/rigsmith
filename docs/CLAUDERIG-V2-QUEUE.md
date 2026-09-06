@@ -211,4 +211,7 @@ The six existing Claude compatibility scenarios keep their unchanged baseline.
 The [shared retained publication engine](CLAUDERIG-V2-RETAINED-PUBLICATION.md)
 consumes committed bundles, privately merges newer histories and confirms remote
 ancestry after publication attempts. It does not write queue markers or enable a
-worker. Claude native policy/transport wiring and process ownership remain gates.
+worker. Claude's `Service.PublishArtifact` now validates committed-batch bindings,
+explicit transport destination/branch, settled local HEAD, raw native attributes
+and secrets. Production transport, execution wiring, native conflict recovery and
+process ownership remain gates.

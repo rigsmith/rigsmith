@@ -36,31 +36,9 @@ func (s Service) CommitArtifact(ctx context.Context, input ArtifactCommitRequest
 	if !strings.HasPrefix(req.Work.CaptureRef, key+":") {
 		return "", queue.ErrBinding
 	}
-	stage, err := canonicalCapturePath(req.Sync.StagingDir)
+	stage, captures, commits, err := artifactStorePaths(req, input.Commits)
 	if err != nil {
 		return "", err
-	}
-	captures, err := canonicalCapturePath(req.Store.Dir)
-	if err != nil {
-		return "", err
-	}
-	commits, err := canonicalCapturePath(input.Commits.Dir)
-	if err != nil {
-		return "", err
-	}
-	roots, err := captureRoots(req.Sync, req.Profiles)
-	if err != nil {
-		return "", err
-	}
-	for _, path := range append(mapValues(roots), stage, captures) {
-		if overlapsCapture(commits, path) {
-			return "", fmt.Errorf("commit store must be outside source, capture and staging roots")
-		}
-	}
-	for _, path := range append(mapValues(roots), stage) {
-		if overlapsCapture(captures, path) {
-			return "", fmt.Errorf("capture store must be outside source and staging roots")
-		}
 	}
 	// The lock graph is capture store -> staging -> commit store. Extraction
 	// only reads the capture store, so it does not reverse capture's lock order.
@@ -86,4 +64,35 @@ func (s Service) CommitArtifact(ctx context.Context, input ArtifactCommitRequest
 		Time:    req.Work.Events[len(req.Work.Events)-1].EnqueuedAt,
 		Prepare: backupgit.EnsureContext, Audit: engine.CheckPublishContext,
 	})
+}
+
+// Keep capture/commit/publication stores disjoint from native roots and staging.
+func artifactStorePaths(req ArtifactCaptureRequest, commitStore artifact.Store) (stage, captures, commits string, err error) {
+	stage, err = canonicalCapturePath(req.Sync.StagingDir)
+	if err != nil {
+		return "", "", "", err
+	}
+	captures, err = canonicalCapturePath(req.Store.Dir)
+	if err != nil {
+		return "", "", "", err
+	}
+	commits, err = canonicalCapturePath(commitStore.Dir)
+	if err != nil {
+		return "", "", "", err
+	}
+	roots, err := captureRoots(req.Sync, req.Profiles)
+	if err != nil {
+		return "", "", "", err
+	}
+	for _, path := range append(mapValues(roots), stage, captures) {
+		if overlapsCapture(commits, path) {
+			return "", "", "", fmt.Errorf("commit store must be outside source, capture and staging roots")
+		}
+	}
+	for _, path := range append(mapValues(roots), stage) {
+		if overlapsCapture(captures, path) {
+			return "", "", "", fmt.Errorf("capture store must be outside source and staging roots")
+		}
+	}
+	return stage, captures, commits, nil
 }

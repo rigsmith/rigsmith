@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
 )
 
 const rule = "* -text -eol -filter -ident -working-tree-encoding"
@@ -179,4 +181,10 @@ func (r attributeReader) Read(b []byte) (int, error) {
 		return 0, err
 	}
 	return r.r.Read(b)
+}
+
+// ValidateTree applies Claude's byte-preservation policy to a private raw tree.
+// Unlike Validate, it needs no checkout and cannot inherit host Git attributes.
+func ValidateTree(ctx context.Context, root string) error {
+	return commitartifact.CheckUnsetAttributes(ctx, root, []string{"text", "eol", "filter", "ident", "working-tree-encoding"})
 }
