@@ -323,7 +323,7 @@
   .store .nmtext{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .store .ct{font-size:10.5px;color:var(--dim);margin-top:2px;}
   .store[data-absent="yes"] .nm{color:var(--dim);font-style:italic;}
-  .grp{padding:5px 9px 5px 20px;border-radius:6px;cursor:pointer;font-size:12px;}
+  .grp{padding:5px 9px 5px 8px;border-radius:6px;cursor:pointer;font-size:12px;}
   .grp:hover{background:var(--raise);}
   .grp[data-on="yes"]{background:var(--raise);color:var(--fg);}
   .grp .sub{font-size:10.5px;color:var(--dim);}
@@ -341,8 +341,11 @@
     margin-bottom:10px;border:1px solid var(--line);border-radius:6px;background:var(--raise);
     color:var(--fg);--wails-draggable:no-drag;}
   .pfilter::placeholder{color:var(--dim);}
-  .caret{display:inline-block;width:12px;color:var(--dim);font-size:11px;}
-  .sessionrow{font-size:12px;}
+  .accthead{display:flex;align-items:center;gap:7px;padding:14px 9px 4px 6px;
+    font-size:11px;color:var(--dim);cursor:default;}
+  .accthead:hover{background:transparent;}
+  .folderhead{padding-left:14px;}
+  .sessionrow{font-size:12px;padding-left:30px;}
   .sessionrow .dot{display:inline-block;width:14px;color:var(--dim);font-size:10px;}
   .sessionrow[data-deleted="yes"]{color:var(--dim);text-decoration:line-through;}
   .grp[data-picked="yes"]{background:var(--raise);color:var(--fg);}
@@ -350,7 +353,6 @@
   .fk{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding-top:2px;}
   .fv{word-break:break-all;}
   .pacts{margin-top:16px;}
-  .grp[data-open="yes"] .caret{color:var(--fg);}
   .store .diff{color:var(--fg-faint);}
   .phead{font-size:13px;margin-bottom:2px;}
   .psub{font-size:11px;color:var(--dim);margin-bottom:14px;word-break:break-all;}
@@ -470,6 +472,7 @@ const LIBRARY_TAKE_HANDOFF = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Tak
 const PLACES_STORES = 'github.com/rigsmith/rigsmith/ui/bridge.Places.Stores';
 const PLACES_GROUPS = 'github.com/rigsmith/rigsmith/ui/bridge.Places.Groups';
 const PLACES_ITEMS = 'github.com/rigsmith/rigsmith/ui/bridge.Places.Items';
+const PLACES_CONTENTS = 'github.com/rigsmith/rigsmith/ui/bridge.Places.Contents';
 
 const LIMIT = 200;
 
@@ -1343,23 +1346,22 @@ async function loadStores() {
 }
 
 async function toggleStore(st, node) {
-  // Second click closes it, so the map does not only ever grow.
+  // Second click closes it, so the column does not only ever grow.
   if (openStore === st.id) {
     openStore = null;
     node.removeAttribute('data-on');
-    clearTree();
+    clearList();
     return;
   }
   openStore = st.id;
-  openGroup = null;
   document.querySelectorAll('.store').forEach(x => x.removeAttribute('data-on'));
-  clearTree();
+  clearList();
   node.dataset.on = 'yes';
   $('pitems').replaceChildren();
 
   let view;
   try {
-    view = await Call.ByName(PLACES_GROUPS, st.id);
+    view = await Call.ByName(PLACES_CONTENTS, st.id);
   } catch (e) {
     node.after(el('div', 'grp', String(e)));
     return;
@@ -1367,302 +1369,131 @@ async function toggleStore(st, node) {
   if (view.error) { node.after(el('div', 'grp', view.error)); return; }
 
   showStoreHeader(view.store, view.config || []);
-
-  const groups = view.groups || [];
-  if (!groups.length) { node.after(el('div', 'grp', 'nothing filed here')); return; }
-
-  // Both stores are path-shaped — a CLI project IS a directory, and Desktop
-  // files each session under the folder it was opened in — so both nest the
-  // same way. A hundred and seventy-four folders in one flat column is not a
-  // tree, it is a list with indentation for decoration; nesting turns it into
-  // nine things to look at.
-  renderTree(st, buildTree(groups), node);
+  renderContents(st, view.folders || [], node);
   applyFilter(currentFilter);
 }
 
-function clearTree() {
-  document.querySelectorAll('.grp, .bandhead').forEach(g => g.remove());
+function clearList() {
+  document.querySelectorAll('.grp').forEach(g => g.remove());
 }
 
-// buildTree turns flat paths into nested nodes. A node can be both a place with
-// its own sessions AND a parent of others — ~/Git holds 500 of its own and 136
-// projects beneath it — so `group` and `kids` are independent.
-function buildTree(groups) {
-  const root = { seg: '', kids: new Map(), group: null, total: 0, latest: '' };
-  for (const g of groups) {
-    const parts = segmentsOf(g.label);
-    // A Desktop store holds more than one account's sessions, and the app only
-    // ever shows you one account at a time. Merging them puts sessions you do
-    // not recognise inside a folder you do — so the account is the outermost
-    // level, the way you actually think about it.
-    if (g.account) parts.unshift(g.account);
-    let node = root;
-    for (const seg of parts) {
-      let kid = node.kids.get(seg);
-      if (!kid) { kid = { seg, kids: new Map(), group: null, total: 0, latest: '' }; node.kids.set(seg, kid); }
-      node = kid;
-      node.total += g.items;
-      if (g.latest > node.latest) node.latest = g.latest;
-    }
-    node.group = g;
-  }
-  collapse(root);
-  return root;
-}
-
-// segmentsOf splits a path into tree levels, keeping the home marker attached to
-// what follows it. "~" on its own is not a level worth a row: every path here
-// starts with it, so it offers no choice and costs a click on the way to the
-// first thing that does.
-function segmentsOf(path) {
-  const parts = path.split('/').filter(Boolean);
-  if (!parts.length) return [path || '(unknown)'];
-  // "~" is its own segment once split, so it has to be dropped before the
-  // marker is attached to what follows — prefixing it onto itself is what
-  // produced a row called "~/~".
-  if (path.startsWith('~/')) {
-    parts.shift();
-    if (!parts.length) return ['~'];
-    parts[0] = '~/' + parts[0];
-  } else if (path.startsWith('/')) {
-    parts[0] = '/' + parts[0];
-  }
-  return parts;
-}
-
-// collapse merges a chain of single children into one row. Without it,
-// ~/Dropbox/File Cabinet/Business Clients/… is five clicks to reach one folder,
-// each of which offers no choice.
-function collapse(node) {
-  for (const [key, kid] of [...node.kids]) {
-    collapse(kid);
-    while (kid.kids.size === 1 && !kid.group) {
-      const [onlyKey, only] = [...kid.kids][0];
-      node.kids.delete(key);
-      kid.seg = kid.seg + '/' + only.seg;
-      kid.kids = only.kids;
-      kid.group = only.group;
-      node.kids.set(kid.seg, kid);
-    }
-  }
-}
-
-// OPEN_BUDGET is how many rows may be showing before anything is clicked. Two
-// levels is right for a Desktop store — account, then folder — and wrong for the
-// CLI store, where the second level is thirty-five projects. So the depth is
-// chosen from what it would cost rather than fixed: open the second level only
-// if the result still fits in a glance.
-const OPEN_BUDGET = 25;
-
-function openDepthFor(root) {
-  const first = root.kids.size;
-  let second = 0;
-  for (const k of root.kids.values()) second += k.kids.size;
-  return first + second <= OPEN_BUDGET ? 1 : 0;
-}
-
-function renderTree(st, root, after) {
-  const openTo = openDepthFor(root);
+// renderContents lays a store out the way Claude Desktop lays out its sidebar:
+// a heading, the sessions under it, the next heading. Everything visible,
+// nothing behind a disclosure — which is what makes the two readable side by
+// side, and the point of this view.
+//
+// Accounts get a heading of their own because a Desktop store holds two logins
+// at once while the app only ever shows one; without it, a folder you recognise
+// contains sessions you do not.
+function renderContents(st, folders, after) {
   let prev = after;
-  const walk = (node, depth, parentOpen) => {
-    for (const kid of [...node.kids.values()].sort((a, b) => (b.latest || '').localeCompare(a.latest || ''))) {
-      const row = el('div', 'grp');
-      row.style.paddingLeft = (12 + depth * 14) + 'px';
-      row.dataset.depth = String(depth);
-      // vis carries "visible when not filtering", because filtering overrides
-      // visibility entirely and has to be able to put it back afterwards.
-      const startsOpen = depth <= openTo;
-      row.dataset.vis = startsOpen ? 'yes' : 'no';
-      row.hidden = !startsOpen;
-      if (depth < openTo && kid.kids.size) row.dataset.open = 'yes';
-      row.dataset.kind = 'folder';
+  const add = row => { prev.after(row); prev = row; return row; };
 
-      // A node is openable if it has folders under it, sessions of its own, or
-      // both — ~/Git has 22 sessions AND four project folders beneath it.
-      const openable = kid.kids.size > 0 || !!kid.group;
-      const caret = el('span', 'caret', !openable ? '' : (depth < openTo ? '‹' : '›'));
-      row.append(caret);
-      row.append(document.createTextNode(kid.seg));
-      const own = kid.group ? kid.group.items : 0;
-      const sub = el('div', 'sub',
-        (kid.kids.size ? `${kid.kids.size} inside · ` : '') +
-        (own ? PLURAL(own, 'item', 'items') : `${kid.total} below`) +
-        (kid.latest ? ' · ' + age(kid.latest) : ''));
-      row.append(sub);
-      if (kid.group && kid.group.note) row.title = kid.group.note;
-      row.dataset.find = ((kid.group ? kid.group.label : kid.seg) + ' ' +
-        (kid.group ? kid.group.note || '' : '')).toLowerCase();
-
-      row.addEventListener('click', async ev => {
-        ev.stopPropagation();
-        const opening = row.dataset.open !== 'yes';
-        row.dataset.open = opening ? 'yes' : 'no';
-        if (caret.textContent) caret.textContent = opening ? '‹' : '›';
-        // A folder's sessions are fetched the first time it is opened, and
-        // land as rows under it — the same shape Claude Desktop's own sidebar
-        // has, so the two can be read side by side.
-        if (opening && kid.group) await loadSessions(st, kid.group, row);
-        setSubtreeVisible(row, opening);
-        if (kid.group) showFolder(st, kid.group);
-      });
-      prev.after(row);
-      prev = row;
-      walk(kid, depth + 1, startsOpen);
+  let account = null;
+  for (const fc of folders) {
+    const f = fc.folder;
+    if (f.account && f.account !== account) {
+      account = f.account;
+      const head = el('div', 'grp accthead');
+      const m = monogramFor(account);
+      head.append(paintMono(el('span', 'mono', m), m));
+      head.append(el('span', 'nmtext', account));
+      head.dataset.find = account.toLowerCase();
+      head.dataset.kind = 'account';
+      add(head);
     }
-  };
-  walk(root, 0, true);
+
+    const row = el('div', 'grp folderhead');
+    row.dataset.kind = 'folder';
+    row.dataset.find = (f.label + ' ' + (f.note || '')).toLowerCase();
+    row.append(document.createTextNode(f.label));
+    row.append(el('div', 'sub', PLURAL(f.items, 'session', 'sessions') +
+      (f.latest ? ' \u00b7 ' + age(f.latest) : '')));
+    if (f.note) row.title = f.note;
+    row.addEventListener('click', () => { pick(row); showFolder(st, f); });
+    add(row);
+
+    for (const it of (fc.items || [])) add(sessionRow(st, it));
+  }
 }
 
-// setSubtreeVisible shows or hides the rows nested under one row. They are
-// siblings in the DOM — a flat list with a depth on each — so "under" means
-// "everything after it that is deeper, until something is not".
-function setSubtreeVisible(row, show) {
-  const depth = Number(row.dataset.depth);
-  for (let n = row.nextElementSibling; n; n = n.nextElementSibling) {
-    if (!n.classList.contains('grp')) break;
-    const d = Number(n.dataset.depth);
-    if (d <= depth) break;
-    // Collapsing hides the whole subtree; expanding reveals one level, so an
-    // already-open branch does not spring back in its entirety.
-    if (show) {
-      const child = d === depth + 1;
-      n.dataset.vis = child ? 'yes' : 'no';
-      if (child && n.dataset.open === 'yes') {
-        n.dataset.open = 'no';
-        const c = n.querySelector('.caret');
-        if (c && c.textContent) c.textContent = '\u203a';
-      }
-    } else {
-      n.dataset.vis = 'no';
-      n.dataset.open = 'no';
-      const c = n.querySelector('.caret');
-      if (c && c.textContent) c.textContent = '\u203a';
-    }
-  }
-  applyFilter(currentFilter);
+function pick(row) {
+  document.querySelectorAll('.grp[data-picked]').forEach(n => delete n.dataset.picked);
+  row.dataset.picked = 'yes';
+}
+
+// sessionRow is one session — a title, the way Desktop lists it. Everything
+// else about it belongs in the detail pane rather than in a column that has to
+// stay readable next to a hundred siblings.
+function sessionRow(st, it) {
+  const row = el('div', 'grp sessionrow');
+  row.dataset.kind = 'session';
+  if (it.deleted) row.dataset.deleted = 'yes';
+  row.append(el('span', 'dot', it.deleted ? '\u00d7' : (it.archived ? '\u00b7' : '\u25cb')));
+  row.append(document.createTextNode(it.label));
+  row.dataset.find = [it.label, it.cwd, it.branch, it.worktree, it.session, it.cliSession]
+    .filter(Boolean).join(' ').toLowerCase();
+  row.addEventListener('click', () => { pick(row); showItem(st, it); });
+  return row;
 }
 
 let currentFilter = '';
 
-// applyFilter narrows what is on screen. While filtering, depth stops deciding
-// visibility — a match five levels down has to be reachable without expanding
-// five things to find it.
+// applyFilter narrows the column. A heading whose sessions have all been
+// filtered away goes too — a heading for nothing reads as an empty folder,
+// which is a different and wrong answer.
 function applyFilter(term) {
   currentFilter = term;
   for (const n of document.querySelectorAll('.store')) {
     n.hidden = term !== '' && !n.textContent.toLowerCase().includes(term);
   }
-  if (term === '') {
-    // Back to whatever was expanded before the filter ran.
-    for (const n of document.querySelectorAll('.grp')) n.hidden = n.dataset.vis !== 'yes';
-    return;
+  const rows = [...document.querySelectorAll('.grp')];
+  for (const n of rows) {
+    n.hidden = term !== '' && !(n.dataset.find || '').includes(term);
   }
-  for (const n of document.querySelectorAll('.grp')) {
-    n.hidden = !(n.dataset.find || '').includes(term);
+  if (term === '') return;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const n = rows[i];
+    if (n.dataset.kind === 'session') continue;
+    let kept = !n.hidden;
+    for (let j = i + 1; j < rows.length && !kept; j++) {
+      const m = rows[j];
+      if (m.dataset.kind === 'account') break;
+      if (n.dataset.kind === 'folder' && m.dataset.kind === 'folder') break;
+      if (!m.hidden) kept = true;
+    }
+    n.hidden = !kept;
   }
 }
 
+// showStoreHeader is what the right side says before anything in the store has
+// been picked: where it is, and the settings it carries in its own right —
+// the part no session listing shows, and the reason a store with few sessions
+// can still be the one worth restoring.
 function showStoreHeader(store, config) {
   const box = $('pitems');
   box.replaceChildren();
-  box.append(el('div', 'phead', store.label));
+  box.append(el('div', 'phead', store.label + (store.account ? '  ' + store.account : '')));
   box.append(el('div', 'psub', store.path));
   if (!config.length) return;
   box.append(el('div', 'pgrouphead', 'what this place carries'));
   for (const c of config) box.append(itemRow(c));
 }
 
-async function openPlaceGroup(st, g, node) {
-  openGroup = g.id;
-  document.querySelectorAll('.grp').forEach(x => x.removeAttribute('data-on'));
-  node.dataset.on = 'yes';
-  const box = $('pitems');
-  box.replaceChildren(el('div', 'pgrouphead', 'reading…'));
-  let view;
-  try {
-    view = await Call.ByName(PLACES_ITEMS, st.id, g.id);
-  } catch (e) {
-    box.replaceChildren(el('div', 'toast err', String(e)));
-    return;
-  }
-  box.replaceChildren();
-  box.append(el('div', 'phead', g.label));
-  box.append(el('div', 'psub', g.note || st.path));
-  if (view.error) { box.append(el('div', 'toast err', view.error)); return; }
-  const items = view.items || [];
-  if (!items.length) { box.append(el('div', 'pgrouphead', 'nothing here')); return; }
-  // Five hundred sessions in one column is the same wall the left side had, so
-  // they are banded by when you were last in them.
-  let band = null;
-  for (const it of items) {
-    const b = bandOf(it.when);
-    if (b !== band) { band = b; box.append(el('div', 'pgrouphead', b)); }
-    box.append(itemRow(it));
-  }
-}
-
-// loadSessions fetches one folder's sessions and puts them in the tree beneath
-// it. Lazily, and once: the CLI store has folders holding five hundred, and
-// nobody needs those rendered until they open that folder.
-async function loadSessions(st, group, row) {
-  if (row.dataset.loaded === 'yes') return;
-  row.dataset.loaded = 'yes';
-  let view;
-  try {
-    view = await Call.ByName(PLACES_ITEMS, st.id, group.id);
-  } catch (e) {
-    const err = el('div', 'grp sessionrow', String(e));
-    err.dataset.depth = String(Number(row.dataset.depth) + 1);
-    row.after(err);
-    return;
-  }
-  const depth = Number(row.dataset.depth) + 1;
-  let prev = row;
-  for (const it of (view.items || [])) {
-    const r = sessionRow(st, it, depth);
-    prev.after(r);
-    prev = r;
-  }
-}
-
-// sessionRow is one session in the tree — a title, the way Desktop lists it.
-// Everything else about it belongs in the detail pane, not in a column that has
-// to stay readable next to a hundred siblings.
-function sessionRow(st, it, depth) {
-  const row = el('div', 'grp sessionrow');
-  row.dataset.depth = String(depth);
-  row.dataset.kind = 'session';
-  row.dataset.vis = 'no';
-  row.hidden = true;
-  row.style.paddingLeft = (12 + depth * 14) + 'px';
-  if (it.deleted) row.dataset.deleted = 'yes';
-  row.append(el('span', 'dot', it.deleted ? '×' : (it.archived ? '·' : '○')));
-  row.append(document.createTextNode(it.label));
-  row.dataset.find = [it.label, it.cwd, it.branch, it.worktree, it.session, it.cliSession]
-    .filter(Boolean).join(' ').toLowerCase();
-  row.addEventListener('click', ev => {
-    ev.stopPropagation();
-    document.querySelectorAll('.grp[data-picked]').forEach(n => delete n.dataset.picked);
-    row.dataset.picked = 'yes';
-    showItem(st, it);
-  });
-  return row;
-}
-
-// showFolder is what the right side says when a folder is selected rather than
-// a session in it: where it is, and what is in it.
+// showFolder is what it says when a folder heading is picked rather than a
+// session in it.
 function showFolder(st, group) {
   const box = $('pitems');
   box.replaceChildren();
   box.append(el('div', 'phead', group.label));
-  box.append(el('div', 'psub', [group.account, group.note].filter(Boolean).join(' · ')));
+  box.append(el('div', 'psub', [group.account, group.note].filter(Boolean).join(' \u00b7 ')));
   box.append(el('div', 'pgrouphead', PLURAL(group.items, 'session', 'sessions') + ' here'));
   box.append(el('div', 'psub', 'in ' + st.label + (st.where === 'repo' ? ' (synced)' : ' (this Mac)')));
 }
 
 // showItem is the detail pane: everything the record holds about one session,
-// which is what makes this view worth having rather than a second way to open
-// the list's drawer.
+// which is what makes this a view of its own rather than a second way into the
+// list's drawer.
 function showItem(st, it) {
   const box = $('pitems');
   box.replaceChildren();
@@ -1677,7 +1508,7 @@ function showItem(st, it) {
     ['session id', it.session],
     ['conversation', it.cliSession],
     ['kind', KIND_HELP[it.kind] || it.kind],
-    ['store', st.label + (st.where === 'repo' ? ' — synced' : ' — this Mac')],
+    ['store', st.label + (st.where === 'repo' ? ' \u2014 synced' : ' \u2014 this Mac')],
     ['file', it.path],
   ];
   const dl = el('div', 'facts');
