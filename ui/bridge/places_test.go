@@ -3,6 +3,7 @@ package bridge
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -383,5 +384,62 @@ func TestProfileEmailIsTheFallbackForASyncedProfile(t *testing.T) {
 func TestCLIStoreHasNoAccount(t *testing.T) {
 	if got := storeAccount(location{kind: "cli", base: t.TempDir()}); got != "" {
 		t.Errorf("storeAccount = %q for a CLI root, want none", got)
+	}
+}
+
+// A store holds two logins at once, and the listing draws a heading whenever
+// the account changes. Ordering folders by recency alone interleaved them — one
+// account's folder landing between two of the other's — so a list of seven
+// folders grew three account headings and read as though the accounts were
+// somehow repeating. An account's folders belong together.
+func TestFoldersAreGroupedByAccount(t *testing.T) {
+	now := time.Now()
+	groups := []PlaceGroup{
+		{Account: "a@x", Label: "~/Git", Latest: now.Add(-1 * time.Hour)},
+		{Account: "b@y", Label: "~/Git/rigsmith", Latest: now.Add(-2 * time.Hour)},
+		{Account: "a@x", Label: deletedFolder, Latest: now},
+		{Account: "a@x", Label: "~/Git/tweed", Latest: now.Add(-3 * time.Hour)},
+	}
+	sortGroups(groups)
+
+	var heads int
+	prev := ""
+	for _, g := range groups {
+		if g.Account != prev {
+			heads++
+			prev = g.Account
+		}
+	}
+	if heads != 2 {
+		t.Errorf("account headings = %d, want one per account", heads)
+	}
+	// The account used most recently comes first...
+	if groups[0].Account != "a@x" {
+		t.Errorf("first account = %q, want the one used most recently", groups[0].Account)
+	}
+	// ...and the deleted bucket sinks to the end of its own account's run, since
+	// it is a place to go looking rather than somewhere you were working.
+	if groups[2].Label != deletedFolder {
+		t.Errorf("deleted bucket at %q, want it last within its account", groups[2].Label)
+	}
+}
+
+// A record with no title of its own reads better as its own id than as the
+// filename that id is wrapped in.
+func TestUntitledSessionShowsItsIDNotItsFilename(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, base, codeSessions+"/a/w/local_051bc295-ae99-42d4-aaf0-b2ba47a4c2a7.json",
+		`{"sessionId":"local_051bc295","cwd":"/tmp","lastActivityAt":1}`)
+
+	refs := scanSidecars(filepath.Join(base, codeSessions))
+	if len(refs) != 1 {
+		t.Fatalf("got %d records", len(refs))
+	}
+	got := refs[0].item.Label
+	if strings.Contains(got, ".json") || strings.Contains(got, "local_") {
+		t.Errorf("label = %q, want the id rather than the filename", got)
+	}
+	if !strings.Contains(got, "051bc295") {
+		t.Errorf("label = %q, want it to still name the session", got)
 	}
 }

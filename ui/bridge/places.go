@@ -223,8 +223,37 @@ func (p *Places) Groups(ctx context.Context, storeID string) (GroupsView, error)
 	} else {
 		out.Groups = desktopFolders(loc)
 	}
-	sort.Slice(out.Groups, func(i, j int) bool { return out.Groups[i].Latest.After(out.Groups[j].Latest) })
+	sortGroups(out.Groups)
 	return out, nil
+}
+
+// sortGroups puts an account's folders together, then orders within them.
+//
+// Sorting on recency alone interleaved the accounts — a brightshore folder
+// landing between two relatecpa ones — and since the heading is drawn whenever
+// the account changes, one account appeared three times down a list of seven.
+// The store holds both logins at once; it should say so once.
+//
+// Accounts are ordered by their own most recent activity, so the one you were
+// last in is at the top. The deleted bucket sinks to the end of its account:
+// it is a place to go looking, not something you were working in.
+func sortGroups(groups []PlaceGroup) {
+	latest := map[string]time.Time{}
+	for _, g := range groups {
+		if g.Latest.After(latest[g.Account]) {
+			latest[g.Account] = g.Latest
+		}
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		a, b := groups[i], groups[j]
+		if a.Account != b.Account {
+			return latest[a.Account].After(latest[b.Account])
+		}
+		if ad, bd := a.Label == deletedFolder, b.Label == deletedFolder; ad != bd {
+			return bd
+		}
+		return a.Latest.After(b.Latest)
+	})
 }
 
 // Items reads one group. This is the only call that opens files, and it opens
@@ -565,6 +594,13 @@ func scanSidecars(root string) []sidecarRef {
 		folder := readSidecar(path, &it)
 		if folder == "" {
 			folder = unknownFolder
+		}
+		// A record with no title of its own reads better as its own id than as
+		// the filename that id is wrapped in: "local_051bc295-…json" is the
+		// same string with noise either side.
+		if it.Label == name {
+			id := strings.TrimSuffix(strings.TrimPrefix(name, "local_"), ".json")
+			it.Label = "(untitled) " + shortSessionID(id)
 		}
 		out = append(out, sidecarRef{folder: folder, account: account, item: it})
 		return nil
