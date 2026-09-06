@@ -13,7 +13,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/internal/agentrig/records"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
+	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
@@ -337,16 +339,8 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	clearProgress()
 
 	// Title matches: a session whose title contains the query, even with no body hit.
-	needle := query
-	if !caseSensitive {
-		needle = strings.ToLower(needle)
-	}
 	for id, m := range idx {
-		hay := m.Title
-		if !caseSensitive {
-			hay = strings.ToLower(hay)
-		}
-		if m.Title != "" && strings.Contains(hay, needle) {
+		if records.TitleMatches(adapter.MetadataSummary(m), query, caseSensitive) {
 			get(id).titleMatch = true
 		}
 	}
@@ -357,13 +351,10 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 	for id, e := range sc.Ledger {
 		r := hits[id]
 		if r == nil {
-			hay := e.Title
-			if !caseSensitive {
-				hay = strings.ToLower(hay)
-			}
-			if e.Title == "" || !strings.Contains(hay, needle) {
+			if !records.TitleMatches(adapter.LedgerSummary(e), query, caseSensitive) {
 				continue
 			}
+
 			r = get(id)
 			r.titleMatch = true
 		}

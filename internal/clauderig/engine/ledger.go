@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/records"
+	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
@@ -40,8 +42,11 @@ func recordLedger(stagingDir, device, liveAccount string, mine map[string]bool) 
 	// the union then discards anyway.
 	union := ledger.LoadAll(stagingDir)
 	projects := filepath.Join(stagingDir, "cli", "projects")
-	if dirExists(projects) {
-		walkErr := filepath.WalkDir(projects, func(p string, d os.DirEntry, werr error) error {
+	result, err := records.Record(adapter.LedgerStore{Ledger: l}, func(yield func(records.Candidate) error) error {
+		if !dirExists(projects) {
+			return nil
+		}
+		return filepath.WalkDir(projects, func(p string, d os.DirEntry, werr error) error {
 			if werr != nil || d.IsDir() || !strings.HasSuffix(p, ".jsonl") {
 				return nil
 			}
@@ -69,11 +74,9 @@ func recordLedger(stagingDir, device, liveAccount string, mine map[string]bool) 
 			// has to be revoked explicitly or it filters forever under an
 			// account that is now disputed.
 			if contested[id] {
-				if l.Revoke(id) {
-					added++
-				}
-				return nil
+				return yield(records.Candidate{Summary: records.Summary{Vendor: "claude", ID: id}, Revoke: true})
 			}
+
 			if a := byDesktop[id]; a != "" {
 				acct, src = a, ledger.AccountFromDesktop
 			} else if liveAccount != "" && mine[id] {
@@ -100,8 +103,10 @@ func recordLedger(stagingDir, device, liveAccount string, mine map[string]bool) 
 			// every session to the copy and, since End is half the change
 			// fingerprint, force a rewrite of every row after it.
 			end := info.ModTime().UTC()
+			approximate := true
 			if a, ok := session.LastActivity(p); ok {
 				end = a.At
+				approximate = false
 			}
 			// An unchanged transcript is normally skipped without reading it. It
 			// still needs a pass when the attribution on offer OUTRANKS the stored
@@ -113,32 +118,21 @@ func recordLedger(stagingDir, device, liveAccount string, mine map[string]bool) 
 			if u := union[id].AccountSource; ledger.AccountRank(u) > ledger.AccountRank(prevSrc) {
 				prevSrc = u
 			}
-			if l.Fresh(id, end, info.Size()) && ledger.AccountRank(src) <= ledger.AccountRank(prevSrc) {
-				return nil
-			}
-			e := ledger.Entry{
-				ID:            id,
-				Slug:          slugOf(rel),
-				End:           end,
-				Bytes:         info.Size(),
-				Title:         session.FirstPrompt(p),
-				Seen:          time.Now().UTC(),
-				Account:       acct,
-				AccountSource: src,
-			}
-			if cwd, ok, cerr := project.CwdFromTranscript(p); cerr == nil && ok {
-				e.Cwd = cwd
-			}
-			if l.Note(e) {
-				added++
-			}
-			return nil
+			return yield(records.Candidate{
+				Summary: records.Summary{Vendor: "claude", ID: id, Project: slugOf(rel), Activity: end, Approximate: approximate, Bytes: info.Size(), Account: acct, AccountSource: src},
+				Refresh: ledger.AccountRank(src) > ledger.AccountRank(prevSrc),
+				Read: func(e *records.Summary) error {
+					e.Title = session.FirstPrompt(p)
+					e.Seen = time.Now().UTC()
+					if cwd, ok, cerr := project.CwdFromTranscript(p); cerr == nil && ok {
+						e.Cwd = cwd
+					}
+					return nil
+				},
+			})
 		})
-		if walkErr != nil {
-			return added, l.Count(), walkErr
-		}
-	}
-	return added, l.Count(), l.Save()
+	})
+	return result.Added, result.Total, err
 }
 
 // sessionIDsFrom picks the session ids out of a CLI root's allowlisted paths:

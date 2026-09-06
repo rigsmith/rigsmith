@@ -57,5 +57,6 @@ remain the cross-platform gate; the baseline is unchanged.
 
 The [shared file mechanics](CLAUDERIG-V2-FILES.md) consume these explicit
 decisions through narrow callbacks. Claude retains codecs and native metadata
-interpretation. Session/metadata and publication boundaries follow; store
+interpretation. The [record/publication boundary](CLAUDERIG-V2-RECORDS-PUBLICATION.md)
+adds normalized session views and a caller-selected publication plan; store
 coordination and the durable queue remain later, separately tested milestones.

@@ -78,7 +78,9 @@ adding unrelated fixes:
 
 No metadata readers, serializers, ledger/search orchestration, Git publication,
 or account/Desktop operations move into the shared packages in this milestone.
-Those boundaries remain in milestone 5 or in their vendor implementations.
+[Milestone 5](CLAUDERIG-V2-RECORDS-PUBLICATION.md) extracts recording/query and
+publication orchestration while keeping native readers, serializers and
+account/Desktop operations in Claude implementations.
 
 ## Validation
 

@@ -87,7 +87,9 @@ selection, and session/subagent flush grouping. The engine and merge resolver
 consume those policies while retaining their existing implementations. See
 [the adapter contracts](CLAUDERIG-V2-ADAPTER.md).
 
-Next, extract the proven vendor-neutral file processing and restore mechanics. Store-wide
+V2 now delegates file mechanics, session recording/query and Git publication to
+shared packages. Claude keeps native serializers and policies; see the
+[record/publication boundary](CLAUDERIG-V2-RECORDS-PUBLICATION.md). Store-wide
 coordination and the durable queue follow: callable services are available now,
 but they do not yet provide worker ownership, durable scheduling or retries
 across process restarts. CodexRig remains a separate consumer to add after those

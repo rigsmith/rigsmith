@@ -2,12 +2,9 @@ package service
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
-	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
-	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
-	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
+	"github.com/rigsmith/rigsmith/internal/agentrig/publication"
 )
 
 // Reconcile brings the staging repo back onto one line of history with the
@@ -24,69 +21,13 @@ import (
 // the SessionStart hook cannot. Otherwise the merge is aborted, which leaves the
 // repo usable even though the sync did not land.
 func (s Service) Reconcile(ctx context.Context, req ReconcileRequest) error {
-	repo, remote, branch := req.Repo, req.Remote, req.Branch
-	if !repo.InMerge(ctx) {
-		conflicted, err := repo.FetchMergeUncommitted(ctx, remote, branch)
-		if err != nil {
-			return fmt.Errorf("reconcile: %w", err)
-		}
-		if !conflicted {
-			return FinishMerge(ctx, repo)
-		}
-	} else {
-		s.emit(MergePending{})
-	}
-
-	rep, err := mergepolicy.Resolve(ctx, repo)
-	if err != nil {
-		return fmt.Errorf("resolve conflicts: %w", err)
-	}
-	s.emit(ConflictsResolved{Resolutions: rep.Resolved})
-	if n := len(rep.Unresolved); n > 0 {
-		if !req.AllowMergeTool {
-			_ = repo.AbortMerge(ctx)
-			return fmt.Errorf("%d conflict(s) need a human (%s); re-run `clauderig sync` in a terminal to resolve via git mergetool",
-				n, rep.Unresolved[0])
-		}
-		s.emit(MergeToolStarting{Count: n})
-		if err := repo.RunMergeTool(ctx); err != nil {
-			_ = repo.AbortMerge(ctx)
-			return fmt.Errorf("mergetool: %w", err)
-		}
-	}
-	return FinishMerge(ctx, repo)
+	return s.publication().Reconcile(ctx, req)
 }
 
-// FinishMerge audits a pending merge before committing. Refused merges remain
-// resumable. Working files must match the index so cleaning only a working copy
-// cannot hide a credential still staged for commit.
+// FinishMerge audits before committing a pending merge. Native audit and byte
+// preparation remain Claude policies.
 func FinishMerge(ctx context.Context, repo *gitrepo.Repo) error {
-	merging := repo.InMerge(ctx)
-	if merging {
-		dirty, err := repo.HasUnstagedChanges(ctx)
-		if err != nil {
-			return err
-		}
-		if dirty {
-			return fmt.Errorf("merge has unstaged changes; stage the intended resolutions before retrying")
-		}
-	}
-	root, err := repo.Toplevel(ctx)
-	if err != nil {
-		return err
-	}
-	if merging {
-		if err := backupgit.Prepare(ctx, root); err != nil {
-			return err
-		}
-	}
-	if err = engine.CheckPublish(root); err != nil {
-		return err
-	}
-	if !merging {
-		return nil
-	}
-	return repo.CommitMerge(ctx)
+	return (Service{}).publication().FinishMerge(ctx, repo)
 }
 
 // RepairMerge finishes a merge an earlier run left in progress, before
@@ -122,11 +63,7 @@ func (s Service) RepairMerge(ctx context.Context, staging string, allowMergeTool
 
 // ReconcileRequest carries the caller's explicit permission to invoke mergetool.
 // Background callers must leave AllowMergeTool false.
-type ReconcileRequest struct {
-	Repo           *gitrepo.Repo
-	Remote, Branch string
-	AllowMergeTool bool
-}
+type ReconcileRequest = publication.ReconcileRequest
 
 // RepairResult distinguishes a repaired or aborted merge from a still-wedged
 // store. An error can coexist with Safe when reconciliation aborted the merge.
