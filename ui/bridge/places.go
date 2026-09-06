@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,6 +105,14 @@ type PlaceItem struct {
 	Bytes      int64     `json:"bytes"`
 	When       time.Time `json:"when"`
 	Archived   bool      `json:"archived,omitempty"`
+	// Deleted marks a session Claude Desktop has removed from its own sidebar.
+	// The record survives, and it is exactly what someone hunting a session
+	// they can no longer see is looking for.
+	Deleted bool `json:"deleted,omitempty"`
+	// Worktree and PRs are what the session was working on. A worktree name is
+	// often the only thing anyone remembers about a piece of work.
+	Worktree string   `json:"worktree,omitempty"`
+	PRs      []string `json:"prs,omitempty"`
 }
 
 // PlacesView is the store list.
@@ -154,7 +163,7 @@ func (p *Places) Groups(ctx context.Context, storeID string) (GroupsView, error)
 	if loc.kind == "cli" {
 		out.Groups = cliProjects(loc, true)
 	} else {
-		out.Groups = desktopWorkspaces(loc)
+		out.Groups = desktopFolders(loc)
 	}
 	sort.Slice(out.Groups, func(i, j int) bool { return out.Groups[i].Latest.After(out.Groups[j].Latest) })
 	return out, nil
@@ -167,15 +176,23 @@ func (p *Places) Items(ctx context.Context, storeID, groupID string) (ItemsView,
 	if err != nil {
 		return ItemsView{Error: err.Error()}, nil
 	}
-	dir, err := groupDir(loc, groupID)
-	if err != nil {
-		return ItemsView{Error: err.Error()}, nil
-	}
 	var items []PlaceItem
 	if loc.kind == "cli" {
+		dir, derr := groupDir(loc, groupID)
+		if derr != nil {
+			return ItemsView{Error: derr.Error()}, nil
+		}
 		items = cliItems(dir)
 	} else {
-		items = desktopItems(dir)
+		folder, ok := strings.CutPrefix(groupID, "folder:")
+		if !ok {
+			return ItemsView{Error: "unknown folder"}, nil
+		}
+		for _, sc := range scanSidecars(filepath.Join(loc.base, codeSessions)) {
+			if sc.folder == folder {
+				items = append(items, sc.item)
+			}
+		}
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].When.After(items[j].When) })
 	return ItemsView{Items: items}, nil
@@ -275,7 +292,7 @@ func describeStore(loc location) PlaceStore {
 			s.Transcripts += g.Items
 		}
 	} else {
-		groups := desktopWorkspaces(loc)
+		groups := desktopFolders(loc)
 		s.Groups = len(groups)
 		for _, g := range groups {
 			s.Sidecars += g.Items
@@ -323,58 +340,102 @@ func storeConfig(loc location) []PlaceItem {
 	return items
 }
 
-// desktopWorkspaces lists the workspaces under a Desktop's session tree. The
-// layout is <account>/<workspace>/local_<id>.json, and both levels are opaque
-// uuids — so the group carries the account it belongs to as its note, and is
-// ordered by recency, which is the only handle anyone actually has on them.
-func desktopWorkspaces(loc location) []PlaceGroup {
-	root := filepath.Join(loc.base, codeSessions)
-	accounts, err := os.ReadDir(root)
-	if err != nil {
-		return nil
+// desktopFolders groups a Desktop's sessions the way Desktop itself does: by
+// the folder they were opened in. Each sidecar records that as originCwd, and
+// it is what the app's own sidebar puts its headings on — so this window and
+// the app agree about where a session lives, which is the whole point when
+// someone is retracing where they were.
+//
+// The uuids in the path (<account>/<workspace>) are not that. They are opaque,
+// they repeat across accounts, and nobody has ever remembered one.
+func desktopFolders(loc location) []PlaceGroup {
+	byFolder := map[string]*PlaceGroup{}
+	for _, sc := range scanSidecars(filepath.Join(loc.base, codeSessions)) {
+		folder := sc.folder
+		g := byFolder[folder]
+		if g == nil {
+			g = &PlaceGroup{ID: folderID(folder), Label: folder, Note: "opened here"}
+			byFolder[folder] = g
+		}
+		g.Items++
+		if sc.item.When.After(g.Latest) {
+			g.Latest = sc.item.When
+		}
 	}
-	var groups []PlaceGroup
-	for _, acct := range accounts {
-		if !acct.IsDir() {
-			continue
-		}
-		spaces, err := os.ReadDir(filepath.Join(root, acct.Name()))
-		if err != nil {
-			continue
-		}
-		for _, sp := range spaces {
-			if !sp.IsDir() {
-				continue
-			}
-			dir := filepath.Join(root, acct.Name(), sp.Name())
-			n, latest, newest := countLatestNewest(dir, ".json")
-			if n == 0 {
-				continue
-			}
-			// A uuid is not a handle anyone has on their own work. The one
-			// thing that makes a workspace recognisable is what was being
-			// worked on in it, so the most recent sidecar in it is read for
-			// its working directory and that becomes the label. Costs one file
-			// read per workspace, of which there are a handful.
-			//
-			// Both uuids stay on the row, because they are what the folder is
-			// actually called if someone goes looking on disk — and because
-			// two accounts here have workspaces with the same id, so neither
-			// uuid identifies one on its own.
-			g := PlaceGroup{
-				ID:    acct.Name() + "/" + sp.Name(),
-				Label: shortSessionID(acct.Name()) + " / " + shortSessionID(sp.Name()),
-				Items: n, Latest: latest,
-			}
-			if cwd := sidecarCwd(newest); cwd != "" {
-				g.Label = trimHome(cwd)
-				g.Note = shortSessionID(acct.Name()) + " / " + shortSessionID(sp.Name())
-			}
-			groups = append(groups, g)
-		}
+	groups := make([]PlaceGroup, 0, len(byFolder))
+	for _, g := range byFolder {
+		groups = append(groups, *g)
 	}
 	return groups
 }
+
+// sidecarRef is one Desktop session record and the folder it belongs under.
+type sidecarRef struct {
+	folder string
+	item   PlaceItem
+}
+
+// scanSidecars reads every session record under a Desktop's session tree,
+// including the deleted_ ones — a session the app has dropped from its sidebar
+// still has a record here, and that record is often the whole reason someone
+// opened this window.
+func scanSidecars(root string) []sidecarRef {
+	var out []sidecarRef
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		deleted := strings.HasPrefix(name, "deleted_")
+		if !deleted && !strings.HasPrefix(name, "local_") {
+			return nil
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		it := PlaceItem{
+			Kind: ItemSidecar, Label: name, Path: path,
+			Bytes: info.Size(), When: info.ModTime(), Deleted: deleted,
+		}
+		if deleted {
+			// A deleted record is a tombstone, not a session: the whole file is
+			// the millisecond it was deleted at, and the id is in its name.
+			// There is no title and no folder to file it under, so they get a
+			// place of their own rather than a bucket of unknowns — "these were
+			// deleted, and when" is a complete answer on its own.
+			it.Session = strings.TrimSuffix(strings.TrimPrefix(name, "deleted_"), ".json")
+			it.Label = shortSessionID(it.Session)
+			if b, rerr := os.ReadFile(path); rerr == nil {
+				if ms, cerr := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); cerr == nil && ms > 0 {
+					it.When = time.UnixMilli(ms)
+				}
+			}
+			out = append(out, sidecarRef{folder: deletedFolder, item: it})
+			return nil
+		}
+		folder := readSidecar(path, &it)
+		if folder == "" {
+			folder = unknownFolder
+		}
+		out = append(out, sidecarRef{folder: folder, item: it})
+		return nil
+	})
+	return out
+}
+
+// unknownFolder is where records that do not say go, rather than being dropped.
+const unknownFolder = "(folder not recorded)"
+
+// deletedFolder collects the tombstones Claude Desktop leaves behind. Someone
+// who cannot find a session at all is often looking for one of these, and "it
+// was deleted, here is when" is the answer they came for.
+const deletedFolder = "Deleted in Desktop"
+
+// folderID encodes a folder path as a group id. The id travels to the window
+// and back, and a raw path would collide with the CLI store's slug ids and read
+// as a path traversal on the way in.
+func folderID(folder string) string { return "folder:" + folder }
 
 // cliProjects lists the project directories under a CLI root. The slug is the
 // working directory with its separators flattened, so it is turned back into
@@ -423,58 +484,50 @@ func groupDir(loc location, groupID string) (string, error) {
 	return dir, nil
 }
 
-// desktopItems reads the sidecars in one workspace. A sidecar is Desktop's
-// record of a session: its title, where it was run, and — the useful part —
-// the CLI session id whose transcript holds the actual conversation.
-func desktopItems(dir string) []PlaceItem {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var items []PlaceItem
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		it := PlaceItem{
-			Kind: ItemSidecar, Label: e.Name(), Path: filepath.Join(dir, e.Name()),
-			Bytes: info.Size(), When: info.ModTime(),
-		}
-		// scheduled-tasks.json sits beside the sidecars and is not one.
-		if !strings.HasPrefix(e.Name(), "local_") {
-			it.Kind = ItemConfig
-			items = append(items, it)
-			continue
-		}
-		readSidecar(it.Path, &it)
-		items = append(items, it)
-	}
-	return items
-}
-
 // readSidecar fills in what the file itself says. Best-effort throughout: a
 // sidecar that will not parse still belongs in the listing, because its
 // existence is the fact being looked for.
-func readSidecar(path string, it *PlaceItem) {
+func readSidecar(path string, it *PlaceItem) (folder string) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return
+		return ""
 	}
 	var s struct {
 		SessionID      string `json:"sessionId"`
 		CLISessionID   string `json:"cliSessionId"`
 		Title          string `json:"title"`
 		Cwd            string `json:"cwd"`
+		OriginCwd      string `json:"originCwd"`
 		Branch         string `json:"branch"`
+		WorktreeName   string `json:"worktreeName"`
 		IsArchived     bool   `json:"isArchived"`
 		LastActivityAt int64  `json:"lastActivityAt"`
+		PRs            []struct {
+			Repo   string `json:"repo"`
+			Number int    `json:"prNumber"`
+			State  string `json:"state"`
+		} `json:"prs"`
 	}
 	if json.Unmarshal(b, &s) != nil {
-		return
+		return ""
+	}
+	it.Worktree = s.WorktreeName
+	for _, pr := range s.PRs {
+		label := "#" + strconv.Itoa(pr.Number)
+		if pr.Repo != "" {
+			label = pr.Repo + label
+		}
+		if pr.State != "" && !strings.EqualFold(pr.State, "OPEN") {
+			label += " (" + strings.ToLower(pr.State) + ")"
+		}
+		it.PRs = append(it.PRs, label)
+	}
+	// originCwd is the folder Desktop files the session under — the heading its
+	// own sidebar shows. cwd is where the session actually ran, which for a
+	// worktree session is several levels below that.
+	folder = trimHome(s.OriginCwd)
+	if folder == "" {
+		folder = trimHome(s.Cwd)
 	}
 	if s.Title != "" {
 		it.Label = s.Title
@@ -490,6 +543,7 @@ func readSidecar(path string, it *PlaceItem) {
 	if s.LastActivityAt > 0 {
 		it.When = time.UnixMilli(s.LastActivityAt)
 	}
+	return folder
 }
 
 // cliItems lists one project's transcripts, and the directories a transcript

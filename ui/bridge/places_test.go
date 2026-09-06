@@ -3,7 +3,6 @@ package bridge
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -27,6 +26,14 @@ func sidecar(id, cliID, title, cwd string, at time.Time) string {
 		itoa(at.UnixMilli()) + `}`
 }
 
+// sidecarIn is a sidecar whose origin folder differs from where it ran, which
+// is what a worktree session looks like.
+func sidecarIn(id, cliID, title, origin, cwd string, at time.Time) string {
+	return `{"sessionId":"` + id + `","cliSessionId":"` + cliID + `","title":"` + title +
+		`","originCwd":"` + origin + `","cwd":"` + cwd + `","branch":"main","lastActivityAt":` +
+		itoa(at.UnixMilli()) + `}`
+}
+
 func itoa(n int64) string {
 	if n == 0 {
 		return "0"
@@ -42,40 +49,56 @@ func itoa(n int64) string {
 // The whole point of this window: a Desktop keeps a record of a session whose
 // conversation lives somewhere else entirely. That record is what says where the
 // session went, so the link it carries has to survive into the listing.
-func TestDesktopItemsCarryTheLinkToTheTranscript(t *testing.T) {
+func TestSidecarsCarryTheLinkToTheTranscript(t *testing.T) {
 	base := t.TempDir()
-	dir := filepath.Join(base, codeSessions, "acct-1111", "ws-2222")
 	writeFile(t, base, codeSessions+"/acct-1111/ws-2222/local_aaa.json",
 		sidecar("local_aaa", "424f8e2f-9b1e-4074-b1b5-ac1fc09b67df", "Session export/import",
 			"/Users/john/Git/rigsmith", time.Now().Add(-2*time.Hour)))
-	writeFile(t, base, codeSessions+"/acct-1111/ws-2222/scheduled-tasks.json", `{}`)
 
-	items := desktopItems(dir)
-	if len(items) != 2 {
-		t.Fatalf("got %d items, want 2", len(items))
+	refs := scanSidecars(filepath.Join(base, codeSessions))
+	if len(refs) != 1 {
+		t.Fatalf("got %d records, want 1", len(refs))
 	}
-	var found bool
-	for _, it := range items {
-		switch it.Kind {
-		case ItemSidecar:
-			found = true
-			if it.Label != "Session export/import" {
-				t.Errorf("label = %q, want the sidecar's own title", it.Label)
-			}
-			if it.CLISession != "424f8e2f-9b1e-4074-b1b5-ac1fc09b67df" {
-				t.Errorf("cliSession = %q — the link to the transcript was dropped", it.CLISession)
-			}
-			if it.Cwd == "" || it.Branch != "main" {
-				t.Errorf("cwd/branch missing: %+v", it)
-			}
-		case ItemConfig:
-			if it.Label != "scheduled-tasks.json" {
-				t.Errorf("unexpected config item %q", it.Label)
+	it := refs[0].item
+	if it.Label != "Session export/import" {
+		t.Errorf("label = %q, want the sidecar's own title", it.Label)
+	}
+	if it.CLISession != "424f8e2f-9b1e-4074-b1b5-ac1fc09b67df" {
+		t.Errorf("cliSession = %q — the link to the transcript was dropped", it.CLISession)
+	}
+	if it.Branch != "main" {
+		t.Errorf("branch missing: %+v", it)
+	}
+}
+
+// A session Claude Desktop has dropped from its own sidebar still has a record
+// here. Someone hunting a session they can no longer see is looking for exactly
+// that, so it is listed — and marked, because "it is gone" and "it is here and
+// deleted" are different answers.
+func TestDeletedSessionsAreListedAndMarked(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, base, codeSessions+"/a/w/local_live.json",
+		sidecar("local_live", "cli-1", "Still here", "/Users/john/Git", time.Now()))
+	// A real tombstone is the deletion timestamp and nothing else.
+	writeFile(t, base, codeSessions+"/a/w/deleted_gone.json", itoa(time.Now().UnixMilli()))
+	// Not a session record at all, and must not be mistaken for one.
+	writeFile(t, base, codeSessions+"/a/w/scheduled-tasks.json", `{}`)
+
+	refs := scanSidecars(filepath.Join(base, codeSessions))
+	if len(refs) != 2 {
+		t.Fatalf("got %d records, want the live one and the deleted one", len(refs))
+	}
+	var deleted int
+	for _, r := range refs {
+		if r.item.Deleted {
+			deleted++
+			if r.item.Session != "gone" {
+				t.Errorf("deleted record lost its id: %q", r.item.Session)
 			}
 		}
 	}
-	if !found {
-		t.Error("no sidecar in the listing")
+	if deleted != 1 {
+		t.Errorf("marked %d records deleted, want 1", deleted)
 	}
 }
 
@@ -84,46 +107,46 @@ func TestDesktopItemsCarryTheLinkToTheTranscript(t *testing.T) {
 func TestUnparseableSidecarStillListed(t *testing.T) {
 	base := t.TempDir()
 	writeFile(t, base, codeSessions+"/a/w/local_broken.json", `{not json`)
-	items := desktopItems(filepath.Join(base, codeSessions, "a", "w"))
-	if len(items) != 1 || items[0].Kind != ItemSidecar {
-		t.Fatalf("got %+v, want the broken sidecar listed anyway", items)
+	refs := scanSidecars(filepath.Join(base, codeSessions))
+	if len(refs) != 1 {
+		t.Fatalf("got %+v, want the broken sidecar listed anyway", refs)
 	}
-	if items[0].Label != "local_broken.json" {
-		t.Errorf("label = %q, want the filename as the fallback", items[0].Label)
+	if refs[0].item.Label != "local_broken.json" {
+		t.Errorf("label = %q, want the filename as the fallback", refs[0].item.Label)
+	}
+	if refs[0].folder != unknownFolder {
+		t.Errorf("folder = %q, want the unrecorded bucket", refs[0].folder)
 	}
 }
 
-// Two accounts here really do have workspaces with the same id, so neither uuid
-// identifies a workspace on its own. The label is taken from what was being
-// worked on instead, because that is the handle someone actually has.
-func TestWorkspaceLabelledByItsWork(t *testing.T) {
+// Desktop files sessions under the folder they were opened in, and shows that
+// folder as the heading in its own sidebar. Grouping by it is what makes this
+// window and the app agree about where a session lives. The <account>/<workspace>
+// uuids in the path are not that: they are opaque, they repeat across accounts,
+// and nobody has ever remembered one.
+func TestSessionsGroupByTheFolderTheyWereOpenedIn(t *testing.T) {
 	base := t.TempDir()
 	home, _ := os.UserHomeDir()
+	git := filepath.Join(home, "Git")
+	// Two accounts, same workspace id, same folder: one group, not three.
 	writeFile(t, base, codeSessions+"/acct-1/ws-same/local_a.json",
-		sidecar("local_a", "cli-1", "Something", filepath.Join(home, "Git", "rigsmith"), time.Now()))
+		sidecarIn("local_a", "cli-1", "One", git, filepath.Join(git, "rigsmith"), time.Now()))
 	writeFile(t, base, codeSessions+"/acct-2/ws-same/local_b.json",
-		sidecar("local_b", "cli-2", "Other", "", time.Now().Add(-time.Hour)))
+		sidecarIn("local_b", "cli-2", "Two", git, git, time.Now().Add(-time.Hour)))
+	// A different folder is a different group.
+	writeFile(t, base, codeSessions+"/acct-1/ws-other/local_c.json",
+		sidecarIn("local_c", "cli-3", "Three", filepath.Join(git, "tweed"), git, time.Now()))
 
-	groups := desktopWorkspaces(location{base: base, kind: "desktop"})
-	if len(groups) != 2 {
-		t.Fatalf("got %d groups, want one per account", len(groups))
-	}
-	var labelled, fallback int
+	groups := desktopFolders(location{base: base, kind: "desktop"})
+	byLabel := map[string]int{}
 	for _, g := range groups {
-		switch {
-		case strings.HasPrefix(g.Label, "~"):
-			labelled++
-			if g.Note == "" {
-				t.Error("a labelled workspace lost the uuids it is called on disk")
-			}
-		case strings.Contains(g.Label, "/"):
-			fallback++ // no cwd to read: the uuids are all there is
-		default:
-			t.Errorf("unexpected label %q", g.Label)
-		}
+		byLabel[g.Label] = g.Items
 	}
-	if labelled != 1 || fallback != 1 {
-		t.Errorf("labelled=%d fallback=%d, want one of each", labelled, fallback)
+	if byLabel["~/Git"] != 2 {
+		t.Errorf("~/Git holds %d sessions, want the two opened there: %v", byLabel["~/Git"], byLabel)
+	}
+	if byLabel["~/Git/tweed"] != 1 {
+		t.Errorf("~/Git/tweed holds %d, want 1: %v", byLabel["~/Git/tweed"], byLabel)
 	}
 }
 
@@ -266,5 +289,34 @@ func TestSlugOfMatchesClaudeCodesNaming(t *testing.T) {
 		if got := slugOf(path); got != want {
 			t.Errorf("slugOf(%q) = %q, want %q", path, got, want)
 		}
+	}
+}
+
+// A deleted record is a tombstone: the whole file is the millisecond it was
+// deleted at, and the session id is in its name. It has no title and no folder,
+// so it gets a place of its own rather than being filed under "unknown" beside
+// records that merely failed to say where they were.
+func TestDeletedTombstonesGetTheirOwnPlace(t *testing.T) {
+	base := t.TempDir()
+	when := time.Now().Add(-48 * time.Hour).Truncate(time.Millisecond)
+	writeFile(t, base, codeSessions+"/a/w/deleted_7ae8c132-f0a1-4bc0-8a00-985f9be72eac.json",
+		itoa(when.UnixMilli()))
+
+	refs := scanSidecars(filepath.Join(base, codeSessions))
+	if len(refs) != 1 {
+		t.Fatalf("got %d records, want the tombstone", len(refs))
+	}
+	r := refs[0]
+	if r.folder != deletedFolder {
+		t.Errorf("folder = %q, want %q", r.folder, deletedFolder)
+	}
+	if !r.item.Deleted {
+		t.Error("tombstone not marked deleted")
+	}
+	if r.item.Session != "7ae8c132-f0a1-4bc0-8a00-985f9be72eac" {
+		t.Errorf("session = %q, want the id from the filename", r.item.Session)
+	}
+	if !r.item.When.Equal(when) {
+		t.Errorf("when = %v, want the timestamp the file holds (%v)", r.item.When, when)
 	}
 }

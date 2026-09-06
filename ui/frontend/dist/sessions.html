@@ -335,13 +335,13 @@
     white-space:nowrap;}
   .pitem .meta{flex:none;font-size:10.5px;color:var(--dim);}
   .pitem .sub{font-size:10.5px;color:var(--dim);margin-top:2px;}
+  .pitem[data-deleted="yes"] .lbl>div:first-child{text-decoration:line-through;color:var(--dim);}
   .pfilter{width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:5px 8px;
     margin-bottom:10px;border:1px solid var(--line);border-radius:6px;background:var(--raise);
     color:var(--fg);--wails-draggable:no-drag;}
   .pfilter::placeholder{color:var(--dim);}
-  .bandhead{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
-    padding:9px 9px 3px 20px;cursor:default;}
-  .bandhead:hover{background:transparent;}
+  .caret{display:inline-block;width:12px;color:var(--dim);font-size:11px;}
+  .grp[data-open="yes"] .caret{color:var(--fg);}
   .store .diff{color:var(--fg-faint);}
   .phead{font-size:13px;margin-bottom:2px;}
   .psub{font-size:11px;color:var(--dim);margin-bottom:14px;word-break:break-all;}
@@ -1424,13 +1424,13 @@ async function toggleStore(st, node) {
   if (openStore === st.id) {
     openStore = null;
     node.removeAttribute('data-on');
-    document.querySelectorAll('.grp').forEach(g => g.remove());
+    clearTree();
     return;
   }
   openStore = st.id;
   openGroup = null;
   document.querySelectorAll('.store').forEach(x => x.removeAttribute('data-on'));
-  document.querySelectorAll('.grp').forEach(g => g.remove());
+  clearTree();
   node.dataset.on = 'yes';
   $('pitems').replaceChildren();
 
@@ -1443,83 +1443,160 @@ async function toggleStore(st, node) {
   }
   if (view.error) { node.after(el('div', 'grp', view.error)); return; }
 
-  // The store's own config first: it belongs to the place, not to any project
-  // in it, and it is the reason an otherwise-empty profile is worth restoring.
   showStoreHeader(view.store, view.config || []);
 
   const groups = view.groups || [];
-  if (!groups.length) {
-    node.after(el('div', 'grp', 'nothing filed here'));
-    return;
-  }
-  // Grouped by when you were last in them. A hundred and seventy projects in
-  // one flat list is a wall; the same list under "today / this week / earlier"
-  // is scannable, and recency is the one thing anyone reliably remembers.
-  let prev = node;
-  let band = null;
+  if (!groups.length) { node.after(el('div', 'grp', 'nothing filed here')); return; }
+
+  // Both stores are path-shaped — a CLI project IS a directory, and Desktop
+  // files each session under the folder it was opened in — so both nest the
+  // same way. A hundred and seventy-four folders in one flat column is not a
+  // tree, it is a list with indentation for decoration; nesting turns it into
+  // nine things to look at.
+  renderTree(st, buildTree(groups), node);
+  applyFilter(currentFilter);
+}
+
+function clearTree() {
+  document.querySelectorAll('.grp, .bandhead').forEach(g => g.remove());
+}
+
+// buildTree turns flat paths into nested nodes. A node can be both a place with
+// its own sessions AND a parent of others — ~/Git holds 500 of its own and 136
+// projects beneath it — so `group` and `kids` are independent.
+function buildTree(groups) {
+  const root = { seg: '', kids: new Map(), group: null, total: 0, latest: '' };
   for (const g of groups) {
-    const b = bandOf(g.latest);
-    if (b !== band) {
-      band = b;
-      const h = el('div', 'grp bandhead', b);
-      prev.after(h);
-      prev = h;
+    const parts = g.label.split('/').filter(Boolean);
+    // A leading ~ or / is part of the first segment, not a level of its own.
+    if (g.label.startsWith('/')) parts[0] = '/' + parts[0];
+    let node = root;
+    for (const seg of parts.length ? parts : ['(unknown)']) {
+      let kid = node.kids.get(seg);
+      if (!kid) { kid = { seg, kids: new Map(), group: null, total: 0, latest: '' }; node.kids.set(seg, kid); }
+      node = kid;
+      node.total += g.items;
+      if (g.latest > node.latest) node.latest = g.latest;
     }
-    const gn = el('div', 'grp');
-    gn.append(document.createTextNode(g.label));
-    const sub = el('div', 'sub', PLURAL(g.items, 'item', 'items') +
-      (g.latest ? ' · ' + age(g.latest) : ''));
-    gn.append(sub);
-    // The slug is what the folder is actually called on disk, which is what you
-    // need if you go looking for it outside this window.
-    if (g.note) gn.title = g.note;
-    gn.dataset.find = (g.label + ' ' + (g.note || '')).toLowerCase();
-    gn.addEventListener('click', ev => { ev.stopPropagation(); openPlaceGroup(st, g, gn); });
-    prev.after(gn);
-    prev = gn;
+    node.group = g;
+  }
+  collapse(root);
+  return root;
+}
+
+// collapse merges a chain of single children into one row. Without it,
+// ~/Dropbox/File Cabinet/Business Clients/… is five clicks to reach one folder,
+// each of which offers no choice.
+function collapse(node) {
+  for (const [key, kid] of [...node.kids]) {
+    collapse(kid);
+    while (kid.kids.size === 1 && !kid.group) {
+      const [onlyKey, only] = [...kid.kids][0];
+      node.kids.delete(key);
+      kid.seg = kid.seg + '/' + only.seg;
+      kid.kids = only.kids;
+      kid.group = only.group;
+      node.kids.set(kid.seg, kid);
+    }
+  }
+}
+
+function renderTree(st, root, after) {
+  let prev = after;
+  const walk = (node, depth, parentOpen) => {
+    for (const kid of [...node.kids.values()].sort((a, b) => (b.latest || '').localeCompare(a.latest || ''))) {
+      const row = el('div', 'grp');
+      row.style.paddingLeft = (12 + depth * 14) + 'px';
+      row.dataset.depth = String(depth);
+      // Two levels open to start with. One is not enough: the first level of a
+      // home directory is "~", which is a row you are forced to click and that
+      // tells you nothing. Two gets you to ~/Git, which is a real answer.
+      //
+      // vis carries "visible when not filtering", because filtering overrides
+      // visibility entirely and has to be able to put it back afterwards.
+      const startsOpen = depth <= 1;
+      row.dataset.vis = startsOpen ? 'yes' : 'no';
+      row.hidden = !startsOpen;
+      if (depth === 0 && kid.kids.size) row.dataset.open = 'yes';
+
+      const caret = el('span', 'caret', !kid.kids.size ? '' : (depth === 0 ? '‹' : '›'));
+      row.append(caret);
+      row.append(document.createTextNode(kid.seg));
+      const own = kid.group ? kid.group.items : 0;
+      const sub = el('div', 'sub',
+        (kid.kids.size ? `${kid.kids.size} inside · ` : '') +
+        (own ? PLURAL(own, 'item', 'items') : `${kid.total} below`) +
+        (kid.latest ? ' · ' + age(kid.latest) : ''));
+      row.append(sub);
+      if (kid.group && kid.group.note) row.title = kid.group.note;
+      row.dataset.find = ((kid.group ? kid.group.label : kid.seg) + ' ' +
+        (kid.group ? kid.group.note || '' : '')).toLowerCase();
+
+      row.addEventListener('click', ev => {
+        ev.stopPropagation();
+        if (kid.kids.size) {
+          const opening = row.dataset.open !== 'yes';
+          row.dataset.open = opening ? 'yes' : 'no';
+          caret.textContent = opening ? '‹' : '›';
+          setSubtreeVisible(row, opening);
+        }
+        if (kid.group) openPlaceGroup(st, kid.group, row);
+      });
+      prev.after(row);
+      prev = row;
+      walk(kid, depth + 1, startsOpen);
+    }
+  };
+  walk(root, 0, true);
+}
+
+// setSubtreeVisible shows or hides the rows nested under one row. They are
+// siblings in the DOM — a flat list with a depth on each — so "under" means
+// "everything after it that is deeper, until something is not".
+function setSubtreeVisible(row, show) {
+  const depth = Number(row.dataset.depth);
+  for (let n = row.nextElementSibling; n; n = n.nextElementSibling) {
+    if (!n.classList.contains('grp')) break;
+    const d = Number(n.dataset.depth);
+    if (d <= depth) break;
+    // Collapsing hides the whole subtree; expanding reveals one level, so an
+    // already-open branch does not spring back in its entirety.
+    if (show) {
+      const child = d === depth + 1;
+      n.dataset.vis = child ? 'yes' : 'no';
+      if (child && n.dataset.open === 'yes') {
+        n.dataset.open = 'no';
+        const c = n.querySelector('.caret');
+        if (c && c.textContent) c.textContent = '\u203a';
+      }
+    } else {
+      n.dataset.vis = 'no';
+      n.dataset.open = 'no';
+      const c = n.querySelector('.caret');
+      if (c && c.textContent) c.textContent = '\u203a';
+    }
   }
   applyFilter(currentFilter);
 }
 
-// bandOf is deliberately coarse. "3 days ago" and "5 days ago" are the same
-// answer to "was it this week", and finer bands would only split the list into
-// more places to look.
-function bandOf(iso) {
-  if (!iso) return 'Undated';
-  const days = (Date.now() - new Date(iso).getTime()) / 86400000;
-  if (days < 1) return 'Today';
-  if (days < 7) return 'This week';
-  if (days < 31) return 'This month';
-  if (days < 366) return 'This year';
-  return 'Older';
-}
-
 let currentFilter = '';
 
-// applyFilter narrows what is on screen without unloading anything, so clearing
-// it puts the tree back exactly as it was rather than collapsing it.
+// applyFilter narrows what is on screen. While filtering, depth stops deciding
+// visibility — a match five levels down has to be reachable without expanding
+// five things to find it.
 function applyFilter(term) {
   currentFilter = term;
   for (const n of document.querySelectorAll('.store')) {
     n.hidden = term !== '' && !n.textContent.toLowerCase().includes(term);
   }
-  let shown = 0;
-  for (const n of document.querySelectorAll('.grp')) {
-    if (n.classList.contains('bandhead')) { n.dataset.hideIfEmpty = 'yes'; continue; }
-    const hit = term === '' || (n.dataset.find || '').includes(term);
-    n.hidden = !hit;
-    if (hit) shown++;
+  if (term === '') {
+    // Back to whatever was expanded before the filter ran.
+    for (const n of document.querySelectorAll('.grp')) n.hidden = n.dataset.vis !== 'yes';
+    return;
   }
-  // A band heading with everything under it filtered away is a heading for
-  // nothing, so it goes too.
-  let head = null, seen = 0;
   for (const n of document.querySelectorAll('.grp')) {
-    if (n.classList.contains('bandhead')) {
-      if (head) head.hidden = seen === 0;
-      head = n; seen = 0;
-    } else if (!n.hidden) seen++;
+    n.hidden = !(n.dataset.find || '').includes(term);
   }
-  if (head) head.hidden = seen === 0;
 }
 
 function showStoreHeader(store, config) {
@@ -1551,7 +1628,27 @@ async function openPlaceGroup(st, g, node) {
   if (view.error) { box.append(el('div', 'toast err', view.error)); return; }
   const items = view.items || [];
   if (!items.length) { box.append(el('div', 'pgrouphead', 'nothing here')); return; }
-  for (const it of items) box.append(itemRow(it));
+  // Five hundred sessions in one column is the same wall the left side had, so
+  // they are banded by when you were last in them.
+  let band = null;
+  for (const it of items) {
+    const b = bandOf(it.when);
+    if (b !== band) { band = b; box.append(el('div', 'pgrouphead', b)); }
+    box.append(itemRow(it));
+  }
+}
+
+// bandOf is deliberately coarse. "3 days ago" and "5 days ago" are the same
+// answer to "was it this week", and finer bands would only split a list into
+// more places to look.
+function bandOf(iso) {
+  if (!iso) return 'Undated';
+  const days = (Date.now() - new Date(iso).getTime()) / 86400000;
+  if (days < 1) return 'Today';
+  if (days < 7) return 'This week';
+  if (days < 31) return 'This month';
+  if (days < 366) return 'This year';
+  return 'Older';
 }
 
 // itemRow renders one thing a place holds. A row that names a session opens it;
@@ -1568,9 +1665,14 @@ function itemRow(it) {
   if (it.cwd) subBits.push(tilde(it.cwd));
   if (it.branch) subBits.push(it.branch);
   if (it.archived) subBits.push('archived');
+  // Deleted in Claude Desktop, but the record is still here — which is the
+  // answer someone gets when they cannot find a session at all.
+  if (it.deleted) { row.dataset.deleted = 'yes'; subBits.push('deleted in Desktop'); }
   // The link that answers the question this window exists for: Desktop knows
   // about the session, and the conversation itself is a CLI transcript over
   // there. Showing the id is what lets someone go and find it.
+  if (it.worktree) subBits.push('worktree ' + it.worktree);
+  if (it.prs && it.prs.length) subBits.push(it.prs.join(', '));
   if (it.cliSession) subBits.push('chat ' + it.cliSession.split('-')[0] + ' →');
   if (subBits.length) mid.append(el('div', 'sub', subBits.join('  ·  ')));
   row.append(mid);
