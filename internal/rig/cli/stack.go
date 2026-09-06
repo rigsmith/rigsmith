@@ -636,6 +636,10 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// this pull is about to make, and the baseline would be the target itself.
 	preTree, _ := repo.RevParse(ctx, "HEAD:"+name)
 	preImported, preKnown := stackImportedTree(ctx, repo, name)
+	// Whether the merge below actually moves history is the only thing that
+	// separates the two reasons the prefix can differ from its target. See the
+	// replace guard.
+	preHead, preHeadErr := repo.Head(ctx)
 
 	conflicted, err := repo.FetchMergeUnrelated(ctx, proxy.url(path, fetch, stackPrefixFilter(name)), "HEAD", msg, auth)
 	if err != nil {
@@ -663,7 +667,20 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// the prefix is what this directory is supposed to hold.
 	want, wantErr := repo.RevParse(ctx, "FETCH_HEAD:"+name)
 	have, haveErr := repo.RevParse(ctx, "HEAD:"+name)
-	if wantErr == nil && haveErr == nil && want != have {
+	// Only when the merge did nothing. A prefix differs from its target for two
+	// reasons and the trees cannot tell them apart: either the merge could not
+	// move it (the repin above), or the merge moved it and combined upstream
+	// with work that was already here — in which case `have` is the merge
+	// result and differing from upstream is exactly right.
+	//
+	// Replacing in that second case discards the merge that just succeeded, and
+	// refusing reports failure for work that is already done: the commit and its
+	// marker are made by then, so the cursor alone stays behind and every later
+	// pull repeats the refusal. Nothing recovers it, and the advice it prints —
+	// send them first — cannot help when the work has already been sent.
+	nowHead, nowHeadErr := repo.Head(ctx)
+	merged := preHeadErr == nil && nowHeadErr == nil && nowHead != preHead
+	if wantErr == nil && haveErr == nil && want != have && !merged {
 		// Replacing the directory discards whatever is under it, so only do it
 		// when there is nothing of the user's to discard. Their own commits would
 		// survive in the history but be stranded there, which is a quiet way to
@@ -705,6 +722,20 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 		return err
 	}
 	if opts.fork != nil {
+		// Rebuilt from the branch this member was last proposed to, so its
+		// content is already on the fork — and that fact has to survive the
+		// rebuild. propose records it under this ref, and status, rm and propose
+		// itself all read it to know the work has left. Without it a rebuilt
+		// stackspace reports work as unsent that is demonstrably on the fork,
+		// re-pushes an identical commit on the next propose, and makes rm ask
+		// about work that is not at risk.
+		//
+		// The fork's own commit is exactly what propose put there: its tree is
+		// this member's tree, which is why the comparison against HEAD:<name>
+		// holds.
+		if err := repo.SetRef(ctx, "refs/rigsmith/propose/"+name, opts.fork.Commit); err != nil {
+			return err
+		}
 		fmt.Fprintf(out, "%s: %s from %s:%s (%s), based on upstream %s\n", name, verb, r.Fork, opts.fork.Branch, short(fetch), short(tip))
 	} else {
 		fmt.Fprintf(out, "%s: %s upstream %s\n", name, verb, short(tip))
@@ -863,6 +894,23 @@ func newStackSendCmd() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to send — it matches upstream\n", name)
 				return nil
 			}
+			// Already on the fork, unchanged, on the branch being asked for.
+			// Differing from upstream is the normal state of a member whose work
+			// is proposed and not yet merged, so upstream alone cannot answer
+			// this — a stackspace rebuilt from its own proposed branch differs
+			// from upstream the moment it is rebuilt, and would push an
+			// identical commit every time.
+			//
+			// The fork is asked rather than trusted from the local ref: a branch
+			// deleted or moved since means the work is no longer where the ref
+			// says, and calling that "nothing to send" would leave it nowhere.
+			// Any doubt falls through and pushes, which costs a redundant commit
+			// and never a lost one.
+			if sent, serr := repo.RevParse(ctx, "refs/rigsmith/propose/"+name+"^{tree}"); serr == nil && sent == tree &&
+				m.LastPropose[name] == branch && stackProposedOnFork(ctx, repo, m, name) == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to send — %s:%s already holds it\n", name, r.Fork, branch)
+				return nil
+			}
 
 			// Local: message is the flag variable, and writing the default back
 			// into it would leak this repo's message into the next send.
@@ -904,6 +952,22 @@ func newStackSendCmd() *cobra.Command {
 			// Remembered after the push, not before: a branch nothing reached is
 			// not the one to offer back next time.
 			if err := stackRememberProposed(src, m, name, branch); err != nil {
+				return err
+			}
+			// And committed, because leaving it in the work tree makes it two
+			// kinds of wrong. `seed` refuses to export a stackspace with
+			// uncommitted changes — reasonably, since a seed has to be a
+			// revision that exists — so a propose left the next seed impossible
+			// until something else happened to commit. And a seed taken anyway
+			// carries the previous branch name, so a rebuild reaches for work
+			// that is not there.
+			//
+			// Only this file: sweeping the user's half-finished edits into a
+			// record of where their work went is not this command's business.
+			// The message deliberately does not match the baseline marker
+			// pattern — the tree here is local work, not what upstream had, and
+			// reading it as a baseline would quietly disable the guard in pull.
+			if _, err := repo.CommitPaths(ctx, fmt.Sprintf("stack: propose %s -> %s", name, branch), src.File); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "proposed %s — pushed to %s:%s, open the PR against %s\n",

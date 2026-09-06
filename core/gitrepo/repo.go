@@ -164,6 +164,36 @@ func (r *Repo) Commit(ctx context.Context, msg string) (changed bool, err error)
 	return err == nil, err
 }
 
+// CommitPaths commits only the named paths, leaving whatever else the work tree
+// or the index is holding exactly where it is.
+//
+// Distinct from Commit, which stages everything: a tool recording one fact of
+// its own must not sweep a user's half-finished edits into the commit that
+// records it. changed=false when those paths hold nothing new, so a caller can
+// record unconditionally without producing empty commits. Signing is disabled
+// for hook-safety, as in Commit.
+func (r *Repo) CommitPaths(ctx context.Context, msg string, paths ...string) (changed bool, err error) {
+	if len(paths) == 0 {
+		return false, nil
+	}
+	// Asked before committing rather than read out of the failure afterwards:
+	// git reports "nothing to commit" on stdout and exits non-zero, so the error
+	// a caller sees carries no message at all and a no-op is indistinguishable
+	// from a real failure.
+	status, err := runGit(ctx, r.Dir, append([]string{"status", "--porcelain", "--"}, paths...)...)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(status) == "" {
+		return false, nil
+	}
+	args := append([]string{"-c", "commit.gpgsign=false", "commit", "-m", msg, "--"}, paths...)
+	if _, err := runGit(ctx, r.Dir, args...); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // CurrentBranch returns the checked-out branch name.
 func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 	out, err := runGit(ctx, r.Dir, "rev-parse", "--abbrev-ref", "HEAD")
