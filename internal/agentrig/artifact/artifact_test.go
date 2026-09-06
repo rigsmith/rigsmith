@@ -48,8 +48,12 @@ func TestSealedCaptureReuseMetadataAndRoundTrip(t *testing.T) {
 		t.Fatalf("metadata %+v %v", meta, err)
 	}
 	dest := filepath.Join(t.TempDir(), "new-tree")
-	if err = s.Extract(t.Context(), ref, dest); err != nil {
+	extracted, err := s.ExtractWithMetadata(t.Context(), ref, dest)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if extracted.Metadata != meta {
+		t.Fatalf("extracted metadata changed: %+v", extracted.Metadata)
 	}
 	data, err := os.ReadFile(filepath.Join(dest, "nested", "capture.bin"))
 	if err != nil || !bytes.Equal(data, payload) {
@@ -237,5 +241,22 @@ func TestReuseMustReflushBeforeAcknowledgingDurability(t *testing.T) {
 	got, err := s.Build(t.Context(), key, build)
 	if err != nil || got != ref || builds != 1 {
 		t.Fatalf("retry: %s builds=%d %v", got, builds, err)
+	}
+}
+
+func TestExtractReturnsVerifiedMetadataAndArchivedMode(t *testing.T) {
+	s := testStore(t)
+	key := Key([]byte("unix-mode"))
+	// Construct an owner-executable tar entry independently of host chmod support.
+	ref := forgedArchive(t, s, key, &tar.Header{Name: "executable", Typeflag: tar.TypeReg, Mode: 0700, ModTime: time.Unix(1, 0)})
+	got, err := s.ExtractWithMetadata(t.Context(), ref, filepath.Join(t.TempDir(), "tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Modes["executable"]&0100 == 0 {
+		t.Fatalf("lost archive mode: %v", got.Modes)
+	}
+	if got.Metadata.BaseReference != "" {
+		t.Fatalf("unexpected metadata: %+v", got.Metadata)
 	}
 }

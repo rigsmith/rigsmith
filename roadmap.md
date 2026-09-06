@@ -12,8 +12,9 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 recovery (6b.1) merged in [#309](https://github.com/rigsmith/rigsmith/pull/309);
 the shared phase driver and Claude capture/publication split (6b.2) merged in
 [#310](https://github.com/rigsmith/rigsmith/pull/310). Durable capture artifacts and
-the Claude capture adapter are in review in [#311](https://github.com/rigsmith/rigsmith/pull/311);
-Commit/Push integration follows.**
+the Claude capture adapter merged in [#311](https://github.com/rigsmith/rigsmith/pull/311).
+Retained commit bundles and the Claude commit adapter are in review in
+[#315](https://github.com/rigsmith/rigsmith/pull/315); Push and lifecycle integration follow.**
 
 | Milestone | Status |
 | --- | --- |
@@ -22,7 +23,7 @@ Commit/Push integration follows.**
 | Claude root/file adapter and policy extraction | Merged into `codex/v2`: [#304](https://github.com/rigsmith/rigsmith/pull/304). |
 | Shared file processing and restore mechanics | Merged into `codex/v2`: [#306](https://github.com/rigsmith/rigsmith/pull/306), including the directory-link review fix. |
 | Shared session/metadata and publication boundaries | Merged into `codex/v2`: [#307](https://github.com/rigsmith/rigsmith/pull/307), including review fixes. |
-| Store coordination and durable sync queue | 6a merged in [#308](https://github.com/rigsmith/rigsmith/pull/308). 6b.1 merged ([#309](https://github.com/rigsmith/rigsmith/pull/309)): durable generations, coalescing, owner recovery and acknowledgements. 6b.2 driver/service split merged in [#310](https://github.com/rigsmith/rigsmith/pull/310). Durable artifacts and Claude capture/sealing are in review in [#311](https://github.com/rigsmith/rigsmith/pull/311); Commit/Push integration follows. |
+| Store coordination and durable sync queue | 6a merged in [#308](https://github.com/rigsmith/rigsmith/pull/308). 6b.1 merged ([#309](https://github.com/rigsmith/rigsmith/pull/309)): durable generations, coalescing, owner recovery and acknowledgements. 6b.2 driver/service split merged in [#310](https://github.com/rigsmith/rigsmith/pull/310). Durable artifacts and Claude capture/sealing merged in [#311](https://github.com/rigsmith/rigsmith/pull/311). Retained commit bundles and Claude commit integration are in review in [#315](https://github.com/rigsmith/rigsmith/pull/315); Push and lifecycle integration follow. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 

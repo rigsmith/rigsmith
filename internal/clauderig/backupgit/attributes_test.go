@@ -2,6 +2,8 @@ package backupgit
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,5 +147,17 @@ func TestPrepareStagesRequiredAttributesDespiteExcludes(t *testing.T) {
 				t.Fatal("required byte-preservation rules were not staged")
 			}
 		})
+	}
+}
+
+func TestEnsureContextCanceledBeforePreparation(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "new-tree")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := EnsureContext(ctx, root); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatal("canceled preparation created tree", err)
 	}
 }
