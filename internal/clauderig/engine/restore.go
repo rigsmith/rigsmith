@@ -13,9 +13,11 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // RestoreRootResult summarises one root's restore.
@@ -127,6 +129,9 @@ type RestoreOptions struct {
 // redacted config so the machine's real secrets are never clobbered by a
 // placeholder. Caller handles target-non-empty safety (backup/abort) first.
 func Restore(opts RestoreOptions) (*RestoreReport, error) {
+	if _, err := transcript.Enabled(opts.StagingDir); err != nil {
+		return nil, err
+	}
 	rep := &RestoreReport{}
 	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
@@ -174,6 +179,9 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			return nil, err
 		}
 		for _, rel := range files {
+			if transcript.IsPartPath(rel) {
+				continue
+			}
 			targetRel := rel
 			if r.ID == "cli" && strings.HasPrefix(rel, "projects/") {
 				newRel, srcSlug, did := rewriteProjectRel(rel, slugMap)
@@ -430,7 +438,7 @@ func restoreJSON(src, dst string, resolver *pathmap.Resolver, pm perm) error {
 	if err := json.Unmarshal(synced, &v); err != nil {
 		return copyBytes(dst, synced, pm) // not JSON after all — copy raw
 	}
-	v, _ = pathmap.ResolveJSONValues(v, resolver)
+	v, _ = desktop.ResolveJSONPaths(v, resolver)
 	resolved, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return copyBytes(dst, synced, pm)
@@ -533,6 +541,9 @@ func isSymlink(p string) bool {
 func copyFile(src, dst string, pm perm) error {
 	if err := os.MkdirAll(filepath.Dir(dst), pm.dir); err != nil {
 		return err
+	}
+	if strings.HasSuffix(src, ".jsonl") {
+		return transcript.Materialize(src, dst, pm.file)
 	}
 	in, err := os.Open(src)
 	if err != nil {

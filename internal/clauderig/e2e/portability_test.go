@@ -66,13 +66,26 @@ func TestE2E_CrossOSPortability(t *testing.T) {
 				"type": "user", "cwd": srcCwd, "isSidechain": false,
 			})
 
+			// Desktop also embeds a file path inside a NUL-delimited permission
+			// reason. This must travel through the production sync/restore path,
+			// while its live source and non-path fields remain untouched.
+			desktopSrc := t.TempDir()
+			const sidecar = "claude-code-sessions/account/org/local_s.json"
+			const reasonPrefix = "Read\x00Path is outside allowed working directories\x00file_path:"
+			writeJSON(t, desktopSrc, sidecar, map[string]any{
+				"cliSessionId": "s", "cwd": srcCwd,
+				"alwaysAllowedReasons": []any{reasonPrefix + srcExtra},
+			})
+			cfg := cliOnly(claudeSrc)
+			cfg.Roots = append(cfg.Roots, config.Root{ID: "desktop", Enabled: true, Location: pathmap.Cascade{Portable: desktopSrc}})
+
 			srcMachine := config.Machine{Name: "src", OS: c.srcOS, Home: c.srcHome}
 
 			// ---- sync → bare → clone ----
 			stagingA := t.TempDir()
 			if _, err := engine.Sync(engine.Options{
-				StagingDir: stagingA, Config: cliOnly(claudeSrc), Machine: srcMachine,
-				SourceOverride: map[string]string{"cli": claudeSrc},
+				StagingDir: stagingA, Config: cfg, Machine: srcMachine,
+				SourceOverride: map[string]string{"cli": claudeSrc, "desktop": desktopSrc},
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -95,10 +108,11 @@ func TestE2E_CrossOSPortability(t *testing.T) {
 
 			// ---- restore for the TARGET os into an override dir ----
 			outDir := t.TempDir()
+			desktopOut := t.TempDir()
 			tgtMachine := config.Machine{Name: "tgt", OS: c.tgtOS, Home: c.tgtHome}
 			if _, err := engine.Restore(engine.RestoreOptions{
-				StagingDir: stagingB, Config: cliOnly(outDir), Machine: tgtMachine, Manifest: man,
-				TargetOverride: map[string]string{"cli": outDir}, OverriddenOnly: true,
+				StagingDir: stagingB, Config: cfg, Machine: tgtMachine, Manifest: man,
+				TargetOverride: map[string]string{"cli": outDir, "desktop": desktopOut}, OverriddenOnly: true,
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -116,6 +130,18 @@ func TestE2E_CrossOSPortability(t *testing.T) {
 			if len(dirs) != 1 || dirs[0] != c.wantExtraResolved {
 				t.Errorf("additionalDirectories = %v, want [%q]", dirs, c.wantExtraResolved)
 			}
+			// 3. Desktop's permission reason keeps its tool/reason framing and
+			// resolves only the embedded path, including a Windows drive colon.
+			meta := readJSON(t, filepath.Join(desktopOut, sidecar))
+			reasons, _ := meta["alwaysAllowedReasons"].([]any)
+			if len(reasons) != 1 || reasons[0] != reasonPrefix+c.wantExtraResolved {
+				t.Fatalf("Desktop permission reasons = %v", reasons)
+			}
+			liveMeta := readJSON(t, filepath.Join(desktopSrc, sidecar))
+			if liveMeta["alwaysAllowedReasons"].([]any)[0] != reasonPrefix+srcExtra {
+				t.Fatal("sync changed the live Desktop metadata")
+			}
+
 			t.Logf("%s: slug %s → %s, path → %s", c.name, srcSlug, c.wantSlug, c.wantExtraResolved)
 		})
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
 	"github.com/rigsmith/rigsmith/internal/clauderig/search"
 	"github.com/rigsmith/rigsmith/internal/clauderig/session"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // Split is one session whose transcript exists under more than one project
@@ -171,7 +172,7 @@ func Describe(s Split) SplitDetail {
 func describeCopy(path string) (Copy, map[string]bool) {
 	c := Copy{Path: path, Slug: filepath.Base(filepath.Dir(path))}
 	ids := map[string]bool{}
-	f, err := os.Open(path)
+	f, err := transcript.Open(path)
 	if err != nil {
 		return c, ids
 	}
@@ -230,11 +231,40 @@ func Consolidate(s Split, parkDir string) (parked []string, err error) {
 		if rerr != nil {
 			return parked, fmt.Errorf("could not park %s: %w", p, rerr)
 		}
-		if err := os.Rename(p, dest); err != nil {
-			_ = os.Remove(dest)
-			return parked, fmt.Errorf("could not park %s: %w", p, err)
+		f, err := transcript.Open(p)
+		if err != nil {
+			os.Remove(dest)
+			return parked, err
 		}
-		parked = append(parked, dest)
+		_, packed := transcript.StoredParts(f)
+		st, err := f.Stat()
+		f.Close()
+		if err != nil {
+			os.Remove(dest)
+			return parked, err
+		}
+		if packed {
+			// A native parked copy is self-contained. Verify it completely
+			// before removing the source owner or any of its chunk objects.
+			if err := transcript.Materialize(p, dest, st.Mode().Perm()); err != nil {
+				os.Remove(dest)
+				return parked, fmt.Errorf("could not park %s: %w", p, err)
+			}
+			if err := os.Remove(p); err != nil {
+				os.Remove(dest)
+				return parked, fmt.Errorf("could not park %s: %w", p, err)
+			}
+			parked = append(parked, dest)
+			if err := os.RemoveAll(p + transcript.Suffix); err != nil {
+				return parked, err
+			}
+		} else {
+			if err := os.Rename(p, dest); err != nil {
+				os.Remove(dest)
+				return parked, fmt.Errorf("could not park %s: %w", p, err)
+			}
+			parked = append(parked, dest)
+		}
 	}
 	return parked, nil
 }

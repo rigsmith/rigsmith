@@ -75,6 +75,35 @@ func (r *Repo) MergeRef(ctx context.Context, ref string) (conflicted bool, err e
 	return false, nil
 }
 
+// MergeRefUncommitted leaves both clean and conflicted merges available for
+// validation before CommitMerge. --no-ff also stops fast-forwards from moving
+// HEAD before validation. An already integrated ref leaves no merge in progress.
+func (r *Repo) MergeRefUncommitted(ctx context.Context, ref string) (conflicted bool, err error) {
+	if _, err := runGit(ctx, r.Dir, "merge", "--no-ff", "--no-commit", "--no-edit", ref); err != nil {
+		if unmerged, _ := r.UnmergedFiles(ctx); len(unmerged) > 0 {
+			return true, nil
+		}
+		return false, err
+	}
+	return false, nil
+}
+
+// FetchMergeUncommitted fetches before starting a merge that the caller must
+// validate and commit. Existing auto-committing helpers retain their behavior.
+func (r *Repo) FetchMergeUncommitted(ctx context.Context, remote, branch string) (bool, error) {
+	if err := r.Fetch(ctx, remote, branch); err != nil {
+		return false, err
+	}
+	return r.MergeRefUncommitted(ctx, "FETCH_HEAD")
+}
+
+// HasUnstagedChanges reports whether tracked working files differ from the
+// index. A caller auditing working files must not commit different staged bytes.
+func (r *Repo) HasUnstagedChanges(ctx context.Context) (bool, error) {
+	out, err := runGit(ctx, r.Dir, "diff", "--name-only", "-z", "--")
+	return out != "", err
+}
+
 // UnmergedFiles lists the paths left conflicted by an in-progress merge, as
 // slash-relative repo paths.
 func (r *Repo) UnmergedFiles(ctx context.Context) ([]string, error) {

@@ -1,5 +1,58 @@
 # github.com/rigsmith/rigsmith
 
+## 1.15.0
+### 🚀 Enhancements
+
+- **rig:** `rig stack seed` names the seed by convention. A seed repository is not a project you clone and work in — it is the few kilobytes `rig stack init` rebuilds a whole stackspace from — and nothing in a list of repositories said so. The convention is `rigstack-<something>`: the interactive prompt now offers one derived from the stackspace's own directory (a stackspace in `acme-2.4/` offers `../rigstack-acme-2.4`, and an already-prefixed name is not doubled), and the help and docs use it throughout. The suggestion is anchored beside the stackspace rather than beside you, since `rig stack` runs from any directory inside one and a seed has to land outside every repository. Only a suggestion — the prompt is editable and the argument form takes whatever you type.
+
+### 🩹 Fixes
+
+- **rig:** `rig stack pull` no longer refuses forever once a member's work has been proposed.
+  
+  With work on a fork branch and upstream moving on, pull merged the two correctly and then reported failure anyway: `libfoo/ holds changes of its own, and moving it to <commit> needs the directory replaced`. Retrying never helped, and the advice it gave — send them first — could not be followed, because the work had already been sent.
+  
+  The check exists for repinning a member to an older commit, where only replacing the directory can move it and replacing would discard. But a prefix also differs from upstream when a merge has just combined the two, which is the ordinary case, and the trees alone cannot tell those apart. It now looks at whether the merge moved anything: if it did, the work is done and there is nothing to replace. The protection against discarding unsent work is untouched and still guards the only step that discards.
+  
+  Two more, found behind it:
+  
+  `rig stack propose` recorded the branch it pushed to in `rig.stack.jsonc` and left the file uncommitted. `rig stack seed` then refused — a seed has to be a revision that exists — and a seed taken anyway carried the previous branch name, so rebuilding reached for work that was not there. Propose commits that record now, and only that file.
+  
+  A stackspace rebuilt by `rig stack init` from a member's proposed branch did not know its content was already on the fork, so the next propose pushed an identical commit. It records what it rebuilt from, and propose treats content already on the branch as nothing to send — after asking the fork about the branch it is actually proposing to, so neither a renamed branch nor one deleted since is mistaken for work that is safely elsewhere.
+  
+  Propose leaves a manifest you have edited yourself alone: the branch is still recorded, but committing it would put your unrelated change into a commit whose message describes something else.
+- **clauderig:** Preserve backup bytes through Git clone, history and restore even when Git text conversion is enabled.
+  
+  Backup repositories now carry attributes disabling line-ending, encoding, keyword and clean/smudge conversions. Sync refreshes older indexes when installing these rules, and publication refuses overriding attributes that could rewrite scanned bytes. This protects both native transcripts and content-addressed chunks. Already altered historical blobs are not rewritten or silently accepted; recover those from an intact source or verified backup.
+- **clauderig:** The secret tripwire no longer refuses a sync over ordinary English.
+  
+  1.14.0 started scanning every staged file for credentials, and the patterns it used were never anchored — `sk-` is the tail of **task-**, and `AKIA` matched inside any long uppercase run. On one machine that was 96 of 134 findings, and the sync had been refusing since, so it was not being backed up at all. Turning `redactTranscripts` on could not help: it scrubbed only `.jsonl` files, while the tripwire read everything, and the two disagreed about what counted as a credential.
+  
+  If your sync started refusing after 1.14.0, this is why, and upgrading is the fix.
+  
+  `redactTranscripts` now scrubs the whole conversation — the transcript, the tool results written beside it, and notes under `memory/` — deciding text from binary by content rather than by file extension. Your live `~/.claude` files are still never modified.
+  
+  It cleans what gets published from now on. It does not reach into commits already pushed; history that carries a credential needs `clauderig repo prune --before <date>`.
+
+## 1.14.0
+### 🚀 Enhancements
+
+- **clauderig:** Add transcript chunking, on for new configurations and auto for existing ones, with immediate migration and native restore; scan complete staged text for credential signatures before publication; audit raw chunk indexes and clean/resumed merges before committing, avoid duplicate referenced-part scans, and preserve private profile directory modes on transcript restore
+  
+  Preserve project names that resemble chunk storage, detect long escaped JWTs, bound title previews, keep parked chunked sessions readable, and enforce native size limits after redaction.
+
+### 🩹 Fixes
+
+- **clauderig:** Translate embedded Desktop permission-reason paths during sync and restore across machines
+- **clauderig:** The sync journal now records **which** files the size cap left out, and how big they were.
+  
+  A row in the activity feed reading `Synced 5 files, 2 files too large` names a conversation that did not get backed up without saying which one. `clauderig sync` prints the paths as it runs, but the journal — the record that exists so an outcome survives the process that produced it — kept only a tally, so an hour later there was no way to find out. That is worse than the equivalent gap in the redaction count, because a redacted file is still in the repo and an oversized one is not there at all.
+  
+  The size comes with it. "Too large" invites exactly one question, and the answer decides what to do: a transcript a little over `maxFileBytes` is an argument for raising the cap, one at ten times the cap is an argument for leaving it behind.
+  
+  The list is capped at 25 files per record, like the redaction list, so a first sync over a tree of marathon transcripts cannot write a record longer than anything will show. The count stays the true total.
+- **shiprig:** a library that describes the package it produces is discovered as one, even where nothing declares `IsPackable`, a `PackageId` or a version. A project carrying `PackageTags`, `PackageLicenseExpression`, `PackageProjectUrl`, `PackageIcon`, `PackageReadmeFile` or an item marked `Pack="true"` is saying what goes in its package; plenty of libraries say only that and let CI supply the version on the pack command line, and those were being skipped — in one workspace, five published libraries were invisible beside the demo apps and tests that correctly were. Read from the project itself, never an ancestor props file — repo-wide licence and author metadata says nothing about which projects beneath it pack. `IsPackable` false still wins, and assembly metadata that a non-packing project carries quite legitimately — `Title`, `Authors`, `Description`, `RepositoryUrl` — is not read as packaging intent.
+- **shiprig:** a props file that sets `IsPackable` false for everything and true again under a condition on the project's path is now read rather than tolerated. That rule is how a repo says "what is under src/ packs, what sits beside it does not", and since the condition went unevaluated, every project inheriting the props file came back packable — a workspace listed a repo's tests, benchmarks, gallery and AOT smoke test alongside the two libraries it ships. A condition testing `MSBuildProjectDirectory` or `MSBuildProjectName` with Contains, StartsWith or EndsWith, optionally negated, is now evaluated against the project's own path. Anything else — a comparison, a compound, a property not known here — is tolerated as a true exactly as before.
+
 ## 1.13.1
 ### 🩹 Fixes
 

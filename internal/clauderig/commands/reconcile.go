@@ -6,6 +6,8 @@ import (
 	"io"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
 )
 
@@ -28,12 +30,12 @@ const resolvedListLimit = 20
 // repo usable even though the sync did not land.
 func reconcile(ctx context.Context, out io.Writer, repo *gitrepo.Repo, remote, branch string, allowMergeTool bool) error {
 	if !repo.InMerge(ctx) {
-		conflicted, err := repo.FetchMerge(ctx, remote, branch)
+		conflicted, err := repo.FetchMergeUncommitted(ctx, remote, branch)
 		if err != nil {
 			return fmt.Errorf("reconcile: %w", err)
 		}
 		if !conflicted {
-			return nil
+			return finishAuditedMerge(ctx, repo)
 		}
 	} else {
 		fmt.Fprintln(out, DimStyle.Render("  finishing a merge left in progress by an earlier run…"))
@@ -67,6 +69,37 @@ func reconcile(ctx context.Context, out io.Writer, repo *gitrepo.Repo, remote, b
 			_ = repo.AbortMerge(ctx)
 			return fmt.Errorf("mergetool: %w", err)
 		}
+	}
+	return finishAuditedMerge(ctx, repo)
+}
+
+// Refused merges remain resumable. Require working files to match the index so
+// cleaning only a working copy cannot hide a credential still staged for commit.
+func finishAuditedMerge(ctx context.Context, repo *gitrepo.Repo) error {
+	merging := repo.InMerge(ctx)
+	if merging {
+		dirty, err := repo.HasUnstagedChanges(ctx)
+		if err != nil {
+			return err
+		}
+		if dirty {
+			return fmt.Errorf("merge has unstaged changes; stage the intended resolutions before retrying")
+		}
+	}
+	root, err := repo.Toplevel(ctx)
+	if err != nil {
+		return err
+	}
+	if merging {
+		if err := backupgit.Prepare(ctx, root); err != nil {
+			return err
+		}
+	}
+	if err = engine.CheckPublish(root); err != nil {
+		return err
+	}
+	if !merging {
+		return nil
 	}
 	return repo.CommitMerge(ctx)
 }

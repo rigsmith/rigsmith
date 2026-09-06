@@ -29,10 +29,9 @@ import (
 // What actually identifies these files is their NAME. That is the primary rule
 // below; content rules are a small, near-zero-false-positive supplement.
 
-// scanContentLimit caps how much of a file is examined. Credential files are
-// small by nature — a key, a PEM block, a dotenv — while the big non-JSON files
-// under an allowed tree are transcripts, which are exactly what must not trip the
-// wire. Skipping large files is a deliberate FP guard, not an optimisation.
+// scanContentLimit caps the legacy whole-file heuristics in ScanFile. The
+// publication path uses ScanReader for complete credential-signature scanning;
+// it does not apply entropy guesses to large conversation bodies.
 const scanContentLimit = 64 << 10
 
 // keyMaterialNames are basenames whose whole reason to exist is to hold a key.
@@ -222,7 +221,15 @@ func hasWord(name, word string) bool {
 // isBinary reports whether data looks binary — a NUL byte in the first block is
 // the usual heuristic, and it is what keeps images and compiled artifacts out of
 // the text rules below.
-func isBinary(data []byte) bool {
+func isBinary(data []byte) bool { return LooksBinary(data) }
+
+// LooksBinary reports whether data looks binary — a NUL byte in the first block,
+// the usual heuristic. Exported so the sync engine can ask the same question
+// before scrubbing a file: deciding by extension classifies a .log of tool
+// output as binary and a .md holding a PNG as text, and both answers are wrong
+// in a way that costs something — the first leaves a credential to be refused
+// later, the second rewrites bytes inside an image.
+func LooksBinary(data []byte) bool {
 	head := data
 	if len(head) > 8000 {
 		head = head[:8000]

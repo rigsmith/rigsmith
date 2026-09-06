@@ -2,11 +2,13 @@ package peek
 
 import (
 	"context"
+	transcriptstore "github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
@@ -489,5 +491,39 @@ func TestListExcludesPrunedSessions(t *testing.T) {
 	// And what is listed can actually be read.
 	if _, err := Read(ctx, repo, DefaultRef, sessions[0]); err != nil {
 		t.Fatalf("a listed session was not readable: %v", err)
+	}
+}
+
+func TestChunkedTitlesReadOnlyTheHeader(t *testing.T) {
+	const rel = "cli/projects/-p/dddddddd-0000-0000-0000-000000000000.jsonl"
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	body := transcript("a bounded title") + strings.Repeat("filler\n", 700000)
+	if err := transcriptstore.Write(p, strings.NewReader(body), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := transcriptstore.Decode(raw)
+	if err != nil || len(idx.Parts) < 2 {
+		t.Fatalf("fixture: %v", err)
+	}
+	first := idx.Parts[0]
+	part, err := os.ReadFile(filepath.Join(p+transcriptstore.Suffix, first.Hash+".part"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A deliberately absent tail proves Titles never asks Git for that object.
+	repo := remoteRepo(t, syncCommit{machine: "test", files: map[string]string{
+		rel: string(raw), rel + transcriptstore.Suffix + "/" + first.Hash + ".part": string(part),
+	}})
+	sessions := []Session{{Path: rel}}
+	titles := Titles(t.Context(), repo, "", sessions)
+	if titles[0].Title != "a bounded title" {
+		t.Fatalf("header unavailable: %q", titles[0].Title)
+	}
+	if _, err := Read(t.Context(), repo, "", sessions[0]); err == nil {
+		t.Fatal("full read did not require the missing tail")
 	}
 }

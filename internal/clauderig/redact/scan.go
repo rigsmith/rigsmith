@@ -61,7 +61,7 @@ func LooksSecret(s string) (kind string, ok bool) {
 	if pemRe.MatchString(s) {
 		return "private-key", true
 	}
-	if strings.HasPrefix(s, "Bearer ") && len(s) > 20 {
+	if len(s) > 20 && strings.EqualFold(s[:7], "Bearer ") {
 		return "bearer", true
 	}
 	for _, p := range knownPrefixes {

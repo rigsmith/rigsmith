@@ -248,3 +248,15 @@ func TestAcquireSyncLock_BreaksTheLockAKilledSyncLeftBehind(t *testing.T) {
 	}
 	lock.Release()
 }
+
+func TestSyncLockCreatesConfigDirectory(t *testing.T) {
+	staging := filepath.Join(t.TempDir(), "new-config", "repo")
+	lock, got, err := acquireSyncLock(staging)
+	if err != nil || !got {
+		t.Fatalf("first sync cannot lock a new config directory: %v", err)
+	}
+	if st, err := os.Stat(filepath.Dir(staging)); err != nil || !st.IsDir() {
+		t.Fatalf("config directory missing: %v", err)
+	}
+	lock.Release()
+}

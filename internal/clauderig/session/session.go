@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // Meta is what we know about one session. Title/Cwd/Model/LastActivity come from
@@ -268,7 +270,7 @@ const (
 // message, for a session with no Desktop sidecar. It skips tool/DOM/system noise
 // and returns "" if nothing suitable is found in the header region.
 func FirstPrompt(path string) string {
-	f, err := os.Open(path)
+	f, err := transcript.Open(path)
 	if err != nil {
 		return ""
 	}

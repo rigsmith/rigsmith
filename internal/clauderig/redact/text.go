@@ -19,30 +19,50 @@ import (
 var textSecretRe = regexp.MustCompile(strings.Join([]string{
 	// Known vendor prefixes followed by enough body to be a real key. Kept in
 	// step with knownPrefixes by TestTextRulesCoverKnownPrefixes.
-	`sk-ant-[A-Za-z0-9_\-]{8,}`,
-	`sk-[A-Za-z0-9_\-]{16,}`,
-	`gh[pousr]_[A-Za-z0-9]{8,}`,
-	`github_pat_[A-Za-z0-9_]{8,}`,
-	`glpat-[A-Za-z0-9_\-]{8,}`,
-	`xox[bpar]-[A-Za-z0-9\-]{8,}`,
-	`(?:AKIA|ASIA)[A-Z0-9]{12,}`,
-	`AIza[A-Za-z0-9_\-]{8,}`,
-	`ya29\.[A-Za-z0-9_\-]{8,}`,
+	// Every rule is anchored on a word boundary. Without one they match INSIDE
+	// ordinary words: `sk-` is the tail of "task-", "risk-" and "desk-", so
+	// "global-task-runner-config" reads as an OpenAI key, and AKIA/ASIA match
+	// anywhere inside a longer uppercase or base64 run. Measured on one real
+	// machine, 96 of 134 findings were exactly this and every one of them
+	// refused a sync.
+	`\bsk-ant-[A-Za-z0-9_\-]{8,}`,
+	`\bsk-[A-Za-z0-9_\-]{16,}`,
+	`\bgh[pousr]_[A-Za-z0-9]{8,}`,
+	`\bgithub_pat_[A-Za-z0-9_]{8,}`,
+	`\bglpat-[A-Za-z0-9_\-]{8,}`,
+	`\bxox[bpar]-[A-Za-z0-9\-]{8,}`,
+	// Exactly sixteen, and bounded both ends: an AWS access key id is twenty
+	// characters. Open-ended, this matched any shouted phrase containing the
+	// letters — ASIAPACIFICREGIONSETTINGS and the like.
+	`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`,
+	`\bAIza[A-Za-z0-9_\-]{8,}`,
+	`\bya29\.[A-Za-z0-9_\-]{8,}`,
 	// A JWT, anchored on its header rather than on the whole string.
-	`eyJ[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}`,
+	`\beyJ[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}`,
 	// An opaque bearer token. LooksSecret already calls one of these a
 	// credential when it judges a config value, and leaving it in a transcript
 	// while redacting it from settings is the inconsistency, not the rule.
 	// Bounded hard, because `Bearer` also appears in every API example ever
 	// pasted into a chat: the RFC 6750 token charset, at least 24 characters,
 	// and placeholders are dropped below.
-	`Bearer\s+[A-Za-z0-9\-._~+/]{24,}={0,2}`,
+	`(?i:\bBearer)\s+[A-Za-z0-9\-._~+/]{24,}={0,2}`,
 }, "|"))
+
+// kebabProseRe matches a hyphenated run of lowercase words: "sk-a-single-line",
+// "sk-the-window-has-no-repo". Anchoring stops the rules firing inside a word,
+// but not on prose that genuinely begins with one of the prefixes — and a
+// conversation about this very tool is full of it.
+//
+// Safe to exclude because no issued credential looks like this. Every vendor
+// here mints keys from a base62 or base64 alphabet, so a real one carries
+// digits or capitals within a few characters; a body that is nothing but
+// lowercase letters and hyphens is a sentence.
+var kebabProseRe = regexp.MustCompile(`^[a-z]+(?:-[a-z]+)+$`)
 
 // screamingRe matches a bearer token that is really a placeholder —
 // YOUR_ACCESS_TOKEN, REPLACE_ME_WITH_TOKEN. Real tokens are mixed case; the
 // things people paste into examples are not.
-var screamingRe = regexp.MustCompile(`^Bearer\s+[A-Z0-9_]+={0,2}$`)
+var screamingRe = regexp.MustCompile(`^(?i:Bearer)\s+[A-Z0-9_]+={0,2}$`)
 
 // TextHit is one credential found in free text.
 type TextHit struct {
@@ -74,8 +94,8 @@ func RedactText(data []byte) (out []byte, hits []TextHit, changed bool) {
 	prev := 0
 	for _, loc := range locs {
 		match := string(data[loc[0]:loc[1]])
-		if screamingRe.MatchString(match) {
-			continue // a placeholder in an example, not a credential
+		if !IsCredentialMatch(match) {
+			continue
 		}
 		b.Write(data[prev:loc[0]])
 		b.WriteString(Placeholder)
@@ -114,3 +134,31 @@ func hint(s string) string {
 // spans a structure this cannot safely edit, and half a scrubbed key is worse
 // than a refusal that says what it found.
 func HasPrivateKey(line []byte) bool { return pemRe.Match(line) }
+
+// IsCredentialMatch reports whether a regex hit is really a credential rather
+// than something merely shaped like one.
+//
+// Shared deliberately. RedactText uses it to decide what to rewrite and the
+// stream scanner to decide what to refuse, and if the two disagree the tool
+// either rewrites something it will still refuse — leaving a sync blocked with
+// the scrubber already on and nothing left to try — or refuses something it has
+// already cleaned. Both were live: the prose exclusion landed in the rewriter
+// only, so the tripwire kept refusing the phrases the rewriter had decided to
+// leave alone.
+func IsCredentialMatch(match string) bool {
+	return !screamingRe.MatchString(match) && !isKebabProse(match)
+}
+
+// isKebabProse reports whether a match is a hyphenated lowercase phrase rather
+// than a credential. Judged on the body, after the vendor prefix: "sk-" is
+// followed by a key in every real case and by English in the false ones.
+func isKebabProse(match string) bool {
+	body := match
+	for _, prefix := range []string{"sk-ant-", "sk-", "glpat-", "xox"} {
+		if rest, ok := strings.CutPrefix(match, prefix); ok {
+			body = rest
+			break
+		}
+	}
+	return kebabProseRe.MatchString(body)
+}
