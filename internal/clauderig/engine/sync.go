@@ -10,13 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/agentrig/files"
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
@@ -744,19 +744,11 @@ func scanNonJSON(srcPath, rel string) *redact.Finding {
 	return found
 }
 
-func dirExists(p string) bool {
-	info, err := os.Stat(p)
-	return err == nil && info.IsDir()
-}
+func dirExists(p string) bool { return files.DirExists(p) }
 
 func writeFile(path string, data []byte) error { return writeFileMode(path, data, defaultPerm) }
 
-func writeFileMode(path string, data []byte, pm perm) error {
-	if err := os.MkdirAll(filepath.Dir(path), pm.dir); err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, pm.file)
-}
+func writeFileMode(path string, data []byte, pm perm) error { return files.Write(path, data, pm) }
 
 // linkSlug returns the project slug a CLI-root rel path sits under, or "" when
 // the path isn't under projects/.
@@ -837,7 +829,6 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 	return pruned, remaining, nil
 }
 
-// removeEmptyDirs removes now-empty subdirectories of root (deepest first).
 // reconcileStagedRoot deletes staged files the allowlist no longer permits, and
 // returns how many it removed. This is what makes a tightened rule retroactive:
 // without it, an exclusion added today only stops NEW files, while everything the
@@ -856,115 +847,20 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 // already refuses to write through a symlink, which is what made the
 // placeholders harmful, so the cleanup bought tidiness at the price of a
 // data-loss class.
-func reconcileStagedRoot(stageRoot string, l allowlist.List) (removed int, err error) {
-	if !dirExists(stageRoot) {
-		return 0, nil
-	}
-	err = filepath.WalkDir(stageRoot, func(p string, d os.DirEntry, werr error) error {
-		if werr != nil {
-			// A staged tree churning under us is not a reason to fail the sync.
-			if os.IsNotExist(werr) {
-				return nil
-			}
-			return werr
-		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, rerr := filepath.Rel(stageRoot, p)
-		if rerr != nil {
-			return nil
-		}
-		if !l.Match(filepath.ToSlash(rel)) {
-			if os.Remove(p) == nil {
-				removed++
-			}
-			return nil
-		}
-		// A staged FILE whose live counterpart is a DIRECTORY (or a symlink to
-		// one) is a category error left by an older sync: the walk now reports
-		// directory symlinks as links and never as files, so no future sync will
-		// ever refresh or remove this copy, while restore keeps trying to write
-		// it back over the live link. Retire it here so the repo can dig itself
-		// out. Judged only where the path exists on this machine — staging also
-		// carries other machines' files, whose absence here means nothing.
-		return nil
-	})
-	if err != nil {
-		return removed, err
-	}
-	removeEmptyDirs(stageRoot)
-	return removed, nil
+func reconcileStagedRoot(stageRoot string, l allowlist.List) (int, error) {
+	return files.Reconcile(stageRoot, l.Match)
 }
 
-func removeEmptyDirs(root string) {
-	var dirs []string
-	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-		if err == nil && d.IsDir() {
-			dirs = append(dirs, p)
-		}
-		return nil
-	})
-	for i := len(dirs) - 1; i >= 0; i-- {
-		if dirs[i] != root {
-			_ = os.Remove(dirs[i]) // removes only if empty
-		}
-	}
-}
+func removeEmptyDirs(root string) { files.RemoveEmptyDirs(root) }
 
-// copyPreserveMtime streams src to dst and stamps dst with src's mtime, so the
-// next sync's size+mtime check can skip an unchanged file (incremental sync).
 // writeFileMtime stages bytes already in hand, keeping the source mtime so the
 // incremental same-size+mtime skip still recognises the copy next sync.
 func writeFileMtime(dst string, data []byte, mtime time.Time) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(dst, data, 0o644); err != nil {
-		return err
-	}
-	return os.Chtimes(dst, mtime, mtime)
+	return files.WriteMtime(dst, data, mtime)
 }
 
 func copyPreserveMtime(src, dst string, mtime time.Time) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	// Written beside dst and renamed over it, so an interrupted copy leaves
-	// the previous staged file where it was rather than a truncated one in
-	// its place: the large-file throttle compares against the staged copy,
-	// and a truncated copy would pass for a baseline and then be committed.
-	out, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	tmp := out.Name()
-	fail := func(err error) error {
-		_ = out.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		return fail(err)
-	}
-	if err := out.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Chtimes(tmp, mtime, mtime); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return files.CopySnapshot(src, dst, mtime)
 }
 
 // copyTranscriptSnapshot writes large transcripts directly as chunks, publishing

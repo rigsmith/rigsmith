@@ -9,14 +9,14 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 
 **Current position: the common foundation and Claude adapter are merged.
 [#304](https://github.com/rigsmith/rigsmith/pull/304) completed the adapter milestone
-on `codex/v2`. Next is shared file processing and restore.**
+on `codex/v2`. Shared file processing and restore are implemented locally; validation is in progress.**
 
 | Milestone | Status |
 | --- | --- |
 | Secret scanning, transcript chunking, and byte preservation | Complete on the v1 foundation. |
 | Compatibility baseline and synchronous services | Merged into both `main` and `codex/v2` through [#299](https://github.com/rigsmith/rigsmith/pull/299) and [#301](https://github.com/rigsmith/rigsmith/pull/301). |
 | Claude root/file adapter and policy extraction | Merged into `codex/v2`: [#304](https://github.com/rigsmith/rigsmith/pull/304). |
-| Shared file processing and restore mechanics | Next; not started. |
+| Shared file processing and restore mechanics | Implementation and validation in progress on `codex/v2-shared-file-mechanics`. |
 | Shared session/metadata and publication boundaries | Planned. |
 | Store coordination and durable sync queue | Planned; no queue or worker is implemented yet. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
