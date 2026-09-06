@@ -320,3 +320,35 @@ func TestDeletedTombstonesGetTheirOwnPlace(t *testing.T) {
 		t.Errorf("when = %v, want the timestamp the file holds (%v)", r.item.When, when)
 	}
 }
+
+// A Desktop store holds more than one account's sessions side by side, and the
+// app only ever shows one account at a time. Merging them puts sessions you do
+// not recognise inside a folder you do — which is exactly how a session goes
+// missing from a listing that is technically showing everything.
+func TestSessionsAreSplitByAccount(t *testing.T) {
+	base := t.TempDir()
+	home, _ := os.UserHomeDir()
+	git := filepath.Join(home, "Git")
+	writeFile(t, base, codeSessions+"/acct-aaa/ws/local_a.json",
+		sidecarIn("local_a", "cli-1", "Mine", git, git, time.Now()))
+	writeFile(t, base, codeSessions+"/acct-bbb/ws/local_b.json",
+		sidecarIn("local_b", "cli-2", "Theirs", git, git, time.Now()))
+
+	groups := desktopFolders(location{base: base, kind: "desktop"})
+	if len(groups) != 2 {
+		t.Fatalf("got %d groups, want one per account: %+v", len(groups), groups)
+	}
+	accounts := map[string]bool{}
+	for _, g := range groups {
+		if g.Label != "~/Git" {
+			t.Errorf("label = %q, want the folder", g.Label)
+		}
+		if g.Items != 1 {
+			t.Errorf("%s holds %d sessions, want its own one", g.Account, g.Items)
+		}
+		accounts[g.Account] = true
+	}
+	if len(accounts) != 2 {
+		t.Errorf("accounts = %v, want the two kept apart", accounts)
+	}
+}

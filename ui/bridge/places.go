@@ -14,6 +14,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/sessions"
 	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
@@ -79,8 +80,13 @@ type PlaceGroup struct {
 	Label string `json:"label"`
 	// Note is the group's own detail — the account a workspace belongs to, the
 	// working directory a project slug decodes to.
-	Note  string `json:"note,omitempty"`
-	Items int    `json:"items"`
+	Note string `json:"note,omitempty"`
+	// Account is who the sessions in this group belong to. A Desktop store holds
+	// more than one account's sessions side by side — the app shows you one at a
+	// time, so a listing that merges them shows you a folder you recognise
+	// containing sessions you do not.
+	Account string `json:"account,omitempty"`
+	Items   int    `json:"items"`
 	// Latest is the most recent thing in the group, so a list of eighty project
 	// slugs can be ordered by when you were last in one. That ordering is what
 	// makes this findable: you rarely remember the slug, you remember it was
@@ -184,12 +190,13 @@ func (p *Places) Items(ctx context.Context, storeID, groupID string) (ItemsView,
 		}
 		items = cliItems(dir)
 	} else {
-		folder, ok := strings.CutPrefix(groupID, "folder:")
+		rest, ok := strings.CutPrefix(groupID, "folder:")
 		if !ok {
 			return ItemsView{Error: "unknown folder"}, nil
 		}
+		account, folder, _ := strings.Cut(rest, "\x00")
 		for _, sc := range scanSidecars(filepath.Join(loc.base, codeSessions)) {
-			if sc.folder == folder {
+			if sc.folder == folder && sc.account == account {
 				items = append(items, sc.item)
 			}
 		}
@@ -349,13 +356,21 @@ func storeConfig(loc location) []PlaceItem {
 // The uuids in the path (<account>/<workspace>) are not that. They are opaque,
 // they repeat across accounts, and nobody has ever remembered one.
 func desktopFolders(loc location) []PlaceGroup {
+	labels := sessions.AccountLabels()
 	byFolder := map[string]*PlaceGroup{}
 	for _, sc := range scanSidecars(filepath.Join(loc.base, codeSessions)) {
-		folder := sc.folder
-		g := byFolder[folder]
+		who := labels[strings.ToLower(sc.account)]
+		if who == "" {
+			who = shortSessionID(sc.account)
+		}
+		key := who + "\x00" + sc.folder
+		g := byFolder[key]
 		if g == nil {
-			g = &PlaceGroup{ID: folderID(folder), Label: folder, Note: "opened here"}
-			byFolder[folder] = g
+			g = &PlaceGroup{
+				ID: folderID(sc.account, sc.folder), Label: sc.folder,
+				Account: who, Note: "opened here",
+			}
+			byFolder[key] = g
 		}
 		g.Items++
 		if sc.item.When.After(g.Latest) {
@@ -371,8 +386,9 @@ func desktopFolders(loc location) []PlaceGroup {
 
 // sidecarRef is one Desktop session record and the folder it belongs under.
 type sidecarRef struct {
-	folder string
-	item   PlaceItem
+	folder  string
+	account string
+	item    PlaceItem
 }
 
 // scanSidecars reads every session record under a Desktop's session tree,
@@ -384,6 +400,14 @@ func scanSidecars(root string) []sidecarRef {
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
+		}
+		// The tree is <account>/<workspace>/<record>, so the account is the
+		// first segment below the root.
+		account := ""
+		if rel, rerr := filepath.Rel(root, path); rerr == nil {
+			if parts := strings.Split(filepath.ToSlash(rel), "/"); len(parts) > 1 {
+				account = parts[0]
+			}
 		}
 		name := d.Name()
 		deleted := strings.HasPrefix(name, "deleted_")
@@ -411,14 +435,14 @@ func scanSidecars(root string) []sidecarRef {
 					it.When = time.UnixMilli(ms)
 				}
 			}
-			out = append(out, sidecarRef{folder: deletedFolder, item: it})
+			out = append(out, sidecarRef{folder: deletedFolder, account: account, item: it})
 			return nil
 		}
 		folder := readSidecar(path, &it)
 		if folder == "" {
 			folder = unknownFolder
 		}
-		out = append(out, sidecarRef{folder: folder, item: it})
+		out = append(out, sidecarRef{folder: folder, account: account, item: it})
 		return nil
 	})
 	return out
@@ -435,7 +459,7 @@ const deletedFolder = "Deleted in Desktop"
 // folderID encodes a folder path as a group id. The id travels to the window
 // and back, and a raw path would collide with the CLI store's slug ids and read
 // as a path traversal on the way in.
-func folderID(folder string) string { return "folder:" + folder }
+func folderID(account, folder string) string { return "folder:" + account + "\x00" + folder }
 
 // cliProjects lists the project directories under a CLI root. The slug is the
 // working directory with its separators flattened, so it is turned back into
