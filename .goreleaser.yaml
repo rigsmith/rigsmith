@@ -375,7 +375,7 @@ winget:
     ids: [rig]
     skip_upload: "true" # komac owns this lane — see the note above
     repository:
-      owner: rigsmith
+      owner: JohnCampionJr
       name: winget-pkgs
       branch: "rig-{{ .Version }}"
       token: "{{ .Env.WINGET_TOKEN }}"
@@ -399,7 +399,7 @@ winget:
     ids: [changerig]
     skip_upload: "true" # komac owns this lane — see the note above
     repository:
-      owner: rigsmith
+      owner: JohnCampionJr
       name: winget-pkgs
       branch: "changerig-{{ .Version }}"
       token: "{{ .Env.WINGET_TOKEN }}"
@@ -423,7 +423,7 @@ winget:
     ids: [clauderig]
     skip_upload: "true" # komac owns this lane — see the note above
     repository:
-      owner: rigsmith
+      owner: JohnCampionJr
       name: winget-pkgs
       branch: "clauderig-{{ .Version }}"
       token: "{{ .Env.WINGET_TOKEN }}"
@@ -447,7 +447,7 @@ winget:
     ids: [shiprig]
     skip_upload: "true" # komac owns this lane — see the note above
     repository:
-      owner: rigsmith
+      owner: JohnCampionJr
       name: winget-pkgs
       branch: "shiprig-{{ .Version }}"
       token: "{{ .Env.WINGET_TOKEN }}"
@@ -474,7 +474,7 @@ winget:
     ids: [rigsmith]
     skip_upload: "true" # komac owns this lane — see the note above
     repository:
-      owner: rigsmith
+      owner: JohnCampionJr
       name: winget-pkgs
       branch: "rigsmith-{{ .Version }}"
       token: "{{ .Env.WINGET_TOKEN }}"

@@ -478,12 +478,29 @@ func newWorktreeNewCmd() *cobra.Command {
 			if _, err := os.Stat(path); err == nil {
 				return fmt.Errorf("worktree path already exists: %s", path)
 			}
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				return err
-			}
 			create := !repo.BranchExists(ctx, branch)
 			if base == "" {
 				base = repo.DefaultBranch(ctx)
+			}
+			// --dry-run is a promise that nothing changes. This verb does its
+			// work in-process rather than by shelling out, so it never passed
+			// through runCommand, which is where that promise is otherwise
+			// kept — and it created the worktree anyway.
+			if dryRun {
+				out := cmd.OutOrStdout()
+				verb := "check out"
+				if create {
+					verb = "create off " + base
+				}
+				fmt.Fprintf(out, "would %s %s and add a worktree at\n", verb, HeaderStyle.Render(branch))
+				fmt.Fprintf(out, "  %s\n", path)
+				return nil
+			}
+			// After the dry-run check, not before: creating the parent is a
+			// change, and leaving an empty <repo>-worktrees directory behind is
+			// still not "nothing happened".
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return err
 			}
 			if err := repo.WorktreeAdd(ctx, path, branch, base, create); err != nil {
 				return err
@@ -620,6 +637,11 @@ func newWorktreeRemoveCmd() *cobra.Command {
 				return err
 			}
 			path := worktree.PathFor(root, args[0])
+			// Same hole as `new`, and this end of it deletes things.
+			if dryRun {
+				fmt.Fprintf(cmd.OutOrStdout(), "would remove %s\n", path)
+				return nil
+			}
 			if err := repo.WorktreeRemove(ctx, path, force); err != nil {
 				return err
 			}
