@@ -1,9 +1,9 @@
 # Claude artifact policy boundary
 
-The next v2 extraction puts Claude's root and file classification in
+V2 keeps Claude's root and file classification in
 `internal/clauderig/adapter`. Sync, restore, and conflict resolution consume these
-decisions while their existing filesystem, codec, and Git implementations remain
-in place. This is an internal Claude policy package, not a public adapter API or
+decisions. Generic filesystem mechanics now live in `internal/agentrig`;
+Claude retains codecs and Git policy. This is an internal Claude policy package, not a public adapter API or
 a shared implementation for both vendors.
 
 ## Responsibilities
@@ -55,7 +55,7 @@ path aliases. Existing engine and merge tests exercise the wiring. Synthetic
 end-to-end tests and the [fixed CLI compatibility baseline](CLAUDERIG-V2-COMPATIBILITY.md)
 remain the cross-platform gate; the baseline is unchanged.
 
-Next, extract file processing and restore mechanics using these explicit
-decisions. Define shared interfaces at their concrete consumers and keep Claude
-codecs and native metadata interpretation behind Claude implementations. Store
+The [shared file mechanics](CLAUDERIG-V2-FILES.md) consume these explicit
+decisions through narrow callbacks. Claude retains codecs and native metadata
+interpretation. Session/metadata and publication boundaries follow; store
 coordination and the durable queue remain later, separately tested milestones.

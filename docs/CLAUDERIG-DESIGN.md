@@ -474,8 +474,15 @@ The compatibility harness and synchronous-service foundation are shared by
 and the durable queue remain v2 work; this alignment introduces no queue or
 Codex runtime dependency.
 
-V2's next extraction centralizes root, artifact, merge-selection and flush-group
+V2 centralizes root, artifact, merge-selection and flush-group
 policy in `internal/clauderig/adapter`, consumed by the existing sync, restore
 and merge implementations. The descriptors are in memory only. Classification
 does not replace allowlist authorization, infer one policy from another, or
 change persisted formats. See [the adapter contracts](CLAUDERIG-V2-ADAPTER.md).
+
+V2 shares allowlist walking, snapshot copying, staged reconciliation and guarded
+restore in `internal/agentrig/allowlist` and `internal/agentrig/files`. The
+shared packages depend only on the standard library. Claude supplies its rules,
+destination mapping, live-session set, codecs and authoritative prune directories;
+it still owns retention/redaction orchestration, chunk formats and native
+metadata. See [the file mechanics contract](CLAUDERIG-V2-FILES.md).

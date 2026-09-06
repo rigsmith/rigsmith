@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/agentrig/files"
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
@@ -118,16 +119,13 @@ func desktopTreesIn(rep *Report) []string {
 }
 
 // perm are the modes a restore writes with.
-type perm struct {
-	dir  os.FileMode
-	file os.FileMode
-}
+type perm = files.Permissions
 
 var (
 	// defaultPerm matches what ~/.claude and the Desktop application-support
 	// tree already carry: the apps create these files themselves, and tightening
 	// them on restore would diverge from what the next app write puts back.
-	defaultPerm = perm{dir: 0o755, file: 0o644}
+	defaultPerm = perm{Dir: 0o755, File: 0o644}
 	// profilePerm matches desktop.Store, which creates profile directories 0700
 	// and profile.json 0600. A restore is the one path that materialises a
 	// profile without going through the store, so it has to carry the same modes
@@ -136,7 +134,7 @@ var (
 	// exists to keep. (Unix only in effect: Go's Chmod on Windows toggles
 	// read-only and nothing else, so containment there rests on the ACL
 	// inherited from %USERPROFILE%.)
-	profilePerm = perm{dir: 0o700, file: 0o600}
+	profilePerm = perm{Dir: 0o700, File: 0o600}
 )
 
 // permFor picks the modes a root's restored files carry.

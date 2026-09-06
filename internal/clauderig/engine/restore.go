@@ -2,14 +2,13 @@ package engine
 
 import (
 	"encoding/json"
-	"io"
-	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/agentrig/files"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
@@ -142,12 +141,6 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			slugMap = buildSlugMap(opts.Manifest, opts.Machine)
 		}
 		rewritten := map[string]bool{}
-		written := map[string]bool{}
-		// protected holds destinations restore refused to write. Their whole
-		// subtree is off-limits to --prune: restore knows nothing about what is
-		// inside them, so "not in the synced set" is not evidence of anything.
-		protected := map[string]bool{}
-		links := linkCache{}
 		pm := permFor(r.ID)
 		// Transcripts a live session is mid-write on. Computed against the
 		// target, so a --dir restore into a scratch folder finds none — the
@@ -158,94 +151,46 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			rep.Unaccounted = max(rep.Unaccounted, n)
 		}
 
-		files, err := listFiles(stageRoot)
+		restored, err := files.Restore(files.RestoreOptions{
+			SourceDir: stageRoot, TargetDir: target, Live: live,
+			Plan: func(rel string) (string, bool) {
+				if transcript.IsPartPath(rel) {
+					return "", true
+				}
+				if r.ID == "cli" && strings.HasPrefix(rel, "projects/") {
+					newRel, srcSlug, did := rewriteProjectRel(rel, slugMap)
+					if did {
+						rewritten[srcSlug] = true
+					}
+					return newRel, false
+				}
+				return rel, false
+			},
+			Write: func(src, dst, rel, targetRel string) error {
+				var err error
+				if r.Classify(rel).Transform == adapter.JSON {
+					err = restoreJSON(src, dst, opts.Machine.Resolver(), pm)
+				} else {
+					err = copyFile(src, dst, pm)
+				}
+				if err == nil && r.Classify(targetRel).Kind == adapter.DesktopCodeSidecar {
+					rr.DesktopSessions++
+				}
+				return err
+			},
+		})
 		if err != nil {
 			return nil, err
 		}
-		for _, rel := range files {
-			if transcript.IsPartPath(rel) {
-				continue
-			}
-			targetRel := rel
-			if r.ID == "cli" && strings.HasPrefix(rel, "projects/") {
-				newRel, srcSlug, did := rewriteProjectRel(rel, slugMap)
-				targetRel = newRel
-				if did {
-					rewritten[srcSlug] = true
-				}
-			}
-			// The staged copy of a session that is still running is a stale
-			// snapshot from the last sync. Writing it back truncates the live
-			// transcript to whatever it looked like then, silently losing every
-			// turn since — so the live file always wins.
-			if live[targetRel] {
-				rr.LiveSkipped = append(rr.LiveSkipped, targetRel)
-				continue
-			}
-
-			src := filepath.Join(stageRoot, filepath.FromSlash(rel))
-			dst := filepath.Join(target, filepath.FromSlash(targetRel))
-
-			// A symlink at or above dst is this machine's own state — nearly always
-			// one of the shared-memory links restoreLinks recreates. Every write
-			// below follows a symlink, so restoring a staged file over one would
-			// silently clobber the link's target, or fail outright with EISDIR when
-			// the link points at a directory. Leave it alone (and count it as
-			// written so --prune doesn't collect it).
-			//
-			// Ancestors matter as much as the leaf: another machine holding this
-			// project as a real directory stages projects/<slug>/memory/MEMORY.md,
-			// and writing that descendant here follows the linked memory/ straight
-			// into the canonical project.
-			if isSymlink(dst) || links.underSymlink(target, dst) {
-				written[targetRel] = true
-				rr.LinksKept++
-				continue
-			}
-
-			// A real DIRECTORY at dst cannot be written either: copyFile and
-			// restoreJSON both open it, and the open fails with EISDIR — taking
-			// the entire restore down over one path.
-			//
-			// This is the same abort the symlink guard was written to stop,
-			// reaching here by a different route. Sync used to delete the staged
-			// file in this situation, but that deleted other machines' data too,
-			// so staging now keeps whatever it has and the resilience has to
-			// live where the write happens. Reported, not silent — a path this
-			// machine cannot accept is worth saying out loud.
-			if conflictAt(target, dst) {
-				written[targetRel] = true
-				// The destination is a directory this restore will not write
-				// into, so everything ALREADY inside it must survive --prune.
-				// Recording only targetRel marked the collision itself as
-				// written and left the directory's real contents looking absent
-				// from the synced set — so prune deleted the user's files under
-				// a path restore had just declined to touch.
-				protected[targetRel] = true
-				rr.Conflicts++
-				continue
-			}
-
-			if r.Classify(rel).Transform == adapter.JSON {
-				if err := restoreJSON(src, dst, opts.Machine.Resolver(), pm); err != nil {
-					return nil, err
-				}
-			} else if err := copyFile(src, dst, pm); err != nil {
-				return nil, err
-			}
-			written[targetRel] = true
-			rr.Files++
-			if r.Classify(targetRel).Kind == adapter.DesktopCodeSidecar {
-				rr.DesktopSessions++
-			}
-		}
+		rr.Files, rr.LinksKept, rr.Conflicts = restored.Files, restored.LinksKept, restored.Conflicts
+		rr.LiveSkipped = restored.LiveSkipped
 		rr.SlugsRewritten = len(rewritten)
 		if r.ID == "cli" && opts.Manifest != nil {
 			rr.Links = restoreLinks(target, opts.Manifest.Links, slugMap)
 		}
 
 		if opts.Prune && r.ID == "cli" {
-			pruned, err := pruneConfigDirs(target, written, protected)
+			pruned, err := pruneConfigDirs(target, restored.Written, restored.Protected)
 			if err != nil {
 				return nil, err
 			}
@@ -263,7 +208,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 // machine's own state and is left alone. A failed creation (e.g. symlinks
 // unavailable on the platform) skips that link, never the restore.
 func restoreLinks(target string, manifestLinks map[string]string, slugMap map[string]string) int {
-	links := linkCache{}
+	links := files.LinkCache{}
 	n := 0
 	for rel, tgtRel := range manifestLinks {
 		rel, _, _ = rewriteProjectRel(rel, slugMap)
@@ -280,7 +225,7 @@ func restoreLinks(target string, manifestLinks map[string]string, slugMap map[st
 		// lets MkdirAll and Symlink follow a linked ancestor and create the link
 		// OUTSIDE the restore target — writing into a directory the user never
 		// pointed restore at.
-		if links.underSymlink(target, linkPath) {
+		if links.UnderSymlink(target, linkPath) {
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
@@ -328,45 +273,7 @@ func liveTranscripts(claudeHome string) map[string]bool {
 // the restored set (deleted upstream). written holds the slash-relative paths just
 // written. projects/ is never visited.
 func pruneConfigDirs(target string, written, protected map[string]bool) (int, error) {
-	pruned := 0
-	for _, dir := range prunableDirs {
-		base := filepath.Join(target, dir)
-		if !dirExists(base) {
-			continue
-		}
-		err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
-			}
-			// Never delete a symlink. It is the machine's own state — the same
-			// rule the restore loop applies when it declines to write through
-			// one — and a link is recorded in `written` only under the
-			// DESCENDANT path that was skipped, so judging the link itself by
-			// that map would collect it every time.
-			if d.Type()&fs.ModeSymlink != 0 {
-				return nil
-			}
-			rel, rerr := filepath.Rel(target, p)
-			if rerr != nil {
-				return rerr
-			}
-			relSlash := filepath.ToSlash(rel)
-			if underProtected(relSlash, protected) {
-				return nil
-			}
-			if !written[relSlash] {
-				if err := os.Remove(p); err != nil {
-					return err
-				}
-				pruned++
-			}
-			return nil
-		})
-		if err != nil {
-			return pruned, err
-		}
-	}
-	return pruned, nil
+	return files.Prune(target, prunableDirs, written, protected)
 }
 
 // buildSlugMap maps each source slug to this machine's slug, via the manifest's
@@ -437,110 +344,14 @@ func restoreJSON(src, dst string, resolver *pathmap.Resolver, pm perm) error {
 	return writeFileMode(dst, merged, pm)
 }
 
-func listFiles(root string) ([]string, error) {
-	var out []string
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
+func copyFile(src, dst string, pm perm) error {
+	if strings.HasSuffix(src, ".jsonl") {
+		if err := os.MkdirAll(filepath.Dir(dst), pm.Dir); err != nil {
 			return err
 		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, rerr := filepath.Rel(root, p)
-		if rerr != nil {
-			return rerr
-		}
-		out = append(out, filepath.ToSlash(rel))
-		return nil
-	})
-	return out, err
-}
-
-// linkCache remembers which destination directories sit on or under a symlink,
-// so the ancestor walk costs one Lstat per directory across the whole restore
-// rather than one per path component per file.
-type linkCache map[string]bool
-
-// underSymlink reports whether any ancestor of dst, up to and excluding root, is
-// a symlink. root itself is never judged: the target directory is where the user
-// pointed restore, and following it is the whole intent.
-func (c linkCache) underSymlink(root, dst string) bool {
-	dir := filepath.Dir(dst)
-	if v, ok := c[dir]; ok {
-		return v
+		return transcript.Materialize(src, dst, pm.File)
 	}
-	rel, err := filepath.Rel(root, dir)
-	// Only ".." itself, or a path BELOW it, is outside the root. A bare prefix
-	// test would also catch a real directory named "..memory" — Rel returns that
-	// name unchanged — and skip the very symlink check this exists to perform.
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false // at or outside the root — nothing left to walk
-	}
-	res := isSymlink(dir) || c.underSymlink(root, dir)
-	c[dir] = res
-	return res
-}
-
-// conflictAt reports whether something at or above dst makes it unwriteable:
-// a directory occupying dst itself, or a regular FILE occupying one of its
-// ancestors.
-//
-// Both end the same way if written through — EISDIR from the open, or ENOTDIR
-// from MkdirAll — and both would take the whole restore down over one path. The
-// ancestor case is easy to miss because Lstat(dst) returns ENOTDIR rather than
-// describing dst, so a check that only inspects dst never sees it.
-func conflictAt(root, dst string) bool {
-	if fi, err := os.Lstat(dst); err == nil && fi.IsDir() {
-		return true
-	}
-	for dir := filepath.Dir(dst); ; dir = filepath.Dir(dir) {
-		rel, err := filepath.Rel(root, dir)
-		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return false
-		}
-		if fi, lerr := os.Lstat(dir); lerr == nil && !fi.IsDir() {
-			return true // a file where a directory has to be
-		}
-	}
-}
-
-// underProtected reports whether rel sits at or beneath a destination restore
-// declined to write.
-func underProtected(rel string, protected map[string]bool) bool {
-	for p := range protected {
-		if rel == p || strings.HasPrefix(rel, p+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-// isSymlink reports whether p is a symlink, without following it. A missing path
-// is not a symlink, so a fresh machine takes the ordinary write path.
-func isSymlink(p string) bool {
-	fi, err := os.Lstat(p)
-	return err == nil && fi.Mode()&fs.ModeSymlink != 0
-}
-
-func copyFile(src, dst string, pm perm) error {
-	if err := os.MkdirAll(filepath.Dir(dst), pm.dir); err != nil {
-		return err
-	}
-	if strings.HasSuffix(src, ".jsonl") {
-		return transcript.Materialize(src, dst, pm.file)
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, pm.file)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	return files.Copy(src, dst, pm)
 }
 
 func copyBytes(dst string, data []byte, pm perm) error { return writeFileMode(dst, data, pm) }

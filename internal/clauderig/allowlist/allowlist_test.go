@@ -60,7 +60,7 @@ func TestNodeModules_PrunedAtAnyDepth(t *testing.T) {
 		t.Error("lockfile beside node_modules should still sync")
 	}
 	// And the walk never enters it.
-	if Desktop().descend("claude-code-sessions/03d/e30/node_modules") {
+	if Desktop().Descend("claude-code-sessions/03d/e30/node_modules") {
 		t.Error("should prune the node_modules dir, not descend it")
 	}
 }
@@ -88,7 +88,7 @@ func TestDesktop_PrunesCoworkSandbox(t *testing.T) {
 	}
 	// The walk must prune the directory outright rather than descend and filter —
 	// this is what keeps a multi-GB sandbox off the disk walk entirely.
-	if l.descend(sess + "local_x") {
+	if l.Descend(sess + "local_x") {
 		t.Error("should prune the sandbox dir, not descend it")
 	}
 	// Sibling metadata at the session level is unaffected by the carve-out.
@@ -125,11 +125,11 @@ func TestDesktop_PrunesCacheTree(t *testing.T) {
 func TestDescend_Pruning(t *testing.T) {
 	l := Desktop()
 	// must descend into an allowed tree and its parent-of-include
-	if !l.descend("claude-code-sessions") || !l.descend("claude-code-sessions/03d") {
+	if !l.Descend("claude-code-sessions") || !l.Descend("claude-code-sessions/03d") {
 		t.Error("should descend allowed session tree")
 	}
 	// must NOT descend cache junk
-	if l.descend("Cache") || l.descend("GPUCache") || l.descend("blob_storage") {
+	if l.Descend("Cache") || l.Descend("GPUCache") || l.Descend("blob_storage") {
 		t.Error("should prune cache dirs")
 	}
 }
