@@ -46,6 +46,12 @@ type ArtifactCaptureRequest struct {
 // configuration or remote credentials. Producers persist this value; execution
 // recomputes it from freshly resolved inputs. Changed inputs never redirect work.
 func CaptureBinding(req SyncRequest, profiles []string) (queue.Binding, error) {
+	return captureBinding(req, profiles, nil)
+}
+
+// resolvedMode is used only after capture: the binding already pins the mode,
+// so materializing its sealed bytes must not depend on today's storage marker.
+func captureBinding(req SyncRequest, profiles []string, resolvedMode *bool) (queue.Binding, error) {
 	if req.Config == nil || req.DryRun || req.AllowMergeTool || req.ResolveFlush != nil {
 		return queue.Binding{}, fmt.Errorf("queued capture requires resolved non-interactive inputs")
 	}
@@ -70,9 +76,14 @@ func CaptureBinding(req SyncRequest, profiles []string) (queue.Binding, error) {
 	if err != nil {
 		return queue.Binding{}, err
 	}
-	chunked, err := transcript.Enabled(req.StagingDir)
-	if err != nil {
-		return queue.Binding{}, err
+	var chunked bool
+	if resolvedMode != nil {
+		chunked = *resolvedMode
+	} else {
+		chunked, err = transcript.Enabled(req.StagingDir)
+		if err != nil {
+			return queue.Binding{}, err
+		}
 	}
 	if req.Config.ChunkTranscripts != nil {
 		chunked = *req.Config.ChunkTranscripts
@@ -497,7 +508,7 @@ func prepareArtifactRequest(req ArtifactCaptureRequest, phase queue.Phase) (Arti
 	}
 	req.Profiles = slices.Clone(req.Profiles)
 	slices.Sort(req.Profiles)
-	binding, err := CaptureBinding(req.Sync, req.Profiles)
+	binding, err := artifactPhaseBinding(req, phase)
 	if err != nil {
 		return req, "", err
 	}
@@ -538,4 +549,23 @@ func prepareArtifactRequest(req ArtifactCaptureRequest, phase queue.Phase) (Arti
 		return req, "", err
 	}
 	return req, artifact.Key(identity), nil
+}
+
+// Captured bytes already pin auto mode through ConfigID. Check both possible
+// resolved values against that digest while still validating every current
+// configuration/path/provenance input. Do not read the now-irrelevant live marker.
+func artifactPhaseBinding(req ArtifactCaptureRequest, phase queue.Phase) (queue.Binding, error) {
+	if phase != queue.Captured {
+		return CaptureBinding(req.Sync, req.Profiles)
+	}
+	for _, mode := range []bool{false, true} {
+		binding, err := captureBinding(req.Sync, req.Profiles, &mode)
+		if err != nil {
+			return queue.Binding{}, err
+		}
+		if binding == req.Binding {
+			return binding, nil
+		}
+	}
+	return queue.Binding{}, queue.ErrBinding
 }

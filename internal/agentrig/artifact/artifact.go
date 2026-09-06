@@ -246,43 +246,69 @@ func (s Store) check(ctx context.Context, f *os.File, key string) (string, error
 // Extract verifies before creating a NEW destination directory. It only restores
 // regular files/directories, never links, devices, Git metadata or paths outside
 // the directory. On failure it removes only the directory it just created.
-func (s Store) Extract(ctx context.Context, ref, dest string) (err error) {
+func (s Store) Extract(ctx context.Context, ref, dest string) error {
+	_, err := s.extract(ctx, ref, dest, false)
+	return err
+}
+
+// Extraction retains verified archive metadata independently of the host's
+// filesystem permissions. Modes contains slash-relative regular-file paths.
+type Extraction struct {
+	Metadata Metadata
+	Modes    map[string]os.FileMode
+}
+
+// ExtractWithMetadata verifies the archive once and returns header and file-mode
+// metadata from that same extraction. Like Extract, it creates a new destination.
+func (s Store) ExtractWithMetadata(ctx context.Context, ref, dest string) (Extraction, error) {
+	return s.extract(ctx, ref, dest, true)
+}
+
+func (s Store) extract(ctx context.Context, ref, dest string, trackModes bool) (result Extraction, err error) {
 	key, sum, ok := strings.Cut(ref, ":")
 	if !ok || !validHash(sum) {
-		return ErrInvalid
+		return result, ErrInvalid
 	}
 	f, err := s.open(key)
 	if err != nil {
-		return err
+		return result, err
 	}
 	defer f.Close()
 	got, err := s.check(ctx, f, key)
 	if err != nil {
-		return err
+		return result, err
 	}
 	if got != sum {
-		return ErrInvalid
+		return result, ErrInvalid
 	}
 	st, err := f.Stat()
 	if err != nil {
-		return err
+		return result, err
 	}
-	offset, _, err := readMetadata(f)
+	offset, meta, err := readMetadata(f)
 	if err != nil {
-		return err
+		return result, err
 	}
 	if _, err = f.Seek(offset, io.SeekStart); err != nil {
-		return err
+		return result, err
 	}
 	if err = os.Mkdir(dest, 0700); err != nil {
-		return err
+		return result, err
 	}
 	defer func() {
 		if err != nil {
 			os.RemoveAll(dest)
 		}
 	}()
-	return readTree(ctx, io.LimitReader(f, st.Size()-offset-sha256.Size), dest)
+	result.Metadata = meta
+	if trackModes {
+		result.Modes = make(map[string]os.FileMode)
+	}
+	err = readTree(ctx, io.LimitReader(f, st.Size()-offset-sha256.Size), dest, result.Modes)
+	if err != nil {
+		return Extraction{}, err
+	}
+	return result, nil
 }
 
 type contextReader struct {
@@ -394,7 +420,7 @@ func writeTree(ctx context.Context, out io.Writer, root string) error {
 	}
 	return tw.Close()
 }
-func readTree(ctx context.Context, in io.Reader, dest string) error {
+func readTree(ctx context.Context, in io.Reader, dest string, modes map[string]os.FileMode) error {
 	tr := tar.NewReader(&contextReader{ctx, in})
 	seen := map[string]bool{}
 	for {
@@ -419,6 +445,9 @@ func readTree(ctx context.Context, in io.Reader, dest string) error {
 				return err
 			}
 		case tar.TypeReg:
+			if modes != nil {
+				modes[h.Name] = 0600 | os.FileMode(h.Mode)&0100
+			}
 			if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 				return err
 			}

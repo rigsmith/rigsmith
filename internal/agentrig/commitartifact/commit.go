@@ -34,7 +34,7 @@ type Request struct {
 	CaptureRef, ParentDir                      string
 	PolicyID, Message, AuthorName, AuthorEmail string
 	Time                                       time.Time
-	Prepare, Audit                             func(string) error
+	Prepare, Audit                             func(context.Context, string) error
 }
 
 // Commit identifies the exact snapshot and its retained ancestry. BundlePath is
@@ -78,23 +78,23 @@ func Build(ctx context.Context, r Request) (string, error) {
 		return "", err
 	}
 	return r.Commits.BuildWithMetadata(ctx, key, func(ctx context.Context, output string, meta *artifact.Metadata) error {
-		captureMeta, err := r.Captures.Metadata(ctx, r.CaptureRef)
+		work := filepath.Dir(output)
+		tree := filepath.Join(work, "snapshot")
+		extracted, err := r.Captures.ExtractWithMetadata(ctx, r.CaptureRef, tree)
 		if err != nil {
 			return err
 		}
-		parent := captureMeta.BaseReference
+		parent := extracted.Metadata.BaseReference
 		if parent != "" && (!objectID(parent) || !filepath.IsAbs(r.ParentDir)) {
 			return ErrInvalid
 		}
-		work := filepath.Dir(output)
-		tree := filepath.Join(work, "snapshot")
-		if err = r.Captures.Extract(ctx, r.CaptureRef, tree); err != nil {
+		if err = r.Prepare(ctx, tree); err != nil {
 			return err
 		}
-		if err = r.Prepare(tree); err != nil {
+		if err = ctx.Err(); err != nil {
 			return err
 		}
-		if err = r.Audit(tree); err != nil {
+		if err = r.Audit(ctx, tree); err != nil {
 			return err
 		}
 		repo, err := initRepo(ctx, filepath.Join(work, "git"), parent)
@@ -113,7 +113,7 @@ func Build(ctx context.Context, r Request) (string, error) {
 				return ErrInvalid
 			}
 		}
-		treeID, err := repo.writeTree(ctx, tree)
+		treeID, err := repo.writeTree(ctx, tree, tree, extracted.Modes)
 		if err != nil {
 			return err
 		}
@@ -168,13 +168,11 @@ func Build(ctx context.Context, r Request) (string, error) {
 // temporary repository, including its full ancestry and recorded tree/parent.
 // This read does not acknowledge an uncertain Build; retry Build for that.
 func Open(ctx context.Context, store artifact.Store, ref, dest string) (result Commit, err error) {
-	meta, err := store.Metadata(ctx, ref)
+	extracted, err := store.ExtractWithMetadata(ctx, ref, dest)
 	if err != nil {
 		return result, err
 	}
-	if err = store.Extract(ctx, ref, dest); err != nil {
-		return result, err
-	}
+	meta := extracted.Metadata
 	defer func() {
 		if err != nil {
 			_ = os.RemoveAll(dest)
@@ -287,7 +285,10 @@ func (r gitRepo) run(ctx context.Context, input io.Reader, args ...string) (stri
 	return string(out), nil
 }
 
-func (r gitRepo) writeTree(ctx context.Context, dir string) (string, error) {
+func (r gitRepo) writeTree(ctx context.Context, root, dir string, modes map[string]os.FileMode) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return "", err
@@ -307,9 +308,17 @@ func (r gitRepo) writeTree(ctx context.Context, dir string) (string, error) {
 		switch {
 		case info.IsDir():
 			mode, kind = "040000", "tree"
-			sha, err = r.writeTree(ctx, path)
+			sha, err = r.writeTree(ctx, root, path, modes)
 		case info.Mode().IsRegular():
-			if info.Mode()&0100 != 0 {
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return "", err
+			}
+			fileMode, archived := modes[filepath.ToSlash(rel)]
+			if !archived {
+				fileMode = info.Mode()
+			} // Newly prepared vendor metadata.
+			if fileMode&0100 != 0 {
 				mode = "100755"
 			}
 			var f *os.File

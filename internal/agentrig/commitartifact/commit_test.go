@@ -36,7 +36,7 @@ func captureRequest(t *testing.T) Request {
 	}
 	return Request{Captures: captures, Commits: artifact.Store{Dir: filepath.Join(root, "commits")}, CaptureRef: ref,
 		PolicyID: "fixture-v1", Message: "fixture capture", AuthorName: "fixture", AuthorEmail: "fixture@example.com",
-		Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Prepare: func(string) error { return nil }, Audit: func(string) error { return nil }}
+		Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Prepare: func(context.Context, string) error { return nil }, Audit: func(context.Context, string) error { return nil }}
 }
 
 func TestRetainedCommitPreservesRawBytesAndReplaysWithoutInputs(t *testing.T) {
@@ -77,7 +77,7 @@ func TestRetainedCommitPreservesRawBytesAndReplaysWithoutInputs(t *testing.T) {
 	if err := os.RemoveAll(r.Captures.Dir); err != nil {
 		t.Fatal(err)
 	}
-	r.Prepare = func(string) error { t.Fatal("retry rebuilt commit"); return nil }
+	r.Prepare = func(context.Context, string) error { t.Fatal("retry rebuilt commit"); return nil }
 	again, err := Build(t.Context(), r)
 	if err != nil || again != ref {
 		t.Fatalf("retry: %q %v", again, err)
@@ -116,11 +116,11 @@ func TestRetainedCommitFailuresDoNotSeal(t *testing.T) {
 			ctx := t.Context()
 			switch mode {
 			case "audit":
-				r.Audit = func(string) error { return errors.New("audit denied") }
+				r.Audit = func(context.Context, string) error { return errors.New("audit denied") }
 			case "prepare":
-				r.Prepare = func(string) error { return errors.New("prepare denied") }
+				r.Prepare = func(context.Context, string) error { return errors.New("prepare denied") }
 			case "link":
-				r.Prepare = func(tree string) error {
+				r.Prepare = func(_ context.Context, tree string) error {
 					if err := os.Symlink("payload", filepath.Join(tree, "link")); err != nil {
 						t.Skipf("symlinks unavailable: %v", err)
 					}
@@ -162,7 +162,7 @@ func TestCorruptRetainedCommitNeverRebuilds(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(r.Commits.Dir, key+".capture"), []byte("broken"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	r.Prepare = func(string) error { t.Fatal("corrupt output rebuilt"); return nil }
+	r.Prepare = func(context.Context, string) error { t.Fatal("corrupt output rebuilt"); return nil }
 	if _, err := Build(t.Context(), r); err == nil {
 		t.Fatal("corrupt retry succeeded")
 	}
@@ -193,5 +193,66 @@ func TestOpenRejectsForgedBundleMetadata(t *testing.T) {
 	}
 	if _, err := os.Stat(dest); !os.IsNotExist(err) {
 		t.Fatal("failed open left destination", err)
+	}
+}
+
+func TestBuildCallbacksObserveCancellation(t *testing.T) {
+	for _, phase := range []string{"prepare", "audit"} {
+		t.Run(phase, func(t *testing.T) {
+			r := captureRequest(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			callback := func(got context.Context, _ string) error {
+				cancel()
+				if got != ctx {
+					t.Fatal("callback lost caller context")
+				}
+				return got.Err()
+			}
+			if phase == "prepare" {
+				r.Prepare = callback
+				r.Audit = func(context.Context, string) error { t.Fatal("audited after cancellation"); return nil }
+			} else {
+				r.Audit = callback
+			}
+			if ref, err := Build(ctx, r); !errors.Is(err, context.Canceled) || ref != "" {
+				t.Fatalf("canceled build: %s %v", ref, err)
+			}
+			if paths, _ := filepath.Glob(filepath.Join(r.Commits.Dir, "*.capture")); len(paths) != 0 {
+				t.Fatal("canceled build sealed", paths)
+			}
+		})
+	}
+}
+
+func TestCommitPreservesUnixArchiveModeOnEveryHost(t *testing.T) {
+	r := captureRequest(t)
+	var err error
+	r.Captures.Dir, err = filepath.Abs("testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.CaptureRef = "48b409d7d20dafa4e42174d93331b99d11696cc06ffc9d7bdec60d6db03c9b5e:aa2a54080185efb3e42ad81f096b8f637fbfc1dd030d5c02bc8409196372e963"
+	// Simulate a host that cannot materialize execute permission. The archived
+	// permission, not a later FileInfo.Mode value, must determine the Git mode.
+	r.Prepare = func(_ context.Context, tree string) error { return os.Chmod(filepath.Join(tree, "executable"), 0600) }
+	ref, err := Build(t.Context(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := Open(t.Context(), r.Commits, ref, filepath.Join(t.TempDir(), "opened"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := initRepo(t.Context(), filepath.Join(t.TempDir(), "git"), info.Commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.run(t.Context(), nil, "fetch", info.BundlePath, RefName+":"+RefName); err != nil {
+		t.Fatal(err)
+	}
+	out, err := repo.run(t.Context(), nil, "ls-tree", info.Commit, "executable")
+	if err != nil || !strings.HasPrefix(out, "100755 blob ") {
+		t.Fatalf("lost archived executable mode: %q %v", out, err)
 	}
 }

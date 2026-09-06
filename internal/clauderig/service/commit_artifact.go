@@ -69,7 +69,7 @@ func (s Service) CommitArtifact(ctx context.Context, input ArtifactCommitRequest
 		return "", err
 	}
 	defer release()
-	binding, err := CaptureBinding(req.Sync, req.Profiles)
+	binding, err := artifactPhaseBinding(req, queue.Captured)
 	if err != nil {
 		return "", err
 	}
@@ -84,6 +84,6 @@ func (s Service) CommitArtifact(ctx context.Context, input ArtifactCommitRequest
 		Message:    adapter.PublicationPlan(req.Sync.Machine.Name, req.Sync.Config.Retention).SnapshotMessage,
 		AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
 		Time:    req.Work.Events[len(req.Work.Events)-1].EnqueuedAt,
-		Prepare: backupgit.Ensure, Audit: engine.CheckPublish,
+		Prepare: backupgit.EnsureContext, Audit: engine.CheckPublishContext,
 	})
 }

@@ -24,6 +24,8 @@ into one archive. Source symlinks, devices and Git metadata are not allowed in t
 sealed output. Directory aliases from Claude's source walk are represented by
 its normal native manifest after capture; they are not archive symlinks. The
 archive preserves file bytes, modification times and the owner's executable bit.
+ExtractWithMetadata additionally returns the verified header and archived modes
+without another checksum pass. These modes are independent of host chmod support.
 Extract verifies the reference before creating a new destination and refuses to
 overwrite an existing tree. Unsafe paths and link entries are rejected. A failed
 extract removes only the directory that operation created. Extraction creates a

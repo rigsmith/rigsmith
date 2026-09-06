@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,3 +81,51 @@ func TestAuditSkipsNestedGitMetadataOnly(t *testing.T) {
 		t.Fatal("nested working files escaped audit")
 	}
 }
+
+// Cancellation must interrupt a file's streaming scan, not merely the next
+// directory entry after a potentially multi-gigabyte transcript finishes.
+func TestAuditContextCancelsDuringFileScan(t *testing.T) {
+	for _, name := range []string{"a.jsonl", "a.bin"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			body := strings.Repeat("safe transcript text\n", 10000)
+			if strings.HasSuffix(name, ".bin") {
+				body = "\x00" + body
+			}
+			write(t, root, name, body)
+			write(t, root, "z.txt", "later file")
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var scanned *cancelAuditFile
+			_, err := auditContext(ctx, root, func(path string) (transcript.File, error) {
+				if scanned != nil {
+					t.Fatal("opened another file after cancellation")
+				}
+				f, err := transcript.Open(path)
+				if err != nil {
+					return nil, err
+				}
+				scanned = &cancelAuditFile{File: f, cancel: cancel}
+				return scanned, nil
+			})
+			if !errors.Is(err, context.Canceled) || scanned.reads != 1 || !scanned.closed {
+				t.Fatalf("scan did not stop/close: %+v, %v", scanned, err)
+			}
+		})
+	}
+}
+
+type cancelAuditFile struct {
+	transcript.File
+	cancel context.CancelFunc
+	reads  int
+	closed bool
+}
+
+func (f *cancelAuditFile) Read(b []byte) (int, error) {
+	f.reads++
+	n, err := f.File.Read(b)
+	f.cancel()
+	return n, err
+}
+func (f *cancelAuditFile) Close() error { f.closed = true; return f.File.Close() }

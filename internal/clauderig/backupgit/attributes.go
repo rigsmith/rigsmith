@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -18,6 +19,15 @@ const rule = "* -text -eol -filter -ident -working-tree-encoding"
 // Ensure writes portable attributes into the backup itself, so they also apply
 // during another machine's first clone. It preserves unrelated attribute rules.
 func Ensure(root string) error {
+	return EnsureContext(context.Background(), root)
+}
+
+// EnsureContext installs the same attributes with cancellation during reads and
+// before replacement, for private queued publication workspaces.
+func EnsureContext(ctx context.Context, root string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
 	}
@@ -29,8 +39,21 @@ func Ensure(root string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	b, err := os.ReadFile(p)
-	if err != nil && !os.IsNotExist(err) {
+	var b []byte
+	in, err := os.Open(p)
+	if err == nil {
+		b, err = io.ReadAll(attributeReader{ctx, in})
+		closeErr := in.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
@@ -41,6 +64,9 @@ func Ensure(root string) error {
 		b = append(b, '\n')
 	}
 	b = append(b, []byte("# ClaudeRig backups must preserve their serialized bytes.\n"+rule+"\n")...)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f, err := os.CreateTemp(root, ".clauderig-attributes-*")
 	if err != nil {
 		return err
@@ -55,6 +81,9 @@ func Ensure(root string) error {
 	}
 	if closeErr != nil {
 		return closeErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return os.Rename(f.Name(), p)
 }
@@ -138,4 +167,16 @@ func git(ctx context.Context, root string, input []byte, args ...string) ([]byte
 		return nil, fmt.Errorf("backup git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
 	}
 	return out, nil
+}
+
+type attributeReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r attributeReader) Read(b []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(b)
 }

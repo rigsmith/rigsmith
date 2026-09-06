@@ -38,7 +38,8 @@ calling Build to replace it is not recovery.
 `commitartifact.Open` checks the archive, strictly reads bounded metadata, extracts
 into a new destination, verifies the bundle in an empty repository, imports its
 explicit ref, compares commit/tree/parent metadata and runs Git's strict object
-checks. The caller owns the extracted destination on success; a failed open
+checks. Extraction returns verified header metadata with the files, avoiding an
+additional full-archive checksum pass in both Build and Open. The caller owns the extracted destination on success; a failed open
 removes only its own destination. Open is read-only with respect to the durable
 store and does not confirm an uncertain Build.
 
@@ -48,7 +49,10 @@ The writer extracts the capture into a private temporary workspace, runs the
 required vendor preparation and audit, and writes raw blobs and trees into a new
 private bare repository. It bypasses filters, ignore rules, line-ending and
 encoding conversions. File bytes and executable modes come from the sealed
-snapshot. Git environment overrides, global/system configuration, templates,
+snapshot. Archived file modes remain separate from host filesystem permissions,
+so a Windows worker preserves executable bits from a Unix capture. Preparation
+and audit receive the caller context; Claude checks cancellation during attributes
+reads, between audit entries and during streaming transcript/index scans. Git environment overrides, global/system configuration, templates,
 replace objects and hooks do not influence the private writer. This avoids
 copying a user's index or Git configuration into queued work.
 
@@ -68,7 +72,10 @@ capture archive alone is not sufficient.
 
 Claude revalidates the canonical root/store/remote/configuration binding and every
 event's provenance, requires the captured phase, and checks that CaptureRef's key
-matches the sealed event membership. Missing live transcripts after capture do
+matches the sealed event membership. For auto chunking, it validates the resolved
+mode already pinned by the binding digest instead of rereading the live storage
+marker; deleting that marker or staging does not prevent reuse of a sealed bundle.
+Configuration, path and provenance checks still apply. Missing live transcripts after capture do
 not trigger recapture. Commit and capture stores must be disjoint and outside all
 source and staging roots. The lock graph is capture store → canonical staging →
 commit store; reading an immutable capture does not acquire its writer lock.

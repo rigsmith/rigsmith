@@ -130,3 +130,39 @@ func TestCommitArtifactRejectsInvalidBatchAndMissingSeed(t *testing.T) {
 		})
 	}
 }
+
+func TestCommitArtifactAutoModeRetryWithoutStorageMarker(t *testing.T) {
+	req := artifactCaptureFixture(t, "auto-mode sealed bytes")
+	req.Sync.Config.ChunkTranscripts = nil
+	put(t, req.Sync.StagingDir, "clauderig-storage.json", `{"version":1,"chunkedTranscripts":true}`)
+	var err error
+	req.Binding, err = service.CaptureBinding(req.Sync, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := (service.Service{}).CaptureArtifact(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Work.CaptureRef, req.Work.Phase = ref, queue.Captured
+	input := service.ArtifactCommitRequest{Capture: req, Commits: artifact.Store{Dir: filepath.Join(t.TempDir(), "commits")}}
+	commitRef, err := (service.Service{}).CommitArtifact(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(req.Sync.StagingDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(req.Store.Dir); err != nil {
+		t.Fatal(err)
+	}
+	again, err := (service.Service{}).CommitArtifact(t.Context(), input)
+	if err != nil || again != commitRef {
+		t.Fatalf("auto retry depended on deleted staging: %s %v", again, err)
+	}
+	// Reusing the sealed mode must not bypass other live binding checks.
+	input.Capture.Sync.Config.Remote = "different destination"
+	if _, err := (service.Service{}).CommitArtifact(t.Context(), input); !errors.Is(err, queue.ErrBinding) {
+		t.Fatalf("changed config accepted: %v", err)
+	}
+}
