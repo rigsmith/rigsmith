@@ -440,7 +440,10 @@
   /* Keep the drawer's own scrolling. Overriding it to visible made the panel
      grow past its height instead, which put the actions bar on top of the
      conversation rather than under it. */
-  .drawer.inpane .body{flex:1;min-height:0;overflow-y:auto;padding:0 12px 0 0;}
+  /* A little on the left as well as the right: the body clips at its padding
+     box, so a full-width input sat flush against that edge and lost its border
+     and focus ring to it. */
+  .drawer.inpane .body{flex:1;min-height:0;overflow-y:auto;padding:0 12px 0 8px;}
   .drawer.inpane .acts{flex:none;position:static;padding:12px 0 0;
     border-top:1px solid var(--line);background:transparent;}
   /* The panel holds a thing that scrolls itself, so it must not also scroll:

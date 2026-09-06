@@ -99,6 +99,9 @@ func measure(chrome, page string, width int) bool {
 		{"the conversation does not scroll sideways", num(got["detailSideways"]) == 0},
 		{"the search box fits its panel", got["searchFitsPanel"] != false},
 		{"the detail panel keeps a readable width", num(got["detailPanelW"]) >= 280},
+		{"the search box's left border is not clipped", got["searchLeftVisible"] != false},
+		{"the detail is no wider than its panel", num(got["shellSideways"]) <= 0},
+		{"the actions row does not overflow", num(got["actsSideways"]) == 0},
 	}
 	failed := 0
 	for _, c := range checks {
@@ -171,7 +174,18 @@ func buildPreview(dir string) (string, error) {
 		c, _ := p.Contents(ctx, st.ID)
 		contents[st.ID] = c
 	}
-	data, err := json.Marshal(map[string]any{"stores": stores, "contents": contents})
+
+	// The detail is answered from a real session, not a stub. A made-up session
+	// has short ids, a short path and no actions worth laying out; the real one
+	// has a uuid, a worktree path and a row of buttons, and it is the real one
+	// that overflows a narrow panel. Stubbing it is how the probe reported that
+	// everything fitted while it did not.
+	lib := bridge.NewLibrary()
+	detail, convo := realSession(ctx, lib, contents)
+
+	data, err := json.Marshal(map[string]any{
+		"stores": stores, "contents": contents, "detail": detail, "conversation": convo,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -188,21 +202,43 @@ func buildPreview(dir string) (string, error) {
 	return out, os.WriteFile(out, []byte(page), 0o644)
 }
 
+// realSession finds a session this machine actually holds and reads it, so the
+// page is laid out with the content it will really be given.
+func realSession(ctx context.Context, lib *bridge.Library, contents map[string]any) (any, any) {
+	for _, v := range contents {
+		c, ok := v.(bridge.ContentsView)
+		if !ok {
+			continue
+		}
+		for _, f := range c.Folders {
+			for _, it := range f.Items {
+				id := it.CLISession
+				if id == "" && it.Kind == bridge.ItemTranscript {
+					id = it.Session
+				}
+				if id == "" {
+					continue
+				}
+				d, err := lib.Detail(ctx, id, "")
+				if err != nil || d.Error != "" || len(d.First) == 0 {
+					continue
+				}
+				conv, _ := lib.Conversation(ctx, id)
+				return d, conv
+			}
+		}
+	}
+	return nil, nil
+}
+
 const stubCall = `const Call = { async ByName(name, ...args) {
   const D = window.__data;
   if (name.endsWith('Places.Stores')) return D.stores;
   if (name.endsWith('Places.Contents')) return D.contents[args[0]] ?? {folders: []};
   if (name.endsWith('Library.List')) return {sessions: [], machine: 'preview', accounts: []};
   if (name.endsWith('Library.TakeHandOff')) return '';
-  if (name.endsWith('Library.Detail')) return {session: {id: args[0], title: 'Preview session',
-    when: new Date().toISOString(), cwd: '/Users/x/Git', sources: [], client: 'cli'},
-    prompts: 40,
-    first: [{text: 'the opening turn', at: new Date().toISOString()}],
-    last: [{text: 'the closing turn', at: new Date().toISOString()}]};
-  if (name.endsWith('Library.Conversation')) return {total: 40, truncated: false,
-    turns: Array.from({length: 40}, (_, i) => ({role: i % 2 ? 'assistant' : 'user',
-      text: (i % 2 ? 'the answer to ' : 'the question about ') + 'thing ' + (i + 1),
-      at: new Date().toISOString()}))};
+  if (name.endsWith('Library.Detail')) return D.detail || {session: {id: args[0]}, prompts: 0};
+  if (name.endsWith('Library.Conversation')) return D.conversation || {turns: [], total: 0};
   return {};
 } };
 `
@@ -225,7 +261,13 @@ const probeScript = `<script>
     const sbox = document.querySelector('#pitems .convosearch input');
     let searchHits = null, searchCleared = null;
     if (sbox) {
-      sbox.value = 'thing 7';
+      // A word from the conversation itself, since it is a real one now and
+      // whatever I invented would simply not be in it.
+      const someTurn = document.querySelector('#pitems .convorow .turn');
+      const word = someTurn
+        ? (someTurn.textContent.split(/\s+/).find(w => w.length > 5) || 'the')
+        : 'the';
+      sbox.value = word;
       sbox.dispatchEvent(new Event('input', {bubbles: true}));
       await sleep(200);
       searchHits = document.querySelectorAll('#pitems .convorow:not([hidden])').length;
@@ -278,6 +320,23 @@ const probeScript = `<script>
       detailSideways: (() => {
         const b = document.querySelector('#pitems .drawer.inpane .body');
         return b ? b.scrollWidth - b.clientWidth : null;
+      })(),
+      shellSideways: (() => {
+        const sh = document.querySelector('#pitems .drawer.inpane');
+        return sh ? Math.round(r(sh).width - r($('pitems')).width) : null;
+      })(),
+      actsSideways: (() => {
+        const a = document.querySelector('#pitems .acts');
+        return a ? a.scrollWidth - a.clientWidth : null;
+      })(),
+      // Against the body it sits in, not the panel: the body is what clips it,
+      // and a border flush with that edge is a border you cannot see.
+      searchLeftVisible: (() => {
+        const b = document.querySelector('#pitems .drawer.inpane .body');
+        // Four pixels, not one: the focus ring is an outline, which draws
+        // outside the border box, so a border that merely clears the edge
+        // still has its ring cut off when the input is focused.
+        return sbox && b ? Math.round(r(sbox).left) >= Math.round(r(b).left) + 4 : null;
       })(),
       searchHits: searchHits,
       searchCleared: searchCleared,
