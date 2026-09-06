@@ -310,7 +310,15 @@
     padding:3px 10px;border:1px solid var(--line);background:transparent;color:var(--dim);
     cursor:pointer;border-radius:5px;}
   .modebtn[aria-pressed="true"]{color:var(--fg);border-color:var(--fg-faint);background:var(--raise);}
-  .places{flex:1;min-height:0;display:grid;grid-template-columns:290px 1fr;gap:0;}
+  /* Three panels, each answering one question: which place, what is in it,
+     what is this. They were two, with the first two sharing a column — a list
+     of stores with a store's contents spliced into the middle of it, which is
+     hard to read as two things because it is drawn as one. */
+  .places{flex:1;min-height:0;display:grid;grid-template-columns:232px 300px 1fr;gap:0;}
+  #plist{border-right:1px solid var(--line);}
+  .pcolhead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+    margin-bottom:10px;}
+  .pempty{color:var(--dim);font-size:12px;padding:4px 0;}
   .pcol{overflow:auto;padding:14px 18px 28px;}
   #pstores{border-right:1px solid var(--line);}
   .pgrouphead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
@@ -429,6 +437,7 @@
 
 <div class="places" id="places" hidden>
   <div class="pcol" id="pstores"></div>
+  <div class="pcol" id="plist"></div>
   <div class="pcol pitems" id="pitems"></div>
 </div>
 
@@ -1300,15 +1309,7 @@ async function loadStores() {
   box.replaceChildren();
   if (view.error) box.append(el('div', 'toast err', view.error));
 
-  // A filter, because one of these stores holds 174 projects and scrolling is
-  // not finding. It narrows whatever is on screen — stores and, once a store is
-  // open, its projects — so it works the same wherever you are in the tree.
-  const filter = el('input', 'pfilter');
-  filter.type = 'search';
-  filter.placeholder = 'filter places…';
-  filter.autocomplete = 'off';
-  filter.addEventListener('input', () => applyFilter(filter.value.trim().toLowerCase()));
-  box.append(filter);
+  box.append(el('div', 'pcolhead', 'places'));
 
   // Split by where the bytes are. This is the distinction the whole window
   // turns on: a session missing from one and present in the other is the
@@ -1339,43 +1340,50 @@ async function loadStores() {
       const hint = diffHint(st, view.stores || []);
       if (hint) node.append(el('div', 'ct diff', hint));
       node.title = st.path;
-      node.addEventListener('click', () => toggleStore(st, node));
+      node.addEventListener('click', () => selectStore(st, node));
       box.append(node);
     }
   }
 }
 
-async function toggleStore(st, node) {
-  // Second click closes it, so the column does not only ever grow.
-  if (openStore === st.id) {
-    openStore = null;
-    node.removeAttribute('data-on');
-    clearList();
-    return;
-  }
+async function selectStore(st, node) {
   openStore = st.id;
   document.querySelectorAll('.store').forEach(x => x.removeAttribute('data-on'));
-  clearList();
   node.dataset.on = 'yes';
   $('pitems').replaceChildren();
+
+  const list = $('plist');
+  list.replaceChildren(el('div', 'pcolhead', 'in this place'), el('div', 'pempty', 'reading\u2026'));
 
   let view;
   try {
     view = await Call.ByName(PLACES_CONTENTS, st.id);
   } catch (e) {
-    node.after(el('div', 'grp', String(e)));
+    list.replaceChildren(el('div', 'toast err', String(e)));
     return;
   }
-  if (view.error) { node.after(el('div', 'grp', view.error)); return; }
+  if (view.error) { list.replaceChildren(el('div', 'toast err', view.error)); return; }
+
+  list.replaceChildren();
+  list.append(el('div', 'pcolhead', 'in ' + st.label));
+
+  // The filter belongs over the long column, not over the eight places beside
+  // it. It searches titles, folders, branches and ids together, because which
+  // of those you remember is not something you decide in advance.
+  const filter = el('input', 'pfilter');
+  filter.type = 'search';
+  filter.placeholder = 'filter sessions\u2026';
+  filter.autocomplete = 'off';
+  filter.value = currentFilter;
+  filter.addEventListener('input', () => applyFilter(filter.value.trim().toLowerCase()));
+  list.append(filter);
 
   showStoreHeader(view.store, view.config || []);
-  renderContents(st, view.folders || [], node);
+  renderContents(st, view.folders || []);
   applyFilter(currentFilter);
 }
 
-function clearList() {
-  document.querySelectorAll('.grp').forEach(g => g.remove());
-}
+
 
 // renderContents lays a store out the way Claude Desktop lays out its sidebar:
 // a heading, the sessions under it, the next heading. Everything visible,
@@ -1385,9 +1393,13 @@ function clearList() {
 // Accounts get a heading of their own because a Desktop store holds two logins
 // at once while the app only ever shows one; without it, a folder you recognise
 // contains sessions you do not.
-function renderContents(st, folders, after) {
-  let prev = after;
-  const add = row => { prev.after(row); prev = row; return row; };
+function renderContents(st, folders) {
+  const list = $('plist');
+  const add = row => { list.append(row); return row; };
+  if (!folders.length) {
+    list.append(el('div', 'pempty', 'nothing filed here'));
+    return;
+  }
 
   let account = null;
   for (const fc of folders) {
@@ -1444,10 +1456,10 @@ let currentFilter = '';
 // which is a different and wrong answer.
 function applyFilter(term) {
   currentFilter = term;
-  for (const n of document.querySelectorAll('.store')) {
-    n.hidden = term !== '' && !n.textContent.toLowerCase().includes(term);
-  }
-  const rows = [...document.querySelectorAll('.grp')];
+  // Only the middle column. The filter sits over the sessions and says so, and
+  // hiding the places beside it would take away the thing you would reach for
+  // when the search comes back empty — looking somewhere else.
+  const rows = [...$('plist').querySelectorAll('.grp')];
   for (const n of rows) {
     n.hidden = term !== '' && !(n.dataset.find || '').includes(term);
   }
