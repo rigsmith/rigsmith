@@ -56,6 +56,10 @@ var textSecretRe = regexp.MustCompile(strings.Join([]string{
 	// The scanner reports a private key on the header alone, so without this
 	// every transcript that merely quotes one refused the sync for ever: the
 	// scrubber declined to touch PEM at all, and no setting could clear it.
+	// Ordered: the footer bounds the block when there is one, so a message that
+	// pastes a key and then keeps talking loses the key and keeps the talking.
+	// Only when no footer follows does the fallback run to the closing quote.
+	`-----BEGIN [A-Z ]*PRIVATE KEY-----[^"]*?-----END [A-Z ]*PRIVATE KEY-----`,
 	`-----BEGIN [A-Z ]*PRIVATE KEY-----[^"]*`,
 	// An opaque bearer token. LooksSecret already calls one of these a
 	// credential when it judges a config value, and leaving it in a transcript
@@ -147,10 +151,7 @@ func hint(s string) string {
 	return s[:n] + "…"
 }
 
-// HasPrivateKey reports a PEM private-key header. Kept separate from RedactText
-// because a key block is the one shape that must NOT be rewritten in place: it
-// spans a structure this cannot safely edit, and half a scrubbed key is worse
-// than a refusal that says what it found.
+// HasPrivateKey reports a PEM private-key header.
 func HasPrivateKey(line []byte) bool { return pemRe.Match(line) }
 
 // IsCredentialMatch reports whether a regex hit is really a credential rather
