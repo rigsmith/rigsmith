@@ -3,6 +3,7 @@ package health
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
@@ -273,5 +274,34 @@ func TestReasonTokensAreExhaustiveAndDistinct(t *testing.T) {
 	// aliased onto a real state.
 	if got := Reason(len(all) + 99).String(); got != "unknown" {
 		t.Errorf("unnamed Reason = %q, want %q", got, "unknown")
+	}
+}
+
+// Staging is dirty for most of the time between syncs — the live tree keeps
+// moving and the next scheduled sync takes what has accumulated. Calling that
+// amber puts the window at "needs attention" for most of every interval while
+// nothing is wrong, and a warning that is usually on is one nobody reads.
+func TestDirtyStagingBetweenSyncsIsNotAWarning(t *testing.T) {
+	info := status.Info{
+		HasStaging: true, Dirty: true, TrackingKnown: true,
+		SyncEvery:  5 * time.Minute,
+		Divergence: gitrepo.Divergence{Tracked: true},
+	}
+	just := journal.Record{Op: journal.OpSync, Outcome: journal.OutcomeOK, At: time.Now().Add(-81 * time.Second)}
+	if r := Of(info, just); r.Level != Green {
+		t.Errorf("81 seconds after a sync, level = %v (%q), want green", r.Level, r.Summary)
+	}
+
+	// Two intervals of quiet is another matter: either the hook is not firing
+	// or a sync is not finishing, and both want a person.
+	stale := journal.Record{Op: journal.OpSync, Outcome: journal.OutcomeOK, At: time.Now().Add(-30 * time.Minute)}
+	r := Of(info, stale)
+	if r.Level != Amber || r.Reason != ReasonUncommitted {
+		t.Errorf("half an hour later, level = %v reason = %v, want an amber warning", r.Level, r.Reason)
+	}
+
+	// Never synced at all is overdue by definition, not early.
+	if r := Of(info, journal.Record{}); r.Level != Amber {
+		t.Errorf("never synced, level = %v, want amber", r.Level)
 	}
 }

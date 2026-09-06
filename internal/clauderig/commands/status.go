@@ -64,8 +64,14 @@ func NewStatusCmd() *cobra.Command {
 			} else {
 				fmt.Fprintf(out, "  last sync %s\n", DimStyle.Render("never (no staging repo yet)"))
 			}
-			if info.Dirty {
-				fmt.Fprintf(out, "            %s\n", WarnStyle.Render("staging has uncommitted changes"))
+			// Only once a sync is genuinely overdue. Between syncs the staging
+			// tree is expected to be dirty — that is what the next one is for —
+			// and saying so every time trained everyone to skip the line.
+			// health.SyncOverdue is the same judgement the window makes, called
+			// rather than restated, because two copies of it is how they came
+			// to disagree.
+			if info.Dirty && health.SyncOverdue(info, lastRunRecord(staging, info.Machine.Name)) {
+				fmt.Fprintf(out, "            %s\n", WarnStyle.Render("staging has uncommitted changes — no sync has landed in a while"))
 			}
 			fmt.Fprintf(out, "  vs remote %s\n", divergenceLine(info.Divergence))
 			if line := lastRunLine(staging, info.Machine.Name); line != "" {
@@ -205,6 +211,16 @@ func divergenceLine(d gitrepo.Divergence) string {
 //
 // The text comes from journal.Record.Summary, the same string the UI's activity
 // feed renders, so the two can't drift.
+// lastRunRecord is the journal's most recent entry, or a zero record when there
+// is none — which SyncOverdue reads as "never synced", and so overdue.
+func lastRunRecord(staging, thisMachine string) journal.Record {
+	recs, err := journal.Read(staging, 1)
+	if err != nil || len(recs) == 0 {
+		return journal.Record{}
+	}
+	return recs[0]
+}
+
 func lastRunLine(staging, thisMachine string) string {
 	recs, err := journal.Read(staging, 1)
 	if err != nil || len(recs) == 0 {

@@ -1,8 +1,11 @@
 package commands
 
 import (
+	"github.com/rigsmith/rigsmith/internal/clauderig/health"
+	"github.com/rigsmith/rigsmith/internal/clauderig/status"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
@@ -163,5 +166,39 @@ func TestClip(t *testing.T) {
 	// A single long word with no boundary still gets cut to length.
 	if got := clipWords(strings.Repeat("x", 100), 10); len([]rune(got)) != 11 {
 		t.Errorf("boundary-less clip = %q (%d runes)", got, len([]rune(got)))
+	}
+}
+
+// The window and the command have to agree about whether staging being dirty
+// is worth saying. They came to disagree by each deciding it separately, so the
+// judgement lives in one place and both call it.
+func TestStatusAgreesWithTheHealthVerdict(t *testing.T) {
+	info := status.Info{
+		HasStaging: true, Dirty: true, TrackingKnown: true,
+		SyncEvery:  5 * time.Minute,
+		Divergence: gitrepo.Divergence{Tracked: true},
+	}
+	fresh := journal.Record{Op: journal.OpSync, Outcome: journal.OutcomeOK, At: time.Now().Add(-time.Minute)}
+	stale := journal.Record{Op: journal.OpSync, Outcome: journal.OutcomeOK, At: time.Now().Add(-time.Hour)}
+
+	for _, c := range []struct {
+		name    string
+		last    journal.Record
+		overdue bool
+	}{
+		{"a minute after a sync", fresh, false},
+		{"an hour after one", stale, true},
+	} {
+		gotOverdue := health.SyncOverdue(info, c.last)
+		if gotOverdue != c.overdue {
+			t.Errorf("%s: SyncOverdue = %v, want %v", c.name, gotOverdue, c.overdue)
+		}
+		// The verdict the window renders has to reach the same conclusion, or
+		// one of them is telling someone the wrong thing.
+		amber := health.Of(info, c.last).Level == health.Amber
+		if amber != c.overdue {
+			t.Errorf("%s: the window says amber=%v while the command says overdue=%v",
+				c.name, amber, c.overdue)
+		}
 	}
 }
