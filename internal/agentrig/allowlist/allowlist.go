@@ -186,7 +186,8 @@ func resolveInRoot(root, p string) (string, bool) {
 		return "", false
 	}
 	rel, err := filepath.Rel(rootReal, target)
-	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+	// Only parent traversal escapes the root; a name such as "..named" does not.
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", false
 	}
 	return filepath.ToSlash(rel), true

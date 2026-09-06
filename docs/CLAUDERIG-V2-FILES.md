@@ -21,6 +21,9 @@ The matcher retains default deny, specificity and tie ordering, hard any-depth
 prunes, sorted results, and directory-link containment rules. The Claude facade
 aliases shared types and supplies unchanged defaults. Existing policy tests stay
 with Claude; shared tests use arbitrary rules and vendor-neutral trees.
+A review follow-up corrects one inherited containment bug: allowed directory-link
+targets named `..named` remain inside the root. Parent traversal (`..` or a path
+beneath it) and links to the root itself remain excluded.
 
 Claude still owns the sync per-file policy loop: retention, throttling, flush
 selection, redaction, scanning, portable JSON transforms and chunk decisions.
