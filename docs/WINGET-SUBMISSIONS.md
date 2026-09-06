@@ -44,6 +44,18 @@ five packages:
 `Commands` is the one with no answer at all: it's what `winget search` and
 `winget install --command` read.
 
+### The fork komac submits from
+
+komac has no fork-owner option: it submits from `<token user>/winget-pkgs`,
+where the user is whoever `WINGET_TOKEN` authenticates as. That token is
+John's PAT, so every PR opens from `JohnCampionJr/winget-pkgs`, and that fork
+must exist — komac does not create it, it fails with "failed to get fork". An
+org-owned fork cannot take its place (an org is never the "current user"), so
+the old `rigsmith/winget-pkgs` fork, which only GoReleaser's disabled publisher
+used, has been deleted. The release workflow keeps the personal fork synced
+with upstream as hygiene; komac branches from upstream's master commit
+regardless, so a stale fork never widens a PR.
+
 ### The three steps, and why they're separate
 
 `winget-submit.sh` generates → corrects → verifies → submits, and the order is
