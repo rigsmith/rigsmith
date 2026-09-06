@@ -1,11 +1,11 @@
 package sessions
 
 import (
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/records"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 	"github.com/rigsmith/rigsmith/internal/clauderig/project"
@@ -434,20 +434,7 @@ func contentHits(path, query string, caseSensitive bool) (int, string) {
 // matchesText reports whether a row matches the search text. Empty text matches
 // everything, so a caller can pass the box's contents through unconditionally.
 func matchesText(row Row, text string) bool {
-	text = strings.ToLower(strings.TrimSpace(text))
-	if text == "" {
-		return true
-	}
-	// Separators normalised on both sides. A project directory is rendered in
-	// this machine's own form — `C:\work\api` on Windows — and nobody types a
-	// path search with backslashes.
-	text = filepath.ToSlash(text)
-	for _, field := range []string{row.Title, row.LastPrompt, row.Cwd, row.Branch, row.ID, row.Client} {
-		if field != "" && strings.Contains(filepath.ToSlash(strings.ToLower(field)), text) {
-			return true
-		}
-	}
-	return false
+	return records.MatchesText(records.Summary{Vendor: "claude", ID: row.ID, Title: row.Title, LastPrompt: row.LastPrompt, Cwd: row.Cwd, Branch: row.Branch, Client: row.Client}, text)
 }
 
 // matchesStores applies the where filter: present in every named store, and —

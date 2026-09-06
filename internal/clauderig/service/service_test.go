@@ -135,6 +135,7 @@ func TestPublishMaintainsHistoryAfterSuccess(t *testing.T) {
 	t.Setenv("GIT_AUTHOR_DATE", "2026-01-10T12:00:00Z")
 	t.Setenv("GIT_COMMITTER_DATE", "2026-01-10T12:00:00Z")
 	put(t, staging, "cli/settings.json", "{}\n")
+	put(t, staging, "desktop/claude-code-sessions/account/org/local_session.json", "{\"title\":\"fixture\"}\n")
 	var events []service.Event
 	svc := service.Service{
 		Observe: func(e service.Event) { events = append(events, e) },
@@ -163,7 +164,7 @@ func TestPublishMaintainsHistoryAfterSuccess(t *testing.T) {
 	if count := git(t, remote, "rev-list", "--count", "main"); count != "2" {
 		t.Fatalf("remote retained %s commits, want old base plus recent capture", count)
 	}
-	if tree := git(t, remote, "ls-tree", "-r", "--name-only", "config-history"); strings.Contains(tree, "cli/projects/") || !strings.Contains(tree, "cli/settings.json") {
+	if tree := git(t, remote, "ls-tree", "-r", "--name-only", "config-history"); strings.Contains(tree, "cli/projects/") || !strings.Contains(tree, "cli/settings.json") || !strings.Contains(tree, "desktop/claude-code-sessions/account/org/local_session.json") {
 		t.Fatalf("config-history selection changed: %s", tree)
 	}
 	if git(t, remote, "rev-parse", "main") != git(t, staging, "rev-parse", "HEAD") {

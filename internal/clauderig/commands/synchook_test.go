@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 )
@@ -318,19 +319,28 @@ func TestAcquireSyncLock_TakesOverFromADeadHolder(t *testing.T) {
 	lock.Release()
 }
 
-// reapedPID is the id of a process that has certainly exited.
+// reapedPID creates an exited process that the liveness probe reports as gone.
 //
 // The test binary re-runs itself with a filter that selects no tests: it needs
 // no shell, which windows-latest does not provide, and it is guaranteed to exit
-// on its own. Waiting for it is what makes the id safe to assert about — an id
-// is only definitely dead once it has been reaped.
+// on its own. Reaping waits for exit, but on Windows the process object may
+// remain queryable briefly afterwards. Establish the fixture's "gone" condition
+// before testing lock takeover; these tests do not test OS process teardown.
 func reapedPID(t *testing.T) int {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("could not spawn a throwaway process: %v", err)
 	}
-	return cmd.Process.Pid
+	pid := cmd.Process.Pid
+	deadline := time.Now().Add(5 * time.Second)
+	for account.PIDAlive(pid) {
+		if time.Now().After(deadline) {
+			t.Fatalf("exited child PID %d is still observable; cannot establish a dead-holder fixture", pid)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return pid
 }
 
 // A platform clock can return the same wall time for successive acquisitions.

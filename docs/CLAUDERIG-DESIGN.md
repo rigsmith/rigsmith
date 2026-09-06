@@ -486,3 +486,10 @@ shared packages depend only on the standard library. Claude supplies its rules,
 destination mapping, live-session set, codecs and authoritative prune directories;
 it still owns retention/redaction orchestration, chunk formats and native
 metadata. See [the file mechanics contract](CLAUDERIG-V2-FILES.md).
+
+V2 also shares the session candidate/read/record loop and summary queries in
+`internal/agentrig/records`, and audited Git publication/reconciliation in
+`internal/agentrig/publication`. Claude supplies native readers, ledger codecs,
+repository initialization, branch/history selection, audits and conflict handling.
+Persisted records and journal ownership remain unchanged. See the
+[record/publication contracts](CLAUDERIG-V2-RECORDS-PUBLICATION.md).
