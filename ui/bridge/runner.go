@@ -30,6 +30,9 @@ const (
 	ActionMaterialize   Action = "materialize"
 	ActionAccountSwitch Action = "account-switch"
 	ActionAccountAdd    Action = "account-add"
+	ActionDoctor        Action = "doctor"
+	ActionDoctorFix     Action = "doctor-fix"
+	ActionAccountDoctor Action = "account-doctor"
 )
 
 // idRule is the only shape an action argument may take: a session uuid or an
@@ -53,6 +56,17 @@ var specs = map[Action]spec{
 	ActionMaterialize:   {args: []string{"peek", "materialize"}, takes: true},
 	ActionAccountSwitch: {args: []string{"account", "switch"}, takes: true},
 	ActionAccountAdd:    {args: []string{"account", "add"}},
+	// The doctors. A window that reports a problem and names the command that
+	// would look into it should be able to run that command: the alternative is
+	// a warning whose only remedy is somewhere else.
+	//
+	// doctor --fix applies what it can. account doctor only diagnoses — the
+	// remedy for a desync is switching to the account you meant, which each
+	// account row already offers — so running it here answers "what is wrong"
+	// rather than pretending to mend it.
+	ActionDoctor:        {args: []string{"doctor"}},
+	ActionDoctorFix:     {args: []string{"doctor", "--fix"}},
+	ActionAccountDoctor: {args: []string{"account", "doctor"}},
 }
 
 // Allowed reports whether a is a runnable action.

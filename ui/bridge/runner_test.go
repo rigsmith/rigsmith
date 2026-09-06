@@ -226,3 +226,29 @@ func TestResolvePrefersSibling(t *testing.T) {
 		t.Error("a directory was treated as the binary")
 	}
 }
+
+// A warning that names a command should be able to run it, so the actions the
+// window offers have to exist in the allowlist — a button wired to a verb the
+// runner rejects is worse than the prose it replaced.
+func TestWarningActionsAreRunnable(t *testing.T) {
+	for _, a := range []Action{ActionDoctor, ActionDoctorFix, ActionAccountDoctor, ActionAccountAdd} {
+		if !Allowed(a) {
+			t.Errorf("%s is offered by a warning but not runnable", a)
+		}
+		argv, err := argvFor(a, "")
+		if err != nil {
+			t.Errorf("argvFor(%s): %v", a, err)
+			continue
+		}
+		if len(argv) == 0 {
+			t.Errorf("%s builds an empty command line", a)
+		}
+	}
+	// The fixing doctor and the reporting one are different commands, or the
+	// button that says it will mend something merely looks at it.
+	report, _ := argvFor(ActionDoctor, "")
+	fix, _ := argvFor(ActionDoctorFix, "")
+	if len(fix) <= len(report) {
+		t.Errorf("doctor --fix (%v) is not distinguishable from doctor (%v)", fix, report)
+	}
+}

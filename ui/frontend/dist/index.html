@@ -259,7 +259,12 @@
   .acct .who{flex:1;min-width:0;overflow-wrap:anywhere;}
   .acct .live{color:var(--ok);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;}
   .acct .plan{color:var(--muted-2);font-size:10px;}
-  .warnrow{color:var(--warn);font-size:11px;margin-top:10px;}
+  .warnrow{color:var(--warn);font-size:11px;margin-top:10px;
+    display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;}
+  .warnfix{flex:none;font:inherit;font-size:11px;padding:2px 9px;border-radius:5px;
+    border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer;
+    --wails-draggable:no-drag;}
+  .warnfix:hover{background:color-mix(in srgb,var(--warn) 14%,transparent);}
   #filing .warnrow{
     margin:0 0 18px;padding:10px 12px;line-height:1.5;
     border:1px solid var(--warn);border-radius:6px;
@@ -1195,7 +1200,26 @@ function renderDoctor(v, force) {
   // window has no repository: it is launched from the tray and inherits
   // whatever directory the launcher used, so it checks this machine and leaves
   // per-repository discipline to the command run from inside the repo you mean.
-  box.append(el('div', 'hint', 'Checks this machine. Worktree discipline is per-repository — run `clauderig doctor` inside one.'));
+  box.append(el('div', 'hint', 'Checks this machine. Worktree discipline is per-repository — run `clauderig doctor` inside the repository you mean.'));
+}
+
+// warnRow is a warning that can be acted on. A window that reports a problem and
+// then names the command you should go and run has stopped short: the command is
+// right here. Where there is nothing to run, it renders as it always did.
+//
+// The button says what it will do rather than "Fix", because some of these
+// mend the problem and some only look into it, and a button labelled Fix that
+// merely diagnoses is a small lie.
+function warnRow(text, act) {
+  const row = el('div', 'warnrow');
+  row.append(el('span', null, text));
+  if (act) {
+    const b = el('button', 'warnfix', act.label);
+    b.title = act.title || '';
+    b.onclick = () => runAction(act.verb, act.arg);
+    row.append(b);
+  }
+  return row;
 }
 
 function checkRow(c, v) {
@@ -1582,7 +1606,9 @@ function renderAccounts(v) {
     return;
   }
   if (!v.accounts || !v.accounts.length) {
-    box.append(el('div', 'empty', 'No accounts captured yet — run `clauderig account add`.'));
+    box.append(warnRow('No accounts captured yet.',
+      {verb: 'account-add', label: 'Capture this login',
+       title: 'Runs `clauderig account add`, storing the account you are logged in as.'}));
     return;
   }
   v.accounts.forEach(a => {
@@ -1644,8 +1670,11 @@ function renderAccounts(v) {
     box.append(row);
   });
   if (v.desynced) {
-    box.append(el('div', 'warnrow',
-      'The live credential and ~/.claude.json name different organizations — run `clauderig account doctor`.'));
+    box.append(warnRow(
+      'The live credential and ~/.claude.json name different organizations.',
+      {verb: 'account-doctor', label: 'Diagnose',
+       title: 'Runs `clauderig account doctor`, which says which account is really being used. ' +
+              'The remedy is to switch to the one you meant, on the rows above.'}));
   }
 }
 
