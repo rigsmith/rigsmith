@@ -1,7 +1,7 @@
 ---
 type: feat
 scope: clauderig-ui
-"github.com/rigsmith/rigsmith"
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 The window's search box searches the whole session, not just what a row shows.

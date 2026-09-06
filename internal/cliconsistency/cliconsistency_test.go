@@ -97,15 +97,77 @@ func TestEveryReleasedBinaryIsVersionStamped(t *testing.T) {
 	for _, b := range cfg.Builds {
 		stamped := false
 		for _, f := range b.Ldflags {
-			// Any -X ...version=, wherever the seam lives: rig and shiprig keep
-			// theirs in an internal package, clauderig and changerig in main.
-			if strings.Contains(f, "version={{.Version}}") {
+			// Any -X ...version= from a template, wherever the seam lives: rig
+			// and shiprig keep theirs in an internal package, clauderig and
+			// changerig in main. The template need not be {{.Version}} — the
+			// window is its own module at its own version, and takes that from
+			// the environment — but there must be one, or the binary reports
+			// itself as a source build.
+			if strings.Contains(f, "version={{") {
 				stamped = true
 			}
 		}
 		if !stamped {
 			t.Errorf("build %q has no version ldflag, so the released binary reports itself as a source build", b.ID)
 		}
+	}
+}
+
+// The window is a separate module at a separate version. Stamping it with the
+// repository's tag would have it report a version it does not have — the whole
+// reason it was split out — so it must not use {{.Version}}, and whatever it
+// does use has to be set for it.
+func TestTheWindowIsStampedWithItsOwnVersion(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(root, ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Builds []struct {
+			ID      string   `yaml:"id"`
+			Ldflags []string `yaml:"ldflags"`
+		} `yaml:"builds"`
+	}
+	if err := yaml.Unmarshal(body, &cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	var found bool
+	for _, b := range cfg.Builds {
+		if b.ID != "clauderig-ui" {
+			continue
+		}
+		found = true
+		for _, f := range b.Ldflags {
+			if strings.Contains(f, "version={{.Version}}") {
+				t.Error("the window is stamped with the repository's tag, not its own version")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no clauderig-ui build in .goreleaser.yaml — this guard is checking nothing")
+	}
+
+	// And the module it comes from carries a version for the release to read.
+	mod, err := os.ReadFile(filepath.Join(root, "ui", "go.mod"))
+	if err != nil {
+		t.Fatalf("ui is not its own module: %v", err)
+	}
+	if !strings.Contains(string(mod), "rigsmith:version") {
+		t.Error("ui/go.mod has no rigsmith:version, so nothing decides what the window reports")
+	}
+
+	// The workflow is what puts it in the environment.
+	wf, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "goreleaser.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(wf), "UI_VERSION") {
+		t.Error("the release workflow never sets UI_VERSION, so the stamp would be empty")
 	}
 }
 

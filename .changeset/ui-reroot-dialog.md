@@ -1,7 +1,7 @@
 ---
 type: feat
 scope: clauderig-ui
-"github.com/rigsmith/rigsmith"
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 Re-filing a session is a button in the window, beside Open and Delete.

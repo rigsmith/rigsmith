@@ -1,7 +1,7 @@
 ---
 type: feat
 scope: clauderig-ui
-"github.com/rigsmith/rigsmith"
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 Click a row in Sync Activity to see the files that run touched, with added and removed line counts.

@@ -1,7 +1,7 @@
 ---
 type: fix
 scope: clauderig-ui
-"github.com/rigsmith/rigsmith"
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 Three more from running the window on Windows.

@@ -1,7 +1,7 @@
 ---
 type: feat
 scope: clauderig-ui
-"github.com/rigsmith/rigsmith"
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 The window has a Health pane: every `clauderig doctor` check, and a button on the ones it can repair.

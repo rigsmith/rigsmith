@@ -1,7 +1,7 @@
 ---
 type: feat
-scope: clauderig
-"github.com/rigsmith/rigsmith"
+scope: clauderig-ui
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 Read a session's conversation from the panel, both sides, with a search box.

@@ -1,7 +1,7 @@
 ---
 type: feat
 scope: clauderig-ui
-"github.com/rigsmith/rigsmith"
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 The clauderig UI has a second window: a sessions manager listing every Claude Code session this machine can see, wherever it lives. Open it from the tray menu (**Sessions…**), or start the app with `--sessions`.

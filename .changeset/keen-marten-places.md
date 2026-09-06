@@ -1,7 +1,7 @@
 ---
 type: feat
-scope: clauderig
-"github.com/rigsmith/rigsmith"
+scope: clauderig-ui
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 Add a Places mode to the sessions window, for finding a session by where it was

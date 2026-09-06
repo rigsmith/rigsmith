@@ -1,7 +1,7 @@
 ---
 type: fix
 scope: clauderig-ui
-"github.com/rigsmith/rigsmith"
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 One repaint guard for the whole window, instead of the same fix written twice and missing twice.

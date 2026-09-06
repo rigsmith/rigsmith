@@ -1,7 +1,7 @@
 ---
 type: feat
 scope: clauderig-ui
-"github.com/rigsmith/rigsmith"
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 The claudeRig UI ships as a signed, notarized macOS app: `brew install --cask rigsmith/tap/clauderig-ui`.

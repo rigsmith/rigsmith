@@ -1,7 +1,7 @@
 ---
 type: feat
-scope: clauderig
-"github.com/rigsmith/rigsmith"
+scope: clauderig-ui
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 Show a session's full detail in the Places panel, and add a layout probe.

@@ -1,7 +1,7 @@
 ---
 type: feat
 scope: clauderig-ui
-"github.com/rigsmith/rigsmith"
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 The window gains a **Repository** panel: what the sync repo costs, what it is made of, and the two ways to make it smaller.

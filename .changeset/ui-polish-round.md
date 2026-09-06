@@ -1,7 +1,7 @@
 ---
 type: fix
 scope: clauderig-ui
-"github.com/rigsmith/rigsmith"
+"github.com/rigsmith/rigsmith/ui"
 ---
 
 A round of fixes to the clauderig window.

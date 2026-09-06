@@ -88,6 +88,16 @@ jobs:
 
       # CI runs on main/PRs but not on tags, so gate the release on the tests
       # passing at the exact tagged commit — never publish binaries that fail.
+      # The window is its own module and carries its own version, so the tag
+      # this workflow fires on does not name it. Read it from ui/go.mod and hand
+      # it to GoReleaser, or the binary reports the CLI's version instead.
+      - name: Read the UI's version
+        run: |
+          v=$(sed -n 's|^module .*rigsmith:version \(.*\)$|\1|p' ui/go.mod | tr -d ' ')
+          if [ -z "$v" ]; then echo "ui/go.mod has no rigsmith:version" >&2; exit 1; fi
+          echo "UI_VERSION=$v" >> "$GITHUB_ENV"
+          echo "the window will be stamped $v"
+
       - name: Test
         run: go test ./... -count=1
 

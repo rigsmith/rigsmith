@@ -95,8 +95,12 @@ builds:
     goarch:
       - amd64
       - arm64
+    # Its own version, not the tag's: the window is a separate module at 0.x
+    # while the command line tools are at 1.x, and stamping it with the tag
+    # would have it report a version it does not have. The workflow reads it
+    # out of ui/go.mod into UI_VERSION.
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w -X main.version={{ .Env.UI_VERSION }}
     hooks:
       post:
         - cmd: sh ./scripts/sign-windows.sh "{{ .Path }}" "{{ .Os }}"
@@ -197,7 +201,7 @@ archives:
   - id: clauderig-ui
     ids:
       - clauderig-ui
-    name_template: "clauderigUi_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "clauderigUi_{{ .Env.UI_VERSION }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - zip
 
