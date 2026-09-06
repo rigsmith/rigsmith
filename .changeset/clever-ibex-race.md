@@ -4,4 +4,4 @@ scope: clauderig
 "github.com/rigsmith/rigsmith"
 ---
 
-Align scanner and redactor credential decisions, recognize project-key prefixes correctly, restage conversation text when upgrading redaction, and stage required backup attributes despite Git excludes.
+Remove missed API keys from existing conversation backups and avoid false secret warnings. Fix sync failures caused by Git ignore rules.
