@@ -1,5 +1,23 @@
 # github.com/rigsmith/rigsmith
 
+## 1.15.1
+### 🩹 Fixes
+
+- **clauderig:** A sync killed mid-run no longer stops the machine syncing for twenty minutes.
+  
+  The lock a sync holds records the process holding it, but the check that breaks an abandoned one only asked how old it was. So a hook terminated with its shell — which happens whenever a session ends mid-sync — left a lock that every later sync honoured for the full twenty minutes, reporting `another sync is running — skipping` while nothing was. Seen twice inside a quarter of an hour on one machine.
+  
+  It reads the pid that is already in the file. A lock whose holder has exited is stale whatever its age, so the next sync takes it immediately. This can only ever break a lock sooner: a pid that has been reused by something unrelated still answers alive, and the age limit still applies to a holder that is genuinely running.
+- **clauderig:** `redactTranscripts` can now clear everything the tripwire refuses on.
+  
+  Two credentials could be detected and never removed, so a sync refused for ever with the scrubber already on and nothing left for its owner to try.
+  
+  A **PEM private key** was reported on its header alone, while the scrubber declined to rewrite PEM at all — so a transcript that merely quoted one blocked the machine's backups permanently. Key material is now removed from the header to the end of the string holding it, which covers the truncated case too: one file here carried four `BEGIN` markers and no `END`, because a transcript records what was on screen. The surrounding record stays valid JSON.
+  
+  A **JWT written straight after an escape** — `…turso.io\neyJ…` — sat behind a word character, and the word boundary added to the signatures in 1.15.0 made the scrubber skip it while the scanner still saw it. A JWT's own shape is three dot-separated base64url runs, which prose does not produce, so that rule needs no boundary and now has none.
+  
+  A test now holds the rule behind both: anything the scanner detects, the scrubber must be able to remove. On the machine that found this, 26 flagged files go to none.
+
 ## 1.15.0
 ### 🚀 Enhancements
 
