@@ -3,11 +3,8 @@ package commitartifact
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -40,75 +37,18 @@ func (r gitRepo) checkTree(ctx context.Context, commit, work string, limit int64
 	}
 	defer os.RemoveAll(root)
 	var listing bytes.Buffer
-	if err = r.runTo(ctx, nil, &boundedOutput{&listing, 64 << 20}, "ls-tree", "-rlz", "--full-tree", commit); err != nil {
+	if err = r.runTo(ctx, nil, &boundedOutput{&listing, 64 << 20}, "ls-tree", "-rltz", "--full-tree", commit); err != nil {
 		return err
 	}
-	modes := map[string]os.FileMode{}
-	spellings := map[string]string{}
-	entries := bytes.Split(bytes.TrimSuffix(listing.Bytes(), []byte{0}), []byte{0})
-	if len(entries) > 1000000 {
-		return artifact.ErrTooLarge
+	tree, err := parsePublicationTree(listing.Bytes(), limit, publicationMetadataLimit)
+	if err != nil {
+		return err
 	}
-	for _, entry := range entries {
-		if len(entry) == 0 {
-			continue
-		}
-		header, path, ok := strings.Cut(string(entry), "\t")
-		fields := strings.Fields(header)
-		if !ok || len(fields) != 4 || fields[1] != "blob" || !objectID(fields[2]) || !publicationPath(path) {
-			return ErrInvalid
-		}
-		mode := os.FileMode(0600)
-		switch fields[0] {
-		case "100644":
-		case "100755":
-			mode = 0700
-		default:
-			return ErrInvalid
-		}
-		size, err := strconv.ParseInt(fields[3], 10, 64)
-		if err != nil || size < 0 {
-			return ErrInvalid
-		}
-		if size > limit {
-			return artifact.ErrTooLarge
-		}
-		limit -= size
-		// Refuse collisions on every supported host, including case-folded parent
-		// directories. Never audit one spelling and publish another hidden spelling.
-		prefix := ""
-		for _, part := range strings.Split(path, "/") {
-			if prefix != "" {
-				prefix += "/"
-			}
-			prefix += part
-			folded := strings.ToLower(prefix)
-			if old, exists := spellings[folded]; exists && old != prefix {
-				return ErrInvalid
-			}
-			spellings[folded] = prefix
-		}
-		dest := filepath.Join(root, filepath.FromSlash(path))
-		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
-			return err
-		}
-		f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
-		if err != nil {
-			return err
-		}
-		output := &boundedOutput{f, size}
-		err = r.runTo(ctx, nil, output, "cat-file", "blob", fields[2])
-		closeErr := f.Close()
-		if err != nil {
-			return err
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if output.left != 0 {
-			return ErrInvalid
-		}
-		modes[path] = mode
+	if err := tree.root.createDirs(ctx, root); err != nil {
+		return err
+	}
+	if err := r.materializeBlobs(ctx, root, tree.files); err != nil {
+		return err
 	}
 	for _, check := range checks {
 		if err := ctx.Err(); err != nil {
@@ -118,20 +58,9 @@ func (r gitRepo) checkTree(ctx context.Context, commit, work string, limit int64
 			return err
 		}
 	}
-	// Callbacks are policies, not permission to clean a working copy while an
-	// unaudited original tree is sent to the remote.
-	tree, err := r.writeTree(ctx, root, root, modes)
-	if err != nil {
-		return err
-	}
-	original, err := r.run(ctx, nil, "rev-parse", commit+"^{tree}")
-	if err != nil {
-		return err
-	}
-	if tree != strings.TrimSpace(original) {
-		return fmt.Errorf("publication policy modified the inspected tree: %w", ErrInvalid)
-	}
-	return nil
+	// Verify raw blob hashes and exact directory membership in-process. This
+	// catches policy mutations without starting hash-object once per file.
+	return tree.root.verify(ctx, root)
 }
 
 func publicationPath(path string) bool {

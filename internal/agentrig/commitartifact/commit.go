@@ -263,17 +263,8 @@ func (r gitRepo) run(ctx context.Context, input io.Reader, args ...string) (stri
 }
 
 func (r gitRepo) runTo(ctx context.Context, input io.Reader, output io.Writer, args ...string) error {
-	flags := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull, "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "commit.gpgsign=false", "-c", "protocol.allow=never", "-c", "protocol.file.allow=always"}
-	cmd := exec.CommandContext(ctx, "git", append(flags, args...)...)
-	cmd.Dir, cmd.Stdin, cmd.Stdout = r.dir, input, output
-	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(strings.ToUpper(entry), "GIT_") {
-			cmd.Env = append(cmd.Env, entry)
-		}
-	}
-	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_ATTR_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_ALLOW_PROTOCOL=file")
-	cmd.Env = append(cmd.Env, r.identity...)
-	cmd.WaitDelay = 5 * time.Second
+	cmd := r.command(ctx, args...)
+	cmd.Stdin, cmd.Stdout = input, output
 	err := cmd.Run()
 	if err != nil {
 		// Do not surface raw Git diagnostics or local paths in queue failure codes.
@@ -283,6 +274,22 @@ func (r gitRepo) runTo(ctx context.Context, input io.Reader, output io.Writer, a
 		return fmt.Errorf("retained commit git %s: %w", args[0], err)
 	}
 	return nil
+}
+
+// command applies the same private Git isolation to one-shot and streaming calls.
+func (r gitRepo) command(ctx context.Context, args ...string) *exec.Cmd {
+	flags := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull, "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "commit.gpgsign=false", "-c", "protocol.allow=never", "-c", "protocol.file.allow=always"}
+	cmd := exec.CommandContext(ctx, "git", append(flags, args...)...)
+	cmd.Dir = r.dir
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(entry), "GIT_") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_ATTR_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_ALLOW_PROTOCOL=file")
+	cmd.Env = append(cmd.Env, r.identity...)
+	cmd.WaitDelay = 5 * time.Second
+	return cmd
 }
 
 func (r gitRepo) writeTree(ctx context.Context, root, dir string, modes map[string]os.FileMode) (string, error) {

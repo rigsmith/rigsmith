@@ -56,8 +56,12 @@ operations belong to the explicit transport. It neither checks out remote trees
 nor runs configured clean/smudge filters. Merge-tree uses Git's built-in merge
 behavior with this private configuration.
 
-Before every push, raw blobs from the candidate are streamed into a fresh private
-directory. This avoids export-ignore, filters, line-ending conversion and index
+Before every push, raw blobs from the candidate are streamed through one
+`git cat-file --batch` process into a fresh private directory. Each object ID,
+type, size and delimiter must match the validated tree listing; truncated or extra
+output fails. Input requests and output are streamed concurrently to avoid pipe
+deadlocks. Cancellation/failure terminates and reaps this batch before returning.
+Empty Git directories are materialized as well. This avoids export-ignore, filters, line-ending conversion and index
 state. Regular files and executable modes are preserved. Links, submodules,
 unsafe paths, case-colliding spellings and unsupported modes are refused.
 Every path component follows the same policy on all hosts: valid UTF-8, at most
@@ -66,13 +70,20 @@ and no DOS device/console name (including extensions and superscript COM/LPT
 digits). This deliberately uses a conservative common policy rather than the
 current worker OS or Windows version's pathname rules.
 The tree has a configurable byte limit (default 32 GiB), a 64 MiB listing limit,
-and at most one million file entries. These are per-tree limits, not total Git
-object, pack, workspace or store quotas.
+a separate 64 MiB metadata budget, and at most one million file entries. Directory
+metadata stores only immediate component names, avoiding cumulative-prefix
+expansion for deep paths. The budget charges names, file descriptors, slice
+capacity and conservative per-node/map overhead before retention; exhausting any
+limit refuses the tree before materialization. These are per-tree limits, not
+total Git object, pack, workspace or store quotas.
 
 Validate and Audit inspect this exact raw directory. They must be context-aware,
-read-only policies that do not require a Git checkout. The engine rewrites a raw
-tree after the callbacks and checks its SHA against the candidate, so a policy
-cannot clean the inspected files while leaving unsafe original blobs to publish.
+read-only policies that do not require a Git checkout. After the callbacks, the engine checks exact directory membership and streams
+files through Go SHA-1/SHA-256 Git-blob hashing against the original object IDs.
+This detects changed files and extra/missing entries without starting per-file
+Git processes or rewriting objects. A policy cannot clean inspected files while
+leaving unsafe original blobs to publish. Executable modes stay attached to the
+original candidate independently of host filesystem permissions.
 Claude's existing checkout-based attributes validator cannot simply be passed to
 this API: a native validator for the materialized tree is a required integration
 step, along with the existing secret/transcript audit.
@@ -114,5 +125,7 @@ remote races, accepted pushes with lost responses, missing confirmation,
 replay without duplicate pushes, conflicts/unrelated history, unsafe trees,
 validation/audit failure or mutation, portable-path fixtures built directly in Git
 (including invalid UTF-8 and Windows device names), mismatched refs/captures, shallow history,
-capacity refusal, cancellation and missing artifacts. No real vendor data or
+metadata/byte capacity refusal, malformed batch output, empty directories,
+cancellation and missing artifacts. Trace-based tests assert that a many-file
+audit uses only a tree-listing process and one blob batch, in both hash formats. No real vendor data or
 network credentials are used.
