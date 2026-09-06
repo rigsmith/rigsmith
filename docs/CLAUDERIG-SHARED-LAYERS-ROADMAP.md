@@ -10,7 +10,8 @@ it builds on the tested synchronous workflow.
 
 **Completed:** store coordination (6a) merged into `codex/v2` through
 [#308](https://github.com/rigsmith/rigsmith/pull/308) as `f2ad7302`.
-**In progress:** durable queue storage and recovery (6b.1). Worker/service
+**In review:** durable queue storage and recovery (6b.1) in
+[#309](https://github.com/rigsmith/rigsmith/pull/309). Worker/service
 integration (6b.2), queued hooks and CodexRig remain planned.
 
 | Milestone | Status | Evidence / remaining work |
@@ -22,7 +23,7 @@ integration (6b.2), queued hooks and CodexRig remain planned.
 | 4. Shared file processing and restore | Merged in v2 | [#306](https://github.com/rigsmith/rigsmith/pull/306), merged as `8f5a13d7`. Shared walking, snapshots, reconciliation and guarded restore; includes the dot-prefixed directory-link review correction. |
 | 5. Shared session/metadata and Git publication boundaries | Merged in v2 | [#307](https://github.com/rigsmith/rigsmith/pull/307). Shared recording/query and audited publication workflows; Claude retains native formats and policies. Local synthetic suite, six baseline compatibility scenarios and vet passed. |
 | 6a. Store coordination | Merged in v2: [#308](https://github.com/rigsmith/rigsmith/pull/308) | OS-owned locks across staging workflows. Linux, macOS and Windows CI passed. [Contract](CLAUDERIG-V2-COORDINATION.md). |
-| 6b.1. Durable queue storage and recovery | In progress | Persist events, coalesce pending flushes, preserve new generations during capture, track phases/retries and recover exclusive worker ownership. [Contract](CLAUDERIG-V2-QUEUE.md). |
+| 6b.1. Durable queue storage and recovery | In review: [#309](https://github.com/rigsmith/rigsmith/pull/309) | Persist events, coalesce pending flushes, preserve new generations during capture, track phases/retries and recover exclusive worker ownership. [Contract](CLAUDERIG-V2-QUEUE.md). |
 | 6b.2. Worker and Claude service integration | Next | Validate immutable configuration/provenance, source retention/deletion, orphaned children, manual-sync acknowledgements and offline publication before exposing queued execution. |
 | 7. Opt-in queued Claude hooks | Planned | Validate worker lifecycle, startup, draining/rollback, and convergence with synchronous sync. |
 | Codex adapter and separate `codexrig` executable | Planned | Consume the proven shared layers without moving Claude account/Desktop internals into them. |
@@ -157,6 +158,6 @@ cmd/clauderig -> Claude commands/composition -> shared services <- Codex command
 
 The composition code passes adapter implementations into narrow interfaces owned by the shared services. Shared packages import neither vendor package. Keep these interfaces internal until both vendors validate them; a public SDK or external plugin ABI would freeze guesses too early.
 
-Milestones 1–5 are merged; milestone 5 landed in v2 through #307. Milestone 6a merged in #308. Milestone 6b.1 implements durable storage/recovery; 6b.2 integrates execution before opt-in hooks. Milestones 3–5 establish the shared foundation; milestones 6–7 deliver the queue as a separately controlled feature. `codexrig` can begin using the proven boundaries without requiring Claude account/Desktop internals to move.
+Milestones 1–5 are merged; milestone 5 landed in v2 through #307. Milestone 6a merged in #308. Milestone 6b.1 is in review in #309; 6b.2 integrates execution before opt-in hooks. Milestones 3–5 establish the shared foundation; milestones 6–7 deliver the queue as a separately controlled feature. `codexrig` can begin using the proven boundaries without requiring Claude account/Desktop internals to move.
 
 Baseline check during this roadmap: `CLAUDERIG_E2E=1 go test ./internal/clauderig/e2e -run '^TestE2E_(RoundTrip|CrossOSPortability)$' -count=1 -v` passed, including both macOS→Windows and Windows→macOS path-mapping cases on this macOS host. These are synthetic fixtures and local bare remotes, not tests of live Claude resume on Windows. No implementation or runtime configuration was changed.
