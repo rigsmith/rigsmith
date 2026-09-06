@@ -46,6 +46,11 @@ mkdir -p "$work/tap/Casks"
 # No `depends_on` on the clauderig cask: the app is usable on its own — it reads
 # the sync repo directly — and forcing the CLI on someone who wanted the menu
 # bar app is the coupling the separate cask exists to avoid.
+# `depends_on macos: :monterey` is a bare symbol, which Homebrew reads as the
+# MINIMUM release — the same thing the older `">= :monterey"` string said, before
+# that form was deprecated and started warning on every install. An array would
+# be the one to avoid here: that means an exact set of releases, which would cut
+# off everyone past Monterey.
 cat > "$work/tap/Casks/clauderig-ui.rb" <<RB
 cask "clauderig-ui" do
   version "$version"
@@ -56,7 +61,7 @@ cask "clauderig-ui" do
   desc "Menu bar app for claudeRig: sync status and your Claude Code sessions"
   homepage "https://rigsmith.dev/clauderig/"
 
-  depends_on macos: ">= :monterey"
+  depends_on macos: :monterey
 
   app "$app.app"
 
