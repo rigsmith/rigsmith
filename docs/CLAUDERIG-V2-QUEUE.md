@@ -62,6 +62,8 @@ requires an explicit decision. Missing sources can be represented as blocked
 work, never silently acknowledged as an empty capture. Completed event receipts
 remain persisted so a producer retry after restart does not recreate finished
 work. Repeated progress/acknowledgement writes reflush before reporting success.
+Unblock also reflushes an already-cleared pending batch on retry; it cannot clear
+a pending retry's backoff or failure code.
 
 ## Persistence and failure boundaries
 
@@ -79,6 +81,9 @@ without altering the file. Temporary files from an interrupted write are ignored
 not promoted over committed state. Missing state is an error, not an empty queue.
 An interrupted initial Create may leave an uninitialized directory that requires
 inspection/removal before retry; ordinary Open never resets it.
+Create on an existing valid queue reflushes the current state before succeeding,
+so retrying an uncertain initialization acknowledges durability without losing
+events or worker progress added since the first attempt.
 
 | Platform | Persistence request |
 | --- | --- |
@@ -95,8 +100,10 @@ network/shared-host state directories are outside the contract. Process-exit
 recovery is tested on native CI platforms; this is not a VM power-cut test suite.
 
 A failure during/after replacement may mean the state committed. ErrUncertain
-requires a producer to retry the same EventID or an executor to repeat/inspect
-its transition, never invent a new event ID. Idempotent write retries reflush:
+requires retrying the same operation with the same identity and arguments:
+the same directory/binding for Create or Worker, EventID/request for Enqueue,
+or batch ID and transition arguments for worker updates. Never invent a new
+event ID. Idempotent write retries reflush:
 merely finding the ID in the readable file is insufficient after an earlier
 uncertain durability result. Read-only snapshots do not acknowledge persistence.
 The queue does not promise exactly-once external side effects; capture and Git

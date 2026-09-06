@@ -25,7 +25,8 @@ type envelope struct {
 }
 
 // Create bootstraps a new private queue directory. If it already exists, this
-// behaves as Open: a missing state file is an error, never an empty queue reset.
+// validates and reflushes its existing state before succeeding. A missing state
+// file is an error, never an empty queue reset.
 // A failed first initialization can leave an uninitialized directory requiring
 // explicit inspection/removal before Create is retried.
 func Create(ctx context.Context, dir string, binding Binding) (*Queue, error) {
@@ -33,25 +34,31 @@ func Create(ctx context.Context, dir string, binding Binding) (*Queue, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, release, err := storelock.Acquire(ctx, q.dir, 15*time.Second)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	if err = os.Mkdir(q.dir, 0700); err != nil {
-		if !os.IsExist(err) {
-			return nil, err
-		}
-		if _, err = q.load(); err != nil {
-			return nil, err
-		}
-		return q, nil
-	}
-	s := &state{Binding: binding, Events: map[string]Event{}, Done: map[uint64]bool{}}
-	if err = q.persist(s); err != nil {
+	if err = q.create(ctx); err != nil {
 		return nil, err
 	}
 	return q, nil
+}
+
+func (q *Queue) create(ctx context.Context) error {
+	_, release, err := storelock.Acquire(ctx, q.dir, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	defer release()
+	s := &state{Binding: q.binding, Events: map[string]Event{}, Done: map[uint64]bool{}}
+	if err = os.Mkdir(q.dir, 0700); err != nil {
+		if !os.IsExist(err) {
+			return err
+		}
+		if s, err = q.load(); err != nil {
+			return err
+		}
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	return q.persist(s)
 }
 
 // Open never initializes or repairs state. Binding/schema/corruption failures

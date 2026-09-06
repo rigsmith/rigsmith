@@ -468,6 +468,105 @@ func TestUncertainProgressAndAcknowledgementReflushOnRetry(t *testing.T) {
 	}
 }
 
+func TestUncertainCreateReflushesCurrentStateOnRetry(t *testing.T) {
+	q, err := newQueue(filepath.Join(t.TempDir(), "queue"), fixtureBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := 0
+	q.save = func(dir string, data []byte) error {
+		saves++
+		if err := saveFile(dir, data); err != nil {
+			return err
+		}
+		return ErrUncertain
+	}
+	for range 2 {
+		if err := q.create(t.Context()); !errors.Is(err, ErrUncertain) {
+			t.Fatal("Create acknowledged uncertain durability", err)
+		}
+	}
+	if saves != 2 {
+		t.Fatal("Create retry skipped flush")
+	}
+	// Another process can add work between the initial publication and retry.
+	other, err := Open(t.Context(), q.dir, fixtureBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueue(t, other, request("a"))
+	w := worker(t, other)
+	b := next(t, w)
+	if err := w.Progress(t.Context(), b.ID, Captured, "capture"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := other.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.save = saveFile
+	if err := q.create(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Create(t.Context(), q.dir, fixtureBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := reopened.Snapshot(t.Context())
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("Create retry changed existing work: %+v %v", after, err)
+	}
+}
+
+func TestUncertainUnblockReflushesOnRetryWithoutClearingBackoff(t *testing.T) {
+	q := fixture(t)
+	enqueue(t, q, request("a"))
+	w := worker(t, q)
+	b := next(t, w)
+	if err := w.Progress(t.Context(), b.ID, Captured, "capture"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Retry(t.Context(), b.ID, fixtureTime, "source-missing", true); err != nil {
+		t.Fatal(err)
+	}
+	saves := 0
+	q.save = func(dir string, data []byte) error {
+		saves++
+		if err := saveFile(dir, data); err != nil {
+			return err
+		}
+		return ErrUncertain
+	}
+	for range 2 {
+		if err := w.Unblock(t.Context(), b.ID); !errors.Is(err, ErrUncertain) {
+			t.Fatal("Unblock acknowledged uncertain durability", err)
+		}
+	}
+	if saves != 2 {
+		t.Fatal("Unblock retry skipped flush")
+	}
+	q.save = saveFile
+	if err := w.Unblock(t.Context(), b.ID); err != nil {
+		t.Fatal(err)
+	}
+	recovered := next(t, w)
+	if recovered.Phase != Captured || recovered.CaptureRef != "capture" || recovered.Attempts != 2 || recovered.FailureCode != "" || !recovered.NotBefore.IsZero() {
+		t.Fatalf("Unblock changed progress or retained failure: %+v", recovered)
+	}
+	if err := w.Unblock(t.Context(), b.ID); !errors.Is(err, ErrTransition) {
+		t.Fatal("Unblock accepted running work", err)
+	}
+	if err := w.Retry(t.Context(), b.ID, fixtureTime.Add(2*time.Hour), "offline", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Unblock(t.Context(), b.ID); !errors.Is(err, ErrTransition) {
+		t.Fatal("Unblock cleared a pending retry", err)
+	}
+	if _, err := w.Next(t.Context(), fixtureTime); !errors.Is(err, ErrEmpty) {
+		t.Fatal("Unblock bypassed backoff", err)
+	}
+}
+
 func TestMetadataBoundsAccountForJSONEscaping(t *testing.T) {
 	q := fixture(t)
 	enqueue(t, q, request("a"))

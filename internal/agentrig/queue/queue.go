@@ -26,7 +26,7 @@ var (
 	ErrOwner      = errors.New("worker no longer owns this queue")
 	ErrTransition = errors.New("invalid queue progress transition")
 	ErrFull       = errors.New("queue state limit reached; existing work was retained")
-	ErrUncertain  = errors.New("queue write may have committed; retry with the same event ID")
+	ErrUncertain  = errors.New("queue write may have committed; retry the same operation with the same identity and arguments")
 )
 
 // Binding contains stable, credential-free identifiers, not mutable config pointers.
@@ -360,6 +360,7 @@ func (w *Worker) Retry(ctx context.Context, id uint64, notBefore time.Time, code
 }
 
 // Unblock requires an explicit caller decision; new events never clear a block.
+// Retrying an already-cleared pending batch reflushes the state before succeeding.
 func (w *Worker) Unblock(ctx context.Context, id uint64) error {
 	return w.update(ctx, func(s *state) (bool, error) {
 		for i := range s.Batches {
@@ -368,6 +369,9 @@ func (w *Worker) Unblock(ctx context.Context, id uint64) error {
 				b.Status = Pending
 				b.NotBefore = time.Time{}
 				b.FailureCode = ""
+				return true, nil
+			}
+			if b.ID == id && b.Status == Pending && b.Owner == "" && b.Attempts > 0 && b.NotBefore.IsZero() && b.FailureCode == "" {
 				return true, nil
 			}
 		}
