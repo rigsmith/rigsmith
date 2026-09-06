@@ -8,16 +8,16 @@ it builds on the tested synchronous workflow.
 
 ## Progress
 
-**Now:** review [#304](https://github.com/rigsmith/rigsmith/pull/304), which implements
-the Claude root/file policy adapter. **Next:** extract shared file processing and
-restore mechanics after that review. The queue and CodexRig are not implemented.
+**Completed:** [#304](https://github.com/rigsmith/rigsmith/pull/304) merged the Claude
+root/file policy adapter into `codex/v2`. **Next:** extract shared file processing
+and restore mechanics (milestone 4; not started). The queue and CodexRig are not implemented.
 
 | Milestone | Status | Evidence / remaining work |
 | --- | --- | --- |
 | Preparation: secret scanning, transcript chunking, Git byte preservation | Complete | Included in the v1 foundation before alignment. Later preparatory fixes from #295 were carried into main by #299. |
 | 1. Compatibility fixtures | Merged in v1 and v2 | [#289](https://github.com/rigsmith/rigsmith/pull/289), then included in main by [#299](https://github.com/rigsmith/rigsmith/pull/299). Fixed baseline and synthetic tests run on Linux, macOS, and Windows. |
 | 2. Synchronous application services | Merged in v1 and v2 | [#299](https://github.com/rigsmith/rigsmith/pull/299). Includes capture, identity, journaling, publication, merge repair, pull, and explicit flush intent. |
-| 3. Claude root/file policy adapter | Implemented; in review | [#304](https://github.com/rigsmith/rigsmith/pull/304). Root selection, file classification, retention, transform and merge selection, and session/subagent grouping. Code CI passes on all three platforms; PR is not merged. |
+| 3. Claude root/file policy adapter | Merged in v2 | [#304](https://github.com/rigsmith/rigsmith/pull/304). Root selection, file classification, retention, transform and merge selection, and session/subagent grouping. Merged as `13795f5`; implementation CI passed on all three platforms. |
 | 4. Shared file processing and restore | Next | Extract mechanics using the adapter's explicit decisions; preserve staged/restored bytes and existing safeguards. |
 | 5. Shared session/metadata and Git publication boundaries | Planned | Publication services and merge selection exist; normalized records, native serializers, and shared orchestration still need boundaries. |
 | 6. Store coordination, then durable queue | Planned | Coordinate competing operations before adding durable jobs, ownership, coalescing, acknowledgements, and crash/offline recovery. |
@@ -28,8 +28,8 @@ After v1.15.1, [#299](https://github.com/rigsmith/rigsmith/pull/299) brought the
 foundation into main and [#301](https://github.com/rigsmith/rigsmith/pull/301) merged
 main forward into `codex/v2`. [#302](https://github.com/rigsmith/rigsmith/pull/302)
 and [#303](https://github.com/rigsmith/rigsmith/pull/303) aligned the end-user
-changesets. The integration branches have the same foundation; #304 is subsequent
-v2 work awaiting review. Merged into a branch does not mean released in a binary.
+changesets. The integration branches share that foundation; #304 subsequently added the
+Claude adapter to v2 only. Merged into a branch does not mean released in a binary.
 
 For the implemented contracts, see [compatibility](CLAUDERIG-V2-COMPATIBILITY.md),
 [services](CLAUDERIG-V2-SERVICES.md), and [the adapter](CLAUDERIG-V2-ADAPTER.md).
@@ -152,6 +152,6 @@ cmd/clauderig -> Claude commands/composition -> shared services <- Codex command
 
 The composition code passes adapter implementations into narrow interfaces owned by the shared services. Shared packages import neither vendor package. Keep these interfaces internal until both vendors validate them; a public SDK or external plugin ABI would freeze guesses too early.
 
-Milestones 1–2 are merged. Milestone 3 is in review in #304, and milestone 4 is next. Milestones 3–5 establish the shared foundation; milestones 6–7 deliver the queue as a separately controlled feature. `codexrig` can begin using the proven boundaries without requiring Claude account/Desktop internals to move.
+Milestones 1–3 are merged; milestone 3 landed in v2 through #304. Milestone 4 is next and has not started. Milestones 3–5 establish the shared foundation; milestones 6–7 deliver the queue as a separately controlled feature. `codexrig` can begin using the proven boundaries without requiring Claude account/Desktop internals to move.
 
 Baseline check during this roadmap: `CLAUDERIG_E2E=1 go test ./internal/clauderig/e2e -run '^TestE2E_(RoundTrip|CrossOSPortability)$' -count=1 -v` passed, including both macOS→Windows and Windows→macOS path-mapping cases on this macOS host. These are synthetic fixtures and local bare remotes, not tests of live Claude resume on Windows. No implementation or runtime configuration was changed.
