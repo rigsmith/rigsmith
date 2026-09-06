@@ -115,8 +115,8 @@ func Desktop() List {
 		inc("extensions-blocklist.json"),
 		inc("git-worktrees.json"),
 		// config.json IS synced, but an adapter-selected keep-only filter reduces it
-		// to its stable `preferences` — the Desktop app rewrites the rest constantly
-		// with rotating cache/token values (oauth.tokenCache, dxt.allowlistCache, …).
+		// to preferences, locale, and userThemeMode. Desktop frequently rewrites
+		// the remaining fields with rotating cache/token values.
 		inc("config.json"),
 	)}
 }
