@@ -3,6 +3,7 @@ package publication_test
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -178,5 +179,63 @@ func TestMissingPolicyDoesNotInitializeStore(t *testing.T) {
 	}
 	if _, err := os.Stat(staging); !os.IsNotExist(err) {
 		t.Fatalf("store initialized: %v", err)
+	}
+}
+
+func TestInvalidPlansDoNotInitializeStore(t *testing.T) {
+	cases := map[string]func(*publication.Plan){
+		"missing remote":                    func(p *publication.Plan) { p.RemoteName = " " },
+		"missing branch":                    func(p *publication.Plan) { p.Branch = "" },
+		"missing snapshot message":          func(p *publication.Plan) { p.SnapshotMessage = " " },
+		"negative retries":                  func(p *publication.Plan) { p.PushRetries = -1 },
+		"missing fold message":              func(p *publication.Plan) { p.Retention.FoldMessage = nil },
+		"zero keep days":                    func(p *publication.Plan) { p.Retention.KeepDays = 0 },
+		"negative keep days":                func(p *publication.Plan) { p.Retention.KeepDays = -1 },
+		"negative floor":                    func(p *publication.Plan) { p.Retention.FloorBytes = -1 },
+		"negative factor":                   func(p *publication.Plan) { p.Retention.SquashFactor = -1 },
+		"nan factor":                        func(p *publication.Plan) { p.Retention.SquashFactor = math.NaN() },
+		"infinite factor":                   func(p *publication.Plan) { p.Retention.SquashFactor = math.Inf(1) },
+		"missing history branch":            func(p *publication.Plan) { p.History.Branch = " " },
+		"history overwrites primary branch": func(p *publication.Plan) { p.History.Branch = p.Branch },
+		"missing history paths":             func(p *publication.Plan) { p.History.Paths = nil },
+		"empty history path":                func(p *publication.Plan) { p.History.Paths = []string{"prefs", ""} },
+		"missing history commit message":    func(p *publication.Plan) { p.History.CommitMessage = "" },
+		"missing history squash message":    func(p *publication.Plan) { p.History.SquashMessage = " " },
+		"zero history limit":                func(p *publication.Plan) { p.History.MaxCommits = 0 },
+		"negative history limit":            func(p *publication.Plan) { p.History.MaxCommits = -1 },
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			staging := filepath.Join(t.TempDir(), "store")
+			p := plan()
+			change(&p)
+			pol := policy(t)
+			pol.Init = func(context.Context, string) (*gitrepo.Repo, error) {
+				t.Fatal("invalid plan reached repository initialization")
+				return nil, nil
+			}
+			result, err := (publication.Workflow{Policy: pol}).Publish(t.Context(), publication.PublishRequest{StagingDir: staging, Plan: p})
+			if err == nil || result.Committed || result.Pushed {
+				t.Fatalf("invalid plan: %+v, %v", result, err)
+			}
+			if _, err := os.Stat(staging); !os.IsNotExist(err) {
+				t.Fatalf("invalid plan touched store: %v", err)
+			}
+		})
+	}
+}
+
+func TestOptionalHistoryAndZeroThresholdsRemainValid(t *testing.T) {
+	root := fixture(t)
+	p := plan()
+	p.History = nil
+	p.PushRetries = 0
+	p.Retention.FloorBytes = 0
+	p.Retention.SquashFactor = 0
+	staging := filepath.Join(root, "store")
+	put(t, staging, "native.log", "fixture")
+	result, err := (publication.Workflow{Policy: policy(t)}).Publish(t.Context(), publication.PublishRequest{StagingDir: staging, Plan: p})
+	if err != nil || !result.Committed || result.Pushed {
+		t.Fatalf("valid zero thresholds: %+v, %v", result, err)
 	}
 }

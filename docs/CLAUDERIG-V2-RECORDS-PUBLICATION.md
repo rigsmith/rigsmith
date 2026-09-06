@@ -31,7 +31,8 @@ No vendor/profile field is added to those rows.
 
 `LedgerSummary` and `MetadataSummary` expose native ledger and Desktop facts to
 queries. The shared query functions preserve literal title matching and the
-session list's existing visible-field filter. They do not broaden title search
+session list's existing visible-field filter. An empty title query is rejected;
+a blank list filter still includes all rows. They do not broaden title search
 to cwd, attribution or transcript bodies. Native content scanning, source
 aggregation, account resolution, resume hints, deletion and Desktop operations
 remain in Claude packages. The shared summary is not serialized into CLI JSON
@@ -42,7 +43,10 @@ responses; existing output types still determine that format.
 `publication.Workflow` runs commit, push/reconcile and history maintenance using
 `core/gitrepo`. Required caller policies supply repository initialization, byte
 preparation, validation, the publication audit, conflict handling and the
-human-resolution error. Missing policies fail before initialization. Claude's
+human-resolution error. Missing policies and incomplete plans fail before initialization. History plans
+require a distinct branch, explicit nonempty pathspecs and messages, and a positive
+commit limit. Retention requires positive resolved keep-days, a fold label, and
+nonnegative finite thresholds (zero thresholds remain valid). Claude's
 service translates shared progress back to its existing event types, including
 native resolution details from the conflict callback.
 

@@ -26,8 +26,8 @@ func (w Workflow) Publish(ctx context.Context, req PublishRequest) (result Publi
 	if err := w.Policy.check(); err != nil {
 		return result, err
 	}
-	if req.Plan.RemoteName == "" || req.Plan.Branch == "" || req.Plan.PushRetries < 0 || req.Plan.Retention.FoldMessage == nil {
-		return result, fmt.Errorf("publication: incomplete plan")
+	if err := req.Plan.check(); err != nil {
+		return result, err
 	}
 	repo, err := w.Policy.Init(ctx, req.StagingDir)
 	if err != nil {

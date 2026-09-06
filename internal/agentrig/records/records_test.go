@@ -93,3 +93,18 @@ func TestQueriesKeepTitleAndVisibleFieldsSeparate(t *testing.T) {
 		t.Fatal("unselected attribution became searchable")
 	}
 }
+
+func TestTitleQueryRejectsEmptyButKeepsLiteralWhitespace(t *testing.T) {
+	row := records.Summary{Title: "Plan Release"}
+	for _, caseSensitive := range []bool{false, true} {
+		if records.TitleMatches(row, "", caseSensitive) {
+			t.Fatal("empty title query matched a nonempty title")
+		}
+		if !records.TitleMatches(row, " ", caseSensitive) {
+			t.Fatal("literal whitespace query was trimmed")
+		}
+	}
+	if !records.MatchesText(row, "") {
+		t.Fatal("blank list filter must still include rows")
+	}
+}

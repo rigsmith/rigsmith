@@ -5,6 +5,8 @@ package publication
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -35,6 +37,28 @@ type Plan struct {
 	PushRetries                         int
 	History                             *HistoryPlan
 	Retention                           Retention
+}
+
+// check rejects incomplete or unsafe maintenance plans before repository setup.
+// Zero size thresholds remain valid; callers may deliberately force maintenance.
+func (p Plan) check() error {
+	if strings.TrimSpace(p.RemoteName) == "" || strings.TrimSpace(p.Branch) == "" || strings.TrimSpace(p.SnapshotMessage) == "" || p.PushRetries < 0 {
+		return fmt.Errorf("publication: incomplete plan")
+	}
+	if p.Retention.FoldMessage == nil || p.Retention.KeepDays <= 0 || p.Retention.FloorBytes < 0 || p.Retention.SquashFactor < 0 || math.IsNaN(p.Retention.SquashFactor) || math.IsInf(p.Retention.SquashFactor, 0) {
+		return fmt.Errorf("publication: invalid retention plan")
+	}
+	if h := p.History; h != nil {
+		if strings.TrimSpace(h.Branch) == "" || h.Branch == p.Branch || len(h.Paths) == 0 || strings.TrimSpace(h.CommitMessage) == "" || strings.TrimSpace(h.SquashMessage) == "" || h.MaxCommits <= 0 {
+			return fmt.Errorf("publication: invalid history plan")
+		}
+		for _, path := range h.Paths {
+			if strings.TrimSpace(path) == "" {
+				return fmt.Errorf("publication: empty history pathspec")
+			}
+		}
+	}
+	return nil
 }
 
 // HistoryPlan selects a best-effort independent history branch and Git pathspecs.

@@ -5,10 +5,10 @@ import (
 	"strings"
 )
 
-// TitleMatches is a literal title query. Empty titles never match, and casing
+// TitleMatches is a literal title query. Empty queries or titles never match, and casing
 // follows the caller's choice. Native content search remains outside this layer.
 func TitleMatches(s Summary, query string, caseSensitive bool) bool {
-	if s.Title == "" {
+	if s.Title == "" || query == "" {
 		return false
 	}
 	title := s.Title
