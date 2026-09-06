@@ -35,14 +35,14 @@ implementations; this extraction does not introduce a second transport stack.
 
 ## Preserved execution contracts
 
-- Sync holds its existing lock across repair, capture, and publication. Services
-  do not acquire another lock. Pull retains its existing coordination behavior;
-  store-wide coordination remains a separate milestone. Lock ownership tokens
-  include a random suffix so same-timestamp acquisitions remain distinct; stale
-  lock parsing still accepts existing PID/timestamp files.
+- Services now acquire shared store ownership, borrowing it for sequential nested
+  calls. Sync's command holds it through debounce, repair, capture and publication;
+  pull tries once before clone/reconcile/auto-restore. See the
+  [coordination contract](CLAUDERIG-V2-COORDINATION.md). The legacy PID/timestamp
+  sync guard remains at the CLI boundary for older sync clients.
 - `Service.Sync` repairs abandoned merges before `engine.Sync` writes the snapshot.
   Identity is still captured once and shared by ledger and device metadata.
-- Hook payload decoding, debounce and locking stay in the command. `SyncRequest`
+- Hook payload decoding and debounce stay in the command. `SyncRequest`
   carries explicit normal/selected/all flush intent and dry-run selection. The
   CLI supplies `ResolveFlush` so decoding still happens after merge repair and
   identity observation; direct callers can pass an already decoded intent.

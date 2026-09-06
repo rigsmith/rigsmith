@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/agentrig/publication"
+	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 )
 
 // Reconcile brings the staging repo back onto one line of history with the
@@ -21,12 +23,28 @@ import (
 // the SessionStart hook cannot. Otherwise the merge is aborted, which leaves the
 // repo usable even though the sync did not land.
 func (s Service) Reconcile(ctx context.Context, req ReconcileRequest) error {
+	if req.Repo == nil {
+		return fmt.Errorf("reconcile requires a repository")
+	}
+	ctx, release, err := storelock.Acquire(ctx, req.Repo.Dir, StoreWait)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.publication().Reconcile(ctx, req)
 }
 
 // FinishMerge audits before committing a pending merge. Native audit and byte
 // preparation remain Claude policies.
 func FinishMerge(ctx context.Context, repo *gitrepo.Repo) error {
+	if repo == nil {
+		return fmt.Errorf("finish merge requires a repository")
+	}
+	ctx, release, err := storelock.Acquire(ctx, repo.Dir, StoreWait)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return (Service{}).publication().FinishMerge(ctx, repo)
 }
 
@@ -46,6 +64,11 @@ func FinishMerge(ctx context.Context, repo *gitrepo.Repo) error {
 // merge standing). Pull does not capture a new snapshot over the conflicted
 // tree; it retains its best-effort behavior instead of blocking SessionStart.
 func (s Service) RepairMerge(ctx context.Context, staging string, allowMergeTool bool) (result RepairResult) {
+	ctx, release, err := storelock.Acquire(ctx, staging, StoreWait)
+	if err != nil {
+		return RepairResult{Err: err}
+	}
+	defer release()
 	repo, err := gitrepo.Open(ctx, staging)
 	if err != nil {
 		return RepairResult{Safe: true} // no staging repo yet — nothing to wedge

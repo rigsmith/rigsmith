@@ -179,7 +179,7 @@ func NewMergeCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&abort, "abort", false, "back out an in-progress merge, restoring the pre-merge state")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the resolution ledger as JSON")
-	return cmd
+	return coordinatedCommand(cmd)
 }
 
 // Resolution is one file the merge dealt with — what ran, and what it did.

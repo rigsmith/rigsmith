@@ -75,8 +75,9 @@ returns before history maintenance, as it did previously.
 Publication success is reported before maintenance. The selected history branch
 is maintained best-effort. Size maintenance repacks and remeasures first, then
 folds history at local midnight and force-pushes only if needed. It retains the
-existing error handling and force-push policy; coordination and competing-writer
-protection are milestone 6, not implicit guarantees of this extraction.
+existing error handling and force-push policy. The shared workflow still requires
+caller-owned coordination; Claude services now supply it through the
+[milestone 6a store lock](CLAUDERIG-V2-COORDINATION.md).
 
 Device, manifest, ledger and journal serializers remain native. The calling
 Claude sync service records capture/device metadata before publication and

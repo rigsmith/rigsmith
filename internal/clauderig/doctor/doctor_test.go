@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
@@ -250,8 +252,23 @@ func TestCheckStagingMerge_FailsAndFixCommitsAMarkerFreeResolution(t *testing.T)
 	if r.Status != Fail || r.Fix == nil {
 		t.Fatalf("wedged repo: got %+v, want Fail with a Fix", r)
 	}
+	_, release, err := storelock.Acquire(ctx, dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	waiting, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
+	defer cancel()
+	if err := r.Fix(waiting); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("busy repair: %v", err)
+	}
+	release()
 	if err := r.Fix(ctx); err != nil {
 		t.Fatal(err)
+	}
+	// A diagnostic callback can be invoked after another operation repaired it.
+	if err := r.Fix(ctx); err != nil {
+		t.Fatalf("already repaired: %v", err)
 	}
 	if r2 := checkStagingMerge(ctx, env); r2.Status != OK {
 		t.Fatalf("after fix: %+v, want OK", r2)

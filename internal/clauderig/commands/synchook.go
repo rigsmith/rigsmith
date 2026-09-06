@@ -2,6 +2,7 @@ package commands
 
 import (
 	"cmp"
+	"context"
 	"crypto/rand"
 	"fmt"
 	"os"
@@ -25,7 +26,8 @@ const maxLockHold = 20 * time.Minute
 // sync, short enough not to hold up the shell someone is closing.
 const flushLockWait = 15 * time.Second
 
-// syncLock is a cross-platform advisory lock over the staging tree. It lives
+// syncLock is the legacy guard retained for v1 sync clients. New operations also
+// hold storelock ownership: this age-based guard alone cannot coordinate v2. It lives
 // beside the repo rather than inside it, so it never shows up as an uncommitted
 // change or has to be gitignored.
 //
@@ -66,8 +68,15 @@ func acquireSyncLock(staging string) (*syncLock, bool, error) {
 // progress to finish. An ordinary hook passes 0: another sync is walking the
 // same tree and will capture the same work, so there is nothing to wait for.
 func acquireSyncLockWait(staging string, d time.Duration) (*syncLock, bool, error) {
+	return acquireSyncLockWaitContext(context.Background(), staging, d)
+}
+
+func acquireSyncLockWaitContext(ctx context.Context, staging string, d time.Duration) (*syncLock, bool, error) {
 	deadline := time.Now().Add(d)
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		lock, got, err := acquireSyncLock(staging)
 		if err != nil || got {
 			return lock, got, err
@@ -75,7 +84,13 @@ func acquireSyncLockWait(staging string, d time.Duration) (*syncLock, bool, erro
 		if !time.Now().Before(deadline) {
 			return nil, false, nil
 		}
-		time.Sleep(250 * time.Millisecond)
+		timer := time.NewTimer(min(250*time.Millisecond, time.Until(deadline)))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, false, ctx.Err()
+		case <-timer.C:
+		}
 	}
 }
 

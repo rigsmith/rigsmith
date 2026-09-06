@@ -8,6 +8,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
@@ -25,6 +26,7 @@ type PullRequest struct {
 // PullResult exposes failures that the SessionStart command deliberately treats
 // as best-effort. A failed initial clone creates no journal/staging directory.
 type PullResult struct {
+	CoordinationError                        error
 	RequestError                             error
 	CloneError, ReconcileError, RestoreError error
 	Repair                                   RepairResult
@@ -40,6 +42,13 @@ func (s Service) Pull(ctx context.Context, req PullRequest) (result PullResult) 
 		s.emit(PullFailed{Err: result.RequestError})
 		return result
 	}
+	ctx, release, err := storelock.Acquire(ctx, req.StagingDir, 0)
+	if err != nil {
+		result.CoordinationError = err
+		s.emit(PullFailed{Err: err})
+		return result
+	}
+	defer release()
 	cfg, me, staging := req.Config, req.Machine, req.StagingDir
 	// Update the staging repo from the remote (best-effort; never blocks).
 	if cfg.Remote != "" {

@@ -12,6 +12,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/confkit"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/claudemd"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ghrepo"
@@ -451,6 +452,15 @@ func checkStagingMerge(ctx context.Context, env Env) Result {
 		Detail: fmt.Sprintf("a merge was left in progress (%d conflicted file(s)) — sync is blocked", len(conflicts)),
 		Hint:   "clauderig can settle it with its merge policies",
 		Fix: func(ctx context.Context) error {
+			ctx, release, err := storelock.Acquire(ctx, env.Staging, 15*time.Second)
+			if err != nil {
+				return err
+			}
+			defer release()
+			// Another operation may have repaired it since the diagnostic.
+			if !repo.InMerge(ctx) {
+				return nil
+			}
 			rep, err := mergepolicy.Resolve(ctx, repo)
 			if err != nil {
 				return err
