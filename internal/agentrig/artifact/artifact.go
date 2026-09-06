@@ -36,6 +36,7 @@ var ErrTooLarge = errors.New("capture artifact exceeds size limit")
 type Store struct {
 	Dir      string
 	MaxBytes int64
+	reflush  func(context.Context, string) error // nil uses durable.Rewrite; per-store fault injection
 }
 
 func (s Store) limit() int64 {
@@ -102,7 +103,11 @@ func (s Store) BuildWithMetadata(ctx context.Context, key string, build func(con
 	}
 	defer release()
 	if ref, err := s.inspect(ctx, key, ""); err == nil {
-		if err = durable.Rewrite(ctx, path); err != nil {
+		reflush := s.reflush
+		if reflush == nil {
+			reflush = durable.Rewrite
+		}
+		if err = reflush(ctx, path); err != nil {
 			return "", err
 		}
 		return ref, nil

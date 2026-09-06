@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rigsmith/rigsmith/internal/agentrig/durable"
 )
 
 func testStore(t *testing.T) Store {
@@ -37,21 +39,9 @@ func TestSealedCaptureReuseMetadataAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, _ := s.path(key)
-	before, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
 	again, err := s.BuildWithMetadata(t.Context(), key, build)
 	if err != nil || again != ref || calls != 1 {
 		t.Fatalf("reused: %s %d %v", again, calls, err)
-	}
-	after, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if os.SameFile(before, after) {
-		t.Fatal("retry did not rewrite/flush the existing capture")
 	}
 	meta, err := s.Metadata(t.Context(), ref)
 	if err != nil || meta.BaseReference != "retained-seed-commit" {
@@ -211,5 +201,41 @@ func TestBuildRefusesLinkedContent(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatal("linked content sealed", err)
+	}
+}
+
+func TestReuseMustReflushBeforeAcknowledgingDurability(t *testing.T) {
+	s := testStore(t)
+	key := Key([]byte("uncertain-reuse"))
+	builds := 0
+	build := func(_ context.Context, dir string) error {
+		builds++
+		return os.WriteFile(filepath.Join(dir, "file"), []byte("capture"), 0600)
+	}
+	ref, err := s.Build(t.Context(), key, build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flushes := 0
+	s.reflush = func(ctx context.Context, path string) error {
+		flushes++
+		if err := durable.Rewrite(ctx, path); err != nil {
+			return err
+		}
+		return durable.ErrUncertain
+	}
+	for range 2 {
+		got, err := s.Build(t.Context(), key, build)
+		if !errors.Is(err, durable.ErrUncertain) || got != "" {
+			t.Fatalf("acknowledged uncertain reflush: %s %v", got, err)
+		}
+	}
+	if flushes != 2 || builds != 1 {
+		t.Fatalf("flushes=%d builds=%d", flushes, builds)
+	}
+	s.reflush = nil
+	got, err := s.Build(t.Context(), key, build)
+	if err != nil || got != ref || builds != 1 {
+		t.Fatalf("retry: %s builds=%d %v", got, builds, err)
 	}
 }
