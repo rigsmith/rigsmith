@@ -311,6 +311,45 @@ at-a-glance status/actions, plus dedicated TUIs for the heavy flows. Every comma
 also runs **non-interactive/scriptable** when piped or given flags (TUIs are
 gated on a TTY).
 
+### Finding a session: two questions, two views
+
+The sessions window answers "which session was that" — a word in it, roughly
+when, whose account. That is the right tool when you remember something *about*
+the session.
+
+It is the wrong tool when what you remember is *where you were*: which Desktop,
+which profile, which project. You cannot search for a place you cannot name, and
+a session row reduces the place to a two-word label. So the window has a second
+mode, **Places**, which walks stores instead of sessions.
+
+What that mode can show and a list cannot:
+
+- **A sidecar with no transcript.** Desktop keeps a record of sessions whose
+  conversation lives in the CLI tree. The sidecar carries `cliSessionId`, which
+  is the link between "this Desktop knows about it" and "the conversation is
+  over there" — and the answer to most of the questions the window exists for.
+- **The same store, live and synced, side by side.** The repo holds more than
+  this machine does (deleted worktrees, other machines), and a session present
+  in one and absent from the other is the case people arrive with.
+- **What a place carries besides sessions** — the MCP config, the worktree
+  registry, a profile's own record. A profile with no sessions in it can still
+  be the thing worth restoring, and no session listing would ever say so.
+
+Three deliberate choices:
+
+- **Lazy in three steps.** Stores are a directory count, groups are one more
+  level, and only opening a group reads files. The CLI store alone holds four
+  thousand of them, so an eager tree would be a several-second pause on a window
+  that is supposed to feel like looking in a drawer.
+- **Workspaces are labelled by their work.** Desktop files sessions under
+  `<account>/<workspace>`, both opaque uuids, and two accounts here have
+  workspaces with the *same* id — so neither uuid identifies one on its own. The
+  newest sidecar in each is read for its working directory, and that becomes the
+  label. The uuids stay on the row, because they are what the folder is called
+  if you go looking on disk.
+- **Absent is not empty.** A store that has not been synced here and a store
+  with nothing in it render identically and mean opposite things.
+
 ### `clauderig ui` — hub dashboard (bubbletea)
 At-a-glance: remote reachability, local/behind status, last sync, per-root file
 state, device registry. Hotkeys dispatch to the focused TUIs.

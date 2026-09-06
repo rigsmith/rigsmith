@@ -1,0 +1,9 @@
+// The repository builds as one workspace: the CLIs and the window are separate
+// modules so they can carry separate versions, and this is what lets the window
+// import the packages beside it without either being published first.
+go 1.26.7
+
+use (
+	.
+	./ui
+)

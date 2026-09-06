@@ -5,14 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/doctorui"
-	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/doctor"
-	"github.com/rigsmith/rigsmith/internal/clauderig/settings"
 	"github.com/spf13/cobra"
 )
 
@@ -45,7 +42,7 @@ func runDoctor(cmd *cobra.Command, version string, fixAll bool) error {
 	defer cancel()
 	out := cmd.OutOrStdout()
 
-	env := buildDoctorEnv(ctx, version)
+	env := doctor.NewEnv(ctx, version)
 	sections := doctor.Run(ctx, env)
 	renderHeader(out, env)
 	doctorui.RenderSections(out, sections)
@@ -60,27 +57,6 @@ func runDoctor(cmd *cobra.Command, version string, fixAll bool) error {
 		os.Exit(1)
 	}
 	return nil
-}
-
-func buildDoctorEnv(ctx context.Context, version string) doctor.Env {
-	home, _ := os.UserHomeDir()
-	root := repoRootBestEffort(ctx)
-	env := doctor.Env{Home: home, Version: version, RepoRoot: root}
-	if root != "" {
-		env.RepoName = filepath.Base(root)
-		env.ProjectSettings, _ = settings.Project.Path(home, root)
-		env.LocalSettings, _ = settings.Local.Path(home, root)
-		env.ClaudeMd = filepath.Join(root, "CLAUDE.md")
-	}
-	env.UserSettings, _ = settings.User.Path(home, root)
-	cfg, err := config.LoadOrDefault()
-	if err != nil {
-		cfg = config.Default()
-	}
-	env.Cfg = cfg
-	env.Machine = config.Detect("this")
-	env.Staging, _ = config.StagingDir()
-	return env
 }
 
 func renderHeader(out io.Writer, env doctor.Env) {

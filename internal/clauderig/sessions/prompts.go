@@ -95,6 +95,122 @@ func Prompts(path string, n int) (Conversation, error) {
 	return c, nil
 }
 
+// turnMax bounds one rendered turn. Longer than a prompt gets, because an
+// answer is where the substance usually is and cutting it at 400 characters
+// leaves the reader with the preamble and none of the point.
+const turnMax = 2000
+
+// Turn is one side of the conversation: who spoke, what they said, when.
+type Turn struct {
+	Role string // "user" or "assistant"
+	Text string
+	At   time.Time
+}
+
+// Turns reads a transcript as a conversation rather than as a list of prompts,
+// and returns the first n turns along with how many there are.
+//
+// Prompts deliberately keeps only what a person typed, which is the right
+// answer for a summary. It is the wrong answer for reading the thing back: a
+// conversation with one side removed is not a shorter conversation, it is a
+// different and confusing document.
+//
+// The same predicate still filters the user side — tool results, IDE-state
+// injections and interrupt markers are all filed as "user" records and none of
+// them were said by anyone. The assistant side keeps its text parts and drops
+// the rest, which is tool calls and their plumbing.
+func Turns(path string, n int) (turns []Turn, total int, err error) {
+	if path == "" || n <= 0 {
+		return nil, 0, nil
+	}
+	f, err := transcript.Open(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = f.Close() }()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 8<<20)
+	for sc.Scan() {
+		var rec struct {
+			Type      string `json:"type"`
+			Timestamp string `json:"timestamp"`
+			Message   struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+			continue
+		}
+		var t Turn
+		switch rec.Type {
+		case "user":
+			text, hasText := session.PromptCandidate(rec.Message.Content)
+			if !hasText || !session.IsHumanPrompt(text) {
+				continue
+			}
+			t = Turn{Role: "user", Text: trimTurn(text)}
+		case "assistant":
+			text := assistantText(rec.Message.Content)
+			if strings.TrimSpace(text) == "" {
+				continue // a turn that was only tool calls said nothing to read
+			}
+			t = Turn{Role: "assistant", Text: trimTurn(text)}
+		default:
+			continue
+		}
+		if ts, terr := time.Parse(time.RFC3339, rec.Timestamp); terr == nil {
+			t.At = ts.UTC()
+		}
+		total++
+		if len(turns) < n {
+			turns = append(turns, t)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return turns, total, err
+	}
+	return turns, total, nil
+}
+
+// assistantText joins the text an answer contained, ignoring everything else in
+// it. Assistant content is a list of parts — text, tool calls, their results —
+// and only the text was addressed to the reader.
+func assistantText(raw json.RawMessage) string {
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &parts) != nil {
+		// Older transcripts wrote a plain string.
+		var plain string
+		if json.Unmarshal(raw, &plain) == nil {
+			return plain
+		}
+		return ""
+	}
+	var b strings.Builder
+	for _, p := range parts {
+		if p.Type != "text" || p.Text == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(p.Text)
+	}
+	return b.String()
+}
+
+// trimTurn bounds a turn by runes, so a cut cannot split a character.
+func trimTurn(s string) string {
+	s = strings.TrimSpace(s)
+	if utf8.RuneCountInString(s) > turnMax {
+		s = string([]rune(s)[:turnMax]) + "\u2026"
+	}
+	return s
+}
+
 // trimPrompt collapses a prompt to something a list can hold, bounding by runes
 // so a cut cannot split a multi-byte character.
 func trimPrompt(s string) string {

@@ -76,8 +76,27 @@ jobs:
           git config --global user.name rigsmith-ci
           git config --global init.defaultBranch main
 
+      # Wails v3 links against GTK 4 and WebKitGTK 6.0 on Linux — not the GTK 3 /
+      # WebKit2GTK 4.1 pairing most guides still name — so `go test ./...` cannot
+      # compile ./ui here without them. The app only ships for macOS, but keeping
+      # it inside ./... means a change that breaks another platform is caught
+      # here rather than by whoever tries to port it.
+      - name: Linux GUI headers (for ./ui)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+
       # CI runs on main/PRs but not on tags, so gate the release on the tests
       # passing at the exact tagged commit — never publish binaries that fail.
+      # The window is its own module and carries its own version, so the tag
+      # this workflow fires on does not name it. Read it from ui/go.mod and hand
+      # it to GoReleaser, or the binary reports the CLI's version instead.
+      - name: Read the UI's version
+        run: |
+          v=$(sh scripts/ui-version.sh)
+          echo "UI_VERSION=$v" >> "$GITHUB_ENV"
+          echo "the window will be stamped $v"
+
       - name: Test
         run: go test ./... -count=1
 
@@ -228,4 +247,71 @@ jobs:
             dist/checksums.txt
             dist/homebrew/Casks/*.rb
             npm/dist/**/package.json
+          retention-days: 7
+  # The UI ships as a macOS .app, which the job above cannot build: it
+  # cross-compiles from Linux and signs bare Mach-O binaries with quill. A
+  # bundle needs cgo (so a real macOS runner) and codesign, which only exists on
+  # macOS. Same certificate and same notary key — a second consumer of the
+  # credentials the release already has, not a second identity.
+  #
+  # Separate job rather than folding the whole release onto macOS: keeping the
+  # CLI builds on Linux is what makes them cheap, and a failure packaging the
+  # app must not take the four binaries down with it.
+  ui:
+    name: Package the macOS app
+    runs-on: macos-latest
+    needs: goreleaser
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build, sign and notarize
+        env:
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+        run: |
+          # The window's own version, not the tag's. It is a separate module at
+          # 0.x while the CLIs are at 1.x, and the app bundle claiming the tag
+          # would put a different number on the Mac build than the Windows one
+          # carries — same window, two versions.
+          version=$(sh scripts/ui-version.sh)
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && version="$version-dryrun"
+          echo "packaging the app as $version"
+          sh scripts/package-ui.sh "$version" dist-ui
+          echo "UI_VERSION=$version" >> "$GITHUB_ENV"
+
+      # Tag pushes only. A dry run has no release to attach to, and inventing
+      # one would publish the thing the dry run exists to avoid.
+      - name: Attach to the release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist-ui/*.zip --clobber
+        # The zip carries the window's version in its name; the release it
+        # attaches to carries the repository's. They are different numbers on
+        # purpose.
+
+      # The cask cannot come from GoReleaser: it publishes casks from its own
+      # artifacts, and this one is built after that job has finished. Written
+      # here from the zip's real checksum instead.
+      - name: Publish the Homebrew cask
+        if: github.event_name == 'push'
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        # The window's version names the cask and its zip; the repository's tag
+        # is where that zip actually lives. Two numbers, both needed.
+        run: sh scripts/publish-ui-cask.sh "$UI_VERSION" dist-ui "$GITHUB_REF_NAME"
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: dryrun-ui
+          path: dist-ui/*.zip
           retention-days: 7
