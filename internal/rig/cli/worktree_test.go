@@ -316,3 +316,66 @@ func TestWorktreeCompletionHonoursRepoFlag(t *testing.T) {
 		t.Fatalf("completions = %v, want the --repo repository's worktree", comps)
 	}
 }
+
+// --dry-run is a promise that nothing changes, and these two verbs broke it:
+// they do their work in-process rather than by shelling out, so they never went
+// through runCommand, which is where that promise is otherwise kept. `new`
+// created the worktree and the branch; `rm` deleted the worktree.
+func TestWorktreeNewAndRmHonourDryRun(t *testing.T) {
+	ctx := context.Background()
+	r, err := gitrepo.Init(ctx, filepath.Join(t.TempDir(), "other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "a", "1", "init")
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := newWorktreeCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs(args)
+		if err := cmd.ExecuteContext(ctx); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return buf.String()
+	}
+
+	// dryRun is the root command's persistent flag, which these subcommands
+	// inherit; the worktree command on its own has no way to set it.
+	dryRun = true
+	defer func() { dryRun = false }()
+
+	wtPath := filepath.Join(filepath.Dir(r.Dir), "other-worktrees", "feat-x")
+	out := run("new", "feat/x", "--repo", r.Dir, "--no-open")
+	if !strings.Contains(out, "would") {
+		t.Errorf("new --dry-run = %q; want it to say what it would do", out)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("new --dry-run created the worktree at %s", wtPath)
+	}
+	// Not even the parent: an empty <repo>-worktrees left behind is still not
+	// "nothing happened".
+	if _, err := os.Stat(filepath.Dir(wtPath)); !os.IsNotExist(err) {
+		t.Errorf("new --dry-run created %s", filepath.Dir(wtPath))
+	}
+	if r.BranchExists(ctx, "feat/x") {
+		t.Error("new --dry-run created the branch")
+	}
+
+	// And rm, which is the destructive end of the same hole.
+	dryRun = false
+	run("new", "feat/y", "--repo", r.Dir, "--no-open")
+	yPath := filepath.Join(filepath.Dir(r.Dir), "other-worktrees", "feat-y")
+	if _, err := os.Stat(yPath); err != nil {
+		t.Fatalf("setup: worktree not created: %v", err)
+	}
+	dryRun = true
+	if out := run("rm", "feat/y", "--repo", r.Dir); !strings.Contains(out, "would remove") {
+		t.Errorf("rm --dry-run = %q; want it to say what it would remove", out)
+	}
+	if _, err := os.Stat(yPath); err != nil {
+		t.Errorf("rm --dry-run removed the worktree: %v", err)
+	}
+}
