@@ -119,6 +119,19 @@ func RunningInstances(claudeHome string) []Instance {
 	return out
 }
 
+// PIDAlive reports whether a process id is still running.
+//
+// Exported because a pid recorded in a file is a claim about a process that may
+// no longer exist, and more than one part of clauderig has to ask: the live
+// session guard here, and the sync lock, whose holder writes its pid and can be
+// killed before it removes the file. Reusing this keeps one per-platform
+// implementation rather than a second one that drifts.
+//
+// A pid belonging to another user answers true — the process exists, which is
+// the question — and a pid that has been reused by something unrelated does
+// too. Callers treat true as "cannot rule it out" rather than as proof.
+func PIDAlive(pid int) bool { return pid > 1 && pidAlive(pid) }
+
 // ErrProcessScan means the process table could not be read, so whether Claude
 // Code is running is UNKNOWN. It is deliberately not an empty result: "I could
 // not look" and "nothing is there" are different answers, and only one of them
