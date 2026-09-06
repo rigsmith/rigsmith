@@ -55,6 +55,9 @@
   .eyebrow button:hover{border-color:var(--muted-2);}
 
   /* filter bar */
+  /* An explicit display in this sheet beats the [hidden] attribute's own rule,
+     so hiding the list's filters left them on screen in Places mode. */
+  [hidden]{display:none !important;}
   .filters{display:flex;gap:10px;align-items:center;margin:18px 0 0;flex-wrap:wrap;}
   select,input{
     background:var(--ink-3);color:var(--paper);border:1px solid var(--line);
@@ -314,7 +317,8 @@
      what is this. They were two, with the first two sharing a column — a list
      of stores with a store's contents spliced into the middle of it, which is
      hard to read as two things because it is drawn as one. */
-  .places{flex:1;min-height:0;display:grid;grid-template-columns:232px 300px 1fr;gap:0;}
+  .places{flex:1;min-height:0;display:grid;gap:0;
+    grid-template-columns:minmax(150px,216px) minmax(180px,300px) minmax(0,1fr);}
   #plist{border-right:1px solid var(--line);}
   .pcolhead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
     margin-bottom:10px;}
@@ -328,7 +332,10 @@
   .linkish{background:none;border:0;padding:0 0 0 6px;font:inherit;font-size:11px;
     color:var(--paper);text-decoration:underline;cursor:pointer;--wails-draggable:no-drag;}
   .pempty{color:var(--muted);font-size:12px;padding:4px 0;}
-  .pcol{overflow:auto;padding:14px 18px 28px;}
+  /* min-width:0 or a grid child refuses to shrink below its content and the
+     whole row overflows, clipping every column instead of wrapping one. */
+  .pcol{overflow:auto;min-width:0;padding:14px 16px 28px;}
+  .pcol *{max-width:100%;}
   #pstores{border-right:1px solid var(--line);}
   .pgrouphead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
     margin:14px 0 6px;}
@@ -1454,8 +1461,9 @@ function renderContents(st, folders) {
   const others = folders.length - mine.length;
   if (others && !showOtherAccounts) {
     const note = el('div', 'pnote');
-    note.append(document.createTextNode(
-      `${others} ${others === 1 ? 'folder' : 'folders'} here belong to another account`));
+    note.append(document.createTextNode(others === 1
+      ? '1 folder here belongs to another account'
+      : `${others} folders here belong to another account`));
     const b = el('button', 'linkish', 'show');
     b.addEventListener('click', () => { showOtherAccounts = true; selectStore(st, storeNode(st.id)); });
     note.append(b);

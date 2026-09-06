@@ -326,7 +326,10 @@ func placeLocations() ([]location, error) {
 		profiles, _ := store.List()
 		for _, pr := range profiles {
 			out = append(out, location{
-				id: "live:desktop@" + pr.Name, label: pr.Label(), where: WhereLive,
+				// The name alone: the account is on the row already, as a badge
+				// and in the tooltip, and Label() repeats it as prose that then
+				// has to be truncated to fit.
+				id: "live:desktop@" + pr.Name, label: pr.Name, where: WhereLive,
 				kind: "profile", profile: pr.Name, base: pr.DataDir()})
 		}
 	}
