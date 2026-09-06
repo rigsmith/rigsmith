@@ -109,7 +109,7 @@ conservative than final archive size. This is not a total-store quota. Archives
 are retained indefinitely for now. No automatic compaction, expiry, startup
 cleanup, or migration is enabled. A process killed during a build can leave a
 private temporary workspace containing raw inputs; startup cleanup under the
-ownership locks is a rollout gate. Successful and ordinarily failed builds clean
+ownership locks is a rollout gate. Successful and ordinarily failed builds attempt to clean
 up their own workspace. Unknown versions and corrupted captures fail closed.
 
 Next: integrate retained capture artifacts with Commit/Push, preserve and recover
