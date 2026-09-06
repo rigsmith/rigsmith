@@ -335,6 +335,14 @@
     white-space:nowrap;}
   .pitem .meta{flex:none;font-size:10.5px;color:var(--dim);}
   .pitem .sub{font-size:10.5px;color:var(--dim);margin-top:2px;}
+  .pfilter{width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:5px 8px;
+    margin-bottom:10px;border:1px solid var(--line);border-radius:6px;background:var(--raise);
+    color:var(--fg);--wails-draggable:no-drag;}
+  .pfilter::placeholder{color:var(--dim);}
+  .bandhead{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+    padding:9px 9px 3px 20px;cursor:default;}
+  .bandhead:hover{background:transparent;}
+  .store .diff{color:var(--fg-faint);}
   .phead{font-size:13px;margin-bottom:2px;}
   .psub{font-size:11px;color:var(--dim);margin-bottom:14px;word-break:break-all;}
 </style>
@@ -1300,6 +1308,7 @@ refresh();
 // group reads any files. The CLI store alone holds four thousand of them.
 
 let placesLoaded = false;
+let placesView = null;
 let openStore = null;   // store id whose groups are showing
 let openGroup = null;   // group id whose items are showing
 
@@ -1317,14 +1326,50 @@ function setMode(mode) {
 // countLine says what is in a store without opening it, and says nothing at all
 // rather than "0 sidecars, 0 transcripts" for an empty one — a row of zeroes
 // reads as broken when the honest answer is "nothing here".
+// The words in here are deliberately not the tool's own. "Sidecar" is what the
+// file is called in the code; what it IS, to someone looking for their work, is
+// a session Claude Desktop remembers. Same for the rest.
+const PLURAL = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
 function countLine(st) {
   if (!st.present) return 'not synced here';
   const bits = [];
-  if (st.transcripts) bits.push(`${st.transcripts} transcript${st.transcripts === 1 ? '' : 's'}`);
-  if (st.sidecars) bits.push(`${st.sidecars} sidecar${st.sidecars === 1 ? '' : 's'}`);
-  if (st.cowork) bits.push(`${st.cowork} cowork`);
-  if (st.configs) bits.push(`${st.configs} config`);
-  return bits.length ? bits.join(' · ') : 'empty';
+  if (st.transcripts) bits.push(PLURAL(st.transcripts, 'conversation', 'conversations'));
+  if (st.sidecars) bits.push(PLURAL(st.sidecars, 'Desktop session', 'Desktop sessions'));
+  if (st.cowork) bits.push(PLURAL(st.cowork, 'Cowork session', 'Cowork sessions'));
+  if (st.configs) bits.push(PLURAL(st.configs, 'setting', 'settings'));
+  return bits.length ? bits.join(' · ') : 'nothing filed here';
+}
+
+// What each kind of thing is, in words that mean something to the person
+// looking. The keys are the bridge's kinds; the values are English.
+const KIND_WORD = {
+  transcript: 'chat',
+  sidecar: 'desktop',
+  cowork: 'cowork',
+  config: 'settings',
+  aux: 'files',
+};
+const KIND_HELP = {
+  transcript: 'A conversation. Clicking opens it.',
+  sidecar: "Claude Desktop's record of a session. The conversation itself may live in the CLI tree — the transcript id says where.",
+  cowork: 'A Cowork session.',
+  config: 'A settings file this place carries.',
+  aux: "Subagent runs and saved tool output kept beside a conversation — the part people are surprised to lose in a restore.",
+};
+
+// countHint says how a synced store differs from the same store on this Mac.
+// The two numbers are side by side already, but nobody diffs four-digit numbers
+// by eye, and the difference is the entire reason someone opened this window.
+function diffHint(st, all) {
+  if (st.where !== 'repo') return '';
+  const mine = all.find(o => o.where === 'live' && o.id.slice(5) === st.id.slice(5));
+  if (!mine || !mine.present) return '';
+  const d = (st.transcripts + st.sidecars + st.cowork) -
+            (mine.transcripts + mine.sidecars + mine.cowork);
+  if (d > 0) return `${d} more than this Mac`;
+  if (d < 0) return `${-d} fewer than this Mac`;
+  return '';
 }
 
 async function loadStores() {
@@ -1338,8 +1383,19 @@ async function loadStores() {
     return;
   }
   placesLoaded = true;
+  placesView = view;
   box.replaceChildren();
   if (view.error) box.append(el('div', 'toast err', view.error));
+
+  // A filter, because one of these stores holds 174 projects and scrolling is
+  // not finding. It narrows whatever is on screen — stores and, once a store is
+  // open, its projects — so it works the same wherever you are in the tree.
+  const filter = el('input', 'pfilter');
+  filter.type = 'search';
+  filter.placeholder = 'filter places…';
+  filter.autocomplete = 'off';
+  filter.addEventListener('input', () => applyFilter(filter.value.trim().toLowerCase()));
+  box.append(filter);
 
   // Split by where the bytes are. This is the distinction the whole window
   // turns on: a session missing from one and present in the other is the
@@ -1354,6 +1410,8 @@ async function loadStores() {
       if (!st.present) node.dataset.absent = 'yes';
       node.append(el('div', 'nm', st.label));
       node.append(el('div', 'ct', countLine(st)));
+      const hint = diffHint(st, view.stores || []);
+      if (hint) node.append(el('div', 'ct diff', hint));
       node.title = st.path;
       node.addEventListener('click', () => toggleStore(st, node));
       box.append(node);
@@ -1394,18 +1452,74 @@ async function toggleStore(st, node) {
     node.after(el('div', 'grp', 'nothing filed here'));
     return;
   }
+  // Grouped by when you were last in them. A hundred and seventy projects in
+  // one flat list is a wall; the same list under "today / this week / earlier"
+  // is scannable, and recency is the one thing anyone reliably remembers.
   let prev = node;
+  let band = null;
   for (const g of groups) {
+    const b = bandOf(g.latest);
+    if (b !== band) {
+      band = b;
+      const h = el('div', 'grp bandhead', b);
+      prev.after(h);
+      prev = h;
+    }
     const gn = el('div', 'grp');
     gn.append(document.createTextNode(g.label));
-    const sub = el('div', 'sub', `${g.items} item${g.items === 1 ? '' : 's'}` +
+    const sub = el('div', 'sub', PLURAL(g.items, 'item', 'items') +
       (g.latest ? ' · ' + age(g.latest) : ''));
     gn.append(sub);
+    // The slug is what the folder is actually called on disk, which is what you
+    // need if you go looking for it outside this window.
     if (g.note) gn.title = g.note;
+    gn.dataset.find = (g.label + ' ' + (g.note || '')).toLowerCase();
     gn.addEventListener('click', ev => { ev.stopPropagation(); openPlaceGroup(st, g, gn); });
     prev.after(gn);
     prev = gn;
   }
+  applyFilter(currentFilter);
+}
+
+// bandOf is deliberately coarse. "3 days ago" and "5 days ago" are the same
+// answer to "was it this week", and finer bands would only split the list into
+// more places to look.
+function bandOf(iso) {
+  if (!iso) return 'Undated';
+  const days = (Date.now() - new Date(iso).getTime()) / 86400000;
+  if (days < 1) return 'Today';
+  if (days < 7) return 'This week';
+  if (days < 31) return 'This month';
+  if (days < 366) return 'This year';
+  return 'Older';
+}
+
+let currentFilter = '';
+
+// applyFilter narrows what is on screen without unloading anything, so clearing
+// it puts the tree back exactly as it was rather than collapsing it.
+function applyFilter(term) {
+  currentFilter = term;
+  for (const n of document.querySelectorAll('.store')) {
+    n.hidden = term !== '' && !n.textContent.toLowerCase().includes(term);
+  }
+  let shown = 0;
+  for (const n of document.querySelectorAll('.grp')) {
+    if (n.classList.contains('bandhead')) { n.dataset.hideIfEmpty = 'yes'; continue; }
+    const hit = term === '' || (n.dataset.find || '').includes(term);
+    n.hidden = !hit;
+    if (hit) shown++;
+  }
+  // A band heading with everything under it filtered away is a heading for
+  // nothing, so it goes too.
+  let head = null, seen = 0;
+  for (const n of document.querySelectorAll('.grp')) {
+    if (n.classList.contains('bandhead')) {
+      if (head) head.hidden = seen === 0;
+      head = n; seen = 0;
+    } else if (!n.hidden) seen++;
+  }
+  if (head) head.hidden = seen === 0;
 }
 
 function showStoreHeader(store, config) {
@@ -1444,7 +1558,9 @@ async function openPlaceGroup(st, g, node) {
 // a row that names a file does not pretend to.
 function itemRow(it) {
   const row = el('div', 'pitem');
-  row.append(el('span', 'kindtag', it.kind));
+  const tag = el('span', 'kindtag', KIND_WORD[it.kind] || it.kind);
+  if (KIND_HELP[it.kind]) tag.title = KIND_HELP[it.kind];
+  row.append(tag);
 
   const mid = el('div', 'lbl');
   mid.append(el('div', null, it.label));
@@ -1455,7 +1571,7 @@ function itemRow(it) {
   // The link that answers the question this window exists for: Desktop knows
   // about the session, and the conversation itself is a CLI transcript over
   // there. Showing the id is what lets someone go and find it.
-  if (it.cliSession) subBits.push('transcript ' + it.cliSession.split('-')[0]);
+  if (it.cliSession) subBits.push('chat ' + it.cliSession.split('-')[0] + ' →');
   if (subBits.length) mid.append(el('div', 'sub', subBits.join('  ·  ')));
   row.append(mid);
   row.append(el('span', 'meta', it.when ? age(it.when) : ''));

@@ -135,7 +135,7 @@ func TestCLIProjectsReadAsPaths(t *testing.T) {
 	writeFile(t, base, cliProjectsDir+"/-Users-john-Git-rigsmith/aaa.jsonl", "{}\n")
 	writeFile(t, base, cliProjectsDir+"/-Users-john-Git-rigsmith/aaa/tool-results/x.txt", "x")
 
-	groups := cliProjects(location{base: base, kind: "cli"})
+	groups := cliProjects(location{base: base, kind: "cli"}, false)
 	if len(groups) != 1 {
 		t.Fatalf("got %d groups, want 1", len(groups))
 	}
@@ -217,4 +217,54 @@ func contains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// A project slug has had every separator and dot flattened to a dash, so it
+// cannot be reversed: "-Users-john-Git-XTerm-NET" reads back as .../XTerm/NET
+// and the directory is XTerm.NET. The real spelling is recovered from a
+// transcript's own record of where it ran — and proved against the slug rather
+// than trusted, because a transcript can sit under a parent project's slug with
+// its own cwd several levels further down.
+func TestProjectPathRecoversTheRealDirectoryName(t *testing.T) {
+	dir := t.TempDir()
+	tr := filepath.Join(dir, "s.jsonl")
+	writeFile(t, dir, "s.jsonl",
+		`{"type":"bridge-session","sessionId":"x"}`+"\n"+
+			`{"type":"user","cwd":"/Users/john/Git/XTerm.NET/.claude/worktrees/wt-1"}`+"\n")
+
+	got := projectPath("-Users-john-Git-XTerm-NET", tr)
+	if got != "/Users/john/Git/XTerm.NET" {
+		t.Errorf("projectPath = %q, want the real directory the slug was made from", got)
+	}
+	// A slug that no prefix of the cwd accounts for must not be answered with a
+	// guess: a path that looks right and is not is worse than none.
+	if got := projectPath("-somewhere-else", tr); got != "" {
+		t.Errorf("projectPath invented %q for a slug the cwd cannot explain", got)
+	}
+}
+
+// Spaces are flattened to dashes too, and are the case where the guess reads
+// most convincingly wrong.
+func TestProjectPathRecoversSpaces(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "s.jsonl", `{"cwd":"/Users/john/Dropbox/File Cabinet/2026"}`+"\n")
+	got := projectPath("-Users-john-Dropbox-File-Cabinet-2026", filepath.Join(dir, "s.jsonl"))
+	if got != "/Users/john/Dropbox/File Cabinet/2026" {
+		t.Errorf("projectPath = %q, want the spaces back", got)
+	}
+}
+
+// slugOf has to match how Claude Code names these directories, or nothing above
+// will ever line up.
+func TestSlugOfMatchesClaudeCodesNaming(t *testing.T) {
+	for path, want := range map[string]string{
+		"/Users/john/Git/rigsmith":                   "-Users-john-Git-rigsmith",
+		"/Users/john/Git/XTerm.NET":                  "-Users-john-Git-XTerm-NET",
+		"/Users/john/Git/rigsmith/.claude/worktrees": "-Users-john-Git-rigsmith--claude-worktrees",
+		"/Users/john/Dropbox/File Cabinet":           "-Users-john-Dropbox-File-Cabinet",
+	} {
+		if got := slugOf(path); got != want {
+			t.Errorf("slugOf(%q) = %q, want %q", path, got, want)
+		}
+	}
 }

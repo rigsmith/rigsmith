@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // Places answers "where was it", which is a different question from the one the
@@ -150,7 +152,7 @@ func (p *Places) Groups(ctx context.Context, storeID string) (GroupsView, error)
 	}
 	out := GroupsView{Store: describeStore(loc), Config: storeConfig(loc)}
 	if loc.kind == "cli" {
-		out.Groups = cliProjects(loc)
+		out.Groups = cliProjects(loc, true)
 	} else {
 		out.Groups = desktopWorkspaces(loc)
 	}
@@ -264,7 +266,10 @@ func describeStore(loc location) PlaceStore {
 		return s
 	}
 	if loc.kind == "cli" {
-		groups := cliProjects(loc)
+		// Counting only: resolving each project's real path means opening a
+		// transcript per project, and the store list has no business doing
+		// that for four thousand of them before anyone has clicked anything.
+		groups := cliProjects(loc, false)
 		s.Groups = len(groups)
 		for _, g := range groups {
 			s.Transcripts += g.Items
@@ -374,7 +379,7 @@ func desktopWorkspaces(loc location) []PlaceGroup {
 // cliProjects lists the project directories under a CLI root. The slug is the
 // working directory with its separators flattened, so it is turned back into
 // something readable — a path is what someone remembers, not a slug.
-func cliProjects(loc location) []PlaceGroup {
+func cliProjects(loc location, resolve bool) []PlaceGroup {
 	root := filepath.Join(loc.base, cliProjectsDir)
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -385,14 +390,18 @@ func cliProjects(loc location) []PlaceGroup {
 		if !e.IsDir() {
 			continue
 		}
-		n, latest := countAndLatest(filepath.Join(root, e.Name()), ".jsonl")
+		dir := filepath.Join(root, e.Name())
+		n, latest, newest := countLatestNewest(dir, ".jsonl")
 		if n == 0 {
 			continue
 		}
-		groups = append(groups, PlaceGroup{
-			ID: e.Name(), Label: unslug(e.Name()), Note: e.Name(),
-			Items: n, Latest: latest,
-		})
+		g := PlaceGroup{ID: e.Name(), Label: unslug(e.Name()), Note: e.Name(), Items: n, Latest: latest}
+		if resolve {
+			if real := projectPath(e.Name(), newest); real != "" {
+				g.Label = trimHome(real)
+			}
+		}
+		groups = append(groups, g)
 	}
 	return groups
 }
@@ -589,6 +598,68 @@ func countLatestNewest(dir, suffix string) (int, time.Time, string) {
 		return nil
 	})
 	return n, latest, newest
+}
+
+// projectPath recovers a project directory's real name. The slug it is filed
+// under has had every separator and dot flattened to a dash, so it cannot be
+// reversed — "-Users-john-Git-XTerm-NET" reads back as .../XTerm/NET, and the
+// directory is actually XTerm.NET. Showing that guess as the label is worse
+// than useless: it is a path that looks right and is not.
+//
+// The transcripts inside record the working directory they ran in, so the real
+// spelling is available. It is not simply trusted, because a transcript can sit
+// under a parent project's slug while its own cwd is a worktree several levels
+// down. Instead the cwd's prefixes are re-slugged until one matches the
+// directory name — that prefix is the project, spelled the way it really is,
+// and proved so rather than assumed.
+func projectPath(slug, transcript string) string {
+	cwd := transcriptCwd(transcript)
+	for p := cwd; p != "" && p != "/" && p != "."; p = filepath.Dir(p) {
+		if slugOf(p) == slug {
+			return p
+		}
+	}
+	return ""
+}
+
+// slugOf reproduces how Claude Code names a project directory: every character
+// that is not a letter or a digit becomes a dash.
+func slugOf(path string) string {
+	var b strings.Builder
+	for _, r := range path {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
+}
+
+// transcriptCwd reads the first working directory a transcript mentions. The
+// opening records are session bookkeeping and carry none, so it reads a little
+// way in — bounded, because a transcript that never says is not going to.
+func transcriptCwd(path string) string {
+	if path == "" {
+		return ""
+	}
+	f, err := transcript.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
+	for i := 0; i < 40 && sc.Scan(); i++ {
+		var rec struct {
+			Cwd string `json:"cwd"`
+		}
+		if json.Unmarshal(sc.Bytes(), &rec) == nil && rec.Cwd != "" {
+			return rec.Cwd
+		}
+	}
+	return ""
 }
 
 // unslug turns a project slug back into the path it was made from. Claude Code
