@@ -327,8 +327,13 @@
   .plisthead .nmtext{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .plisthead .where{margin-left:auto;flex:none;font-size:10px;color:var(--muted);}
   .pcontrols{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
-  .pcontrols .pfilter{flex:1;margin-bottom:0;}
-  .pnote{font-size:11px;color:var(--muted);padding:4px 0 8px;}
+  /* An input carries an intrinsic minimum width from its size attribute, and a
+     flex item will not shrink below that unless told to — so the filter kept
+     its full width and pushed the checkbox beside it off the panel. */
+  .pcontrols .pfilter{flex:1 1 0;min-width:0;margin-bottom:0;}
+  .pnote{display:flex;align-items:baseline;gap:2px;font-size:11px;color:var(--muted);
+    padding:4px 0 8px;white-space:nowrap;overflow:hidden;}
+  .pnote>:first-child{overflow:hidden;text-overflow:ellipsis;}
   .linkish{background:none;border:0;padding:0 0 0 6px;font:inherit;font-size:11px;
     color:var(--paper);text-decoration:underline;cursor:pointer;--wails-draggable:no-drag;}
   .pempty{color:var(--muted);font-size:12px;padding:4px 0;}
@@ -1408,6 +1413,7 @@ async function selectStore(st, node) {
   filter.type = 'search';
   filter.placeholder = 'filter sessions\u2026';
   filter.autocomplete = 'off';
+  filter.size = 1; // the CSS drives the width; the attribute's default only sets a floor
   filter.value = currentFilter;
   filter.addEventListener('input', () => applyFilter(filter.value.trim().toLowerCase()));
   controls.append(filter);
@@ -1461,9 +1467,10 @@ function renderContents(st, folders) {
   const others = folders.length - mine.length;
   if (others && !showOtherAccounts) {
     const note = el('div', 'pnote');
-    note.append(document.createTextNode(others === 1
-      ? '1 folder here belongs to another account'
-      : `${others} folders here belong to another account`));
+    // Short enough to sit on one line in a narrow panel. The long form said
+    // the same thing over two lines and read as an error rather than an aside.
+    note.append(el('span', null,
+      `${others} ${others === 1 ? 'folder' : 'folders'} from another account`));
     const b = el('button', 'linkish', 'show');
     b.addEventListener('click', () => { showOtherAccounts = true; selectStore(st, storeNode(st.id)); });
     note.append(b);
