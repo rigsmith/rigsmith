@@ -92,7 +92,7 @@ func scanText(rel string, data []byte) *Finding {
 	}
 	for _, loc := range textSecretRe.FindAllIndex(normalized, -1) {
 		token := string(normalized[loc[0]:loc[1]])
-		if !screamingRe.MatchString(token) {
+		if IsCredentialMatch(token) {
 			return &Finding{Path: rel, Kind: kindOf(token)}
 		}
 	}

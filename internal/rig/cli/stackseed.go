@@ -17,6 +17,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// seedPrefix marks a repository as a stackspace seed rather than something you
+// clone and work in — `rig stack init` rebuilds the members from it.
+const seedPrefix = "rigstack-"
+
 // newStackSeedCmd exports what is the stackspace's own — everything at the
 // root outside every prefix: the manifest with its cursors, build overlays,
 // packaging, whatever was deliberately kept out of the members because it
@@ -45,8 +49,12 @@ func newStackSeedCmd() *cobra.Command {
 			"A member holding commits that have not left the stackspace is refused:\n" +
 			"a rebuild holds its cursor or its proposed branch, and those commits would\n" +
 			"be in neither. `rig stack propose` them first, or --force to seed anyway.\n\n" +
-			"  rig stack seed ../my-stack-seed\n" +
-			"  git -C ../my-stack-seed remote add origin <url> && git -C ../my-stack-seed push -u origin main",
+			"By convention the directory — and the repository you push it to — is\n" +
+			"named rigstack-<something>. A seed is not a project you clone and work\n" +
+			"in; it is the few kilobytes `rig stack init` rebuilds a stackspace from,\n" +
+			"and the prefix says so at a glance in a list of repositories.\n\n" +
+			"  rig stack seed ../rigstack-acme\n" +
+			"  git -C ../rigstack-acme remote add origin <url> && git -C ../rigstack-acme push -u origin main",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -76,7 +84,7 @@ func newStackSeedMenuCmd() *cobra.Command {
 		Use:    "seed",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			dest := "../stack-seed"
+			dest := defaultSeedDir(cmd.Context())
 			if err := huh.NewInput().
 				Title("Write the seed repository where?").
 				Description("a new or empty directory; it gets one commit holding the root files").
@@ -93,6 +101,73 @@ func newStackSeedMenuCmd() *cobra.Command {
 			return sub.RunE(sub, []string{dest})
 		},
 	}
+}
+
+// defaultSeedDir offers a name following the rigstack- convention, taken from
+// the stackspace's own directory: a stackspace in acme-2.4/ is seeded
+// to ../rigstack-acme-2.4, outside any enclosing repositories. The prompt is
+// editable, and the argument form takes whatever you type.
+func defaultSeedDir(ctx context.Context) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = ""
+	}
+	_, _, repo, err := stackspace(ctx)
+	if err != nil {
+		return seedDirFor(ctx, nil, cwd)
+	}
+	return seedDirFor(ctx, repo, cwd)
+}
+
+// seedDirFor applies the naming rule to a stackspace, or offers the bare
+// convention when there is no name to take.
+//
+// The suggestion is anchored beside the stackspace, not beside the caller: a
+// seed has to land outside every repository, and `rig stack` runs from any
+// directory within one — so a bare "../name" typed from a member prefix would
+// point back inside the stackspace and be refused. It is rendered relative to
+// the caller where that is expressible, since "../rigstack-acme" reads better
+// in a prompt than an absolute path, and absolute otherwise.
+func seedDirFor(ctx context.Context, repo *gitrepo.Repo, cwd string) string {
+	const fallback = "../" + seedPrefix + "seed"
+	if repo == nil {
+		return fallback
+	}
+	name := strings.TrimSpace(filepath.Base(repo.Dir))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return fallback
+	}
+	target := filepath.Join(filepath.Dir(repo.Dir), seedPrefix+strings.TrimPrefix(name, seedPrefix))
+	// Trimming keeps the usual case tidy, but a stackspace already called
+	// rigstack-acme would trim and re-prefix back to its own directory — the one
+	// place the seed may not go.
+	if target == filepath.Clean(repo.Dir) {
+		target += "-seed"
+	}
+	// A sibling of a nested stackspace can still lie inside an outer repo.
+	// Move beside each enclosing worktree until the suggestion is outside all.
+	for {
+		top, inside := stackEnclosingRepo(ctx, target)
+		if !inside {
+			break
+		}
+		parent := filepath.Dir(top)
+		if parent == top { // No directory on this volume is outside that repo.
+			return ""
+		}
+		target = filepath.Join(parent, filepath.Base(target))
+		if target == filepath.Clean(top) {
+			target += "-seed"
+		}
+	}
+	if cwd == "" {
+		return target
+	}
+	rel, err := filepath.Rel(cwd, target)
+	if err != nil {
+		return target
+	}
+	return rel
 }
 
 // stackSeed materialises HEAD's root entries that are not member prefixes into

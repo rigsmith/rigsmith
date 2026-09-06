@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
 )
@@ -88,6 +89,11 @@ func finishAuditedMerge(ctx context.Context, repo *gitrepo.Repo) error {
 	root, err := repo.Toplevel(ctx)
 	if err != nil {
 		return err
+	}
+	if merging {
+		if err := backupgit.Prepare(ctx, root); err != nil {
+			return err
+		}
 	}
 	if err = engine.CheckPublish(root); err != nil {
 		return err

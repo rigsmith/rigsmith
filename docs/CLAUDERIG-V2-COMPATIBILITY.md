@@ -14,8 +14,8 @@ require explicit activation.
 ## Pinned baseline
 
 `internal/clauderig/compatibility` compares the candidate working tree against
-`b8711429ada6e570e5ccf0259ee3d1064a4b4e64`, the release commit immediately after
-the scanning and transcript chunking changes in PR #283. It exports that commit
+`d39a4462427f1956d310abc306f010f85704d264`, the v1 byte-preservation fix in
+[PR #293](https://github.com/rigsmith/rigsmith/pull/293). It exports that commit
 with `git archive` and builds both CLI binaries with the current Go toolchain.
 The comparison tests application behavior, not historical compiler behavior.
 
@@ -80,25 +80,35 @@ comparison; they do not prove that either vendor's GUI can resume every session.
 Before extracting a workflow not covered by these scenarios, add its observable
 contract here. Keep each extraction independently reviewable and reversible.
 
-## Known baseline gap: Git line-ending conversion
+## Resolved baseline gap: Git line-ending conversion
 
-A separate probe during this milestone reproduced a production compatibility
-gap with `core.autocrlf=true`: a raw transcript restored after Git clone gained
-CRLF line endings, and a chunked transcript's title could no longer be read
-after clone. Git can treat `.part` files as text and change their bytes, which
-invalidates the hashes recorded in the transcript index. The normal comparison
-and synthetic fixtures explicitly set `core.autocrlf=false`; green results do
-not establish safety with text-converting Git settings.
+The initial baseline at `b8711429ada6e570e5ccf0259ee3d1064a4b4e64` could change
+native transcript bytes and invalidate chunk hashes with `core.autocrlf=true`.
+PR #293 fixes that in v1: committed backup attributes disable conversions, sync
+refreshes legacy Git indexes, and publication refuses overriding conversion
+attributes. Previously damaged historical blobs still require an intact source
+or verified backup; hash checks remain strict.
 
-This needs a separate fix before service extraction, including byte-preserving
-attributes for stored chunks, existing-repository handling, and a regression
-that enables `core.autocrlf=true` through sync, clone, history reads and restore.
-Do not relax chunk integrity checks or silently regenerate hashes for changed
-payloads. Other clean/smudge filters also need consideration when defining that
-storage contract.
+The pinned baseline advances explicitly to that v1 fix because `.gitattributes`
+is an intentional addition to the backup tree. This is a reviewed storage fix,
+not a mechanical extraction accepting its own new behavior. The merge also
+carries the intervening v1 fixes from main into v2.
 
-The probe used the unmodified production code at this milestone and temporary
-fixtures only. It was equivalent to running the round-trip tests with
-`GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=core.autocrlf`, and
-`GIT_CONFIG_VALUE_0=true`, before adding the explicit `fixtureGit` setup. To
-reproduce after this PR, override that setup in an isolated test checkout.
+The command comparison and synthetic round trips now run with
+`core.autocrlf=true`. The dedicated `TestE2E_GitBytePreservation` regression also
+sets hostile global encoding, keyword and filter attributes, then verifies LF
+and CRLF data, append history, fresh clone, integrity checks and native restore.
+It runs as part of v2's existing synthetic end-to-end CI gate on all three OSes.
+There is no need for a second invocation of the same regression in that workflow.
+
+## Review corrections after the pinned baseline
+
+PR #295 keeps the fixed v1 baseline pinned while correcting additional defects:
+scanner and redactor classification now agree; the `sk-proj-` prefix is removed
+before testing a key body for prose; older redaction markers trigger one restage;
+and required backup attributes are staged even when Git excludes them. Focused
+regressions assert these intentional improvements. The existing workflow
+comparisons still require identical output for their unchanged scenarios.
+
+The redaction marker is local cache state outside the backup tree, so changing
+its version does not change the published backup format.

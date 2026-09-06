@@ -18,6 +18,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
+	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
@@ -373,7 +374,7 @@ func Sync(opts Options) (*Report, error) {
 				// it would never match and the file would be re-scrubbed on every
 				// sync forever. The mtime is copied from the source exactly, so
 				// it alone already means "staged from this version of this file".
-				scrub := opts.RedactTranscripts && isTranscript(rel)
+				scrub := opts.RedactTranscripts && scrubbable(rel, srcPath)
 				unchanged := false
 				staged, derr := transcript.Stat(dstPath)
 				if derr != nil {
@@ -420,27 +421,39 @@ func Sync(opts Options) (*Report, error) {
 					case errors.Is(rerr, errPrivateKeyInTranscript):
 						noteFinding(&redact.Finding{Path: rel, Kind: "private-key"})
 						continue
+					case errors.Is(rerr, errBinaryContent):
+						// Binary after a text-looking head. Fall through to the
+						// ordinary copy below, which carries it byte for byte —
+						// the audit still reads it, so a credential in there is
+						// refused rather than quietly rewritten.
+						scrub = false
 					case os.IsNotExist(rerr):
 						rr.SkippedFiles++
 						continue
 					case rerr != nil:
 						return nil, rerr
 					}
-					dropped, err := dropOversizeSnapshot()
-					if err != nil {
-						return nil, err
-					}
-					if dropped {
+					// Only when the rewrite actually happened. Binary content
+					// clears the flag above and falls through to the copy below;
+					// counting it here would record a file as staged that this
+					// branch never wrote.
+					if scrub {
+						dropped, err := dropOversizeSnapshot()
+						if err != nil {
+							return nil, err
+						}
+						if dropped {
+							continue
+						}
+						if len(hits) > 0 {
+							rr.Redactions += len(hits)
+							rr.Redacted = append(rr.Redacted, FileRedaction{
+								Rel: rel, Kinds: kindsOf(hits), Count: len(hits),
+							})
+						}
+						rr.Files++
 						continue
 					}
-					if len(hits) > 0 {
-						rr.Redactions += len(hits)
-						rr.Redacted = append(rr.Redacted, FileRedaction{
-							Rel: rel, Kinds: kindsOf(hits), Count: len(hits),
-						})
-					}
-					rr.Files++
-					continue
 				}
 
 				// Scan the EXACT bytes being staged. Reading for the scan and then
@@ -666,6 +679,9 @@ func Sync(opts Options) (*Report, error) {
 		}
 	}
 
+	if err := backupgit.Ensure(opts.StagingDir); err != nil {
+		return rep, err
+	}
 	if audit, err := Audit(opts.StagingDir); err != nil {
 		return rep, err
 	} else {
@@ -700,6 +716,10 @@ func Sync(opts Options) (*Report, error) {
 	return rep, nil
 }
 
+// redactionVersion changes when the scrub scope or credential rules expand,
+// forcing existing staged copies through the current redactor once.
+const redactionVersion = "2"
+
 // redactionStatePath is where the last run's redactTranscripts setting is kept.
 // Beside the staging repo rather than inside it: it describes what THIS machine
 // has staged, and everything in the tree is committed and shared.
@@ -710,16 +730,15 @@ func redactionStatePath(staging string) string {
 	return filepath.Join(filepath.Dir(staging), ".redaction-state")
 }
 
-// redactedLastRun reports whether the previous sync scrubbed transcripts. An
-// absent or unreadable marker reads as "no", which costs one restage of the
-// transcripts and never the other way around.
+// redactedLastRun reports whether the previous sync used the current redactor.
+// A missing, unreadable or older marker forces one restage of conversation text.
 func redactedLastRun(staging string) bool {
 	p := redactionStatePath(staging)
 	if p == "" {
 		return false
 	}
 	b, err := os.ReadFile(p)
-	return err == nil && strings.TrimSpace(string(b)) == "1"
+	return err == nil && strings.TrimSpace(string(b)) == redactionVersion
 }
 
 // noteRedactionSetting records the setting this sync ran with. Best-effort: a
@@ -732,7 +751,7 @@ func noteRedactionSetting(staging string, on bool) {
 	}
 	v := []byte("0\n")
 	if on {
-		v = []byte("1\n")
+		v = []byte(redactionVersion + "\n")
 	}
 	_ = os.WriteFile(p, v, 0o644)
 }

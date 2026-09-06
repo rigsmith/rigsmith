@@ -74,7 +74,15 @@ func TestRedactText_IgnoresBareMentions(t *testing.T) {
 // added to one and not the other is a silent hole.
 func TestTextRulesCoverKnownPrefixes(t *testing.T) {
 	for _, p := range knownPrefixes {
+		// Shaped like the real credential, not merely long enough. An AWS access
+		// key id is exactly twenty characters, and the text rule now says so —
+		// open-ended, it matched any shouted phrase containing those four
+		// letters. A fixture that is unrealistic in that way would force the
+		// rule to stay loose to satisfy it.
 		body := strings.Repeat("A", 24)
+		if p.prefix == "AKIA" || p.prefix == "ASIA" {
+			body = strings.Repeat("A", 16)
+		}
 		if _, _, changed := RedactText([]byte("x " + p.prefix + body + " y")); !changed {
 			t.Errorf("knownPrefixes has %q (%s) but the text rules miss it", p.prefix, p.kind)
 		}
@@ -118,6 +126,136 @@ func TestRedactText_LeavesBearerPlaceholders(t *testing.T) {
 	} {
 		if out, _, changed := RedactText([]byte(s)); changed {
 			t.Errorf("rewrote an example: %q became %q", s, out)
+		}
+	}
+}
+
+// The rules run over conversation prose, so they must not fire inside ordinary
+// words. `sk-` is the tail of "task-", "risk-" and "desk-"; AKIA and ASIA sit
+// inside longer uppercase and base64 runs. On one real machine this was 96 of
+// 134 findings, and every one of them refused a sync that should have run.
+func TestRedactText_DoesNotMatchInsideWords(t *testing.T) {
+	for _, s := range []string{
+		"the global-task-runner-configuration is fine",
+		"a risk-assessment-matrix-worksheet",
+		"see the desk-allocation-spreadsheet-2026",
+		"deployed to ASIAPACIFICREGIONSETTINGS today",
+		"the token KA2AwiASIAQQQQQQQQQQQQQQQQ was rotated",
+	} {
+		if out, hits, changed := RedactText([]byte(s)); changed {
+			t.Errorf("rewrote ordinary text %q → %q (%+v)", s, out, hits)
+		}
+	}
+}
+
+// Anchored, but the prefixes still begin real words. A conversation about this
+// very tool is full of hyphenated lowercase phrases.
+func TestRedactText_LeavesHyphenatedProse(t *testing.T) {
+	for _, s := range []string{
+		"sk-a-single-line-of-explanation",
+		"sk-the-window-has-no-repository",
+		"glpat-a-name-someone-chose",
+	} {
+		if out, _, changed := RedactText([]byte(s)); changed {
+			t.Errorf("rewrote a phrase %q → %q", s, out)
+		}
+	}
+}
+
+// And none of that may cost a real credential.
+func TestRedactText_StillCatchesRealShapes(t *testing.T) {
+	for _, s := range []string{
+		"key sk-ant-api03-" + strings.Repeat("Aa1", 20),
+		"AKIA" + strings.Repeat("A", 16),
+		"ghp_" + strings.Repeat("a1", 18),
+		"Authorization: Bearer 8xLOxBtZp8kFqz5mNvQ2wRt7yHjKlPoI",
+	} {
+		if _, _, changed := RedactText([]byte(s)); !changed {
+			t.Errorf("missed a real credential shape: %q", s)
+		}
+	}
+}
+
+// The rewriter and the tripwire have to agree about what a credential is. When
+// only the rewriter learned to skip hyphenated prose, the tripwire kept
+// refusing the phrases the rewriter had decided to leave alone — a sync blocked
+// with the scrubber already on and nothing left for its owner to try.
+func TestScanAndRedactAgreeOnWhatCountsAsACredential(t *testing.T) {
+	cases := []struct {
+		text   string
+		secret bool
+	}{
+		{"sk-a-single-line-of-explanation", false},
+		{"the global-task-runner-configuration", false},
+		{"Authorization: Bearer YOUR_ACCESS_TOKEN_GOES_HERE", false},
+		{"key sk-ant-api03-" + strings.Repeat("Aa1", 20), true},
+		{"AKIA" + strings.Repeat("A", 16), true},
+		{"Authorization: Bearer 8xLOxBtZp8kFqz5mNvQ2wRt7yHjKlPoI", true},
+	}
+	for _, tc := range cases {
+		_, _, rewrote := RedactText([]byte(tc.text))
+		refused := scanText("projects/-p/s.jsonl", []byte(tc.text)) != nil
+		if rewrote != refused {
+			t.Errorf("%q: rewriter says credential=%v, tripwire says %v — they must agree",
+				tc.text, rewrote, refused)
+		}
+		if refused != tc.secret {
+			t.Errorf("%q: treated as credential=%v, want %v", tc.text, refused, tc.secret)
+		}
+	}
+}
+
+func TestReviewCredentialDecisionsAgree(t *testing.T) {
+	for _, tc := range []struct {
+		name, token string
+		credential  bool
+	}{
+		{"hyphenated prose", "sk-a-single-line-of-explanation", false},
+		{"embedded prefix", "global-task-runner-config", false},
+		{"project key lowercase body", "sk-proj-" + strings.Repeat("a", 48), true},
+		{"project key mixed body", "sk-proj-" + strings.Repeat("Ab1", 16), true},
+		{"ordinary key", "sk-" + strings.Repeat("Ab1", 16), true},
+		{"anthropic key", "sk-ant-api03-" + strings.Repeat("Ab1", 16), true},
+		{"placeholder", "Bearer YOUR_ACCESS_TOKEN_GOES_HERE", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "example: " + tc.token + " ends here\n"
+			out, _, changed := RedactText([]byte(body))
+			if changed != tc.credential {
+				t.Fatalf("redaction changed=%v, want %v", changed, tc.credential)
+			}
+			// Both a native file and chunk payload use the complete scanner.
+			for _, rel := range []string{"projects/p/s.jsonl", "projects/p/s.jsonl.chunks/000.part"} {
+				finding, err := ScanReader(rel, strings.NewReader(body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if (finding != nil) != tc.credential {
+					t.Fatalf("%s: finding=%v, want credential=%v", rel, finding, tc.credential)
+				}
+				finding, err = ScanReader(rel, strings.NewReader(string(out)))
+				if err != nil || finding != nil {
+					t.Fatalf("%s: cleaned text refused: %v, %v", rel, finding, err)
+				}
+			}
+		})
+	}
+}
+
+func TestScanReaderBareProseAndProjectKey(t *testing.T) {
+	for _, tc := range []struct {
+		token      string
+		credential bool
+	}{
+		{"sk-a-single-line-of-explanation", false},
+		{"sk-proj-" + strings.Repeat("a", 48), true},
+	} {
+		finding, err := ScanReader("projects/p/note.txt", strings.NewReader(tc.token+"\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (finding != nil) != tc.credential {
+			t.Fatalf("bare-token classification: finding=%v, want credential=%v", finding, tc.credential)
 		}
 	}
 }

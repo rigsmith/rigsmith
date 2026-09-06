@@ -21,9 +21,9 @@ import (
 	"time"
 )
 
-// The release immediately after #283. Advance only as an explicit compatibility
+// The v1 byte-preservation fix (#293). Advance only as an explicit compatibility
 // decision, never automatically to main (which would compare a change to itself).
-const baselineRef = "b8711429ada6e570e5ccf0259ee3d1064a4b4e64"
+const baselineRef = "d39a4462427f1956d310abc306f010f85704d264"
 
 var fixtureTime = time.Now().UTC().Truncate(time.Second)
 
@@ -111,7 +111,7 @@ func newSandbox(t *testing.T, root, bin string) *sandbox {
 		"GIT_CONFIG_GLOBAL="+filepath.Join(s.home, "empty-gitconfig"), "GIT_ALLOW_PROTOCOL=file", "GIT_TERMINAL_PROMPT=0",
 		"GIT_AUTHOR_NAME=Compatibility", "GIT_AUTHOR_EMAIL=compat@example.com", "GIT_COMMITTER_NAME=Compatibility", "GIT_COMMITTER_EMAIL=compat@example.com",
 		"GIT_AUTHOR_DATE="+fixtureTime.Format(time.RFC3339), "GIT_COMMITTER_DATE="+fixtureTime.Format(time.RFC3339),
-		"GIT_CONFIG_COUNT=4", "GIT_CONFIG_KEY_0=core.autocrlf", "GIT_CONFIG_VALUE_0=false",
+		"GIT_CONFIG_COUNT=4", "GIT_CONFIG_KEY_0=core.autocrlf", "GIT_CONFIG_VALUE_0=true",
 		"GIT_CONFIG_KEY_1=commit.gpgsign", "GIT_CONFIG_VALUE_1=false", "GIT_CONFIG_KEY_2=init.defaultBranch", "GIT_CONFIG_VALUE_2=main",
 		"GIT_CONFIG_KEY_3=core.hooksPath", "GIT_CONFIG_VALUE_3="+filepath.Join(s.home, "empty-hooks"))
 	ost := runtime.GOOS

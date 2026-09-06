@@ -42,8 +42,9 @@ clauderig ui                   # interactive dashboard
 - **Secret redaction and publication checks.** Secret-bearing config fields are
   stripped, and complete staged-text scanning refuses recognized credentials
   in transcripts and other staged files, regardless of size. Set
-  `redactTranscripts` to true to scrub supported signatures from staged
-  transcripts first. Live files are never edited. These checks do not sanitize
+  `redactTranscripts` to true to scrub supported signatures from the staged copy of a
+  conversation — the transcript, the tool results beside it, and memory notes.
+  Live files are never edited. These checks do not sanitize
   existing Git history or identify every possible secret.
 - **Transcript chunking.** On for new configurations; existing configs without
   the key use auto and follow the repository. Large backups use reusable 4 MiB chunks

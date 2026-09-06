@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rigsmith/rigsmith/core/gitrepo"
 )
 
 func TestStackSeed(t *testing.T) {
@@ -299,4 +301,103 @@ func mustAbs(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return abs
+}
+
+// The seed directory offered by the menu follows the rigstack- convention, and
+// is anchored beside the stackspace rather than beside the caller: a seed has
+// to land outside every repository, and `rig stack` runs from any directory
+// within one.
+func TestSeedDirFor(t *testing.T) {
+	root := t.TempDir()
+	stack := filepath.Join(root, "acme-2.4")
+	if err := os.MkdirAll(filepath.Join(stack, "member", "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		dir  string
+		cwd  string
+		want string
+	}{
+		{"from the stackspace root", stack, stack, filepath.Join("..", "rigstack-acme-2.4")},
+		{
+			"from inside a member, still outside the stackspace",
+			stack,
+			filepath.Join(stack, "member", "src"),
+			filepath.Join("..", "..", "..", "rigstack-acme-2.4"),
+		},
+		{"absolute when there is no cwd", stack, "", filepath.Join(root, "rigstack-acme-2.4")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := seedDirFor(t.Context(), &gitrepo.Repo{Dir: tc.dir}, tc.cwd); got != tc.want {
+				t.Errorf("seedDirFor = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Whatever the caller's directory, the suggestion must not point back inside
+// the stackspace — stackSeed refuses that, so a default that did would be an
+// offer that cannot be accepted.
+func TestSeedDirForNeverLandsInsideTheStackspace(t *testing.T) {
+	root := t.TempDir()
+	stack := filepath.Join(root, "acme")
+	nested := filepath.Join(stack, "member", "deep", "deeper")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, cwd := range []string{stack, filepath.Join(stack, "member"), nested} {
+		got := seedDirFor(t.Context(), &gitrepo.Repo{Dir: stack}, cwd)
+		abs := got
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(cwd, got)
+		}
+		if rel, err := filepath.Rel(stack, filepath.Clean(abs)); err == nil && !strings.HasPrefix(rel, "..") {
+			t.Errorf("from %s the suggestion %q resolves to %s, inside the stackspace", cwd, got, abs)
+		}
+	}
+}
+
+// A stackspace whose own directory already carries the prefix would otherwise
+// be offered its own path — the one place a seed may not go. And with no
+// stackspace to take a name from, the offer still follows the convention.
+func TestSeedDirForEdgeCases(t *testing.T) {
+	root := t.TempDir()
+	prefixed := filepath.Join(root, "rigstack-acme")
+	if got, want := seedDirFor(t.Context(), &gitrepo.Repo{Dir: prefixed}, prefixed), filepath.Join("..", "rigstack-acme-seed"); got != want {
+		t.Errorf("a stackspace already carrying the prefix: got %q, want %q", got, want)
+	}
+	if got := seedDirFor(t.Context(), nil, root); got != "../rigstack-seed" {
+		t.Errorf("seedDirFor(nil) = %q, want ../rigstack-seed", got)
+	}
+}
+
+func TestSeedDirForEscapesEnclosingRepositories(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer := filepath.Join(root, "outer")
+	inner := filepath.Join(outer, "nested", "middle")
+	stack := filepath.Join(inner, "stacks", "acme")
+	for _, dir := range []string{outer, inner, stack} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, dir, "init", "-b", "main")
+	}
+	cwd := filepath.Join(stack, "member")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := seedDirFor(t.Context(), &gitrepo.Repo{Dir: stack}, cwd)
+	abs := filepath.Clean(filepath.Join(cwd, got))
+	if want := filepath.Join(root, "rigstack-acme"); abs != want {
+		t.Fatalf("suggested %s, want %s", abs, want)
+	}
+	if top, inside := stackEnclosingRepo(t.Context(), abs); inside {
+		t.Fatalf("suggestion still inside %s", top)
+	}
 }

@@ -79,6 +79,12 @@ transcripts stay native, and restore always reconstructs native JSONL. Search,
 peek and the ledger understand both formats. Divergent chunk-index conflicts
 require resolution; they are never combined as JSONL records.
 
+Committed backup attributes prevent Git line-ending, encoding and filter
+conversions, including with `core.autocrlf=true`. Sync refreshes the Git index
+when installing those rules; overriding conversion attributes refuse
+publication. Previously damaged chunk history still needs an intact source or
+verified backup; hash checks remain strict.
+
 Updated clients follow the repository setting unless locally overridden.
 `clauderig config set chunkTranscripts auto` removes the local override.
 To convert back, run `clauderig config set chunkTranscripts false` followed by
@@ -90,9 +96,10 @@ chunked revisions still require an updated binary after rollback.
 
 Scanning checks complete staged text even when scrubbing is off. A recognized
 credential stops publication. `clauderig config set redactTranscripts true`
-scrubs supported signatures from staged transcripts before that check; private
-keys or signatures it cannot safely rewrite still cause refusal. Live files are
-never modified, and existing Git history is not sanitized by either setting.
+scrubs supported signatures from staged transcripts, tool results, and memory
+notes before that check; private keys or signatures it cannot safely rewrite
+still cause refusal. Upgrading redaction restages those files once. Live files
+are never modified, and existing Git history is not sanitized by either setting.
 
 ## Finding a session
 

@@ -576,15 +576,23 @@ kind of thing that drifts. Two things make a smaller seed enough:
   at that commit rather than at upstream's tip.
 
 ```sh
-rig stack seed ../my-stack-seed                  # root files → a new repo, one commit (--force past unsent commits)
-git -C ../my-stack-seed remote add origin <url>
-git -C ../my-stack-seed push -u origin main
+rig stack seed ../rigstack-acme                  # root files → a new repo, one commit (--force past unsent commits)
+git -C ../rigstack-acme remote add origin <url>
+git -C ../rigstack-acme push -u origin main
 
 # elsewhere
 git clone <url> my-stack && cd my-stack
 rig stack init                                   # rebuilds every member
 rig stack wire
 ```
+
+Name the directory — and the repository you push it to — `rigstack-<something>`.
+A seed is not a project you clone and work in: it is the few kilobytes `stack
+init` rebuilds a stackspace from, and the prefix says so at a glance in a list
+of repositories. `rig stack seed` offers a name that follows it, taken from the
+stackspace's own directory. When the stackspace is nested in another repository,
+the suggestion moves outside the enclosing repositories. Nothing enforces the
+name; the argument takes whatever you type.
 
 A seed carries no member, so a rebuilt one holds its cursor or the branch it
 was last proposed to — and a commit that reached neither is in no seed. `seed`

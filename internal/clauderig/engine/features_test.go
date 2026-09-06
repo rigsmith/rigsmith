@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -494,5 +495,171 @@ func TestSync_EnablingRedactionScrubsWhatIsAlreadyStaged(t *testing.T) {
 	}
 	if rep.Roots[0].Files != 0 {
 		t.Errorf("a third run restaged %d files, want none", rep.Roots[0].Files)
+	}
+}
+
+// A credential lands wherever the conversation put it. Scrubbing only .jsonl
+// left tool results beside the transcript carrying bearer tokens, which the
+// tripwire then refused — the setting was on and the sync still would not run.
+func TestSync_ScrubsToolResultsAndNotesBesideTheTranscript(t *testing.T) {
+	live := t.TempDir()
+	key := "sk-ant-api03-" + strings.Repeat("z", 60)
+	write(t, live, "projects/-p/s.jsonl", `{"type":"user","cwd":"/p","text":"my key is `+key+`"}`+"\n")
+	write(t, live, "projects/-p/s/tool-results/out.txt", "Authorization: Bearer "+strings.Repeat("Aa1b2", 13)+"\n")
+	write(t, live, "projects/-p/memory/notes.md", "the key was "+key+"\n")
+	// Not text, and must be carried across byte for byte. It holds no
+	// credential: one that did could not be scrubbed without corrupting the
+	// file, so it would block the sync outright — which is the honest outcome,
+	// and a different problem from this one.
+	const binary = "\xff\xd8\xff\xe0 JFIF binary payload\n"
+	write(t, live, "projects/-p/shot.jpg", binary)
+
+	staging := t.TempDir()
+	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
+	if _, err := Sync(Options{
+		StagingDir: staging, Config: cliOnlyConfig(live), Machine: m,
+		RedactTranscripts: true, SourceOverride: override("cli", live),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{"projects/-p/s.jsonl", "projects/-p/s/tool-results/out.txt", "projects/-p/memory/notes.md"} {
+		b, err := os.ReadFile(filepath.Join(staging, "cli", filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("%s: %v", rel, err)
+		}
+		if strings.Contains(string(b), key) || strings.Contains(string(b), "Aa1b2Aa1b2") {
+			t.Errorf("%s still holds a credential after scrubbing", rel)
+		}
+	}
+	// The live files are never edited — clauderig backs a machine up.
+	b, err := os.ReadFile(filepath.Join(live, "projects/-p/memory/notes.md"))
+	if err != nil {
+		t.Fatalf("reading the live note: %v", err)
+	}
+	if !strings.Contains(string(b), key) {
+		t.Error("the live note was rewritten; only the staged copy may be")
+	}
+	// A binary is copied, not rewritten.
+	if b, err := os.ReadFile(filepath.Join(staging, "cli", "projects", "-p", "shot.jpg")); err != nil {
+		t.Errorf("the binary did not sync: %v", err)
+	} else if string(b) != binary {
+		t.Error("a binary was rewritten, which is damage rather than redaction")
+	}
+}
+
+// Classifying by extension gets both ends wrong. Tool output written to a .log
+// or to a file with no extension is text that would keep its credential and
+// keep the sync refused; a PNG somebody named .md would be handed to the
+// rewriter, which would edit bytes inside an image.
+func TestSync_ScrubDecidedByContentNotExtension(t *testing.T) {
+	live := t.TempDir()
+	key := "sk-ant-api03-" + strings.Repeat("z", 60)
+	write(t, live, "projects/-p/s.jsonl", `{"type":"user","cwd":"/p"}`+"\n")
+	write(t, live, "projects/-p/s/tool-results/out.log", "printed "+key+"\n")
+	write(t, live, "projects/-p/s/tool-results/README", "also "+key+"\n")
+	const png = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR not text at all\n"
+	write(t, live, "projects/-p/s/tool-results/shot.md", png)
+
+	staging := t.TempDir()
+	if _, err := Sync(Options{
+		StagingDir: staging, Config: cliOnlyConfig(live),
+		Machine:           config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"},
+		RedactTranscripts: true, SourceOverride: override("cli", live),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Text, whatever it is called, gets scrubbed.
+	for _, rel := range []string{"projects/-p/s/tool-results/out.log", "projects/-p/s/tool-results/README"} {
+		b, err := os.ReadFile(filepath.Join(staging, "cli", filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("%s: %v", rel, err)
+		}
+		if strings.Contains(string(b), key) {
+			t.Errorf("%s kept its credential — it would refuse the sync with nothing left to try", rel)
+		}
+	}
+	// A binary is carried byte for byte, whatever it is called.
+	b, err := os.ReadFile(filepath.Join(staging, "cli", "projects", "-p", "s", "tool-results", "shot.md"))
+	if err != nil {
+		t.Fatalf("the binary did not sync: %v", err)
+	}
+	if string(b) != png {
+		t.Error("a binary named .md was rewritten, which is damage rather than redaction")
+	}
+}
+
+// The head-of-file check reads 8 KB. A file can be clean text for longer than
+// that and binary after it, and rewriting a byte sequence inside the binary
+// part is damage — those bytes are not a credential, they are pixels. The
+// rewrite is abandoned as soon as the binary appears, and nothing half-written
+// is left at the destination for the caller's plain copy to trip over.
+func TestRedactTranscript_AbandonsARewriteWhenContentTurnsBinary(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "mixed.log")
+	var b strings.Builder
+	for b.Len() < 12<<10 {
+		b.WriteString("ordinary log output, nothing to see here\n")
+	}
+	b.WriteString("\x00\x00 binary payload sk-ant-api03-" + strings.Repeat("z", 60) + "\n")
+	if err := os.WriteFile(src, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(dir, "staged.log")
+	_, err := redactTranscript(dst, src, time.Now())
+	if !errors.Is(err, errBinaryContent) {
+		t.Fatalf("err = %v, want errBinaryContent so the caller copies it instead", err)
+	}
+	if _, serr := os.Stat(dst); !os.IsNotExist(serr) {
+		t.Error("a half-rewritten file was left at the destination")
+	}
+}
+
+func TestSync_UpgradesLegacyRedactionState(t *testing.T) {
+	live := t.TempDir()
+	staging := filepath.Join(t.TempDir(), "repo")
+	key := "sk-proj-" + strings.Repeat("a", 48)
+	body := "the key was " + key + "\n"
+	rels := []string{"projects/-p/s/tool-results/out.txt", "projects/-p/memory/notes.md", "projects/-p/s/tool-results/out.log", "projects/-p/s/tool-results/README"}
+	for _, rel := range rels {
+		write(t, live, rel, body)
+		write(t, staging, "cli/"+rel, body)
+		st, err := os.Stat(filepath.Join(live, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(filepath.Join(staging, "cli", filepath.FromSlash(rel)), st.ModTime(), st.ModTime()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The old client already had redaction on, but did not cover these files.
+	if err := os.WriteFile(redactionStatePath(staging), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{StagingDir: staging, Config: cliOnlyConfig(live),
+		Machine:           config.Machine{OS: pathmap.OSMacOS, Home: "/Users/fixture"},
+		RedactTranscripts: true, SourceOverride: override("cli", live)}
+	if _, err := Sync(opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range rels {
+		if got := read(t, filepath.Join(staging, "cli", filepath.FromSlash(rel))); strings.Contains(got, key) || !strings.Contains(got, redact.Placeholder) {
+			t.Fatalf("%s was not scrubbed during upgrade", rel)
+		}
+		if got := read(t, filepath.Join(live, filepath.FromSlash(rel))); got != body {
+			t.Fatalf("%s: live source changed", rel)
+		}
+	}
+	if got := read(t, redactionStatePath(staging)); got != redactionVersion+"\n" {
+		t.Fatalf("marker not upgraded: %q", got)
+	}
+	rep, err := Sync(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Roots[0].Files != 0 || rep.Roots[0].Redactions != 0 {
+		t.Fatalf("upgrade did not settle: %+v", rep.Roots[0])
 	}
 }

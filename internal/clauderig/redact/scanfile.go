@@ -221,7 +221,15 @@ func hasWord(name, word string) bool {
 // isBinary reports whether data looks binary — a NUL byte in the first block is
 // the usual heuristic, and it is what keeps images and compiled artifacts out of
 // the text rules below.
-func isBinary(data []byte) bool {
+func isBinary(data []byte) bool { return LooksBinary(data) }
+
+// LooksBinary reports whether data looks binary — a NUL byte in the first block,
+// the usual heuristic. Exported so the sync engine can ask the same question
+// before scrubbing a file: deciding by extension classifies a .log of tool
+// output as binary and a .md holding a PNG as text, and both answers are wrong
+// in a way that costs something — the first leaves a credential to be refused
+// later, the second rewrites bytes inside an image.
+func LooksBinary(data []byte) bool {
 	head := data
 	if len(head) > 8000 {
 		head = head[:8000]
@@ -257,6 +265,12 @@ func ScanFile(rel string, data []byte) []Finding {
 	// code — not a bare token — so it is left alone.
 	s := strings.TrimSpace(string(data))
 	if s != "" && !strings.ContainsAny(s, "\n\r") {
+		// A complete signature match still uses the shared prose decision.
+		// Otherwise the small-file fallback would re-flag a phrase that the
+		// stream scanner and rewriter both intentionally left alone.
+		if textSecretRe.FindString(s) == s && !IsCredentialMatch(s) {
+			return nil
+		}
 		if kind, ok := LooksSecret(s); ok {
 			return []Finding{{Path: rel, Kind: kind}}
 		}

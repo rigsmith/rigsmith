@@ -31,7 +31,7 @@ rig stack propose some-lib read-timeout -m "Fix the read timeout"   # → stack/
 rig stack push my-app                # a repo you own: its own branch, history intact
 rig stack propose some-lib read-timeout --dry-run   # the commit and fork branch that would go; touches no remote
 rig stack push my-app --dry-run      # the target, branch and commits that would go; touches no remote
-rig stack seed ../seed               # root files as a small repo; init on a clone rebuilds the members
+rig stack seed ../rigstack-acme      # portable seed; the menu suggests a path outside enclosing repos
 ```
 
 `propose` proposes one squashed commit to a fork you contribute to; `push`
