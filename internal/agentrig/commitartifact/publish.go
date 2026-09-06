@@ -243,6 +243,5 @@ func (r gitRepo) completeHistory(ctx context.Context) error {
 	if strings.TrimSpace(shallow) != "false" {
 		return ErrInvalid
 	}
-	_, err = r.run(ctx, nil, "fsck", "--strict", "--no-reflogs")
-	return err
+	return r.checkObjects(ctx)
 }

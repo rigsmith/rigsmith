@@ -14,12 +14,14 @@ import (
 // boundedOutput also bounds Git's listing output before parsing or allocating
 // per-entry metadata. Blob contents are streamed directly into private files.
 type boundedOutput struct {
-	w    io.Writer
-	left int64
+	w        io.Writer
+	left     int64
+	exceeded bool
 }
 
 func (w *boundedOutput) Write(p []byte) (int, error) {
 	if int64(len(p)) > w.left {
+		w.exceeded = true
 		return 0, artifact.ErrTooLarge
 	}
 	n, err := w.w.Write(p)
@@ -37,7 +39,7 @@ func (r gitRepo) checkTree(ctx context.Context, commit, work string, limit int64
 	}
 	defer os.RemoveAll(root)
 	var listing bytes.Buffer
-	if err = r.runTo(ctx, nil, &boundedOutput{&listing, 64 << 20}, "ls-tree", "-rltz", "--full-tree", commit); err != nil {
+	if err = r.runTo(ctx, nil, &boundedOutput{w: &listing, left: 64 << 20}, "ls-tree", "-rltz", "--full-tree", commit); err != nil {
 		return err
 	}
 	tree, err := parsePublicationTree(listing.Bytes(), limit, publicationMetadataLimit)

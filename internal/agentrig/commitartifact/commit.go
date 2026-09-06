@@ -229,7 +229,7 @@ func Open(ctx context.Context, store artifact.Store, ref, dest string) (result C
 	if strings.TrimSpace(got) != strings.TrimSpace(result.Commit+"\n"+result.Tree+"\n"+result.Parent) {
 		return result, ErrInvalid
 	}
-	if _, err = repo.run(ctx, nil, "fsck", "--strict", "--no-reflogs"); err != nil {
+	if err = repo.checkObjects(ctx); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -256,16 +256,28 @@ func initRepo(ctx context.Context, dir, oid string) (gitRepo, error) {
 	return r, err
 }
 
+// Control-command stdout is bounded, including conflict diagnostics on failure.
+// Large blob/tree streams use runTo with their own explicit bounds or consumers.
+const gitOutputLimit int64 = 1 << 20
+
 func (r gitRepo) run(ctx context.Context, input io.Reader, args ...string) (string, error) {
 	var out bytes.Buffer
-	err := r.runTo(ctx, input, &out, args...)
-	return out.String(), err
+	err := r.runTo(ctx, input, &boundedOutput{w: &out, left: gitOutputLimit}, args...)
+	if err != nil {
+		return "", err // Never expose partial output as a usable object ID.
+	}
+	return out.String(), nil
 }
 
 func (r gitRepo) runTo(ctx context.Context, input io.Reader, output io.Writer, args ...string) error {
 	cmd := r.command(ctx, args...)
 	cmd.Stdin, cmd.Stdout = input, output
 	err := cmd.Run()
+	if bounded, ok := output.(*boundedOutput); ok && bounded.exceeded {
+		// Wait can prefer the child's broken-pipe exit over the writer error.
+		// Preserve the capacity failure after the child and copy goroutine exit.
+		err = artifact.ErrTooLarge
+	}
 	if err != nil {
 		// Do not surface raw Git diagnostics or local paths in queue failure codes.
 		if ctx.Err() != nil {
@@ -274,6 +286,12 @@ func (r gitRepo) runTo(ctx context.Context, input io.Reader, output io.Writer, a
 		return fmt.Errorf("retained commit git %s: %w", args[0], err)
 	}
 	return nil
+}
+
+func (r gitRepo) checkObjects(ctx context.Context) error {
+	// Dangling retry candidates are expected. Keep strict integrity checks,
+	// suppress their notices, and never buffer diagnostics we do not consume.
+	return r.runTo(ctx, nil, io.Discard, "fsck", "--strict", "--no-reflogs", "--no-dangling", "--no-progress")
 }
 
 // command applies the same private Git isolation to one-shot and streaming calls.

@@ -52,7 +52,12 @@ Claude adapter must add its native policy and recovery path before activation.
 Private Git runs disable inherited Git overrides, global/system configuration,
 system/global attributes, templates, hooks, replacement objects and automatic
 maintenance. The shared runner itself allows only local file operations; network
-operations belong to the explicit transport. It neither checks out remote trees
+operations belong to the explicit transport. Captured control-command output,
+including merge-conflict diagnostics, has a 1 MiB limit. Overflow returns a
+capacity error without exposing partial output for parsing. Strict integrity
+checks suppress expected dangling-object/progress notices and stream unused
+output to a discard writer; this does not skip damaged-object checks. The same
+helper protects commit/seed bundle verification. Git neither checks out remote trees
 nor runs configured clean/smudge filters. Merge-tree uses Git's built-in merge
 behavior with this private configuration.
 
@@ -125,7 +130,9 @@ remote races, accepted pushes with lost responses, missing confirmation,
 replay without duplicate pushes, conflicts/unrelated history, unsafe trees,
 validation/audit failure or mutation, portable-path fixtures built directly in Git
 (including invalid UTF-8 and Windows device names), mismatched refs/captures, shallow history,
-metadata/byte capacity refusal, malformed batch output, empty directories,
+metadata/byte/output capacity refusal (including a large real conflicted merge),
+quiet integrity checks that still reject corrupt dangling objects, malformed
+batch output, empty directories,
 cancellation and missing artifacts. Trace-based tests assert that a many-file
 audit uses only a tree-listing process and one blob batch, in both hash formats. No real vendor data or
 network credentials are used.

@@ -86,7 +86,7 @@ func (r gitRepo) importSeed(ctx context.Context, bundle, commit string) error {
 	if err := r.importRef(ctx, bundle, seedRefName, seedRefName, commit); err != nil {
 		return err
 	}
-	if _, err := r.run(ctx, nil, "fsck", "--strict", "--no-reflogs"); err != nil {
+	if err := r.checkObjects(ctx); err != nil {
 		return err
 	}
 	return nil
