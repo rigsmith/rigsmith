@@ -37,7 +37,9 @@ implementations; this extraction does not introduce a second transport stack.
 
 - Sync holds its existing lock across repair, capture, and publication. Services
   do not acquire another lock. Pull retains its existing coordination behavior;
-  store-wide coordination remains a separate milestone.
+  store-wide coordination remains a separate milestone. Lock ownership tokens
+  include a random suffix so same-timestamp acquisitions remain distinct; stale
+  lock parsing still accepts existing PID/timestamp files.
 - `Service.Sync` repairs abandoned merges before `engine.Sync` writes the snapshot.
   Identity is still captured once and shared by ledger and device metadata.
 - Hook payload decoding, debounce and locking stay in the command. `SyncRequest`

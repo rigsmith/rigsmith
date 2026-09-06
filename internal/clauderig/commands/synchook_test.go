@@ -332,3 +332,23 @@ func reapedPID(t *testing.T) int {
 	}
 	return cmd.Process.Pid
 }
+
+// A platform clock can return the same wall time for successive acquisitions.
+// Ownership must still differ when both the PID and timestamp are identical.
+func TestSyncLock_SameTimestampDoesNotShareOwnership(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".sync.lock")
+	at := time.Unix(1800000000, 0)
+	first := &syncLock{path: path, token: lockToken(os.Getpid(), at)}
+	second := &syncLock{path: path, token: lockToken(os.Getpid(), at)}
+	if err := os.WriteFile(path, []byte(second.token+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first.Release()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("same-timestamp previous holder deleted the replacement: %v", err)
+	}
+	second.Release()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("replacement holder could not release its lock: %v", err)
+	}
+}
