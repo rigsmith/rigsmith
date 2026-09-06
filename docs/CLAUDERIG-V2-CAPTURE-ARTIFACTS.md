@@ -86,6 +86,8 @@ abort; this is a collection of bounded file snapshots, not a filesystem-wide
 transaction. A source removed after freezing cannot silently turn into a missing
 capture. File symlinks are refused; creating supported directory aliases in the
 private source snapshot requires the OS to permit symlink creation.
+Alias target directories are retained even when empty or containing only excluded
+files, so the native manifest preserves the alias without copying excluded data.
 
 Requested transcripts' seeded copies are removed from the private output before
 capture. They must be readable in the resulting output and have ledger entries;

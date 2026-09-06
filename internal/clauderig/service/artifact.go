@@ -271,7 +271,14 @@ func (s Service) CaptureArtifact(ctx context.Context, req ArtifactCaptureRequest
 			}
 			for _, link := range links {
 				from := filepath.Join(dst, filepath.FromSlash(link.Rel))
-				target, err := filepath.Rel(filepath.Dir(from), filepath.Join(dst, filepath.FromSlash(link.Target)))
+				to := filepath.Join(dst, filepath.FromSlash(link.Target))
+				// The walk returns files and aliases, not directories. Preserve an
+				// empty (or entirely excluded) target so the frozen alias remains
+				// a directory link when the capture engine walks it again.
+				if err = os.MkdirAll(to, 0700); err != nil {
+					return err
+				}
+				target, err := filepath.Rel(filepath.Dir(from), to)
 				if err != nil {
 					return err
 				}

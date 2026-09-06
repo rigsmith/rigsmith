@@ -13,6 +13,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
+	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 	"github.com/rigsmith/rigsmith/internal/clauderig/service"
 	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
@@ -100,6 +101,56 @@ func TestCaptureArtifactPinsBytesAndOnlyRequestedAttribution(t *testing.T) {
 	data, _ = artifactBytes(t, req, again)
 	if !strings.Contains(data, "original queued capture") {
 		t.Fatal("retry changed bytes")
+	}
+}
+
+func TestCaptureArtifactPreservesEmptyDirectoryAliases(t *testing.T) {
+	for _, excludedOnly := range []bool{false, true} {
+		name := "empty"
+		if excludedOnly {
+			name = "excluded-only"
+		}
+		t.Run(name, func(t *testing.T) {
+			req := artifactCaptureFixture(t, "shared memory")
+			live := filepath.Join(req.Sync.Machine.Home, ".claude")
+			const target = "projects/-workspace-acme/memory"
+			const alias = "projects/-workspace-acme-wt/memory"
+			if err := os.MkdirAll(filepath.Join(live, filepath.FromSlash(target)), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if excludedOnly {
+				put(t, live, target+"/node_modules/dependency/index.js", "excluded dependency")
+			}
+			put(t, live, "projects/-workspace-acme-wt/other.jsonl",
+				`{"type":"user","sessionId":"other","cwd":"/workspace/acme-wt","message":{"role":"user","content":"fixture"}}`+"\n")
+			if err := os.Symlink(filepath.Join(live, filepath.FromSlash(target)), filepath.Join(live, filepath.FromSlash(alias))); err != nil {
+				t.Skipf("symlink unsupported: %v", err)
+			}
+			svc := service.Service{ReadIdentity: func() (service.Identity, error) { return req.Identity, nil }}
+			// Capture live inputs separately so seeded metadata cannot hide an alias
+			// lost while freezing the queued capture's source tree.
+			native := req.Sync
+			native.StagingDir = filepath.Join(t.TempDir(), "native")
+			if _, err := svc.Capture(t.Context(), native); err != nil {
+				t.Fatal(err)
+			}
+			nativeManifest, err := manifest.Load(native.StagingDir)
+			if err != nil || nativeManifest.Links[alias] != target {
+				t.Fatalf("live capture did not preserve alias: %+v, %v", nativeManifest, err)
+			}
+			ref, err := svc.CaptureArtifact(t.Context(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, dest := artifactBytes(t, req, ref)
+			sealedManifest, err := manifest.Load(dest)
+			if err != nil || sealedManifest.Links[alias] != nativeManifest.Links[alias] {
+				t.Fatalf("sealed capture lost alias: %+v, %v", sealedManifest, err)
+			}
+			if _, err := os.Stat(filepath.Join(dest, "cli", filepath.FromSlash(target), "node_modules")); !os.IsNotExist(err) {
+				t.Fatalf("sealed capture included excluded files: %v", err)
+			}
+		})
 	}
 }
 
