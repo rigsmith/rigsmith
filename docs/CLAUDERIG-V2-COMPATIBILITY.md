@@ -1,12 +1,15 @@
 # ClaudeRig v2 compatibility baseline
 
-The shared-layer work targets `codex/v2`. Implementation PRs target that
-integration branch; `main` remains available for 1.x fixes. ClaudeRig and CodexRig
-remain separate executables with their own configuration, state and backup
-repositories. No v2 release is published by creating or updating this branch.
+After v1.15.1, the compatibility harness, synchronous services, and preparatory
+fixes are shared by `main` and `codex/v2`. They have no Codex runtime dependency
+and are suitable for ClaudeRig 1.x. Subsequent adapters, store coordination, and
+the queue target `codex/v2`. ClaudeRig and CodexRig remain separate executables
+with their own configuration, state and backup repositories. Aligning the
+branches does not publish a release.
 
-The first milestone establishes compatibility evidence. The next milestone
-extracts synchronous sync/pull/reconcile services from command handlers. Artifact
+The first milestone establishes compatibility evidence. The synchronous-service
+milestone now provides callable sync, publication, reconciliation and pull
+workflows; [service boundaries](CLAUDERIG-V2-SERVICES.md) record their contracts. Artifact
 adapters and shared mechanics follow, then store coordination and the durable
 queue, and then CodexRig as a second consumer. Queued Claude hooks will initially
 require explicit activation.
@@ -35,7 +38,7 @@ CLAUDERIG_COMPAT=1 go test ./internal/clauderig/compatibility -count=1 -v -timeo
 ```
 
 CI enables synthetic end-to-end tests and the baseline comparison on Linux,
-macOS and Windows, for PRs and pushes to the v2 integration branch. A shallow
+macOS and Windows, for PRs and pushes to both `main` and the v2 integration branch. A shallow
 local checkout must fetch the pinned commit before running the comparison.
 
 `CLAUDERIG_E2E=1` does **not** enable the optional scan of a user's real Desktop

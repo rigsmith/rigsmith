@@ -2,6 +2,7 @@ package commands
 
 import (
 	"cmp"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 )
 
@@ -112,12 +114,15 @@ func (l *syncLock) Release() {
 	_ = os.Remove(l.path)
 }
 
-// lockToken is a lock file's entire contents: who holds it, and when they took
-// it. One definition, used by writeLock and by the tests — the parser below and
+// lockToken carries the PID and acquisition time, followed by a random owner
+// nonce. The nonce distinguishes acquisitions even when the platform clock
+// returns the same timestamp in one process. Older readers ignore that third
+// field, preserving PID and seconds/nanoseconds compatibility.
+// One definition, used by writeLock and by the tests — the parser below and
 // the writer disagreeing about the unit is exactly the bug this exists to stop
 // coming back, and a test that builds its own fixture cannot catch that.
 func lockToken(pid int, at time.Time) string {
-	return fmt.Sprintf("%d %d", pid, at.UnixNano())
+	return fmt.Sprintf("%d %d %s", pid, at.UnixNano(), rand.Text())
 }
 
 // lockIsStale reports whether a lock file is old enough to disbelieve. An
@@ -130,6 +135,19 @@ func lockIsStale(path string) bool {
 	}
 	fields := strings.Fields(string(b))
 	if len(fields) < 2 {
+		return true
+	}
+	// A lock whose holder is gone is stale whatever its age. Without this the
+	// file is believed for the full maxLockHold, so one sync killed mid-run —
+	// a hook terminated with its shell, a laptop closed — stops the machine
+	// syncing for twenty minutes. Observed twice within a quarter of an hour on
+	// a real machine, each time reporting "another sync is running" while
+	// nothing was.
+	//
+	// Only ever an argument for breaking the lock sooner, never for keeping it:
+	// a pid reused by something unrelated answers alive, and the age check
+	// below still applies.
+	if pid, perr := strconv.Atoi(fields[0]); perr == nil && !account.PIDAlive(pid) {
 		return true
 	}
 	stamp, err := strconv.ParseInt(fields[1], 10, 64)

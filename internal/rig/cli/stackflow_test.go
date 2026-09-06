@@ -254,6 +254,39 @@ func TestStackFlow(t *testing.T) {
 	if out, err := runVerbOut(ctx, newStackSendCmd(), "libfoo", "after-pull"); err != nil || !strings.Contains(out, "nothing to send") {
 		t.Fatalf("propose after rebuild should be a no-op against the same branch: %v\n%s", err, out)
 	}
+	// ---- propose must not commit a manifest edit of the user's own -------
+	//
+	// Last, because it deliberately leaves the manifest dirty. Against the
+	// rebuilt stackspace, which is what the working directory is by now.
+
+	manifest := filepath.Join(rebuilt, "rig.stack.jsonc")
+	keep, rerr := os.ReadFile(manifest)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if werr := os.WriteFile(manifest, append(keep, []byte("// a note of my own\n")...), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	if werr := os.WriteFile(filepath.Join(rebuilt, "libfoo", "src", "libfoo.txt"), []byte("libfoo v5\n"), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	mustGitStack(t, rebuilt, "commit", "-qm", "libfoo: v5", "--", "libfoo")
+	head := strings.TrimSpace(mustGitStack(t, rebuilt, "rev-parse", "HEAD"))
+
+	if err := runVerb(ctx, newStackSendCmd(), "libfoo", "mine"); err != nil {
+		t.Fatalf("propose with a manifest the user has edited: %v", err)
+	}
+	if now := strings.TrimSpace(mustGitStack(t, rebuilt, "rev-parse", "HEAD")); now != head {
+		t.Fatalf("propose committed while the manifest held the user's own edit: %q",
+			strings.TrimSpace(mustGitStack(t, rebuilt, "log", "-1", "--format=%s")))
+	}
+	body, _ := os.ReadFile(manifest)
+	if !strings.Contains(string(body), "a note of my own") {
+		t.Error("propose discarded the user's manifest edit")
+	}
+	if !strings.Contains(string(body), "stack/mine") {
+		t.Error("propose did not record the branch it pushed to")
+	}
 }
 
 // ---- harness ----------------------------------------------------------

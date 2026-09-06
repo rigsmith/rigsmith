@@ -410,3 +410,105 @@ func TestDirtyExcluding(t *testing.T) {
 		t.Error("a real change next to the excluded subtree was missed")
 	}
 }
+
+// CommitPaths records one file and leaves everything else exactly where it was.
+// A tool committing a fact of its own must not sweep a user's half-finished
+// edits in with it — which is what Commit, staging everything, would do.
+func TestCommitPathsLeavesOtherWorkAlone(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	r, err := Init(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "tracked.txt", "first\n")
+	write(t, dir, "manifest.json", "{}\n")
+	if _, err := r.Commit(ctx, "initial"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two dirty files; only one is ours to record.
+	write(t, dir, "manifest.json", `{"lastPropose":"branch"}`+"\n")
+	write(t, dir, "tracked.txt", "someone's work in progress\n")
+	write(t, dir, "untracked.txt", "also theirs\n")
+
+	changed, err := r.CommitPaths(ctx, "record: the manifest", filepath.Join(dir, "manifest.json"))
+	if err != nil || !changed {
+		t.Fatalf("CommitPaths: changed=%v err=%v", changed, err)
+	}
+	dirty, err := r.DirtyPaths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(dirty, " "), "tracked.txt") {
+		t.Errorf("the user's edit was swept into the commit; dirty = %v", dirty)
+	}
+	if !strings.Contains(strings.Join(dirty, " "), "untracked.txt") {
+		t.Errorf("an untracked file was swept in; dirty = %v", dirty)
+	}
+	if body, _ := runGit(ctx, dir, "show", "HEAD:manifest.json"); !strings.Contains(body, "lastPropose") {
+		t.Errorf("the named path was not recorded: %q", body)
+	}
+	if body, _ := runGit(ctx, dir, "show", "HEAD:tracked.txt"); strings.Contains(body, "work in progress") {
+		t.Error("the user's edit reached the commit")
+	}
+}
+
+// Nothing to record is a no-op, not a failure: git says so on stdout and exits
+// non-zero, so a caller reading only the error sees an empty message and cannot
+// tell the two apart.
+func TestCommitPathsNoOpWhenNothingChanged(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	r, err := Init(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "manifest.json", "{}\n")
+	if _, err := r.Commit(ctx, "initial"); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := r.Head(ctx)
+
+	changed, err := r.CommitPaths(ctx, "record: nothing", filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("a no-op reported an error: %v", err)
+	}
+	if changed {
+		t.Error("reported a commit it did not make")
+	}
+	if after, _ := r.Head(ctx); after != before {
+		t.Error("an empty commit was made")
+	}
+}
+
+// A path git does not know yet still has to be recordable. `git commit -- <p>`
+// refuses an untracked path, and the status check above reports one as a
+// change — so without staging, CommitPaths would see work to do and then fail
+// to do it.
+func TestCommitPathsRecordsAnUntrackedPath(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	r, err := Init(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "seed.txt", "seed\n")
+	if _, err := r.Commit(ctx, "initial"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "brand-new.json", `{"recorded":true}`+"\n")
+	write(t, dir, "theirs.txt", "not ours to commit\n")
+
+	changed, err := r.CommitPaths(ctx, "record: a new file", filepath.Join(dir, "brand-new.json"))
+	if err != nil || !changed {
+		t.Fatalf("CommitPaths on an untracked path: changed=%v err=%v", changed, err)
+	}
+	if body, gerr := runGit(ctx, dir, "show", "HEAD:brand-new.json"); gerr != nil || !strings.Contains(body, "recorded") {
+		t.Errorf("the new path was not recorded: %q %v", body, gerr)
+	}
+	dirty, _ := r.DirtyPaths(ctx)
+	if !strings.Contains(strings.Join(dirty, " "), "theirs.txt") {
+		t.Errorf("staging the named path swept up another; dirty = %v", dirty)
+	}
+}

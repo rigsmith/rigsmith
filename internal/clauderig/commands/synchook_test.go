@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -259,4 +260,95 @@ func TestSyncLockCreatesConfigDirectory(t *testing.T) {
 		t.Fatalf("config directory missing: %v", err)
 	}
 	lock.Release()
+}
+
+// A sync killed mid-run leaves a lock its process no longer backs. Believing it
+// for the full maxLockHold stops the machine syncing for twenty minutes and
+// reports "another sync is running" while nothing is — seen twice inside a
+// quarter of an hour on a real machine.
+func TestLockIsStale_HolderIsGone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".sync.lock")
+	dead := reapedPID(t)
+
+	// Written now, so age alone would say "hold on to it".
+	if err := os.WriteFile(path, []byte(lockToken(dead, time.Now())+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !lockIsStale(path) {
+		t.Error("a lock whose holder has exited was believed; the machine would stop syncing for maxLockHold")
+	}
+}
+
+// The live holder is the whole reason the lock exists. A fresh one it still
+// owns must be honoured.
+func TestLockIsStale_LiveHolderIsHonoured(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".sync.lock")
+	if err := os.WriteFile(path, []byte(lockToken(os.Getpid(), time.Now())+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if lockIsStale(path) {
+		t.Error("this process is alive and holding it, yet the lock was called stale")
+	}
+	// Age still decides for a holder that is alive but has overrun.
+	if err := os.WriteFile(path, []byte(lockToken(os.Getpid(), time.Now().Add(-2*maxLockHold))+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !lockIsStale(path) {
+		t.Error("a live holder past maxLockHold should still be breakable")
+	}
+}
+
+// End to end: the lock a killed sync left behind is taken by the next one
+// immediately, rather than twenty minutes later.
+func TestAcquireSyncLock_TakesOverFromADeadHolder(t *testing.T) {
+	staging := filepath.Join(t.TempDir(), "repo")
+	dead := reapedPID(t)
+	path := filepath.Join(filepath.Dir(staging), ".sync.lock")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(lockToken(dead, time.Now())+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lock, got, err := acquireSyncLock(staging)
+	if err != nil || !got {
+		t.Fatal("the next sync could not take a lock nothing is holding")
+	}
+	lock.Release()
+}
+
+// reapedPID is the id of a process that has certainly exited.
+//
+// The test binary re-runs itself with a filter that selects no tests: it needs
+// no shell, which windows-latest does not provide, and it is guaranteed to exit
+// on its own. Waiting for it is what makes the id safe to assert about — an id
+// is only definitely dead once it has been reaped.
+func reapedPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("could not spawn a throwaway process: %v", err)
+	}
+	return cmd.Process.Pid
+}
+
+// A platform clock can return the same wall time for successive acquisitions.
+// Ownership must still differ when both the PID and timestamp are identical.
+func TestSyncLock_SameTimestampDoesNotShareOwnership(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".sync.lock")
+	at := time.Unix(1800000000, 0)
+	first := &syncLock{path: path, token: lockToken(os.Getpid(), at)}
+	second := &syncLock{path: path, token: lockToken(os.Getpid(), at)}
+	if err := os.WriteFile(path, []byte(second.token+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first.Release()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("same-timestamp previous holder deleted the replacement: %v", err)
+	}
+	second.Release()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("replacement holder could not release its lock: %v", err)
+	}
 }

@@ -458,3 +458,18 @@ mirror — no path correction, manual excludes.
    Re-run shows 0 residual across all session files. **Still manual (non-blocking):**
    whether the Electron app itself resumes after rewrite — drive it by hand; the
    data-completeness half is automated.
+
+## V2 application-service extraction
+
+The shared foundation provides callable Claude-specific sync, publication, reconciliation and pull
+services under `internal/clauderig/service`. Sync owns capture, identity and
+journal orchestration. Command handlers retain terminal rendering, hook input,
+debounce and existing lock acquisition. The services preserve the
+existing Git policies and backup formats; shared vendor adapters and store
+coordination are later steps. See [the service boundary and validation
+contracts](CLAUDERIG-V2-SERVICES.md).
+
+The compatibility harness and synchronous-service foundation are shared by
+`main` and `codex/v2` after v1.15.1. Later vendor adapters, store coordination,
+and the durable queue remain v2 work; this alignment introduces no queue or
+Codex runtime dependency.
