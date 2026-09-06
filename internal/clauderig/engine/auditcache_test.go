@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 )
 
 // The audit is the last thing between a credential and the remote, so the cache
@@ -72,5 +75,31 @@ func TestAuditCacheIgnoresAnOlderRuleSet(t *testing.T) {
 	}
 	if found, err := Audit(stage); err != nil || len(found) != 1 {
 		t.Fatalf("stale cache was trusted: %v %v", found, err)
+	}
+}
+
+// The unchanged path may only skip its scan for bytes the audit actually read.
+// A credential staged by an older clauderig — one that never scanned this file —
+// has to keep failing the sync, which is the whole reason that scan exists.
+func TestSyncStillScansUnchangedFilesTheAuditNeverVouchedFor(t *testing.T) {
+	live := t.TempDir()
+	write(t, live, "projects/-p/s.jsonl", `{"type":"user","text":"ghp_`+strings.Repeat("a", 40)+`"}`+"\n")
+
+	staging := filepath.Join(t.TempDir(), "repo")
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	opts := Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, SourceOverride: override("cli", live)}
+
+	// Staged verbatim by a run with no scrubbing, as an older version would.
+	if _, err := Sync(opts); err == nil {
+		t.Fatal("expected the tripwire to refuse")
+	}
+	// Nothing changed, so the file takes the unchanged path this time. It has
+	// no cached verdict (the audit never completed clean), so it must be read.
+	rep, err := Sync(opts)
+	if err == nil {
+		t.Fatal("unchanged credential was let through on the second run")
+	}
+	if len(rep.Findings) == 0 {
+		t.Error("no finding reported for the unchanged file")
 	}
 }

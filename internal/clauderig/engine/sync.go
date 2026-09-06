@@ -284,6 +284,9 @@ func Sync(opts Options) (*Report, error) {
 	// is NOT in here after every root has run is a staged file with no live
 	// source behind it any more — see sweepOrphanedTranscripts.
 	visited := map[string]bool{}
+	// What the last audit read and found clean, so the unchanged path below can
+	// skip re-reading bytes nothing has touched since. Never written here.
+	audited := newAuditCache(opts.StagingDir)
 
 	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
@@ -414,10 +417,23 @@ func Sync(opts Options) (*Report, error) {
 							continue
 						}
 					}
-					// Check the bytes that will actually be published.
-					if f := scanNonJSON(dstPath, rel); f != nil {
-						noteFinding(f)
-						continue
+					// Check the bytes that will actually be published — unless the
+					// audit already read exactly these bytes and found them
+					// clean. Without that, every sync re-read the whole staged
+					// tree here as well as in the audit: two full passes over
+					// gigabytes to conclude that three files had moved.
+					//
+					// Read-only: the audit writes those verdicts, and only when
+					// it finds nothing anywhere. So this skips a file that has
+					// been read at this exact size and mtime, and nothing else —
+					// a credential staged by an older clauderig still fails here
+					// until it is dealt with.
+					if st, serr := os.Stat(dstPath); serr != nil ||
+						!audited.wasClean(r.ID+"/"+rel, auditEntry{size: st.Size(), mod: st.ModTime().UnixNano()}) {
+						if f := scanNonJSON(dstPath, rel); f != nil {
+							noteFinding(f)
+							continue
+						}
 					}
 					rr.Unchanged++
 					continue
