@@ -333,3 +333,61 @@ func TestRunOneFailedMarkerDoesNotDiscardExternalEffect(t *testing.T) {
 		t.Fatal("unconfirmed effect must be checked/reused by adapter")
 	}
 }
+
+func TestRunOneClassifiesOperationTimeoutUnlessCallerCanceled(t *testing.T) {
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		for _, blocked := range []bool{false, true} {
+			for _, cancelCaller := range []bool{false, true} {
+				name := cause.Error()
+				if blocked {
+					name += "/blocked"
+				} else {
+					name += "/retry"
+				}
+				if cancelCaller {
+					name += "/caller-canceled"
+				} else {
+					name += "/caller-active"
+				}
+				t.Run(name, func(t *testing.T) {
+					q := fixture(t)
+					enqueue(t, q, request("a"))
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					deadline := fixtureTime.Add(time.Hour)
+					f := &executionFixture{push: func(context.Context, Work) error {
+						if cancelCaller {
+							cancel()
+						}
+						return &ExecutionFailure{Code: "operation-timeout", RetryAt: deadline, Blocked: blocked, Cause: cause}
+					}}
+					result, err := q.RunOne(ctx, fixtureTime, f)
+					if !errors.Is(err, cause) || result.Phase != Committed || result.Acknowledged {
+						t.Fatalf("timeout: %+v %v", result, err)
+					}
+					jobs, err := q.Snapshot(t.Context())
+					if err != nil || len(jobs) != 1 {
+						t.Fatalf("snapshot: %+v %v", jobs, err)
+					}
+					b := jobs[0]
+					if cancelCaller {
+						if b.Status != Running || b.FailureCode != "" || !b.NotBefore.IsZero() {
+							t.Fatalf("canceled caller persisted classification: %+v", b)
+						}
+					} else {
+						want := Pending
+						if blocked {
+							want = Blocked
+						}
+						if b.Status != want || b.FailureCode != "operation-timeout" || !b.NotBefore.Equal(deadline) {
+							t.Fatalf("operation timeout lost classification: %+v", b)
+						}
+						if _, err := q.RunOne(t.Context(), fixtureTime, &executionFixture{}); !errors.Is(err, ErrEmpty) {
+							t.Fatal("timeout retry ignored backoff/block", err)
+						}
+					}
+				})
+			}
+		}
+	}
+}

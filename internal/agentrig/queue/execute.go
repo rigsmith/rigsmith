@@ -37,9 +37,10 @@ type Execution interface {
 }
 
 // ExecutionFailure explicitly classifies an adapter failure for durable retry
-// or blocking. Only Code and RetryAt are persisted, never Cause or its text.
+// or blocking. Code, RetryAt and Blocked are persisted, never Cause or its text.
 // An ordinary error stops execution without choosing a retry policy; the next
-// worker recovers the claim at its last durable phase. Cancellation always stops.
+// worker recovers the claim at its last durable phase. Caller cancellation stops
+// without classification; an adapter's own timeout may use a classified retry.
 type ExecutionFailure struct {
 	Code    string
 	RetryAt time.Time
@@ -135,7 +136,7 @@ func (q *Queue) RunOne(ctx context.Context, now time.Time, adapter Adapter) (res
 }
 
 func (w *Worker) executionFailed(ctx context.Context, id uint64, err error) error {
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if ctx.Err() != nil {
 		return err
 	}
 	var failure *ExecutionFailure

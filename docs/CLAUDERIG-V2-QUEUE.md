@@ -148,9 +148,11 @@ adapter must find and reuse it when called again.
 
 Typed `ExecutionFailure` values choose a bounded failure code, retry deadline and
 whether work blocks. Only that classification is persisted; raw error text is
-not stored. Unclassified errors and cancellation stop the run with the last
-confirmed phase retained. A retry-classification persistence failure remains
-visible to the caller. Execution cleanup runs before worker ownership releases;
+not stored. An adapter's operation-level timeout can carry that classification
+while the RunOne context is still active. Unclassified errors and cancellation
+of the RunOne context stop with the last confirmed phase retained, without
+recording a new retry classification. A retry-classification persistence failure
+remains visible to the caller. Execution cleanup runs before worker ownership releases;
 adapters own child-process cleanup and staging lease release. Queue transactions
 always use the original context, not the staging lease's derived context.
 
