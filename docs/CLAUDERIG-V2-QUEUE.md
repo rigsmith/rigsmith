@@ -1,10 +1,11 @@
 # V2 durable queue core (milestone 6b.1)
 
 `internal/agentrig/queue` persists capture intent, exclusive worker ownership and
-publication progress. Both vendor adapters can consume it. It has no executable
-worker, Claude service calls, queue command, hook changes or automatic activation.
-Those belong to milestone 6b.2 and the later opt-in rollout. This internal
-foundation has no end-user changeset because shipped commands behave as before.
+publication progress. Both vendor adapters can consume it. Milestone 6b.2 now
+adds a shared one-batch phase driver and separates Claude capture from publication.
+A concrete Claude queue adapter, durable capture artifacts, worker command and
+hook activation are still pending. This internal foundation has no end-user
+changeset because shipped commands behave as before.
 
 ## Identity and generations
 
@@ -126,7 +127,55 @@ worker before choosing a journal or database. Unknown versions fail closed.
 Schema migration/rollback must run under both ownership locks and preserve
 pending work and deduplication receipts; there is no automatic migration yet.
 
-## Integration gates (milestone 6b.2)
+## Execution driver and Claude service boundary (milestone 6b.2, first slice)
+
+`Queue.RunOne` acquires worker ownership, claims one eligible batch, and runs only
+its unfinished phases through a required vendor `Adapter`. It returns ErrEmpty
+when nothing is eligible; it does not wait, run a background loop, or activate
+hooks. Two callers cannot execute the same queue concurrently. Producers can
+still enqueue while a batch is executing, and only that sealed batch is
+acknowledged on completion.
+
+`Adapter.Begin` receives the queue binding and detached work snapshot. It must
+validate actual configuration, provenance and saved references, then acquire the
+staging lease. Its `Execution` seals a durable capture, creates/retains a commit,
+and confirms remote publication. The driver persists each successful phase
+before calling the next method. Committed retries skip capture and commit;
+already-pushed recovery only acknowledges the batch. Failure or uncertainty in a
+phase marker stops the driver immediately. External effects still require
+idempotency by batch ID: if the effect happened but its marker did not, the
+adapter must find and reuse it when called again.
+
+Typed `ExecutionFailure` values choose a bounded failure code, retry deadline and
+whether work blocks. Only that classification is persisted; raw error text is
+not stored. An adapter's operation-level timeout can carry that classification
+while the RunOne context is still active. Unclassified errors and cancellation
+of the RunOne context stop with the last confirmed phase retained, without
+recording a new retry classification. A retry-classification persistence failure
+remains visible to the caller. Execution cleanup runs before worker ownership releases;
+adapters own child-process cleanup and staging lease release. Queue transactions
+always use the original context, not the staging lease's derived context.
+
+Claude's `Service.Capture` now exposes its existing repair/capture/scan/metadata
+phase. `Service.Sync` still composes Capture and Publish under one staging lease,
+with unchanged journal timing, identity observation, dry runs and terminal events.
+Capture alone does not commit the new snapshot or publish it (repair may finish
+an earlier merge). It returns a report over a **mutable** staging tree. It is not
+a valid implementation of the queue's durable Capture contract until the next
+slice seals and retains an immutable artifact. The standalone service preserves
+legacy live-identity and retention behavior; a queue adapter must supply pinned
+source attribution and protect its requested generations instead of assuming
+those synchronous defaults are sufficient.
+
+Tests cover phase resumption, offline retry, new input during capture, staging
+and worker ownership, cancellation, uncertain/failed markers and classified
+blocking. A synthetic Claude capture/publication test changes and deletes live
+sources between phases and confirms the original local commit reaches a local
+bare remote without another identity observation. This tests the service
+boundary, not a completed production queue adapter. The unchanged six-scenario
+compatibility baseline remains the gate for synchronous behavior.
+
+## Remaining integration gates (milestone 6b.2)
 
 - Recompute and validate canonical store/root/remote/configuration identity and
   source provenance before execution. Reject changed bindings rather than use a
