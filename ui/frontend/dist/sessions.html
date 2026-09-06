@@ -349,6 +349,9 @@
     margin-bottom:10px;border:1px solid var(--line);border-radius:6px;background:var(--raise);
     color:var(--fg);--wails-draggable:no-drag;}
   .pfilter::placeholder{color:var(--dim);}
+  .ptoggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);
+    margin:-4px 0 10px 2px;cursor:pointer;--wails-draggable:no-drag;}
+  .ptoggle input{margin:0;}
   .accthead{display:flex;align-items:center;gap:7px;padding:14px 9px 4px 6px;
     font-size:11px;color:var(--dim);cursor:default;}
   .accthead:hover{background:transparent;}
@@ -1258,6 +1261,9 @@ function countLine(st) {
   const bits = [];
   if (st.transcripts) bits.push(PLURAL(st.transcripts, 'conversation', 'conversations'));
   if (st.sidecars) bits.push(PLURAL(st.sidecars, 'Desktop session', 'Desktop sessions'));
+  // Only when they are on screen: a count that includes what is hidden reads as
+  // a listing that has lost half of itself.
+  if (showDeleted && st.deleted) bits.push(PLURAL(st.deleted, 'deleted', 'deleted'));
   if (st.cowork) bits.push(PLURAL(st.cowork, 'Cowork session', 'Cowork sessions'));
   if (st.configs) bits.push(PLURAL(st.configs, 'setting', 'settings'));
   return bits.length ? bits.join(' · ') : 'nothing filed here';
@@ -1378,6 +1384,22 @@ async function selectStore(st, node) {
   filter.addEventListener('input', () => applyFilter(filter.value.trim().toLowerCase()));
   list.append(filter);
 
+  // Deleted sessions are records of things Claude Desktop no longer shows, and
+  // there are as many of them here as there are live ones. They are worth
+  // keeping — a session you cannot find at all is often one of these — but not
+  // worth putting between you and the sessions that still exist.
+  const toggle = el('label', 'ptoggle');
+  const cb = el('input');
+  cb.type = 'checkbox';
+  cb.checked = showDeleted;
+  cb.addEventListener('change', () => {
+    showDeleted = cb.checked;
+    loadStores();          // the counts change with it
+    applyFilter(currentFilter);
+  });
+  toggle.append(cb, el('span', null, 'show deleted'));
+  list.append(toggle);
+
   showStoreHeader(view.store, view.config || []);
   renderContents(st, view.folders || []);
   applyFilter(currentFilter);
@@ -1422,6 +1444,7 @@ function renderContents(st, folders) {
     row.append(el('div', 'sub', PLURAL(f.items, 'session', 'sessions') +
       (f.latest ? ' \u00b7 ' + age(f.latest) : '')));
     if (f.note) row.title = f.note;
+    if (f.deletedBucket) row.dataset.deletedBucket = 'yes';
     row.addEventListener('click', () => { pick(row); showFolder(st, f); });
     add(row);
 
@@ -1450,6 +1473,9 @@ function sessionRow(st, it) {
 }
 
 let currentFilter = '';
+// Off by default. On, it reveals the deleted records and the heading they live
+// under; the choice is remembered while the window is open.
+let showDeleted = false;
 
 // applyFilter narrows the column. A heading whose sessions have all been
 // filtered away goes too — a heading for nothing reads as an empty folder,
@@ -1461,7 +1487,15 @@ function applyFilter(term) {
   // when the search comes back empty — looking somewhere else.
   const rows = [...$('plist').querySelectorAll('.grp')];
   for (const n of rows) {
-    n.hidden = term !== '' && !(n.dataset.find || '').includes(term);
+    const gone = !showDeleted && n.dataset.deleted === 'yes';
+    n.hidden = gone || (term !== '' && !(n.dataset.find || '').includes(term));
+  }
+  // With the deleted hidden, their heading has nothing under it. Hide it too,
+  // rather than leaving a folder that looks empty.
+  if (!showDeleted) {
+    for (const n of rows) {
+      if (n.dataset.kind === 'folder' && n.dataset.deletedBucket === 'yes') n.hidden = true;
+    }
   }
   if (term === '') return;
   for (let i = rows.length - 1; i >= 0; i--) {

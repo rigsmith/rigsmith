@@ -443,3 +443,34 @@ func TestUntitledSessionShowsItsIDNotItsFilename(t *testing.T) {
 		t.Errorf("label = %q, want it to still name the session", got)
 	}
 }
+
+// Deleted records are counted apart from live ones. The window hides them by
+// default, and a headline count that includes what is being hidden reads as a
+// listing that has lost half of itself — which here it would be: this machine's
+// Desktop store holds 27 live sessions and 24 tombstones.
+func TestDeletedAreCountedApartFromLiveSessions(t *testing.T) {
+	base := t.TempDir()
+	home, _ := os.UserHomeDir()
+	writeFile(t, base, codeSessions+"/a/w/local_live.json",
+		sidecarIn("local_live", "cli-1", "Here", filepath.Join(home, "Git"), filepath.Join(home, "Git"), time.Now()))
+	writeFile(t, base, codeSessions+"/a/w/deleted_gone.json", itoa(time.Now().UnixMilli()))
+
+	st := describeStore(location{id: "x", base: base, kind: "desktop"})
+	if st.Sidecars != 1 {
+		t.Errorf("Sidecars = %d, want only the live one", st.Sidecars)
+	}
+	if st.Deleted != 1 {
+		t.Errorf("Deleted = %d, want the tombstone counted on its own", st.Deleted)
+	}
+}
+
+// The bucket holding the tombstones is marked, so the window can hide it along
+// with them rather than leaving a heading over nothing.
+func TestDeletedBucketIsMarked(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, base, codeSessions+"/a/w/deleted_gone.json", itoa(time.Now().UnixMilli()))
+	groups := desktopFolders(location{base: base, kind: "desktop"})
+	if len(groups) != 1 || !groups[0].DeletedBucket {
+		t.Fatalf("groups = %+v, want the deleted bucket marked", groups)
+	}
+}
