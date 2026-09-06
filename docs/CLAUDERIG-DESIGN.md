@@ -39,6 +39,15 @@ which is exactly why the inclusion model is an allowlist, never a denylist.
 
 Legend: ✅ sync · 🔧 junk (machine-local/ephemeral) · 🔑 secret (never leaves machine)
 
+**Git's own config files never sync, at any depth.** The backup *is* a Git
+repository, so a `.gitattributes` arriving as ordinary content stops being
+content and starts governing how the backup stores every file beside it. One
+ships inside a plugin marketplace clone reading `* text=auto eol=lf` — which
+re-enables the byte conversion the backup exists to prevent, so publication
+refuses and stays refused: deleting the file only lasts until the next plugin
+update. Pruned by name like `node_modules`. The cost is a vendored file that a
+marketplace re-clone regenerates.
+
 ### Root: `~/.claude` (CLI)
 
 | Path | Verdict | Notes |
@@ -99,6 +108,36 @@ insufficient. The redactor parses JSON, strips known secret-bearing fields, comm
 the redacted doc, and on restore **merges synced fields back without clobbering
 the local machine's secrets**. (Redaction is an always-on *transform*, separate
 from conflict *merge* below.)
+
+### As built: anything the tripwire detects, the scrubber must be able to remove
+
+The tripwire refuses to publish a credential it can still see. That is only
+survivable if every shape it detects is a shape the scrubber can clear —
+otherwise the refusal is permanent, and no setting the user can reach fixes it.
+Three ways that invariant was broken in practice, each of which made syncing
+impossible rather than merely noisy:
+
+- **A refusal that outranked the rule that would have fixed it.** Transcripts
+  quoting a PEM private key were refused before the scrubber ran, including
+  after it gained a rule for exactly that shape. The refusal now applies only
+  where a line-at-a-time rewrite genuinely cannot finish: a key block in raw
+  text, whose body continues onto lines the rewrite copies through untouched.
+  Inside a JSON record — which is what every transcript line is — the rule stops
+  at the closing quote and takes the whole block. Note that testing for a
+  closing `-----END-----` marker is *not* a usable proxy: a key quoted in a
+  conversation is usually truncated and has no footer at all.
+
+- **Progress that a refusal threw away.** The marker recording what a run
+  scrubbed was written past the tripwire, so a refused run never recorded it and
+  every later run re-scrubbed the whole tree before refusing again. It is
+  written once the staging pass is done, whatever the tripwire goes on to say.
+  A run that stops part-way still returns above it and still re-scrubs.
+
+- **Staged files with no live source.** A transcript whose project is gone (a
+  deleted worktree) is never walked again, so it keeps whatever it held when it
+  was staged — and if that predated redaction, nothing could clear it, because
+  there is no source left to scrub from. The run that turns redaction on scrubs
+  those staged copies in place.
 
 ## Path rewriting
 
