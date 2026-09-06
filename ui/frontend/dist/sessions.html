@@ -307,66 +307,75 @@
      right is what is in the place you picked. */
   .modes{display:inline-flex;gap:2px;margin-left:12px;--wails-draggable:no-drag;}
   .modebtn{font:inherit;font-size:11px;letter-spacing:.04em;text-transform:lowercase;
-    padding:3px 10px;border:1px solid var(--line);background:transparent;color:var(--dim);
+    padding:3px 10px;border:1px solid var(--line);background:transparent;color:var(--muted);
     cursor:pointer;border-radius:5px;}
-  .modebtn[aria-pressed="true"]{color:var(--fg);border-color:var(--fg-faint);background:var(--raise);}
+  .modebtn[aria-pressed="true"]{color:var(--paper);border-color:var(--muted-2);background:var(--ink-2);}
   /* Three panels, each answering one question: which place, what is in it,
      what is this. They were two, with the first two sharing a column — a list
      of stores with a store's contents spliced into the middle of it, which is
      hard to read as two things because it is drawn as one. */
   .places{flex:1;min-height:0;display:grid;grid-template-columns:232px 300px 1fr;gap:0;}
   #plist{border-right:1px solid var(--line);}
-  .pcolhead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+  .pcolhead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
     margin-bottom:10px;}
-  .pempty{color:var(--dim);font-size:12px;padding:4px 0;}
+  .plisthead{display:flex;align-items:center;gap:7px;margin-bottom:9px;font-size:12.5px;
+    color:var(--paper);}
+  .plisthead .nmtext{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .plisthead .where{margin-left:auto;flex:none;font-size:10px;color:var(--muted);}
+  .pcontrols{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+  .pcontrols .pfilter{flex:1;margin-bottom:0;}
+  .pnote{font-size:11px;color:var(--muted);padding:4px 0 8px;}
+  .linkish{background:none;border:0;padding:0 0 0 6px;font:inherit;font-size:11px;
+    color:var(--paper);text-decoration:underline;cursor:pointer;--wails-draggable:no-drag;}
+  .pempty{color:var(--muted);font-size:12px;padding:4px 0;}
   .pcol{overflow:auto;padding:14px 18px 28px;}
   #pstores{border-right:1px solid var(--line);}
-  .pgrouphead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+  .pgrouphead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
     margin:14px 0 6px;}
   .pgrouphead:first-child{margin-top:0;}
   .store{padding:7px 9px;border-radius:6px;cursor:pointer;border:1px solid transparent;}
-  .store:hover{background:var(--raise);}
-  .store[data-on="yes"]{background:var(--raise);border-color:var(--fg-faint);}
+  .store:hover{background:var(--ink-2);}
+  .store[data-on="yes"]{background:var(--ink-3);border-color:var(--muted-2);}
   .store .nm{font-size:12.5px;display:flex;align-items:center;gap:7px;}
   .store .nmtext{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .store .ct{font-size:10.5px;color:var(--dim);margin-top:2px;}
-  .store[data-absent="yes"] .nm{color:var(--dim);font-style:italic;}
+  .store .ct{font-size:10.5px;color:var(--muted);margin-top:2px;}
+  .store[data-absent="yes"] .nm{color:var(--muted);font-style:italic;}
   .grp{padding:5px 9px 5px 8px;border-radius:6px;cursor:pointer;font-size:12px;}
-  .grp:hover{background:var(--raise);}
-  .grp[data-on="yes"]{background:var(--raise);color:var(--fg);}
-  .grp .sub{font-size:10.5px;color:var(--dim);}
+  .grp:hover{background:var(--ink-2);}
+  .grp[data-on="yes"]{background:var(--ink-2);color:var(--paper);}
+  .grp .sub{font-size:10.5px;color:var(--muted);}
   .pitem{display:flex;gap:10px;align-items:baseline;padding:7px 8px;border-radius:6px;}
   .pitem[data-click="yes"]{cursor:pointer;}
-  .pitem[data-click="yes"]:hover{background:var(--raise);}
+  .pitem[data-click="yes"]:hover{background:var(--ink-2);}
   .kindtag{flex:none;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;
-    color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 5px;}
+    color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px;}
   .pitem .lbl{flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;
     white-space:nowrap;}
-  .pitem .meta{flex:none;font-size:10.5px;color:var(--dim);}
-  .pitem .sub{font-size:10.5px;color:var(--dim);margin-top:2px;}
-  .pitem[data-deleted="yes"] .lbl>div:first-child{text-decoration:line-through;color:var(--dim);}
+  .pitem .meta{flex:none;font-size:10.5px;color:var(--muted);}
+  .pitem .sub{font-size:10.5px;color:var(--muted);margin-top:2px;}
+  .pitem[data-deleted="yes"] .lbl>div:first-child{text-decoration:line-through;color:var(--muted);}
   .pfilter{width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:5px 8px;
-    margin-bottom:10px;border:1px solid var(--line);border-radius:6px;background:var(--raise);
-    color:var(--fg);--wails-draggable:no-drag;}
-  .pfilter::placeholder{color:var(--dim);}
-  .ptoggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);
-    margin:-4px 0 10px 2px;cursor:pointer;--wails-draggable:no-drag;}
+    margin-bottom:10px;border:1px solid var(--line);border-radius:6px;background:var(--ink-2);
+    color:var(--paper);--wails-draggable:no-drag;}
+  .pfilter::placeholder{color:var(--muted);}
+  .ptoggle{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);
+    flex:none;cursor:pointer;white-space:nowrap;--wails-draggable:no-drag;}
   .ptoggle input{margin:0;}
   .accthead{display:flex;align-items:center;gap:7px;padding:14px 9px 4px 6px;
-    font-size:11px;color:var(--dim);cursor:default;}
+    font-size:11px;color:var(--muted);cursor:default;}
   .accthead:hover{background:transparent;}
   .folderhead{padding-left:14px;}
   .sessionrow{font-size:12px;padding-left:30px;}
-  .sessionrow .dot{display:inline-block;width:14px;color:var(--dim);font-size:10px;}
-  .sessionrow[data-deleted="yes"]{color:var(--dim);text-decoration:line-through;}
-  .grp[data-picked="yes"]{background:var(--raise);color:var(--fg);}
+  .sessionrow .dot{display:inline-block;width:14px;color:var(--muted);font-size:10px;}
+  .sessionrow[data-deleted="yes"]{color:var(--muted);text-decoration:line-through;}
+  .grp[data-picked="yes"]{background:var(--ink-3);color:var(--paper);}
   .facts{display:grid;grid-template-columns:120px 1fr;gap:5px 12px;margin:12px 0 4px;font-size:12px;}
-  .fk{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding-top:2px;}
+  .fk{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding-top:2px;}
   .fv{word-break:break-all;}
   .pacts{margin-top:16px;}
-  .store .diff{color:var(--fg-faint);}
+  .store .diff{color:var(--muted-2);}
   .phead{font-size:13px;margin-bottom:2px;}
-  .psub{font-size:11px;color:var(--dim);margin-bottom:14px;word-break:break-all;}
+  .psub{font-size:11px;color:var(--muted);margin-bottom:14px;word-break:break-all;}
 </style>
 </head>
 <body>
@@ -1371,18 +1380,30 @@ async function selectStore(st, node) {
   if (view.error) { list.replaceChildren(el('div', 'toast err', view.error)); return; }
 
   list.replaceChildren();
-  list.append(el('div', 'pcolhead', 'in ' + st.label));
+
+  // One line, not a wrapped shout. The place is already named and badged in the
+  // panel to the left; repeating it here in capitals over two lines spends the
+  // top of the column saying what is next to it.
+  const head = el('div', 'plisthead');
+  if (st.account) {
+    const m = monogramFor(st.account);
+    head.append(paintMono(el('span', 'mono', m), m));
+  }
+  head.append(el('span', 'nmtext', st.label));
+  head.append(el('span', 'where', st.where === 'repo' ? 'synced' : 'this Mac'));
+  list.append(head);
 
   // The filter belongs over the long column, not over the eight places beside
   // it. It searches titles, folders, branches and ids together, because which
   // of those you remember is not something you decide in advance.
+  const controls = el('div', 'pcontrols');
   const filter = el('input', 'pfilter');
   filter.type = 'search';
   filter.placeholder = 'filter sessions\u2026';
   filter.autocomplete = 'off';
   filter.value = currentFilter;
   filter.addEventListener('input', () => applyFilter(filter.value.trim().toLowerCase()));
-  list.append(filter);
+  controls.append(filter);
 
   // Deleted sessions are records of things Claude Desktop no longer shows, and
   // there are as many of them here as there are live ones. They are worth
@@ -1397,8 +1418,9 @@ async function selectStore(st, node) {
     loadStores();          // the counts change with it
     applyFilter(currentFilter);
   });
-  toggle.append(cb, el('span', null, 'show deleted'));
-  list.append(toggle);
+  toggle.append(cb, el('span', null, 'deleted'));
+  controls.append(toggle);
+  list.append(controls);
 
   showStoreHeader(view.store, view.config || []);
   renderContents(st, view.folders || []);
@@ -1423,10 +1445,28 @@ function renderContents(st, folders) {
     return;
   }
 
+  // A Desktop tree can hold a stray folder belonging to another login — a
+  // session opened while signed in as someone else. The panel to the left names
+  // one account for this place, so showing the others here contradicts it.
+  // They are set aside rather than dropped: the count says they exist, and
+  // clicking it brings them in.
+  const mine = st.account ? folders.filter(f => !f.folder.account || f.folder.account === st.account) : folders;
+  const others = folders.length - mine.length;
+  if (others && !showOtherAccounts) {
+    const note = el('div', 'pnote');
+    note.append(document.createTextNode(
+      `${others} ${others === 1 ? 'folder' : 'folders'} here belong to another account`));
+    const b = el('button', 'linkish', 'show');
+    b.addEventListener('click', () => { showOtherAccounts = true; selectStore(st, storeNode(st.id)); });
+    note.append(b);
+    list.append(note);
+  }
+  folders = showOtherAccounts ? folders : mine;
+
   let account = null;
   for (const fc of folders) {
     const f = fc.folder;
-    if (f.account && f.account !== account) {
+    if (f.account && f.account !== account && (showOtherAccounts || f.account !== st.account)) {
       account = f.account;
       const head = el('div', 'grp accthead');
       const m = monogramFor(account);
@@ -1476,6 +1516,11 @@ let currentFilter = '';
 // Off by default. On, it reveals the deleted records and the heading they live
 // under; the choice is remembered while the window is open.
 let showDeleted = false;
+// A place names one account; folders belonging to a different login are set
+// aside until asked for, so the two panels never disagree about whose this is.
+let showOtherAccounts = false;
+
+function storeNode(id) { return document.querySelector(`.store[data-id="${id}"]`); }
 
 // applyFilter narrows the column. A heading whose sessions have all been
 // filtered away goes too — a heading for nothing reads as an empty folder,
