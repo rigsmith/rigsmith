@@ -458,3 +458,12 @@ mirror — no path correction, manual excludes.
    Re-run shows 0 residual across all session files. **Still manual (non-blocking):**
    whether the Electron app itself resumes after rewrite — drive it by hand; the
    data-completeness half is automated.
+
+## V2 application-service extraction
+
+V2 starts with callable Claude-specific publication, reconciliation and pull
+services under `internal/clauderig/service`. Command handlers retain terminal
+rendering, hook input and capture orchestration. The services preserve the
+existing Git policies and backup formats; shared vendor adapters and store
+coordination are later steps. See [the service boundary and validation
+contracts](CLAUDERIG-V2-SERVICES.md).

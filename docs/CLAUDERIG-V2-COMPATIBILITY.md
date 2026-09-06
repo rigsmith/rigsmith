@@ -5,8 +5,10 @@ integration branch; `main` remains available for 1.x fixes. ClaudeRig and CodexR
 remain separate executables with their own configuration, state and backup
 repositories. No v2 release is published by creating or updating this branch.
 
-The first milestone establishes compatibility evidence. The next milestone
-extracts synchronous sync/pull/reconcile services from command handlers. Artifact
+The first milestone establishes compatibility evidence. The synchronous-service
+milestone has started with publication, reconciliation, and pull extracted from
+command handlers; [service boundaries](CLAUDERIG-V2-SERVICES.md) record the
+completed scope and the remaining capture orchestration. Artifact
 adapters and shared mechanics follow, then store coordination and the durable
 queue, and then CodexRig as a second consumer. Queued Claude hooks will initially
 require explicit activation.

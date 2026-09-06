@@ -11,22 +11,17 @@ import (
 	"time"
 
 	"github.com/mattn/go-isatty"
-	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
-	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
+	"github.com/rigsmith/rigsmith/internal/clauderig/service"
 	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 	"github.com/spf13/cobra"
 )
-
-// configHistoryMaxCommits bounds the config-history side branch: once it grows
-// past this, it's squashed to a single commit (it's tiny, so this is generous).
-const configHistoryMaxCommits = 200
 
 // hookTranscripts reads the Claude Code hook payload from stdin, if one is
 // there, and returns the transcript it names. Every hook event carries
@@ -107,11 +102,6 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	c.n += int64(n)
 	return n, err
 }
-
-// pushAttempts bounds the push/reconcile retry loop. Small on purpose: each round
-// is a real fetch+merge, and if the remote is moving faster than that the next
-// scheduled sync is the right place to catch up, not a loop here.
-const pushAttempts = 3
 
 // NewSyncCmd builds the `sync` command — walk → redact → manifest → tripwire into
 // the staging repo, then commit (empty-guarded) and push. Streams the report so
@@ -393,115 +383,11 @@ func NewSyncCmd() *cobra.Command {
 				_ = reg.Save(staging)
 			}
 
-			repo, err := gitrepo.Init(ctx, staging)
-			if err != nil {
-				return err
-			}
-			if cfg.Remote != "" {
-				if err := repo.SetRemote(ctx, "origin", cfg.Remote); err != nil {
-					return err
-				}
-			}
-			if err := backupgit.Prepare(ctx, staging); err != nil {
-				return err
-			}
-			if err := engine.CheckPublish(staging); err != nil {
-				return err
-			}
-			changed, err := repo.Commit(ctx, "clauderig sync: "+me.Name)
-			if err != nil {
-				return err
-			}
-			if cfg.Remote == "" {
-				if changed {
-					fmt.Fprintln(out, OkStyle.Render("\n  ✓ committed locally (no remote — run init)"))
-				} else {
-					fmt.Fprintln(out, OkStyle.Render("\n  ✓ already up to date (no remote)"))
-				}
-				return nil
-			}
-			// Always push (even with no new commit) so a previously-failed push
-			// recovers; an in-sync push is a cheap no-op. A rejection means the
-			// remote advanced, so reconcile and try again — and keep trying a few
-			// times, because with several machines syncing on a timer another one
-			// can land a push while this one is still merging. Failing there would
-			// report a broken sync for a race that resolves itself on the retry.
-			for attempt := 0; ; attempt++ {
-				if err := backupgit.Validate(ctx, staging); err != nil {
-					return err
-				}
-				if err := engine.CheckPublish(staging); err != nil {
-					return err
-				}
-				perr := repo.Push(ctx, "origin", "main")
-				if perr == nil {
-					break
-				}
-				if attempt >= pushAttempts {
-					return fmt.Errorf("push after reconcile: %w", perr)
-				}
-				if err := reconcile(ctx, out, repo, "origin", "main", true); err != nil {
-					return err
-				}
-			}
-			if changed {
-				fmt.Fprintln(out, OkStyle.Render("\n  ✓ synced & pushed"))
-			} else {
-				fmt.Fprintln(out, OkStyle.Render("\n  ✓ in sync"))
-			}
-
-			// Preserve config history on a separate branch that survives main's
-			// squash (everything except the disposable transcript tree). Bounded:
-			// squash it once its commit count grows large. Best-effort throughout.
-			if changed, cerr := repo.CommitSubtree(ctx, "config-history", []string{".", ":!cli/projects"}, "clauderig config: "+me.Name); cerr == nil && changed {
-				if repo.BranchCommitCount(ctx, "config-history") > configHistoryMaxCommits {
-					if err := repo.SquashBranch(ctx, "config-history", "clauderig: squashed config history"); err == nil && cfg.Remote != "" {
-						_ = repo.ForcePushBranch(ctx, "origin", "config-history")
-					}
-				} else if cfg.Remote != "" {
-					_ = repo.PushBranch(ctx, "origin", "config-history")
-				}
-			}
-
-			// Size-based maintenance: bound .git when it has outgrown the content.
-			//
-			// Repack FIRST, and re-measure. Every sync writes its objects loose
-			// and undeltified, and append-only transcripts compress to almost
-			// nothing once packed — on a real repo 2.4 GB of a 2.9 GB .git was
-			// simply unpacked. Squashing to escape that traded a month of
-			// history for something a gc would have given back for free.
-			gitBytes, _ := repo.GitDirBytes(ctx)
-			wtBytes, _ := repo.WorkTreeBytes(ctx)
-			if gitrepo.ShouldSquash(gitBytes, wtBytes, cfg.Retention.FloorBytes, cfg.Retention.SquashFactor) {
-				fmt.Fprintf(out, "  %s repacking (.git %dMB > %.0f× worktree)\n",
-					DimStyle.Render("⟳"), gitBytes>>20, cfg.Retention.SquashFactor)
-				if err := repo.Repack(ctx); err != nil {
-					return fmt.Errorf("repack: %w", err)
-				}
-				gitBytes, _ = repo.GitDirBytes(ctx)
-			}
-
-			// Only history's length can still be the problem here, so now it is
-			// fair to drop some. Keep whole days, cut on a day boundary: the
-			// squash used to fire at whatever o'clock it tripped, which is how a
-			// repo came to report that its history began at 08:18 on a Tuesday.
-			if gitrepo.ShouldSquash(gitBytes, wtBytes, cfg.Retention.FloorBytes, cfg.Retention.SquashFactor) {
-				keep := cfg.Retention.KeepDays()
-				cutoff := startOfDay(time.Now().AddDate(0, 0, -keep))
-				folded, err := repo.SquashBefore(ctx, cutoff,
-					"clauderig: history before "+cutoff.Format("2006-01-02"))
-				if err != nil {
-					return fmt.Errorf("squash: %w", err)
-				}
-				if folded > 0 {
-					fmt.Fprintf(out, "  %s folded %d commit(s) before %s, kept the last %d days\n",
-						DimStyle.Render("⟳"), folded, cutoff.Format("2006-01-02"), keep)
-					if err := repo.ForcePush(ctx, "origin", "main"); err != nil {
-						return fmt.Errorf("force-push after squash: %w", err)
-					}
-				}
-			}
-			return nil
+			_, err = applicationService(out).Publish(ctx, service.PublishRequest{
+				StagingDir: staging, Remote: cfg.Remote, MachineName: me.Name,
+				Retention: cfg.Retention, AllowMergeTool: interactive(),
+			})
+			return err
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "stage and scan, but don't commit or push")
