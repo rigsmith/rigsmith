@@ -12,8 +12,14 @@
 #   HOMEBREW_TAP_TOKEN  push access to rigsmith/homebrew-tap
 set -eu
 
+# The window's version and the release it is attached to are different numbers.
+# The window is its own module at 0.x; the release is tagged with the CLIs'
+# version, because that is what the workflow fires on. The cask says the first
+# and downloads from the second — reusing one for both puts a URL in the cask
+# that 404s, which is what the split nearly shipped.
 version="${1:?version required}"
 dir="${2:?artifact directory required}"
+release_tag="${3:?release tag required, e.g. v1.15.5}"
 # Absent token is a skip, not a failure — the same stance the notarize block
 # takes, so this is safe to ship before the tap secret is wired. A step `if`
 # cannot check it: a step's own env block is not in scope for its own condition,
@@ -28,7 +34,7 @@ zip="${app}_${version}_darwin_universal.zip"
 [ -f "$dir/$zip" ] || { echo "no $dir/$zip to publish" >&2; exit 1; }
 
 sha=$(shasum -a 256 "$dir/$zip" | awk '{print $1}')
-url="https://github.com/rigsmith/rigsmith/releases/download/v${version}/${zip}"
+url="https://github.com/rigsmith/rigsmith/releases/download/${release_tag}/${zip}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

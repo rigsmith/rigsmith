@@ -305,7 +305,9 @@ jobs:
         if: github.event_name == 'push'
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: sh scripts/publish-ui-cask.sh "$UI_VERSION" dist-ui
+        # The window's version names the cask and its zip; the repository's tag
+        # is where that zip actually lives. Two numbers, both needed.
+        run: sh scripts/publish-ui-cask.sh "$UI_VERSION" dist-ui "$GITHUB_REF_NAME"
 
       - uses: actions/upload-artifact@v7
         if: github.event_name == 'workflow_dispatch'

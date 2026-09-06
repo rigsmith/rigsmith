@@ -184,8 +184,17 @@ func TestTheWindowIsStampedWithItsOwnVersion(t *testing.T) {
 		if strings.Contains(line, "package-ui.sh") && strings.Contains(line, "GITHUB_REF_NAME") {
 			t.Error("the macOS app is packaged with the repository's tag, not the window's version")
 		}
-		if strings.Contains(line, "publish-ui-cask.sh") && strings.Contains(line, "GITHUB_REF_NAME") {
-			t.Error("the Homebrew cask names the repository's tag, not the window's version")
+		// The cask is the one place that needs both numbers: it is named for the
+		// window's version and downloads from the release the repository tagged.
+		// It must take UI_VERSION first — naming it after the tag is the bug —
+		// and it must still be told the tag, or the URL it writes 404s.
+		if strings.Contains(line, "publish-ui-cask.sh") {
+			if !strings.Contains(line, "$UI_VERSION") {
+				t.Error("the Homebrew cask is named for the repository's tag, not the window's version")
+			}
+			if !strings.Contains(line, "GITHUB_REF_NAME") {
+				t.Error("the cask is not told which release its download lives in, so its url will 404")
+			}
 		}
 	}
 }
