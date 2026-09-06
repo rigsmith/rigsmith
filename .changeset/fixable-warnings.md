@@ -1,7 +1,7 @@
 ---
 type: feat
-scope: clauderig
-"github.com/rigsmith/rigsmith/ui"
+scope: clauderig-ui
+"github.com/rigsmith/rigsmith"
 ---
 
 Let the window act on the warnings it reports.

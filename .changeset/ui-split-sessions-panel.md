@@ -1,7 +1,7 @@
 ---
 type: feat
 scope: clauderig-ui
-"github.com/rigsmith/rigsmith/ui"
+"github.com/rigsmith/rigsmith"
 ---
 
 The window shows sessions filed in more than one place, and offers to resolve them.
