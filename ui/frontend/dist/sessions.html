@@ -319,7 +319,8 @@
   .store{padding:7px 9px;border-radius:6px;cursor:pointer;border:1px solid transparent;}
   .store:hover{background:var(--raise);}
   .store[data-on="yes"]{background:var(--raise);border-color:var(--fg-faint);}
-  .store .nm{font-size:12.5px;}
+  .store .nm{font-size:12.5px;display:flex;align-items:center;gap:7px;}
+  .store .nmtext{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .store .ct{font-size:10.5px;color:var(--dim);margin-top:2px;}
   .store[data-absent="yes"] .nm{color:var(--dim);font-style:italic;}
   .grp{padding:5px 9px 5px 20px;border-radius:6px;cursor:pointer;font-size:12px;}
@@ -448,6 +449,7 @@
 
 <script type="module">
 import { Call } from '/wails/runtime.js';
+import { monogramFor, paintMono } from './monogram.js';
 
 const $ = id => document.getElementById(id);
 
@@ -488,107 +490,7 @@ const SOURCE_LABEL = { cli: 'here-cli', desktop: 'here-desk', repo: 'sync' };
 // the window and the transfer arrows each say what their store is.
 const SOURCE_ICON = { cli: '\u276F', desktop: '\u25A3', repo: '\u21C5' };
 
-// Account labels are emails, and on one person's machine they are routinely the
-// same person at different organisations — john@brightshore.io beside
-// john@relatecpa.com — so an initial taken from the address would read "J" for
-// both. The letter comes from the domain instead, which is the part that
-// actually names the account.
-//
-// Where two accounts share a domain the local part stands in, and where the
-// chosen source still collides the prefix grows a letter at a time: "BR" and
-// "BU", never a letter plucked from the middle of a word, which reads as a typo
-// rather than as an abbreviation.
-//
-// Computed over every label seen so far rather than the rows currently on
-// screen, so filtering the list can't quietly re-letter a badge.
-const seenAccounts = new Set();
-let monoCache = new Map();
-
-function monogramFor(label) {
-  if (!label) return '';
-  if (!seenAccounts.has(label)) {
-    seenAccounts.add(label);
-    monoCache = buildMonograms([...seenAccounts]);
-  }
-  return monoCache.get(label) || '';
-}
-
-// The badge takes its colour from its own letter — b is blue, r is red, g is
-// green — so the mapping needs no learning and no legend. Letters with no
-// colour that starts the same way get one of the hues left over; those pairings
-// are arbitrary and only have to stay stable and distinct.
-//
-// Tailwind's 400 step throughout: saturated enough to read as a colour at 22px
-// on near-black, light enough not to vibrate against it.
-const LETTER_HUE = {
-  a: '#fbbf24', // amber
-  b: '#60a5fa', // blue
-  c: '#22d3ee', // cyan
-  d: '#fb7185', // rose
-  e: '#34d399', // emerald
-  f: '#e879f9', // fuchsia
-  g: '#4ade80', // green
-  h: '#f472b6', // pink
-  i: '#818cf8', // indigo
-  j: '#94a3b8', // slate
-  k: '#a8a29e', // stone
-  l: '#a3e635', // lime
-  m: '#9ca3af', // gray
-  n: '#a3a3a3', // neutral
-  o: '#fb923c', // orange
-  p: '#c084fc', // purple
-  q: '#fbbf24', // amber
-  r: '#f87171', // red
-  s: '#38bdf8', // sky
-  t: '#2dd4bf', // teal
-  u: '#22d3ee', // cyan
-  v: '#a78bfa', // violet
-  w: '#a78bfa', // violet
-  x: '#a3e635', // lime
-  y: '#facc15', // yellow
-  z: '#a1a1aa', // zinc
-};
-
-function hueFor(mono) {
-  return LETTER_HUE[(mono || '').charAt(0).toLowerCase()] || null;
-}
-
-// Ring and letter in the hue, with the faintest wash behind it. A solid fill
-// would make the badge the loudest thing in a row whose point is the title.
-function paintMono(badge, mono) {
-  const hue = hueFor(mono);
-  if (!hue) return badge;
-  badge.style.color = hue;
-  badge.style.borderColor = hue;
-  badge.style.background = hue + '1a';
-  return badge;
-}
-
-function buildMonograms(labels) {
-  const domain = l => {
-    const at = l.lastIndexOf('@');
-    return at >= 0 ? l.slice(at + 1) : '';
-  };
-  const clean = t => t.replace(/[^a-z0-9]/gi, '');
-  const source = l => {
-    const host = clean((domain(l).split('.')[0] || ''));
-    // A shared domain says nothing about which account this is; the address does.
-    const shared = host && labels.some(o => o !== l && clean((domain(o).split('.')[0] || '')) === host);
-    if (host && !shared) return host;
-    const at = l.lastIndexOf('@');
-    return clean(at >= 0 ? l.slice(0, at) : l) || host || clean(l);
-  };
-  const out = new Map();
-  for (const l of labels) {
-    const src = source(l);
-    if (!src) { out.set(l, '?'); continue; }
-    let n = 1;
-    while (n < src.length && labels.some(o => o !== l &&
-      source(o).slice(0, n).toLowerCase() === src.slice(0, n).toLowerCase())) n++;
-    out.set(l, src.slice(0, n).toUpperCase());
-  }
-  return out;
-}
+// Account monograms come from monogram.js, shared with the status window.
 
 
 // Always rendered in this order, present or not, so the column reads as a
@@ -1416,8 +1318,21 @@ async function loadStores() {
       const node = el('div', 'store');
       node.dataset.id = st.id;
       if (!st.present) node.dataset.absent = 'yes';
-      node.append(el('div', 'nm', st.label));
+      // Three Desktop trees live on one machine — the app's own and one per
+      // profile — and their names do not say which login is inside. The badge
+      // does, and it is the same badge the status window uses for the same
+      // account, so it needs no learning here.
+      const name = el('div', 'nm');
+      if (st.account) {
+        const m = monogramFor(st.account);
+        const badge = paintMono(el('span', 'mono', m), m);
+        badge.title = st.account;
+        name.append(badge);
+      }
+      name.append(el('span', 'nmtext', st.label));
+      node.append(name);
       node.append(el('div', 'ct', countLine(st)));
+      if (st.account) node.title = st.account + ' — ' + st.path;
       const hint = diffHint(st, view.stores || []);
       if (hint) node.append(el('div', 'ct diff', hint));
       node.title = st.path;

@@ -59,6 +59,10 @@ type PlaceStore struct {
 	// decides how its insides are grouped.
 	Kind    string `json:"kind"`
 	Profile string `json:"profile,omitempty"`
+	// Account is who this store is signed in as. Three Desktop trees live on one
+	// machine — the app's own, and one per clauderig profile — and the only
+	// thing that tells them apart at a glance is whose sessions are inside.
+	Account string `json:"account,omitempty"`
 	Path    string `json:"path"`
 	// Present distinguishes a store that is empty from one that is not there.
 	// They render the same and mean opposite things: an empty profile is a
@@ -289,6 +293,7 @@ func describeStore(loc location) PlaceStore {
 	if !s.Present {
 		return s
 	}
+	s.Account = storeAccount(loc)
 	if loc.kind == "cli" {
 		// Counting only: resolving each project's real path means opening a
 		// transcript per project, and the store list has no business doing
@@ -308,6 +313,77 @@ func describeStore(loc location) PlaceStore {
 	}
 	s.Configs = len(storeConfig(loc))
 	return s
+}
+
+// storeAccount reports who a Desktop store is signed in as, by three routes in
+// descending order of how much they know.
+//
+// The app records lastKnownAccountUuid in its own config, which is the direct
+// answer for a tree on this machine. The synced copies do not have it — sync
+// keeps only the stable `preferences` out of that file — so a profile falls back
+// to the login it was created for, and the machine-wide copy falls back to
+// whoever owns most of the sessions in it. The last is a reading of the
+// evidence rather than a record, and it is right for the same reason the
+// listing is useful at all: the sessions are the thing that is actually there.
+func storeAccount(loc location) string {
+	if loc.kind == "cli" {
+		return ""
+	}
+	labels := sessions.AccountLabels()
+	if uuid := lastKnownAccount(loc.base); uuid != "" {
+		if label := labels[strings.ToLower(uuid)]; label != "" {
+			return label
+		}
+	}
+	if loc.profile != "" {
+		if email := profileEmail(filepath.Dir(loc.base)); email != "" {
+			return email
+		}
+	}
+	count := map[string]int{}
+	for _, sc := range scanSidecars(filepath.Join(loc.base, codeSessions)) {
+		if sc.account != "" {
+			count[sc.account]++
+		}
+	}
+	best, most := "", 0
+	for uuid, n := range count {
+		if n > most {
+			best, most = uuid, n
+		}
+	}
+	if label := labels[strings.ToLower(best)]; label != "" {
+		return label
+	}
+	return ""
+}
+
+func lastKnownAccount(base string) string {
+	b, err := os.ReadFile(filepath.Join(base, "config.json"))
+	if err != nil {
+		return ""
+	}
+	var c struct {
+		LastKnownAccountUUID string `json:"lastKnownAccountUuid"`
+	}
+	if json.Unmarshal(b, &c) != nil {
+		return ""
+	}
+	return c.LastKnownAccountUUID
+}
+
+func profileEmail(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, "profile.json"))
+	if err != nil {
+		return ""
+	}
+	var p struct {
+		Email string `json:"email"`
+	}
+	if json.Unmarshal(b, &p) != nil {
+		return ""
+	}
+	return p.Email
 }
 
 // storeConfig lists the settings a store carries in its own right — the MCP

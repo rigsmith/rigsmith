@@ -352,3 +352,36 @@ func TestSessionsAreSplitByAccount(t *testing.T) {
 		t.Errorf("accounts = %v, want the two kept apart", accounts)
 	}
 }
+
+// Three Desktop trees live on one machine — the app's own, and one per
+// clauderig profile — and nothing in their names says which login is inside.
+// The app records that in its own config, so that is the first place to look.
+func TestStoreAccountComesFromTheAppsOwnRecord(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, base, "config.json", `{"lastKnownAccountUuid":"03d1c0c9-823d-464b-a468-a9bea2383338"}`)
+	if got := lastKnownAccount(base); got != "03d1c0c9-823d-464b-a468-a9bea2383338" {
+		t.Errorf("lastKnownAccount = %q, want the uuid the app recorded", got)
+	}
+	// Absent or unreadable is a state, not a failure: the synced copies do not
+	// carry this file, and they still have to render.
+	if got := lastKnownAccount(t.TempDir()); got != "" {
+		t.Errorf("lastKnownAccount invented %q with no config to read", got)
+	}
+}
+
+// A synced profile has no config.json — sync keeps only the stable preferences
+// out of it — so it falls back to the login it was created for.
+func TestProfileEmailIsTheFallbackForASyncedProfile(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "profile.json", `{"name":"relatecpa","email":"john@relatecpa.com"}`)
+	if got := profileEmail(root); got != "john@relatecpa.com" {
+		t.Errorf("profileEmail = %q, want the profile's own record", got)
+	}
+}
+
+// The CLI root has no login of its own, so it must not be given one.
+func TestCLIStoreHasNoAccount(t *testing.T) {
+	if got := storeAccount(location{kind: "cli", base: t.TempDir()}); got != "" {
+		t.Errorf("storeAccount = %q for a CLI root, want none", got)
+	}
+}
