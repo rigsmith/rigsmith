@@ -102,19 +102,20 @@ jobs:
           node-version: "22"
           registry-url: https://registry.npmjs.org
 
-      # Keep the rigsmith/winget-pkgs fork's master current with upstream before
-      # GoReleaser branches off it to open the winget PRs. winget-pkgs moves
-      # thousands of commits a week; a stale fork turns each PR into a massive,
-      # conflicting diff instead of a clean single-manifest add. Needs WINGET_TOKEN
-      # (write access to the fork); no-ops without it, since the winget upload is
-      # skipped then anyway.
+      # Keep the JohnCampionJr/winget-pkgs fork's master current with upstream
+      # before the komac submission below. komac hardcodes the fork as
+      # <token user>/winget-pkgs, so WINGET_TOKEN (John's PAT) decides the fork —
+      # there is no org-owned alternative. komac branches from upstream's current
+      # master commit, so a stale fork does not widen the PR diff; this is hygiene
+      # so the fork does not drift thousands of commits behind. No-ops without
+      # WINGET_TOKEN, since the submission is skipped then anyway.
       #
       # Never fatal. This is hygiene for one of several publish targets, and it
       # runs before the build — a failure here used to abort the entire release
       # with nothing published at all. v1.5.0 was tagged and then shipped nothing
       # for exactly this reason: `gh repo sync` refuses when upstream has touched
       # its own workflow files unless the token carries the `workflow` scope, which
-      # a `public_repo` PAT does not. A stale fork costs a messier winget diff; a
+      # a `public_repo` PAT does not. A stale fork costs nothing but drift; a
       # failed release costs the release.
       - name: Sync winget-pkgs fork with upstream
         env:
@@ -124,8 +125,8 @@ jobs:
             echo "WINGET_TOKEN unset — winget upload is skipped, nothing to sync."
             exit 0
           fi
-          if ! gh repo sync rigsmith/winget-pkgs --source microsoft/winget-pkgs --branch master; then
-            echo "::warning::Could not sync the winget-pkgs fork — the winget PRs will branch from a stale master. If this is the `workflow` scope error, add that scope to WINGET_TOKEN. Continuing; the release does not depend on this."
+          if ! gh repo sync JohnCampionJr/winget-pkgs --source microsoft/winget-pkgs --branch master; then
+            echo "::warning::Could not sync the JohnCampionJr/winget-pkgs fork — it will drift further behind upstream (komac still branches from upstream master, so the PRs are unaffected). If this is the `workflow` scope error, add that scope to WINGET_TOKEN. Continuing; the release does not depend on this."
           fi
 
       - uses: goreleaser/goreleaser-action@v7
@@ -143,10 +144,9 @@ jobs:
           # Cross-repo token so GoReleaser can commit the casks to
           # rigsmith/homebrew-tap (the default GITHUB_TOKEN can't reach it).
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          # Classic PAT (public_repo) with write access to the rigsmith/winget-pkgs
-          # fork; GoReleaser pushes each package's manifest branch there and opens the
-          # PR to microsoft/winget-pkgs. Absent/empty ⇒ winget entries skip (their
-          # skip_upload gates on this being non-empty), so the release never fails.
+          # Classic PAT (public_repo) owned by John; komac submits winget PRs from
+          # JohnCampionJr/winget-pkgs. The GoReleaser winget blocks are disabled
+          # (skip_upload), so this only feeds the "Submit to winget (komac)" step.
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
           # Cross-repo token so GoReleaser can push the Scoop manifest to
           # rigsmith/scoop-bucket (the default GITHUB_TOKEN can't reach it). Absent/
