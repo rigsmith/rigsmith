@@ -11,6 +11,7 @@ package health
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 	"github.com/rigsmith/rigsmith/internal/clauderig/status"
@@ -89,6 +90,23 @@ const tooltipMax = 127
 //
 // The order is the priority order: the worst true thing wins the tray, because
 // the tray has exactly one colour to spend.
+// syncOverdue reports whether a sync should already have happened. Staging is
+// expected to be dirty between syncs; it is only worth remarking on once the
+// interval the hook runs at has passed without one landing.
+//
+// Generous by a whole interval, because the hook fires on a session ending
+// rather than on a timer: two intervals of quiet means nothing has been
+// happening, and a machine nobody is typing at does not need a warning about it.
+func syncOverdue(info status.Info, last journal.Record) bool {
+	if info.SyncEvery <= 0 {
+		return true // nothing to be early for
+	}
+	if last.At.IsZero() {
+		return true // never synced, so nothing is pending — it is overdue
+	}
+	return time.Since(last.At) > 2*info.SyncEvery
+}
+
 func Of(info status.Info, last journal.Record) Report {
 	d := info.Divergence
 	r := Report{Ahead: d.Ahead, Behind: d.Behind}
@@ -147,9 +165,18 @@ func Of(info status.Info, last journal.Record) Report {
 		r.Summary = commits(d.Ahead, "ahead") + " — not pushed yet"
 		r.Action = "clauderig sync"
 
+	case info.Dirty && !syncOverdue(info, last):
+		// Loose changes in staging are what the time between syncs looks like:
+		// the live tree keeps moving, and the next scheduled sync will take
+		// them. Amber here would mean the window sat at "needs attention" for
+		// most of every interval while nothing was wrong — and a warning that
+		// is usually on is one nobody reads.
+		r.Level, r.Reason = Green, ReasonSynced
+		r.Summary = "Up to date"
+
 	case info.Dirty:
-		// Level with the remote but the staging tree has loose changes: a sync
-		// started and did not finish.
+		// Still loose after the interval has passed. Now it is worth saying:
+		// either the hook is not firing or a sync is failing to finish.
 		r.Level, r.Reason = Amber, ReasonUncommitted
 		r.Summary = "Staging has uncommitted changes"
 		r.Action = "clauderig sync"
