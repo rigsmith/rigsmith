@@ -1,5 +1,102 @@
 # github.com/rigsmith/rigsmith
 
+## 1.15.3
+### 🩹 Fixes
+
+- **clauderig:** Stop warning about staging that is simply waiting for the next sync.
+  
+  Loose changes in staging are what the time between syncs looks like: the live
+  tree keeps moving and the next scheduled sync takes what has accumulated. Amber
+  there meant the window sat at "needs attention" for most of every interval while
+  nothing was wrong — and a warning that is usually on is one nobody reads.
+  
+  Both the window and `clauderig status` stay quiet until the interval has passed
+  twice without a sync landing, which means the hook is not firing or a sync is
+  not finishing. They call the same judgement rather than each making it, since
+  making it twice is how they came to disagree.
+
+## 1.15.2
+### 🩹 Fixes
+
+- **rig:** Fix the suggested stack seed location when working inside nested Git repositories.
+- **clauderig:** Forget a deleted `.gitattributes` before reading Git attributes.
+  
+  `git check-attr` falls back to the index for a file the working tree no longer
+  has, so a `.gitattributes` that stops being synced goes on governing the backup
+  after it is deleted — invisible, refusing every publish, and with nothing left
+  on disk to remove.
+- **clauderig:** Remove missed API keys from existing conversation backups and avoid false secret warnings. Fix sync failures caused by Git ignore rules.
+- **clauderig:** Unblock syncing when transcripts hold credentials the scrubber never got to.
+  
+  Three faults compounded into a sync that refused on every run and re-did all of
+  its work each time:
+  
+  - A transcript quoting a PEM private key was refused rather than scrubbed, even
+    though the scrubber gained a rule for exactly that shape. The refusal now
+    applies only where it has to — a key block in raw text, whose body runs on
+    into lines a line-at-a-time rewrite would copy through untouched. Inside a
+    JSON record, which is what every transcript line is, the block is scrubbed.
+  - The marker recording what a run scrubbed was written past the tripwire, so a
+    refused run never recorded it. Every later run then re-scrubbed every
+    transcript in the tree — thousands of files — before refusing on the same
+    finding. It is now written once the staging pass is done, whatever the
+    tripwire goes on to say.
+  - A staged transcript whose live source is gone (a deleted worktree, an
+    archived project) was never walked again, so it kept whatever it held when it
+    was staged. If that predated redaction, no setting could ever clear it. The
+    run that turns redaction on now scrubs those staged copies in place.
+- **clauderig:** Never sync a `.gitattributes` from inside a synced tree.
+  
+  The backup is a Git repository, so one of these arriving as ordinary content
+  stops being content and starts governing how the backup stores every file
+  beside it. One ships inside a plugin marketplace clone reading
+  `* text=auto eol=lf`, which re-enables exactly the byte conversion the backup
+  exists to prevent — publication refused, and deleting the file did not help
+  because the next plugin update brought it back. It is now pruned by name at any
+  depth, like `node_modules`.
+- **clauderig:** Stop scanning unchanged staged files twice per sync.
+  
+  The unchanged path re-read and re-scanned every staged file on every run, then
+  the audit read the whole tree again — two full passes over gigabytes to
+  conclude that three files had moved. It now consults the verdicts the audit
+  already reached, and reads anything it cannot account for.
+  
+  Read-only, and narrow: the audit writes those verdicts, and only when it finds
+  nothing anywhere in the tree. A file staged by an older clauderig, which no
+  audit ever vouched for, still fails the sync until it is dealt with.
+- **clauderig:** Fix a rare sync-lock issue that could allow overlapping syncs.
+- **clauderig:** Stop re-reading the whole backup on every sync.
+  
+  The pre-publication audit read all of staging on every run, whatever had
+  changed — nearly four minutes here to conclude that three files had moved, and
+  twice per publish. It now reads with a worker per core, and remembers which
+  files it found clean by size and mtime, so a run reads only what has moved
+  since. On a 1.8 GB tree: 3m52s to 27s cold, and 75ms warm.
+  
+  Nothing is taken on trust that has not been read at exactly that size and
+  mtime. Findings are never cached — they are reported again on every run until
+  they are dealt with — a run that found something leaves no verdicts behind at
+  all, a packed transcript is always read through its parts, and the cache is
+  discarded whole when the scanner learns a new credential shape.
+
+## 1.15.1
+### 🩹 Fixes
+
+- **clauderig:** A sync killed mid-run no longer stops the machine syncing for twenty minutes.
+  
+  The lock a sync holds records the process holding it, but the check that breaks an abandoned one only asked how old it was. So a hook terminated with its shell — which happens whenever a session ends mid-sync — left a lock that every later sync honoured for the full twenty minutes, reporting `another sync is running — skipping` while nothing was. Seen twice inside a quarter of an hour on one machine.
+  
+  It reads the pid that is already in the file. A lock whose holder has exited is stale whatever its age, so the next sync takes it immediately. This can only ever break a lock sooner: a pid that has been reused by something unrelated still answers alive, and the age limit still applies to a holder that is genuinely running.
+- **clauderig:** `redactTranscripts` can now clear everything the tripwire refuses on.
+  
+  Two credentials could be detected and never removed, so a sync refused for ever with the scrubber already on and nothing left for its owner to try.
+  
+  A **PEM private key** was reported on its header alone, while the scrubber declined to rewrite PEM at all — so a transcript that merely quoted one blocked the machine's backups permanently. Key material is now removed from the header to the end of the string holding it, which covers the truncated case too: one file here carried four `BEGIN` markers and no `END`, because a transcript records what was on screen. The surrounding record stays valid JSON.
+  
+  A **JWT written straight after an escape** — `…turso.io\neyJ…` — sat behind a word character, and the word boundary added to the signatures in 1.15.0 made the scrubber skip it while the scanner still saw it. A JWT's own shape is three dot-separated base64url runs, which prose does not produce, so that rule needs no boundary and now has none.
+  
+  A test now holds the rule behind both: anything the scanner detects, the scrubber must be able to remove. On the machine that found this, 26 flagged files go to none.
+
 ## 1.15.0
 ### 🚀 Enhancements
 

@@ -68,7 +68,10 @@ func TestPrepareRefreshesLegacyIndexWithoutChangingWorkingBytes(t *testing.T) {
 	if err := Ensure(root); err != nil {
 		t.Fatal(err)
 	}
-	again, _ := os.ReadFile(filepath.Join(root, ".gitattributes"))
+	again, err := os.ReadFile(filepath.Join(root, ".gitattributes"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !bytes.Equal(attrs, again) {
 		t.Fatal("attribute installation is not idempotent")
 	}
@@ -114,5 +117,63 @@ func TestEnsureRejectsSymlink(t *testing.T) {
 	b, _ := os.ReadFile(target)
 	if string(b) != "untouched" {
 		t.Fatal("changed symlink destination")
+	}
+}
+
+func TestPrepareStagesRequiredAttributesDespiteExcludes(t *testing.T) {
+	for _, location := range []string{".gitignore", ".git/info/exclude", "user-excludes"} {
+		t.Run(location, func(t *testing.T) {
+			root := setup(t)
+			p := filepath.Join(root, filepath.FromSlash(location))
+			if location == "user-excludes" {
+				p = filepath.Join(t.TempDir(), "ignore")
+				if _, err := git(t.Context(), root, nil, "config", "core.excludesFile", p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(p, []byte(".gitattributes\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := Prepare(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
+			attrs, err := git(t.Context(), root, nil, "show", ":.gitattributes")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(string(attrs), rule+"\n") {
+				t.Fatal("required byte-preservation rules were not staged")
+			}
+		})
+	}
+}
+
+// A .gitattributes that stops being synced is deleted from the tree, but the
+// index still holds it — and check-attr falls back to the index for a file that
+// is gone from disk. Without forgetting the entry, the deleted file goes on
+// overriding the backup's own rules and refusing every publish, with nothing
+// left on disk to delete.
+func TestPrepareForgetsDeletedNestedAttributes(t *testing.T) {
+	root := setup(t)
+	if err := os.MkdirAll(filepath.Join(root, "cli"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cli/s.jsonl"), []byte("safe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "cli/.gitattributes")
+	if err := os.WriteFile(nested, []byte("* text=auto eol=lf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// It was synced once, so the index carries it.
+	if _, err := git(t.Context(), root, nil, "add", "--force", "--", "cli/.gitattributes"); err != nil {
+		t.Fatal(err)
+	}
+	// The allowlist now excludes it, so sync removed it from the tree.
+	if err := os.Remove(nested); err != nil {
+		t.Fatal(err)
+	}
+	if err := Prepare(t.Context(), root); err != nil {
+		t.Fatalf("prepare still refuses after the file is gone: %v", err)
 	}
 }

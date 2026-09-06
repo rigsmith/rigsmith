@@ -1,6 +1,8 @@
 package redact
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -201,6 +203,117 @@ func TestScanAndRedactAgreeOnWhatCountsAsACredential(t *testing.T) {
 		}
 		if refused != tc.secret {
 			t.Errorf("%q: treated as credential=%v, want %v", tc.text, refused, tc.secret)
+		}
+	}
+}
+
+// The invariant behind `redactTranscripts`: anything the tripwire can DETECT,
+// the scrubber must be able to REMOVE. Where the two disagree the sync refuses
+// with the scrubber already on and nothing left for its owner to try — which is
+// how a PEM header nobody could clear, and a JWT written straight after an
+// escape, each blocked a machine's backups indefinitely.
+func TestScrubberCanRemoveEverythingTheScannerDetects(t *testing.T) {
+	jwt := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ.dBjftJeZ4CVP"
+	cases := []struct{ name, body string }{
+		{"jwt", `{"t":"` + jwt + `"}`},
+		// The one that was blocking a real machine: no separator between the
+		// escape and the token, so the header sits behind a word character.
+		{"jwt after an escape", `{"t":"https://db.turso.io\n` + jwt + `"}`},
+		{"pem, whole block", `{"t":"-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----"}`},
+		{"pem, header only", `{"t":"it printed -----BEGIN OPENSSH PRIVATE KEY----- and stopped"}`},
+		{"anthropic key", `{"t":"sk-ant-api03-` + strings.Repeat("Aa1", 20) + `"}`},
+		{"aws key", `{"t":"AKIA` + strings.Repeat("A", 16) + `"}`},
+		{"github token", `{"t":"ghp_` + strings.Repeat("a1", 18) + `"}`},
+		{"bearer", `{"t":"Authorization: Bearer 8xLOxBtZp8kFqz5mNvQ2wRt7yHjKlPoI"}`},
+	}
+	for _, tc := range cases {
+		raw := []byte(tc.body)
+		if before, _ := ScanReader("projects/-p/s.jsonl", bytes.NewReader(raw)); before == nil {
+			t.Errorf("%s: the scanner does not detect this at all — the case is not testing anything", tc.name)
+			continue
+		}
+		cleaned, _, changed := RedactText(raw)
+		if !changed {
+			t.Errorf("%s: detected but the scrubber left it untouched — no setting can clear this", tc.name)
+			continue
+		}
+		if after, _ := ScanReader("projects/-p/s.jsonl", bytes.NewReader(cleaned)); after != nil {
+			t.Errorf("%s: still detected as %q after scrubbing — the sync would refuse for ever", tc.name, after.Kind)
+		}
+	}
+}
+
+// Scrubbing a PEM block must not take the rest of the record with it: the
+// bound is the quote that closes the string, so the JSON survives.
+func TestRedactText_PEMStopsAtTheStringItIsIn(t *testing.T) {
+	in := []byte(`{"t":"-----BEGIN RSA PRIVATE KEY-----\nMIIEowIB\n-----END RSA PRIVATE KEY-----","keep":"me"}`)
+	out, _, changed := RedactText(in)
+	if !changed {
+		t.Fatal("the key was left in place")
+	}
+	if bytes.Contains(out, []byte("MIIEowIB")) {
+		t.Error("key material survived")
+	}
+	if !bytes.Contains(out, []byte(`"keep":"me"`)) {
+		t.Errorf("the rest of the record was eaten: %s", out)
+	}
+	var doc map[string]string
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Errorf("the scrubbed record is no longer valid JSON: %v\n%s", err, out)
+	}
+}
+
+func TestReviewCredentialDecisionsAgree(t *testing.T) {
+	for _, tc := range []struct {
+		name, token string
+		credential  bool
+	}{
+		{"hyphenated prose", "sk-a-single-line-of-explanation", false},
+		{"embedded prefix", "global-task-runner-config", false},
+		{"project key lowercase body", "sk-proj-" + strings.Repeat("a", 48), true},
+		{"project key mixed body", "sk-proj-" + strings.Repeat("Ab1", 16), true},
+		{"ordinary key", "sk-" + strings.Repeat("Ab1", 16), true},
+		{"anthropic key", "sk-ant-api03-" + strings.Repeat("Ab1", 16), true},
+		{"placeholder", "Bearer YOUR_ACCESS_TOKEN_GOES_HERE", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "example: " + tc.token + " ends here\n"
+			out, _, changed := RedactText([]byte(body))
+			if changed != tc.credential {
+				t.Fatalf("redaction changed=%v, want %v", changed, tc.credential)
+			}
+			// Both a native file and chunk payload use the complete scanner.
+			for _, rel := range []string{"projects/p/s.jsonl", "projects/p/s.jsonl.chunks/000.part"} {
+				finding, err := ScanReader(rel, strings.NewReader(body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if (finding != nil) != tc.credential {
+					t.Fatalf("%s: finding=%v, want credential=%v", rel, finding, tc.credential)
+				}
+				finding, err = ScanReader(rel, strings.NewReader(string(out)))
+				if err != nil || finding != nil {
+					t.Fatalf("%s: cleaned text refused: %v, %v", rel, finding, err)
+				}
+			}
+		})
+	}
+}
+
+func TestScanReaderBareProseAndProjectKey(t *testing.T) {
+	for _, tc := range []struct {
+		token      string
+		credential bool
+	}{
+		{"sk-a-single-line-of-explanation", false},
+		{"sk-proj-" + strings.Repeat("a", 48), true},
+	} {
+		finding, err := ScanReader("projects/p/note.txt", strings.NewReader(tc.token+"\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (finding != nil) != tc.credential {
+			t.Fatalf("bare-token classification: finding=%v, want credential=%v", finding, tc.credential)
 		}
 	}
 }

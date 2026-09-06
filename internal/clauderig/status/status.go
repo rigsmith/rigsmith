@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
@@ -37,6 +38,10 @@ type Info struct {
 	HasStaging bool           `json:"hasStaging"`
 	LastSync   string         `json:"lastSync"` // "hash when — subject", or "" when never
 	Dirty      bool           `json:"dirty"`
+	// SyncEvery is how often the hook syncs. Staging is expected to be dirty
+	// between those, so the health verdict needs it to tell "the interval has
+	// not elapsed yet" from "something is stuck".
+	SyncEvery time.Duration `json:"syncEvery"`
 	// Divergence is this machine's position against TrackingRef as of the last
 	// fetch — ahead, behind, and whether an unresolved merge is sitting in the
 	// repo. It is the full picture the tray and the UI render.
@@ -102,7 +107,7 @@ type AccountInfo struct {
 
 // Gather collects the local snapshot. settingsPath points at ~/.claude/settings.json.
 func Gather(ctx context.Context, cfg *config.Config, me config.Machine, staging, settingsPath string) Info {
-	info := Info{Machine: me, Remote: cfg.Remote}
+	info := Info{Machine: me, Remote: cfg.Remote, SyncEvery: cfg.HookInterval()}
 
 	if _, err := os.Stat(filepath.Join(staging, ".git")); err == nil {
 		info.HasStaging = true

@@ -43,3 +43,16 @@ paths = [
   '''internal/clauderig/redact/text\.go''',
   '''internal/clauderig/redact/text_test\.go''',
 ]
+
+# The transcript scrub tests need fixtures that carry a PEM block, because
+# refusing one instead of scrubbing it is the bug they cover. The body is
+# fabricated and twenty characters long; a real RSA key is thousands.
+#
+# By VALUE, with no `paths` entry, for the reason given at the top of this file:
+# naming the path would allow the whole test file, and a real key pasted into it
+# later would go unreported.
+[[allowlists]]
+description = "Fabricated PEM body in the transcript scrub tests"
+regexes = [
+  '''MIIEowIBAAKCAQEA1234''',
+]

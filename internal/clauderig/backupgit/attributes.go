@@ -66,6 +66,9 @@ func Prepare(ctx context.Context, root string) error {
 	if err := Ensure(root); err != nil {
 		return err
 	}
+	if err := dropDeletedAttributes(ctx, root); err != nil {
+		return err
+	}
 	if err := Validate(ctx, root); err != nil {
 		return err
 	}
@@ -79,7 +82,32 @@ func Prepare(ctx context.Context, root string) error {
 			return err
 		}
 	}
-	_, err = git(ctx, root, nil, "add", "--", ".gitattributes")
+	_, err = git(ctx, root, nil, "add", "--force", "--", ".gitattributes")
+	return err
+}
+
+// dropDeletedAttributes forgets index entries for .gitattributes files the
+// working tree no longer has. check-attr falls back to the index for a file
+// that is gone from disk, so one the allowlist has just stopped syncing goes on
+// governing the backup after it is deleted — invisible, and refusing every
+// publish, with nothing left to delete.
+//
+// Removals only, and only of these files: a refused Prepare must still add
+// nothing to the index.
+func dropDeletedAttributes(ctx context.Context, root string) error {
+	out, err := git(ctx, root, nil, "ls-files", "--deleted", "-z", "--", ":(glob)**/.gitattributes")
+	if err != nil {
+		return err
+	}
+	out = bytes.TrimRight(out, "\x00")
+	if len(out) == 0 {
+		return nil
+	}
+	args := []string{"rm", "--cached", "--quiet", "--"}
+	for _, p := range bytes.Split(out, []byte{0}) {
+		args = append(args, string(p))
+	}
+	_, err = git(ctx, root, nil, args...)
 	return err
 }
 

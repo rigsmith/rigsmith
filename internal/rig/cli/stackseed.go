@@ -17,6 +17,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// seedPrefix marks a repository as a stackspace seed rather than something you
+// clone and work in — `rig stack init` rebuilds the members from it.
+const seedPrefix = "rigstack-"
+
 // newStackSeedCmd exports what is the stackspace's own — everything at the
 // root outside every prefix: the manifest with its cursors, build overlays,
 // packaging, whatever was deliberately kept out of the members because it
@@ -27,10 +31,6 @@ import (
 // itself, ~100 MB carrying every upstream's history, and a derived artifact
 // under version control drifts. The seed is a few kilobytes and derives
 // nothing: the manifest already records which commit each prefix held.
-// seedPrefix marks a repository as a stackspace seed rather than something you
-// clone and work in — `rig stack init` rebuilds the members from it.
-const seedPrefix = "rigstack-"
-
 func newStackSeedCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
@@ -104,9 +104,9 @@ func newStackSeedMenuCmd() *cobra.Command {
 }
 
 // defaultSeedDir offers a name following the rigstack- convention, taken from
-// the stackspace's own directory: a stackspace in livemarkdown-2.4/ is seeded
-// to ../rigstack-livemarkdown-2.4. Only a suggestion — the prompt is editable,
-// and the argument form takes whatever you type.
+// the stackspace's own directory: a stackspace in acme-2.4/ is seeded
+// to ../rigstack-acme-2.4, outside any enclosing repositories. The prompt is
+// editable, and the argument form takes whatever you type.
 func defaultSeedDir(ctx context.Context) string {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -114,9 +114,9 @@ func defaultSeedDir(ctx context.Context) string {
 	}
 	_, _, repo, err := stackspace(ctx)
 	if err != nil {
-		return seedDirFor(nil, cwd)
+		return seedDirFor(ctx, nil, cwd)
 	}
-	return seedDirFor(repo, cwd)
+	return seedDirFor(ctx, repo, cwd)
 }
 
 // seedDirFor applies the naming rule to a stackspace, or offers the bare
@@ -128,7 +128,7 @@ func defaultSeedDir(ctx context.Context) string {
 // point back inside the stackspace and be refused. It is rendered relative to
 // the caller where that is expressible, since "../rigstack-acme" reads better
 // in a prompt than an absolute path, and absolute otherwise.
-func seedDirFor(repo *gitrepo.Repo, cwd string) string {
+func seedDirFor(ctx context.Context, repo *gitrepo.Repo, cwd string) string {
 	const fallback = "../" + seedPrefix + "seed"
 	if repo == nil {
 		return fallback
@@ -143,6 +143,22 @@ func seedDirFor(repo *gitrepo.Repo, cwd string) string {
 	// place the seed may not go.
 	if target == filepath.Clean(repo.Dir) {
 		target += "-seed"
+	}
+	// A sibling of a nested stackspace can still lie inside an outer repo.
+	// Move beside each enclosing worktree until the suggestion is outside all.
+	for {
+		top, inside := stackEnclosingRepo(ctx, target)
+		if !inside {
+			break
+		}
+		parent := filepath.Dir(top)
+		if parent == top { // No directory on this volume is outside that repo.
+			return ""
+		}
+		target = filepath.Join(parent, filepath.Base(target))
+		if target == filepath.Clean(top) {
+			target += "-seed"
+		}
 	}
 	if cwd == "" {
 		return target

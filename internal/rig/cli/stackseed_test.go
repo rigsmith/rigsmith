@@ -331,7 +331,7 @@ func TestSeedDirFor(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := seedDirFor(&gitrepo.Repo{Dir: tc.dir}, tc.cwd); got != tc.want {
+			if got := seedDirFor(t.Context(), &gitrepo.Repo{Dir: tc.dir}, tc.cwd); got != tc.want {
 				t.Errorf("seedDirFor = %q, want %q", got, tc.want)
 			}
 		})
@@ -349,7 +349,7 @@ func TestSeedDirForNeverLandsInsideTheStackspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, cwd := range []string{stack, filepath.Join(stack, "member"), nested} {
-		got := seedDirFor(&gitrepo.Repo{Dir: stack}, cwd)
+		got := seedDirFor(t.Context(), &gitrepo.Repo{Dir: stack}, cwd)
 		abs := got
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(cwd, got)
@@ -366,10 +366,38 @@ func TestSeedDirForNeverLandsInsideTheStackspace(t *testing.T) {
 func TestSeedDirForEdgeCases(t *testing.T) {
 	root := t.TempDir()
 	prefixed := filepath.Join(root, "rigstack-acme")
-	if got, want := seedDirFor(&gitrepo.Repo{Dir: prefixed}, prefixed), filepath.Join("..", "rigstack-acme-seed"); got != want {
+	if got, want := seedDirFor(t.Context(), &gitrepo.Repo{Dir: prefixed}, prefixed), filepath.Join("..", "rigstack-acme-seed"); got != want {
 		t.Errorf("a stackspace already carrying the prefix: got %q, want %q", got, want)
 	}
-	if got := seedDirFor(nil, root); got != "../rigstack-seed" {
+	if got := seedDirFor(t.Context(), nil, root); got != "../rigstack-seed" {
 		t.Errorf("seedDirFor(nil) = %q, want ../rigstack-seed", got)
+	}
+}
+
+func TestSeedDirForEscapesEnclosingRepositories(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer := filepath.Join(root, "outer")
+	inner := filepath.Join(outer, "nested", "middle")
+	stack := filepath.Join(inner, "stacks", "acme")
+	for _, dir := range []string{outer, inner, stack} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, dir, "init", "-b", "main")
+	}
+	cwd := filepath.Join(stack, "member")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := seedDirFor(t.Context(), &gitrepo.Repo{Dir: stack}, cwd)
+	abs := filepath.Clean(filepath.Join(cwd, got))
+	if want := filepath.Join(root, "rigstack-acme"); abs != want {
+		t.Fatalf("suggested %s, want %s", abs, want)
+	}
+	if top, inside := stackEnclosingRepo(t.Context(), abs); inside {
+		t.Fatalf("suggestion still inside %s", top)
 	}
 }

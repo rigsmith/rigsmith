@@ -37,8 +37,30 @@ var textSecretRe = regexp.MustCompile(strings.Join([]string{
 	`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`,
 	`\bAIza[A-Za-z0-9_\-]{8,}`,
 	`\bya29\.[A-Za-z0-9_\-]{8,}`,
-	// A JWT, anchored on its header rather than on the whole string.
-	`\beyJ[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}`,
+	// A JWT, anchored on its header rather than on the whole string, and
+	// deliberately WITHOUT a word boundary. Its own shape is the guard here —
+	// three dot-separated base64url runs is not something prose produces — so
+	// the boundary buys nothing and costs real tokens: one written straight
+	// after an escape, "…turso.io\neyJ…", is preceded by the n and would never
+	// be rewritten. The stream scanner has no boundary either, so requiring one
+	// here made it possible to detect a credential that could not be redacted,
+	// which leaves a sync refusing with the scrubber already on.
+	`eyJ[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}`,
+	// PEM private key material, from the header to the end of the string that
+	// holds it. Bounded on the quote rather than on END, because a transcript
+	// records what was on screen: a key pasted mid-scroll, or one a tool printed
+	// and truncated, has a header and no footer at all — one file here carried
+	// four BEGIN markers and no END. Both have to go, and stopping at the quote
+	// keeps the surrounding JSON record intact.
+	//
+	// The scanner reports a private key on the header alone, so without this
+	// every transcript that merely quotes one refused the sync for ever: the
+	// scrubber declined to touch PEM at all, and no setting could clear it.
+	// Ordered: the footer bounds the block when there is one, so a message that
+	// pastes a key and then keeps talking loses the key and keeps the talking.
+	// Only when no footer follows does the fallback run to the closing quote.
+	`-----BEGIN [A-Z ]*PRIVATE KEY-----[^"]*?-----END [A-Z ]*PRIVATE KEY-----`,
+	`-----BEGIN [A-Z ]*PRIVATE KEY-----[^"]*`,
 	// An opaque bearer token. LooksSecret already calls one of these a
 	// credential when it judges a config value, and leaving it in a transcript
 	// while redacting it from settings is the inconsistency, not the rule.
@@ -129,10 +151,7 @@ func hint(s string) string {
 	return s[:n] + "…"
 }
 
-// HasPrivateKey reports a PEM private-key header. Kept separate from RedactText
-// because a key block is the one shape that must NOT be rewritten in place: it
-// spans a structure this cannot safely edit, and half a scrubbed key is worse
-// than a refusal that says what it found.
+// HasPrivateKey reports a PEM private-key header.
 func HasPrivateKey(line []byte) bool { return pemRe.Match(line) }
 
 // IsCredentialMatch reports whether a regex hit is really a credential rather
@@ -154,7 +173,7 @@ func IsCredentialMatch(match string) bool {
 // followed by a key in every real case and by English in the false ones.
 func isKebabProse(match string) bool {
 	body := match
-	for _, prefix := range []string{"sk-ant-", "sk-", "glpat-", "xox"} {
+	for _, prefix := range []string{"sk-ant-", "sk-proj-", "sk-", "glpat-", "xox"} {
 		if rest, ok := strings.CutPrefix(match, prefix); ok {
 			body = rest
 			break
