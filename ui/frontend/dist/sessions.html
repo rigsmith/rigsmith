@@ -235,6 +235,19 @@
   .gapaction{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
   .gapaction .linkish{letter-spacing:0;font-size:11px;}
   .gapaction .err{color:var(--err);letter-spacing:0;}
+  .convosearch{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;
+    gap:10px;margin:14px 0 10px;}
+  .convocount{font-size:10.5px;color:var(--muted);white-space:nowrap;}
+  /* Who said it, said by which side of the column it sits on and what colour it
+     is. Enough to follow a conversation; not an attempt at a chat window. */
+  .convo .convorow{display:flex;margin:6px 0;}
+  .convo .convorow.said{justify-content:flex-end;}
+  .convo .convorow .turn{max-width:82%;border-left:0;padding:7px 10px;border-radius:9px;}
+  .convo .convorow.said .turn{background:var(--ink-3);color:var(--paper);
+    border:1px solid var(--line);}
+  .convo .convorow.replied .turn{background:transparent;color:var(--muted);
+    border:1px solid var(--line-soft);}
+  .convo .convorow .turn mark{background:none;color:var(--warn);font-weight:700;}
   .acts{
     flex:none;border-top:1px solid var(--line);padding:14px 22px 18px;
     display:flex;flex-wrap:wrap;gap:8px;align-items:center;
@@ -529,7 +542,7 @@ const $ = id => document.getElementById(id);
 // ui/bridge; ui/bridge/binding_test.go fails if this drifts.
 const LIBRARY_LIST = 'github.com/rigsmith/rigsmith/ui/bridge.Library.List';
 const LIBRARY_DETAIL = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Detail';
-const LIBRARY_ALL_PROMPTS = 'github.com/rigsmith/rigsmith/ui/bridge.Library.AllPrompts';
+const LIBRARY_CONVERSATION = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Conversation';
 const LIBRARY_TERMINAL = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenTerminal';
 const LIBRARY_DESKTOP = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenDesktop';
 const LIBRARY_VSCODE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenVSCode';
@@ -926,7 +939,7 @@ function openOutGap(d, missing, turns) {
     btn.textContent = 'reading\u2026';
     let view;
     try {
-      view = await Call.ByName(LIBRARY_ALL_PROMPTS, d.session.id);
+      view = await Call.ByName(LIBRARY_CONVERSATION, d.session.id);
     } catch (e) {
       gap.replaceChildren(el('span', 'err', String(e)));
       return;
@@ -937,12 +950,21 @@ function openOutGap(d, missing, turns) {
     }
     // Replace both ends with the whole thing, so the conversation reads once
     // through rather than as two fragments with the middle wedged between them.
+    const all = view.turns || [];
     turns.replaceChildren();
-    (view.prompts || []).forEach(p => turns.append(turn(p)));
+    turns.classList.add('convo');
+    all.forEach(t => turns.append(convoTurn(t)));
     if (view.truncated) {
       turns.append(el('div', 'gap',
-        `\u22ef the first ${(view.prompts || []).length} of ${view.total} \u2014 this conversation is longer than the window will read \u22ef`));
+        `\u22ef the first ${all.length} of ${view.total} \u2014 this conversation is longer than the window will read \u22ef`));
     }
+    // A search box over the conversation, not over the list: by this point you
+    // are reading one session and looking for a place inside it.
+    //
+    // Placed before the turns rather than over the gap: replaceChildren above
+    // has already taken the gap out of the document, so replacing it would put
+    // the box nowhere.
+    turns.before(convoSearch(turns, all.length));
     // The heading above said "Opened with", which is no longer what follows.
     const head = turns.previousElementSibling;
     if (head && head.tagName === 'B') head.textContent = 'The conversation';
@@ -955,6 +977,58 @@ function openOutGap(d, missing, turns) {
     }
   });
   return gap;
+}
+
+// convoTurn is one turn of the conversation. The two sides are told apart by
+// where they sit and how they are coloured, which is the least a reader needs to
+// follow who said what — and as much as belongs in a panel that is not trying
+// to be a chat window.
+function convoTurn(t) {
+  const row = el('div', 'convorow ' + (t.role === 'user' ? 'said' : 'replied'));
+  const bubble = el('div', 'turn', t.text);
+  if (t.at) bubble.title = new Date(t.at).toLocaleString();
+  row.append(bubble);
+  return row;
+}
+
+// convoSearch filters the conversation to the turns that mention something, and
+// marks where. Filtering rather than jumping: the count of what matched is the
+// useful answer when you are trying to remember whether a thing was discussed
+// at all, and the turns either side of a hit are usually why you were looking.
+function convoSearch(turns, total) {
+  const wrap = el('div', 'convosearch');
+  const box = el('input', 'pfilter');
+  box.type = 'search';
+  box.size = 1;
+  box.placeholder = 'search this conversation\u2026';
+  box.autocomplete = 'off';
+  const count = el('span', 'convocount', `${total} turn${total === 1 ? '' : 's'}`);
+  wrap.append(box, count);
+
+  box.addEventListener('input', () => {
+    const term = box.value.trim().toLowerCase();
+    let hits = 0;
+    for (const row of turns.querySelectorAll('.convorow')) {
+      const bubble = row.querySelector('.turn');
+      const text = bubble.dataset.text || (bubble.dataset.text = bubble.textContent);
+      const at = term ? text.toLowerCase().indexOf(term) : -1;
+      row.hidden = term !== '' && at < 0;
+      if (!row.hidden && term) hits++;
+      // Rebuild the bubble so a previous mark cannot survive into this search.
+      bubble.replaceChildren();
+      if (at < 0) {
+        bubble.append(document.createTextNode(text));
+      } else {
+        bubble.append(document.createTextNode(text.slice(0, at)));
+        bubble.append(el('mark', null, text.slice(at, at + term.length)));
+        bubble.append(document.createTextNode(text.slice(at + term.length)));
+      }
+    }
+    count.textContent = term
+      ? `${hits} of ${total} turn${total === 1 ? '' : 's'}`
+      : `${total} turn${total === 1 ? '' : 's'}`;
+  });
+  return wrap;
 }
 
 function renderActions(d, into) {

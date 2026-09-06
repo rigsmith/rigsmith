@@ -112,10 +112,17 @@ func (l *Library) Detail(ctx context.Context, id, search string) (SessionDetail,
 // transcript from being loaded in its entirety into a panel.
 const allPromptsCap = 5000
 
-// PromptsView is every human turn in one session, in order.
+// Turn is one side of the conversation.
+type Turn struct {
+	Role string    `json:"role"`
+	Text string    `json:"text"`
+	At   time.Time `json:"at"`
+}
+
+// PromptsView is one session's conversation, in order.
 type PromptsView struct {
-	Prompts []Prompt `json:"prompts"`
-	Total   int      `json:"total"`
+	Turns []Turn `json:"turns"`
+	Total int    `json:"total"`
 	// Truncated says the conversation is longer than what is returned, so the
 	// window can say so rather than implying the last turn it shows is the last
 	// turn there was.
@@ -123,13 +130,13 @@ type PromptsView struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// AllPrompts returns the whole conversation, for the panel that offers to open
-// it out rather than showing only its two ends.
+// Conversation returns a session as it was had — both sides, in order — for the
+// panel that offers to open it out rather than showing only its two ends.
 //
-// Detail asks for a handful from each end because that is what a summary needs.
-// This asks for the lot, and is a separate call for that reason: it is only
-// paid for when someone asks to read the middle.
-func (l *Library) AllPrompts(ctx context.Context, id string) (PromptsView, error) {
+// Detail asks for a handful of prompts from each end because that is what a
+// summary needs. This asks for the conversation, and is a separate call for
+// that reason: it is only paid for when someone asks to read it.
+func (l *Library) Conversation(ctx context.Context, id string) (PromptsView, error) {
 	row, _, err := l.find(id)
 	if err != nil {
 		return PromptsView{Error: err.Error()}, nil
@@ -137,23 +144,22 @@ func (l *Library) AllPrompts(ctx context.Context, id string) (PromptsView, error
 	if row.Path == "" {
 		return PromptsView{Error: "no transcript on this machine to read"}, nil
 	}
-	c, perr := sessions.Prompts(row.Path, allPromptsCap)
+	turns, total, perr := sessions.Turns(row.Path, allPromptsCap)
 	if perr != nil {
 		return PromptsView{Error: perr.Error()}, nil
 	}
-	return promptsView(c), nil
+	return promptsView(turns, total), nil
 }
 
-// promptsView decides what the window is being handed. First holds up to the
-// cap from the start of the conversation, so below the cap it IS the whole
-// conversation, already in order — and above it, the window has to say so
-// rather than let the last turn it shows read as the last turn there was.
-func promptsView(c sessions.Conversation) PromptsView {
-	return PromptsView{
-		Prompts:   toPrompts(c.First),
-		Total:     c.Total,
-		Truncated: c.Total > len(c.First),
+// promptsView decides what the window is being handed. The reader stops at a
+// cap, so above it the window has to say so rather than let the last turn it
+// can show read as the last turn there was.
+func promptsView(turns []sessions.Turn, total int) PromptsView {
+	out := make([]Turn, 0, len(turns))
+	for _, t := range turns {
+		out = append(out, Turn{Role: t.Role, Text: t.Text, At: t.At})
 	}
+	return PromptsView{Turns: out, Total: total, Truncated: total > len(turns)}
 }
 
 func toPrompts(ps []sessions.Prompt) []Prompt {

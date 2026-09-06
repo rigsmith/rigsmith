@@ -73,6 +73,11 @@ func main() {
 		{"a shortened conversation offers to open out", got["hadOpenOut"] == true},
 		{"opening it out shows every turn", num(got["turnsAfter"]) > num(got["turnsBefore"])},
 		{"and the whole conversation still fits the panel", got["actsInsidePanel"] != false},
+		{"prompts sit on the right of the answers", got["saidOnRight"] == true},
+		{"and are coloured differently from them", got["rolesDiffer"] == true},
+		{"the conversation has a search box", got["hasSearch"] == true},
+		{"searching it narrows the turns", num(got["searchHits"]) > 0 && num(got["searchHits"]) < num(got["turnsAfter"])},
+		{"and clearing it brings them back", num(got["searchCleared"]) == num(got["turnsAfter"])},
 	}
 	bad := 0
 	for _, c := range checks {
@@ -173,8 +178,9 @@ const stubCall = `const Call = { async ByName(name, ...args) {
     prompts: 40,
     first: [{text: 'the opening turn', at: new Date().toISOString()}],
     last: [{text: 'the closing turn', at: new Date().toISOString()}]};
-  if (name.endsWith('Library.AllPrompts')) return {total: 40, truncated: false,
-    prompts: Array.from({length: 40}, (_, i) => ({text: 'turn number ' + (i + 1),
+  if (name.endsWith('Library.Conversation')) return {total: 40, truncated: false,
+    turns: Array.from({length: 40}, (_, i) => ({role: i % 2 ? 'assistant' : 'user',
+      text: (i % 2 ? 'the answer to ' : 'the question about ') + 'thing ' + (i + 1),
       at: new Date().toISOString()}))};
   return {};
 } };
@@ -193,7 +199,22 @@ const probeScript = `<script>
     if (first) { first.click(); await sleep(500); }
     const gapBtn = document.querySelector('#pitems .gapaction .linkish');
     const turnsBefore = document.querySelectorAll('#pitems .turns .turn').length;
-    if (gapBtn) { gapBtn.click(); await sleep(400); }
+    if (gapBtn) { gapBtn.click(); await sleep(500); }
+    // Search inside the conversation, then clear it again.
+    const sbox = document.querySelector('#pitems .convosearch input');
+    let searchHits = null, searchCleared = null;
+    if (sbox) {
+      sbox.value = 'thing 7';
+      sbox.dispatchEvent(new Event('input', {bubbles: true}));
+      await sleep(200);
+      searchHits = document.querySelectorAll('#pitems .convorow:not([hidden])').length;
+      sbox.value = '';
+      sbox.dispatchEvent(new Event('input', {bubbles: true}));
+      await sleep(200);
+      searchCleared = document.querySelectorAll('#pitems .convorow:not([hidden])').length;
+    }
+    const said = document.querySelector('#pitems .convorow.said .turn');
+    const replied = document.querySelector('#pitems .convorow.replied .turn');
     const r = n => n.getBoundingClientRect();
     const panel = r($('plist')), f = r(document.querySelector('.pcontrols .pfilter'));
     const t = r(document.querySelector('.ptoggle'));
@@ -224,6 +245,16 @@ const probeScript = `<script>
       turnsBefore: turnsBefore,
       turnsAfter: document.querySelectorAll('#pitems .turns .turn').length,
       gapGone: !document.querySelector('#pitems .gapaction'),
+      hasSearch: !!sbox,
+      searchHits: searchHits,
+      searchCleared: searchCleared,
+      saidOnRight: said && replied
+        ? Math.round(r(said).right) >= Math.round(r(replied).right)
+          && Math.round(r(said).left) > Math.round(r(replied).left)
+        : null,
+      rolesDiffer: said && replied
+        ? getComputedStyle(said).backgroundColor !== getComputedStyle(replied).backgroundColor
+        : null,
     });
   } catch (e) { document.title = 'PROBE {"error":"' + String(e).replace(/"/g, "'") + '"}'; }
 })();

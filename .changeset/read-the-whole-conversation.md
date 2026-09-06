@@ -4,15 +4,17 @@ scope: clauderig
 "github.com/rigsmith/rigsmith"
 ---
 
-Read the whole conversation from the session panel.
+Read a session's conversation from the panel, both sides, with a search box.
 
-The detail showed a session's opening turns and its closing ones with a count of
-what sat between them — "⋯ 5 more prompt(s) ⋯" — and no way to see it. That gap
-is the one place in the panel where the answer is "read the rest", so it now
-offers to, and opens the conversation out in place: the two ends are the context
-for the middle, and losing them to read it is how you end up scrolling back to
-work out where you are.
+The detail showed a session's opening and closing prompts with a count of what
+sat between them and no way to reach it. That gap now offers to open the
+conversation out in place — the two ends are the context for the middle.
 
-Fetched only when asked, since the summary does not need it, and capped — a
-conversation longer than the window will read says so rather than letting its
-last shown turn read as the last turn there was.
+It shows both sides. Reading back a conversation with one voice removed is not a
+shorter conversation, it is a different and confusing document, so the assistant
+turns come too: prompts sit to the right, answers to the left, each coloured for
+its side. That is as much chat window as this is trying to be.
+
+A search box over the conversation filters it to the turns that mention
+something and marks where, because by that point you are inside one session
+looking for a place in it, not looking for a session.
