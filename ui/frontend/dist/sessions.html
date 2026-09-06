@@ -302,12 +302,53 @@
   .notes div{margin-top:5px;}
   .notes .warn{color:var(--warn);}
   .notes .err{color:var(--err);}
+
+  /* Places: two columns, both scrolling on their own. The left is the map, the
+     right is what is in the place you picked. */
+  .modes{display:inline-flex;gap:2px;margin-left:12px;--wails-draggable:no-drag;}
+  .modebtn{font:inherit;font-size:11px;letter-spacing:.04em;text-transform:lowercase;
+    padding:3px 10px;border:1px solid var(--line);background:transparent;color:var(--dim);
+    cursor:pointer;border-radius:5px;}
+  .modebtn[aria-pressed="true"]{color:var(--fg);border-color:var(--fg-faint);background:var(--raise);}
+  .places{flex:1;min-height:0;display:grid;grid-template-columns:290px 1fr;gap:0;}
+  .pcol{overflow:auto;padding:14px 18px 28px;}
+  #pstores{border-right:1px solid var(--line);}
+  .pgrouphead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+    margin:14px 0 6px;}
+  .pgrouphead:first-child{margin-top:0;}
+  .store{padding:7px 9px;border-radius:6px;cursor:pointer;border:1px solid transparent;}
+  .store:hover{background:var(--raise);}
+  .store[data-on="yes"]{background:var(--raise);border-color:var(--fg-faint);}
+  .store .nm{font-size:12.5px;}
+  .store .ct{font-size:10.5px;color:var(--dim);margin-top:2px;}
+  .store[data-absent="yes"] .nm{color:var(--dim);font-style:italic;}
+  .grp{padding:5px 9px 5px 20px;border-radius:6px;cursor:pointer;font-size:12px;}
+  .grp:hover{background:var(--raise);}
+  .grp[data-on="yes"]{background:var(--raise);color:var(--fg);}
+  .grp .sub{font-size:10.5px;color:var(--dim);}
+  .pitem{display:flex;gap:10px;align-items:baseline;padding:7px 8px;border-radius:6px;}
+  .pitem[data-click="yes"]{cursor:pointer;}
+  .pitem[data-click="yes"]:hover{background:var(--raise);}
+  .kindtag{flex:none;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 5px;}
+  .pitem .lbl{flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;}
+  .pitem .meta{flex:none;font-size:10.5px;color:var(--dim);}
+  .pitem .sub{font-size:10.5px;color:var(--dim);margin-top:2px;}
+  .phead{font-size:13px;margin-bottom:2px;}
+  .psub{font-size:11px;color:var(--dim);margin-bottom:14px;word-break:break-all;}
 </style>
 </head>
 <body>
 <div class="head">
   <div class="eyebrow">
     <span id="machine">Sessions</span>
+    <span class="modes">
+      <button id="mode-list" class="modebtn" aria-pressed="true"
+        title="Find a session by something about it — a word in it, roughly when it was">List</button>
+      <button id="mode-places" class="modebtn" aria-pressed="false"
+        title="Find a session by where it was kept — which Desktop, which profile, which project">Places</button>
+    </span>
     <span class="rule"></span>
     <button id="openStatus" title="Back to sync status">Status</button>
   </div>
@@ -367,6 +408,11 @@
 </div>
 
 
+<div class="places" id="places" hidden>
+  <div class="pcol" id="pstores"></div>
+  <div class="pcol pitems" id="pitems"></div>
+</div>
+
 <div class="scrim" id="scrim"></div>
 <aside class="drawer" id="drawer" data-on="no" aria-hidden="true">
   <div class="dhead" id="dhead"></div>
@@ -403,6 +449,9 @@ const LIBRARY_MATERIALIZE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Mate
 const WINDOWS_OPEN = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Open';
 const WINDOWS_HIDE = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Hide';
 const LIBRARY_TAKE_HANDOFF = 'github.com/rigsmith/rigsmith/ui/bridge.Library.TakeHandOff';
+const PLACES_STORES = 'github.com/rigsmith/rigsmith/ui/bridge.Places.Stores';
+const PLACES_GROUPS = 'github.com/rigsmith/rigsmith/ui/bridge.Places.Groups';
+const PLACES_ITEMS = 'github.com/rigsmith/rigsmith/ui/bridge.Places.Items';
 
 const LIMIT = 200;
 
@@ -1237,6 +1286,195 @@ $('q').addEventListener('keydown', (e) => {
 });
 $('since').addEventListener('change', refresh);
 refresh();
+
+// ---- Places -------------------------------------------------------------
+//
+// The list answers "which session was that". This answers "where was I". They
+// are different questions and the second one has no good answer in a flat list:
+// you cannot search for a place you cannot name, and the thing you remember —
+// which Desktop, which profile, which project — is exactly the thing a session
+// row reduces to a two-word label.
+//
+// So this walks stores. Lazily, in three steps: the store list is a directory
+// count, a store's groups are one more level of directories, and only opening a
+// group reads any files. The CLI store alone holds four thousand of them.
+
+let placesLoaded = false;
+let openStore = null;   // store id whose groups are showing
+let openGroup = null;   // group id whose items are showing
+
+function setMode(mode) {
+  const places = mode === 'places';
+  $('mode-list').setAttribute('aria-pressed', String(!places));
+  $('mode-places').setAttribute('aria-pressed', String(places));
+  document.querySelector('.filters').hidden = places;
+  document.querySelector('.filters2').hidden = places;
+  document.querySelector('.scroll').hidden = places;
+  $('places').hidden = !places;
+  if (places && !placesLoaded) loadStores();
+}
+
+// countLine says what is in a store without opening it, and says nothing at all
+// rather than "0 sidecars, 0 transcripts" for an empty one — a row of zeroes
+// reads as broken when the honest answer is "nothing here".
+function countLine(st) {
+  if (!st.present) return 'not synced here';
+  const bits = [];
+  if (st.transcripts) bits.push(`${st.transcripts} transcript${st.transcripts === 1 ? '' : 's'}`);
+  if (st.sidecars) bits.push(`${st.sidecars} sidecar${st.sidecars === 1 ? '' : 's'}`);
+  if (st.cowork) bits.push(`${st.cowork} cowork`);
+  if (st.configs) bits.push(`${st.configs} config`);
+  return bits.length ? bits.join(' · ') : 'empty';
+}
+
+async function loadStores() {
+  const box = $('pstores');
+  box.replaceChildren(el('div', 'pgrouphead', 'loading…'));
+  let view;
+  try {
+    view = await Call.ByName(PLACES_STORES);
+  } catch (e) {
+    box.replaceChildren(el('div', 'toast err', String(e)));
+    return;
+  }
+  placesLoaded = true;
+  box.replaceChildren();
+  if (view.error) box.append(el('div', 'toast err', view.error));
+
+  // Split by where the bytes are. This is the distinction the whole window
+  // turns on: a session missing from one and present in the other is the
+  // case someone is here to resolve.
+  for (const [where, head] of [['live', 'On this Mac'], ['repo', 'In the sync']]) {
+    const stores = (view.stores || []).filter(st => st.where === where);
+    if (!stores.length) continue;
+    box.append(el('div', 'pgrouphead', head));
+    for (const st of stores) {
+      const node = el('div', 'store');
+      node.dataset.id = st.id;
+      if (!st.present) node.dataset.absent = 'yes';
+      node.append(el('div', 'nm', st.label));
+      node.append(el('div', 'ct', countLine(st)));
+      node.title = st.path;
+      node.addEventListener('click', () => toggleStore(st, node));
+      box.append(node);
+    }
+  }
+}
+
+async function toggleStore(st, node) {
+  // Second click closes it, so the map does not only ever grow.
+  if (openStore === st.id) {
+    openStore = null;
+    node.removeAttribute('data-on');
+    document.querySelectorAll('.grp').forEach(g => g.remove());
+    return;
+  }
+  openStore = st.id;
+  openGroup = null;
+  document.querySelectorAll('.store').forEach(x => x.removeAttribute('data-on'));
+  document.querySelectorAll('.grp').forEach(g => g.remove());
+  node.dataset.on = 'yes';
+  $('pitems').replaceChildren();
+
+  let view;
+  try {
+    view = await Call.ByName(PLACES_GROUPS, st.id);
+  } catch (e) {
+    node.after(el('div', 'grp', String(e)));
+    return;
+  }
+  if (view.error) { node.after(el('div', 'grp', view.error)); return; }
+
+  // The store's own config first: it belongs to the place, not to any project
+  // in it, and it is the reason an otherwise-empty profile is worth restoring.
+  showStoreHeader(view.store, view.config || []);
+
+  const groups = view.groups || [];
+  if (!groups.length) {
+    node.after(el('div', 'grp', 'nothing filed here'));
+    return;
+  }
+  let prev = node;
+  for (const g of groups) {
+    const gn = el('div', 'grp');
+    gn.append(document.createTextNode(g.label));
+    const sub = el('div', 'sub', `${g.items} item${g.items === 1 ? '' : 's'}` +
+      (g.latest ? ' · ' + age(g.latest) : ''));
+    gn.append(sub);
+    if (g.note) gn.title = g.note;
+    gn.addEventListener('click', ev => { ev.stopPropagation(); openPlaceGroup(st, g, gn); });
+    prev.after(gn);
+    prev = gn;
+  }
+}
+
+function showStoreHeader(store, config) {
+  const box = $('pitems');
+  box.replaceChildren();
+  box.append(el('div', 'phead', store.label));
+  box.append(el('div', 'psub', store.path));
+  if (!config.length) return;
+  box.append(el('div', 'pgrouphead', 'what this place carries'));
+  for (const c of config) box.append(itemRow(c));
+}
+
+async function openPlaceGroup(st, g, node) {
+  openGroup = g.id;
+  document.querySelectorAll('.grp').forEach(x => x.removeAttribute('data-on'));
+  node.dataset.on = 'yes';
+  const box = $('pitems');
+  box.replaceChildren(el('div', 'pgrouphead', 'reading…'));
+  let view;
+  try {
+    view = await Call.ByName(PLACES_ITEMS, st.id, g.id);
+  } catch (e) {
+    box.replaceChildren(el('div', 'toast err', String(e)));
+    return;
+  }
+  box.replaceChildren();
+  box.append(el('div', 'phead', g.label));
+  box.append(el('div', 'psub', g.note || st.path));
+  if (view.error) { box.append(el('div', 'toast err', view.error)); return; }
+  const items = view.items || [];
+  if (!items.length) { box.append(el('div', 'pgrouphead', 'nothing here')); return; }
+  for (const it of items) box.append(itemRow(it));
+}
+
+// itemRow renders one thing a place holds. A row that names a session opens it;
+// a row that names a file does not pretend to.
+function itemRow(it) {
+  const row = el('div', 'pitem');
+  row.append(el('span', 'kindtag', it.kind));
+
+  const mid = el('div', 'lbl');
+  mid.append(el('div', null, it.label));
+  const subBits = [];
+  if (it.cwd) subBits.push(tilde(it.cwd));
+  if (it.branch) subBits.push(it.branch);
+  if (it.archived) subBits.push('archived');
+  // The link that answers the question this window exists for: Desktop knows
+  // about the session, and the conversation itself is a CLI transcript over
+  // there. Showing the id is what lets someone go and find it.
+  if (it.cliSession) subBits.push('transcript ' + it.cliSession.split('-')[0]);
+  if (subBits.length) mid.append(el('div', 'sub', subBits.join('  ·  ')));
+  row.append(mid);
+  row.append(el('span', 'meta', it.when ? age(it.when) : ''));
+  row.title = it.path;
+
+  // Prefer the transcript the sidecar points at: that is the conversation. A
+  // CLI row opens itself. Anything else is a file, and stays inert rather than
+  // opening a drawer that would have nothing to say.
+  const open = it.cliSession || (it.kind === 'transcript' ? it.session : '');
+  if (open) {
+    row.dataset.click = 'yes';
+    row.addEventListener('click', () => openDetail(open, null));
+  }
+  return row;
+}
+
+$('mode-list').addEventListener('click', () => setMode('list'));
+$('mode-places').addEventListener('click', () => setMode('places'));
+
 </script>
 </body>
 </html>

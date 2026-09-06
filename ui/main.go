@@ -97,6 +97,7 @@ func main() {
 			application.NewService(bridge.NewChooser()),
 			application.NewService(actionsSvc),
 			application.NewService(bridge.NewLibrary()),
+			application.NewService(bridge.NewPlaces()),
 			application.NewService(bridge.NewAccounts()),
 			application.NewService(windowsSvc),
 		},
