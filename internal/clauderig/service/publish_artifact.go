@@ -43,6 +43,13 @@ func (s Service) PublishArtifact(ctx context.Context, input ArtifactPublishReque
 	if !strings.HasPrefix(req.Work.CaptureRef, key+":") || req.Work.CommitRef == "" {
 		return fail, queue.ErrBinding
 	}
+	commitKey, err := commitartifact.RequestKey(claudeCommitRequest(req, input.Commit.Commits))
+	if err != nil {
+		return fail, err
+	}
+	if !strings.HasPrefix(req.Work.CommitRef, commitKey+":") {
+		return fail, queue.ErrBinding
+	}
 	plan := adapter.PublicationPlan(req.Sync.Machine.Name, req.Sync.Config.Retention)
 	if input.Remote == nil || req.Sync.Config.Remote == "" {
 		return fail, queue.ErrBinding

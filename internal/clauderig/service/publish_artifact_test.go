@@ -14,6 +14,9 @@ import (
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
+	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
+	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/service"
 )
 
@@ -269,5 +272,51 @@ func TestPublishArtifactCancellationReleasesStaging(t *testing.T) {
 	work, err := filepath.Glob(filepath.Join(input.Commit.Commits.Dir, ".publication-*"))
 	if err != nil || len(work) != 0 {
 		t.Fatalf("private workspace retained: %v %v", work, err)
+	}
+}
+
+func TestPublishArtifactRejectsForeignPolicyForSameCapture(t *testing.T) {
+	for _, field := range []string{"policy", "name", "email", "time", "message"} {
+		t.Run(field, func(t *testing.T) {
+			input, remote := publicationFixture(t, false, false)
+			capture := input.Commit.Capture
+			request := commitartifact.Request{
+				Captures: capture.Store, Commits: input.Commit.Commits, CaptureRef: capture.Work.CaptureRef,
+				PolicyID:   "claude-retained-commit-v1",
+				Message:    adapter.PublicationPlan(capture.Sync.Machine.Name, capture.Sync.Config.Retention).SnapshotMessage,
+				AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
+				Time:    capture.Work.Events[len(capture.Work.Events)-1].EnqueuedAt,
+				Prepare: backupgit.EnsureContext, Audit: engine.CheckPublishContext,
+			}
+			original, err := commitartifact.Build(t.Context(), request)
+			if err != nil || original != capture.Work.CommitRef {
+				t.Fatalf("fixture policy drift: %s %v", original, err)
+			}
+			switch field {
+			case "policy":
+				request.PolicyID = "foreign-policy"
+			case "name":
+				request.AuthorName = "foreign author"
+			case "email":
+				request.AuthorEmail = "foreign@example.com"
+			case "time":
+				request.Time = request.Time.Add(time.Second)
+			case "message":
+				request.Message = "foreign commit"
+			}
+			foreign, err := commitartifact.Build(t.Context(), request)
+			if err != nil || foreign == original {
+				t.Fatalf("foreign fixture: %s %v", foreign, err)
+			}
+			info, err := commitartifact.Open(t.Context(), input.Commit.Commits, foreign, filepath.Join(t.TempDir(), "foreign"))
+			if err != nil || info.CaptureRef != capture.Work.CaptureRef {
+				t.Fatalf("invalid fixture: %+v %v", info, err)
+			}
+			input.Commit.Capture.Work.CommitRef = foreign
+			result, err := (service.Service{}).PublishArtifact(t.Context(), input)
+			if !errors.Is(err, queue.ErrBinding) || result != (commitartifact.Publication{}) || remote.fetches != 0 || remote.pushes != 0 {
+				t.Fatalf("foreign %s accepted: %+v %v fetches=%d pushes=%d", field, result, err, remote.fetches, remote.pushes)
+			}
+		})
 	}
 }

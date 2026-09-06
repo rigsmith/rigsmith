@@ -56,14 +56,7 @@ func (s Service) CommitArtifact(ctx context.Context, input ArtifactCommitRequest
 	}
 	req.Store.Dir = captures
 	input.Commits.Dir = commits
-	return commitartifact.Build(ctx, commitartifact.Request{
-		Captures: req.Store, Commits: input.Commits, CaptureRef: req.Work.CaptureRef,
-		PolicyID:   "claude-retained-commit-v1",
-		Message:    adapter.PublicationPlan(req.Sync.Machine.Name, req.Sync.Config.Retention).SnapshotMessage,
-		AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
-		Time:    req.Work.Events[len(req.Work.Events)-1].EnqueuedAt,
-		Prepare: backupgit.EnsureContext, Audit: engine.CheckPublishContext,
-	})
+	return commitartifact.Build(ctx, claudeCommitRequest(req, input.Commits))
 }
 
 // Keep capture/commit/publication stores disjoint from native roots and staging.
@@ -95,4 +88,17 @@ func artifactStorePaths(req ArtifactCaptureRequest, commitStore artifact.Store) 
 		}
 	}
 	return stage, captures, commits, nil
+}
+
+// One policy description drives both commit construction and publication binding.
+// req must already have passed prepareArtifactRequest for its current phase.
+func claudeCommitRequest(req ArtifactCaptureRequest, commits artifact.Store) commitartifact.Request {
+	return commitartifact.Request{
+		Captures: req.Store, Commits: commits, CaptureRef: req.Work.CaptureRef,
+		PolicyID:   "claude-retained-commit-v1",
+		Message:    adapter.PublicationPlan(req.Sync.Machine.Name, req.Sync.Config.Retention).SnapshotMessage,
+		AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
+		Time:    req.Work.Events[len(req.Work.Events)-1].EnqueuedAt,
+		Prepare: backupgit.EnsureContext, Audit: engine.CheckPublishContext,
+	}
 }

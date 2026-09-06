@@ -98,8 +98,12 @@ validator stays unchanged.
 `Service.PublishArtifact` consumes an `ArtifactPublishRequest` containing the
 committed batch and an explicit `ArtifactTransport`. It detaches request values,
 checks the configured roots/staging/remote, producer identity, sealed event
-membership, capture reference key and committed phase, and requires a commit
-reference. The verified bundle must name that exact capture. Missing or corrupt
+membership, capture reference key and committed phase. The commit reference must
+carry the exact artifact key derived from the same policy request used by
+`CommitArtifact`: capture reference, policy version, message, author name/email
+and sealed timestamp. A valid bundle for the same capture built with different
+commit policy or identity is refused before opening it or calling transport.
+The verified bundle must also name that exact capture. Missing or corrupt
 artifacts fail without recapture or rebuilding.
 
 The transport must report its immutable destination and branch. Both must exactly
@@ -180,7 +184,8 @@ audit uses only a tree-listing process and one blob batch, in both hash formats.
 network credentials are used.
 
 Claude adapter tests additionally cover invalid bindings/provenance/phases,
-wrong destination/branch, missing/corrupt/foreign committed artifacts, auto-mode
+wrong destination/branch, missing/corrupt/foreign committed artifacts (including
+each policy/identity field changed for the same capture), auto-mode
 recovery after live inputs disappear, staging ownership during transport,
 byte-for-byte preservation of canonical index/config/worktree, newer local commits,
 lost-response replay, SHA-256 publication, cancellation cleanup, and native
