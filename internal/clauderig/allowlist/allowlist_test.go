@@ -203,3 +203,26 @@ func mustWrite(t *testing.T, root, rel, content string) {
 		t.Fatal(err)
 	}
 }
+
+// A .gitattributes inside synced content is not content: the backup is a Git
+// repository, and one of these governs how it stores every file beside it. The
+// one that prompted this rule ships in a plugin marketplace clone and reads
+// `* text=auto eol=lf`, which re-enables the byte conversion the backup exists
+// to prevent — publication refuses while it is in the tree.
+func TestGitattributesNeverSyncs(t *testing.T) {
+	for _, rel := range []string{
+		"plugins/marketplaces/official/plugins/security/.gitattributes",
+		"skills/my-skill/.gitattributes",
+	} {
+		if CLI().Match(rel) {
+			t.Errorf("%s should not sync", rel)
+		}
+	}
+	if Desktop().Match("claude-code-sessions/03d/.gitattributes") {
+		t.Error(".gitattributes under a session tree should not sync")
+	}
+	// The rule is about Git's own config, not about dotfiles or the word.
+	if !CLI().Match("skills/my-skill/gitattributes.md") {
+		t.Error("a file merely named like it should still sync")
+	}
+}
