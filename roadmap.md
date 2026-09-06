@@ -9,7 +9,8 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 
 **Current position: shared file mechanics merged into `codex/v2` through
 [#306](https://github.com/rigsmith/rigsmith/pull/306). Milestone 5, shared
-session/metadata and Git publication boundaries, is in progress.**
+session/metadata and Git publication boundaries, is in review in
+[#307](https://github.com/rigsmith/rigsmith/pull/307).**
 
 | Milestone | Status |
 | --- | --- |
@@ -17,8 +18,8 @@ session/metadata and Git publication boundaries, is in progress.**
 | Compatibility baseline and synchronous services | Merged into both `main` and `codex/v2` through [#299](https://github.com/rigsmith/rigsmith/pull/299) and [#301](https://github.com/rigsmith/rigsmith/pull/301). |
 | Claude root/file adapter and policy extraction | Merged into `codex/v2`: [#304](https://github.com/rigsmith/rigsmith/pull/304). |
 | Shared file processing and restore mechanics | Merged into `codex/v2`: [#306](https://github.com/rigsmith/rigsmith/pull/306), including the directory-link review fix. |
-| Shared session/metadata and publication boundaries | In progress on `codex/v2-session-publication`. |
-| Store coordination and durable sync queue | Planned; no queue or worker is implemented yet. |
+| Shared session/metadata and publication boundaries | In review: [#307](https://github.com/rigsmith/rigsmith/pull/307). Local synthetic and compatibility tests passed. |
+| Store coordination and durable sync queue | Next after #307: establish store coordination first, then durable jobs. No queue or worker is implemented yet. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 
