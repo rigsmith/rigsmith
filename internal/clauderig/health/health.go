@@ -90,14 +90,18 @@ const tooltipMax = 127
 //
 // The order is the priority order: the worst true thing wins the tray, because
 // the tray has exactly one colour to spend.
-// syncOverdue reports whether a sync should already have happened. Staging is
+// SyncOverdue reports whether a sync should already have happened. Staging is
 // expected to be dirty between syncs; it is only worth remarking on once the
 // interval the hook runs at has passed without one landing.
+//
+// Exported because the text status prints the same judgement in prose: two
+// places deciding this separately is how they came to disagree, with the window
+// calling a machine healthy while the command called it dirty.
 //
 // Generous by a whole interval, because the hook fires on a session ending
 // rather than on a timer: two intervals of quiet means nothing has been
 // happening, and a machine nobody is typing at does not need a warning about it.
-func syncOverdue(info status.Info, last journal.Record) bool {
+func SyncOverdue(info status.Info, last journal.Record) bool {
 	if info.SyncEvery <= 0 {
 		return true // nothing to be early for
 	}
@@ -165,7 +169,7 @@ func Of(info status.Info, last journal.Record) Report {
 		r.Summary = commits(d.Ahead, "ahead") + " — not pushed yet"
 		r.Action = "clauderig sync"
 
-	case info.Dirty && !syncOverdue(info, last):
+	case info.Dirty && !SyncOverdue(info, last):
 		// Loose changes in staging are what the time between syncs looks like:
 		// the live tree keeps moving, and the next scheduled sync will take
 		// them. Amber here would mean the window sat at "needs attention" for
