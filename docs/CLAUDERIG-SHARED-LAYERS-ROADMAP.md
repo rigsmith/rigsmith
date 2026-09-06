@@ -12,9 +12,10 @@ it builds on the tested synchronous workflow.
 [#308](https://github.com/rigsmith/rigsmith/pull/308) as `f2ad7302`.
 **Completed:** durable queue storage and recovery (6b.1) in
 [#309](https://github.com/rigsmith/rigsmith/pull/309) as `2853c4fb`, including review fixes.
-**In review:** milestone 6b.2 starts with the shared execution driver and
-Claude capture/publication service split in [#310](https://github.com/rigsmith/rigsmith/pull/310). Durable artifact integration, queued
-hooks and CodexRig remain planned.
+**Completed:** the shared execution driver and Claude capture/publication split
+merged in [#310](https://github.com/rigsmith/rigsmith/pull/310) as `3bd0d8fe`.
+**In progress:** durable artifacts and the Claude capture/sealing adapter.
+Commit/Push integration, queued hooks and CodexRig remain planned.
 
 | Milestone | Status | Evidence / remaining work |
 | --- | --- | --- |
@@ -26,7 +27,7 @@ hooks and CodexRig remain planned.
 | 5. Shared session/metadata and Git publication boundaries | Merged in v2 | [#307](https://github.com/rigsmith/rigsmith/pull/307). Shared recording/query and audited publication workflows; Claude retains native formats and policies. Local synthetic suite, six baseline compatibility scenarios and vet passed. |
 | 6a. Store coordination | Merged in v2: [#308](https://github.com/rigsmith/rigsmith/pull/308) | OS-owned locks across staging workflows. Linux, macOS and Windows CI passed. [Contract](CLAUDERIG-V2-COORDINATION.md). |
 | 6b.1. Durable queue storage and recovery | Merged in v2: [#309](https://github.com/rigsmith/rigsmith/pull/309) | Persist events, coalesce pending flushes, preserve new generations during capture, track phases/retries and recover exclusive worker ownership. [Contract](CLAUDERIG-V2-QUEUE.md). |
-| 6b.2. Worker and Claude service integration | First slice in review: [#310](https://github.com/rigsmith/rigsmith/pull/310) | Shared one-batch phase driver and separate Claude Capture/Publish services. Next: durable artifacts and concrete Claude adapter, configuration/provenance validation, retention/deletion protection, child-process ownership and exact manual-sync coverage before exposing queued execution. |
+| 6b.2. Worker and Claude service integration | Driver/service split merged in [#310](https://github.com/rigsmith/rigsmith/pull/310); capture artifacts in progress | Durable archives, frozen Claude sources and pinned attribution: [contract](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md). Next: Commit/Push integration, retained Git references, child-process ownership, exact manual-sync coverage and lifecycle/capacity remedies. |
 | 7. Opt-in queued Claude hooks | Planned | Validate worker lifecycle, startup, draining/rollback, and convergence with synchronous sync. |
 | Codex adapter and separate `codexrig` executable | Planned | Consume the proven shared layers without moving Claude account/Desktop internals into them. |
 
@@ -160,6 +161,6 @@ cmd/clauderig -> Claude commands/composition -> shared services <- Codex command
 
 The composition code passes adapter implementations into narrow interfaces owned by the shared services. Shared packages import neither vendor package. Keep these interfaces internal until both vendors validate them; a public SDK or external plugin ABI would freeze guesses too early.
 
-Milestones 1–5 are merged; milestone 5 landed in v2 through #307. Milestone 6a merged in #308. Milestone 6b.1 merged in #309; 6b.2 has the shared execution driver and Claude service split in review in #310, followed by durable artifact/adapter integration before opt-in hooks. Milestones 3–5 establish the shared foundation; milestones 6–7 deliver the queue as a separately controlled feature. `codexrig` can begin using the proven boundaries without requiring Claude account/Desktop internals to move.
+Milestones 1–5 are merged; milestone 5 landed in v2 through #307. Milestone 6a merged in #308. Milestone 6b.1 merged in #309; 6b.2 has the shared execution driver and Claude service split merged in #310; durable artifacts and capture/sealing are in progress, followed by Commit/Push and lifecycle integration before opt-in hooks. Milestones 3–5 establish the shared foundation; milestones 6–7 deliver the queue as a separately controlled feature. `codexrig` can begin using the proven boundaries without requiring Claude account/Desktop internals to move.
 
 Baseline check during this roadmap: `CLAUDERIG_E2E=1 go test ./internal/clauderig/e2e -run '^TestE2E_(RoundTrip|CrossOSPortability)$' -count=1 -v` passed, including both macOS→Windows and Windows→macOS path-mapping cases on this macOS host. These are synthetic fixtures and local bare remotes, not tests of live Claude resume on Windows. No implementation or runtime configuration was changed.

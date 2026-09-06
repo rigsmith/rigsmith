@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-package queue
+package durable
 
 import (
 	"os"

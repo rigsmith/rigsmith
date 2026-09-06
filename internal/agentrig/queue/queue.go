@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/durable"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 )
 
@@ -26,7 +27,7 @@ var (
 	ErrOwner      = errors.New("worker no longer owns this queue")
 	ErrTransition = errors.New("invalid queue progress transition")
 	ErrFull       = errors.New("queue state limit reached; existing work was retained")
-	ErrUncertain  = errors.New("queue write may have committed; retry the same operation with the same identity and arguments")
+	ErrUncertain  = durable.ErrUncertain
 )
 
 // Binding contains stable, credential-free identifiers, not mutable config pointers.

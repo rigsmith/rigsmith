@@ -133,6 +133,9 @@ type Options struct {
 	// logged in, unreadable) simply leaves those rows unattributed — a guess is
 	// never invented, and a stored attribution is never overwritten by one.
 	LiveAccountUUID string
+	// AttributionSessions optionally limits account inference to explicitly named
+	// source sessions. Nil preserves synchronous attribution for the whole walk.
+	AttributionSessions map[string]bool
 }
 
 // largeFileSettle is how long a large transcript has to go unwritten before a
@@ -513,6 +516,13 @@ func Sync(opts Options) (*Report, error) {
 	// is about to age out still leaves a searchable row behind — otherwise `search`
 	// answers "no such session", which reads as "that chat never existed" rather
 	// than "its body is older than the window, recover it from git history".
+	if opts.AttributionSessions != nil {
+		for id := range cliSessionIDs {
+			if !opts.AttributionSessions[id] {
+				delete(cliSessionIDs, id)
+			}
+		}
+	}
 	if added, total, lerr := recordLedger(opts.StagingDir, opts.Machine.Name, opts.LiveAccountUUID, cliSessionIDs); lerr == nil {
 		rep.LedgerAdded, rep.LedgerTotal = added, total
 	} else {

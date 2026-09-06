@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/durable"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 )
 
@@ -261,32 +262,10 @@ func validate(s *state) error {
 	return nil
 }
 
-// saveFile publishes a complete checksummed snapshot. No truncate-in-place or
-// fallback remove+rename is allowed. An error after publication is uncertain;
-// replaying the same EventID is safe because deduplication is in this snapshot.
+// saveFile publishes the complete queue snapshot using the shared durability layer.
 func saveFile(dir string, data []byte) error {
-	f, err := os.CreateTemp(dir, ".queue-*")
-	if err != nil {
+	return durable.Write(context.Background(), filepath.Join(dir, "queue.json"), func(f *os.File) error {
+		_, err := f.Write(data)
 		return err
-	}
-	name := f.Name()
-	defer os.Remove(name)
-	if _, err = f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err = syncData(f); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	if err = replaceFile(name, filepath.Join(dir, "queue.json")); err != nil {
-		return fmt.Errorf("%w: %v", ErrUncertain, err)
-	}
-	if err = syncDirectory(dir); err != nil {
-		return fmt.Errorf("%w: %v", ErrUncertain, err)
-	}
-	return nil
+	})
 }
