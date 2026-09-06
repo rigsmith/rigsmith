@@ -237,12 +237,14 @@
   .gapaction .err{color:var(--err);letter-spacing:0;}
   .convosearch{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;
     gap:10px;margin:14px 0 10px;}
+  .convosearch .pfilter{margin-bottom:0;}
   .convocount{font-size:10.5px;color:var(--muted);white-space:nowrap;}
   /* Who said it, said by which side of the column it sits on and what colour it
      is. Enough to follow a conversation; not an attempt at a chat window. */
   .convo .convorow{display:flex;margin:6px 0;}
   .convo .convorow.said{justify-content:flex-end;}
-  .convo .convorow .turn{max-width:82%;border-left:0;padding:7px 10px;border-radius:9px;}
+  .convo .convorow .turn{max-width:82%;border-left:0;padding:7px 10px;border-radius:9px;
+    overflow-wrap:anywhere;}
   .convo .convorow.said .turn{background:var(--ink-3);color:var(--paper);
     border:1px solid var(--line);}
   .convo .convorow.replied .turn{background:transparent;color:var(--muted);
@@ -351,7 +353,7 @@
      a flex item to give that up depends on min-width:0 and a basis that engines
      have historically read differently when it is a unitless zero. A grid track
      of minmax(0,1fr) says the same thing once and without the caveats. */
-  .pcontrols .pfilter{width:100%;min-width:0;margin-bottom:0;}
+  .pcontrols .pfilter{margin-bottom:0;}
   .pnote{display:flex;align-items:baseline;gap:2px;font-size:11px;color:var(--muted);
     padding:4px 0 8px;white-space:nowrap;overflow:hidden;}
   .pnote>:first-child{overflow:hidden;text-overflow:ellipsis;}
@@ -392,7 +394,11 @@
   .pitem .meta{flex:none;font-size:10.5px;color:var(--muted);}
   .pitem .sub{font-size:10.5px;color:var(--muted);margin-top:2px;}
   .pitem[data-deleted="yes"] .lbl>div:first-child{text-decoration:line-through;color:var(--muted);}
-  .pfilter{width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:5px 8px;
+  /* min-width here, not at each use: the sheet sets input{min-width:280px} for
+     the header's search box, and every box in these panels is narrower than
+     that. Overriding it per place is how the same fault turns up again in the
+     next place that borrows this class. */
+  .pfilter{width:100%;min-width:0;box-sizing:border-box;font:inherit;font-size:12px;padding:5px 8px;
     margin-bottom:10px;border:1px solid var(--line);border-radius:6px;background:var(--ink-2);
     color:var(--paper);--wails-draggable:no-drag;}
   .pfilter::placeholder{color:var(--muted);}

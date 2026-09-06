@@ -40,8 +40,24 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	// Two widths, because the faults this catches are all faults of not having
+	// enough room: a checkbox with a 280px floor fits a wide window and shoves
+	// its row off a narrow one. Measuring only the comfortable size is how the
+	// same bug reached the same person twice.
+	bad := 0
+	for _, w := range []int{1180, 900} {
+		if !measure(chrome, page, w) {
+			bad++
+		}
+	}
+	if bad > 0 {
+		os.Exit(1)
+	}
+}
+
+func measure(chrome, page string, width int) bool {
 	out, err := exec.Command(chrome, "--headless=new", "--disable-gpu",
-		"--window-size=1180,820", "--virtual-time-budget=5000",
+		fmt.Sprintf("--window-size=%d,820", width), "--virtual-time-budget=5000",
 		"--dump-dom", "file://"+page).Output()
 	if err != nil {
 		fail(err)
@@ -54,6 +70,7 @@ func main() {
 	if err := json.Unmarshal(m[1], &got); err != nil {
 		fail(err)
 	}
+	fmt.Printf("\n  at %dpx wide\n", width)
 
 	// What has actually gone wrong here before, stated as what must be true.
 	checks := []struct {
@@ -78,19 +95,21 @@ func main() {
 		{"the conversation has a search box", got["hasSearch"] == true},
 		{"searching it narrows the turns", num(got["searchHits"]) > 0 && num(got["searchHits"]) < num(got["turnsAfter"])},
 		{"and clearing it brings them back", num(got["searchCleared"]) == num(got["turnsAfter"])},
+		{"the turn count is not pushed off the panel", got["countInsidePanel"] != false},
+		{"the conversation does not scroll sideways", num(got["detailSideways"]) == 0},
 	}
-	bad := 0
+	failed := 0
 	for _, c := range checks {
 		mark := "ok  "
 		if !c.ok {
-			mark, bad = "FAIL", bad+1
+			mark, failed = "FAIL", failed+1
 		}
-		fmt.Printf("  %s  %s\n", mark, c.name)
+		fmt.Printf("    %s  %s\n", mark, c.name)
 	}
-	fmt.Printf("\n  measured: %s\n", strings.TrimSpace(string(m[1])))
-	if bad > 0 {
-		os.Exit(1)
+	if failed > 0 {
+		fmt.Printf("    measured: %s\n", strings.TrimSpace(string(m[1])))
 	}
+	return failed == 0
 }
 
 func num(v any) float64 {
@@ -246,6 +265,15 @@ const probeScript = `<script>
       turnsAfter: document.querySelectorAll('#pitems .turns .turn').length,
       gapGone: !document.querySelector('#pitems .gapaction'),
       hasSearch: !!sbox,
+      convoSearchW: sbox ? Math.round(r(sbox).width) : null,
+      countInsidePanel: (() => {
+        const c = document.querySelector('#pitems .convocount');
+        return c ? Math.round(r(c).right) <= Math.round(r($('pitems')).right) + 1 : null;
+      })(),
+      detailSideways: (() => {
+        const b = document.querySelector('#pitems .drawer.inpane .body');
+        return b ? b.scrollWidth - b.clientWidth : null;
+      })(),
       searchHits: searchHits,
       searchCleared: searchCleared,
       saidOnRight: said && replied
