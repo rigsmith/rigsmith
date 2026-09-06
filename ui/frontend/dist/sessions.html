@@ -335,8 +335,13 @@
      what is this. They were two, with the first two sharing a column — a list
      of stores with a store's contents spliced into the middle of it, which is
      hard to read as two things because it is drawn as one. */
+  /* The detail panel gets a floor, and the two beside it give way to keep it.
+     Without one, a narrow window spent 516 pixels on the places and their
+     contents and left 204 for the thing being read — a search box 84 pixels
+     wide, and a conversation in a gutter. What you are reading matters more
+     than the two columns that got you to it. */
   .places{flex:1;min-height:0;display:grid;gap:0;
-    grid-template-columns:minmax(150px,216px) minmax(180px,300px) minmax(0,1fr);}
+    grid-template-columns:minmax(132px,216px) minmax(168px,290px) minmax(300px,1fr);}
   #plist{border-right:1px solid var(--line);}
   .pcolhead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
     margin-bottom:10px;}
@@ -346,6 +351,13 @@
   .plisthead .where{margin-left:auto;flex:none;font-size:10px;color:var(--muted);}
   .pcontrols{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;
     gap:10px;margin-bottom:10px;}
+  /* Side by side while there is room for both, stacked when there is not: a
+     filter narrowed to forty pixels to keep a checkbox on the same line is a
+     worse trade than one more row. */
+  @media (max-width: 860px) {
+    .pcontrols{grid-template-columns:minmax(0,1fr);gap:7px;}
+    .ptoggle{justify-self:start;}
+  }
   /* An input carries an intrinsic minimum width from its size attribute, and a
      flex item will not shrink below that unless told to — so the filter kept
      its full width and pushed the checkbox beside it off the panel. */

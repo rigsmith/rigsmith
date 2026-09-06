@@ -45,7 +45,7 @@ func main() {
 	// its row off a narrow one. Measuring only the comfortable size is how the
 	// same bug reached the same person twice.
 	bad := 0
-	for _, w := range []int{1180, 900} {
+	for _, w := range []int{1180, 900, 720} {
 		if !measure(chrome, page, w) {
 			bad++
 		}
@@ -97,6 +97,8 @@ func measure(chrome, page string, width int) bool {
 		{"and clearing it brings them back", num(got["searchCleared"]) == num(got["turnsAfter"])},
 		{"the turn count is not pushed off the panel", got["countInsidePanel"] != false},
 		{"the conversation does not scroll sideways", num(got["detailSideways"]) == 0},
+		{"the search box fits its panel", got["searchFitsPanel"] != false},
+		{"the detail panel keeps a readable width", num(got["detailPanelW"]) >= 280},
 	}
 	failed := 0
 	for _, c := range checks {
@@ -266,6 +268,9 @@ const probeScript = `<script>
       gapGone: !document.querySelector('#pitems .gapaction'),
       hasSearch: !!sbox,
       convoSearchW: sbox ? Math.round(r(sbox).width) : null,
+      detailPanelW: Math.round(r($('pitems')).width),
+      searchFitsPanel: sbox
+        ? Math.round(r(sbox).right) <= Math.round(r($('pitems')).right) + 1 : null,
       countInsidePanel: (() => {
         const c = document.querySelector('#pitems .convocount');
         return c ? Math.round(r(c).right) <= Math.round(r($('pitems')).right) + 1 : null;
