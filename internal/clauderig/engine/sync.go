@@ -716,6 +716,10 @@ func Sync(opts Options) (*Report, error) {
 	return rep, nil
 }
 
+// redactionVersion changes when the scrub scope or credential rules expand,
+// forcing existing staged copies through the current redactor once.
+const redactionVersion = "2"
+
 // redactionStatePath is where the last run's redactTranscripts setting is kept.
 // Beside the staging repo rather than inside it: it describes what THIS machine
 // has staged, and everything in the tree is committed and shared.
@@ -726,16 +730,15 @@ func redactionStatePath(staging string) string {
 	return filepath.Join(filepath.Dir(staging), ".redaction-state")
 }
 
-// redactedLastRun reports whether the previous sync scrubbed transcripts. An
-// absent or unreadable marker reads as "no", which costs one restage of the
-// transcripts and never the other way around.
+// redactedLastRun reports whether the previous sync used the current redactor.
+// A missing, unreadable or older marker forces one restage of conversation text.
 func redactedLastRun(staging string) bool {
 	p := redactionStatePath(staging)
 	if p == "" {
 		return false
 	}
 	b, err := os.ReadFile(p)
-	return err == nil && strings.TrimSpace(string(b)) == "1"
+	return err == nil && strings.TrimSpace(string(b)) == redactionVersion
 }
 
 // noteRedactionSetting records the setting this sync ran with. Best-effort: a
@@ -748,7 +751,7 @@ func noteRedactionSetting(staging string, on bool) {
 	}
 	v := []byte("0\n")
 	if on {
-		v = []byte("1\n")
+		v = []byte(redactionVersion + "\n")
 	}
 	_ = os.WriteFile(p, v, 0o644)
 }

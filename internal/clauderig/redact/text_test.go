@@ -262,3 +262,58 @@ func TestRedactText_PEMStopsAtTheStringItIsIn(t *testing.T) {
 		t.Errorf("the scrubbed record is no longer valid JSON: %v\n%s", err, out)
 	}
 }
+
+func TestReviewCredentialDecisionsAgree(t *testing.T) {
+	for _, tc := range []struct {
+		name, token string
+		credential  bool
+	}{
+		{"hyphenated prose", "sk-a-single-line-of-explanation", false},
+		{"embedded prefix", "global-task-runner-config", false},
+		{"project key lowercase body", "sk-proj-" + strings.Repeat("a", 48), true},
+		{"project key mixed body", "sk-proj-" + strings.Repeat("Ab1", 16), true},
+		{"ordinary key", "sk-" + strings.Repeat("Ab1", 16), true},
+		{"anthropic key", "sk-ant-api03-" + strings.Repeat("Ab1", 16), true},
+		{"placeholder", "Bearer YOUR_ACCESS_TOKEN_GOES_HERE", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "example: " + tc.token + " ends here\n"
+			out, _, changed := RedactText([]byte(body))
+			if changed != tc.credential {
+				t.Fatalf("redaction changed=%v, want %v", changed, tc.credential)
+			}
+			// Both a native file and chunk payload use the complete scanner.
+			for _, rel := range []string{"projects/p/s.jsonl", "projects/p/s.jsonl.chunks/000.part"} {
+				finding, err := ScanReader(rel, strings.NewReader(body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if (finding != nil) != tc.credential {
+					t.Fatalf("%s: finding=%v, want credential=%v", rel, finding, tc.credential)
+				}
+				finding, err = ScanReader(rel, strings.NewReader(string(out)))
+				if err != nil || finding != nil {
+					t.Fatalf("%s: cleaned text refused: %v, %v", rel, finding, err)
+				}
+			}
+		})
+	}
+}
+
+func TestScanReaderBareProseAndProjectKey(t *testing.T) {
+	for _, tc := range []struct {
+		token      string
+		credential bool
+	}{
+		{"sk-a-single-line-of-explanation", false},
+		{"sk-proj-" + strings.Repeat("a", 48), true},
+	} {
+		finding, err := ScanReader("projects/p/note.txt", strings.NewReader(tc.token+"\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (finding != nil) != tc.credential {
+			t.Fatalf("bare-token classification: finding=%v, want credential=%v", finding, tc.credential)
+		}
+	}
+}

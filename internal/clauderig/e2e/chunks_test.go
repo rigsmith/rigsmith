@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
-	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/peek"
@@ -25,12 +24,13 @@ func TestE2E_ChunkedRoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}
+	fixtureGit(t)
 	ctx := t.Context()
 	live, stage := t.TempDir(), t.TempDir()
 	const rel = "cli/projects/-p/aaaaaaaa-0000-0000-0000-000000000000.jsonl"
 	body := `{"type":"user","cwd":"/p","message":{"role":"user","content":"chunked opening prompt"}}` + "\n" + strings.Repeat(`{"type":"assistant","message":{"content":"ordinary filler"}}`+"\n", 150000)
 	write(t, live, strings.TrimPrefix(rel, "cli/"), body)
-	opts := engine.Options{StagingDir: stage, Config: cliOnly(live), Machine: config.Machine{Name: "src", OS: pathmap.OSMacOS, Home: t.TempDir()}, ChunkTranscripts: true}
+	opts := engine.Options{StagingDir: stage, Config: cliOnly(live), Machine: config.Machine{Name: "src", OS: config.OSToken(), Home: t.TempDir()}, ChunkTranscripts: true}
 	if _, err := engine.Sync(opts); err != nil {
 		t.Fatal(err)
 	}
@@ -38,16 +38,16 @@ func TestE2E_ChunkedRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Commit(ctx, "clauderig sync: src"); err != nil {
-		t.Fatal(err)
+	if changed, err := repo.Commit(ctx, "clauderig sync: src"); err != nil || !changed {
+		t.Fatalf("initial fixture did not create a commit: changed=%t, err=%v", changed, err)
 	}
 	tail := `{"type":"user","message":{"role":"user","content":"unique appended question"}}` + "\n"
 	write(t, live, strings.TrimPrefix(rel, "cli/"), body+tail)
 	if _, err := engine.Sync(opts); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Commit(ctx, "clauderig sync: src"); err != nil {
-		t.Fatal(err)
+	if changed, err := repo.Commit(ctx, "clauderig sync: src"); err != nil || !changed {
+		t.Fatalf("appended fixture did not create a commit: changed=%t, err=%v", changed, err)
 	}
 	// History resolves chunk references at the requested revision, even after the
 	// working tree removes its old tail. An append changes only index + tail.

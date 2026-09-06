@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/v2]
   pull_request:
 
 permissions:
@@ -18,6 +18,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # pinned pre-refactor source for command compatibility
 
       - uses: actions/setup-go@v6
         with:
@@ -44,12 +46,14 @@ jobs:
           git config --global init.defaultBranch main
 
       - name: Test
+        env:
+          CLAUDERIG_E2E: '1' # synthetic fixtures only; real-data scan has its own gate
         run: go test ./... -count=1
 
-      - name: ClaudeRig Git byte preservation
+      - name: ClaudeRig baseline compatibility
         env:
-          CLAUDERIG_E2E: '1'
-        run: go test ./internal/clauderig/e2e -run '^TestE2E_GitBytePreservation$' -count=1 -v
+          CLAUDERIG_COMPAT: '1'
+        run: go test ./internal/clauderig/compatibility -count=1 -v -timeout=10m
 
   secret-scan:
     name: gitleaks

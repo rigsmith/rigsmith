@@ -590,8 +590,9 @@ Name the directory — and the repository you push it to — `rigstack-<somethin
 A seed is not a project you clone and work in: it is the few kilobytes `stack
 init` rebuilds a stackspace from, and the prefix says so at a glance in a list
 of repositories. `rig stack seed` offers a name that follows it, taken from the
-stackspace's own directory. Nothing enforces it; the argument takes whatever
-you type.
+stackspace's own directory. When the stackspace is nested in another repository,
+the suggestion moves outside the enclosing repositories. Nothing enforces the
+name; the argument takes whatever you type.
 
 A seed carries no member, so a rebuilt one holds its cursor or the branch it
 was last proposed to — and a commit that reached neither is in no seed. `seed`

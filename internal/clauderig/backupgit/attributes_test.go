@@ -68,7 +68,10 @@ func TestPrepareRefreshesLegacyIndexWithoutChangingWorkingBytes(t *testing.T) {
 	if err := Ensure(root); err != nil {
 		t.Fatal(err)
 	}
-	again, _ := os.ReadFile(filepath.Join(root, ".gitattributes"))
+	again, err := os.ReadFile(filepath.Join(root, ".gitattributes"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !bytes.Equal(attrs, again) {
 		t.Fatal("attribute installation is not idempotent")
 	}
@@ -114,5 +117,33 @@ func TestEnsureRejectsSymlink(t *testing.T) {
 	b, _ := os.ReadFile(target)
 	if string(b) != "untouched" {
 		t.Fatal("changed symlink destination")
+	}
+}
+
+func TestPrepareStagesRequiredAttributesDespiteExcludes(t *testing.T) {
+	for _, location := range []string{".gitignore", ".git/info/exclude", "user-excludes"} {
+		t.Run(location, func(t *testing.T) {
+			root := setup(t)
+			p := filepath.Join(root, filepath.FromSlash(location))
+			if location == "user-excludes" {
+				p = filepath.Join(t.TempDir(), "ignore")
+				if _, err := git(t.Context(), root, nil, "config", "core.excludesFile", p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(p, []byte(".gitattributes\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := Prepare(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
+			attrs, err := git(t.Context(), root, nil, "show", ":.gitattributes")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(string(attrs), rule+"\n") {
+				t.Fatal("required byte-preservation rules were not staged")
+			}
+		})
 	}
 }

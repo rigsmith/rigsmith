@@ -172,7 +172,7 @@ func IsCredentialMatch(match string) bool {
 // followed by a key in every real case and by English in the false ones.
 func isKebabProse(match string) bool {
 	body := match
-	for _, prefix := range []string{"sk-ant-", "sk-", "glpat-", "xox"} {
+	for _, prefix := range []string{"sk-ant-", "sk-proj-", "sk-", "glpat-", "xox"} {
 		if rest, ok := strings.CutPrefix(match, prefix); ok {
 			body = rest
 			break

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"cmp"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,12 +114,15 @@ func (l *syncLock) Release() {
 	_ = os.Remove(l.path)
 }
 
-// lockToken is a lock file's entire contents: who holds it, and when they took
-// it. One definition, used by writeLock and by the tests — the parser below and
+// lockToken carries the PID and acquisition time, followed by a random owner
+// nonce. The nonce distinguishes acquisitions even when the platform clock
+// returns the same timestamp in one process. Older readers ignore that third
+// field, preserving PID and seconds/nanoseconds compatibility.
+// One definition, used by writeLock and by the tests — the parser below and
 // the writer disagreeing about the unit is exactly the bug this exists to stop
 // coming back, and a test that builds its own fixture cannot catch that.
 func lockToken(pid int, at time.Time) string {
-	return fmt.Sprintf("%d %d", pid, at.UnixNano())
+	return fmt.Sprintf("%d %d %s", pid, at.UnixNano(), rand.Text())
 }
 
 // lockIsStale reports whether a lock file is old enough to disbelieve. An
