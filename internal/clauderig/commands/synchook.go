@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 )
 
@@ -130,6 +131,19 @@ func lockIsStale(path string) bool {
 	}
 	fields := strings.Fields(string(b))
 	if len(fields) < 2 {
+		return true
+	}
+	// A lock whose holder is gone is stale whatever its age. Without this the
+	// file is believed for the full maxLockHold, so one sync killed mid-run —
+	// a hook terminated with its shell, a laptop closed — stops the machine
+	// syncing for twenty minutes. Observed twice within a quarter of an hour on
+	// a real machine, each time reporting "another sync is running" while
+	// nothing was.
+	//
+	// Only ever an argument for breaking the lock sooner, never for keeping it:
+	// a pid reused by something unrelated answers alive, and the age check
+	// below still applies.
+	if pid, perr := strconv.Atoi(fields[0]); perr == nil && !account.PIDAlive(pid) {
 		return true
 	}
 	stamp, err := strconv.ParseInt(fields[1], 10, 64)
