@@ -1,6 +1,6 @@
 # ClaudeRig v2 application services
 
-This is the first part of the synchronous-service milestone, on `codex/v2`.
+This completes the synchronous-service extraction milestone on `codex/v2`.
 It prepares callable workflows for the later queue and Codex adapter while
 keeping ClaudeRig and CodexRig as separate tools. No background worker, vendor
 adapter, storage migration, or runtime setting is introduced here.
@@ -11,6 +11,7 @@ adapter, storage migration, or runtime setting is introduced here.
 
 | Entry point | Responsibility |
 | --- | --- |
+| `Service.Sync` | Repair before capture, observe identity once, capture/scan, journal the outcome, update devices, and publish. |
 | `Service.Publish` | Audit the captured store, commit, retry push through reconciliation, maintain config-history, then repack/squash when required. |
 | `Service.Reconcile` | Fetch/merge, apply Claude conflict policies, optionally invoke an explicitly permitted mergetool, and audit before completing the merge. |
 | `Service.RepairMerge` | Settle an abandoned merge before a caller captures data; report whether the store is safe to write even when an attempted reconciliation failed and aborted. |
@@ -23,9 +24,10 @@ terminal styles. Progress is delivered synchronously as typed events; commands
 render the existing messages. Results expose publication phases and best-effort
 pull failures without requiring another caller to parse terminal text.
 
-The observer is informational: it must not mutate the store or reenter a service.
-The optional `Now` clock controls the maintenance cutoff and defaults to the
-existing real-time behavior. Git and filesystem operations still use the existing
+The observer is informational: it must not mutate the store or event payloads,
+or reenter a service. `ReadIdentity` defaults to the existing live-account reader
+and is called once per sync. The optional `Now` clock controls device timestamps
+and the maintenance cutoff, defaulting to the existing real-time behavior. Git and filesystem operations still use the existing
 implementations; this extraction does not introduce a second transport stack.
 
 ## Preserved execution contracts
@@ -33,12 +35,17 @@ implementations; this extraction does not introduce a second transport stack.
 - Sync holds its existing lock across repair, capture, and publication. Services
   do not acquire another lock. Pull retains its existing coordination behavior;
   store-wide coordination remains a separate milestone.
-- The command repairs abandoned merges before `engine.Sync` writes the snapshot.
+- `Service.Sync` repairs abandoned merges before `engine.Sync` writes the snapshot.
   Identity is still captured once and shared by ledger and device metadata.
-- Hook payload decoding, debounce, flush behavior, and dry-run stay in the command.
+- Hook payload decoding, debounce and locking stay in the command. `SyncRequest`
+  carries explicit normal/selected/all flush intent and dry-run selection. The
+  CLI supplies `ResolveFlush` so decoding still happens after merge repair and
+  identity observation; direct callers can pass an already decoded intent.
   Dry-run still stages and scans without publication or a sync journal entry.
-- Capture journalling and device registration still happen before publication;
-  Git-phase failures are still journalled by the command.
+- The sync service owns capture journalling and device registration before
+  publication, plus the separate Git-phase failure record. A capture refusal
+  produces one refusal record; an offline push preserves the successful capture
+  record in the commit and appends its failure record for the next sync.
 - A new commit is not required for push retry. The service audits before commit
   and each push, and reconciliation audits before completing its merge.
 - Publish reports success before history maintenance, matching existing output
@@ -61,14 +68,18 @@ behavior through the command-to-service wiring.
 Direct service tests add callers without Cobra and verify pending-commit retry,
 secret refusal before commit, failed-clone destination handling, publication
 phase events, config-history selection, and maintenance with a fixed cutoff.
-Core Git tests continue to cover history rewriting itself, including merge
-history and out-of-order commit dates.
+Sync-service tests additionally verify repair-before-identity/input ordering,
+a single identity observation shared by ledger and device records, dry-run
+capture without publication, and journal ownership across capture refusal and
+transport failure. Core Git tests continue to cover history rewriting itself,
+including merge history and out-of-order commit dates.
 
 ## Next extraction
 
-Finish the synchronous application boundary by moving capture orchestration,
-identity/device updates, and journal ownership behind a callable sync entry
-point. Preserve the command's input and failure ordering while doing so. Then
-introduce explicit artifact classification and flush intent before extracting
-vendor-neutral mechanics. Shared store coordination and the durable queue follow
-those boundaries; this package alone is not yet a complete queue-worker API.
+Introduce explicit artifact classification behind a Claude adapter, preserving
+root selection, retention, transform and merge policies, and session/subagent
+flush grouping. Then extract the proven vendor-neutral mechanics. Store-wide
+coordination and the durable queue follow: callable services are available now,
+but they do not yet provide worker ownership, durable scheduling or retries
+across process restarts. CodexRig remains a separate consumer to add after those
+shared boundaries are established.

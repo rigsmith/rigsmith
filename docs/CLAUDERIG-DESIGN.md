@@ -461,9 +461,10 @@ mirror — no path correction, manual excludes.
 
 ## V2 application-service extraction
 
-V2 starts with callable Claude-specific publication, reconciliation and pull
-services under `internal/clauderig/service`. Command handlers retain terminal
-rendering, hook input and capture orchestration. The services preserve the
+V2 provides callable Claude-specific sync, publication, reconciliation and pull
+services under `internal/clauderig/service`. Sync owns capture, identity and
+journal orchestration. Command handlers retain terminal rendering, hook input,
+debounce and existing lock acquisition. The services preserve the
 existing Git policies and backup formats; shared vendor adapters and store
 coordination are later steps. See [the service boundary and validation
 contracts](CLAUDERIG-V2-SERVICES.md).
