@@ -400,10 +400,19 @@
   /* The same drawer, laid flat in the panel: its own styling applies, and only
      the parts that make it a panel sliding in from the edge are undone. */
   .drawer.inpane{position:static;transform:none;width:auto;max-width:none;height:100%;
+    display:flex;flex-direction:column;min-height:0;
     border:0;box-shadow:none;background:transparent;}
-  .drawer.inpane .dhead{padding:0 0 10px;}
-  .drawer.inpane .body{padding:0;overflow:visible;}
-  .drawer.inpane .acts{padding:14px 0 0;border-top:1px solid var(--line);background:transparent;}
+  .drawer.inpane .dhead{flex:none;padding:0 0 10px;}
+  /* Keep the drawer's own scrolling. Overriding it to visible made the panel
+     grow past its height instead, which put the actions bar on top of the
+     conversation rather than under it. */
+  .drawer.inpane .body{flex:1;min-height:0;overflow-y:auto;padding:0 12px 0 0;}
+  .drawer.inpane .acts{flex:none;position:static;padding:12px 0 0;
+    border-top:1px solid var(--line);background:transparent;}
+  /* The panel holds a thing that scrolls itself, so it must not also scroll:
+     two nested scrollbars for one column is how the actions bar ends up out of
+     reach at the bottom of an outer scroll. */
+  .pcol.holds-detail{overflow:hidden;}
   .facts{display:grid;grid-template-columns:120px 1fr;gap:5px 12px;margin:12px 0 4px;font-size:12px;}
   .fk{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding-top:2px;}
   .fv{word-break:break-all;}
@@ -1620,6 +1629,7 @@ function applyFilter(term) {
 function showStoreHeader(store, config) {
   const box = $('pitems');
   box.replaceChildren();
+  box.classList.remove('holds-detail');
   box.append(el('div', 'phead', store.label + (store.account ? '  ' + store.account : '')));
   box.append(el('div', 'psub', store.path));
   if (!config.length) return;
@@ -1632,6 +1642,7 @@ function showStoreHeader(store, config) {
 function showFolder(st, group) {
   const box = $('pitems');
   box.replaceChildren();
+  box.classList.remove('holds-detail');
   box.append(el('div', 'phead', group.label));
   box.append(el('div', 'psub', [group.account, group.note].filter(Boolean).join(' \u00b7 ')));
   box.append(el('div', 'pgrouphead', PLURAL(group.items, 'session', 'sessions') + ' here'));
@@ -1653,6 +1664,7 @@ const PANE = { head: 'ppdhead', body: 'ppdetail', acts: 'ppacts' };
 async function showItem(st, it) {
   const box = $('pitems');
   box.replaceChildren();
+  box.classList.remove('holds-detail');
 
   const open = it.cliSession || (it.kind === 'transcript' ? it.session : '');
   if (!open) {
@@ -1662,6 +1674,7 @@ async function showItem(st, it) {
     return;
   }
 
+  box.classList.add('holds-detail');
   const shell = el('div', 'drawer inpane');
   shell.dataset.on = 'yes';
   const head = el('div', 'dhead');

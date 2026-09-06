@@ -67,6 +67,9 @@ func main() {
 		{"the places panel does not scroll sideways", num(got["storesOverflow"]) == 0},
 		{"the aside about other accounts stays on one line", got["noteOneLine"] != false},
 		{"sessions are listed", num(got["sessions"]) > 0},
+		{"the detail scrolls inside the panel", got["detailScrolls"] != false},
+		{"the actions bar stays inside the panel", got["actsInsidePanel"] != false},
+		{"the panel itself does not also scroll", num(got["detailOverflow"]) == 0},
 	}
 	bad := 0
 	for _, c := range checks {
@@ -192,6 +195,18 @@ const probeScript = `<script>
       plistOverflow: $('plist').scrollWidth - $('plist').clientWidth,
       storesOverflow: $('pstores').scrollWidth - $('pstores').clientWidth,
       detailInPane: !!document.querySelector('#pitems .drawer.inpane'),
+      detailScrolls: (() => {
+        const b = document.querySelector('#pitems .drawer.inpane .body');
+        return b ? getComputedStyle(b).overflowY === 'auto' : null;
+      })(),
+      actsInsidePanel: (() => {
+        const a = document.querySelector('#pitems .acts');
+        return a ? Math.round(r(a).bottom) <= Math.round(r($('pitems')).bottom) + 1 : null;
+      })(),
+      detailOverflow: (() => {
+        const d = $('pitems');
+        return d.scrollHeight - d.clientHeight;
+      })(),
       sessions: document.querySelectorAll('.sessionrow:not([hidden])').length,
     });
   } catch (e) { document.title = 'PROBE {"error":"' + String(e).replace(/"/g, "'") + '"}'; }
