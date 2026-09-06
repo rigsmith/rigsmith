@@ -397,6 +397,13 @@
   .sessionrow .tag{margin-left:7px;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
     color:var(--muted-2);border:1px solid var(--line);border-radius:4px;padding:0 4px;}
   .grp[data-picked="yes"]{background:var(--ink-3);color:var(--paper);}
+  /* The same drawer, laid flat in the panel: its own styling applies, and only
+     the parts that make it a panel sliding in from the edge are undone. */
+  .drawer.inpane{position:static;transform:none;width:auto;max-width:none;height:100%;
+    border:0;box-shadow:none;background:transparent;}
+  .drawer.inpane .dhead{padding:0 0 10px;}
+  .drawer.inpane .body{padding:0;overflow:visible;}
+  .drawer.inpane .acts{padding:14px 0 0;border-top:1px solid var(--line);background:transparent;}
   .facts{display:grid;grid-template-columns:120px 1fr;gap:5px 12px;margin:12px 0 4px;font-size:12px;}
   .fk{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding-top:2px;}
   .fv{word-break:break-all;}
@@ -816,15 +823,21 @@ function renderHits(d) {
   return box;
 }
 
-function renderDetail(d) {
+// DRAWER is where the detail goes by default. Places passes its own three
+// elements instead, so the same rendering serves the sliding drawer and the
+// third panel — one description of a session, not two that drift apart.
+const DRAWER = { head: 'dhead', body: 'detail', acts: 'acts' };
+
+function renderDetail(d, into) {
+  const t = into || DRAWER;
   current = d;
   const s = d.session;
-  const head = $('dhead');
+  const head = $(t.head);
   head.replaceChildren();
   head.append(el('h2', null, s.title || '(untitled session)'));
   head.append(el('div', 'id', s.id));
 
-  const box = $('detail');
+  const box = $(t.body);
   box.replaceChildren();
 
   const meta = el('div', 'meta');
@@ -869,15 +882,19 @@ function renderDetail(d) {
       : 'No transcript on this machine to read.'));
   }
 
-  renderActions(d);
+  renderActions(d, into);
   $('confirm').dataset.on = 'no';
-  $('drawer').dataset.on = 'yes';
-  $('drawer').setAttribute('aria-hidden', 'false');
-  $('scrim').dataset.on = 'yes';
+  // Revealing the drawer belongs to the drawer. Rendering the same content into
+  // the third panel is not a reason to slide a panel over the top of it.
+  if (t === DRAWER) {
+    $('drawer').dataset.on = 'yes';
+    $('drawer').setAttribute('aria-hidden', 'false');
+    $('scrim').dataset.on = 'yes';
+  }
 }
 
-function renderActions(d) {
-  const acts = $('acts');
+function renderActions(d, into) {
+  const acts = $((into || DRAWER).acts);
   acts.replaceChildren();
   const toast = el('div', 'toast');
   const say = (text, cls, full) => {
@@ -1624,22 +1641,61 @@ function showFolder(st, group) {
 // showItem is the detail pane: everything the record holds about one session,
 // which is what makes this a view of its own rather than a second way into the
 // list's drawer.
-function showItem(st, it) {
+// PANE is the third panel's copy of the drawer's three regions. Same classes,
+// so the drawer's styling applies unchanged; different ids, because both exist
+// in the document at once.
+const PANE = { head: 'ppdhead', body: 'ppdetail', acts: 'ppacts' };
+
+// showItem fills the third panel. Where the session has a conversation behind
+// it, that panel shows exactly what the drawer shows — the same call, the same
+// rendering — rather than a second, thinner description of the same session
+// that would drift from it.
+async function showItem(st, it) {
   const box = $('pitems');
   box.replaceChildren();
-  box.append(el('div', 'phead', it.label));
 
+  const open = it.cliSession || (it.kind === 'transcript' ? it.session : '');
+  if (!open) {
+    // Nothing to read: a tombstone, or a record of a session whose transcript
+    // is not here. What the record itself holds is all there is to say.
+    showRecord(st, it);
+    return;
+  }
+
+  const shell = el('div', 'drawer inpane');
+  shell.dataset.on = 'yes';
+  const head = el('div', 'dhead');
+  head.id = PANE.head;
+  const body = el('div', 'body');
+  body.id = PANE.body;
+  const acts = el('div', 'acts');
+  acts.id = PANE.acts;
+  shell.append(head, body, acts);
+  box.append(shell);
+
+  head.replaceChildren(el('h2', null, 'Reading the transcript\u2026'));
+  try {
+    renderDetail(await Call.ByName(LIBRARY_DETAIL, open, term()), PANE);
+  } catch (e) {
+    head.replaceChildren(el('h2', null, 'Could not open that session'));
+    body.replaceChildren(el('div', 'toast err', String(e)));
+  }
+}
+
+// showRecord is for the sessions with no conversation to open: it says what the
+// record knows and why there is nothing more.
+function showRecord(st, it) {
+  const box = $('pitems');
+  box.append(el('div', 'phead', it.label));
   const facts = [
     ['where it ran', it.cwd],
     ['branch', it.branch],
     ['worktree', it.worktree],
     ['pull requests', (it.prs || []).join(', ')],
     ['last active', it.when ? new Date(it.when).toLocaleString() : ''],
-    ['session id', it.session],
-    ['conversation', it.cliSession],
     ['state', it.deleted ? 'deleted in Claude Desktop'
       : (it.archived ? 'archived in Claude Desktop' : '')],
-    ['kind', KIND_HELP[it.kind] || it.kind],
+    ['session id', it.session],
     ['store', st.label + (st.where === 'repo' ? ' \u2014 synced' : ' \u2014 this Mac')],
     ['file', it.path],
   ];
@@ -1650,23 +1706,12 @@ function showItem(st, it) {
     dl.append(el('div', 'fv', String(v)));
   }
   box.append(dl);
-
-  if (it.deleted) {
-    box.append(el('div', 'toast', 'Deleted in Claude Desktop. The record survives here; the conversation may not.'));
-  }
-  // The one action worth offering: read the conversation itself. Everything
-  // above comes from the record, and the record is not the conversation.
-  const open = it.cliSession || (it.kind === 'transcript' ? it.session : '');
-  if (open) {
-    const b = el('button', 'chipbtn', 'Open the conversation');
-    b.addEventListener('click', () => openDetail(open, null));
-    const acts = el('div', 'pacts');
-    acts.append(b);
-    box.append(acts);
-  }
+  box.append(el('div', 'toast', it.deleted
+    ? 'Deleted in Claude Desktop. This record is what survives; the conversation is not here.'
+    : 'Claude Desktop knows of this session, but the conversation itself is not in this place.'));
 }
 
-// bandOf is deliberately coarse. "3 days ago" and "5 days ago" are the same
+// bandOf is deliberately coarse.// bandOf is deliberately coarse. "3 days ago" and "5 days ago" are the same
 // answer to "was it this week", and finer bands would only split a list into
 // more places to look.
 function bandOf(iso) {
