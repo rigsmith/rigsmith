@@ -2,8 +2,9 @@
 
 This is the capture/sealing portion of milestone 6b.2. The shared execution driver
 and Claude Capture/Publish split merged in #310. `Service.CaptureArtifact` now
-prepares a durable, immutable input for a future commit/publication adapter.
-It does not implement that adapter's Commit or Push methods, expose a worker
+prepares a durable, immutable input for commit/publication.
+[Retained commits](CLAUDERIG-V2-RETAINED-COMMITS.md) now implements the next
+commit/sealing step. Capture itself does not commit or push, expose a worker
 command, acknowledge a queue batch, or enable hooks. Installed sync behavior and
 backup formats stay unchanged; no end-user changeset is needed for this internal
 step.
@@ -15,8 +16,8 @@ from the binding and sealed event membership. The reference contains both that
 key and the checksum of the archive. Its versioned header includes a bounded seed
 reference; Claude records canonical staging's current HEAD when present. This
 records the reference, but does not pin Git objects against later garbage
-collection. The publication adapter still needs commit retention and merge
-recovery.
+collection. The commit adapter now retains complete ancestry once its bundle is sealed.
+Capture-time seed retention and publication/merge recovery remain pending.
 
 A build runs in a private workspace, then streams regular files and directories
 into one archive. Source symlinks, devices and Git metadata are not allowed in the
@@ -114,8 +115,8 @@ private temporary workspace containing raw inputs; startup cleanup under the
 ownership locks is a rollout gate. Successful and ordinarily failed builds attempt to clean
 up their own workspace. Unknown versions and corrupted captures fail closed.
 
-Next: integrate retained capture artifacts with Commit/Push, preserve and recover
-Git commit references across offline publication, define merge/manual-sync
+The [commit adapter](CLAUDERIG-V2-RETAINED-COMMITS.md) now seals retained Git
+bundles. Next: retain seeds before commit, integrate Push and define merge/manual-sync
 coverage, and own child processes before exposing queued execution. Local-only
 completion, artifact/receipt cleanup, status and capacity remedies also remain
 rollout gates. A mutable extracted working copy or recorded seed SHA alone does

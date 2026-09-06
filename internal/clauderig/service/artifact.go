@@ -114,65 +114,11 @@ func CaptureProvenance(identity Identity) (string, error) {
 // reading sources. An absent/corrupt artifact is never silently substituted when
 // the caller already holds a capture reference: use Store.Verify in that case.
 func (s Service) CaptureArtifact(ctx context.Context, req ArtifactCaptureRequest) (string, error) {
-	// Deep-copy caller-owned configuration before reading it throughout the build.
-	raw, err := json.Marshal(req.Sync.Config)
+	req, key, err := prepareArtifactRequest(req, queue.Queued)
 	if err != nil {
 		return "", err
 	}
-	req.Sync.Config = nil
-	if err = json.Unmarshal(raw, &req.Sync.Config); err != nil {
-		return "", err
-	}
-	machine, err := json.Marshal(req.Sync.Machine)
-	if err != nil {
-		return "", err
-	}
-	req.Sync.Machine.Tokens = nil
-	if err = json.Unmarshal(machine, &req.Sync.Machine); err != nil {
-		return "", err
-	}
-	req.Profiles = slices.Clone(req.Profiles)
-	slices.Sort(req.Profiles)
-	binding, err := CaptureBinding(req.Sync, req.Profiles)
-	if err != nil {
-		return "", err
-	}
-	if binding != req.Binding {
-		return "", queue.ErrBinding
-	}
-	provenance, err := CaptureProvenance(req.Identity)
-	if err != nil {
-		return "", err
-	}
-	req.Identity.AccountUUID = account.CanonicalUUID(req.Identity.AccountUUID)
-	if req.Work.ID == 0 || req.Work.Phase != queue.Queued || len(req.Work.Events) == 0 {
-		return "", queue.ErrTransition
-	}
-	workJSON, err := json.Marshal(req.Work)
-	if err != nil {
-		return "", err
-	}
-	req.Work = queue.Work{}
-	if err = json.Unmarshal(workJSON, &req.Work); err != nil {
-		return "", err
-	}
-	previous := uint64(0)
-	for _, event := range req.Work.Events {
-		if event.BatchID != req.Work.ID || event.Generation <= previous || event.Request.ProvenanceID != provenance || event.Request.SessionID == "" {
-			return "", queue.ErrBinding
-		}
-		previous = event.Generation
-	}
-	if req.Work.Through != previous || req.Work.Events[0].Generation != req.Work.ID {
-		return "", queue.ErrBinding
-	}
-	identity, err := json.Marshal(struct {
-		Binding queue.Binding
-		Events  []queue.Event
-	}{binding, req.Work.Events})
-	if err != nil {
-		return "", err
-	}
+	binding := req.Binding
 	roots, err := captureRoots(req.Sync, req.Profiles)
 	if err != nil {
 		return "", err
@@ -191,7 +137,7 @@ func (s Service) CaptureArtifact(ctx context.Context, req ArtifactCaptureRequest
 		}
 	}
 	req.Store.Dir = store
-	return req.Store.BuildWithMetadata(ctx, artifact.Key(identity), func(ctx context.Context, tree string, meta *artifact.Metadata) error {
+	return req.Store.BuildWithMetadata(ctx, key, func(ctx context.Context, tree string, meta *artifact.Metadata) error {
 		// Keep canonical staging stable while seeding the capture. The artifact
 		// builder passes the original context; the private tree owns its own lease.
 		_, release, err := storelock.Acquire(ctx, stage, StoreWait)
@@ -527,4 +473,69 @@ func (r *captureReader) Read(b []byte) (int, error) {
 		return 0, err
 	}
 	return r.r.Read(b)
+}
+
+// prepareArtifactRequest detaches and validates the immutable queue inputs for
+// either capture or commit without consulting the worker login.
+func prepareArtifactRequest(req ArtifactCaptureRequest, phase queue.Phase) (ArtifactCaptureRequest, string, error) {
+	// Deep-copy caller-owned configuration before reading it throughout the build.
+	raw, err := json.Marshal(req.Sync.Config)
+	if err != nil {
+		return req, "", err
+	}
+	req.Sync.Config = nil
+	if err = json.Unmarshal(raw, &req.Sync.Config); err != nil {
+		return req, "", err
+	}
+	machine, err := json.Marshal(req.Sync.Machine)
+	if err != nil {
+		return req, "", err
+	}
+	req.Sync.Machine.Tokens = nil
+	if err = json.Unmarshal(machine, &req.Sync.Machine); err != nil {
+		return req, "", err
+	}
+	req.Profiles = slices.Clone(req.Profiles)
+	slices.Sort(req.Profiles)
+	binding, err := CaptureBinding(req.Sync, req.Profiles)
+	if err != nil {
+		return req, "", err
+	}
+	if binding != req.Binding {
+		return req, "", queue.ErrBinding
+	}
+	provenance, err := CaptureProvenance(req.Identity)
+	if err != nil {
+		return req, "", err
+	}
+	req.Identity.AccountUUID = account.CanonicalUUID(req.Identity.AccountUUID)
+	if req.Work.ID == 0 || req.Work.Phase != phase || len(req.Work.Events) == 0 {
+		return req, "", queue.ErrTransition
+	}
+	workJSON, err := json.Marshal(req.Work)
+	if err != nil {
+		return req, "", err
+	}
+	req.Work = queue.Work{}
+	if err = json.Unmarshal(workJSON, &req.Work); err != nil {
+		return req, "", err
+	}
+	previous := uint64(0)
+	for _, event := range req.Work.Events {
+		if event.BatchID != req.Work.ID || event.Generation <= previous || event.Request.ProvenanceID != provenance || event.Request.SessionID == "" {
+			return req, "", queue.ErrBinding
+		}
+		previous = event.Generation
+	}
+	if req.Work.Through != previous || req.Work.Events[0].Generation != req.Work.ID {
+		return req, "", queue.ErrBinding
+	}
+	identity, err := json.Marshal(struct {
+		Binding queue.Binding
+		Events  []queue.Event
+	}{binding, req.Work.Events})
+	if err != nil {
+		return req, "", err
+	}
+	return req, artifact.Key(identity), nil
 }
