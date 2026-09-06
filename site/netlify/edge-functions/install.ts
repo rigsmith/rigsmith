@@ -23,6 +23,12 @@ const INSTALL_HOSTS: Record<string, string> = {
 // platform, and scripts/install.{sh,ps1} accept all four by name.
 const TOOLS = new Set(['rig', 'changerig', 'shiprig', 'clauderig'])
 
+// Packages installable with Homebrew. A superset of TOOLS: `rigsmith` is the
+// bundle cask, and `clauderig-ui` is the window, which the direct installer does
+// not build — it fetches release archives, and the window ships as a signed .app
+// inside a cask instead.
+const BREW = new Set([...TOOLS, 'rigsmith', 'clauderig-ui'])
+
 // Where a browser lands per tool.
 const DOCS_PATH: Record<string, string> = {
   rig: '/rig/',
@@ -50,6 +56,38 @@ export default async function handler(req: Request, context: Context) {
   // The first path segment selects the tool; empty path uses the host default.
   const seg = url.pathname.replace(/^\/+|\/+$/g, '').split('/')[0]
   const tool = seg === '' ? hostDefault : seg
+
+  // /brew installs with Homebrew rather than fetching an archive. The second
+  // segment picks the package the way the first picks the tool elsewhere:
+  // /brew, /brew/clauderig, /brew/clauderig-ui.
+  //
+  // Its own branch, before the tool check below, because the packages are not
+  // the same set: the bundle and the window exist as casks and nowhere else.
+  if (tool === 'brew') {
+    const pkg = url.pathname.replace(/^\/+|\/+$/g, '').split('/')[1] || 'rigsmith'
+    if (!BREW.has(pkg)) {
+      return Response.redirect(DOCS_ORIGIN + '/guide/installation', 302)
+    }
+    // Browsers get the docs, as everywhere else here. PowerShell is not a case
+    // worth handling: these are macOS casks.
+    if (wantsHtml(req)) {
+      return Response.redirect(DOCS_ORIGIN + (DOCS_PATH[pkg] || '/guide/installation'), 302)
+    }
+    const brewRes = await context.next(new Request(new URL('/brew.sh', url.origin)))
+    if (!brewRes.ok) {
+      return new Response('# rigsmith installer is temporarily unavailable\n', {
+        status: 503,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      })
+    }
+    return new Response(`set -- ${pkg}\n` + (await brewRes.text()), {
+      status: 200,
+      headers: {
+        'content-type': 'text/plain; charset=utf-8',
+        'cache-control': 'public, max-age=300',
+      },
+    })
+  }
 
   // Anything that isn't an installable tool (or "all") → send to the docs.
   if (tool !== 'all' && !TOOLS.has(tool)) {

@@ -50,15 +50,32 @@ Binaries install to `$HOME\.local\bin` (override with `RIGSMITH_INSTALL`); the
 script adds that directory to your user `PATH` — restart the terminal to pick it
 up. Same URL as curl: PowerShell gets the `.ps1`, a shell gets the `.sh`.
 
-## Homebrew (macOS / Linux)
+## Homebrew (macOS)
 
 ```sh
-brew install --cask rigsmith/tap/rigsmith   # all four tools
-brew install --cask rigsmith/tap/rig        # just rig
-brew install --cask rigsmith/tap/changerig  # just changerig
-brew install --cask rigsmith/tap/shiprig    # just shiprig
-brew install --cask rigsmith/tap/clauderig  # just clauderig
+curl -fsSL rigsmith.sh/brew | sh                 # all four tools
+curl -fsSL rigsmith.sh/brew/clauderig | sh       # just clauderig
+curl -fsSL rigsmith.sh/brew/clauderig-ui | sh    # the menu bar app
 ```
+
+Or run brew yourself:
+
+```sh
+brew install --cask rigsmith/tap/rigsmith      # all four tools
+brew install --cask rigsmith/tap/rig           # just rig
+brew install --cask rigsmith/tap/changerig     # just changerig
+brew install --cask rigsmith/tap/shiprig       # just shiprig
+brew install --cask rigsmith/tap/clauderig     # just clauderig
+brew install --cask rigsmith/tap/clauderig-ui  # the menu bar app
+```
+
+Note the `rigsmith/tap/` prefix. Homebrew will not load a cask from a
+non-official tap by its short name until the tap is trusted, so
+`brew install rig` stops with a trust prompt while the qualified name does not.
+That is the whole reason `rigsmith.sh/brew` exists — it bakes the prefix in.
+
+The packages are casks, so this route is macOS only. On Linux use `curl | sh`
+below.
 
 ## curl | sh (macOS / Linux)
 
