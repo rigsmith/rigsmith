@@ -187,6 +187,13 @@ func (r *Repo) CommitPaths(ctx context.Context, msg string, paths ...string) (ch
 	if strings.TrimSpace(status) == "" {
 		return false, nil
 	}
+	// Staged first, because `git commit -- <path>` refuses a path git does not
+	// know yet: the status above reports an untracked file as a change, and
+	// without this the call would detect it and then fail to record it. Only
+	// the named paths are added, so anything else already staged stays staged.
+	if _, err := runGit(ctx, r.Dir, append([]string{"add", "--"}, paths...)...); err != nil {
+		return false, err
+	}
 	args := append([]string{"-c", "commit.gpgsign=false", "commit", "-m", msg, "--"}, paths...)
 	if _, err := runGit(ctx, r.Dir, args...); err != nil {
 		return false, err

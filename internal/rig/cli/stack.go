@@ -448,6 +448,55 @@ func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty
 	return u
 }
 
+// stackFileDirty reports whether one path has changes git has not recorded —
+// staged or not, tracked or not.
+func stackFileDirty(ctx context.Context, repo *gitrepo.Repo, path string) (bool, error) {
+	if path == "" {
+		return false, nil
+	}
+	dirty, err := repo.DirtyPaths(ctx)
+	if err != nil {
+		return false, err
+	}
+	want := filepath.Base(path)
+	for _, p := range dirty {
+		if filepath.Base(p) == want {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// stackTreeOf is a commit's tree, or "" when it cannot be read. "" never
+// compares equal to a real tree, so an unreadable commit falls through to the
+// push rather than being mistaken for a match.
+func stackTreeOf(ctx context.Context, repo *gitrepo.Repo, commit string) string {
+	tree, err := repo.RevParse(ctx, commit+"^{tree}")
+	if err != nil {
+		return ""
+	}
+	return tree
+}
+
+// stackBranchHolds reports whether the fork's branch is exactly at commit.
+//
+// Asked about the branch being proposed TO, not the one the manifest remembers.
+// Branch resolution prefixes and can settle on an alternate candidate, so the
+// remembered name and the resolved one are not always the same string, and
+// comparing them misses an unchanged proposal and pushes again for nothing.
+//
+// Any doubt answers false — an unreachable fork, a missing ref, a branch that
+// has moved — so the caller pushes. A redundant commit costs a little noise; a
+// wrong "nothing to send" leaves the work nowhere.
+func stackBranchHolds(ctx context.Context, repo *gitrepo.Repo, fork, branch, commit string) bool {
+	ref := "refs/heads/" + branch
+	found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(fork), ref)
+	if err != nil {
+		return false
+	}
+	return found[ref] == commit
+}
+
 // stackProposedOnFork confirms that the branch a member was last proposed to
 // still holds, on the fork, the commit propose pushed. The ref under
 // refs/rigsmith/propose says the work left; this says it is still where it
@@ -906,8 +955,9 @@ func newStackSendCmd() *cobra.Command {
 			// says, and calling that "nothing to send" would leave it nowhere.
 			// Any doubt falls through and pushes, which costs a redundant commit
 			// and never a lost one.
-			if sent, serr := repo.RevParse(ctx, "refs/rigsmith/propose/"+name+"^{tree}"); serr == nil && sent == tree &&
-				m.LastPropose[name] == branch && stackProposedOnFork(ctx, repo, m, name) == nil {
+			if sentCommit, serr := repo.RevParse(ctx, "refs/rigsmith/propose/"+name); serr == nil &&
+				stackTreeOf(ctx, repo, sentCommit) == tree &&
+				stackBranchHolds(ctx, repo, r.Fork, branch, sentCommit) {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to send — %s:%s already holds it\n", name, r.Fork, branch)
 				return nil
 			}
@@ -949,6 +999,13 @@ func newStackSendCmd() *cobra.Command {
 			if err := repo.SetRef(ctx, "refs/rigsmith/propose/"+name, commit); err != nil {
 				return err
 			}
+			// Whether the manifest was already the user's business before this
+			// command touched it. Asked BEFORE the write below, because
+			// afterwards rig's own edit is indistinguishable from theirs.
+			manifestWasDirty, dirtyErr := stackFileDirty(ctx, repo, src.File)
+			if dirtyErr != nil {
+				return dirtyErr
+			}
 			// Remembered after the push, not before: a branch nothing reached is
 			// not the one to offer back next time.
 			if err := stackRememberProposed(src, m, name, branch); err != nil {
@@ -967,8 +1024,21 @@ func newStackSendCmd() *cobra.Command {
 			// The message deliberately does not match the baseline marker
 			// pattern — the tree here is local work, not what upstream had, and
 			// reading it as a baseline would quietly disable the guard in pull.
-			if _, err := repo.CommitPaths(ctx, fmt.Sprintf("stack: propose %s -> %s", name, branch), src.File); err != nil {
-				return err
+			//
+			// Not when the file was already edited: committing then would put
+			// the user's unrelated change into a commit that claims to record a
+			// proposal, under a message describing something else entirely. The
+			// record still reached the file, and it goes in with whatever they
+			// commit next.
+			switch {
+			case manifestWasDirty:
+				fmt.Fprintf(cmd.OutOrStdout(),
+					"%s: recorded the branch in %s, left uncommitted — that file already had changes of yours\n",
+					name, filepath.Base(src.File))
+			default:
+				if _, err := repo.CommitPaths(ctx, fmt.Sprintf("stack: propose %s -> %s", name, branch), src.File); err != nil {
+					return err
+				}
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "proposed %s — pushed to %s:%s, open the PR against %s\n",
 				name, r.Fork, branch, r.Upstream)

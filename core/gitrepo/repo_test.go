@@ -481,3 +481,34 @@ func TestCommitPathsNoOpWhenNothingChanged(t *testing.T) {
 		t.Error("an empty commit was made")
 	}
 }
+
+// A path git does not know yet still has to be recordable. `git commit -- <p>`
+// refuses an untracked path, and the status check above reports one as a
+// change — so without staging, CommitPaths would see work to do and then fail
+// to do it.
+func TestCommitPathsRecordsAnUntrackedPath(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	r, err := Init(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "seed.txt", "seed\n")
+	if _, err := r.Commit(ctx, "initial"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "brand-new.json", `{"recorded":true}`+"\n")
+	write(t, dir, "theirs.txt", "not ours to commit\n")
+
+	changed, err := r.CommitPaths(ctx, "record: a new file", filepath.Join(dir, "brand-new.json"))
+	if err != nil || !changed {
+		t.Fatalf("CommitPaths on an untracked path: changed=%v err=%v", changed, err)
+	}
+	if body, gerr := runGit(ctx, dir, "show", "HEAD:brand-new.json"); gerr != nil || !strings.Contains(body, "recorded") {
+		t.Errorf("the new path was not recorded: %q %v", body, gerr)
+	}
+	dirty, _ := r.DirtyPaths(ctx)
+	if !strings.Contains(strings.Join(dirty, " "), "theirs.txt") {
+		t.Errorf("staging the named path swept up another; dirty = %v", dirty)
+	}
+}
