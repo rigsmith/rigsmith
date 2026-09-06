@@ -166,8 +166,27 @@ func TestTheWindowIsStampedWithItsOwnVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(wf), "UI_VERSION") {
+	wfText := string(wf)
+	if !strings.Contains(wfText, "UI_VERSION") {
 		t.Error("the release workflow never sets UI_VERSION, so the stamp would be empty")
+	}
+
+	// The window ships from two jobs — GoReleaser builds the Windows binary,
+	// a macOS job packages the app — and both need the same number. They read
+	// it through one script, because two copies of "where the version comes
+	// from" is how the same window ends up shipping under two of them.
+	if n := strings.Count(wfText, "scripts/ui-version.sh"); n < 2 {
+		t.Errorf("only %d job(s) read the window's version through scripts/ui-version.sh; "+
+			"both the Windows build and the macOS packaging need it", n)
+	}
+	// And neither takes it from the tag, which names the CLIs.
+	for _, line := range strings.Split(wfText, "\n") {
+		if strings.Contains(line, "package-ui.sh") && strings.Contains(line, "GITHUB_REF_NAME") {
+			t.Error("the macOS app is packaged with the repository's tag, not the window's version")
+		}
+		if strings.Contains(line, "publish-ui-cask.sh") && strings.Contains(line, "GITHUB_REF_NAME") {
+			t.Error("the Homebrew cask names the repository's tag, not the window's version")
+		}
 	}
 }
 

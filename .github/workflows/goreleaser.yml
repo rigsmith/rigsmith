@@ -93,8 +93,7 @@ jobs:
       # it to GoReleaser, or the binary reports the CLI's version instead.
       - name: Read the UI's version
         run: |
-          v=$(sed -n 's|^module .*rigsmith:version \(.*\)$|\1|p' ui/go.mod | tr -d ' ')
-          if [ -z "$v" ]; then echo "ui/go.mod has no rigsmith:version" >&2; exit 1; fi
+          v=$(sh scripts/ui-version.sh)
           echo "UI_VERSION=$v" >> "$GITHUB_ENV"
           echo "the window will be stamped $v"
 
@@ -278,9 +277,15 @@ jobs:
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          [ "${{ github.event_name }}" = "workflow_dispatch" ] && version="0.0.0-dryrun"
+          # The window's own version, not the tag's. It is a separate module at
+          # 0.x while the CLIs are at 1.x, and the app bundle claiming the tag
+          # would put a different number on the Mac build than the Windows one
+          # carries — same window, two versions.
+          version=$(sh scripts/ui-version.sh)
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && version="$version-dryrun"
+          echo "packaging the app as $version"
           sh scripts/package-ui.sh "$version" dist-ui
+          echo "UI_VERSION=$version" >> "$GITHUB_ENV"
 
       # Tag pushes only. A dry run has no release to attach to, and inventing
       # one would publish the thing the dry run exists to avoid.
@@ -289,6 +294,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$GITHUB_REF_NAME" dist-ui/*.zip --clobber
+        # The zip carries the window's version in its name; the release it
+        # attaches to carries the repository's. They are different numbers on
+        # purpose.
 
       # The cask cannot come from GoReleaser: it publishes casks from its own
       # artifacts, and this one is built after that job has finished. Written
@@ -297,7 +305,7 @@ jobs:
         if: github.event_name == 'push'
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: sh scripts/publish-ui-cask.sh "${GITHUB_REF_NAME#v}" dist-ui
+        run: sh scripts/publish-ui-cask.sh "$UI_VERSION" dist-ui
 
       - uses: actions/upload-artifact@v7
         if: github.event_name == 'workflow_dispatch'
