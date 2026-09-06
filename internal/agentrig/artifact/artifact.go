@@ -63,7 +63,12 @@ func (s Store) path(key string) (string, error) {
 
 // Metadata retains the adapter's immutable seed reference for later publication.
 // BaseReference is credential-free (for Git, the source staging HEAD or empty).
-type Metadata struct{ BaseReference string }
+type Metadata struct {
+	BaseReference string
+	// SeedReference names a separately durable seed artifact, when the adapter
+	// requires retained ancestry. It is private metadata, never an extracted file.
+	SeedReference string `json:",omitempty"`
+}
 
 // Build reuses and reflushes an existing valid artifact without invoking build.
 // Otherwise build receives an empty private workspace to fill with audited bytes.
@@ -127,7 +132,7 @@ func (s Store) BuildWithMetadata(ctx context.Context, key string, build func(con
 	if err = build(ctx, tree, &meta); err != nil {
 		return "", err
 	}
-	if len(meta.BaseReference) > 4096 {
+	if len(meta.BaseReference) > 4096 || len(meta.SeedReference) > 4096 {
 		return "", ErrInvalid
 	}
 	metadata, err := json.Marshal(meta)
@@ -515,7 +520,7 @@ func readMetadata(f *os.File) (int64, Metadata, error) {
 	if err := dec.Decode(&meta); err != nil {
 		return 0, meta, err
 	}
-	if len(meta.BaseReference) > 4096 {
+	if len(meta.BaseReference) > 4096 || len(meta.SeedReference) > 4096 {
 		return 0, meta, ErrInvalid
 	}
 	var extra any

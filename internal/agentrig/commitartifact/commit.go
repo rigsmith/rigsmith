@@ -26,12 +26,12 @@ const RefName = "refs/rig/capture"
 var ErrInvalid = errors.New("invalid retained commit")
 
 // Request supplies immutable commit policy and a verified capture reference.
-// PolicyID must change when Prepare/Audit behavior changes. Callers keep ParentDir
-// stable under its store lock until Build returns. Stores must be disjoint and
-// outside the parent repository and vendor source roots.
+// PolicyID must change when Prepare/Audit behavior changes. Seeded captures must
+// name a retained seed in their metadata. Stores must be disjoint and outside
+// the canonical repository and vendor source roots.
 type Request struct {
 	Captures, Commits                          artifact.Store
-	CaptureRef, ParentDir                      string
+	CaptureRef                                 string
 	PolicyID, Message, AuthorName, AuthorEmail string
 	Time                                       time.Time
 	Prepare, Audit                             func(context.Context, string) error
@@ -70,8 +70,8 @@ func requestKey(r Request) (string, error) {
 // Build returns only after the self-contained bundle has been durably sealed.
 // Same-request retries verify and reflush the existing output without loading
 // capture bytes or parent objects again. A corrupt output is never rebuilt.
-// Before the first successful build, a missing capture or seed commit fails
-// closed; a recorded seed SHA alone does not retain objects against Git GC.
+// A missing capture or retained seed fails closed before the first build. Git
+// objects are never loaded from a mutable canonical repository here.
 func Build(ctx context.Context, r Request) (string, error) {
 	key, err := requestKey(r)
 	if err != nil {
@@ -85,7 +85,7 @@ func Build(ctx context.Context, r Request) (string, error) {
 			return err
 		}
 		parent := extracted.Metadata.BaseReference
-		if parent != "" && (!objectID(parent) || !filepath.IsAbs(r.ParentDir)) {
+		if (parent != "" && (!objectID(parent) || extracted.Metadata.SeedReference == "")) || (parent == "" && extracted.Metadata.SeedReference != "") {
 			return ErrInvalid
 		}
 		if err = r.Prepare(ctx, tree); err != nil {
@@ -102,17 +102,11 @@ func Build(ctx context.Context, r Request) (string, error) {
 			return err
 		}
 		if parent != "" {
-			if _, err = repo.run(ctx, nil, "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--", r.ParentDir, parent+":refs/rig/base"); err != nil {
+			if err = repo.loadSeed(ctx, r.Captures, extracted.Metadata.SeedReference, parent, filepath.Join(work, "seed")); err != nil {
 				return err
-			}
-			got, err := repo.run(ctx, nil, "rev-parse", "refs/rig/base^{commit}")
-			if err != nil {
-				return err
-			}
-			if strings.TrimSpace(got) != parent {
-				return ErrInvalid
 			}
 		}
+
 		treeID, err := repo.writeTree(ctx, tree, tree, extracted.Modes)
 		if err != nil {
 			return err
