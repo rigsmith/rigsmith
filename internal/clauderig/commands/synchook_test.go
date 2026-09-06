@@ -268,12 +268,7 @@ func TestSyncLockCreatesConfigDirectory(t *testing.T) {
 // quarter of an hour on a real machine.
 func TestLockIsStale_HolderIsGone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".sync.lock")
-	// A pid that cannot be running: allocated, then reaped.
-	cmd := exec.Command("sh", "-c", "exit 0")
-	if err := cmd.Run(); err != nil {
-		t.Fatal(err)
-	}
-	dead := cmd.Process.Pid
+	dead := reapedPID(t)
 
 	// Written now, so age alone would say "hold on to it".
 	if err := os.WriteFile(path, []byte(lockToken(dead, time.Now())+"\n"), 0o644); err != nil {
@@ -307,15 +302,12 @@ func TestLockIsStale_LiveHolderIsHonoured(t *testing.T) {
 // immediately, rather than twenty minutes later.
 func TestAcquireSyncLock_TakesOverFromADeadHolder(t *testing.T) {
 	staging := filepath.Join(t.TempDir(), "repo")
-	cmd := exec.Command("sh", "-c", "exit 0")
-	if err := cmd.Run(); err != nil {
-		t.Fatal(err)
-	}
+	dead := reapedPID(t)
 	path := filepath.Join(filepath.Dir(staging), ".sync.lock")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(lockToken(cmd.Process.Pid, time.Now())+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(lockToken(dead, time.Now())+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -324,4 +316,19 @@ func TestAcquireSyncLock_TakesOverFromADeadHolder(t *testing.T) {
 		t.Fatal("the next sync could not take a lock nothing is holding")
 	}
 	lock.Release()
+}
+
+// reapedPID is the id of a process that has certainly exited.
+//
+// The test binary re-runs itself with a filter that selects no tests: it needs
+// no shell, which windows-latest does not provide, and it is guaranteed to exit
+// on its own. Waiting for it is what makes the id safe to assert about — an id
+// is only definitely dead once it has been reaped.
+func reapedPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("could not spawn a throwaway process: %v", err)
+	}
+	return cmd.Process.Pid
 }

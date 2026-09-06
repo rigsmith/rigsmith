@@ -130,7 +130,12 @@ func RunningInstances(claudeHome string) []Instance {
 // A pid belonging to another user answers true — the process exists, which is
 // the question — and a pid that has been reused by something unrelated does
 // too. Callers treat true as "cannot rule it out" rather than as proof.
-func PIDAlive(pid int) bool { return pid > 1 && pidAlive(pid) }
+//
+// Only non-positive ids are rejected outright. 1 is a real process id: run as a
+// container entrypoint, clauderig IS pid 1, and its own lock records that — so
+// treating 1 as dead would have it break its own fresh lock and let a second
+// sync run beside it.
+func PIDAlive(pid int) bool { return pid > 0 && pidAlive(pid) }
 
 // ErrProcessScan means the process table could not be read, so whether Claude
 // Code is running is UNKNOWN. It is deliberately not an empty result: "I could

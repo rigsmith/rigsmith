@@ -3,6 +3,7 @@
 package account
 
 import (
+	"errors"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -13,13 +14,21 @@ import (
 // pidAlive reports whether a process with the given pid currently exists by
 // opening it with minimal rights. A successful open (handle closed immediately)
 // means the process is present.
+//
+// Only ERROR_INVALID_PARAMETER means "no such process". Every other failure —
+// access denied for a process running elevated or as another user, a handle
+// quota, a protected process — means the question could not be answered, and
+// answering "dead" there is the dangerous direction for both callers: the
+// switch guard would swap a credential out from under a live session, and the
+// sync lock would break a lock somebody is still holding and run a second sync
+// beside them. Over-reporting alive costs a refusal that can be overridden.
 func pidAlive(pid int) bool {
 	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
-	if err != nil {
-		return false
+	if err == nil {
+		windows.CloseHandle(h)
+		return true
 	}
-	windows.CloseHandle(h)
-	return true
+	return !errors.Is(err, windows.ERROR_INVALID_PARAMETER)
 }
 
 // Windows has no graceful per-process signal equivalent for GUI apps that's
