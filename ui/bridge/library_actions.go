@@ -106,6 +106,56 @@ func (l *Library) Detail(ctx context.Context, id, search string) (SessionDetail,
 	return d, nil
 }
 
+// allPromptsCap bounds what "show the whole conversation" will read into a
+// window. Sessions here run to a few hundred turns; a cap an order of magnitude
+// above that is invisible in practice and still keeps one pathological
+// transcript from being loaded in its entirety into a panel.
+const allPromptsCap = 5000
+
+// PromptsView is every human turn in one session, in order.
+type PromptsView struct {
+	Prompts []Prompt `json:"prompts"`
+	Total   int      `json:"total"`
+	// Truncated says the conversation is longer than what is returned, so the
+	// window can say so rather than implying the last turn it shows is the last
+	// turn there was.
+	Truncated bool   `json:"truncated"`
+	Error     string `json:"error,omitempty"`
+}
+
+// AllPrompts returns the whole conversation, for the panel that offers to open
+// it out rather than showing only its two ends.
+//
+// Detail asks for a handful from each end because that is what a summary needs.
+// This asks for the lot, and is a separate call for that reason: it is only
+// paid for when someone asks to read the middle.
+func (l *Library) AllPrompts(ctx context.Context, id string) (PromptsView, error) {
+	row, _, err := l.find(id)
+	if err != nil {
+		return PromptsView{Error: err.Error()}, nil
+	}
+	if row.Path == "" {
+		return PromptsView{Error: "no transcript on this machine to read"}, nil
+	}
+	c, perr := sessions.Prompts(row.Path, allPromptsCap)
+	if perr != nil {
+		return PromptsView{Error: perr.Error()}, nil
+	}
+	return promptsView(c), nil
+}
+
+// promptsView decides what the window is being handed. First holds up to the
+// cap from the start of the conversation, so below the cap it IS the whole
+// conversation, already in order — and above it, the window has to say so
+// rather than let the last turn it shows read as the last turn there was.
+func promptsView(c sessions.Conversation) PromptsView {
+	return PromptsView{
+		Prompts:   toPrompts(c.First),
+		Total:     c.Total,
+		Truncated: c.Total > len(c.First),
+	}
+}
+
 func toPrompts(ps []sessions.Prompt) []Prompt {
 	out := make([]Prompt, 0, len(ps))
 	for _, p := range ps {

@@ -101,3 +101,31 @@ func TestLibraryView_UnavailableRegistryIsNotSilence(t *testing.T) {
 		t.Error("an unreadable device registry was reported as simply having no devices")
 	}
 }
+
+// The whole-conversation view is read with a cap. Below it, what comes back is
+// the conversation entire; above it, the window has to know that the last turn
+// it can show is not the last turn there was — otherwise opening a long session
+// out quietly ends it early.
+func TestPromptsView_SaysWhenTheConversationOutrunsTheCap(t *testing.T) {
+	whole := sessions.Conversation{
+		First: []sessions.Prompt{{Text: "one"}, {Text: "two"}, {Text: "three"}},
+		Total: 3,
+	}
+	if v := promptsView(whole); v.Truncated {
+		t.Errorf("a conversation shorter than the cap reported truncated: %+v", v)
+	} else if len(v.Prompts) != 3 || v.Total != 3 {
+		t.Errorf("got %d of %d prompts, want all three", len(v.Prompts), v.Total)
+	}
+
+	clipped := sessions.Conversation{
+		First: []sessions.Prompt{{Text: "one"}, {Text: "two"}},
+		Total: 900,
+	}
+	v := promptsView(clipped)
+	if !v.Truncated {
+		t.Error("a conversation longer than what was read did not say so")
+	}
+	if v.Total != 900 {
+		t.Errorf("Total = %d, want the real length even though it was not all read", v.Total)
+	}
+}

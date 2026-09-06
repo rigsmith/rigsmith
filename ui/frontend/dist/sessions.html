@@ -232,6 +232,9 @@
   }
   .turn .at{display:block;color:var(--muted-2);font-size:9px;margin-top:3px;}
   .gap{color:var(--muted-2);font-size:10px;margin:12px 0 4px;letter-spacing:0.08em;}
+  .gapaction{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
+  .gapaction .linkish{letter-spacing:0;font-size:11px;}
+  .gapaction .err{color:var(--err);letter-spacing:0;}
   .acts{
     flex:none;border-top:1px solid var(--line);padding:14px 22px 18px;
     display:flex;flex-wrap:wrap;gap:8px;align-items:center;
@@ -526,6 +529,7 @@ const $ = id => document.getElementById(id);
 // ui/bridge; ui/bridge/binding_test.go fails if this drifts.
 const LIBRARY_LIST = 'github.com/rigsmith/rigsmith/ui/bridge.Library.List';
 const LIBRARY_DETAIL = 'github.com/rigsmith/rigsmith/ui/bridge.Library.Detail';
+const LIBRARY_ALL_PROMPTS = 'github.com/rigsmith/rigsmith/ui/bridge.Library.AllPrompts';
 const LIBRARY_TERMINAL = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenTerminal';
 const LIBRARY_DESKTOP = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenDesktop';
 const LIBRARY_VSCODE = 'github.com/rigsmith/rigsmith/ui/bridge.Library.OpenVSCode';
@@ -878,7 +882,10 @@ function renderDetail(d, into) {
     // already holds the whole conversation.
     const shown = (d.first || []).length + (d.last || []).length;
     if (d.prompts > shown) {
-      turns.append(el('div', 'gap', `\u22ef ${d.prompts - shown} more prompt(s) \u22ef`));
+      // The gap said how much was missing and left you to go and find it. It
+      // is the one place in the panel where the answer is "read the rest", so
+      // that is what it offers.
+      turns.append(openOutGap(d, d.prompts - shown, turns));
     }
     if ((d.last || []).length) {
       turns.append(el('b', null, 'Last said'));
@@ -900,6 +907,54 @@ function renderDetail(d, into) {
     $('drawer').setAttribute('aria-hidden', 'false');
     $('scrim').dataset.on = 'yes';
   }
+}
+
+// openOutGap is the seam between the opening turns and the closing ones: it
+// says how many are hidden there, and opens them out in place when asked.
+//
+// In place, rather than in a window of its own — the two ends are the context
+// for the middle, and losing them to read it is how you end up scrolling back
+// to work out where you are.
+function openOutGap(d, missing, turns) {
+  const gap = el('div', 'gap gapaction');
+  const say = n => `\u22ef ${n} more prompt(s) \u22ef`;
+  const btn = el('button', 'linkish', 'show the whole conversation');
+  gap.append(el('span', null, say(missing)), btn);
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'reading\u2026';
+    let view;
+    try {
+      view = await Call.ByName(LIBRARY_ALL_PROMPTS, d.session.id);
+    } catch (e) {
+      gap.replaceChildren(el('span', 'err', String(e)));
+      return;
+    }
+    if (view.error) {
+      gap.replaceChildren(el('span', 'err', view.error));
+      return;
+    }
+    // Replace both ends with the whole thing, so the conversation reads once
+    // through rather than as two fragments with the middle wedged between them.
+    turns.replaceChildren();
+    (view.prompts || []).forEach(p => turns.append(turn(p)));
+    if (view.truncated) {
+      turns.append(el('div', 'gap',
+        `\u22ef the first ${(view.prompts || []).length} of ${view.total} \u2014 this conversation is longer than the window will read \u22ef`));
+    }
+    // The heading above said "Opened with", which is no longer what follows.
+    const head = turns.previousElementSibling;
+    if (head && head.tagName === 'B') head.textContent = 'The conversation';
+    const lastSaid = turns.nextElementSibling;
+    if (lastSaid && lastSaid.tagName === 'B' && lastSaid.textContent === 'Last said') {
+      // Its turns are already above, in place.
+      const after = lastSaid.nextElementSibling;
+      lastSaid.remove();
+      if (after && after.classList.contains('turns')) after.remove();
+    }
+  });
+  return gap;
 }
 
 function renderActions(d, into) {

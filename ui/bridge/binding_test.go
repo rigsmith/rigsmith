@@ -45,6 +45,7 @@ func TestFrontendCallsMatchBoundMethods(t *testing.T) {
 		fqn(&Status{}, "Get"),
 		fqn(&Activity{}, "Recent"),
 		fqn(&Activity{}, "Files"),
+		fqn(&Library{}, "AllPrompts"),
 		fqn(&Places{}, "Stores"),
 		fqn(&Places{}, "Contents"),
 		fqn(&Places{}, "Groups"),

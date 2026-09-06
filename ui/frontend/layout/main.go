@@ -70,6 +70,9 @@ func main() {
 		{"the detail scrolls inside the panel", got["detailScrolls"] != false},
 		{"the actions bar stays inside the panel", got["actsInsidePanel"] != false},
 		{"the panel itself does not also scroll", num(got["detailOverflow"]) == 0},
+		{"a shortened conversation offers to open out", got["hadOpenOut"] == true},
+		{"opening it out shows every turn", num(got["turnsAfter"]) > num(got["turnsBefore"])},
+		{"and the whole conversation still fits the panel", got["actsInsidePanel"] != false},
 	}
 	bad := 0
 	for _, c := range checks {
@@ -166,7 +169,13 @@ const stubCall = `const Call = { async ByName(name, ...args) {
   if (name.endsWith('Library.List')) return {sessions: [], machine: 'preview', accounts: []};
   if (name.endsWith('Library.TakeHandOff')) return '';
   if (name.endsWith('Library.Detail')) return {session: {id: args[0], title: 'Preview session',
-    when: new Date().toISOString(), cwd: '/Users/x/Git', sources: [], client: 'cli'}, prompts: 0};
+    when: new Date().toISOString(), cwd: '/Users/x/Git', sources: [], client: 'cli'},
+    prompts: 40,
+    first: [{text: 'the opening turn', at: new Date().toISOString()}],
+    last: [{text: 'the closing turn', at: new Date().toISOString()}]};
+  if (name.endsWith('Library.AllPrompts')) return {total: 40, truncated: false,
+    prompts: Array.from({length: 40}, (_, i) => ({text: 'turn number ' + (i + 1),
+      at: new Date().toISOString()}))};
   return {};
 } };
 `
@@ -182,6 +191,9 @@ const probeScript = `<script>
     store.click(); await sleep(800);
     const first = document.querySelector('.sessionrow:not([hidden])');
     if (first) { first.click(); await sleep(500); }
+    const gapBtn = document.querySelector('#pitems .gapaction .linkish');
+    const turnsBefore = document.querySelectorAll('#pitems .turns .turn').length;
+    if (gapBtn) { gapBtn.click(); await sleep(400); }
     const r = n => n.getBoundingClientRect();
     const panel = r($('plist')), f = r(document.querySelector('.pcontrols .pfilter'));
     const t = r(document.querySelector('.ptoggle'));
@@ -208,6 +220,10 @@ const probeScript = `<script>
         return d.scrollHeight - d.clientHeight;
       })(),
       sessions: document.querySelectorAll('.sessionrow:not([hidden])').length,
+      hadOpenOut: !!gapBtn,
+      turnsBefore: turnsBefore,
+      turnsAfter: document.querySelectorAll('#pitems .turns .turn').length,
+      gapGone: !document.querySelector('#pitems .gapaction'),
     });
   } catch (e) { document.title = 'PROBE {"error":"' + String(e).replace(/"/g, "'") + '"}'; }
 })();
