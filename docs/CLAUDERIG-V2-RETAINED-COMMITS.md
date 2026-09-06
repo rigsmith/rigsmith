@@ -113,9 +113,10 @@ Queue operations continue to use the original cancellation context.
 
 ## Remaining integration gates
 
-- Implement Push using the retained commit, explicit remote confirmation,
-  conflict recovery, and an audited merge with newer synchronous/remote history.
-  This layer intentionally does not install its snapshot over newer work.
+- The [shared retained publication engine](CLAUDERIG-V2-RETAINED-PUBLICATION.md)
+  now merges newer committed histories and requires fresh remote confirmation.
+  Wire Claude Push with bound production transport and native conflict recovery.
+  The engine leaves canonical staging untouched.
 - Validate native Git attributes and audit the materialized publication tree at
   the publication boundary, as synchronous Publish already does.
 - Own Git and merge-tool process trees across cancellation and parent death.

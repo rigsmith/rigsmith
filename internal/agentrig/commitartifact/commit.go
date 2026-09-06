@@ -1,6 +1,6 @@
 // Package commitartifact retains audited Git snapshots as self-contained bundles
-// inside the shared durable artifact format. It never updates a canonical ref,
-// index or checkout, contacts a network remote, or acknowledges queue work.
+// inside the shared durable artifact format. Publication uses an explicit
+// transport; canonical refs, indexes, checkouts and queue markers stay untouched.
 package commitartifact
 
 import (
@@ -229,7 +229,7 @@ func Open(ctx context.Context, store artifact.Store, ref, dest string) (result C
 	if strings.TrimSpace(got) != strings.TrimSpace(result.Commit+"\n"+result.Tree+"\n"+result.Parent) {
 		return result, ErrInvalid
 	}
-	if _, err = repo.run(ctx, nil, "fsck", "--strict", "--no-reflogs"); err != nil {
+	if err = repo.checkObjects(ctx); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -256,27 +256,58 @@ func initRepo(ctx context.Context, dir, oid string) (gitRepo, error) {
 	return r, err
 }
 
+// Control-command stdout is bounded, including conflict diagnostics on failure.
+// Large blob/tree streams use runTo with their own explicit bounds or consumers.
+const gitOutputLimit int64 = 1 << 20
+
 func (r gitRepo) run(ctx context.Context, input io.Reader, args ...string) (string, error) {
-	flags := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "commit.gpgsign=false", "-c", "protocol.allow=never", "-c", "protocol.file.allow=always"}
+	var out bytes.Buffer
+	err := r.runTo(ctx, input, &boundedOutput{w: &out, left: gitOutputLimit}, args...)
+	if err != nil {
+		return "", err // Never expose partial output as a usable object ID.
+	}
+	return out.String(), nil
+}
+
+func (r gitRepo) runTo(ctx context.Context, input io.Reader, output io.Writer, args ...string) error {
+	cmd := r.command(ctx, args...)
+	cmd.Stdin, cmd.Stdout = input, output
+	err := cmd.Run()
+	if bounded, ok := output.(*boundedOutput); ok && bounded.exceeded {
+		// Wait can prefer the child's broken-pipe exit over the writer error.
+		// Preserve the capacity failure after the child and copy goroutine exit.
+		err = artifact.ErrTooLarge
+	}
+	if err != nil {
+		// Do not surface raw Git diagnostics or local paths in queue failure codes.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("retained commit git %s: %w", args[0], err)
+	}
+	return nil
+}
+
+func (r gitRepo) checkObjects(ctx context.Context) error {
+	// Dangling retry candidates are expected. Keep strict integrity checks,
+	// suppress their notices, and never buffer diagnostics we do not consume.
+	return r.runTo(ctx, nil, io.Discard, "fsck", "--strict", "--no-reflogs", "--no-dangling", "--no-progress")
+}
+
+// command applies the same private Git isolation to one-shot and streaming calls.
+func (r gitRepo) command(ctx context.Context, args ...string) *exec.Cmd {
+	flags := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull, "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "commit.gpgsign=false", "-c", "protocol.allow=never", "-c", "protocol.file.allow=always"}
 	cmd := exec.CommandContext(ctx, "git", append(flags, args...)...)
-	cmd.Dir, cmd.Stdin = r.dir, input
+	cmd.Dir = r.dir
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(strings.ToUpper(entry), "GIT_") {
 			cmd.Env = append(cmd.Env, entry)
 		}
 	}
-	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_ALLOW_PROTOCOL=file")
+	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_ATTR_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_ALLOW_PROTOCOL=file")
 	cmd.Env = append(cmd.Env, r.identity...)
 	cmd.WaitDelay = 5 * time.Second
-	out, err := cmd.Output()
-	if err != nil {
-		// Do not surface raw Git diagnostics or local paths in queue failure codes.
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		return "", fmt.Errorf("retained commit git %s: %w", args[0], err)
-	}
-	return string(out), nil
+	return cmd
 }
 
 func (r gitRepo) writeTree(ctx context.Context, root, dir string, modes map[string]os.FileMode) (string, error) {
