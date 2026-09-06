@@ -1,7 +1,8 @@
 # ClaudeRig v2 application services
 
-This completes the synchronous-service extraction milestone on `codex/v2`.
-It prepares callable workflows for the later queue and Codex adapter while
+This completes the synchronous-service extraction milestone, shared by `main`
+and `codex/v2` after v1.15.1. These services have no Codex runtime dependency.
+They prepare callable workflows for the later queue and Codex adapter while
 keeping ClaudeRig and CodexRig as separate tools. No background worker, vendor
 adapter, storage migration, or runtime setting is introduced here.
 
@@ -22,7 +23,9 @@ Requests carry resolved paths, configuration, machine identity, and permission t
 invoke mergetool. The services do not inspect the terminal or import Cobra or
 terminal styles. Progress is delivered synchronously as typed events; commands
 render the existing messages. Results expose publication phases and best-effort
-pull failures without requiring another caller to parse terminal text.
+pull failures without requiring another caller to parse terminal text. Missing
+configuration is rejected before filesystem work: sync returns an error; pull
+sets `RequestError` and emits `PullFailed`.
 
 The observer is informational: it must not mutate the store or event payloads,
 or reenter a service. `ReadIdentity` defaults to the existing live-account reader

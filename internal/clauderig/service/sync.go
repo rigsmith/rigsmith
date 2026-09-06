@@ -52,6 +52,9 @@ type SyncResult struct {
 // Sync repairs, captures, scans, records metadata/journal entries and publishes.
 // Lock acquisition, debounce and terminal input remain caller responsibilities.
 func (s Service) Sync(ctx context.Context, req SyncRequest) (result SyncResult, rerr error) {
+	if req.Config == nil {
+		return result, fmt.Errorf("sync requires a configuration")
+	}
 	cfg, me, staging, dryRun := req.Config, req.Machine, req.StagingDir, req.DryRun
 	// Capture errors have their own record below. After capture succeeds, a
 	// publication-phase failure needs a separate record, even when it occurs

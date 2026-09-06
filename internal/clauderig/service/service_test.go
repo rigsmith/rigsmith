@@ -170,3 +170,46 @@ func TestPublishMaintainsHistoryAfterSuccess(t *testing.T) {
 		t.Fatal("maintained history did not reach the remote")
 	}
 }
+
+func TestPullRejectsMissingConfigBeforeTouchingStore(t *testing.T) {
+	staging := filepath.Join(t.TempDir(), "repo")
+	var events []service.Event
+	svc := service.Service{Observe: func(e service.Event) { events = append(events, e) }}
+	result := svc.Pull(t.Context(), service.PullRequest{StagingDir: staging})
+	if result.RequestError == nil || result.CloneError != nil || result.ReconcileError != nil || result.RestoreError != nil || result.Restore != nil {
+		t.Fatalf("invalid request result: %+v", result)
+	}
+	if len(events) != 1 {
+		t.Fatalf("failure events: %v", events)
+	}
+	if e, ok := events[0].(service.PullFailed); !ok || e.Err != result.RequestError {
+		t.Fatalf("failure event: %+v", events[0])
+	}
+	if _, err := os.Stat(staging); !os.IsNotExist(err) {
+		t.Fatalf("invalid request touched the store: %v", err)
+	}
+}
+
+func TestSyncRejectsMissingConfigBeforeRepairOrInput(t *testing.T) {
+	staging := filepath.Join(t.TempDir(), "repo")
+	svc := service.Service{
+		Observe: func(service.Event) { t.Fatal("invalid request started a workflow") },
+		ReadIdentity: func() (service.Identity, error) {
+			t.Fatal("invalid request read identity")
+			return service.Identity{}, nil
+		},
+	}
+	result, err := svc.Sync(t.Context(), service.SyncRequest{
+		StagingDir: staging,
+		ResolveFlush: func() service.FlushIntent {
+			t.Fatal("invalid request read input")
+			return service.FlushIntent{}
+		},
+	})
+	if err == nil || result.Capture != nil || result.Publication.Committed || result.Publication.Pushed {
+		t.Fatalf("invalid request: result=%+v, err=%v", result, err)
+	}
+	if _, err := os.Stat(staging); !os.IsNotExist(err) {
+		t.Fatalf("invalid request touched the store: %v", err)
+	}
+}

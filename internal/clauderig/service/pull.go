@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -24,6 +25,7 @@ type PullRequest struct {
 // PullResult exposes failures that the SessionStart command deliberately treats
 // as best-effort. A failed initial clone creates no journal/staging directory.
 type PullResult struct {
+	RequestError                             error
 	CloneError, ReconcileError, RestoreError error
 	Repair                                   RepairResult
 	Restore                                  *engine.RestoreReport
@@ -33,6 +35,11 @@ type PullResult struct {
 // keeps its successful exit on these operational failures; callers can inspect
 // the result without scraping rendered output.
 func (s Service) Pull(ctx context.Context, req PullRequest) (result PullResult) {
+	if req.Config == nil {
+		result.RequestError = fmt.Errorf("pull requires a configuration")
+		s.emit(PullFailed{Err: result.RequestError})
+		return result
+	}
 	cfg, me, staging := req.Config, req.Machine, req.StagingDir
 	// Update the staging repo from the remote (best-effort; never blocks).
 	if cfg.Remote != "" {

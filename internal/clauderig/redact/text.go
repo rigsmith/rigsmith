@@ -37,8 +37,26 @@ var textSecretRe = regexp.MustCompile(strings.Join([]string{
 	`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`,
 	`\bAIza[A-Za-z0-9_\-]{8,}`,
 	`\bya29\.[A-Za-z0-9_\-]{8,}`,
-	// A JWT, anchored on its header rather than on the whole string.
-	`\beyJ[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}`,
+	// A JWT, anchored on its header rather than on the whole string, and
+	// deliberately WITHOUT a word boundary. Its own shape is the guard here —
+	// three dot-separated base64url runs is not something prose produces — so
+	// the boundary buys nothing and costs real tokens: one written straight
+	// after an escape, "…turso.io\neyJ…", is preceded by the n and would never
+	// be rewritten. The stream scanner has no boundary either, so requiring one
+	// here made it possible to detect a credential that could not be redacted,
+	// which leaves a sync refusing with the scrubber already on.
+	`eyJ[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}`,
+	// PEM private key material, from the header to the end of the string that
+	// holds it. Bounded on the quote rather than on END, because a transcript
+	// records what was on screen: a key pasted mid-scroll, or one a tool printed
+	// and truncated, has a header and no footer at all — one file here carried
+	// four BEGIN markers and no END. Both have to go, and stopping at the quote
+	// keeps the surrounding JSON record intact.
+	//
+	// The scanner reports a private key on the header alone, so without this
+	// every transcript that merely quotes one refused the sync for ever: the
+	// scrubber declined to touch PEM at all, and no setting could clear it.
+	`-----BEGIN [A-Z ]*PRIVATE KEY-----[^"]*`,
 	// An opaque bearer token. LooksSecret already calls one of these a
 	// credential when it judges a config value, and leaving it in a transcript
 	// while redacting it from settings is the inconsistency, not the rule.
@@ -135,8 +153,16 @@ func hint(s string) string {
 // than a refusal that says what it found.
 func HasPrivateKey(line []byte) bool { return pemRe.Match(line) }
 
-// IsCredentialMatch is shared by the rewriter and publication scanner so both
-// classify placeholders and prose the same way. The input must be a regex hit.
+// IsCredentialMatch reports whether a regex hit is really a credential rather
+// than something merely shaped like one.
+//
+// Shared deliberately. RedactText uses it to decide what to rewrite and the
+// stream scanner to decide what to refuse, and if the two disagree the tool
+// either rewrites something it will still refuse — leaving a sync blocked with
+// the scrubber already on and nothing left to try — or refuses something it has
+// already cleaned. Both were live: the prose exclusion landed in the rewriter
+// only, so the tripwire kept refusing the phrases the rewriter had decided to
+// leave alone.
 func IsCredentialMatch(match string) bool {
 	return !screamingRe.MatchString(match) && !isKebabProse(match)
 }
