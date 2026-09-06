@@ -1,5 +1,38 @@
 # github.com/rigsmith/rigsmith
 
+## 1.15.0
+### 🚀 Enhancements
+
+- **rig:** `rig stack seed` names the seed by convention. A seed repository is not a project you clone and work in — it is the few kilobytes `rig stack init` rebuilds a whole stackspace from — and nothing in a list of repositories said so. The convention is `rigstack-<something>`: the interactive prompt now offers one derived from the stackspace's own directory (a stackspace in `acme-2.4/` offers `../rigstack-acme-2.4`, and an already-prefixed name is not doubled), and the help and docs use it throughout. The suggestion is anchored beside the stackspace rather than beside you, since `rig stack` runs from any directory inside one and a seed has to land outside every repository. Only a suggestion — the prompt is editable and the argument form takes whatever you type.
+
+### 🩹 Fixes
+
+- **rig:** `rig stack pull` no longer refuses forever once a member's work has been proposed.
+  
+  With work on a fork branch and upstream moving on, pull merged the two correctly and then reported failure anyway: `libfoo/ holds changes of its own, and moving it to <commit> needs the directory replaced`. Retrying never helped, and the advice it gave — send them first — could not be followed, because the work had already been sent.
+  
+  The check exists for repinning a member to an older commit, where only replacing the directory can move it and replacing would discard. But a prefix also differs from upstream when a merge has just combined the two, which is the ordinary case, and the trees alone cannot tell those apart. It now looks at whether the merge moved anything: if it did, the work is done and there is nothing to replace. The protection against discarding unsent work is untouched and still guards the only step that discards.
+  
+  Two more, found behind it:
+  
+  `rig stack propose` recorded the branch it pushed to in `rig.stack.jsonc` and left the file uncommitted. `rig stack seed` then refused — a seed has to be a revision that exists — and a seed taken anyway carried the previous branch name, so rebuilding reached for work that was not there. Propose commits that record now, and only that file.
+  
+  A stackspace rebuilt by `rig stack init` from a member's proposed branch did not know its content was already on the fork, so the next propose pushed an identical commit. It records what it rebuilt from, and propose treats content already on the branch as nothing to send — after asking the fork about the branch it is actually proposing to, so neither a renamed branch nor one deleted since is mistaken for work that is safely elsewhere.
+  
+  Propose leaves a manifest you have edited yourself alone: the branch is still recorded, but committing it would put your unrelated change into a commit whose message describes something else.
+- **clauderig:** Preserve backup bytes through Git clone, history and restore even when Git text conversion is enabled.
+  
+  Backup repositories now carry attributes disabling line-ending, encoding, keyword and clean/smudge conversions. Sync refreshes older indexes when installing these rules, and publication refuses overriding attributes that could rewrite scanned bytes. This protects both native transcripts and content-addressed chunks. Already altered historical blobs are not rewritten or silently accepted; recover those from an intact source or verified backup.
+- **clauderig:** The secret tripwire no longer refuses a sync over ordinary English.
+  
+  1.14.0 started scanning every staged file for credentials, and the patterns it used were never anchored — `sk-` is the tail of **task-**, and `AKIA` matched inside any long uppercase run. On one machine that was 96 of 134 findings, and the sync had been refusing since, so it was not being backed up at all. Turning `redactTranscripts` on could not help: it scrubbed only `.jsonl` files, while the tripwire read everything, and the two disagreed about what counted as a credential.
+  
+  If your sync started refusing after 1.14.0, this is why, and upgrading is the fix.
+  
+  `redactTranscripts` now scrubs the whole conversation — the transcript, the tool results written beside it, and notes under `memory/` — deciding text from binary by content rather than by file extension. Your live `~/.claude` files are still never modified.
+  
+  It cleans what gets published from now on. It does not reach into commits already pushed; history that carries a credential needs `clauderig repo prune --before <date>`.
+
 ## 1.14.0
 ### 🚀 Enhancements
 
