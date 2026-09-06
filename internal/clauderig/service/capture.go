@@ -21,6 +21,18 @@ import (
 // through capture and sealing/publication; Capture borrows that lease.
 // SyncRequest retains the same dry-run, identity and flush semantics as Sync.
 func (s Service) Capture(ctx context.Context, req SyncRequest) (*engine.Report, error) {
+	return s.capture(ctx, req, nil)
+}
+
+// captureInputs is used only for sealed queued captures. Nil preserves live
+// discovery and source resolution for synchronous callers.
+type captureInputs struct {
+	sources             map[string]string
+	profiles            []string
+	attributionSessions map[string]bool
+}
+
+func (s Service) capture(ctx context.Context, req SyncRequest, inputs *captureInputs) (*engine.Report, error) {
 	if req.Config == nil {
 		return nil, fmt.Errorf("capture requires a configuration")
 	}
@@ -37,11 +49,14 @@ func (s Service) Capture(ctx context.Context, req SyncRequest) (*engine.Report, 
 	// into the staging tree — committing over a conflicted index would
 	// publish the conflict markers themselves. If it cannot be settled,
 	// STOP: this path stages and commits, so carrying on is the hazard.
-	if !s.RepairMerge(ctx, staging, req.AllowMergeTool).Safe {
+	if inputs == nil && !s.RepairMerge(ctx, staging, req.AllowMergeTool).Safe {
 		return report, fmt.Errorf("the staging repo is still mid-merge — resolve it in %s, or run `clauderig doctor --fix`", staging)
 	}
 	claudeVer := ""
 	if cliLoc, st := cfg.RootLocation("cli", me); st == pathmap.StatusResolved {
+		if inputs != nil {
+			cliLoc = inputs.sources["cli"]
+		}
 		claudeVer = config.DetectClaudeVersion(cliLoc)
 	}
 	// Attribution for ledger rows no Desktop sidecar covers. Read once,
@@ -96,16 +111,27 @@ func (s Service) Capture(ctx context.Context, req SyncRequest) (*engine.Report, 
 	if cfg.ChunkTranscripts != nil {
 		chunked = *cfg.ChunkTranscripts
 	}
+	var profiles []string
+	var sources map[string]string
+	var attributionSessions map[string]bool
+	if inputs == nil {
+		profiles = engine.LocalProfileNames()
+	} else {
+		profiles, sources = inputs.profiles, inputs.sources
+		attributionSessions = inputs.attributionSessions
+	}
 	rep, serr := engine.Sync(engine.Options{
 		ChunkTranscripts: chunked,
 		StagingDir:       staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
-		RetentionDays:     cfg.Retention.HistoryDays,
-		MaxFileBytes:      cfg.Retention.MaxFileBytes,
-		LargeFileBytes:    largeFileBytes,
-		Flush:             flushPaths,
-		RedactTranscripts: cfg.RedactTranscripts,
-		Profiles:          engine.LocalProfileNames(),
-		LiveAccountUUID:   liveAcct,
+		RetentionDays:       cfg.Retention.HistoryDays,
+		MaxFileBytes:        cfg.Retention.MaxFileBytes,
+		LargeFileBytes:      largeFileBytes,
+		Flush:               flushPaths,
+		RedactTranscripts:   cfg.RedactTranscripts,
+		Profiles:            profiles,
+		SourceOverride:      sources,
+		LiveAccountUUID:     liveAcct,
+		AttributionSessions: attributionSessions,
 	})
 	report = rep
 	if rep != nil {
@@ -129,6 +155,12 @@ func (s Service) Capture(ctx context.Context, req SyncRequest) (*engine.Report, 
 	}
 	if dryRun {
 		s.emit(DryRunStaged{})
+		return report, nil
+	}
+
+	// A delayed capture must not stamp the current device registry with an old
+	// event's source account. Retain the registry copied from canonical staging.
+	if inputs != nil {
 		return report, nil
 	}
 

@@ -3,9 +3,11 @@
 `internal/agentrig/queue` persists capture intent, exclusive worker ownership and
 publication progress. Both vendor adapters can consume it. Milestone 6b.2 now
 adds a shared one-batch phase driver and separates Claude capture from publication.
-A concrete Claude queue adapter, durable capture artifacts, worker command and
-hook activation are still pending. This internal foundation has no end-user
-changeset because shipped commands behave as before.
+Durable capture artifacts and the capture/sealing portion of the Claude adapter
+are now implemented; see [capture artifacts](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md).
+Commit/Push integration, a worker command and hook activation are still pending.
+This internal foundation has no end-user changeset because shipped commands
+behave as before.
 
 ## Identity and generations
 
@@ -160,12 +162,11 @@ Claude's `Service.Capture` now exposes its existing repair/capture/scan/metadata
 phase. `Service.Sync` still composes Capture and Publish under one staging lease,
 with unchanged journal timing, identity observation, dry runs and terminal events.
 Capture alone does not commit the new snapshot or publish it (repair may finish
-an earlier merge). It returns a report over a **mutable** staging tree. It is not
-a valid implementation of the queue's durable Capture contract until the next
-slice seals and retains an immutable artifact. The standalone service preserves
-legacy live-identity and retention behavior; a queue adapter must supply pinned
-source attribution and protect its requested generations instead of assuming
-those synchronous defaults are sufficient.
+an earlier merge). It returns a report over a **mutable** staging tree, which
+is not itself a durable capture artifact. `Service.CaptureArtifact` now provides
+a separate frozen-input and sealed-output path with explicit provenance; see
+the [capture artifact contract](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md). Standalone
+Capture keeps its synchronous live-identity and retention behavior.
 
 Tests cover phase resumption, offline retry, new input during capture, staging
 and worker ownership, cancellation, uncertain/failed markers and classified
