@@ -114,7 +114,7 @@ func Desktop() List {
 		inc("cowork-enabled-cli-ops.json"),
 		inc("extensions-blocklist.json"),
 		inc("git-worktrees.json"),
-		// config.json IS synced, but a keep-only filter (engine.keepOnly) reduces it
+		// config.json IS synced, but an adapter-selected keep-only filter reduces it
 		// to its stable `preferences` — the Desktop app rewrites the rest constantly
 		// with rotating cache/token values (oauth.tokenCache, dxt.allowlistCache, …).
 		inc("config.json"),

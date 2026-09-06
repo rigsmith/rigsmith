@@ -473,3 +473,9 @@ The compatibility harness and synchronous-service foundation are shared by
 `main` and `codex/v2` after v1.15.1. Later vendor adapters, store coordination,
 and the durable queue remain v2 work; this alignment introduces no queue or
 Codex runtime dependency.
+
+V2's next extraction centralizes root, artifact, merge-selection and flush-group
+policy in `internal/clauderig/adapter`, consumed by the existing sync, restore
+and merge implementations. The descriptors are in memory only. Classification
+does not replace allowlist authorization, infer one policy from another, or
+change persisted formats. See [the adapter contracts](CLAUDERIG-V2-ADAPTER.md).

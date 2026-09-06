@@ -79,11 +79,15 @@ capture without publication, and journal ownership across capture refusal and
 transport failure. Core Git tests continue to cover history rewriting itself,
 including merge history and out-of-order commit dates.
 
-## Next extraction
+## Artifact policy extraction on v2
 
-Introduce explicit artifact classification behind a Claude adapter, preserving
-root selection, retention, transform and merge policies, and session/subagent
-flush grouping. Then extract the proven vendor-neutral mechanics. Store-wide
+V2 now supplies explicit root and file policies through
+`internal/clauderig/adapter`: root selection, retention, transforms, merge
+selection, and session/subagent flush grouping. The engine and merge resolver
+consume those policies while retaining their existing implementations. See
+[the adapter contracts](CLAUDERIG-V2-ADAPTER.md).
+
+Next, extract the proven vendor-neutral file processing and restore mechanics. Store-wide
 coordination and the durable queue follow: callable services are available now,
 but they do not yet provide worker ownership, durable scheduling or retries
 across process restarts. CodexRig remains a separate consumer to add after those

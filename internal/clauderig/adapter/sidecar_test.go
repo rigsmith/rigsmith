@@ -1,6 +1,10 @@
-package engine
+package adapter_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
+)
 
 func TestIsDesktopSessionSidecar(t *testing.T) {
 	yes := []string{
@@ -15,13 +19,13 @@ func TestIsDesktopSessionSidecar(t *testing.T) {
 		"claude-code-sessions/org/local_cache/not-a-sess.json", // local_ is a DIR, not the file
 	}
 	for _, r := range yes {
-		if !isDesktopSessionSidecar(r) {
-			t.Errorf("isDesktopSessionSidecar(%q) = false, want true", r)
+		if !adapter.IsDesktopCodeSidecar(r) {
+			t.Errorf("adapter.IsDesktopCodeSidecar(%q) = false, want true", r)
 		}
 	}
 	for _, r := range no {
-		if isDesktopSessionSidecar(r) {
-			t.Errorf("isDesktopSessionSidecar(%q) = true, want false", r)
+		if adapter.IsDesktopCodeSidecar(r) {
+			t.Errorf("adapter.IsDesktopCodeSidecar(%q) = true, want false", r)
 		}
 	}
 }

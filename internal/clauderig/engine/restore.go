@@ -11,7 +11,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
-	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
+	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
@@ -55,22 +55,6 @@ func (r *RestoreReport) DesktopSessions() int {
 		n += rr.DesktopSessions
 	}
 	return n
-}
-
-// isDesktopSessionSidecar reports whether a restored (slash) rel path is a
-// Desktop Code-session sidecar:
-// claude-code-sessions/<accountUuid>/<organizationUuid>/local_<id>.json. Those
-// two uuids are the account's, straight from ~/.claude.json's oauthAccount — so
-// this tree is already partitioned per account, which is what devices.Account
-// records for the CLI side, where nothing else does.
-// The local_<id>.json shape is matched on the basename so a directory like
-// claude-code-sessions/org/local_cache/other.json isn't miscounted as a session.
-func isDesktopSessionSidecar(rel string) bool {
-	if !strings.HasPrefix(rel, "claude-code-sessions/") {
-		return false
-	}
-	base := path.Base(rel)
-	return strings.HasPrefix(base, "local_") && strings.HasSuffix(base, ".json")
 }
 
 // prunableDirs are the authoritative config dirs where "deleted upstream" means
@@ -133,7 +117,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 		return nil, err
 	}
 	rep := &RestoreReport{}
-	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
+	for _, r := range adapter.Roots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
 			continue
 		}
@@ -242,7 +226,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 				continue
 			}
 
-			if strings.HasSuffix(rel, ".json") {
+			if r.Classify(rel).Transform == adapter.JSON {
 				if err := restoreJSON(src, dst, opts.Machine.Resolver(), pm); err != nil {
 					return nil, err
 				}
@@ -251,7 +235,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			}
 			written[targetRel] = true
 			rr.Files++
-			if allowlist.DesktopRoot(r.ID) && isDesktopSessionSidecar(desktopRel(r.ID, targetRel)) {
+			if r.Classify(targetRel).Kind == adapter.DesktopCodeSidecar {
 				rr.DesktopSessions++
 			}
 		}

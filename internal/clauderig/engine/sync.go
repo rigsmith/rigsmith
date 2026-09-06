@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
@@ -143,62 +144,6 @@ type Options struct {
 // wait for it: the hook runs `sync --flush` with that session's transcript.
 const largeFileSettle = 30 * time.Minute
 
-// flushSet resolves Options.Flush into a set keyed the way the walk will ask
-// — cleaned, with symlinks resolved where the path exists — so a path the
-// hook reports and the one the walk visits agree whatever the spelling.
-func flushSet(paths []string) flushScope {
-	var f flushScope
-	if len(paths) == 0 {
-		return f
-	}
-	f.files = make(map[string]bool, len(paths))
-	for _, p := range paths {
-		c := canonicalPath(p)
-		f.files[c] = true
-		// A session's sub-agent transcripts live beside it, under a
-		// directory of its own name: projects/<slug>/<id>/subagents/….
-		// They ended with the session, and the hook names only the parent.
-		if dir := strings.TrimSuffix(c, ".jsonl"); dir != c {
-			f.dirs = append(f.dirs, dir+string(filepath.Separator))
-		}
-	}
-	return f
-}
-
-// flushScope is what a flush covers: the transcripts named, and every
-// transcript under the directory a named session keeps its sub-agents in.
-// Nothing else — a flush is one session's, not the machine's.
-type flushScope struct {
-	files map[string]bool
-	dirs  []string
-}
-
-// covers reports whether the flush exempts path from the throttle.
-func (f flushScope) covers(path string) bool {
-	if len(f.files) == 0 {
-		return false
-	}
-	c := canonicalPath(path)
-	if f.files[c] {
-		return true
-	}
-	for _, d := range f.dirs {
-		if strings.HasPrefix(c, d) {
-			return true
-		}
-	}
-	return false
-}
-
-// canonicalPath is a path as the flush set keys it.
-func canonicalPath(p string) string {
-	p = filepath.Clean(p)
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		return resolved
-	}
-	return p
-}
-
 // deferLarge reports whether a changed transcript should wait: it is a
 // project transcript over the large-file threshold, a staged copy exists, and
 // the source has neither grown by half the threshold since that copy nor
@@ -211,8 +156,8 @@ func canonicalPath(p string) string {
 // retention prunes staged files by their mtime later in the same sync, and a
 // live transcript that was just appended must not lose its only copy to a
 // deferral.
-func deferLarge(rel string, src, staged os.FileInfo, threshold int64, cutoff, now time.Time) bool {
-	if threshold <= 0 || staged == nil || src.Size() <= threshold || !isTranscriptRel(rel) {
+func deferLarge(file adapter.File, src, staged os.FileInfo, threshold int64, cutoff, now time.Time) bool {
+	if threshold <= 0 || staged == nil || src.Size() <= threshold || !file.ChunkEligible {
 		return false
 	}
 	if !cutoff.IsZero() && staged.ModTime().Before(cutoff) {
@@ -225,12 +170,6 @@ func deferLarge(rel string, src, staged os.FileInfo, threshold int64, cutoff, no
 		return false
 	}
 	return now.Sub(src.ModTime()) < largeFileSettle
-}
-
-// isTranscriptRel reports whether rel is a session transcript: a .jsonl under
-// projects/, memory excluded.
-func isTranscriptRel(rel string) bool {
-	return strings.HasPrefix(rel, "projects/") && strings.HasSuffix(rel, ".jsonl") && !isMemoryRel(rel)
 }
 
 // Sync materialises the allowlisted, redacted file set for each enabled root into
@@ -259,7 +198,7 @@ func Sync(opts Options) (*Report, error) {
 	if opts.RetentionDays > 0 {
 		cutoff = time.Now().AddDate(0, 0, -opts.RetentionDays)
 	}
-	flush := flushSet(opts.Flush)
+	flush := adapter.NewFlushScope(opts.Flush)
 
 	// Turning redaction ON has to reach the transcripts an earlier sync already
 	// staged unscrubbed. Nothing about those files changes when the setting
@@ -279,19 +218,19 @@ func Sync(opts Options) (*Report, error) {
 	// never ran — permanently, since attribution is sticky.
 	var cliSessionIDs map[string]bool
 
-	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
+	for _, r := range adapter.Roots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
 			continue
 		}
 		rr := RootResult{ID: r.ID}
-		loc, st := sourceLoc(opts, r)
+		loc, st := sourceLoc(opts, r.Root)
 		if st != pathmap.StatusResolved || !dirExists(loc) {
 			rr.Skipped = true
 			rep.Roots = append(rep.Roots, rr)
 			continue
 		}
 
-		files, links, err := allowlist.Walk(loc, allowlist.For(r.ID))
+		files, links, err := allowlist.Walk(loc, r.Allowlist)
 		if err != nil {
 			return nil, fmt.Errorf("walk %s: %w", r.ID, err)
 		}
@@ -304,7 +243,7 @@ func Sync(opts Options) (*Report, error) {
 		for _, rel := range files {
 			srcPath := filepath.Join(loc, filepath.FromSlash(rel))
 			dstPath := filepath.Join(stageRoot, filepath.FromSlash(rel))
-			isJSON := strings.HasSuffix(rel, ".json")
+			file := r.Classify(rel)
 
 			info, err := os.Stat(srcPath)
 			if err != nil {
@@ -315,8 +254,8 @@ func Sync(opts Options) (*Report, error) {
 			}
 
 			// Retention: drop project transcripts older than the window. Memory is
-			// exempt — see isMemoryRel.
-			if !cutoff.IsZero() && strings.HasPrefix(rel, "projects/") && !isMemoryRel(rel) && info.ModTime().Before(cutoff) {
+			// exempt — the adapter keeps durable memory outside ProjectAge.
+			if !cutoff.IsZero() && file.Retention == adapter.ProjectAge && info.ModTime().Before(cutoff) {
 				rr.RetentionByAge++
 				continue
 			}
@@ -325,7 +264,7 @@ func Sync(opts Options) (*Report, error) {
 			// the host and fails the entire push, so drop it here. Remove any copy an
 			// earlier, uncapped sync staged — otherwise the cap can never dig a repo
 			// out of the hole it was added to fix.
-			if opts.MaxFileBytes > 0 && info.Size() > opts.MaxFileBytes && !(opts.ChunkTranscripts && isTranscriptRel(rel) && info.Size() > 2*transcript.ChunkSize) {
+			if opts.MaxFileBytes > 0 && info.Size() > opts.MaxFileBytes && !(opts.ChunkTranscripts && file.ChunkEligible && info.Size() > 2*transcript.ChunkSize) {
 				rr.Oversize = append(rr.Oversize, OversizeFile{Rel: rel, Bytes: info.Size()})
 				_ = os.Remove(dstPath)
 				continue
@@ -333,7 +272,7 @@ func Sync(opts Options) (*Report, error) {
 
 			// Non-JSON (transcripts, skill files): copy verbatim, but skip if the
 			// staging copy is already current (same size+mtime) — incremental sync.
-			if !isJSON {
+			if file.Transform != adapter.JSON {
 				noteFinding := func(f *redact.Finding) {
 					rep.Findings = append(rep.Findings, redact.Finding{
 						Path: r.ID + "/" + f.Path, Kind: f.Kind,
@@ -348,7 +287,7 @@ func Sync(opts Options) (*Report, error) {
 						return false, err
 					}
 					if opts.MaxFileBytes <= 0 || st.Size() <= opts.MaxFileBytes ||
-						(opts.ChunkTranscripts && isTranscriptRel(rel) && st.Size() > 2*transcript.ChunkSize) {
+						(opts.ChunkTranscripts && file.ChunkEligible && st.Size() > 2*transcript.ChunkSize) {
 						return false, nil
 					}
 					if err := os.Remove(dstPath); err != nil {
@@ -374,7 +313,7 @@ func Sync(opts Options) (*Report, error) {
 				// it would never match and the file would be re-scrubbed on every
 				// sync forever. The mtime is copied from the source exactly, so
 				// it alone already means "staged from this version of this file".
-				scrub := opts.RedactTranscripts && scrubbable(rel, srcPath)
+				scrub := opts.RedactTranscripts && file.Transform == adapter.ConversationText && scrubbable(srcPath)
 				unchanged := false
 				staged, derr := transcript.Stat(dstPath)
 				if derr != nil {
@@ -390,7 +329,7 @@ func Sync(opts Options) (*Report, error) {
 				// repo carries until the next squash. Past LargeFileBytes it waits
 				// for a chunk's worth of new content, or for the session to go
 				// quiet, before it is restaged.
-				if !opts.ChunkTranscripts && !rescrub && !unchanged && !flush.covers(srcPath) && deferLarge(rel, info, staged, opts.LargeFileBytes, cutoff, time.Now()) {
+				if !opts.ChunkTranscripts && !rescrub && !unchanged && !flush.Covers(srcPath) && deferLarge(file, info, staged, opts.LargeFileBytes, cutoff, time.Now()) {
 					rr.Deferred++
 					continue
 				}
@@ -476,7 +415,7 @@ func Sync(opts Options) (*Report, error) {
 					if err := writeFileMtime(dstPath, data, info.ModTime()); err != nil {
 						return nil, err
 					}
-				} else if err := copyTranscriptSnapshot(srcPath, dstPath, info.ModTime(), opts.ChunkTranscripts && isTranscriptRel(rel) && info.Size() > 2*transcript.ChunkSize); err != nil {
+				} else if err := copyTranscriptSnapshot(srcPath, dstPath, info.ModTime(), opts.ChunkTranscripts && file.ChunkEligible && info.Size() > 2*transcript.ChunkSize); err != nil {
 					if os.IsNotExist(err) {
 						rr.SkippedFiles++
 						continue
@@ -502,7 +441,7 @@ func Sync(opts Options) (*Report, error) {
 				rr.SkippedFiles++
 				continue
 			}
-			v = applyKeepFilter(r.ID, rel, v)
+			v = applyKeepFilter(file.KeepKeys, v)
 			// Counted below, not here: every JSON file in the tree is redacted on
 			// every pass, so tallying at this point reported the whole tree's
 			// secret count on every run — "21 secrets redacted" beside a sync
@@ -556,7 +495,7 @@ func Sync(opts Options) (*Report, error) {
 		// Only for roots that resolved on this machine: a root we skipped tells us
 		// nothing about whether its staged files are still wanted, and pruning it
 		// would delete another machine's data.
-		disallowed, perr := reconcileStagedRoot(stageRoot, allowlist.For(r.ID))
+		disallowed, perr := reconcileStagedRoot(stageRoot, r.Allowlist)
 		if perr != nil {
 			return nil, fmt.Errorf("reconcile staged %s: %w", r.ID, perr)
 		}
@@ -773,30 +712,8 @@ func sourceLoc(opts Options, r config.Root) (string, pathmap.Status) {
 	return r.ResolveOn(opts.Machine)
 }
 
-// keepOnly returns the top-level keys to retain for a file that's mostly volatile,
-// or nil to keep the whole document. The Desktop config.json is rewritten
-// constantly with rotating caches and OAuth token blobs (which is what tripped the
-// redaction wire before this filter existed), so it is reduced to the few keys
-// that are both stable and portable.
-//
-// Keep the list conservative — everything omitted is dropped, so a wrong entry
-// costs sync coverage, never safety. `preferences` is a nested object Desktop has
-// used for settings; `locale` and `userThemeMode` are the flat keys it uses now.
-// Deliberately NOT kept: `lastKnownAccountUuid` (identity — syncing it would
-// re-point another machine's Desktop at this account), `updaterLastSeenVersion`
-// and `first_launch_at` (machine state), and every `oauth:*`/`dxt:*` key (secret
-// or cache). Note Desktop's real keys are flat and colon-namespaced
-// ("oauth:tokenCache"), not nested.
-func keepOnly(rootID, rel string) []string {
-	if allowlist.DesktopRoot(rootID) && desktopRel(rootID, rel) == "config.json" {
-		return config.DesktopConfigKeepKeys()
-	}
-	return nil
-}
-
-// applyKeepFilter prunes a parsed JSON object to keepOnly's allowed top-level keys.
-func applyKeepFilter(rootID, rel string, v any) any {
-	keep := keepOnly(rootID, rel)
+// applyKeepFilter prunes a parsed JSON object to the adapter-selected top-level keys.
+func applyKeepFilter(keep []string, v any) any {
 	if keep == nil {
 		return v
 	}
@@ -856,21 +773,9 @@ func projectIn(m *manifest.Manifest, slug string) bool {
 	return ok
 }
 
-// isMemoryRel reports whether a CLI-root rel path is a project memory file
-// ("projects/<slug>/memory/…"). Memory is exempt from the retention window: a
-// transcript is a dated record and ages out, but a memory is durable state that
-// is only rewritten when the fact changes. Aging it by mtime silently stops a
-// stable memory from propagating and then deletes it from the staged tree, so a
-// fresh restore gets a MEMORY.md index pointing at files it never received.
-// They're a few KB each, so there is no size argument for expiring them either.
-func isMemoryRel(rel string) bool {
-	parts := strings.Split(rel, "/")
-	return len(parts) > 3 && parts[0] == "projects" && parts[2] == "memory"
-}
-
 // pruneAgedStagedProjects removes files under projectsDir older than cutoff and
 // the directories they empty, enforcing the rolling window on the staged tree.
-// Memory files are kept regardless of age (isMemoryRel) and count as content, so
+// Memory files are kept regardless of age (adapter.Keep) and count as content, so
 // a project whose transcripts have all aged out keeps its slug for its memory.
 // It returns the count removed and the set of top-level slugs that still have
 // content (so the manifest can drop the rest). A missing dir is a no-op.
@@ -906,7 +811,7 @@ func pruneAgedStagedProjects(projectsDir string, cutoff time.Time) (pruned int, 
 			if e != nil {
 				return nil
 			}
-			if rel, rerr := filepath.Rel(slugDir, p); rerr == nil && isMemoryRel("projects/"+slug+"/"+filepath.ToSlash(rel)) {
+			if rel, rerr := filepath.Rel(slugDir, p); rerr == nil && adapter.Classify("cli", "projects/"+slug+"/"+filepath.ToSlash(rel)).Retention == adapter.Keep {
 				kept++
 				return nil
 			}

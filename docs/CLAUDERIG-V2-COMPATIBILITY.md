@@ -9,8 +9,9 @@ branches does not publish a release.
 
 The first milestone establishes compatibility evidence. The synchronous-service
 milestone now provides callable sync, publication, reconciliation and pull
-workflows; [service boundaries](CLAUDERIG-V2-SERVICES.md) record their contracts. Artifact
-adapters and shared mechanics follow, then store coordination and the durable
+workflows; [service boundaries](CLAUDERIG-V2-SERVICES.md) record their contracts. V2's
+[Claude artifact policy boundary](CLAUDERIG-V2-ADAPTER.md) now supplies explicit root,
+file, merge and flush decisions. Shared mechanics follow, then store coordination and the durable
 queue, and then CodexRig as a second consumer. Queued Claude hooks will initially
 require explicit activation.
 
