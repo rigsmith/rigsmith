@@ -1,8 +1,35 @@
 # Roadmap
 
-Forward-looking ideas for the rigsmith tools. Nothing here is committed scope —
-it's the "where this could go" list. Shipped work lives in the changelog and the
-`docs/` design docs.
+Progress on active rigsmith work, followed by ideas that are not committed scope.
+Released work lives in the changelog; implementation contracts live in `docs/`.
+
+## Active work
+
+### V2: separate `clauderig` and `codexrig` with shared infrastructure
+
+**Current position: the common foundation is merged; the Claude adapter is in
+review in [#304](https://github.com/rigsmith/rigsmith/pull/304). Next is shared
+file processing and restore.**
+
+| Milestone | Status |
+| --- | --- |
+| Secret scanning, transcript chunking, and byte preservation | Complete on the v1 foundation. |
+| Compatibility baseline and synchronous services | Merged into both `main` and `codex/v2` through [#299](https://github.com/rigsmith/rigsmith/pull/299) and [#301](https://github.com/rigsmith/rigsmith/pull/301). |
+| Claude root/file adapter and policy extraction | In review: [#304](https://github.com/rigsmith/rigsmith/pull/304); implementation passes Linux, macOS, and Windows CI. |
+| Shared file processing and restore mechanics | Next, after adapter review. |
+| Shared session/metadata and publication boundaries | Planned. |
+| Store coordination and durable sync queue | Planned; no queue or worker is implemented yet. |
+| Opt-in queued Claude hooks | Planned after queue/recovery validation. |
+| Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
+
+The v1/v2 foundation was aligned after v1.15.1; that alignment did not publish a
+new release. Subsequent adapter and queue work targets `codex/v2`. Preserve
+ClaudeRig's commands, hooks, state, and backup formats, and keep the two tools'
+configuration and backup repositories separate.
+
+See the [detailed roadmap](docs/CLAUDERIG-SHARED-LAYERS-ROADMAP.md) for milestones,
+PR links, compatibility gates, and queue rollout requirements. Update its status
+and this summary with each implementation PR and merge.
 
 ## Ideas
 

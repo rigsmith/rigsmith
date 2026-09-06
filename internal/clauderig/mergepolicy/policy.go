@@ -24,10 +24,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
@@ -85,23 +85,24 @@ func Resolve(ctx context.Context, repo *gitrepo.Repo) (Report, error) {
 }
 
 func resolveOne(ctx context.Context, repo *gitrepo.Repo, p string) (Resolution, bool) {
-	if strings.HasSuffix(p, ".jsonl") {
+	rule := adapter.ClassifyMerge(p)
+	if rule.CheckChunkIndex {
 		ours, _ := repo.ConflictStage(ctx, p, 2)
 		theirs, _ := repo.ConflictStage(ctx, p, 3)
 		if transcript.IsIndex(ours) || transcript.IsIndex(theirs) {
 			return Resolution{}, false
 		}
 	}
-	switch {
-	case p == manifest.FileName:
+	switch rule.Strategy {
+	case adapter.UnionManifest:
 		if note, ok := unionManifest(ctx, repo, p); ok {
 			return Resolution{Path: p, Policy: PolicyUnionMeta, Note: note}, true
 		}
-	case p == devices.FileName:
+	case adapter.UnionDevices:
 		if note, ok := unionDevices(ctx, repo, p); ok {
 			return Resolution{Path: p, Policy: PolicyUnionMeta, Note: note}, true
 		}
-	case isAppendText(p):
+	case adapter.UnionText:
 		if content, ok := repo.UnionMerge(ctx, p); ok {
 			content, dropped := dedupRecords(p, content)
 			if err := repo.ResolveWith(ctx, p, content); err == nil {
@@ -114,41 +115,6 @@ func resolveOne(ctx context.Context, repo *gitrepo.Repo, p string) (Resolution, 
 		}
 	}
 	return newest(ctx, repo, p)
-}
-
-// isAppendText reports whether a path is one of the grow-by-appending files where
-// keeping both sides is right.
-//
-// Two different rules, because "text" is not the property that matters:
-//
-//   - Session transcripts (.jsonl) are literally append-only, wherever they sit.
-//   - Prose is unioned ONLY inside a memory/ directory. That is where a machine
-//     adds what it learned, so two sides are additions to a shared note. Every
-//     other synced document — CLAUDE.md, skills, plans, commands, agents — is a
-//     document someone EDITS, and concatenating two revisions of one would
-//     produce a file that contradicts itself while reporting success. Those take
-//     the newest-snapshot fallback like any other whole-file conflict.
-func isAppendText(p string) bool {
-	if strings.EqualFold(path.Ext(p), ".jsonl") {
-		return true
-	}
-	switch strings.ToLower(path.Ext(p)) {
-	case ".md", ".markdown", ".txt":
-		return isMemoryPath(p)
-	}
-	return false
-}
-
-// isMemoryPath reports whether a staged path lies inside a memory/ directory —
-// projects/<slug>/memory/… in the CLI root, and the same shape under the repo's
-// cli/ prefix.
-func isMemoryPath(p string) bool {
-	for _, seg := range strings.Split(path.Dir(p), "/") {
-		if seg == "memory" {
-			return true
-		}
-	}
-	return false
 }
 
 // dedupRecords drops repeated records from a unioned TRANSCRIPT, keeping the
@@ -164,7 +130,7 @@ func isMemoryPath(p string) bool {
 // usually legitimate (blank lines, list markers, code fences), and dropping one
 // would edit a note rather than merge it.
 func dedupRecords(p string, content []byte) ([]byte, int) {
-	if !strings.EqualFold(path.Ext(p), ".jsonl") {
+	if !adapter.ClassifyMerge(p).DeduplicateRecords {
 		return content, 0
 	}
 	lines := strings.Split(string(content), "\n")

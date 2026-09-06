@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
@@ -16,42 +15,14 @@ import (
 // the caller can fall back to refusing it rather than staging a mangled copy.
 var errPrivateKeyInTranscript = errors.New("transcript contains a private key block")
 
-// isTranscript reports whether rel is a conversation rather than config. Only
-// these are scrubbed: a secret in settings.json is there because Claude Code
-// needs it, while a secret in a transcript is there because somebody pasted it.
-func isTranscript(rel string) bool {
-	return strings.HasPrefix(rel, "projects/") && strings.HasSuffix(rel, ".jsonl")
-}
-
-// conversationText reports whether a staged file is text belonging to a
-// conversation, and so gets scrubbed when redactTranscripts is on.
-//
-// Wider than the transcript itself, because a pasted credential lands wherever
-// the conversation put it: in the transcript, in a tool result written beside
-// it, in a note under memory/. Scrubbing only .jsonl left four files on one
-// real machine holding bearer tokens — the setting was on, the tripwire refused
-// them anyway, and the sync stayed blocked with nothing left to try.
-//
-// .json is excluded deliberately: structured files go through the field-level
-// redactor, which knows where a value ends. Images and other binaries are
-// excluded because a byte-level rewrite of one is not a redaction, it is
-// damage.
-func conversationText(rel string) bool {
-	return strings.HasPrefix(rel, "projects/")
-}
-
-// scrubbable reports whether a staged file should be scrubbed: it belongs to a
-// conversation, and its content is text.
+// scrubbable checks the content of an adapter-selected conversation file.
 //
 // Judged on content rather than on the extension. An allowlist gets both ends
 // wrong: tool output written to a .log, or to a file with no extension at all,
 // is text that would keep a credential and keep the sync refused; and a PNG
 // somebody named .md would be handed to the rewriter, which would edit bytes
 // inside an image. The head of the file answers the question directly.
-func scrubbable(rel, src string) bool {
-	if !conversationText(rel) {
-		return false
-	}
+func scrubbable(src string) bool {
 	f, err := os.Open(src)
 	if err != nil {
 		return false // unreadable here means the copy will fail anyway
