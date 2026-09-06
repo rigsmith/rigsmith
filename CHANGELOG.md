@@ -1,5 +1,69 @@
 # github.com/rigsmith/rigsmith
 
+## 1.15.2
+### 🩹 Fixes
+
+- **rig:** Fix the suggested stack seed location when working inside nested Git repositories.
+- **clauderig:** Forget a deleted `.gitattributes` before reading Git attributes.
+  
+  `git check-attr` falls back to the index for a file the working tree no longer
+  has, so a `.gitattributes` that stops being synced goes on governing the backup
+  after it is deleted — invisible, refusing every publish, and with nothing left
+  on disk to remove.
+- **clauderig:** Remove missed API keys from existing conversation backups and avoid false secret warnings. Fix sync failures caused by Git ignore rules.
+- **clauderig:** Unblock syncing when transcripts hold credentials the scrubber never got to.
+  
+  Three faults compounded into a sync that refused on every run and re-did all of
+  its work each time:
+  
+  - A transcript quoting a PEM private key was refused rather than scrubbed, even
+    though the scrubber gained a rule for exactly that shape. The refusal now
+    applies only where it has to — a key block in raw text, whose body runs on
+    into lines a line-at-a-time rewrite would copy through untouched. Inside a
+    JSON record, which is what every transcript line is, the block is scrubbed.
+  - The marker recording what a run scrubbed was written past the tripwire, so a
+    refused run never recorded it. Every later run then re-scrubbed every
+    transcript in the tree — thousands of files — before refusing on the same
+    finding. It is now written once the staging pass is done, whatever the
+    tripwire goes on to say.
+  - A staged transcript whose live source is gone (a deleted worktree, an
+    archived project) was never walked again, so it kept whatever it held when it
+    was staged. If that predated redaction, no setting could ever clear it. The
+    run that turns redaction on now scrubs those staged copies in place.
+- **clauderig:** Never sync a `.gitattributes` from inside a synced tree.
+  
+  The backup is a Git repository, so one of these arriving as ordinary content
+  stops being content and starts governing how the backup stores every file
+  beside it. One ships inside a plugin marketplace clone reading
+  `* text=auto eol=lf`, which re-enables exactly the byte conversion the backup
+  exists to prevent — publication refused, and deleting the file did not help
+  because the next plugin update brought it back. It is now pruned by name at any
+  depth, like `node_modules`.
+- **clauderig:** Stop scanning unchanged staged files twice per sync.
+  
+  The unchanged path re-read and re-scanned every staged file on every run, then
+  the audit read the whole tree again — two full passes over gigabytes to
+  conclude that three files had moved. It now consults the verdicts the audit
+  already reached, and reads anything it cannot account for.
+  
+  Read-only, and narrow: the audit writes those verdicts, and only when it finds
+  nothing anywhere in the tree. A file staged by an older clauderig, which no
+  audit ever vouched for, still fails the sync until it is dealt with.
+- **clauderig:** Fix a rare sync-lock issue that could allow overlapping syncs.
+- **clauderig:** Stop re-reading the whole backup on every sync.
+  
+  The pre-publication audit read all of staging on every run, whatever had
+  changed — nearly four minutes here to conclude that three files had moved, and
+  twice per publish. It now reads with a worker per core, and remembers which
+  files it found clean by size and mtime, so a run reads only what has moved
+  since. On a 1.8 GB tree: 3m52s to 27s cold, and 75ms warm.
+  
+  Nothing is taken on trust that has not been read at exactly that size and
+  mtime. Findings are never cached — they are reported again on every run until
+  they are dealt with — a run that found something leaves no verdicts behind at
+  all, a packed transcript is always read through its parts, and the cache is
+  discarded whole when the scanner learns a new credential shape.
+
 ## 1.15.1
 ### 🩹 Fixes
 
