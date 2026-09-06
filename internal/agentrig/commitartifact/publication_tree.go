@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
 )
@@ -134,13 +135,39 @@ func (r gitRepo) checkTree(ctx context.Context, commit, work string, limit int64
 }
 
 func publicationPath(path string) bool {
-	if len(path) > 4096 || strings.ContainsAny(path, "\\:\x00") || !filepath.IsLocal(filepath.FromSlash(path)) {
+	// Git paths use slash separators on every host. Do not use filepath.IsLocal
+	// here: its Windows device-name rules depend on the worker's OS/version.
+	if len(path) > 4096 || !utf8.ValidString(path) || strings.ContainsAny(path, "\\:<>\"|?*") {
 		return false
 	}
+	for _, ch := range path {
+		if ch < 32 {
+			return false
+		}
+	}
 	for _, part := range strings.Split(path, "/") {
-		if part == "" || part == "." || part == ".." || strings.EqualFold(part, ".git") || strings.TrimRight(part, ". ") != part {
+		if part == "" || len(part) > 255 || part == "." || part == ".." || strings.EqualFold(part, ".git") || strings.TrimRight(part, ". ") != part || publicationDeviceName(part) {
 			return false
 		}
 	}
 	return true
+}
+
+func publicationDeviceName(part string) bool {
+	// Reserve device names even with extensions or spaces before an extension.
+	// Some Windows versions accept more spellings; use one conservative policy
+	// for all workers and for every component, including parent directories.
+	stem, _, _ := strings.Cut(part, ".")
+	stem = strings.ToUpper(strings.TrimRight(stem, " "))
+	switch stem {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return true
+	}
+	if strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT") {
+		switch stem[3:] {
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³":
+			return true
+		}
+	}
+	return false
 }

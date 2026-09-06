@@ -60,6 +60,11 @@ Before every push, raw blobs from the candidate are streamed into a fresh privat
 directory. This avoids export-ignore, filters, line-ending conversion and index
 state. Regular files and executable modes are preserved. Links, submodules,
 unsafe paths, case-colliding spellings and unsupported modes are refused.
+Every path component follows the same policy on all hosts: valid UTF-8, at most
+255 bytes, no Windows-reserved characters or ASCII controls, no trailing dot/space,
+and no DOS device/console name (including extensions and superscript COM/LPT
+digits). This deliberately uses a conservative common policy rather than the
+current worker OS or Windows version's pathname rules.
 The tree has a configurable byte limit (default 32 GiB), a 64 MiB listing limit,
 and at most one million file entries. These are per-tree limits, not total Git
 object, pack, workspace or store quotas.
@@ -107,6 +112,7 @@ newer local and remote histories, canonical state isolation, raw binary bytes an
 executable modes, inherited Git overrides, deterministic candidate reconstruction,
 remote races, accepted pushes with lost responses, missing confirmation,
 replay without duplicate pushes, conflicts/unrelated history, unsafe trees,
-validation/audit failure or mutation, mismatched refs/captures, shallow history,
+validation/audit failure or mutation, portable-path fixtures built directly in Git
+(including invalid UTF-8 and Windows device names), mismatched refs/captures, shallow history,
 capacity refusal, cancellation and missing artifacts. No real vendor data or
 network credentials are used.
