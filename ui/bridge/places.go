@@ -72,6 +72,10 @@ type PlaceStore struct {
 	// inside; the rest are totals across them.
 	Groups   int `json:"groups"`
 	Sidecars int `json:"sidecars"`
+	// Archived is counted inside Sidecars, not apart from it: the session is
+	// still there and still listed here. Claude Desktop merely stops showing it
+	// in its own sidebar, which is a different fact from being gone.
+	Archived int `json:"archived"`
 	// Deleted is counted apart from Sidecars rather than inside it. The window
 	// hides deleted sessions by default, and a headline count that includes
 	// what is being hidden reads as a listing that has lost half of itself.
@@ -98,7 +102,9 @@ type PlaceGroup struct {
 	// so the window can hide it with the records it holds rather than leaving a
 	// heading over nothing.
 	DeletedBucket bool `json:"deletedBucket,omitempty"`
-	Items         int  `json:"items"`
+	// Archived counts how many of Items Claude Desktop has stopped listing.
+	Archived int `json:"archived,omitempty"`
+	Items    int `json:"items"`
 	// Latest is the most recent thing in the group, so a list of eighty project
 	// slugs can be ordered by when you were last in one. That ordering is what
 	// makes this findable: you rarely remember the slug, you remember it was
@@ -400,6 +406,7 @@ func describeStore(loc location) PlaceStore {
 				continue
 			}
 			s.Sidecars += g.Items
+			s.Archived += g.Archived
 		}
 		s.Cowork = countFiles(filepath.Join(loc.base, coworkSessions), ".json")
 	}
@@ -542,6 +549,9 @@ func desktopFolders(loc location) []PlaceGroup {
 			byFolder[key] = g
 		}
 		g.Items++
+		if sc.item.Archived {
+			g.Archived++
+		}
 		if sc.item.When.After(g.Latest) {
 			g.Latest = sc.item.When
 		}

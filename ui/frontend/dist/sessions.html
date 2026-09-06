@@ -326,11 +326,16 @@
     color:var(--paper);}
   .plisthead .nmtext{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .plisthead .where{margin-left:auto;flex:none;font-size:10px;color:var(--muted);}
-  .pcontrols{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+  .pcontrols{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;
+    gap:10px;margin-bottom:10px;}
   /* An input carries an intrinsic minimum width from its size attribute, and a
      flex item will not shrink below that unless told to — so the filter kept
      its full width and pushed the checkbox beside it off the panel. */
-  .pcontrols .pfilter{flex:1 1 0;min-width:0;margin-bottom:0;}
+  /* Grid, not flex: a text input carries an intrinsic minimum width, and getting
+     a flex item to give that up depends on min-width:0 and a basis that engines
+     have historically read differently when it is a unitless zero. A grid track
+     of minmax(0,1fr) says the same thing once and without the caveats. */
+  .pcontrols .pfilter{width:100%;min-width:0;margin-bottom:0;}
   .pnote{display:flex;align-items:baseline;gap:2px;font-size:11px;color:var(--muted);
     padding:4px 0 8px;white-space:nowrap;overflow:hidden;}
   .pnote>:first-child{overflow:hidden;text-overflow:ellipsis;}
@@ -352,7 +357,12 @@
   .store .nmtext{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .store .ct{font-size:10.5px;color:var(--muted);margin-top:2px;}
   .store[data-absent="yes"] .nm{color:var(--muted);font-style:italic;}
-  .grp{padding:5px 9px 5px 8px;border-radius:6px;cursor:pointer;font-size:12px;}
+  /* Truncate rather than overflow: a session title is as long as someone's
+     first sentence, and without this the panel scrolls sideways and every row
+     in it is cut off mid-word instead of one row ending in an ellipsis. */
+  .grp{padding:5px 9px 5px 8px;border-radius:6px;cursor:pointer;font-size:12px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .grp .sub{overflow:hidden;text-overflow:ellipsis;}
   .grp:hover{background:var(--ink-2);}
   .grp[data-on="yes"]{background:var(--ink-2);color:var(--paper);}
   .grp .sub{font-size:10.5px;color:var(--muted);}
@@ -372,7 +382,11 @@
   .pfilter::placeholder{color:var(--muted);}
   .ptoggle{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);
     flex:none;cursor:pointer;white-space:nowrap;--wails-draggable:no-drag;}
-  .ptoggle input{margin:0;}
+  /* The sheet sets input{min-width:280px} for the header's search box. A
+     checkbox inherits it, which made this one 280px wide and pushed everything
+     sharing its row off the panel — the fault that looked like a flex problem
+     and was not. */
+  .ptoggle input{margin:0;min-width:0;width:auto;}
   .accthead{display:flex;align-items:center;gap:7px;padding:14px 9px 4px 6px;
     font-size:11px;color:var(--muted);cursor:default;}
   .accthead:hover{background:transparent;}
@@ -380,6 +394,8 @@
   .sessionrow{font-size:12px;padding-left:30px;}
   .sessionrow .dot{display:inline-block;width:14px;color:var(--muted);font-size:10px;}
   .sessionrow[data-deleted="yes"]{color:var(--muted);text-decoration:line-through;}
+  .sessionrow .tag{margin-left:7px;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--muted-2);border:1px solid var(--line);border-radius:4px;padding:0 4px;}
   .grp[data-picked="yes"]{background:var(--ink-3);color:var(--paper);}
   .facts{display:grid;grid-template-columns:120px 1fr;gap:5px 12px;margin:12px 0 4px;font-size:12px;}
   .fk{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding-top:2px;}
@@ -1521,6 +1537,14 @@ function sessionRow(st, it) {
   if (it.deleted) row.dataset.deleted = 'yes';
   row.append(el('span', 'dot', it.deleted ? '\u00d7' : (it.archived ? '\u00b7' : '\u25cb')));
   row.append(document.createTextNode(it.label));
+  // Archived is not deleted: Claude Desktop still has the session, it has just
+  // stopped listing it. A dot alone was carrying that distinction, which is no
+  // distinction at all unless you already knew to look for it.
+  if (it.archived) {
+    row.append(el('span', 'tag', 'archived'));
+    row.title = 'Archived in Claude Desktop \u2014 still there, not listed';
+  }
+  if (it.deleted) row.title = 'Deleted in Claude Desktop \u2014 only this record survives';
   row.dataset.find = [it.label, it.cwd, it.branch, it.worktree, it.session, it.cliSession]
     .filter(Boolean).join(' ').toLowerCase();
   row.addEventListener('click', () => { pick(row); showItem(st, it); });
@@ -1613,6 +1637,8 @@ function showItem(st, it) {
     ['last active', it.when ? new Date(it.when).toLocaleString() : ''],
     ['session id', it.session],
     ['conversation', it.cliSession],
+    ['state', it.deleted ? 'deleted in Claude Desktop'
+      : (it.archived ? 'archived in Claude Desktop' : '')],
     ['kind', KIND_HELP[it.kind] || it.kind],
     ['store', st.label + (st.where === 'repo' ? ' \u2014 synced' : ' \u2014 this Mac')],
     ['file', it.path],
