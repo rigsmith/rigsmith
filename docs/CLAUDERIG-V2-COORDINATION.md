@@ -86,7 +86,8 @@ contention to stop work before capture/clone/restore/journalling. A gated binary
 test verifies busy hooks skip, then sync and restore converge after release.
 The unchanged six-scenario compatibility baseline remains pinned at `d39a446`.
 
-Next, milestone 6b adds durable jobs and worker ownership on top of these
+Milestone 6b.1 now supplies [durable queue state and ownership](CLAUDERIG-V2-QUEUE.md);
+6b.2 will integrate execution on top of these
 operation boundaries: generation-aware acknowledgements, flush coalescing,
 offline/retry recovery, captured provenance, and queue upgrade policy. Installed
 hooks stay synchronous until the later opt-in rollout milestone.

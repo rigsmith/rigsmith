@@ -7,10 +7,10 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 
 ### V2: separate `clauderig` and `codexrig` with shared infrastructure
 
-**Current position: milestone 5 merged into `codex/v2` through
-[#307](https://github.com/rigsmith/rigsmith/pull/307). Milestone 6a, store
-coordination, is in review in [#308](https://github.com/rigsmith/rigsmith/pull/308).
-Durable jobs and the worker follow in 6b.**
+**Current position: store coordination (6a) merged into `codex/v2` through
+[#308](https://github.com/rigsmith/rigsmith/pull/308). Durable queue storage and
+recovery (6b.1) are in review in [#309](https://github.com/rigsmith/rigsmith/pull/309);
+worker/service integration follows in 6b.2.**
 
 | Milestone | Status |
 | --- | --- |
@@ -19,7 +19,7 @@ Durable jobs and the worker follow in 6b.**
 | Claude root/file adapter and policy extraction | Merged into `codex/v2`: [#304](https://github.com/rigsmith/rigsmith/pull/304). |
 | Shared file processing and restore mechanics | Merged into `codex/v2`: [#306](https://github.com/rigsmith/rigsmith/pull/306), including the directory-link review fix. |
 | Shared session/metadata and publication boundaries | Merged into `codex/v2`: [#307](https://github.com/rigsmith/rigsmith/pull/307), including review fixes. |
-| Store coordination and durable sync queue | 6a in review ([#308](https://github.com/rigsmith/rigsmith/pull/308)): OS-owned store locks across sync, pull, restore, merge and maintenance. 6b next: durable jobs and worker; neither is implemented yet. |
+| Store coordination and durable sync queue | 6a merged in [#308](https://github.com/rigsmith/rigsmith/pull/308). 6b.1 in review ([#309](https://github.com/rigsmith/rigsmith/pull/309)): durable generations, coalescing, owner recovery and acknowledgements. Worker/service integration follows in 6b.2. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 
