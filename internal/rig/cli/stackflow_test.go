@@ -709,9 +709,17 @@ func TestStackProposeFromTopic(t *testing.T) {
 	if !strings.Contains(out, "stack-pr-fix-b") {
 		t.Fatalf("did not resolve the bare name to the conventional branch:\n%s", out)
 	}
-	// What the pull request will contain, said before it is opened.
-	if !strings.Contains(out, "1 commit(s) since the import") || !strings.Contains(out, "lib: b.txt") {
-		t.Fatalf("did not report what the proposal carries:\n%s", out)
+	// What the pull request will contain, said before it is opened. Asserted by
+	// subject rather than by count: this fixture's stackspace is a fresh `git
+	// init`, so the cursor is not an ancestor of anything here and the range
+	// spans the synthetic import commit too. A real stackspace merges upstream
+	// in, so the cursor IS an ancestor there — and the property worth pinning is
+	// which fix is named, not how many commits the range happened to span.
+	if !strings.Contains(out, "lib: b.txt") {
+		t.Fatalf("did not name the fix being proposed:\n%s", out)
+	}
+	if strings.Contains(out, "lib: a.txt") {
+		t.Fatalf("reported carrying the other unmerged fix, which this topic does not:\n%s", out)
 	}
 
 	// The pull request holds fix B and NOT fix A. Without --from both would be
