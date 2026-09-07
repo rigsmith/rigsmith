@@ -51,8 +51,8 @@ merge-tree mode; failure is surfaced, with no fallback to a checkout merge.
 Conflicts fail closed with ErrConflict. Unrelated history, invalid object formats
 and Git execution failures also stop publication. An optional raw-blob resolver now handles bounded regular-file content conflicts.
 Claude enables manifest/device metadata unions and conservative native JSONL/memory
-append recovery. Chunk-index, other file and canonical staging conflict recovery
-remain required before activation. There is no interactive
+append recovery, including canonical v1 chunked transcripts. Other file and
+canonical staging conflict recovery remain required before activation. There is no interactive
 mergetool or whole-side fallback in retained publication.
 
 Private Git runs disable inherited Git overrides, global/system configuration,
@@ -267,8 +267,7 @@ Tests cover SHA-1/SHA-256, raw CRLF bytes, deterministic replay and both parents
 declined resolutions, delete/edit refusal, malformed/unsafe stage records,
 cancellation and blob bounds. Claude fixtures exercise metadata union through
 actual publication, preserved device provenance, unchanged canonical files/index/
-config, unknown-field refusal and secret rejection after resolution. Transcript
-chunk indexes, other machine state, rename-aware recovery,
+config, unknown-field refusal and secret rejection after resolution. Other machine state, rename-aware recovery,
 canonical merge repair and operational unblock/status commands remain future work.
 
 
@@ -300,13 +299,49 @@ Tests cover shared append prefixes, CRLF bytes, repeated unkeyed records,
 deterministic reconstruction, malformed records, ambiguous identities, reordered
 chunk markers and cancellation. Real Git publication fixtures exercise transcript
 and memory conflicts, unchanged canonical files/index/config, replay without a
-second push, and rejection of edited bases, conflicting UUIDs, secrets and chunk
+second push, and rejection of edited bases, conflicting UUIDs, secrets and mixed native/chunked
 indexes. A gated QueueAdapter round trip publishes both tails and the sealed
 capture after live sources and the separate capture archive have disappeared,
 then verifies acknowledgement prevents another push. These tests use synthetic data only.
 
-Chunk-aware recovery needs the referenced content-addressed parts; a JSONL index
-is not an append record. It remains blocked, including with default chunking on.
-Ordinary settings/cache conflicts still need snapshot-ordering policy. Those
-follow-ups and canonical merge recovery remain activation gates; queued hooks and
-the synchronous merge policy are unchanged.
+## Bounded retained chunk recovery
+
+`ResolveRetainedFiles` extends the append policy to conflicts where all three
+sides are canonical version-1 chunk indexes for a native CLI project transcript.
+It keeps the existing on/auto defaults and chunked representation. Index fields,
+ordering and encoding must match the native writer (surrounding JSON whitespace
+is allowed); unknown/duplicate fields, aliases and other representations remain
+blocked. Native/chunked conversion conflicts and add/add indexes also stay blocked.
+
+The shared `RelatedFiles` capability reads exact regular blobs from the immutable
+base, local and remote trees. Base reads require a single merge base whose owner
+blob matches Git's conflict stage; virtual merge bases are refused. Literal tree
+lookups do not follow filesystem links, interpret pathspecs or read live sessions.
+This recovers even when retention has removed the old partial chunk from both tips.
+Every referenced part must match its index size and SHA-256 before logical bytes
+enter the same append/UUID policy used for native transcripts.
+
+Each transcript and its worst-case union are limited to 32 MiB, checked before
+loading parts. Larger conflicts require a future streaming recovery path; they
+remain blocked with a capacity error. Related reads and proposed files have a
+separate shared budget of 4 MiB per operation, 128 MiB total and 256 operations per
+merge. Existing 1 MiB owner-blob, 16 MiB conflict-total and whole-tree limits remain.
+Repeated reads/additions count against these limits, and ignored capability errors
+still abort recovery.
+
+Recovered bytes are split using the native 4 MiB content-addressed format. The
+resolver proposes all referenced parts and returns the new index. Additions cannot
+replace other conflicts, file ancestors, directories or different existing bytes;
+an identical regular 0644 file can be reused. All proposals go through the private
+Git index, followed by the complete tree validation and secret audit. Obsolete
+unreferenced parts already in the merged tree are preserved and audited; this path
+does not run retention or edit canonical staging.
+
+Tests cover immutable SHA-1/SHA-256 side reads, addition/refusal bounds, canonical
+index validation, missing/corrupt parts, default-threshold transcripts and records
+crossing part boundaries. Real publication tests verify both tails, pruned base
+parts, secret rejection, unchanged canonical state and replay. A gated synthetic
+QueueAdapter round trip reconstructs a backup larger than 8 MiB after live sources
+and the separate capture archive disappear, then confirms exact acknowledgement.
+Ordinary settings/cache conflicts, canonical merge recovery and lifecycle/capacity
+remedies remain activation gates. Queued hooks and synchronous policy are unchanged.

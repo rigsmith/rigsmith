@@ -35,8 +35,9 @@ type ArtifactPublishRequest struct {
 // worker's login, updates canonical staging, or acknowledges queue work. Only a
 // confirmed success permits a caller to persist the pushed phase. Manifest/device
 // content conflicts use native metadata unions; proven append-only native JSONL
-// and memory conflicts preserve both tails. Chunk-index/other file conflicts,
-// canonical merge repair and local-only completion remain separate work.
+// and memory conflicts preserve both tails. Canonical chunked transcripts use
+// verified immutable parts and remain chunked. Other file conflicts, canonical
+// merge repair and local-only completion remain separate work.
 func (s Service) PublishArtifact(ctx context.Context, input ArtifactPublishRequest) (commitartifact.Publication, error) {
 	return s.publishArtifact(ctx, ctx, input)
 }
@@ -97,6 +98,6 @@ func (s Service) publishArtifact(ctx, staging context.Context, input ArtifactPub
 		Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, Attempts: plan.PushRetries + 1,
 		MaxTreeBytes: input.Commit.Commits.MaxBytes,
 		Validate:     backupgit.ValidateTree, Audit: engine.CheckPublishContext,
-		Resolve: mergepolicy.ResolveRetained,
+		Resolve: mergepolicy.ResolveRetainedFiles,
 	})
 }

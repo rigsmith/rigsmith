@@ -126,7 +126,7 @@ func TestPublicationResolverKeepsNewerLocalPrecedence(t *testing.T) {
 			remoteHead := newPublicationCommit(t, remote.repo, parent, "captured", "remote value")
 			mustRun(t, remote.repo, "", "update-ref", "refs/heads/main", remoteHead)
 			calls := 0
-			r.Resolve = func(_ context.Context, path string, base, ours, theirs []byte) ([]byte, error) {
+			r.Resolve = func(_ context.Context, path string, base, ours, theirs []byte, _ RelatedFiles) ([]byte, error) {
 				calls++
 				wantTheirs := "sealed\r\n\x00bytes"
 				if calls == 2 {

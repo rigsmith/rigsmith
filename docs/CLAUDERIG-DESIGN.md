@@ -543,6 +543,11 @@ Persisted records and journal ownership remain unchanged. See the
 Retained publication can combine proven append-only native JSONL and memory-text
 changes while preserving both machines' additions. It requires a shared byte
 prefix, complete lines and unambiguous transcript identities; conflicting edits
-and chunk indexes remain blocked. This is a v2-only policy, separate from the
+remain blocked. Canonical v1 chunk indexes can now use verified immutable Git
+parts and the same logical append policy, then publish a new chunked snapshot.
+This is bounded to a 32 MiB worst-case transcript union; native/chunked conversion
+conflicts remain blocked. Shared related-file access is read-only for side trees
+and additive for candidate blobs, with full-tree validation and auditing afterward.
+This is a v2-only policy, separate from the
 synchronous merge fallback. See the [retained publication contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-append-recovery)
 for validation, byte bounds and remaining queue activation gates.
