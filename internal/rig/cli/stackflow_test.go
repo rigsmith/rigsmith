@@ -907,8 +907,13 @@ func TestStackProposeFromStaleTopic(t *testing.T) {
 	if err == nil {
 		t.Fatalf("proposed a topic that predates the pull — it would revert upstream's new work:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "rooted before upstream moved") {
-		t.Fatalf("the error does not say why it refused: %v", err)
+	// Matched on the parts that carry the meaning, not the whole sentence: this
+	// assertion already went stale once when the guard moved from the cursor to
+	// the import marker and the wording moved with it.
+	for _, want := range []string{"was rooted before", "revert the commits"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the error does not say why it refused (missing %q): %v", want, err)
+		}
 	}
 	if refExists(t, fork, "refs/heads/stack/fix-b") {
 		t.Fatal("it pushed before refusing")
