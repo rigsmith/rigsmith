@@ -26,7 +26,7 @@ rig stack setup                      # a fresh clone: engine, members, overlay, 
 rig stack init                       # scaffold the manifest; run again to import
 rig stack add github.com/them/lib    # fuse another repo
 rig stack rm some-lib                # take one back out: manifest, tree and overlay
-rig stack status                     # who has moved upstream, and what has not left
+rig stack status                     # who has moved upstream, what has not left, and where each topic's PR is
 rig stack pull some-lib              # take that movement
 rig stack propose some-lib read-timeout -m "Fix the read timeout"   # ALL of some-lib's changes → stack/read-timeout
 rig stack propose some-lib read-timeout --from read-timeout         # ...or one topic's tree (stack-pr-read-timeout); root it on the import, or it carries its parent's fixes too

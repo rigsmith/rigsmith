@@ -312,6 +312,33 @@ func stackForgetRepo(src *cfgfind.Source, m *stackManifest, name string) (err er
 			return fmt.Errorf("could not update %s in %s", kv.key, src.File)
 		}
 	}
+
+	// Proposals is a map OF maps, so it does not fit the loop above: the member's
+	// whole sub-map goes, not one key. Left behind it would name pull requests
+	// for a project this stackspace no longer has.
+	if _, has := m.Proposals[name]; has {
+		delete(m.Proposals, name)
+		path := []string{"proposals"}
+		if embedded {
+			path = []string{"stack", "proposals"}
+		}
+		var ok bool
+		switch {
+		case len(m.Proposals) == 0:
+			ok = w.Delete(src.File, path)
+		case embedded:
+			raw, err := json.Marshal(m.Proposals)
+			if err != nil {
+				return err
+			}
+			ok = w.Set(src.File, path, string(raw))
+		default:
+			ok = w.Delete(src.File, append(path, name))
+		}
+		if !ok {
+			return fmt.Errorf("could not update proposals in %s", src.File)
+		}
+	}
 	return nil
 }
 

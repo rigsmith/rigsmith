@@ -314,6 +314,19 @@ written: an import or pull rewrites that one value while the entries you wrote,
 and their comments, stay untouched. The values are full 40-character SHAs — an
 abbreviated one would never equal the tip `status` reads from the remote.
 
+`proposals` is machine written too, and records where each **topic branch's** pull
+request went, with the commit that was sent —
+`{"pty-core": {"stack-pr-read-timeout": {"branch": "stack/read-timeout", "commit": "a1b2…"}}}`.
+The commit is what lets `status` say a branch has moved past its pull request, and
+stops a topic recreated under an old name from inheriting the old destination.
+`lastPropose` cannot answer that: it holds one branch per repo and is overwritten on
+every propose, which was sufficient while a proposal meant the whole prefix and only
+one could be in flight. It keeps its own job, naming the branch a rebuild
+reconstitutes from. Nothing else about a topic is recorded — which topics exist, what
+they touch and whether a pull left them behind are derived from the repository each
+time `status` runs, so a branch deleted after its pull request merged simply stops
+being listed instead of leaving the manifest claiming work that is not there.
+
 `branchPrefix` is prepended to the name you give `rig stack propose`, so
 `send pty-core read-timeout` creates `stack/read-timeout` on your fork. It
 defaults to `stack/`, keeping these branches apart from your own work on the

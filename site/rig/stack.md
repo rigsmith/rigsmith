@@ -554,6 +554,48 @@ term-core: proposing stack-pr-reader-wedge — 2 commit(s) since the import
 
 A subject you did not expect is the signal to rebase the topic onto the import.
 
+#### Where everything is: `status` {#topic-status}
+
+`rig stack status` lists each member's topics under it, and where each one went:
+
+```
+lib          a1b2c3d4   up to date  ·  `propose` sends this prefix's whole divergence (--from <branch> for one topic)
+  stack-pr-reader-wedge          → you/lib:stack/reader-wedge
+  stack-pr-kitty-scale           not proposed yet
+```
+
+Almost all of that is derived from the repository each time it runs — which topics
+exist, which member each one touches, whether it went stale behind a pull. Only the
+**fork branch** is recorded, in the manifest under `proposals`, because it is the one
+thing git here cannot be asked:
+
+```jsonc
+"proposals": {
+  "lib": { "stack-pr-reader-wedge": { "branch": "stack/reader-wedge", "commit": "a1b2c3d4…" } }
+}
+```
+
+The commit is the topic's tip when it was proposed. Records are keyed by branch
+*name*, and names get reused — delete a topic once its pull request merges, start
+another with the same name later, and the old destination would be reported for the
+new work. Comparing what the branch is now against what was sent catches that, and
+answers the commoner question too:
+
+```
+  stack-pr-reader-wedge          → you/lib:stack/reader-wedge  (branch has moved since; propose again to update it)
+```
+
+`lastPropose` cannot serve this. It holds one branch per repo and is overwritten on
+every propose, which was enough while a proposal meant the whole prefix — there could
+only ever be one in flight. Two topics for one member are two pull requests, and it
+remembers the second. It keeps its own job: naming the branch a rebuild reconstitutes
+from.
+
+Nothing else is recorded on purpose. A list of topics in config would drift the moment
+a branch was deleted, and leave the manifest claiming work that is not there; deriving
+it means a topic simply stops being listed once its pull request merges and you delete
+the branch.
+
 #### A pull leaves topics behind {#propose-stale}
 
 `pull` moves the prefix on. A topic branch does not come with it, so its tree is
@@ -601,7 +643,7 @@ quietly missing work.
 out before a maintainer does:
 
 ```
-term-core   e5f6a7b8   up to date  ·  3 commits diverge from upstream; `propose` sends all of them (--from <branch> for one)
+term-core   e5f6a7b8   up to date  ·  `propose` sends this prefix's whole divergence (--from <branch> for one topic)
 ```
 
 Sending again to the same branch **updates** it, so you can act on review

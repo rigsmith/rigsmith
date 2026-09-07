@@ -313,9 +313,11 @@ func newStackStatusCmd() *cobra.Command {
 				case !u.Known && m.cursor(name) != "":
 					state += "  ·  cannot tell whether it has unsent changes (no import commit in this history)"
 				}
-				if stale := stackStaleTopics(ctx, repo, m, name); len(stale) > 0 {
-					state += fmt.Sprintf("  ·  %d topic(s) rooted before the last pull (%s) — `propose --from` refuses them", len(stale), strings.Join(stale, ", "))
-				}
+				// Staleness is NOT summarised on this line: the per-topic listing
+				// below names each stale topic where its own entry is, which is
+				// where a reader looks for it. Saying it twice was an artefact of
+				// the listing arriving after the summary did.
+				//
 				// `propose` sends the prefix's WHOLE divergence, not the change you
 				// have in mind, so a second pull request for this repo would carry
 				// the first one's too. Nothing else says so, and the place it is
@@ -330,6 +332,27 @@ func newStackStatusCmd() *cobra.Command {
 					state += "  ·  `propose` sends this prefix's whole divergence (--from <branch> for one topic)"
 				}
 				fmt.Fprintf(out, "%-24s %-10s %s\n", name, short(m.cursor(name)), state)
+				// Then each topic in flight for this member, and where it went.
+				// Existence, reach and staleness are asked of the repository; only
+				// the destination comes from the manifest, because only that is
+				// unknowable from here.
+				for _, t := range stackTopics(ctx, repo, m, name) {
+					where := "not proposed yet"
+					if pr, ok := m.Proposals[name][t.Name]; ok && pr.Branch != "" {
+						where = "→ " + m.Repos[name].Fork + ":" + pr.Branch
+						// Recorded against a branch NAME, and names get reused —
+						// so what was proposed is compared with what is there now.
+						// Catches a topic recreated under an old name, and the
+						// commoner case of a pull request left behind its branch.
+						if tip, terr := repo.RevParse(ctx, t.Name); terr == nil && pr.Commit != "" && tip != pr.Commit {
+							where += "  (branch has moved since; propose again to update it)"
+						}
+					}
+					if t.Stale {
+						where += "  (rooted before the last pull — `propose --from` refuses it)"
+					}
+					fmt.Fprintf(out, "  %-30s %s\n", t.Name, where)
+				}
 			}
 			// The whole point of the convention is not having to remember what is
 			// in flight. Only the conventionally-named ones: a branch the user
@@ -419,7 +442,7 @@ func newStackPullCmd() *cobra.Command {
 			// none of the integration line's fixes, which is a separate piece of
 			// work and not a flag.
 			for _, name := range moved {
-				stale := stackStaleTopics(ctx, repo, m, name)
+				stale := stackStaleTopicNames(ctx, repo, m, name)
 				if len(stale) == 0 {
 					continue
 				}
@@ -556,33 +579,52 @@ func stackTopicTouches(ctx context.Context, repo *gitrepo.Repo, base, topic, nam
 	return berr == nil && terr == nil && baseTree != topicTree
 }
 
-// stackStaleTopics lists the conventionally-named topic branches that touch a
-// prefix and do NOT contain its cursor — topics rooted before the last pull,
-// whose prefix tree is upstream as it USED to be. Proposing one commits that
-// tree onto the current tip, presenting everything upstream landed since as
-// though the branch had reverted it, which is why propose refuses them.
+// stackTopic is one in-flight topic branch of this stackspace, as it stands
+// against a member.
+type stackTopic struct {
+	Name string
+	// Stale is set when the topic predates the member's latest import: its
+	// prefix tree is upstream as it USED to be, so proposing it would present
+	// everything upstream landed since as reverted.
+	Stale bool
+}
+
+// stackTopics lists the conventionally-named topic branches that touch a member,
+// and says which of them a pull has left behind.
 //
-// Only the conventionally-named ones are examined: a branch the user named
+// One traversal answering both questions. They were two functions, each listing
+// the branches and finding the import again — not merely twice the work, since
+// two derivations of one thing can disagree, and `status` printed both.
+//
+// Only the conventionally-named branches are examined. A branch the user named
 // themselves may be anything at all, and calling someone's unrelated work a
 // stale topic is worse than saying nothing.
-func stackStaleTopics(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) []string {
+func stackTopics(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) []stackTopic {
 	base := stackImportCommit(ctx, repo, name)
 	if base == "" {
 		return nil
 	}
-	topics, err := repo.BranchesWithPrefix(ctx, stackTopicPrefix)
+	branches, err := repo.BranchesWithPrefix(ctx, stackTopicPrefix)
 	if err != nil {
 		return nil
 	}
-	var stale []string
-	for _, t := range topics {
-		// Does it touch this member at all? A topic for another project is not
-		// this member's business, stale or otherwise.
-		if !stackTopicTouches(ctx, repo, base, t, name) {
+	var out []stackTopic
+	for _, b := range branches {
+		if !stackTopicTouches(ctx, repo, base, b, name) {
 			continue
 		}
-		if current, aerr := repo.IsAncestor(ctx, base, t); aerr == nil && !current {
-			stale = append(stale, t)
+		current, aerr := repo.IsAncestor(ctx, base, b)
+		out = append(out, stackTopic{Name: b, Stale: aerr == nil && !current})
+	}
+	return out
+}
+
+// stackStaleTopicNames is stackTopics filtered to the ones a pull left behind.
+func stackStaleTopicNames(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) []string {
+	var stale []string
+	for _, t := range stackTopics(ctx, repo, m, name) {
+		if t.Stale {
+			stale = append(stale, t.Name)
 		}
 	}
 	return stale
@@ -1306,6 +1348,21 @@ func newStackSendCmd() *cobra.Command {
 			// not the one to offer back next time.
 			if err := stackRememberProposed(src, m, name, branch); err != nil {
 				return err
+			}
+			// And, for a topic, WHICH topic went where. lastPropose holds one
+			// branch per prefix, so with two fixes in flight for one member it can
+			// only remember the second; this is the record `status` reads to say
+			// where each one is.
+			if fromBranch != "" {
+				// The topic's tip, not the commit that was pushed: what status
+				// compares later is the branch as it stands against what was sent.
+				tip, terr := repo.RevParse(ctx, fromBranch)
+				if terr != nil {
+					tip = ""
+				}
+				if err := stackRememberProposal(src, m, name, fromBranch, branch, tip); err != nil {
+					return fmt.Errorf("%s reached %s:%s, but recording where it went failed: %w\npropose it again to record it — the push already happened, so re-sending is a no-op on the fork", fromBranch, r.Fork, branch, err)
+				}
 			}
 			// And committed, because leaving it in the work tree makes it two
 			// kinds of wrong. `seed` refuses to export a stackspace with
