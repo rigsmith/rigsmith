@@ -185,7 +185,8 @@ rig stack propose term-core reader-wedge --from reader-wedge
 
 A topic rooted on the import holds upstream plus its own change and nothing else, so
 its tree is what upstream should see — no patch to replay, nothing to fail to apply as
-histories intertwine. A topic based on another unmerged fix is refused. `stack-pr-<name>`
+histories intertwine. A topic branched off another unmerged fix contains it too, and
+`propose` reports the commits it is sending so you see that. `stack-pr-<name>`
 is a convention, not a rule: an exact branch name always wins, the conventional one is
 the fallback.
 

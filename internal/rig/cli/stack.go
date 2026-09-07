@@ -900,8 +900,9 @@ func newStackSendCmd() *cobra.Command {
 			"you can see what is in flight.\n\n" +
 			"A topic rooted on the import holds upstream plus its own change and\n" +
 			"nothing else, so there is no patch to replay and nothing that can fail\n" +
-			"to apply as histories intertwine. A topic based on another unmerged fix\n" +
-			"is refused, since it would carry that fix along.\n\n" +
+			"to apply as histories intertwine. Branch off a line that already carries\n" +
+			"another unmerged fix and the topic contains that fix too — propose says\n" +
+			"which commits it is sending, so you see that before a reviewer does.\n\n" +
 			"A topic is deliberately not the whole divergence, so it cannot also be\n" +
 			"what a rebuild elsewhere reconstitutes from. That is trackBranch, which\n" +
 			"--from requires and keeps current with everything the prefix carries.\n\n" +
@@ -1055,21 +1056,29 @@ func newStackSendCmd() *cobra.Command {
 				if terr != nil {
 					return fmt.Errorf("%s has no %s/ in it, so there is nothing of that project to propose: %w", fromBranch, name, terr)
 				}
-				// That only holds if it really is rooted there. A topic branched
-				// off a line already carrying another unmerged fix would take that
-				// fix into this pull request, which is the failure --from exists to
-				// prevent — so it is checked rather than assumed.
-				base, berr := repo.MergeBase(ctx, fromBranch, "HEAD")
-				if berr != nil {
-					return fmt.Errorf("cannot tell what %s is based on: %w", fromBranch, berr)
-				}
-				if baseTree, berr := repo.RevParse(ctx, base+":"+name); berr == nil && baseTree != tipTree {
-					return fmt.Errorf("%s branches off %s/ work that is not upstream yet, so proposing it would carry that work into this pull request too\n"+
-						"rebase it onto the commit that imported %s (`rig stack status` names the cursor), or propose without --from to send everything the prefix has",
-						fromBranch, name, name)
+				// What the pull request will actually contain, said out loud.
+				//
+				// There is deliberately no check that the topic is "rooted
+				// correctly", because there cannot be one: a topic branched off a
+				// line already carrying another fix genuinely CONTAINS that fix,
+				// and which commits constitute this change is precisely what the
+				// branch encodes. rig cannot tell "that came along by accident"
+				// from "that is part of my change" — only the author can. So it
+				// reports, and the author sees a second subject they did not
+				// expect before a maintainer does.
+				//
+				// Measured from the cursor, the upstream commit this prefix was
+				// taken from, so this is the topic's own history since the import.
+				// Not prefix-filtered: a cross-cutting commit belongs in every
+				// member's proposal, and one that happens to touch only another
+				// member is still part of what this branch is.
+				if carried, cerr := repo.LogRange(ctx, m.cursor(name), fromBranch); cerr == nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s: proposing %s — %d commit(s) since the import\n", name, fromBranch, len(carried))
+					for _, c := range carried {
+						fmt.Fprintf(cmd.OutOrStdout(), "    %s %s\n", short(c.SHA), c.Subject)
+					}
 				}
 				tree = topicTree
-				fmt.Fprintf(cmd.OutOrStdout(), "%s: proposing what %s adds, not the whole prefix\n", name, fromBranch)
 			}
 			if tipTree == tree {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to send — it matches upstream\n", name)

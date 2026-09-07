@@ -617,9 +617,15 @@ reconstructing it. Its prefix tree already *is* upstream plus that one change, s
 - the proposed tree is `<topic>:<prefix>`, taken as-is. No replay, no scratch index,
   nothing that can fail to apply. `TreeWithPrefixCommits` went away with the
   approach that needed it.
-- a topic branched off a line already carrying another unmerged fix is **refused**:
-  its tree at `merge-base(topic, HEAD)` differs from upstream's, which is exactly the
-  condition "this topic would take someone else's work with it".
+- a topic branched off a line already carrying another unmerged fix **contains** that
+  fix, and `propose` reports the commits it is sending rather than refusing. There is
+  no check to be had here: the first attempt compared the tree at
+  `merge-base(topic, HEAD)` to upstream's, which is wrong twice over — once the topic
+  is merged into the integration line that merge-base *is* the topic tip, and more
+  fundamentally, which commits constitute a change is precisely what the branch
+  encodes. rig cannot distinguish "that came along by accident" from "that is part of
+  my change"; only the author can, and a listed subject they did not expect is what
+  tells them.
 - a cross-cutting change is one topic proposed to each member it touched, which is
   what a stackspace is for. A range would have to be retyped per member and mean the
   same thing each time.

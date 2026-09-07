@@ -541,9 +541,18 @@ replay and nothing that can fail to apply. That matters more the longer you carr
 work: reconstructing one change out of an intertwined history is a patch that stops
 applying, while a topic keeps the isolation by construction.
 
-A topic branched off a line that already carries another unmerged fix would take that
-fix into the pull request, so `propose` refuses it and says so. Rebase it onto the
-import.
+Branch off a line that already carries another unmerged fix and the topic contains
+that fix too. `propose` does not refuse — it cannot: the topic genuinely *does*
+contain it, and which commits make up a change is exactly what the branch encodes, so
+only you can say whether it was meant. What it does is say what it is sending:
+
+```
+term-core: proposing stack-pr-reader-wedge — 2 commit(s) since the import
+    a1b2c3d4 term-core: the reader wedge
+    e5f6a7b8 term-core: an earlier fix, still in review
+```
+
+A subject you did not expect is the signal to rebase the topic onto the import.
 
 ::: warning `--from` requires `trackBranch`
 A topic holds part of what the prefix carries, so it cannot also be what a rebuild

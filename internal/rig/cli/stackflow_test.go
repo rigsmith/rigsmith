@@ -709,6 +709,10 @@ func TestStackProposeFromTopic(t *testing.T) {
 	if !strings.Contains(out, "stack-pr-fix-b") {
 		t.Fatalf("did not resolve the bare name to the conventional branch:\n%s", out)
 	}
+	// What the pull request will contain, said before it is opened.
+	if !strings.Contains(out, "1 commit(s) since the import") || !strings.Contains(out, "lib: b.txt") {
+		t.Fatalf("did not report what the proposal carries:\n%s", out)
+	}
 
 	// The pull request holds fix B and NOT fix A. Without --from both would be
 	// here, and the reviewer would read a change nobody asked them to.
@@ -736,9 +740,11 @@ func TestStackProposeFromTopic(t *testing.T) {
 	}
 }
 
-// TestStackProposeFromTopicOnUnmergedWork: a topic branched off a line already
-// carrying another unmerged fix would take that fix into the pull request. That
-// is the failure --from exists to prevent, so it is refused rather than sent.
+// TestStackProposeFromTopicOnUnmergedWork: a topic branched off a line that
+// already carries another unmerged fix genuinely contains that fix, and rig
+// cannot tell "that came along by accident" from "that is part of my change".
+// So it does not refuse — it says what the pull request will contain, which is
+// what lets the author notice a subject they did not expect.
 func TestStackProposeFromTopicOnUnmergedWork(t *testing.T) {
 	work := t.TempDir()
 	srv := newGitServer(t, filepath.Join(work, "srv"))
@@ -747,7 +753,7 @@ func TestStackProposeFromTopicOnUnmergedWork(t *testing.T) {
 	ws, _ := twoFixStackspace(t, work, srv, "stack/integration")
 
 	// Rooted on main, which already carries fix A.
-	mustGitStack(t, ws, "switch", "-q", "-c", "fix-c", "main")
+	mustGitStack(t, ws, "switch", "-q", "-c", "stack-pr-fix-c", "main")
 	if err := os.WriteFile(filepath.Join(ws, "lib", "src", "c.txt"), []byte("c\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -757,14 +763,18 @@ func TestStackProposeFromTopicOnUnmergedWork(t *testing.T) {
 
 	chdir(t, ws)
 	out, err := propose(t, "lib", "fix-c", "fix-c")
-	if err == nil {
-		t.Fatalf("proposed a topic that carries someone else's unmerged fix:\n%s", out)
+	if err != nil {
+		t.Fatalf("propose --from: %v\n%s", err, out)
 	}
-	if !strings.Contains(err.Error(), "not upstream yet") {
-		t.Fatalf("the error does not say why it refused: %v", err)
+	// The report names the fix that came along, which is the whole point of it.
+	if !strings.Contains(out, "lib: a.txt") {
+		t.Fatalf("did not name the other fix this proposal carries:\n%s", out)
 	}
-	if refExists(t, fork, "refs/heads/stack/fix-c") {
-		t.Fatal("it pushed before refusing")
+	// And the branch really does carry it — the report is not a warning about
+	// something that did not happen.
+	proposed := forkTree(t, fork, "stack/fix-c")
+	if !strings.Contains(proposed, "src/a.txt") {
+		t.Fatalf("expected the topic to carry the other fix:\n%s", proposed)
 	}
 }
 
