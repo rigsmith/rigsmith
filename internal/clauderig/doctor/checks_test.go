@@ -71,7 +71,7 @@ func TestHiddenWorktreesUnreadableIsReported(t *testing.T) {
 	}
 	root := t.TempDir()
 	dir := filepath.Join(root, ".claude", "worktrees")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(dir, 0o000); err != nil {

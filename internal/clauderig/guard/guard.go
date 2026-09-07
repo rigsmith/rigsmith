@@ -90,6 +90,14 @@ func Evaluate(r Request, e Env) Result {
 	if TakesIsolation(r.Tool) && r.Isolation == "worktree" {
 		return Result{Deny, agentIsolationReason}
 	}
+	// The same worktree, made by hand — and above the repo gate, next to the
+	// tool that makes it the other way. `git -C <repo> worktree add
+	// <repo>/.claude/worktrees/x` puts one there from a session standing
+	// anywhere, and the reason it is a bad place does not depend on where the
+	// session was standing when it ran.
+	if RunsCommand(r.Tool) && addsHiddenWorktree(r.Command) {
+		return Result{Deny, hiddenWorktreeReason}
+	}
 	if !e.InRepo {
 		return Result{Defer, ""}
 	}
@@ -120,12 +128,6 @@ func evalBash(r Request, e Env) Result {
 	// A session-level cd/pushd out of the repo silently moves the conversation.
 	if target, outside := escapingCd(r.Command, r.Cwd, e.Root, e.Home); outside {
 		return Result{Deny, cdReason(target)}
-	}
-	// The same worktree, made by hand. Denying the Agent tool's isolation flag
-	// closes one route to .claude/worktrees; this closes the other, so the rule
-	// is about the place rather than about which tool asked.
-	if addsHiddenWorktree(r.Command) {
-		return Result{Deny, hiddenWorktreeReason}
 	}
 	if !e.OnBase || e.Override {
 		return Result{Defer, ""}
@@ -382,12 +384,37 @@ func addsHiddenWorktree(command string) bool {
 			continue
 		}
 		for _, tok := range f[wi+2:] {
-			if strings.Contains(filepath.ToSlash(tok), hiddenWorktreeDir) {
+			if underHiddenWorktrees(tok) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// underHiddenWorktrees reports whether a path argument lands in
+// .claude/worktrees.
+//
+// Cleaned first, so the path is judged as git will resolve it rather than as it
+// was typed, and matched on directory boundaries, so a directory that merely
+// begins with the same letters is not swept up with it.
+//
+// Separators are folded unconditionally rather than through filepath.ToSlash,
+// which does nothing off Windows: the guard reads a command someone typed, and
+// the spelling in it is a property of the machine it was typed for, not of the
+// machine judging it. isGitExe folds them the same way.
+func underHiddenWorktrees(tok string) bool {
+	p := path.Clean(strings.ReplaceAll(tok, `\`, "/"))
+	for {
+		if p == hiddenWorktreeDir || strings.HasSuffix(p, "/"+hiddenWorktreeDir) {
+			return true
+		}
+		parent := path.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
 }
 
 const hiddenWorktreeReason = "That creates a worktree under .claude/worktrees, which `rig worktree list` cannot see and nothing later cleans up — one repo collected 28 of them before anyone noticed. " +

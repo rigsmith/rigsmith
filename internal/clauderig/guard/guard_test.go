@@ -283,11 +283,22 @@ func TestGitWorktreeAddUnderDotClaudeIsDenied(t *testing.T) {
 		"git worktree add -b feat .claude/worktrees/thing",
 		"git -C /repo worktree add /repo/.claude/worktrees/thing",
 		"echo hi && git worktree add .claude/worktrees/x",
+		// Judged as git will resolve it, not as it was typed.
+		"git worktree add .claude/tmp/../worktrees/thing",
+		`git worktree add .claude\worktrees\thing`,
 	}
 	for _, cmd := range denied {
 		if got := Evaluate(Request{Tool: "Bash", Command: cmd, Cwd: "/repo"}, env); got.Decision != Deny {
 			t.Errorf("%q was %v, want Deny", cmd, got.Decision)
 		}
+	}
+
+	// The place is what is wrong with it, and the place does not depend on
+	// where the session happened to be standing. `git -C` reaches a repo from
+	// outside one, and the repo gate used to let exactly that through.
+	outside := Env{InRepo: false}
+	if got := Evaluate(Request{Tool: "Bash", Command: "git -C /repo worktree add /repo/.claude/worktrees/thing", Cwd: "/tmp"}, outside); got.Decision != Deny {
+		t.Errorf("from outside a repo: %v, want Deny", got.Decision)
 	}
 
 	// Cleaning one up has to keep working — blocking the remedy would be a poor
@@ -297,6 +308,9 @@ func TestGitWorktreeAddUnderDotClaudeIsDenied(t *testing.T) {
 		"git worktree remove .claude/worktrees/thing",
 		"rm -rf .claude/worktrees",
 		"git worktree add ../repo-worktrees/thing",
+		// Begins with the same letters and is a different directory. The rule
+		// is about .claude/worktrees, not about anything spelled like it.
+		"git worktree add .claude/worktrees-of-my-own/thing",
 	}
 	for _, cmd := range allowed {
 		if got := Evaluate(Request{Tool: "Bash", Command: cmd, Cwd: "/repo"}, env); got.Decision != Defer {
