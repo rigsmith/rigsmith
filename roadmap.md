@@ -7,26 +7,12 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 
 ### V2: separate `clauderig` and `codexrig` with shared infrastructure
 
-**Current position: store coordination (6a) merged into `codex/v2` through
-[#308](https://github.com/rigsmith/rigsmith/pull/308). Durable queue storage and
-recovery (6b.1) merged in [#309](https://github.com/rigsmith/rigsmith/pull/309);
-the shared phase driver and Claude capture/publication split (6b.2) merged in
-[#310](https://github.com/rigsmith/rigsmith/pull/310). Durable capture artifacts and
-the Claude capture adapter merged in [#311](https://github.com/rigsmith/rigsmith/pull/311).
-Retained commit bundles and the Claude commit adapter merged in
-[#315](https://github.com/rigsmith/rigsmith/pull/315). Capture-time seed retention
-merged in [#317](https://github.com/rigsmith/rigsmith/pull/317). The shared retained
-publication engine merged in [#318](https://github.com/rigsmith/rigsmith/pull/318).
-Claude retained publication policy merged in [#319](https://github.com/rigsmith/rigsmith/pull/319).
-Owned process cleanup is implemented for retained Git commands and streams.
-[#326](https://github.com/rigsmith/rigsmith/pull/326) merged, removing custom
-SSH/HTTPS transports and the proposed credential helper. Merged in [#327](https://github.com/rigsmith/rigsmith/pull/327): retained
-publication using existing Git/`gh` configuration, validated with real CLI fixtures.
-Claude queue execution is merged in [#332](https://github.com/rigsmith/rigsmith/pull/332), with retained-phase recovery and
-exact batch acknowledgement. Bounded retry/backoff and explicit failure blocking are merged in [#336](https://github.com/rigsmith/rigsmith/pull/336).
-Retained manifest/device conflict recovery merged in [#337](https://github.com/rigsmith/rigsmith/pull/337). Native JSONL/memory append recovery is in review in [#341](https://github.com/rigsmith/rigsmith/pull/341).
-Chunk-index and ordinary-file conflicts, canonical merge recovery, lifecycle/capacity
-gates and the Codex adapter follow.**
+**Current position:** shared infrastructure, queue execution, retry policy and
+retained metadata/native append recovery are merged into `codex/v2` through
+[#341](https://github.com/rigsmith/rigsmith/pull/341). [#342](https://github.com/rigsmith/rigsmith/pull/342) adds bounded
+chunked-transcript recovery. Ordinary file conflicts, canonical merge recovery,
+manual-sync coverage and worker lifecycle/capacity remain before queued Claude
+hooks and the separate Codex adapter. The queue work is split into concrete steps below.
 
 | Milestone | Status |
 | --- | --- |
@@ -35,7 +21,16 @@ gates and the Codex adapter follow.**
 | Claude root/file adapter and policy extraction | Merged into `codex/v2`: [#304](https://github.com/rigsmith/rigsmith/pull/304). |
 | Shared file processing and restore mechanics | Merged into `codex/v2`: [#306](https://github.com/rigsmith/rigsmith/pull/306), including the directory-link review fix. |
 | Shared session/metadata and publication boundaries | Merged into `codex/v2`: [#307](https://github.com/rigsmith/rigsmith/pull/307), including review fixes. |
-| Store coordination and durable sync queue | 6a merged in [#308](https://github.com/rigsmith/rigsmith/pull/308). 6b.1 merged ([#309](https://github.com/rigsmith/rigsmith/pull/309)): durable generations, coalescing, owner recovery and acknowledgements. 6b.2 driver/service split merged in [#310](https://github.com/rigsmith/rigsmith/pull/310). Durable artifacts and Claude capture/sealing merged in [#311](https://github.com/rigsmith/rigsmith/pull/311). Retained commit bundles and Claude commit integration merged in [#315](https://github.com/rigsmith/rigsmith/pull/315). Capture-time seed retention merged in [#317](https://github.com/rigsmith/rigsmith/pull/317). Shared retained publication merged in [#318](https://github.com/rigsmith/rigsmith/pull/318). Claude retained publication policy merged in [#319](https://github.com/rigsmith/rigsmith/pull/319). Owned cleanup for retained Git commands and streams merged through #323/#324. [#326](https://github.com/rigsmith/rigsmith/pull/326) removed the custom SSH/HTTPS transports and proposed credential-helper layer. Merged in [#327](https://github.com/rigsmith/rigsmith/pull/327): existing Git/`gh` publication integration with real CLI fixtures. Merged in [#332](https://github.com/rigsmith/rigsmith/pull/332): Claude queue execution with retained-phase recovery and one staging lease. Merged in [#336](https://github.com/rigsmith/rigsmith/pull/336): bounded retry/backoff and failure blocking. Merged in [#337](https://github.com/rigsmith/rigsmith/pull/337): retained manifest/device conflict recovery, including device/link removal, case-sensitive identifiers, newer-local precedence and merge-driver isolation. In review ([#341](https://github.com/rigsmith/rigsmith/pull/341)): native JSONL/memory append recovery. Next: chunk-index and ordinary file conflicts, canonical merge recovery, manual-sync coverage and lifecycle/capacity gates. |
+| Store locks and durable queue | Merged: #308/#309. |
+| Sealed capture, retained commits and publication | Merged: #310–#319; existing Git/`gh` integration and owned process cleanup through #327. |
+| Queue execution and retry/blocking policy | Merged: #332/#336. |
+| Retained metadata and native append recovery | Merged: #337/#341. |
+| Retained chunked-transcript recovery | In review: [#342](https://github.com/rigsmith/rigsmith/pull/342): verify immutable parts, recover bounded append conflicts, preserve chunking. |
+| Ordinary file conflict policy | Next. Define snapshot ordering without silently discarding edits. |
+| Canonical staging merge recovery | Planned. Recover unfinished canonical merges before queued publication. |
+| Manual-sync queue coverage | Planned. Acknowledge only the exact generations included in manual sync. |
+| Worker startup/restart, parent death and draining | Planned. |
+| Capacity remedies and artifact/receipt cleanup | Planned before queued hooks. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 
@@ -58,9 +53,10 @@ Merged: [#339](https://github.com/rigsmith/rigsmith/pull/339) for v1 and
 paths in older/manually edited backups, with directory-confined creation and
 relative targets.
 
-In review ([#341](https://github.com/rigsmith/rigsmith/pull/341)): retained append recovery for native JSONL transcripts and memory files.
+Merged in [#341](https://github.com/rigsmith/rigsmith/pull/341): retained append recovery for native JSONL transcripts and memory files.
 It keeps both machines' additions when neither changed the shared history and
-blocks conflicting UUIDs. Chunk-index conflicts, ordinary file conflicts and
+blocks conflicting UUIDs. [#342](https://github.com/rigsmith/rigsmith/pull/342) adds bounded recovery for canonical chunked
+transcripts, including the default chunking threshold. Ordinary file conflicts and
 canonical recovery remain next; queued hooks stay disabled.
 
 ## Ideas

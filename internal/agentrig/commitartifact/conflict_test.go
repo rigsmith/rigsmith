@@ -17,7 +17,7 @@ func TestMergeWithPolicyRawBlobs(t *testing.T) {
 			a := newPublicationCommit(t, repo, parent, "meta.json", "ours")
 			b := newPublicationCommit(t, repo, parent, "meta.json", "theirs")
 			calls := 0
-			resolve := func(ctx context.Context, path string, base, ours, theirs []byte) ([]byte, error) {
+			resolve := func(ctx context.Context, path string, base, ours, theirs []byte, _ RelatedFiles) ([]byte, error) {
 				calls++
 				if path != "meta.json" || base != nil || string(ours) != "ours" || string(theirs) != "theirs" {
 					t.Fatalf("wrong sides: %q %q %q %q", path, base, ours, theirs)
@@ -43,7 +43,9 @@ func TestMergeWithPolicyRawBlobs(t *testing.T) {
 			if parents != a+" "+b {
 				t.Fatal("lost parents", parents)
 			}
-			if _, err := repo.mergeWithPolicy(t.Context(), a, b, "declined", func(context.Context, string, []byte, []byte, []byte) ([]byte, error) { return nil, ErrConflict }); !errors.Is(err, ErrConflict) {
+			if _, err := repo.mergeWithPolicy(t.Context(), a, b, "declined", func(context.Context, string, []byte, []byte, []byte, RelatedFiles) ([]byte, error) {
+				return nil, ErrConflict
+			}); !errors.Is(err, ErrConflict) {
 				t.Fatal("accepted declined resolution", err)
 			}
 		})
@@ -80,7 +82,7 @@ func TestRetainedMergeIgnoresAttributeDrivers(t *testing.T) {
 				var resolve ResolveConflict
 				calls := 0
 				if policy {
-					resolve = func(_ context.Context, path string, base, ours, theirs []byte) ([]byte, error) {
+					resolve = func(_ context.Context, path string, base, ours, theirs []byte, _ RelatedFiles) ([]byte, error) {
 						calls++
 						if path != "nested/meta.json" || string(base) != "base\n" || string(ours) != "ours\n" || string(theirs) != "theirs\n" {
 							t.Fatalf("wrong conflict: %s %q %q %q", path, base, ours, theirs)
@@ -131,14 +133,14 @@ func TestMergeWithPolicyBoundsAndStructuralRefusal(t *testing.T) {
 	a := newPublicationCommit(t, repo, parent, "meta.json", "ours")
 	b := newPublicationCommit(t, repo, parent, "meta.json", "theirs")
 	ctx, cancel := context.WithCancel(t.Context())
-	_, err := repo.mergeWithPolicy(ctx, a, b, "cancel", func(context.Context, string, []byte, []byte, []byte) ([]byte, error) {
+	_, err := repo.mergeWithPolicy(ctx, a, b, "cancel", func(context.Context, string, []byte, []byte, []byte, RelatedFiles) ([]byte, error) {
 		cancel()
 		return []byte("result"), nil
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatal("ignored cancellation", err)
 	}
-	_, err = repo.mergeWithPolicy(t.Context(), a, b, "large output", func(context.Context, string, []byte, []byte, []byte) ([]byte, error) {
+	_, err = repo.mergeWithPolicy(t.Context(), a, b, "large output", func(context.Context, string, []byte, []byte, []byte, RelatedFiles) ([]byte, error) {
 		return make([]byte, conflictByteLimit+1), nil
 	})
 	if !errors.Is(err, artifact.ErrTooLarge) {
@@ -146,14 +148,20 @@ func TestMergeWithPolicyBoundsAndStructuralRefusal(t *testing.T) {
 	}
 	large := newPublicationCommit(t, repo, parent, "meta.json", strings.Repeat("z", conflictByteLimit+1))
 	called := false
-	_, err = repo.mergeWithPolicy(t.Context(), a, large, "large input", func(context.Context, string, []byte, []byte, []byte) ([]byte, error) { called = true; return nil, nil })
+	_, err = repo.mergeWithPolicy(t.Context(), a, large, "large input", func(context.Context, string, []byte, []byte, []byte, RelatedFiles) ([]byte, error) {
+		called = true
+		return nil, nil
+	})
 	if !errors.Is(err, artifact.ErrTooLarge) || called {
 		t.Fatal("unbounded input", err, called)
 	}
 	// Real delete/edit conflicts cannot be treated as a two-sided content merge.
 	edited := newPublicationCommit(t, repo, a, "meta.json", "edited")
 	deleted := newPublicationCommit(t, repo, a, "other", "other")
-	_, err = repo.mergeWithPolicy(t.Context(), edited, deleted, "delete edit", func(context.Context, string, []byte, []byte, []byte) ([]byte, error) { called = true; return nil, nil })
+	_, err = repo.mergeWithPolicy(t.Context(), edited, deleted, "delete edit", func(context.Context, string, []byte, []byte, []byte, RelatedFiles) ([]byte, error) {
+		called = true
+		return nil, nil
+	})
 	if !errors.Is(err, ErrConflict) || called {
 		t.Fatal("resolved structural conflict", err, called)
 	}

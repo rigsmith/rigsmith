@@ -41,7 +41,8 @@ type Transport interface {
 // MaxTreeBytes bounds each materialized tree; zero uses the archive default.
 // Attempts bounds push/confirmation cycles (1..10). Conflicts fail closed; no
 // mergetool or unrelated-history replacement is implied. Resolve optionally
-// supplies a bounded raw-blob policy for supported content conflicts.
+// supplies a bounded raw-blob policy for supported content conflicts, with
+// immutable related-file reads and additive raw-file proposals.
 // Newer LocalCommit is ours when merging the capture; the combined local result
 // is ours when merging the remote. Policies may depend on this precedence.
 type PublishRequest struct {

@@ -12,10 +12,11 @@ import (
 
 // ResolveConflict handles bounded, regular-file content/add-add conflicts only.
 // The path and raw side blobs are detached; nil Base means an add/add conflict.
-// Return ErrConflict to decline. The resolver cannot edit the private repository.
+// Return ErrConflict to decline. RelatedFiles can read immutable side files and
+// propose additional raw files; it exposes no repository or checkout handle.
 // Its output is reinserted as a raw blob and the whole candidate is validated and
 // audited before publication. No resolver is called for delete/edit or mode changes.
-type ResolveConflict func(ctx context.Context, path string, base, ours, theirs []byte) ([]byte, error)
+type ResolveConflict func(ctx context.Context, path string, base, ours, theirs []byte, files RelatedFiles) ([]byte, error)
 
 const conflictByteLimit = 1 << 20
 const conflictTotalLimit = 16 << 20
@@ -72,12 +73,13 @@ func parseConflicts(raw string) (string, []conflictStages, error) {
 	return tree, conflicts, nil
 }
 
-func (r gitRepo) resolveConflicts(ctx context.Context, raw string, resolve ResolveConflict) (string, error) {
+func (r gitRepo) resolveConflicts(ctx context.Context, raw, a, b string, resolve ResolveConflict) (string, error) {
 	tree, conflicts, err := parseConflicts(raw)
 	if err != nil {
 		return "", err
 	}
 	var updates strings.Builder
+	related := newRelatedFiles(r, tree, a, b, conflicts)
 	budget := int64(conflictTotalLimit)
 	for _, c := range conflicts {
 		var sides [3][]byte
@@ -99,7 +101,11 @@ func (r gitRepo) resolveConflicts(ctx context.Context, raw string, resolve Resol
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		resolved, err := resolve(ctx, c.path, sides[0], sides[1], sides[2])
+		related.owner = c
+		resolved, err := resolve(ctx, c.path, sides[0], sides[1], sides[2], related)
+		if err == nil {
+			err = related.err
+		}
 		if err != nil {
 			return "", err
 		}
@@ -122,7 +128,7 @@ func (r gitRepo) resolveConflicts(ctx context.Context, raw string, resolve Resol
 	if _, err := r.run(ctx, nil, "read-tree", tree); err != nil {
 		return "", err
 	}
-	if _, err := r.run(ctx, strings.NewReader(updates.String()), "update-index", "-z", "--index-info"); err != nil {
+	if _, err := r.run(ctx, strings.NewReader(updates.String()+related.updates.String()), "update-index", "-z", "--index-info"); err != nil {
 		return "", err
 	}
 	return r.run(ctx, nil, "write-tree")
@@ -150,7 +156,7 @@ func (r gitRepo) mergeWithPolicy(ctx context.Context, a, b, message string, reso
 	if err == nil {
 		tree = strings.TrimSuffix(out.String(), "\x00")
 	} else if ctx.Err() == nil && gitExited(err, 1) {
-		tree, err = r.resolveConflicts(ctx, out.String(), resolve)
+		tree, err = r.resolveConflicts(ctx, out.String(), a, b, resolve)
 	}
 	if err != nil {
 		return "", err
