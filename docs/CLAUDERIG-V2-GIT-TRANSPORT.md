@@ -18,10 +18,10 @@ are refused. SSH destinations require an explicit user and SSH options as below.
 integrations; production HTTP destinations must use HTTPS. Custom CA bundles are
 explicit and TLS verification cannot be disabled.
 
-Credentials are provided by the caller, separately from the captured Claude
-account identity. This layer does not invoke credential helpers, select a vendor
-account, prompt, or load a worker's credential store. A later composition layer
-must resolve and refresh repository authentication explicitly. Passwords are
+The basic constructor accepts credentials provided by the caller, separately
+from the captured Claude account identity. An additional helper constructor
+resolves an explicitly selected HTTPS credential as described below. Neither
+constructor selects a vendor account or discovers the worker's login credentials. Passwords are
 copied into a URL-scoped Authorization header in the child's environment. They
 are not written to argv, Git configuration, archives, queue state or error text.
 Environment delivery is not a claim of protection from the same OS user or a
@@ -38,9 +38,8 @@ raw diagnostics, URLs or authorization values.
 
 This uses Git's documented [URL-scoped HTTP settings and redirect controls](https://git-scm.com/docs/git-config).
 The implementation intentionally rejects redirects instead of following one with
-a bound credential or changing the destination. Credential-helper selection and
-agent/keychain discovery still need explicit noninteractive contracts before
-queued hooks can support those installations.
+a bound credential or changing the destination. Automatic helper selection and agent/keychain integration still need platform
+validation before queued hooks can support those installations.
 
 ## SSH identity and host trust
 
@@ -92,10 +91,77 @@ it does not guarantee that a remote server has stopped processing a request.
 Uncertain pushes still require the publisher's fresh ancestry observation.
 
 This first SSH path deliberately requires explicit files. Agent-backed encrypted
-keys, OS keychains, Git credential helpers, host aliases, ProxyJump and custom SSH
-configuration remain composition work. Repository authentication stays separate
+keys, OS keychain integration, automatic Git helper selection, host aliases,
+ProxyJump and custom SSH configuration remain composition work. The explicit
+HTTPS helper boundary below does not change SSH authentication. Repository authentication stays separate
 from Claude/Codex session attribution. Existing synchronous SSH behavior is
 unchanged, and no queued command or hook is activated.
+
+## Explicit HTTPS credential helpers
+
+`NewGitTransportWithCredentialHelper` adds an internal composition boundary for
+existing repository credentials. It takes ordinary transport options without an
+inline credential, plus `CredentialHelperOptions`: an absolute trusted helper
+executable, non-secret argument vector, absolute credential home and required
+repository username. It validates the destination and options before starting
+anything. Only HTTPS is accepted. The selected helper is executed directly with
+`get` appended; there is no shell expansion, Git helper-name resolution, configured
+helper chain or fallback to another account/anonymous authentication.
+
+The request contains protocol, host (including an explicit port), repository path
+and username, following the [Git credential protocol](https://git-scm.com/docs/git-credential).
+Path is always supplied; there is no retry with a less specific lookup. Helpers
+may themselves use host-wide credentials, but the result is still applied only
+to the original bound repository. Returned account/context fields must match the
+request. Password-only replies retain the requested username. Decoded CR/LF/NUL
+in the request, duplicate scalar replies, malformed fields, content after the
+record terminator, missing passwords, expired/invalid expiry values, destination
+rewrites and alternate/multistage authentication are refused. CRLF helper output
+is supported. Equals signs inside a password remain literal. Unknown attributes,
+refresh tokens and helper state are discarded. Basic username/password output,
+including tokens returned as passwords, is the supported authentication form.
+
+Lookup has a 15-second execution ceiling or the caller's earlier cancellation.
+Stdout is limited to 32 KiB, with a 16 KiB combined username/password limit; stderr
+is discarded. Cancellation and output rejection use the shared owned process
+runner and join cleanup before returning. Startup, nonzero exit and parse errors
+return `ErrCredentialHelper` without helper output or command details; capacity
+errors also match `artifact.ErrTooLarge`, and deadlines/cancellation remain
+context errors. Cleanup can extend past the execution deadline because ownership
+must settle before the caller releases its lease.
+
+The helper runs in a fresh temporary directory with only selected OS runtime
+variables inherited (PATH, system-root and temporary-directory variables).
+Home/profile/config paths come from the explicit credential home, not the worker's
+ambient home. Windows app-data paths use the normal subdirectories of that home;
+custom locations, Linux session-bus stores and platform-specific overrides need
+future adapters. Git system/global configuration and parent repository discovery
+are suppressed. Ambient Git/GCM overrides, tokens, tracing, proxies, askpass,
+loader and shell startup overrides are not forwarded. The executable and any
+runtime programs it locates via PATH must be trusted.
+
+The boundary disables Git terminal prompting and supplies noninteractive GCM
+settings, following [GCM's environment contract](https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/environment.md).
+**Those controls do not prevent an arbitrary helper or OS credential broker from
+showing native UI.** Callers must select a helper with a verified unattended
+contract. For example, the current
+[osxkeychain implementation](https://github.com/git/git/blob/master/contrib/credential/osxkeychain/git-credential-osxkeychain.c)
+calls the native keychain lookup without an explicit UI-suppression option.
+Native locked-store, missing-credential and consent-required fixtures remain a
+gate before automatic platform selection; this PR tests the shared boundary with
+synthetic executables, not a user's real keychain. This is not a helper sandbox.
+
+Only the `get` operation is requested. No `store`, `erase`, approval or rejection
+notification is sent, so a failed push cannot cause rig to delete an existing
+credential. A trusted helper may still refresh tokens or update its own cache
+while handling `get`. The resulting transport keeps the authorization header
+and optional expiry in memory; it stores no helper or refresh-token state in the
+queue, artifacts or Git config. Expiry is checked again before commands run.
+Construct a new transport for each publication attempt to resolve a refreshed
+credential; do not cache one across queue retries. The composition layer must
+bind helper/account selection to the job's configuration, independently of
+Claude/Codex session attribution. No existing command, hook or credential store
+behavior is changed.
 
 ## Fetch and push
 
@@ -227,3 +293,11 @@ enable default identities or agents. Trust/key files and private Git
 configuration remain unchanged. The Go
 SSH dependency is used only by tests; production continues to use OpenSSH. CI must
 run these fixtures natively on Linux, macOS and Windows.
+
+Credential-helper fixtures compile a native executable and use only synthetic
+homes, responses and repositories. Real HTTPS publication/confirmation and replay
+cover both Git hash formats and changed credentials between attempts. Additional
+cases exercise account/path binding, CRLF, response rejection/expiry, environment
+isolation, missing executables, pre-cancellation and process-tree cleanup after
+normal exit, cancellation and excessive output. A descendant tries to execute
+after the call returns to detect leaked ownership. No real keychains are read.

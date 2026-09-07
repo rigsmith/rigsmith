@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
 	"github.com/rigsmith/rigsmith/internal/agentrig/process"
@@ -43,7 +44,10 @@ type GitTransportOptions struct {
 // the repository created by Publish. They must not receive canonical staging or
 // a repository with caller-added configuration. Concurrent use of one repoDir
 // requires external serialization. No command, queue worker or hook is enabled.
-type GitTransport struct{ remote, branch, protocol, caFile, authorization, sshCommand string }
+type GitTransport struct {
+	remote, branch, protocol, caFile, authorization, sshCommand string
+	credentialExpiry                                            int64
+}
 
 func NewGitTransport(options GitTransportOptions) (*GitTransport, error) {
 	if !transportBranch(options.Branch) || len(options.Remote) == 0 || len(options.Remote) > 4096 || strings.ContainsAny(options.Remote, "\x00\r\n") {
@@ -210,6 +214,12 @@ func transportBranch(branch string) bool {
 // header. Redirects, helpers, askpass, proxies, inherited Git overrides, submodule
 // recursion, hooks and automatic maintenance cannot redirect the operation.
 func (t *GitTransport) run(ctx context.Context, dir string, args ...string) (string, int, error) {
+	if err := ctx.Err(); err != nil {
+		return "", -1, err
+	}
+	if t.credentialExpiry != 0 && time.Now().Unix() >= t.credentialExpiry {
+		return "", -1, ErrCredentialHelper
+	}
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	flags := []string{"-c", "credential.helper=", "-c", "credential.interactive=false", "-c", "core.askPass=", "-c", "http.followRedirects=false", "-c", "http.proxy=", "-c", "http.extraHeader=", "-c", "http.sslVerify=true", "-c", "fetch.recurseSubmodules=false", "-c", "submodule.recurse=false", "-c", "fetch.writeCommitGraph=false", "-c", "push.followTags=false", "-c", "push.gpgSign=false"}
