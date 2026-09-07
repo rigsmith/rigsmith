@@ -26,6 +26,9 @@ rig worktree new feat/x  # sibling worktree + new VS Code window; never moves th
 clauderig ui                   # interactive dashboard
 ```
 
+Restore skips unsafe shared-memory link paths and targets outside the selected
+restore folder, including entries from older backups.
+
 ## Worktree discipline
 
 `clauderig guard` (a PreToolUse hook) and `rig worktree` make worktrees and
