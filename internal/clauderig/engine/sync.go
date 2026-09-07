@@ -652,11 +652,11 @@ func Sync(opts Options) (*Report, error) {
 		files := credentialFiles
 		switch {
 		case files == len(rep.Findings):
-			return rep, fmt.Errorf("secret tripwire: %d file(s) are credential material and cannot be redacted; refusing to sync — exclude them from the allowlist or remove them", files)
+			return rep, fmt.Errorf("%w: %d file(s) are credential material and cannot be redacted; refusing to sync — exclude them from the allowlist or remove them", ErrSecretTripwire, files)
 		case files > 0:
-			return rep, fmt.Errorf("secret tripwire: %d credential file(s) and %d unredacted value(s); refusing to sync", files, len(rep.Findings)-files)
+			return rep, fmt.Errorf("%w: %d credential file(s) and %d unredacted value(s); refusing to sync", ErrSecretTripwire, files, len(rep.Findings)-files)
 		default:
-			return rep, fmt.Errorf("secret tripwire: %d value(s) look like credentials and were not redacted; refusing to sync", len(rep.Findings))
+			return rep, fmt.Errorf("%w: %d value(s) look like credentials and were not redacted; refusing to sync", ErrSecretTripwire, len(rep.Findings))
 		}
 	}
 	// Recorded only on the way out: a run that failed part-way has not scrubbed
