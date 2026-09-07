@@ -24,9 +24,12 @@ import (
 // This is git's racy-index problem and it takes git's answer: remember when the
 // run began, and refuse to trust an mtime at or after that instant, because a
 // file written in the same tick as the copy cannot be told from one written
-// before it. Such a file is simply staged again — restaging identical bytes
-// writes the same file and git sees no change, so being wrong in this direction
-// costs a copy and nothing else.
+// before it. Such a file is treated as changed — which for almost everything
+// means staged again, and restaging identical bytes writes the same file, so
+// git sees nothing and being wrong in this direction costs a copy. A large
+// transcript still meets the growth throttle above it and may wait for a chunk
+// or for the session to go quiet, which is that rule doing its job: the restage
+// is delayed, not skipped.
 //
 // One instant for the whole run, not one per file: the question is only whether
 // a file could have changed around the time the run was reading, and the start
@@ -49,31 +52,80 @@ func stageClockPath(staging string) string {
 // this file existed. The alternative is to distrust every mtime on the first
 // run after an upgrade and restage the entire tree to learn nothing, since
 // there is no evidence yet that anything is wrong.
-func readStageClock(staging string) time.Time {
+func readStageClock(staging string) stageClock {
 	p := stageClockPath(staging)
 	if p == "" {
-		return time.Time{}
+		return stageClock{}
 	}
 	b, err := os.ReadFile(p)
+	if os.IsNotExist(err) {
+		return stageClock{} // no run has finished here yet
+	}
 	if err != nil {
-		return time.Time{}
+		return stageClock{suspect: true}
 	}
 	ns, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
 	if err != nil || ns <= 0 {
-		return time.Time{}
+		// Something wrote this and it is not what we write. Not knowing when
+		// the last run was is only safe while there is no reason to think one
+		// happened, and a file sitting here is that reason.
+		return stageClock{suspect: true}
 	}
-	return time.Unix(0, ns)
+	return stageClock{started: time.Unix(0, ns)}
 }
 
-// writeStageClock records when this run began. Best-effort: a clock that cannot
-// be written costs the next run some restaging, which is the harmless
-// direction.
+// stageClock is what the last completed run left behind: when it began, and
+// whether that answer can be believed.
+type stageClock struct {
+	// started is zero when no clock is there at all — a first run, or a
+	// staging tree from before this existed.
+	started time.Time
+	// suspect is a clock that exists and could not be read. Absence says
+	// nothing happened; damage says something did and the record of it is
+	// gone, which is not the same and is not safe to treat as the same.
+	suspect bool
+}
+
+// trusts reports whether a source mtime identifies the file's contents: older
+// than the last run by more than one tick of the clock that stamped it, so no
+// tick it could share reaches into that run.
+func (c stageClock) trusts(mod time.Time, tick time.Duration) bool {
+	switch {
+	case c.suspect:
+		return false
+	case c.started.IsZero():
+		return true
+	}
+	return mod.Before(c.started.Add(-tick))
+}
+
+// writeStageClock records when this run began.
+//
+// Written whole or not at all, the same way the audit cache is: writing in
+// place truncates first, and an interruption there leaves a clock that reads as
+// damaged — which then distrusts every mtime and restages the tree. Correct,
+// but a needless day's work for anyone it happened to.
+//
+// Best-effort past that: a clock that cannot be written costs the next run some
+// restaging, which is the harmless direction.
 func writeStageClock(staging string, started time.Time) {
 	p := stageClockPath(staging)
 	if p == "" {
 		return
 	}
-	_ = os.WriteFile(p, []byte(strconv.FormatInt(started.UnixNano(), 10)+"\n"), 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".stage-clock-*")
+	if err != nil {
+		return
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(strconv.FormatInt(started.UnixNano(), 10) + "\n"); err != nil {
+		tmp.Close()
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		return
+	}
+	_ = os.Rename(tmp.Name(), p)
 }
 
 // coarseTick is what a filesystem that records only whole seconds is assumed to
@@ -81,18 +133,6 @@ func writeStageClock(staging string, started time.Time) {
 // two; measuring cannot tell them apart from here, and a second of slack
 // already covers the case this exists for.
 const coarseTick = time.Second
-
-// mtimeIsTrustworthy reports whether a source mtime identifies the file's
-// contents: older than the last run by more than one tick of the clock that
-// stamped it, so no tick it could share reaches into that run.
-//
-// A zero clock means nothing is known, and nothing known trusts the mtime.
-func mtimeIsTrustworthy(mod, lastRunStarted time.Time, tick time.Duration) bool {
-	if lastRunStarted.IsZero() {
-		return true
-	}
-	return mod.Before(lastRunStarted.Add(-tick))
-}
 
 // probeMtimeTick measures how finely dir's filesystem records modification
 // times, which is the width of the window above.

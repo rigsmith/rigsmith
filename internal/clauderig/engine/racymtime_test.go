@@ -68,32 +68,65 @@ func TestSync_RewriteUnderTheSameMtimeIsStaged(t *testing.T) {
 	}
 }
 
-func TestMtimeIsTrustworthy(t *testing.T) {
+func TestStageClockTrusts(t *testing.T) {
 	run := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
-		name string
-		mod  time.Time
-		last time.Time
-		tick time.Duration
-		want bool
+		name  string
+		clock stageClock
+		mod   time.Time
+		tick  time.Duration
+		want  bool
 	}{
-		{"nothing known yet", run, time.Time{}, time.Second, true},
-		// A fine clock tells the two writes apart on its own, so the window is
+		{"no clock yet", stageClock{}, run, time.Second, true},
+		// A clock that is there and unreadable is not the same as no clock: it
+		// says a run happened and the record of it is gone.
+		{"damaged clock", stageClock{suspect: true}, run.Add(-time.Hour), time.Second, false},
+		// A fine clock tells two writes apart on its own, so the window is
 		// nearly nothing and the incremental path is untouched. This is the
 		// ordinary case, and why the fix costs nothing in practice.
-		{"fine clock, written just before the run", run.Add(-time.Millisecond), run, time.Microsecond, true},
-		{"fine clock, inside its own tick", run, run, time.Microsecond, false},
-		{"coarse clock, long before the run", run.Add(-time.Hour), run, time.Second, true},
+		{"fine clock, written just before the run", stageClock{started: run}, run.Add(-time.Millisecond), time.Microsecond, true},
+		{"fine clock, inside its own tick", stageClock{started: run}, run, time.Microsecond, false},
+		{"coarse clock, long before the run", stageClock{started: run}, run.Add(-time.Hour), time.Second, true},
 		// Same tick as the run that staged it: a later write in that tick
 		// reuses this mtime, so the staged copy cannot be told apart.
-		{"coarse clock, same tick as the run", run, run, time.Second, false},
-		{"coarse clock, just inside the window", run.Add(-time.Second / 2), run, time.Second, false},
-		{"coarse clock, just outside the window", run.Add(-2 * time.Second), run, time.Second, true},
+		{"coarse clock, same tick as the run", stageClock{started: run}, run, time.Second, false},
+		{"coarse clock, just inside the window", stageClock{started: run}, run.Add(-time.Second / 2), time.Second, false},
+		{"coarse clock, just outside the window", stageClock{started: run}, run.Add(-2 * time.Second), time.Second, true},
 	}
 	for _, c := range cases {
-		if got := mtimeIsTrustworthy(c.mod, c.last, c.tick); got != c.want {
+		if got := c.clock.trusts(c.mod, c.tick); got != c.want {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// Damage is not absence: a clock that cannot be read says a run happened and
+// its record is gone, which is not a reason to believe the mtimes it would have
+// vouched for.
+func TestStageClockRoundTrips(t *testing.T) {
+	staging := filepath.Join(t.TempDir(), "repo")
+	if c := readStageClock(staging); !c.started.IsZero() || c.suspect {
+		t.Errorf("an absent clock read as %+v, want no clock and no suspicion", c)
+	}
+	want := time.Now()
+	writeStageClock(staging, want)
+	if got := readStageClock(staging); !got.started.Equal(want) || got.suspect {
+		t.Errorf("got %+v, want %v", got, want)
+	}
+	if err := os.WriteFile(stageClockPath(staging), []byte("nonsense\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := readStageClock(staging)
+	if !got.suspect {
+		t.Fatalf("a corrupt clock read as %+v, want suspect", got)
+	}
+	if got.trusts(time.Now().Add(-time.Hour), time.Second) {
+		t.Error("a corrupt clock still trusted an mtime")
+	}
+	// A completed run puts it right.
+	writeStageClock(staging, want)
+	if c := readStageClock(staging); c.suspect {
+		t.Error("a completed run did not clear the suspicion")
 	}
 }
 
