@@ -113,12 +113,14 @@ not confuse cancellation cleanup with crash recovery.
 
 ### Retained command streams and errors
 
-One-shot retained commands cancel their owned process tree if the output writer
+One-shot retained commands, including transport, cancel their owned process tree if the output writer
 rejects data or exceeds its bound. They wait for cleanup before returning the
 write/capacity error and discard partial control output. Git's exit code is usable
 as a semantic result only after clean ownership completion: a joined cleanup or
 cancellation failure cannot mean an absent local branch, a negative ancestry
-answer, or an ordinary merge conflict.
+answer, or an ordinary merge conflict. Follow-up HEAD probes preserve their own
+startup, cancellation, capacity and cleanup errors rather than replacing them
+with the earlier HEAD verification error.
 
 Streamed `cat-file --batch` and `check-attr` responses use an explicitly owned OS
 pipe. A concurrent runner observes process exit and cleans up descendants before
@@ -153,6 +155,9 @@ start real descendant processes. They check cleanup after ordinary exit,
 cancellation, output overflow and malformed stream rejection, including helpers
 that hold stdout open. A post-return marker detects further helper execution;
 large bidirectional transfers verify concurrent pipe draining and exact bytes.
+The fixture ignores SIGPIPE so output-rejection checks also cover helpers that
+keep running after a broken pipe. Follow-up HEAD probe tests preserve overflow
+and cancellation failures from both symbolic-ref and show-ref.
 Missing-executable and semantic-exit cases exercise startup closure and rejection
 of exit statuses joined with cleanup errors. These fixtures run on all three CI
 platforms and never access a real user's repository or vendor data.

@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -22,6 +24,8 @@ func wait(path string) bool {
 }
 
 func main() {
+	// Exercise helpers that survive stdout rejection instead of exiting on SIGPIPE.
+	signal.Ignore(syscall.SIGPIPE)
 	marker := os.Getenv("RIG_RETAINED_HELPER_MARKER")
 	if len(os.Args) > 1 && os.Args[1] == "leaf" {
 		if os.WriteFile(marker, nil, 0600) != nil {
@@ -33,7 +37,7 @@ func main() {
 		return
 	}
 	mode := os.Getenv("RIG_RETAINED_HELPER_MODE")
-	if mode == "head-overflow" {
+	if strings.HasPrefix(mode, "head-") {
 		args := strings.Join(os.Args[1:], " ")
 		switch {
 		case strings.Contains(args, "--git-path"):
@@ -42,12 +46,28 @@ func main() {
 		case strings.Contains(args, "ls-files"):
 			return
 		case strings.Contains(args, "symbolic-ref"):
-			_, _ = io.WriteString(os.Stdout, "refs/heads/main\n")
-			return
+			if strings.HasPrefix(mode, "head-symbolic-") {
+				mode = strings.TrimPrefix(mode, "head-symbolic-")
+			} else {
+				_, _ = io.WriteString(os.Stdout, "refs/heads/main\n")
+				return
+			}
 		case strings.Contains(args, "show-ref"):
-			os.Exit(1)
+			if strings.HasPrefix(mode, "head-show-") {
+				mode = strings.TrimPrefix(mode, "head-show-")
+			} else {
+				os.Exit(1)
+			}
+		default:
+			if mode == "head-overflow" {
+				mode = "overflow"
+			} else {
+				os.Exit(128)
+			}
 		}
-		mode = "overflow"
+		if mode == "cancel" {
+			mode = "wait"
+		}
 	}
 	if mode == "exit" {
 		os.Exit(1)

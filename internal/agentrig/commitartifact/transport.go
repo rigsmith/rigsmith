@@ -195,6 +195,8 @@ func transportBranch(branch string) bool {
 // header. Redirects, helpers, askpass, proxies, inherited Git overrides, submodule
 // recursion, hooks and automatic maintenance cannot redirect the operation.
 func (t *GitTransport) run(ctx context.Context, dir string, args ...string) (string, int, error) {
+	childCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	flags := []string{"-c", "credential.helper=", "-c", "credential.interactive=false", "-c", "core.askPass=", "-c", "http.followRedirects=false", "-c", "http.proxy=", "-c", "http.extraHeader=", "-c", "http.sslVerify=true", "-c", "fetch.recurseSubmodules=false", "-c", "submodule.recurse=false", "-c", "fetch.writeCommitGraph=false", "-c", "push.followTags=false", "-c", "push.gpgSign=false"}
 	if t.caFile != "" {
 		flags = append(flags, "-c", "http.sslCAInfo="+t.caFile, "-c", "http.schannelUseSSLCAInfo=true")
@@ -215,8 +217,8 @@ func (t *GitTransport) run(ctx context.Context, dir string, args ...string) (str
 	}
 	var out bytes.Buffer
 	bound := &boundedOutput{w: &out, left: gitOutputLimit}
-	cmd.Stdout = bound
-	err := process.Run(ctx, cmd)
+	cmd.Stdout = &cancelOutput{writer: bound, cancel: cancel}
+	err := process.Run(childCtx, cmd)
 	code := -1
 	if _, pureExit := err.(*exec.ExitError); cmd.ProcessState != nil && (err == nil || pureExit) {
 		code = cmd.ProcessState.ExitCode()

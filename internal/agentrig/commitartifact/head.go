@@ -63,15 +63,25 @@ func SettledHead(ctx context.Context, dir string) (string, error) {
 	// Only a symbolic HEAD whose exact branch is absent is an unborn checkout.
 	ref, refErr := repo.run(ctx, nil, "symbolic-ref", "--quiet", "HEAD")
 	if refErr != nil {
-		return "", err
+		// A clean detached-HEAD result adds no new command failure.
+		if gitExited(refErr, 1) {
+			return "", err
+		}
+		return "", refErr
 	}
 	ref = strings.TrimSpace(ref)
 	if !strings.HasPrefix(ref, "refs/heads/") {
 		return "", ErrInvalid
 	}
 	_, refErr = repo.run(ctx, nil, "show-ref", "--verify", "--quiet", ref)
-	if gitExited(refErr, 1) && ctx.Err() == nil {
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if gitExited(refErr, 1) {
 		return "", nil
 	}
-	return "", err
+	if refErr != nil {
+		return "", refErr
+	}
+	return "", err // The branch exists, but HEAD still failed verification.
 }

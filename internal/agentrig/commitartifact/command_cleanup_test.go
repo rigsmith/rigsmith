@@ -49,6 +49,11 @@ func TestRetainedCommandCleanup(t *testing.T) {
 		{"command-overflow", "overflow", "run"},
 		{"command-write-failure", "overflow", "write"},
 		{"head-probe-failure", "head-overflow", "head"},
+		{"head-symbolic-overflow", "head-symbolic-overflow", "head"},
+		{"head-show-overflow", "head-show-overflow", "head"},
+		{"head-symbolic-cancel", "head-symbolic-cancel", "head"},
+		{"head-show-cancel", "head-show-cancel", "head"},
+		{"transport-overflow", "overflow", "transport"},
 		{"stream-exit", "return", "stream"},
 		{"stream-cancel", "wait", "stream"},
 		{"stream-reject", "reject", "stream"},
@@ -59,7 +64,7 @@ func TestRetainedCommandCleanup(t *testing.T) {
 			t.Setenv("RIG_RETAINED_HELPER_MODE", tc.mode)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			if tc.mode == "wait" {
+			if tc.mode == "wait" || strings.HasSuffix(tc.mode, "-cancel") {
 				go func() {
 					if waitCleanupMarker(ctx, marker) {
 						cancel()
@@ -73,6 +78,17 @@ func TestRetainedCommandCleanup(t *testing.T) {
 				output, err = repo.run(ctx, nil, "synthetic")
 				if err != nil && output != "" {
 					t.Fatal("returned partial output", output)
+				}
+			} else if tc.runner == "transport" {
+				transport, setupErr := NewGitTransport(GitTransportOptions{Remote: t.TempDir(), Branch: "main"})
+				if setupErr != nil {
+					t.Fatal(setupErr)
+				}
+				var output string
+				var code int
+				output, code, err = transport.run(ctx, repo.dir, "synthetic")
+				if output != "" || code != -1 {
+					t.Fatalf("partial transport result: %q, %d", output, code)
 				}
 			} else if tc.runner == "head" {
 				if err := os.MkdirAll(filepath.Join(repo.dir, ".git"), 0700); err != nil {
@@ -94,16 +110,16 @@ func TestRetainedCommandCleanup(t *testing.T) {
 					return err
 				}, "synthetic")
 			}
-			switch tc.mode {
-			case "return":
+			switch {
+			case tc.mode == "return":
 				if err != nil {
 					t.Fatal(err)
 				}
-			case "wait":
+			case tc.mode == "wait" || strings.HasSuffix(tc.mode, "-cancel"):
 				if !errors.Is(err, context.Canceled) {
 					t.Fatal(err)
 				}
-			case "overflow", "head-overflow":
+			case tc.mode == "overflow" || strings.HasSuffix(tc.mode, "-overflow"):
 				expected := artifact.ErrTooLarge
 				if tc.runner == "write" {
 					expected = io.ErrClosedPipe
@@ -111,7 +127,7 @@ func TestRetainedCommandCleanup(t *testing.T) {
 				if !errors.Is(err, expected) {
 					t.Fatal(err)
 				}
-			case "reject":
+			case tc.mode == "reject":
 				if !errors.Is(err, ErrInvalid) {
 					t.Fatal(err)
 				}
