@@ -3,6 +3,7 @@ package commitartifact
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -46,6 +47,66 @@ func TestMergeWithPolicyRawBlobs(t *testing.T) {
 				t.Fatal("accepted declined resolution", err)
 			}
 		})
+	}
+}
+
+func TestRetainedMergeIgnoresAttributeDrivers(t *testing.T) {
+	for _, format := range []string{"sha1", "sha256"} {
+		for _, policy := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/policy=%v", format, policy), func(t *testing.T) {
+				_, _, repo, parent := publicationFixture(t, format)
+				commit := func(parent, body string) string {
+					root := t.TempDir()
+					putPublicationFile(t, root, ".gitattributes", "[attr]automatic merge=union\n* automatic\n")
+					putPublicationFile(t, root, "nested/.gitattributes", "* merge=union\n")
+					putPublicationFile(t, root, "nested/meta.json", body)
+					tree, err := repo.writeTree(t.Context(), root, root, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return mustRun(t, repo, "attribute fixture\n", "commit-tree", tree, "-p", parent)
+				}
+				base := commit(parent, "base\n")
+				a, b := commit(base, "ours\n"), commit(base, "theirs\n")
+				// Select the attribute source explicitly so this regression does
+				// not depend on the bare repository default. The override must win.
+				mustRun(t, repo, "", "read-tree", a)
+				mustRun(t, repo, "", "config", "attr.tree", a)
+				// Demonstrate that Git alone reports the hostile union as clean.
+				unionTree := mustRun(t, repo, "", "merge-tree", "--write-tree", a, b)
+				if got := mustRun(t, repo, "", "show", unionTree+":nested/meta.json"); got != "ours\ntheirs" {
+					t.Fatalf("fixture did not activate union driver: %q", got)
+				}
+				var resolve ResolveConflict
+				calls := 0
+				if policy {
+					resolve = func(_ context.Context, path string, base, ours, theirs []byte) ([]byte, error) {
+						calls++
+						if path != "nested/meta.json" || string(base) != "base\n" || string(ours) != "ours\n" || string(theirs) != "theirs\n" {
+							t.Fatalf("wrong conflict: %s %q %q %q", path, base, ours, theirs)
+						}
+						return nil, ErrConflict
+					}
+				}
+				if _, err := repo.mergeWithPolicy(t.Context(), a, b, "decline union", resolve); !errors.Is(err, ErrConflict) {
+					t.Fatalf("attribute driver bypassed conflict refusal: %v", err)
+				}
+				if policy && calls != 1 {
+					t.Fatal("resolver bypassed", calls)
+				}
+				// Ordinary non-overlapping text edits still merge automatically.
+				base = commit(parent, "one\ntwo\nthree\nfour\nfive\n")
+				a = commit(base, "ours\ntwo\nthree\nfour\nfive\n")
+				b = commit(base, "one\ntwo\nthree\nfour\ntheirs\n")
+				sha, err := repo.mergeWithPolicy(t.Context(), a, b, "clean text", resolve)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := mustRun(t, repo, "", "show", sha+":nested/meta.json"); got != "ours\ntwo\nthree\nfour\ntheirs" {
+					t.Fatalf("lost non-overlapping edits: %q", got)
+				}
+			})
+		}
 	}
 }
 

@@ -3,6 +3,8 @@ package commitartifact
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
@@ -136,6 +138,9 @@ func (r gitRepo) mergeWithPolicy(ctx context.Context, a, b, message string, reso
 	if yes, err := r.ancestor(ctx, a, b); err != nil || yes {
 		return b, err
 	}
+	if err := r.prepareTextMerge(ctx); err != nil {
+		return "", err
+	}
 	var out bytes.Buffer
 	// Disable rename inference for this limited policy. Unsupported structural
 	// conflicts must not disappear merely because a content resolver accepts a path.
@@ -156,4 +161,20 @@ func (r gitRepo) mergeWithPolicy(ctx context.Context, a, b, message string, reso
 	}
 	sha, err := r.run(ctx, strings.NewReader(message+"\n"), "commit-tree", tree, "-p", a, "-p", b)
 	return strings.TrimSpace(sha), err
+}
+
+// info/attributes has higher priority than tree/index .gitattributes, including
+// nested rules and macros. Pin Git's built-in text driver so merge=union cannot
+// hide conflicts from the explicit resolver. Non-overlapping edits still merge.
+// This file belongs only to the disposable bare repository, never the candidate
+// tree or canonical staging. Attribute auditing uses a separate repository.
+func (r gitRepo) prepareTextMerge(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	info := filepath.Join(r.dir, "info")
+	if err := os.MkdirAll(info, 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(info, "attributes"), []byte("* merge=text\n"), 0600)
 }

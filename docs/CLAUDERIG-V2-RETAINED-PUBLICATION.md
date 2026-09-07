@@ -216,7 +216,12 @@ batches still require explicit Unblock before execution.
 
 The publisher reads Git's NUL-delimited conflict stage records from
 [merge-tree](https://git-scm.com/docs/git-merge-tree), with messages and rename
-inference disabled. Only a clean conflict exit with complete bounded output is
+inference disabled. Before either retained merge path runs, a private
+`info/attributes` override pins `merge=text`, Git's built-in text driver. This
+prevents root/nested rules and attribute macros from selecting `merge=union` to
+hide a conflict; ordinary non-overlapping edits still merge. The override never
+enters the published tree, and attribute auditing uses its own repository.
+Only a clean conflict exit with complete bounded output is
 eligible for parsing; cancellation, output overflow and child cleanup failures
 cannot masquerade as conflict records. The publisher limits a merge to 128
 conflicted paths, 1 MiB per input/output blob and 16 MiB across conflict inputs and
@@ -232,7 +237,9 @@ path prevents publication even if earlier paths were resolvable.
 
 Claude resolves only the root manifest and device registry. The same pure union
 functions now serve both synchronous and retained resolution: manifests retain
-both project/link maps with ours winning shared keys, and device registries take
+both project/link maps with ours winning shared keys (newer canonical history
+is ours for the initial capture/local merge; the combined local result is ours
+for the later remote merge), and device registries take
 the newest sync entry while preserving a known account if the newer entry has
 none. Retained device recovery first compares both sides with a strictly decoded
 merge base: an unchanged entry yields to removal on the other side, while a
@@ -245,7 +252,14 @@ and excessive nesting are refused rather than silently discarded. Unsupported
 metadata is not replaced by whichever snapshot is newer. This deliberately
 conservative decoder applies only to the new retained resolver. Project, link and
 device map identifiers remain exact and case-sensitive; only exact duplicate map
-keys are refused.
+keys are refused. This is validation of inputs the resolver must interpret, not a
+new whole-backup resource schema. Empty/null maps remain valid empty metadata.
+Entries being merged must have a project cwd, device identity matching its map key, and slash-relative link
+endpoints without traversal or platform-specific absolute paths. Device deletion
+comparisons use timestamp instants, so a changed timezone spelling does not bring
+a removed machine back. Other optional/zero-valued fields keep native semantics.
+Clean, fast-forward and already-confirmed metadata is preserved without requiring schema 1 or rejecting future fields; the
+existing whole-tree byte policy and secret audit still run on those paths.
 
 Tests cover SHA-1/SHA-256, raw CRLF bytes, deterministic replay and both parents,
 declined resolutions, delete/edit refusal, malformed/unsafe stage records,

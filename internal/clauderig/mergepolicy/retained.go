@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"reflect"
 	"strings"
 	"unicode"
@@ -32,15 +33,21 @@ func ResolveMetadata(ctx context.Context, path string, base, ours, theirs []byte
 		if !decodeRetainedMetadata(ours, &a) || !decodeRetainedMetadata(theirs, &b) || a.Schema != 1 || b.Schema != 1 {
 			return nil, commitartifact.ErrConflict
 		}
+		if !validManifestEntries(a) || !validManifestEntries(b) {
+			return nil, commitartifact.ErrConflict
+		}
 		merged = mergeManifest(a, b)
 	case devices.FileName:
 		var a, b devices.Registry
 		if !decodeRetainedMetadata(ours, &a) || !decodeRetainedMetadata(theirs, &b) || a.Schema != 1 || b.Schema != 1 {
 			return nil, commitartifact.ErrConflict
 		}
+		if !validDeviceEntries(a) || !validDeviceEntries(b) {
+			return nil, commitartifact.ErrConflict
+		}
 		var ancestor devices.Registry
 		if base != nil {
-			if !decodeRetainedMetadata(base, &ancestor) || ancestor.Schema != 1 {
+			if !decodeRetainedMetadata(base, &ancestor) || ancestor.Schema != 1 || !validDeviceEntries(ancestor) {
 				return nil, commitartifact.ErrConflict
 			}
 		}
@@ -49,10 +56,10 @@ func ResolveMetadata(ctx context.Context, path string, base, ours, theirs []byte
 		for name, previous := range ancestor.Devices {
 			ourDevice, haveOurs := a.Devices[name]
 			theirDevice, haveTheirs := b.Devices[name]
-			if haveOurs && !haveTheirs && reflect.DeepEqual(ourDevice, previous) {
+			if haveOurs && !haveTheirs && sameDevice(ourDevice, previous) {
 				delete(a.Devices, name)
 			}
-			if haveTheirs && !haveOurs && reflect.DeepEqual(theirDevice, previous) {
+			if haveTheirs && !haveOurs && sameDevice(theirDevice, previous) {
 				delete(b.Devices, name)
 			}
 		}
@@ -68,6 +75,41 @@ func ResolveMetadata(ctx context.Context, path string, base, ours, theirs []byte
 		return nil, err
 	}
 	return append(b, '\n'), nil
+}
+
+func sameDevice(a, b devices.Device) bool {
+	if !a.LastSync.Equal(b.LastSync) {
+		return false
+	}
+	// Location/offset spelling is not evidence that a removed machine synced.
+	a.LastSync = b.LastSync
+	return reflect.DeepEqual(a, b)
+}
+
+func validDeviceEntries(r devices.Registry) bool {
+	for name, d := range r.Devices {
+		if strings.TrimSpace(name) == "" || d.Name != name {
+			return false
+		}
+	}
+	return true
+}
+
+func validManifestEntries(m manifest.Manifest) bool {
+	for slug, p := range m.Projects {
+		if strings.TrimSpace(slug) == "" || strings.TrimSpace(p.Cwd) == "" {
+			return false
+		}
+	}
+	for link, target := range m.Links {
+		for _, endpoint := range []string{link, target} {
+			// Links are slash-relative to the Claude root on every platform.
+			if endpoint == "." || !fs.ValidPath(endpoint) || strings.ContainsAny(endpoint, "\\:\x00") {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func decodeRetainedMetadata(raw []byte, out any) bool {

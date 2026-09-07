@@ -115,9 +115,11 @@ func TestRetainedMetadataDeviceRemoval(t *testing.T) {
 	}
 	base := registry(map[string]devices.Device{"retired": old})
 	empty := registry(map[string]devices.Device{})
-	for _, changed := range []string{"unchanged", "synced", "account"} {
+	for _, changed := range []string{"unchanged", "same-instant", "synced", "account"} {
 		survivor := old
 		switch changed {
+		case "same-instant":
+			survivor.LastSync = old.LastSync.In(time.FixedZone("other", -4*60*60))
 		case "synced":
 			survivor.LastSync = old.LastSync.Add(time.Hour)
 		case "account":
@@ -137,7 +139,7 @@ func TestRetainedMetadataDeviceRemoval(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, kept := got.Devices["retired"]
-			if kept != (changed != "unchanged") || !got.Has("new") {
+			if kept != (changed == "synced" || changed == "account") || !got.Has("new") {
 				t.Errorf("%s reverse=%v: %+v", changed, reverse, got)
 			}
 		}
@@ -189,6 +191,32 @@ func TestRetainedMetadataNestedDuplicates(t *testing.T) {
 	} {
 		if _, err := ResolveMetadata(t.Context(), tc.path, nil, []byte(tc.raw), []byte(tc.raw)); !errors.Is(err, commitartifact.ErrConflict) {
 			t.Errorf("nested duplicate accepted: %s %v", tc.raw, err)
+		}
+	}
+}
+
+func TestRetainedMetadataRejectsUnusableEntries(t *testing.T) {
+	for _, tc := range []struct{ path, raw string }{
+		{manifest.FileName, `{"schema":1,"projects":{"p":null}}`},
+		{manifest.FileName, `{"schema":1,"projects":{"p":{"cwd":" "}}}`},
+		{devices.FileName, `{"schema":1,"devices":{"host":null}}`},
+		{devices.FileName, `{"schema":1,"devices":{"host":{"name":"other"}}}`},
+		{devices.FileName, `{"schema":1,"devices":{"":{"name":""}}}`},
+	} {
+		if _, err := ResolveMetadata(t.Context(), tc.path, nil, []byte(tc.raw), []byte(tc.raw)); !errors.Is(err, commitartifact.ErrConflict) {
+			t.Errorf("unusable record accepted: %s %v", tc.raw, err)
+		}
+	}
+	for _, endpoint := range []string{"", ".", "../outside", "a/../../outside", "/absolute", `C:\outside`, `a\..\outside`, "a/../b"} {
+		for _, reverse := range []bool{false, true} {
+			link, target := "projects/p/memory", endpoint
+			if reverse {
+				link, target = target, link
+			}
+			raw := metadataJSON(t, manifest.Manifest{Schema: 1, Links: map[string]string{link: target}})
+			if _, err := ResolveMetadata(t.Context(), manifest.FileName, nil, raw, raw); !errors.Is(err, commitartifact.ErrConflict) {
+				t.Errorf("unsafe link accepted: %s %v", raw, err)
+			}
 		}
 	}
 }

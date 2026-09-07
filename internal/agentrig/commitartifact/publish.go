@@ -42,6 +42,8 @@ type Transport interface {
 // Attempts bounds push/confirmation cycles (1..10). Conflicts fail closed; no
 // mergetool or unrelated-history replacement is implied. Resolve optionally
 // supplies a bounded raw-blob policy for supported content conflicts.
+// Newer LocalCommit is ours when merging the capture; the combined local result
+// is ours when merging the remote. Policies may depend on this precedence.
 type PublishRequest struct {
 	Commits                          artifact.Store
 	CommitRef, CaptureRef            string
@@ -158,7 +160,7 @@ func Publish(ctx context.Context, r PublishRequest) (Publication, error) {
 		if err := repo.completeHistory(ctx); err != nil {
 			return Publication{}, err
 		}
-		base, err = repo.mergeWithPolicy(ctx, base, r.LocalCommit, r.Message, r.Resolve)
+		base, err = repo.mergeWithPolicy(ctx, r.LocalCommit, base, r.Message, r.Resolve)
 		if err != nil {
 			return Publication{}, err
 		}
@@ -215,8 +217,11 @@ func (r gitRepo) merge(ctx context.Context, a, b, message string) (string, error
 	if yes, err := r.ancestor(ctx, a, b); err != nil || yes {
 		return b, err
 	}
-	// Requires Git's merge-tree --write-tree. No checkout means no filters, symlinks,
-	// ignored paths, executable merge drivers or canonical merge state.
+	if err := r.prepareTextMerge(ctx); err != nil {
+		return "", err
+	}
+	// Requires Git's merge-tree --write-tree with the built-in text driver pinned.
+	// No checkout means no filters, symlinks, ignored paths or canonical merge state.
 	tree, err := r.run(ctx, nil, "merge-tree", "--write-tree", a, b)
 	if err != nil {
 		if ctx.Err() != nil {
