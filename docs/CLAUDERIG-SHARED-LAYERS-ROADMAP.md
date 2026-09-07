@@ -66,7 +66,7 @@ credential providers and SSH-agent/keychain discovery are deferred.
 | 6b.2g. Retained manifest/device conflict recovery | Merged: #337 | Removal-aware metadata unions and merge-driver isolation. |
 | 6b.2h. Native JSONL/memory append recovery | Merged: #341 | Preserve both tails; block changed history and ambiguous UUIDs. |
 | 6b.2i. Chunked-transcript append recovery | Merged: [#342](https://github.com/rigsmith/rigsmith/pull/342) | Verify immutable side parts, reuse native record policy, preserve chunked output. 32 MiB worst-case union limit. |
-| 6b.3. Ordinary file conflict policy | In review: [#343](https://github.com/rigsmith/rigsmith/pull/343) | Select the newer recorded source snapshot; synthetic merge timestamps do not refresh copied bytes. Equal/unknown origins remain blocked. |
+| 6b.3. Ordinary file conflict policy | In review: [#343](https://github.com/rigsmith/rigsmith/pull/343) | Select the newer recorded source snapshot; synthetic merge timestamps do not refresh copied bytes. Equal/unknown origins remain blocked. Both conflict sides are scanned; malformed profile roots are excluded. |
 | 6b.4. Canonical staging merge recovery | Next | Repair unfinished canonical merges before retained publication. |
 | 6b.5. Exact manual-sync coverage | Planned | Acknowledge only generations actually included; preserve newer queued work. |
 | 6b.6. Worker lifecycle | Planned | Parent-death recovery, startup/restart, stop and draining. |

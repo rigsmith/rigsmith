@@ -349,7 +349,8 @@ Canonical merge recovery and lifecycle/capacity remedies remain activation gates
 ## Retained ordinary-file snapshots
 
 `adapter.RetainedSnapshot` selects allowlisted files under `cli`, `desktop` and
-named `desktop@` profile roots whose native policy is `NewestSnapshot`. This
+named `desktop@` profile roots whose native policy is `NewestSnapshot`. Profile
+names must pass the same `desktop.ValidName` validation used by staged restore. This
 includes settings, skills/plans/commands and included plugin or Desktop state.
 The selected snapshot is preserved byte-for-byte, including binary files and
 CRLF. No JSON parsing or reserialization is introduced. Both Git parents remain
@@ -378,6 +379,10 @@ commits, retries and synthetic publication merges cannot make copied bytes newer
 Distinct bytes with equal or unknown origin times stay blocked, rather than using
 the synchronous incoming-side tie fallback. A strictly later recorded origin wins.
 
+Before ordinary-file selection, the service scans both raw conflict sides with
+the existing streaming secret tripwire. An older secret-bearing local snapshot
+therefore cannot enter reachable history merely because the newer winner is clean.
+This scans the two conflicting file snapshots, not every historical ancestor.
 Whole-tree byte validation and secret auditing still run before publication,
 followed by fresh remote confirmation. Canonical staging and live sources are
 untouched; existing blocked queue work still needs explicit Unblock. This changes
@@ -386,6 +391,7 @@ only retained v2 publication, not synchronous merge behavior or chunking default
 Tests cover both Git object formats, old/new synthetic merge timestamps, unrelated
 commits, multiple identical origins, novel merge bytes, limits and cancellation.
 Real publication fixtures exercise newer local/remote selection, add/add, equal-time
-refusal, unsupported paths, secret rejection, raw bytes, preserved history/canonical
+refusal, unsupported/malformed profile paths, secret rejection on either the
+selected or losing side, raw bytes, preserved history/canonical
 state and replay. A gated synthetic queue round trip verifies publication and exact
 acknowledgement after live sources and the separate capture archive disappear.

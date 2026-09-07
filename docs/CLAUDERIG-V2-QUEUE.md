@@ -324,7 +324,7 @@ repository. Proven append-only native CLI transcripts and memory text can also
 keep both machines' additions through [bounded append recovery](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-append-recovery).
 Canonical version-1 chunked transcripts now use verified saved parts through
 [bounded chunk recovery](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-chunk-recovery), keeping the chunked format and on/auto defaults.
-Eligible ordinary files now use [saved snapshot ordering](CLAUDERIG-V2-RETAINED-PUBLICATION.md#retained-ordinary-file-snapshots). Equal/unknown times and novel merge bytes remain blocked.
+Eligible ordinary files now use [saved snapshot ordering](CLAUDERIG-V2-RETAINED-PUBLICATION.md#retained-ordinary-file-snapshots). Both ordinary-file conflict sides pass the secret tripwire before selection, including the losing snapshot. Equal/unknown times and novel merge bytes remain blocked.
 The complete resolved tree is audited before pushing. Mixed native/chunked indexes, ordinary
 JSONL files, edited transcript/memory history, structural conflicts and invalid metadata still return a conflict
 and remain blocked. Existing blocked batches require explicit Unblock; recovery

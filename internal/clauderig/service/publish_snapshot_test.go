@@ -33,6 +33,9 @@ func snapshotPublicationFixture(t *testing.T, kind string) (service.ArtifactPubl
 	if kind == "unsupported" {
 		path = "unknown/state.json"
 	}
+	if kind == "malformed-profile" {
+		path = "desktop@a b/profile.json"
+	}
 	if kind != "add-add" {
 		put(t, stage, path, "{\"value\":\"base\"}\n")
 	} else {
@@ -50,8 +53,14 @@ func snapshotPublicationFixture(t *testing.T, kind string) (service.ArtifactPubl
 	if kind == "tie" {
 		theirTime = ourTime
 	}
-	if kind == "secret" {
+	if kind == "secret" || kind == "losing-remote-secret" {
 		theirs = "{\"token\":\"ghp_" + strings.Repeat("z", 40) + "\"}\n"
+	}
+	if kind == "losing-local-secret" {
+		ours = "{\"token\":\"ghp_" + strings.Repeat("z", 40) + "\"}\n"
+	}
+	if kind == "losing-remote-secret" {
+		ourTime = 400
 	}
 	put(t, stage, path, ours)
 	commitSnapshotAt(t, stage, "local snapshot", ourTime)
@@ -69,7 +78,7 @@ func snapshotPublicationFixture(t *testing.T, kind string) (service.ArtifactPubl
 }
 
 func TestPublishArtifactRecoversSnapshotConflicts(t *testing.T) {
-	for _, kind := range []string{"ours", "theirs", "add-add", "tie", "secret", "unsupported"} {
+	for _, kind := range []string{"ours", "theirs", "add-add", "tie", "secret", "losing-local-secret", "losing-remote-secret", "unsupported", "malformed-profile"} {
 		t.Run(kind, func(t *testing.T) {
 			input, remote, path, want := snapshotPublicationFixture(t, kind)
 			stage := input.Commit.Capture.Sync.StagingDir
@@ -86,9 +95,9 @@ func TestPublishArtifactRecoversSnapshotConflicts(t *testing.T) {
 			if head != git(t, stage, "rev-parse", "HEAD") || !bytes.Equal(index, read(".git/index")) || !bytes.Equal(config, read(".git/config")) || !bytes.Equal(body, read(path)) {
 				t.Fatal("changed canonical staging")
 			}
-			if kind == "tie" || kind == "secret" || kind == "unsupported" {
+			if kind == "tie" || strings.Contains(kind, "secret") || kind == "unsupported" || kind == "malformed-profile" {
 				reason := commitartifact.ErrConflict
-				if kind == "secret" {
+				if strings.Contains(kind, "secret") {
 					reason = engine.ErrSecretTripwire
 				}
 				if !errors.Is(err, reason) || result != (commitartifact.Publication{}) || remote.pushes != 0 || git(t, remote.dir, "rev-parse", "main") != before {
@@ -143,5 +152,23 @@ func TestQueueAdapterRetainedSnapshotRoundTrip(t *testing.T) {
 	pushes := remote.pushes
 	if _, err := q.RunOne(t.Context(), time.Now(), adapter); !errors.Is(err, queue.ErrEmpty) || remote.pushes != pushes {
 		t.Fatal("acknowledged snapshot replayed", err, remote.pushes)
+	}
+}
+
+func TestQueueAdapterRetainedSnapshotLosingSecret(t *testing.T) {
+	if os.Getenv("CLAUDERIG_E2E") != "1" {
+		t.Skip("set CLAUDERIG_E2E=1; synthetic losing-snapshot tripwire")
+	}
+	input, remote, _, _ := snapshotPublicationFixture(t, "losing-local-secret")
+	req := input.Commit.Capture
+	q, _, adapter := queueAdapterFixture(t, req, input.Commit.Commits, remote)
+	seedQueuePhase(t, q, req, queue.Committed)
+	result, err := q.RunOne(t.Context(), time.Now(), adapter)
+	if !errors.Is(err, engine.ErrSecretTripwire) || result.Acknowledged || result.Phase != queue.Committed || remote.pushes != 0 {
+		t.Fatalf("secret-bearing history acknowledged: %+v %v", result, err)
+	}
+	work, err := q.Snapshot(t.Context())
+	if err != nil || len(work) != 1 || work[0].Status != queue.Blocked || work[0].FailureCode != "scan-rejected" {
+		t.Fatalf("scan refusal not retained: %+v %v", work, err)
 	}
 }

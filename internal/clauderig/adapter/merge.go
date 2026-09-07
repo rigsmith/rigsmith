@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
@@ -62,6 +63,9 @@ func ClassifyMerge(p string) MergeRule {
 func RetainedSnapshot(p string) bool {
 	root, rel, ok := strings.Cut(p, "/")
 	if !ok || strings.EqualFold(path.Base(rel), ".gitattributes") || (root != "cli" && root != DesktopRootID && ProfileNameOf(root) == "") {
+		return false
+	}
+	if root != "cli" && root != DesktopRootID && desktop.ValidName(ProfileNameOf(root)) != nil {
 		return false
 	}
 	file := Classify(root, rel)

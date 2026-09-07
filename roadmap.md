@@ -26,7 +26,7 @@ hooks and the separate Codex adapter. The queue work is split into concrete step
 | Queue execution and retry/blocking policy | Merged: #332/#336. |
 | Retained metadata and native append recovery | Merged: #337/#341. |
 | Retained chunked-transcript recovery | Merged: [#342](https://github.com/rigsmith/rigsmith/pull/342): verify immutable parts, recover bounded append conflicts, preserve chunking. |
-| Ordinary file conflict policy | In review: [#343](https://github.com/rigsmith/rigsmith/pull/343): choose the newer proven Git snapshot; equal/unknown origins remain blocked. |
+| Ordinary file conflict policy | In review: [#343](https://github.com/rigsmith/rigsmith/pull/343): choose the newer proven Git snapshot; equal/unknown origins remain blocked. Both conflict sides are scanned; malformed profile roots are excluded. |
 | Canonical staging merge recovery | Next. Recover unfinished canonical merges before queued publication. |
 | Manual-sync queue coverage | Planned. Acknowledge only the exact generations included in manual sync. |
 | Worker startup/restart, parent death and draining | Planned. |

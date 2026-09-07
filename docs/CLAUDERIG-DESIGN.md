@@ -561,6 +561,9 @@ through immutable parents so unchanged commits and synthetic merge timestamps do
 not refresh a file's origin. A merge that created novel bytes has no proven single
 snapshot origin and remains blocked, as do distinct snapshots with equal times.
 Both parents remain reachable; this policy does not erase the historical copy.
+The service audits both ordinary-file conflict sides before selection so a clean
+winner cannot hide a secret-bearing losing snapshot. Profile roots must have a
+valid native Desktop profile name.
 
 This intentionally differs from synchronous incoming-side tie fallback and never
 rescues failed metadata/transcript/memory unions. The [retained publication contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#retained-ordinary-file-snapshots)

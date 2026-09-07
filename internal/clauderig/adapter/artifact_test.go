@@ -2,6 +2,7 @@ package adapter_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
@@ -116,7 +117,10 @@ func TestRetainedSnapshotPaths(t *testing.T) {
 		{"cli/plugins/cache/state.json", false}, {"cli/projects/p/file-history/snapshot", false},
 		{"cli/skills/tool/node_modules/config.json", false}, {"cli/projects/p/s.jsonl", false},
 		{"cli/projects/p/memory/settings.json", false}, {"cli/projects/p/s.jsonl.chunks/x.part", false},
-		{"cli/history.jsonl", false}, {"custom/settings.json", false}, {"desktop@/profile.json", false},
+		{"cli/history.jsonl", false}, {"custom/settings.json", false}, {"desktop@/profile.json", false}, {"desktop@a b/profile.json", false},
+		{"desktop@.hidden/profile.json", false}, {"desktop@é/profile.json", false},
+		{"desktop@a@b/profile.json", false}, {"desktop@" + strings.Repeat("a", 65) + "/profile.json", false},
+		{"desktop@" + strings.Repeat("a", 64) + "/profile.json", true},
 		{"clauderig-storage.json", false}, {".gitattributes", false}, {"cli/skills/example/.gitattributes", false}, {"cli/skills/example/.GITATTRIBUTES", false},
 	} {
 		if got := adapter.RetainedSnapshot(tc.path); got != tc.want {
