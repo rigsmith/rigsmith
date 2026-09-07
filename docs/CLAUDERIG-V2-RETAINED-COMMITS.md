@@ -119,9 +119,10 @@ Queue operations continue to use the original cancellation context.
   now merges newer committed histories and requires fresh remote confirmation.
   Claude's `Service.PublishArtifact` now checks batch/destination bindings and
   applies native Git attributes and secret auditing to the raw publication tree.
-  [HTTPS/local transport](CLAUDERIG-V2-GIT-TRANSPORT.md) now supplies explicit
-  credentials; all retained Git commands now have cancellation cleanup. Add SSH/authentication
-  discovery and native conflict recovery next. The engine and adapter leave
+  [HTTPS/SSH/local transport](CLAUDERIG-V2-GIT-TRANSPORT.md) now supplies explicit
+  credentials; all retained Git commands now have cancellation cleanup. SSH now
+  requires explicit identity/host-trust files. Add authentication discovery and
+  native conflict recovery next. The engine and adapter leave
   canonical staging untouched.
 - Establish parent-death recovery and ownership for future external merge tools.
   Retained Git cancellation cleanup does not establish abrupt-death recovery.
