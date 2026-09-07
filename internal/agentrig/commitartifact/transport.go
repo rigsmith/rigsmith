@@ -23,11 +23,14 @@ type GitTransportOptions struct {
 }
 
 // GitTransport implements Transport and Claude's bound-destination interface for
-// local repositories only. Methods require a fresh private bare repository owned
-// by the caller, such as the repository created by Publish, with no caller-added
+// local fixtures or existing Git configuration. Methods require a private bare
+// repository owned by the caller, such as Publish creates, with no caller-added
 // configuration. Concurrent use of one repoDir requires external serialization.
 // No command, queue worker or hook is enabled.
-type GitTransport struct{ remote, branch string }
+type GitTransport struct {
+	remote, branch string
+	configured     bool
+}
 
 func NewGitTransport(options GitTransportOptions) (*GitTransport, error) {
 	if !transportBranch(options.Branch) || !filepath.IsAbs(options.Remote) || len(options.Remote) > 4096 || strings.ContainsAny(options.Remote, "\x00\r\n") {
@@ -57,7 +60,7 @@ func (t *GitTransport) Fetch(ctx context.Context, repoDir, ref string) (string, 
 		return "", err
 	}
 	branch := "refs/heads/" + t.branch
-	listing, code, err := t.run(ctx, repoDir, "ls-remote", "--exit-code", "--refs", "--", t.remote, branch)
+	listing, code, err := t.run(ctx, repoDir, "ls-remote", "--exit-code", "--refs", "--", t.gitRemote(), branch)
 	if code == 2 && ctx.Err() == nil {
 		return "", nil
 	}
@@ -70,7 +73,7 @@ func (t *GitTransport) Fetch(ctx context.Context, repoDir, ref string) (string, 
 	}
 	// The branch can advance after advertisement. Return the SHA actually fetched,
 	// which Publish independently verifies and checks for complete ancestry.
-	if _, _, err = t.run(ctx, repoDir, "fetch", "--no-tags", "--no-write-fetch-head", "--no-auto-maintenance", "--recurse-submodules=no", "--", t.remote, branch+":"+ref); err != nil {
+	if _, _, err = t.run(ctx, repoDir, "fetch", "--no-tags", "--no-write-fetch-head", "--no-auto-maintenance", "--recurse-submodules=no", "--refmap=", "--", t.gitRemote(), branch+":"+ref); err != nil {
 		return "", err
 	}
 	actual, _, err := t.run(ctx, repoDir, "rev-parse", "--verify", ref+"^{commit}")
@@ -100,7 +103,7 @@ func (t *GitTransport) Push(ctx context.Context, repoDir, commit string) error {
 	if strings.TrimSpace(actual) != commit {
 		return ErrInvalid
 	}
-	_, _, err = t.run(ctx, repoDir, "push", "--porcelain", "--no-verify", "--recurse-submodules=no", "--", t.remote, commit+":refs/heads/"+t.branch)
+	_, _, err = t.run(ctx, repoDir, "push", "--porcelain", "--no-verify", "--recurse-submodules=no", "--", t.gitRemote(), commit+":refs/heads/"+t.branch)
 	return err
 }
 
@@ -108,6 +111,35 @@ func (t *GitTransport) checkRepo(ctx context.Context, dir string) error {
 	if t == nil || t.remote == "" || !filepath.IsAbs(dir) {
 		return ErrInvalid
 	}
+	if filepath.IsAbs(t.remote) {
+		if err := t.checkLocalOverlap(dir); err != nil {
+			return err
+		}
+	}
+	bare, _, err := t.run(ctx, dir, "rev-parse", "--is-bare-repository")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(bare) != "true" {
+		return ErrInvalid
+	}
+	if t.configured {
+		// The explicit push URL suppresses pushInsteadOf. Reject additional URLs
+		// and ask Git to expand insteadOf before contacting the bound destination.
+		for _, args := range [][]string{{"config", "--get-all", "remote." + configuredRemote + ".url"}, {"config", "--get-all", "remote." + configuredRemote + ".pushurl"}, {"ls-remote", "--get-url", "--", configuredRemote}} {
+			url, _, err := t.run(ctx, dir, args...)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSuffix(url, "\n") != t.remote {
+				return ErrInvalid
+			}
+		}
+	}
+	return nil
+}
+
+func (t *GitTransport) checkLocalOverlap(dir string) error {
 	local, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return ErrInvalid
@@ -118,13 +150,6 @@ func (t *GitTransport) checkRepo(ctx context.Context, dir string) error {
 	}
 	local, remote = strings.ToLower(filepath.Clean(local)), strings.ToLower(filepath.Clean(remote))
 	if local == remote || strings.HasPrefix(local, remote+string(filepath.Separator)) || strings.HasPrefix(remote, local+string(filepath.Separator)) {
-		return ErrInvalid
-	}
-	bare, _, err := t.run(ctx, dir, "rev-parse", "--is-bare-repository")
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(bare) != "true" {
 		return ErrInvalid
 	}
 	return nil
@@ -148,13 +173,20 @@ func transportBranch(branch string) bool {
 }
 
 // run bounds diagnostics, suppresses raw Git errors/argv, and owns every helper
-// through completion. The private Git runner permits only local file transport
-// and disables inherited Git overrides, hooks and automatic maintenance.
+// through completion. Local commands retain private Git isolation; configured
+// network commands use normal Git authentication with publication side effects
+// constrained by configuredCommand.
 func (t *GitTransport) run(ctx context.Context, dir string, args ...string) (string, int, error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	flags := []string{"-c", "fetch.recurseSubmodules=false", "-c", "submodule.recurse=false", "-c", "fetch.writeCommitGraph=false", "-c", "push.followTags=false", "-c", "push.gpgSign=false"}
 	cmd := (gitRepo{dir: dir}).command(append(flags, args...)...)
+	if t.configured && len(args) > 0 {
+		switch args[0] {
+		case "ls-remote", "fetch", "push", "config":
+			cmd = t.configuredCommand(dir, append(flags, args...)...)
+		}
+	}
 	var out bytes.Buffer
 	bound := &boundedOutput{w: &out, left: gitOutputLimit}
 	cmd.Stdout = &cancelOutput{writer: bound, cancel: cancel}

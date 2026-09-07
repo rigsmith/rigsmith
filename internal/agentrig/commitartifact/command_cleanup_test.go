@@ -54,6 +54,9 @@ func TestRetainedCommandCleanup(t *testing.T) {
 		{"head-symbolic-cancel", "head-symbolic-cancel", "head"},
 		{"head-show-cancel", "head-show-cancel", "head"},
 		{"transport-overflow", "overflow", "transport"},
+		{"configured-transport-exit", "return", "configured"},
+		{"configured-transport-cancel", "wait", "configured"},
+		{"configured-transport-overflow", "overflow", "configured"},
 		{"stream-exit", "return", "stream"},
 		{"stream-cancel", "wait", "stream"},
 		{"stream-reject", "reject", "stream"},
@@ -79,15 +82,16 @@ func TestRetainedCommandCleanup(t *testing.T) {
 				if err != nil && output != "" {
 					t.Fatal("returned partial output", output)
 				}
-			} else if tc.runner == "transport" {
+			} else if tc.runner == "transport" || tc.runner == "configured" {
 				transport, setupErr := NewGitTransport(GitTransportOptions{Remote: t.TempDir(), Branch: "main"})
 				if setupErr != nil {
 					t.Fatal(setupErr)
 				}
 				var output string
 				var code int
-				output, code, err = transport.run(ctx, repo.dir, "synthetic")
-				if output != "" || code != -1 {
+				transport.configured = tc.runner == "configured"
+				output, code, err = transport.run(ctx, repo.dir, "ls-remote")
+				if err != nil && (output != "" || code != -1) {
 					t.Fatalf("partial transport result: %q, %d", output, code)
 				}
 			} else if tc.runner == "head" {

@@ -216,6 +216,7 @@ worker. Claude's `Service.PublishArtifact` now validates committed-batch binding
 explicit transport destination/branch, settled local HEAD, raw native attributes
 and secrets. The [local Git adapter](CLAUDERIG-V2-GIT-TRANSPORT.md) and owned
 cancellation cleanup remain after the custom network transports are removed.
-Network publication will reuse existing Git/`gh` authentication. Execution wiring,
+`NewConfiguredGitTransport` now reuses existing Git/`gh` authentication for
+network publication. Execution wiring,
 native conflict recovery, parent-death recovery and lifecycle/capacity remedies
 remain gates; broad credential discovery is deferred.

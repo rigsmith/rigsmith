@@ -45,6 +45,10 @@ jobs:
           git config --global user.name rigsmith-ci
           git config --global init.defaultBranch main
 
+      # Retained-publication fixtures exercise the actual configured gh helper.
+      - name: GitHub CLI for synthetic authentication fixtures
+        run: gh --version
+
       - name: Test
         env:
           CLAUDERIG_E2E: '1' # synthetic fixtures only; real-data scan has its own gate

@@ -8,8 +8,8 @@ local-Git transport tests. Claude now supplies an internal `Service.PublishArtif
 policy adapter with an explicitly injected bound transport. The custom HTTPS/SSH implementations are removed in
 [#326](https://github.com/rigsmith/rigsmith/pull/326); the
 [local Git adapter and owned process runner](CLAUDERIG-V2-GIT-TRANSPORT.md) remain.
-Network integration will reuse existing Git authentication with `gh` as the
-primary GitHub path. Queue wiring and lifecycle/recovery gates remain pending.
+`NewConfiguredGitTransport` now delegates remote operations to existing Git
+configuration, including `gh` credentials for the primary GitHub path. Queue wiring and lifecycle/recovery gates remain pending.
 
 ## Inputs and ownership
 
@@ -34,8 +34,8 @@ return its exact SHA. The engine clears that ref before each fetch, checks the
 returned ref/SHA and object integrity, and refuses shallow history. Transport.Push
 must send the exact candidate to the bound branch using a normal fast-forward-only
 push. There is no force push, remote-config lookup or history maintenance here.
-Transport implementations are trusted code, not a sandbox. `GitTransport` implements this contract for absolute local paths used by the
-synthetic fixtures. Its [contract](CLAUDERIG-V2-GIT-TRANSPORT.md) records the
+Transport implementations are trusted code, not a sandbox. `GitTransport` implements this contract for local fixtures and, through
+`NewConfiguredGitTransport`, existing Git configuration for network publication. Its [contract](CLAUDERIG-V2-GIT-TRANSPORT.md) records the
 existing Git/`gh` integration direction and command ownership limitations.
 
 ## Merging and byte checks
@@ -141,8 +141,9 @@ event timestamp and four push/confirmation attempts. The committed store's byte
 limit also bounds materialized publication trees. A returned `Publication` is
 only evidence for persisting the pushed phase; this adapter does not update queue
 state. Config-history, retention, local-only completion, native merge recovery and
-network integration are not implemented in the service. Composition will reuse
-existing Git/`gh` authentication; broad credential discovery is deferred. Synchronous behavior is unchanged.
+worker wiring are not implemented in the service. Composition can supply
+`NewConfiguredGitTransport` to reuse existing Git/`gh` authentication; broad
+credential discovery is deferred. Synchronous behavior is unchanged.
 
 ## Confirmation and retries
 

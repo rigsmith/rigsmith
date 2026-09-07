@@ -24,7 +24,7 @@ var (
 // fast-forward-only push. Neither operation may consult canonical remote config,
 // force push, modify other private refs/config, or return before children finish.
 // Production authentication and process ownership belong to the transport.
-// GitTransport supplies local repository transport for synthetic fixtures. No
+// GitTransport supplies local fixtures and existing Git/gh integration. No
 // background worker is enabled by this package.
 type Transport interface {
 	Fetch(ctx context.Context, repoDir, ref string) (string, error)

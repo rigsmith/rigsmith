@@ -120,8 +120,8 @@ Queue operations continue to use the original cancellation context.
   Claude's `Service.PublishArtifact` now checks batch/destination bindings and
   applies native Git attributes and secret auditing to the raw publication tree.
   The [local Git adapter](CLAUDERIG-V2-GIT-TRANSPORT.md) and cancellation cleanup
-  remain after removal of the custom network transports. Reuse existing Git/`gh`
-  authentication for network integration, then connect worker execution and native
+  remain after removal of the custom network transports. `NewConfiguredGitTransport` now reuses existing Git/`gh`
+  authentication for publication. Next connect worker execution and native
   conflict recovery. Broad credential discovery is deferred. The engine and
   adapter leave canonical staging untouched.
 - Establish parent-death recovery and ownership for future external merge tools.

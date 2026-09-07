@@ -7,28 +7,63 @@ transports introduced in #323/#325 and drops the proposed generic credential
 helper. Queue reliability does not require replacing users' existing Git
 credentials or adding rig-specific key, host-trust or keychain configuration.
 
-## Network integration direction
+## Existing Git/gh integration
 
-Use the existing Git authentication setup, with `gh` as the primary GitHub path.
-Claude's existing `gh` repository creation/private-repository verification and
-Git push behavior remain the reference. Retained-publisher integration must
-exercise that path while preserving exact destination/commit selection, retry
-confirmation and owned subprocess cleanup. No replacement credential provider
-or automatic SSH-agent/keychain discovery is a prerequisite for the queue.
-Existing GitLab and SSH users retain the synchronous workflow during development.
+`NewConfiguredGitTransport` connects the retained publisher to system Git with
+its existing global/system configuration. Git invokes the credential helpers the
+user already configured, including those installed by `gh auth setup-git`.
+Git/gh select the login and access their existing credential stores. Rig does not
+read helper responses, construct authorization headers, copy tokens, configure
+TLS trust, or introduce credential-provider options. Credentials are resolved
+by Git on each operation, so a changed login/token is used on the next attempt.
 
-This cleanup does not wire a network transport into the retained publisher or
-activate queued commands/hooks. The next implementation should connect existing
-Git/`gh` authentication to the publication boundary with focused integration
-fixtures, then progress through worker recovery and rollout gates in the
+The initial integration accepts HTTPS destinations and absolute local paths.
+The local-only constructor remains available for isolated fixtures. This is an
+internal service boundary, with no new CLI flags, config keys or installed hooks.
+The caller must have verified repository privacy using the existing checks.
+Claude's `Service.PublishArtifact` accepts the configured adapter through its
+existing destination interface and retains native auditing and staging ownership.
+
+Only remote commands use normal Git configuration. Local retained-object reads,
+raw-tree checks and merges keep their private Git isolation. The remote commands
+run in the owned private bare repository; canonical staging configuration is not
+modified or imported. Global/system credential configuration, HOME, GH_CONFIG_DIR,
+GH token environment variables and Git's normal trust settings remain available.
+Repository/object-location environment overrides and injected Git config-count/
+parameter overrides are discarded to keep the operation in that workspace.
+Repository-local credential overrides and configuration conditional on the
+canonical staging path are not covered by this first integration.
+
+Git receives an ephemeral command-line remote named `rig-publication`, with
+explicit fetch and push URLs. The push URL prevents `pushInsteadOf` redirection.
+Before any transfer, Git reports both configured URL lists and expands
+`insteadOf`; extra URLs or a result different from the bound destination are
+refused. No remote is written into Git config. The configuration must remain
+stable through the operation. This follows Git's
+[URL expansion](https://git-scm.com/docs/git-ls-remote) and
+[explicit push URL semantics](https://git-scm.com/docs/git-config).
+
+Publication disables local hooks, mirror/tag pushes, recursive submodules,
+HTTP redirects and automatic maintenance. Explicit refspecs and an empty fetch
+refmap prevent configured tracking refs from adding side effects. Git retains
+its ordinary fast-forward check, and the publisher still performs fresh remote
+confirmation. The existing owned process runner bounds output, hides raw Git
+errors and joins helper cleanup on exit/cancellation. Terminal prompting is
+disabled; native credential helper/keychain behavior otherwise remains Git's.
+This does not promise that arbitrary helpers cannot display native UI.
+
+The tested primary path is an existing `gh` login configured with `gh auth
+setup-git`. Broad credential discovery and custom SSH/keychain configuration
+remain deferred. Existing SSH and GitLab synchronous behavior is unchanged.
+Worker execution, recovery and lifecycle/capacity remain the next gates in the
 [roadmap](CLAUDERIG-SHARED-LAYERS-ROADMAP.md).
 
 ## Local publication adapter
 
 `commitartifact.NewGitTransport` now accepts only an absolute local repository
 path and branch. Its options contain no credentials or network configuration.
-HTTP, HTTPS, SSH, file URLs and remote aliases are refused. This adapter keeps
-synthetic publication and Claude service fixtures exercising real Git. The
+HTTP, HTTPS, SSH, file URLs and remote aliases are refused. This constructor keeps
+synthetic publication and Claude service fixtures exercising isolated local Git. The
 private Git command environment permits only file transport and disables inherited
 Git overrides, hooks and automatic maintenance.
 
@@ -112,12 +147,22 @@ helpers are outside this trusted internal contract.
 Local bare-repository fixtures cover SHA-1 and SHA-256 publication, newer local
 and remote histories, confirmation, replay, fast-forward rejection, absent versus
 missing destinations, ref/configuration preservation and network-URL rejection.
-Claude service tests still exercise the concrete local adapter. The standalone
-TLS/SSH servers, synthetic SSH keys, generic helper fixtures and their x/crypto
-dependency are removed with the network implementations.
+Claude service tests still exercise the concrete local adapter. The standalone SSH implementation, synthetic SSH keys, generic credential
+helper and their x/crypto dependency remain removed.
 
 Process and retained-command tests continue to exercise normal exit, cancellation,
 output overflow, rejected writers/streams, bidirectional transfers, helper trees
 and semantic exit handling on Linux, macOS and Windows. Post-return markers detect
 helpers that keep executing after ownership should have ended. The fixed six-case
 Claude compatibility baseline and synthetic end-to-end suite remain required.
+
+Configured-publication fixtures use real Git and `gh auth setup-git` with a
+synthetic stored login and a local TLS Git server. Standard Git config supplies
+the fixture CA; the production adapter has no CA or credential options. Tests
+cover both hash formats, newer local/remote histories, confirmation/replay,
+environment-token precedence, changed stored credentials, authentication failure,
+URL rewrite refusal and unchanged login/Git configuration. The fixture contains
+a nonempty synthetic token, so gh never falls back to a real OS keychain. No
+GitHub service or real user data is accessed. `gh` is required for these tests.
+Configured-command process tests also cover normal exit, cancellation and overflow
+with real descendants. Native Linux/macOS/Windows CI remains the platform gate.
