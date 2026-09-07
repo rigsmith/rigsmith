@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
@@ -12,7 +13,7 @@ import (
 )
 
 type swappingRestoreTarget struct {
-	*os.Root
+	restoreLinkFS
 	swap       func() error
 	cleanupErr error
 }
@@ -48,7 +49,7 @@ func TestRestoreLinkRechecksTargetAfterCreation(t *testing.T) {
 		if _, err := root.Stat("alias"); err != nil {
 			t.Fatal(err)
 		}
-		fs := swappingRestoreTarget{Root: root, swap: func() error {
+		fs := swappingRestoreTarget{restoreLinkFS: restoreLinkFS{root}, swap: func() error {
 			if err := root.Remove("alias"); err != nil {
 				return err
 			}
@@ -110,7 +111,7 @@ func TestRestoreLinksRejectsEscapingEndpoints(t *testing.T) {
 			write(t, root, "projects/safe/data/keep.txt", "inside")
 			write(t, outside, "keep.txt", "outside")
 			if got, err := restoreLinks(root, map[string]string{tc.link: tc.dest}, tc.slugs); err != nil || got != 0 {
-				t.Errorf("restored escaping link: %d", got)
+				t.Errorf("restored escaping link: count=%d err=%v", got, err)
 			}
 			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 1 {
 				t.Fatalf("outside directory changed: %v %v", entries, err)
@@ -132,7 +133,7 @@ func TestRestoreLinksRejectsExternalTargetSymlinks(t *testing.T) {
 				t.Fatal(err)
 			}
 			if got, err := restoreLinks(root, map[string]string{"new/memory": "alias" + suffix}, nil); err != nil || got != 0 {
-				t.Error("restored link to external directory", got)
+				t.Error("restored link to external directory", got, err)
 			}
 			if _, err := os.Lstat(filepath.Join(root, "new")); !os.IsNotExist(err) {
 				t.Error("created a parent for an external target", err)
@@ -153,7 +154,7 @@ func TestRestoreLinksAcceptsChosenRootAndInternalTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, err := restoreLinks(chosen, map[string]string{"projects/p/memory": "alias"}, nil); err != nil || got != 1 {
-		t.Fatal("valid internal link rejected", got)
+		t.Fatal("valid internal link rejected", got, err)
 	}
 	if got := read(t, filepath.Join(chosen, "projects/p/memory/keep.txt")); got != "inside" {
 		t.Fatal("restored link does not reach its target", got)
@@ -196,5 +197,121 @@ func TestRestoreSkipsUnsafeSavedLinksAndRestoresSafeOnes(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(root, "projects/unsafe")); !os.IsNotExist(err) {
 		t.Fatal("created an unsafe link parent", err)
+	}
+}
+
+// A writer can claim the public name before installation, or replace our link
+// after it. Neither case permits cleanup to remove the writer's entry.
+type concurrentRestoreWriter struct {
+	restoreLinkFS
+	before, after func()
+}
+
+func (r concurrentRestoreWriter) Install(temp, name string) error {
+	if r.before != nil {
+		r.before()
+	}
+	err := r.restoreLinkFS.Install(temp, name)
+	if r.after != nil {
+		r.after()
+	}
+	return err
+}
+
+func TestRestoreLinkPreservesConcurrentDestination(t *testing.T) {
+	requireRestoreSymlink(t)
+	for _, phase := range []string{"before install", "after install"} {
+		for _, kind := range []string{"file", "directory", "symlink"} {
+			t.Run(phase+"/"+kind, func(t *testing.T) {
+				dir := t.TempDir()
+				write(t, dir, "data/keep.txt", "inside")
+				root, err := os.OpenRoot(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer root.Close()
+				writer := concurrentRestoreWriter{restoreLinkFS: restoreLinkFS{root}}
+				var owned os.FileInfo
+				replace := func() {
+					if phase == "after install" {
+						if err := root.Remove("memory"); err != nil {
+							t.Fatal(err)
+						}
+					}
+					switch kind {
+					case "file":
+						err = root.WriteFile("memory", []byte("writer"), 0o600)
+					case "directory":
+						err = root.Mkdir("memory", 0o700)
+					case "symlink":
+						err = root.Symlink("data", "memory")
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					owned, err = root.Lstat("memory")
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if phase == "before install" {
+					writer.before = replace
+				} else {
+					writer.after = replace
+				}
+				created, err := createRestoreLink(writer, "data", "memory")
+				if err != nil || created != (phase == "after install") {
+					t.Fatalf("create result: %v %v", created, err)
+				}
+				current, err := root.Lstat("memory")
+				if err != nil || !os.SameFile(owned, current) {
+					t.Fatalf("concurrent destination replaced or removed: %v", err)
+				}
+				entries, err := os.ReadDir(dir)
+				if err != nil || len(entries) != 2 {
+					t.Fatalf("temporary link left behind: %v %v", entries, err)
+				}
+			})
+		}
+	}
+}
+
+func TestRestoreLinksReportsRootOpenFailure(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "file", "not a directory")
+	for _, target := range []string{filepath.Join(dir, "missing"), filepath.Join(dir, "file")} {
+		if n, err := restoreLinks(target, map[string]string{"memory": "data"}, nil); n != 0 || err == nil {
+			t.Fatalf("root failure hidden: count=%d err=%v", n, err)
+		}
+		if n, err := restoreLinks(target, nil, nil); n != 0 || err != nil {
+			t.Fatalf("empty link map should not need a root: count=%d err=%v", n, err)
+		}
+	}
+}
+
+func TestRestoreLinkFailureRetainsPartialReport(t *testing.T) {
+	staging, dir := t.TempDir(), t.TempDir()
+	first, target := filepath.Join(dir, "first"), filepath.Join(dir, "file")
+	write(t, staging, "other/notes.md", "restored")
+	if err := os.MkdirAll(filepath.Join(staging, "cli"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "file", "not a directory")
+	cfg := targetRootConfig(target)
+	cfg.Roots = append([]config.Root{{ID: "other", Enabled: true, Location: pathmap.Cascade{Portable: first}}}, cfg.Roots...)
+	rep, err := Restore(RestoreOptions{StagingDir: staging, Config: cfg, Manifest: &manifest.Manifest{Links: map[string]string{"memory": "data"}}, TargetOverride: map[string]string{"other": first, "cli": target}})
+	if err == nil || rep == nil || len(rep.Roots) != 2 || rep.Roots[0].Files != 1 || rep.Roots[1].ID != "cli" {
+		t.Fatalf("partial report lost: %+v %v", rep, err)
+	}
+	if got := read(t, filepath.Join(first, "notes.md")); got != "restored" {
+		t.Fatal(got)
+	}
+}
+
+func TestRestoreLinkPathUsesDestinationPlatform(t *testing.T) {
+	// A Unix backup may legitimately contain CON. Restoring it on Windows
+	// skips that unrepresentable name; the saved manifest remains unchanged.
+	if got := validRestoreLinkPath("projects/CON/memory"); got != (runtime.GOOS != "windows") {
+		t.Fatalf("reserved name accepted=%v on %s", got, runtime.GOOS)
 	}
 }

@@ -297,9 +297,19 @@ Memory-link restore opens the selected folder with `os.OpenRoot`. Target checks,
 parent creation and link creation use that rooted handle; existing occupied paths
 and symlinked link-parent directories remain untouched. Links have relative
 targets, including on Windows, so moving the restored folder preserves its layout.
-After creation, restore checks the completed link through the rooted handle and
-removes it if it no longer resolves to an internal directory. A cleanup failure
-stops restore with an error rather than counting an unverified link as restored.
+Restore creates an unpredictable temporary sibling and checks that it resolves
+through the rooted handle to an internal directory before installing it. The
+installation never replaces an occupied destination: Unix uses a rooted hard link
+of the symlink itself; Windows uses a handle-relative reparse-point rename with
+replacement disabled. Cleanup only removes the temporary name, never the public
+destination that another writer might have replaced. Root-open or temporary-cleanup
+failures stop restore with an error and preserve the partial report for journaling.
+Unsupported link creation remains a best-effort skip.
+
+Restore additionally rejects names that its destination platform cannot represent
+(such as Windows reserved device names). Those names can be valid in a Unix backup:
+restore leaves saved metadata intact, and retained publication uses the portable
+format rules rather than discarding another platform's links.
 
 These checks constrain restore's operations and its observations. A symbolic link
 still follows mutable filesystem names: changes after the final check can redirect
