@@ -52,8 +52,10 @@ See the [detailed roadmap](docs/CLAUDERIG-SHARED-LAYERS-ROADMAP.md) for mileston
 PR links, compatibility gates, and queue rollout requirements. Update its status
 and this summary with each implementation PR and merge.
 
-Implemented for v1/v2, pending review: restore-time link validation for older and
-manually edited backups, with directory-confined creation and relative targets.
+In review: [#339](https://github.com/rigsmith/rigsmith/pull/339) for v1 and
+[#340](https://github.com/rigsmith/rigsmith/pull/340) for v2 validate restored link
+paths in older/manually edited backups, with directory-confined creation and
+relative targets.
 
 ## Ideas
 

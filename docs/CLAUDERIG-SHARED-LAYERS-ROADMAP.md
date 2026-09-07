@@ -61,7 +61,8 @@ credential providers and SSH-agent/keychain discovery are deferred.
 | 7. Opt-in queued Claude hooks | Planned | Validate worker lifecycle, startup, draining/rollback, and convergence with synchronous sync. |
 | Codex adapter and separate `codexrig` executable | Planned | Consume the proven shared layers without moving Claude account/Desktop internals into them. |
 
-Restore boundary validation is implemented for v1 and v2, pending review: reject
+Restore boundary validation is in review for [v1 (#339)](https://github.com/rigsmith/rigsmith/pull/339)
+and [v2 (#340)](https://github.com/rigsmith/rigsmith/pull/340): reject
 unsafe manifest link endpoints before and after slug rewriting, and confine target
 checks and link creation to the selected restore folder. Tests include older saved
 metadata, traversal, external target symlinks and valid shared-memory restores.
