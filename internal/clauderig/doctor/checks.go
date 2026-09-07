@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -362,6 +363,41 @@ func checkGuide(env Env) Result {
 			_, err := claudemd.InstallAll(env.ClaudeMd)
 			return err
 		}}
+}
+
+// checkHiddenWorktrees reports worktrees under .claude/worktrees — the checkout
+// Claude Code's own isolation makes, which the guard now refuses.
+//
+// Worth a check of its own because they are invisible where anyone would look:
+// `rig worktree list` does not show them, `rig prune` does not reap them, and
+// they sit inside a directory nobody browses. One repo had 28 worktrees
+// registered across three containers before a review found them, one created
+// after the guard was already installed.
+//
+// Reported, not fixed. Removing a worktree can discard uncommitted work, and a
+// doctor that quietly deletes a checkout is worse than one that names it — the
+// hint says what to run.
+func checkHiddenWorktrees(env Env) (Result, bool) {
+	dir := filepath.Join(env.RepoRoot, ".claude", "worktrees")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return Result{}, false // absent is the normal case, and not worth a row
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	if len(names) == 0 {
+		return Result{}, false
+	}
+	detail := strconv.Itoa(len(names)) + " under .claude/worktrees: " + strings.Join(names, ", ")
+	return Result{
+		ID: "hidden-worktrees", Name: "hidden worktrees", Status: Warn, Detail: detail,
+		Hint: "`rig worktree list` cannot see these. Check each for unmerged work, then " +
+			"`git worktree remove .claude/worktrees/<name>`. Make new ones with `rig worktree new <branch>`.",
+	}, true
 }
 
 // checkLocalGitignore only applies when a local settings file actually exists;

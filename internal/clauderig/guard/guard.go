@@ -52,6 +52,10 @@ type Request struct {
 	FilePath string // absolute target, for Edit/Write/NotebookEdit
 	Command  string // shell command, for Bash
 	Cwd      string // session working directory from the hook payload
+	// Isolation is the Agent tool's isolation mode. "worktree" makes it create a
+	// .claude/worktrees/<name> checkout, which is the thing the worktree rules
+	// exist to prevent — reached through an input field rather than a tool name.
+	Isolation string
 }
 
 // Env is the git/environment context the caller resolves for the Request.
@@ -79,6 +83,12 @@ func Evaluate(r Request, e Env) Result {
 	// Worktree tools relocate the session regardless of repo state — always block.
 	if Relocates(r.Tool) {
 		return Result{Deny, worktreeReason}
+	}
+	// An agent asked to isolate itself makes the same checkout by another route.
+	// Only when it asks: an agent without isolation is an ordinary subagent and
+	// has nothing to do with worktrees.
+	if TakesIsolation(r.Tool) && r.Isolation == "worktree" {
+		return Result{Deny, agentIsolationReason}
 	}
 	if !e.InRepo {
 		return Result{Defer, ""}
@@ -110,6 +120,12 @@ func evalBash(r Request, e Env) Result {
 	// A session-level cd/pushd out of the repo silently moves the conversation.
 	if target, outside := escapingCd(r.Command, r.Cwd, e.Root, e.Home); outside {
 		return Result{Deny, cdReason(target)}
+	}
+	// The same worktree, made by hand. Denying the Agent tool's isolation flag
+	// closes one route to .claude/worktrees; this closes the other, so the rule
+	// is about the place rather than about which tool asked.
+	if addsHiddenWorktree(r.Command) {
+		return Result{Deny, hiddenWorktreeReason}
 	}
 	if !e.OnBase || e.Override {
 		return Result{Defer, ""}
@@ -283,8 +299,9 @@ type input struct {
 	ToolName  string `json:"tool_name"`
 	Cwd       string `json:"cwd"`
 	ToolInput struct {
-		FilePath string `json:"file_path"`
-		Command  string `json:"command"`
+		FilePath  string `json:"file_path"`
+		Command   string `json:"command"`
+		Isolation string `json:"isolation"`
 	} `json:"tool_input"`
 }
 
@@ -295,10 +312,11 @@ func Parse(stdin []byte) (Request, error) {
 		return Request{}, err
 	}
 	return Request{
-		Tool:     in.ToolName,
-		FilePath: in.ToolInput.FilePath,
-		Command:  in.ToolInput.Command,
-		Cwd:      in.Cwd,
+		Tool:      in.ToolName,
+		FilePath:  in.ToolInput.FilePath,
+		Command:   in.ToolInput.Command,
+		Isolation: in.ToolInput.Isolation,
+		Cwd:       in.Cwd,
 	}, nil
 }
 
@@ -320,6 +338,52 @@ func Output(res Result) []byte {
 
 const worktreeReason = "Worktree tools move this session's working directory, and Claude Code keys chat history to the folder path — moving it mid-session scrambles your VS Code chat. " +
 	"Create an isolated worktree without moving this window: run `rig worktree new <branch>`. It makes a sibling checkout and opens it in a separate VS Code window for review; keep editing here by absolute path and run git via `git -C <worktree>`."
+
+// hiddenWorktreeDir is where Claude Code's own isolation puts its checkouts.
+// A worktree there is invisible to `rig worktree list` and easy to leave behind:
+// one repo had 28 registered worktrees across three containers before anyone
+// looked.
+const hiddenWorktreeDir = ".claude/worktrees"
+
+// addsHiddenWorktree reports a `git worktree add` whose target is under
+// .claude/worktrees.
+//
+// Deliberately narrow. It matches creation and nothing else, so `git worktree
+// list`, and above all `git worktree remove .claude/worktrees/x`, still work —
+// blocking the cleanup for one of these would be a poor way to discourage them.
+func addsHiddenWorktree(command string) bool {
+	for _, seg := range splitSegments(command) {
+		f := strings.Fields(seg)
+		// git … worktree add — allowing for `git -C dir worktree add`.
+		gi, wi := -1, -1
+		for i, tok := range f {
+			if tok == "git" && gi < 0 {
+				gi = i
+			}
+			if gi >= 0 && tok == "worktree" {
+				wi = i
+				break
+			}
+		}
+		if gi < 0 || wi < 0 || wi+1 >= len(f) || f[wi+1] != "add" {
+			continue
+		}
+		for _, tok := range f[wi+2:] {
+			if strings.Contains(filepath.ToSlash(tok), hiddenWorktreeDir) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+const hiddenWorktreeReason = "That creates a worktree under .claude/worktrees, which `rig worktree list` cannot see and nothing later cleans up — one repo collected 28 of them before anyone noticed. " +
+	"Use `rig worktree new <branch>`: a sibling checkout, visible to `rig worktree list`, reaped by `rig prune`, and opened in its own VS Code window for review. " +
+	"Removing one that is already there is fine and not blocked."
+
+const agentIsolationReason = "An agent with isolation: \"worktree\" creates a .claude/worktrees/<name> checkout — the same worktree the guard exists to keep out of this repo, made through the Agent tool rather than by hand. " +
+	"Run the agent without isolation, or make the worktree deliberately: `rig worktree new <branch>` puts a sibling checkout in its own VS Code window, where it can be reviewed and turned into a PR. " +
+	"A worktree under .claude/ is invisible to both."
 
 func baseReason(rel string) string {
 	return "You're on a base branch (main/master) and `" + rel + "` is code, not docs/config. " +
