@@ -614,3 +614,147 @@ func TestStackProposeDryRun(t *testing.T) {
 		t.Fatalf("dry run left the worktree dirty:\n%s", dirty)
 	}
 }
+
+// stackspaceWithTwoFixes builds a stackspace whose prefix carries two
+// independent commits on top of upstream — the shape that makes proposing the
+// second one alone necessary.
+func stackspaceWithTwoFixes(t *testing.T, work string, srv *gitServer, trackBranch string) string {
+	t.Helper()
+	ws := filepath.Join(work, "stackspace")
+	if err := os.MkdirAll(filepath.Join(ws, "lib", "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "init", "-q", "-b", "main")
+	mustGitStack(t, ws, "config", "user.email", "t@t")
+	mustGitStack(t, ws, "config", "user.name", "t")
+
+	tip := strings.TrimSpace(mustGitStack(t, srv.path("acme/lib"), "rev-parse", "main"))
+	track := ""
+	if trackBranch != "" {
+		track = fmt.Sprintf(`, "trackBranch": %q`, trackBranch)
+	}
+	writeStackManifest(t, ws, fmt.Sprintf(`{
+  "branchPrefix": "stack/",
+  "repos": { "lib": { "upstream": %q, "fork": %q, "upstreamBranch": "main"%s } },
+  "lastSync": { "lib": %q }
+}`, srv.spec("acme/lib"), srv.spec("you/lib"), track, tip))
+
+	// The prefix starts as upstream's tree, so the two commits below are the
+	// whole of what this stackspace carries.
+	if err := os.WriteFile(filepath.Join(ws, "lib", "src", "lib.txt"), []byte("lib v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "stack: import lib")
+
+	for _, c := range []struct{ file, msg string }{
+		{"a.txt", "lib: fix A, still in review upstream"},
+		{"b.txt", "lib: fix B, the one to propose"},
+	} {
+		if err := os.WriteFile(filepath.Join(ws, "lib", "src", c.file), []byte(c.file+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, ws, "add", "-A")
+		mustGitStack(t, ws, "commit", "-qm", c.msg)
+	}
+	return ws
+}
+
+// forkTree is the paths a branch of the bare fork holds.
+func forkTree(t *testing.T, fork, branch string) string {
+	t.Helper()
+	return mustGitStack(t, fork, "ls-tree", "-r", "--name-only", branch)
+}
+
+// TestStackProposeSelectedCommits is the point of --commits: a prefix carrying
+// two fixes can propose the second WITHOUT the first, which by default it
+// cannot — propose sends the prefix's whole tree.
+func TestStackProposeSelectedCommits(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	ws := stackspaceWithTwoFixes(t, work, srv, "stack/integration")
+
+	chdir(t, ws)
+	out, err := runVerbOut(context.Background(), newStackSendCmd(), "lib", "fix-b", "--commits", "HEAD~1..HEAD")
+	if err != nil {
+		t.Fatalf("propose --commits: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "proposing 1 of this stackspace's commits") {
+		t.Fatalf("did not say how much it was proposing:\n%s", out)
+	}
+
+	// The pull request holds fix B and NOT fix A. Without --commits both would
+	// be here, and the reviewer would be reading a change nobody asked for.
+	proposed := forkTree(t, fork, "stack/fix-b")
+	if !strings.Contains(proposed, "src/b.txt") {
+		t.Fatalf("the proposed branch is missing the commit it was asked for:\n%s", proposed)
+	}
+	if strings.Contains(proposed, "src/a.txt") {
+		t.Fatalf("the proposed branch carries the unselected fix too:\n%s", proposed)
+	}
+	// Paths are upstream's, not the stackspace's.
+	if strings.Contains(proposed, "lib/src/") {
+		t.Fatalf("the proposed branch kept the stackspace prefix:\n%s", proposed)
+	}
+
+	// And the whole divergence is on trackBranch, or a rebuild would build
+	// without fix A while this machine still had it.
+	integration := forkTree(t, fork, "stack/integration")
+	for _, want := range []string{"src/a.txt", "src/b.txt"} {
+		if !strings.Contains(integration, want) {
+			t.Fatalf("trackBranch does not carry %s — a rebuild would be missing it:\n%s", want, integration)
+		}
+	}
+	if !strings.Contains(out, "now carries everything") {
+		t.Fatalf("did not report updating the rebuild branch:\n%s", out)
+	}
+	if !refExists(t, ws, "refs/rigsmith/integration/lib") {
+		t.Fatal("the integration push was not recorded, so seed will call the unproposed work unsent")
+	}
+}
+
+// TestStackProposeSelectedNeedsTrackBranch: without somewhere to keep the
+// commits it leaves out, a selection makes every rebuild silently short. That
+// is invisible from here — this worktree still has everything — so it refuses.
+func TestStackProposeSelectedNeedsTrackBranch(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	ws := stackspaceWithTwoFixes(t, work, srv, "")
+
+	chdir(t, ws)
+	out, err := runVerbOut(context.Background(), newStackSendCmd(), "lib", "fix-b", "--commits", "HEAD~1..HEAD")
+	if err == nil {
+		t.Fatalf("proposed a selection with nowhere to keep the rest:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "trackBranch") {
+		t.Fatalf("the error does not name what to set: %v", err)
+	}
+	if refExists(t, fork, "refs/heads/stack/fix-b") {
+		t.Fatal("it pushed before refusing")
+	}
+}
+
+// TestStackProposeWholePrefixByDefault pins the default that --commits exists to
+// escape: no selection means the branch carries everything the prefix has.
+func TestStackProposeWholePrefixByDefault(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	ws := stackspaceWithTwoFixes(t, work, srv, "")
+
+	chdir(t, ws)
+	if out, err := runVerbOut(context.Background(), newStackSendCmd(), "lib", "everything"); err != nil {
+		t.Fatalf("propose: %v\n%s", err, out)
+	}
+	proposed := forkTree(t, fork, "stack/everything")
+	for _, want := range []string{"src/a.txt", "src/b.txt"} {
+		if !strings.Contains(proposed, want) {
+			t.Fatalf("an unselected propose left out %s:\n%s", want, proposed)
+		}
+	}
+}

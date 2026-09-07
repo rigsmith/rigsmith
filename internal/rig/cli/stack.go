@@ -289,6 +289,14 @@ func newStackStatusCmd() *cobra.Command {
 				case !u.Known && m.cursor(name) != "":
 					state += "  ·  cannot tell whether it has unsent changes (no import commit in this history)"
 				}
+				// `propose` sends the prefix's WHOLE divergence, not the commit
+				// you have in mind, so a second pull request for this repo would
+				// carry the first one's changes too. Nothing else says so, and
+				// the place it is discovered otherwise is a maintainer asking why
+				// the diff touches something unrelated.
+				if n := stackDivergingCommits(ctx, repo, m, name); n > 1 {
+					state += fmt.Sprintf("  ·  %d commits diverge from upstream; `propose` sends all of them (--commits to select)", n)
+				}
 				fmt.Fprintf(out, "%-24s %-10s %s\n", name, short(m.cursor(name)), state)
 			}
 			return nil
@@ -441,11 +449,35 @@ func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty
 	// this history records it: propose keeps the commit it pushed under a
 	// ref, and a prefix holding exactly that tree has nothing left to send.
 	if u.Commits {
-		if sent, err := repo.RevParse(ctx, "refs/rigsmith/propose/"+name+"^{tree}"); err == nil && sent == here {
-			u.Commits, u.Proposed = false, true
+		for _, ref := range []string{"refs/rigsmith/propose/", "refs/rigsmith/integration/"} {
+			// The integration ref matters for a prefix proposed with --commits:
+			// the selected branch holds part of the divergence, so the propose
+			// ref legitimately does not match, while trackBranch holds all of it
+			// and the work has in fact left.
+			if sent, err := repo.RevParse(ctx, ref+name+"^{tree}"); err == nil && sent == here {
+				u.Commits, u.Proposed = false, true
+				break
+			}
 		}
 	}
 	return u
+}
+
+// stackDivergingCommits counts this stackspace's own commits under a prefix
+// since it was imported — which is exactly what `propose` would put on one
+// branch. Zero when it cannot be answered (no cursor, or a history rewritten
+// past it): status has plenty else to say, and a wrong count here would be read
+// as a fact about someone's pull request.
+func stackDivergingCommits(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) int {
+	cursor := m.cursor(name)
+	if cursor == "" {
+		return 0
+	}
+	commits, err := repo.PrefixCommits(ctx, cursor+"..HEAD", name)
+	if err != nil {
+		return 0
+	}
+	return len(commits)
 }
 
 // stackFileDirty reports whether one path has changes git has not recorded —
@@ -800,6 +832,7 @@ func stackPrefixPresent(ctx context.Context, repo *gitrepo.Repo, name string) bo
 
 func newStackSendCmd() *cobra.Command {
 	var message string
+	var commitsSpec string
 	cmd := &cobra.Command{
 		Use:     "propose [repo] [new-branch]",
 		Aliases: []string{"send"},
@@ -817,6 +850,17 @@ func newStackSendCmd() *cobra.Command {
 			"among your own work on the same fork: `propose lib read-timeout` creates\n" +
 			"stack/read-timeout. Change it with the manifest's branchPrefix, or set\n" +
 			"that to \"\" for bare names.\n\n" +
+			"By default the branch carries the WHOLE of what this stackspace has for\n" +
+			"<repo> — every fix it is holding, not just your latest. That is right\n" +
+			"while one thing is in flight, and wrong the moment two are: a second\n" +
+			"pull request would show the first one's changes too. --commits <range>\n" +
+			"selects which of this stackspace's commits to send, so each fix can be\n" +
+			"its own pull request:\n\n" +
+			"    rig stack propose lib read-timeout --commits HEAD~1..HEAD\n\n" +
+			"A selected branch is deliberately not the whole divergence, so it cannot\n" +
+			"also be what a rebuild elsewhere reconstitutes from. That is trackBranch,\n" +
+			"which --commits requires and keeps current with everything the prefix\n" +
+			"carries.\n\n" +
 			"With --dry-run, says what it would push and where, and stops there:\n" +
 			"nothing reaches the fork, and nothing local records a proposal.",
 		Args:              cobra.MaximumNArgs(2),
@@ -939,6 +983,33 @@ func newStackSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Everything the prefix carries, kept aside before any selection
+			// narrows what is proposed: it is what trackBranch is updated with
+			// below, so a rebuild still gets the fixes this pull request leaves out.
+			fullTree := tree
+			if commitsSpec != "" {
+				// Without somewhere to keep the whole divergence, selecting would
+				// make every rebuild — CI included — silently drop the fixes not
+				// selected, while the local worktree still had them and looked
+				// fine. Refuse rather than be quietly wrong.
+				if r.TrackBranch == "" {
+					return fmt.Errorf("--commits needs a trackBranch for %s: the proposed branch would hold only the selected commits, and a rebuild reconstitutes from it\n"+
+						"set \"trackBranch\" on %s in the manifest (a branch of %s, e.g. %q) — propose keeps it current with everything the prefix carries",
+						name, name, r.Fork, m.sendBranch(name, "integration"))
+				}
+				commits, cerr := repo.PrefixCommits(ctx, commitsSpec, name)
+				if cerr != nil {
+					return fmt.Errorf("reading %s as a revision range: %w", commitsSpec, cerr)
+				}
+				if len(commits) == 0 {
+					return fmt.Errorf("no commit in %s touched %s/ — nothing to propose", commitsSpec, name)
+				}
+				tree, err = repo.TreeWithPrefixCommits(ctx, tipTree, name, commits)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s: proposing %d of this stackspace's commits\n", name, len(commits))
+			}
 			if tipTree == tree {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to send — it matches upstream\n", name)
 				return nil
@@ -999,6 +1070,31 @@ func newStackSendCmd() *cobra.Command {
 			if err := repo.SetRef(ctx, "refs/rigsmith/propose/"+name, commit); err != nil {
 				return err
 			}
+			// A selected branch holds part of what this prefix carries, and
+			// `init` reconstitutes from trackBranch — so trackBranch is where the
+			// rest has to be, or a rebuild elsewhere quietly builds without the
+			// fixes this pull request left out. Pushed after the proposal, so a
+			// failed proposal does not move it.
+			//
+			// Its commit is rooted on the same upstream tip, so the branch reads
+			// as "upstream, plus everything we carry" — which is what it is, and
+			// what makes it a sane thing to open by hand.
+			if commitsSpec != "" {
+				intCommit, ierr := repo.CommitTree(ctx, fullTree, tip,
+					fmt.Sprintf("Everything the stackspace carries for %s, including what is not yet proposed", name))
+				if ierr != nil {
+					return ierr
+				}
+				if ierr := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), intCommit, "refs/heads/"+r.TrackBranch); ierr != nil {
+					return fmt.Errorf("the proposal reached %s:%s, but %s could not be updated: %w\na rebuild would be missing what this pull request left out — push it before seeding", r.Fork, branch, r.TrackBranch, ierr)
+				}
+				// Recorded like the proposal ref, so status and seed can tell
+				// that the unproposed commits have left too.
+				if ierr := repo.SetRef(ctx, "refs/rigsmith/integration/"+name, intCommit); ierr != nil {
+					return ierr
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s: %s now carries everything, for rebuilds\n", name, r.TrackBranch)
+			}
 			// Whether the manifest was already the user's business before this
 			// command touched it. Asked BEFORE the write below, because
 			// afterwards rig's own edit is indistinguishable from theirs.
@@ -1046,6 +1142,7 @@ func newStackSendCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&message, "message", "m", "", "commit message for the branch")
+	cmd.Flags().StringVar(&commitsSpec, "commits", "", "send only these commits' changes (a revision range, e.g. HEAD~1..HEAD); requires trackBranch")
 	return cmd
 }
 
@@ -1505,9 +1602,9 @@ func stackMenuItems() []menuItem {
 		{label: "init", desc: "import any repo the manifest names but has not fused yet", cmd: newStackInitCmd()},
 		{label: "add", desc: "add a repo to this stackspace and import it", cmd: newStackAddCmd()},
 		{label: "rm", desc: "remove a repo from this stackspace — manifest, tree and overlay (pick one)", cmd: newStackRemoveMenuCmd()},
-		{label: "status", desc: "each repo's cursor against its upstream", cmd: newStackStatusCmd()},
+		{label: "status", desc: "each repo's cursor against its upstream, and how much it diverges by", cmd: newStackStatusCmd()},
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
-		{label: "propose", desc: "a repo's changes to its upstream, via a branch on your fork (asks)", cmd: newStackSendCmd()},
+		{label: "propose", desc: "ALL of a repo's changes to its upstream, via a branch on your fork (asks; --commits selects)", cmd: newStackSendCmd()},
 		{label: "push", desc: "a repo you own back to its own branch, history intact (pick one)", cmd: newStackPushMenuCmd()},
 		{label: "wire", desc: "write the build overlay so members resolve each other from source", cmd: newStackWireCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},

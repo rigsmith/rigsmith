@@ -583,3 +583,43 @@ prefix that is the one place it must not be written: the file leaves in a
   own directory is not the stackspace's either. One file, `# <package>`
   sections, newest entry on top within each.
 
+### Proposing one fix out of several (2026-09-07)
+
+`propose` commits `HEAD:<prefix>` onto the upstream tip — the prefix's **whole**
+current tree. It was never a per-change extraction, and nothing said so, which is
+how a stackspace carrying two fixes for one project produced a second pull request
+showing the first one's changes.
+
+The two properties are in tension and both are wanted:
+
+- The proposed branch is what a rebuild reconstitutes from (`lastPropose`), so it
+  has to hold **everything** the prefix carries or CI publishes without the rest.
+- A pull request has to hold **only its own change**, or a maintainer is reading a
+  diff nobody asked them to review.
+
+One branch cannot be both, so `--commits <range>` splits them:
+
+- The proposed branch holds the selected commits' changes to the prefix, replayed
+  onto the upstream tip through a scratch index (`GIT_INDEX_FILE`, `git apply
+  --cached -p2` — never the worktree, which the user has not asked to modify).
+  Replayed rather than diffed end to end, because a selection need not be
+  contiguous: proposing the newest fix while an older one waits for review is the
+  case this exists for.
+- `trackBranch` holds the whole divergence, and `propose --commits` **pushes it on
+  every send**. It stops being a branch the user maintains and becomes one rig
+  writes.
+- `--commits` **refuses without `trackBranch`**, rather than leaving the rebuild
+  short. That failure is invisible from the machine where the work was done: the
+  worktree still has every fix, and only a rebuild elsewhere is missing them.
+- The integration push is recorded under `refs/rigsmith/integration/<name>`,
+  alongside `refs/rigsmith/propose/<name>`. `stackUnsentWork` accepts either, or
+  `seed` would refuse a stackspace whose unproposed commits are safely on the fork,
+  and `status` would call them unsent.
+
+A patch that does not apply is a real answer, not a malfunction: the selected
+commits depend on unselected ones, so what is being asked for cannot stand alone
+on upstream. The error says so and names the commit.
+
+`status` now reports how many commits a prefix diverges by, because the
+whole-prefix behaviour is otherwise discovered by a maintainer asking why a diff
+touches something unrelated.

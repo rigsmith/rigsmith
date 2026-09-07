@@ -316,6 +316,78 @@ func (r *Repo) CommitTree(ctx context.Context, tree, parent, message string) (st
 	return strings.TrimSpace(out), nil
 }
 
+// PrefixCommits lists the commits in a revision range that touched prefix/,
+// oldest first, merges excluded. Oldest first because they are replayed in that
+// order; merges excluded because in a stackspace they are rig's own imports of
+// upstream, whose changes are already in the base being replayed onto.
+func (r *Repo) PrefixCommits(ctx context.Context, revRange, prefix string) ([]string, error) {
+	out, err := runGit(ctx, r.Dir, "rev-list", "--reverse", "--no-merges", revRange, "--", prefix+"/")
+	if err != nil {
+		return nil, err
+	}
+	var commits []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			commits = append(commits, line)
+		}
+	}
+	return commits, nil
+}
+
+// TreeWithPrefixCommits builds the tree an upstream repository would have if
+// the given commits' changes to prefix/ — and only those — were applied to
+// baseTree, with the prefix stripped so the paths are the ones upstream uses.
+//
+// A scratch index, never the worktree: this runs while the caller is sitting in
+// a stackspace they have not asked to modify, and `git apply --cached` against
+// GIT_INDEX_FILE touches no file on disk.
+//
+// The commits are replayed rather than diffed end to end, because a selection
+// is not necessarily contiguous — proposing the newest fix while an older one
+// waits for review is the case this exists for, and the older one's changes
+// must not come along.
+//
+// A patch that does not apply is an error naming the commit, and it is a real
+// answer rather than a malfunction: the selected commits depend on unselected
+// ones, so what is being asked for cannot stand alone on upstream.
+func (r *Repo) TreeWithPrefixCommits(ctx context.Context, baseTree, prefix string, commits []string) (string, error) {
+	idx, err := os.CreateTemp("", "rig-stack-index-*")
+	if err != nil {
+		return "", err
+	}
+	idxPath := idx.Name()
+	idx.Close()
+	// git writes the index itself; an existing empty file is not a valid one.
+	os.Remove(idxPath)
+	defer os.Remove(idxPath)
+
+	env := []string{"GIT_INDEX_FILE=" + idxPath}
+	if _, err := runGitStdin(ctx, r.Dir, "", env, "read-tree", baseTree); err != nil {
+		return "", fmt.Errorf("staging the upstream tree: %w", err)
+	}
+	for _, c := range commits {
+		// --binary so a patch over a binary file is appliable rather than
+		// silently descriptive; --full-index so it applies against blobs this
+		// repository has rather than relying on abbreviated hashes resolving.
+		patch, err := runGit(ctx, r.Dir, "diff", "--binary", "--full-index", c+"^", c, "--", prefix+"/")
+		if err != nil {
+			return "", fmt.Errorf("reading %s's changes to %s/: %w", c[:8], prefix, err)
+		}
+		if strings.TrimSpace(patch) == "" {
+			continue
+		}
+		// -p2 strips "a/<prefix>/", which is what makes these upstream's paths.
+		if _, err := runGitStdin(ctx, r.Dir, patch, env, "apply", "--cached", "-p2", "-"); err != nil {
+			return "", fmt.Errorf("%s does not apply to upstream on its own: %w\nit depends on a commit you did not select; propose those together, or propose the whole prefix", c[:8], err)
+		}
+	}
+	out, err := runGitStdin(ctx, r.Dir, "", env, "write-tree")
+	if err != nil {
+		return "", fmt.Errorf("writing the selected tree: %w", err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // LogEntry is one commit of a log: its full id and its subject line.
 type LogEntry struct {
 	SHA     string

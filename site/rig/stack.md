@@ -484,6 +484,59 @@ per stackspace or per repo, or set it to `""` for bare names. A name that alread
 starts with the prefix is left alone, so pasting a full branch name back in when
 proposing again does not stutter it.
 
+#### It sends the whole prefix, not the commit you have in mind {#propose-whole}
+
+`propose` commits **the prefix's entire current tree** onto the upstream tip. It does
+not extract one change: whatever this stackspace is holding for that project — every
+fix, including ones already waiting in another pull request — is what the branch
+carries.
+
+While one thing is in flight that is exactly right, and it is why a rebuild elsewhere
+is safe: the branch a member was last proposed to holds everything, so
+[`init` reconstituting from it](#seed) gets all of it.
+
+The moment two things are in flight for one project it is wrong. Fix A sits unmerged
+in the stackspace; you propose fix B; B's branch contains A as well, and its pull
+request shows changes its reviewer never asked about.
+
+`--commits` is the way out — a revision range naming which of *this stackspace's*
+commits to send:
+
+```sh
+rig stack propose term-core reader-wedge --commits HEAD~1..HEAD
+# term-core: proposing 1 of this stackspace's commits
+```
+
+Those commits' changes to the prefix are replayed onto the upstream tip and nothing
+else goes with them. A selection that cannot stand alone is an error naming the
+commit — the changes depend on one you did not select, so propose them together or
+send the whole prefix.
+
+::: warning `--commits` requires `trackBranch`
+A selected branch holds part of what the prefix carries, so it cannot also be what a
+rebuild reconstitutes from — a fresh `init` would build without the fixes you left
+out, while your own worktree still had them and looked fine. `trackBranch` is where
+the whole divergence lives, and `propose --commits` **keeps it current** on every
+send:
+
+```sh
+rig stack propose term-core reader-wedge --commits HEAD~1..HEAD
+# term-core: proposing 1 of this stackspace's commits
+# sent term-core to you/term-core:stack/reader-wedge
+# term-core: stack/integration now carries everything, for rebuilds
+```
+
+Without it set, `--commits` refuses rather than publish a package or a rebuild that
+is quietly missing work.
+:::
+
+`rig stack status` says how many commits a prefix diverges by, so you find out
+before a maintainer does:
+
+```
+term-core   e5f6a7b8   up to date  ·  3 commits diverge from upstream; `propose` sends all of them (--commits to select)
+```
+
 Sending again to the same branch **updates** it, so you can act on review
 feedback: commit in the stackspace, propose again, and the pull request moves. The
 branch is replaced under a lease taken at the moment of the push, which guards
