@@ -513,7 +513,9 @@ func TestStackForgetRepoKeepsOtherProposals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if _, gone := after.Proposals["pty-core"]; !gone {
+	// Named for what the second return value actually is. Calling it "gone"
+	// inverted the check and failed the test exactly when the removal worked.
+	if _, present := after.Proposals["pty-core"]; present {
 		t.Fatalf("the removed member's proposals are still recorded: %#v", after.Proposals)
 	}
 	kept, ok := after.Proposals["term-core"]
