@@ -151,6 +151,43 @@ func TestRetainedMetadataDeviceRemoval(t *testing.T) {
 	}
 }
 
+func TestRetainedMetadataLinkRemoval(t *testing.T) {
+	link := "projects/worktree/memory"
+	old := "projects/main/memory"
+	manifestJSON := func(links map[string]string) []byte {
+		return metadataJSON(t, manifest.Manifest{Schema: 1, Links: links})
+	}
+	base := manifestJSON(map[string]string{link: old})
+	empty := manifestJSON(nil)
+	for _, target := range []string{old, "projects/other/memory"} {
+		for _, reverse := range []bool{false, true} {
+			a, b := empty, manifestJSON(map[string]string{link: target, "new": "target"})
+			if reverse {
+				a, b = b, a
+			}
+			for _, ancestor := range [][]byte{base, nil} {
+				out, err := ResolveMetadata(t.Context(), manifest.FileName, ancestor, a, b)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var got manifest.Manifest
+				if err := json.Unmarshal(out, &got); err != nil {
+					t.Fatal(err)
+				}
+				_, kept := got.Links[link]
+				if kept != (ancestor == nil || target != old) || (kept && got.Links[link] != target) || got.Links["new"] != "target" {
+					t.Errorf("target=%s reverse=%v base=%s: %+v", target, reverse, ancestor, got.Links)
+				}
+			}
+		}
+	}
+	for _, bad := range [][]byte{[]byte{}, []byte("null"), []byte(`{"schema":2}`), []byte(`{"schema":1,"future":true}`)} {
+		if _, err := ResolveMetadata(t.Context(), manifest.FileName, bad, empty, base); !errors.Is(err, commitartifact.ErrConflict) {
+			t.Errorf("invalid manifest base accepted: %s %v", bad, err)
+		}
+	}
+}
+
 func TestRetainedMetadataCaseSensitiveIdentifiers(t *testing.T) {
 	for _, tc := range []struct{ path, raw string }{
 		{manifest.FileName, `{"schema":1,"projects":{"Laptop":{"cwd":"/one"},"laptop":{"cwd":"/two"}},"links":{"s":"one","ſ":"two","k":"three","K":"four"}}`},

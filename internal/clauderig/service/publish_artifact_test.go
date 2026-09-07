@@ -365,8 +365,16 @@ func TestPublishArtifactResolvesMetadataAndAuditsResult(t *testing.T) {
 			now := time.Now().UTC()
 			retired := devices.Device{Name: "retired", LastSync: now.Add(-time.Hour)}
 			writeJSON(stage, devices.FileName, devices.Registry{Schema: 1, Devices: map[string]devices.Device{"retired": retired}})
-			git(t, stage, "add", devices.FileName)
-			git(t, stage, "commit", "-m", "base device registry")
+			removedLink := "projects/worktree/memory"
+			oldTarget := "projects/main/memory"
+			var baseManifest manifest.Manifest
+			if err := json.Unmarshal([]byte(git(t, stage, "show", "HEAD:"+manifest.FileName)), &baseManifest); err != nil {
+				t.Fatal(err)
+			}
+			baseManifest.Links = map[string]string{removedLink: oldTarget}
+			writeJSON(stage, manifest.FileName, baseManifest)
+			git(t, stage, "add", devices.FileName, manifest.FileName)
+			git(t, stage, "commit", "-m", "base metadata")
 			git(t, stage, "push", remote.dir, "HEAD:refs/heads/main")
 			incoming := filepath.Join(t.TempDir(), "incoming")
 			git(t, filepath.Dir(incoming), "clone", "--branch", "main", remote.dir, incoming)
@@ -378,6 +386,7 @@ func TestPublishArtifactResolvesMetadataAndAuditsResult(t *testing.T) {
 			remoteManifest := manifest.Manifest{Schema: 1, SourceOS: "windows", Projects: map[string]manifest.Project{"theirs": {Cwd: "/theirs"}, "shared": {Cwd: "/theirs/shared"}}}
 
 			writeJSON(stage, manifest.FileName, localManifest)
+			remoteManifest.Links = map[string]string{removedLink: oldTarget}
 			writeJSON(incoming, manifest.FileName, remoteManifest)
 			if kind == "unknown-field" {
 				put(t, incoming, manifest.FileName, "{\"schema\":1,\"sourceOS\":\"windows\",\"projects\":{},\"future\":true}\n")
@@ -420,6 +429,9 @@ func TestPublishArtifactResolvesMetadataAndAuditsResult(t *testing.T) {
 			var merged manifest.Manifest
 			if err := json.Unmarshal([]byte(git(t, remote.dir, "show", "main:"+manifest.FileName)), &merged); err != nil {
 				t.Fatal(err)
+			}
+			if _, restored := merged.Links[removedLink]; restored {
+				t.Fatal("restored removed link", merged.Links)
 			}
 			if len(merged.Projects) != 3 || merged.Projects["shared"].Cwd != "/ours/shared" || merged.Projects["theirs"].Cwd != "/theirs" {
 				t.Fatalf("lost projects: %+v", merged)

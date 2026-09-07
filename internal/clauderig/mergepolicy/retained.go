@@ -19,8 +19,8 @@ import (
 // ResolveMetadata uses the existing native unions for retained publication.
 // Only schema-1 manifest/device documents are accepted. Unknown/duplicate fields,
 // unsupported paths and malformed sides remain conflicts, never newest-side
-// fallbacks. A device removed on one side stays removed when the other side's
-// entry is unchanged from base; a changed entry can return. An absent base unions.
+// fallbacks. A device or link removed on one side stays removed when the other
+// side's entry is unchanged from base; a changed entry can return. No base unions.
 // The publisher bounds inputs/outputs and audits the complete candidate.
 func ResolveMetadata(ctx context.Context, path string, base, ours, theirs []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
@@ -35,6 +35,24 @@ func ResolveMetadata(ctx context.Context, path string, base, ours, theirs []byte
 		}
 		if !validManifestEntries(a) || !validManifestEntries(b) {
 			return nil, commitartifact.ErrConflict
+		}
+		var ancestor manifest.Manifest
+		if base != nil {
+			if !decodeRetainedMetadata(base, &ancestor) || ancestor.Schema != 1 || !validManifestEntries(ancestor) {
+				return nil, commitartifact.ErrConflict
+			}
+		}
+		// Sync treats a missing link in an owned project as a removal. Do not
+		// reintroduce it from an unchanged copy; a retargeted link can return.
+		for link, previous := range ancestor.Links {
+			ourTarget, haveOurs := a.Links[link]
+			theirTarget, haveTheirs := b.Links[link]
+			if haveOurs && !haveTheirs && ourTarget == previous {
+				delete(a.Links, link)
+			}
+			if haveTheirs && !haveOurs && theirTarget == previous {
+				delete(b.Links, link)
+			}
 		}
 		merged = mergeManifest(a, b)
 	case devices.FileName:

@@ -241,9 +241,10 @@ both project/link maps with ours winning shared keys (newer canonical history
 is ours for the initial capture/local merge; the combined local result is ours
 for the later remote merge), and device registries take
 the newest sync entry while preserving a known account if the newer entry has
-none. Retained device recovery first compares both sides with a strictly decoded
-merge base: an unchanged entry yields to removal on the other side, while a
-changed entry can return. No base means add/add union; an invalid present base
+none. Retained device and link recovery first compare both sides with a strictly
+decoded merge base: an unchanged entry yields to removal on the other side, while a
+changed device or retargeted link can return. Project maps keep their native
+additive policy. No base means add/add union; an invalid present base
 blocks recovery. The synchronous fallback/reporting behavior remains unchanged.
 
 Retained resolution requires schema 1, valid UTF-8 JSON and only known fields.
