@@ -93,19 +93,54 @@ const stageClockSlack = 2 * time.Second
 // mtimeIsTrustworthy reports whether a source mtime identifies the file's
 // contents.
 //
-// The whole hazard belongs to coarse filesystems, and a coarse one announces
-// itself: every mtime it reports lands exactly on a second, because it has
-// nothing finer to report. Where the sub-second component is present the tick
-// is nanoseconds and no realistic pair of writes shares one, so the mtime is
-// taken at face value and the fast path is untouched — which is nearly always,
-// and is why this costs nothing on a developer's own machine.
+// On a filesystem that records sub-second times the tick is nanoseconds, no
+// realistic pair of writes shares one, and the mtime is taken at face value —
+// the incremental path is untouched. That is nearly every machine, which is why
+// this costs nothing in ordinary use.
 //
-// Where it is absent, the mtime has to be older than the last run by more than
-// a tick could span. A zero clock means nothing is known, and nothing known
-// trusts the mtime.
-func mtimeIsTrustworthy(mod, lastRunStarted time.Time) bool {
-	if lastRunStarted.IsZero() || mod.Nanosecond() != 0 {
+// Where the tick is a whole second, the mtime has to be older than the last run
+// by more than a tick could span. A zero clock means nothing is known, and
+// nothing known trusts the mtime.
+func mtimeIsTrustworthy(mod, lastRunStarted time.Time, coarse bool) bool {
+	if lastRunStarted.IsZero() || !coarse {
 		return true
 	}
 	return mod.Before(lastRunStarted.Add(-stageClockSlack))
+}
+
+// probeMtimeGranularity reports whether dir's filesystem records only whole
+// seconds, which is the condition the rule above exists for.
+//
+// Measured rather than inferred from the files themselves. A round mtime is not
+// evidence of a coarse clock: archives, restores and anything else that stamps
+// times explicitly produce whole seconds on a filesystem that would have
+// recorded nanoseconds — one restore here stamped 541 transcripts with the same
+// minute. Inferring from those would put every one of them on the slow path
+// forever, for a hazard they do not have.
+//
+// Unknowable reads as fine-grained, which keeps the fast path and the behaviour
+// that was there before this: a probe that cannot run is not evidence either.
+var probeMtimeGranularity = func(dir string) (coarse bool) {
+	f, err := os.CreateTemp(dir, ".tick-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	if _, err := f.WriteString("x"); err != nil {
+		f.Close()
+		return false
+	}
+	if err := f.Close(); err != nil {
+		return false
+	}
+	fi, err := os.Stat(name)
+	if err != nil {
+		return false
+	}
+	// A filesystem storing only seconds has nothing else to report. One that
+	// stores more can still land on a whole second by chance, which reads as
+	// coarse for this run and costs some restaging — the harmless direction,
+	// and about a billion to one.
+	return fi.ModTime().Nanosecond() == 0
 }

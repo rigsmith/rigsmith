@@ -292,6 +292,7 @@ func Sync(opts Options) (*Report, error) {
 	// stageclock.go.
 	startedAt := time.Now()
 	lastRunStarted := readStageClock(opts.StagingDir)
+	coarseMtimes := probeMtimeGranularity(opts.StagingDir)
 
 	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
@@ -401,7 +402,7 @@ func Sync(opts Options) (*Report, error) {
 				if staged != nil && staged.ModTime().Equal(info.ModTime()) &&
 					(scrub || staged.Size() == info.Size()) &&
 					!(scrub && rescrub) &&
-					mtimeIsTrustworthy(info.ModTime(), lastRunStarted) {
+					mtimeIsTrustworthy(info.ModTime(), lastRunStarted, coarseMtimes) {
 					unchanged = true
 				}
 				// A long session's transcript is the one file that is both large

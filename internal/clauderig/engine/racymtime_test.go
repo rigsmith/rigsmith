@@ -50,6 +50,13 @@ func TestSync_RewriteUnderTheSameMtimeIsStaged(t *testing.T) {
 		}
 	}
 
+	// Stand in for a filesystem with a one-second clock. The probe measures the
+	// real one, and every machine this test runs on records nanoseconds — so
+	// without this there is nothing to reproduce.
+	restore := probeMtimeGranularity
+	probeMtimeGranularity = func(string) bool { return true }
+	t.Cleanup(func() { probeMtimeGranularity = restore })
+
 	writeAt("a")
 	sync()
 	writeAt("b") // same size, same mtime, different bytes
@@ -64,24 +71,24 @@ func TestSync_RewriteUnderTheSameMtimeIsStaged(t *testing.T) {
 func TestMtimeIsTrustworthy(t *testing.T) {
 	run := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
-		name string
-		mod  time.Time
-		last time.Time
-		want bool
+		name   string
+		mod    time.Time
+		last   time.Time
+		coarse bool
+		want   bool
 	}{
-		{"nothing known yet", run, time.Time{}, true},
-		// The common case, and the reason this costs nothing in practice: a
-		// sub-second component means the clock ticks in nanoseconds.
-		{"sub-second precision", run.Add(-time.Millisecond), run, true},
-		{"whole second, long before the run", run.Add(-time.Hour), run, true},
+		{"nothing known yet", run, time.Time{}, true, true},
+		// The common case, and the reason this costs nothing in practice.
+		{"filesystem records nanoseconds", run, run, false, true},
+		{"coarse, long before the run", run.Add(-time.Hour), run, true, true},
 		// Same second as the run that staged it: a later write in that second
 		// reuses this mtime, so the staged copy cannot be told apart.
-		{"whole second, same tick as the run", run, run, false},
-		{"whole second, one second before", run.Add(-time.Second), run, false},
-		{"whole second, just outside the window", run.Add(-3 * time.Second), run, true},
+		{"coarse, same tick as the run", run, run, true, false},
+		{"coarse, one second before", run.Add(-time.Second), run, true, false},
+		{"coarse, just outside the window", run.Add(-3 * time.Second), run, true, true},
 	}
 	for _, c := range cases {
-		if got := mtimeIsTrustworthy(c.mod, c.last); got != c.want {
+		if got := mtimeIsTrustworthy(c.mod, c.last, c.coarse); got != c.want {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
 	}
@@ -106,5 +113,18 @@ func TestStageClockRoundTrips(t *testing.T) {
 	}
 	if !readStageClock(staging).IsZero() {
 		t.Error("a corrupt clock was believed")
+	}
+}
+
+// The probe has to say "fine" on the machines this actually runs on, or every
+// sync takes the slow path for a hazard it does not have.
+func TestProbeMtimeGranularity(t *testing.T) {
+	if probeMtimeGranularity(t.TempDir()) {
+		t.Error("this filesystem was reported as second-granular; if that is really true, say so here")
+	}
+	// Nowhere to write is not evidence of anything, and reads as fine-grained
+	// so the fast path survives.
+	if probeMtimeGranularity(filepath.Join(t.TempDir(), "no", "such", "dir")) {
+		t.Error("an unusable directory was reported as coarse")
 	}
 }
