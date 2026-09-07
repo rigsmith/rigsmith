@@ -31,7 +31,9 @@ clauderig ui                   # interactive dashboard
 `clauderig guard` (a PreToolUse hook) and `rig worktree` make worktrees and
 PRs the default for Claude Code, and stop it from scrambling your VS Code chat
 history — which is keyed to the folder path — by moving the session's working
-directory. The guard denies `EnterWorktree`, denies a `cd` out of the repo root,
+directory. The guard denies `EnterWorktree`, denies an `Agent` asked to
+isolate itself in a worktree (and a `git worktree add` under `.claude/worktrees`,
+which is the same checkout by hand), denies a `cd` out of the repo root,
 and on `main` requires a branch+worktree+PR for code while letting docs/config
 through (override: `CLAUDERIG_ALLOW_MAIN=1` or `touch .claude/allow-main`). It
 fails open on anything it isn't sure about. `clauderig project install` sets a repo

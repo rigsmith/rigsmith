@@ -275,6 +275,11 @@ func TestGitWorktreeAddUnderDotClaudeIsDenied(t *testing.T) {
 	env := Env{InRepo: true, Root: "/repo"}
 	denied := []string{
 		"git worktree add .claude/worktrees/thing",
+		// Path-qualified and Windows spellings: a rule that only knows the bare
+		// word is a rule /usr/bin/git walks past.
+		"/usr/bin/git worktree add .claude/worktrees/thing",
+		`C:\Program Files\Git\cmd\git.exe worktree add .claude/worktrees/thing`,
+		"git.exe worktree add .claude/worktrees/thing",
 		"git worktree add -b feat .claude/worktrees/thing",
 		"git -C /repo worktree add /repo/.claude/worktrees/thing",
 		"echo hi && git worktree add .claude/worktrees/x",

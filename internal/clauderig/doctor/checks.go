@@ -380,8 +380,18 @@ func checkGuide(env Env) Result {
 func checkHiddenWorktrees(env Env) (Result, bool) {
 	dir := filepath.Join(env.RepoRoot, ".claude", "worktrees")
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return Result{}, false // absent is the normal case, and not worth a row
+	switch {
+	case os.IsNotExist(err):
+		return Result{}, false // the normal case, and not worth a row
+	case err != nil:
+		// Anything else — a permission or I/O error — means the check could not
+		// look, which is not the same as finding nothing. Saying so beats a
+		// silence that reads as "clean".
+		return Result{
+			ID: "hidden-worktrees", Name: "hidden worktrees", Status: Warn,
+			Detail: "could not read .claude/worktrees: " + err.Error(),
+			Hint:   "check it by hand: worktrees there are invisible to `rig worktree list`.",
+		}, true
 	}
 	var names []string
 	for _, e := range entries {

@@ -415,6 +415,23 @@ repo, so they never clutter the primary checkout and each gets its own
 review-window history. `new` never moves the session's cwd; it prints the path
 and, when opted in, opens a separate window.
 
+### What the guard refuses
+
+Anything that would put a worktree somewhere nothing later looks:
+
+- `EnterWorktree` / `ExitWorktree` — they move the session's own directory.
+- An **`Agent` with `isolation: "worktree"`**, which makes a
+  `.claude/worktrees/<name>` checkout through the Agent tool rather than by
+  hand. An agent without isolation is an ordinary subagent and runs normally.
+- `git worktree add` aimed at `.claude/worktrees`. Listing and **removing** one
+  there is allowed — that is the way out, not the way in.
+
+`clauderig doctor` reports any that are already there. They are invisible to
+`rig worktree list` and never reaped by `rig prune`, so they accumulate unseen;
+one repo had 28 registered before anyone looked. The doctor names them and says
+what to run, and never removes one itself: a worktree can hold work that was
+never committed anywhere else.
+
 ### Configuring the review window
 
 Because `worktree` is a [`rig`](/rig/verbs#git-worktree-verbs) command, the

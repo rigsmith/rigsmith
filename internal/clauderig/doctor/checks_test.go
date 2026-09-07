@@ -50,3 +50,28 @@ func TestHiddenWorktreesCheck(t *testing.T) {
 		t.Errorf("the hint does not say how to deal with them: %q", r.Hint)
 	}
 }
+
+// A directory the check cannot read is not a directory with nothing in it.
+// Swallowing the error would report clean when the truth is unknown.
+func TestHiddenWorktreesUnreadableIsReported(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads anything")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude", "worktrees")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o755)
+
+	r, ok := checkHiddenWorktrees(Env{RepoRoot: root})
+	if !ok {
+		t.Fatal("an unreadable .claude/worktrees produced no row at all")
+	}
+	if r.Status != Warn || !strings.Contains(r.Detail, "could not read") {
+		t.Errorf("status=%v detail=%q, want a warning that says it could not look", r.Status, r.Detail)
+	}
+}

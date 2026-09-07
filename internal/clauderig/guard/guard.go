@@ -246,12 +246,25 @@ func isGitCommit(command string) bool {
 	for _, seg := range splitSegments(command) {
 		fields := strings.Fields(seg)
 		for i := 0; i < len(fields)-1; i++ {
-			if (fields[i] == "git" || strings.HasSuffix(fields[i], "/git")) && nextWord(fields[i+1:], "commit") {
+			if isGitExe(fields[i]) && nextWord(fields[i+1:], "commit") {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// isGitExe reports whether a token invokes git.
+//
+// Both detectors ask this, because a rule that only recognises the bare word is
+// a rule `/usr/bin/git` walks past. Windows spellings included: the guard runs
+// wherever Claude Code does, and `git.exe` is git there.
+func isGitExe(tok string) bool {
+	tok = strings.ToLower(strings.ReplaceAll(tok, `\`, "/"))
+	if i := strings.LastIndexByte(tok, '/'); i >= 0 {
+		tok = tok[i+1:]
+	}
+	return tok == "git" || tok == "git.exe"
 }
 
 // nextWord reports whether want appears among args before any non-flag operand
@@ -357,7 +370,7 @@ func addsHiddenWorktree(command string) bool {
 		// git … worktree add — allowing for `git -C dir worktree add`.
 		gi, wi := -1, -1
 		for i, tok := range f {
-			if tok == "git" && gi < 0 {
+			if isGitExe(tok) && gi < 0 {
 				gi = i
 			}
 			if gi >= 0 && tok == "worktree" {
