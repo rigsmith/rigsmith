@@ -89,7 +89,7 @@ func TestRestore_RecreatesSharedMemoryLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("link not created: %v", err)
 	}
-	wantDest := filepath.Join(target, "projects", "-Users-jane-Git-grasp", "memory")
+	wantDest := filepath.Join("..", "-Users-jane-Git-grasp", "memory")
 	if dest != wantDest {
 		t.Errorf("link dest = %s, want %s", dest, wantDest)
 	}

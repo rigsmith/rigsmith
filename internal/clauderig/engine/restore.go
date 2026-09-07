@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -208,17 +209,33 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 // machine's own state and is left alone. A failed creation (e.g. symlinks
 // unavailable on the platform) skips that link, never the restore.
 func restoreLinks(target string, manifestLinks map[string]string, slugMap map[string]string) int {
+	if len(manifestLinks) == 0 {
+		return 0
+	}
+	root, err := os.OpenRoot(target)
+	if err != nil {
+		return 0
+	}
+	defer root.Close()
 	links := files.LinkCache{}
 	n := 0
 	for rel, tgtRel := range manifestLinks {
+		// Validate before rewriting too: a malformed source slug must not be
+		// made to look safe by a mapping. Backup metadata is not trusted input.
+		if !validRestoreLinkPath(rel) || !validRestoreLinkPath(tgtRel) {
+			continue
+		}
 		rel, _, _ = rewriteProjectRel(rel, slugMap)
 		tgtRel, _, _ = rewriteProjectRel(tgtRel, slugMap)
-		linkPath := filepath.Join(target, filepath.FromSlash(rel))
-		tgtPath := filepath.Join(target, filepath.FromSlash(tgtRel))
-		if info, err := os.Stat(tgtPath); err != nil || !info.IsDir() {
+		if !validRestoreLinkPath(rel) || !validRestoreLinkPath(tgtRel) {
+			continue
+		}
+		linkName, targetName := filepath.FromSlash(rel), filepath.FromSlash(tgtRel)
+		linkPath := filepath.Join(target, linkName)
+		if info, err := root.Stat(targetName); err != nil || !info.IsDir() {
 			continue // target absent on this machine — nothing to point at
 		}
-		if _, err := os.Lstat(linkPath); err == nil {
+		if _, err := root.Lstat(linkName); !os.IsNotExist(err) {
 			continue
 		}
 		// The same ancestor rule the write loop applies. Checking only the leaf
@@ -228,14 +245,27 @@ func restoreLinks(target string, manifestLinks map[string]string, slugMap map[st
 		if links.UnderSymlink(target, linkPath) {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+		// Root keeps creation inside the chosen directory even if a parent
+		// changes after the ancestor check. Relative targets also let Windows
+		// Root.Symlink recognize this as a directory link.
+		linkTarget, err := filepath.Rel(filepath.Dir(linkName), targetName)
+		if err != nil {
 			continue
 		}
-		if err := os.Symlink(tgtPath, linkPath); err == nil {
+		if err := root.MkdirAll(filepath.Dir(linkName), 0o755); err != nil {
+			continue
+		}
+		if err := root.Symlink(linkTarget, linkName); err == nil {
 			n++
 		}
 	}
 	return n
+}
+
+// Manifest endpoints use portable slash-relative names, never absolute paths,
+// parent traversal, drive/UNC paths or alternate Windows stream names.
+func validRestoreLinkPath(p string) bool {
+	return p != "." && fs.ValidPath(p) && !strings.ContainsAny(p, "\\:\x00") && filepath.IsLocal(filepath.FromSlash(p))
 }
 
 // liveTranscripts returns the target-relative transcript paths that running
