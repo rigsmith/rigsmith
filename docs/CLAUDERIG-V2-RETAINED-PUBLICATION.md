@@ -237,7 +237,7 @@ push; fresh remote confirmation and replay rules remain unchanged. A declined
 path prevents publication even if earlier paths were resolvable.
 
 For the root manifest and device registry, Claude uses the same pure union
-functions now serve both synchronous and retained resolution: manifests retain
+functions that now serve both synchronous and retained resolution: manifests retain
 both project/link maps with ours winning shared keys (newer canonical history
 is ours for the initial capture/local merge; the combined local result is ours
 for the later remote merge), and device registries take
@@ -274,8 +274,8 @@ canonical merge repair and operational unblock/status commands remain future wor
 
 ## Bounded retained append recovery
 
-`ResolveRetained` also accepts the Claude adapter's native JSONL and memory-text
-paths when both snapshots preserve an existing merge base as an exact byte prefix.
+`ResolveRetained` also accepts the Claude adapter's native CLI project transcripts
+(including subagents, excluding memory JSONL and chunk parts) and memory-text paths when both snapshots preserve an existing merge base as an exact byte prefix.
 All sides must be UTF-8 without NUL and end at a complete newline (or be empty).
 A nil base is an unproven add/add conflict and remains blocked. This intentionally
 does not apply synchronous newest-snapshot fallback to retained conflicts.
@@ -283,12 +283,17 @@ does not apply synchronous newest-snapshot fallback to retained conflicts.
 The resolver keeps the longest common prefix of complete lines once, then appends
 the local tail followed by the remote tail. Memory `.md`, `.markdown` and `.txt`
 files preserve their bytes and repeated lines. JSONL requires one object per
-nonblank line. Unknown payload fields are preserved without reserialization;
+nonblank line, with only JSON whitespace (space, tab, CR and LF) around each value.
+Unknown payload fields are preserved without reserialization;
 duplicate top-level fields, UUID aliases/non-string values and chunk-index markers
-are rejected. Records with matching nonempty UUIDs are deduplicated only when their
-trimmed raw JSON bytes match exactly. Different payloads for the same UUID block
-recovery, including differences in unknown fields. Records without UUIDs and blank
-lines remain in order. Existing input/output and whole-tree budgets, cancellation,
+are rejected. Only incoming-tail records matching a local-tail nonempty UUID and JSON-whitespace-trimmed
+raw payload are deduplicated. Identical duplicates within one side and repeats of shared-history records are preserved.
+Standard hyphenated UUIDs use case-insensitive hex identity; opaque legacy IDs
+remain exact. Different raw payloads under one identity block recovery, including
+UUID spelling changes and differences in unknown fields. Records without UUIDs
+and blank lines remain in order. Ordinary JSONL files (such as history and audit
+logs) have no retained append policy; the synchronous classifier remains unchanged.
+Existing input/output and whole-tree budgets, cancellation,
 secret auditing, validation and fresh remote confirmation still apply.
 
 Tests cover shared append prefixes, CRLF bytes, repeated unkeyed records,
@@ -296,7 +301,9 @@ deterministic reconstruction, malformed records, ambiguous identities, reordered
 chunk markers and cancellation. Real Git publication fixtures exercise transcript
 and memory conflicts, unchanged canonical files/index/config, replay without a
 second push, and rejection of edited bases, conflicting UUIDs, secrets and chunk
-indexes. These tests use synthetic data only.
+indexes. A gated QueueAdapter round trip publishes both tails and the sealed
+capture after live sources and the separate capture archive have disappeared,
+then verifies acknowledgement prevents another push. These tests use synthetic data only.
 
 Chunk-aware recovery needs the referenced content-addressed parts; a JSONL index
 is not an append record. It remains blocked, including with default chunking on.

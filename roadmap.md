@@ -24,8 +24,9 @@ SSH/HTTPS transports and the proposed credential helper. Merged in [#327](https:
 publication using existing Git/`gh` configuration, validated with real CLI fixtures.
 Claude queue execution is merged in [#332](https://github.com/rigsmith/rigsmith/pull/332), with retained-phase recovery and
 exact batch acknowledgement. Bounded retry/backoff and explicit failure blocking are merged in [#336](https://github.com/rigsmith/rigsmith/pull/336).
-Retained manifest/device conflict recovery merged in [#337](https://github.com/rigsmith/rigsmith/pull/337). Transcript/file and
-canonical merge recovery, lifecycle/capacity gates and the Codex adapter follow.**
+Retained manifest/device conflict recovery merged in [#337](https://github.com/rigsmith/rigsmith/pull/337). Native JSONL/memory append recovery is in review in [#341](https://github.com/rigsmith/rigsmith/pull/341).
+Chunk-index and ordinary-file conflicts, canonical merge recovery, lifecycle/capacity
+gates and the Codex adapter follow.**
 
 | Milestone | Status |
 | --- | --- |

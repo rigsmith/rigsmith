@@ -454,7 +454,7 @@ func TestPublishArtifactResolvesMetadataAndAuditsResult(t *testing.T) {
 }
 
 func TestPublishArtifactRecoversAppendConflicts(t *testing.T) {
-	for _, kind := range []string{"transcript", "memory", "uuid-collision", "edited-base", "secret", "chunk-index"} {
+	for _, kind := range []string{"transcript", "memory", "uuid-collision", "edited-base", "secret", "chunk-index", "non-json-whitespace", "ordinary-jsonl"} {
 		t.Run(kind, func(t *testing.T) {
 			input, remote := publicationFixture(t, true, false)
 			stage := input.Commit.Capture.Sync.StagingDir
@@ -462,6 +462,9 @@ func TestPublishArtifactRecoversAppendConflicts(t *testing.T) {
 			base := "{\"uuid\":\"base\",\"type\":\"user\"}\n"
 			local := "{\"uuid\":\"local\",\"parentUuid\":\"base\"}\n"
 			incomingTail := "{\"uuid\":\"remote\",\"parentUuid\":\"base\"}\n"
+			if kind == "ordinary-jsonl" {
+				path = "cli/history.jsonl"
+			}
 			if kind == "memory" {
 				path = "cli/projects/-p/memory/MEMORY.md"
 				base, local, incomingTail = "# Memory\n", "local note\n\n", "remote note\n\n"
@@ -480,6 +483,8 @@ func TestPublishArtifactRecoversAppendConflicts(t *testing.T) {
 				theirBody = "{\"uuid\":\"base\",\"edited\":true}\n" + incomingTail
 			case "secret":
 				theirBody = base + fmt.Sprintf("{\"uuid\":\"remote\",\"text\":%q}\n", "ghp_"+strings.Repeat("z", 40))
+			case "non-json-whitespace":
+				theirBody = base + "\u00a0" + incomingTail
 			case "chunk-index":
 				theirBody = "{\"clauderig_chunked_transcript\":1,\"size\":0,\"parts\":[]}\n"
 			}

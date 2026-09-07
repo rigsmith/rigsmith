@@ -10,6 +10,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // ResolveRetained adds conservative append recovery to the metadata policy.
@@ -23,6 +24,15 @@ func ResolveRetained(ctx context.Context, path string, base, ours, theirs []byte
 	rule := adapter.ClassifyMerge(path)
 	if rule.Strategy != adapter.UnionText {
 		return ResolveMetadata(ctx, path, base, ours, theirs)
+	}
+	// Retained recovery is narrower than synchronous extension-based union:
+	// only native CLI transcripts and memory text have an append contract.
+	root, rel, _ := strings.Cut(path, "/")
+	file := adapter.Classify(root, rel)
+	if root != "cli" || transcript.IsPartPath(rel) ||
+		(rule.DeduplicateRecords && file.Kind != adapter.Transcript) ||
+		(!rule.DeduplicateRecords && file.Kind != adapter.Memory) {
+		return nil, commitartifact.ErrConflict
 	}
 	if base == nil || ours == nil || theirs == nil {
 		return nil, commitartifact.ErrConflict
@@ -43,48 +53,81 @@ func ResolveRetained(ctx context.Context, path string, base, ours, theirs []byte
 			shared = i + 1
 		}
 	}
-	merged := append([]byte(nil), ours...)
-	merged = append(merged, theirs[shared:]...)
-	if !rule.DeduplicateRecords {
-		return merged, ctx.Err()
+	if rule.DeduplicateRecords {
+		return retainedRecords(ctx, ours, theirs[shared:], shared)
 	}
-	return retainedRecords(ctx, merged)
+	merged := append([]byte(nil), ours...)
+	return append(merged, theirs[shared:]...), ctx.Err()
 }
 
-// retainedRecords preserves raw JSONL bytes and unkeyed records, deduplicating
-// only identical records with the same UUID. Different payloads for one UUID
-// must remain a conflict: silently choosing one would discard a recorded turn.
-func retainedRecords(ctx context.Context, content []byte) ([]byte, error) {
+// retainedRecords preserves each side's records, including existing duplicates.
+// Only proven cross-side UUID matches can be removed from the incoming tail.
+// Conflicting payloads remain blocked, including within one input snapshot.
+func retainedRecords(ctx context.Context, ours, incoming []byte, shared int) ([]byte, error) {
+	local := map[string]string{}
 	seen := map[string]string{}
 	var out bytes.Buffer
-	for len(content) > 0 {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		n := bytes.IndexByte(content, '\n') + 1 // callers require complete lines
-		line := content[:n]
-		content = content[n:]
-		record := bytes.TrimSpace(line)
-		if len(record) == 0 {
-			out.Write(line)
-			continue
-		}
-		uuid, ok := retainedRecordUUID(record)
-		if !ok {
-			return nil, commitartifact.ErrConflict
-		}
-		if uuid != "" {
-			if previous, found := seen[uuid]; found {
-				if previous != string(record) {
-					return nil, commitartifact.ErrConflict
-				}
+	for side, content := range [][]byte{ours, incoming} {
+		offset := 0
+		for len(content) > 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			n := bytes.IndexByte(content, '\n') + 1
+			if n == 0 {
+				return nil, commitartifact.ErrConflict
+			}
+			line := content[:n]
+			content = content[n:]
+			start := offset
+			offset += n
+			// Trim only JSON whitespace; every emitted byte stays unchanged.
+			record := bytes.Trim(line, " \t\r\n")
+			if len(record) == 0 {
+				out.Write(line)
 				continue
 			}
-			seen[uuid] = string(record)
+			uuid, ok := retainedRecordUUID(record)
+			if !ok {
+				return nil, commitartifact.ErrConflict
+			}
+			if uuid != "" {
+				id := retainedUUIDIdentity(uuid)
+				if previous, found := seen[id]; found && previous != string(record) {
+					return nil, commitartifact.ErrConflict
+				}
+				seen[id] = string(record)
+				if side == 0 && start >= shared {
+					local[id] = string(record)
+				} else if side == 1 {
+					if _, found := local[id]; found {
+						continue
+					}
+				}
+			}
+			out.Write(line)
 		}
-		out.Write(line)
 	}
 	return out.Bytes(), ctx.Err()
+}
+
+// Standard hyphenated UUIDs have case-insensitive hex identity. Preserve opaque
+// legacy IDs exactly. A spelling change still changes raw payload bytes and
+// therefore blocks recovery; it never silently selects one spelling.
+func retainedUUIDIdentity(id string) string {
+	if len(id) != 36 {
+		return id
+	}
+	for i := range len(id) {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if id[i] != '-' {
+				return id
+			}
+		} else if !strings.ContainsRune("0123456789abcdefABCDEF", rune(id[i])) {
+			return id
+		}
+	}
+	return strings.ToLower(id)
 }
 
 // Inspect top-level fields without reserializing or discarding unknown payloads.
@@ -113,7 +156,7 @@ func retainedRecordUUID(raw []byte) (string, bool) {
 			return "", false
 		}
 		if key == "uuid" {
-			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) || json.Unmarshal(value, &uuid) != nil {
+			if bytes.Equal(bytes.Trim(value, " \t\r\n"), []byte("null")) || json.Unmarshal(value, &uuid) != nil {
 				return "", false
 			}
 		}
