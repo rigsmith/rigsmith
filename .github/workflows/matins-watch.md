@@ -32,6 +32,12 @@ permissions:
 # user's Copilot plan.
 engine: copilot
 
+# Blacksmith for the agent job, which is the one that does work; the activation,
+# detection and conclusion jobs stay on whatever gh-aw picks, which is the
+# cheapest GitHub tier and seconds long. Set here, not in the lock file, which
+# is generated.
+runs-on: blacksmith-4vcpu-ubuntu-2404
+
 network: defaults
 
 tools:
