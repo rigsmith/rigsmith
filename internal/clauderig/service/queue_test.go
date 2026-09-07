@@ -488,3 +488,54 @@ func TestQueueAdapterBlocksMissingSourceAndScanUntilUnblocked(t *testing.T) {
 		})
 	}
 }
+
+func TestQueueAdapterRetainedAppendRoundTrip(t *testing.T) {
+	if os.Getenv("CLAUDERIG_E2E") != "1" {
+		t.Skip("set CLAUDERIG_E2E=1; synthetic retained publication round trip")
+	}
+	input, remote := publicationFixture(t, true, false)
+	req := input.Commit.Capture
+	stage := req.Sync.StagingDir
+	const path = "cli/projects/-p/append.jsonl"
+	const base = "{\"uuid\":\"base\"}\n"
+	const local = "{\"uuid\":\"local\"}\n"
+	const incomingTail = "{\"uuid\":\"remote\"}\n"
+	put(t, stage, path, base)
+	git(t, stage, "add", ".")
+	git(t, stage, "commit", "-m", "shared base")
+	git(t, stage, "push", remote.dir, "HEAD:main")
+	incoming := filepath.Join(t.TempDir(), "incoming")
+	git(t, filepath.Dir(incoming), "clone", "--branch", "main", remote.dir, incoming)
+	put(t, stage, path, base+local)
+	put(t, incoming, path, base+incomingTail)
+	git(t, stage, "add", ".")
+	git(t, stage, "commit", "-m", "local append")
+	git(t, incoming, "add", ".")
+	git(t, incoming, "commit", "-m", "remote append")
+	git(t, incoming, "push", "origin", "HEAD:main")
+	// Committed recovery must use the sealed bundle, even after capture sources
+	// and the separate capture archive disappear. QueueAdapter also rejects any
+	// attempt to read the worker's login through this fixture's identity hook.
+	if err := os.RemoveAll(filepath.Join(req.Sync.Machine.Home, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(req.Store.Dir); err != nil {
+		t.Fatal(err)
+	}
+	q, _, adapter := queueAdapterFixture(t, req, input.Commit.Commits, remote)
+	seedQueuePhase(t, q, req, queue.Committed)
+	result, err := q.RunOne(t.Context(), time.Now(), adapter)
+	if err != nil || !result.Acknowledged || result.Phase != queue.Pushed {
+		t.Fatalf("queue append recovery: %+v %v", result, err)
+	}
+	if got := git(t, remote.dir, "show", "main:"+path); got != strings.TrimSpace(base+local+incomingTail) {
+		t.Fatalf("lost divergent tails: %q", got)
+	}
+	if got := git(t, remote.dir, "show", "main:cli/projects/-workspace-acme/s.jsonl"); !strings.Contains(got, "sealed publication bytes") {
+		t.Fatal("lost sealed capture", got)
+	}
+	pushes := remote.pushes
+	if _, err := q.RunOne(t.Context(), time.Now(), adapter); !errors.Is(err, queue.ErrEmpty) || remote.pushes != pushes {
+		t.Fatal("acknowledged work replayed", err, remote.pushes)
+	}
+}

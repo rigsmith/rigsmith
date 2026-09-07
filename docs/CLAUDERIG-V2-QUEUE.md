@@ -316,11 +316,13 @@ error omission from queue state, missing-source and scan repair/unblock, joined
 error precedence, cancellation and uncertain-write classification boundaries.
 
 
-## Metadata conflict recovery
+## Retained conflict recovery
 
 Retained publication now resolves supported manifest and device-registry content
 conflicts using Claude's existing native unions, in the private publication
-repository. The complete resolved tree is audited before pushing. Unsupported
-transcript/file/structural conflicts and invalid metadata still return a conflict
+repository. Proven append-only native CLI transcripts and memory text can also
+keep both machines' additions through [bounded append recovery](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-append-recovery).
+The complete resolved tree is audited before pushing. Chunk indexes, ordinary
+JSONL/settings files, edited history, structural conflicts and invalid metadata still return a conflict
 and remain blocked. Existing blocked batches require explicit Unblock; recovery
 does not clear queue state on its own. See the [retained publication contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-metadata-recovery).
