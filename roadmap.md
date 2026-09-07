@@ -9,7 +9,7 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 
 **Current position:** shared infrastructure, queue execution, retry policy and
 retained metadata/native append recovery are merged into `codex/v2` through
-[#341](https://github.com/rigsmith/rigsmith/pull/341). This PR adds bounded
+[#341](https://github.com/rigsmith/rigsmith/pull/341). [#342](https://github.com/rigsmith/rigsmith/pull/342) adds bounded
 chunked-transcript recovery. Ordinary file conflicts, canonical merge recovery,
 manual-sync coverage and worker lifecycle/capacity remain before queued Claude
 hooks and the separate Codex adapter. The queue work is split into concrete steps below.
@@ -25,7 +25,7 @@ hooks and the separate Codex adapter. The queue work is split into concrete step
 | Sealed capture, retained commits and publication | Merged: #310–#319; existing Git/`gh` integration and owned process cleanup through #327. |
 | Queue execution and retry/blocking policy | Merged: #332/#336. |
 | Retained metadata and native append recovery | Merged: #337/#341. |
-| Retained chunked-transcript recovery | In progress in this PR: verify immutable parts, recover bounded append conflicts, preserve chunking. |
+| Retained chunked-transcript recovery | In review: [#342](https://github.com/rigsmith/rigsmith/pull/342): verify immutable parts, recover bounded append conflicts, preserve chunking. |
 | Ordinary file conflict policy | Next. Define snapshot ordering without silently discarding edits. |
 | Canonical staging merge recovery | Planned. Recover unfinished canonical merges before queued publication. |
 | Manual-sync queue coverage | Planned. Acknowledge only the exact generations included in manual sync. |
@@ -55,7 +55,7 @@ relative targets.
 
 Merged in [#341](https://github.com/rigsmith/rigsmith/pull/341): retained append recovery for native JSONL transcripts and memory files.
 It keeps both machines' additions when neither changed the shared history and
-blocks conflicting UUIDs. This PR adds bounded recovery for canonical chunked
+blocks conflicting UUIDs. [#342](https://github.com/rigsmith/rigsmith/pull/342) adds bounded recovery for canonical chunked
 transcripts, including the default chunking threshold. Ordinary file conflicts and
 canonical recovery remain next; queued hooks stay disabled.
 
