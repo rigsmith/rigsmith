@@ -76,71 +76,75 @@ func writeStageClock(staging string, started time.Time) {
 	_ = os.WriteFile(p, []byte(strconv.FormatInt(started.UnixNano(), 10)+"\n"), 0o600)
 }
 
-// stageClockSlack is how much older than the run an mtime has to be before it
-// is taken as evidence.
-//
-// The hazard is a file whose mtime lands in the same tick as the run that
-// staged it: a later write inside that tick reuses the mtime the staged copy
-// was stamped with, so the two versions are indistinguishable. Being *before*
-// the run is not enough, since a tick spans both.
-//
-// Two seconds because the granularity is not knowable from here and 2s is the
-// coarsest in ordinary use (FAT); one second covers ext3 and the sub-second
-// filesystems need none of it. The cost of overshooting is that a file written
-// within two seconds of a sync is staged once more than it had to be.
-const stageClockSlack = 2 * time.Second
+// coarseTick is what a filesystem that records only whole seconds is assumed to
+// have, and the ceiling on any measurement. ext3 ticks at a second and FAT at
+// two; measuring cannot tell them apart from here, and a second of slack
+// already covers the case this exists for.
+const coarseTick = time.Second
 
 // mtimeIsTrustworthy reports whether a source mtime identifies the file's
-// contents.
+// contents: older than the last run by more than one tick of the clock that
+// stamped it, so no tick it could share reaches into that run.
 //
-// On a filesystem that records sub-second times the tick is nanoseconds, no
-// realistic pair of writes shares one, and the mtime is taken at face value —
-// the incremental path is untouched. That is nearly every machine, which is why
-// this costs nothing in ordinary use.
-//
-// Where the tick is a whole second, the mtime has to be older than the last run
-// by more than a tick could span. A zero clock means nothing is known, and
-// nothing known trusts the mtime.
-func mtimeIsTrustworthy(mod, lastRunStarted time.Time, coarse bool) bool {
-	if lastRunStarted.IsZero() || !coarse {
+// A zero clock means nothing is known, and nothing known trusts the mtime.
+func mtimeIsTrustworthy(mod, lastRunStarted time.Time, tick time.Duration) bool {
+	if lastRunStarted.IsZero() {
 		return true
 	}
-	return mod.Before(lastRunStarted.Add(-stageClockSlack))
+	return mod.Before(lastRunStarted.Add(-tick))
 }
 
-// probeMtimeGranularity reports whether dir's filesystem records only whole
-// seconds, which is the condition the rule above exists for.
+// probeMtimeTick measures how finely dir's filesystem records modification
+// times, which is the width of the window above.
 //
 // Measured rather than inferred from the files themselves. A round mtime is not
-// evidence of a coarse clock: archives, restores and anything else that stamps
-// times explicitly produce whole seconds on a filesystem that would have
-// recorded nanoseconds — one restore here stamped 541 transcripts with the same
-// minute. Inferring from those would put every one of them on the slow path
-// forever, for a hazard they do not have.
+// evidence of a coarse clock — archives, restores and anything else that stamps
+// times explicitly produce whole seconds on a filesystem that records far more,
+// and one restore here stamped 541 transcripts with the same minute. Nor is a
+// non-zero nanosecond field evidence of a fine one: Linux fills those in from a
+// clock it only updates each kernel tick, so two writes milliseconds apart can
+// carry the same stamp down to the nanosecond. That is the case this whole file
+// exists for, and the case reading the digits would miss.
 //
-// Unknowable reads as fine-grained, which keeps the fast path and the behaviour
-// that was there before this: a probe that cannot run is not evidence either.
-var probeMtimeGranularity = func(dir string) (coarse bool) {
+// The smallest gap two writes can be told apart by is the answer, so it takes
+// the smallest non-zero difference it sees. Stamps that never differ mean a
+// clock coarser than this loop can measure.
+var probeMtimeTick = func(dir string) time.Duration {
 	f, err := os.CreateTemp(dir, ".tick-*")
 	if err != nil {
-		return false
+		return coarseTick // no way to look is not a reason to assume the best
 	}
 	name := f.Name()
+	f.Close()
 	defer os.Remove(name)
-	if _, err := f.WriteString("x"); err != nil {
-		f.Close()
-		return false
+
+	stamp := func() (time.Time, bool) {
+		if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
+			return time.Time{}, false
+		}
+		fi, err := os.Stat(name)
+		if err != nil {
+			return time.Time{}, false
+		}
+		return fi.ModTime(), true
 	}
-	if err := f.Close(); err != nil {
-		return false
+	best := time.Duration(0)
+	prev, ok := stamp()
+	if !ok {
+		return coarseTick
 	}
-	fi, err := os.Stat(name)
-	if err != nil {
-		return false
+	for i := 0; i < 8; i++ {
+		next, ok := stamp()
+		if !ok {
+			return coarseTick
+		}
+		if d := next.Sub(prev); d > 0 && (best == 0 || d < best) {
+			best = d
+		}
+		prev = next
 	}
-	// A filesystem storing only seconds has nothing else to report. One that
-	// stores more can still land on a whole second by chance, which reads as
-	// coarse for this run and costs some restaging — the harmless direction,
-	// and about a billion to one.
-	return fi.ModTime().Nanosecond() == 0
+	if best <= 0 || best > coarseTick {
+		return coarseTick
+	}
+	return best
 }

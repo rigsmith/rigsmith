@@ -51,11 +51,11 @@ func TestSync_RewriteUnderTheSameMtimeIsStaged(t *testing.T) {
 	}
 
 	// Stand in for a filesystem with a one-second clock. The probe measures the
-	// real one, and every machine this test runs on records nanoseconds — so
-	// without this there is nothing to reproduce.
-	restore := probeMtimeGranularity
-	probeMtimeGranularity = func(string) bool { return true }
-	t.Cleanup(func() { probeMtimeGranularity = restore })
+	// real one, and the machines this runs on tick far finer — so without this
+	// the two writes get different stamps and there is nothing to reproduce.
+	restore := probeMtimeTick
+	probeMtimeTick = func(string) time.Duration { return time.Second }
+	t.Cleanup(func() { probeMtimeTick = restore })
 
 	writeAt("a")
 	sync()
@@ -71,60 +71,44 @@ func TestSync_RewriteUnderTheSameMtimeIsStaged(t *testing.T) {
 func TestMtimeIsTrustworthy(t *testing.T) {
 	run := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
-		name   string
-		mod    time.Time
-		last   time.Time
-		coarse bool
-		want   bool
+		name string
+		mod  time.Time
+		last time.Time
+		tick time.Duration
+		want bool
 	}{
-		{"nothing known yet", run, time.Time{}, true, true},
-		// The common case, and the reason this costs nothing in practice.
-		{"filesystem records nanoseconds", run, run, false, true},
-		{"coarse, long before the run", run.Add(-time.Hour), run, true, true},
-		// Same second as the run that staged it: a later write in that second
+		{"nothing known yet", run, time.Time{}, time.Second, true},
+		// A fine clock tells the two writes apart on its own, so the window is
+		// nearly nothing and the incremental path is untouched. This is the
+		// ordinary case, and why the fix costs nothing in practice.
+		{"fine clock, written just before the run", run.Add(-time.Millisecond), run, time.Microsecond, true},
+		{"fine clock, inside its own tick", run, run, time.Microsecond, false},
+		{"coarse clock, long before the run", run.Add(-time.Hour), run, time.Second, true},
+		// Same tick as the run that staged it: a later write in that tick
 		// reuses this mtime, so the staged copy cannot be told apart.
-		{"coarse, same tick as the run", run, run, true, false},
-		{"coarse, one second before", run.Add(-time.Second), run, true, false},
-		{"coarse, just outside the window", run.Add(-3 * time.Second), run, true, true},
+		{"coarse clock, same tick as the run", run, run, time.Second, false},
+		{"coarse clock, just inside the window", run.Add(-time.Second / 2), run, time.Second, false},
+		{"coarse clock, just outside the window", run.Add(-2 * time.Second), run, time.Second, true},
 	}
 	for _, c := range cases {
-		if got := mtimeIsTrustworthy(c.mod, c.last, c.coarse); got != c.want {
+		if got := mtimeIsTrustworthy(c.mod, c.last, c.tick); got != c.want {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
 	}
 }
 
-// The clock has to survive the trip through the file, or every run distrusts
-// every coarse mtime and restages the tree.
-func TestStageClockRoundTrips(t *testing.T) {
-	staging := filepath.Join(t.TempDir(), "repo")
-	if readStageClock(staging).IsZero() != true {
-		t.Error("an absent clock did not read as unknown")
+// The probe has to find a fine clock where there is one, or every sync widens
+// its window for a hazard the filesystem does not have.
+func TestProbeMtimeTick(t *testing.T) {
+	got := probeMtimeTick(t.TempDir())
+	if got <= 0 || got > coarseTick {
+		t.Errorf("tick = %v, want a positive measurement no coarser than %v", got, coarseTick)
 	}
-	want := time.Now().Truncate(time.Nanosecond)
-	writeStageClock(staging, want)
-	if got := readStageClock(staging); !got.Equal(want) {
-		t.Errorf("got %v, want %v", got, want)
+	if got == coarseTick {
+		t.Logf("this filesystem records whole seconds (tick %v) — the slow path is correct here", got)
 	}
-	// Anything unreadable reads as unknown, which trusts the mtime — the
-	// behaviour before the clock existed.
-	if err := os.WriteFile(stageClockPath(staging), []byte("nonsense\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if !readStageClock(staging).IsZero() {
-		t.Error("a corrupt clock was believed")
-	}
-}
-
-// The probe has to say "fine" on the machines this actually runs on, or every
-// sync takes the slow path for a hazard it does not have.
-func TestProbeMtimeGranularity(t *testing.T) {
-	if probeMtimeGranularity(t.TempDir()) {
-		t.Error("this filesystem was reported as second-granular; if that is really true, say so here")
-	}
-	// Nowhere to write is not evidence of anything, and reads as fine-grained
-	// so the fast path survives.
-	if probeMtimeGranularity(filepath.Join(t.TempDir(), "no", "such", "dir")) {
-		t.Error("an unusable directory was reported as coarse")
+	// Nowhere to write is no reason to assume the best.
+	if got := probeMtimeTick(filepath.Join(t.TempDir(), "no", "such", "dir")); got != coarseTick {
+		t.Errorf("unusable directory gave %v, want the coarse assumption %v", got, coarseTick)
 	}
 }
