@@ -10,7 +10,7 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 **Current position:** shared infrastructure, queue execution, retry policy and
 retained metadata/native append recovery are merged into `codex/v2` through
 [#341](https://github.com/rigsmith/rigsmith/pull/341). [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded
-chunked-transcript recovery. Ordinary-file snapshot ordering is in progress in this PR. Canonical merge recovery,
+chunked-transcript recovery. Ordinary-file snapshot ordering is in review in [#343](https://github.com/rigsmith/rigsmith/pull/343). Canonical merge recovery,
 manual-sync coverage and worker lifecycle/capacity remain before queued Claude
 hooks and the separate Codex adapter. The queue work is split into concrete steps below.
 
@@ -26,7 +26,7 @@ hooks and the separate Codex adapter. The queue work is split into concrete step
 | Queue execution and retry/blocking policy | Merged: #332/#336. |
 | Retained metadata and native append recovery | Merged: #337/#341. |
 | Retained chunked-transcript recovery | Merged: [#342](https://github.com/rigsmith/rigsmith/pull/342): verify immutable parts, recover bounded append conflicts, preserve chunking. |
-| Ordinary file conflict policy | In progress in this PR: choose the newer proven Git snapshot; equal/unknown origins remain blocked. |
+| Ordinary file conflict policy | In review: [#343](https://github.com/rigsmith/rigsmith/pull/343): choose the newer proven Git snapshot; equal/unknown origins remain blocked. |
 | Canonical staging merge recovery | Next. Recover unfinished canonical merges before queued publication. |
 | Manual-sync queue coverage | Planned. Acknowledge only the exact generations included in manual sync. |
 | Worker startup/restart, parent death and draining | Planned. |
@@ -56,7 +56,7 @@ relative targets.
 Merged in [#341](https://github.com/rigsmith/rigsmith/pull/341): retained append recovery for native JSONL transcripts and memory files.
 It keeps both machines' additions when neither changed the shared history and
 blocks conflicting UUIDs. [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded recovery for canonical chunked
-transcripts, including the default chunking threshold. This PR adds ordinary-file snapshot ordering.
+transcripts, including the default chunking threshold. [#343](https://github.com/rigsmith/rigsmith/pull/343) adds ordinary-file snapshot ordering.
 Canonical recovery is next; queued hooks stay disabled.
 
 ## Ideas
