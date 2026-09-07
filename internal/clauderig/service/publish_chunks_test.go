@@ -17,7 +17,16 @@ import (
 
 func putChunked(t *testing.T, root, path, body string) {
 	t.Helper()
-	if err := transcript.Write(filepath.Join(root, path), strings.NewReader(body), time.Unix(0, 0)); err != nil {
+	name := filepath.Join(root, path)
+	modified := time.Unix(0, 0)
+	if info, err := os.Stat(name); err == nil {
+		// A rewritten index can have the same length. Advance its mtime so
+		// Git cannot reuse cached bytes under coarse Windows stat matching.
+		modified = info.ModTime().Add(time.Second)
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := transcript.Write(name, strings.NewReader(body), modified); err != nil {
 		t.Fatal(err)
 	}
 	// Match normal retention: obsolete partial chunks disappear from both tips.
@@ -45,6 +54,11 @@ func TestPublishArtifactRecoversChunkConflicts(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			input, remote := publicationFixture(t, true, false)
 			stage := input.Commit.Capture.Sync.StagingDir
+			if kind == "edited" {
+				// Exercise coarse Windows-style stat matching on every platform.
+				git(t, stage, "config", "core.trustctime", "false")
+				git(t, stage, "config", "core.checkStat", "minimal")
+			}
 			const path = "cli/projects/-p/chunked.jsonl"
 			base := "{\"uuid\":\"base\"}\n"
 			local := "{\"uuid\":\"local\"}\n"
@@ -86,6 +100,13 @@ func TestPublishArtifactRecoversChunkConflicts(t *testing.T) {
 			git(t, incoming, "add", ".")
 			git(t, incoming, "commit", "-m", "remote append")
 			git(t, incoming, "push", "origin", "HEAD:main")
+			if kind == "edited" {
+				for _, dir := range []string{stage, incoming} {
+					if git(t, dir, "rev-parse", "HEAD:"+path) != git(t, dir, "hash-object", "--no-filters", path) {
+						t.Fatal("fixture did not commit the rewritten chunk index")
+					}
+				}
+			}
 			before := git(t, remote.dir, "rev-parse", "main")
 			localHead := git(t, stage, "rev-parse", "HEAD")
 			read := func(p string) []byte {

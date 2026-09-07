@@ -404,7 +404,9 @@ whose resolutions are already staged. This is a separate shared primitive,
 `FinishStagedMerge`; the private retained publisher still never edits canonical
 state. Claude verifies the batch archive and capture binding before calling it,
 under the staging lease that remains held through publication and confirmation.
-Fresh queued capture still blocks on unfinished merges. Unresolved canonical
+Fresh queued capture uses the same settled-state guard before retaining a seed
+or copying staging, including standalone autostash residue. It refuses unfinished
+operations without attempting repair. Unresolved canonical
 conflicts and capture integration remain the next recovery step.
 
 Completion uses the exact index as the chosen resolution, including any other

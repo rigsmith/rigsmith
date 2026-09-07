@@ -6,8 +6,9 @@ prepares a durable, immutable input for commit/publication.
 [Retained commits](CLAUDERIG-V2-RETAINED-COMMITS.md) now implements the next
 commit/sealing step. Capture itself does not commit or push, expose a worker
 command, acknowledge a queue batch, or enable hooks. Installed sync behavior and
-backup formats stay unchanged; no end-user changeset is needed for this internal
-step.
+backup formats stay unchanged. The initial internal capture foundation had no
+end-user changeset; subsequent v2 queue behavior has release changesets while
+worker commands and queued hooks remain disabled.
 
 ## Shared archive and durability layers
 
@@ -18,7 +19,9 @@ reference; Claude records canonical staging's current HEAD when present. Before
 the capture is sealed, its complete seed ancestry is retained in a private
 bundle and its immutable artifact reference is recorded in `SeedReference`. See
 [retained commits](CLAUDERIG-V2-RETAINED-COMMITS.md) for the dependency contract.
-Publication/merge recovery remains pending.
+Retained publication and native conflict recovery are implemented; staged
+canonical merge completion merged in #344. Unresolved canonical recovery and
+repair before fresh capture remain pending.
 
 A build runs in a private workspace, then streams regular files and directories
 into one archive. Source symlinks, devices and Git metadata are not allowed in the
@@ -77,8 +80,11 @@ device registry with an old event identity; it retains the seeded registry.
 ## Capture sequence and isolation
 
 The artifact builder takes staging ownership with the original context, verifies
-the binding again, refuses an unsettled canonical merge, and copies the canonical
-staging tree excluding Git metadata. It records HEAD and a durable seed-bundle
+the binding again, and calls the shared `SettledHead` guard before retaining a
+seed or copying canonical staging. The guard refuses merges, standalone
+MERGE_AUTOSTASH residue, cherry-picks, reverts, rebases, sequencers and unmerged
+index entries. It does not repair these states. Only a settled checkout is copied,
+excluding Git metadata. It records HEAD and a durable seed-bundle
 reference in the archive header. Seed retention must succeed before capture can
 be acknowledged. The canonical checkout, index and refs are not changed.
 
@@ -121,9 +127,10 @@ ownership locks is a rollout gate. Successful and ordinarily failed builds attem
 up their own workspace. Unknown versions and corrupted captures fail closed.
 
 The [commit adapter](CLAUDERIG-V2-RETAINED-COMMITS.md) now seals retained Git
-bundles, and captures now retain seeds before acknowledgement. Next: integrate Push
-and define merge/manual-sync
-coverage, and own child processes before exposing queued execution. Local-only
+bundles, and captures retain seeds before acknowledgement. Queue execution now
+connects capture, commit and confirmed publication, with owned child cleanup.
+Unresolved canonical recovery, repair before fresh capture, exact manual-sync
+coverage and worker lifecycle remain activation gates. Local-only
 completion, artifact/receipt cleanup, status and capacity remedies also remain
 rollout gates. A mutable extracted working copy or recorded seed SHA alone does
 not satisfy those requirements.

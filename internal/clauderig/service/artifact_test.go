@@ -357,3 +357,48 @@ func TestCaptureCannotSealBeforeSeedRetentionSucceeds(t *testing.T) {
 		})
 	}
 }
+
+func TestCaptureArtifactRejectsUnsettledStagingBeforeRetainingSeed(t *testing.T) {
+	for _, marker := range []string{"MERGE_HEAD", "MERGE_AUTOSTASH", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"} {
+		t.Run(marker, func(t *testing.T) {
+			req := artifactCaptureFixture(t, "pending capture")
+			svc := service.Service{ReadIdentity: func() (service.Identity, error) { return req.Identity, nil }}
+			if _, err := svc.Sync(t.Context(), req.Sync); err != nil {
+				t.Fatal(err)
+			}
+			stage := req.Sync.StagingDir
+			head := git(t, stage, "rev-parse", "HEAD")
+			put(t, stage, ".git/"+marker, head+"\n")
+			put(t, stage, "pending.txt", "pending staged bytes")
+			git(t, stage, "add", "pending.txt")
+			put(t, stage, "pending.txt", "later unstaged bytes")
+			before := map[string]string{}
+			for _, path := range []string{".git/index", ".git/config", ".git/" + marker, "pending.txt"} {
+				data, err := os.ReadFile(filepath.Join(stage, path))
+				if err != nil {
+					t.Fatal(err)
+				}
+				before[path] = string(data)
+			}
+			ref, err := svc.CaptureArtifact(t.Context(), req)
+			if !errors.Is(err, commitartifact.ErrConflict) || ref != "" {
+				t.Fatalf("captured unfinished operation: %s %v", ref, err)
+			}
+			for _, store := range []artifact.Store{req.Store, commitartifact.SeedStore(req.Store)} {
+				sealed, err := filepath.Glob(filepath.Join(store.Dir, "*.capture"))
+				if err != nil || len(sealed) != 0 {
+					t.Fatalf("retained bytes before refusing %s: %v %v", marker, sealed, err)
+				}
+			}
+			for path, want := range before {
+				got, err := os.ReadFile(filepath.Join(stage, path))
+				if err != nil || string(got) != want {
+					t.Fatalf("changed canonical %s: %v", path, err)
+				}
+			}
+			if got := git(t, stage, "rev-parse", "HEAD"); got != head {
+				t.Fatal("capture moved HEAD")
+			}
+		})
+	}
+}
