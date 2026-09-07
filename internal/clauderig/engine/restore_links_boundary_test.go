@@ -279,7 +279,7 @@ func TestRestoreLinkPreservesConcurrentDestination(t *testing.T) {
 func TestRestoreLinksReportsRootOpenFailure(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "file", "not a directory")
-	for _, target := range []string{filepath.Join(dir, "missing"), filepath.Join(dir, "file")} {
+	for _, target := range []string{filepath.Join(dir, "file")} {
 		if n, err := restoreLinks(target, map[string]string{"memory": "data"}, nil); n != 0 || err == nil {
 			t.Fatalf("root failure hidden: count=%d err=%v", n, err)
 		}
@@ -308,10 +308,117 @@ func TestRestoreLinkFailureRetainsPartialReport(t *testing.T) {
 	}
 }
 
-func TestRestoreLinkPathUsesDestinationPlatform(t *testing.T) {
-	// A Unix backup may legitimately contain CON. Restoring it on Windows
-	// skips that unrepresentable name; the saved manifest remains unchanged.
-	if got := validRestoreLinkPath("projects/CON/memory"); got != (runtime.GOOS != "windows") {
+func TestRestoreLinkPathUsesHostFilesystem(t *testing.T) {
+	// Machine.OS can simulate a different slug layout, but writes still use
+	// the host filesystem. It must not override the native name restrictions.
+	accepted := runtime.GOOS != "windows"
+	if got := validRestoreLinkPath("projects/CON/memory"); got != accepted {
 		t.Fatalf("reserved name accepted=%v on %s", got, runtime.GOOS)
+	}
+	requireRestoreSymlink(t)
+	staging, target := t.TempDir(), t.TempDir()
+	write(t, staging, "cli/data/keep.txt", "inside")
+	otherOS := pathmap.OSWindows
+	if runtime.GOOS == "windows" {
+		otherOS = pathmap.OSLinux
+	}
+	rep, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target),
+		Machine: config.Machine{OS: otherOS}, Manifest: &manifest.Manifest{Links: map[string]string{"projects/CON/memory": "data"}},
+		TargetOverride: override("cli", target)})
+	want := 0
+	if accepted {
+		want = 1
+	}
+	if err != nil || rep == nil || len(rep.Roots) != 1 || rep.Roots[0].Links != want {
+		t.Fatalf("Machine.OS changed host filesystem validation: %+v %v", rep, err)
+	}
+}
+
+func TestRestoreLinksMissingDestinationIsNoOp(t *testing.T) {
+	staging, parent := t.TempDir(), t.TempDir()
+	target := filepath.Join(parent, "missing")
+	if err := os.Mkdir(filepath.Join(staging, "cli"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Restore(RestoreOptions{StagingDir: staging, Config: targetRootConfig(target),
+		Manifest: &manifest.Manifest{Links: map[string]string{"memory": "data"}}, TargetOverride: override("cli", target)})
+	if err != nil || rep == nil || len(rep.Roots) != 1 || rep.Roots[0].Links != 0 || rep.Roots[0].Files != 0 {
+		t.Fatalf("empty restore should succeed without creating links: %+v %v", rep, err)
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Fatalf("no-op created a destination: %v", err)
+	}
+}
+
+type failingRestoreLinkFS struct {
+	restoreLinkFS
+	createErr, installErr, cleanupErr error
+}
+
+func (r failingRestoreLinkFS) Symlink(target, name string) error {
+	if r.createErr != nil {
+		return r.createErr
+	}
+	return r.restoreLinkFS.Symlink(target, name)
+}
+func (r failingRestoreLinkFS) Install(temp, name string) error {
+	if r.installErr != nil {
+		return r.installErr
+	}
+	return r.restoreLinkFS.Install(temp, name)
+}
+func (r failingRestoreLinkFS) Remove(name string) error {
+	if r.cleanupErr != nil {
+		return r.cleanupErr
+	}
+	return r.restoreLinkFS.Remove(name)
+}
+
+func TestRestoreLinkReportsUnexpectedFilesystemFailures(t *testing.T) {
+	requireRestoreSymlink(t)
+	for _, phase := range []string{"create", "install"} {
+		for _, cause := range []error{os.ErrPermission, errors.New("fixture I/O failure"), os.ErrExist, errors.ErrUnsupported} {
+			t.Run(phase+"/"+cause.Error(), func(t *testing.T) {
+				dir := t.TempDir()
+				write(t, dir, "data/keep.txt", "inside")
+				root, err := os.OpenRoot(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer root.Close()
+				fs := failingRestoreLinkFS{restoreLinkFS: restoreLinkFS{root}}
+				if phase == "create" {
+					fs.createErr = cause
+				} else {
+					fs.installErr = cause
+				}
+				created, err := createRestoreLink(fs, "data", "memory")
+				skip := cause == os.ErrExist || cause == errors.ErrUnsupported
+				if created || (skip && err != nil) || (!skip && !errors.Is(err, cause)) {
+					t.Fatalf("failure policy: created=%v err=%v cause=%v", created, err, cause)
+				}
+				entries, err := os.ReadDir(dir)
+				if err != nil || len(entries) != 1 {
+					t.Fatalf("failed link left behind: %v %v", entries, err)
+				}
+			})
+		}
+	}
+}
+
+func TestRestoreLinkRetainsInstallAndCleanupErrors(t *testing.T) {
+	requireRestoreSymlink(t)
+	dir := t.TempDir()
+	write(t, dir, "data/keep.txt", "inside")
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	cleanupErr := errors.New("fixture cleanup denied")
+	fs := failingRestoreLinkFS{restoreLinkFS: restoreLinkFS{root}, installErr: os.ErrPermission, cleanupErr: cleanupErr}
+	created, err := createRestoreLink(fs, "data", "memory")
+	if created || !errors.Is(err, os.ErrPermission) || !errors.Is(err, cleanupErr) {
+		t.Fatalf("install or cleanup failure lost: %v %v", created, err)
 	}
 }

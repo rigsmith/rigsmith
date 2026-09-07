@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -57,4 +58,18 @@ func installRestoreLink(root *os.Root, temp, name string) error {
 	err = windows.NtSetInformationFile(handle, &status, &buffer[0], uint32(size), windows.FileRenameInformation)
 	runtime.KeepAlive(parent)
 	return err
+}
+
+// Native rename failures are NTSTATUS values; normalize them for the same
+// collision/unsupported policy as os.Root.Symlink's Win32 errors.
+func skipRestoreLinkError(err error) bool {
+	var status windows.NTStatus
+	if errors.As(err, &status) {
+		err = status.Errno()
+	}
+	return errors.Is(err, os.ErrExist) || errors.Is(err, errors.ErrUnsupported) ||
+		errors.Is(err, windows.ERROR_NOT_SUPPORTED) ||
+		errors.Is(err, windows.ERROR_CALL_NOT_IMPLEMENTED) ||
+		errors.Is(err, windows.ERROR_INVALID_FUNCTION) ||
+		errors.Is(err, windows.ERROR_PRIVILEGE_NOT_HELD)
 }
