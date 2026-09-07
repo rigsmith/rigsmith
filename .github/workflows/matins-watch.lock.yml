@@ -80,7 +80,7 @@ run-name: "Matins watch — Claude Code changes that break clauderig's assumptio
 
 jobs:
   activation:
-    runs-on: ubuntu-slim
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       actions: read
       contents: read
@@ -353,7 +353,7 @@ jobs:
   agent:
     needs: activation
     if: needs.activation.outputs.daily_ai_credits_exceeded != 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
       issues: read
@@ -985,7 +985,7 @@ jobs:
       always() && (needs.agent.result != 'skipped' || needs.activation.outputs.lockdown_check_failed == 'true' ||
       needs.activation.outputs.oauth_token_check_failed == 'true' || needs.activation.outputs.stale_lock_file_failed == 'true' ||
       needs.activation.outputs.secret_verification_result == 'failed' || needs.activation.outputs.daily_ai_credits_exceeded == 'true')
-    runs-on: ubuntu-slim
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       actions: read
       issues: write
@@ -1239,7 +1239,7 @@ jobs:
       - activation
       - agent
     if: always() && needs.agent.result != 'skipped'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
     env:
@@ -1505,7 +1505,7 @@ jobs:
       - agent
       - detection
     if: (!cancelled()) && needs.agent.result != 'skipped' && needs.detection.result == 'success'
-    runs-on: ubuntu-slim
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       issues: write
     timeout-minutes: 45
