@@ -1,7 +1,9 @@
 package service_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,7 +19,9 @@ import (
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
+	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 	"github.com/rigsmith/rigsmith/internal/clauderig/service"
 )
 
@@ -341,6 +345,109 @@ func TestPublishArtifactWithGitTransport(t *testing.T) {
 			}
 			if got := git(t, remote.dir, "show", "main:cli/projects/-workspace-acme/s.jsonl"); !strings.Contains(got, "sealed publication bytes") {
 				t.Fatal("native captured bytes missing")
+			}
+		})
+	}
+}
+
+func TestPublishArtifactResolvesMetadataAndAuditsResult(t *testing.T) {
+	for _, kind := range []string{"union", "unknown-field", "secret"} {
+		t.Run(kind, func(t *testing.T) {
+			input, remote := publicationFixture(t, true, false)
+			stage := input.Commit.Capture.Sync.StagingDir
+			writeJSON := func(root, path string, value any) {
+				b, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				put(t, root, path, string(b)+"\n")
+			}
+			now := time.Now().UTC()
+			retired := devices.Device{Name: "retired", LastSync: now.Add(-time.Hour)}
+			writeJSON(stage, devices.FileName, devices.Registry{Schema: 1, Devices: map[string]devices.Device{"retired": retired}})
+			removedLink := "projects/worktree/memory"
+			oldTarget := "projects/main/memory"
+			var baseManifest manifest.Manifest
+			if err := json.Unmarshal([]byte(git(t, stage, "show", "HEAD:"+manifest.FileName)), &baseManifest); err != nil {
+				t.Fatal(err)
+			}
+			baseManifest.Links = map[string]string{removedLink: oldTarget}
+			writeJSON(stage, manifest.FileName, baseManifest)
+			git(t, stage, "add", devices.FileName, manifest.FileName)
+			git(t, stage, "commit", "-m", "base metadata")
+			git(t, stage, "push", remote.dir, "HEAD:refs/heads/main")
+			incoming := filepath.Join(t.TempDir(), "incoming")
+			git(t, filepath.Dir(incoming), "clone", "--branch", "main", remote.dir, incoming)
+			oursPath := "/ours"
+			if kind == "secret" {
+				oursPath = "ghp_" + strings.Repeat("z", 40)
+			}
+			localManifest := manifest.Manifest{Schema: 1, SourceOS: "linux", Projects: map[string]manifest.Project{"ours": {Cwd: oursPath}, "shared": {Cwd: "/ours/shared"}}}
+			remoteManifest := manifest.Manifest{Schema: 1, SourceOS: "windows", Projects: map[string]manifest.Project{"theirs": {Cwd: "/theirs"}, "shared": {Cwd: "/theirs/shared"}}}
+
+			writeJSON(stage, manifest.FileName, localManifest)
+			remoteManifest.Links = map[string]string{removedLink: oldTarget}
+			writeJSON(incoming, manifest.FileName, remoteManifest)
+			if kind == "unknown-field" {
+				put(t, incoming, manifest.FileName, "{\"schema\":1,\"sourceOS\":\"windows\",\"projects\":{},\"future\":true}\n")
+			}
+			writeJSON(stage, devices.FileName, devices.Registry{Schema: 1, Devices: map[string]devices.Device{
+				"ours": {Name: "ours"}, "shared": {Name: "shared", LastSync: now, Account: &devices.Account{Email: "fixture@example.com"}},
+			}})
+			writeJSON(incoming, devices.FileName, devices.Registry{Schema: 1, Devices: map[string]devices.Device{
+				"retired": retired, "theirs": {Name: "theirs"}, "shared": {Name: "shared", LastSync: now.Add(time.Hour)},
+			}})
+			git(t, stage, "add", ".")
+			git(t, stage, "commit", "-m", "local metadata")
+			git(t, incoming, "add", ".")
+			git(t, incoming, "commit", "-m", "remote metadata")
+			git(t, incoming, "push", "origin", "HEAD:main")
+			before := git(t, remote.dir, "rev-parse", "main")
+			localHead := git(t, stage, "rev-parse", "HEAD")
+			canonical := func(path string) []byte {
+				b, err := os.ReadFile(filepath.Join(stage, path))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return b
+			}
+			index, cfg, content := canonical(".git/index"), canonical(".git/config"), canonical(manifest.FileName)
+			result, err := (service.Service{}).PublishArtifact(t.Context(), input)
+			if kind != "union" {
+				want := commitartifact.ErrConflict
+				if kind == "secret" {
+					want = engine.ErrSecretTripwire
+				}
+				if !errors.Is(err, want) || result != (commitartifact.Publication{}) || remote.pushes != 0 || git(t, remote.dir, "rev-parse", "main") != before {
+					t.Fatalf("unsafe merge published: %+v %v pushes=%d", result, err, remote.pushes)
+				}
+				return
+			}
+			if err != nil || result.RemoteCommit == "" {
+				t.Fatalf("metadata publication: %+v %v", result, err)
+			}
+			var merged manifest.Manifest
+			if err := json.Unmarshal([]byte(git(t, remote.dir, "show", "main:"+manifest.FileName)), &merged); err != nil {
+				t.Fatal(err)
+			}
+			if _, restored := merged.Links[removedLink]; restored {
+				t.Fatal("restored removed link", merged.Links)
+			}
+			if len(merged.Projects) != 3 || merged.Projects["shared"].Cwd != "/ours/shared" || merged.Projects["theirs"].Cwd != "/theirs" {
+				t.Fatalf("lost projects: %+v", merged)
+			}
+			var registry devices.Registry
+			if err := json.Unmarshal([]byte(git(t, remote.dir, "show", "main:"+devices.FileName)), &registry); err != nil {
+				t.Fatal(err)
+			}
+			if registry.Has("retired") || len(registry.Devices) != 3 || registry.Devices["shared"].Account == nil || registry.Devices["shared"].Account.Email != "fixture@example.com" || !registry.Devices["shared"].LastSync.Equal(now.Add(time.Hour)) {
+				t.Fatalf("lost device provenance: %+v", registry)
+			}
+			if localHead != git(t, stage, "rev-parse", "HEAD") || !bytes.Equal(index, canonical(".git/index")) || !bytes.Equal(cfg, canonical(".git/config")) || !bytes.Equal(content, canonical(manifest.FileName)) {
+				t.Fatal("changed canonical staging")
+			}
+			if _, err := (service.Service{}).PublishArtifact(t.Context(), input); err != nil || remote.pushes != 1 {
+				t.Fatal("replay pushed again", err, remote.pushes)
 			}
 		})
 	}

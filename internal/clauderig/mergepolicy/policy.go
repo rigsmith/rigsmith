@@ -209,19 +209,7 @@ func unionManifest(ctx context.Context, repo *gitrepo.Repo, p string) (string, b
 	if !decodeSides(ctx, repo, p, &ours, &theirs) {
 		return "", false
 	}
-	merged := theirs
-	if merged.Projects == nil {
-		merged.Projects = map[string]manifest.Project{}
-	}
-	for k, v := range ours.Projects {
-		merged.Projects[k] = v
-	}
-	if len(ours.Links) > 0 && merged.Links == nil {
-		merged.Links = map[string]string{}
-	}
-	for k, v := range ours.Links {
-		merged.Links[k] = v
-	}
+	merged := mergeManifest(ours, theirs)
 	b, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
 		return "", false
@@ -239,6 +227,44 @@ func unionDevices(ctx context.Context, repo *gitrepo.Repo, p string) (string, bo
 	if !decodeSides(ctx, repo, p, &ours, &theirs) {
 		return "", false
 	}
+	merged := mergeDevices(ours, theirs)
+	b, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return "", false
+	}
+	if err := repo.ResolveWith(ctx, p, append(b, '\n')); err != nil {
+		return "", false
+	}
+	return fmt.Sprintf("%d device(s)", len(merged.Devices)), true
+}
+
+func decodeSides(ctx context.Context, repo *gitrepo.Repo, p string, ours, theirs any) bool {
+	ob, okO := repo.ConflictStage(ctx, p, 2)
+	tb, okT := repo.ConflictStage(ctx, p, 3)
+	if !okO || !okT {
+		return false
+	}
+	return json.Unmarshal(ob, ours) == nil && json.Unmarshal(tb, theirs) == nil
+}
+
+func mergeManifest(ours, theirs manifest.Manifest) manifest.Manifest {
+	merged := theirs
+	if merged.Projects == nil {
+		merged.Projects = map[string]manifest.Project{}
+	}
+	for k, v := range ours.Projects {
+		merged.Projects[k] = v
+	}
+	if len(ours.Links) > 0 && merged.Links == nil {
+		merged.Links = map[string]string{}
+	}
+	for k, v := range ours.Links {
+		merged.Links[k] = v
+	}
+	return merged
+}
+
+func mergeDevices(ours, theirs devices.Registry) devices.Registry {
 	merged := theirs
 	if merged.Devices == nil {
 		merged.Devices = map[string]devices.Device{}
@@ -263,21 +289,5 @@ func unionDevices(ctx context.Context, repo *gitrepo.Repo, p string) (string, bo
 		}
 		merged.Devices[name] = d
 	}
-	b, err := json.MarshalIndent(merged, "", "  ")
-	if err != nil {
-		return "", false
-	}
-	if err := repo.ResolveWith(ctx, p, append(b, '\n')); err != nil {
-		return "", false
-	}
-	return fmt.Sprintf("%d device(s)", len(merged.Devices)), true
-}
-
-func decodeSides(ctx context.Context, repo *gitrepo.Repo, p string, ours, theirs any) bool {
-	ob, okO := repo.ConflictStage(ctx, p, 2)
-	tb, okT := repo.ConflictStage(ctx, p, 3)
-	if !okO || !okT {
-		return false
-	}
-	return json.Unmarshal(ob, ours) == nil && json.Unmarshal(tb, theirs) == nil
+	return merged
 }

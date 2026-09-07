@@ -114,6 +114,44 @@ func publicationFixture(t *testing.T, format string) (PublishRequest, *testTrans
 		Validate: r.Audit, Audit: r.Audit}, tr, seed, parent
 }
 
+func TestPublicationResolverKeepsNewerLocalPrecedence(t *testing.T) {
+	for _, format := range []string{"sha1", "sha256"} {
+		t.Run(format, func(t *testing.T) {
+			r, remote, local, parent := publicationFixture(t, format)
+			r.LocalDir = local.dir
+			r.LocalCommit = newPublicationCommit(t, local, parent, "captured", "newer local value")
+			if err := remote.repo.importRef(t.Context(), local.dir, parent, "refs/heads/main", parent); err != nil {
+				t.Fatal(err)
+			}
+			remoteHead := newPublicationCommit(t, remote.repo, parent, "captured", "remote value")
+			mustRun(t, remote.repo, "", "update-ref", "refs/heads/main", remoteHead)
+			calls := 0
+			r.Resolve = func(_ context.Context, path string, base, ours, theirs []byte) ([]byte, error) {
+				calls++
+				wantTheirs := "sealed\r\n\x00bytes"
+				if calls == 2 {
+					wantTheirs = "remote value"
+				}
+				if path != "captured" || string(ours) != "newer local value" || string(theirs) != wantTheirs {
+					t.Errorf("merge %d precedence: %s ours=%q theirs=%q", calls, path, ours, theirs)
+				}
+				// Claude's shared manifest keys use this same ours-wins rule.
+				return ours, nil
+			}
+			result, err := Publish(t.Context(), r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if calls != 2 || mustRun(t, remote.repo, "", "show", result.RemoteCommit+":captured") != "newer local value" {
+				t.Fatal("newer local value lost", calls)
+			}
+			if again, err := Publish(t.Context(), r); err != nil || again != result || remote.pushes != 1 || calls != 2 {
+				t.Fatal("replay rebuilt or republished", again, err, calls, remote.pushes)
+			}
+		})
+	}
+}
+
 func TestPublicationMergesNewerHistoriesAndReplays(t *testing.T) {
 	for _, format := range []string{"sha1", "sha256"} {
 		t.Run(format, func(t *testing.T) {

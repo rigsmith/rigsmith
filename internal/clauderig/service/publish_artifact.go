@@ -10,6 +10,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
 )
 
 // ArtifactTransport is trusted transport code fixed to one destination/branch.
@@ -32,8 +33,9 @@ type ArtifactPublishRequest struct {
 // audit to retained publication. The staging lease spans HEAD inspection through
 // final remote confirmation and child cleanup. It never recaptures, reads the
 // worker's login, updates canonical staging, or acknowledges queue work. Only a
-// confirmed success permits a caller to persist the pushed phase. Local-only
-// completion and conflict recovery remain separate work.
+// confirmed success permits a caller to persist the pushed phase. Manifest/device
+// content conflicts use native metadata unions. Other file/structural conflicts,
+// canonical merge repair and local-only completion remain separate work.
 func (s Service) PublishArtifact(ctx context.Context, input ArtifactPublishRequest) (commitartifact.Publication, error) {
 	return s.publishArtifact(ctx, ctx, input)
 }
@@ -94,5 +96,6 @@ func (s Service) publishArtifact(ctx, staging context.Context, input ArtifactPub
 		Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, Attempts: plan.PushRetries + 1,
 		MaxTreeBytes: input.Commit.Commits.MaxBytes,
 		Validate:     backupgit.ValidateTree, Audit: engine.CheckPublishContext,
+		Resolve: mergepolicy.ResolveMetadata,
 	})
 }

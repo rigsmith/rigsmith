@@ -314,3 +314,13 @@ Synthetic tests cover deadline persistence across reopen, early-call exclusion,
 budget exhaustion and explicit recovery, retained-reference preservation, raw
 error omission from queue state, missing-source and scan repair/unblock, joined
 error precedence, cancellation and uncertain-write classification boundaries.
+
+
+## Metadata conflict recovery
+
+Retained publication now resolves supported manifest and device-registry content
+conflicts using Claude's existing native unions, in the private publication
+repository. The complete resolved tree is audited before pushing. Unsupported
+transcript/file/structural conflicts and invalid metadata still return a conflict
+and remain blocked. Existing blocked batches require explicit Unblock; recovery
+does not clear queue state on its own. See the [retained publication contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-metadata-recovery).
