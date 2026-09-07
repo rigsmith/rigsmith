@@ -32,6 +32,7 @@ func newStackCmd() *cobra.Command {
 			"and leave one project at a time: `send` puts a prefix's changes on your\n" +
 			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
+			"  rig stack setup                     set up a fresh clone: engine, members, overlay\n" +
 			"  rig stack init                      scaffold the manifest / import the repos\n" +
 			"  rig stack add [upstream]            add a repo and import it (asks if not given)\n" +
 			"  rig stack rm <repo>                 remove a repo: manifest, tree and overlay\n" +
@@ -49,7 +50,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
 	return refuseUnknownVerb(cmd)
 }
 
@@ -201,6 +202,29 @@ func newStackInitCmd() *cobra.Command {
 			}
 			if imported == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "nothing to import — every repo has a cursor; use `rig stack pull` for updates")
+			}
+			// A seed clone is a manifest, a build overlay, and nothing that says
+			// what either is — so the next person reads a build file pointing at
+			// directories that are not there and concludes the repo is broken.
+			// Best-effort: failing to write a README must not fail an import that
+			// worked.
+			switch wrote, err := writeStackReadme(root, m); {
+			case err != nil:
+				// Best-effort, but not silent: the import worked and the
+				// guidance it promises is missing, and only this line says so.
+				fmt.Fprintf(cmd.ErrOrStderr(), "could not write README.md: %v\n", err)
+			case wrote:
+				fmt.Fprintln(cmd.OutOrStdout(), "wrote README.md — what this is, and how to set it up")
+				// Committed, and by path alone. init refuses a dirty tree, and
+				// so do pull and propose — so a file this verb generates and
+				// leaves loose makes the next verb refuse over something the
+				// user never wrote. A rebuild from a seed hits it immediately:
+				// the heading follows the directory name, so a clone under a
+				// different one rewrites the file and nothing works again
+				// until someone commits it.
+				if _, err := repo.CommitPaths(ctx, "stack: README", "README.md"); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "could not commit README.md: %v\n", err)
+				}
 			}
 			return nil
 		},
@@ -1591,8 +1615,28 @@ func newStackWireCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, err = stackWire(ctx, cmd.OutOrStdout(), m, repo, "", false)
-			return err
+			// Asked before wiring, because a wire that defers still returns
+			// nil and the refresh below would go ahead anyway — writing a file
+			// nobody asked for into a tree that is about to be imported into.
+			// The heading follows the directory name, so a seed cloned under a
+			// different one is dirtied on sight, and the `setup` that follows
+			// refuses to import over it.
+			deferred := len(stackMissingPrefixes(repo.Dir, m.names())) > 0
+			if _, err := stackWire(ctx, cmd.OutOrStdout(), m, repo, "", false); err != nil {
+				return err
+			}
+			if deferred {
+				return nil // it changed nothing, so it leaves nothing behind
+			}
+			// Regenerated with the overlay, so the member table follows the
+			// manifest rather than going stale the first time one is added.
+			switch wrote, err := writeStackReadme(repo.Dir, m); {
+			case err != nil:
+				fmt.Fprintf(cmd.ErrOrStderr(), "could not refresh README.md: %v\n", err)
+			case wrote:
+				fmt.Fprintln(cmd.OutOrStdout(), "refreshed README.md")
+			}
+			return nil
 		},
 	}
 	return cmd
@@ -1775,6 +1819,7 @@ func stackMenuItems() []menuItem {
 		}
 	}
 	return []menuItem{
+		{label: "setup", desc: "set up a fresh clone: fusion engine, member directories, build overlay", cmd: newStackSetupCmd()},
 		{label: "init", desc: "import any repo the manifest names but has not fused yet", cmd: newStackInitCmd()},
 		{label: "add", desc: "add a repo to this stackspace and import it", cmd: newStackAddCmd()},
 		{label: "rm", desc: "remove a repo from this stackspace — manifest, tree and overlay (pick one)", cmd: newStackRemoveMenuCmd()},
