@@ -234,13 +234,18 @@ Claude resolves only the root manifest and device registry. The same pure union
 functions now serve both synchronous and retained resolution: manifests retain
 both project/link maps with ours winning shared keys, and device registries take
 the newest sync entry while preserving a known account if the newer entry has
-none. The synchronous fallback/reporting behavior remains unchanged.
+none. Retained device recovery first compares both sides with a strictly decoded
+merge base: an unchanged entry yields to removal on the other side, while a
+changed entry can return. No base means add/add union; an invalid present base
+blocks recovery. The synchronous fallback/reporting behavior remains unchanged.
 
 Retained resolution requires schema 1, valid UTF-8 JSON and only known fields.
-Malformed/unknown versions, unknown fields, duplicate keys (including Unicode simple-fold aliases),
+Malformed/unknown versions, unknown fields, duplicate keys (including Unicode simple-fold aliases for struct fields),
 and excessive nesting are refused rather than silently discarded. Unsupported
 metadata is not replaced by whichever snapshot is newer. This deliberately
-conservative decoder applies only to the new retained resolver.
+conservative decoder applies only to the new retained resolver. Project, link and
+device map identifiers remain exact and case-sensitive; only exact duplicate map
+keys are refused.
 
 Tests cover SHA-1/SHA-256, raw CRLF bytes, deterministic replay and both parents,
 declined resolutions, delete/edit refusal, malformed/unsafe stage records,

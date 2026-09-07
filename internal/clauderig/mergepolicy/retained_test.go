@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -103,6 +104,91 @@ func TestRetainedMetadataRejectsUnicodeAliases(t *testing.T) {
 		raw := []byte("{\"schema\":1,\"sourceOS\":\"linux\",\"projects\":{}," + fields + "}")
 		if _, err := ResolveMetadata(t.Context(), manifest.FileName, nil, raw, valid); !errors.Is(err, commitartifact.ErrConflict) {
 			t.Fatalf("accepted overwritten links: %s %v", raw, err)
+		}
+	}
+}
+
+func TestRetainedMetadataDeviceRemoval(t *testing.T) {
+	old := devices.Device{Name: "retired", LastSync: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), Account: &devices.Account{Email: "fixture@example.com"}}
+	registry := func(entries map[string]devices.Device) []byte {
+		return metadataJSON(t, devices.Registry{Schema: 1, Devices: entries})
+	}
+	base := registry(map[string]devices.Device{"retired": old})
+	empty := registry(map[string]devices.Device{})
+	for _, changed := range []string{"unchanged", "synced", "account"} {
+		survivor := old
+		switch changed {
+		case "synced":
+			survivor.LastSync = old.LastSync.Add(time.Hour)
+		case "account":
+			survivor.Account = &devices.Account{Email: "changed@example.com"}
+		}
+		for _, reverse := range []bool{false, true} {
+			a, b := empty, registry(map[string]devices.Device{"retired": survivor, "new": {Name: "new"}})
+			if reverse {
+				a, b = b, a
+			}
+			out, err := ResolveMetadata(t.Context(), devices.FileName, base, a, b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got devices.Registry
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatal(err)
+			}
+			_, kept := got.Devices["retired"]
+			if kept != (changed != "unchanged") || !got.Has("new") {
+				t.Errorf("%s reverse=%v: %+v", changed, reverse, got)
+			}
+		}
+	}
+	for _, bad := range [][]byte{[]byte{}, []byte("null"), []byte(`{"schema":2,"devices":{}}`), []byte(`{"schema":1,"devices":{},"future":true}`)} {
+		if _, err := ResolveMetadata(t.Context(), devices.FileName, bad, empty, base); !errors.Is(err, commitartifact.ErrConflict) {
+			t.Errorf("invalid base accepted: %s %v", bad, err)
+		}
+	}
+}
+
+func TestRetainedMetadataCaseSensitiveIdentifiers(t *testing.T) {
+	for _, tc := range []struct{ path, raw string }{
+		{manifest.FileName, `{"schema":1,"projects":{"Laptop":{"cwd":"/one"},"laptop":{"cwd":"/two"}},"links":{"s":"one","ſ":"two","k":"three","K":"four"}}`},
+		{devices.FileName, `{"schema":1,"devices":{"Laptop":{"name":"Laptop"},"laptop":{"name":"laptop"}}}`},
+	} {
+		out, err := ResolveMetadata(t.Context(), tc.path, nil, []byte(tc.raw), []byte(tc.raw))
+		if err != nil {
+			t.Errorf("distinct identifiers rejected: %s %v", tc.path, err)
+			continue
+		}
+		// Compare decoded values: serialization can add omitted zero fields.
+		var want, got any
+		if tc.path == manifest.FileName {
+			want, got = &manifest.Manifest{}, &manifest.Manifest{}
+		} else {
+			want, got = &devices.Registry{}, &devices.Registry{}
+		}
+		if err := json.Unmarshal([]byte(tc.raw), want); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(out, got); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(want, got) {
+			t.Errorf("identifiers or values changed: %s", out)
+		}
+	}
+}
+
+func TestRetainedMetadataNestedDuplicates(t *testing.T) {
+	for _, tc := range []struct{ path, raw string }{
+		{manifest.FileName, `{"schema":1,"projects":{"p":{},"p":{}}}`},
+		{manifest.FileName, `{"schema":1,"links":{"p":"one","p":"two"}}`},
+		{devices.FileName, `{"schema":1,"devices":{"p":{},"p":{}}}`},
+		{manifest.FileName, `{"schema":1,"projects":{"p":{"cwd":"one","CWD":"two"}}}`},
+		{devices.FileName, `{"schema":1,"devices":{"p":{"lastSync":null,"laſtSync":null}}}`},
+		{devices.FileName, `{"schema":1,"devices":{"p":{"account":{"email":"one","EMAIL":"two"}}}}`},
+	} {
+		if _, err := ResolveMetadata(t.Context(), tc.path, nil, []byte(tc.raw), []byte(tc.raw)); !errors.Is(err, commitartifact.ErrConflict) {
+			t.Errorf("nested duplicate accepted: %s %v", tc.raw, err)
 		}
 	}
 }

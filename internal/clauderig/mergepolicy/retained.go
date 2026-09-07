@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"reflect"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -17,7 +18,8 @@ import (
 // ResolveMetadata uses the existing native unions for retained publication.
 // Only schema-1 manifest/device documents are accepted. Unknown/duplicate fields,
 // unsupported paths and malformed sides remain conflicts, never newest-side
-// fallbacks. Base is not used: these metadata maps describe an additive union.
+// fallbacks. A device removed on one side stays removed when the other side's
+// entry is unchanged from base; a changed entry can return. An absent base unions.
 // The publisher bounds inputs/outputs and audits the complete candidate.
 func ResolveMetadata(ctx context.Context, path string, base, ours, theirs []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
@@ -35,6 +37,24 @@ func ResolveMetadata(ctx context.Context, path string, base, ours, theirs []byte
 		var a, b devices.Registry
 		if !decodeRetainedMetadata(ours, &a) || !decodeRetainedMetadata(theirs, &b) || a.Schema != 1 || b.Schema != 1 {
 			return nil, commitartifact.ErrConflict
+		}
+		var ancestor devices.Registry
+		if base != nil {
+			if !decodeRetainedMetadata(base, &ancestor) || ancestor.Schema != 1 {
+				return nil, commitartifact.ErrConflict
+			}
+		}
+		// Compare before unioning: mergeDevices mutates b's map and may fill
+		// missing account provenance from the other side.
+		for name, previous := range ancestor.Devices {
+			ourDevice, haveOurs := a.Devices[name]
+			theirDevice, haveTheirs := b.Devices[name]
+			if haveOurs && !haveTheirs && reflect.DeepEqual(ourDevice, previous) {
+				delete(a.Devices, name)
+			}
+			if haveTheirs && !haveOurs && reflect.DeepEqual(theirDevice, previous) {
+				delete(b.Devices, name)
+			}
 		}
 		merged = mergeDevices(a, b)
 	default:
@@ -57,7 +77,7 @@ func decodeRetainedMetadata(raw []byte, out any) bool {
 	// DisallowUnknownFields does not reject duplicate fields. Validate tokens
 	// first so a duplicate (including a case alias) cannot silently lose a value.
 	tokens := json.NewDecoder(bytes.NewReader(raw))
-	if !uniqueJSON(tokens, 0) {
+	if !uniqueJSON(tokens, reflect.TypeOf(out), 0) {
 		return false
 	}
 	if _, err := tokens.Token(); err != io.EOF {
@@ -68,7 +88,9 @@ func decodeRetainedMetadata(raw []byte, out any) bool {
 	return d.Decode(out) == nil
 }
 
-func uniqueJSON(d *json.Decoder, depth int) bool {
+// These metadata types use direct tagged fields, string-keyed maps and pointers.
+// Follow their types so struct aliases collide but map identifiers stay exact.
+func uniqueJSON(d *json.Decoder, typ reflect.Type, depth int) bool {
 	if depth > 32 {
 		return false
 	}
@@ -80,8 +102,14 @@ func uniqueJSON(d *json.Decoder, depth int) bool {
 	if !container {
 		return true
 	}
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
 	switch delim {
 	case '{':
+		if typ.Kind() != reflect.Struct && typ.Kind() != reflect.Map {
+			return false
+		}
 		seen := map[string]bool{}
 		for d.More() {
 			key, err := d.Token()
@@ -89,18 +117,37 @@ func uniqueJSON(d *json.Decoder, depth int) bool {
 			if err != nil || !ok {
 				return false
 			}
-			name = foldedJSONName(name)
+			var child reflect.Type
+			if typ.Kind() == reflect.Map {
+				child = typ.Elem()
+			} else {
+				name = foldedJSONName(name)
+				for i := 0; i < typ.NumField(); i++ {
+					field := typ.Field(i)
+					tag, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+					if field.IsExported() && tag != "" && tag != "-" && foldedJSONName(tag) == name {
+						child = field.Type
+						break
+					}
+				}
+				if child == nil {
+					return false
+				}
+			}
 			if seen[name] {
 				return false
 			}
 			seen[name] = true
-			if !uniqueJSON(d, depth+1) {
+			if !uniqueJSON(d, child, depth+1) {
 				return false
 			}
 		}
 	case '[':
+		if typ.Kind() != reflect.Slice && typ.Kind() != reflect.Array {
+			return false
+		}
 		for d.More() {
-			if !uniqueJSON(d, depth+1) {
+			if !uniqueJSON(d, typ.Elem(), depth+1) {
 				return false
 			}
 		}

@@ -355,6 +355,18 @@ func TestPublishArtifactResolvesMetadataAndAuditsResult(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			input, remote := publicationFixture(t, true, false)
 			stage := input.Commit.Capture.Sync.StagingDir
+			writeJSON := func(root, path string, value any) {
+				b, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				put(t, root, path, string(b)+"\n")
+			}
+			now := time.Now().UTC()
+			retired := devices.Device{Name: "retired", LastSync: now.Add(-time.Hour)}
+			writeJSON(stage, devices.FileName, devices.Registry{Schema: 1, Devices: map[string]devices.Device{"retired": retired}})
+			git(t, stage, "add", devices.FileName)
+			git(t, stage, "commit", "-m", "base device registry")
 			git(t, stage, "push", remote.dir, "HEAD:refs/heads/main")
 			incoming := filepath.Join(t.TempDir(), "incoming")
 			git(t, filepath.Dir(incoming), "clone", "--branch", "main", remote.dir, incoming)
@@ -364,24 +376,17 @@ func TestPublishArtifactResolvesMetadataAndAuditsResult(t *testing.T) {
 			}
 			localManifest := manifest.Manifest{Schema: 1, SourceOS: "linux", Projects: map[string]manifest.Project{"ours": {Cwd: oursPath}, "shared": {Cwd: "/ours/shared"}}}
 			remoteManifest := manifest.Manifest{Schema: 1, SourceOS: "windows", Projects: map[string]manifest.Project{"theirs": {Cwd: "/theirs"}, "shared": {Cwd: "/theirs/shared"}}}
-			writeJSON := func(root, path string, value any) {
-				b, err := json.Marshal(value)
-				if err != nil {
-					t.Fatal(err)
-				}
-				put(t, root, path, string(b)+"\n")
-			}
+
 			writeJSON(stage, manifest.FileName, localManifest)
 			writeJSON(incoming, manifest.FileName, remoteManifest)
 			if kind == "unknown-field" {
 				put(t, incoming, manifest.FileName, "{\"schema\":1,\"sourceOS\":\"windows\",\"projects\":{},\"future\":true}\n")
 			}
-			now := time.Now().UTC()
 			writeJSON(stage, devices.FileName, devices.Registry{Schema: 1, Devices: map[string]devices.Device{
 				"ours": {Name: "ours"}, "shared": {Name: "shared", LastSync: now, Account: &devices.Account{Email: "fixture@example.com"}},
 			}})
 			writeJSON(incoming, devices.FileName, devices.Registry{Schema: 1, Devices: map[string]devices.Device{
-				"theirs": {Name: "theirs"}, "shared": {Name: "shared", LastSync: now.Add(time.Hour)},
+				"retired": retired, "theirs": {Name: "theirs"}, "shared": {Name: "shared", LastSync: now.Add(time.Hour)},
 			}})
 			git(t, stage, "add", ".")
 			git(t, stage, "commit", "-m", "local metadata")
@@ -423,7 +428,7 @@ func TestPublishArtifactResolvesMetadataAndAuditsResult(t *testing.T) {
 			if err := json.Unmarshal([]byte(git(t, remote.dir, "show", "main:"+devices.FileName)), &registry); err != nil {
 				t.Fatal(err)
 			}
-			if len(registry.Devices) != 3 || registry.Devices["shared"].Account == nil || registry.Devices["shared"].Account.Email != "fixture@example.com" || !registry.Devices["shared"].LastSync.Equal(now.Add(time.Hour)) {
+			if registry.Has("retired") || len(registry.Devices) != 3 || registry.Devices["shared"].Account == nil || registry.Devices["shared"].Account.Email != "fixture@example.com" || !registry.Devices["shared"].LastSync.Equal(now.Add(time.Hour)) {
 				t.Fatalf("lost device provenance: %+v", registry)
 			}
 			if localHead != git(t, stage, "rev-parse", "HEAD") || !bytes.Equal(index, canonical(".git/index")) || !bytes.Equal(cfg, canonical(".git/config")) || !bytes.Equal(content, canonical(manifest.FileName)) {
