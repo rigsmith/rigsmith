@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
@@ -88,7 +89,7 @@ func uniqueJSON(d *json.Decoder, depth int) bool {
 			if err != nil || !ok {
 				return false
 			}
-			name = strings.ToLower(name)
+			name = foldedJSONName(name)
 			if seen[name] {
 				return false
 			}
@@ -108,4 +109,18 @@ func uniqueJSON(d *json.Decoder, depth int) bool {
 	}
 	end, err := d.Token()
 	return err == nil && ((delim == '{' && end == json.Delim('}')) || (delim == '[' && end == json.Delim(']')))
+}
+
+// Match encoding/json's Unicode simple-fold equivalence, not just lowercase.
+// Canonicalizing each fold cycle keeps duplicate lookup linear in input size.
+func foldedJSONName(name string) string {
+	return strings.Map(func(r rune) rune {
+		smallest := r
+		for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+			if next < smallest {
+				smallest = next
+			}
+		}
+		return smallest
+	}, name)
 }

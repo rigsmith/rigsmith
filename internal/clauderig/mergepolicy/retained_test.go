@@ -76,3 +76,33 @@ func TestRetainedMetadataDeclinesUnsafeDocuments(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// encoding/json treats long s as S/s and Kelvin sign as K/k. A lowercased
+// duplicate check misses the former even though the decoder overwrites Schema.
+func TestRetainedMetadataRejectsUnicodeAliases(t *testing.T) {
+	valid := metadataJSON(t, manifest.Manifest{Schema: 1, SourceOS: "linux", Projects: map[string]manifest.Project{}})
+	for _, fields := range []string{
+		"\"schema\":2,\"ſchema\":1",
+		"\"ſchema\":2,\"schema\":1",
+		"\"SCHEMA\":2,\"ſchema\":1",
+		"\"\\u017fchema\":2,\"schema\":1",
+	} {
+		raw := []byte("{" + fields + ",\"sourceOS\":\"linux\",\"projects\":{}}")
+		var decoded manifest.Manifest
+		if err := json.Unmarshal(raw, &decoded); err != nil || decoded.Schema != 1 {
+			t.Fatalf("invalid alias fixture: %+v %v", decoded, err)
+		}
+		if _, err := ResolveMetadata(t.Context(), manifest.FileName, nil, raw, valid); !errors.Is(err, commitartifact.ErrConflict) {
+			t.Fatalf("accepted overwritten schema: %s %v", raw, err)
+		}
+	}
+	for _, fields := range []string{
+		"\"links\":{\"a\":\"one\"},\"linKs\":{\"a\":\"two\"}",
+		"\"links\":{\"a\":\"one\"},\"linkſ\":{\"a\":\"two\"}",
+	} {
+		raw := []byte("{\"schema\":1,\"sourceOS\":\"linux\",\"projects\":{}," + fields + "}")
+		if _, err := ResolveMetadata(t.Context(), manifest.FileName, nil, raw, valid); !errors.Is(err, commitartifact.ErrConflict) {
+			t.Fatalf("accepted overwritten links: %s %v", raw, err)
+		}
+	}
+}

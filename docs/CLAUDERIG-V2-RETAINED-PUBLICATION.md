@@ -237,7 +237,7 @@ the newest sync entry while preserving a known account if the newer entry has
 none. The synchronous fallback/reporting behavior remains unchanged.
 
 Retained resolution requires schema 1, valid UTF-8 JSON and only known fields.
-Malformed/unknown versions, unknown fields, duplicate keys (including case aliases),
+Malformed/unknown versions, unknown fields, duplicate keys (including Unicode simple-fold aliases),
 and excessive nesting are refused rather than silently discarded. Unsupported
 metadata is not replaced by whichever snapshot is newer. This deliberately
 conservative decoder applies only to the new retained resolver.
