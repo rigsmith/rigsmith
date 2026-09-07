@@ -197,7 +197,7 @@ the fallback.
 `--from` requires `trackBranch` in the manifest, and keeps that branch current with the
 whole divergence — a topic is only part of it, and `init` rebuilds from it, so without
 that a rebuild (CI included) would silently build without the fixes you left out.
-`rig stack status` reports how many commits a prefix diverges by when more than one does, and lists the
+`rig stack status` says when `propose` would send a prefix's whole divergence, and lists the
 `stack-pr-*` topics in flight.
 
 Pass the **short name** — `read-timeout`, not `stack/read-timeout`. `send`

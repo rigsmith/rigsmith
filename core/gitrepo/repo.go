@@ -386,24 +386,6 @@ func (r *Repo) BranchesWithPrefix(ctx context.Context, prefix string) ([]string,
 	return names, nil
 }
 
-// PrefixCommits lists the commits in a revision range that touched prefix/,
-// oldest first. Merges are excluded because in a stackspace they are rig's own
-// imports of upstream, which say nothing about how far the prefix has diverged
-// — the question this answers.
-func (r *Repo) PrefixCommits(ctx context.Context, revRange, prefix string) ([]string, error) {
-	out, err := runGit(ctx, r.Dir, "rev-list", "--reverse", "--no-merges", revRange, "--", prefix+"/")
-	if err != nil {
-		return nil, err
-	}
-	var commits []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			commits = append(commits, line)
-		}
-	}
-	return commits, nil
-}
-
 // LogEntry is one commit of a log: its full id and its subject line.
 type LogEntry struct {
 	SHA     string

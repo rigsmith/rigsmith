@@ -653,10 +653,13 @@ The rest is unchanged from the first attempt:
   `seed` would refuse a stackspace whose unproposed commits are safely on the fork,
   and `status` would call them unsent.
 
-`status` now reports how many commits a prefix diverges by once there is more than one
-(one is the ordinary case and saying so every time is noise), because the
-whole-prefix behaviour is otherwise discovered by a maintainer asking why a diff
-touches something unrelated.
+`status` now says that `propose` sends the prefix's whole divergence, because that
+behaviour is otherwise discovered by a maintainer asking why a diff touches something
+unrelated. Said rather than counted: a count needs a range, and every range against the
+integration line is wrong here — the newest import marker sits on top of the fixes, so
+`marker..HEAD` omits all of them, and a topic merged into the line makes
+`marker..topic` empty. Whether a topic touches a member is answered by comparing prefix
+TREES, which no merge can distort.
 
 **Staleness after a pull.** A pull moves the prefix on and a topic branch does not
 come with it, so the topic's tree is upstream as it used to be. The whole-prefix path

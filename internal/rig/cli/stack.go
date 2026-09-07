@@ -289,16 +289,21 @@ func newStackStatusCmd() *cobra.Command {
 				case !u.Known && m.cursor(name) != "":
 					state += "  ·  cannot tell whether it has unsent changes (no import commit in this history)"
 				}
-				// `propose` sends the prefix's WHOLE divergence, not the commit
-				// you have in mind, so a second pull request for this repo would
-				// carry the first one's changes too. Nothing else says so, and
-				// the place it is discovered otherwise is a maintainer asking why
-				// the diff touches something unrelated.
 				if stale := stackStaleTopics(ctx, repo, m, name); len(stale) > 0 {
 					state += fmt.Sprintf("  ·  %d topic(s) rooted before the last pull (%s) — `propose --from` refuses them", len(stale), strings.Join(stale, ", "))
 				}
-				if n := stackDivergingCommits(ctx, repo, m, name); n > 1 {
-					state += fmt.Sprintf("  ·  %d commits diverge from upstream; `propose` sends all of them (--from <branch> for one)", n)
+				// `propose` sends the prefix's WHOLE divergence, not the change you
+				// have in mind, so a second pull request for this repo would carry
+				// the first one's too. Nothing else says so, and the place it is
+				// otherwise discovered is a maintainer asking why the diff touches
+				// something unrelated.
+				//
+				// Said, not counted. A count needs a range, and every range against
+				// the integration line is wrong here: the newest import marker sits
+				// on top of the fixes, so `marker..HEAD` omits all of them. The
+				// sentence was the point anyway.
+				if u.Commits || u.Proposed {
+					state += "  ·  `propose` sends this prefix's whole divergence (--from <branch> for one topic)"
 				}
 				fmt.Fprintf(out, "%-24s %-10s %s\n", name, short(m.cursor(name)), state)
 			}
@@ -514,6 +519,19 @@ func stackImportCommit(ctx context.Context, repo *gitrepo.Repo, name string) str
 	return marker
 }
 
+// stackTopicTouches reports whether a topic changes a member at all, by
+// comparing its prefix tree against the import's.
+//
+// Content, NOT history. The workflow merges topics into the integration line, so
+// a topic's commits are ancestors of the newest import marker and any
+// `marker..topic` range is empty — a range test called every topic irrelevant to
+// every member the moment it was merged, which is to say always.
+func stackTopicTouches(ctx context.Context, repo *gitrepo.Repo, base, topic, name string) bool {
+	baseTree, berr := repo.RevParse(ctx, base+":"+name)
+	topicTree, terr := repo.RevParse(ctx, topic+":"+name)
+	return berr == nil && terr == nil && baseTree != topicTree
+}
+
 // stackStaleTopics lists the conventionally-named topic branches that touch a
 // prefix and do NOT contain its cursor — topics rooted before the last pull,
 // whose prefix tree is upstream as it USED to be. Proposing one commits that
@@ -536,7 +554,7 @@ func stackStaleTopics(ctx context.Context, repo *gitrepo.Repo, m *stackManifest,
 	for _, t := range topics {
 		// Does it touch this member at all? A topic for another project is not
 		// this member's business, stale or otherwise.
-		if commits, cerr := repo.PrefixCommits(ctx, base+".."+t, name); cerr != nil || len(commits) == 0 {
+		if !stackTopicTouches(ctx, repo, base, t, name) {
 			continue
 		}
 		if current, aerr := repo.IsAncestor(ctx, base, t); aerr == nil && !current {
@@ -544,23 +562,6 @@ func stackStaleTopics(ctx context.Context, repo *gitrepo.Repo, m *stackManifest,
 		}
 	}
 	return stale
-}
-
-// stackDivergingCommits counts this stackspace's own commits under a prefix
-// since it was imported — which is exactly what `propose` would put on one
-// branch. Zero when it cannot be answered (no cursor, or a history rewritten
-// past it): status has plenty else to say, and a wrong count here would be read
-// as a fact about someone's pull request.
-func stackDivergingCommits(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) int {
-	base := stackImportCommit(ctx, repo, name)
-	if base == "" {
-		return 0
-	}
-	commits, err := repo.PrefixCommits(ctx, base+"..HEAD", name)
-	if err != nil {
-		return 0
-	}
-	return len(commits)
 }
 
 // stackFileDirty reports whether one path has changes git has not recorded —
