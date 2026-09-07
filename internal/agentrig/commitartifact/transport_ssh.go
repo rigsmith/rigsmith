@@ -106,12 +106,14 @@ func sshComponent(s, punctuation string) bool {
 
 // OpenSSH expands tokens/environment variables inside file options. Reject
 // those forms rather than letting a worker login redirect a bound credential.
+// IsAbs already excludes leading home expansion; interior tildes are literal
+// and must remain valid for Windows short paths such as C:/Users/RUNNER~1.
 func sshFile(path string) bool {
 	if !filepath.IsAbs(path) || len(path) > 4096 {
 		return false
 	}
 	for _, ch := range filepath.ToSlash(path) {
-		if ch < 32 || ch == 127 || strings.ContainsRune("\"\\%$~", ch) {
+		if ch < 32 || ch == 127 || strings.ContainsRune("\"\\%$", ch) {
 			return false
 		}
 	}

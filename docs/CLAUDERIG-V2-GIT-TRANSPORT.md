@@ -80,7 +80,9 @@ existing Git override isolation. Git receives `GIT_SSH_VARIANT=ssh` and a genera
 Every argument is shell quoted, including executable and identity paths containing
 spaces or apostrophes. The known-hosts path is also quoted for OpenSSH's list
 parser. Paths with control characters, quotes that would alter that parser,
-percent tokens or environment/tilde expansion are refused. This relies on Git's
+percent tokens or environment/leading-tilde expansion are refused. Literal
+tildes inside absolute paths remain valid, including Windows short directory
+names such as `C:/Users/RUNNER~1`. This relies on Git's
 shell convention, including Git for Windows; Plink/TortoisePlink are not accepted
 as alternate SSH implementations. Unsupported OpenSSH options fail closed.
 

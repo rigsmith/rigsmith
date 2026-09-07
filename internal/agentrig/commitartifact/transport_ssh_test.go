@@ -138,7 +138,7 @@ func sshTransportFixture(t *testing.T, remote gitRepo) (GitTransportOptions, *at
 	})
 	t.Cleanup(func() { cancel(); _ = listener.Close(); wg.Wait() })
 	// Both shell and SSH-option quoting must preserve spaces and apostrophes.
-	dir := filepath.Join(t.TempDir(), "key owner's files")
+	dir := filepath.Join(t.TempDir(), "key owner's files~1")
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestSSHTransportPublishesAndConfirms(t *testing.T) {
 }
 
 func TestSSHRemoteAndOptionsValidation(t *testing.T) {
-	base := SSHOptions{Executable: filepath.Join(t.TempDir(), "ssh"), IdentityFile: filepath.Join(t.TempDir(), "key"), KnownHostsFile: filepath.Join(t.TempDir(), "hosts")}
+	base := SSHOptions{Executable: filepath.Join(t.TempDir(), "SSH~1"), IdentityFile: filepath.Join(t.TempDir(), "KEY~1"), KnownHostsFile: filepath.Join(t.TempDir(), "HOSTS~1")}
 	for _, remote := range []string{"git@example.com:acme/repo.git", "git@example.com:/srv/repo.git", "git@[::1]:repo", "ssh://git@example.com/repo", "ssh://git@[::1]:2222/repo"} {
 		if _, err := NewGitTransport(GitTransportOptions{Remote: remote, Branch: "main", SSH: &base}); err != nil {
 			t.Fatalf("%s: %v", remote, err)
@@ -203,7 +203,7 @@ func TestSSHRemoteAndOptionsValidation(t *testing.T) {
 		}
 	}
 	for _, field := range []string{"executable", "identity", "hosts"} {
-		for _, path := range []string{"", "relative", filepath.Join(t.TempDir(), "${HOME}"), filepath.Join(t.TempDir(), "%h"), filepath.Join(t.TempDir(), "quote\""), filepath.Join(t.TempDir(), "line\n")} {
+		for _, path := range []string{"", "relative", "~/identity", "~other/identity", filepath.Join(t.TempDir(), "${HOME}"), filepath.Join(t.TempDir(), "%h"), filepath.Join(t.TempDir(), "quote\""), filepath.Join(t.TempDir(), "line\n")} {
 			t.Run(fmt.Sprintf("%s/%q", field, path), func(t *testing.T) {
 				value := base
 				switch field {
@@ -400,7 +400,7 @@ func TestSSHMissingIdentityDoesNotEnableDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := SSHOptions{Executable: executable, IdentityFile: filepath.Join(t.TempDir(), "missing key"), KnownHostsFile: filepath.Join(t.TempDir(), "missing hosts")}
+	options := SSHOptions{Executable: executable, IdentityFile: filepath.Join(t.TempDir(), "RUNNER~1", "missing key"), KnownHostsFile: filepath.Join(t.TempDir(), "RUNNER~1", "missing hosts")}
 	args, err := sshArguments(options)
 	if err != nil {
 		t.Fatal(err)
