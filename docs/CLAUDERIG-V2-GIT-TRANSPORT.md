@@ -1,131 +1,50 @@
-# V2 retained Git transport
+# V2 retained publication execution
 
-`commitartifact.NewGitTransport` supplies the first concrete transport for the
-retained publisher. It implements the shared `Transport` contract and Claude's
-`ArtifactTransport` destination interface. It can publish through HTTPS, SSH with explicit identity/host-trust files, or an
-absolute local path, with ordinary fast-forward pushes and fresh confirmation
-performed by `Publish`. This remains internal code: commands, hooks and installed
-workers do not call it. Existing synchronous Git and credential handling are
-unchanged, so this step has no end-user changeset.
+The retained publisher keeps its shared `Transport` interface, exact destination
+binding, ordinary fast-forward publication and fresh remote confirmation.
+[#326](https://github.com/rigsmith/rigsmith/pull/326) removes the custom HTTPS/SSH
+transports introduced in #323/#325 and drops the proposed generic credential
+helper. Queue reliability does not require replacing users' existing Git
+credentials or adding rig-specific key, host-trust or keychain configuration.
 
-## Destination and authentication
+## Network integration direction
 
-Construction copies one exact remote string, branch, optional HTTP Basic
-credential and optional CA bundle path. The destination interface returns those
-same bound values. Relative local paths, remote aliases, remote helpers, HTTP
-URL userinfo, queries, fragments, control characters and unsafe branch/ref syntax
-are refused. SSH destinations require an explicit user and SSH options as below. Plain HTTP is limited to literal loopback IP addresses for local
-integrations; production HTTP destinations must use HTTPS. Custom CA bundles are
-explicit and TLS verification cannot be disabled.
+Use the existing Git authentication setup, with `gh` as the primary GitHub path.
+Claude's existing `gh` repository creation/private-repository verification and
+Git push behavior remain the reference. Retained-publisher integration must
+exercise that path while preserving exact destination/commit selection, retry
+confirmation and owned subprocess cleanup. No replacement credential provider
+or automatic SSH-agent/keychain discovery is a prerequisite for the queue.
+Existing GitLab and SSH users retain the synchronous workflow during development.
 
-Credentials are provided by the caller, separately from the captured Claude
-account identity. This layer does not invoke credential helpers, select a vendor
-account, prompt, or load a worker's credential store. A later composition layer
-must resolve and refresh repository authentication explicitly. Passwords are
-copied into a URL-scoped Authorization header in the child's environment. They
-are not written to argv, Git configuration, archives, queue state or error text.
-Environment delivery is not a claim of protection from the same OS user or a
-privileged process inspecting child environments.
+This cleanup does not wire a network transport into the retained publisher or
+activate queued commands/hooks. The next implementation should connect existing
+Git/`gh` authentication to the publication boundary with focused integration
+fixtures, then progress through worker recovery and rollout gates in the
+[roadmap](CLAUDERIG-SHARED-LAYERS-ROADMAP.md).
 
-Each command disables inherited Git overrides, global/system configuration,
-credential helpers, askpass, proxies, redirects, submodule recursion, hooks,
-signing and automatic maintenance. The child's home/config directories point at
-the owned private repository so curl cannot silently use the worker's netrc.
-Only the selected transport protocol is allowed. TLS defaults remain enabled,
-with an optional caller-supplied CA file. Git stderr is discarded and stdout is
-bounded at 1 MiB; errors expose a stable transport error and exit code rather than
-raw diagnostics, URLs or authorization values.
+## Local publication adapter
 
-This uses Git's documented [URL-scoped HTTP settings and redirect controls](https://git-scm.com/docs/git-config).
-The implementation intentionally rejects redirects instead of following one with
-a bound credential or changing the destination. Credential-helper selection and
-agent/keychain discovery still need explicit noninteractive contracts before
-queued hooks can support those installations.
-
-## SSH identity and host trust
-
-`SSHOptions` supplies three absolute paths: a trusted OpenSSH executable, one
-identity file and one known-hosts file. Construction copies their selection into
-the transport. Callers own these files and must keep them stable through an
-operation; path binding is not a snapshot of their contents. Missing, unreadable,
-wrong or encrypted identities fail authentication without an alternate identity
-or a prompt. The identity is supplied through `IdentityFile` configuration rather
-than `-i`, so even a missing path suppresses default identity-file selection.
-No private-key bytes are read by the transport, copied into queue
-state/artifacts, or embedded in command arguments, environment or errors. The
-selected file paths are visible to the child process.
-
-Supported destinations include `ssh://git@example.com:2222/srv/repo.git` and
-`git@example.com:acme/repo.git`. The original string remains the destination
-binding and the argument to Git: scp-style relative paths retain their remote
-home-directory semantics; SSH URL paths remain absolute. URLs may specify a port
-from 1 through 65535. Scp-style destinations use the normal SSH port. Users,
-hostnames and repository paths use a conservative ASCII grammar. Passwords,
-percent escapes, query/fragment text, shell syntax, tilde paths and dot traversal
-are refused. IPv6 literals must be bracketed in the destination. Alias expansion
-through SSH configuration is not supported.
-
-The command uses [OpenSSH's `-F none`](https://man.openbsd.org/ssh) to ignore user
-and system SSH configuration. [Authentication and host-key options](https://man.openbsd.org/ssh_config)
-select public-key authentication, one identity, and strict checking against the
-supplied known-hosts file. Unknown/changed hosts fail before running remote Git.
-Global host files, DNS host-key trust, host-key updates, certificate sidecar
-selection, identity agents, password/keyboard prompts, forwarding, proxy/jump
-commands, local commands, and connection sharing are disabled. The transport does
-not accept host keys on first use or add keys to an agent.
-
-Inherited SSH agent/askpass/provider environment is removed, along with the
-existing Git override isolation. Git receives `GIT_SSH_VARIANT=ssh` and a generated
-[`GIT_SSH_COMMAND`](https://git-scm.com/docs/git#Documentation/git.txt-GIT_SSH_COMMAND).
-Every argument is shell quoted, including executable and identity paths containing
-spaces or apostrophes. The known-hosts path is also quoted for OpenSSH's list
-parser. Paths with control characters, quotes that would alter that parser,
-percent tokens or environment/leading-tilde expansion are refused. Literal
-tildes inside absolute paths remain valid, including Windows short directory
-names such as `C:/Users/RUNNER~1`. This relies on Git's
-shell convention, including Git for Windows; Plink/TortoisePlink are not accepted
-as alternate SSH implementations. Unsupported OpenSSH options fail closed.
-
-The same owned process runner, output bound, ordinary push and fresh confirmation
-rules apply to SSH. Cancelling a connection terminates the local SSH process tree;
-it does not guarantee that a remote server has stopped processing a request.
-Uncertain pushes still require the publisher's fresh ancestry observation.
-
-This first SSH path deliberately requires explicit files. Agent-backed encrypted
-keys, OS keychains, Git credential helpers, host aliases, ProxyJump and custom SSH
-configuration remain composition work. Repository authentication stays separate
-from Claude/Codex session attribution. Existing synchronous SSH behavior is
-unchanged, and no queued command or hook is activated.
-
-## Fetch and push
+`commitartifact.NewGitTransport` now accepts only an absolute local repository
+path and branch. Its options contain no credentials or network configuration.
+HTTP, HTTPS, SSH, file URLs and remote aliases are refused. This adapter keeps
+synthetic publication and Claude service fixtures exercising real Git. The
+private Git command environment permits only file transport and disables inherited
+Git overrides, hooks and automatic maintenance.
 
 Methods require the fresh private bare repository created by `Publish`, owned by
-the caller and containing no caller-added Git configuration. This is a trusted
-internal contract, not a sandbox for arbitrary repositories. A canonical checkout
-is refused, as is overlap between a local remote and the supplied workspace.
-Calls sharing a workspace must be serialized by its owner.
+the caller and containing no caller-added Git configuration. A canonical checkout
+is refused, as is overlap between the local destination and publication workspace.
+Calls sharing a workspace must be serialized by their owner.
 
 Fetch clears only the supplied `refs/rig/publication-…` ref and advertises the
-exact configured branch with `ls-remote --exit-code --refs`. Only Git's documented
-[exit status 2 for no matching refs](https://git-scm.com/docs/git-ls-remote), with
-successful process cleanup and no context cancellation, means an absent branch.
-An unreachable repository, authentication failure, malformed response, cleanup
-failure or failed fetch is an error. A missing local remote is also an error.
-
-The subsequent fetch imports only that branch into the supplied private ref,
-without tags, FETCH_HEAD, recursive submodules or maintenance. It returns the
-actual fetched commit because the branch may advance after advertisement.
-`Publish` then independently checks the ref/SHA, object integrity and complete
-history. Other private refs and configuration stay unchanged.
-
-Push requires an exact commit object and sends it to the bound branch using a
-normal, non-forced refspec. It does not infer a push remote, invoke a pre-push hook,
-push tags or update canonical staging. A non-fast-forward attempt is rejected.
-Only the publisher's subsequent fresh fetch and tree validation can establish
-success for a queued batch; the push command alone is not confirmation.
-
-The caller supplies the operation context and deadline. This transport does not
-persist retry state, acknowledge generations or implement worker timeout policy.
+exact configured branch. Only a clean `ls-remote --exit-code --refs` exit status
+of 2 means the branch is absent. Missing repositories, cancellation and cleanup
+failures remain errors. Fetch imports the branch without tags, FETCH_HEAD or
+maintenance and returns its actual commit SHA for independent publisher checks.
+Push sends exactly the candidate commit to the bound branch without forcing,
+pushing tags or updating canonical staging. The publisher confirms success by
+fetching again and checking ancestry and the observed tree.
 
 ## Command ownership and cleanup
 
@@ -190,40 +109,15 @@ helpers are outside this trusted internal contract.
 
 ## Validation
 
-Synthetic tests use real local bare remotes and a TLS Git smart-HTTP server with
-an explicit fixture CA and credential. SHA-1 and SHA-256 cases publish newer local
-and remote histories, validate confirmation and replay, and exercise ordinary push
-rejection. Additional tests cover absent branches versus unreachable/auth failures,
-protected refs, configuration/FETCH_HEAD preservation, ambient Git/netrc isolation,
-credential copying, redirect refusal, untrusted TLS, cancellation and invalid
-endpoints. A native Claude service test uses the concrete local transport.
+Local bare-repository fixtures cover SHA-1 and SHA-256 publication, newer local
+and remote histories, confirmation, replay, fast-forward rejection, absent versus
+missing destinations, ref/configuration preservation and network-URL rejection.
+Claude service tests still exercise the concrete local adapter. The standalone
+TLS/SSH servers, synthetic SSH keys, generic helper fixtures and their x/crypto
+dependency are removed with the network implementations.
 
-Process tests start real helper trees, including a descendant retaining output
-pipes after its parent exits. A write attempted only after Run returns detects
-leaked helpers without depending on the race detector's delayed exit behavior.
-They cover both normal completion and cancellation, direct exit status, startup
-failure and pre-cancellation. Native Linux/macOS/Windows CI remains the platform
-gate, alongside the unchanged six-scenario Claude compatibility baseline.
-
-Additional retained-command tests put a synthetic Git executable on PATH and
-start real descendant processes. They check cleanup after ordinary exit,
-cancellation, output overflow and malformed stream rejection, including helpers
-that hold stdout open. A post-return marker detects further helper execution;
-large bidirectional transfers verify concurrent pipe draining and exact bytes.
-The fixture ignores SIGPIPE so output-rejection checks also cover helpers that
-keep running after a broken pipe. Follow-up HEAD probe tests preserve overflow
-and cancellation failures from both symbolic-ref and show-ref.
-Missing-executable and semantic-exit cases exercise startup closure and rejection
-of exit statuses joined with cleanup errors. These fixtures run on all three CI
-platforms and never access a real user's repository or vendor data.
-
-SSH tests use real Git/OpenSSH against an unprivileged loopback SSH server with
-fresh synthetic keys. They exercise SHA-1/SHA-256 publication and replay, newer
-local/remote histories, absent-branch ref isolation, option copying, paths with
-spaces/apostrophes, poisoned inherited settings, wrong/missing/encrypted keys,
-unknown/changed/missing host trust, wrong users and cancellation during a blocked
-handshake. An OpenSSH `-G` check verifies that missing selected files do not
-enable default identities or agents. Trust/key files and private Git
-configuration remain unchanged. The Go
-SSH dependency is used only by tests; production continues to use OpenSSH. CI must
-run these fixtures natively on Linux, macOS and Windows.
+Process and retained-command tests continue to exercise normal exit, cancellation,
+output overflow, rejected writers/streams, bidirectional transfers, helper trees
+and semantic exit handling on Linux, macOS and Windows. Post-return markers detect
+helpers that keep executing after ownership should have ended. The fixed six-case
+Claude compatibility baseline and synthetic end-to-end suite remain required.

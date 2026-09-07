@@ -26,16 +26,16 @@ as `151a4d47`, with private merges and fresh remote confirmation.
 **Completed:** Claude retained publication policy merged in [#319](https://github.com/rigsmith/rigsmith/pull/319) as `674830b1`: committed-batch bindings,
 explicit transport destination checks, settled local HEAD, raw-tree native
 attributes and secret auditing ([contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md)).
-**Completed:** concrete HTTPS/local Git transport with explicit credentials and
-transport subprocess cancellation/cleanup merged in [#323](https://github.com/rigsmith/rigsmith/pull/323) as `4bd53792`
-([contract](CLAUDERIG-V2-GIT-TRANSPORT.md)).
-**Completed:** process ownership for all retained Git commands and streams merged
-in [#324](https://github.com/rigsmith/rigsmith/pull/324) as `1006a009`, including
-transport output rejection and follow-up HEAD probe review fixes.
-**In review in [#325](https://github.com/rigsmith/rigsmith/pull/325):** SSH transport with explicit identity/known-hosts files, isolated
-OpenSSH configuration, and local SSH publication/authentication fixtures.
-Agent/keychain discovery, native conflict recovery, parent-death recovery, queued
-hooks and CodexRig remain planned.
+**Completed:** owned subprocess cancellation/cleanup introduced in
+[#323](https://github.com/rigsmith/rigsmith/pull/323) and extended to all retained
+Git commands and streams in [#324](https://github.com/rigsmith/rigsmith/pull/324)
+as `1006a009`, including output rejection and follow-up HEAD probe fixes.
+**In review in [#326](https://github.com/rigsmith/rigsmith/pull/326):** remove the
+custom HTTPS/SSH transports from #323/#325 and the proposed generic credential
+helper. Keep the local Git fixture adapter, process cleanup and retained publisher.
+The next network integration uses existing Git authentication and `gh` for GitHub.
+Worker execution/recovery, queued hooks and CodexRig remain planned. Broad
+credential providers and SSH-agent/keychain discovery are deferred.
 
 | Milestone | Status | Evidence / remaining work |
 | --- | --- | --- |
@@ -47,9 +47,28 @@ hooks and CodexRig remain planned.
 | 5. Shared session/metadata and Git publication boundaries | Merged in v2 | [#307](https://github.com/rigsmith/rigsmith/pull/307). Shared recording/query and audited publication workflows; Claude retains native formats and policies. Local synthetic suite, six baseline compatibility scenarios and vet passed. |
 | 6a. Store coordination | Merged in v2: [#308](https://github.com/rigsmith/rigsmith/pull/308) | OS-owned locks across staging workflows. Linux, macOS and Windows CI passed. [Contract](CLAUDERIG-V2-COORDINATION.md). |
 | 6b.1. Durable queue storage and recovery | Merged in v2: [#309](https://github.com/rigsmith/rigsmith/pull/309) | Persist events, coalesce pending flushes, preserve new generations during capture, track phases/retries and recover exclusive worker ownership. [Contract](CLAUDERIG-V2-QUEUE.md). |
-| 6b.2. Worker and Claude service integration | Driver/service split merged in [#310](https://github.com/rigsmith/rigsmith/pull/310); capture artifacts merged in [#311](https://github.com/rigsmith/rigsmith/pull/311) | Durable archives, frozen Claude sources and pinned attribution: [contract](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md). Retained commit bundles and Claude commit integration merged in [#315](https://github.com/rigsmith/rigsmith/pull/315): [contract](CLAUDERIG-V2-RETAINED-COMMITS.md). Capture-time seed retention merged in [#317](https://github.com/rigsmith/rigsmith/pull/317). Shared retained publication merged in [#318](https://github.com/rigsmith/rigsmith/pull/318): [contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md). Claude retained publication policy merged in [#319](https://github.com/rigsmith/rigsmith/pull/319). Concrete HTTPS/local transport and cancellation cleanup merged in [#323](https://github.com/rigsmith/rigsmith/pull/323): [contract](CLAUDERIG-V2-GIT-TRANSPORT.md). Process ownership for all retained Git commands and streams merged in [#324](https://github.com/rigsmith/rigsmith/pull/324). In review in [#325](https://github.com/rigsmith/rigsmith/pull/325): SSH transport with explicit keys and host trust. Next: authentication discovery, native conflict recovery, parent-death recovery, exact manual-sync coverage and lifecycle/capacity remedies. |
+| 6b.2. Worker and Claude service integration | Driver/service split merged in [#310](https://github.com/rigsmith/rigsmith/pull/310); capture artifacts merged in [#311](https://github.com/rigsmith/rigsmith/pull/311) | Durable archives, frozen Claude sources and pinned attribution: [contract](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md). Retained commit bundles and Claude commit integration merged in [#315](https://github.com/rigsmith/rigsmith/pull/315): [contract](CLAUDERIG-V2-RETAINED-COMMITS.md). Capture-time seed retention merged in [#317](https://github.com/rigsmith/rigsmith/pull/317). Shared retained publication merged in [#318](https://github.com/rigsmith/rigsmith/pull/318): [contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md). Claude retained publication policy merged in [#319](https://github.com/rigsmith/rigsmith/pull/319). Owned subprocess cleanup merged through [#323](https://github.com/rigsmith/rigsmith/pull/323)/[#324](https://github.com/rigsmith/rigsmith/pull/324): [contract](CLAUDERIG-V2-GIT-TRANSPORT.md). [#326](https://github.com/rigsmith/rigsmith/pull/326) removes custom SSH/HTTPS transports and the proposed credential helper. Next: publication through existing Git/`gh`, worker integration, native conflict and parent-death recovery, exact manual-sync coverage and lifecycle/capacity remedies. |
 | 7. Opt-in queued Claude hooks | Planned | Validate worker lifecycle, startup, draining/rollback, and convergence with synchronous sync. |
 | Codex adapter and separate `codexrig` executable | Planned | Consume the proven shared layers without moving Claude account/Desktop internals into them. |
+
+## Delivery priority
+
+1. Reuse the existing Git/`gh` authentication setup for retained publication.
+   Validate the primary GitHub workflow without requiring new credential files,
+   keychain configuration or a generic credential-provider layer. Preserve the
+   current private-repository checks and existing synchronous workflows.
+2. Connect the durable queue to the Claude capture, commit and publication
+   services. Complete exact generation acknowledgement, retries, native conflict
+   recovery and coordination with manual sync.
+3. Finish parent-death recovery, worker startup/restart/draining, capacity and
+   artifact/receipt cleanup before enabling queued hooks.
+4. Validate opt-in queued Claude sync and rollback against the synchronous path.
+5. Build the separate `codexrig` adapter using the proven shared layers.
+
+SSH-agent discovery, broad credential-helper support and new OS keychain
+integration are deferred. They are not prerequisites for delivering the queue
+or adding a second vendor. The merged queue, retained commits, remote
+confirmation and owned process cleanup remain part of v2.
 
 After v1.15.1, [#299](https://github.com/rigsmith/rigsmith/pull/299) brought the
 foundation into main and [#301](https://github.com/rigsmith/rigsmith/pull/301) merged
@@ -181,6 +200,6 @@ cmd/clauderig -> Claude commands/composition -> shared services <- Codex command
 
 The composition code passes adapter implementations into narrow interfaces owned by the shared services. Shared packages import neither vendor package. Keep these interfaces internal until both vendors validate them; a public SDK or external plugin ABI would freeze guesses too early.
 
-Milestones 1–5 are merged; milestone 5 landed in v2 through #307. Milestone 6a merged in #308. Milestone 6b.1 merged in #309; 6b.2 has the shared execution driver and Claude service split merged in #310; durable artifacts and capture/sealing merged in #311. Retained commit bundles and the Claude commit adapter merged in #315. Capture-time seed retention merged in #317. Shared retained publication merged in #318. Claude retained publication policy merged in #319. Concrete HTTPS/local Git transport and cancellation cleanup merged in [#323](https://github.com/rigsmith/rigsmith/pull/323). Cleanup for all retained Git commands and streams merged in [#324](https://github.com/rigsmith/rigsmith/pull/324). SSH transport with explicit keys and host trust is in review in [#325](https://github.com/rigsmith/rigsmith/pull/325), followed by authentication discovery, native conflict recovery and lifecycle integration before opt-in hooks. Milestones 3–5 establish the shared foundation; milestones 6–7 deliver the queue as a separately controlled feature. `codexrig` can begin using the proven boundaries without requiring Claude account/Desktop internals to move.
+Milestones 1–5 are merged; milestone 5 landed in v2 through #307. Milestone 6a merged in #308. Milestone 6b.1 merged in #309; 6b.2 has the shared execution driver and Claude service split merged in #310; durable artifacts and capture/sealing merged in #311. Retained commit bundles and the Claude commit adapter merged in #315. Capture-time seed retention merged in #317. Shared retained publication merged in #318. Claude retained publication policy merged in #319. Owned process cleanup merged through [#323](https://github.com/rigsmith/rigsmith/pull/323) and [#324](https://github.com/rigsmith/rigsmith/pull/324). [#326](https://github.com/rigsmith/rigsmith/pull/326) removes the custom network transports and proposed credential helper, retaining the local fixture adapter. The delivery order now prioritizes existing Git/`gh` publication integration, queued Claude sync and then the Codex adapter; broad credential discovery is deferred. Milestones 3–5 establish the shared foundation; milestones 6–7 deliver the queue as a separately controlled feature. `codexrig` can begin using the proven boundaries without requiring Claude account/Desktop internals to move.
 
 Baseline check during this roadmap: `CLAUDERIG_E2E=1 go test ./internal/clauderig/e2e -run '^TestE2E_(RoundTrip|CrossOSPortability)$' -count=1 -v` passed, including both macOS→Windows and Windows→macOS path-mapping cases on this macOS host. These are synthetic fixtures and local bare remotes, not tests of live Claude resume on Windows. No implementation or runtime configuration was changed.
