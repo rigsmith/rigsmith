@@ -10,6 +10,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
 )
 
 // ArtifactTransport is trusted transport code fixed to one destination/branch.
@@ -94,5 +95,6 @@ func (s Service) publishArtifact(ctx, staging context.Context, input ArtifactPub
 		Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, Attempts: plan.PushRetries + 1,
 		MaxTreeBytes: input.Commit.Commits.MaxBytes,
 		Validate:     backupgit.ValidateTree, Audit: engine.CheckPublishContext,
+		Resolve: mergepolicy.ResolveMetadata,
 	})
 }

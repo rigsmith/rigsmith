@@ -39,8 +39,12 @@ The local fixture adapter, process cleanup and retained publisher remain.
 commit and confirmed publication services under one staging lease. Offline and
 unmarked-push recovery preserve saved phases and later generations. Conflicts
 block for deliberate recovery.
-**In review in [#336](https://github.com/rigsmith/rigsmith/pull/336):** bounded retry/backoff for temporary failures and explicit blocking
-for scan, data, binding and unknown failures. Queued hooks and CodexRig remain planned. Broad
+**Merged in [#336](https://github.com/rigsmith/rigsmith/pull/336):** bounded retry/backoff for temporary failures and explicit blocking
+for scan, data, binding and unknown failures.
+**In progress:** private retained conflict resolution for manifest/device metadata,
+reusing native unions and auditing the resolved tree before publication. Transcript,
+file and canonical staging merge recovery remain open. Queued hooks and CodexRig
+remain planned. Broad
 credential providers and SSH-agent/keychain discovery are deferred.
 
 | Milestone | Status | Evidence / remaining work |
@@ -53,7 +57,7 @@ credential providers and SSH-agent/keychain discovery are deferred.
 | 5. Shared session/metadata and Git publication boundaries | Merged in v2 | [#307](https://github.com/rigsmith/rigsmith/pull/307). Shared recording/query and audited publication workflows; Claude retains native formats and policies. Local synthetic suite, six baseline compatibility scenarios and vet passed. |
 | 6a. Store coordination | Merged in v2: [#308](https://github.com/rigsmith/rigsmith/pull/308) | OS-owned locks across staging workflows. Linux, macOS and Windows CI passed. [Contract](CLAUDERIG-V2-COORDINATION.md). |
 | 6b.1. Durable queue storage and recovery | Merged in v2: [#309](https://github.com/rigsmith/rigsmith/pull/309) | Persist events, coalesce pending flushes, preserve new generations during capture, track phases/retries and recover exclusive worker ownership. [Contract](CLAUDERIG-V2-QUEUE.md). |
-| 6b.2. Worker and Claude service integration | Driver/service split merged in [#310](https://github.com/rigsmith/rigsmith/pull/310); capture artifacts merged in [#311](https://github.com/rigsmith/rigsmith/pull/311) | Durable archives, frozen Claude sources and pinned attribution: [contract](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md). Retained commit bundles and Claude commit integration merged in [#315](https://github.com/rigsmith/rigsmith/pull/315): [contract](CLAUDERIG-V2-RETAINED-COMMITS.md). Capture-time seed retention merged in [#317](https://github.com/rigsmith/rigsmith/pull/317). Shared retained publication merged in [#318](https://github.com/rigsmith/rigsmith/pull/318): [contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md). Claude retained publication policy merged in [#319](https://github.com/rigsmith/rigsmith/pull/319). Owned subprocess cleanup merged through [#323](https://github.com/rigsmith/rigsmith/pull/323)/[#324](https://github.com/rigsmith/rigsmith/pull/324): [contract](CLAUDERIG-V2-GIT-TRANSPORT.md). [#326](https://github.com/rigsmith/rigsmith/pull/326) removed custom SSH/HTTPS transports and the proposed credential helper. Merged in [#327](https://github.com/rigsmith/rigsmith/pull/327): publication through existing Git/`gh` configuration with real CLI fixtures. Merged in [#332](https://github.com/rigsmith/rigsmith/pull/332): Claude QueueAdapter integration, retained-phase recovery and exact queued-batch acknowledgement. In review in [#336](https://github.com/rigsmith/rigsmith/pull/336): bounded retry/backoff and explicit failure blocking. Next: native conflict and parent-death recovery, exact manual-sync coverage and lifecycle/capacity remedies. |
+| 6b.2. Worker and Claude service integration | Driver/service split merged in [#310](https://github.com/rigsmith/rigsmith/pull/310); capture artifacts merged in [#311](https://github.com/rigsmith/rigsmith/pull/311) | Durable archives, frozen Claude sources and pinned attribution: [contract](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md). Retained commit bundles and Claude commit integration merged in [#315](https://github.com/rigsmith/rigsmith/pull/315): [contract](CLAUDERIG-V2-RETAINED-COMMITS.md). Capture-time seed retention merged in [#317](https://github.com/rigsmith/rigsmith/pull/317). Shared retained publication merged in [#318](https://github.com/rigsmith/rigsmith/pull/318): [contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md). Claude retained publication policy merged in [#319](https://github.com/rigsmith/rigsmith/pull/319). Owned subprocess cleanup merged through [#323](https://github.com/rigsmith/rigsmith/pull/323)/[#324](https://github.com/rigsmith/rigsmith/pull/324): [contract](CLAUDERIG-V2-GIT-TRANSPORT.md). [#326](https://github.com/rigsmith/rigsmith/pull/326) removed custom SSH/HTTPS transports and the proposed credential helper. Merged in [#327](https://github.com/rigsmith/rigsmith/pull/327): publication through existing Git/`gh` configuration with real CLI fixtures. Merged in [#332](https://github.com/rigsmith/rigsmith/pull/332): Claude QueueAdapter integration, retained-phase recovery and exact queued-batch acknowledgement. Merged in [#336](https://github.com/rigsmith/rigsmith/pull/336): bounded retry/backoff and explicit failure blocking. In progress: retained manifest/device conflict unions. Next: transcript/file and canonical merge recovery, parent-death recovery, exact manual-sync coverage and lifecycle/capacity remedies. |
 | 7. Opt-in queued Claude hooks | Planned | Validate worker lifecycle, startup, draining/rollback, and convergence with synchronous sync. |
 | Codex adapter and separate `codexrig` executable | Planned | Consume the proven shared layers without moving Claude account/Desktop internals into them. |
 
@@ -65,8 +69,8 @@ credential providers and SSH-agent/keychain discovery are deferred.
    current private-repository checks and existing synchronous workflows.
 2. **Merged in [#332](https://github.com/rigsmith/rigsmith/pull/332):** connect the durable queue to the Claude capture, commit and
    publication services, with exact batch acknowledgement and saved-phase replay.
-   In review in [#336](https://github.com/rigsmith/rigsmith/pull/336): bounded retry/backoff and explicit failure blocking. Next: native
-   conflict recovery and exact
+   Merged in [#336](https://github.com/rigsmith/rigsmith/pull/336): bounded retry/backoff and explicit failure blocking. In progress: retained manifest/device
+   conflict unions. Next: transcript/file and canonical merge recovery, plus exact
    manual-sync coverage; the worker currently excludes manual sync while active.
 3. Finish parent-death recovery, worker startup/restart/draining, capacity and
    artifact/receipt cleanup before enabling queued hooks.

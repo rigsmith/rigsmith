@@ -9,7 +9,8 @@ policy adapter with an explicitly injected bound transport. The custom HTTPS/SSH
 [#326](https://github.com/rigsmith/rigsmith/pull/326); the
 [local Git adapter and owned process runner](CLAUDERIG-V2-GIT-TRANSPORT.md) remain.
 `NewConfiguredGitTransport` now delegates remote operations to existing Git
-configuration, including `gh` credentials for the primary GitHub path. Queue wiring and lifecycle/recovery gates remain pending.
+configuration, including `gh` credentials for the primary GitHub path. Queue execution and bounded retry
+policy are integrated; lifecycle and further recovery gates remain pending.
 
 ## Inputs and ownership
 
@@ -48,8 +49,10 @@ produce the same candidate after an interrupted attempt. Git must support that
 merge-tree mode; failure is surfaced, with no fallback to a checkout merge.
 
 Conflicts fail closed with ErrConflict. Unrelated history, invalid object formats
-and Git execution failures also stop publication. There is no automatic choice of
-one vendor's side, native conflict resolver or interactive mergetool yet. Claude native conflict recovery must be added before activation.
+and Git execution failures also stop publication. An optional raw-blob resolver now handles bounded regular-file content conflicts.
+Claude enables only manifest/device metadata unions; transcript/file and canonical
+staging conflict recovery remain required before activation. There is no interactive
+mergetool or whole-side fallback in retained publication.
 
 Private Git runs disable inherited Git overrides, global/system configuration,
 system/global attributes, templates, hooks, replacement objects and automatic
@@ -140,8 +143,8 @@ Claude supplies its native snapshot label, fixed queued author identity, sealed
 event timestamp and four push/confirmation attempts. The committed store's byte
 limit also bounds materialized publication trees. A returned `Publication` is
 only evidence for persisting the pushed phase; this adapter does not update queue
-state. Config-history, retention, local-only completion, native merge recovery and
-worker wiring are not implemented in the service. Composition can supply
+state. QueueAdapter now supplies worker phase wiring. Config-history, retention,
+local-only completion and broader native merge recovery remain separate work. Composition can supply
 `NewConfiguredGitTransport` to reuse existing Git/`gh` authentication; broad
 credential discovery is deferred. Synchronous behavior is unchanged.
 
@@ -200,3 +203,49 @@ attribute/secret rejection on both local candidates and already-published remote
 trees. The shared attribute validator tests macros, nested overrides for all five
 attributes, ignored paths, inherited Git overrides and streamed responses larger
 than the ordinary command-output cap.
+
+
+## Bounded retained metadata recovery
+
+The optional Resolve callback accepts an exact path and raw base/ours/theirs blobs.
+It is used only for regular-file content or add/add conflicts with both sides
+present and consistent modes. Delete/edit, directory/file, mode and unsupported
+path conflicts remain blocked. A nil resolver keeps the previous fail-closed
+behavior. Claude enables its resolver in PublishArtifact; already-blocked queue
+batches still require explicit Unblock before execution.
+
+The publisher reads Git's NUL-delimited conflict stage records from
+[merge-tree](https://git-scm.com/docs/git-merge-tree), with messages and rename
+inference disabled. Only a clean conflict exit with complete bounded output is
+eligible for parsing; cancellation, output overflow and child cleanup failures
+cannot masquerade as conflict records. The publisher limits a merge to 128
+conflicted paths, 1 MiB per input/output blob and 16 MiB across conflict inputs and
+outputs. Existing control-output and whole-tree limits still apply.
+
+All accepted outputs are written as raw Git blobs and applied through a private
+bare-repository index. No checkout, filter, external merge driver, mergetool or
+canonical-state edit is needed. Every resulting merge commit has both original
+parents and the same deterministic publication identity/time/message. The entire
+candidate still passes native attribute validation and secret auditing before a
+push; fresh remote confirmation and replay rules remain unchanged. A declined
+path prevents publication even if earlier paths were resolvable.
+
+Claude resolves only the root manifest and device registry. The same pure union
+functions now serve both synchronous and retained resolution: manifests retain
+both project/link maps with ours winning shared keys, and device registries take
+the newest sync entry while preserving a known account if the newer entry has
+none. The synchronous fallback/reporting behavior remains unchanged.
+
+Retained resolution requires schema 1, valid UTF-8 JSON and only known fields.
+Malformed/unknown versions, unknown fields, duplicate keys (including case aliases),
+and excessive nesting are refused rather than silently discarded. Unsupported
+metadata is not replaced by whichever snapshot is newer. This deliberately
+conservative decoder applies only to the new retained resolver.
+
+Tests cover SHA-1/SHA-256, raw CRLF bytes, deterministic replay and both parents,
+declined resolutions, delete/edit refusal, malformed/unsafe stage records,
+cancellation and blob bounds. Claude fixtures exercise metadata union through
+actual publication, preserved device provenance, unchanged canonical files/index/
+config, unknown-field refusal and secret rejection after resolution. Transcript
+chunk indexes, append-text recovery, other machine state, rename-aware recovery,
+canonical merge repair and operational unblock/status commands remain future work.

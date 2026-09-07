@@ -40,7 +40,8 @@ type Transport interface {
 // it. They must not require a .git checkout or consult inherited Git settings.
 // MaxTreeBytes bounds each materialized tree; zero uses the archive default.
 // Attempts bounds push/confirmation cycles (1..10). Conflicts fail closed; no
-// mergetool, vendor conflict policy or unrelated-history replacement is implied.
+// mergetool or unrelated-history replacement is implied. Resolve optionally
+// supplies a bounded raw-blob policy for supported content conflicts.
 type PublishRequest struct {
 	Commits                          artifact.Store
 	CommitRef, CaptureRef            string
@@ -51,6 +52,7 @@ type PublishRequest struct {
 	Attempts                         int
 	MaxTreeBytes                     int64
 	Validate, Audit                  func(context.Context, string) error
+	Resolve                          ResolveConflict
 }
 
 // Publication is returned only after a fresh remote fetch proves the retained
@@ -156,7 +158,7 @@ func Publish(ctx context.Context, r PublishRequest) (Publication, error) {
 		if err := repo.completeHistory(ctx); err != nil {
 			return Publication{}, err
 		}
-		base, err = repo.merge(ctx, base, r.LocalCommit, r.Message)
+		base, err = repo.mergeWithPolicy(ctx, base, r.LocalCommit, r.Message, r.Resolve)
 		if err != nil {
 			return Publication{}, err
 		}
@@ -164,7 +166,7 @@ func Publish(ctx context.Context, r PublishRequest) (Publication, error) {
 	for attempt := 0; attempt < r.Attempts; attempt++ {
 		candidate := base
 		if remote != "" {
-			candidate, err = repo.merge(ctx, base, remote, r.Message)
+			candidate, err = repo.mergeWithPolicy(ctx, base, remote, r.Message, r.Resolve)
 			if err != nil {
 				return Publication{}, err
 			}
