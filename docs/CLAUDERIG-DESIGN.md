@@ -536,3 +536,13 @@ V2 also shares the session candidate/read/record loop and summary queries in
 repository initialization, branch/history selection, audits and conflict handling.
 Persisted records and journal ownership remain unchanged. See the
 [record/publication contracts](CLAUDERIG-V2-RECORDS-PUBLICATION.md).
+
+
+### V2 retained append conflicts
+
+Retained publication can combine proven append-only native JSONL and memory-text
+changes while preserving both machines' additions. It requires a shared byte
+prefix, complete lines and unambiguous transcript identities; conflicting edits
+and chunk indexes remain blocked. This is a v2-only policy, separate from the
+synchronous merge fallback. See the [retained publication contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-append-recovery)
+for validation, byte bounds and remaining queue activation gates.

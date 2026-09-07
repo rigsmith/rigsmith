@@ -452,3 +452,77 @@ func TestPublishArtifactResolvesMetadataAndAuditsResult(t *testing.T) {
 		})
 	}
 }
+
+func TestPublishArtifactRecoversAppendConflicts(t *testing.T) {
+	for _, kind := range []string{"transcript", "memory", "uuid-collision", "edited-base", "secret", "chunk-index"} {
+		t.Run(kind, func(t *testing.T) {
+			input, remote := publicationFixture(t, true, false)
+			stage := input.Commit.Capture.Sync.StagingDir
+			path := "cli/projects/-p/append.jsonl"
+			base := "{\"uuid\":\"base\",\"type\":\"user\"}\n"
+			local := "{\"uuid\":\"local\",\"parentUuid\":\"base\"}\n"
+			incomingTail := "{\"uuid\":\"remote\",\"parentUuid\":\"base\"}\n"
+			if kind == "memory" {
+				path = "cli/projects/-p/memory/MEMORY.md"
+				base, local, incomingTail = "# Memory\n", "local note\n\n", "remote note\n\n"
+			}
+			put(t, stage, path, base)
+			git(t, stage, "add", ".")
+			git(t, stage, "commit", "-m", "shared append base")
+			git(t, stage, "push", remote.dir, "HEAD:refs/heads/main")
+			incoming := filepath.Join(t.TempDir(), "incoming")
+			git(t, filepath.Dir(incoming), "clone", "--branch", "main", remote.dir, incoming)
+			ourBody, theirBody := base+local, base+incomingTail
+			switch kind {
+			case "uuid-collision":
+				theirBody = base + "{\"uuid\":\"local\",\"changed\":true}\n"
+			case "edited-base":
+				theirBody = "{\"uuid\":\"base\",\"edited\":true}\n" + incomingTail
+			case "secret":
+				theirBody = base + fmt.Sprintf("{\"uuid\":\"remote\",\"text\":%q}\n", "ghp_"+strings.Repeat("z", 40))
+			case "chunk-index":
+				theirBody = "{\"clauderig_chunked_transcript\":1,\"size\":0,\"parts\":[]}\n"
+			}
+			put(t, stage, path, ourBody)
+			put(t, incoming, path, theirBody)
+			git(t, stage, "add", ".")
+			git(t, stage, "commit", "-m", "local append")
+			git(t, incoming, "add", ".")
+			git(t, incoming, "commit", "-m", "remote append")
+			git(t, incoming, "push", "origin", "HEAD:main")
+			before, localHead := git(t, remote.dir, "rev-parse", "main"), git(t, stage, "rev-parse", "HEAD")
+			readCanonical := func(p string) []byte {
+				b, err := os.ReadFile(filepath.Join(stage, p))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return b
+			}
+			index, cfg := readCanonical(".git/index"), readCanonical(".git/config")
+			result, err := (service.Service{}).PublishArtifact(t.Context(), input)
+			if localHead != git(t, stage, "rev-parse", "HEAD") || !bytes.Equal(index, readCanonical(".git/index")) || !bytes.Equal(cfg, readCanonical(".git/config")) || string(readCanonical(path)) != ourBody {
+				t.Fatal("changed canonical staging")
+			}
+			if kind != "transcript" && kind != "memory" {
+				want := commitartifact.ErrConflict
+				if kind == "secret" {
+					want = engine.ErrSecretTripwire
+				}
+				if !errors.Is(err, want) || result != (commitartifact.Publication{}) || remote.pushes != 0 || git(t, remote.dir, "rev-parse", "main") != before {
+					t.Fatalf("unsafe merge published: %+v %v", result, err)
+				}
+				return
+			}
+			if err != nil || result.RemoteCommit == "" {
+				t.Fatalf("append publication: %+v %v", result, err)
+			}
+			got := git(t, remote.dir, "show", "main:"+path)
+			if got != strings.TrimSpace(base+local+incomingTail) {
+				t.Fatalf("lost appended content: %q", got)
+			}
+			if _, err := (service.Service{}).PublishArtifact(t.Context(), input); err != nil || remote.pushes != 1 {
+				t.Fatal("replay pushed again", err, remote.pushes)
+			}
+		})
+	}
+}

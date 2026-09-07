@@ -96,6 +96,6 @@ func (s Service) publishArtifact(ctx, staging context.Context, input ArtifactPub
 		Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, Attempts: plan.PushRetries + 1,
 		MaxTreeBytes: input.Commit.Commits.MaxBytes,
 		Validate:     backupgit.ValidateTree, Audit: engine.CheckPublishContext,
-		Resolve: mergepolicy.ResolveMetadata,
+		Resolve: mergepolicy.ResolveRetained,
 	})
 }
