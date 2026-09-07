@@ -595,8 +595,13 @@ first and judges after.
 `rig stack init` also writes a `README.md` if the repository has none, generated
 from the manifest: the member table, the setup command, and the two things a
 seed cannot show — that the directories are missing on purpose, and that work
-leaves through `propose` rather than a push. Edit it and rig leaves it alone;
-the marker line at the top says so.
+leaves through `propose` rather than a push. `wire` refreshes it, so the member
+table follows the manifest instead of going stale.
+
+**Delete the marker line at the top to make the file yours.** Editing it is not
+enough: a file still carrying the marker is one rig owns, and the next `init` or
+`wire` rewrites it — edits and all. Without the marker rig never touches it
+again, which is also how you opt out of having one at all.
 
 Name the directory — and the repository you push it to — `rigstack-<something>`.
 A seed is not a project you clone and work in: it is the few kilobytes `stack
@@ -672,7 +677,8 @@ the step-by-step.
 
 | Verb | What it does |
 |---|---|
-| `stack init` | Scaffold the manifest, or import the repos it names that are not imported yet |
+| `stack setup` | Set up a freshly cloned stackspace: the fusion engine, the members, the build overlay, the status — in an order where each step can see what it is judging. Safe to run again |
+| `stack init` | Scaffold the manifest, or import the repos it names that are not imported yet; writes the generated `README.md` unless one is there that rig does not own |
 | `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
 | `stack rm <repo>` | Remove a repo: its manifest entry and cursor, its directory, and the overlay redirects into it; refuses while it holds work that has not left (`--force`), `--keep-tree` keeps the directory |
 | `stack seed <dir>` | Export the root files — everything outside every prefix, manifest included — as a small repo that `stack init` rebuilds the members from elsewhere; refuses while a member holds commits that have not left (`--force`) |
@@ -680,7 +686,7 @@ the step-by-step.
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch; `--dry-run` says what would go and touches no remote |
 | `stack push [repo]` | Fast-forward a repo you own with this stackspace's commits, history intact; inferred when only one is yours; `--dry-run` lists the commits that would go and touches no remote |
-| `stack wire` | Write the build overlay so members resolve each other from source |
+| `stack wire` | Write the build overlay so members resolve each other from source, and refresh the generated `README.md`. Defers while any member the manifest names is not imported: nothing crosses between directories that are not there, which reads exactly like an overlay left over |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
 `propose` and `push` answer different questions. `propose` proposes one squashed

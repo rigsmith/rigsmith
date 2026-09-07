@@ -325,17 +325,29 @@ func stackReportNotes(out io.Writer, notes []string) {
 	}
 }
 
-// stackAnyPrefixPresent reports whether any member directory exists on disk.
+// stackMissingPrefixes names the members the manifest has and the working tree
+// does not.
 //
 // By directory rather than by cursor: a seed clone carries cursors for members
-// it does not have, which is exactly the state this needs to recognise.
-func stackAnyPrefixPresent(root string, members []string) bool {
+// it does not have, which is exactly the state this exists to recognise.
+//
+// Every member, not any member: the overlay is written from the links that
+// cross between them, so a graph missing one member is missing whatever ran
+// through it, and acting on that removes real links as confidently as it would
+// remove stale ones. A half-imported workspace is a state to wait out, not one
+// to judge.
+//
+// An empty manifest returns nothing missing, which is the point: after the last
+// member is removed there is genuinely nothing left to cross, and the overlay
+// standing there is stale and wants taking away.
+func stackMissingPrefixes(root string, members []string) []string {
+	var missing []string
 	for _, name := range members {
-		if fi, err := os.Stat(filepath.Join(root, name)); err == nil && fi.IsDir() {
-			return true
+		if fi, err := os.Stat(filepath.Join(root, name)); err != nil || !fi.IsDir() {
+			missing = append(missing, name)
 		}
 	}
-	return false
+	return missing
 }
 
 // redirectsOf drops the reporting detail the adapters have no use for.
@@ -372,9 +384,10 @@ func stackCheckOverlay(ctx context.Context, root string, m *stackManifest) ([]st
 	// The same distinction the failed-scan guard above draws, and the one
 	// `status` draws when it says it cannot tell without an import commit: no
 	// links found is not the same as no links.
-	if !stackAnyPrefixPresent(root, members) {
+	if missing := stackMissingPrefixes(root, members); len(missing) > 0 {
 		return nil, orphans, append(notes,
-			"members are not imported yet, so nothing can be said about the build overlay — run `rig stack setup`"), failed
+			fmt.Sprintf("%s not imported yet, so nothing can be said about the build overlay — run `rig stack setup`",
+				strings.Join(missing, ", "))), failed
 	}
 	for _, eco := range ecosystem.Default().All() {
 		// A scan that errored found no links, which is not the same as there

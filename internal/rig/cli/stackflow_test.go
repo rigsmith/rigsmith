@@ -75,13 +75,21 @@ func TestStackFlow(t *testing.T) {
 		}
 	})
 
-	if err := runVerb(ctx, newStackInitCmd()); err != nil {
-		t.Fatalf("init: %v", err)
+	// Through `setup` rather than `init`: that is the command a fresh clone is
+	// told to run, so it is the sequence — engine, members, overlay, status —
+	// that has to hold together. The assertions below are about the import it
+	// performs, which is the step this replaces.
+	if err := runVerb(ctx, newStackSetupCmd()); err != nil {
+		t.Fatalf("setup: %v", err)
 	}
 	for _, name := range []string{"libfoo", "libbar"} {
 		if _, err := os.Stat(filepath.Join(ws, name, "src", name+".txt")); err != nil {
 			t.Fatalf("%s was not imported: %v", name, err)
 		}
+	}
+	// Every step is meant to be a no-op once it has been done.
+	if err := runVerb(ctx, newStackSetupCmd()); err != nil {
+		t.Fatalf("setup is not repeatable: %v", err)
 	}
 	// The prefix content must be the upstream tree, not a nested copy of it.
 	if _, err := os.Stat(filepath.Join(ws, "libfoo", "libfoo")); err == nil {

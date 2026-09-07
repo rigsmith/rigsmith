@@ -22,6 +22,7 @@ your app and the libraries you have forked, fused into one history, so a change
 can span them in a single commit while each still leaves as itself:
 
 ```sh
+rig stack setup                      # a fresh clone: engine, members, overlay, status
 rig stack init                       # scaffold the manifest; run again to import
 rig stack add github.com/them/lib    # fuse another repo
 rig stack rm some-lib                # take one back out: manifest, tree and overlay

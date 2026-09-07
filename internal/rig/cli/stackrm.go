@@ -363,8 +363,17 @@ func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitre
 	//
 	// By directory rather than by cursor: a seed carries cursors for members it
 	// does not have, which is exactly this state.
-	if !stackAnyPrefixPresent(repo.Dir, m.names()) {
-		fmt.Fprintf(out, "%smembers are not imported yet — nothing to wire against; run `rig stack setup`\n", indent)
+	//
+	// A partly imported workspace counts as unimported. The links are read from
+	// the members' own build files, so one that is not there contributes none —
+	// and an overlay written from that graph is missing whatever crossed through
+	// it, which is the same damage arriving by a slower route.
+	//
+	// A manifest with no members at all is a different answer and falls through:
+	// nothing can cross when there is nothing to cross between, so the overlay
+	// the last `rm` left really is stale, and the pass below is what takes it.
+	if missing := stackMissingPrefixes(repo.Dir, m.names()); len(missing) > 0 {
+		fmt.Fprintf(out, "%s%s not imported yet — nothing to wire against; run `rig stack setup`\n", indent, strings.Join(missing, ", "))
 		return nil, nil
 	}
 	byEco, orphans, notes, failed := stackRedirects(ctx, repo.Dir, m.names(), m.publishing())

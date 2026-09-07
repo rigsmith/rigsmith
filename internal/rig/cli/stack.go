@@ -32,6 +32,7 @@ func newStackCmd() *cobra.Command {
 			"and leave one project at a time: `send` puts a prefix's changes on your\n" +
 			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
+			"  rig stack setup                     set up a fresh clone: engine, members, overlay\n" +
 			"  rig stack init                      scaffold the manifest / import the repos\n" +
 			"  rig stack add [upstream]            add a repo and import it (asks if not given)\n" +
 			"  rig stack rm <repo>                 remove a repo: manifest, tree and overlay\n" +
@@ -207,8 +208,23 @@ func newStackInitCmd() *cobra.Command {
 			// directories that are not there and concludes the repo is broken.
 			// Best-effort: failing to write a README must not fail an import that
 			// worked.
-			if wrote, err := writeStackReadme(root, m); err == nil && wrote {
+			switch wrote, err := writeStackReadme(root, m); {
+			case err != nil:
+				// Best-effort, but not silent: the import worked and the
+				// guidance it promises is missing, and only this line says so.
+				fmt.Fprintf(cmd.ErrOrStderr(), "could not write README.md: %v\n", err)
+			case wrote:
 				fmt.Fprintln(cmd.OutOrStdout(), "wrote README.md — what this is, and how to set it up")
+				// Committed, and by path alone. init refuses a dirty tree, and
+				// so do pull and propose — so a file this verb generates and
+				// leaves loose makes the next verb refuse over something the
+				// user never wrote. A rebuild from a seed hits it immediately:
+				// the heading follows the directory name, so a clone under a
+				// different one rewrites the file and nothing works again
+				// until someone commits it.
+				if _, err := repo.CommitPaths(ctx, "stack: README", "README.md"); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "could not commit README.md: %v\n", err)
+				}
 			}
 			return nil
 		},
@@ -1331,7 +1347,10 @@ func newStackWireCmd() *cobra.Command {
 			}
 			// Regenerated with the overlay, so the member table follows the
 			// manifest rather than going stale the first time one is added.
-			if wrote, err := writeStackReadme(repo.Dir, m); err == nil && wrote {
+			switch wrote, err := writeStackReadme(repo.Dir, m); {
+			case err != nil:
+				fmt.Fprintf(cmd.ErrOrStderr(), "could not refresh README.md: %v\n", err)
+			case wrote:
 				fmt.Fprintln(cmd.OutOrStdout(), "refreshed README.md")
 			}
 			return nil
@@ -1517,6 +1536,7 @@ func stackMenuItems() []menuItem {
 		}
 	}
 	return []menuItem{
+		{label: "setup", desc: "set up a fresh clone: fusion engine, member directories, build overlay", cmd: newStackSetupCmd()},
 		{label: "init", desc: "import any repo the manifest names but has not fused yet", cmd: newStackInitCmd()},
 		{label: "add", desc: "add a repo to this stackspace and import it", cmd: newStackAddCmd()},
 		{label: "rm", desc: "remove a repo from this stackspace — manifest, tree and overlay (pick one)", cmd: newStackRemoveMenuCmd()},

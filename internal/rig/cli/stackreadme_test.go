@@ -92,32 +92,3 @@ func TestStackReadmeLinksOnlyWhatResolves(t *testing.T) {
 		}
 	}
 }
-
-// Before anything is imported, nothing crosses between members — which reads
-// identically to "the overlay is left over" and is a completely different fact.
-// doctor advised deleting it; wire did delete it. On a fresh seed clone that is
-// the first thing anyone runs.
-func TestUnimportedWorkspaceIsNotJudged(t *testing.T) {
-	root := t.TempDir()
-	members := []string{"porta-pty", "xterm-net"}
-
-	if stackAnyPrefixPresent(root, members) {
-		t.Error("a seed with no member directories was reported as imported")
-	}
-	// A cursor without a directory is exactly the seed state, so presence has to
-	// be judged by the tree rather than by the manifest.
-	if err := os.MkdirAll(filepath.Join(root, "porta-pty"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if !stackAnyPrefixPresent(root, members) {
-		t.Error("one member present was not enough to count as imported")
-	}
-	// A file where a member directory should be is not a member.
-	other := t.TempDir()
-	if err := os.WriteFile(filepath.Join(other, "porta-pty"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if stackAnyPrefixPresent(other, members) {
-		t.Error("a plain file was mistaken for a member directory")
-	}
-}
