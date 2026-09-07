@@ -165,7 +165,7 @@ func TestPublishArtifactAutoRecoveryWithoutLiveInputs(t *testing.T) {
 }
 
 func TestPublishArtifactRejectsInvalidWorkBeforeTransport(t *testing.T) {
-	for _, mode := range []string{"binding", "provenance", "phase", "capture-key", "missing-commit", "other-commit", "other-batch", "corrupt-commit", "overlap", "remote", "branch", "no-remote", "merge"} {
+	for _, mode := range []string{"binding", "provenance", "phase", "capture-key", "missing-commit", "other-commit", "other-batch", "corrupt-commit", "overlap", "remote", "branch", "no-remote", "merge", "autostash"} {
 		t.Run(mode, func(t *testing.T) {
 			input, remote := publicationFixture(t, true, false)
 			switch mode {
@@ -203,8 +203,12 @@ func TestPublishArtifactRejectsInvalidWorkBeforeTransport(t *testing.T) {
 				remote.branch = "other"
 			case "no-remote":
 				input.Remote = nil
-			case "merge":
-				put(t, input.Commit.Capture.Sync.StagingDir, ".git/MERGE_HEAD", git(t, input.Commit.Capture.Sync.StagingDir, "rev-parse", "HEAD")+"\n")
+			case "merge", "autostash":
+				name := "MERGE_HEAD"
+				if mode == "autostash" {
+					name = "MERGE_AUTOSTASH"
+				}
+				put(t, input.Commit.Capture.Sync.StagingDir, ".git/"+name, git(t, input.Commit.Capture.Sync.StagingDir, "rev-parse", "HEAD")+"\n")
 			}
 			result, err := (service.Service{}).PublishArtifact(t.Context(), input)
 			if err == nil || result != (commitartifact.Publication{}) || remote.fetches != 0 || remote.pushes != 0 {

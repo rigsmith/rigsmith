@@ -10,8 +10,10 @@ Retained commit bundles and Claude commit/sealing are also implemented; see
 now keeps ancestry available before the first commit. Claude QueueAdapter now
 connects these services to RunOne, including confirmed retained publication. A
 worker command and hook activation are still pending.
-This internal foundation has no end-user changeset because shipped commands
-behave as before.
+The v2 queue has end-user changesets for its planned release behavior, including
+completion of staged merges before retrying committed batches. Shipped
+synchronous commands remain unchanged; worker commands and queued hooks are not
+yet enabled.
 
 ## Identity and generations
 
@@ -248,7 +250,7 @@ lease; archive builders, seed/commit stores, private capture trees and queue
 transactions receive independent operation contexts. This avoids borrowing one
 store's capability to access another and prevents a capture-store/staging lock
 inversion. Manual sync cannot run between execution phases; this exclusion does
-not yet establish manual-sync event coverage or advance canonical staging.
+not yet establish manual-sync event coverage. Publication can now finish an audited, already-staged canonical merge while preserving the index and unstaged files; it does not resolve unmerged index entries or recover a merge before fresh capture.
 
 RunOne persists each successful reference, resumes only unfinished phases, and
 acknowledges only its sealed batch after fresh remote confirmation. A retry after
@@ -329,3 +331,5 @@ The complete resolved tree is audited before pushing. Mixed native/chunked index
 JSONL files, edited transcript/memory history, structural conflicts and invalid metadata still return a conflict
 and remain blocked. Existing blocked batches require explicit Unblock; recovery
 does not clear queue state on its own. See the [retained publication contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-metadata-recovery).
+
+Already-staged canonical merges can be completed before retrying committed work; see the [completion contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#already-staged-canonical-merge-completion). The retained artifact is verified before any HEAD change. Secret rejection leaves the batch committed and blocked, and transport failure after completion reuses the same retained batch. Unresolved canonical conflicts and fresh-capture integration remain planned.
