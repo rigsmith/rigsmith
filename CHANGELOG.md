@@ -1,5 +1,64 @@
 # github.com/rigsmith/rigsmith
 
+## 1.16.0
+### 🚀 Enhancements
+
+- **rig:** rig stack: `rig stack status` now lists each member's topic branches under it and says where each one went — the branch on your fork carrying its pull request, whether that branch has moved since it was proposed, whether a pull left the topic behind, or that it has not been proposed yet. Recorded in the manifest as `proposals`, written by `propose --from`.
+  
+  `lastPropose` could not answer this. It holds one branch per repo and is overwritten on every propose, which was enough while a proposal meant the whole prefix and only one could be in flight; two topics for one member are two pull requests. It keeps its own job, naming the branch a rebuild reconstitutes from.
+  
+  Only what git cannot be asked is recorded: the fork branch and the commit that was sent. Which topics exist, which member each touches and whether a pull left one behind are derived from the repository every time, so a branch deleted after its pull request merged stops being listed rather than leaving the manifest claiming work that is not there. The commit is what keeps a topic recreated under a previously-used name from inheriting the old destination.
+- **rig:** rig stack: `propose --from <branch>` proposes one topic branch of the stackspace instead of everything the prefix carries, so a second fix in the same project can be its own pull request rather than showing the first one's changes too. Keep each in-flight fix on a branch rooted where that member was imported — `stack-pr-<name>` is the recommended naming, and a bare `--from reader-wedge` finds it — while `main` merges them and stays the fused line you build and test. An exact branch name always wins, so the convention stays a suggestion.
+  
+  A topic rooted on the import holds upstream plus its own change and nothing else, so there is no patch to replay and nothing that can fail to apply as histories intertwine. Branch off a line that already carries another unmerged fix and the topic contains that fix too, so `propose` lists the commits it is sending and you see the unexpected subject before a reviewer does.
+  
+  A `pull` leaves topics behind: their trees are upstream as it used to be, and proposing one would present everything upstream landed since as reverted. `propose --from` now refuses such a topic, and `pull` and `status` name them so you find out when it happens rather than days later. They are not re-rooted for you — an import merges into your integration line, which has already merged your topics, so any base derived from it would fold the fix back in.
+  
+  `--from` needs `trackBranch` and keeps it current with everything the prefix holds, because `rig stack init` rebuilds from it. `rig stack status` also reports how many commits a prefix diverges by and lists the `stack-pr-*` topics in flight.
+- **rig:** `rig stack setup` — the one command a freshly cloned stackspace needs.
+  
+  It installs the fusion engine, reconstitutes the members, writes the build
+  overlay and prints the status, in an order where each step can see what it is
+  judging. The obvious order did not: `doctor --fix` is what installs the engine,
+  so it had to run first, and with no members imported nothing crosses between
+  them — so the overlay looked left over and `doctor` advised deleting it. `wire`
+  went further and deleted it. Both now defer while any member the manifest names
+  is missing, and point at `setup`.
+  
+  `rig stack init` also writes a `README.md` when the repository has none,
+  generated from the manifest: what a stackspace is, the member table, how to set
+  it up, and the two things a seed cannot show — the directories are absent on
+  purpose, and work leaves through `propose` rather than a push. `wire` refreshes
+  it. **Delete the marker line at the top to make the file yours** — editing it is
+  not enough, since a file still carrying the marker is one rig rewrites.
+
+### 🩹 Fixes
+
+- **rig:** `rig stack` commands no longer fail with "josh-proxy exited before becoming
+  ready". The engine is handed a free port, and in the moment between rig letting
+  that port go and the engine binding it, something else can take it. Rig now
+  notices the port was taken and starts again on another one, rather than
+  reporting the command as failed.
+- **clauderig:** The worktree guard now catches agents that isolate themselves.
+  
+  A subagent launched with `isolation: "worktree"` creates the same
+  `.claude/worktrees/<name>` checkout the guard refuses `EnterWorktree` for, and
+  went straight past it — one was created in a guarded repo. Both routes are
+  closed now, including `git worktree add` aimed at that directory. Removing one
+  is still allowed, since that is the way out.
+  
+  `clauderig doctor` also reports worktrees it finds under `.claude/worktrees`.
+  They are invisible to `rig worktree list` and never reaped by `rig prune`, so
+  they accumulate unseen — one repo had 28 registered before anyone looked.
+- **clauderig:** `clauderig sync` no longer misses a transcript that was rewritten without its
+  timestamp moving. Sync decides a file is already backed up by comparing its
+  modification time to the copy it staged last time, and two writes close enough
+  together share a timestamp — so the second one was skipped, the backup kept the
+  earlier content, and nothing said so. How close is "close enough" depends on
+  the filesystem, so sync now measures that and stages the file again when a
+  timestamp is too near its own last run to be evidence. On the filesystems most
+  machines use the window is well under a millisecond and nothing changes.
+
 ## 1.15.5
 ### 🩹 Fixes
 
