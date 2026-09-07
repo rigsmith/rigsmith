@@ -112,3 +112,18 @@ func TestProbeMtimeTick(t *testing.T) {
 		t.Errorf("unusable directory gave %v, want the coarse assumption %v", got, coarseTick)
 	}
 }
+
+// settle backdates fixture files so their mtimes are unambiguously older than
+// the run that reads them — what "not touched since the last sync" looks like.
+// Fixtures written moments before a sync sit inside the filesystem's own tick,
+// where sync cannot tell them from a file rewritten during that tick and
+// restages to be safe.
+func settle(t *testing.T, root string, rels ...string) {
+	t.Helper()
+	old := time.Now().Add(-time.Hour)
+	for _, rel := range rels {
+		if err := os.Chtimes(filepath.Join(root, filepath.FromSlash(rel)), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

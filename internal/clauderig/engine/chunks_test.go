@@ -136,6 +136,10 @@ func TestScrubbingAndChunkingTogether(t *testing.T) {
 	body := strings.Repeat(`{"type":"assistant","text":"ordinary filler"}`+"\n", 210000) + `{"type":"user","text":"` + key + `"}` + "\n"
 	write(t, live, "projects/-p/s.jsonl", body)
 	opts := Options{StagingDir: stage, Config: cliOnlyConfig(live), Machine: config.Machine{OS: pathmap.OSMacOS, Home: "/Users/test"}, SourceOverride: override("cli", live), ChunkTranscripts: true, RedactTranscripts: true}
+	// Older than the run that reads it: a fixture stamped in the same tick is
+	// indistinguishable from one rewritten during it, so sync restages rather
+	// than trusting it, and the second sync here is about what it leaves alone.
+	settle(t, live, "projects/-p/s.jsonl")
 	if _, err := Sync(opts); err != nil {
 		t.Fatal(err)
 	}
