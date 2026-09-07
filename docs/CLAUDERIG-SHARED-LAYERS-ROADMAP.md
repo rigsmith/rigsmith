@@ -43,7 +43,7 @@ block for deliberate recovery.
 for scan, data, binding and unknown failures.
 **Merged in [#337](https://github.com/rigsmith/rigsmith/pull/337):** private retained conflict resolution for manifest/device metadata,
 reusing native unions and auditing the resolved tree before publication. Native transcript/memory append recovery merged in #341. Canonical chunk-index
-recovery merged in [#342](https://github.com/rigsmith/rigsmith/pull/342); ordinary-file snapshot ordering is in review in [#343](https://github.com/rigsmith/rigsmith/pull/343). Canonical staging recovery remains next. Queued hooks and CodexRig
+recovery merged in [#342](https://github.com/rigsmith/rigsmith/pull/342); ordinary-file snapshot ordering merged in [#343](https://github.com/rigsmith/rigsmith/pull/343). Already-staged canonical merge completion is in progress; unresolved recovery and capture integration remain next. Queued hooks and CodexRig
 remain planned. Broad
 credential providers and SSH-agent/keychain discovery are deferred.
 
@@ -66,8 +66,9 @@ credential providers and SSH-agent/keychain discovery are deferred.
 | 6b.2g. Retained manifest/device conflict recovery | Merged: #337 | Removal-aware metadata unions and merge-driver isolation. |
 | 6b.2h. Native JSONL/memory append recovery | Merged: #341 | Preserve both tails; block changed history and ambiguous UUIDs. |
 | 6b.2i. Chunked-transcript append recovery | Merged: [#342](https://github.com/rigsmith/rigsmith/pull/342) | Verify immutable side parts, reuse native record policy, preserve chunked output. 32 MiB worst-case union limit. |
-| 6b.3. Ordinary file conflict policy | In review: [#343](https://github.com/rigsmith/rigsmith/pull/343) | Select the newer recorded source snapshot; synthetic merge timestamps do not refresh copied bytes. Equal/unknown origins remain blocked. Both conflict sides are scanned; malformed profile roots are excluded. |
-| 6b.4. Canonical staging merge recovery | Next | Repair unfinished canonical merges before retained publication. |
+| 6b.3. Ordinary file conflict policy | Merged: [#343](https://github.com/rigsmith/rigsmith/pull/343) | Select the newer recorded source snapshot; synthetic merge timestamps do not refresh copied bytes. Equal/unknown origins remain blocked. Both conflict sides are scanned; malformed profile roots are excluded. |
+| 6b.4a. Finish staged canonical merges | In progress | Audit the exact staged tree and both parent tips, commit without staging files, and resume interrupted cleanup before retained publication. |
+| 6b.4b. Unresolved canonical merges and capture | Next | Recover supported unresolved conflicts without losing pending edits; integrate recovery before fresh queued capture. |
 | 6b.5. Exact manual-sync coverage | Planned | Acknowledge only generations actually included; preserve newer queued work. |
 | 6b.6. Worker lifecycle | Planned | Parent-death recovery, startup/restart, stop and draining. |
 | 6b.7. Capacity and cleanup | Planned | Actionable capacity remedies and safe artifact/receipt cleanup. |
@@ -76,7 +77,7 @@ credential providers and SSH-agent/keychain discovery are deferred.
 
 Milestone 6b.2 is split above into the steps already delivered and the completed
 chunk recovery step. The remaining recovery, coverage, lifecycle and cleanup gates
-now have separate rows, so partial completion is visible.
+now have separate rows, so partial completion is visible. Canonical recovery is split into staged merge completion (6b.4a) and unresolved recovery/capture integration (6b.4b); neither implies queued hooks are enabled.
 
 Restore boundary validation merged for [v1 (#339)](https://github.com/rigsmith/rigsmith/pull/339)
 and [v2 (#340)](https://github.com/rigsmith/rigsmith/pull/340): preserve missing-destination no-ops, report unexpected link-operation failures with partial restore reports, and reject
@@ -89,7 +90,7 @@ Native append recovery merged in [#341](https://github.com/rigsmith/rigsmith/pul
 memory changes, preserve shared lines and unknown record payloads, and reject
 conflicting UUIDs or edited history. Publication still audits the complete tree.
 [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded canonical chunk-index recovery, including default chunked
-backups. [#343](https://github.com/rigsmith/rigsmith/pull/343) adds ordinary-file snapshot ordering; canonical staging recovery remains next. Queued hooks stay disabled.
+backups. [#343](https://github.com/rigsmith/rigsmith/pull/343) adds ordinary-file snapshot ordering; staged canonical merge completion is in progress; unresolved recovery and capture integration remain next. Queued hooks stay disabled.
 
 ## Delivery priority
 
@@ -100,7 +101,7 @@ backups. [#343](https://github.com/rigsmith/rigsmith/pull/343) adds ordinary-fil
 2. **Merged in [#332](https://github.com/rigsmith/rigsmith/pull/332):** connect the durable queue to the Claude capture, commit and
    publication services, with exact batch acknowledgement and saved-phase replay.
    Merged in [#336](https://github.com/rigsmith/rigsmith/pull/336): bounded retry/backoff and explicit failure blocking. Merged in [#337](https://github.com/rigsmith/rigsmith/pull/337): retained manifest/device
-   conflict unions. Native JSONL/memory append recovery merged in [#341](https://github.com/rigsmith/rigsmith/pull/341). [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded chunk-index recovery. [#343](https://github.com/rigsmith/rigsmith/pull/343) adds ordinary-file snapshot ordering. Next: canonical merge recovery, plus exact
+   conflict unions. Native JSONL/memory append recovery merged in [#341](https://github.com/rigsmith/rigsmith/pull/341). [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded chunk-index recovery. [#343](https://github.com/rigsmith/rigsmith/pull/343) adds ordinary-file snapshot ordering. In progress: completion of already-staged canonical merges. Next: unresolved recovery and fresh capture integration, plus exact
    manual-sync coverage; the worker currently excludes manual sync while active.
 3. Finish parent-death recovery, worker startup/restart/draining, capacity and
    artifact/receipt cleanup before enabling queued hooks.

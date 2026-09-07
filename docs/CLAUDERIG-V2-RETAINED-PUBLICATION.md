@@ -120,9 +120,9 @@ transport, credential discovery, worker-login read or network activation.
 
 The adapter revalidates bindings under the canonical staging lease and holds it
 through publication, confirmation and cleanup. A protected read of settled HEAD
-selects only committed local history; staged and unstaged files are untouched.
+selects only committed local history. If a merge is already fully staged, the adapter first verifies the retained artifact and may finish that audited merge as described below. The index and unstaged files are preserved.
 An absent checkout or confirmed unborn branch contributes no local history.
-Unfinished merges, cherry-picks, reverts, rebases and sequencers, unmerged index
+Unresolved or ambiguous merges, cherry-picks, reverts, rebases and sequencers, unmerged index
 entries, malformed Git state and other read failures stop the attempt. Inherited
 Git environment cannot redirect HEAD inspection. Auto chunk mode remains pinned
 by the sealed binding even after the live marker or staging checkout disappears.
@@ -145,7 +145,7 @@ event timestamp and four push/confirmation attempts. The committed store's byte
 limit also bounds materialized publication trees. A returned `Publication` is
 only evidence for persisting the pushed phase; this adapter does not update queue
 state. QueueAdapter now supplies worker phase wiring. Config-history, retention,
-local-only completion and canonical merge recovery remain separate work. Composition can supply
+local-only completion and unresolved canonical merge recovery remain separate work. Composition can supply
 `NewConfiguredGitTransport` to reuse existing Git/`gh` authentication; broad
 credential discovery is deferred. Synchronous behavior is unchanged.
 
@@ -268,7 +268,7 @@ declined resolutions, delete/edit refusal, malformed/unsafe stage records,
 cancellation and blob bounds. Claude fixtures exercise metadata union through
 actual publication, preserved device provenance, unchanged canonical files/index/
 config, unknown-field refusal and secret rejection after resolution. Unsupported machine state, rename-aware recovery,
-canonical merge repair and operational unblock/status commands remain future work.
+unresolved canonical merge repair and operational unblock/status commands remain future work.
 
 
 ## Bounded retained append recovery
@@ -395,3 +395,55 @@ refusal, unsupported/malformed profile paths, secret rejection on either the
 selected or losing side, raw bytes, preserved history/canonical
 state and replay. A gated synthetic queue round trip verifies publication and exact
 acknowledgement after live sources and the separate capture archive disappear.
+
+
+## Already-staged canonical merge completion
+
+Before publishing a committed batch, Claude can finish a two-parent canonical merge
+whose resolutions are already staged. This is a separate shared primitive,
+`FinishStagedMerge`; the private retained publisher still never edits canonical
+state. Claude verifies the batch archive and capture binding before calling it,
+under the staging lease that remains held through publication and confirmation.
+Fresh queued capture still blocks on unfinished merges. Unresolved canonical
+conflicts and capture integration remain the next recovery step.
+
+Completion uses the exact index as the chosen resolution, including any other
+staged changes. It does not run `git add`, infer resolutions from worktree files,
+abort a merge, or run a mergetool. A copied index supplies the tree without
+refreshing or rewriting the original index. Raw materialization validates and
+secret-scans the staged tree **and both parent tips** before changing HEAD, so a
+clean resolution cannot conceal a secret-bearing parent file. This is not a scan
+of every historical ancestor or a semantic validation of manual resolutions.
+Unstaged and untracked files stay local, byte for byte.
+
+The candidate is recorded with `commit-tree` and an exact-old-HEAD `update-ref`,
+then `git merge --quit` removes merge metadata without restoring files. Before
+advancing HEAD and before cleanup, the index, MERGE_HEAD and ORIG_HEAD must still
+match the inspected bytes. Cleanup also checks the current HEAD. These checks
+supplement the required cooperative staging lease; they do not replace it with
+transactional exclusion of arbitrary external Git writers. Configured hooks,
+filesystem monitors, filters and signing programs are not invoked.
+
+If interrupted after the ref update, a retry only recognizes completion when
+HEAD has exactly the original and incoming parents in that order, and its tree
+matches the still-staged tree. It repeats validation/auditing and finishes cleanup
+without a second commit. A changed index or unexpected HEAD remains blocked.
+If a later transport operation fails, the finished canonical commit remains for
+the saved committed batch's next attempt; queue acknowledgement still requires
+fresh remote confirmation. A batch already present remotely retains the existing
+replay rule and does not imply that later canonical work was also uploaded.
+
+Only one regular-file MERGE_HEAD containing a literal object ID is supported.
+ORIG_HEAD must identify the original parent. Unresolved index entries, octopus or
+redundant merges, autostash, cherry-pick/revert/rebase/sequencer state, malformed
+state, shallow/incomplete history, failed audits and changed inputs stop recovery.
+Control files are bounded (256 bytes for parent markers, 64 MiB for the copied
+index); each of the three materialized trees uses the configured committed-store
+byte limit. Failure never falls back to an abort or an unaudited commit.
+
+Tests cover SHA-1/SHA-256, split indexes, exact index/config/worktree preservation,
+interruption after ref update, changed-state and cancellation refusal, both parent
+and candidate audit failures, and corrupted retained artifacts. Gated synthetic
+queue tests remove live inputs and capture archives before recovery, verify exact
+batch acknowledgement and replay, and retain a blocked batch on a losing-parent
+secret. Synchronous v1 behavior and queued-hook activation are unchanged.

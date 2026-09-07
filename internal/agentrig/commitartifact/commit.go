@@ -1,6 +1,7 @@
 // Package commitartifact retains audited Git snapshots as self-contained bundles
 // inside the shared durable artifact format. Publication uses an explicit
-// transport; canonical refs, indexes, checkouts and queue markers stay untouched.
+// transport. FinishStagedMerge separately records an audited canonical merge;
+// artifact construction and publication leave canonical state untouched.
 package commitartifact
 
 import (
@@ -355,7 +356,7 @@ func (r gitRepo) checkObjects(ctx context.Context) error {
 
 // command applies the same private Git isolation to one-shot and streaming calls.
 func (r gitRepo) command(args ...string) *exec.Cmd {
-	flags := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull, "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "commit.gpgsign=false", "-c", "protocol.allow=never", "-c", "protocol.file.allow=always"}
+	flags := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "commit.gpgsign=false", "-c", "protocol.allow=never", "-c", "protocol.file.allow=always"}
 	cmd := exec.Command("git", append(flags, args...)...)
 	cmd.Dir = r.dir
 	for _, entry := range os.Environ() {

@@ -3,7 +3,10 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
@@ -35,13 +38,14 @@ type ArtifactPublishRequest struct {
 // PublishArtifact applies Claude's bindings, byte-preservation policy and secret
 // audit to retained publication. The staging lease spans HEAD inspection through
 // final remote confirmation and child cleanup. It never recaptures, reads the
-// worker's login, updates canonical staging, or acknowledges queue work. Only a
+// worker's login, or acknowledges queue work. An already-staged canonical merge
+// can be audited and committed without staging or changing worktree files. Only a
 // confirmed success permits a caller to persist the pushed phase. Manifest/device
 // content conflicts use native metadata unions; proven append-only native JSONL
 // and memory conflicts preserve both tails. Canonical chunked transcripts use
 // verified immutable parts and remain chunked. Eligible ordinary files select
 // the newer proven snapshot origin; ties and unknown origins remain blocked.
-// Canonical merge repair and local-only completion remain separate work.
+// Unresolved canonical conflicts and local-only completion remain separate work.
 func (s Service) PublishArtifact(ctx context.Context, input ArtifactPublishRequest) (commitartifact.Publication, error) {
 	return s.publishArtifact(ctx, ctx, input)
 }
@@ -87,6 +91,28 @@ func (s Service) publishArtifact(ctx, staging context.Context, input ArtifactPub
 		return fail, queue.ErrBinding
 	}
 	head, err := commitartifact.SettledHead(ctx, stage)
+	if errors.Is(err, commitartifact.ErrConflict) {
+		// Verify the retained batch before making any canonical change. Publish
+		// opens it again under its private store contract for actual publication.
+		work, openErr := os.MkdirTemp(commits, ".merge-binding-*")
+		if openErr != nil {
+			return fail, openErr
+		}
+		defer os.RemoveAll(work)
+		input.Commit.Commits.Dir = commits
+		info, openErr := commitartifact.Open(ctx, input.Commit.Commits, req.Work.CommitRef, filepath.Join(work, "artifact"))
+		if openErr != nil {
+			return fail, openErr
+		}
+		if info.CaptureRef != req.Work.CaptureRef {
+			return fail, queue.ErrBinding
+		}
+		head, err = commitartifact.FinishStagedMerge(ctx, stage, commitartifact.MergeFinishPolicy{
+			Message: plan.SnapshotMessage, AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
+			Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, MaxTreeBytes: input.Commit.Commits.MaxBytes,
+			Validate: backupgit.ValidateTree, Audit: engine.CheckPublishContext,
+		})
+	}
 	if err != nil {
 		return fail, err
 	}

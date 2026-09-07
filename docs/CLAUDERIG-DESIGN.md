@@ -569,3 +569,15 @@ This intentionally differs from synchronous incoming-side tie fallback and never
 rescues failed metadata/transcript/memory unions. The [retained publication contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#retained-ordinary-file-snapshots)
 records eligible paths, timestamp semantics and bounded traversal. Whole-tree
 validation/auditing, on/auto chunking and disabled queued hooks remain unchanged.
+
+
+### V2 staged merge completion
+
+Queued publication can finish an already-staged canonical merge under its staging
+lease after verifying the retained batch. The shared primitive audits the exact
+staged tree and both parent tips, records that tree without staging worktree
+files, then forgets merge metadata. Exact parents and the staged tree allow a
+retry to finish cleanup after an interrupted ref update. The index and unstaged
+files are preserved. Unresolved merge recovery and fresh queued capture
+integration remain separate; the synchronous repair path is unchanged. See the
+[completion contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#already-staged-canonical-merge-completion).
