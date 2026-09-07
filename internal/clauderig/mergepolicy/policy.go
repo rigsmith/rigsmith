@@ -9,7 +9,10 @@
 // it is worse than a stalled sync: a staging repo abandoned mid-merge wedges every
 // later pull with "unmerged files" until someone finds it by hand.
 //
-// Three policies cover the tree:
+// These are the synchronous staging policies. Retained publication uses bounded
+// variants that leave ambiguous edits, origins and unsupported paths blocked.
+//
+// Three policies cover the synchronous tree:
 //
 //   - clauderig's own metadata (the manifest and the device registry) is a UNION
 //     across machines by definition — restore on a third machine needs every

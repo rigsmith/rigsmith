@@ -16,12 +16,16 @@ import (
 
 const retainedTranscriptLimit = 32 << 20
 
-// ResolveRetainedFiles also recovers append conflicts between canonical v1 chunk
-// indexes. It verifies each side's immutable parts, applies the native record
+// ResolveRetainedFiles handles ordered ordinary snapshots and append conflicts
+// between canonical v1 chunk indexes. It verifies each side's immutable parts,
+// applies the native record
 // policy, then proposes new chunks before returning their index. Native/chunked
 // conversion conflicts, edited history and oversized transcripts remain blocked.
 func ResolveRetainedFiles(ctx context.Context, path string, base, ours, theirs []byte, files commitartifact.RelatedFiles) ([]byte, error) {
 	if !transcript.IsIndex(base) && !transcript.IsIndex(ours) && !transcript.IsIndex(theirs) {
+		if adapter.RetainedSnapshot(path) {
+			return resolveRetainedSnapshot(ctx, ours, theirs, files)
+		}
 		return ResolveRetained(ctx, path, base, ours, theirs)
 	}
 	if err := ctx.Err(); err != nil {

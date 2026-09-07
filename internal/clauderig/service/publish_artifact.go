@@ -36,8 +36,9 @@ type ArtifactPublishRequest struct {
 // confirmed success permits a caller to persist the pushed phase. Manifest/device
 // content conflicts use native metadata unions; proven append-only native JSONL
 // and memory conflicts preserve both tails. Canonical chunked transcripts use
-// verified immutable parts and remain chunked. Other file conflicts, canonical
-// merge repair and local-only completion remain separate work.
+// verified immutable parts and remain chunked. Eligible ordinary files select
+// the newer proven snapshot origin; ties and unknown origins remain blocked.
+// Canonical merge repair and local-only completion remain separate work.
 func (s Service) PublishArtifact(ctx context.Context, input ArtifactPublishRequest) (commitartifact.Publication, error) {
 	return s.publishArtifact(ctx, ctx, input)
 }

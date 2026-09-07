@@ -551,3 +551,18 @@ and additive for candidate blobs, with full-tree validation and auditing afterwa
 This is a v2-only policy, separate from the
 synchronous merge fallback. See the [retained publication contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-append-recovery)
 for validation, byte bounds and remaining queue activation gates.
+
+
+### V2 retained ordinary-file ordering
+
+Allowlisted ordinary files under known Claude roots use the newer recorded
+snapshot, preserving its exact bytes. The publisher follows matching blobs/modes
+through immutable parents so unchanged commits and synthetic merge timestamps do
+not refresh a file's origin. A merge that created novel bytes has no proven single
+snapshot origin and remains blocked, as do distinct snapshots with equal times.
+Both parents remain reachable; this policy does not erase the historical copy.
+
+This intentionally differs from synchronous incoming-side tie fallback and never
+rescues failed metadata/transcript/memory unions. The [retained publication contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#retained-ordinary-file-snapshots)
+records eligible paths, timestamp semantics and bounded traversal. Whole-tree
+validation/auditing, on/auto chunking and disabled queued hooks remain unchanged.

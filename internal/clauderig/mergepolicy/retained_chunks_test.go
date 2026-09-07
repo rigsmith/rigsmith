@@ -176,3 +176,7 @@ func TestRetainedChunksEmptyBase(t *testing.T) {
 		t.Fatal("accepted missing base", err)
 	}
 }
+
+func (f *chunkFilesFixture) SnapshotTime(context.Context, commitartifact.ConflictSide) (time.Time, error) {
+	return time.Time{}, errors.New("chunk recovery must not request snapshot ordering")
+}

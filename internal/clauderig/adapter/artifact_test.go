@@ -102,3 +102,25 @@ func TestMergePoliciesPreserveMetadataAndLegacyCaseRules(t *testing.T) {
 		}
 	}
 }
+
+func TestRetainedSnapshotPaths(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"cli/settings.json", true}, {"cli/settings.local.json", true}, {"cli/CLAUDE.md", true},
+		{"cli/skills/example/SKILL.md", true}, {"cli/plugins/data/state.bin", true},
+		{"desktop/config.json", true}, {"desktop@generic/data/config.json", true}, {"desktop@generic/profile.json", true},
+		{"desktop/local-agent-mode-sessions/org/user/local_session.json", true},
+		{"desktop/local-agent-mode-sessions/org/user/local_session/upload.txt", false},
+		{"cli/plugins/cache/state.json", false}, {"cli/projects/p/file-history/snapshot", false},
+		{"cli/skills/tool/node_modules/config.json", false}, {"cli/projects/p/s.jsonl", false},
+		{"cli/projects/p/memory/settings.json", false}, {"cli/projects/p/s.jsonl.chunks/x.part", false},
+		{"cli/history.jsonl", false}, {"custom/settings.json", false}, {"desktop@/profile.json", false},
+		{"clauderig-storage.json", false}, {".gitattributes", false}, {"cli/skills/example/.gitattributes", false}, {"cli/skills/example/.GITATTRIBUTES", false},
+	} {
+		if got := adapter.RetainedSnapshot(tc.path); got != tc.want {
+			t.Errorf("%s: %v want %v", tc.path, got, tc.want)
+		}
+	}
+}
