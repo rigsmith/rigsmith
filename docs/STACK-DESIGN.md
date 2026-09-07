@@ -587,7 +587,7 @@ prefix that is the one place it must not be written: the file leaves in a
 
 `propose` commits `HEAD:<prefix>` onto the upstream tip — the prefix's **whole**
 current tree. It was never a per-change extraction, and nothing said so, which is
-how a stackspace carrying two fixes for one project produced a second pull request
+how a stackspace carrying two fixes for one project produces a second pull request
 showing the first one's changes.
 
 The two properties are in tension and both are wanted:
@@ -597,29 +597,61 @@ The two properties are in tension and both are wanted:
 - A pull request has to hold **only its own change**, or a maintainer is reading a
   diff nobody asked them to review.
 
-One branch cannot be both, so `--commits <range>` splits them:
+One branch cannot be both, so `--from <branch>` splits them: in-flight fixes live on
+topic branches of the stackspace, rooted on the commit that imported that member,
+and `main` merges them and stays the fused line you build and test.
 
-- The proposed branch holds the selected commits' changes to the prefix, replayed
-  onto the upstream tip through a scratch index (`GIT_INDEX_FILE`, `git apply
-  --cached -p2` — never the worktree, which the user has not asked to modify).
-  Replayed rather than diffed end to end, because a selection need not be
-  contiguous: proposing the newest fix while an older one waits for review is the
-  case this exists for.
-- `trackBranch` holds the whole divergence, and `propose --commits` **pushes it on
+**Why a branch and not a range of commits.** The first attempt selected commits
+(`--commits HEAD~1..HEAD`) and replayed their prefix-scoped diffs onto the upstream
+tip through a scratch index. It worked, and it was the wrong shape twice over. A
+range is *positional* — `HEAD~1..HEAD` means something different after the next
+commit, and nothing a week later. And reconstructing one change out of an
+intertwined history is a patch that stops applying exactly when it is most needed:
+the more fixes a stackspace carries, the more they touch the same files, so the
+common case degrades into "does not apply" — in the very scenario the feature exists
+for.
+
+A topic rooted on the import keeps the isolation **by construction** instead of
+reconstructing it. Its prefix tree already *is* upstream plus that one change, so:
+
+- the proposed tree is `<topic>:<prefix>`, taken as-is. No replay, no scratch index,
+  nothing that can fail to apply. `TreeWithPrefixCommits` went away with the
+  approach that needed it.
+- a topic branched off a line already carrying another unmerged fix is **refused**:
+  its tree at `merge-base(topic, HEAD)` differs from upstream's, which is exactly the
+  condition "this topic would take someone else's work with it".
+- a cross-cutting change is one topic proposed to each member it touched, which is
+  what a stackspace is for. A range would have to be retyped per member and mean the
+  same thing each time.
+
+**Naming them.** `stack-pr-<name>` is a *recommended* convention rather than a rule.
+`--from` takes any branch and an exact match always wins; the conventional name is
+only the fallback when what it was given is not itself a branch, so
+`--from reader-wedge` finds `stack-pr-reader-wedge` without it being typed. `status`
+lists branches named that way, which is what makes "what is in flight" something you
+read rather than remember. The prefix is deliberately **not** `branchPrefix`'s
+`stack/`: those name branches on the *fork* and mean a pull request, while these are
+work in progress here, and one spelling for both would invite reading either as the
+other.
+
+The rest is unchanged from the first attempt:
+
+- `trackBranch` holds the whole divergence, and `propose --from` **pushes it on
   every send**. It stops being a branch the user maintains and becomes one rig
   writes.
-- `--commits` **refuses without `trackBranch`**, rather than leaving the rebuild
-  short. That failure is invisible from the machine where the work was done: the
-  worktree still has every fix, and only a rebuild elsewhere is missing them.
+- `--from` **refuses without `trackBranch`**, rather than leaving the rebuild short.
+  That failure is invisible from the machine where the work was done: the worktree
+  still has every fix, and only a rebuild elsewhere is missing them.
 - The integration push is recorded under `refs/rigsmith/integration/<name>`,
   alongside `refs/rigsmith/propose/<name>`. `stackUnsentWork` accepts either, or
   `seed` would refuse a stackspace whose unproposed commits are safely on the fork,
   and `status` would call them unsent.
 
-A patch that does not apply is a real answer, not a malfunction: the selected
-commits depend on unselected ones, so what is being asked for cannot stand alone
-on upstream. The error says so and names the commit.
-
 `status` now reports how many commits a prefix diverges by, because the
 whole-prefix behaviour is otherwise discovered by a maintainer asking why a diff
 touches something unrelated.
+
+**Not solved here:** a topic goes stale when `pull` moves upstream, since `propose`
+roots on the cursor and refuses a stale one. Today that surfaces as a refusal per
+topic and the fix is a manual rebase. Rebasing in-flight topics on `pull` — or at
+least reporting which went stale — is the obvious next step.

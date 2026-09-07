@@ -85,10 +85,10 @@ type stackRepo struct {
 	// merged actually lives. The cursor records the upstream commit that
 	// branch is based on, so status and pull keep measuring against upstream.
 	//
-	// `propose --commits` requires it and keeps it current: a selected proposal
-	// holds only the commits it names, so something has to hold the rest or a
-	// rebuild silently builds without them. With a selection in use this stops
-	// being a branch you maintain and becomes one rig writes.
+	// `propose --from` requires it and keeps it current: a topic proposal holds
+	// only that branch's change, so something has to hold the rest or a rebuild
+	// silently builds without them. With topics in use this stops being a branch
+	// you maintain and becomes one rig writes.
 	TrackBranch string `json:"trackBranch,omitempty"`
 }
 

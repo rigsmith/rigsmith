@@ -484,7 +484,7 @@ per stackspace or per repo, or set it to `""` for bare names. A name that alread
 starts with the prefix is left alone, so pasting a full branch name back in when
 proposing again does not stutter it.
 
-#### It sends the whole prefix, not the commit you have in mind {#propose-whole}
+#### It sends the whole prefix, not the change you have in mind {#propose-whole}
 
 `propose` commits **the prefix's entire current tree** onto the upstream tip. It does
 not extract one change: whatever this stackspace is holding for that project — every
@@ -499,42 +499,74 @@ The moment two things are in flight for one project it is wrong. Fix A sits unme
 in the stackspace; you propose fix B; B's branch contains A as well, and its pull
 request shows changes its reviewer never asked about.
 
-`--commits` is the way out — a revision range naming which of *this stackspace's*
-commits to send:
+#### One fix at a time: `--from` a topic branch {#propose-from}
 
-```sh
-rig stack propose term-core reader-wedge --commits HEAD~1..HEAD
-# term-core: proposing 1 of this stackspace's commits
+Keep each in-flight fix on its own branch of the stackspace, rooted on the commit that
+imported that member. `main` merges them, and stays what it always was — everything
+fused, the thing you build and test.
+
+```
+import ── fix A ─────────────── merge ──  main: both fixes, what you build and test
+   └───── stack-pr-reader-wedge ───┘      topic: upstream plus this fix, nothing else
 ```
 
-Those commits' changes to the prefix are replayed onto the upstream tip and nothing
-else goes with them. A selection that cannot stand alone is an error naming the
-commit — the changes depend on one you did not select, so propose them together or
-send the whole prefix.
+```sh
+git switch -c stack-pr-reader-wedge <the import commit>
+# ...fix it, commit...
+git switch main && git merge stack-pr-reader-wedge
 
-::: warning `--commits` requires `trackBranch`
-A selected branch holds part of what the prefix carries, so it cannot also be what a
-rebuild reconstitutes from — a fresh `init` would build without the fixes you left
-out, while your own worktree still had them and looked fine. `trackBranch` is where
-the whole divergence lives, and `propose --commits` **keeps it current** on every
-send:
+rig stack propose term-core reader-wedge --from reader-wedge
+# term-core: proposing what stack-pr-reader-wedge adds, not the whole prefix
+```
+
+**`stack-pr-<name>` is a recommended convention, not a rule.** `--from` takes any
+branch: an exact name always wins, and the conventional name is only the fallback when
+what you gave it is not itself a branch — so `--from reader-wedge` finds
+`stack-pr-reader-wedge` without you spelling it out. The prefix is deliberately not
+`stack/`, which names the branches that appear on your **fork**: those two live in
+different repositories and mean different things, and sharing a spelling would only
+invite reading one as the other.
+
+`rig stack status` lists the ones named that way, so what is in flight is something you
+read rather than remember:
+
+```
+topics in flight: stack-pr-reader-wedge, stack-pr-kitty-scaling
+  propose one with `rig stack propose <repo> <name> --from reader-wedge`
+```
+
+A topic rooted on the import holds upstream's tree plus its own change and nothing
+else, so **its tree is already the one upstream should see** — there is no patch to
+replay and nothing that can fail to apply. That matters more the longer you carry
+work: reconstructing one change out of an intertwined history is a patch that stops
+applying, while a topic keeps the isolation by construction.
+
+A topic branched off a line that already carries another unmerged fix would take that
+fix into the pull request, so `propose` refuses it and says so. Rebase it onto the
+import.
+
+::: warning `--from` requires `trackBranch`
+A topic holds part of what the prefix carries, so it cannot also be what a rebuild
+reconstitutes from — a fresh `init` would build without the other fixes, while your own
+worktree still had them and looked fine. `trackBranch` is where the whole divergence
+lives, and `propose --from` **keeps it current** on every send:
 
 ```sh
-rig stack propose term-core reader-wedge --commits HEAD~1..HEAD
-# term-core: proposing 1 of this stackspace's commits
+rig stack propose term-core reader-wedge --from reader-wedge
+# term-core: proposing what reader-wedge adds, not the whole prefix
 # sent term-core to you/term-core:stack/reader-wedge
 # term-core: stack/integration now carries everything, for rebuilds
 ```
 
-Without it set, `--commits` refuses rather than publish a package or a rebuild that
-is quietly missing work.
+Without it set, `--from` refuses rather than publish a package or a rebuild that is
+quietly missing work.
 :::
 
-`rig stack status` says how many commits a prefix diverges by, so you find out
-before a maintainer does:
+`rig stack status` says how many commits a prefix diverges by, so you find out before
+a maintainer does:
 
 ```
-term-core   e5f6a7b8   up to date  ·  3 commits diverge from upstream; `propose` sends all of them (--commits to select)
+term-core   e5f6a7b8   up to date  ·  3 commits diverge from upstream; `propose` sends all of them (--from <branch> for one)
 ```
 
 Sending again to the same branch **updates** it, so you can act on review
