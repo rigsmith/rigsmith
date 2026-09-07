@@ -7,9 +7,10 @@ now closes the interval between those phases. The shared
 `internal/agentrig/commitartifact` package converts a sealed capture into a Git
 snapshot and retains its complete ancestry in a self-contained bundle. Claude's
 `Service.CommitArtifact` supplies native audit, attributes, labels and queue
-binding validation. This remains internal: no worker command, push adapter,
-manual-sync acknowledgement or queued hook is enabled. Synchronous commands are
-unchanged, so this step has no end-user changeset.
+binding validation. Claude now also has a retained-publication adapter and queue
+execution, with end-user changesets for planned v2 behavior. Worker commands,
+manual-sync acknowledgement and queued hooks remain pending. Shipped synchronous
+commands are unchanged.
 
 ## Identity and durability
 
@@ -122,9 +123,13 @@ Queue operations continue to use the original cancellation context.
   applies native Git attributes and secret auditing to the raw publication tree.
   The [local Git adapter](CLAUDERIG-V2-GIT-TRANSPORT.md) and cancellation cleanup
   remain after removal of the custom network transports. `NewConfiguredGitTransport` now reuses existing Git/`gh`
-  authentication for publication. Next connect worker execution and native
-  conflict recovery. Broad credential discovery is deferred. The engine and
-  adapter leave canonical staging untouched.
+  authentication for publication. Queue execution and retained native conflict
+  recovery are implemented. The private publisher leaves canonical staging
+  untouched; the Claude queued adapter can first audit and complete an
+  already-staged canonical merge while preserving the index and unstaged files.
+  Unresolved canonical recovery and fresh-capture integration remain next; see
+  the [completion contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#already-staged-canonical-merge-completion).
+  Broad credential discovery remains deferred.
 - Establish parent-death recovery and ownership for future external merge tools.
   Retained Git cancellation cleanup does not establish abrupt-death recovery.
 - Add exact manual-sync event coverage, local-only completion policy, queue/status

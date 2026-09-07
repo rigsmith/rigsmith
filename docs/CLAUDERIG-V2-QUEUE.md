@@ -10,8 +10,10 @@ Retained commit bundles and Claude commit/sealing are also implemented; see
 now keeps ancestry available before the first commit. Claude QueueAdapter now
 connects these services to RunOne, including confirmed retained publication. A
 worker command and hook activation are still pending.
-This internal foundation has no end-user changeset because shipped commands
-behave as before.
+The v2 queue has end-user changesets for its planned release behavior, including
+completion of staged merges before retrying committed batches. Shipped
+synchronous commands remain unchanged; worker commands and queued hooks are not
+yet enabled.
 
 ## Identity and generations
 

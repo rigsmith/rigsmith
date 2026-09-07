@@ -434,7 +434,8 @@ fresh remote confirmation. A batch already present remotely retains the existing
 replay rule and does not imply that later canonical work was also uploaded.
 
 Only one regular-file MERGE_HEAD containing a literal object ID is supported.
-ORIG_HEAD must identify the original parent. Unresolved index entries, octopus or
+ORIG_HEAD must identify the original parent. The settled-state guard also rejects
+a standalone MERGE_AUTOSTASH marker without MERGE_HEAD. Unresolved index entries, octopus or
 redundant merges, autostash, cherry-pick/revert/rebase/sequencer state, malformed
 state, shallow/incomplete history, failed audits and changed inputs stop recovery.
 Control files are bounded (256 bytes for parent markers, 64 MiB for the copied

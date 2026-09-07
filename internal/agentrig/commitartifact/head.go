@@ -25,7 +25,7 @@ func SettledHead(ctx context.Context, dir string) (string, error) {
 		return "", err
 	}
 	repo := gitRepo{dir: dir}
-	for _, name := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"} {
+	for _, name := range []string{"MERGE_HEAD", "MERGE_AUTOSTASH", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"} {
 		p, err := repo.run(ctx, nil, "rev-parse", "--git-path", name)
 		if err != nil {
 			return "", err

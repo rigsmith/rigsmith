@@ -18,6 +18,11 @@ import (
 func stagedPublicationFixture(t *testing.T, kind string) (service.ArtifactPublishRequest, *artifactRemote, string, string) {
 	t.Helper()
 	input, remote := publicationFixture(t, true, false)
+	if kind == "already-published" {
+		if _, err := (service.Service{}).PublishArtifact(t.Context(), input); err != nil {
+			t.Fatal(err)
+		}
+	}
 	stage := input.Commit.Capture.Sync.StagingDir
 	path := "cli/plugins/data/saved.json"
 	git(t, stage, "checkout", "-b", "incoming")
@@ -172,5 +177,40 @@ func TestQueueAdapterStagedMergeRoundTrip(t *testing.T) {
 				t.Fatal("replayed acknowledged batch", err)
 			}
 		})
+	}
+}
+
+// A replay acknowledges only the retained capture. Finishing a later canonical
+// merge does not expand that batch's coverage to newer local or queued work.
+func TestQueueAdapterStagedMergeAlreadyPublished(t *testing.T) {
+	if os.Getenv("CLAUDERIG_E2E") != "1" {
+		t.Skip("set CLAUDERIG_E2E=1; synthetic already-published batch replay")
+	}
+	input, remote, original, _ := stagedPublicationFixture(t, "already-published")
+	req := input.Commit.Capture
+	before := git(t, remote.dir, "rev-parse", "main")
+	pushes := remote.pushes
+	q, _, adapter := queueAdapterFixture(t, req, input.Commit.Commits, remote)
+	seedQueuePhase(t, q, req, queue.Committed)
+	laterRequest := req.Work.Events[0].Request
+	laterRequest.EventID = "later-staged-merge-event"
+	later, err := q.Enqueue(t.Context(), laterRequest, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := q.RunOne(t.Context(), time.Now(), adapter)
+	if err != nil || !result.Acknowledged || result.Phase != queue.Pushed || remote.pushes != pushes || git(t, remote.dir, "rev-parse", "main") != before {
+		t.Fatalf("replay expanded publication: %+v %v", result, err)
+	}
+	head, err := commitartifact.SettledHead(t.Context(), req.Sync.StagingDir)
+	if err != nil || head == "" || head == original {
+		t.Fatalf("canonical merge not retained: %s %v", head, err)
+	}
+	if head == before {
+		t.Fatal("later canonical merge unexpectedly matches the already-published snapshot")
+	}
+	pending, err := q.Snapshot(t.Context())
+	if err != nil || len(pending) != 1 || pending[0].ID != later.BatchID || pending[0].Phase != queue.Queued {
+		t.Fatalf("later generation incorrectly acknowledged: %+v %v", pending, err)
 	}
 }
