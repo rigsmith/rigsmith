@@ -213,5 +213,7 @@ consumes committed bundles, privately merges newer histories and confirms remote
 ancestry after publication attempts. It does not write queue markers or enable a
 worker. Claude's `Service.PublishArtifact` now validates committed-batch bindings,
 explicit transport destination/branch, settled local HEAD, raw native attributes
-and secrets. Production transport, execution wiring, native conflict recovery and
-process ownership remain gates.
+and secrets. [HTTPS/local transport](CLAUDERIG-V2-GIT-TRANSPORT.md) now supplies
+explicit credentials and transport-command cancellation cleanup. SSH/authentication
+discovery, execution wiring, native conflict recovery, remaining process ownership
+and parent-death recovery remain gates.

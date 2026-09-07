@@ -117,8 +117,10 @@ Queue operations continue to use the original cancellation context.
   now merges newer committed histories and requires fresh remote confirmation.
   Claude's `Service.PublishArtifact` now checks batch/destination bindings and
   applies native Git attributes and secret auditing to the raw publication tree.
-  Wire production transport and native conflict recovery next. The engine and
-  adapter leave canonical staging untouched.
+  [HTTPS/local transport](CLAUDERIG-V2-GIT-TRANSPORT.md) now supplies explicit
+  credentials and transport-command cancellation cleanup. Add SSH/authentication
+  discovery and native conflict recovery next. The engine and adapter leave
+  canonical staging untouched.
 - Own Git and merge-tool process trees across cancellation and parent death.
   Command cancellation and a bounded pipe wait do not establish that ownership.
 - Add exact manual-sync event coverage, local-only completion policy, queue/status

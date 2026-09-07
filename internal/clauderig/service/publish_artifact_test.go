@@ -320,3 +320,19 @@ func TestPublishArtifactRejectsForeignPolicyForSameCapture(t *testing.T) {
 		})
 	}
 }
+
+func TestPublishArtifactWithGitTransport(t *testing.T) {
+	input, remote := publicationFixture(t, true, false)
+	transport, err := commitartifact.NewGitTransport(commitartifact.GitTransportOptions{Remote: remote.dir, Branch: remote.branch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Remote = transport
+	result, err := (service.Service{}).PublishArtifact(t.Context(), input)
+	if err != nil || result.RemoteCommit == "" {
+		t.Fatalf("bound transport: %+v %v", result, err)
+	}
+	if got := git(t, remote.dir, "show", "main:cli/projects/-workspace-acme/s.jsonl"); !strings.Contains(got, "sealed publication bytes") {
+		t.Fatal("native captured bytes missing")
+	}
+}

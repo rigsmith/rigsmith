@@ -5,8 +5,10 @@ Milestone 6b.2 now has an internal shared publication engine in
 from #315/#317, merges committed history in a private repository, and confirms
 remote ancestry before returning success. This is a library boundary with real
 local-Git transport tests. Claude now supplies an internal `Service.PublishArtifact`
-policy adapter with an explicitly injected bound transport. Production transport,
-queue execution wiring and process ownership are still next steps. No
+policy adapter with an explicitly injected bound transport. A concrete
+[HTTPS/local Git transport](CLAUDERIG-V2-GIT-TRANSPORT.md) now supplies explicit
+credentials and transport-command cancellation cleanup. SSH/authentication
+discovery, queue execution wiring and remaining process ownership are next. No
 command or hook calls this engine, and synchronous publication is unchanged.
 There is no end-user changeset for this internal step.
 
@@ -33,8 +35,9 @@ return its exact SHA. The engine clears that ref before each fetch, checks the
 returned ref/SHA and object integrity, and refuses shallow history. Transport.Push
 must send the exact candidate to the bound branch using a normal fast-forward-only
 push. There is no force push, remote-config lookup or history maintenance here.
-Transport implementations are trusted code, not a sandbox: production wiring must
-honor these requirements and own its child processes.
+Transport implementations are trusted code, not a sandbox. `GitTransport` now
+implements this contract for HTTPS/local paths; its [contract](CLAUDERIG-V2-GIT-TRANSPORT.md)
+records authentication, cancellation and remaining parent-death limitations.
 
 ## Merging and byte checks
 
@@ -137,7 +140,8 @@ event timestamp and four push/confirmation attempts. The committed store's byte
 limit also bounds materialized publication trees. A returned `Publication` is
 only evidence for persisting the pushed phase; this adapter does not update queue
 state. Config-history, retention, local-only completion, native merge recovery and
-production transport are not implemented here. Synchronous behavior is unchanged.
+authentication discovery are not implemented in the service. Concrete transport
+construction remains explicit at composition. Synchronous behavior is unchanged.
 
 ## Confirmation and retries
 
@@ -163,7 +167,8 @@ No local-only success is represented by this API.
 
 Private workspaces are removed on normal return. Process death can leave them
 behind, and a bounded command pipe wait is not ownership of Git/transport child
-processes. Production transport, process ownership, native conflict resolution,
+processes. HTTPS/local transport commands now have cancellation ownership;
+remaining process ownership and parent-death recovery, native conflict resolution,
 cleanup/quotas, exact manual-sync coverage and queue lifecycle/rollback remain
 required before queued hooks can be enabled.
 
