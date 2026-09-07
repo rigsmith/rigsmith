@@ -188,7 +188,8 @@ remains the gate for synchronous behavior.
   binding and provenance without consulting the worker's login.
 - Durable captures, capture-time seed bundles and retained commits now preserve
   their dependencies independently of staging and now feed Push/recovery through
-  QueueAdapter. Define safe artifact cleanup and classified retry policy.
+  QueueAdapter. Define safe artifact cleanup; classified retry policy is described
+  below.
 - Protect requested sources from retention until captured; handle deletion and
   unavailable source attribution explicitly, without acknowledging missing data.
 - Integrate manual sync acknowledgements only for the exact events its capture
@@ -253,11 +254,10 @@ RunOne persists each successful reference, resumes only unfinished phases, and
 acknowledges only its sealed batch after fresh remote confirmation. A retry after
 an unmarked successful push confirms reachability without another push. Conflicts
 reported by retained publication become blocked `publication-conflict` jobs;
-recovery requires an explicit decision. Other errors, including offline transport,
-missing sources/artifacts, scan rejection and binding mismatch, retain their
-original errors and last durable phase. The caller must choose retry and
-remediation policy; this adapter adds no daemon or automatic retry loop. Raw
-errors are never persisted in queue state. Local-only completion remains unsupported.
+recovery requires an explicit decision. The adapter now classifies other failures
+using the bounded policy below. It adds no daemon or automatic retry loop: a
+worker must call RunOne again when work is due. Raw errors are never persisted
+in queue state. Local-only completion remains unsupported.
 
 Synthetic tests exercise real configured Git publication, offline recovery after
 source deletion, later-generation preservation, cancellation between remote push
@@ -266,3 +266,51 @@ conflict blocking, detached inputs, and staging ownership across phase gaps and
 manual-sync attempts. Existing artifact, queue and fixed-baseline compatibility
 tests remain required. Worker startup, parent-death recovery, capacity remedies,
 artifact/receipt cleanup, explicit status and opt-in hook rollout remain future work.
+
+## Bounded failure policy
+
+The shared queue RetryFailure helper calculates retry deadlines from a batch's
+persisted claim count: 5 seconds, 10 seconds, 20 seconds, then a 30-second cap. Claim eight blocks instead of scheduling another attempt. Interrupted
+claims count, and advancing phases does not reset the budget. Deadlines survive
+reopening the queue; early calls do not consume attempts. The policy does not
+sleep or install a background worker. A later batch with the same provenance
+cannot overtake delayed or blocked work.
+
+Claude applies fixed, credential-free codes, preserving the original error chain
+for the immediate caller:
+
+| Failure | Code | Action |
+| --- | --- | --- |
+| Git transport failure or publication not confirmed | publication-unconfirmed | Bounded retry |
+| Source changed during freezing | source-changing | Bounded retry |
+| Staging/artifact store busy | store-busy | Bounded retry |
+| Operation deadline while caller context remains active | operation-timeout | Bounded retry |
+| Scan tripwire | scan-rejected | Block |
+| Config/provenance/destination mismatch | binding-mismatch | Block |
+| Invalid queued work | invalid-work | Block |
+| Publication/staging merge conflict | publication-conflict | Block |
+| Invalid archive, retained commit or byte-conversion attributes | artifact-invalid | Block |
+| Artifact size bound exceeded | capacity-exceeded | Block |
+| Missing requested source or saved artifact | data-unavailable | Block |
+| Filesystem permission denied | permission-denied | Block |
+| Unrecognized failure | operation-failed | Block |
+
+Git does not distinguish authentication from network failures through this
+transport error type. Both receive the bounded publication budget; this does not
+claim every transport error is transient. Known permanent failures take precedence
+when errors are joined. Secret rejection is now typed by the engine without
+changing existing diagnostic text; classification never parses Git/scanner text.
+
+Cancellation and uncertain artifact writes stay unclassified, retaining the last
+confirmed phase for recovery. Queue marker/acknowledgement persistence failures
+never pass through this policy. Blocking does not discard artifacts or events,
+create an acknowledgement, or infer that live data can be omitted. Repairing a
+file or credentials does not automatically clear a block. Explicit Unblock grants
+another attempt without resetting the claim count; an exhausted batch that fails
+again blocks again. A status/recovery command and production worker scheduling
+remain rollout gates.
+
+Synthetic tests cover deadline persistence across reopen, early-call exclusion,
+budget exhaustion and explicit recovery, retained-reference preservation, raw
+error omission from queue state, missing-source and scan repair/unblock, joined
+error precedence, cancellation and uncertain-write classification boundaries.

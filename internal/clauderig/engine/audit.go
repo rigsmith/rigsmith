@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -113,6 +114,9 @@ func CheckPublish(root string) error {
 	return CheckPublishContext(context.Background(), root)
 }
 
+// ErrSecretTripwire identifies rejected bytes without parsing diagnostic text.
+var ErrSecretTripwire = errors.New("secret tripwire")
+
 // CheckPublishContext preserves the publication tripwire while allowing a worker
 // to stop a whole-tree audit without waiting for every transcript to be scanned.
 func CheckPublishContext(ctx context.Context, root string) error {
@@ -121,7 +125,7 @@ func CheckPublishContext(ctx context.Context, root string) error {
 		return err
 	}
 	if len(findings) > 0 {
-		return fmt.Errorf("secret tripwire: refusing publication: %s (%s); %d affected file(s)", findings[0].Path, findings[0].Kind, len(findings))
+		return fmt.Errorf("%w: refusing publication: %s (%s); %d affected file(s)", ErrSecretTripwire, findings[0].Path, findings[0].Kind, len(findings))
 	}
 	return nil
 }

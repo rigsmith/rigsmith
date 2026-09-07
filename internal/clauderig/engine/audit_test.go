@@ -24,8 +24,8 @@ func TestAuditScansRawIndexBytes(t *testing.T) {
 		if _, err := transcript.Decode([]byte(raw)); err != nil {
 			t.Fatalf("fixture should decode: %v", err)
 		}
-		if err := CheckPublish(stage); err == nil {
-			t.Fatal("credential hidden in physical index passed audit")
+		if err := CheckPublish(stage); !errors.Is(err, ErrSecretTripwire) {
+			t.Fatalf("credential hidden in physical index needs typed scan rejection: %v", err)
 		} else if strings.Contains(err.Error(), key) {
 			t.Fatal("diagnostic leaked credential")
 		}

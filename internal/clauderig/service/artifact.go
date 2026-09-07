@@ -183,7 +183,7 @@ func (s Service) captureArtifact(operation, staging context.Context, req Artifac
 				}
 			}
 			if repo.InMerge(ctx) {
-				return fmt.Errorf("queued capture requires a settled staging merge")
+				return fmt.Errorf("%w: queued capture requires a settled staging merge", commitartifact.ErrConflict)
 			}
 		} else if !os.IsNotExist(err) {
 			return err
@@ -278,7 +278,7 @@ func (s Service) captureArtifact(operation, staging context.Context, req Artifac
 				}
 			}
 			if found == "" {
-				return fmt.Errorf("requested session source is missing")
+				return fmt.Errorf("%w: requested session source is missing", ErrCaptureSourceUnavailable)
 			}
 			required[found] = true
 			for _, path := range event.Request.Flush.Paths {
@@ -288,7 +288,7 @@ func (s Service) captureArtifact(operation, staging context.Context, req Artifac
 				}
 				rel, err := filepath.Rel(roots["cli"], abs)
 				if err != nil || !slices.Contains(cliFiles, filepath.ToSlash(rel)) {
-					return fmt.Errorf("requested flush source is unavailable")
+					return fmt.Errorf("%w: requested flush source is unavailable", ErrCaptureSourceUnavailable)
 				}
 				required[filepath.ToSlash(rel)] = true
 			}
@@ -463,7 +463,7 @@ func copyCaptureFile(ctx context.Context, src, dst string, budget *int64) error 
 	defer in.Close()
 	actual, err := in.Stat()
 	if err != nil || !os.SameFile(info, actual) {
-		return fmt.Errorf("capture source changed")
+		return ErrCaptureSourceChanged
 	}
 	if err = os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
 		return err
@@ -485,7 +485,7 @@ func copyCaptureFile(ctx context.Context, src, dst string, budget *int64) error 
 		return err
 	}
 	if after.Size() != info.Size() || !after.ModTime().Equal(info.ModTime()) {
-		return fmt.Errorf("capture source changed")
+		return ErrCaptureSourceChanged
 	}
 	return os.Chtimes(dst, info.ModTime(), info.ModTime())
 }

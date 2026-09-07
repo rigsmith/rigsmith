@@ -80,7 +80,7 @@ func TestQueueAdapterOfflineRecoveryPreservesLaterGeneration(t *testing.T) {
 	}
 	remote := &queuedTransport{ArtifactTransport: transport}
 	q, dir, adapter := queueAdapterFixture(t, req, artifact.Store{Dir: filepath.Join(t.TempDir(), "commits")}, remote)
-	offline := errors.New("synthetic offline")
+	offline := errors.Join(commitartifact.ErrTransport, errors.New("synthetic offline"))
 	var later queue.Event
 	remote.beforeFetch = func() error {
 		_, release, err := storelock.Acquire(t.Context(), req.Sync.StagingDir, 0)
@@ -126,7 +126,7 @@ func TestQueueAdapterOfflineRecoveryPreservesLaterGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote.beforeFetch = nil
-	result, err = q.RunOne(t.Context(), time.Now(), adapter)
+	result, err = q.RunOne(t.Context(), before[0].NotBefore, adapter)
 	if err != nil || !result.Acknowledged || result.Phase != queue.Pushed || remote.pushes != 1 {
 		t.Fatalf("recovery: %+v %v pushes=%d", result, err, remote.pushes)
 	}
@@ -358,6 +358,132 @@ func TestQueueAdapterResumesSavedPhaseWithoutSources(t *testing.T) {
 			}
 			if got := git(t, remote.dir, "show", "main:cli/projects/-workspace-acme/s.jsonl"); !strings.Contains(got, "sealed publication bytes") {
 				t.Fatal("lost saved capture")
+			}
+		})
+	}
+}
+
+func TestQueueAdapterPersistsBackoffAndExhaustion(t *testing.T) {
+	input, fixture := publicationFixture(t, false, false)
+	remote := &queuedTransport{ArtifactTransport: fixture}
+	privateDiagnostic := "synthetic-private-transport-diagnostic"
+	remote.beforeFetch = func() error { return errors.Join(commitartifact.ErrTransport, errors.New(privateDiagnostic)) }
+	req := input.Commit.Capture
+	q, dir, adapter := queueAdapterFixture(t, req, input.Commit.Commits, remote)
+	seedQueuePhase(t, q, req, queue.Committed)
+	now := time.Now().UTC()
+	adapter.Service.Now = func() time.Time { return now }
+	// Seeding the committed phase already used claim one (an interrupted worker).
+	for attempt := uint64(2); attempt <= queue.RetryLimit; attempt++ {
+		result, err := q.RunOne(t.Context(), now, adapter)
+		if !errors.Is(err, commitartifact.ErrTransport) || result.Phase != queue.Committed || result.Acknowledged {
+			t.Fatalf("retry: %+v %v", result, err)
+		}
+		work, err := q.Snapshot(t.Context())
+		if err != nil || len(work) != 1 {
+			t.Fatal(work, err)
+		}
+		b := work[0]
+		if b.Attempts != attempt || b.FailureCode != "publication-unconfirmed" || b.CommitRef != req.Work.CommitRef || b.CaptureRef != req.Work.CaptureRef {
+			t.Fatalf("lost retry state: %+v", b)
+		}
+		q, err = queue.Open(t.Context(), dir, req.Binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if attempt == queue.RetryLimit {
+			if b.Status != queue.Blocked {
+				t.Fatal("retry limit did not block", b)
+			}
+			if _, err := q.RunOne(t.Context(), now.Add(24*time.Hour), adapter); !errors.Is(err, queue.ErrEmpty) {
+				t.Fatal("retried exhausted batch", err)
+			}
+		} else {
+			if b.Status != queue.Pending || !b.NotBefore.After(now) {
+				t.Fatal("no backoff", b)
+			}
+			if _, err := q.RunOne(t.Context(), b.NotBefore.Add(-time.Nanosecond), adapter); !errors.Is(err, queue.ErrEmpty) {
+				t.Fatal("retried too early", err)
+			}
+			now = b.NotBefore
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "queue.json"))
+	if err != nil || strings.Contains(string(data), privateDiagnostic) {
+		t.Fatal("persisted raw diagnostic", err)
+	}
+	// Explicit unblock grants another attempt without forgetting prior claims.
+	w, err := q.Worker(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Unblock(t.Context(), req.Work.ID); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	remote.beforeFetch = nil
+	result, err := q.RunOne(t.Context(), now, adapter)
+	if err != nil || !result.Acknowledged {
+		t.Fatalf("explicit recovery: %+v %v", result, err)
+	}
+}
+
+func TestQueueAdapterBlocksMissingSourceAndScanUntilUnblocked(t *testing.T) {
+	for _, kind := range []string{"missing", "scan"} {
+		t.Run(kind, func(t *testing.T) {
+			req := artifactCaptureFixture(t, "queued recovery bytes")
+			remote := &artifactRemote{dir: filepath.Join(t.TempDir(), "remote.git"), branch: "main"}
+			git(t, filepath.Dir(remote.dir), "init", "--bare", remote.dir)
+			req.Sync.Config.Remote = remote.dir
+			var err error
+			req.Binding, err = service.CaptureBinding(req.Sync, req.Profiles)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q, _, adapter := queueAdapterFixture(t, req, artifact.Store{Dir: filepath.Join(t.TempDir(), "commits")}, remote)
+			source := filepath.Join(req.Sync.Machine.Home, ".claude", "projects", "-workspace-acme", "s.jsonl")
+			original, err := os.ReadFile(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			code := "data-unavailable"
+			if kind == "missing" {
+				if err := os.Remove(source); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				code = "scan-rejected"
+				put(t, req.Sync.Machine.Home, ".claude/plugins/data/leak.json", "{\"saved\":\""+"ghp_"+strings.Repeat("a", 21)+"\"}")
+			}
+			result, err := q.RunOne(t.Context(), time.Now(), adapter)
+			if err == nil || result.Phase != queue.Queued || result.Acknowledged || remote.fetches != 0 {
+				t.Fatalf("unsafe capture: %+v %v", result, err)
+			}
+			work, err := q.Snapshot(t.Context())
+			if err != nil || len(work) != 1 || work[0].Status != queue.Blocked || work[0].FailureCode != code || work[0].CaptureRef != "" {
+				t.Fatal(work, err)
+			}
+			if kind == "missing" {
+				if err := os.WriteFile(source, original, 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Remove(filepath.Join(req.Sync.Machine.Home, ".claude/plugins/data/leak.json")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := q.RunOne(t.Context(), time.Now().Add(time.Hour), adapter); !errors.Is(err, queue.ErrEmpty) {
+				t.Fatal("repair silently unblocked work", err)
+			}
+			w, err := q.Worker(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Unblock(t.Context(), work[0].ID); err != nil {
+				t.Fatal(err)
+			}
+			w.Close()
+			result, err = q.RunOne(t.Context(), time.Now(), adapter)
+			if err != nil || !result.Acknowledged {
+				t.Fatalf("repaired capture: %+v %v", result, err)
 			}
 		})
 	}

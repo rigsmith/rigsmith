@@ -20,7 +20,8 @@ const StoreWait = 15 * time.Second
 
 // Service delivers synchronous progress to an optional observer. Observers must
 // not mutate the store, event payloads or reenter a workflow. A nil observer
-// discards progress. Now defaults to time.Now for device metadata and maintenance.
+// discards progress. Now defaults to time.Now for device metadata, maintenance
+// and queue retry deadlines. A supplied clock must return a nonzero time.
 type Service struct {
 	Observe func(Event)
 	Now     func() time.Time

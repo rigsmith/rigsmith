@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"strings"
 
@@ -29,7 +28,8 @@ type QueueInputs struct {
 // called once per claimed batch, with its binding and saved provenance ID. It
 // must return current inputs, not derive new destinations from old queue work.
 // This adapter does not install hooks, run a daemon, update canonical staging,
-// acknowledge manual sync coverage, or choose retry timing for unknown errors.
+// acknowledge manual sync coverage. Classified temporary failures use bounded
+// backoff; other failures block for deliberate recovery.
 type QueueAdapter struct {
 	Service Service
 	Resolve func(context.Context, queue.Binding, string) (QueueInputs, error)
@@ -37,7 +37,8 @@ type QueueAdapter struct {
 
 var _ queue.Adapter = QueueAdapter{}
 
-func (a QueueAdapter) Begin(ctx context.Context, binding queue.Binding, work queue.Work) (queue.Execution, error) {
+func (a QueueAdapter) Begin(ctx context.Context, binding queue.Binding, work queue.Work) (execution queue.Execution, err error) {
+	defer func() { err = a.Service.queueFailure(ctx, work, err) }()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -150,7 +151,7 @@ func (e *queueExecution) Capture(ctx context.Context, work queue.Work) (string, 
 		e.input.Commit.Capture.Work.Phase = queue.Captured
 		e.input.Commit.Capture.Work.CaptureRef = ref
 	}
-	return ref, err
+	return ref, e.service.queueFailure(ctx, work, err)
 }
 func (e *queueExecution) Commit(ctx context.Context, work queue.Work) (string, error) {
 	if err := e.check(ctx, work, queue.Captured); err != nil {
@@ -161,7 +162,7 @@ func (e *queueExecution) Commit(ctx context.Context, work queue.Work) (string, e
 		e.input.Commit.Capture.Work.Phase = queue.Committed
 		e.input.Commit.Capture.Work.CommitRef = ref
 	}
-	return ref, err
+	return ref, e.service.queueFailure(ctx, work, err)
 }
 func (e *queueExecution) Push(ctx context.Context, work queue.Work) error {
 	if err := e.check(ctx, work, queue.Committed); err != nil {
@@ -171,13 +172,7 @@ func (e *queueExecution) Push(ctx context.Context, work queue.Work) error {
 	if err == nil {
 		e.input.Commit.Capture.Work.Phase = queue.Pushed
 	}
-	// Conflicts need a deliberate recovery decision; never loop over the same
-	// conflict or silently omit the queued capture. Other errors retain their
-	// original type and last durable phase for caller-controlled recovery.
-	if errors.Is(err, commitartifact.ErrConflict) {
-		return &queue.ExecutionFailure{Code: "publication-conflict", RetryAt: e.service.now(), Blocked: true, Cause: err}
-	}
-	return err
+	return e.service.queueFailure(ctx, work, err)
 }
 func (e *queueExecution) Close() {
 	if !e.closed {
