@@ -1,7 +1,11 @@
 package engine
 
 import (
+	"crypto/rand"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -186,7 +190,12 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 		rr.LiveSkipped = restored.LiveSkipped
 		rr.SlugsRewritten = len(rewritten)
 		if r.ID == "cli" && opts.Manifest != nil {
-			rr.Links = restoreLinks(target, opts.Manifest.Links, slugMap)
+			var err error
+			rr.Links, err = restoreLinks(target, opts.Manifest.Links, slugMap)
+			if err != nil {
+				rep.Roots = append(rep.Roots, rr)
+				return rep, err
+			}
 		}
 
 		if opts.Prune && r.ID == "cli" {
@@ -205,20 +214,39 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 // rewriting both endpoints through this machine's slug map. A link is created
 // only when its target directory exists (was restored or already lived here) and
 // nothing occupies the link path — an existing file, dir, or link is the
-// machine's own state and is left alone. A failed creation (e.g. symlinks
-// unavailable on the platform) skips that link, never the restore.
-func restoreLinks(target string, manifestLinks map[string]string, slugMap map[string]string) int {
+// machine's own state and is left alone. Unsupported links and concurrent name
+// collisions are skipped; unexpected creation or installation errors are returned.
+func restoreLinks(target string, manifestLinks map[string]string, slugMap map[string]string) (int, error) {
+	if len(manifestLinks) == 0 {
+		return 0, nil
+	}
+	root, err := os.OpenRoot(target)
+	if os.IsNotExist(err) {
+		return 0, nil // no destination means none of the link targets exist yet
+	}
+	if err != nil {
+		return 0, fmt.Errorf("restore: open memory-link root: %w", err)
+	}
+	defer root.Close()
 	links := files.LinkCache{}
 	n := 0
 	for rel, tgtRel := range manifestLinks {
+		// Validate before rewriting too: a malformed source slug must not be
+		// made to look safe by a mapping. Backup metadata is not trusted input.
+		if !validRestoreLinkPath(rel) || !validRestoreLinkPath(tgtRel) {
+			continue
+		}
 		rel, _, _ = rewriteProjectRel(rel, slugMap)
 		tgtRel, _, _ = rewriteProjectRel(tgtRel, slugMap)
-		linkPath := filepath.Join(target, filepath.FromSlash(rel))
-		tgtPath := filepath.Join(target, filepath.FromSlash(tgtRel))
-		if info, err := os.Stat(tgtPath); err != nil || !info.IsDir() {
+		if !validRestoreLinkPath(rel) || !validRestoreLinkPath(tgtRel) {
+			continue
+		}
+		linkName, targetName := filepath.FromSlash(rel), filepath.FromSlash(tgtRel)
+		linkPath := filepath.Join(target, linkName)
+		if info, err := root.Stat(targetName); err != nil || !info.IsDir() {
 			continue // target absent on this machine — nothing to point at
 		}
-		if _, err := os.Lstat(linkPath); err == nil {
+		if _, err := root.Lstat(linkName); !os.IsNotExist(err) {
 			continue
 		}
 		// The same ancestor rule the write loop applies. Checking only the leaf
@@ -228,14 +256,81 @@ func restoreLinks(target string, manifestLinks map[string]string, slugMap map[st
 		if links.UnderSymlink(target, linkPath) {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+		// Root keeps creation inside the chosen directory even if a parent
+		// changes after the ancestor check. Relative targets also let Windows
+		// Root.Symlink recognize this as a directory link.
+		linkTarget, err := filepath.Rel(filepath.Dir(linkName), targetName)
+		if err != nil {
 			continue
 		}
-		if err := os.Symlink(tgtPath, linkPath); err == nil {
+		if err := root.MkdirAll(filepath.Dir(linkName), 0o755); err != nil {
+			continue
+		}
+		created, err := createRestoreLink(restoreLinkFS{root}, linkTarget, linkName)
+		if created {
 			n++
 		}
+		if err != nil {
+			return n, err
+		}
 	}
-	return n
+	return n, nil
+}
+
+// restoreLinkCreator exposes creation, verification and no-replace installation
+// separately so tests can interleave another writer at each boundary.
+type restoreLinkCreator interface {
+	Symlink(string, string) error
+	Stat(string) (os.FileInfo, error)
+	Remove(string) error
+	Install(string, string) error
+}
+
+type restoreLinkFS struct{ *os.Root }
+
+func (r restoreLinkFS) Install(temp, name string) error {
+	return installRestoreLink(r.Root, temp, name)
+}
+
+// createRestoreLink validates a randomly named sibling before installing it.
+// Cleanup only touches that private name, never the public destination, which
+// another writer may have replaced. Installation must fail if name exists.
+func createRestoreLink(root restoreLinkCreator, target, name string) (created bool, err error) {
+	temp := filepath.Join(filepath.Dir(name), ".clauderig-link-"+rand.Text())
+	// Unsupported links and occupied names are expected skips. Other failures
+	// must reach the restore report and journal instead of looking successful.
+	if err := root.Symlink(target, temp); err != nil {
+		if skipRestoreLinkError(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("restore: create temporary memory link: %w", err)
+	}
+	defer func() {
+		if cleanupErr := root.Remove(temp); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+			err = errors.Join(err, fmt.Errorf("restore: could not remove temporary memory link: %w", cleanupErr))
+		}
+	}()
+	// The sibling has exactly the same relative target as the final link.
+	// Validate after creation, before publishing; no symbolic link can prevent
+	// changes to its target after this observation.
+	if info, statErr := root.Stat(temp); statErr == nil && info.IsDir() {
+		if err := root.Install(temp, name); err != nil {
+			if skipRestoreLinkError(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("restore: install memory link: %w", err)
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// Manifest endpoints use portable slash-relative names, never absolute paths,
+// parent traversal, drive/UNC paths or alternate Windows stream names. The final
+// IsLocal check uses the filesystem host OS: Machine.OS controls path rewriting,
+// but Restore always performs filesystem operations on this host.
+func validRestoreLinkPath(p string) bool {
+	return p != "." && fs.ValidPath(p) && !strings.ContainsAny(p, "\\:\x00") && filepath.IsLocal(filepath.FromSlash(p))
 }
 
 // liveTranscripts returns the target-relative transcript paths that running
