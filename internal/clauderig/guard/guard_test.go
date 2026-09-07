@@ -285,6 +285,11 @@ func TestGitWorktreeAddUnderDotClaudeIsDenied(t *testing.T) {
 		"echo hi && git worktree add .claude/worktrees/x",
 		// Judged as git will resolve it, not as it was typed.
 		"git worktree add .claude/tmp/../worktrees/thing",
+		`git worktree add ".claude/worktrees/thing"`,
+		"git worktree add '.claude/worktrees/thing'",
+		// -C decides what a relative target is relative to.
+		"git -C .claude worktree add worktrees/thing",
+		"git -C/repo/.claude worktree add worktrees/thing",
 		`git worktree add .claude\worktrees\thing`,
 	}
 	for _, cmd := range denied {

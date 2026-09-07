@@ -383,13 +383,43 @@ func addsHiddenWorktree(command string) bool {
 		if gi < 0 || wi < 0 || wi+1 >= len(f) || f[wi+1] != "add" {
 			continue
 		}
+		// `git -C <dir>` decides what a relative target is relative to, so the
+		// target alone is not the path git will make.
+		cdir := ""
+		for i := gi + 1; i < wi; i++ {
+			switch a := unquoteArg(f[i]); {
+			case a == "-C" && i+1 < wi:
+				cdir = unquoteArg(f[i+1])
+			case strings.HasPrefix(a, "-C") && len(a) > 2:
+				cdir = a[2:]
+			}
+		}
 		for _, tok := range f[wi+2:] {
-			if underHiddenWorktrees(tok) {
+			t := unquoteArg(tok)
+			if underHiddenWorktrees(t) {
 				return true
+			}
+			// Relative to -C, which is where git will resolve it.
+			if cdir != "" && !strings.HasPrefix(t, "/") && !strings.HasPrefix(t, `\`) {
+				if underHiddenWorktrees(cdir + "/" + t) {
+					return true
+				}
 			}
 		}
 	}
 	return false
+}
+
+// unquoteArg strips one layer of matching quotes. A path with a space in it is
+// quoted as a matter of course, and a rule reading raw tokens sees the quotes
+// as part of the name and matches nothing.
+func unquoteArg(tok string) string {
+	if len(tok) >= 2 {
+		if q := tok[0]; (q == '"' || q == '\'') && tok[len(tok)-1] == q {
+			return tok[1 : len(tok)-1]
+		}
+	}
+	return tok
 }
 
 // underHiddenWorktrees reports whether a path argument lands in
