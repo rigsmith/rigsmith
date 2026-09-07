@@ -10,7 +10,7 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 **Current position:** shared infrastructure, queue execution, retry policy and
 retained metadata/native append recovery are merged into `codex/v2` through
 [#341](https://github.com/rigsmith/rigsmith/pull/341). [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded
-chunked-transcript recovery. Ordinary-file snapshot ordering merged in [#343](https://github.com/rigsmith/rigsmith/pull/343). Completion of already-staged canonical merges is included in [#344](https://github.com/rigsmith/rigsmith/pull/344). A follow-up strengthens the fresh-capture state guard and corrects a Windows chunk fixture. Unresolved merge recovery,
+chunked-transcript recovery. Ordinary-file snapshot ordering merged in [#343](https://github.com/rigsmith/rigsmith/pull/343). Completion of already-staged canonical merges is included in [#344](https://github.com/rigsmith/rigsmith/pull/344). Follow-up [#345](https://github.com/rigsmith/rigsmith/pull/345) is in review: it strengthens the fresh-capture state guard and corrects a Windows chunk fixture. Unresolved merge recovery,
 manual-sync coverage and worker lifecycle/capacity remain before queued Claude
 hooks and the separate Codex adapter. The queue work is split into concrete steps below.
 
