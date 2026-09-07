@@ -51,9 +51,9 @@ merge-tree mode; failure is surfaced, with no fallback to a checkout merge.
 Conflicts fail closed with ErrConflict. Unrelated history, invalid object formats
 and Git execution failures also stop publication. An optional raw-blob resolver now handles bounded regular-file content conflicts.
 Claude enables manifest/device metadata unions and conservative native JSONL/memory
-append recovery, including canonical v1 chunked transcripts. Other file and
-canonical staging conflict recovery remain required before activation. There is no interactive
-mergetool or whole-side fallback in retained publication.
+append recovery, including canonical v1 chunked transcripts. Eligible ordinary files also use proven snapshot ordering. Canonical staging
+recovery and lifecycle/capacity gates remain required before activation. There is no interactive
+mergetool or fallback from a failed union to whole-side selection.
 
 Private Git runs disable inherited Git overrides, global/system configuration,
 system/global attributes, templates, hooks, replacement objects and automatic
@@ -145,7 +145,7 @@ event timestamp and four push/confirmation attempts. The committed store's byte
 limit also bounds materialized publication trees. A returned `Publication` is
 only evidence for persisting the pushed phase; this adapter does not update queue
 state. QueueAdapter now supplies worker phase wiring. Config-history, retention,
-local-only completion and broader native merge recovery remain separate work. Composition can supply
+local-only completion and canonical merge recovery remain separate work. Composition can supply
 `NewConfiguredGitTransport` to reuse existing Git/`gh` authentication; broad
 credential discovery is deferred. Synchronous behavior is unchanged.
 
@@ -267,7 +267,7 @@ Tests cover SHA-1/SHA-256, raw CRLF bytes, deterministic replay and both parents
 declined resolutions, delete/edit refusal, malformed/unsafe stage records,
 cancellation and blob bounds. Claude fixtures exercise metadata union through
 actual publication, preserved device provenance, unchanged canonical files/index/
-config, unknown-field refusal and secret rejection after resolution. Other machine state, rename-aware recovery,
+config, unknown-field refusal and secret rejection after resolution. Unsupported machine state, rename-aware recovery,
 canonical merge repair and operational unblock/status commands remain future work.
 
 
@@ -343,5 +343,55 @@ crossing part boundaries. Real publication tests verify both tails, pruned base
 parts, secret rejection, unchanged canonical state and replay. A gated synthetic
 QueueAdapter round trip reconstructs a backup larger than 8 MiB after live sources
 and the separate capture archive disappear, then confirms exact acknowledgement.
-Ordinary settings/cache conflicts, canonical merge recovery and lifecycle/capacity
-remedies remain activation gates. Queued hooks and synchronous policy are unchanged.
+Canonical merge recovery and lifecycle/capacity remedies remain activation gates. Queued hooks and synchronous policy are unchanged.
+
+
+## Retained ordinary-file snapshots
+
+`adapter.RetainedSnapshot` selects allowlisted files under `cli`, `desktop` and
+named `desktop@` profile roots whose native policy is `NewestSnapshot`. Profile
+names must pass the same `desktop.ValidName` validation used by staged restore. This
+includes settings, skills/plans/commands and included plugin or Desktop state.
+The selected snapshot is preserved byte-for-byte, including binary files and
+CRLF. No JSON parsing or reserialization is introduced. Both Git parents remain
+reachable, preserving the unselected snapshot in history.
+
+Root metadata, all `.gitattributes`, transcripts/ordinary JSONL, memory files,
+chunk parts, excluded paths and unknown/custom roots cannot use this policy.
+Failures in metadata or append recovery never fall back to snapshot selection.
+Delete/edit and mode conflicts still stop before the resolver is called. Add/add
+ordinary files can be ordered when both sides have a known origin.
+
+The shared `RelatedFiles.SnapshotTime` capability traces the current conflict
+owner's exact blob and mode through immutable Git history. An unchanged commit
+inherits its parent's origin. A merge that copied a parent's bytes inherits that
+parent's origin, regardless of the merge timestamp; if multiple parents match,
+use their latest proven origin. A merge with bytes matching no parent is an
+ambiguous composite, so it remains blocked. Traversal allows at most 512 uncached
+commit/path visits per merge and eight parents per commit; excess history returns
+a capacity error. Cancellation and ignored capability errors still abort recovery.
+
+A source commit's recorded committer time establishes the ordering. This is Git
+snapshot ordering, not proof of wall-clock order or source-file modification time;
+clock skew and deliberately changed commit dates retain their normal Git meaning.
+Retained capture commits keep their already-pinned queue timestamp. Later unrelated
+commits, retries and synthetic publication merges cannot make copied bytes newer.
+Distinct bytes with equal or unknown origin times stay blocked, rather than using
+the synchronous incoming-side tie fallback. A strictly later recorded origin wins.
+
+Before ordinary-file selection, the service scans both raw conflict sides with
+the existing streaming secret tripwire. An older secret-bearing local snapshot
+therefore cannot enter reachable history merely because the newer winner is clean.
+This scans the two conflicting file snapshots, not every historical ancestor.
+Whole-tree byte validation and secret auditing still run before publication,
+followed by fresh remote confirmation. Canonical staging and live sources are
+untouched; existing blocked queue work still needs explicit Unblock. This changes
+only retained v2 publication, not synchronous merge behavior or chunking defaults.
+
+Tests cover both Git object formats, old/new synthetic merge timestamps, unrelated
+commits, multiple identical origins, novel merge bytes, limits and cancellation.
+Real publication fixtures exercise newer local/remote selection, add/add, equal-time
+refusal, unsupported/malformed profile paths, secret rejection on either the
+selected or losing side, raw bytes, preserved history/canonical
+state and replay. A gated synthetic queue round trip verifies publication and exact
+acknowledgement after live sources and the separate capture archive disappear.

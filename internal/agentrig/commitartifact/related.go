@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"time"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
 )
@@ -26,22 +27,27 @@ const (
 type RelatedFiles interface {
 	Read(context.Context, ConflictSide, string) ([]byte, error)
 	Add(context.Context, string, []byte) error
+	// SnapshotTime traces the current owner file on ours/theirs to its byte origin.
+	// At most 512 commit/path visits and eight parents per commit per merge.
+	SnapshotTime(context.Context, ConflictSide) (time.Time, error)
 }
 
 const relatedByteLimit = 4 << 20
 const relatedTotalLimit = 128 << 20
 
 type relatedFiles struct {
-	repo      gitRepo
-	tree      string
-	sides     [3]string
-	conflicts []conflictStages
-	owner     conflictStages
-	updates   strings.Builder
-	added     map[string]string
-	budget    int64
-	calls     int
-	err       error
+	repo         gitRepo
+	tree         string
+	sides        [3]string
+	conflicts    []conflictStages
+	owner        conflictStages
+	updates      strings.Builder
+	added        map[string]string
+	budget       int64
+	calls        int
+	err          error
+	origins      map[string]time.Time
+	originVisits int
 }
 
 func newRelatedFiles(r gitRepo, tree, a, b string, conflicts []conflictStages) *relatedFiles {

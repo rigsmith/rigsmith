@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
@@ -11,6 +13,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
+	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
 
 // ArtifactTransport is trusted transport code fixed to one destination/branch.
@@ -36,8 +39,9 @@ type ArtifactPublishRequest struct {
 // confirmed success permits a caller to persist the pushed phase. Manifest/device
 // content conflicts use native metadata unions; proven append-only native JSONL
 // and memory conflicts preserve both tails. Canonical chunked transcripts use
-// verified immutable parts and remain chunked. Other file conflicts, canonical
-// merge repair and local-only completion remain separate work.
+// verified immutable parts and remain chunked. Eligible ordinary files select
+// the newer proven snapshot origin; ties and unknown origins remain blocked.
+// Canonical merge repair and local-only completion remain separate work.
 func (s Service) PublishArtifact(ctx context.Context, input ArtifactPublishRequest) (commitartifact.Publication, error) {
 	return s.publishArtifact(ctx, ctx, input)
 }
@@ -98,6 +102,24 @@ func (s Service) publishArtifact(ctx, staging context.Context, input ArtifactPub
 		Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, Attempts: plan.PushRetries + 1,
 		MaxTreeBytes: input.Commit.Commits.MaxBytes,
 		Validate:     backupgit.ValidateTree, Audit: engine.CheckPublishContext,
-		Resolve: mergepolicy.ResolveRetainedFiles,
+		Resolve: resolveArtifactConflict,
 	})
+}
+
+// Snapshot selection retains both parents. Scan both ordinary-file sides before
+// selection so a clean winner cannot hide secret-bearing losing snapshot bytes.
+// The full candidate audit still runs; this is not a scan of every ancestor.
+func resolveArtifactConflict(ctx context.Context, path string, base, ours, theirs []byte, files commitartifact.RelatedFiles) ([]byte, error) {
+	if adapter.RetainedSnapshot(path) {
+		for _, data := range [][]byte{ours, theirs} {
+			finding, err := redact.ScanReader(path, &captureReader{ctx: ctx, r: bytes.NewReader(data)})
+			if err != nil {
+				return nil, err
+			}
+			if finding != nil {
+				return nil, fmt.Errorf("%w: refusing snapshot conflict: %s (%s)", engine.ErrSecretTripwire, path, finding.Kind)
+			}
+		}
+	}
+	return mergepolicy.ResolveRetainedFiles(ctx, path, base, ours, theirs, files)
 }

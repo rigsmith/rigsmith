@@ -4,8 +4,11 @@ import (
 	"path"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
+	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 type MergeStrategy uint8
@@ -52,4 +55,20 @@ func ClassifyMerge(p string) MergeRule {
 		}
 	}
 	return rule
+}
+
+// RetainedSnapshot selects ordinary files with native whole-snapshot semantics.
+// Root metadata, excluded files and failed transcript/memory unions must never
+// fall through to this policy. Unknown/custom roots need an explicit policy.
+func RetainedSnapshot(p string) bool {
+	root, rel, ok := strings.Cut(p, "/")
+	if !ok || strings.EqualFold(path.Base(rel), ".gitattributes") || (root != "cli" && root != DesktopRootID && ProfileNameOf(root) == "") {
+		return false
+	}
+	if root != "cli" && root != DesktopRootID && desktop.ValidName(ProfileNameOf(root)) != nil {
+		return false
+	}
+	file := Classify(root, rel)
+	return file.Merge.Strategy == NewestSnapshot && file.Kind != Memory &&
+		!transcript.IsPartPath(rel) && allowlist.For(root).Match(rel)
 }
