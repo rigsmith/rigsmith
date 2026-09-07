@@ -7,8 +7,9 @@ remote ancestry before returning success. This is a library boundary with real
 local-Git transport tests. Claude now supplies an internal `Service.PublishArtifact`
 policy adapter with an explicitly injected bound transport. A concrete
 [HTTPS/local Git transport](CLAUDERIG-V2-GIT-TRANSPORT.md) now supplies explicit
-credentials and transport-command cancellation cleanup. SSH/authentication
-discovery, queue execution wiring and remaining process ownership are next. No
+credentials. All retained Git commands now use its cancellation/cleanup runner.
+SSH/authentication discovery, queue execution wiring and parent-death recovery
+are next. No
 command or hook calls this engine, and synchronous publication is unchanged.
 There is no end-user changeset for this internal step.
 
@@ -133,7 +134,9 @@ filter runs and no `.git` is added to the audited directory. A single streamed
 `check-attr` process verifies bounded NUL-delimited response fields against each
 requested path/attribute pair. Path input is limited to 64 MiB and one million
 files; the publisher already bounds and validates tree metadata before invoking
-this policy. Failure and cancellation reap the process before returning.
+this policy. Failure and cancellation clean up the process group/job and reap
+the direct child before returning. The streamed reader stays open until the
+runner finishes; helpers retaining stdout cannot prevent EOF.
 
 Claude supplies its native snapshot label, fixed queued author identity, sealed
 event timestamp and four push/confirmation attempts. The committed store's byte
@@ -166,9 +169,9 @@ its files. The caller still persists the queue phase and exact acknowledgement.
 No local-only success is represented by this API.
 
 Private workspaces are removed on normal return. Process death can leave them
-behind, and a bounded command pipe wait is not ownership of Git/transport child
-processes. HTTPS/local transport commands now have cancellation ownership;
-remaining process ownership and parent-death recovery, native conflict resolution,
+behind. All retained Git commands, including transport and streamed validation,
+now have cancellation ownership. Parent-death recovery, ownership of future
+external merge tools, native conflict resolution,
 cleanup/quotas, exact manual-sync coverage and queue lifecycle/rollback remain
 required before queued hooks can be enabled.
 

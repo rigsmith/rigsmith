@@ -74,10 +74,12 @@ persist retry state, acknowledge generations or implement worker timeout policy.
 
 ## Command ownership and cleanup
 
-The new `internal/agentrig/process` runner is used by these transport commands.
-Existing synchronous runners and the retained publisher's other private Git
-commands are unchanged. It owns cancellation, helper termination and direct-child
-reaping before a transport call returns normally.
+The `internal/agentrig/process` runner is used by transport commands and all
+other Git commands in `commitartifact`: seed retention, bundle creation/opening,
+local HEAD inspection, private merges, object checks, blob materialization and
+raw-tree attribute validation. It owns cancellation, helper termination and
+direct-child reaping before those calls return normally. Existing synchronous
+runners remain unchanged.
 
 On Linux/macOS, commands start in their own process group. The runner waits for
 root exit without reaping it, keeping its PID reserved while it signals the
@@ -104,10 +106,32 @@ fail before starting a command.
 Abrupt parent death is still a rollout gate. Unix process groups alone do not
 terminate when the worker dies. Windows kill-on-close jobs help after association,
 but the suspended-create/assign window needs a stronger startup contract for that
-guarantee. Worker supervision, store-lease ownership across parent death, process
-ownership for other retained Git operations, native conflict recovery and draining
+guarantee. Worker supervision, store-lease ownership across parent death, ownership of any
+future external merge tools, native conflict recovery and draining
 must be completed before enabling queued hooks. The next integration work must
 not confuse cancellation cleanup with crash recovery.
+
+### Retained command streams and errors
+
+One-shot retained commands, including transport, cancel their owned process tree if the output writer
+rejects data or exceeds its bound. They wait for cleanup before returning the
+write/capacity error and discard partial control output. Git's exit code is usable
+as a semantic result only after clean ownership completion: a joined cleanup or
+cancellation failure cannot mean an absent local branch, a negative ancestry
+answer, or an ordinary merge conflict. Follow-up HEAD probes preserve their own
+startup, cancellation, capacity and cleanup errors rather than replacing them
+with the earlier HEAD verification error.
+
+Streamed `cat-file --batch` and `check-attr` responses use an explicitly owned OS
+pipe. A concurrent runner observes process exit and cleans up descendants before
+closing the parent's writer. That permits EOF even when a helper inherited
+stdout, without `Cmd.Wait` prematurely closing the consumer's reader. Requests and
+responses remain concurrent and bounded by their existing protocol consumers.
+Startup failure closes the writer too. Rejection or early return by a consumer
+closes the reader and cancels the command; the call joins cleanup before releasing
+its caller's staging lease. Inputs must be finite and consumers must return on
+EOF or read failure. Arbitrarily blocking application readers/writers and escaping
+helpers are outside this trusted internal contract.
 
 ## Validation
 
@@ -125,3 +149,15 @@ leaked helpers without depending on the race detector's delayed exit behavior.
 They cover both normal completion and cancellation, direct exit status, startup
 failure and pre-cancellation. Native Linux/macOS/Windows CI remains the platform
 gate, alongside the unchanged six-scenario Claude compatibility baseline.
+
+Additional retained-command tests put a synthetic Git executable on PATH and
+start real descendant processes. They check cleanup after ordinary exit,
+cancellation, output overflow and malformed stream rejection, including helpers
+that hold stdout open. A post-return marker detects further helper execution;
+large bidirectional transfers verify concurrent pipe draining and exact bytes.
+The fixture ignores SIGPIPE so output-rejection checks also cover helpers that
+keep running after a broken pipe. Follow-up HEAD probe tests preserve overflow
+and cancellation failures from both symbolic-ref and show-ref.
+Missing-executable and semantic-exit cases exercise startup closure and rejection
+of exit statuses joined with cleanup errors. These fixtures run on all three CI
+platforms and never access a real user's repository or vendor data.

@@ -194,9 +194,10 @@ compatibility baseline remains the gate for synchronous behavior.
 - Keep lock order consistent: worker ownership before staging ownership; queue
   transactions stay short. Pass the original cancellation context to queue APIs,
   not a borrowed staging-store capability, which rejects nesting another store.
-- Own Git/mergetool child processes and validate offline retry/local-commit/push
-  recovery before offering a worker command or queued hooks. Queue owner recovery
-  alone does not terminate orphaned external processes.
+- Retained Git commands now own cancellation cleanup. Establish parent-death
+  recovery and ownership of future external merge tools, and validate offline
+  retry/local-commit/push recovery before offering a worker command or queued
+  hooks. Queue owner recovery alone does not terminate orphaned external processes.
 - Add the Claude command/status surface, local-only completion policy, queue
   capacity remedy and supported worker startup/draining/rollback behavior.
 
@@ -214,6 +215,7 @@ ancestry after publication attempts. It does not write queue markers or enable a
 worker. Claude's `Service.PublishArtifact` now validates committed-batch bindings,
 explicit transport destination/branch, settled local HEAD, raw native attributes
 and secrets. [HTTPS/local transport](CLAUDERIG-V2-GIT-TRANSPORT.md) now supplies
-explicit credentials and transport-command cancellation cleanup. SSH/authentication
-discovery, execution wiring, native conflict recovery, remaining process ownership
-and parent-death recovery remain gates.
+explicit credentials. All retained Git commands and streams now use owned
+cancellation cleanup. SSH/authentication discovery, execution wiring, native
+conflict recovery, parent-death recovery and lifecycle/capacity remedies remain
+gates.

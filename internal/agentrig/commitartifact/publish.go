@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -201,8 +200,7 @@ func (r gitRepo) ancestor(ctx context.Context, ancestor, descendant string) (boo
 	if err == nil {
 		return true, nil
 	}
-	var exit *exec.ExitError
-	if ctx.Err() == nil && errors.As(err, &exit) && exit.ExitCode() == 1 {
+	if ctx.Err() == nil && gitExited(err, 1) {
 		return false, nil
 	}
 	return false, err
@@ -222,8 +220,7 @@ func (r gitRepo) merge(ctx context.Context, a, b, message string) (string, error
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		if gitExited(err, 1) {
 			return "", errors.Join(ErrConflict, err)
 		}
 		return "", err

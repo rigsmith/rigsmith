@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
+	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 )
 
 // RefName is the explicit source ref to import from a retained bundle.
@@ -277,22 +278,73 @@ func (r gitRepo) run(ctx context.Context, input io.Reader, args ...string) (stri
 }
 
 func (r gitRepo) runTo(ctx context.Context, input io.Reader, output io.Writer, args ...string) error {
-	cmd := r.command(ctx, args...)
-	cmd.Stdin, cmd.Stdout = input, output
-	err := cmd.Run()
+	childCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := r.command(args...)
+	writer := &cancelOutput{writer: output, cancel: cancel}
+	cmd.Stdin, cmd.Stdout = input, writer
+	err := process.Run(childCtx, cmd)
+	if writer.err != nil {
+		err = errors.Join(writer.err, err)
+	}
 	if bounded, ok := output.(*boundedOutput); ok && bounded.exceeded {
 		// Wait can prefer the child's broken-pipe exit over the writer error.
 		// Preserve the capacity failure after the child and copy goroutine exit.
-		err = artifact.ErrTooLarge
+		err = errors.Join(artifact.ErrTooLarge, err)
 	}
 	if err != nil {
 		// Do not surface raw Git diagnostics or local paths in queue failure codes.
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return fmt.Errorf("retained commit git %s: %w", args[0], err)
+		return commandError(args[0], err)
 	}
 	return nil
+}
+
+// A rejected write must stop the process tree promptly, even if Git or a
+// helper ignores its broken stdout pipe. Run still owns all cleanup and reaping.
+type cancelOutput struct {
+	writer io.Writer
+	cancel context.CancelFunc
+	err    error // Read only after Run has joined the stdout copy goroutine.
+}
+
+func (w *cancelOutput) Write(p []byte) (int, error) {
+	n, err := w.writer.Write(p)
+	if err == nil && n != len(p) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		w.err = err
+		w.cancel()
+	}
+	return n, err
+}
+
+// A semantic Git exit is usable only when process ownership completed cleanly.
+// errors.As alone could find an ExitError inside a joined cleanup failure and
+// turn that failure into an ordinary negative ancestry / absent-ref result.
+type gitCommandError struct {
+	operation string
+	cause     error
+	exitCode  int
+}
+
+func (e *gitCommandError) Error() string {
+	return fmt.Sprintf("retained commit git %s: %v", e.operation, e.cause)
+}
+func (e *gitCommandError) Unwrap() error { return e.cause }
+func commandError(operation string, err error) error {
+	code := -1
+	if exit, ok := err.(*exec.ExitError); ok {
+		code = exit.ExitCode()
+	}
+	return &gitCommandError{operation, err, code}
+}
+func gitExited(err error, code int) bool {
+	failure, ok := err.(*gitCommandError)
+	return ok && failure.exitCode == code
 }
 
 func (r gitRepo) checkObjects(ctx context.Context) error {
@@ -302,9 +354,9 @@ func (r gitRepo) checkObjects(ctx context.Context) error {
 }
 
 // command applies the same private Git isolation to one-shot and streaming calls.
-func (r gitRepo) command(ctx context.Context, args ...string) *exec.Cmd {
+func (r gitRepo) command(args ...string) *exec.Cmd {
 	flags := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull, "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "commit.gpgsign=false", "-c", "protocol.allow=never", "-c", "protocol.file.allow=always"}
-	cmd := exec.CommandContext(ctx, "git", append(flags, args...)...)
+	cmd := exec.Command("git", append(flags, args...)...)
 	cmd.Dir = r.dir
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(strings.ToUpper(entry), "GIT_") {

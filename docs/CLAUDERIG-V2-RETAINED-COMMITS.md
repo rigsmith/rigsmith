@@ -58,7 +58,9 @@ and audit receive the caller context; Claude checks cancellation during attribut
 reads, between audit entries and during streaming transcript/index scans. Git
 environment overrides, global/system configuration, templates,
 replace objects and hooks do not influence the private writer. This avoids
-copying a user's index or Git configuration into queued work.
+copying a user's index or Git configuration into queued work. All retained Git
+commands use the [owned process runner](CLAUDERIG-V2-GIT-TRANSPORT.md#command-ownership-and-cleanup),
+which cleans up helpers before returning after normal completion or cancellation.
 
 For a seeded capture, the parent is exactly the SHA in the capture header. Before
 sealing that capture, Claude holds staging ownership and calls the shared
@@ -118,11 +120,11 @@ Queue operations continue to use the original cancellation context.
   Claude's `Service.PublishArtifact` now checks batch/destination bindings and
   applies native Git attributes and secret auditing to the raw publication tree.
   [HTTPS/local transport](CLAUDERIG-V2-GIT-TRANSPORT.md) now supplies explicit
-  credentials and transport-command cancellation cleanup. Add SSH/authentication
+  credentials; all retained Git commands now have cancellation cleanup. Add SSH/authentication
   discovery and native conflict recovery next. The engine and adapter leave
   canonical staging untouched.
-- Own Git and merge-tool process trees across cancellation and parent death.
-  Command cancellation and a bounded pipe wait do not establish that ownership.
+- Establish parent-death recovery and ownership for future external merge tools.
+  Retained Git cancellation cleanup does not establish abrupt-death recovery.
 - Add exact manual-sync event coverage, local-only completion policy, queue/status
   commands, rollback/draining, artifact/receipt cleanup and capacity remedies.
 
