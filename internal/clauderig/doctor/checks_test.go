@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -85,5 +86,50 @@ func TestHiddenWorktreesUnreadableIsReported(t *testing.T) {
 	}
 	if r.Status != Warn || !strings.Contains(r.Detail, "could not read") {
 		t.Errorf("status=%v detail=%q, want a warning that says it could not look", r.Status, r.Detail)
+	}
+}
+
+// The hidden worktrees are made under the primary's .claude, and doctor is
+// almost always run from somewhere else — working in a sibling worktree is the
+// discipline this enforces. Anchoring the scan on the current checkout looked
+// inside a linked one and found nothing, in the case that is the norm.
+func TestHiddenWorktreesFoundFromALinkedCheckout(t *testing.T) {
+	primary := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = primary
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "t")
+	if err := os.WriteFile(filepath.Join(primary, "f"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-A")
+	run("commit", "-qm", "init")
+
+	// One hidden worktree under the primary, and an ordinary sibling to stand in.
+	hidden := filepath.Join(primary, ".claude", "worktrees", "agent-a")
+	run("worktree", "add", "-q", "-b", "agent-a", hidden)
+	sibling := filepath.Join(t.TempDir(), "side")
+	run("worktree", "add", "-q", "-b", "side", sibling)
+
+	for _, from := range []struct{ name, root string }{
+		{"the primary", primary},
+		{"a sibling worktree", sibling},
+		{"the hidden worktree itself", hidden},
+	} {
+		r, ok := checkHiddenWorktrees(Env{RepoRoot: from.root})
+		if !ok {
+			t.Errorf("from %s: no row — the hidden worktree went unreported", from.name)
+			continue
+		}
+		if !strings.Contains(r.Detail, "agent-a") {
+			t.Errorf("from %s: detail = %q, want it to name agent-a", from.name, r.Detail)
+		}
 	}
 }

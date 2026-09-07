@@ -53,6 +53,11 @@ A PreToolUse hook guards this environment. Work *with* it:
   Claude Code keys chat history to that folder path — moving it scrambles the
   conversation. They are denied. To act elsewhere, use an absolute path,
   ` + "`git -C <dir> …`" + `, or a subshell ` + "`(cd <dir> && …)`" + ` (which doesn't move this shell).
+- **Don't ask an agent to isolate itself in a worktree**, and don't make one by
+  hand under ` + "`.claude/worktrees`" + `. Both are denied. Those checkouts are invisible
+  to ` + "`rig worktree list`" + ` and nothing later reaps them — one repo collected 28.
+  Use ` + "`rig worktree new <branch>`" + `; an agent with no isolation is unaffected.
+  Removing one that is already there is allowed, and is the way out.
 - **Don't write code on ` + "`main`/`master`" + `.** Make a branch + worktree first:
   run ` + "`rig worktree new <branch>`" + `. It creates a sibling checkout at
   ` + "`<repo>-worktrees/<branch>`" + ` and opens it in a *new* VS Code window for review —

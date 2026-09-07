@@ -387,12 +387,18 @@ func addsHiddenWorktree(command string) bool {
 		// target alone is not the path git will make.
 		cdir := ""
 		for i := gi + 1; i < wi; i++ {
+			next := ""
 			switch a := unquoteArg(f[i]); {
 			case a == "-C" && i+1 < wi:
-				cdir = unquoteArg(f[i+1])
+				next = unquoteArg(f[i+1])
 			case strings.HasPrefix(a, "-C") && len(a) > 2:
-				cdir = a[2:]
+				next = a[2:]
+			default:
+				continue
 			}
+			// git accepts several, and resolves each relative one against the
+			// directory the last left it in.
+			cdir = resolveAgainst(cdir, next)
 		}
 		for _, tok := range f[wi+2:] {
 			t := unquoteArg(tok)
@@ -400,26 +406,42 @@ func addsHiddenWorktree(command string) bool {
 				return true
 			}
 			// Relative to -C, which is where git will resolve it.
-			if cdir != "" && !strings.HasPrefix(t, "/") && !strings.HasPrefix(t, `\`) {
-				if underHiddenWorktrees(cdir + "/" + t) {
-					return true
-				}
+			if cdir != "" && underHiddenWorktrees(resolveAgainst(cdir, t)) {
+				return true
 			}
 		}
 	}
 	return false
 }
 
-// unquoteArg strips one layer of matching quotes. A path with a space in it is
-// quoted as a matter of course, and a rule reading raw tokens sees the quotes
+// unquoteArg strips quotes from the ends of a token. A path with a space in it
+// is quoted as a matter of course, and a rule reading raw tokens sees the quote
 // as part of the name and matches nothing.
+//
+// Each end independently, because the command is split on whitespace and a
+// quoted path containing a space arrives as several tokens — the first carrying
+// the opening quote and no closing one. That fragment still begins with the
+// directory being looked for, which is all this has to recognise.
 func unquoteArg(tok string) string {
-	if len(tok) >= 2 {
-		if q := tok[0]; (q == '"' || q == '\'') && tok[len(tok)-1] == q {
-			return tok[1 : len(tok)-1]
-		}
+	tok = strings.TrimLeft(tok, `"'`)
+	return strings.TrimRight(tok, `"'`)
+}
+
+// resolveAgainst joins a path onto the directory a previous one selected, the
+// way git resolves a relative argument. An absolute path replaces it outright.
+func resolveAgainst(base, next string) string {
+	slashed := strings.ReplaceAll(next, `\`, "/")
+	if base == "" || strings.HasPrefix(slashed, "/") || windowsDriveAbs(slashed) {
+		return next
 	}
-	return tok
+	return base + "/" + next
+}
+
+// windowsDriveAbs recognises `C:/…`, which is absolute on the platform this
+// guard also runs on and would otherwise be joined onto something.
+func windowsDriveAbs(p string) bool {
+	return len(p) >= 3 && p[1] == ':' && p[2] == '/' &&
+		((p[0] >= 'a' && p[0] <= 'z') || (p[0] >= 'A' && p[0] <= 'Z'))
 }
 
 // underHiddenWorktrees reports whether a path argument lands in

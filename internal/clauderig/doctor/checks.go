@@ -365,8 +365,8 @@ func checkGuide(env Env) Result {
 		}}
 }
 
-// checkHiddenWorktrees reports worktrees under .claude/worktrees — the checkout
-// Claude Code's own isolation makes, which the guard now refuses.
+// checkHiddenWorktrees reports worktrees under .claude/worktrees — the
+// checkouts Claude Code's own isolation makes, which the guard now refuses.
 //
 // Worth a check of its own because they are invisible where anyone would look:
 // `rig worktree list` does not show them, `rig prune` does not reap them, and
@@ -378,7 +378,7 @@ func checkGuide(env Env) Result {
 // doctor that quietly deletes a checkout is worse than one that names it — the
 // hint says what to run.
 func checkHiddenWorktrees(env Env) (Result, bool) {
-	dir := filepath.Join(env.RepoRoot, ".claude", "worktrees")
+	dir := filepath.Join(primaryCheckout(env.RepoRoot), ".claude", "worktrees")
 	entries, err := os.ReadDir(dir)
 	switch {
 	case os.IsNotExist(err):
@@ -425,6 +425,35 @@ func checkLocalGitignore(env Env) (Result, bool) {
 		Fix: func(ctx context.Context) error {
 			return ensureIgnored(env.RepoRoot, entry)
 		}}, true
+}
+
+// primaryCheckout is the repository's main working tree, given the root of any
+// of its checkouts.
+//
+// The hidden worktrees are made under the primary's .claude, and doctor is
+// usually run from somewhere else: the whole point of the discipline this
+// enforces is that work happens in a sibling worktree, so anchoring the scan on
+// the current checkout would look inside a linked one and find nothing — in the
+// case that is the norm rather than the exception.
+//
+// `git rev-parse --git-common-dir` names the shared .git every checkout of a
+// repository points at, so its parent is the primary. Anything unexpected falls
+// back to the root given, which is right for a plain checkout and no worse than
+// what was there before for anything else.
+func primaryCheckout(root string) string {
+	if root == "" {
+		return root
+	}
+	out, err := exec.Command("git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	if err != nil {
+		return root
+	}
+	common := strings.TrimSpace(string(out))
+	// A bare repository has no working tree to hold a .claude at all.
+	if common == "" || filepath.Base(common) != ".git" {
+		return root
+	}
+	return filepath.Dir(common)
 }
 
 func ensureIgnored(root, entry string) error {

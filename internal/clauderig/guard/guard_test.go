@@ -287,8 +287,13 @@ func TestGitWorktreeAddUnderDotClaudeIsDenied(t *testing.T) {
 		"git worktree add .claude/tmp/../worktrees/thing",
 		`git worktree add ".claude/worktrees/thing"`,
 		"git worktree add '.claude/worktrees/thing'",
+		// A quoted path with a space in it is split before anything sees it;
+		// the fragment that survives still names the directory.
+		`git worktree add ".claude/worktrees/my thing"`,
 		// -C decides what a relative target is relative to.
 		"git -C .claude worktree add worktrees/thing",
+		// git takes several, each relative one resolved against the last.
+		"git -C .claude -C worktrees worktree add thing",
 		"git -C/repo/.claude worktree add worktrees/thing",
 		`git worktree add .claude\worktrees\thing`,
 	}
@@ -316,6 +321,8 @@ func TestGitWorktreeAddUnderDotClaudeIsDenied(t *testing.T) {
 		// Begins with the same letters and is a different directory. The rule
 		// is about .claude/worktrees, not about anything spelled like it.
 		"git worktree add .claude/worktrees-of-my-own/thing",
+		// An absolute -C replaces what came before rather than joining onto it.
+		"git -C .claude -C /elsewhere worktree add thing",
 	}
 	for _, cmd := range allowed {
 		if got := Evaluate(Request{Tool: "Bash", Command: cmd, Cwd: "/repo"}, env); got.Decision != Defer {
