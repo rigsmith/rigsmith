@@ -53,23 +53,25 @@ func TestHiddenWorktreesCheck(t *testing.T) {
 
 // A directory the check cannot read is not a directory with nothing in it.
 // Swallowing the error would report clean when the truth is unknown.
+// A directory that cannot be read is not an absent one: reporting clean because
+// the check could not look is the answer most likely to be hiding something.
+//
+// Made unreadable by putting a file where the directory belongs rather than by
+// chmod: Windows honours neither a mode of 0 on a directory nor Geteuid, so the
+// permissions version of this test passed there by not reproducing the state at
+// all. Any error that is not IsNotExist takes the same branch.
 func TestHiddenWorktreesUnreadableIsReported(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads anything")
-	}
 	root := t.TempDir()
-	dir := filepath.Join(root, ".claude", "worktrees")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o000); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".claude", "worktrees"), []byte("not a directory\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(dir, 0o755)
 
 	r, ok := checkHiddenWorktrees(Env{RepoRoot: root})
 	if !ok {
-		t.Fatal("an unreadable .claude/worktrees produced no row at all")
+		t.Fatal("a .claude/worktrees that could not be read produced no row at all")
 	}
 	if r.Status != Warn || !strings.Contains(r.Detail, "could not read") {
 		t.Errorf("status=%v detail=%q, want a warning that says it could not look", r.Status, r.Detail)
