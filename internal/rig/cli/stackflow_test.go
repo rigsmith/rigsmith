@@ -962,3 +962,102 @@ func TestStackProposeFromOntoTrackBranch(t *testing.T) {
 		t.Fatal("it pushed before refusing")
 	}
 }
+
+// TestStackProposalsRecordedAndShown: where a topic's pull request went is the
+// one thing about an in-flight fix the repository cannot be asked, so it is
+// recorded — and `status` reads it back, so "where is that fix" is something you
+// look at rather than remember.
+func TestStackProposalsRecordedAndShown(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	srv.bare(t, "you/lib")
+	ws, importSHA := twoFixStackspace(t, work, srv, "stack/integration")
+
+	// A second topic, deliberately left unproposed: "not proposed yet" is as much
+	// a part of where things are as a branch name is.
+	mustGitStack(t, ws, "switch", "-q", "-c", "stack-pr-fix-d", importSHA)
+	if err := os.WriteFile(filepath.Join(ws, "lib", "src", "d.txt"), []byte("d\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "lib: d.txt")
+	mustGitStack(t, ws, "switch", "-q", "main")
+	mustGitStack(t, ws, "merge", "-q", "--no-edit", "stack-pr-fix-d")
+
+	chdir(t, ws)
+	if out, err := propose(t, "lib", "fix-b", "fix-b"); err != nil {
+		t.Fatalf("propose --from: %v\n%s", err, out)
+	}
+
+	// Recorded under the topic, not just the repo: lastPropose holds one branch
+	// per repo and could not tell these two apart.
+	manifest, err := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"proposals"`, "stack-pr-fix-b", "stack/fix-b"} {
+		if !strings.Contains(string(manifest), want) {
+			t.Fatalf("manifest does not record %s:\n%s", want, manifest)
+		}
+	}
+
+	out, err := runVerbOut(context.Background(), newStackStatusCmd())
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "stack-pr-fix-b") || !strings.Contains(out, "you/lib:stack/fix-b") {
+		t.Fatalf("status does not say where the proposed topic went:\n%s", out)
+	}
+	if !strings.Contains(out, "stack-pr-fix-d") || !strings.Contains(out, "not proposed yet") {
+		t.Fatalf("status does not show the topic that has not left yet:\n%s", out)
+	}
+
+	// Now propose the SECOND topic. This is the case the whole record exists for:
+	// lastPropose would have overwritten the first mapping here, and a test that
+	// only ever proposed once could not tell the two designs apart.
+	if out, err := propose(t, "lib", "fix-d", "fix-d"); err != nil {
+		t.Fatalf("propose the second topic: %v\n%s", err, out)
+	}
+	manifest, err = os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"stack-pr-fix-b", "stack/fix-b", "stack-pr-fix-d", "stack/fix-d"} {
+		if !strings.Contains(string(manifest), want) {
+			t.Fatalf("the second proposal lost %s — one mapping overwrote the other:\n%s", want, manifest)
+		}
+	}
+	out, err = runVerbOut(context.Background(), newStackStatusCmd())
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	for _, want := range []string{"you/lib:stack/fix-b", "you/lib:stack/fix-d"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status does not still show %s with two topics in flight:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "not proposed yet") {
+		t.Fatalf("status still calls a proposed topic unproposed:\n%s", out)
+	}
+
+	// Commit to a proposed topic without re-proposing. The record is keyed by
+	// branch NAME, so what was sent has to be compared with what is there now —
+	// which catches both a pull request left behind its branch and a topic
+	// recreated under a name that has been used before.
+	mustGitStack(t, ws, "switch", "-q", "stack-pr-fix-b")
+	if err := os.WriteFile(filepath.Join(ws, "lib", "src", "b2.txt"), []byte("b2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "lib: more of fix B")
+	mustGitStack(t, ws, "switch", "-q", "main")
+
+	out, err = runVerbOut(context.Background(), newStackStatusCmd())
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "branch has moved since") {
+		t.Fatalf("status does not say the pull request is behind the branch:\n%s", out)
+	}
+}
