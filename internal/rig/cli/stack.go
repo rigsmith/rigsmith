@@ -1342,8 +1342,18 @@ func newStackWireCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Asked before wiring, because a wire that defers still returns
+			// nil and the refresh below would go ahead anyway — writing a file
+			// nobody asked for into a tree that is about to be imported into.
+			// The heading follows the directory name, so a seed cloned under a
+			// different one is dirtied on sight, and the `setup` that follows
+			// refuses to import over it.
+			deferred := len(stackMissingPrefixes(repo.Dir, m.names())) > 0
 			if _, err := stackWire(ctx, cmd.OutOrStdout(), m, repo, "", false); err != nil {
 				return err
+			}
+			if deferred {
+				return nil // it changed nothing, so it leaves nothing behind
 			}
 			// Regenerated with the overlay, so the member table follows the
 			// manifest rather than going stale the first time one is added.

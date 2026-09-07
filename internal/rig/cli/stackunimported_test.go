@@ -114,3 +114,51 @@ func TestRemovingTheLastMemberTakesTheOverlay(t *testing.T) {
 		t.Fatalf("the overlay outlived the last member it pointed at: %v", err)
 	}
 }
+
+// `rig stack wire` on a seed clone defers, and a verb that did nothing has to
+// leave nothing behind. It used to refresh the README anyway — and since the
+// heading follows the directory name, a clone under a different one was dirtied
+// on sight, so the `setup` that follows refused to import over a file the user
+// never wrote.
+//
+// Cloned rather than simulated, because that is the whole mechanism: generating
+// the README twice in the same directory produces the same bytes and would have
+// let this pass.
+func TestWireOnAnUnimportedCloneLeavesTheTreeClean(t *testing.T) {
+	ctx := context.Background()
+	seed := inTempStackspace(t, `{
+  "repos": {
+    "app": { "upstream": "github.com/acme/app", "fork": "github.com/you/app" },
+    "lib": { "upstream": "github.com/acme/lib", "fork": "github.com/you/lib" }
+  }
+}`)
+	// What a seed carries: manifest, build overlay, README — and no members.
+	if err := os.WriteFile(filepath.Join(seed, "Directory.Build.targets"), []byte("<Project />\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeStackReadme(seed, mustManifest(t, seed)); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, seed, "add", "-A")
+	mustGitStack(t, seed, "commit", "-qm", "seed")
+
+	clone := filepath.Join(t.TempDir(), "my-stack")
+	mustGitStack(t, filepath.Dir(clone), "clone", "-q", seed, clone)
+	chdir(t, clone)
+
+	if err := runVerb(ctx, newStackWireCmd()); err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	if dirty := strings.TrimSpace(mustGitStack(t, clone, "status", "--porcelain")); dirty != "" {
+		t.Errorf("wire deferred and still dirtied the clone:\n%s", dirty)
+	}
+}
+
+func mustManifest(t *testing.T, root string) *stackManifest {
+	t.Helper()
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}

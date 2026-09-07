@@ -375,20 +375,26 @@ type stackOverlayReport struct {
 func stackCheckOverlay(ctx context.Context, root string, m *stackManifest) ([]stackOverlayReport, []stackOrphan, []string, map[string]error) {
 	var out []stackOverlayReport
 	members, writable := m.names(), m.ownedNames()
-	byEco, orphans, notes, failed := stackRedirects(ctx, root, members, m.publishing())
-	// Nothing is imported yet, so of course nothing crosses between members —
-	// and an overlay judged against that reads as left over and is advised away.
-	// On a fresh clone of a seed that is the first thing anyone runs, and taking
-	// the advice deletes the file the workspace is about to need.
+	// Asked before the scan, not after. Nothing is imported yet, so of course
+	// nothing crosses between members — and an overlay judged against that reads
+	// as left over and is advised away. On a fresh clone of a seed that is the
+	// first thing anyone runs, and taking the advice deletes the file the
+	// workspace is about to need.
 	//
-	// The same distinction the failed-scan guard above draws, and the one
+	// The same distinction the failed-scan guard below draws, and the one
 	// `status` draws when it says it cannot tell without an import commit: no
 	// links found is not the same as no links.
+	//
+	// Everything the scan produces is about the same absence, so none of it is
+	// worth reporting: a member whose only consumer is missing looks like one
+	// nothing consumes, and an orphan named on those grounds sends someone
+	// looking for a problem that is not there.
 	if missing := stackMissingPrefixes(root, members); len(missing) > 0 {
-		return nil, orphans, append(notes,
+		return nil, nil, []string{
 			fmt.Sprintf("%s not imported yet, so nothing can be said about the build overlay — run `rig stack setup`",
-				strings.Join(missing, ", "))), failed
+				strings.Join(missing, ", "))}, nil
 	}
+	byEco, orphans, notes, failed := stackRedirects(ctx, root, members, m.publishing())
 	for _, eco := range ecosystem.Default().All() {
 		// A scan that errored found no links, which is not the same as there
 		// being none: the overlay it would have needed is still needed, and
