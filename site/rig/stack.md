@@ -554,6 +554,32 @@ term-core: proposing stack-pr-reader-wedge — 2 commit(s) since the import
 
 A subject you did not expect is the signal to rebase the topic onto the import.
 
+#### A pull leaves topics behind {#propose-stale}
+
+`pull` moves the prefix on. A topic branch does not come with it, so its tree is
+upstream as it *used* to be — and committing that onto the current tip would present
+everything upstream landed since as though your branch had **reverted** it. That is the
+same hazard the [stale-cursor refusal](#propose) covers for a whole-prefix propose, and
+`--from` cannot rely on that one: `HEAD` gets pulled, and a topic does not.
+
+So `propose --from` refuses a topic that does not have the current cursor in it, and
+both `pull` and `status` name them unprompted — the pull that caused it may have been
+days ago:
+
+```
+lib: 1 topic(s) rooted before this pull — `propose --from` will refuse them until re-rooted:
+    stack-pr-reader-wedge
+  branch again from the new import and replay the fix; proposing as-is would revert what upstream landed.
+```
+
+::: warning Why rig does not re-root them for you
+The obvious target is the commit the pull just made — and it is the wrong one. An import
+merges into `HEAD`, and `HEAD` has already merged your topics, so re-rooting a topic onto
+it folds the very fix that topic isolates straight back in. Doing it correctly means
+replaying the topic onto upstream's new tree with **none** of the integration line's
+fixes, which is a different operation from a rebase and is not built yet.
+:::
+
 ::: warning `--from` requires `trackBranch`
 A topic holds part of what the prefix carries, so it cannot also be what a rebuild
 reconstitutes from — a fresh `init` would build without the other fixes, while your own

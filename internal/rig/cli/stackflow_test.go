@@ -650,7 +650,14 @@ func twoFixStackspace(t *testing.T, work string, srv *gitServer, trackBranch str
 		t.Fatal(err)
 	}
 	mustGitStack(t, ws, "add", "-A")
-	mustGitStack(t, ws, "commit", "-qm", "stack: import lib")
+	mustGitStack(t, ws, "commit", "-qm", "stack: import lib @ "+tip[:8])
+	// ...and it MERGES upstream, the way rig's own import does, so the cursor is
+	// a genuine ancestor here. Without this the fixture cannot exercise anything
+	// that asks "has this branch got upstream in it" — which is what tells a
+	// stale topic from a current one. `-s ours` keeps the prefixed tree while
+	// recording upstream as a parent, which is the shape josh's import produces.
+	mustGitStack(t, ws, "fetch", "-q", srv.path("acme/lib"), "main")
+	mustGitStack(t, ws, "merge", "-q", "--no-edit", "--allow-unrelated-histories", "-s", "ours", "FETCH_HEAD")
 	importSHA = strings.TrimSpace(mustGitStack(t, ws, "rev-parse", "HEAD"))
 
 	writeFix := func(file string) {
@@ -862,5 +869,58 @@ func TestStackProposeFromUnconventionalBranch(t *testing.T) {
 		if strings.Contains(proposed, unwanted) {
 			t.Fatalf("the proposed branch carries %s, which is another unmerged fix:\n%s", unwanted, proposed)
 		}
+	}
+}
+
+// TestStackProposeFromStaleTopic: a topic rooted before upstream moved holds the
+// prefix as upstream USED to be. Committing that onto the current tip presents
+// everything upstream landed since as though the branch had reverted it — the
+// hazard the whole-prefix path is protected from by the stale-cursor guard, and
+// which --from cannot see there because HEAD gets pulled and a topic does not.
+//
+// The pull is simulated rather than run: advancing the cursor and merging
+// upstream is exactly what an import does to HEAD, and doing it by hand keeps
+// this out of the engine-gated tests.
+func TestStackProposeFromStaleTopic(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	ws, _ := twoFixStackspace(t, work, srv, "stack/integration")
+
+	// Upstream lands something, and the stackspace takes it — but the topic,
+	// like any branch, does not come along.
+	srv.commit(t, "acme/lib", "src/upstream.txt", "new upstream work\n", "lib: upstream moved on")
+	newTip := strings.TrimSpace(mustGitStack(t, srv.path("acme/lib"), "rev-parse", "main"))
+	mustGitStack(t, ws, "fetch", "-q", srv.path("acme/lib"), "main")
+	mustGitStack(t, ws, "merge", "-q", "--no-edit", "-s", "ours", "FETCH_HEAD")
+	writeStackManifest(t, ws, fmt.Sprintf(`{
+  "branchPrefix": "stack/",
+  "repos": { "lib": { "upstream": %q, "fork": %q, "upstreamBranch": "main", "trackBranch": "stack/integration" } },
+  "lastSync": { "lib": %q }
+}`, srv.spec("acme/lib"), srv.spec("you/lib"), newTip))
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "stack: pull lib")
+
+	chdir(t, ws)
+	out, err := propose(t, "lib", "fix-b", "fix-b")
+	if err == nil {
+		t.Fatalf("proposed a topic that predates the pull — it would revert upstream's new work:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "rooted before upstream moved") {
+		t.Fatalf("the error does not say why it refused: %v", err)
+	}
+	if refExists(t, fork, "refs/heads/stack/fix-b") {
+		t.Fatal("it pushed before refusing")
+	}
+
+	// And status says so unprompted, since the pull that caused it may have been
+	// days ago.
+	statusOut, serr := runVerbOut(context.Background(), newStackStatusCmd())
+	if serr != nil {
+		t.Fatalf("status: %v\n%s", serr, statusOut)
+	}
+	if !strings.Contains(statusOut, "rooted before the last pull") || !strings.Contains(statusOut, "stack-pr-fix-b") {
+		t.Fatalf("status did not name the stale topic:\n%s", statusOut)
 	}
 }

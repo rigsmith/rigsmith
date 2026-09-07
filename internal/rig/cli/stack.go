@@ -294,6 +294,9 @@ func newStackStatusCmd() *cobra.Command {
 				// carry the first one's changes too. Nothing else says so, and
 				// the place it is discovered otherwise is a maintainer asking why
 				// the diff touches something unrelated.
+				if stale := stackStaleTopics(ctx, repo, m, name); len(stale) > 0 {
+					state += fmt.Sprintf("  ·  %d topic(s) rooted before the last pull (%s) — `propose --from` refuses them", len(stale), strings.Join(stale, ", "))
+				}
 				if n := stackDivergingCommits(ctx, repo, m, name); n > 1 {
 					state += fmt.Sprintf("  ·  %d commits diverge from upstream; `propose` sends all of them (--from <branch> for one)", n)
 				}
@@ -373,6 +376,29 @@ func newStackPullCmd() *cobra.Command {
 				if err := stackPullOne(ctx, cmd.OutOrStdout(), repo, bin, src, m, name, stackPullOpts{}); err != nil {
 					return fmt.Errorf("pulling %s: %w", name, err)
 				}
+			}
+			// A pull moves the prefix on; a topic branch does not come with it,
+			// and its tree is now upstream as it USED to be. propose refuses such
+			// a topic, but only when you next reach for it — which may be days
+			// later, with no memory of the pull that caused it. Say it here.
+			//
+			// Deliberately NOT rebased automatically. The obvious target is the
+			// commit this pull just made, and that is wrong: an import merges into
+			// HEAD, and HEAD has already merged your topics, so re-rooting onto it
+			// folds the very fix the topic isolates back into it. Re-rooting a
+			// topic correctly means replaying it onto upstream's new tree with
+			// none of the integration line's fixes, which is a separate piece of
+			// work and not a flag.
+			for _, name := range moved {
+				stale := stackStaleTopics(ctx, repo, m, name)
+				if len(stale) == 0 {
+					continue
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "\n%s: %d topic(s) rooted before this pull — `propose --from` will refuse them until re-rooted:\n", name, len(stale))
+				for _, t := range stale {
+					fmt.Fprintf(cmd.OutOrStdout(), "    %s\n", t)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "  branch again from the new import and replay the fix; proposing as-is would revert what upstream landed.\n")
 			}
 			return nil
 		},
@@ -469,6 +495,38 @@ func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty
 		}
 	}
 	return u
+}
+
+// stackStaleTopics lists the conventionally-named topic branches that touch a
+// prefix and do NOT contain its cursor — topics rooted before the last pull,
+// whose prefix tree is upstream as it USED to be. Proposing one commits that
+// tree onto the current tip, presenting everything upstream landed since as
+// though the branch had reverted it, which is why propose refuses them.
+//
+// Only the conventionally-named ones are examined: a branch the user named
+// themselves may be anything at all, and calling someone's unrelated work a
+// stale topic is worse than saying nothing.
+func stackStaleTopics(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) []string {
+	cursor := m.cursor(name)
+	if cursor == "" {
+		return nil
+	}
+	topics, err := repo.BranchesWithPrefix(ctx, stackTopicPrefix)
+	if err != nil {
+		return nil
+	}
+	var stale []string
+	for _, t := range topics {
+		// Does it touch this member at all? A topic for another project is not
+		// this member's business, stale or otherwise.
+		if commits, cerr := repo.PrefixCommits(ctx, cursor+".."+t, name); cerr != nil || len(commits) == 0 {
+			continue
+		}
+		if current, aerr := repo.IsAncestor(ctx, cursor, t); aerr == nil && !current {
+			stale = append(stale, t)
+		}
+	}
+	return stale
 }
 
 // stackDivergingCommits counts this stackspace's own commits under a prefix
@@ -1055,6 +1113,19 @@ func newStackSendCmd() *cobra.Command {
 				topicTree, terr := repo.RevParse(ctx, fromBranch+":"+name)
 				if terr != nil {
 					return fmt.Errorf("%s has no %s/ in it, so there is nothing of that project to propose: %w", fromBranch, name, terr)
+				}
+				// A topic rooted before the last pull holds the prefix as upstream
+				// USED to be. Committing that tree onto the current tip would
+				// present every upstream commit since as though this branch had
+				// reverted it — the same failure the stale-cursor guard above
+				// prevents for a whole-prefix propose, which cannot see this one
+				// because HEAD has been pulled and the topic has not.
+				if current, aerr := repo.IsAncestor(ctx, m.cursor(name), fromBranch); aerr != nil {
+					return fmt.Errorf("cannot tell whether %s has upstream %s in it: %w", fromBranch, short(m.cursor(name)), aerr)
+				} else if !current {
+					return fmt.Errorf("%s was rooted before upstream moved to %s, so proposing it would revert the commits that landed in between\n"+
+						"re-root it on the new import: branch again from the current import commit and replay this fix onto it",
+						fromBranch, short(m.cursor(name)))
 				}
 				// What the pull request will actually contain, said out loud.
 				//

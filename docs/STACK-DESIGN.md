@@ -657,7 +657,20 @@ The rest is unchanged from the first attempt:
 whole-prefix behaviour is otherwise discovered by a maintainer asking why a diff
 touches something unrelated.
 
-**Not solved here:** a topic goes stale when `pull` moves upstream, since `propose`
-roots on the cursor and refuses a stale one. Today that surfaces as a refusal per
-topic and the fix is a manual rebase. Rebasing in-flight topics on `pull` — or at
-least reporting which went stale — is the obvious next step.
+**Staleness after a pull.** A pull moves the prefix on and a topic branch does not
+come with it, so the topic's tree is upstream as it used to be. The whole-prefix path
+is protected by the stale-cursor guard, which `--from` cannot rely on: `HEAD` gets
+pulled and a topic does not, so the cursor equals the tip and the guard sees nothing
+wrong. `propose --from` therefore requires the cursor to be an ancestor of the topic,
+and `pull` and `status` both name the topics that are not.
+
+**Why they are not re-rooted automatically.** The obvious target is the commit the
+pull just made, and it is wrong: `stackPullOne` merges into `HEAD`, and `HEAD` has
+already merged the topics, so re-rooting a topic onto that commit folds the very fix
+it isolates back into it — and the same is true of any base derived from the
+integration line. Correct re-rooting means replaying the topic's own diff onto
+upstream's new tree with none of the integration line's fixes: a synthesised clean
+base, not a rebase onto an existing commit. That is a separate piece of design and
+deliberately not a flag on `pull`, because a flag that is right only when a prefix has
+exactly one unmerged topic — and silently wrong otherwise — is worse than the manual
+step it replaces.
