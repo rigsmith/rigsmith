@@ -33,8 +33,12 @@ type ArtifactPublishRequest struct {
 // final remote confirmation and child cleanup. It never recaptures, reads the
 // worker's login, updates canonical staging, or acknowledges queue work. Only a
 // confirmed success permits a caller to persist the pushed phase. Local-only
-// completion, conflict recovery and production transport remain separate work.
+// completion and conflict recovery remain separate work.
 func (s Service) PublishArtifact(ctx context.Context, input ArtifactPublishRequest) (commitartifact.Publication, error) {
+	return s.publishArtifact(ctx, ctx, input)
+}
+
+func (s Service) publishArtifact(ctx, staging context.Context, input ArtifactPublishRequest) (commitartifact.Publication, error) {
 	fail := commitartifact.Publication{}
 	req, key, err := prepareArtifactRequest(input.Commit.Capture, queue.Committed)
 	if err != nil {
@@ -62,7 +66,7 @@ func (s Service) PublishArtifact(ctx context.Context, input ArtifactPublishReque
 	if err != nil {
 		return fail, err
 	}
-	_, release, err := storelock.Acquire(ctx, stage, StoreWait)
+	_, release, err := storelock.Acquire(staging, stage, StoreWait)
 	if err != nil {
 		return fail, err
 	}

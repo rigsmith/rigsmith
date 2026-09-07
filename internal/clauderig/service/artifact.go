@@ -32,7 +32,7 @@ import (
 // operation never reads the worker's live login. Profiles is the explicit set of
 // Desktop profiles. It never discovers additional profiles at execution time.
 // Current support requires every event to name an existing CLI session transcript.
-// Desktop-only event routing and commit/publication integration remain separate.
+// Desktop-only event routing remains separate.
 type ArtifactCaptureRequest struct {
 	Store    artifact.Store
 	Binding  queue.Binding
@@ -126,6 +126,13 @@ func CaptureProvenance(identity Identity) (string, error) {
 // reading sources. An absent/corrupt artifact is never silently substituted when
 // the caller already holds a capture reference: use Store.Verify in that case.
 func (s Service) CaptureArtifact(ctx context.Context, req ArtifactCaptureRequest) (string, error) {
+	return s.captureArtifact(ctx, ctx, req)
+}
+
+// operation is the independent context for private stores; staging may borrow
+// the queue execution's lease. Never pass staging to a different store.
+func (s Service) captureArtifact(operation, staging context.Context, req ArtifactCaptureRequest) (string, error) {
+	ctx := operation
 	req, key, err := prepareArtifactRequest(req, queue.Queued)
 	if err != nil {
 		return "", err
@@ -148,15 +155,15 @@ func (s Service) CaptureArtifact(ctx context.Context, req ArtifactCaptureRequest
 			return "", fmt.Errorf("artifact store must be outside source and staging roots")
 		}
 	}
+	// All Claude artifact services take staging before private artifact stores.
+	// This also lets a queue execution retain staging across phase markers.
+	_, release, err := storelock.Acquire(staging, stage, StoreWait)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	req.Store.Dir = store
 	return req.Store.BuildWithMetadata(ctx, key, func(ctx context.Context, tree string, meta *artifact.Metadata) error {
-		// Keep canonical staging stable while seeding the capture. The artifact
-		// builder passes the original context; the private tree owns its own lease.
-		_, release, err := storelock.Acquire(ctx, stage, StoreWait)
-		if err != nil {
-			return err
-		}
-		defer release()
 		current, err := CaptureBinding(req.Sync, req.Profiles)
 		if err != nil {
 			return err

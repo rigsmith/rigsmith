@@ -107,10 +107,11 @@ matches the sealed event membership. For auto chunking, it validates the resolve
 mode already pinned by the binding digest instead of rereading the live storage
 marker; deleting that marker or staging does not prevent reuse of a sealed bundle.
 Configuration, path and provenance checks still apply. Missing live transcripts
-after capture do not trigger recapture. Commit and capture stores must be disjoint and outside all
-source and staging roots. The lock graph is capture store → canonical staging →
-commit store, with staging → seed store during capture-time retention. Reading
-immutable captures or seeds does not acquire their writer locks.
+after capture do not trigger recapture. Commit and capture stores must be disjoint
+and outside all source and staging roots. Canonical staging precedes private
+artifact writer locks: staging → capture store → seed store during capture, and
+staging → commit store during commit. Reading immutable captures or seeds does
+not acquire their writer locks.
 Queue operations continue to use the original cancellation context.
 
 ## Remaining integration gates
