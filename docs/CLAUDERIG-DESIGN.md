@@ -180,6 +180,14 @@ The manifest also stamps the producing **Claude Code version** (skew warning) an
 the **source OS**, and is the natural home for the Desktop `claude-code-sessions`
 cwd mappings (Q4).
 
+The manifest also persists shared-memory directory links as a map of link path
+to target path, both slash-relative to the Claude root. Restore treats these
+endpoints as untrusted, including in older backups, and validates them both
+before and after project-slug rewriting. It rejects traversal, absolute or
+platform-specific paths and malformed names. Live source link discovery, Git
+persistence/clone, slug rewriting and relative link recreation are covered by a
+synthetic gated round-trip test.
+
 ## Retention & repo shape
 
 - **90-day** working-tree window on `projects/`, enforced two ways: sync skips
@@ -284,6 +292,34 @@ Flags: `--backup`, `--force`.
 Mechanism: a **pre-sync snapshot** is taken before any tree-touching pull/restore
 (lifted from claude-sync) so every operation is rollback-able. Snapshots are
 pruned to the N most recent.
+
+Memory-link restore opens the selected folder with `os.OpenRoot`. Target checks,
+parent creation and link creation use that rooted handle; existing occupied paths
+and symlinked link-parent directories remain untouched. Links have relative
+targets, including on Windows, so moving the restored folder preserves its layout.
+Restore creates an unpredictable temporary sibling and checks that it resolves
+through the rooted handle to an internal directory before installing it. The
+installation never replaces an occupied destination: Unix uses a rooted hard link
+of the symlink itself; Windows uses a handle-relative reparse-point rename with
+replacement disabled. Cleanup only removes the temporary name, never the public
+destination that another writer might have replaced. A missing restore folder is a
+successful no-op because none of the link targets exist there. Other root-open
+failures, unexpected link creation/installation errors, and temporary-cleanup
+failures return an error with the partial report for journaling. Unsupported link
+operations and concurrent destination collisions remain skips; cleanup failures
+are reported alongside any installation failure.
+
+Restore uses the running host's filesystem rules to reject unrepresentable names
+(such as Windows reserved device names). `Machine.OS` controls path rewriting; it
+does not change the filesystem that receives the writes. A name rejected on Windows
+can be valid in a Unix backup. Restore itself does not write the saved manifest.
+A later sync still applies normal retention: with retention enabled, project
+entries without surviving staged files and their associated links can be removed.
+Portable format validation is not a guarantee of retention across later syncs.
+
+These checks constrain restore's operations and its observations. A symbolic link
+still follows mutable filesystem names: changes after the final check can redirect
+it. Restore does not claim permanent confinement against later filesystem edits.
 
 ## Version skew
 

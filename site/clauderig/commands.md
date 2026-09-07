@@ -52,6 +52,11 @@ changed transcript; a hook payload that names no transcript flushes nothing,
 and `sync` says so rather than restage every long session's transcript on the
 strength of a broken hook. Set the key negative to restage every change.
 
+Restore recreates shared-memory links only within the selected restore folder.
+It skips unsafe link paths and targets that lead outside that folder, including
+entries in older or manually edited backups. Restored links use relative targets
+so they remain valid if the folder moves.
+
 When a restore brings back Claude **Code** sessions, it reminds you to fully quit
 and reopen Claude Desktop — Desktop only rebuilds its Code-tab list from the
 restored session sidecars on startup, so a running app won't show them until it
