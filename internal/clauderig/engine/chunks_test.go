@@ -136,6 +136,10 @@ func TestScrubbingAndChunkingTogether(t *testing.T) {
 	body := strings.Repeat(`{"type":"assistant","text":"ordinary filler"}`+"\n", 210000) + `{"type":"user","text":"` + key + `"}` + "\n"
 	write(t, live, "projects/-p/s.jsonl", body)
 	opts := Options{StagingDir: stage, Config: cliOnlyConfig(live), Machine: config.Machine{OS: pathmap.OSMacOS, Home: "/Users/test"}, SourceOverride: override("cli", live), ChunkTranscripts: true, RedactTranscripts: true}
+	// Older than the run that reads it: a fixture stamped in the same tick is
+	// indistinguishable from one rewritten during it, so sync restages rather
+	// than trusting it, and the second sync here is about what it leaves alone.
+	settle(t, live, "projects/-p/s.jsonl")
 	if _, err := Sync(opts); err != nil {
 		t.Fatal(err)
 	}
@@ -172,12 +176,16 @@ func TestRedactionCannotLeaveNativeSnapshotAboveCap(t *testing.T) {
 				t.Fatal("redaction-state fixture missing")
 			}
 			write(t, stage, "cli/"+rel, safe)
-			st, err := os.Stat(filepath.Join(live, rel))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chtimes(filepath.Join(stage, "cli", rel), st.ModTime(), st.ModTime()); err != nil {
-				t.Fatal(err)
+			// Both stamped well before this run, which is what "not touched
+			// since the last sync" means. A live mtime from the same moment as
+			// the run is ambiguous on purpose — a write inside that tick would
+			// carry the same stamp — so sync distrusts it and restages, and the
+			// unchanged path this case exists for would never be reached.
+			settled := time.Now().Add(-time.Hour)
+			for _, p := range []string{filepath.Join(live, filepath.FromSlash(rel)), filepath.Join(stage, "cli", filepath.FromSlash(rel))} {
+				if err := os.Chtimes(p, settled, settled); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 		rep, err := Sync(opts)

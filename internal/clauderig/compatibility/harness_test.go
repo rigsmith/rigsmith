@@ -25,7 +25,17 @@ import (
 // decision, never automatically to main (which would compare a change to itself).
 const baselineRef = "d39a4462427f1956d310abc306f010f85704d264"
 
-var fixtureTime = time.Now().UTC().Truncate(time.Second)
+// Fixture mtimes march forward a second per write from here. Anchored in the
+// past so every stamp is unambiguously older than the run that reads it: a
+// stamp at or after a sync's own start is indistinguishable from a write made
+// during that sync, and sync restages rather than guess — which showed up as a
+// difference between the two binaries on a runner fast enough for the stamps to
+// catch up with the clock.
+//
+// Five minutes: far enough back to stay behind any run, and far short of the
+// thirty-minute settle that decides whether a large transcript is deferred, so
+// the scenarios that turn on that still mean what they did.
+var fixtureTime = time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)
 
 func binaries(t *testing.T) (string, string) {
 	t.Helper()

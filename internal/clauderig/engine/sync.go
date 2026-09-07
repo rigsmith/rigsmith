@@ -287,6 +287,17 @@ func Sync(opts Options) (*Report, error) {
 	// What the last audit read and found clean, so the unchanged path below can
 	// skip re-reading bytes nothing has touched since. Never written here.
 	audited := newAuditCache(opts.StagingDir)
+	// When this run began, and when the last one did. An mtime is only evidence
+	// of a file's contents while it is older than the run that read it; see
+	// stageclock.go.
+	startedAt := time.Now()
+	clock := readStageClock(opts.StagingDir)
+	// The mtimes being judged come from the source roots, so that is what gets
+	// measured — a root on a network share or a removable disk can be far
+	// coarser than the staging tree, and measuring staging would answer a
+	// question about the wrong filesystem. Cached by directory: roots usually
+	// share one, and the probe writes a file each time.
+	ticks := map[string]time.Duration{}
 
 	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
@@ -300,6 +311,11 @@ func Sync(opts Options) (*Report, error) {
 			continue
 		}
 
+		mtimeTick, ok := ticks[loc]
+		if !ok {
+			mtimeTick = probeMtimeTick(loc)
+			ticks[loc] = mtimeTick
+		}
 		files, links, err := allowlist.Walk(loc, allowlist.For(r.ID))
 		if err != nil {
 			return nil, fmt.Errorf("walk %s: %w", r.ID, err)
@@ -395,7 +411,8 @@ func Sync(opts Options) (*Report, error) {
 				}
 				if staged != nil && staged.ModTime().Equal(info.ModTime()) &&
 					(scrub || staged.Size() == info.Size()) &&
-					!(scrub && rescrub) {
+					!(scrub && rescrub) &&
+					clock.trusts(info.ModTime(), mtimeTick) {
 					unchanged = true
 				}
 				// A long session's transcript is the one file that is both large
@@ -747,6 +764,10 @@ func Sync(opts Options) (*Report, error) {
 	// after that, for as long as anything in the tree is refused. A run that
 	// genuinely stopped part-way returns above this and still re-scrubs.
 	noteRedactionSetting(opts.StagingDir, opts.RedactTranscripts)
+	// The walk finished, so every mtime older than this instant has now been
+	// staged from. Recorded even when the tripwire refuses below: the files
+	// were still copied, and the reason to distrust their mtimes is gone.
+	writeStageClock(opts.StagingDir, startedAt)
 	if len(rep.Findings) > 0 {
 		// The two halves of the wire need different remedies, so say which one
 		// fired: a JSON value means the redactor's key rules missed something, a

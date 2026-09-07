@@ -207,6 +207,11 @@ func TestSync_IncrementalSkipsUnchanged(t *testing.T) {
 	live := t.TempDir()
 	write(t, live, "skills/a/SKILL.md", "body")
 	write(t, live, "projects/-p/s.jsonl", "transcript")
+	// Written before the first run rather than during it. A file stamped in the
+	// same tick as the run reading it is ambiguous by construction — a rewrite
+	// inside that tick carries the same stamp — so sync restages it, and this
+	// is a test about the files it does not restage.
+	settle(t, live, "skills/a/SKILL.md", "projects/-p/s.jsonl")
 	staging := t.TempDir()
 	m := config.Machine{OS: pathmap.OSMacOS, Home: "/Users/john"}
 	cfg := cliOnlyConfig(live)
@@ -466,6 +471,14 @@ func TestSync_EnablingRedactionScrubsWhatIsAlreadyStaged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Both ends stamped before this run: a mtime from the same tick as the run
+	// cannot be told from one written during it, so sync restages and the
+	// already-staged path under test is never reached.
+	settle(t, live, "projects/-p/s.jsonl")
+	st, err = os.Stat(filepath.Join(live, filepath.FromSlash("projects/-p/s.jsonl")))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chtimes(stagedPath, st.ModTime(), st.ModTime()); err != nil {
 		t.Fatal(err)
 	}
@@ -628,6 +641,10 @@ func TestSync_UpgradesLegacyRedactionState(t *testing.T) {
 		write(t, staging, "cli/"+rel, body)
 		st, err := os.Stat(filepath.Join(live, filepath.FromSlash(rel)))
 		if err != nil {
+			t.Fatal(err)
+		}
+		settle(t, live, rel)
+		if st, err = os.Stat(filepath.Join(live, filepath.FromSlash(rel))); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Chtimes(filepath.Join(staging, "cli", filepath.FromSlash(rel)), st.ModTime(), st.ModTime()); err != nil {
