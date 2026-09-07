@@ -316,6 +316,76 @@ func (r *Repo) CommitTree(ctx context.Context, tree, parent, message string) (st
 	return strings.TrimSpace(out), nil
 }
 
+// IsAncestor reports whether ancestor is reachable from descendant — plain
+// ancestry, no squash-merge detection (see IsMerged for that). For asking
+// whether a branch has been brought up to date with something, where a wrong
+// "yes" is the dangerous answer, so a git failure is returned rather than
+// guessed at.
+func (r *Repo) IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error) {
+	code, err := gitExitCode(ctx, r.Dir, "merge-base", "--is-ancestor", ancestor, descendant)
+	if err != nil {
+		return false, err
+	}
+	switch code {
+	case 0:
+		return true, nil
+	case 1:
+		return false, nil
+	default:
+		return false, fmt.Errorf("git merge-base --is-ancestor %s %s: exit %d", ancestor, descendant, code)
+	}
+}
+
+// RebaseOnto replays branch's commits after upstream onto newBase --
+// `git rebase --onto <newBase> <upstream> <branch>`. Returns conflicted=true
+// when the rebase stops for the user to resolve, having left it in progress.
+func (r *Repo) RebaseOnto(ctx context.Context, newBase, upstream, branch string) (conflicted bool, err error) {
+	if _, err := runGit(ctx, r.Dir, "rebase", "--onto", newBase, upstream, branch); err != nil {
+		if inProgress, _ := r.RebaseInProgress(ctx); inProgress {
+			return true, nil
+		}
+		return false, err
+	}
+	return false, nil
+}
+
+// RebaseInProgress reports whether a rebase is stopped part-way in this repo.
+func (r *Repo) RebaseInProgress(ctx context.Context) (bool, error) {
+	dir, err := r.gitDir(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, d := range []string{"rebase-merge", "rebase-apply"} {
+		if _, err := os.Stat(filepath.Join(dir, d)); err == nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// RebaseAbort undoes a rebase left in progress, putting the branch back.
+func (r *Repo) RebaseAbort(ctx context.Context) error {
+	_, err := runGit(ctx, r.Dir, "rebase", "--abort")
+	return err
+}
+
+// BranchesWithPrefix lists local branches whose names start with prefix, in
+// git's own order. For showing what is in flight without asking the user to
+// remember it.
+func (r *Repo) BranchesWithPrefix(ctx context.Context, prefix string) ([]string, error) {
+	out, err := runGit(ctx, r.Dir, "for-each-ref", "--format=%(refname:short)", "refs/heads/"+prefix+"*")
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			names = append(names, line)
+		}
+	}
+	return names, nil
+}
+
 // LogEntry is one commit of a log: its full id and its subject line.
 type LogEntry struct {
 	SHA     string

@@ -614,3 +614,343 @@ func TestStackProposeDryRun(t *testing.T) {
 		t.Fatalf("dry run left the worktree dirty:\n%s", dirty)
 	}
 }
+
+// twoFixStackspace builds the shape --from exists for: a prefix carrying two
+// independent fixes, one of which is also a topic branch rooted on the import.
+//
+//	import ── fix A ───────── merge ── (main: both fixes, what you build and test)
+//	   └───── stack-pr-fix-b ────┘      (topic: upstream plus fix B, nothing else)
+//
+// Returns the stackspace and the import commit, which is what a topic must be
+// rooted on for its tree to be one upstream can take.
+func twoFixStackspace(t *testing.T, work string, srv *gitServer, trackBranch string) (ws, importSHA string) {
+	t.Helper()
+	ws = filepath.Join(work, "stackspace")
+	if err := os.MkdirAll(filepath.Join(ws, "lib", "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "init", "-q", "-b", "main")
+	mustGitStack(t, ws, "config", "user.email", "t@t")
+	mustGitStack(t, ws, "config", "user.name", "t")
+
+	tip := strings.TrimSpace(mustGitStack(t, srv.path("acme/lib"), "rev-parse", "main"))
+	track := ""
+	if trackBranch != "" {
+		track = fmt.Sprintf(`, "trackBranch": %q`, trackBranch)
+	}
+	writeStackManifest(t, ws, fmt.Sprintf(`{
+  "branchPrefix": "stack/",
+  "repos": { "lib": { "upstream": %q, "fork": %q, "upstreamBranch": "main"%s } },
+  "lastSync": { "lib": %q }
+}`, srv.spec("acme/lib"), srv.spec("you/lib"), track, tip))
+
+	// The import: the prefix holds exactly upstream's tree, which is what makes
+	// a topic rooted here proposable as-is.
+	if err := os.WriteFile(filepath.Join(ws, "lib", "src", "lib.txt"), []byte("lib v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "add", "-A")
+	// The marker message matters: rig finds the commit a member was last imported
+	// at by matching it, and that commit — NOT the cursor — is what local
+	// ancestry is measured against. The cursor is a raw upstream commit, while a
+	// real import merges josh-rewritten content, so upstream's own commit is an
+	// ancestor of nothing in a stackspace. An earlier version of this fixture
+	// merged the raw upstream commit to make it one, which made the fixture
+	// disagree with every real stackspace and hid exactly that bug.
+	mustGitStack(t, ws, "commit", "-qm", "stack: import lib @ "+tip[:8])
+	importSHA = strings.TrimSpace(mustGitStack(t, ws, "rev-parse", "HEAD"))
+
+	writeFix := func(file string) {
+		if err := os.WriteFile(filepath.Join(ws, "lib", "src", file), []byte(file+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, ws, "add", "-A")
+		mustGitStack(t, ws, "commit", "-qm", "lib: "+file)
+	}
+
+	writeFix("a.txt") // fix A, on main, still in review upstream
+	mustGitStack(t, ws, "switch", "-q", "-c", "stack-pr-fix-b", importSHA)
+	writeFix("b.txt") // fix B, a topic of its own
+	mustGitStack(t, ws, "switch", "-q", "main")
+	mustGitStack(t, ws, "merge", "-q", "--no-edit", "stack-pr-fix-b")
+	return ws, importSHA
+}
+
+// propose runs the verb with --from set. runVerbOut calls RunE directly, which
+// is cobra's parsing skipped, so a flag passed as an argument would arrive as a
+// positional and be silently ignored — set it on the command instead.
+func propose(t *testing.T, repo, branch, from string) (string, error) {
+	t.Helper()
+	cmd := newStackSendCmd()
+	if from != "" {
+		if err := cmd.Flags().Set("from", from); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return runVerbOut(context.Background(), cmd, repo, branch)
+}
+
+// forkTree is the paths a branch of the bare fork holds.
+func forkTree(t *testing.T, fork, branch string) string {
+	t.Helper()
+	return mustGitStack(t, fork, "ls-tree", "-r", "--name-only", branch)
+}
+
+// TestStackProposeFromTopic is the point of --from: a prefix carrying two fixes
+// can propose one WITHOUT the other, which by default it cannot — propose sends
+// the prefix's whole tree.
+func TestStackProposeFromTopic(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	ws, _ := twoFixStackspace(t, work, srv, "stack/integration")
+
+	chdir(t, ws)
+	// "fix-b" is not a branch; stack-pr-fix-b is. The bare name resolving to the
+	// conventional one is the whole ergonomic point of the convention.
+	out, err := propose(t, "lib", "fix-b", "fix-b")
+	if err != nil {
+		t.Fatalf("propose --from: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "stack-pr-fix-b") {
+		t.Fatalf("did not resolve the bare name to the conventional branch:\n%s", out)
+	}
+	// What the pull request will contain, said before it is opened. Asserted by
+	// subject rather than by count: this fixture's stackspace is a fresh `git
+	// init`, so the cursor is not an ancestor of anything here and the range
+	// spans the synthetic import commit too. A real stackspace merges upstream
+	// in, so the cursor IS an ancestor there — and the property worth pinning is
+	// which fix is named, not how many commits the range happened to span.
+	if !strings.Contains(out, "lib: b.txt") {
+		t.Fatalf("did not name the fix being proposed:\n%s", out)
+	}
+	if strings.Contains(out, "lib: a.txt") {
+		t.Fatalf("reported carrying the other unmerged fix, which this topic does not:\n%s", out)
+	}
+
+	// The pull request holds fix B and NOT fix A. Without --from both would be
+	// here, and the reviewer would read a change nobody asked them to.
+	proposed := forkTree(t, fork, "stack/fix-b")
+	if !strings.Contains(proposed, "src/b.txt") {
+		t.Fatalf("the proposed branch is missing the topic it was asked for:\n%s", proposed)
+	}
+	if strings.Contains(proposed, "src/a.txt") {
+		t.Fatalf("the proposed branch carries the other unmerged fix too:\n%s", proposed)
+	}
+	if strings.Contains(proposed, "lib/src/") {
+		t.Fatalf("the proposed branch kept the stackspace prefix:\n%s", proposed)
+	}
+
+	// And the whole divergence is on trackBranch, or a rebuild would build
+	// without fix A while this machine still had it.
+	integration := forkTree(t, fork, "stack/integration")
+	for _, want := range []string{"src/a.txt", "src/b.txt"} {
+		if !strings.Contains(integration, want) {
+			t.Fatalf("trackBranch does not carry %s — a rebuild would be missing it:\n%s", want, integration)
+		}
+	}
+	if !refExists(t, ws, "refs/rigsmith/integration/lib") {
+		t.Fatal("the integration push was not recorded, so seed will call the unproposed work unsent")
+	}
+}
+
+// TestStackProposeFromTopicOnUnmergedWork: a topic branched off a line that
+// already carries another unmerged fix genuinely contains that fix, and rig
+// cannot tell "that came along by accident" from "that is part of my change".
+// So it does not refuse — it says what the pull request will contain, which is
+// what lets the author notice a subject they did not expect.
+func TestStackProposeFromTopicOnUnmergedWork(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	ws, _ := twoFixStackspace(t, work, srv, "stack/integration")
+
+	// Rooted on main, which already carries fix A.
+	mustGitStack(t, ws, "switch", "-q", "-c", "stack-pr-fix-c", "main")
+	if err := os.WriteFile(filepath.Join(ws, "lib", "src", "c.txt"), []byte("c\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "lib: c.txt")
+	mustGitStack(t, ws, "switch", "-q", "main")
+
+	chdir(t, ws)
+	out, err := propose(t, "lib", "fix-c", "fix-c")
+	if err != nil {
+		t.Fatalf("propose --from: %v\n%s", err, out)
+	}
+	// The report names the fix that came along, which is the whole point of it.
+	if !strings.Contains(out, "lib: a.txt") {
+		t.Fatalf("did not name the other fix this proposal carries:\n%s", out)
+	}
+	// And the branch really does carry it — the report is not a warning about
+	// something that did not happen.
+	proposed := forkTree(t, fork, "stack/fix-c")
+	if !strings.Contains(proposed, "src/a.txt") {
+		t.Fatalf("expected the topic to carry the other fix:\n%s", proposed)
+	}
+}
+
+// TestStackProposeFromNeedsTrackBranch: without somewhere to keep the fixes it
+// leaves out, a topic proposal makes every rebuild silently short. That is
+// invisible from here — this worktree still has everything — so it refuses.
+func TestStackProposeFromNeedsTrackBranch(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	ws, _ := twoFixStackspace(t, work, srv, "")
+
+	chdir(t, ws)
+	out, err := propose(t, "lib", "fix-b", "fix-b")
+	if err == nil {
+		t.Fatalf("proposed a topic with nowhere to keep the rest:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "trackBranch") {
+		t.Fatalf("the error does not name what to set: %v", err)
+	}
+	if refExists(t, fork, "refs/heads/stack/fix-b") {
+		t.Fatal("it pushed before refusing")
+	}
+}
+
+// TestStackProposeWholePrefixByDefault pins the default that --from exists to
+// escape: no topic means the branch carries everything the prefix has.
+func TestStackProposeWholePrefixByDefault(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	ws, _ := twoFixStackspace(t, work, srv, "")
+
+	chdir(t, ws)
+	if out, err := propose(t, "lib", "everything", ""); err != nil {
+		t.Fatalf("propose: %v\n%s", err, out)
+	}
+	proposed := forkTree(t, fork, "stack/everything")
+	for _, want := range []string{"src/a.txt", "src/b.txt"} {
+		if !strings.Contains(proposed, want) {
+			t.Fatalf("an unselected propose left out %s:\n%s", want, proposed)
+		}
+	}
+}
+
+// TestStackProposeFromUnconventionalBranch pins that the naming convention is a
+// recommendation. A branch the user named themselves is taken as given — an
+// exact match wins, and nothing requires the stack-pr- prefix.
+func TestStackProposeFromUnconventionalBranch(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	ws, importSHA := twoFixStackspace(t, work, srv, "stack/integration")
+
+	// No prefix, and rooted on the import like any other topic.
+	mustGitStack(t, ws, "switch", "-q", "-c", "my-own-name", importSHA)
+	if err := os.WriteFile(filepath.Join(ws, "lib", "src", "d.txt"), []byte("d\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "lib: d.txt")
+	mustGitStack(t, ws, "switch", "-q", "main")
+	mustGitStack(t, ws, "merge", "-q", "--no-edit", "my-own-name")
+
+	chdir(t, ws)
+	if out, err := propose(t, "lib", "fix-d", "my-own-name"); err != nil {
+		t.Fatalf("propose --from an unprefixed branch: %v\n%s", err, out)
+	}
+	proposed := forkTree(t, fork, "stack/fix-d")
+	if !strings.Contains(proposed, "src/d.txt") {
+		t.Fatalf("the proposed branch is missing the topic:\n%s", proposed)
+	}
+	for _, unwanted := range []string{"src/a.txt", "src/b.txt"} {
+		if strings.Contains(proposed, unwanted) {
+			t.Fatalf("the proposed branch carries %s, which is another unmerged fix:\n%s", unwanted, proposed)
+		}
+	}
+}
+
+// TestStackProposeFromStaleTopic: a topic rooted before upstream moved holds the
+// prefix as upstream USED to be. Committing that onto the current tip presents
+// everything upstream landed since as though the branch had reverted it — the
+// hazard the whole-prefix path is protected from by the stale-cursor guard, and
+// which --from cannot see there because HEAD gets pulled and a topic does not.
+//
+// The pull is simulated rather than run: advancing the cursor and merging
+// upstream is exactly what an import does to HEAD, and doing it by hand keeps
+// this out of the engine-gated tests.
+func TestStackProposeFromStaleTopic(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	ws, _ := twoFixStackspace(t, work, srv, "stack/integration")
+
+	// Upstream lands something, and the stackspace takes it — but the topic,
+	// like any branch, does not come along.
+	srv.commit(t, "acme/lib", "src/upstream.txt", "new upstream work\n", "lib: upstream moved on")
+	newTip := strings.TrimSpace(mustGitStack(t, srv.path("acme/lib"), "rev-parse", "main"))
+	writeStackManifest(t, ws, fmt.Sprintf(`{
+  "branchPrefix": "stack/",
+  "repos": { "lib": { "upstream": %q, "fork": %q, "upstreamBranch": "main", "trackBranch": "stack/integration" } },
+  "lastSync": { "lib": %q }
+}`, srv.spec("acme/lib"), srv.spec("you/lib"), newTip))
+	mustGitStack(t, ws, "add", "-A")
+	// A new import marker on main that the topic does not contain — which is
+	// precisely what "rooted before the last pull" means.
+	mustGitStack(t, ws, "commit", "-qm", "stack: pull lib @ "+newTip[:8])
+
+	chdir(t, ws)
+	out, err := propose(t, "lib", "fix-b", "fix-b")
+	if err == nil {
+		t.Fatalf("proposed a topic that predates the pull — it would revert upstream's new work:\n%s", out)
+	}
+	// Matched on the parts that carry the meaning, not the whole sentence: this
+	// assertion already went stale once when the guard moved from the cursor to
+	// the import marker and the wording moved with it.
+	for _, want := range []string{"was rooted before", "revert the commits"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the error does not say why it refused (missing %q): %v", want, err)
+		}
+	}
+	if refExists(t, fork, "refs/heads/stack/fix-b") {
+		t.Fatal("it pushed before refusing")
+	}
+
+	// And status says so unprompted, since the pull that caused it may have been
+	// days ago.
+	statusOut, serr := runVerbOut(context.Background(), newStackStatusCmd())
+	if serr != nil {
+		t.Fatalf("status: %v\n%s", serr, statusOut)
+	}
+	if !strings.Contains(statusOut, "rooted before the last pull") || !strings.Contains(statusOut, "stack-pr-fix-b") {
+		t.Fatalf("status did not name the stale topic:\n%s", statusOut)
+	}
+}
+
+// TestStackProposeFromOntoTrackBranch: proposing onto trackBranch would have the
+// integration push overwrite the pull request with the whole divergence — a
+// reviewer opening a topic's PR and finding every carried fix in it. The two
+// branches serve opposite purposes, so they cannot be the same one.
+func TestStackProposeFromOntoTrackBranch(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	// trackBranch is stack/integration, so proposing "integration" collides.
+	ws, _ := twoFixStackspace(t, work, srv, "stack/integration")
+
+	chdir(t, ws)
+	out, err := propose(t, "lib", "integration", "fix-b")
+	if err == nil {
+		t.Fatalf("proposed onto trackBranch — the PR would be overwritten:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "trackBranch") {
+		t.Fatalf("the error does not say what collided: %v", err)
+	}
+	if refExists(t, fork, "refs/heads/stack/integration") {
+		t.Fatal("it pushed before refusing")
+	}
+}

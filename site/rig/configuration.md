@@ -240,6 +240,13 @@ leave it out. Where pull requests go does not change — `upstream` is still wha
 `propose` roots on and what `pull` follows — and the cursor records the upstream
 commit the branch is based on, so `status` still compares against upstream. A
 `trackBranch` that is not on the fork is an error rather than a silent fallback.
+
+`rig stack propose --from` **requires** it and **writes** it. A topic branch holds
+only its own fix, and `init` reconstitutes from it, so something has to hold the rest
+or a rebuild elsewhere quietly builds without the fixes the pull request left out.
+Every `--from` send force-updates `trackBranch` to the prefix's whole divergence — so
+once topics are in use it stops being a branch you maintain and becomes one rig writes,
+and it must not be the branch you propose onto.
 It cannot be combined with a tag or commit pin. Without it, `init` rebuilding a
 member checks for the branch it was last proposed to and uses that when it
 still exists.

@@ -52,7 +52,8 @@ rig worktree new feat/x                     # sibling checkout for working on a 
 # your app and its forked libraries fused into one history, each still leaving as itself:
 rig stack init                              # scaffold rig.stack.jsonc; run again to import
 rig stack status / pull [repo]              # what upstream did, and taking it
-rig stack propose some-lib read-timeout        # → stack/read-timeout on your fork, PR-ready
+rig stack propose some-lib read-timeout        # ALL of some-lib's changes → stack/read-timeout, PR-ready
+rig stack propose some-lib read-timeout --from read-timeout   # ...or one topic's tree — root it on the import, or it carries its parent's fixes too
 rig stack push my-app                       # → your own repo, fast-forwarded, history intact
 rig stack propose some-lib read-timeout --dry-run   # what would go to your fork, touching nothing
 rig stack push my-app --dry-run             # what would go — target, branch, commits — touching no remote

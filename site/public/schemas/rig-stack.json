@@ -81,7 +81,7 @@
           },
           "trackBranch": {
             "type": "string",
-            "description": "A branch of `fork` this directory is IMPORTED from instead of upstream's branch — so a stackspace rebuilt elsewhere (`rig stack seed`, then `rig stack init`) starts from work that has left as a proposal and not yet merged. Where pull requests go does not change, and `pull` still follows `upstream`; the cursor records the upstream commit the branch is based on. Not combinable with a tag or commit pin.",
+            "description": "A branch of `fork` this directory is IMPORTED from instead of upstream's branch — so a stackspace rebuilt elsewhere (`rig stack seed`, then `rig stack init`) starts from work that has left as a proposal and not yet merged. Where pull requests go does not change, and `pull` still follows `upstream`; the cursor records the upstream commit the branch is based on. Required by `rig stack propose --from`, which keeps this branch current with everything the prefix carries while each pull request holds only its own topic branch. Not combinable with a tag or commit pin.",
             "minLength": 1
           },
           "publishesAs": {

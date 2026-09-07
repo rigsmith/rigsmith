@@ -202,6 +202,7 @@ func newStackRemoveCmd() *cobra.Command {
 			// still there, or the retry would call sent work unsent.
 			_ = repo.DeleteRef(ctx, "refs/rigsmith/push/"+name)
 			_ = repo.DeleteRef(ctx, "refs/rigsmith/propose/"+name)
+			_ = repo.DeleteRef(ctx, "refs/rigsmith/integration/"+name)
 			if changed {
 				fmt.Fprintf(out, "  committed: stack: remove %s\n", name)
 			}

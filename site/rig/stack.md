@@ -484,6 +484,126 @@ per stackspace or per repo, or set it to `""` for bare names. A name that alread
 starts with the prefix is left alone, so pasting a full branch name back in when
 proposing again does not stutter it.
 
+#### It sends the whole prefix, not the change you have in mind {#propose-whole}
+
+`propose` commits **the prefix's entire current tree** onto the upstream tip. It does
+not extract one change: whatever this stackspace is holding for that project — every
+fix, including ones already waiting in another pull request — is what the branch
+carries.
+
+While one thing is in flight that is exactly right, and it is why a rebuild elsewhere
+is safe: the branch a member was last proposed to holds everything, so
+[`init` reconstituting from it](#seed) gets all of it.
+
+The moment two things are in flight for one project it is wrong. Fix A sits unmerged
+in the stackspace; you propose fix B; B's branch contains A as well, and its pull
+request shows changes its reviewer never asked about.
+
+#### One fix at a time: `--from` a topic branch {#propose-from}
+
+Keep each in-flight fix on its own branch of the stackspace, rooted on the commit that
+imported that member. `main` merges them, and stays what it always was — everything
+fused, the thing you build and test.
+
+```
+import ── fix A ─────────────── merge ──  main: both fixes, what you build and test
+   └───── stack-pr-reader-wedge ───┘      topic: upstream plus this fix, nothing else
+```
+
+```sh
+git switch -c stack-pr-reader-wedge <the import commit>
+# ...fix it, commit...
+git switch main && git merge stack-pr-reader-wedge
+
+rig stack propose term-core reader-wedge --from reader-wedge
+# term-core: proposing what stack-pr-reader-wedge adds, not the whole prefix
+```
+
+**`stack-pr-<name>` is a recommended convention, not a rule.** `--from` takes any
+branch: an exact name always wins, and the conventional name is only the fallback when
+what you gave it is not itself a branch — so `--from reader-wedge` finds
+`stack-pr-reader-wedge` without you spelling it out. The prefix is deliberately not
+`stack/`, which names the branches that appear on your **fork**: those two live in
+different repositories and mean different things, and sharing a spelling would only
+invite reading one as the other.
+
+`rig stack status` lists the ones named that way, so what is in flight is something you
+read rather than remember:
+
+```
+topics in flight: stack-pr-reader-wedge, stack-pr-kitty-scaling
+  propose one with `rig stack propose <repo> <name> --from reader-wedge`
+```
+
+A topic rooted on the import holds upstream's tree plus its own change and nothing
+else, so **its tree is already the one upstream should see** — there is no patch to
+replay and nothing that can fail to apply. That matters more the longer you carry
+work: reconstructing one change out of an intertwined history is a patch that stops
+applying, while a topic keeps the isolation by construction.
+
+Branch off a line that already carries another unmerged fix and the topic contains
+that fix too. `propose` does not refuse — it cannot: the topic genuinely *does*
+contain it, and which commits make up a change is exactly what the branch encodes, so
+only you can say whether it was meant. What it does is say what it is sending:
+
+```
+term-core: proposing stack-pr-reader-wedge — 2 commit(s) since the import
+    a1b2c3d4 term-core: the reader wedge
+    e5f6a7b8 term-core: an earlier fix, still in review
+```
+
+A subject you did not expect is the signal to rebase the topic onto the import.
+
+#### A pull leaves topics behind {#propose-stale}
+
+`pull` moves the prefix on. A topic branch does not come with it, so its tree is
+upstream as it *used* to be — and committing that onto the current tip would present
+everything upstream landed since as though your branch had **reverted** it. That is the
+same hazard the [stale-cursor refusal](#propose) covers for a whole-prefix propose, and
+`--from` cannot rely on that one: `HEAD` gets pulled, and a topic does not.
+
+So `propose --from` refuses a topic that does not have the current cursor in it, and
+both `pull` and `status` name them unprompted — the pull that caused it may have been
+days ago:
+
+```
+lib: 1 topic(s) rooted before this pull — `propose --from` will refuse them until re-rooted:
+    stack-pr-reader-wedge
+  branch again from the new import and replay the fix; proposing as-is would revert what upstream landed.
+```
+
+::: warning Why rig does not re-root them for you
+The obvious target is the commit the pull just made — and it is the wrong one. An import
+merges into `HEAD`, and `HEAD` has already merged your topics, so re-rooting a topic onto
+it folds the very fix that topic isolates straight back in. Doing it correctly means
+replaying the topic onto upstream's new tree with **none** of the integration line's
+fixes, which is a different operation from a rebase and is not built yet.
+:::
+
+::: warning `--from` requires `trackBranch`
+A topic holds part of what the prefix carries, so it cannot also be what a rebuild
+reconstitutes from — a fresh `init` would build without the other fixes, while your own
+worktree still had them and looked fine. `trackBranch` is where the whole divergence
+lives, and `propose --from` **keeps it current** on every send:
+
+```sh
+rig stack propose term-core reader-wedge --from reader-wedge
+# term-core: proposing what reader-wedge adds, not the whole prefix
+# sent term-core to you/term-core:stack/reader-wedge
+# term-core: stack/integration now carries everything, for rebuilds
+```
+
+Without it set, `--from` refuses rather than publish a package or a rebuild that is
+quietly missing work.
+:::
+
+`rig stack status` says that `propose` sends the prefix's whole divergence, so you find
+out before a maintainer does:
+
+```
+term-core   e5f6a7b8   up to date  ·  3 commits diverge from upstream; `propose` sends all of them (--from <branch> for one)
+```
+
 Sending again to the same branch **updates** it, so you can act on review
 feedback: commit in the stackspace, propose again, and the pull request moves. The
 branch is replaced under a lease taken at the moment of the push, which guards
