@@ -125,6 +125,12 @@ func TestFinishStagedMergeResumesAfterRefUpdate(t *testing.T) {
 				}
 			} else if err != nil || got != head {
 				t.Fatalf("resume: %s %v", got, err)
+			} else {
+				for _, name := range []string{"MERGE_HEAD", "MERGE_MSG", "MERGE_MODE"} {
+					if _, err := os.Stat(filepath.Join(r.dir, ".git", name)); !os.IsNotExist(err) {
+						t.Fatalf("resume left %s: %v", name, err)
+					}
+				}
 			}
 			if !bytes.Equal(before, readMergeTestFile(t, r.dir, ".git/index")) || mustRun(t, r, "", "rev-parse", "HEAD") != head {
 				t.Fatal("retry changed saved work or created another commit")
