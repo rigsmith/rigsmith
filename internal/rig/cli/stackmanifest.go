@@ -487,6 +487,14 @@ func (m *stackManifest) validate() error {
 			if strings.TrimSpace(p.Branch) == "" {
 				return fmt.Errorf("the proposals map for %q records no branch for topic %q — remove the entry, or name the branch its pull request is on", prefix, topic)
 			}
+			// A malformed commit is worse than none. `status` compares every
+			// non-empty value against the topic's tip, and something that is not a
+			// SHA can never equal one — so the branch would be reported as having
+			// moved on every run, for ever. Absent is a legitimate value and means
+			// "recorded before the commit was tracked".
+			if p.Commit != "" && !stackIsSHA(p.Commit) {
+				return fmt.Errorf("the proposals map for %q records commit %q for topic %q — that must be a full 40-character commit SHA, or be left out", prefix, p.Commit, topic)
+			}
 		}
 	}
 	return nil

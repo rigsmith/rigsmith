@@ -553,3 +553,50 @@ func TestStackForgetLastRepoDropsProposals(t *testing.T) {
 		t.Fatalf("the last proposal left an empty block behind:\n%s", raw)
 	}
 }
+
+// TestStackProposalCommitValidated: a malformed commit is worse than an absent
+// one. status compares every non-empty value against the topic's tip, and
+// something that is not a SHA can never equal one — so the branch would be
+// reported as moved on every run, for ever.
+func TestStackProposalCommitValidated(t *testing.T) {
+	for _, tc := range []struct {
+		name, commit string
+		wantErr      bool
+	}{
+		{"absent", "", false},
+		{"full sha", "0123456789abcdef0123456789abcdef01234567", false},
+		{"abbreviated", "0123456", true},
+		{"not hex", "zzzz456789abcdef0123456789abcdef01234567", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commit := ""
+			if tc.commit != "" {
+				commit = fmt.Sprintf(`, "commit": %q`, tc.commit)
+			}
+			root := rmStackspace(t, fmt.Sprintf(`{
+  "repos": { "pty-core": { "upstream": "github.com/acme/pty-core", "fork": "github.com/you/pty-core" } },
+  "proposals": { "pty-core": { "stack-pr-x": { "branch": "stack/x"%s } } }
+}`, commit))
+			_, _, err := loadStackManifest(root)
+			if tc.wantErr && err == nil {
+				t.Fatalf("loaded a manifest recording commit %q", tc.commit)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("rejected a legitimate manifest: %v", err)
+			}
+		})
+	}
+}
+
+// TestStackProposalOrphanKeyIgnored: JSON Schema cannot express "this key must
+// also appear in repos", so refusing here made rig reject manifests its own
+// published schema accepts. An entry for a repo that is gone is ignored.
+func TestStackProposalOrphanKeyIgnored(t *testing.T) {
+	root := rmStackspace(t, `{
+  "repos": { "pty-core": { "upstream": "github.com/acme/pty-core", "fork": "github.com/you/pty-core" } },
+  "proposals": { "gone-away": { "stack-pr-x": { "branch": "stack/x" } } }
+}`)
+	if _, _, err := loadStackManifest(root); err != nil {
+		t.Fatalf("an orphan proposals entry should be ignored, not refuse the manifest: %v", err)
+	}
+}
