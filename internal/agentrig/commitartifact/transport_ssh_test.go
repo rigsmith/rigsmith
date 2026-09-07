@@ -413,7 +413,8 @@ func TestSSHMissingIdentityDoesNotEnableDefaults(t *testing.T) {
 	}
 	settings := map[string][]string{}
 	for _, line := range strings.Split(string(out), "\n") {
-		key, value, ok := strings.Cut(line, " ")
+		// Native Windows OpenSSH emits CRLF; preserve the option value itself.
+		key, value, ok := strings.Cut(strings.TrimSuffix(line, "\r"), " ")
 		if ok {
 			settings[key] = append(settings[key], value)
 		}
