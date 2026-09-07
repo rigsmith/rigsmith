@@ -6,10 +6,10 @@ from #315/#317, merges committed history in a private repository, and confirms
 remote ancestry before returning success. This is a library boundary with real
 local-Git transport tests. Claude now supplies an internal `Service.PublishArtifact`
 policy adapter with an explicitly injected bound transport. A concrete
-[HTTPS/local Git transport](CLAUDERIG-V2-GIT-TRANSPORT.md) now supplies explicit
+[HTTPS/SSH/local Git transport](CLAUDERIG-V2-GIT-TRANSPORT.md) now supplies explicit
 credentials. All retained Git commands now use its cancellation/cleanup runner.
-SSH/authentication discovery, queue execution wiring and parent-death recovery
-are next. No
+SSH now uses explicit identity/host-trust files. Authentication discovery, queue
+execution wiring and parent-death recovery are next. No
 command or hook calls this engine, and synchronous publication is unchanged.
 There is no end-user changeset for this internal step.
 

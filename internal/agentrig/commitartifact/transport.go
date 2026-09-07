@@ -27,14 +27,15 @@ type HTTPCredential struct {
 }
 
 // GitTransportOptions selects one immutable destination and branch. HTTPS and
-// absolute local paths are supported. HTTP is restricted to literal loopback
-// addresses for local integrations. SSH and ambient credential helpers are not
-// supported. CAFile optionally supplies an explicit HTTPS trust bundle; TLS
+// absolute local paths are supported. SSH requires explicit SSHOptions. HTTP
+// is restricted to literal loopback addresses for local integrations. Ambient
+// credential helpers are not supported. CAFile optionally supplies an explicit HTTPS trust bundle; TLS
 // verification is always enabled. No option changes canonical Git configuration.
 type GitTransportOptions struct {
 	Remote, Branch string
 	Credential     *HTTPCredential
 	CAFile         string
+	SSH            *SSHOptions
 }
 
 // GitTransport implements Transport and Claude's bound-destination interface.
@@ -42,7 +43,7 @@ type GitTransportOptions struct {
 // the repository created by Publish. They must not receive canonical staging or
 // a repository with caller-added configuration. Concurrent use of one repoDir
 // requires external serialization. No command, queue worker or hook is enabled.
-type GitTransport struct{ remote, branch, protocol, caFile, authorization string }
+type GitTransport struct{ remote, branch, protocol, caFile, authorization, sshCommand string }
 
 func NewGitTransport(options GitTransportOptions) (*GitTransport, error) {
 	if !transportBranch(options.Branch) || len(options.Remote) == 0 || len(options.Remote) > 4096 || strings.ContainsAny(options.Remote, "\x00\r\n") {
@@ -51,6 +52,8 @@ func NewGitTransport(options GitTransportOptions) (*GitTransport, error) {
 	t := &GitTransport{remote: options.Remote, branch: options.Branch}
 	if filepath.IsAbs(options.Remote) {
 		t.protocol = "file"
+	} else if sshRemote(options.Remote) {
+		t.protocol = "ssh"
 	} else {
 		u, err := url.Parse(options.Remote)
 		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(options.Remote, "#") || u.Fragment != "" || u.Opaque != "" || u.RawPath != "" || strings.ContainsAny(options.Remote, "\t \\") {
@@ -61,6 +64,18 @@ func NewGitTransport(options GitTransportOptions) (*GitTransport, error) {
 		}
 		t.protocol = u.Scheme
 	}
+	if t.protocol == "ssh" {
+		if options.SSH == nil {
+			return nil, ErrInvalid
+		}
+		command, err := sshCommand(*options.SSH)
+		if err != nil {
+			return nil, err
+		}
+		t.sshCommand = command
+	} else if options.SSH != nil {
+		return nil, ErrInvalid
+	}
 	if options.CAFile != "" {
 		if t.protocol != "https" || !filepath.IsAbs(options.CAFile) || strings.ContainsAny(options.CAFile, "\x00\r\n") {
 			return nil, ErrInvalid
@@ -69,7 +84,7 @@ func NewGitTransport(options GitTransportOptions) (*GitTransport, error) {
 	}
 	if options.Credential != nil {
 		c := *options.Credential
-		if t.protocol == "file" || c.Username == "" || c.Password == "" || len(c.Username)+len(c.Password) > 16<<10 || strings.ContainsAny(c.Username, ":\r\n\x00") || strings.ContainsAny(c.Password, "\r\n\x00") {
+		if (t.protocol != "http" && t.protocol != "https") || c.Username == "" || c.Password == "" || len(c.Username)+len(c.Password) > 16<<10 || strings.ContainsAny(c.Username, ":\r\n\x00") || strings.ContainsAny(c.Password, "\r\n\x00") {
 			return nil, ErrInvalid
 		}
 		t.authorization = "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(c.Username+":"+c.Password))
@@ -206,12 +221,15 @@ func (t *GitTransport) run(ctx context.Context, dir string, args ...string) (str
 	for _, entry := range cmd.Env {
 		key, _, _ := strings.Cut(entry, "=")
 		switch strings.ToUpper(key) {
-		case "GIT_ALLOW_PROTOCOL", "HOME", "USERPROFILE", "XDG_CONFIG_HOME", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "CURL_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR":
+		case "SSH_AUTH_SOCK", "SSH_AGENT_PID", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_SK_PROVIDER", "GIT_ALLOW_PROTOCOL", "HOME", "USERPROFILE", "XDG_CONFIG_HOME", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "CURL_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR":
 			continue
 		}
 		filtered = append(filtered, entry)
 	}
 	cmd.Env = append(filtered, "GIT_ALLOW_PROTOCOL="+t.protocol, "GCM_INTERACTIVE=Never", "HOME="+dir, "USERPROFILE="+dir, "XDG_CONFIG_HOME="+dir)
+	if t.sshCommand != "" {
+		cmd.Env = append(cmd.Env, "GIT_SSH_COMMAND="+t.sshCommand, "GIT_SSH_VARIANT=ssh", "SSH_ASKPASS_REQUIRE=never")
+	}
 	if t.authorization != "" {
 		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http."+t.remote+".extraHeader", "GIT_CONFIG_VALUE_0="+t.authorization)
 	}

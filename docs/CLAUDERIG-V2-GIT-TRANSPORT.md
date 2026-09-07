@@ -2,7 +2,7 @@
 
 `commitartifact.NewGitTransport` supplies the first concrete transport for the
 retained publisher. It implements the shared `Transport` contract and Claude's
-`ArtifactTransport` destination interface. It can publish through HTTPS or an
+`ArtifactTransport` destination interface. It can publish through HTTPS, SSH with explicit identity/host-trust files, or an
 absolute local path, with ordinary fast-forward pushes and fresh confirmation
 performed by `Publish`. This remains internal code: commands, hooks and installed
 workers do not call it. Existing synchronous Git and credential handling are
@@ -12,9 +12,9 @@ unchanged, so this step has no end-user changeset.
 
 Construction copies one exact remote string, branch, optional HTTP Basic
 credential and optional CA bundle path. The destination interface returns those
-same bound values. Relative paths, remote aliases, SSH, remote helpers, URL
-userinfo, queries, fragments, control characters and unsafe branch/ref syntax
-are refused. Plain HTTP is limited to literal loopback IP addresses for local
+same bound values. Relative local paths, remote aliases, remote helpers, HTTP
+URL userinfo, queries, fragments, control characters and unsafe branch/ref syntax
+are refused. SSH destinations require an explicit user and SSH options as below. Plain HTTP is limited to literal loopback IP addresses for local
 integrations; production HTTP destinations must use HTTPS. Custom CA bundles are
 explicit and TLS verification cannot be disabled.
 
@@ -38,9 +38,62 @@ raw diagnostics, URLs or authorization values.
 
 This uses Git's documented [URL-scoped HTTP settings and redirect controls](https://git-scm.com/docs/git-config).
 The implementation intentionally rejects redirects instead of following one with
-a bound credential or changing the destination. SSH support and credential-helper
-selection need their own explicit noninteractive contracts before queued hooks
-can support those installations.
+a bound credential or changing the destination. Credential-helper selection and
+agent/keychain discovery still need explicit noninteractive contracts before
+queued hooks can support those installations.
+
+## SSH identity and host trust
+
+`SSHOptions` supplies three absolute paths: a trusted OpenSSH executable, one
+identity file and one known-hosts file. Construction copies their selection into
+the transport. Callers own these files and must keep them stable through an
+operation; path binding is not a snapshot of their contents. Missing, unreadable,
+wrong or encrypted identities fail authentication without an alternate identity
+or a prompt. The identity is supplied through `IdentityFile` configuration rather
+than `-i`, so even a missing path suppresses default identity-file selection.
+No private-key bytes are read by the transport, copied into queue
+state/artifacts, or embedded in command arguments, environment or errors. The
+selected file paths are visible to the child process.
+
+Supported destinations include `ssh://git@example.com:2222/srv/repo.git` and
+`git@example.com:acme/repo.git`. The original string remains the destination
+binding and the argument to Git: scp-style relative paths retain their remote
+home-directory semantics; SSH URL paths remain absolute. URLs may specify a port
+from 1 through 65535. Scp-style destinations use the normal SSH port. Users,
+hostnames and repository paths use a conservative ASCII grammar. Passwords,
+percent escapes, query/fragment text, shell syntax, tilde paths and dot traversal
+are refused. IPv6 literals must be bracketed in the destination. Alias expansion
+through SSH configuration is not supported.
+
+The command uses [OpenSSH's `-F none`](https://man.openbsd.org/ssh) to ignore user
+and system SSH configuration. [Authentication and host-key options](https://man.openbsd.org/ssh_config)
+select public-key authentication, one identity, and strict checking against the
+supplied known-hosts file. Unknown/changed hosts fail before running remote Git.
+Global host files, DNS host-key trust, host-key updates, certificate sidecar
+selection, identity agents, password/keyboard prompts, forwarding, proxy/jump
+commands, local commands, and connection sharing are disabled. The transport does
+not accept host keys on first use or add keys to an agent.
+
+Inherited SSH agent/askpass/provider environment is removed, along with the
+existing Git override isolation. Git receives `GIT_SSH_VARIANT=ssh` and a generated
+[`GIT_SSH_COMMAND`](https://git-scm.com/docs/git#Documentation/git.txt-GIT_SSH_COMMAND).
+Every argument is shell quoted, including executable and identity paths containing
+spaces or apostrophes. The known-hosts path is also quoted for OpenSSH's list
+parser. Paths with control characters, quotes that would alter that parser,
+percent tokens or environment/tilde expansion are refused. This relies on Git's
+shell convention, including Git for Windows; Plink/TortoisePlink are not accepted
+as alternate SSH implementations. Unsupported OpenSSH options fail closed.
+
+The same owned process runner, output bound, ordinary push and fresh confirmation
+rules apply to SSH. Cancelling a connection terminates the local SSH process tree;
+it does not guarantee that a remote server has stopped processing a request.
+Uncertain pushes still require the publisher's fresh ancestry observation.
+
+This first SSH path deliberately requires explicit files. Agent-backed encrypted
+keys, OS keychains, Git credential helpers, host aliases, ProxyJump and custom SSH
+configuration remain composition work. Repository authentication stays separate
+from Claude/Codex session attribution. Existing synchronous SSH behavior is
+unchanged, and no queued command or hook is activated.
 
 ## Fetch and push
 
@@ -161,3 +214,14 @@ and cancellation failures from both symbolic-ref and show-ref.
 Missing-executable and semantic-exit cases exercise startup closure and rejection
 of exit statuses joined with cleanup errors. These fixtures run on all three CI
 platforms and never access a real user's repository or vendor data.
+
+SSH tests use real Git/OpenSSH against an unprivileged loopback SSH server with
+fresh synthetic keys. They exercise SHA-1/SHA-256 publication and replay, newer
+local/remote histories, absent-branch ref isolation, option copying, paths with
+spaces/apostrophes, poisoned inherited settings, wrong/missing/encrypted keys,
+unknown/changed/missing host trust, wrong users and cancellation during a blocked
+handshake. An OpenSSH `-G` check verifies that missing selected files do not
+enable default identities or agents. Trust/key files and private Git
+configuration remain unchanged. The Go
+SSH dependency is used only by tests; production continues to use OpenSSH. CI must
+run these fixtures natively on Linux, macOS and Windows.
