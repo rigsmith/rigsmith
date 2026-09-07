@@ -29,6 +29,10 @@ type ArtifactCommitRequest struct {
 // committed reference uses commitartifact.Open; it must never rebuild a missing
 // committed artifact. Seed objects come only from the capture's retained bundle.
 func (s Service) CommitArtifact(ctx context.Context, input ArtifactCommitRequest) (string, error) {
+	return s.commitArtifact(ctx, ctx, input)
+}
+
+func (s Service) commitArtifact(ctx, staging context.Context, input ArtifactCommitRequest) (string, error) {
 	req, key, err := prepareArtifactRequest(input.Capture, queue.Captured)
 	if err != nil {
 		return "", err
@@ -40,9 +44,8 @@ func (s Service) CommitArtifact(ctx context.Context, input ArtifactCommitRequest
 	if err != nil {
 		return "", err
 	}
-	// The lock graph is capture store -> staging -> commit store. Extraction
-	// only reads the capture store, so it does not reverse capture's lock order.
-	_, release, err := storelock.Acquire(ctx, stage, StoreWait)
+	// Staging precedes private artifact stores. Capture extraction is read-only.
+	_, release, err := storelock.Acquire(staging, stage, StoreWait)
 	if err != nil {
 		return "", err
 	}

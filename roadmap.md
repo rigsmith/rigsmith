@@ -20,9 +20,11 @@ publication engine merged in [#318](https://github.com/rigsmith/rigsmith/pull/31
 Claude retained publication policy merged in [#319](https://github.com/rigsmith/rigsmith/pull/319).
 Owned process cleanup is implemented for retained Git commands and streams.
 [#326](https://github.com/rigsmith/rigsmith/pull/326) merged, removing custom
-SSH/HTTPS transports and the proposed credential helper. In review in [#327](https://github.com/rigsmith/rigsmith/pull/327): retained
+SSH/HTTPS transports and the proposed credential helper. Merged in [#327](https://github.com/rigsmith/rigsmith/pull/327): retained
 publication using existing Git/`gh` configuration, validated with real CLI fixtures.
-Queue execution/recovery and the Codex adapter follow.**
+Claude queue execution is in review in [#332](https://github.com/rigsmith/rigsmith/pull/332), with retained-phase recovery and
+exact batch acknowledgement. Native conflict recovery, lifecycle/capacity gates
+and the Codex adapter follow.**
 
 | Milestone | Status |
 | --- | --- |
@@ -31,7 +33,7 @@ Queue execution/recovery and the Codex adapter follow.**
 | Claude root/file adapter and policy extraction | Merged into `codex/v2`: [#304](https://github.com/rigsmith/rigsmith/pull/304). |
 | Shared file processing and restore mechanics | Merged into `codex/v2`: [#306](https://github.com/rigsmith/rigsmith/pull/306), including the directory-link review fix. |
 | Shared session/metadata and publication boundaries | Merged into `codex/v2`: [#307](https://github.com/rigsmith/rigsmith/pull/307), including review fixes. |
-| Store coordination and durable sync queue | 6a merged in [#308](https://github.com/rigsmith/rigsmith/pull/308). 6b.1 merged ([#309](https://github.com/rigsmith/rigsmith/pull/309)): durable generations, coalescing, owner recovery and acknowledgements. 6b.2 driver/service split merged in [#310](https://github.com/rigsmith/rigsmith/pull/310). Durable artifacts and Claude capture/sealing merged in [#311](https://github.com/rigsmith/rigsmith/pull/311). Retained commit bundles and Claude commit integration merged in [#315](https://github.com/rigsmith/rigsmith/pull/315). Capture-time seed retention merged in [#317](https://github.com/rigsmith/rigsmith/pull/317). Shared retained publication merged in [#318](https://github.com/rigsmith/rigsmith/pull/318). Claude retained publication policy merged in [#319](https://github.com/rigsmith/rigsmith/pull/319). Owned cleanup for retained Git commands and streams merged through #323/#324. [#326](https://github.com/rigsmith/rigsmith/pull/326) removed the custom SSH/HTTPS transports and proposed credential-helper layer. In review in [#327](https://github.com/rigsmith/rigsmith/pull/327): existing Git/`gh` publication integration with real CLI fixtures. Next: worker execution/recovery and lifecycle/capacity gates. |
+| Store coordination and durable sync queue | 6a merged in [#308](https://github.com/rigsmith/rigsmith/pull/308). 6b.1 merged ([#309](https://github.com/rigsmith/rigsmith/pull/309)): durable generations, coalescing, owner recovery and acknowledgements. 6b.2 driver/service split merged in [#310](https://github.com/rigsmith/rigsmith/pull/310). Durable artifacts and Claude capture/sealing merged in [#311](https://github.com/rigsmith/rigsmith/pull/311). Retained commit bundles and Claude commit integration merged in [#315](https://github.com/rigsmith/rigsmith/pull/315). Capture-time seed retention merged in [#317](https://github.com/rigsmith/rigsmith/pull/317). Shared retained publication merged in [#318](https://github.com/rigsmith/rigsmith/pull/318). Claude retained publication policy merged in [#319](https://github.com/rigsmith/rigsmith/pull/319). Owned cleanup for retained Git commands and streams merged through #323/#324. [#326](https://github.com/rigsmith/rigsmith/pull/326) removed the custom SSH/HTTPS transports and proposed credential-helper layer. Merged in [#327](https://github.com/rigsmith/rigsmith/pull/327): existing Git/`gh` publication integration with real CLI fixtures. In review in [#332](https://github.com/rigsmith/rigsmith/pull/332): Claude queue execution with retained-phase recovery and one staging lease. Next: native conflict recovery, manual-sync coverage and lifecycle/capacity gates. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 

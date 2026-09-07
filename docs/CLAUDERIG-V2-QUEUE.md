@@ -7,8 +7,9 @@ Durable capture artifacts and the capture/sealing portion of the Claude adapter
 are now implemented; see [capture artifacts](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md).
 Retained commit bundles and Claude commit/sealing are also implemented; see
 [retained commits](CLAUDERIG-V2-RETAINED-COMMITS.md). Capture-time seed retention
-now keeps ancestry available before the first commit. Push integration, a worker
-command and hook activation are still pending.
+now keeps ancestry available before the first commit. Claude QueueAdapter now
+connects these services to RunOne, including confirmed retained publication. A
+worker command and hook activation are still pending.
 This internal foundation has no end-user changeset because shipped commands
 behave as before.
 
@@ -175,18 +176,19 @@ Tests cover phase resumption, offline retry, new input during capture, staging
 and worker ownership, cancellation, uncertain/failed markers and classified
 blocking. A synthetic Claude capture/publication test changes and deletes live
 sources between phases and confirms the original local commit reaches a local
-bare remote without another identity observation. This tests the service
-boundary, not a completed production queue adapter. The unchanged six-scenario
-compatibility baseline remains the gate for synchronous behavior.
+bare remote without another identity observation. The concrete Claude adapter
+now has additional end-to-end queue tests described below; production lifecycle
+and rollout gates remain open. The unchanged six-scenario compatibility baseline
+remains the gate for synchronous behavior.
 
 ## Remaining integration gates (milestone 6b.2)
 
-- Recompute and validate canonical store/root/remote/configuration identity and
-  source provenance before execution. Reject changed bindings rather than use a
-  mutable config pointer or the worker's current login.
+- Add production producers and a resolver that persist/retrieve source provenance
+  and freshly resolve configuration for QueueAdapter. The adapter now validates
+  binding and provenance without consulting the worker's login.
 - Durable captures, capture-time seed bundles and retained commits now preserve
-  their dependencies independently of staging. Integrate verified commit
-  references with Push/recovery and define safe artifact cleanup.
+  their dependencies independently of staging and now feed Push/recovery through
+  QueueAdapter. Define safe artifact cleanup and classified retry policy.
 - Protect requested sources from retention until captured; handle deletion and
   unavailable source attribution explicitly, without acknowledging missing data.
 - Integrate manual sync acknowledgements only for the exact events its capture
@@ -195,9 +197,9 @@ compatibility baseline remains the gate for synchronous behavior.
   transactions stay short. Pass the original cancellation context to queue APIs,
   not a borrowed staging-store capability, which rejects nesting another store.
 - Retained Git commands now own cancellation cleanup. Establish parent-death
-  recovery and ownership of future external merge tools, and validate offline
-  retry/local-commit/push recovery before offering a worker command or queued
-  hooks. Queue owner recovery alone does not terminate orphaned external processes.
+  recovery and ownership of future external merge tools before offering a worker
+  command or queued hooks. Offline and unmarked-push replay now have integrated
+  queue tests. Queue owner recovery alone does not terminate orphaned external processes.
 - Add the Claude command/status surface, local-only completion policy, queue
   capacity remedy and supported worker startup/draining/rollback behavior.
 
@@ -217,6 +219,50 @@ explicit transport destination/branch, settled local HEAD, raw native attributes
 and secrets. The [local Git adapter](CLAUDERIG-V2-GIT-TRANSPORT.md) and owned
 cancellation cleanup remain after the custom network transports are removed.
 `NewConfiguredGitTransport` now reuses existing Git/`gh` authentication for
-network publication. Execution wiring,
-native conflict recovery, parent-death recovery and lifecycle/capacity remedies
+network publication. Claude QueueAdapter now supplies execution wiring.
+Native conflict recovery, parent-death recovery and lifecycle/capacity remedies
 remain gates; broad credential discovery is deferred.
+
+## Claude queue execution adapter
+
+`service.QueueAdapter` implements `queue.Adapter`. Its required resolver receives
+only the queue binding and batch provenance ID, and returns freshly resolved
+configuration, saved source identity, explicit Desktop profiles, separate capture
+and commit stores, and a destination-bound transport. It must use saved producer
+attribution, never the worker's active login. Existing repository privacy checks
+remain the composition caller's responsibility. The queue directory must also
+remain outside native roots, staging and artifact stores.
+
+Begin detaches and validates configuration and sealed events, rejects changed
+bindings or a mismatched/missing remote, then owns staging until Close. Saved
+capture/commit references must match their request keys and pass archive checks;
+full retained Git history/descriptor validation occurs before publication. A
+committed batch depends on its retained commit bundle, not on live transcripts
+or a still-present capture archive. Missing saved artifacts are errors and are
+never silently rebuilt. Changed inputs cannot redirect an already-open execution.
+
+All Claude artifact services now acquire staging **before** private artifact
+writer locks. The execution keeps a staging context solely for borrowing that
+lease; archive builders, seed/commit stores, private capture trees and queue
+transactions receive independent operation contexts. This avoids borrowing one
+store's capability to access another and prevents a capture-store/staging lock
+inversion. Manual sync cannot run between execution phases; this exclusion does
+not yet establish manual-sync event coverage or advance canonical staging.
+
+RunOne persists each successful reference, resumes only unfinished phases, and
+acknowledges only its sealed batch after fresh remote confirmation. A retry after
+an unmarked successful push confirms reachability without another push. Conflicts
+reported by retained publication become blocked `publication-conflict` jobs;
+recovery requires an explicit decision. Other errors, including offline transport,
+missing sources/artifacts, scan rejection and binding mismatch, retain their
+original errors and last durable phase. The caller must choose retry and
+remediation policy; this adapter adds no daemon or automatic retry loop. Raw
+errors are never persisted in queue state. Local-only completion remains unsupported.
+
+Synthetic tests exercise real configured Git publication, offline recovery after
+source deletion, later-generation preservation, cancellation between remote push
+and phase persistence, absent saved artifacts, changed bindings/provenance,
+conflict blocking, detached inputs, and staging ownership across phase gaps and
+manual-sync attempts. Existing artifact, queue and fixed-baseline compatibility
+tests remain required. Worker startup, parent-death recovery, capacity remedies,
+artifact/receipt cleanup, explicit status and opt-in hook rollout remain future work.
