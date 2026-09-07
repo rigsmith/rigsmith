@@ -582,9 +582,21 @@ git -C ../rigstack-acme push -u origin main
 
 # elsewhere
 git clone <url> my-stack && cd my-stack
-rig stack init                                   # rebuilds every member
-rig stack wire
+rig stack setup                                  # engine, members, overlay, status
 ```
+
+`setup` is the one command a fresh clone needs. It does the steps in an order
+where each can see what it is judging — which matters, because the obvious order
+does not. `doctor --fix` is what installs the engine, so running it first was
+unavoidable, and at that moment no member exists: nothing crosses between them,
+the overlay looks left over, and `doctor` said to delete it. `setup` imports
+first and judges after.
+
+`rig stack init` also writes a `README.md` if the repository has none, generated
+from the manifest: the member table, the setup command, and the two things a
+seed cannot show — that the directories are missing on purpose, and that work
+leaves through `propose` rather than a push. Edit it and rig leaves it alone;
+the marker line at the top says so.
 
 Name the directory — and the repository you push it to — `rigstack-<something>`.
 A seed is not a project you clone and work in: it is the few kilobytes `stack

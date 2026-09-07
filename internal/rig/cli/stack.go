@@ -49,7 +49,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
 	return refuseUnknownVerb(cmd)
 }
 
@@ -201,6 +201,14 @@ func newStackInitCmd() *cobra.Command {
 			}
 			if imported == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "nothing to import — every repo has a cursor; use `rig stack pull` for updates")
+			}
+			// A seed clone is a manifest, a build overlay, and nothing that says
+			// what either is — so the next person reads a build file pointing at
+			// directories that are not there and concludes the repo is broken.
+			// Best-effort: failing to write a README must not fail an import that
+			// worked.
+			if wrote, err := writeStackReadme(root, m); err == nil && wrote {
+				fmt.Fprintln(cmd.OutOrStdout(), "wrote README.md — what this is, and how to set it up")
 			}
 			return nil
 		},
@@ -1318,8 +1326,15 @@ func newStackWireCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, err = stackWire(ctx, cmd.OutOrStdout(), m, repo, "", false)
-			return err
+			if _, err := stackWire(ctx, cmd.OutOrStdout(), m, repo, "", false); err != nil {
+				return err
+			}
+			// Regenerated with the overlay, so the member table follows the
+			// manifest rather than going stale the first time one is added.
+			if wrote, err := writeStackReadme(repo.Dir, m); err == nil && wrote {
+				fmt.Fprintln(cmd.OutOrStdout(), "refreshed README.md")
+			}
+			return nil
 		},
 	}
 	return cmd

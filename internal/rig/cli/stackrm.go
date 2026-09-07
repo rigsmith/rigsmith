@@ -356,6 +356,17 @@ func stackRestoreFromHead(ctx context.Context, repo *gitrepo.Repo, rel string) b
 // about to commit a member's removal, and an overlay it could not rewrite
 // may still point into the directory that left.
 func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitrepo.Repo, indent string, strict bool) (touched []string, err error) {
+	// Nothing imported means nothing crosses between members, which reads as
+	// "the overlay is left over" — and this is the verb that acts on that
+	// reading. On a seed clone it deleted the overlay the workspace was about to
+	// need. Doctor only advised it; here it happened.
+	//
+	// By directory rather than by cursor: a seed carries cursors for members it
+	// does not have, which is exactly this state.
+	if !stackAnyPrefixPresent(repo.Dir, m.names()) {
+		fmt.Fprintf(out, "%smembers are not imported yet — nothing to wire against; run `rig stack setup`\n", indent)
+		return nil, nil
+	}
 	byEco, orphans, notes, failed := stackRedirects(ctx, repo.Dir, m.names(), m.publishing())
 	if strict && len(failed) > 0 {
 		names := make([]string, 0, len(failed))

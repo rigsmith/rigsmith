@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -324,6 +325,19 @@ func stackReportNotes(out io.Writer, notes []string) {
 	}
 }
 
+// stackAnyPrefixPresent reports whether any member directory exists on disk.
+//
+// By directory rather than by cursor: a seed clone carries cursors for members
+// it does not have, which is exactly the state this needs to recognise.
+func stackAnyPrefixPresent(root string, members []string) bool {
+	for _, name := range members {
+		if fi, err := os.Stat(filepath.Join(root, name)); err == nil && fi.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 // redirectsOf drops the reporting detail the adapters have no use for.
 func redirectsOf(links []stackLink) []plugin.Redirect {
 	out := make([]plugin.Redirect, 0, len(links))
@@ -350,6 +364,18 @@ func stackCheckOverlay(ctx context.Context, root string, m *stackManifest) ([]st
 	var out []stackOverlayReport
 	members, writable := m.names(), m.ownedNames()
 	byEco, orphans, notes, failed := stackRedirects(ctx, root, members, m.publishing())
+	// Nothing is imported yet, so of course nothing crosses between members —
+	// and an overlay judged against that reads as left over and is advised away.
+	// On a fresh clone of a seed that is the first thing anyone runs, and taking
+	// the advice deletes the file the workspace is about to need.
+	//
+	// The same distinction the failed-scan guard above draws, and the one
+	// `status` draws when it says it cannot tell without an import commit: no
+	// links found is not the same as no links.
+	if !stackAnyPrefixPresent(root, members) {
+		return nil, orphans, append(notes,
+			"members are not imported yet, so nothing can be said about the build overlay — run `rig stack setup`"), failed
+	}
 	for _, eco := range ecosystem.Default().All() {
 		// A scan that errored found no links, which is not the same as there
 		// being none: the overlay it would have needed is still needed, and
