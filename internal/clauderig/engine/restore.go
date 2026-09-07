@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -257,7 +258,11 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 		}
 		rr.SlugsRewritten = len(rewritten)
 		if r.ID == "cli" && opts.Manifest != nil {
-			rr.Links = restoreLinks(target, opts.Manifest.Links, slugMap)
+			var err error
+			rr.Links, err = restoreLinks(target, opts.Manifest.Links, slugMap)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		if opts.Prune && r.ID == "cli" {
@@ -278,13 +283,13 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 // nothing occupies the link path — an existing file, dir, or link is the
 // machine's own state and is left alone. A failed creation (e.g. symlinks
 // unavailable on the platform) skips that link, never the restore.
-func restoreLinks(target string, manifestLinks map[string]string, slugMap map[string]string) int {
+func restoreLinks(target string, manifestLinks map[string]string, slugMap map[string]string) (int, error) {
 	if len(manifestLinks) == 0 {
-		return 0
+		return 0, nil
 	}
 	root, err := os.OpenRoot(target)
 	if err != nil {
-		return 0
+		return 0, nil
 	}
 	defer root.Close()
 	links := linkCache{}
@@ -325,11 +330,39 @@ func restoreLinks(target string, manifestLinks map[string]string, slugMap map[st
 		if err := root.MkdirAll(filepath.Dir(linkName), 0o755); err != nil {
 			continue
 		}
-		if err := root.Symlink(linkTarget, linkName); err == nil {
+		created, err := createRestoreLink(root, linkTarget, linkName)
+		if err != nil {
+			return n, err
+		}
+		if created {
 			n++
 		}
 	}
-	return n
+	return n, nil
+}
+
+// restoreLinkCreator is the rooted filesystem surface needed to create and
+// verify one link. Tests can deterministically replace a target after creation.
+type restoreLinkCreator interface {
+	Symlink(string, string) error
+	Stat(string) (os.FileInfo, error)
+	Remove(string) error
+}
+
+func createRestoreLink(root restoreLinkCreator, target, name string) (bool, error) {
+	if err := root.Symlink(target, name); err != nil {
+		return false, nil
+	}
+	// Symlink confines its new name, but does not validate its target. Check
+	// the completed link through Root too, catching target swaps before this
+	// observation. A symbolic link cannot prevent later filesystem changes.
+	if info, err := root.Stat(name); err == nil && info.IsDir() {
+		return true, nil
+	}
+	if err := root.Remove(name); err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("restore: could not remove unverified memory link: %w", err)
+	}
+	return false, nil
 }
 
 // Manifest endpoints use portable slash-relative names, never absolute paths,

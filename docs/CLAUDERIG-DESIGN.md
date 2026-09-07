@@ -180,6 +180,14 @@ The manifest also stamps the producing **Claude Code version** (skew warning) an
 the **source OS**, and is the natural home for the Desktop `claude-code-sessions`
 cwd mappings (Q4).
 
+The manifest also persists shared-memory directory links as a map of link path
+to target path, both slash-relative to the Claude root. Restore treats these
+endpoints as untrusted, including in older backups, and validates them both
+before and after project-slug rewriting. It rejects traversal, absolute or
+platform-specific paths and malformed names. Live source link discovery, Git
+persistence/clone, slug rewriting and relative link recreation are covered by a
+synthetic gated round-trip test.
+
 ## Retention & repo shape
 
 - **90-day** working-tree window on `projects/`, enforced two ways: sync skips
@@ -284,6 +292,18 @@ Flags: `--backup`, `--force`.
 Mechanism: a **pre-sync snapshot** is taken before any tree-touching pull/restore
 (lifted from claude-sync) so every operation is rollback-able. Snapshots are
 pruned to the N most recent.
+
+Memory-link restore opens the selected folder with `os.OpenRoot`. Target checks,
+parent creation and link creation use that rooted handle; existing occupied paths
+and symlinked link-parent directories remain untouched. Links have relative
+targets, including on Windows, so moving the restored folder preserves its layout.
+After creation, restore checks the completed link through the rooted handle and
+removes it if it no longer resolves to an internal directory. A cleanup failure
+stops restore with an error rather than counting an unverified link as restored.
+
+These checks constrain restore's operations and its observations. A symbolic link
+still follows mutable filesystem names: changes after the final check can redirect
+it. Restore does not claim permanent confinement against later filesystem edits.
 
 ## Version skew
 
