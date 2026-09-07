@@ -6,8 +6,10 @@ description: >
   changerig (changesets), shiprig (releases/publish), and clauderig (sync Claude Code
   config across machines + worktree/PR guard). Invoke whenever the work involves
   building/testing/running/formatting a project, managing changesets or changelogs,
-  cutting or publishing a release, creating worktrees/branches, or syncing Claude
-  Code setup — even if the user names a raw tool (go/dotnet/npm/cargo) instead of rig.
+  cutting or publishing a release, creating worktrees/branches, syncing Claude Code
+  setup, finding or reopening a past Claude Code session, or working across several
+  forked repos fused into one history (`rig stack`) — even if the user names a raw
+  tool (go/dotnet/npm/cargo) instead of rig.
 allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
 ---
 
@@ -106,6 +108,109 @@ Only when none of the above covers the task, add it:
 
 Custom commands honor `--dry-run`, forward extra args, and take `env`/`cwd`/
 `description`.
+
+## rig stack — several forked repos in one history
+
+A **stack workspace** fuses upstream repos you maintain forks of into one git
+history, each under its own directory (`pty-core/`, `term-core/`, …). A change
+spans them in one commit and the build compiles against source; each project
+still leaves as an ordinary PR to its own upstream. `rig.stack.jsonc` at the
+workspace root names the repos.
+
+```sh
+rig stack status                       # each repo's cursor vs its upstream tip
+rig stack pull [repo]                  # take upstream's new commits (all repos by default)
+rig stack send <repo> <new-branch>     # ALL that repo's changes → a branch on the fork
+rig stack propose <repo> <b> --from <topic>  # ...or one topic branch (needs trackBranch)
+rig stack init                         # scaffold the manifest; run again to import
+rig stack doctor --fix                 # install the josh engine if missing
+```
+
+**You are usually working inside one.** Detect it: a `rig.stack.jsonc` at the
+git top level, or directories that match its `repos` keys. If so:
+
+- **Commit across projects freely.** That is the point — one commit may touch
+  `pty-core/` and `term-control/` together. Do not split it "so each repo gets
+  its own commit"; `send` does that split for you, correctly.
+- **Never `git push` from the workspace**, and never add a remote to it. It
+  holds several rewritten upstream histories fused together. The only sanctioned
+  way out is `rig stack send`.
+- **Keep the worktree clean** before `init`, `pull`, or `send` — they refuse a
+  dirty tree, because an import stages everything and would swallow stray edits.
+
+### Four different things called "branch"
+
+Read this before touching a manifest or writing a `propose` command. They are
+unrelated to each other, and they live in three different repositories:
+
+| | What it is | Where it lives |
+|---|---|---|
+| `upstreamBranch` | the branch of **upstream** a directory follows — what `pull` takes, what `propose` roots on | the manifest, per repo, default `main` |
+| `<new-branch>` | a branch **you create on your fork** for one change — the pull request | the `propose` argument, named per change |
+| `branchPrefix` | what `propose` prepends to that argument, default `stack/` | the manifest, workspace-wide or per repo |
+| `--from <topic>` | a branch **of the stackspace itself**, holding one in-flight fix | your local stackspace; `stack-pr-<name>` by convention |
+| `trackBranch` | a branch **of your fork** holding everything the prefix carries, so a rebuild is not short | the manifest, per repo; rig writes it when `--from` is used |
+
+A manifest never names the branch `propose` creates, because that is a property
+of the change rather than of the project. (`branch` is the old name for
+`upstreamBranch` and is still read.)
+
+The two prefixes are deliberately different spellings: `stack/` is a pull
+request **on your fork**, `stack-pr-` is work in progress **here**.
+
+### Sending work upstream
+
+```sh
+rig stack send pty-core read-timeout -m "Fix the read timeout"
+# → pushes stack/read-timeout: one commit on your fork, rooted on upstream's
+#   tip, containing only that project's files at their real un-prefixed paths.
+#   Open the PR from the fork.
+```
+
+**It sends the whole prefix, not the change you have in mind.** The branch carries
+everything the stackspace holds for that project — including a fix already waiting in
+another pull request, whose changes would then show up in this one too. Fine while one
+thing is in flight, wrong as soon as two are.
+
+Keep each in-flight fix on its own **topic branch of the stackspace**, rooted on the
+commit that imported that member; `main` merges them and stays the fused line you build
+and test. Then propose one at a time:
+
+```sh
+git switch -c stack-pr-reader-wedge <the import commit>   # recommended naming
+# ...fix, commit...
+git switch main && git merge stack-pr-reader-wedge
+rig stack propose term-core reader-wedge --from reader-wedge
+```
+
+A topic rooted on the import holds upstream plus its own change and nothing else, so
+its tree is what upstream should see — no patch to replay, nothing to fail to apply as
+histories intertwine. A topic based on another unmerged fix is refused. `stack-pr-<name>`
+is a convention, not a rule: an exact branch name always wins, the conventional one is
+the fallback.
+
+`--from` requires `trackBranch` in the manifest, and keeps that branch current with the
+whole divergence — a topic is only part of it, and `init` rebuilds from it, so without
+that a rebuild (CI included) would silently build without the fixes you left out.
+`rig stack status` reports how many commits a prefix diverges by, and lists the
+`stack-pr-*` topics in flight.
+
+Pass the **short name** — `read-timeout`, not `stack/read-timeout`. `send`
+prepends `branchPrefix` (default `stack/`) so these branches stay apart from the
+user's own work on the same fork — it identifies them, it does not reserve them. A name that already carries the prefix is left
+alone, so re-sending with the full branch name still works. The output line
+names the branch that was actually created; use that when opening the PR.
+
+A workspace commit touching three projects becomes three `send` calls, one per
+project. Sending twice to the same branch **updates** it, so review feedback is
+a commit plus a re-send.
+
+`send` **refuses when upstream has moved** past the recorded cursor: rooting a
+stale tree on a newer tip would produce a PR that silently reverts whatever
+landed in between. When you see that, `rig stack pull <repo>` and send again —
+do not work around it.
+
+Full guide: <https://rigsmith.dev/rig/stack>.
 
 ## changerig — changesets (the changelog source of truth)
 
