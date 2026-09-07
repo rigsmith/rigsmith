@@ -3,12 +3,14 @@ package commitartifact
 import (
 	"bufio"
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 )
 
 // batchRequests avoids constructing another object-ID list in memory. exec feeds
@@ -47,32 +49,42 @@ func (r gitRepo) materializeBlobs(ctx context.Context, root string, files []*pub
 	}, "cat-file", "--batch")
 }
 
-// stream drains bounded protocol records and reaps the child before returning.
-func (r gitRepo) stream(ctx context.Context, input io.Reader, consume func(io.Reader) error, args ...string) (err error) {
+// stream owns the pipe independently of Cmd.Wait: Run can observe root exit
+// and stop descendants holding stdout before the consumer needs to see EOF.
+// The consumer must return on EOF/read failure and inputs must be finite.
+func (r gitRepo) stream(ctx context.Context, input io.Reader, consume func(io.Reader) error, args ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := r.command(childCtx, args...)
-	cmd.Stdin = input
-	stdout, err := cmd.StdoutPipe()
+	stdout, writer, err := os.Pipe()
 	if err != nil {
 		return err
 	}
-	if err = cmd.Start(); err != nil {
-		stdout.Close()
-		return fmt.Errorf("retained commit git stream: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			cancel()
-		}
-		waitErr := cmd.Wait()
-		if ctx.Err() != nil {
-			err = ctx.Err()
-		} else if err == nil && waitErr != nil {
-			err = fmt.Errorf("retained commit git stream: %w", waitErr)
-		}
+	defer stdout.Close()
+	cmd := r.command(args...)
+	cmd.Stdin, cmd.Stdout = input, writer
+	done := make(chan error, 1)
+	go func() {
+		runErr := process.Run(childCtx, cmd)
+		closeErr := writer.Close() // Also delivers EOF after startup failure.
+		done <- errors.Join(runErr, closeErr)
 	}()
-	return consume(stdout)
+	consumeErr := consume(stdout)
+	cancel()
+	_ = stdout.Close() // Unblock a writer even if the consumer returns early.
+	runErr := <-done   // Retain the staging lease through process and pipe cleanup.
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if consumeErr != nil {
+		return errors.Join(consumeErr, runErr)
+	}
+	if runErr != nil {
+		return commandError("stream", runErr)
+	}
+	return nil
 }
 
 func materializeBatch(ctx context.Context, input io.Reader, root string, files []*publicationFile) error {

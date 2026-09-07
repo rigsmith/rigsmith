@@ -2,9 +2,7 @@ package commitartifact
 
 import (
 	"context"
-	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -57,6 +55,11 @@ func SettledHead(ctx context.Context, dir string) (string, error) {
 		}
 		return head, nil
 	}
+	// Only a clean rev-parse failure can enter unborn-branch detection. A
+	// cleanup or output failure must not be hidden by later successful probes.
+	if !gitExited(err, 128) {
+		return "", err
+	}
 	// Only a symbolic HEAD whose exact branch is absent is an unborn checkout.
 	ref, refErr := repo.run(ctx, nil, "symbolic-ref", "--quiet", "HEAD")
 	if refErr != nil {
@@ -67,8 +70,7 @@ func SettledHead(ctx context.Context, dir string) (string, error) {
 		return "", ErrInvalid
 	}
 	_, refErr = repo.run(ctx, nil, "show-ref", "--verify", "--quiet", ref)
-	var exit *exec.ExitError
-	if errors.As(refErr, &exit) && exit.ExitCode() == 1 && ctx.Err() == nil {
+	if gitExited(refErr, 1) && ctx.Err() == nil {
 		return "", nil
 	}
 	return "", err

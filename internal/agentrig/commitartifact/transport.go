@@ -199,8 +199,7 @@ func (t *GitTransport) run(ctx context.Context, dir string, args ...string) (str
 	if t.caFile != "" {
 		flags = append(flags, "-c", "http.sslCAInfo="+t.caFile, "-c", "http.schannelUseSSLCAInfo=true")
 	}
-	cmd := (gitRepo{dir: dir}).command(context.Background(), append(flags, args...)...)
-	cmd.Cancel = nil // process.Run owns cancellation, including subprocess cleanup.
+	cmd := (gitRepo{dir: dir}).command(append(flags, args...)...)
 	filtered := cmd.Env[:0]
 	for _, entry := range cmd.Env {
 		key, _, _ := strings.Cut(entry, "=")

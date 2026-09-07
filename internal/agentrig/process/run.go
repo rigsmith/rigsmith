@@ -1,4 +1,4 @@
-// Package process owns command cancellation and cleanup for queued Git transport.
+// Package process owns command cancellation and cleanup for retained Git operations.
 // Commands must be fresh, have finite stdin, and use trusted helpers that remain
 // in their inherited Unix process group or Windows job. This is not a sandbox.
 package process
