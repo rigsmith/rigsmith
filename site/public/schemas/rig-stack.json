@@ -179,7 +179,7 @@
     },
     "proposals": {
       "type": "object",
-      "description": "Written by `propose --from`, not by hand: for each repo, which branch of your fork carries each topic branch's pull request, and the commit that was sent to it. `lastPropose` holds one branch per repo and cannot answer this once two fixes are in flight for one member. Only what git cannot be asked is recorded — which topics exist, what they touch and whether they are stale are derived from the repository every time. The commit lets `status` say when a branch has moved past its pull request, and keeps a topic recreated under an old name from inheriting the old destination.",
+      "description": "Written by `propose --from`, not by hand: for each repo, which branch of your fork carries each topic branch's pull request, and the commit that was sent to it. `lastPropose` holds one branch per repo and cannot answer this once two fixes are in flight for one member. Only what git cannot be asked to derive is recorded — which topics exist, what they touch and whether they are stale all come from the repository every time. The commit lets `status` say when a branch has moved past its pull request, and keeps a topic recreated under an old name from inheriting the old destination.",
       "additionalProperties": {
         "type": "object",
         "additionalProperties": {

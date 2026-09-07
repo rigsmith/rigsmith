@@ -472,15 +472,20 @@ func (m *stackManifest) validate() error {
 	// published schema rejects blank values that would otherwise reach `status`
 	// and be shown as a branch or silently read as "not proposed yet".
 	for prefix, topics := range m.Proposals {
+		// An entry for a repo that is gone is ignored, not refused. JSON Schema
+		// cannot express "this key must appear in repos", so refusing here made
+		// rig reject manifests the published schema accepts — and refusing to
+		// LOAD over a stale record would be out of proportion to it anyway.
+		// `status` only ever reads Proposals[name] for a member it already has.
 		if m.Repos[prefix] == nil {
-			return fmt.Errorf("proposals names %q, which is not a repo in this stackspace", prefix)
+			continue
 		}
 		for topic, p := range topics {
 			if strings.TrimSpace(topic) == "" {
-				return fmt.Errorf("proposals for %q has an entry with no topic branch name", prefix)
+				return fmt.Errorf("the proposals map for %q has an entry with no topic branch name", prefix)
 			}
 			if strings.TrimSpace(p.Branch) == "" {
-				return fmt.Errorf("proposals for %q: topic %q records no branch — remove the entry, or name the branch its pull request is on", prefix, topic)
+				return fmt.Errorf("the proposals map for %q records no branch for topic %q — remove the entry, or name the branch its pull request is on", prefix, topic)
 			}
 		}
 	}
@@ -577,22 +582,12 @@ func stackSetCursor(src *cfgfind.Source, m *stackManifest, prefix, sha string) e
 		delete(m.LastPin, prefix)
 	}
 
-	w := confkit.Writer{SchemaURL: stackSchemaURL}
 	for _, kv := range []struct {
 		key   string
 		value map[string]string
 	}{{"lastSync", m.LastSync}, {"lastPin", m.LastPin}} {
-		key, value := kv.key, kv.value
-		raw, err := json.Marshal(value)
-		if err != nil {
+		if err := stackWriteManifestMap(src, kv.key, kv.value); err != nil {
 			return err
-		}
-		path := []string{key}
-		if src.Path == "" { // embedded key in .rig.json
-			path = []string{"stack", key}
-		}
-		if !w.Set(src.File, path, string(raw)) {
-			return fmt.Errorf("could not update %s in %s", strings.Join(path, "."), src.File)
 		}
 	}
 	return nil

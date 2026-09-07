@@ -565,9 +565,9 @@ lib          a1b2c3d4   up to date  ·  `propose` sends this prefix's whole dive
 ```
 
 Almost all of that is derived from the repository each time it runs — which topics
-exist, which member each one touches, whether it went stale behind a pull. Only the
-**fork branch** is recorded, in the manifest under `proposals`, because it is the one
-thing git here cannot be asked:
+exist, which member each one touches, whether it went stale behind a pull. What is
+recorded, in the manifest under `proposals`, is only what the repository cannot be
+asked: **where the pull request went**, and **which commit was sent there**.
 
 ```jsonc
 "proposals": {

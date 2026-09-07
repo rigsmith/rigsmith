@@ -336,7 +336,13 @@ func newStackStatusCmd() *cobra.Command {
 				// Existence, reach and staleness are asked of the repository; only
 				// the destination comes from the manifest, because only that is
 				// unknowable from here.
-				for _, t := range stackTopics(ctx, repo, m, name) {
+				topics, terr := stackTopics(ctx, repo, m, name)
+				if terr != nil {
+					// Said, not swallowed: an empty list here would read as "no
+					// topics in flight", which is the opposite of "cannot tell".
+					fmt.Fprintf(out, "  (cannot list topics for %s — %s)\n", name, stackFirstLine(terr))
+				}
+				for _, t := range topics {
 					where := "not proposed yet"
 					if pr, ok := m.Proposals[name][t.Name]; ok && pr.Branch != "" {
 						where = "→ " + m.Repos[name].Fork + ":" + pr.Branch
@@ -442,7 +448,11 @@ func newStackPullCmd() *cobra.Command {
 			// none of the integration line's fixes, which is a separate piece of
 			// work and not a flag.
 			for _, name := range moved {
-				stale := stackStaleTopicNames(ctx, repo, m, name)
+				stale, serr := stackStaleTopicNames(ctx, repo, m, name)
+				if serr != nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "\n%s: cannot tell which topics this pull left behind — %s\n", name, stackFirstLine(serr))
+					continue
+				}
 				if len(stale) == 0 {
 					continue
 				}
@@ -573,10 +583,20 @@ func stackImportCommit(ctx context.Context, repo *gitrepo.Repo, name string) str
 // a topic's commits are ancestors of the newest import marker and any
 // `marker..topic` range is empty — a range test called every topic irrelevant to
 // every member the moment it was merged, which is to say always.
-func stackTopicTouches(ctx context.Context, repo *gitrepo.Repo, base, topic, name string) bool {
+func stackTopicTouches(ctx context.Context, repo *gitrepo.Repo, base, topic, name string) (bool, error) {
 	baseTree, berr := repo.RevParse(ctx, base+":"+name)
+	if berr != nil {
+		// The import has no such directory, which is a stackspace this member is
+		// not really in — nothing to compare, and nothing wrong either.
+		return false, nil
+	}
 	topicTree, terr := repo.RevParse(ctx, topic+":"+name)
-	return berr == nil && terr == nil && baseTree != topicTree
+	if terr != nil {
+		// The topic does not carry this member's directory at all: absence, not
+		// failure. It is the ordinary case for a topic belonging to another member.
+		return false, nil
+	}
+	return baseTree != topicTree, nil
 }
 
 // stackTopic is one in-flight topic branch of this stackspace, as it stands
@@ -599,35 +619,53 @@ type stackTopic struct {
 // Only the conventionally-named branches are examined. A branch the user named
 // themselves may be anything at all, and calling someone's unrelated work a
 // stale topic is worse than saying nothing.
-func stackTopics(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) []stackTopic {
+func stackTopics(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) ([]stackTopic, error) {
 	base := stackImportCommit(ctx, repo, name)
 	if base == "" {
-		return nil
+		// No marker to measure against. Not an error: a stackspace whose history
+		// was rewritten past rig's own commits legitimately has none, and there
+		// is simply nothing to say about topics there.
+		return nil, nil
 	}
 	branches, err := repo.BranchesWithPrefix(ctx, stackTopicPrefix)
 	if err != nil {
-		return nil
+		// Failing to enumerate is not the same as there being none, and the
+		// difference matters: silence here reads as "no topics in flight".
+		return nil, fmt.Errorf("listing %s* branches: %w", stackTopicPrefix, err)
 	}
 	var out []stackTopic
 	for _, b := range branches {
-		if !stackTopicTouches(ctx, repo, base, b, name) {
+		touches, terr := stackTopicTouches(ctx, repo, base, b, name)
+		if terr != nil {
+			return nil, fmt.Errorf("comparing %s against %s: %w", b, name, terr)
+		}
+		if !touches {
 			continue
 		}
+		// An ancestry check that fails errs toward STALE. The two answers are not
+		// symmetric: calling a stale topic current hides the one thing this
+		// reports — that proposing it would revert what upstream landed — while
+		// calling a current one stale costs a line of noise and a propose that
+		// then succeeds.
 		current, aerr := repo.IsAncestor(ctx, base, b)
-		out = append(out, stackTopic{Name: b, Stale: aerr == nil && !current})
+		out = append(out, stackTopic{Name: b, Stale: aerr != nil || !current})
 	}
-	return out
+	return out, nil
 }
 
 // stackStaleTopicNames is stackTopics filtered to the ones a pull left behind.
-func stackStaleTopicNames(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) []string {
+func stackStaleTopicNames(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) ([]string, error) {
+	topics, err := stackTopics(ctx, repo, m, name)
+	if err != nil {
+		return nil, err
+	}
 	var stale []string
-	for _, t := range stackTopics(ctx, repo, m, name) {
+	for _, t := range topics {
 		if t.Stale {
 			stale = append(stale, t.Name)
 		}
 	}
-	return stale
+	return stale, nil
 }
 
 // stackFileDirty reports whether one path has changes git has not recorded —
@@ -1174,6 +1212,9 @@ func newStackSendCmd() *cobra.Command {
 			// what is proposed: it is what trackBranch is updated with below, so
 			// a rebuild still gets the fixes this pull request leaves out.
 			fullTree := tree
+			// Declared out here because it is written under --from and read at the
+			// recording step further down, after the push.
+			topicCommit := ""
 			if fromBranch != "" {
 				// Without somewhere to keep the whole divergence, proposing one
 				// topic would make every rebuild — CI included — silently drop the
@@ -1205,6 +1246,15 @@ func newStackSendCmd() *cobra.Command {
 				topicTree, terr := repo.RevParse(ctx, fromBranch+":"+name)
 				if terr != nil {
 					return fmt.Errorf("%s has no %s/ in it, so there is nothing of that project to propose: %w", fromBranch, name, terr)
+				}
+				// Read HERE, with the tree that is about to be built and pushed —
+				// not after the push. Re-reading a mutable branch afterwards can
+				// record a revision that was never sent, and a failed re-read would
+				// silently record nothing and turn movement detection off.
+				var cerr error
+				topicCommit, cerr = repo.RevParse(ctx, fromBranch)
+				if cerr != nil {
+					return fmt.Errorf("cannot read %s to record what is being proposed: %w", fromBranch, cerr)
 				}
 				// A topic rooted before the last pull holds the prefix as upstream
 				// USED to be. Committing that tree onto the current tip would
@@ -1354,13 +1404,9 @@ func newStackSendCmd() *cobra.Command {
 			// only remember the second; this is the record `status` reads to say
 			// where each one is.
 			if fromBranch != "" {
-				// The topic's tip, not the commit that was pushed: what status
-				// compares later is the branch as it stands against what was sent.
-				tip, terr := repo.RevParse(ctx, fromBranch)
-				if terr != nil {
-					tip = ""
-				}
-				if err := stackRememberProposal(src, m, name, fromBranch, branch, tip); err != nil {
+				// topicCommit, captured with the tree that was pushed — not a fresh
+				// read, which could have moved in between.
+				if err := stackRememberProposal(src, m, name, fromBranch, branch, topicCommit); err != nil {
 					return fmt.Errorf("%s reached %s:%s, but recording where it went failed: %w\npropose it again to record it — the push already happened, so re-sending is a no-op on the fork", fromBranch, r.Fork, branch, err)
 				}
 			}
