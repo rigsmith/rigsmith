@@ -36,6 +36,8 @@ flow, so a bug can only ever fail *open*.
 | Tool call | Verdict |
 |---|---|
 | `EnterWorktree` / `ExitWorktree` | **Deny** — moves the session cwd; use `rig worktree new` |
+| `Agent` with `isolation: "worktree"` | **Deny** — makes the same `.claude/worktrees/<name>` checkout through the Agent tool. An agent *without* isolation is an ordinary subagent and passes |
+| `Bash` running `git worktree add` under `.claude/worktrees` | **Deny** — the same place by hand. `list` and `remove` there are allowed: that is the way out |
 | `Bash` with a top-level `cd`/`pushd` out of the repo root | **Deny** — relocates the shell. A subshell `(cd … && …)` is the escape hatch |
 | `Edit`/`Write`/`NotebookEdit` of **code** while on `main`/`master`/`trunk` | **Deny** — needs a branch + worktree + PR |
 | `git commit` of **code** while on a base branch | **Deny** — inspects the staged (and `-a` tracked) files |

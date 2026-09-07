@@ -3,6 +3,7 @@ package guard
 import (
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -199,9 +200,133 @@ func TestEveryRegisteredToolIsActedOn(t *testing.T) {
 			req.Command = "cd ~ && echo hi"
 		case WritesFile(tool):
 			req.FilePath = filepath.Join(root, "main.go")
+		case TakesIsolation(tool):
+			// Its rule is conditional on the input, the way the two above are:
+			// the tool is fine, asking it to isolate itself is not.
+			req.Isolation = "worktree"
 		}
 		if got := Evaluate(req, env); got.Decision != Deny {
 			t.Errorf("%s: decision = %v, want Deny — it is in the matcher, so it should be governed", tool, got.Decision)
+		}
+	}
+}
+
+// The Agent tool takes isolation: "worktree" and creates the same
+// .claude/worktrees/<name> checkout EnterWorktree would. The guard refused the
+// tool by name and never looked at the input, so one was created in this repo on
+// 6 September with the hook already installed — the branch that became #313.
+func TestAgentWithWorktreeIsolationIsDenied(t *testing.T) {
+	env := Env{InRepo: true, Root: "/repo"}
+	got := Evaluate(Request{Tool: "Agent", Isolation: "worktree", Cwd: "/repo"}, env)
+	if got.Decision != Deny {
+		t.Fatalf("an isolated agent was %v, want Deny", got.Decision)
+	}
+	if !strings.Contains(got.Reason, "rig worktree new") {
+		t.Errorf("the denial does not point at the sanctioned route: %q", got.Reason)
+	}
+
+	// An ordinary subagent is not a worktree and must still run. Denying every
+	// Agent call would block the useful case to stop the rare one.
+	for _, iso := range []string{"", "remote"} {
+		if got := Evaluate(Request{Tool: "Agent", Isolation: iso, Cwd: "/repo"}, env); got.Decision != Defer {
+			t.Errorf("Agent with isolation %q was %v, want Defer", iso, got.Decision)
+		}
+	}
+
+	// Outside a repo too: the checkout is just as invisible there, and the
+	// relocation rules above do not depend on repo state either.
+	if got := Evaluate(Request{Tool: "Agent", Isolation: "worktree"}, Env{}); got.Decision != Deny {
+		t.Errorf("outside a repo an isolated agent was %v, want Deny", got.Decision)
+	}
+}
+
+// The hook only runs for tools the matcher names, so a rule for a tool missing
+// from Tools() is a rule that never fires. This is how Monitor was missed once
+// already.
+func TestAgentIsInTheMatcher(t *testing.T) {
+	var found bool
+	for _, tool := range Tools() {
+		if tool == "Agent" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("Agent is not in Tools(), so the PreToolUse matcher will not fire for it")
+	}
+}
+
+// The isolation flag is read off the payload, not just off a hand-built Request.
+func TestParseReadsIsolation(t *testing.T) {
+	req, err := Parse([]byte(`{"tool_name":"Agent","cwd":"/repo",
+		"tool_input":{"isolation":"worktree","prompt":"go and do a thing"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Isolation != "worktree" {
+		t.Errorf("Isolation = %q, want it decoded from tool_input", req.Isolation)
+	}
+	if got := Evaluate(req, Env{InRepo: true, Root: "/repo"}); got.Decision != Deny {
+		t.Errorf("the decoded request was %v, want Deny", got.Decision)
+	}
+}
+
+// The other route to the same place: making one by hand.
+func TestGitWorktreeAddUnderDotClaudeIsDenied(t *testing.T) {
+	env := Env{InRepo: true, Root: "/repo"}
+	denied := []string{
+		"git worktree add .claude/worktrees/thing",
+		// Path-qualified and Windows spellings: a rule that only knows the bare
+		// word is a rule /usr/bin/git walks past.
+		"/usr/bin/git worktree add .claude/worktrees/thing",
+		`C:\Program Files\Git\cmd\git.exe worktree add .claude/worktrees/thing`,
+		"git.exe worktree add .claude/worktrees/thing",
+		"git worktree add -b feat .claude/worktrees/thing",
+		"git -C /repo worktree add /repo/.claude/worktrees/thing",
+		"echo hi && git worktree add .claude/worktrees/x",
+		// Judged as git will resolve it, not as it was typed.
+		"git worktree add .claude/tmp/../worktrees/thing",
+		`git worktree add ".claude/worktrees/thing"`,
+		"git worktree add '.claude/worktrees/thing'",
+		// A quoted path with a space in it is split before anything sees it;
+		// the fragment that survives still names the directory.
+		`git worktree add ".claude/worktrees/my thing"`,
+		// -C decides what a relative target is relative to.
+		"git -C .claude worktree add worktrees/thing",
+		// git takes several, each relative one resolved against the last.
+		"git -C .claude -C worktrees worktree add thing",
+		"git -C/repo/.claude worktree add worktrees/thing",
+		`git worktree add .claude\worktrees\thing`,
+	}
+	for _, cmd := range denied {
+		if got := Evaluate(Request{Tool: "Bash", Command: cmd, Cwd: "/repo"}, env); got.Decision != Deny {
+			t.Errorf("%q was %v, want Deny", cmd, got.Decision)
+		}
+	}
+
+	// The place is what is wrong with it, and the place does not depend on
+	// where the session happened to be standing. `git -C` reaches a repo from
+	// outside one, and the repo gate used to let exactly that through.
+	outside := Env{InRepo: false}
+	if got := Evaluate(Request{Tool: "Bash", Command: "git -C /repo worktree add /repo/.claude/worktrees/thing", Cwd: "/tmp"}, outside); got.Decision != Deny {
+		t.Errorf("from outside a repo: %v, want Deny", got.Decision)
+	}
+
+	// Cleaning one up has to keep working — blocking the remedy would be a poor
+	// way to discourage the thing.
+	allowed := []string{
+		"git worktree list",
+		"git worktree remove .claude/worktrees/thing",
+		"rm -rf .claude/worktrees",
+		"git worktree add ../repo-worktrees/thing",
+		// Begins with the same letters and is a different directory. The rule
+		// is about .claude/worktrees, not about anything spelled like it.
+		"git worktree add .claude/worktrees-of-my-own/thing",
+		// An absolute -C replaces what came before rather than joining onto it.
+		"git -C .claude -C /elsewhere worktree add thing",
+	}
+	for _, cmd := range allowed {
+		if got := Evaluate(Request{Tool: "Bash", Command: cmd, Cwd: "/repo"}, env); got.Decision != Defer {
+			t.Errorf("%q was %v, want Defer — this is the way out, not the way in", cmd, got.Decision)
 		}
 	}
 }

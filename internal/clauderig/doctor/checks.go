@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -364,6 +365,51 @@ func checkGuide(env Env) Result {
 		}}
 }
 
+// checkHiddenWorktrees reports worktrees under .claude/worktrees — the
+// checkouts Claude Code's own isolation makes, which the guard now refuses.
+//
+// Worth a check of its own because they are invisible where anyone would look:
+// `rig worktree list` does not show them, `rig prune` does not reap them, and
+// they sit inside a directory nobody browses. One repo had 28 worktrees
+// registered across three containers before a review found them, one created
+// after the guard was already installed.
+//
+// Reported, not fixed. Removing a worktree can discard uncommitted work, and a
+// doctor that quietly deletes a checkout is worse than one that names it — the
+// hint says what to run.
+func checkHiddenWorktrees(env Env) (Result, bool) {
+	dir := filepath.Join(primaryCheckout(env.RepoRoot), ".claude", "worktrees")
+	entries, err := os.ReadDir(dir)
+	switch {
+	case os.IsNotExist(err):
+		return Result{}, false // the normal case, and not worth a row
+	case err != nil:
+		// Anything else — a permission or I/O error — means the check could not
+		// look, which is not the same as finding nothing. Saying so beats a
+		// silence that reads as "clean".
+		return Result{
+			ID: "hidden-worktrees", Name: "hidden worktrees", Status: Warn,
+			Detail: "could not read .claude/worktrees: " + err.Error(),
+			Hint:   "check it by hand: worktrees there are invisible to `rig worktree list`.",
+		}, true
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	if len(names) == 0 {
+		return Result{}, false
+	}
+	detail := strconv.Itoa(len(names)) + " under .claude/worktrees: " + strings.Join(names, ", ")
+	return Result{
+		ID: "hidden-worktrees", Name: "hidden worktrees", Status: Warn, Detail: detail,
+		Hint: "`rig worktree list` cannot see these. Check each for unmerged work, then " +
+			"`git worktree remove .claude/worktrees/<name>`. Make new ones with `rig worktree new <branch>`.",
+	}, true
+}
+
 // checkLocalGitignore only applies when a local settings file actually exists;
 // ok is false to omit the check entirely otherwise.
 func checkLocalGitignore(env Env) (Result, bool) {
@@ -379,6 +425,35 @@ func checkLocalGitignore(env Env) (Result, bool) {
 		Fix: func(ctx context.Context) error {
 			return ensureIgnored(env.RepoRoot, entry)
 		}}, true
+}
+
+// primaryCheckout is the repository's main working tree, given the root of any
+// of its checkouts.
+//
+// The hidden worktrees are made under the primary's .claude, and doctor is
+// usually run from somewhere else: the whole point of the discipline this
+// enforces is that work happens in a sibling worktree, so anchoring the scan on
+// the current checkout would look inside a linked one and find nothing — in the
+// case that is the norm rather than the exception.
+//
+// `git rev-parse --git-common-dir` names the shared .git every checkout of a
+// repository points at, so its parent is the primary. Anything unexpected falls
+// back to the root given, which is right for a plain checkout and no worse than
+// what was there before for anything else.
+func primaryCheckout(root string) string {
+	if root == "" {
+		return root
+	}
+	out, err := exec.Command("git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	if err != nil {
+		return root
+	}
+	common := strings.TrimSpace(string(out))
+	// A bare repository has no working tree to hold a .claude at all.
+	if common == "" || filepath.Base(common) != ".git" {
+		return root
+	}
+	return filepath.Dir(common)
 }
 
 func ensureIgnored(root, entry string) error {

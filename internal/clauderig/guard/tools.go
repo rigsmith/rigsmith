@@ -26,6 +26,16 @@ var writeTools = []string{"Edit", "Write", "NotebookEdit"}
 // scrambles the chat history keyed to it. Always denied, repo or not.
 var relocationTools = []string{"EnterWorktree", "ExitWorktree"}
 
+// isolationTools can make a worktree through an input field rather than by being
+// one. The Agent tool takes isolation: "worktree" and creates the same
+// .claude/worktrees/<name> checkout EnterWorktree would — so refusing the tool
+// by name was never enough, and one got through after the guard was installed.
+//
+// Separate from relocationTools because the tool itself is fine: an agent
+// without isolation is an ordinary subagent, and denying every Agent call would
+// block the useful case to stop the rare one.
+var isolationTools = []string{"Agent"}
+
 // RunsCommand reports whether a tool executes a shell command.
 func RunsCommand(tool string) bool { return in(commandTools, tool) }
 
@@ -35,14 +45,18 @@ func WritesFile(tool string) bool { return in(writeTools, tool) }
 // Relocates reports whether a tool moves the session's working directory.
 func Relocates(tool string) bool { return in(relocationTools, tool) }
 
+// TakesIsolation reports whether a tool can create a worktree through its input.
+func TakesIsolation(tool string) bool { return in(isolationTools, tool) }
+
 // Tools is every tool the guard acts on — the source the PreToolUse matcher is
 // built from. A tool the guard handles but the matcher omits is not guarded at
 // all, so these must not be allowed to drift apart.
 func Tools() []string {
-	out := make([]string, 0, len(writeTools)+len(commandTools)+len(relocationTools))
+	out := make([]string, 0, len(writeTools)+len(commandTools)+len(relocationTools)+len(isolationTools))
 	out = append(out, writeTools...)
 	out = append(out, commandTools...)
-	return append(out, relocationTools...)
+	out = append(out, relocationTools...)
+	return append(out, isolationTools...)
 }
 
 func in(list []string, s string) bool {

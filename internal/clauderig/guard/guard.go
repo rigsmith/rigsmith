@@ -52,6 +52,10 @@ type Request struct {
 	FilePath string // absolute target, for Edit/Write/NotebookEdit
 	Command  string // shell command, for Bash
 	Cwd      string // session working directory from the hook payload
+	// Isolation is the Agent tool's isolation mode. "worktree" makes it create a
+	// .claude/worktrees/<name> checkout, which is the thing the worktree rules
+	// exist to prevent — reached through an input field rather than a tool name.
+	Isolation string
 }
 
 // Env is the git/environment context the caller resolves for the Request.
@@ -79,6 +83,20 @@ func Evaluate(r Request, e Env) Result {
 	// Worktree tools relocate the session regardless of repo state — always block.
 	if Relocates(r.Tool) {
 		return Result{Deny, worktreeReason}
+	}
+	// An agent asked to isolate itself makes the same checkout by another route.
+	// Only when it asks: an agent without isolation is an ordinary subagent and
+	// has nothing to do with worktrees.
+	if TakesIsolation(r.Tool) && r.Isolation == "worktree" {
+		return Result{Deny, agentIsolationReason}
+	}
+	// The same worktree, made by hand — and above the repo gate, next to the
+	// tool that makes it the other way. `git -C <repo> worktree add
+	// <repo>/.claude/worktrees/x` puts one there from a session standing
+	// anywhere, and the reason it is a bad place does not depend on where the
+	// session was standing when it ran.
+	if RunsCommand(r.Tool) && addsHiddenWorktree(r.Command) {
+		return Result{Deny, hiddenWorktreeReason}
 	}
 	if !e.InRepo {
 		return Result{Defer, ""}
@@ -230,12 +248,25 @@ func isGitCommit(command string) bool {
 	for _, seg := range splitSegments(command) {
 		fields := strings.Fields(seg)
 		for i := 0; i < len(fields)-1; i++ {
-			if (fields[i] == "git" || strings.HasSuffix(fields[i], "/git")) && nextWord(fields[i+1:], "commit") {
+			if isGitExe(fields[i]) && nextWord(fields[i+1:], "commit") {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// isGitExe reports whether a token invokes git.
+//
+// Both detectors ask this, because a rule that only recognises the bare word is
+// a rule `/usr/bin/git` walks past. Windows spellings included: the guard runs
+// wherever Claude Code does, and `git.exe` is git there.
+func isGitExe(tok string) bool {
+	tok = strings.ToLower(strings.ReplaceAll(tok, `\`, "/"))
+	if i := strings.LastIndexByte(tok, '/'); i >= 0 {
+		tok = tok[i+1:]
+	}
+	return tok == "git" || tok == "git.exe"
 }
 
 // nextWord reports whether want appears among args before any non-flag operand
@@ -283,8 +314,9 @@ type input struct {
 	ToolName  string `json:"tool_name"`
 	Cwd       string `json:"cwd"`
 	ToolInput struct {
-		FilePath string `json:"file_path"`
-		Command  string `json:"command"`
+		FilePath  string `json:"file_path"`
+		Command   string `json:"command"`
+		Isolation string `json:"isolation"`
 	} `json:"tool_input"`
 }
 
@@ -295,10 +327,11 @@ func Parse(stdin []byte) (Request, error) {
 		return Request{}, err
 	}
 	return Request{
-		Tool:     in.ToolName,
-		FilePath: in.ToolInput.FilePath,
-		Command:  in.ToolInput.Command,
-		Cwd:      in.Cwd,
+		Tool:      in.ToolName,
+		FilePath:  in.ToolInput.FilePath,
+		Command:   in.ToolInput.Command,
+		Isolation: in.ToolInput.Isolation,
+		Cwd:       in.Cwd,
 	}, nil
 }
 
@@ -320,6 +353,129 @@ func Output(res Result) []byte {
 
 const worktreeReason = "Worktree tools move this session's working directory, and Claude Code keys chat history to the folder path — moving it mid-session scrambles your VS Code chat. " +
 	"Create an isolated worktree without moving this window: run `rig worktree new <branch>`. It makes a sibling checkout and opens it in a separate VS Code window for review; keep editing here by absolute path and run git via `git -C <worktree>`."
+
+// hiddenWorktreeDir is where Claude Code's own isolation puts its checkouts.
+// A worktree there is invisible to `rig worktree list` and easy to leave behind:
+// one repo had 28 registered worktrees across three containers before anyone
+// looked.
+const hiddenWorktreeDir = ".claude/worktrees"
+
+// addsHiddenWorktree reports a `git worktree add` whose target is under
+// .claude/worktrees.
+//
+// Deliberately narrow. It matches creation and nothing else, so `git worktree
+// list`, and above all `git worktree remove .claude/worktrees/x`, still work —
+// blocking the cleanup for one of these would be a poor way to discourage them.
+func addsHiddenWorktree(command string) bool {
+	for _, seg := range splitSegments(command) {
+		f := strings.Fields(seg)
+		// git … worktree add — allowing for `git -C dir worktree add`.
+		gi, wi := -1, -1
+		for i, tok := range f {
+			if isGitExe(tok) && gi < 0 {
+				gi = i
+			}
+			if gi >= 0 && tok == "worktree" {
+				wi = i
+				break
+			}
+		}
+		if gi < 0 || wi < 0 || wi+1 >= len(f) || f[wi+1] != "add" {
+			continue
+		}
+		// `git -C <dir>` decides what a relative target is relative to, so the
+		// target alone is not the path git will make.
+		cdir := ""
+		for i := gi + 1; i < wi; i++ {
+			next := ""
+			switch a := unquoteArg(f[i]); {
+			case a == "-C" && i+1 < wi:
+				next = unquoteArg(f[i+1])
+			case strings.HasPrefix(a, "-C") && len(a) > 2:
+				next = a[2:]
+			default:
+				continue
+			}
+			// git accepts several, and resolves each relative one against the
+			// directory the last left it in.
+			cdir = resolveAgainst(cdir, next)
+		}
+		for _, tok := range f[wi+2:] {
+			t := unquoteArg(tok)
+			if underHiddenWorktrees(t) {
+				return true
+			}
+			// Relative to -C, which is where git will resolve it.
+			if cdir != "" && underHiddenWorktrees(resolveAgainst(cdir, t)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// unquoteArg strips quotes from the ends of a token. A path with a space in it
+// is quoted as a matter of course, and a rule reading raw tokens sees the quote
+// as part of the name and matches nothing.
+//
+// Each end independently, because the command is split on whitespace and a
+// quoted path containing a space arrives as several tokens — the first carrying
+// the opening quote and no closing one. That fragment still begins with the
+// directory being looked for, which is all this has to recognise.
+func unquoteArg(tok string) string {
+	tok = strings.TrimLeft(tok, `"'`)
+	return strings.TrimRight(tok, `"'`)
+}
+
+// resolveAgainst joins a path onto the directory a previous one selected, the
+// way git resolves a relative argument. An absolute path replaces it outright.
+func resolveAgainst(base, next string) string {
+	slashed := strings.ReplaceAll(next, `\`, "/")
+	if base == "" || strings.HasPrefix(slashed, "/") || windowsDriveAbs(slashed) {
+		return next
+	}
+	return base + "/" + next
+}
+
+// windowsDriveAbs recognises `C:/…`, which is absolute on the platform this
+// guard also runs on and would otherwise be joined onto something.
+func windowsDriveAbs(p string) bool {
+	return len(p) >= 3 && p[1] == ':' && p[2] == '/' &&
+		((p[0] >= 'a' && p[0] <= 'z') || (p[0] >= 'A' && p[0] <= 'Z'))
+}
+
+// underHiddenWorktrees reports whether a path argument lands in
+// .claude/worktrees.
+//
+// Cleaned first, so the path is judged as git will resolve it rather than as it
+// was typed, and matched on directory boundaries, so a directory that merely
+// begins with the same letters is not swept up with it.
+//
+// Separators are folded unconditionally rather than through filepath.ToSlash,
+// which does nothing off Windows: the guard reads a command someone typed, and
+// the spelling in it is a property of the machine it was typed for, not of the
+// machine judging it. isGitExe folds them the same way.
+func underHiddenWorktrees(tok string) bool {
+	p := path.Clean(strings.ReplaceAll(tok, `\`, "/"))
+	for {
+		if p == hiddenWorktreeDir || strings.HasSuffix(p, "/"+hiddenWorktreeDir) {
+			return true
+		}
+		parent := path.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
+}
+
+const hiddenWorktreeReason = "That creates a worktree under .claude/worktrees, which `rig worktree list` cannot see and nothing later cleans up — one repo collected 28 of them before anyone noticed. " +
+	"Use `rig worktree new <branch>`: a sibling checkout, visible to `rig worktree list`, reaped by `rig prune`, and opened in its own VS Code window for review. " +
+	"Removing one that is already there is fine and not blocked."
+
+const agentIsolationReason = "An agent with isolation: \"worktree\" creates a .claude/worktrees/<name> checkout — the same worktree the guard exists to keep out of this repo, made through the Agent tool rather than by hand. " +
+	"Run the agent without isolation, or make the worktree deliberately: `rig worktree new <branch>` puts a sibling checkout in its own VS Code window, where it can be reviewed and turned into a PR. " +
+	"A worktree under .claude/ is invisible to both."
 
 func baseReason(rel string) string {
 	return "You're on a base branch (main/master) and `" + rel + "` is code, not docs/config. " +
