@@ -1,30 +1,93 @@
 name: CI
 
+# Where the minutes go, and the rules that keep them down.
+#
+# Runners are Blacksmith's (the rigsmith org's app). Windows is the long pole
+# at ~2.5 minutes, macOS ~1.3, Linux ~1; the three cheap Linux jobs are
+# seconds each. So the spend rules are about the two expensive tiers:
+#
+#   - A new push to a PR cancels the run for the head it replaced. main is
+#     keyed by ref and never cancelled — every commit that lands gets its own
+#     verdict.
+#   - Changes that touch only docs, the site, design notes or Markdown do not
+#     run CI at all; nothing here checks them.
+#   - macOS and Windows do not run for a draft PR.
+#   - The moment any Linux job fails it cancels the run, so whatever the
+#     expensive tiers had left on a red push is not spent. The cancel is
+#     one-way: a macOS or Windows failure never cancels a Linux job, whose
+#     verdict is the one that says what broke.
+#   - Every job has a timeout, so a hung test cannot bill an hour.
+#
+# Caches are explicit and per job rather than setup-go's own: that one keys on
+# go.sum alone with no restore-keys, so every go.sum change starts cold, and
+# the first job to finish saves the build cache for ITS compilation while the
+# others miss. These key on job, runner OS, Go version and go.sum, with a
+# restore-key prefix that stops at the Go version — a go.sum change (main
+# moving under a PR counts, since PR runs check out the merge commit) starts
+# from the last cache for that Go rather than from nothing. actions/cache is
+# served from Blacksmith's colocated store on these runners; no fork needed.
+
 on:
   push:
     branches: [main, codex/v2]
+    paths-ignore:
+      - 'docs/**'
+      - 'docs-archive/**'
+      - 'design/**'
+      - 'site/**'
+      - '**.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - 'docs-archive/**'
+      - 'design/**'
+      - 'site/**'
+      - '**.md'
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Pinned rather than @latest so a tool release cannot change the verdict on
+  # an unrelated PR. Part of the tools cache key: a bump rebuilds once.
+  GOVULNCHECK_VERSION: v1.1.4
+  GITLEAKS_VERSION: 8.30.1
+
 jobs:
-  test:
-    name: test (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  test-linux:
+    name: test (linux)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write # for the cancel step alone
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0 # pinned pre-refactor source for command compatibility
-
+          persist-credentials: false
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.sum
+          cache: false
+      - id: paths
+        shell: bash
+        run: |
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "goversion=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.paths.outputs.gocache }}
+            ${{ steps.paths.outputs.gomodcache }}
+          key: go-test-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-test-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-
 
       # Wails v3 links against GTK 4 and WebKitGTK 6.0 on Linux — not the GTK 3 /
       # WebKit2GTK 4.1 pairing most guides still name — so `go test ./...` cannot
@@ -32,7 +95,6 @@ jobs:
       # it inside ./... means a change that breaks another platform is caught
       # here rather than by whoever tries to port it.
       - name: Linux GUI headers (for ./ui)
-        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
@@ -55,55 +117,185 @@ jobs:
           CLAUDERIG_COMPAT: '1'
         run: go test ./internal/clauderig/compatibility -count=1 -v -timeout=10m
 
+      # The one-way cancel. On a failure above, stop the whole run so the
+      # expensive tiers do not finish a push that is already red. This job's
+      # own failure is already recorded when the cancel lands, so the PR still
+      # shows which step broke.
+      - if: failure()
+        name: stop the expensive tiers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+
+  test:
+    # The expensive tiers: the platforms rigsmith ships for, and the ones a
+    # Linux failure cancels. Not run for a draft PR.
+    name: test (${{ matrix.name }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            os: blacksmith-6vcpu-macos-15
+          - name: windows
+            os: blacksmith-4vcpu-windows-2025
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # pinned pre-refactor source for command compatibility
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - id: paths
+        shell: bash
+        run: |
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "goversion=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.paths.outputs.gocache }}
+            ${{ steps.paths.outputs.gomodcache }}
+          key: go-test-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-test-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-
+
+      - name: Configure git for tests
+        run: |
+          git config --global user.email ci@rigsmith.test
+          git config --global user.name rigsmith-ci
+          git config --global init.defaultBranch main
+
+      - name: Test
+        env:
+          CLAUDERIG_E2E: '1' # synthetic fixtures only; real-data scan has its own gate
+        run: go test ./... -count=1
+
+      - name: ClaudeRig baseline compatibility
+        env:
+          CLAUDERIG_COMPAT: '1'
+        run: go test ./internal/clauderig/compatibility -count=1 -v -timeout=10m
+
   secret-scan:
     name: gitleaks
-    runs-on: ubuntu-latest
+    # Single-threaded and seconds long: the smallest tier.
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write # for the cancel step alone
     steps:
       # Full history so the scan covers every commit, not just the tip.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Install gitleaks
-        env:
-          GITLEAKS_VERSION: 8.30.1
+          persist-credentials: false
+      - id: gitleaks
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/gitleaks
+          key: gitleaks-${{ runner.os }}-${{ env.GITLEAKS_VERSION }}
+      - if: steps.gitleaks.outputs.cache-hit != 'true'
+        name: Install gitleaks
         run: |
+          mkdir -p ~/.local/bin
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | tar -xz -C /usr/local/bin gitleaks
-          gitleaks version
+            | tar -xz -C ~/.local/bin gitleaks
       - name: Scan full history
-        run: gitleaks git --no-banner -v -c .gitleaks.toml
+        run: |
+          ~/.local/bin/gitleaks version
+          ~/.local/bin/gitleaks git --no-banner -v -c .gitleaks.toml
+      - if: failure()
+        name: stop the expensive tiers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   vulncheck:
     name: govulncheck
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write # for the cancel step alone
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       # go-version-file honours the go directive, so the scan runs on the same
       # toolchain the module requires — which is the point: most findings here
       # have been standard-library ones, invisible to any dependency bump.
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.sum
-      # Pinned rather than @latest so a tool release cannot change the verdict
-      # on an unrelated PR; the vulnerability database is fetched live, so this
-      # still scans against current advisories.
-      - name: Install govulncheck
-        env:
-          GOVULNCHECK_VERSION: v1.1.4
+          cache: false
+      - id: paths
+        run: |
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "goversion=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
+          echo "gobin=$(go env GOPATH)/bin" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.paths.outputs.gocache }}
+            ${{ steps.paths.outputs.gomodcache }}
+          key: go-vuln-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-vuln-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-
+      # The binary, built once per (Go version, tool version) and restored.
+      # The vulnerability database is fetched live either way, so this still
+      # scans against current advisories.
+      - id: tools
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.paths.outputs.gobin }}
+          key: go-tools-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-govulncheck-${{ env.GOVULNCHECK_VERSION }}
+      - if: steps.tools.outputs.cache-hit != 'true'
+        name: Install govulncheck
         run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
       - name: Scan
         run: govulncheck ./...
+      - if: failure()
+        name: stop the expensive tiers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   lint:
     name: vet + gofmt
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write # for the cancel step alone
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.sum
+          cache: false
+      - id: paths
+        run: |
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "goversion=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.paths.outputs.gocache }}
+            ${{ steps.paths.outputs.gomodcache }}
+          key: go-lint-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-
       - name: go vet
         run: go vet ./...
       - name: gofmt
@@ -112,3 +304,8 @@ jobs:
           if [ -n "$out" ]; then
             echo "gofmt needed on:" && echo "$out" && exit 1
           fi
+      - if: failure()
+        name: stop the expensive tiers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}

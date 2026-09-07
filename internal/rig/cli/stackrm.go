@@ -202,6 +202,7 @@ func newStackRemoveCmd() *cobra.Command {
 			// still there, or the retry would call sent work unsent.
 			_ = repo.DeleteRef(ctx, "refs/rigsmith/push/"+name)
 			_ = repo.DeleteRef(ctx, "refs/rigsmith/propose/"+name)
+			_ = repo.DeleteRef(ctx, "refs/rigsmith/integration/"+name)
 			if changed {
 				fmt.Fprintf(out, "  committed: stack: remove %s\n", name)
 			}
@@ -311,6 +312,33 @@ func stackForgetRepo(src *cfgfind.Source, m *stackManifest, name string) (err er
 			return fmt.Errorf("could not update %s in %s", kv.key, src.File)
 		}
 	}
+
+	// Proposals is a map OF maps, so it does not fit the loop above: the member's
+	// whole sub-map goes, not one key. Left behind it would name pull requests
+	// for a project this stackspace no longer has.
+	if _, has := m.Proposals[name]; has {
+		delete(m.Proposals, name)
+		path := []string{"proposals"}
+		if embedded {
+			path = []string{"stack", "proposals"}
+		}
+		var ok bool
+		switch {
+		case len(m.Proposals) == 0:
+			ok = w.Delete(src.File, path)
+		case embedded:
+			raw, err := json.Marshal(m.Proposals)
+			if err != nil {
+				return err
+			}
+			ok = w.Set(src.File, path, string(raw))
+		default:
+			ok = w.Delete(src.File, append(path, name))
+		}
+		if !ok {
+			return fmt.Errorf("could not update proposals in %s", src.File)
+		}
+	}
 	return nil
 }
 
@@ -356,6 +384,26 @@ func stackRestoreFromHead(ctx context.Context, repo *gitrepo.Repo, rel string) b
 // about to commit a member's removal, and an overlay it could not rewrite
 // may still point into the directory that left.
 func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitrepo.Repo, indent string, strict bool) (touched []string, err error) {
+	// Nothing imported means nothing crosses between members, which reads as
+	// "the overlay is left over" — and this is the verb that acts on that
+	// reading. On a seed clone it deleted the overlay the workspace was about to
+	// need. Doctor only advised it; here it happened.
+	//
+	// By directory rather than by cursor: a seed carries cursors for members it
+	// does not have, which is exactly this state.
+	//
+	// A partly imported workspace counts as unimported. The links are read from
+	// the members' own build files, so one that is not there contributes none —
+	// and an overlay written from that graph is missing whatever crossed through
+	// it, which is the same damage arriving by a slower route.
+	//
+	// A manifest with no members at all is a different answer and falls through:
+	// nothing can cross when there is nothing to cross between, so the overlay
+	// the last `rm` left really is stale, and the pass below is what takes it.
+	if missing := stackMissingPrefixes(repo.Dir, m.names()); len(missing) > 0 {
+		fmt.Fprintf(out, "%s%s not imported yet — nothing to wire against; run `rig stack setup`\n", indent, strings.Join(missing, ", "))
+		return nil, nil
+	}
 	byEco, orphans, notes, failed := stackRedirects(ctx, repo.Dir, m.names(), m.publishing())
 	if strict && len(failed) > 0 {
 		names := make([]string, 0, len(failed))

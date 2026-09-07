@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -298,10 +299,35 @@ type joshProxy struct {
 	exited chan struct{} // closed once the process has been reaped (exactly one Wait)
 }
 
+// errProxyPortTaken is the one startup failure worth another try: the child
+// died before it answered, which is what losing the race for the port looks
+// like from here. Anything else — a missing binary, a cache it cannot open — is
+// no better the second time.
+var errProxyPortTaken = errors.New("josh-proxy exited before becoming ready")
+
 // startJoshProxy spawns josh-proxy fronting https://<host> on a free port and
 // waits for it to accept connections. The port is picked fresh per invocation —
 // unlike josh-sync's fixed 42042 — so two rig commands can't collide.
+//
+// Retried on the race freePort cannot close: the kernel names a free port, the
+// listener holding it closes, and something else may bind it before the child
+// does. Rare by hand and common under a parallel test run, where every package
+// is churning ports at once — which is where it was found, as a failure that
+// only ever appeared when the whole suite ran together.
 func startJoshProxy(ctx context.Context, bin, host string) (*joshProxy, error) {
+	const attempts = 3
+	var err error
+	for i := 0; i < attempts; i++ {
+		var p *joshProxy
+		p, err = startJoshProxyOnce(ctx, bin, host)
+		if err == nil || !errors.Is(err, errProxyPortTaken) {
+			return p, err
+		}
+	}
+	return nil, err
+}
+
+func startJoshProxyOnce(ctx context.Context, bin, host string) (*joshProxy, error) {
 	port, err := freePort(ctx)
 	if err != nil {
 		return nil, err
@@ -353,8 +379,17 @@ func startJoshProxy(ctx context.Context, bin, host string) (*joshProxy, error) {
 		}
 		select {
 		case <-p.exited:
+			// Two very different endings look the same from out here: the
+			// child lost the race for the port, or it died of its own
+			// problems. Asking who holds the port separates them — if it is
+			// free, nobody took it and trying again would fail the same way.
 			// Its log is the only account of why it gave up.
-			err := fmt.Errorf("josh-proxy exited before becoming ready (port %d)", port)
+			var err error
+			if portInUse(ctx, port) {
+				err = fmt.Errorf("%w (port %d)", errProxyPortTaken, port)
+			} else {
+				err = fmt.Errorf("josh-proxy exited before becoming ready (port %d)", port)
+			}
 			if tail := p.tail(15); tail != "" {
 				err = fmt.Errorf("%w\n--- josh-proxy log:\n%s", err, tail)
 			}
@@ -446,6 +481,18 @@ func stackPrefixFilter(prefix string) string { return ":prefix=" + prefix }
 // is an unavoidable gap between closing this listener and the child binding —
 // josh-proxy takes a port, not a socket — so callers retry rather than treat a
 // bind failure as fatal.
+// portInUse reports whether something is holding the port, which is how the
+// lost half of freePort's race is told apart from a child that simply died.
+func portInUse(ctx context.Context, port int) bool {
+	var lc net.ListenConfig
+	l, err := lc.Listen(ctx, "tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		return true
+	}
+	l.Close()
+	return false
+}
+
 func freePort(ctx context.Context) (int, error) {
 	var lc net.ListenConfig
 	l, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")

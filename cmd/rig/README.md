@@ -22,12 +22,14 @@ your app and the libraries you have forked, fused into one history, so a change
 can span them in a single commit while each still leaves as itself:
 
 ```sh
+rig stack setup                      # a fresh clone: engine, members, overlay, status
 rig stack init                       # scaffold the manifest; run again to import
 rig stack add github.com/them/lib    # fuse another repo
 rig stack rm some-lib                # take one back out: manifest, tree and overlay
-rig stack status                     # who has moved upstream, and what has not left
+rig stack status                     # who has moved upstream, what has not left, and where each topic's PR is
 rig stack pull some-lib              # take that movement
-rig stack propose some-lib read-timeout -m "Fix the read timeout"   # → stack/read-timeout
+rig stack propose some-lib read-timeout -m "Fix the read timeout"   # ALL of some-lib's changes → stack/read-timeout
+rig stack propose some-lib read-timeout --from read-timeout         # ...or one topic's tree (stack-pr-read-timeout); root it on the import, or it carries its parent's fixes too
 rig stack push my-app                # a repo you own: its own branch, history intact
 rig stack propose some-lib read-timeout --dry-run   # the commit and fork branch that would go; touches no remote
 rig stack push my-app --dry-run      # the target, branch and commits that would go; touches no remote

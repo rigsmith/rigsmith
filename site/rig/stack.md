@@ -484,6 +484,168 @@ per stackspace or per repo, or set it to `""` for bare names. A name that alread
 starts with the prefix is left alone, so pasting a full branch name back in when
 proposing again does not stutter it.
 
+#### It sends the whole prefix, not the change you have in mind {#propose-whole}
+
+`propose` commits **the prefix's entire current tree** onto the upstream tip. It does
+not extract one change: whatever this stackspace is holding for that project — every
+fix, including ones already waiting in another pull request — is what the branch
+carries.
+
+While one thing is in flight that is exactly right, and it is why a rebuild elsewhere
+is safe: the branch a member was last proposed to holds everything, so
+[`init` reconstituting from it](#seed) gets all of it.
+
+The moment two things are in flight for one project it is wrong. Fix A sits unmerged
+in the stackspace; you propose fix B; B's branch contains A as well, and its pull
+request shows changes its reviewer never asked about.
+
+#### One fix at a time: `--from` a topic branch {#propose-from}
+
+Keep each in-flight fix on its own branch of the stackspace, rooted on the commit that
+imported that member. `main` merges them, and stays what it always was — everything
+fused, the thing you build and test.
+
+```
+import ── fix A ─────────────── merge ──  main: both fixes, what you build and test
+   └───── stack-pr-reader-wedge ───┘      topic: upstream plus this fix, nothing else
+```
+
+```sh
+git switch -c stack-pr-reader-wedge <the import commit>
+# ...fix it, commit...
+git switch main && git merge stack-pr-reader-wedge
+
+rig stack propose term-core reader-wedge --from reader-wedge
+# term-core: proposing what stack-pr-reader-wedge adds, not the whole prefix
+```
+
+**`stack-pr-<name>` is a recommended convention, not a rule.** `--from` takes any
+branch: an exact name always wins, and the conventional name is only the fallback when
+what you gave it is not itself a branch — so `--from reader-wedge` finds
+`stack-pr-reader-wedge` without you spelling it out. The prefix is deliberately not
+`stack/`, which names the branches that appear on your **fork**: those two live in
+different repositories and mean different things, and sharing a spelling would only
+invite reading one as the other.
+
+`rig stack status` lists the ones named that way, so what is in flight is something you
+read rather than remember:
+
+```
+topics in flight: stack-pr-reader-wedge, stack-pr-kitty-scaling
+  propose one with `rig stack propose <repo> <name> --from reader-wedge`
+```
+
+A topic rooted on the import holds upstream's tree plus its own change and nothing
+else, so **its tree is already the one upstream should see** — there is no patch to
+replay and nothing that can fail to apply. That matters more the longer you carry
+work: reconstructing one change out of an intertwined history is a patch that stops
+applying, while a topic keeps the isolation by construction.
+
+Branch off a line that already carries another unmerged fix and the topic contains
+that fix too. `propose` does not refuse — it cannot: the topic genuinely *does*
+contain it, and which commits make up a change is exactly what the branch encodes, so
+only you can say whether it was meant. What it does is say what it is sending:
+
+```
+term-core: proposing stack-pr-reader-wedge — 2 commit(s) since the import
+    a1b2c3d4 term-core: the reader wedge
+    e5f6a7b8 term-core: an earlier fix, still in review
+```
+
+A subject you did not expect is the signal to rebase the topic onto the import.
+
+#### Where everything is: `status` {#topic-status}
+
+`rig stack status` lists each member's topics under it, and where each one went:
+
+```
+lib          a1b2c3d4   up to date  ·  `propose` sends this prefix's whole divergence (--from <branch> for one topic)
+  stack-pr-reader-wedge          → you/lib:stack/reader-wedge
+  stack-pr-kitty-scale           not proposed yet
+```
+
+Almost all of that is derived from the repository each time it runs — which topics
+exist, which member each one touches, whether it went stale behind a pull. What is
+recorded, in the manifest under `proposals`, is only what the repository cannot be
+asked: **where the pull request went**, and **which commit was sent there**.
+
+```jsonc
+"proposals": {
+  "lib": { "stack-pr-reader-wedge": { "branch": "stack/reader-wedge", "commit": "a1b2c3d4…" } }
+}
+```
+
+The commit is the topic's tip when it was proposed. Records are keyed by branch
+*name*, and names get reused — delete a topic once its pull request merges, start
+another with the same name later, and the old destination would be reported for the
+new work. Comparing what the branch is now against what was sent catches that, and
+answers the commoner question too:
+
+```
+  stack-pr-reader-wedge          → you/lib:stack/reader-wedge  (branch has moved since; propose again to update it)
+```
+
+`lastPropose` cannot serve this. It holds one branch per repo and is overwritten on
+every propose, which was enough while a proposal meant the whole prefix — there could
+only ever be one in flight. Two topics for one member are two pull requests, and it
+remembers the second. It keeps its own job: naming the branch a rebuild reconstitutes
+from.
+
+Nothing else is recorded on purpose. A list of topics in config would drift the moment
+a branch was deleted, and leave the manifest claiming work that is not there; deriving
+it means a topic simply stops being listed once its pull request merges and you delete
+the branch.
+
+#### A pull leaves topics behind {#propose-stale}
+
+`pull` moves the prefix on. A topic branch does not come with it, so its tree is
+upstream as it *used* to be — and committing that onto the current tip would present
+everything upstream landed since as though your branch had **reverted** it. That is the
+same hazard the [stale-cursor refusal](#propose) covers for a whole-prefix propose, and
+`--from` cannot rely on that one: `HEAD` gets pulled, and a topic does not.
+
+So `propose --from` refuses a topic that does not have the current cursor in it, and
+both `pull` and `status` name them unprompted — the pull that caused it may have been
+days ago:
+
+```
+lib: 1 topic(s) rooted before this pull — `propose --from` will refuse them until re-rooted:
+    stack-pr-reader-wedge
+  branch again from the new import and replay the fix; proposing as-is would revert what upstream landed.
+```
+
+::: warning Why rig does not re-root them for you
+The obvious target is the commit the pull just made — and it is the wrong one. An import
+merges into `HEAD`, and `HEAD` has already merged your topics, so re-rooting a topic onto
+it folds the very fix that topic isolates straight back in. Doing it correctly means
+replaying the topic onto upstream's new tree with **none** of the integration line's
+fixes, which is a different operation from a rebase and is not built yet.
+:::
+
+::: warning `--from` requires `trackBranch`
+A topic holds part of what the prefix carries, so it cannot also be what a rebuild
+reconstitutes from — a fresh `init` would build without the other fixes, while your own
+worktree still had them and looked fine. `trackBranch` is where the whole divergence
+lives, and `propose --from` **keeps it current** on every send:
+
+```sh
+rig stack propose term-core reader-wedge --from reader-wedge
+# term-core: proposing what reader-wedge adds, not the whole prefix
+# sent term-core to you/term-core:stack/reader-wedge
+# term-core: stack/integration now carries everything, for rebuilds
+```
+
+Without it set, `--from` refuses rather than publish a package or a rebuild that is
+quietly missing work.
+:::
+
+`rig stack status` says that `propose` sends the prefix's whole divergence, so you find
+out before a maintainer does:
+
+```
+term-core   e5f6a7b8   up to date  ·  `propose` sends this prefix's whole divergence (--from <branch> for one topic)
+```
+
 Sending again to the same branch **updates** it, so you can act on review
 feedback: commit in the stackspace, propose again, and the pull request moves. The
 branch is replaced under a lease taken at the moment of the push, which guards
@@ -582,9 +744,26 @@ git -C ../rigstack-acme push -u origin main
 
 # elsewhere
 git clone <url> my-stack && cd my-stack
-rig stack init                                   # rebuilds every member
-rig stack wire
+rig stack setup                                  # engine, members, overlay, status
 ```
+
+`setup` is the one command a fresh clone needs. It does the steps in an order
+where each can see what it is judging — which matters, because the obvious order
+does not. `doctor --fix` is what installs the engine, so running it first was
+unavoidable, and at that moment no member exists: nothing crosses between them,
+the overlay looks left over, and `doctor` said to delete it. `setup` imports
+first and judges after.
+
+`rig stack init` also writes a `README.md` if the repository has none, generated
+from the manifest: the member table, the setup command, and the two things a
+seed cannot show — that the directories are missing on purpose, and that work
+leaves through `propose` rather than a push. `wire` refreshes it, so the member
+table follows the manifest instead of going stale.
+
+**Delete the marker line at the top to make the file yours.** Editing it is not
+enough: a file still carrying the marker is one rig owns, and the next `init` or
+`wire` rewrites it — edits and all. Without the marker rig never touches it
+again, which is also how you opt out of having one at all.
 
 Name the directory — and the repository you push it to — `rigstack-<something>`.
 A seed is not a project you clone and work in: it is the few kilobytes `stack
@@ -660,7 +839,8 @@ the step-by-step.
 
 | Verb | What it does |
 |---|---|
-| `stack init` | Scaffold the manifest, or import the repos it names that are not imported yet |
+| `stack setup` | Set up a freshly cloned stackspace: the fusion engine, the members, the build overlay, the status — in an order where each step can see what it is judging. Safe to run again |
+| `stack init` | Scaffold the manifest, or import the repos it names that are not imported yet; writes the generated `README.md` unless one is there that rig does not own |
 | `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
 | `stack rm <repo>` | Remove a repo: its manifest entry and cursor, its directory, and the overlay redirects into it; refuses while it holds work that has not left (`--force`), `--keep-tree` keeps the directory |
 | `stack seed <dir>` | Export the root files — everything outside every prefix, manifest included — as a small repo that `stack init` rebuilds the members from elsewhere; refuses while a member holds commits that have not left (`--force`) |
@@ -668,7 +848,7 @@ the step-by-step.
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch; `--dry-run` says what would go and touches no remote |
 | `stack push [repo]` | Fast-forward a repo you own with this stackspace's commits, history intact; inferred when only one is yours; `--dry-run` lists the commits that would go and touches no remote |
-| `stack wire` | Write the build overlay so members resolve each other from source |
+| `stack wire` | Write the build overlay so members resolve each other from source, and refresh the generated `README.md`. Defers while any member the manifest names is not imported: nothing crosses between directories that are not there, which reads exactly like an overlay left over |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
 `propose` and `push` answer different questions. `propose` proposes one squashed

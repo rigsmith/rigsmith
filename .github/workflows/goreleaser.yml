@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   goreleaser:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       # Fail fast on half-configured Windows signing. scripts/sign-windows.sh
       # auto-enables once TRUSTED_SIGNING_ACCOUNT is set, then hard-requires the
@@ -259,7 +259,7 @@ jobs:
   # app must not take the four binaries down with it.
   ui:
     name: Package the macOS app
-    runs-on: macos-latest
+    runs-on: blacksmith-6vcpu-macos-15
     needs: goreleaser
     steps:
       - uses: actions/checkout@v5

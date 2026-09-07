@@ -84,6 +84,11 @@ type stackRepo struct {
 	// branch, which is where work that has left as a proposal and not yet
 	// merged actually lives. The cursor records the upstream commit that
 	// branch is based on, so status and pull keep measuring against upstream.
+	//
+	// `propose --from` requires it and keeps it current: a topic proposal holds
+	// only that branch's change, so something has to hold the rest or a rebuild
+	// silently builds without them. With topics in use this stops being a branch
+	// you maintain and becomes one rig writes.
 	TrackBranch string `json:"trackBranch,omitempty"`
 }
 
@@ -154,6 +159,38 @@ type stackManifest struct {
 	// proposeBranch and stackForkRefFor read both. Machine-written, like the
 	// cursors beside it.
 	LastPropose map[string]string `json:"lastPropose,omitempty"`
+	// Proposals records where each TOPIC went: prefix -> topic branch of this
+	// stackspace -> the branch on the fork carrying its pull request.
+	//
+	// LastPropose cannot answer this. It holds one branch per prefix and is
+	// overwritten on every propose, which was sufficient while a proposal meant
+	// "the whole prefix" — there could only ever be one in flight. Topics break
+	// that: two fixes for one member are two pull requests, and LastPropose can
+	// only remember the second. It keeps its own job, which is naming the branch
+	// a rebuild reconstitutes from.
+	//
+	// Only what git cannot answer is recorded here. Which topics exist, what they
+	// touch and whether they are stale are all derived from the repository on
+	// demand — recording them would drift the moment a branch is deleted, and
+	// leave the manifest claiming work that is not there. Where a topic was
+	// PROPOSED is knowable nowhere else.
+	//
+	// Machine-written, like the cursors beside it.
+	Proposals map[string]map[string]stackProposal `json:"proposals,omitempty"`
+}
+
+// stackProposal is where one topic's pull request went, and the commit that was
+// sent to it.
+//
+// The commit is not decoration. Records are keyed by branch NAME, and a name can
+// be reused: delete a topic once its pull request merges, later start another
+// with the same name, and the old destination would be reported for the new
+// work. Comparing what the topic is now against what was proposed catches that,
+// and answers the more common question too — whether the pull request is behind
+// the branch.
+type stackProposal struct {
+	Branch string `json:"branch"`
+	Commit string `json:"commit,omitempty"`
 }
 
 func (m *stackManifest) cursor(name string) string { return m.LastSync[name] }
@@ -175,6 +212,46 @@ func (m *stackManifest) ownedNames() []string {
 // legitimate state — it is what `stack init` scaffolds, and what `stack add`
 // writes the first entry into — so loading one is not an error; only asking it
 // to do something is.
+// stackRememberProposal records that a topic's pull request lives on a branch of
+// the fork — the one thing about an in-flight fix that the repository cannot be
+// asked. Written beside the cursors, and read back by `status` so "where is that
+// fix" is something you look at rather than remember.
+func stackRememberProposal(src *cfgfind.Source, m *stackManifest, prefix, topic, branch, commit string) error {
+	if m.Proposals == nil {
+		m.Proposals = map[string]map[string]stackProposal{}
+	}
+	if m.Proposals[prefix] == nil {
+		m.Proposals[prefix] = map[string]stackProposal{}
+	}
+	want := stackProposal{Branch: branch, Commit: commit}
+	if m.Proposals[prefix][topic] == want {
+		return nil // nothing to write, and no commit to make out of nothing
+	}
+	m.Proposals[prefix][topic] = want
+	return stackWriteManifestMap(src, "proposals", m.Proposals)
+}
+
+// stackWriteManifestMap replaces one machine-written top-level map in the
+// manifest, leaving the hand-authored entries and their comments alone. Shared
+// by every such record so their write semantics cannot drift apart — which is
+// the sort of difference nothing would notice until one of them stopped
+// persisting.
+func stackWriteManifestMap(src *cfgfind.Source, key string, value any) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	path := []string{key}
+	if src.Path == "" { // embedded stack block in .rig.json
+		path = []string{"stack", key}
+	}
+	w := confkit.Writer{SchemaURL: stackSchemaURL}
+	if !w.Set(src.File, path, string(raw)) {
+		return fmt.Errorf("could not record %s in %s", key, src.File)
+	}
+	return nil
+}
+
 // stackRememberProposed records the branch a prefix was last proposed on —
 // the one that was pushed, prefix and all, so a rebuild can look for exactly
 // that even if branchPrefix changes later — and the next propose offers it
@@ -187,19 +264,7 @@ func stackRememberProposed(src *cfgfind.Source, m *stackManifest, prefix, branch
 		return nil // nothing to write, and no commit to make out of nothing
 	}
 	m.LastPropose[prefix] = branch
-	raw, err := json.Marshal(m.LastPropose)
-	if err != nil {
-		return err
-	}
-	path := []string{"lastPropose"}
-	if src.Path == "" { // embedded stack block in .rig.json
-		path = []string{"stack", "lastPropose"}
-	}
-	w := confkit.Writer{SchemaURL: stackSchemaURL}
-	if !w.Set(src.File, path, string(raw)) {
-		return fmt.Errorf("could not record the branch in %s", src.File)
-	}
-	return nil
+	return stackWriteManifestMap(src, "lastPropose", m.LastPropose)
 }
 
 func (m *stackManifest) requireRepos() error {
@@ -403,6 +468,35 @@ func (m *stackManifest) validate() error {
 			}
 		}
 	}
+	// Proposals is machine-written, but a manifest is a file people edit, and the
+	// published schema rejects blank values that would otherwise reach `status`
+	// and be shown as a branch or silently read as "not proposed yet".
+	for prefix, topics := range m.Proposals {
+		// An entry for a repo that is gone is ignored, not refused. JSON Schema
+		// cannot express "this key must appear in repos", so refusing here made
+		// rig reject manifests the published schema accepts — and refusing to
+		// LOAD over a stale record would be out of proportion to it anyway.
+		// `status` only ever reads Proposals[name] for a member it already has.
+		if m.Repos[prefix] == nil {
+			continue
+		}
+		for topic, p := range topics {
+			if strings.TrimSpace(topic) == "" {
+				return fmt.Errorf("the proposals map for %q has an entry with no topic branch name", prefix)
+			}
+			if strings.TrimSpace(p.Branch) == "" {
+				return fmt.Errorf("the proposals map for %q records no branch for topic %q — remove the entry, or name the branch its pull request is on", prefix, topic)
+			}
+			// A malformed commit is worse than none. `status` compares every
+			// non-empty value against the topic's tip, and something that is not a
+			// SHA can never equal one — so the branch would be reported as having
+			// moved on every run, for ever. Absent is a legitimate value and means
+			// "recorded before the commit was tracked".
+			if p.Commit != "" && !stackIsSHA(p.Commit) {
+				return fmt.Errorf("the proposals map for %q records commit %q for topic %q — that must be a full 40-character commit SHA, or be left out", prefix, p.Commit, topic)
+			}
+		}
+	}
 	return nil
 }
 
@@ -496,22 +590,12 @@ func stackSetCursor(src *cfgfind.Source, m *stackManifest, prefix, sha string) e
 		delete(m.LastPin, prefix)
 	}
 
-	w := confkit.Writer{SchemaURL: stackSchemaURL}
 	for _, kv := range []struct {
 		key   string
 		value map[string]string
 	}{{"lastSync", m.LastSync}, {"lastPin", m.LastPin}} {
-		key, value := kv.key, kv.value
-		raw, err := json.Marshal(value)
-		if err != nil {
+		if err := stackWriteManifestMap(src, kv.key, kv.value); err != nil {
 			return err
-		}
-		path := []string{key}
-		if src.Path == "" { // embedded key in .rig.json
-			path = []string{"stack", key}
-		}
-		if !w.Set(src.File, path, string(raw)) {
-			return fmt.Errorf("could not update %s in %s", strings.Join(path, "."), src.File)
 		}
 	}
 	return nil
@@ -636,6 +720,12 @@ const stackManifestTemplate = `{
 
   // A "lastSync" block appears here after the first import, recording the
   // upstream commit each directory was taken from. Written by rig, not by hand.
+
+  // A "proposals" block appears once you send a topic branch with
+  //     rig stack propose <repo> <name> --from <topic>
+  // recording which branch of your fork carries each topic's pull request, and
+  // the commit that went to it, so "rig stack status" can say where each fix is
+  // and whether the branch has moved since. Written by rig, not by hand.
 }
 `
 

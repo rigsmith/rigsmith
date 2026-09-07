@@ -246,13 +246,14 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 
 | Verb | What |
 |------|------|
-| `stack init` | Write the manifest, or import the repos it names into this history |
+| `stack setup` | Set up a freshly cloned stackspace: install the fusion engine, import the members, write the build overlay, print the status. The one command a new clone needs; safe to run again |
+| `stack init` | Write the manifest, or import the repos it names into this history (and a generated `README.md`, unless one is there that rig does not own) |
 | `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
 | `stack rm <repo>` | Remove a repo — manifest entry, directory and overlay redirects; refuses while it holds unsent or uncommitted work, or files git ignores (`--force` overrides); `--keep-tree` keeps the directory, and needs a clean one even with `--force` |
 | `stack seed <dir>` | Export the root files as a small repo (conventionally `rigstack-<name>`, suggested outside enclosing repositories); `stack init` on a clone of it rebuilds every member at its recorded cursor, or from the fork branch it was last proposed to while that branch still exists; refuses while a member holds unsent commits (`--force`) |
-| `stack status` | Each repo's cursor against its upstream, and whether it holds work that has not left |
+| `stack status` | Each repo's cursor against its upstream, whether it holds work that has not left — all of which `propose` would send — and, listed under it, each `stack-pr-*` topic in flight with the fork branch its pull request is on, `not proposed yet`, whether the branch has moved since, and whether a pull left it behind |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default) |
-| `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch; `--dry-run` shows the commit and branch that would go and touches no remote |
+| `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch — **all** of them, the prefix's whole divergence from upstream; `--from <branch>` sends only what a topic branch of the stackspace adds (a bare name resolves to the conventional `stack-pr-<name>`), so a second fix can be its own pull request (needs `trackBranch`, which it then keeps current); `--dry-run` shows the commit and branch that would go and touches no remote |
 | `stack push [repo]` | Fast-forward a repo you own with this stackspace's commits, history intact; inferred when only one is yours; `--dry-run` shows the target, branch and commits that would go and touches no remote |
 | `stack wire` | Write the build overlay so members resolve each other from source |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what's missing |
@@ -260,7 +261,8 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 ```sh
 rig stack init                       # writes rig.stack.jsonc to fill in
 rig stack init                       # again: imports each repo it names
-rig stack status                     # who has moved upstream
+rig stack setup                      # a fresh clone: engine, members, overlay, status
+rig stack status                     # who has moved upstream, and where each topic's PR is
 rig stack pull pty-core              # take that movement
 rig stack propose pty-core read-timeout -m "Fix the read timeout"  # → stack/read-timeout
 ```

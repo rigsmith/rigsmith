@@ -32,6 +32,7 @@ func newStackCmd() *cobra.Command {
 			"and leave one project at a time: `send` puts a prefix's changes on your\n" +
 			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
+			"  rig stack setup                     set up a fresh clone: engine, members, overlay\n" +
 			"  rig stack init                      scaffold the manifest / import the repos\n" +
 			"  rig stack add [upstream]            add a repo and import it (asks if not given)\n" +
 			"  rig stack rm <repo>                 remove a repo: manifest, tree and overlay\n" +
@@ -49,7 +50,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
 	return refuseUnknownVerb(cmd)
 }
 
@@ -202,6 +203,29 @@ func newStackInitCmd() *cobra.Command {
 			if imported == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "nothing to import — every repo has a cursor; use `rig stack pull` for updates")
 			}
+			// A seed clone is a manifest, a build overlay, and nothing that says
+			// what either is — so the next person reads a build file pointing at
+			// directories that are not there and concludes the repo is broken.
+			// Best-effort: failing to write a README must not fail an import that
+			// worked.
+			switch wrote, err := writeStackReadme(root, m); {
+			case err != nil:
+				// Best-effort, but not silent: the import worked and the
+				// guidance it promises is missing, and only this line says so.
+				fmt.Fprintf(cmd.ErrOrStderr(), "could not write README.md: %v\n", err)
+			case wrote:
+				fmt.Fprintln(cmd.OutOrStdout(), "wrote README.md — what this is, and how to set it up")
+				// Committed, and by path alone. init refuses a dirty tree, and
+				// so do pull and propose — so a file this verb generates and
+				// leaves loose makes the next verb refuse over something the
+				// user never wrote. A rebuild from a seed hits it immediately:
+				// the heading follows the directory name, so a clone under a
+				// different one rewrites the file and nothing works again
+				// until someone commits it.
+				if _, err := repo.CommitPaths(ctx, "stack: README", "README.md"); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "could not commit README.md: %v\n", err)
+				}
+			}
 			return nil
 		},
 	}
@@ -289,7 +313,60 @@ func newStackStatusCmd() *cobra.Command {
 				case !u.Known && m.cursor(name) != "":
 					state += "  ·  cannot tell whether it has unsent changes (no import commit in this history)"
 				}
+				// Staleness is NOT summarised on this line: the per-topic listing
+				// below names each stale topic where its own entry is, which is
+				// where a reader looks for it. Saying it twice was an artefact of
+				// the listing arriving after the summary did.
+				//
+				// `propose` sends the prefix's WHOLE divergence, not the change you
+				// have in mind, so a second pull request for this repo would carry
+				// the first one's too. Nothing else says so, and the place it is
+				// otherwise discovered is a maintainer asking why the diff touches
+				// something unrelated.
+				//
+				// Said, not counted. A count needs a range, and every range against
+				// the integration line is wrong here: the newest import marker sits
+				// on top of the fixes, so `marker..HEAD` omits all of them. The
+				// sentence was the point anyway.
+				if u.Commits || u.Proposed {
+					state += "  ·  `propose` sends this prefix's whole divergence (--from <branch> for one topic)"
+				}
 				fmt.Fprintf(out, "%-24s %-10s %s\n", name, short(m.cursor(name)), state)
+				// Then each topic in flight for this member, and where it went.
+				// Existence, reach and staleness are asked of the repository; only
+				// the destination comes from the manifest, because only that is
+				// unknowable from here.
+				topics, terr := stackTopics(ctx, repo, m, name)
+				if terr != nil {
+					// Said, not swallowed: an empty list here would read as "no
+					// topics in flight", which is the opposite of "cannot tell".
+					fmt.Fprintf(out, "  (cannot list topics for %s — %s)\n", name, stackFirstLine(terr))
+				}
+				for _, t := range topics {
+					where := "not proposed yet"
+					if pr, ok := m.Proposals[name][t.Name]; ok && pr.Branch != "" {
+						where = "→ " + m.Repos[name].Fork + ":" + pr.Branch
+						// Recorded against a branch NAME, and names get reused —
+						// so what was proposed is compared with what is there now.
+						// Catches a topic recreated under an old name, and the
+						// commoner case of a pull request left behind its branch.
+						if tip, terr := repo.RevParse(ctx, t.Name); terr == nil && pr.Commit != "" && tip != pr.Commit {
+							where += "  (branch has moved since; propose again to update it)"
+						}
+					}
+					if t.Stale {
+						where += "  (rooted before the last pull — `propose --from` refuses it)"
+					}
+					fmt.Fprintf(out, "  %-30s %s\n", t.Name, where)
+				}
+			}
+			// The whole point of the convention is not having to remember what is
+			// in flight. Only the conventionally-named ones: a branch the user
+			// named themselves is theirs, and guessing at it would be listing
+			// their work back at them.
+			if topics, terr := repo.BranchesWithPrefix(ctx, stackTopicPrefix); terr == nil && len(topics) > 0 {
+				fmt.Fprintf(out, "\ntopics in flight: %s\n", strings.Join(topics, ", "))
+				fmt.Fprintf(out, "  propose one with `rig stack propose <repo> <name> --from %s`\n", strings.TrimPrefix(topics[0], stackTopicPrefix))
 			}
 			return nil
 		},
@@ -357,6 +434,33 @@ func newStackPullCmd() *cobra.Command {
 				if err := stackPullOne(ctx, cmd.OutOrStdout(), repo, bin, src, m, name, stackPullOpts{}); err != nil {
 					return fmt.Errorf("pulling %s: %w", name, err)
 				}
+			}
+			// A pull moves the prefix on; a topic branch does not come with it,
+			// and its tree is now upstream as it USED to be. propose refuses such
+			// a topic, but only when you next reach for it — which may be days
+			// later, with no memory of the pull that caused it. Say it here.
+			//
+			// Deliberately NOT rebased automatically. The obvious target is the
+			// commit this pull just made, and that is wrong: an import merges into
+			// HEAD, and HEAD has already merged your topics, so re-rooting onto it
+			// folds the very fix the topic isolates back into it. Re-rooting a
+			// topic correctly means replaying it onto upstream's new tree with
+			// none of the integration line's fixes, which is a separate piece of
+			// work and not a flag.
+			for _, name := range moved {
+				stale, serr := stackStaleTopicNames(ctx, repo, m, name)
+				if serr != nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "\n%s: cannot tell which topics this pull left behind — %s\n", name, stackFirstLine(serr))
+					continue
+				}
+				if len(stale) == 0 {
+					continue
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "\n%s: %d topic(s) rooted before this pull — `propose --from` will refuse them until re-rooted:\n", name, len(stale))
+				for _, t := range stale {
+					fmt.Fprintf(cmd.OutOrStdout(), "    %s\n", t)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "  branch again from the new import and replay the fix; proposing as-is would revert what upstream landed.\n")
 			}
 			return nil
 		},
@@ -441,11 +545,127 @@ func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty
 	// this history records it: propose keeps the commit it pushed under a
 	// ref, and a prefix holding exactly that tree has nothing left to send.
 	if u.Commits {
-		if sent, err := repo.RevParse(ctx, "refs/rigsmith/propose/"+name+"^{tree}"); err == nil && sent == here {
-			u.Commits, u.Proposed = false, true
+		for _, ref := range []string{"refs/rigsmith/propose/", "refs/rigsmith/integration/"} {
+			// The integration ref matters for a prefix proposed with --from: the
+			// topic's branch holds part of the divergence, so the propose ref
+			// legitimately does not match, while trackBranch holds all of it and
+			// the work has in fact left.
+			if sent, err := repo.RevParse(ctx, ref+name+"^{tree}"); err == nil && sent == here {
+				u.Commits, u.Proposed = false, true
+				break
+			}
 		}
 	}
 	return u
+}
+
+// stackImportCommit is the commit that last brought a member's prefix up to
+// upstream — rig's own import/pull marker.
+//
+// This, and NOT the cursor, is what local ancestry is measured against. The
+// cursor is a raw upstream commit, while an import merges josh-REWRITTEN
+// content, so the upstream commit itself is an ancestor of nothing in this
+// history. Verified against a real stackspace: all three members' cursors
+// answered "not an ancestor of HEAD", which measured that way would have made
+// every topic look stale and refused every `propose --from`.
+func stackImportCommit(ctx context.Context, repo *gitrepo.Repo, name string) string {
+	marker, err := repo.LastCommitMatching(ctx, `^stack: (import|pull|push) `+regexp.QuoteMeta(name)+` @`)
+	if err != nil {
+		return ""
+	}
+	return marker
+}
+
+// stackTopicTouches reports whether a topic changes a member at all, by
+// comparing its prefix tree against the import's.
+//
+// Content, NOT history. The workflow merges topics into the integration line, so
+// a topic's commits are ancestors of the newest import marker and any
+// `marker..topic` range is empty — a range test called every topic irrelevant to
+// every member the moment it was merged, which is to say always.
+func stackTopicTouches(ctx context.Context, repo *gitrepo.Repo, base, topic, name string) (bool, error) {
+	baseTree, berr := repo.RevParse(ctx, base+":"+name)
+	if berr != nil {
+		// The import has no such directory, which is a stackspace this member is
+		// not really in — nothing to compare, and nothing wrong either.
+		return false, nil
+	}
+	topicTree, terr := repo.RevParse(ctx, topic+":"+name)
+	if terr != nil {
+		// The topic does not carry this member's directory at all: absence, not
+		// failure. It is the ordinary case for a topic belonging to another member.
+		return false, nil
+	}
+	return baseTree != topicTree, nil
+}
+
+// stackTopic is one in-flight topic branch of this stackspace, as it stands
+// against a member.
+type stackTopic struct {
+	Name string
+	// Stale is set when the topic predates the member's latest import: its
+	// prefix tree is upstream as it USED to be, so proposing it would present
+	// everything upstream landed since as reverted.
+	Stale bool
+}
+
+// stackTopics lists the conventionally-named topic branches that touch a member,
+// and says which of them a pull has left behind.
+//
+// One traversal answering both questions. They were two functions, each listing
+// the branches and finding the import again — not merely twice the work, since
+// two derivations of one thing can disagree, and `status` printed both.
+//
+// Only the conventionally-named branches are examined. A branch the user named
+// themselves may be anything at all, and calling someone's unrelated work a
+// stale topic is worse than saying nothing.
+func stackTopics(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) ([]stackTopic, error) {
+	base := stackImportCommit(ctx, repo, name)
+	if base == "" {
+		// No marker to measure against. Not an error: a stackspace whose history
+		// was rewritten past rig's own commits legitimately has none, and there
+		// is simply nothing to say about topics there.
+		return nil, nil
+	}
+	branches, err := repo.BranchesWithPrefix(ctx, stackTopicPrefix)
+	if err != nil {
+		// Failing to enumerate is not the same as there being none, and the
+		// difference matters: silence here reads as "no topics in flight".
+		return nil, fmt.Errorf("listing %s* branches: %w", stackTopicPrefix, err)
+	}
+	var out []stackTopic
+	for _, b := range branches {
+		touches, terr := stackTopicTouches(ctx, repo, base, b, name)
+		if terr != nil {
+			return nil, fmt.Errorf("comparing %s against %s: %w", b, name, terr)
+		}
+		if !touches {
+			continue
+		}
+		// An ancestry check that fails errs toward STALE. The two answers are not
+		// symmetric: calling a stale topic current hides the one thing this
+		// reports — that proposing it would revert what upstream landed — while
+		// calling a current one stale costs a line of noise and a propose that
+		// then succeeds.
+		current, aerr := repo.IsAncestor(ctx, base, b)
+		out = append(out, stackTopic{Name: b, Stale: aerr != nil || !current})
+	}
+	return out, nil
+}
+
+// stackStaleTopicNames is stackTopics filtered to the ones a pull left behind.
+func stackStaleTopicNames(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) ([]string, error) {
+	topics, err := stackTopics(ctx, repo, m, name)
+	if err != nil {
+		return nil, err
+	}
+	var stale []string
+	for _, t := range topics {
+		if t.Stale {
+			stale = append(stale, t.Name)
+		}
+	}
+	return stale, nil
 }
 
 // stackFileDirty reports whether one path has changes git has not recorded —
@@ -798,8 +1018,35 @@ func stackPrefixPresent(ctx context.Context, repo *gitrepo.Repo, name string) bo
 	return err == nil
 }
 
+// stackTopicPrefix is the RECOMMENDED name for a stackspace's own in-flight
+// branches — the topics `propose --from` sends one at a time. It is a
+// convention, not a rule: --from takes any branch, and this is only what it
+// falls back to when the name it was given is not itself a branch, and what
+// `status` lists so you can see what is in flight without remembering it.
+//
+// Distinct from branchPrefix (`stack/`), which names the branches that appear
+// on your FORK. These two live in different repositories and mean different
+// things — one is work in progress here, the other is a pull request there — so
+// sharing a spelling would only invite reading one as the other.
+const stackTopicPrefix = "stack-pr-"
+
+// stackResolveTopic turns what --from was given into a branch that exists.
+// An exact name wins: the convention is a suggestion, and a branch the user
+// actually named is never second-guessed. Otherwise the conventional name is
+// tried, so `--from reader-wedge` finds stack-pr-reader-wedge.
+func stackResolveTopic(ctx context.Context, repo *gitrepo.Repo, given string) (string, error) {
+	if repo.BranchExists(ctx, given) {
+		return given, nil
+	}
+	if conventional := stackTopicPrefix + given; repo.BranchExists(ctx, conventional) {
+		return conventional, nil
+	}
+	return "", fmt.Errorf("no branch %q in this stackspace, and no %q either — `git branch` to see what is here", given, stackTopicPrefix+given)
+}
+
 func newStackSendCmd() *cobra.Command {
 	var message string
+	var fromBranch string
 	cmd := &cobra.Command{
 		Use:     "propose [repo] [new-branch]",
 		Aliases: []string{"send"},
@@ -817,6 +1064,28 @@ func newStackSendCmd() *cobra.Command {
 			"among your own work on the same fork: `propose lib read-timeout` creates\n" +
 			"stack/read-timeout. Change it with the manifest's branchPrefix, or set\n" +
 			"that to \"\" for bare names.\n\n" +
+			"By default the branch carries the WHOLE of what this stackspace has for\n" +
+			"<repo> — every fix it is holding, not just your latest. That is right\n" +
+			"while one thing is in flight, and wrong the moment two are: a second\n" +
+			"pull request would show the first one's changes too.\n\n" +
+			"--from <branch> proposes one topic branch of this stackspace instead,\n" +
+			"so each fix is its own pull request:\n\n" +
+			"    git switch -c stack-pr-reader-wedge <the import commit>\n" +
+			"    ...fix, commit...\n" +
+			"    git switch main && git merge stack-pr-reader-wedge\n" +
+			"    rig stack propose lib reader-wedge --from reader-wedge\n\n" +
+			"`stack-pr-<name>` is a recommended convention, not a rule: --from takes\n" +
+			"any branch, falls back to the conventional name when what you gave it\n" +
+			"is not itself a branch, and `status` lists the ones named that way so\n" +
+			"you can see what is in flight.\n\n" +
+			"A topic rooted on the import holds upstream plus its own change and\n" +
+			"nothing else, so there is no patch to replay and nothing that can fail\n" +
+			"to apply as histories intertwine. Branch off a line that already carries\n" +
+			"another unmerged fix and the topic contains that fix too — propose says\n" +
+			"which commits it is sending, so you see that before a reviewer does.\n\n" +
+			"A topic is deliberately not the whole divergence, so it cannot also be\n" +
+			"what a rebuild elsewhere reconstitutes from. That is trackBranch, which\n" +
+			"--from requires and keeps current with everything the prefix carries.\n\n" +
 			"With --dry-run, says what it would push and where, and stops there:\n" +
 			"nothing reaches the fork, and nothing local records a proposal.",
 		Args:              cobra.MaximumNArgs(2),
@@ -939,6 +1208,100 @@ func newStackSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Everything the prefix carries, kept aside before a topic narrows
+			// what is proposed: it is what trackBranch is updated with below, so
+			// a rebuild still gets the fixes this pull request leaves out.
+			fullTree := tree
+			// Declared out here because it is written under --from and read at the
+			// recording step further down, after the push.
+			topicCommit := ""
+			if fromBranch != "" {
+				// Without somewhere to keep the whole divergence, proposing one
+				// topic would make every rebuild — CI included — silently drop the
+				// other fixes, while the local worktree still had them and looked
+				// fine. Refuse rather than be quietly wrong.
+				if r.TrackBranch == "" {
+					return fmt.Errorf("--from needs a trackBranch for %s: the proposed branch would hold only %s, and a rebuild reconstitutes from it\n"+
+						"set \"trackBranch\" on %s in the manifest (a branch of %s, e.g. %q) — propose keeps it current with everything the prefix carries",
+						name, fromBranch, name, r.Fork, m.sendBranch(name, "integration"))
+				}
+				// Proposing ONTO trackBranch would have the integration push below
+				// force-overwrite the pull request with the whole divergence — the
+				// reviewer would open a topic's PR and find every carried fix in it.
+				// The two branches serve opposite purposes and cannot be one.
+				if branch == r.TrackBranch {
+					return fmt.Errorf("%s is %s's trackBranch, which propose keeps at the whole divergence — a pull request there would be overwritten with every carried fix\n"+
+						"name the proposal something else", branch, name)
+				}
+				// A topic rooted on the import holds upstream's tree plus its own
+				// change and nothing else, so its prefix tree IS what upstream
+				// should see. No patch to replay, and nothing that can fail to
+				// apply — which is the whole reason this is a branch rather than a
+				// range of commits.
+				topic, terr := stackResolveTopic(ctx, repo, fromBranch)
+				if terr != nil {
+					return terr
+				}
+				fromBranch = topic
+				topicTree, terr := repo.RevParse(ctx, fromBranch+":"+name)
+				if terr != nil {
+					return fmt.Errorf("%s has no %s/ in it, so there is nothing of that project to propose: %w", fromBranch, name, terr)
+				}
+				// Read HERE, with the tree that is about to be built and pushed —
+				// not after the push. Re-reading a mutable branch afterwards can
+				// record a revision that was never sent, and a failed re-read would
+				// silently record nothing and turn movement detection off.
+				var cerr error
+				topicCommit, cerr = repo.RevParse(ctx, fromBranch)
+				if cerr != nil {
+					return fmt.Errorf("cannot read %s to record what is being proposed: %w", fromBranch, cerr)
+				}
+				// A topic rooted before the last pull holds the prefix as upstream
+				// USED to be. Committing that tree onto the current tip would
+				// present every upstream commit since as though this branch had
+				// reverted it — the same failure the stale-cursor guard above
+				// prevents for a whole-prefix propose, which cannot see this one
+				// because HEAD has been pulled and the topic has not.
+				//
+				// Measured against rig's own import marker, not the cursor: the
+				// cursor is a raw upstream commit while an import merges
+				// josh-rewritten content, so the cursor is an ancestor of nothing
+				// here and would call every topic stale.
+				importedAt := stackImportCommit(ctx, repo, name)
+				if importedAt == "" {
+					return fmt.Errorf("cannot find the commit that imported %s, so cannot tell whether %s predates it", name, fromBranch)
+				}
+				if current, aerr := repo.IsAncestor(ctx, importedAt, fromBranch); aerr != nil {
+					return fmt.Errorf("cannot tell whether %s has %s's latest import in it: %w", fromBranch, name, aerr)
+				} else if !current {
+					return fmt.Errorf("%s was rooted before %s was last brought up to upstream (%s), so proposing it would revert the commits that landed in between\n"+
+						"re-root it: branch again from that commit and replay this fix onto it",
+						fromBranch, name, short(importedAt))
+				}
+				// What the pull request will actually contain, said out loud.
+				//
+				// There is deliberately no check that the topic is "rooted
+				// correctly", because there cannot be one: a topic branched off a
+				// line already carrying another fix genuinely CONTAINS that fix,
+				// and which commits constitute this change is precisely what the
+				// branch encodes. rig cannot tell "that came along by accident"
+				// from "that is part of my change" — only the author can. So it
+				// reports, and the author sees a second subject they did not
+				// expect before a maintainer does.
+				//
+				// Measured from the import marker, so this is the topic's own
+				// history since the prefix was last brought up to upstream.
+				// Not prefix-filtered: a cross-cutting commit belongs in every
+				// member's proposal, and one that happens to touch only another
+				// member is still part of what this branch is.
+				if carried, cerr := repo.LogRange(ctx, importedAt, fromBranch); cerr == nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s: proposing %s — %d commit(s) since the import\n", name, fromBranch, len(carried))
+					for _, c := range carried {
+						fmt.Fprintf(cmd.OutOrStdout(), "    %s %s\n", short(c.SHA), c.Subject)
+					}
+				}
+				tree = topicTree
+			}
 			if tipTree == tree {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to send — it matches upstream\n", name)
 				return nil
@@ -999,6 +1362,31 @@ func newStackSendCmd() *cobra.Command {
 			if err := repo.SetRef(ctx, "refs/rigsmith/propose/"+name, commit); err != nil {
 				return err
 			}
+			// A selected branch holds part of what this prefix carries, and
+			// `init` reconstitutes from trackBranch — so trackBranch is where the
+			// rest has to be, or a rebuild elsewhere quietly builds without the
+			// fixes this pull request left out. Pushed after the proposal, so a
+			// failed proposal does not move it.
+			//
+			// Its commit is rooted on the same upstream tip, so the branch reads
+			// as "upstream, plus everything we carry" — which is what it is, and
+			// what makes it a sane thing to open by hand.
+			if fromBranch != "" {
+				intCommit, ierr := repo.CommitTree(ctx, fullTree, tip,
+					fmt.Sprintf("Everything the stackspace carries for %s, including what is not yet proposed", name))
+				if ierr != nil {
+					return ierr
+				}
+				if ierr := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), intCommit, "refs/heads/"+r.TrackBranch); ierr != nil {
+					return fmt.Errorf("the proposal reached %s:%s, but %s could not be updated: %w\na rebuild would be missing what this pull request left out — push it before seeding", r.Fork, branch, r.TrackBranch, ierr)
+				}
+				// Recorded like the proposal ref, so status and seed can tell
+				// that the unproposed commits have left too.
+				if ierr := repo.SetRef(ctx, "refs/rigsmith/integration/"+name, intCommit); ierr != nil {
+					return ierr
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s: %s now carries everything, for rebuilds\n", name, r.TrackBranch)
+			}
 			// Whether the manifest was already the user's business before this
 			// command touched it. Asked BEFORE the write below, because
 			// afterwards rig's own edit is indistinguishable from theirs.
@@ -1010,6 +1398,17 @@ func newStackSendCmd() *cobra.Command {
 			// not the one to offer back next time.
 			if err := stackRememberProposed(src, m, name, branch); err != nil {
 				return err
+			}
+			// And, for a topic, WHICH topic went where. lastPropose holds one
+			// branch per prefix, so with two fixes in flight for one member it can
+			// only remember the second; this is the record `status` reads to say
+			// where each one is.
+			if fromBranch != "" {
+				// topicCommit, captured with the tree that was pushed — not a fresh
+				// read, which could have moved in between.
+				if err := stackRememberProposal(src, m, name, fromBranch, branch, topicCommit); err != nil {
+					return fmt.Errorf("%s reached %s:%s, but recording where it went failed: %w\npropose it again to record it — the push already happened, so re-sending is a no-op on the fork", fromBranch, r.Fork, branch, err)
+				}
 			}
 			// And committed, because leaving it in the work tree makes it two
 			// kinds of wrong. `seed` refuses to export a stackspace with
@@ -1046,6 +1445,7 @@ func newStackSendCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&message, "message", "m", "", "commit message for the branch")
+	cmd.Flags().StringVar(&fromBranch, "from", "", "propose only what this stackspace branch adds (a topic branch); requires trackBranch")
 	return cmd
 }
 
@@ -1318,8 +1718,28 @@ func newStackWireCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, err = stackWire(ctx, cmd.OutOrStdout(), m, repo, "", false)
-			return err
+			// Asked before wiring, because a wire that defers still returns
+			// nil and the refresh below would go ahead anyway — writing a file
+			// nobody asked for into a tree that is about to be imported into.
+			// The heading follows the directory name, so a seed cloned under a
+			// different one is dirtied on sight, and the `setup` that follows
+			// refuses to import over it.
+			deferred := len(stackMissingPrefixes(repo.Dir, m.names())) > 0
+			if _, err := stackWire(ctx, cmd.OutOrStdout(), m, repo, "", false); err != nil {
+				return err
+			}
+			if deferred {
+				return nil // it changed nothing, so it leaves nothing behind
+			}
+			// Regenerated with the overlay, so the member table follows the
+			// manifest rather than going stale the first time one is added.
+			switch wrote, err := writeStackReadme(repo.Dir, m); {
+			case err != nil:
+				fmt.Fprintf(cmd.ErrOrStderr(), "could not refresh README.md: %v\n", err)
+			case wrote:
+				fmt.Fprintln(cmd.OutOrStdout(), "refreshed README.md")
+			}
+			return nil
 		},
 	}
 	return cmd
@@ -1502,12 +1922,13 @@ func stackMenuItems() []menuItem {
 		}
 	}
 	return []menuItem{
+		{label: "setup", desc: "set up a fresh clone: fusion engine, member directories, build overlay", cmd: newStackSetupCmd()},
 		{label: "init", desc: "import any repo the manifest names but has not fused yet", cmd: newStackInitCmd()},
 		{label: "add", desc: "add a repo to this stackspace and import it", cmd: newStackAddCmd()},
 		{label: "rm", desc: "remove a repo from this stackspace — manifest, tree and overlay (pick one)", cmd: newStackRemoveMenuCmd()},
-		{label: "status", desc: "each repo's cursor against its upstream", cmd: newStackStatusCmd()},
+		{label: "status", desc: "each repo's cursor against its upstream, and how much it diverges by", cmd: newStackStatusCmd()},
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
-		{label: "propose", desc: "a repo's changes to its upstream, via a branch on your fork (asks)", cmd: newStackSendCmd()},
+		{label: "propose", desc: "ALL of a repo's changes to its upstream, via a branch on your fork (asks; --from proposes one topic)", cmd: newStackSendCmd()},
 		{label: "push", desc: "a repo you own back to its own branch, history intact (pick one)", cmd: newStackPushMenuCmd()},
 		{label: "wire", desc: "write the build overlay so members resolve each other from source", cmd: newStackWireCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},

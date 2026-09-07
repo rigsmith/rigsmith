@@ -240,6 +240,13 @@ leave it out. Where pull requests go does not change — `upstream` is still wha
 `propose` roots on and what `pull` follows — and the cursor records the upstream
 commit the branch is based on, so `status` still compares against upstream. A
 `trackBranch` that is not on the fork is an error rather than a silent fallback.
+
+`rig stack propose --from` **requires** it and **writes** it. A topic branch holds
+only its own fix, and `init` reconstitutes from it, so something has to hold the rest
+or a rebuild elsewhere quietly builds without the fixes the pull request left out.
+Every `--from` send force-updates `trackBranch` to the prefix's whole divergence — so
+once topics are in use it stops being a branch you maintain and becomes one rig writes,
+and it must not be the branch you propose onto.
 It cannot be combined with a tag or commit pin. Without it, `init` rebuilding a
 member checks for the branch it was last proposed to and uses that when it
 still exists.
@@ -306,6 +313,19 @@ fork arrangement looks identical, so it is stated.
 written: an import or pull rewrites that one value while the entries you wrote,
 and their comments, stay untouched. The values are full 40-character SHAs — an
 abbreviated one would never equal the tip `status` reads from the remote.
+
+`proposals` is machine written too, and records where each **topic branch's** pull
+request went, with the commit that was sent —
+`{"pty-core": {"stack-pr-read-timeout": {"branch": "stack/read-timeout", "commit": "a1b2…"}}}`.
+The commit is what lets `status` say a branch has moved past its pull request, and
+stops a topic recreated under an old name from inheriting the old destination.
+`lastPropose` cannot answer that: it holds one branch per repo and is overwritten on
+every propose, which was sufficient while a proposal meant the whole prefix and only
+one could be in flight. It keeps its own job, naming the branch a rebuild
+reconstitutes from. Nothing else about a topic is recorded — which topics exist, what
+they touch and whether a pull left them behind are derived from the repository each
+time `status` runs, so a branch deleted after its pull request merged simply stops
+being listed instead of leaving the manifest claiming work that is not there.
 
 `branchPrefix` is prepended to the name you give `rig stack propose`, so
 `send pty-core read-timeout` creates `stack/read-timeout` on your fork. It

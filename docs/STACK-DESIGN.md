@@ -583,3 +583,98 @@ prefix that is the one place it must not be written: the file leaves in a
   own directory is not the stackspace's either. One file, `# <package>`
   sections, newest entry on top within each.
 
+### Proposing one fix out of several (2026-09-07)
+
+`propose` commits `HEAD:<prefix>` onto the upstream tip — the prefix's **whole**
+current tree. It was never a per-change extraction, and nothing said so, which is
+how a stackspace carrying two fixes for one project produces a second pull request
+showing the first one's changes.
+
+The two properties are in tension and both are wanted:
+
+- The proposed branch is what a rebuild reconstitutes from (`lastPropose`), so it
+  has to hold **everything** the prefix carries or CI publishes without the rest.
+- A pull request has to hold **only its own change**, or a maintainer is reading a
+  diff nobody asked them to review.
+
+One branch cannot be both, so `--from <branch>` splits them: in-flight fixes live on
+topic branches of the stackspace, rooted on the commit that imported that member,
+and `main` merges them and stays the fused line you build and test.
+
+**Why a branch and not a range of commits.** The first attempt selected commits
+(`--commits HEAD~1..HEAD`) and replayed their prefix-scoped diffs onto the upstream
+tip through a scratch index. It worked, and it was the wrong shape twice over. A
+range is *positional* — `HEAD~1..HEAD` means something different after the next
+commit, and nothing a week later. And reconstructing one change out of an
+intertwined history is a patch that stops applying exactly when it is most needed:
+the more fixes a stackspace carries, the more they touch the same files, so the
+common case degrades into "does not apply" — in the very scenario the feature exists
+for.
+
+A topic rooted on the import keeps the isolation **by construction** instead of
+reconstructing it. Its prefix tree already *is* upstream plus that one change, so:
+
+- the proposed tree is `<topic>:<prefix>`, taken as-is. No replay, no scratch index,
+  nothing that can fail to apply. `TreeWithPrefixCommits` went away with the
+  approach that needed it.
+- a topic branched off a line already carrying another unmerged fix **contains** that
+  fix, and `propose` reports the commits it is sending rather than refusing. There is
+  no check to be had here: the first attempt compared the tree at
+  `merge-base(topic, HEAD)` to upstream's, which is wrong twice over — once the topic
+  is merged into the integration line that merge-base *is* the topic tip, and more
+  fundamentally, which commits constitute a change is precisely what the branch
+  encodes. rig cannot distinguish "that came along by accident" from "that is part of
+  my change"; only the author can, and a listed subject they did not expect is what
+  tells them.
+- a cross-cutting change is one topic proposed to each member it touched, which is
+  what a stackspace is for. A range would have to be retyped per member and mean the
+  same thing each time.
+
+**Naming them.** `stack-pr-<name>` is a *recommended* convention rather than a rule.
+`--from` takes any branch and an exact match always wins; the conventional name is
+only the fallback when what it was given is not itself a branch, so
+`--from reader-wedge` finds `stack-pr-reader-wedge` without it being typed. `status`
+lists branches named that way, which is what makes "what is in flight" something you
+read rather than remember. The prefix is deliberately **not** `branchPrefix`'s
+`stack/`: those name branches on the *fork* and mean a pull request, while these are
+work in progress here, and one spelling for both would invite reading either as the
+other.
+
+The rest is unchanged from the first attempt:
+
+- `trackBranch` holds the whole divergence, and `propose --from` **pushes it on
+  every send**. It stops being a branch the user maintains and becomes one rig
+  writes.
+- `--from` **refuses without `trackBranch`**, rather than leaving the rebuild short.
+  That failure is invisible from the machine where the work was done: the worktree
+  still has every fix, and only a rebuild elsewhere is missing them.
+- The integration push is recorded under `refs/rigsmith/integration/<name>`,
+  alongside `refs/rigsmith/propose/<name>`. `stackUnsentWork` accepts either, or
+  `seed` would refuse a stackspace whose unproposed commits are safely on the fork,
+  and `status` would call them unsent.
+
+`status` now says that `propose` sends the prefix's whole divergence, because that
+behaviour is otherwise discovered by a maintainer asking why a diff touches something
+unrelated. Said rather than counted: a count needs a range, and every range against the
+integration line is wrong here — the newest import marker sits on top of the fixes, so
+`marker..HEAD` omits all of them, and a topic merged into the line makes
+`marker..topic` empty. Whether a topic touches a member is answered by comparing prefix
+TREES, which no merge can distort.
+
+**Staleness after a pull.** A pull moves the prefix on and a topic branch does not
+come with it, so the topic's tree is upstream as it used to be. The whole-prefix path
+is protected by the stale-cursor guard, which `--from` cannot rely on: `HEAD` gets
+pulled and a topic does not, so the cursor equals the tip and the guard sees nothing
+wrong. `propose --from` therefore requires the cursor to be an ancestor of the topic,
+and `pull` and `status` both name the topics that are not.
+
+**Why they are not re-rooted automatically.** The obvious target is the commit the
+pull just made, and it is wrong: `stackPullOne` merges into `HEAD`, and `HEAD` has
+already merged the topics, so re-rooting a topic onto that commit folds the very fix
+it isolates back into it — and the same is true of any base derived from the
+integration line. Correct re-rooting means replaying the topic's own diff onto
+upstream's new tree with none of the integration line's fixes: a synthesised clean
+base, not a rebase onto an existing commit. That is a separate piece of design and
+deliberately not a flag on `pull`, because a flag that is right only when a prefix has
+exactly one unmerged topic — and silently wrong otherwise — is worse than the manual
+step it replaces.

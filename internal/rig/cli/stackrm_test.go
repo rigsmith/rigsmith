@@ -483,3 +483,122 @@ func TestStackRm(t *testing.T) {
 		}
 	})
 }
+
+// TestStackForgetRepoKeepsOtherProposals: proposals is a map OF maps, so it does
+// not fit the loop that clears the other machine-written records and is handled
+// by hand. Removing one member must take its mapping and leave everybody
+// else's — the failure otherwise is a manifest naming pull requests for a
+// project the stackspace no longer has, or losing one that is still open.
+func TestStackForgetRepoKeepsOtherProposals(t *testing.T) {
+	root := rmStackspace(t, `{
+  "repos": {
+    "pty-core":  { "upstream": "github.com/acme/pty-core",  "fork": "github.com/you/pty-core" },
+    "term-core": { "upstream": "github.com/acme/term-core", "fork": "github.com/you/term-core" }
+  },
+  "proposals": {
+    "pty-core":  { "stack-pr-read-timeout": { "branch": "stack/read-timeout" } },
+    "term-core": { "stack-pr-reader-wedge": { "branch": "stack/reader-wedge" } }
+  }
+}`)
+
+	m, src, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := stackForgetRepo(src, m, "pty-core"); err != nil {
+		t.Fatalf("forget: %v", err)
+	}
+
+	after, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	// Named for what the second return value actually is. Calling it "gone"
+	// inverted the check and failed the test exactly when the removal worked.
+	if _, present := after.Proposals["pty-core"]; present {
+		t.Fatalf("the removed member's proposals are still recorded: %#v", after.Proposals)
+	}
+	kept, ok := after.Proposals["term-core"]
+	if !ok {
+		t.Fatalf("removing one member took another's proposals with it: %#v", after.Proposals)
+	}
+	if kept["stack-pr-reader-wedge"].Branch != "stack/reader-wedge" {
+		t.Fatalf("the surviving mapping is wrong: %#v", kept)
+	}
+}
+
+// TestStackForgetLastRepoDropsProposals: with nothing left to record, the block
+// goes rather than lingering as an empty object.
+func TestStackForgetLastRepoDropsProposals(t *testing.T) {
+	root := rmStackspace(t, `{
+  "repos": {
+    "pty-core":  { "upstream": "github.com/acme/pty-core",  "fork": "github.com/you/pty-core" },
+    "term-core": { "upstream": "github.com/acme/term-core", "fork": "github.com/you/term-core" }
+  },
+  "proposals": {
+    "pty-core": { "stack-pr-read-timeout": { "branch": "stack/read-timeout" } }
+  }
+}`)
+
+	m, src, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := stackForgetRepo(src, m, "pty-core"); err != nil {
+		t.Fatalf("forget: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "rig.stack.jsonc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "proposals") {
+		t.Fatalf("the last proposal left an empty block behind:\n%s", raw)
+	}
+}
+
+// TestStackProposalCommitValidated: a malformed commit is worse than an absent
+// one. status compares every non-empty value against the topic's tip, and
+// something that is not a SHA can never equal one — so the branch would be
+// reported as moved on every run, for ever.
+func TestStackProposalCommitValidated(t *testing.T) {
+	for _, tc := range []struct {
+		name, commit string
+		wantErr      bool
+	}{
+		{"absent", "", false},
+		{"full sha", "0123456789abcdef0123456789abcdef01234567", false},
+		{"abbreviated", "0123456", true},
+		{"not hex", "zzzz456789abcdef0123456789abcdef01234567", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commit := ""
+			if tc.commit != "" {
+				commit = fmt.Sprintf(`, "commit": %q`, tc.commit)
+			}
+			root := rmStackspace(t, fmt.Sprintf(`{
+  "repos": { "pty-core": { "upstream": "github.com/acme/pty-core", "fork": "github.com/you/pty-core" } },
+  "proposals": { "pty-core": { "stack-pr-x": { "branch": "stack/x"%s } } }
+}`, commit))
+			_, _, err := loadStackManifest(root)
+			if tc.wantErr && err == nil {
+				t.Fatalf("loaded a manifest recording commit %q", tc.commit)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("rejected a legitimate manifest: %v", err)
+			}
+		})
+	}
+}
+
+// TestStackProposalOrphanKeyIgnored: JSON Schema cannot express "this key must
+// also appear in repos", so refusing here made rig reject manifests its own
+// published schema accepts. An entry for a repo that is gone is ignored.
+func TestStackProposalOrphanKeyIgnored(t *testing.T) {
+	root := rmStackspace(t, `{
+  "repos": { "pty-core": { "upstream": "github.com/acme/pty-core", "fork": "github.com/you/pty-core" } },
+  "proposals": { "gone-away": { "stack-pr-x": { "branch": "stack/x" } } }
+}`)
+	if _, _, err := loadStackManifest(root); err != nil {
+		t.Fatalf("an orphan proposals entry should be ignored, not refuse the manifest: %v", err)
+	}
+}

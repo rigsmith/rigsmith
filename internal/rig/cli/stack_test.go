@@ -423,27 +423,23 @@ func mustGitStack(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
-func TestStackMenuAndCompletion(t *testing.T) {
-	// Both read the manifest through the working directory, so the tests run
-	// from inside a temp stackspace rather than passing a root around.
-	inStackspace := func(t *testing.T, manifest string) {
-		t.Helper()
-		dir := t.TempDir()
-		// The stackspace root is the git top level, so the fixture has to be a
-		// repository — outside one there is no stackspace to find.
-		mustGitStack(t, dir, "init", "-q", "-b", "main")
-		if manifest != "" {
-			writeStackManifest(t, dir, manifest)
-		}
-		prev, err := os.Getwd()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chdir(dir); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.Chdir(prev) })
+// inTempStackspace runs the rest of the test from inside a fresh stackspace.
+// The stack verbs read the manifest through the working directory, so the
+// fixture is a place to stand rather than a root passed around — and it has to
+// be a git repository, since the stackspace root is the git top level.
+func inTempStackspace(t *testing.T, manifest string) string {
+	t.Helper()
+	dir := t.TempDir()
+	mustGitStack(t, dir, "init", "-q", "-b", "main")
+	if manifest != "" {
+		writeStackManifest(t, dir, manifest)
 	}
+	chdir(t, dir)
+	return dir
+}
+
+func TestStackMenuAndCompletion(t *testing.T) {
+	inStackspace := func(t *testing.T, manifest string) { inTempStackspace(t, manifest) }
 
 	t.Run("only init is offered before a manifest exists", func(t *testing.T) {
 		inStackspace(t, "")
@@ -489,7 +485,7 @@ func TestStackMenuAndCompletion(t *testing.T) {
 		for _, it := range stackMenuItems() {
 			labels = append(labels, it.label)
 		}
-		want := "init,add,rm,status,pull,propose,push,wire,doctor,seed"
+		want := "setup,init,add,rm,status,pull,propose,push,wire,doctor,seed"
 		if got := strings.Join(labels, ","); got != want {
 			t.Fatalf("menu = %q, want %q", got, want)
 		}
