@@ -235,7 +235,7 @@ at what version, with what notes); GitHub Actions owns the *compute*.
 1. **Plan + version** — `push` to main. The action runs `shiprig version` and
    keeps the Version Packages PR current. Unchanged from today.
 2. **Publish + tag** — merge of that PR. The action runs
-   `shiprig release --yes --to tag` instead of bare `shiprig publish`: commit,
+   `shiprig release --yes --to push` instead of bare `shiprig publish`: commit,
    publish to registries, tag, push, stop. It emits a JSON *release plan*
    (packages, versions, tags, notes) as a step output alongside the existing
    `publishedPackages`.
