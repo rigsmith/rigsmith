@@ -287,6 +287,11 @@ func Sync(opts Options) (*Report, error) {
 	// What the last audit read and found clean, so the unchanged path below can
 	// skip re-reading bytes nothing has touched since. Never written here.
 	audited := newAuditCache(opts.StagingDir)
+	// When this run began, and when the last one did. An mtime is only evidence
+	// of a file's contents while it is older than the run that read it; see
+	// stageclock.go.
+	startedAt := time.Now()
+	lastRunStarted := readStageClock(opts.StagingDir)
 
 	for _, r := range EffectiveRoots(opts.Config, opts.Profiles) {
 		if !r.Enabled {
@@ -395,7 +400,8 @@ func Sync(opts Options) (*Report, error) {
 				}
 				if staged != nil && staged.ModTime().Equal(info.ModTime()) &&
 					(scrub || staged.Size() == info.Size()) &&
-					!(scrub && rescrub) {
+					!(scrub && rescrub) &&
+					mtimeIsTrustworthy(info.ModTime(), lastRunStarted) {
 					unchanged = true
 				}
 				// A long session's transcript is the one file that is both large
@@ -747,6 +753,10 @@ func Sync(opts Options) (*Report, error) {
 	// after that, for as long as anything in the tree is refused. A run that
 	// genuinely stopped part-way returns above this and still re-scrubs.
 	noteRedactionSetting(opts.StagingDir, opts.RedactTranscripts)
+	// The walk finished, so every mtime older than this instant has now been
+	// staged from. Recorded even when the tripwire refuses below: the files
+	// were still copied, and the reason to distrust their mtimes is gone.
+	writeStageClock(opts.StagingDir, startedAt)
 	if len(rep.Findings) > 0 {
 		// The two halves of the wire need different remedies, so say which one
 		// fired: a JSON value means the redactor's key rules missed something, a
