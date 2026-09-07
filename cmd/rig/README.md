@@ -27,7 +27,8 @@ rig stack add github.com/them/lib    # fuse another repo
 rig stack rm some-lib                # take one back out: manifest, tree and overlay
 rig stack status                     # who has moved upstream, and what has not left
 rig stack pull some-lib              # take that movement
-rig stack propose some-lib read-timeout -m "Fix the read timeout"   # → stack/read-timeout
+rig stack propose some-lib read-timeout -m "Fix the read timeout"   # ALL of some-lib's changes → stack/read-timeout
+rig stack propose some-lib read-timeout --from read-timeout         # ...or one topic branch (stack-pr-read-timeout), so a second fix is its own PR
 rig stack push my-app                # a repo you own: its own branch, history intact
 rig stack propose some-lib read-timeout --dry-run   # the commit and fork branch that would go; touches no remote
 rig stack push my-app --dry-run      # the target, branch and commits that would go; touches no remote

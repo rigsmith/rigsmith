@@ -597,7 +597,8 @@ Without it set, `--from` refuses rather than publish a package or a rebuild that
 quietly missing work.
 :::
 
-`rig stack status` says how many commits a prefix diverges by, so you find out before
+`rig stack status` says how many commits a prefix diverges by once there is more than one
+— the point being that `propose` sends all of them — so you find out before
 a maintainer does:
 
 ```

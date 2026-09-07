@@ -653,7 +653,8 @@ The rest is unchanged from the first attempt:
   `seed` would refuse a stackspace whose unproposed commits are safely on the fork,
   and `status` would call them unsent.
 
-`status` now reports how many commits a prefix diverges by, because the
+`status` now reports how many commits a prefix diverges by once there is more than one
+(one is the ordinary case and saying so every time is noise), because the
 whole-prefix behaviour is otherwise discovered by a maintainer asking why a diff
 touches something unrelated.
 

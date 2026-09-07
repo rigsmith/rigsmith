@@ -650,14 +650,14 @@ func twoFixStackspace(t *testing.T, work string, srv *gitServer, trackBranch str
 		t.Fatal(err)
 	}
 	mustGitStack(t, ws, "add", "-A")
+	// The marker message matters: rig finds the commit a member was last imported
+	// at by matching it, and that commit — NOT the cursor — is what local
+	// ancestry is measured against. The cursor is a raw upstream commit, while a
+	// real import merges josh-rewritten content, so upstream's own commit is an
+	// ancestor of nothing in a stackspace. An earlier version of this fixture
+	// merged the raw upstream commit to make it one, which made the fixture
+	// disagree with every real stackspace and hid exactly that bug.
 	mustGitStack(t, ws, "commit", "-qm", "stack: import lib @ "+tip[:8])
-	// ...and it MERGES upstream, the way rig's own import does, so the cursor is
-	// a genuine ancestor here. Without this the fixture cannot exercise anything
-	// that asks "has this branch got upstream in it" — which is what tells a
-	// stale topic from a current one. `-s ours` keeps the prefixed tree while
-	// recording upstream as a parent, which is the shape josh's import produces.
-	mustGitStack(t, ws, "fetch", "-q", srv.path("acme/lib"), "main")
-	mustGitStack(t, ws, "merge", "-q", "--no-edit", "--allow-unrelated-histories", "-s", "ours", "FETCH_HEAD")
 	importSHA = strings.TrimSpace(mustGitStack(t, ws, "rev-parse", "HEAD"))
 
 	writeFix := func(file string) {
@@ -892,15 +892,15 @@ func TestStackProposeFromStaleTopic(t *testing.T) {
 	// like any branch, does not come along.
 	srv.commit(t, "acme/lib", "src/upstream.txt", "new upstream work\n", "lib: upstream moved on")
 	newTip := strings.TrimSpace(mustGitStack(t, srv.path("acme/lib"), "rev-parse", "main"))
-	mustGitStack(t, ws, "fetch", "-q", srv.path("acme/lib"), "main")
-	mustGitStack(t, ws, "merge", "-q", "--no-edit", "-s", "ours", "FETCH_HEAD")
 	writeStackManifest(t, ws, fmt.Sprintf(`{
   "branchPrefix": "stack/",
   "repos": { "lib": { "upstream": %q, "fork": %q, "upstreamBranch": "main", "trackBranch": "stack/integration" } },
   "lastSync": { "lib": %q }
 }`, srv.spec("acme/lib"), srv.spec("you/lib"), newTip))
 	mustGitStack(t, ws, "add", "-A")
-	mustGitStack(t, ws, "commit", "-qm", "stack: pull lib")
+	// A new import marker on main that the topic does not contain — which is
+	// precisely what "rooted before the last pull" means.
+	mustGitStack(t, ws, "commit", "-qm", "stack: pull lib @ "+newTip[:8])
 
 	chdir(t, ws)
 	out, err := propose(t, "lib", "fix-b", "fix-b")
@@ -922,5 +922,30 @@ func TestStackProposeFromStaleTopic(t *testing.T) {
 	}
 	if !strings.Contains(statusOut, "rooted before the last pull") || !strings.Contains(statusOut, "stack-pr-fix-b") {
 		t.Fatalf("status did not name the stale topic:\n%s", statusOut)
+	}
+}
+
+// TestStackProposeFromOntoTrackBranch: proposing onto trackBranch would have the
+// integration push overwrite the pull request with the whole divergence — a
+// reviewer opening a topic's PR and finding every carried fix in it. The two
+// branches serve opposite purposes, so they cannot be the same one.
+func TestStackProposeFromOntoTrackBranch(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/lib", "lib")
+	fork := srv.bare(t, "you/lib")
+	// trackBranch is stack/integration, so proposing "integration" collides.
+	ws, _ := twoFixStackspace(t, work, srv, "stack/integration")
+
+	chdir(t, ws)
+	out, err := propose(t, "lib", "integration", "fix-b")
+	if err == nil {
+		t.Fatalf("proposed onto trackBranch — the PR would be overwritten:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "trackBranch") {
+		t.Fatalf("the error does not say what collided: %v", err)
+	}
+	if refExists(t, fork, "refs/heads/stack/integration") {
+		t.Fatal("it pushed before refusing")
 	}
 }

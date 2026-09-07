@@ -497,6 +497,23 @@ func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty
 	return u
 }
 
+// stackImportCommit is the commit that last brought a member's prefix up to
+// upstream — rig's own import/pull marker.
+//
+// This, and NOT the cursor, is what local ancestry is measured against. The
+// cursor is a raw upstream commit, while an import merges josh-REWRITTEN
+// content, so the upstream commit itself is an ancestor of nothing in this
+// history. Verified against a real stackspace: all three members' cursors
+// answered "not an ancestor of HEAD", which measured that way would have made
+// every topic look stale and refused every `propose --from`.
+func stackImportCommit(ctx context.Context, repo *gitrepo.Repo, name string) string {
+	marker, err := repo.LastCommitMatching(ctx, `^stack: (import|pull|push) `+regexp.QuoteMeta(name)+` @`)
+	if err != nil {
+		return ""
+	}
+	return marker
+}
+
 // stackStaleTopics lists the conventionally-named topic branches that touch a
 // prefix and do NOT contain its cursor — topics rooted before the last pull,
 // whose prefix tree is upstream as it USED to be. Proposing one commits that
@@ -507,8 +524,8 @@ func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty
 // themselves may be anything at all, and calling someone's unrelated work a
 // stale topic is worse than saying nothing.
 func stackStaleTopics(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) []string {
-	cursor := m.cursor(name)
-	if cursor == "" {
+	base := stackImportCommit(ctx, repo, name)
+	if base == "" {
 		return nil
 	}
 	topics, err := repo.BranchesWithPrefix(ctx, stackTopicPrefix)
@@ -519,10 +536,10 @@ func stackStaleTopics(ctx context.Context, repo *gitrepo.Repo, m *stackManifest,
 	for _, t := range topics {
 		// Does it touch this member at all? A topic for another project is not
 		// this member's business, stale or otherwise.
-		if commits, cerr := repo.PrefixCommits(ctx, cursor+".."+t, name); cerr != nil || len(commits) == 0 {
+		if commits, cerr := repo.PrefixCommits(ctx, base+".."+t, name); cerr != nil || len(commits) == 0 {
 			continue
 		}
-		if current, aerr := repo.IsAncestor(ctx, cursor, t); aerr == nil && !current {
+		if current, aerr := repo.IsAncestor(ctx, base, t); aerr == nil && !current {
 			stale = append(stale, t)
 		}
 	}
@@ -535,11 +552,11 @@ func stackStaleTopics(ctx context.Context, repo *gitrepo.Repo, m *stackManifest,
 // past it): status has plenty else to say, and a wrong count here would be read
 // as a fact about someone's pull request.
 func stackDivergingCommits(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, name string) int {
-	cursor := m.cursor(name)
-	if cursor == "" {
+	base := stackImportCommit(ctx, repo, name)
+	if base == "" {
 		return 0
 	}
-	commits, err := repo.PrefixCommits(ctx, cursor+"..HEAD", name)
+	commits, err := repo.PrefixCommits(ctx, base+"..HEAD", name)
 	if err != nil {
 		return 0
 	}
@@ -1100,6 +1117,14 @@ func newStackSendCmd() *cobra.Command {
 						"set \"trackBranch\" on %s in the manifest (a branch of %s, e.g. %q) — propose keeps it current with everything the prefix carries",
 						name, fromBranch, name, r.Fork, m.sendBranch(name, "integration"))
 				}
+				// Proposing ONTO trackBranch would have the integration push below
+				// force-overwrite the pull request with the whole divergence — the
+				// reviewer would open a topic's PR and find every carried fix in it.
+				// The two branches serve opposite purposes and cannot be one.
+				if branch == r.TrackBranch {
+					return fmt.Errorf("%s is %s's trackBranch, which propose keeps at the whole divergence — a pull request there would be overwritten with every carried fix\n"+
+						"name the proposal something else", branch, name)
+				}
 				// A topic rooted on the import holds upstream's tree plus its own
 				// change and nothing else, so its prefix tree IS what upstream
 				// should see. No patch to replay, and nothing that can fail to
@@ -1120,12 +1145,21 @@ func newStackSendCmd() *cobra.Command {
 				// reverted it — the same failure the stale-cursor guard above
 				// prevents for a whole-prefix propose, which cannot see this one
 				// because HEAD has been pulled and the topic has not.
-				if current, aerr := repo.IsAncestor(ctx, m.cursor(name), fromBranch); aerr != nil {
-					return fmt.Errorf("cannot tell whether %s has upstream %s in it: %w", fromBranch, short(m.cursor(name)), aerr)
+				//
+				// Measured against rig's own import marker, not the cursor: the
+				// cursor is a raw upstream commit while an import merges
+				// josh-rewritten content, so the cursor is an ancestor of nothing
+				// here and would call every topic stale.
+				importedAt := stackImportCommit(ctx, repo, name)
+				if importedAt == "" {
+					return fmt.Errorf("cannot find the commit that imported %s, so cannot tell whether %s predates it", name, fromBranch)
+				}
+				if current, aerr := repo.IsAncestor(ctx, importedAt, fromBranch); aerr != nil {
+					return fmt.Errorf("cannot tell whether %s has %s's latest import in it: %w", fromBranch, name, aerr)
 				} else if !current {
-					return fmt.Errorf("%s was rooted before upstream moved to %s, so proposing it would revert the commits that landed in between\n"+
-						"re-root it on the new import: branch again from the current import commit and replay this fix onto it",
-						fromBranch, short(m.cursor(name)))
+					return fmt.Errorf("%s was rooted before %s was last brought up to upstream (%s), so proposing it would revert the commits that landed in between\n"+
+						"re-root it: branch again from that commit and replay this fix onto it",
+						fromBranch, name, short(importedAt))
 				}
 				// What the pull request will actually contain, said out loud.
 				//
@@ -1138,12 +1172,12 @@ func newStackSendCmd() *cobra.Command {
 				// reports, and the author sees a second subject they did not
 				// expect before a maintainer does.
 				//
-				// Measured from the cursor, the upstream commit this prefix was
-				// taken from, so this is the topic's own history since the import.
+				// Measured from the import marker, so this is the topic's own
+				// history since the prefix was last brought up to upstream.
 				// Not prefix-filtered: a cross-cutting commit belongs in every
 				// member's proposal, and one that happens to touch only another
 				// member is still part of what this branch is.
-				if carried, cerr := repo.LogRange(ctx, m.cursor(name), fromBranch); cerr == nil {
+				if carried, cerr := repo.LogRange(ctx, importedAt, fromBranch); cerr == nil {
 					fmt.Fprintf(cmd.OutOrStdout(), "%s: proposing %s — %d commit(s) since the import\n", name, fromBranch, len(carried))
 					for _, c := range carried {
 						fmt.Fprintf(cmd.OutOrStdout(), "    %s %s\n", short(c.SHA), c.Subject)

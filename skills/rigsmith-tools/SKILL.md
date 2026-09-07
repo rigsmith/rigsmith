@@ -133,10 +133,14 @@ git top level, or directories that match its `repos` keys. If so:
   `pty-core/` and `term-control/` together. Do not split it "so each repo gets
   its own commit"; `send` does that split for you, correctly.
 - **Never `git push` from the workspace**, and never add a remote to it. It
-  holds several rewritten upstream histories fused together. The only sanctioned
-  way out is `rig stack send`.
-- **Keep the worktree clean** before `init`, `pull`, or `send` — they refuse a
-  dirty tree, because an import stages everything and would swallow stray edits.
+  holds several rewritten upstream histories fused together. Work leaves through
+  `rig stack propose` (a fork you contribute to) or `rig stack push` (a repo of
+  your own, marked `owned`) — never through git directly.
+- **Keep the worktree clean** before `init` and `pull` — they refuse a dirty tree
+  anywhere, because an import stages everything and would swallow stray edits.
+  `propose` is narrower: it refuses only uncommitted changes **under the member
+  being proposed**, since those are the ones that would silently not be in what
+  you send. Unrelated edits elsewhere do not block it.
 
 ### Four different things called "branch"
 
@@ -193,7 +197,7 @@ the fallback.
 `--from` requires `trackBranch` in the manifest, and keeps that branch current with the
 whole divergence — a topic is only part of it, and `init` rebuilds from it, so without
 that a rebuild (CI included) would silently build without the fixes you left out.
-`rig stack status` reports how many commits a prefix diverges by, and lists the
+`rig stack status` reports how many commits a prefix diverges by when more than one does, and lists the
 `stack-pr-*` topics in flight.
 
 Pass the **short name** — `read-timeout`, not `stack/read-timeout`. `send`
