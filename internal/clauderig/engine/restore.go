@@ -3,6 +3,7 @@ package engine
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -283,13 +284,16 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 // rewriting both endpoints through this machine's slug map. A link is created
 // only when its target directory exists (was restored or already lived here) and
 // nothing occupies the link path — an existing file, dir, or link is the
-// machine's own state and is left alone. A failed creation (e.g. symlinks
-// unavailable on the platform) skips that link, never the restore.
+// machine's own state and is left alone. Unsupported links and concurrent name
+// collisions are skipped; unexpected creation or installation errors are returned.
 func restoreLinks(target string, manifestLinks map[string]string, slugMap map[string]string) (int, error) {
 	if len(manifestLinks) == 0 {
 		return 0, nil
 	}
 	root, err := os.OpenRoot(target)
+	if os.IsNotExist(err) {
+		return 0, nil // no destination means none of the link targets exist yet
+	}
 	if err != nil {
 		return 0, fmt.Errorf("restore: open memory-link root: %w", err)
 	}
@@ -363,26 +367,38 @@ func (r restoreLinkFS) Install(temp, name string) error {
 // another writer may have replaced. Installation must fail if name exists.
 func createRestoreLink(root restoreLinkCreator, target, name string) (created bool, err error) {
 	temp := filepath.Join(filepath.Dir(name), ".clauderig-link-"+rand.Text())
-	// Symlink support is optional; an unavailable link is a deliberate skip.
-	if err := root.Symlink(target, temp); err != nil { //nolint:nilerr // preserve best-effort link creation
-		return false, nil
+	// Unsupported links and occupied names are expected skips. Other failures
+	// must reach the restore report and journal instead of looking successful.
+	if err := root.Symlink(target, temp); err != nil {
+		if skipRestoreLinkError(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("restore: create temporary memory link: %w", err)
 	}
 	defer func() {
 		if cleanupErr := root.Remove(temp); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
-			err = fmt.Errorf("restore: could not remove temporary memory link: %w", cleanupErr)
+			err = errors.Join(err, fmt.Errorf("restore: could not remove temporary memory link: %w", cleanupErr))
 		}
 	}()
 	// The sibling has exactly the same relative target as the final link.
 	// Validate after creation, before publishing; no symbolic link can prevent
 	// changes to its target after this observation.
 	if info, statErr := root.Stat(temp); statErr == nil && info.IsDir() {
-		return root.Install(temp, name) == nil, nil
+		if err := root.Install(temp, name); err != nil {
+			if skipRestoreLinkError(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("restore: install memory link: %w", err)
+		}
+		return true, nil
 	}
 	return false, nil
 }
 
 // Manifest endpoints use portable slash-relative names, never absolute paths,
-// parent traversal, drive/UNC paths or alternate Windows stream names.
+// parent traversal, drive/UNC paths or alternate Windows stream names. The final
+// IsLocal check uses the filesystem host OS: Machine.OS controls path rewriting,
+// but Restore always performs filesystem operations on this host.
 func validRestoreLinkPath(p string) bool {
 	return p != "." && fs.ValidPath(p) && !strings.ContainsAny(p, "\\:\x00") && filepath.IsLocal(filepath.FromSlash(p))
 }

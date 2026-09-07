@@ -302,14 +302,20 @@ through the rooted handle to an internal directory before installing it. The
 installation never replaces an occupied destination: Unix uses a rooted hard link
 of the symlink itself; Windows uses a handle-relative reparse-point rename with
 replacement disabled. Cleanup only removes the temporary name, never the public
-destination that another writer might have replaced. Root-open or temporary-cleanup
-failures stop restore with an error and preserve the partial report for journaling.
-Unsupported link creation remains a best-effort skip.
+destination that another writer might have replaced. A missing restore folder is a
+successful no-op because none of the link targets exist there. Other root-open
+failures, unexpected link creation/installation errors, and temporary-cleanup
+failures return an error with the partial report for journaling. Unsupported link
+operations and concurrent destination collisions remain skips; cleanup failures
+are reported alongside any installation failure.
 
-Restore additionally rejects names that its destination platform cannot represent
-(such as Windows reserved device names). Those names can be valid in a Unix backup:
-restore leaves saved metadata intact, and retained publication uses the portable
-format rules rather than discarding another platform's links.
+Restore uses the running host's filesystem rules to reject unrepresentable names
+(such as Windows reserved device names). `Machine.OS` controls path rewriting; it
+does not change the filesystem that receives the writes. A name rejected on Windows
+can be valid in a Unix backup. Restore itself does not write the saved manifest.
+A later sync still applies normal retention: with retention enabled, project
+entries without surviving staged files and their associated links can be removed.
+Portable format validation is not a guarantee of retention across later syncs.
 
 These checks constrain restore's operations and its observations. A symbolic link
 still follows mutable filesystem names: changes after the final check can redirect
