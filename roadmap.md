@@ -132,3 +132,151 @@ entry rather than a chore:
 
 Worth doing after the ledger has been in use for a while: the third case only
 becomes common once rows outlive their transcripts.
+
+### shiprig + the `release` action — closing the release-please DX gap
+
+**Context.** The `release` composite action already gives the release-please
+experience on changesets: a standing **Version Packages** PR that previews the
+next release and publishes when merged (see `docs/GITHUB-ACTIONS.md`). What
+release-please does *beyond* that is mostly about closing loops — telling
+contributors what happened to their change, and letting maintainers steer the
+release moment. This is the list of what would take the action and shiprig
+from "parity with changesets/action" to "better than either". Roughly ordered
+by leverage within each group.
+
+**Action — close the loop back to contributors**
+
+- **"Released in" comments on source PRs.** After `publish`, comment on every
+  PR whose changeset shipped (`Released in pkg@1.2.3`) and apply a label
+  (release-please's `autorelease: tagged`). This is the single most-loved
+  release-please feature. The changeset→commit→PR mapping already exists in
+  the changelog-enrichment step, so it's plumbing, not new analysis.
+- **Rendered changelog preview in the feature PR.** The `require-changeset`
+  sticky comment today only says present/missing. Render the exact changelog
+  line each changeset will produce, per package, with the bump level, so bad
+  summaries get fixed in review instead of in the Version PR.
+- **A real Version PR body.** Today the body is `shiprig status` in a code
+  block. Render markdown: one section per package (old → new version), the
+  changelog entries, links to the originating PRs. Put a hidden marker above
+  the generated region so regeneration never clobbers anything a human added
+  below it.
+
+**Action — control over the release moment**
+
+- **Hold and skip labels on the Version PR.** A `release:hold` label stops the
+  action from force-updating the release branch while someone hand-edits it.
+  Per-package exclusion (a checkbox list in the body, or a label) lets one
+  package ship while another waits.
+- **Snapshot publishes from feature PRs.** shiprig already does snapshot
+  versioning. Wire a `/snapshot` comment or a `snapshot` label that publishes
+  `0.0.0-pr<N>-<sha>` so reviewers can try the change before merge (the
+  pkg.pr.new idea). Big win for library repos.
+- **Verified commits.** Push the version commit via the GraphQL
+  `createCommitOnBranch` mutation instead of `git push`, so it carries
+  GitHub's signature (green Verified badge) and satisfies signed-commit
+  branch protection. changesets/action gained this after years of requests.
+- **Job summary and dispatch.** Write the plan to `GITHUB_STEP_SUMMARY` so the
+  run page shows what would ship without opening the PR. Add a
+  `workflow_dispatch` input for publish-only reruns after a partial failure.
+
+**CLI**
+
+- **Explicit version override in a changeset.** A `version: 1.0.0` frontmatter
+  key — the equivalent of release-please's `Release-As:` footer — for the
+  "we're going 1.0 now" moment without faking a major bump.
+- **`shiprig status --changelog`.** Print the exact markdown `version` would
+  write, per package, touching nothing. The same renderer feeds the PR
+  preview above; locally it answers "what does the changelog look like right
+  now" instantly.
+- **`changerig add --from-pr`.** Prefill package (from touched paths), bump,
+  and summary from the branch's open PR title. Most changesets are a
+  rephrasing of the PR title anyway.
+- **Automatic changesets for dependency bumps.** Dependabot/Renovate PRs never
+  carry changesets, so they either block on the gate or need the skip label.
+  Generate a patch changeset from the lockfile diff, or let the gate
+  auto-waive a configurable list of bot authors.
+- **Changeset lint.** Reject unknown package names, empty summaries, and
+  invalid bump levels at `add` time and in the gate. Silently misfiled
+  changesets are the most common "why didn't my change ship" bug in the Node
+  ecosystem.
+
+**Dogfooding**
+
+- **Wire the action into rigsmith itself.** `docs/GITHUB-ACTIONS.md` notes the
+  action isn't used by the repo that builds it (GoReleaser-only, no
+  `.changeset/`). Moving rigsmith onto `.changeset/` + the action catches
+  action bugs before the polyglot consumers do, and gives the most active
+  repo the running changelog preview.
+
+**If only three ship:** released-in comments, changelog preview in the feature
+PR, snapshot publishes. Those are the ones contributors notice every day.
+
+### Design sketch: moving the whole release onto the GHA side
+
+**The question.** Can shiprig deliver the release-please experience end to end
+in CI — standing PR, release on merge, tags + notes, *and* the built artifacts
+release-please leaves as an exercise — without losing the one-machine
+`shiprig release` flow?
+
+**What already exists.** More than the README's "artifacts not yet wired" note
+suggests. The `release` pipeline has `--yes` (answer every confirm gate),
+`--from`/`--to` (resume at / stop after a step), `--dry-build` (build
+artifacts, publish nothing), `--local`/`--rehearse` (prove it works before
+anything leaves the machine). The forge layer (`internal/shiprig/forge`)
+creates GitHub/GitLab/Gitea releases and attaches assets idempotently
+(`gh release upload --clobber`). The `release` action already does the
+standing Version PR and publish-on-merge. So the state machine is there; the
+gaps are that the action calls bare `shiprig publish` rather than the
+pipeline, and nothing fans out builds.
+
+**Target shape.** Three phases. shiprig owns every *decision* (what releases,
+at what version, with what notes); GitHub Actions owns the *compute*.
+
+1. **Plan + version** — `push` to main. The action runs `shiprig version` and
+   keeps the Version Packages PR current. Unchanged from today.
+2. **Publish + tag** — merge of that PR. The action runs
+   `shiprig release --yes --to tag` instead of bare `shiprig publish`: commit,
+   publish to registries, tag, push, stop. It emits a JSON *release plan*
+   (packages, versions, tags, notes) as a step output alongside the existing
+   `publishedPackages`.
+3. **Build + attach** — a matrix job keyed on that plan. Each OS runner builds
+   its slice and uploads a workflow artifact. A final job downloads them and
+   runs `shiprig release --yes --from release`, which creates the forge
+   release with the changelog notes and attaches the assets.
+
+**Why the split at step 3.** One runner cross-compiles Go and .NET fine, but
+macOS signing/notarization, Windows signing, and anything with native deps
+need their own OS. release-please sidesteps this by not building at all.
+shiprig does better by answering "what to release" and letting the workflow
+answer "where to build it". The local `shiprig release` path is unchanged: the
+same `.changeset/release.jsonc` drives both; in CI the `build` step is
+disabled in favour of the matrix and the confirm gates are answered by
+`--yes`.
+
+**Two things to get right.**
+
+- **Draft first, publish after assets land.** Create the forge release as a
+  draft in step 3's final job, upload, then flip it to published. Otherwise
+  watchers get a release notification with no binaries for ten minutes — the
+  classic release-please complaint. Small addition: a `draft` flag on the
+  release step and a `--publish-draft` finisher (or fold into `--from release`).
+- **JSON plan as the contract between phases.** `shiprig release --plan-output
+  plan.json` (or `shiprig status --output json` post-version) is what the
+  matrix reads. Keep it stable and documented; it is the action's public API.
+
+**Concrete work list** (small — most is wiring):
+
+- Action: a `mode`/`to` input so it runs the pipeline instead of bare publish;
+  a `releasePlan` JSON output.
+- Action: a second small composite (`release-attach`) or a documented workflow
+  for the attach job, consuming the plan + workflow artifacts.
+- Pipeline: `draft` on the release step; `--plan-output`; make `--from release`
+  accept the plan file so it doesn't need to re-derive state from git.
+- Docs: replace the README's "artifacts not yet wired" with "artifacts build in
+  your matrix; shiprig attaches them" and an example `release.yml` showing all
+  three phases.
+
+**What this buys over release-please.** Everything it does (standing PR,
+release on merge, tags + notes, released-in comments per the section above)
+plus the artifacts leg — and it stays polyglot, one pipeline driving NuGet,
+npm, crates.io, and Go tags.
