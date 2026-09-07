@@ -65,7 +65,8 @@ Restore boundary validation is in review for [v1 (#339)](https://github.com/rigs
 and [v2 (#340)](https://github.com/rigsmith/rigsmith/pull/340): reject
 unsafe manifest link endpoints before and after slug rewriting, and confine target
 checks and link creation to the selected restore folder. Tests include older saved
-metadata, traversal, external target symlinks and valid shared-memory restores.
+metadata, traversal, external target symlinks, target-swap verification/cleanup,
+and a gated sync→Git→clone→restore shared-memory link round trip.
 
 ## Delivery priority
 

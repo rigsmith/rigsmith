@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,64 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
 )
+
+type swappingRestoreTarget struct {
+	*os.Root
+	swap       func() error
+	cleanupErr error
+}
+
+func (r swappingRestoreTarget) Symlink(target, name string) error {
+	if err := r.Root.Symlink(target, name); err != nil {
+		return err
+	}
+	return r.swap()
+}
+
+func (r swappingRestoreTarget) Remove(name string) error {
+	if r.cleanupErr != nil {
+		return r.cleanupErr
+	}
+	return r.Root.Remove(name)
+}
+
+func TestRestoreLinkRechecksTargetAfterCreation(t *testing.T) {
+	requireRestoreSymlink(t)
+	for _, failCleanup := range []bool{false, true} {
+		dir, outside := t.TempDir(), t.TempDir()
+		write(t, dir, "data/keep.txt", "inside")
+		if err := os.Symlink("data", filepath.Join(dir, "alias")); err != nil {
+			t.Fatal(err)
+		}
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { root.Close() })
+		// Model the initial successful target check in restoreLinks.
+		if _, err := root.Stat("alias"); err != nil {
+			t.Fatal(err)
+		}
+		fs := swappingRestoreTarget{Root: root, swap: func() error {
+			if err := root.Remove("alias"); err != nil {
+				return err
+			}
+			return root.Symlink(outside, "alias")
+		}}
+		if failCleanup {
+			fs.cleanupErr = errors.New("fixture cleanup denied")
+		}
+		created, err := createRestoreLink(fs, "alias", "memory")
+		if created || !errors.Is(err, fs.cleanupErr) {
+			t.Fatalf("unsafe link counted or cleanup failure hidden: %v %v", created, err)
+		}
+		if !failCleanup {
+			if _, err := root.Lstat("memory"); !os.IsNotExist(err) {
+				t.Fatal("unverified link remained", err)
+			}
+		}
+	}
+}
 
 func TestValidRestoreLinkPath(t *testing.T) {
 	for _, p := range []string{"", ".", "..", "../outside", "a/../b", "/absolute", "//server/share", `C:\outside`, "C:outside", `a\b`, "a//b", "a/./b", "a/", "a:stream", "a\x00b", string([]byte{0xff})} {
@@ -50,7 +109,7 @@ func TestRestoreLinksRejectsEscapingEndpoints(t *testing.T) {
 			write(t, root, "data/keep.txt", "inside")
 			write(t, root, "projects/safe/data/keep.txt", "inside")
 			write(t, outside, "keep.txt", "outside")
-			if got := restoreLinks(root, map[string]string{tc.link: tc.dest}, tc.slugs); got != 0 {
+			if got, err := restoreLinks(root, map[string]string{tc.link: tc.dest}, tc.slugs); err != nil || got != 0 {
 				t.Errorf("restored escaping link: %d", got)
 			}
 			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 1 {
@@ -72,7 +131,7 @@ func TestRestoreLinksRejectsExternalTargetSymlinks(t *testing.T) {
 			if err := os.Symlink(outside, filepath.Join(root, "alias")); err != nil {
 				t.Fatal(err)
 			}
-			if got := restoreLinks(root, map[string]string{"new/memory": "alias" + suffix}, nil); got != 0 {
+			if got, err := restoreLinks(root, map[string]string{"new/memory": "alias" + suffix}, nil); err != nil || got != 0 {
 				t.Error("restored link to external directory", got)
 			}
 			if _, err := os.Lstat(filepath.Join(root, "new")); !os.IsNotExist(err) {
@@ -93,7 +152,7 @@ func TestRestoreLinksAcceptsChosenRootAndInternalTarget(t *testing.T) {
 	if err := os.Symlink("data", filepath.Join(root, "alias")); err != nil {
 		t.Fatal(err)
 	}
-	if got := restoreLinks(chosen, map[string]string{"projects/p/memory": "alias"}, nil); got != 1 {
+	if got, err := restoreLinks(chosen, map[string]string{"projects/p/memory": "alias"}, nil); err != nil || got != 1 {
 		t.Fatal("valid internal link rejected", got)
 	}
 	if got := read(t, filepath.Join(chosen, "projects/p/memory/keep.txt")); got != "inside" {
