@@ -53,7 +53,7 @@ PR links, compatibility gates, and queue rollout requirements. Update its status
 and this summary with each implementation PR and merge.
 
 In review: [#339](https://github.com/rigsmith/rigsmith/pull/339) for v1 and
-[#340](https://github.com/rigsmith/rigsmith/pull/340) for v2 validate restored link
+[#340](https://github.com/rigsmith/rigsmith/pull/340) for v2 preserve concurrent destinations and partial restore reports, and validate restored link
 paths in older/manually edited backups, with directory-confined creation and
 relative targets.
 
