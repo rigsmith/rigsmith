@@ -671,7 +671,11 @@ rig stack pull                # take all of them
 
 A pull merges the new upstream commits into that repo's directory, so a conflict
 is scoped to the project that caused it rather than landing across the whole
-stackspace. The cursor only advances once the merge is committed.
+stackspace. The cursor only advances once the merge is committed: resolve the
+files, commit, and run the pull again — it recognises the merge you finished,
+records the cursor into that commit, and does not second-guess how you resolved
+it. Anything you committed on top since stays as it is; the cursor then gets a
+small commit of its own.
 
 A [pinned](./configuration#stack) project has nothing to take: its tag was
 resolved once, and an upstream that later re-cuts that tag does not move you.
@@ -925,7 +929,8 @@ stops after. Pin a version per stackspace with the manifest's
   fetched history is simply part of yours.
   Conflicts inside the prefix are real, and `pull` lists the files rather than
   just the directory. `git merge --abort` steps back; the cursor is not moved
-  until the merge is committed, so a re-run tries again from the same place.
+  until the merge is committed, so a re-run tries again from the same place —
+  or, once you have committed the resolution, records the cursor for it.
 - **Do not give the stackspace a remote** and push it somewhere. It contains
   several rewritten upstream histories fused together, which is meaningful to
   you and to nobody else. To carry it to another machine, push a

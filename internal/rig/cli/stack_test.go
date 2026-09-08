@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1275,5 +1276,103 @@ func TestStackPullDirtyGuardNamesTheManifest(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "commit or stash before pulling") || strings.Contains(err.Error(), "rig.stack.jsonc") {
 		t.Errorf("pull with other edits should give the generic refusal:\n%v", err)
+	}
+}
+
+// resolvedPullStackspace builds the history a conflicted pull leaves once the
+// user has resolved and committed it: an import marker whose upstream side is
+// F1, local work on the prefix, and a merge of F2 (F1's child) resolved by
+// hand with msg. It returns the repo, the root, and the filtered upstream
+// commits F0 (F1's parent, never the cursor) and F2.
+func resolvedPullStackspace(t *testing.T, msg string) (*gitrepo.Repo, string, string, string) {
+	t.Helper()
+	root := t.TempDir()
+	git := func(args ...string) string { return strings.TrimSpace(mustGitStack(t, root, args...)) }
+	write := func(rel, body string) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	git("config", "user.email", "t@t")
+	git("config", "user.name", "t")
+	write("README.md", "stackspace\n")
+	git("add", "-A")
+	git("commit", "-qm", "stack: stackspace manifest")
+
+	// The filtered upstream history: tweed/ only, unrelated to the stackspace.
+	git("checkout", "-q", "--orphan", "up")
+	git("rm", "-rqf", "--cached", ".")
+	os.Remove(filepath.Join(root, "README.md"))
+	write("tweed/src/a.cs", "v0\n")
+	git("add", "-A")
+	git("commit", "-qm", "upstream v0")
+	f0 := git("rev-parse", "HEAD")
+	write("tweed/src/a.cs", "v1\n")
+	git("add", "-A")
+	git("commit", "-qm", "upstream v1")
+	f1 := git("rev-parse", "HEAD")
+	write("tweed/src/a.cs", "v2\n")
+	git("add", "-A")
+	git("commit", "-qm", "upstream v2")
+	f2 := git("rev-parse", "HEAD")
+
+	// Import F1, then local work on the prefix.
+	git("checkout", "-q", "main")
+	git("merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", "stack: import tweed @ "+f1[:8], f1)
+	write("tweed/src/a.cs", "mine\n")
+	git("add", "-A")
+	git("commit", "-qm", "tweed: my change")
+
+	// Pull F2: conflicts, resolved by hand to something that is neither side.
+	if err := gitCmd(root, "merge", "--no-edit", "-m", msg, f2).Run(); err == nil {
+		t.Fatal("expected the merge of v2 over local work to conflict")
+	}
+	write("tweed/src/a.cs", "resolved\n")
+	git("add", "-A")
+	git("commit", "-qm", msg)
+
+	repo, err := gitrepo.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo, root, f0, f2
+}
+
+func TestStackTargetTaken(t *testing.T) {
+	ctx := context.Background()
+	for _, msg := range []string{"stack: pull tweed @ f2", "resolved the tweed merge"} {
+		t.Run("a resolved merge committed as "+strconv.Quote(msg), func(t *testing.T) {
+			repo, root, f0, f2 := resolvedPullStackspace(t, msg)
+			// The re-run the conflict message asked for: the target is in
+			// HEAD's history and past where the prefix last stood.
+			if !stackTargetTaken(ctx, repo, "tweed", f2) {
+				t.Fatal("the resolved merge was not recognised as taking v2 in")
+			}
+			if !stackHeadTook(ctx, repo, f2) {
+				t.Fatal("HEAD is the merge that took v2 in, and should be amended")
+			}
+			// Work committed after it does not undo that, but HEAD is no
+			// longer the merge, so the cursor gets a commit of its own.
+			if err := os.WriteFile(filepath.Join(root, "tweed", "src", "a.cs"), []byte("v1\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			mustGitStack(t, root, "commit", "-qam", "tweed: back to the import's tree")
+			if !stackTargetTaken(ctx, repo, "tweed", f2) {
+				t.Fatal("a later commit should not hide the merge that took v2 in")
+			}
+			if stackHeadTook(ctx, repo, f2) {
+				t.Fatal("HEAD is not the merge any more, and must not be amended")
+			}
+			// Moving back to v0 is a repin backwards: v0 is in the history
+			// too, but behind the last sync, so the replace guard must decide.
+			if stackTargetTaken(ctx, repo, "tweed", f0) {
+				t.Fatal("a target behind the last sync must not count as taken")
+			}
+		})
 	}
 }

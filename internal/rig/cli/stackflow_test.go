@@ -317,13 +317,70 @@ func TestStackFlow(t *testing.T) {
 	if werr := os.WriteFile(stray, []byte("mine\n"), 0o644); werr != nil {
 		t.Fatal(werr)
 	}
-	defer os.Remove(stray)
 	perr = runVerb(ctx, newStackPullCmd(), "libfoo")
 	if perr == nil {
 		t.Fatal("expected pull to refuse a dirty worktree")
 	}
 	if !strings.Contains(perr.Error(), "commit or stash before pulling") || strings.Contains(perr.Error(), "rig.stack.jsonc") {
 		t.Errorf("pull with other edits should give the generic refusal:\n%v", perr)
+	}
+	if err := os.Remove(stray); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, rebuilt, "commit", "-qam", "stack: manifest")
+
+	// ---- a conflicted pull, resolved by hand, is recorded on the re-run --
+	//
+	// libbar is at upstream's content with nothing of its own. Change the
+	// same file on both sides, and the pull has to stop inside libbar/. The
+	// resolution keeps neither side, so afterwards the prefix matches
+	// neither upstream nor the import — the state that used to be refused as
+	// "holds changes of its own" on every later pull, with no way out short
+	// of removing the member.
+	if werr := os.WriteFile(filepath.Join(rebuilt, "libbar", "src", "libbar.txt"), []byte("libbar mine\n"), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	mustGitStack(t, rebuilt, "commit", "-qam", "libbar: mine")
+	srv.commit(t, "org/libbar", "src/libbar.txt", "libbar v2\n", "upstream: v2")
+	perr = runVerb(ctx, newStackPullCmd(), "libbar")
+	if perr == nil {
+		t.Fatal("expected the pull to conflict inside libbar/")
+	}
+	if !strings.Contains(perr.Error(), "merge conflicts under libbar/") || !strings.Contains(perr.Error(), "re-run") {
+		t.Fatalf("unexpected conflict report: %v", perr)
+	}
+	if werr := os.WriteFile(filepath.Join(rebuilt, "libbar", "src", "libbar.txt"), []byte("libbar resolved\n"), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	mustGitStack(t, rebuilt, "add", "-A")
+	// --no-edit takes the message pull prepared, as `git commit` would.
+	mustGitStack(t, rebuilt, "commit", "-q", "--no-edit")
+	out, perr = runVerbOut(ctx, newStackPullCmd(), "libbar")
+	if perr != nil {
+		t.Fatalf("pull after resolving by hand: %v\n%s", perr, out)
+	}
+	if !strings.Contains(out, "recorded the resolved merge") {
+		t.Fatalf("the re-run should record the resolution, got:\n%s", out)
+	}
+	if got := strings.TrimSpace(mustGitStack(t, rebuilt, "show", "HEAD:libbar/src/libbar.txt")); got != "libbar resolved" {
+		t.Fatalf("the re-run changed the resolution to %q", got)
+	}
+	if dirty := strings.TrimSpace(mustGitStack(t, rebuilt, "status", "--porcelain")); dirty != "" {
+		t.Fatalf("the re-run left the worktree dirty:\n%s", dirty)
+	}
+	// Amended into the merge, not a commit of its own, since nothing came after.
+	if subject := strings.TrimSpace(mustGitStack(t, rebuilt, "log", "-1", "--format=%s")); !strings.HasPrefix(subject, "stack: pull libbar @") {
+		t.Fatalf("the cursor was not amended into the resolved merge: HEAD is %q", subject)
+	}
+	m, _, err = loadStackManifest(rebuilt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.TrimSpace(mustGitStack(t, srv.path("org/libbar"), "rev-parse", "main")); m.cursor("libbar") != want {
+		t.Fatalf("libbar cursor = %s, want upstream tip %s", short(m.cursor("libbar")), short(want))
+	}
+	if out, err := runVerbOut(ctx, newStackPullCmd(), "libbar"); err != nil || !strings.Contains(out, "nothing to pull") {
+		t.Fatalf("pull after recording: %v\n%s", err, out)
 	}
 }
 

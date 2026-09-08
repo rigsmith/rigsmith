@@ -961,7 +961,16 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// send them first — cannot help when the work has already been sent.
 	nowHead, nowHeadErr := repo.Head(ctx)
 	merged := preHeadErr == nil && nowHeadErr == nil && nowHead != preHead
-	if wantErr == nil && haveErr == nil && want != have && !merged {
+	// A merge that did nothing NOW may have been done before: a pull that
+	// conflicted inside the prefix stops with the merge open and the cursor
+	// where it was, the user resolves and commits, and this run is the re-run
+	// the conflict message asked for. The target is then already in HEAD's
+	// history, and the prefix differs from upstream because the resolution
+	// kept something — which is a finished merge, not a directory to replace.
+	// Judged by history rather than by tree, since a resolution that keeps
+	// nothing of its own is the only one a tree comparison would pass.
+	taken := !merged && stackTargetTaken(ctx, repo, name, "FETCH_HEAD")
+	if wantErr == nil && haveErr == nil && want != have && !merged && !taken {
 		// Replacing the directory discards whatever is under it, so only do it
 		// when there is nothing of the user's to discard. Their own commits would
 		// survive in the history but be stranded there, which is a quiet way to
@@ -997,10 +1006,26 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// Amend the cursor edit into the merge commit, so one commit carries both
 	// the history and the fact that it was synced — the reviewable unit a
 	// cron-driven pull PR is built from.
-	if _, err := repo.CommitAmendNoEdit(ctx); err != nil {
+	//
+	// When the merge was finished by hand, HEAD is that merge only if nothing
+	// has been committed since; the cursor is amended into it then, as it
+	// would have been, and otherwise recorded in a commit of its own rather
+	// than folded into whatever the user committed last. That commit is not
+	// an import marker — it has no upstream side for the baseline to be read
+	// from — so its subject must not read as one.
+	if taken && !stackHeadTook(ctx, repo, "FETCH_HEAD") {
+		if _, err := repo.Commit(ctx, fmt.Sprintf("stack: cursor %s @ %s", name, short(tip))); err != nil {
+			restore()
+			delete(m.LastSync, name)
+			return err
+		}
+	} else if _, err := repo.CommitAmendNoEdit(ctx); err != nil {
 		restore()
 		delete(m.LastSync, name)
 		return err
+	}
+	if taken {
+		verb = "recorded the resolved merge to"
 	}
 	if opts.fork != nil {
 		// Rebuilt from the branch this member was last proposed to, so its
@@ -1022,6 +1047,44 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 		fmt.Fprintf(out, "%s: %s upstream %s\n", name, verb, short(tip))
 	}
 	return nil
+}
+
+// stackTargetTaken reports whether the filtered upstream commit a pull is
+// bringing in is already in the stackspace's history by way of a merge that
+// went FORWARD from where the prefix was last synced — a pull that conflicted
+// and was resolved and committed by hand, whose re-run is what records it.
+//
+// Ancestry alone cannot say that: repinning a prefix to an older release also
+// finds the target already in HEAD, and there the answer is to replace the
+// directory. The two are told apart by the last import marker's upstream
+// side, which is where the prefix last stood: a target at or past it was
+// merged in, one behind it is a move backwards. No marker, or a marker with
+// no upstream side, answers no, and the replace guard decides as before.
+func stackTargetTaken(ctx context.Context, repo *gitrepo.Repo, name, target string) bool {
+	if ok, err := repo.IsAncestor(ctx, target, "HEAD"); err != nil || !ok {
+		return false
+	}
+	marker := stackImportCommit(ctx, repo, name)
+	if marker == "" {
+		return false
+	}
+	last, err := repo.RevParse(ctx, marker+"^2")
+	if err != nil {
+		return false
+	}
+	ok, err := repo.IsAncestor(ctx, last, target)
+	return err == nil && ok
+}
+
+// stackHeadTook reports whether HEAD is itself the merge that brought target
+// in — the commit a resolved pull is amended into, as an unconflicted one is.
+func stackHeadTook(ctx context.Context, repo *gitrepo.Repo, target string) bool {
+	side, err := repo.RevParse(ctx, "HEAD^2")
+	if err != nil {
+		return false
+	}
+	want, err := repo.RevParse(ctx, target)
+	return err == nil && side == want
 }
 
 // stackPrefixPresent reports whether HEAD has a directory for the prefix.
