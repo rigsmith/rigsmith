@@ -122,7 +122,7 @@ The adapter revalidates bindings under the canonical staging lease and holds it
 through publication, confirmation and cleanup. A protected read of settled HEAD
 selects only committed local history. If a merge is already fully staged, the adapter first verifies the retained artifact and may finish that audited merge as described below. The index and unstaged files are preserved.
 An absent checkout or confirmed unborn branch contributes no local history.
-Unresolved or ambiguous merges, cherry-picks, reverts, rebases and sequencers, unmerged index
+Unresolved or ambiguous merges, active bisects, cherry-picks, reverts, rebases and sequencers, unmerged index
 entries, malformed Git state and other read failures stop the attempt. Inherited
 Git environment cannot redirect HEAD inspection. Auto chunk mode remains pinned
 by the sealed binding even after the live marker or staging checkout disappears.
@@ -404,7 +404,9 @@ whose resolutions are already staged. This is a separate shared primitive,
 `FinishStagedMerge`; the private retained publisher still never edits canonical
 state. Claude verifies the batch archive and capture binding before calling it,
 under the staging lease that remains held through publication and confirmation.
-Fresh queued capture still blocks on unfinished merges. Unresolved canonical
+Fresh queued capture uses the same settled-state guard before retaining a seed
+or copying staging, including standalone autostash residue and active bisects. It refuses unfinished
+operations without attempting repair. Unresolved canonical
 conflicts and capture integration remain the next recovery step.
 
 Completion uses the exact index as the chosen resolution, including any other
@@ -436,7 +438,7 @@ replay rule and does not imply that later canonical work was also uploaded.
 Only one regular-file MERGE_HEAD containing a literal object ID is supported.
 ORIG_HEAD must identify the original parent. The settled-state guard also rejects
 a standalone MERGE_AUTOSTASH marker without MERGE_HEAD. Unresolved index entries, octopus or
-redundant merges, autostash, cherry-pick/revert/rebase/sequencer state, malformed
+redundant merges, autostash, bisect/cherry-pick/revert/rebase/sequencer state, malformed
 state, shallow/incomplete history, failed audits and changed inputs stop recovery.
 Control files are bounded (256 bytes for parent markers, 64 MiB for the copied
 index); each of the three materialized trees uses the configured committed-store

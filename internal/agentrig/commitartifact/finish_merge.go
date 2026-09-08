@@ -46,7 +46,7 @@ func FinishStagedMerge(ctx context.Context, dir string, p MergeFinishPolicy) (st
 	}
 	r := gitRepo{dir: dir}
 	// Do not discard an autostash or interfere with another operation.
-	for _, name := range []string{"CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer", "MERGE_AUTOSTASH"} {
+	for _, name := range []string{"CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer", "MERGE_AUTOSTASH", "BISECT_START"} {
 		path, err := r.operationPath(ctx, name)
 		if err != nil {
 			return "", err

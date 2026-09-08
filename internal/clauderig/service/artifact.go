@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
@@ -171,22 +170,11 @@ func (s Service) captureArtifact(operation, staging context.Context, req Artifac
 		if current != binding {
 			return queue.ErrBinding
 		}
-		if _, err = os.Stat(filepath.Join(stage, ".git")); err == nil {
-			repo, err := gitrepo.Open(ctx, stage)
-			if err != nil {
-				return err
-			}
-			if !repo.Unborn(ctx) {
-				meta.BaseReference, err = repo.Head(ctx)
-				if err != nil {
-					return err
-				}
-			}
-			if repo.InMerge(ctx) {
-				return fmt.Errorf("%w: queued capture requires a settled staging merge", commitartifact.ErrConflict)
-			}
-		} else if !os.IsNotExist(err) {
-			return err
+		// Inspect unfinished operations before retaining a seed or copying
+		// staging bytes. This is a refusal guard, not automatic merge repair.
+		meta.BaseReference, err = commitartifact.SettledHead(ctx, stage)
+		if err != nil {
+			return fmt.Errorf("queued capture requires settled staging: %w", err)
 		}
 		if meta.BaseReference != "" {
 			// Persist ancestry before the capture can refer to it. Canonical

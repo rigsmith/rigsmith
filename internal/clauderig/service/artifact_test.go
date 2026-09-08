@@ -3,7 +3,9 @@ package service_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -353,6 +355,89 @@ func TestCaptureCannotSealBeforeSeedRetentionSucceeds(t *testing.T) {
 			}
 			if got := git(t, req.Sync.StagingDir, "rev-parse", "HEAD"); got != head {
 				t.Fatal("failed seed retention changed canonical HEAD")
+			}
+		})
+	}
+}
+
+func TestCaptureArtifactRejectsUnsettledStagingBeforeRetainingSeed(t *testing.T) {
+	markers := []string{"MERGE_HEAD", "MERGE_AUTOSTASH", "BISECT_START", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"}
+	for _, marker := range append(markers, "unmerged-index") {
+		t.Run(marker, func(t *testing.T) {
+			req := artifactCaptureFixture(t, "pending capture")
+			svc := service.Service{ReadIdentity: func() (service.Identity, error) { return req.Identity, nil }}
+			if _, err := svc.Sync(t.Context(), req.Sync); err != nil {
+				t.Fatal(err)
+			}
+			stage := req.Sync.StagingDir
+			head := git(t, stage, "rev-parse", "HEAD")
+			paths := []string{".git/HEAD", ".git/index", ".git/config", "pending.txt"}
+			if marker == "unmerged-index" {
+				// Populate all three conflict stages without an operation marker,
+				// so only the unmerged-index guard can reject this capture.
+				var entries strings.Builder
+				for i, content := range []string{"base", "ours", "theirs"} {
+					put(t, stage, "conflicted.txt", content)
+					blob := git(t, stage, "hash-object", "-w", "conflicted.txt")
+					fmt.Fprintf(&entries, "100644 %s %d\tconflicted.txt\n", blob, i+1)
+				}
+				cmd := exec.CommandContext(t.Context(), "git", "update-index", "--index-info")
+				cmd.Dir = stage
+				cmd.Stdin = strings.NewReader(entries.String())
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("create unmerged index: %v\n%s", err, out)
+				}
+				if got := git(t, stage, "ls-files", "--unmerged"); got != strings.TrimSpace(entries.String()) {
+					t.Fatalf("unexpected conflict stages: %s", got)
+				}
+				for _, absent := range markers {
+					if _, err := os.Stat(filepath.Join(stage, ".git", absent)); !os.IsNotExist(err) {
+						t.Fatalf("unexpected operation marker %s: %v", absent, err)
+					}
+				}
+				paths = append(paths, "conflicted.txt")
+			} else if marker == "BISECT_START" {
+				git(t, stage, "commit", "--allow-empty", "-m", "bisect middle")
+				git(t, stage, "commit", "--allow-empty", "-m", "bisect bad")
+				git(t, stage, "bisect", "start", "HEAD", head)
+				head = git(t, stage, "rev-parse", "HEAD")
+				paths = append(paths, ".git/BISECT_START")
+			} else {
+				put(t, stage, ".git/"+marker, head+"\n")
+				paths = append(paths, ".git/"+marker)
+			}
+			put(t, stage, "pending.txt", "pending staged bytes")
+			git(t, stage, "add", "pending.txt")
+			put(t, stage, "pending.txt", "later unstaged bytes")
+			before := map[string]string{}
+			for _, path := range paths {
+				data, err := os.ReadFile(filepath.Join(stage, path))
+				if err != nil {
+					t.Fatal(err)
+				}
+				before[path] = string(data)
+			}
+			ref, err := svc.CaptureArtifact(t.Context(), req)
+			if !errors.Is(err, commitartifact.ErrConflict) || ref != "" {
+				t.Fatalf("captured unfinished operation: %s %v", ref, err)
+			}
+			if !strings.Contains(err.Error(), "queued capture requires settled staging") {
+				t.Fatalf("missing capture diagnostic context: %v", err)
+			}
+			for _, store := range []artifact.Store{req.Store, commitartifact.SeedStore(req.Store)} {
+				sealed, err := filepath.Glob(filepath.Join(store.Dir, "*.capture"))
+				if err != nil || len(sealed) != 0 {
+					t.Fatalf("retained bytes before refusing %s: %v %v", marker, sealed, err)
+				}
+			}
+			for path, want := range before {
+				got, err := os.ReadFile(filepath.Join(stage, path))
+				if err != nil || string(got) != want {
+					t.Fatalf("changed canonical %s: %v", path, err)
+				}
+			}
+			if got := git(t, stage, "rev-parse", "HEAD"); got != head {
+				t.Fatal("capture moved HEAD")
 			}
 		})
 	}

@@ -140,7 +140,7 @@ func TestFinishStagedMergeResumesAfterRefUpdate(t *testing.T) {
 }
 
 func TestFinishStagedMergeRefusesUnsafeState(t *testing.T) {
-	for _, kind := range []string{"unresolved", "octopus", "autostash", "rebase", "missing-original", "wrong-original", "audit-parent", "audit-result", "cancel", "changed-index", "changed-head", "limit"} {
+	for _, kind := range []string{"unresolved", "octopus", "autostash", "bisect", "rebase", "missing-original", "wrong-original", "audit-parent", "audit-result", "cancel", "changed-index", "changed-head", "limit"} {
 		t.Run(kind, func(t *testing.T) {
 			r, original, incoming, _ := stagedMergeFixture(t, "sha1")
 			p := mergeFinishPolicy()
@@ -156,6 +156,8 @@ func TestFinishStagedMergeRefusesUnsafeState(t *testing.T) {
 				putPublicationFile(t, r.dir, ".git/MERGE_HEAD", incoming+"\n"+original+"\n")
 			case "autostash":
 				putPublicationFile(t, r.dir, ".git/MERGE_AUTOSTASH", original+"\n")
+			case "bisect":
+				putPublicationFile(t, r.dir, ".git/BISECT_START", original+"\n")
 			case "rebase":
 				putPublicationFile(t, r.dir, ".git/rebase-apply", "pending")
 			case "missing-original":
@@ -169,6 +171,10 @@ func TestFinishStagedMergeRefusesUnsafeState(t *testing.T) {
 			}
 			before := readMergeTestFile(t, r.dir, ".git/index")
 			merge := readMergeTestFile(t, r.dir, ".git/MERGE_HEAD")
+			var bisect []byte
+			if kind == "bisect" {
+				bisect = readMergeTestFile(t, r.dir, ".git/BISECT_START")
+			}
 			audits := 0
 			p.Audit = func(context.Context, string) error {
 				audits++
@@ -195,6 +201,9 @@ func TestFinishStagedMergeRefusesUnsafeState(t *testing.T) {
 			}
 			if mustRun(t, r, "", "rev-parse", "HEAD") != original || !bytes.Equal(before, readMergeTestFile(t, r.dir, ".git/index")) || !bytes.Equal(merge, readMergeTestFile(t, r.dir, ".git/MERGE_HEAD")) {
 				t.Fatal("failed repair changed canonical state")
+			}
+			if kind == "bisect" && !bytes.Equal(bisect, readMergeTestFile(t, r.dir, ".git/BISECT_START")) {
+				t.Fatal("failed repair changed bisect state")
 			}
 		})
 	}

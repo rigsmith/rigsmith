@@ -332,6 +332,65 @@ func TestQueueAdapterBlocksConflictWithoutAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestQueueAdapterBlocksBisectBeforeCapture(t *testing.T) {
+	req := artifactCaptureFixture(t, "queued bisect bytes")
+	svc := service.Service{ReadIdentity: func() (service.Identity, error) { return req.Identity, nil }}
+	if _, err := svc.Sync(t.Context(), req.Sync); err != nil {
+		t.Fatal(err)
+	}
+	stage := req.Sync.StagingDir
+	good := git(t, stage, "rev-parse", "HEAD")
+	git(t, stage, "commit", "--allow-empty", "-m", "bisect middle")
+	git(t, stage, "commit", "--allow-empty", "-m", "bisect bad")
+	git(t, stage, "bisect", "start", "HEAD", good)
+	before := map[string]string{}
+	for _, path := range []string{".git/HEAD", ".git/index", ".git/config", ".git/BISECT_START"} {
+		data, err := os.ReadFile(filepath.Join(stage, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[path] = string(data)
+	}
+	commits := artifact.Store{Dir: filepath.Join(t.TempDir(), "commits")}
+	remote := &artifactRemote{dir: filepath.Join(t.TempDir(), "remote.git"), branch: "main"}
+	git(t, filepath.Dir(remote.dir), "init", "--bare", remote.dir)
+	req.Sync.Config.Remote = remote.dir
+	var err error
+	req.Binding, err = service.CaptureBinding(req.Sync, req.Profiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, _, adapter := queueAdapterFixture(t, req, commits, remote)
+	result, err := q.RunOne(t.Context(), time.Now(), adapter)
+	if !errors.Is(err, commitartifact.ErrConflict) || result.Phase != queue.Queued || result.Acknowledged || remote.fetches != 0 || remote.pushes != 0 {
+		t.Fatalf("unsafe bisect capture: %+v %v", result, err)
+	}
+	work, err := q.Snapshot(t.Context())
+	if err != nil || len(work) != 1 || work[0].Phase != queue.Queued || work[0].Status != queue.Blocked || work[0].FailureCode != "publication-conflict" || work[0].CaptureRef != "" || work[0].CommitRef != "" {
+		t.Fatalf("bisect work not retained and blocked: %+v %v", work, err)
+	}
+	for _, store := range []artifact.Store{req.Store, commitartifact.SeedStore(req.Store), commits} {
+		sealed, err := filepath.Glob(filepath.Join(store.Dir, "*.capture"))
+		if err != nil || len(sealed) != 0 {
+			t.Fatalf("sealed bisect artifact: %v %v", sealed, err)
+		}
+	}
+	for path, want := range before {
+		got, err := os.ReadFile(filepath.Join(stage, path))
+		if err != nil || string(got) != want {
+			t.Fatalf("changed bisect state %s: %v", path, err)
+		}
+	}
+	if _, err := q.RunOne(t.Context(), time.Now().Add(time.Hour), adapter); !errors.Is(err, queue.ErrEmpty) {
+		t.Fatal("automatically retried bisect conflict", err)
+	}
+	_, release, err := storelock.Acquire(t.Context(), stage, 0)
+	if err != nil {
+		t.Fatal("bisect failure leaked staging lease", err)
+	}
+	release()
+}
+
 func TestQueueAdapterResumesSavedPhaseWithoutSources(t *testing.T) {
 	for _, phase := range []queue.Phase{queue.Captured, queue.Committed} {
 		t.Run(string(phase), func(t *testing.T) {
