@@ -31,6 +31,9 @@ Unrelated unstaged and untracked files are preserved. Raw bytes are written
 without Git attribute conversions. Windows cannot represent Git executable modes
 in the same way as Unix; the index retains them, and live mode checking is limited
 to platforms that expose those bits.
+Isolated Git commands enable `core.longpaths` on Windows so nested staging
+repositories can store SHA-256 packs beyond the default Git path limit. This is
+a per-command setting; it does not modify the user's Git configuration.
 
 ## Durable intent and application
 

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -25,31 +24,6 @@ func stagePolicy(t *testing.T) MergeStagePolicy {
 }
 
 func TestMergeStagePreservesPendingEditsAndCompletes(t *testing.T) {
-	// All inputs here are synthetic. Keep raw Git diagnostics in the test
-	// harness only, so platform failures do not require exposing queue inputs.
-	realGit, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin := t.TempDir()
-	name := "git"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", filepath.Join(bin, name), "testdata/gitdiagnostic.go")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build diagnostic helper: %v\n%s", err, out)
-	}
-	logPath := filepath.Join(bin, "diagnostics")
-	t.Setenv("RIG_TEST_REAL_GIT", realGit)
-	t.Setenv("RIG_TEST_GIT_DIAGNOSTICS", logPath)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Cleanup(func() {
-		if t.Failed() {
-			data, _ := os.ReadFile(logPath)
-			t.Logf("synthetic Git diagnostics:\n%s", data)
-		}
-	})
 	for _, format := range []string{"sha1", "sha256"} {
 		t.Run(format, func(t *testing.T) {
 			r, original, incoming := unresolvedMergeFixture(t, format)
@@ -450,5 +424,36 @@ func TestMergeStageChecksUnchangedConflictBlobs(t *testing.T) {
 				t.Fatal("changed live bytes")
 			}
 		})
+	}
+}
+
+// Pack filenames contain the complete object ID, so even short payload paths
+// can exceed Windows MAX_PATH beneath private staging/verification directories.
+func TestMergeStageLongGitPaths(t *testing.T) {
+	source, head := seedRepository(t, "sha256")
+	mustRun(t, source, "", "update-ref", "refs/rig/merge-plan", head)
+	bundle := filepath.Join(t.TempDir(), "candidate.bundle")
+	mustRun(t, source, "", "bundle", "create", bundle, "refs/rig/merge-plan")
+	dir := t.TempDir()
+	for len(dir) < 210 {
+		dir = filepath.Join(dir, strings.Repeat("nested", 3))
+	}
+	dir = filepath.Join(dir, "git")
+	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
+		t.Fatal(err)
+	}
+	target, err := initRepo(t.Context(), dir, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := target.importRef(t.Context(), bundle, "refs/rig/merge-plan", "refs/rig/merge-plan", head); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.completeHistory(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	packs, err := filepath.Glob(filepath.Join(dir, "objects", "pack", "*.pack"))
+	if err != nil || len(packs) != 1 || len(packs[0]) <= 260 {
+		t.Fatalf("expected a pack path exceeding MAX_PATH: %v, %v", packs, err)
 	}
 }
