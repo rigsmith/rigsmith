@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -114,6 +115,11 @@ func TestQueueAdapterRecoversUnresolvedMergeAcrossOfflineRetry(t *testing.T) {
 			if !errors.Is(err, offline) || result.Phase != queue.Committed || result.Acknowledged {
 				t.Fatalf("expected retained offline batch: %+v %v", result, err)
 			}
+			saved, err := q.Snapshot(t.Context())
+			if err != nil || len(saved) != 1 {
+				t.Fatal("missing retained batch", saved, err)
+			}
+			wantCapture, _ := artifactBytes(t, req, saved[0].CaptureRef)
 			stage := req.Sync.StagingDir
 			head, err := commitartifact.SettledHead(t.Context(), stage)
 			if err != nil || head == original {
@@ -149,6 +155,12 @@ func TestQueueAdapterRecoversUnresolvedMergeAcrossOfflineRetry(t *testing.T) {
 				t.Fatalf("restart publication: %+v %v", result, err)
 			}
 			git(t, remote.dir, "merge-base", "--is-ancestor", head, "main")
+			show := exec.CommandContext(t.Context(), "git", "show", "main:cli/projects/-workspace-acme/s.jsonl")
+			show.Dir = remote.dir
+			remoteCapture, err := show.Output()
+			if err != nil || !bytes.Equal(remoteCapture, []byte(wantCapture)) {
+				t.Fatalf("remote changed retained capture bytes: %v", err)
+			}
 			gotIndex, err := os.ReadFile(filepath.Join(stage, ".git/index"))
 			if err != nil || !bytes.Equal(gotIndex, index) || git(t, stage, "rev-parse", "HEAD") != head {
 				t.Fatal("replay changed completed canonical merge", err)
