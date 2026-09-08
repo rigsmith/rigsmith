@@ -52,9 +52,16 @@ func (r *Repo) fetchMerge(ctx context.Context, remote, branch string, allowUnrel
 // Everything after this point names something that cannot move.
 func (r *Repo) FetchRef(ctx context.Context, remote, branch string, auth *HTTPAuth) (string, error) {
 	ref := privateFetchRef()
-	// Best effort: a ref left behind by a crash between fetch and delete is
-	// inert (nothing lists refs/rig/), and the next call names a fresh one.
-	defer runGit(ctx, r.Dir, "update-ref", "-d", ref) //nolint:errcheck
+	// Best effort, and on its own context: a caller's cancellation after the
+	// fetch has landed must not skip the delete, or the ref would keep the
+	// fetched objects reachable for as long as it sat there. A ref left behind
+	// by a crash is still inert — nothing lists refs/rig/ — and the next call
+	// names a fresh one.
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_, _ = runGit(cleanup, r.Dir, "update-ref", "-d", ref)
+	}()
 	// The error names the fetch as asked for — "git fetch origin main" — not
 	// the refspec: the ref is this call's alone, and the message outlives it
 	// in journals and on screen.

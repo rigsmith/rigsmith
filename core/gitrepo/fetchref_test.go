@@ -19,15 +19,15 @@ func clobberFetchHead(t *testing.T, sha string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shim is a shell script")
 	}
-	real, err := exec.LookPath("git")
+	realGit, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
 	script := "#!/bin/sh\n" +
-		"\"" + real + "\" \"$@\"\nrc=$?\n" +
+		"\"" + realGit + "\" \"$@\"\nrc=$?\n" +
 		"for a in \"$@\"; do\n" +
-		"  if [ \"$a\" = fetch ]; then printf '%s\\t\\tbranch other\\n' \"" + sha + "\" > \"$(\"" + real + "\" rev-parse --git-dir)/FETCH_HEAD\"; break; fi\n" +
+		"  if [ \"$a\" = fetch ]; then printf '%s\\t\\tbranch other\\n' \"" + sha + "\" > \"$(\"" + realGit + "\" rev-parse --git-dir)/FETCH_HEAD\"; break; fi\n" +
 		"done\nexit $rc\n"
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -106,5 +106,37 @@ func TestFetchRef_ErrorNamesTheBranchNotThePrivateRef(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), " main: ") || strings.Contains(err.Error(), "refs/rig/") {
 		t.Fatalf("error should read as `git fetch <remote> main: …`, got: %v", err)
+	}
+}
+
+func TestFetchRef_DropsThePrivateRefWhenTheCallerHasCancelled(t *testing.T) {
+	ctx, a, b := twoClones(t)
+	// A context that reads as cancelled by the time the deferred cleanup runs
+	// but lets the fetch itself through: git gets a fresh process, so what
+	// matters is only whether the delete honours the caller's cancellation.
+	cctx, cancel := context.WithCancel(ctx)
+	tip, err := a.Head(ctx)
+	must(t, err)
+	go func() {
+		// Cancel as soon as the fetch has landed anything, which is before the
+		// rev-parse and the deferred delete; a cancelled ctx afterwards is the
+		// case under test, an earlier one just fails the fetch.
+		for {
+			if refs, _ := runGit(ctx, b.Dir, "for-each-ref", "refs/rig/"); strings.TrimSpace(refs) != "" {
+				cancel()
+				return
+			}
+			if cctx.Err() != nil {
+				return
+			}
+		}
+	}()
+	got, ferr := b.FetchRef(cctx, "origin", "main", nil)
+	cancel()
+	if ferr == nil && got != tip {
+		t.Fatalf("FetchRef returned %s, wanted %s", got, tip)
+	}
+	if refs, _ := runGit(ctx, b.Dir, "for-each-ref", "refs/rig/"); strings.TrimSpace(refs) != "" {
+		t.Fatalf("private fetch ref left behind after cancellation:\n%s", refs)
 	}
 }
