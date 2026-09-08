@@ -28,9 +28,49 @@ func (r *Repo) FetchMergeUnrelated(ctx context.Context, remote, branch, msg stri
 }
 
 func (r *Repo) fetchMerge(ctx context.Context, remote, branch string, allowUnrelated bool, msg string, auth *HTTPAuth) (conflicted bool, err error) {
-	if _, err := runGitStdin(ctx, r.Dir, "", auth.env(), "fetch", remote, branch); err != nil {
+	fetched, err := r.FetchRef(ctx, remote, branch, auth)
+	if err != nil {
 		return false, err
 	}
+	return r.mergeRef(ctx, fetched, allowUnrelated, msg)
+}
+
+// FetchRef fetches remote/branch and returns the commit it landed on, without
+// merging anything.
+//
+// Splitting fetch from merge is what lets an import reject a fetch that arrived
+// with nothing in it: once the merge has run, that failure is already a commit,
+// and unwinding it means a reset the caller has to get exactly right.
+//
+// The commit comes back as a sha rather than as FETCH_HEAD because FETCH_HEAD is
+// one mutable file per repository. A second fetch — another rig process working
+// in the same stackspace — overwrites it, and a caller that fetches, inspects,
+// and then merges "FETCH_HEAD" can merge the other fetch's commit while
+// recording its own as the cursor. Resolving once, here, means everything after
+// this point names something that cannot move.
+func (r *Repo) FetchRef(ctx context.Context, remote, branch string, auth *HTTPAuth) (string, error) {
+	if _, err := runGitStdin(ctx, r.Dir, "", auth.env(), "fetch", remote, branch); err != nil {
+		return "", err
+	}
+	out, err := runGit(ctx, r.Dir, "rev-parse", "FETCH_HEAD")
+	if err != nil {
+		return "", err
+	}
+	sha := strings.TrimSpace(out)
+	if sha == "" {
+		return "", fmt.Errorf("fetch of %s %s left no FETCH_HEAD", remote, branch)
+	}
+	return sha, nil
+}
+
+// MergeUnrelated merges ref into the current branch for histories that share no
+// common ancestor. Same contract as FetchMergeUnrelated, minus the fetch the
+// caller has already done.
+func (r *Repo) MergeUnrelated(ctx context.Context, ref, msg string) (conflicted bool, err error) {
+	return r.mergeRef(ctx, ref, true, msg)
+}
+
+func (r *Repo) mergeRef(ctx context.Context, ref string, allowUnrelated bool, msg string) (conflicted bool, err error) {
 	args := []string{"merge", "--no-edit"}
 	if allowUnrelated {
 		// --no-ff too: an import must land as a merge commit, and a repo
@@ -41,7 +81,7 @@ func (r *Repo) fetchMerge(ctx context.Context, remote, branch string, allowUnrel
 	if msg != "" {
 		args = append(args, "-m", msg)
 	}
-	args = append(args, "FETCH_HEAD")
+	args = append(args, ref)
 	if _, err := runGit(ctx, r.Dir, args...); err != nil {
 		if unmerged, _ := runGit(ctx, r.Dir, "ls-files", "-u"); strings.TrimSpace(unmerged) != "" {
 			return true, nil // genuine conflicts — repo is mid-merge
@@ -90,11 +130,15 @@ func (r *Repo) MergeRefUncommitted(ctx context.Context, ref string) (conflicted 
 
 // FetchMergeUncommitted fetches before starting a merge that the caller must
 // validate and commit. Existing auto-committing helpers retain their behavior.
+// The commit is resolved before the merge for the reason FetchRef gives: naming
+// FETCH_HEAD across two git invocations merges whatever the last fetch in this
+// repository left, which need not be this one's.
 func (r *Repo) FetchMergeUncommitted(ctx context.Context, remote, branch string) (bool, error) {
-	if err := r.Fetch(ctx, remote, branch); err != nil {
+	fetched, err := r.FetchRef(ctx, remote, branch, nil)
+	if err != nil {
 		return false, err
 	}
-	return r.MergeRefUncommitted(ctx, "FETCH_HEAD")
+	return r.MergeRefUncommitted(ctx, fetched)
 }
 
 // HasUnstagedChanges reports whether tracked working files differ from the

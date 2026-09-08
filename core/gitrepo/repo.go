@@ -301,8 +301,8 @@ func (r *Repo) PushWithOptions(ctx context.Context, remote, branch string, opts 
 
 // FetchObjects fetches a single commit from a URL into the local object store,
 // without touching any ref — enough to build on top of it.
-func (r *Repo) FetchObjects(ctx context.Context, url, commit string) error {
-	_, err := runGit(ctx, r.Dir, "fetch", "--no-tags", "--no-write-fetch-head", url, commit)
+func (r *Repo) FetchObjects(ctx context.Context, url, commit string, auth *HTTPAuth) error {
+	_, err := runGitStdin(ctx, r.Dir, "", auth.env(), "fetch", "--no-tags", "--no-write-fetch-head", url, commit)
 	return err
 }
 
@@ -415,9 +415,11 @@ func (r *Repo) LogRange(ctx context.Context, base, head string) ([]LogEntry, err
 	return entries, nil
 }
 
-// PushRef pushes an arbitrary commit to a remote ref.
-func (r *Repo) PushRef(ctx context.Context, remote, commit, ref string) error {
-	_, err := runGit(ctx, r.Dir, "push", remote, commit+":"+ref)
+// PushRef pushes an arbitrary commit to a remote ref. auth, when not nil, is
+// the credential for remote — the write half of what CredentialFor resolves
+// for reads, since a fork that needs a token to read needs it to push too.
+func (r *Repo) PushRef(ctx context.Context, remote, commit, ref string, auth *HTTPAuth) error {
+	_, err := runGitStdin(ctx, r.Dir, "", auth.env(), "push", remote, commit+":"+ref)
 	return err
 }
 
@@ -427,13 +429,13 @@ func (r *Repo) PushRef(ctx context.Context, remote, commit, ref string) error {
 // re-synthesized commit replacing the one they pushed before — where a plain
 // push would be refused as non-fast-forward but a bare --force would be willing
 // to discard another person's work.
-func (r *Repo) PushRefForce(ctx context.Context, remote, commit, ref string) error {
+func (r *Repo) PushRefForce(ctx context.Context, remote, commit, ref string, auth *HTTPAuth) error {
 	// The lease needs the ref's current value: pushing to a URL leaves no
 	// remote-tracking ref for git to infer one from, so a bare
 	// --force-with-lease=<ref> would have nothing to compare and refuse the
 	// push. A ref that does not exist yet needs no lease at all — an ordinary
 	// push already fails if someone creates it first.
-	expected, err := r.lsRemoteOpt(ctx, remote, ref)
+	expected, err := r.lsRemoteOpt(ctx, remote, ref, auth)
 	if err != nil {
 		return err
 	}
@@ -442,7 +444,7 @@ func (r *Repo) PushRefForce(ctx context.Context, remote, commit, ref string) err
 		args = append(args, "--force-with-lease="+ref+":"+expected)
 	}
 	args = append(args, remote, commit+":"+ref)
-	_, err = runGit(ctx, r.Dir, args...)
+	_, err = runGitStdin(ctx, r.Dir, "", auth.env(), args...)
 	return err
 }
 
@@ -459,8 +461,8 @@ func (r *Repo) CommitAmendNoEdit(ctx context.Context) (string, error) {
 // LsRemote resolves ref's SHA on a remote (a name or a URL) without fetching —
 // the cheap "has upstream moved past our cursor" probe. ref not found on the
 // remote is an error, not an empty result, so a typo'd branch is loud.
-func (r *Repo) LsRemote(ctx context.Context, remote, ref string) (string, error) {
-	sha, err := r.lsRemoteOpt(ctx, remote, ref)
+func (r *Repo) LsRemote(ctx context.Context, remote, ref string, auth *HTTPAuth) (string, error) {
+	sha, err := r.lsRemoteOpt(ctx, remote, ref, auth)
 	if err != nil {
 		return "", err
 	}
@@ -468,6 +470,19 @@ func (r *Repo) LsRemote(ctx context.Context, remote, ref string) (string, error)
 		return "", fmt.Errorf("ls-remote %s: ref %q not found", remote, ref)
 	}
 	return sha, nil
+}
+
+// PathInIndex reports whether the index holds anything under path.
+//
+// Not the same question as whether HEAD holds it: after ReplacePath the index
+// carries a directory HEAD has never seen, and after a removal it is HEAD that
+// still has one. What the next commit will contain is the index.
+func (r *Repo) PathInIndex(ctx context.Context, path string) (bool, error) {
+	out, err := runGit(ctx, r.Dir, "ls-files", "-z", "--", path)
+	if err != nil {
+		return false, err
+	}
+	return strings.Trim(out, "\x00") != "", nil
 }
 
 // ReplacePath makes dir's contents match what commit holds at that path,
@@ -493,8 +508,8 @@ func (r *Repo) ReplacePath(ctx context.Context, commit, dir string) error {
 // from the map rather than an error: callers use this to ask which of a few
 // candidate forms a name takes — a tag and its peeled commit, say — where "not
 // this one" is the useful answer.
-func (r *Repo) LsRemoteRefs(ctx context.Context, remote string, refs ...string) (map[string]string, error) {
-	out, err := runGit(ctx, r.Dir, append([]string{"ls-remote", remote}, refs...)...)
+func (r *Repo) LsRemoteRefs(ctx context.Context, remote string, auth *HTTPAuth, refs ...string) (map[string]string, error) {
+	out, err := runGitStdin(ctx, r.Dir, "", auth.env(), append([]string{"ls-remote", remote}, refs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -511,8 +526,8 @@ func (r *Repo) LsRemoteRefs(ctx context.Context, remote string, refs ...string) 
 // lsRemoteOpt is LsRemote for callers that treat a missing ref as a fact rather
 // than a failure — creating it, say — and still need a real error to surface
 // when the remote itself is unreachable.
-func (r *Repo) lsRemoteOpt(ctx context.Context, remote, ref string) (string, error) {
-	out, err := runGit(ctx, r.Dir, "ls-remote", remote, ref)
+func (r *Repo) lsRemoteOpt(ctx context.Context, remote, ref string, auth *HTTPAuth) (string, error) {
+	out, err := runGitStdin(ctx, r.Dir, "", auth.env(), "ls-remote", remote, ref)
 	if err != nil {
 		return "", err
 	}

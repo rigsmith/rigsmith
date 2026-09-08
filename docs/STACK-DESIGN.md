@@ -227,11 +227,33 @@ it.
    credentials. josh-proxy already supports this — it takes HTTP Basic from its
    client and uses it for the upstream fetch — and rig was presenting none, so
    every private upstream answered 401 (`auth=Handle { value: None }` in the
-   engine log). rig now resolves the credential through `git credential fill`,
-   so whatever the user already configured answers, and passes it as a
-   URL-scoped `http.extraHeader` in the environment. Not a PAT rig stores, and
-   not in argv: `git -c` would put the token in every process listing, and the
-   git runner quotes its arguments into the error it returns on failure.
+   engine log). rig now resolves the credential and passes it as a URL-scoped
+   `http.extraHeader` in the environment. Not a PAT rig stores, and not in argv:
+   `git -c` would put the token in every process listing, and the git runner
+   quotes its arguments into the error it returns on failure.
+
+   *Revised 2026-09-07: `gh auth git-credential` is asked first and
+   `git credential fill` second. 401 is not the only way a private upstream
+   fails — when the client presents a credential that authenticates but cannot
+   read the repo, josh returns an **empty history** rather than an error. A
+   stale helper entry (an old token still in the keychain) produces exactly
+   that, and the import path treated it as success: it recorded the cursor,
+   made no import commit, and left `status` reporting a member up to date
+   against a directory that did not exist.
+
+   The forwarded header also turned out to cover less than it looked like it
+   did. It gets josh as far as *authorising* the request; the upstream fetch
+   behind it is a `git fetch` josh spawns, which authenticates on its own and
+   inherits only josh's environment — so it had been quietly relying on an
+   ambient credential helper the whole time. `ls-remote`, which runs before the
+   engine exists, carried no credential at all. Both now get one, scoped to the
+   forge, by the same GIT_CONFIG_* mechanism.
+
+   Four changes, because no one of them closes it — gh first so the maintained
+   token wins, the credential on `ls-remote`, the credential in the engine's own
+   environment, and a hard refusal when a fetch arrives with no tree under the
+   prefix. The refusal happens before the merge, so a rejected import leaves no
+   commit to unwind.*
 2. Merge strategy per child on `pull` (merge vs squash vs rebase-ish), given
    the known merge-noise wart. Default merge, per-child override in manifest?
 3. `stack init` adopting an existing non-fused stackspace (the sibling-clone

@@ -293,6 +293,12 @@ func newStackStatusCmd() *cobra.Command {
 					state = "upstream unreachable — " + stackFirstLine(err)
 				case m.cursor(name) == "":
 					state = "not imported — run `rig stack init`"
+				case !stackPrefixPresent(ctx, repo, name):
+					// A cursor with no directory under it: an import that
+					// recorded a revision it never brought in, or a removal
+					// that left the manifest entry. "up to date" would be
+					// what the cursor says, and the tree says otherwise.
+					state = fmt.Sprintf("cursor at %s but no %s/ directory — `rig stack setup` reconstitutes it", short(m.cursor(name)), name)
 				case tip != m.cursor(name):
 					state = fmt.Sprintf("upstream moved (%s) — `rig stack pull %s`", short(tip), name)
 				case pin.pinned():
@@ -418,6 +424,14 @@ func newStackPullCmd() *cobra.Command {
 					return fmt.Errorf("pulling %s: %w", name, err)
 				}
 				if tip == m.cursor(name) {
+					// The cursor is the only thing a pull consults, and one
+					// left over a missing directory would be reported as
+					// current forever. init is the verb that rebuilds a
+					// prefix at its cursor, so say so rather than "nothing".
+					if !stackPrefixPresent(ctx, repo, name) {
+						fmt.Fprintf(cmd.OutOrStdout(), "%s: cursor at %s but no %s/ directory — `rig stack setup` reconstitutes it\n", name, short(tip), name)
+						continue
+					}
 					fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to pull\n", name)
 					continue
 				}
@@ -710,7 +724,7 @@ func stackTreeOf(ctx context.Context, repo *gitrepo.Repo, commit string) string 
 // wrong "nothing to send" leaves the work nowhere.
 func stackBranchHolds(ctx context.Context, repo *gitrepo.Repo, fork, branch, commit string) bool {
 	ref := "refs/heads/" + branch
-	found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(fork), ref)
+	found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(fork), stackAuthFor(ctx, fork), ref)
 	if err != nil {
 		return false
 	}
@@ -734,7 +748,7 @@ func stackProposedOnFork(ctx context.Context, repo *gitrepo.Repo, m *stackManife
 		return err
 	}
 	ref := "refs/heads/" + branch
-	found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(r.Fork), ref)
+	found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(r.Fork), stackAuthFor(ctx, r.Fork), ref)
 	if err != nil {
 		return fmt.Errorf("%s's work was proposed to %s:%s, and the fork cannot be asked whether it is still there (%s) — check it, then --force", name, r.Fork, branch, stackFirstLine(err))
 	}
@@ -786,7 +800,7 @@ func stackResolveUpstream(ctx context.Context, repo *gitrepo.Repo, url string, p
 		// An annotated tag resolves to a tag object rather than a commit, and its
 		// peeled entry is the commit. josh serves commits, and the cursor records
 		// one, so the peeled value wins wherever it exists.
-		found, err := repo.LsRemoteRefs(ctx, url, ref, ref+"^{}")
+		found, err := repo.LsRemoteRefs(ctx, url, stackAuthForURL(ctx, url), ref, ref+"^{}")
 		if err != nil {
 			return "", err
 		}
@@ -797,7 +811,7 @@ func stackResolveUpstream(ctx context.Context, repo *gitrepo.Repo, url string, p
 		}
 		return "", fmt.Errorf("ls-remote %s: tag %q not found", url, pin.Value)
 	default:
-		return repo.LsRemote(ctx, url, "refs/heads/"+pin.Value)
+		return repo.LsRemote(ctx, url, "refs/heads/"+pin.Value, stackAuthForURL(ctx, url))
 	}
 }
 
@@ -853,10 +867,10 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	if opts.fork != nil {
 		source, fetch = r.Fork, opts.fork.Commit
 		upstreamURL, forkURL := stackRemoteURL(r.Upstream), stackRemoteURL(r.Fork)
-		if err := repo.FetchObjects(ctx, forkURL, fetch); err != nil {
+		if err := repo.FetchObjects(ctx, forkURL, fetch, stackAuthForURL(ctx, forkURL)); err != nil {
 			return fmt.Errorf("fetching %s:%s: %w", r.Fork, opts.fork.Branch, err)
 		}
-		if err := repo.FetchObjects(ctx, upstreamURL, tip); err != nil {
+		if err := repo.FetchObjects(ctx, upstreamURL, tip, stackAuthForURL(ctx, upstreamURL)); err != nil {
 			return err
 		}
 		base, err := repo.MergeBase(ctx, fetch, tip)
@@ -869,7 +883,11 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 		tip = base
 	}
 	host, path := stackSplitHost(source)
-	proxy, err := startJoshProxy(ctx, bin, host)
+	// Two scopes of the same credential, because two different processes
+	// authenticate with it. This one is for the engine's own fetch of upstream,
+	// so it is scoped to the forge; the one below is for our fetch from the
+	// engine, scoped to the loopback proxy.
+	proxy, err := startJoshProxy(ctx, bin, host, stackAuthFor(ctx, source))
 	if err != nil {
 		return err
 	}
@@ -910,11 +928,38 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// replace guard.
 	preHead, preHeadErr := repo.Head(ctx)
 
-	conflicted, err := repo.FetchMergeUnrelated(ctx, proxy.url(path, fetch, stackPrefixFilter(name)), "HEAD", msg, auth)
+	fetched, err := repo.FetchRef(ctx, proxy.url(path, fetch, stackPrefixFilter(name)), "HEAD", auth)
 	if err != nil {
 		if tail := proxy.tail(15); tail != "" {
 			return fmt.Errorf("%w\n--- josh-proxy log:\n%s", err, tail)
 		}
+		return err
+	}
+
+	// What arrived, checked before anything merges it. An empty fetch is not an
+	// empty upstream: josh serves `:prefix=<name>`, so anything it has to give
+	// comes back with a tree at <name>, and nothing there means the engine had
+	// nothing to filter.
+	//
+	// The usual reason is a credential that cannot read a private upstream —
+	// josh answers that with an empty history rather than a refusal, and the
+	// ls-remote above already passed because the credential authenticates, it
+	// just cannot see this repo. Everything downstream is guarded on
+	// wantErr == nil, so letting it through skips the replace check entirely and
+	// records a cursor for a revision that was never imported, after which
+	// `status` calls the member up to date against a directory that does not
+	// exist and every later pull short-circuits on the cursor.
+	//
+	// Before the merge, so a rejected import leaves no commit to unwind.
+	want, wantErr := repo.RevParse(ctx, fetched+":"+name)
+	if wantErr != nil {
+		return fmt.Errorf("%s: fetched %s from %s and it carried no %s/ tree\n"+
+			"if that upstream is private, the credential in use cannot read it — check `gh auth status`, then run this again",
+			name, short(fetch), source, name)
+	}
+
+	conflicted, err := repo.MergeUnrelated(ctx, fetched, msg)
+	if err != nil {
 		return err
 	}
 	if conflicted {
@@ -932,9 +977,8 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// revision the directory does not contain, with `status` reporting the pin
 	// while the sources stay newer.
 	//
-	// FETCH_HEAD is the prefixed target that was just fetched, so its tree under
-	// the prefix is what this directory is supposed to hold.
-	want, wantErr := repo.RevParse(ctx, "FETCH_HEAD:"+name)
+	// want (read before the merge) is the prefixed target that was fetched, so
+	// its tree under the prefix is what this directory is supposed to hold.
 	have, haveErr := repo.RevParse(ctx, "HEAD:"+name)
 	// Only when the merge did nothing. A prefix differs from its target for two
 	// reasons and the trees cannot tell them apart: either the merge could not
@@ -949,7 +993,19 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// send them first — cannot help when the work has already been sent.
 	nowHead, nowHeadErr := repo.Head(ctx)
 	merged := preHeadErr == nil && nowHeadErr == nil && nowHead != preHead
-	if wantErr == nil && haveErr == nil && want != have && !merged {
+	if haveErr != nil {
+		// The prefix is not in HEAD at all — removed by `rig stack rm`, or an
+		// import that never produced one. Taking such a member back is the case
+		// the merge cannot serve: its filtered history is already an ancestor
+		// (it was imported once), so the merge is a no-op and nothing restores
+		// the directory the removal deleted.
+		//
+		// Unconditional, unlike the branch below: there is no directory here, so
+		// there is nothing of the user's to discard by writing one.
+		if err := repo.ReplacePath(ctx, fetched, name); err != nil {
+			return fmt.Errorf("restoring %s from %s: %w", name, short(fetch), err)
+		}
+	} else if want != have && !merged {
 		// Replacing the directory discards whatever is under it, so only do it
 		// when there is nothing of the user's to discard. Their own commits would
 		// survive in the history but be stranded there, which is a quiet way to
@@ -959,7 +1015,7 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 				"send them first, or revert them, and run this again",
 				name, short(tip), m.pin(name).describe())
 		}
-		if err := repo.ReplacePath(ctx, "FETCH_HEAD", name); err != nil {
+		if err := repo.ReplacePath(ctx, fetched, name); err != nil {
 			return fmt.Errorf("moving %s to %s: %w", name, m.pin(name).describe(), err)
 		}
 		verb = "moved"
@@ -980,12 +1036,46 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	}
 	if err := repo.StageAll(ctx); err != nil {
 		restore()
+		delete(m.LastSync, name)
 		return err
+	}
+	// The cursor claims this directory holds that revision, so it cannot be
+	// written while the directory is not going to be there. Against the index
+	// rather than HEAD: a replace above has just written a tree HEAD has never
+	// seen, and the index is what the commit below will carry.
+	//
+	// The guard after the fetch catches an empty upstream; this catches every
+	// other way the prefix can end up absent. It is the one that has to hold — a
+	// cursor over a missing directory makes `status` report the member up to
+	// date and every later pull short-circuit on it, and nothing after that ever
+	// looks at the tree again.
+	if present, err := repo.PathInIndex(ctx, name); err != nil || !present {
+		restore()
+		delete(m.LastSync, name)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("%s: importing %s left no %s/ directory, so there is nothing for a cursor to point at", name, short(fetch), name)
 	}
 	// Amend the cursor edit into the merge commit, so one commit carries both
 	// the history and the fact that it was synced — the reviewable unit a
 	// cron-driven pull PR is built from.
-	if _, err := repo.CommitAmendNoEdit(ctx); err != nil {
+	//
+	// Only when there is a merge commit to amend. Where the merge did nothing —
+	// a repin backwards, or a removed member whose filtered history is already
+	// an ancestor — amending would rewrite whatever the user committed last, and
+	// git refuses outright when the result would be empty. That refusal is the
+	// `--amend --no-edit: would make it empty` dead end: nothing was wrong with
+	// the import, only with what it tried to fold itself into.
+	commit := func() error {
+		if merged {
+			_, err := repo.CommitAmendNoEdit(ctx)
+			return err
+		}
+		_, err := repo.Commit(ctx, msg)
+		return err
+	}
+	if err := commit(); err != nil {
 		restore()
 		delete(m.LastSync, name)
 		return err
@@ -1150,7 +1240,7 @@ func newStackSendCmd() *cobra.Command {
 				// The remembered branch reads two ways (a prefix changed since
 				// it was recorded); the fork knows which one exists, and that
 				// is the one an open pull request is watching.
-				found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(r.Fork), "refs/heads/"+branch, "refs/heads/"+other)
+				found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(r.Fork), stackAuthFor(ctx, r.Fork), "refs/heads/"+branch, "refs/heads/"+other)
 				if err != nil {
 					return fmt.Errorf("%s was last proposed to %s or %s, and %s cannot be asked which exists: %w\nname the branch in full to propose without asking", name, branch, other, r.Fork, err)
 				}
@@ -1198,7 +1288,7 @@ func newStackSendCmd() *cobra.Command {
 					"sending now would revert those commits — run `rig stack pull %s` first",
 					r.Upstream, short(tip), short(m.cursor(name)), name)
 			}
-			if err := repo.FetchObjects(ctx, upstreamURL, tip); err != nil {
+			if err := repo.FetchObjects(ctx, upstreamURL, tip, stackAuthForURL(ctx, upstreamURL)); err != nil {
 				return err
 			}
 
@@ -1353,7 +1443,7 @@ func newStackSendCmd() *cobra.Command {
 			// plain push is refused as non-fast-forward — which would make it
 			// impossible to update an open PR. Replace under a lease instead, so
 			// the push still fails if someone else moved the branch meanwhile.
-			if err := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), commit, "refs/heads/"+branch); err != nil {
+			if err := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), commit, "refs/heads/"+branch, stackAuthFor(ctx, r.Fork)); err != nil {
 				return err
 			}
 			// Kept under a local ref as well: this commit's tree is what the
@@ -1377,7 +1467,7 @@ func newStackSendCmd() *cobra.Command {
 				if ierr != nil {
 					return ierr
 				}
-				if ierr := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), intCommit, "refs/heads/"+r.TrackBranch); ierr != nil {
+				if ierr := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), intCommit, "refs/heads/"+r.TrackBranch, stackAuthFor(ctx, r.Fork)); ierr != nil {
 					return fmt.Errorf("the proposal reached %s:%s, but %s could not be updated: %w\na rebuild would be missing what this pull request left out — push it before seeding", r.Fork, branch, r.TrackBranch, ierr)
 				}
 				// Recorded like the proposal ref, so status and seed can tell
@@ -1525,7 +1615,7 @@ func newStackPushCmd() *cobra.Command {
 
 			upstreamURL := stackRemoteURL(r.Upstream)
 			branch := m.branch(name)
-			tip, err := repo.LsRemote(ctx, upstreamURL, "refs/heads/"+branch)
+			tip, err := repo.LsRemote(ctx, upstreamURL, "refs/heads/"+branch, stackAuthForURL(ctx, upstreamURL))
 			if err != nil {
 				return err
 			}
@@ -1601,7 +1691,7 @@ func newStackPushCmd() *cobra.Command {
 			// No force and no lease: a push that is not a fast-forward means the
 			// filtered history is not a continuation of upstream's, and overwriting
 			// is never the right answer to that.
-			if err := repo.PushRef(ctx, upstreamURL, head, "refs/heads/"+branch); err != nil {
+			if err := repo.PushRef(ctx, upstreamURL, head, "refs/heads/"+branch, stackAuthForURL(ctx, upstreamURL)); err != nil {
 				return fmt.Errorf("pushing %s to %s:%s: %w", name, r.Upstream, branch, err)
 			}
 

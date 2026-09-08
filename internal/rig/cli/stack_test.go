@@ -302,7 +302,7 @@ func buildFakeProxy(t *testing.T) string {
 // stand-in that listens like the real proxy, so the lifecycle is covered
 // without a Rust toolchain anywhere near CI.
 func TestStartJoshProxy_FakeBinary(t *testing.T) {
-	p, err := startJoshProxy(context.Background(), buildFakeProxy(t), "github.com")
+	p, err := startJoshProxy(context.Background(), buildFakeProxy(t), "github.com", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestStartJoshProxy_FakeBinary(t *testing.T) {
 func TestStartJoshProxy_NeverReady(t *testing.T) {
 	bin := buildFakeProxy(t)
 	t.Setenv("FAKE_PROXY_EXIT", "1")
-	_, err := startJoshProxy(context.Background(), bin, "github.com")
+	_, err := startJoshProxy(context.Background(), bin, "github.com", nil)
 	if err == nil {
 		t.Fatal("expected readiness failure for a proxy that exits immediately")
 	}
@@ -355,14 +355,14 @@ func TestGitrepoWsAdditions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		sha, err := repo.LsRemote(ctx, src, "refs/heads/"+branch)
+		sha, err := repo.LsRemote(ctx, src, "refs/heads/"+branch, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if sha != head {
 			t.Fatalf("ls-remote = %s, head = %s", sha, head)
 		}
-		if _, err := repo.LsRemote(ctx, src, "refs/heads/nope"); err == nil {
+		if _, err := repo.LsRemote(ctx, src, "refs/heads/nope", nil); err == nil {
 			t.Fatal("missing ref should error, not return empty")
 		}
 	})
