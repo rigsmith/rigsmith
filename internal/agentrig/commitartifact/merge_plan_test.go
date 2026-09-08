@@ -304,3 +304,37 @@ func TestMergePlanPathsOverlap(t *testing.T) {
 		})
 	}
 }
+
+func TestPlanUnresolvedMergeRejectsNormalizationAlias(t *testing.T) {
+	r, original, _ := unresolvedMergeFixture(t, "sha1")
+	parent := t.TempDir()
+	linked := filepath.Join(parent, "caf\u00e9")
+	alias := filepath.Join(parent, "cafe\u0301")
+	mustRun(t, r, "", "worktree", "add", "--detach", linked, original)
+	registered, err := os.Stat(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliased, err := os.Stat(alias)
+	if os.IsNotExist(err) {
+		t.Skip("filesystem distinguishes Unicode normalization forms")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(registered, aliased) {
+		t.Skip("normalization forms refer to different directories")
+	}
+	if err := os.Mkdir(filepath.Join(linked, "nested"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, dest := range []string{filepath.Join(alias, "plan"), filepath.Join(alias, "nested", "plan")} {
+		plan, err := PlanUnresolvedMerge(t.Context(), r.dir, dest, mergePlanPolicy(t))
+		if !errors.Is(err, ErrInvalid) || plan != (MergePlan{}) {
+			t.Fatalf("accepted filesystem alias %s: %+v %v", dest, plan, err)
+		}
+		if _, err := os.Stat(dest); !os.IsNotExist(err) {
+			t.Fatal("wrote output through normalization alias", dest, err)
+		}
+	}
+}

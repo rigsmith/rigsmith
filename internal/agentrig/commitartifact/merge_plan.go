@@ -286,6 +286,20 @@ func (r gitRepo) planDestination(ctx context.Context, dest string) (string, erro
 		}
 		roots = append(roots, root)
 	}
+	// String containment alone misses filesystem aliases (for example Unicode
+	// normalization on macOS). The destination is new, so inspect its existing
+	// ancestors and compare their identities with every protected root.
+	var ancestors []os.FileInfo
+	for path := parent; ; path = filepath.Dir(path) {
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", err
+		}
+		ancestors = append(ancestors, info)
+		if filepath.Dir(path) == path {
+			break
+		}
+	}
 	for _, root := range roots {
 		root, err = filepath.EvalSymlinks(root)
 		if err != nil {
@@ -293,6 +307,15 @@ func (r gitRepo) planDestination(ctx context.Context, dest string) (string, erro
 		}
 		if mergePlanPathsOverlap(root, dest) {
 			return "", ErrInvalid
+		}
+		info, err := os.Stat(root)
+		if err != nil {
+			return "", err
+		}
+		for _, ancestor := range ancestors {
+			if os.SameFile(info, ancestor) {
+				return "", ErrInvalid
+			}
 		}
 	}
 	return dest, nil

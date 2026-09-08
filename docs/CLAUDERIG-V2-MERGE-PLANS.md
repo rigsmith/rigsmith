@@ -14,7 +14,8 @@ The caller holds the cooperative staging lease throughout. The output directory'
 parent must exist; the output must not exist or overlap the checkout, its Git
 directory, its shared Git directory, or any other registered checkout. An
 unavailable registered checkout fails closed. Destination
-parent symlinks are resolved before this check. Arbitrary concurrent filesystem
+parent symlinks are resolved before this check. Filesystem identity checks on
+existing destination ancestors also reject aliases such as Unicode normalization. Arbitrary concurrent filesystem
 writers and parent swaps outside the lease contract are not supported.
 
 The initial implementation accepts one literal `MERGE_HEAD`, a matching
