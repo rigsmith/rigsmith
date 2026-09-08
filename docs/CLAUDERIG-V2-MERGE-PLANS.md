@@ -3,7 +3,8 @@
 Milestone 6b.4b.2a adds an internal shared planner for unresolved canonical merges.
 It does not apply a repair, move canonical HEAD, acknowledge queue work, or enable
 queued hooks. Capture and publication still refuse unresolved canonical conflicts.
-The next steps are safe application with restart recovery, then queue integration.
+Recoverable application is described in [merge staging](CLAUDERIG-V2-MERGE-STAGING.md);
+queue integration follows. The planner itself remains preview-only.
 There is no end-user changeset for this internal planning foundation.
 
 ## Inputs and ownership

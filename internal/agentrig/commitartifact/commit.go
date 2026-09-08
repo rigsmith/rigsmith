@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -357,6 +358,11 @@ func (r gitRepo) checkObjects(ctx context.Context) error {
 // command applies the same private Git isolation to one-shot and streaming calls.
 func (r gitRepo) command(args ...string) *exec.Cmd {
 	flags := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "commit.gpgsign=false", "-c", "protocol.allow=never", "-c", "protocol.file.allow=always"}
+	if runtime.GOOS == "windows" {
+		// Nested private staging repositories plus SHA-256 pack names can exceed
+		// MAX_PATH. Global/system settings are intentionally excluded below.
+		flags = append(flags, "-c", "core.longpaths=true")
+	}
 	cmd := exec.Command("git", append(flags, args...)...)
 	cmd.Dir = r.dir
 	for _, entry := range os.Environ() {
