@@ -2,9 +2,10 @@
 
 Milestone 6b.4b.2a adds an internal shared planner for unresolved canonical merges.
 It does not apply a repair, move canonical HEAD, acknowledge queue work, or enable
-queued hooks. Capture and publication still refuse unresolved canonical conflicts.
+queued hooks. Capture and publication now recover supported canonical conflicts
+through the [sealed completion protocol](CLAUDERIG-V2-MERGE-RECOVERY.md).
 Recoverable application is described in [merge staging](CLAUDERIG-V2-MERGE-STAGING.md);
-queue integration follows. The planner itself remains preview-only.
+queue integration uses that application path. The planner itself remains preview-only.
 There is no end-user changeset for this internal planning foundation.
 
 ## Inputs and ownership
@@ -32,7 +33,7 @@ disables rename inference. It reconstructs all stage-zero and conflict entries,
 then compares that listing with the copied canonical index. This avoids treating
 manual staged edits as disposable merge output. Worktree bytes are not used to
 infer resolutions and are never modified; a later live edit does not invalidate a
-preview, but must be checked before any future application.
+preview, but must be checked before application.
 
 ## Candidate and audits
 
@@ -73,10 +74,11 @@ These bounds do not provide a total temporary-disk quota for imported Git histor
 
 Applying a plan requires fresh provenance checks and explicit handling of edited
 conflict files, modes, untracked collisions, index flags and interrupted writes.
-The returned index digest alone does not certify worktree state. Persisting a
-recoverable installation intent and completing or refusing an interrupted repair
-must be designed before queue services consume these plans. No partial-resolution
-or arbitrary external-writer guarantee is implied by this planner.
+The returned index digest alone does not certify worktree state. Queue services
+use `MergeStageStore.Complete` to persist the installation intent, apply the
+repair and resume exact-candidate completion through Git metadata cleanup.
+No partial-resolution or arbitrary external-writer guarantee is implied by this
+planner. Queued hooks remain disabled; synchronous commands keep their behavior.
 
 Tests cover both Git object formats, split indexes, raw binary/CRLF results,
 companion proposals, nonconflicting entries, complete detached bundles, unchanged

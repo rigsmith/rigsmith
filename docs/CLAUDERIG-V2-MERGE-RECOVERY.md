@@ -60,6 +60,15 @@ with the existing Git/gh transport. Offline retries keep the committed batch and
 its repair checkpoint; only confirmed publication permits acknowledgement.
 Newer queued generations remain pending.
 
+On its first recovery attempt, publication deliberately observes the current
+canonical merge, which can be newer than the retained capture. This matches the
+publisher's existing `LocalCommit` contract for newer synchronous history. The
+private plan is audited and sealed before any canonical write; that intent then
+pins all subsequent attempts. The recovered commit is combined with the retained
+capture through normal publication merging, never substituted for it or used to
+acknowledge newer events. Unrelated histories are not forcibly replaced. Once an
+intent exists, a different canonical HEAD or operation is refused on retry.
+
 Checkpoints must remain until their batch no longer needs replay. Deletion,
 abandoned-attempt recovery, total temporary-history quotas and cleanup of crash
 leftovers remain the capacity milestone. The existing stable-filesystem and

@@ -144,8 +144,8 @@ Claude supplies its native snapshot label, fixed queued author identity, sealed
 event timestamp and four push/confirmation attempts. The committed store's byte
 limit also bounds materialized publication trees. A returned `Publication` is
 only evidence for persisting the pushed phase; this adapter does not update queue
-state. QueueAdapter now supplies worker phase wiring. Config-history, retention,
-local-only completion remains separate; supported canonical conflicts use
+state. QueueAdapter now supplies worker phase wiring. Config-history, retention
+and local-only completion remain separate; supported canonical conflicts use
 [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md). Composition can supply
 `NewConfiguredGitTransport` to reuse existing Git/`gh` authentication; broad
 credential discovery is deferred. Synchronous behavior is unchanged.
@@ -268,8 +268,10 @@ Tests cover SHA-1/SHA-256, raw CRLF bytes, deterministic replay and both parents
 declined resolutions, delete/edit refusal, malformed/unsafe stage records,
 cancellation and blob bounds. Claude fixtures exercise metadata union through
 actual publication, preserved device provenance, unchanged canonical files/index/
-config, unknown-field refusal and secret rejection after resolution. Unsupported machine state, rename-aware recovery,
-supported canonical merge repair now uses [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md); operational unblock/status commands remain future work.
+config, unknown-field refusal and secret rejection after resolution. Supported
+canonical merge repair now uses [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md).
+Unsupported machine state, rename-aware recovery and operational unblock/status
+commands remain future work.
 
 
 ## Bounded retained append recovery
