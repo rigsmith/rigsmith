@@ -50,7 +50,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
 	return refuseUnknownVerb(cmd)
 }
 
@@ -1931,6 +1931,7 @@ func stackMenuItems() []menuItem {
 		{label: "propose", desc: "ALL of a repo's changes to its upstream, via a branch on your fork (asks; --from proposes one topic)", cmd: newStackSendCmd()},
 		{label: "push", desc: "a repo you own back to its own branch, history intact (pick one)", cmd: newStackPushMenuCmd()},
 		{label: "wire", desc: "write the build overlay so members resolve each other from source", cmd: newStackWireCmd()},
+		{label: "pack", desc: "build a member's packages here, where the overlay makes siblings resolve", cmd: newStackPackCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
 		{label: "seed", desc: "export just the root files as a small repo, to rebuild this stackspace elsewhere (asks where)", cmd: newStackSeedMenuCmd()},
 	}

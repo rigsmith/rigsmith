@@ -886,6 +886,34 @@ exists. Nothing runs in the background: the engine starts per operation and
 stops after. Pin a version per stackspace with the manifest's
 [`josh` key](./configuration#stack).
 
+## Packing a member
+
+A member's publishable packages are built from *here*, not from a checkout of
+the branch you proposed:
+
+```sh
+rig stack pack mermaider              # → dist/
+rig stack pack mermaider --out ./out  # somewhere else
+rig stack pack                        # every member
+rig stack pack mermaider -n           # say what would be built
+```
+
+The reason is the build overlay. A member consumes its siblings by package
+identity, and the overlay is what points those references at the sibling's
+source. A bare checkout has neither the sibling nor, necessarily, a feed
+carrying the version the branch pins — so its restore fails, and NuGet in
+particular can fail without logging why.
+
+`pack` refuses while the overlay is not in effect, and says to run
+[`rig stack wire`](#wire). Packing without it would succeed and produce exactly
+the packages the bare checkout produces, which is the thing being avoided —
+and nothing downstream can tell the difference.
+
+What it lists is what appeared in the output directory, not what the build
+predicted: a project that computes its version at build time (MinVer and
+friends) is discovered with no version at all, so a predicted file name would
+have an empty version in it and match nothing on disk.
+
 ## Things worth knowing before they bite
 
 - **A member built on its own still builds from packages.** No project file

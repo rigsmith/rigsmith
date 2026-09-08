@@ -256,6 +256,7 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch — **all** of them, the prefix's whole divergence from upstream; `--from <branch>` sends only what a topic branch of the stackspace adds (a bare name resolves to the conventional `stack-pr-<name>`), so a second fix can be its own pull request (needs `trackBranch`, which it then keeps current); `--dry-run` shows the commit and branch that would go and touches no remote |
 | `stack push [repo]` | Fast-forward a repo you own with this stackspace's commits, history intact; inferred when only one is yours; `--dry-run` shows the target, branch and commits that would go and touches no remote |
 | `stack wire` | Write the build overlay so members resolve each other from source |
+| `stack pack [repo]` | Build a member's publishable packages from inside the stackspace, where the build overlay makes cross-member references resolve from source (every member with no argument); `--out` chooses the directory, default `dist/`; refuses while the overlay is missing, since without it the packages are the ones a bare checkout would produce |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what's missing |
 
 ```sh
