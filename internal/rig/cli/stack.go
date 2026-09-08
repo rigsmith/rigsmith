@@ -148,8 +148,10 @@ func newStackInitCmd() *cobra.Command {
 			// worktree would be swallowed into the import.
 			if dirty, err := repo.Dirty(ctx); err != nil {
 				return err
-			} else if dirty && !stackOnlyManifestDirty(ctx, repo, src) {
-				return fmt.Errorf("stackspace has uncommitted changes — commit or stash before importing")
+			} else if dirty {
+				if _, only := stackOnlyManifestDirty(ctx, repo, src); !only {
+					return fmt.Errorf("stackspace has uncommitted changes — commit or stash before importing")
+				}
 			}
 			// A merge into an unborn HEAD fast-forwards instead of creating a
 			// merge commit, which leaves the cursor amended onto the upstream
@@ -233,31 +235,33 @@ func newStackInitCmd() *cobra.Command {
 }
 
 // stackOnlyManifestDirty reports whether a dedicated manifest file is the only
-// uncommitted thing. Filling in the scaffolded rig.stack.jsonc and running init
-// again is the documented first run, so that one file must not trip the dirty
-// guard — the import commits it anyway.
-func stackOnlyManifestDirty(ctx context.Context, repo *gitrepo.Repo, src *cfgfind.Source) bool {
+// uncommitted thing, and names it relative to the stackspace root when so.
+// Filling in the scaffolded rig.stack.jsonc and running init again is the
+// documented first run, so that one file must not trip init's dirty guard —
+// the import commits it anyway. pull keeps its guard, and uses the name to say
+// which file is in the way.
+func stackOnlyManifestDirty(ctx context.Context, repo *gitrepo.Repo, src *cfgfind.Source) (string, bool) {
 	// Only a dedicated manifest earns the exemption. An inline `stack` block
 	// shares .rig.json with every other rig setting, so waving that file
 	// through would commit whatever else the user happened to be editing.
 	if src == nil || src.File == "" || src.Path == "" {
-		return false
+		return "", false
 	}
 	paths, err := repo.DirtyPaths(ctx)
 	if err != nil || len(paths) == 0 {
-		return false
+		return "", false
 	}
 	manifest, err := filepath.Rel(repo.Dir, src.File)
 	if err != nil {
-		return false
+		return "", false
 	}
 	manifest = filepath.ToSlash(manifest)
 	for _, p := range paths {
 		if filepath.ToSlash(p) != manifest {
-			return false
+			return "", false
 		}
 	}
-	return true
+	return manifest, true
 }
 
 func newStackStatusCmd() *cobra.Command {
@@ -399,6 +403,14 @@ func newStackPullCmd() *cobra.Command {
 			if dirty, err := repo.Dirty(ctx); err != nil {
 				return err
 			} else if dirty {
+				// The manifest is what a pull reads, and a pin that stopped
+				// resolving — upstream renamed or deleted the branch — is fixed
+				// by editing it. That edit is then the thing tripping this guard,
+				// which read cold says the fix was wrong. Name the file and the
+				// step between it and the pull.
+				if manifest, ok := stackOnlyManifestDirty(ctx, repo, src); ok {
+					return fmt.Errorf("stackspace has uncommitted changes — only %s; commit it (`git commit -m \"stack: manifest\" -- %s`), then pull again", manifest, manifest)
+				}
 				return fmt.Errorf("stackspace has uncommitted changes — commit or stash before pulling")
 			}
 			names := m.names()

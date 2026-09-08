@@ -1236,3 +1236,44 @@ func TestStackPublishesAs(t *testing.T) {
 		}
 	})
 }
+
+// pull's dirty guard runs before any engine or upstream is consulted, so the
+// wording can be checked without josh or a network: only the manifest and the
+// stackspace's git state are in play.
+func TestStackPullDirtyGuardNamesTheManifest(t *testing.T) {
+	ctx := context.Background()
+	dir := inTempStackspace(t, stackTestManifest)
+	mustGitStack(t, dir, "config", "user.email", "t@t")
+	mustGitStack(t, dir, "config", "user.name", "t")
+	mustGitStack(t, dir, "add", "-A")
+	mustGitStack(t, dir, "commit", "-qm", "stack: stackspace manifest")
+
+	// The state after fixing an upstreamBranch that upstream renamed: the
+	// manifest edited, nothing else touched.
+	edited := strings.Replace(stackTestManifest, `"branch":   "main"`, `"branch":   "release-2.5"`, 1)
+	writeStackManifest(t, dir, edited)
+
+	err := runVerb(ctx, newStackPullCmd())
+	if err == nil {
+		t.Fatal("expected pull to refuse a dirty manifest")
+	}
+	for _, want := range []string{"uncommitted changes", "only rig.stack.jsonc", "commit it", "then pull again"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("pull's refusal should say %q:\n%v", want, err)
+		}
+	}
+
+	// Anything else dirty alongside it gets the generic refusal: pointing at
+	// the manifest alone would have the user commit one file and trip on the
+	// other.
+	if werr := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("mine\n"), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	err = runVerb(ctx, newStackPullCmd())
+	if err == nil {
+		t.Fatal("expected pull to refuse a dirty worktree")
+	}
+	if !strings.Contains(err.Error(), "commit or stash before pulling") || strings.Contains(err.Error(), "rig.stack.jsonc") {
+		t.Errorf("pull with other edits should give the generic refusal:\n%v", err)
+	}
+}

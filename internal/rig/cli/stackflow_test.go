@@ -295,6 +295,36 @@ func TestStackFlow(t *testing.T) {
 	if !strings.Contains(string(body), "stack/mine") {
 		t.Error("propose did not record the branch it pushed to")
 	}
+
+	// ---- pull names the manifest when it is the only thing in the way ----
+	//
+	// The manifest is dirty and nothing else is: the state a member is left
+	// in after fixing an upstreamBranch that upstream renamed. pull still
+	// refuses — its merge commit would sweep the edit in — but the refusal
+	// has to say which file and what to do, not just "uncommitted changes".
+	perr := runVerb(ctx, newStackPullCmd(), "libfoo")
+	if perr == nil {
+		t.Fatal("expected pull to refuse a dirty manifest")
+	}
+	for _, want := range []string{"uncommitted", "rig.stack.jsonc", "commit it", "then pull again"} {
+		if !strings.Contains(perr.Error(), want) {
+			t.Errorf("pull's refusal should say %q:\n%v", want, perr)
+		}
+	}
+	// With something else dirty too, the generic refusal: naming the manifest
+	// alone would send the user to commit one file and trip over the other.
+	stray := filepath.Join(rebuilt, "notes.txt")
+	if werr := os.WriteFile(stray, []byte("mine\n"), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	defer os.Remove(stray)
+	perr = runVerb(ctx, newStackPullCmd(), "libfoo")
+	if perr == nil {
+		t.Fatal("expected pull to refuse a dirty worktree")
+	}
+	if !strings.Contains(perr.Error(), "commit or stash before pulling") || strings.Contains(perr.Error(), "rig.stack.jsonc") {
+		t.Errorf("pull with other edits should give the generic refusal:\n%v", perr)
+	}
 }
 
 // ---- harness ----------------------------------------------------------
