@@ -96,3 +96,15 @@ func TestPull_FastForwardsWhatItFetched(t *testing.T) {
 		t.Fatalf("Pull left HEAD at %s; wanted main's tip %s (other's is %s)", head, mainTip, otherTip)
 	}
 }
+
+func TestFetchRef_ErrorNamesTheBranchNotThePrivateRef(t *testing.T) {
+	ctx := context.Background()
+	r, _ := Init(ctx, t.TempDir())
+	_, err := r.FetchRef(ctx, filepath.Join(t.TempDir(), "missing.git"), "main", nil)
+	if err == nil {
+		t.Fatal("expected the fetch of a missing remote to fail")
+	}
+	if !strings.Contains(err.Error(), " main: ") || strings.Contains(err.Error(), "refs/rig/") {
+		t.Fatalf("error should read as `git fetch <remote> main: …`, got: %v", err)
+	}
+}

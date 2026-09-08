@@ -55,7 +55,11 @@ func (r *Repo) FetchRef(ctx context.Context, remote, branch string, auth *HTTPAu
 	// Best effort: a ref left behind by a crash between fetch and delete is
 	// inert (nothing lists refs/rig/), and the next call names a fresh one.
 	defer runGit(ctx, r.Dir, "update-ref", "-d", ref) //nolint:errcheck
-	if _, err := runGitStdin(ctx, r.Dir, "", auth.env(), "fetch", remote, "+"+branch+":"+ref); err != nil {
+	// The error names the fetch as asked for — "git fetch origin main" — not
+	// the refspec: the ref is this call's alone, and the message outlives it
+	// in journals and on screen.
+	shown := []string{"fetch", remote, branch}
+	if _, err := runGitShown(ctx, r.Dir, "", auth.env(), shown, "fetch", remote, "+"+branch+":"+ref); err != nil {
 		return "", err
 	}
 	out, err := runGit(ctx, r.Dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
