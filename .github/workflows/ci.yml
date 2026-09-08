@@ -116,7 +116,7 @@ jobs:
           CLAUDERIG_COMPAT: '1'
         run: go test ./internal/clauderig/compatibility -count=1 -v -timeout=10m
 
-  windows-result:
+  test-result:
     # Preserve the existing required check name. The shared matrix contains all
     # Windows groups plus Unix, so this gate conservatively requires all of them.
     name: test (windows-latest)

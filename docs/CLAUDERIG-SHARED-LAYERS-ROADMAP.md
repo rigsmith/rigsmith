@@ -72,7 +72,7 @@ credential providers and SSH-agent/keychain discovery are deferred.
 | 6b.4b.2a. Private unresolved-merge plan | Merged: [#347](https://github.com/rigsmith/rigsmith/pull/347) | Recreate supported content conflicts, require matching index entries, and export an audited candidate bundle without changing canonical state. [Contract](CLAUDERIG-V2-MERGE-PLANS.md). |
 | 6b.4b.2b. Safe plan application and restart | Merged: [#348](https://github.com/rigsmith/rigsmith/pull/348) | Seal a repair intent, check AUTO_MERGE/live files, durably stage files/index, and resume interrupted writes. [Contract](CLAUDERIG-V2-MERGE-STAGING.md). |
 | 6b.4b.2c. Unresolved recovery in queue services | Merged: [#357](https://github.com/rigsmith/rigsmith/pull/357) | Replay the sealed candidate across staging, HEAD update and cleanup before fresh capture/publication. [Contract](CLAUDERIG-V2-MERGE-RECOVERY.md). |
-| Windows CI follow-up | In progress | Run existing Windows groups concurrently; preserve all tests, per-group limits and the required aggregate check. |
+| Windows CI follow-up | In review: [#358](https://github.com/rigsmith/rigsmith/pull/358) | Run existing Windows groups concurrently; preserve all tests, per-group limits and the required aggregate check. |
 | 6b.5. Exact manual-sync coverage | Next | Acknowledge only generations actually included; preserve newer queued work. |
 | 6b.6. Worker lifecycle | Planned | Parent-death recovery, startup/restart, stop and draining. |
 | 6b.7. Capacity and cleanup | Planned | Actionable capacity remedies and safe artifact/receipt cleanup. |
