@@ -179,12 +179,16 @@ func stackPack(ctx context.Context, out io.Writer, root string, names []string, 
 			return err
 		}
 	}
+	// Discovered once for the whole stackspace, not once per member: the scan
+	// walks the entire tree either way, so asking per member repeats the same
+	// traversal for every prefix and gets the same answer each time.
+	all, err := stackPackDiscover(ctx, root)
+	if err != nil {
+		return err
+	}
 	var packed int
 	for _, name := range names {
-		pkgs, err := stackPackPackages(ctx, root, name)
-		if err != nil {
-			return err
-		}
+		pkgs := stackPackFor(all, name)
 		if len(pkgs) == 0 {
 			fmt.Fprintf(out, "%s: nothing publishable to pack\n", name)
 			continue
@@ -213,7 +217,7 @@ func stackPack(ctx context.Context, out io.Writer, root string, names []string, 
 			default:
 				packed++
 				fmt.Fprintf(out, "%s: packed %s\n", name, p.pkg.Name)
-				for _, f := range stackPackNewFiles(dir, before) {
+				for _, f := range append(stackPackNewFiles(dir, before), stackPackOutside(dir, resp.Artifacts)...) {
 					fmt.Fprintf(out, "    %s\n", f)
 				}
 			}
@@ -268,6 +272,30 @@ func stackPackNewFiles(dir string, before map[string]bool) []string {
 	return out
 }
 
+// stackPackOutside names artifacts an adapter reported that do not live under
+// the output directory, so they are not lost from the listing — the directory
+// diff can only see what landed inside it.
+//
+// Only ones that exist: the reported path is a prediction, and the reason the
+// listing is observed at all is that the prediction can be wrong.
+func stackPackOutside(dir string, arts []plugin.Artifact) []string {
+	var out []string
+	for _, a := range arts {
+		if a.Path == "" {
+			continue
+		}
+		if rel, err := filepath.Rel(dir, a.Path); err == nil && !strings.HasPrefix(rel, "..") {
+			continue // inside dir; the diff already has it
+		}
+		if _, err := os.Stat(a.Path); err != nil {
+			continue
+		}
+		out = append(out, a.Path)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // stackPackWalk lists every file under dir, as slash-separated paths relative
 // to it. Errors answer with whatever was reached: this feeds a listing, and a
 // partial one is better than none.
@@ -299,7 +327,7 @@ type stackPackPackage struct {
 	pkg  plugin.Package
 }
 
-// stackPackPackages finds the publishable packages under one member.
+// stackPackDiscover finds every publishable package in the stackspace.
 //
 // Discovery runs over the whole stackspace and is filtered by directory
 // afterwards, rather than being pointed at the member: an adapter reads shared
@@ -315,25 +343,24 @@ type stackPackPackage struct {
 //
 // Private packages are dropped. They are versioned but never published, so
 // packing one produces something with nowhere to go.
-func stackPackPackages(ctx context.Context, root, name string) ([]stackPackPackage, error) {
+func stackPackDiscover(ctx context.Context, root string) ([]stackPackPackage, error) {
 	var found []stackPackPackage
-	for _, eco := range ecosystem.Default().All() {
-		ok, err := eco.Detect(ctx, root)
-		if err != nil {
-			return nil, fmt.Errorf("scanning for %s projects: %w", eco.Info().ID, err)
+	// Overlay adapters included: one owns the artifacts for the unit it claims,
+	// and a build that left it out would produce the base language's package
+	// instead of the installers.
+	//
+	// A failed scan stops the build rather than being collected: packing against
+	// a partial picture is how the wrong packages get produced quietly, which is
+	// the whole subject of this command.
+	for _, scan := range stackScan(ctx, root, stackScanOptions{IncludeOverlays: true}) {
+		if scan.Err != nil {
+			return nil, fmt.Errorf("scanning for %s projects: %w", scan.Eco.Info().ID, scan.Err)
 		}
-		if !ok {
-			continue
-		}
-		resp, err := eco.Discover(ctx, plugin.DiscoverRequest{RepoRoot: root, SourcePath: "."})
-		if err != nil {
-			return nil, fmt.Errorf("discovering %s packages: %w", eco.Info().ID, err)
-		}
-		for _, pkg := range resp.Packages {
-			if pkg.Private || !stackPackUnder(name, pkg.Dir) {
+		for _, pkg := range scan.Packages {
+			if pkg.Private {
 				continue
 			}
-			found = append(found, stackPackPackage{eco: eco, info: eco.Info(), pkg: pkg})
+			found = append(found, stackPackPackage{eco: scan.Eco, info: scan.Eco.Info(), pkg: pkg})
 		}
 	}
 	out := stackPackReconcileOverlays(found)
@@ -363,6 +390,17 @@ func stackPackReconcileOverlays(found []stackPackPackage) []stackPackPackage {
 		kept = append(kept, f)
 	}
 	return kept
+}
+
+// stackPackFor narrows a discovery to one member's packages.
+func stackPackFor(all []stackPackPackage, name string) []stackPackPackage {
+	var out []stackPackPackage
+	for _, p := range all {
+		if stackPackUnder(name, p.pkg.Dir) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // stackPackUnder reports whether a package directory belongs to the member.

@@ -56,25 +56,15 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 	// Every republished id that turned out to name a real package, so a rule
 	// that never matched anything can be reported afterwards.
 	aliasUsed := map[string]map[string]bool{}
-	for _, eco := range ecosystem.Default().All() {
-		// Overlay ecosystems re-emit the base language's project rather than
-		// owning it, so asking them would double-count what the base reports.
-		if len(eco.Info().Overlays) > 0 {
+	// Overlay adapters are left out: one re-emits the base language's project
+	// rather than owning it, so asking both would count the same project twice.
+	for _, scan := range stackScan(ctx, root, stackScanOptions{Registry: true}) {
+		eco := scan.Eco
+		if scan.Err != nil {
+			failed[eco.Info().ID] = scan.Err
 			continue
 		}
-		ok, err := eco.Detect(ctx, root)
-		if err != nil {
-			failed[eco.Info().ID] = err
-			continue
-		}
-		if !ok {
-			continue
-		}
-		resp, err := eco.Discover(ctx, plugin.DiscoverRequest{RepoRoot: root, SourcePath: ".", IncludeUnversioned: true, IncludeRegistrySiblings: true})
-		if err != nil {
-			failed[eco.Info().ID] = err
-			continue
-		}
+		resp := plugin.DiscoverResponse{Packages: scan.Packages}
 		// Where each package is produced, so a dependency on it can be pointed
 		// at the project rather than at the registry.
 		// Per member too: a republished id is resolved to the package the

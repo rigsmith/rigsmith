@@ -158,3 +158,41 @@ func TestStackPackNewFilesFindsNestedOutput(t *testing.T) {
 		t.Fatalf("new files = %v, want the nested crate", got)
 	}
 }
+
+// An adapter may place artifacts outside the directory it was handed — the
+// directory diff cannot see those, so the reported paths carry them.
+func TestStackPackOutside(t *testing.T) {
+	dir := t.TempDir()
+	elsewhere := t.TempDir()
+
+	inside := filepath.Join(dir, "in.nupkg")
+	outside := filepath.Join(elsewhere, "out.zip")
+	for _, f := range []string{inside, outside} {
+		if err := os.WriteFile(f, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := stackPackOutside(dir, []plugin.Artifact{
+		{Path: inside},  // the diff already has it
+		{Path: outside}, // kept
+		{Path: filepath.Join(elsewhere, "ghost.zip")}, // predicted, never written
+		{Path: ""}, // nothing to say
+	})
+	if len(got) != 1 || got[0] != outside {
+		t.Fatalf("outside = %v, want just %s", got, outside)
+	}
+}
+
+// Discovery is per stackspace, not per member: the scan walks the whole tree
+// either way, so the members are a filter over one answer.
+func TestStackPackFor(t *testing.T) {
+	all := []stackPackPackage{
+		{pkg: plugin.Package{Name: "App", Dir: "app/src/App"}},
+		{pkg: plugin.Package{Name: "Lib", Dir: "lib/src/Lib"}},
+		{pkg: plugin.Package{Name: "Other", Dir: "libextra/src"}},
+	}
+	got := stackPackFor(all, "lib")
+	if len(got) != 1 || got[0].pkg.Name != "Lib" {
+		t.Fatalf("for(lib) = %v, want just Lib — libextra/ is a different member", got)
+	}
+}

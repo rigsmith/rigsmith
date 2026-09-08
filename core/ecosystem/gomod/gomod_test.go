@@ -300,6 +300,7 @@ func TestArtifactsDryRun(t *testing.T) {
 	if resp.Built || resp.Skipped ||
 		!strings.Contains(resp.Message, "--clean") ||
 		!strings.Contains(resp.Message, "--skip=publish,validate") ||
+		!strings.Contains(resp.Message, "--dist ") ||
 		!strings.Contains(resp.Message, "GORELEASER_CURRENT_TAG=v1.2.3") {
 		t.Errorf("dry-run artifacts = %+v, want a tag-injecting goreleaser message", resp)
 	}
