@@ -92,7 +92,7 @@ conflicting UUIDs or edited history. Publication still audits the complete tree.
 [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded canonical chunk-index recovery, including default chunked
 backups. [#343](https://github.com/rigsmith/rigsmith/pull/343) adds ordinary-file snapshot ordering; staged canonical merge completion merged in [#344](https://github.com/rigsmith/rigsmith/pull/344); unresolved recovery and capture integration remain next. Queued hooks stay disabled.
 
-Follow-up [#345](https://github.com/rigsmith/rigsmith/pull/345), in review, reuses the shared staging-state guard before fresh capture and corrects a Windows chunk fixture whose fixed timestamp could hide rewritten bytes from Git. Automatic repair before fresh capture remains part of 6b.4b.
+Follow-up [#345](https://github.com/rigsmith/rigsmith/pull/345), in review, reuses the shared staging-state guard before fresh capture, blocks active bisects during capture and merge completion, and corrects a Windows chunk fixture whose fixed timestamp could hide rewritten bytes from Git. Automatic repair before fresh capture remains part of 6b.4b.
 
 ## Delivery priority
 

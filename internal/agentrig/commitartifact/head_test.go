@@ -34,7 +34,7 @@ func TestSettledHeadReadsOnlyExactCommittedHistory(t *testing.T) {
 	if got := mustRun(t, repo, "", "status", "--porcelain"); got != before {
 		t.Fatal("changed index/worktree")
 	}
-	for _, state := range []string{"MERGE_HEAD", "MERGE_AUTOSTASH", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"} {
+	for _, state := range []string{"MERGE_HEAD", "MERGE_AUTOSTASH", "BISECT_START", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"} {
 		p := filepath.Join(root, ".git", state)
 		if err := os.WriteFile(p, []byte(want+"\n"), 0600); err != nil {
 			t.Fatal(err)

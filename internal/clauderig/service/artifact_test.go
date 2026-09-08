@@ -361,7 +361,7 @@ func TestCaptureCannotSealBeforeSeedRetentionSucceeds(t *testing.T) {
 }
 
 func TestCaptureArtifactRejectsUnsettledStagingBeforeRetainingSeed(t *testing.T) {
-	markers := []string{"MERGE_HEAD", "MERGE_AUTOSTASH", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"}
+	markers := []string{"MERGE_HEAD", "MERGE_AUTOSTASH", "BISECT_START", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"}
 	for _, marker := range append(markers, "unmerged-index") {
 		t.Run(marker, func(t *testing.T) {
 			req := artifactCaptureFixture(t, "pending capture")
@@ -396,6 +396,12 @@ func TestCaptureArtifactRejectsUnsettledStagingBeforeRetainingSeed(t *testing.T)
 					}
 				}
 				paths = append(paths, "conflicted.txt")
+			} else if marker == "BISECT_START" {
+				git(t, stage, "commit", "--allow-empty", "-m", "bisect middle")
+				git(t, stage, "commit", "--allow-empty", "-m", "bisect bad")
+				git(t, stage, "bisect", "start", "HEAD", head)
+				head = git(t, stage, "rev-parse", "HEAD")
+				paths = append(paths, ".git/BISECT_START")
 			} else {
 				put(t, stage, ".git/"+marker, head+"\n")
 				paths = append(paths, ".git/"+marker)

@@ -82,7 +82,7 @@ device registry with an old event identity; it retains the seeded registry.
 The artifact builder takes staging ownership with the original context, verifies
 the binding again, and calls the shared `SettledHead` guard before retaining a
 seed or copying canonical staging. The guard refuses merges, standalone
-MERGE_AUTOSTASH residue, cherry-picks, reverts, rebases, sequencers and unmerged
+MERGE_AUTOSTASH residue, active bisects, cherry-picks, reverts, rebases, sequencers and unmerged
 index entries. It does not repair these states. Only a settled checkout is copied,
 excluding Git metadata. It records HEAD and a durable seed-bundle
 reference in the archive header. Seed retention must succeed before capture can
