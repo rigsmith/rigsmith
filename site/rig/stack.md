@@ -902,6 +902,33 @@ stops after. Pin a version per stackspace with the manifest's
 
 ## Things worth knowing before they bite
 
+### A proposed branch is not buildable on its own
+
+This is by design, and it surprises people anyway. A member that consumes a
+sibling references it *by package identity* — the stackspace answers that from
+the sibling's source through the build overlay. A plain checkout of the branch
+you proposed has neither that directory nor, necessarily, a feed carrying the
+version the branch pins. Restore fails, and NuGet in particular can fail without
+printing a reason.
+
+`propose` now says so, on both the real run and `--dry-run`:
+
+```
+proposed live-markdown — pushed to you/LiveMarkdown:stack/token-cache, open the PR against them/LiveMarkdown
+note: live-markdown references 1 package that this stackspace provides from source, not a feed:
+        Mermaider  live-markdown → mermaider
+      a plain checkout of this branch has no source for it — pack it from the stackspace,
+      or make sure the feed the branch expects carries the version it pins
+```
+
+Republished ids (`publishesAs`, `publishPrefix`) are the case most worth
+naming: the consumer references an id only your own feed ever carries, so
+"is it on the public registry" is not even the right question.
+
+The note is a note, not a refusal — this is the normal shape of a stackspace
+proposal. What was missing was only that nothing said so.
+
+
 - **A member built on its own still builds from packages.** No project file
   changes, so a clone of any one repo resolves its dependencies from the
   registry exactly as it always did — which is what its CI does, and what

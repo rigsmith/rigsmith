@@ -141,6 +141,12 @@ git top level, or directories that match its `repos` keys. If so:
   `propose` is narrower: it refuses only uncommitted changes **under the member
   being proposed**, since those are the ones that would silently not be in what
   you send. Unrelated edits elsewhere do not block it.
+- **Relay what `propose` says about pins.** It ends by naming any package the
+  member gets from a sibling in the stackspace rather than from a feed. Those
+  are the pins a plain checkout of the proposed branch cannot restore — so if
+  someone is about to build or pack that branch outside the stackspace, that
+  note is the answer to the failure they are about to hit. Do not treat it as
+  an error: it is the normal shape of a stackspace proposal.
 
 ### Four different things called "branch"
 

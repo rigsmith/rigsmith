@@ -1415,6 +1415,11 @@ func newStackSendCmd() *cobra.Command {
 				return nil
 			}
 
+			// What this member gets from the stackspace rather than from a feed.
+			// Read here, before the push, so the same answer serves a dry run
+			// and a real proposal; reporting happens at whichever exit is taken.
+			pins, pinScanFailed := stackStackOnlyPins(ctx, repo.Dir, m, name)
+
 			// Local: message is the flag variable, and writing the default back
 			// into it would leak this repo's message into the next send.
 			msg := message
@@ -1435,6 +1440,7 @@ func newStackSendCmd() *cobra.Command {
 			if dryRun {
 				fmt.Fprintf(cmd.OutOrStdout(), "would push %s to %s:%s (proposing to %s)\n",
 					short(commit), r.Fork, branch, r.Upstream)
+				stackReportStackOnlyPins(cmd.OutOrStdout(), pins, name, pinScanFailed)
 				return nil
 			}
 
@@ -1531,6 +1537,7 @@ func newStackSendCmd() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "proposed %s — pushed to %s:%s, open the PR against %s\n",
 				name, r.Fork, branch, r.Upstream)
+			stackReportStackOnlyPins(cmd.OutOrStdout(), pins, name, pinScanFailed)
 			return nil
 		},
 	}
