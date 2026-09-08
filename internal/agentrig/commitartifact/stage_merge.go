@@ -57,6 +57,19 @@ type mergeStageIntent struct {
 // unchanged: FinishStagedMerge is the separate audited completion step. A retry
 // after that completion is deliberately refused; callers retain phase state.
 func (s MergeStageStore) Stage(ctx context.Context, dir string, p MergeStagePolicy) (tree string, err error) {
+	return s.stage(ctx, dir, p, false)
+}
+
+// Complete stages and finishes exactly the merge saved in this store. The sealed
+// intent remains the restart checkpoint across file writes, HEAD update and Git
+// metadata cleanup. Retry requires the saved index and affected files; a different
+// HEAD, merge or later affected edit is refused. Callers retain the staging lease
+// and the intent until their own durable queue phase records completion.
+func (s MergeStageStore) Complete(ctx context.Context, dir string, p MergeStagePolicy) (head string, err error) {
+	return s.stage(ctx, dir, p, true)
+}
+
+func (s MergeStageStore) stage(ctx context.Context, dir string, p MergeStagePolicy, complete bool) (result string, err error) {
 	key, err := requestKey(Request{PolicyID: p.PolicyID, Message: p.Message, AuthorName: p.AuthorName,
 		AuthorEmail: p.AuthorEmail, Time: p.Time, Prepare: p.Validate, Audit: p.Audit})
 	if err != nil || !filepath.IsAbs(dir) || !filepath.IsAbs(s.Dir) || p.Resolve == nil || p.MaxTreeBytes < 0 || p.MaxBundleBytes < 0 {
@@ -184,6 +197,15 @@ func (s MergeStageStore) Stage(ctx context.Context, dir string, p MergeStagePoli
 		return "", err
 	}
 	defer func() { err = errors.Join(err, release()) }()
+	if complete {
+		head, err := source.run(ctx, nil, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(head) == intent.Commit {
+			return s.finish(ctx, source, intent, after, p.MergeFinishPolicy)
+		}
+	}
 	indexed, err := checkMergeStage(ctx, source, intent, before, after)
 	if err != nil {
 		return "", err
@@ -236,6 +258,9 @@ func (s MergeStageStore) Stage(ctx context.Context, dir string, p MergeStagePoli
 	}
 	if _, err := checkMergeStage(ctx, source, intent, before, after); err != nil {
 		return "", err
+	}
+	if complete {
+		return s.finish(ctx, source, intent, after, p.MergeFinishPolicy)
 	}
 	return intent.Tree, nil
 }

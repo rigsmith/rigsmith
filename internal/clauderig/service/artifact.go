@@ -123,9 +123,9 @@ func CaptureProvenance(identity Identity) (string, error) {
 }
 
 // CaptureArtifact implements the capture/sealing portion of a Claude queue
-// adapter. It can audit and finish an already-staged canonical merge before
-// retaining its seed, preserving index and worktree bytes. It never pushes. Retrying
-// the same binding and event membership reuses a verified artifact without
+// adapter. It can audit and finish an already-staged merge or resume a sealed
+// supported unresolved repair before retaining its seed. Unrelated edits remain.
+// It never pushes. Retrying the same binding and event membership reuses a verified artifact without
 // reading sources. An absent/corrupt artifact is never silently substituted when
 // the caller already holds a capture reference: use Store.Verify in that case.
 func (s Service) CaptureArtifact(ctx context.Context, req ArtifactCaptureRequest) (string, error) {
@@ -174,12 +174,16 @@ func (s Service) captureArtifact(operation, staging context.Context, req Artifac
 		if current != binding {
 			return queue.ErrBinding
 		}
-		// Finish only an audited resolution already in the index before pinning
-		// the seed. Unresolved conflicts and other operations remain blocked.
+		// Consult saved repair state even after Git has removed MERGE_HEAD.
+		recovery := artifactMergeStore(store, key, req.Store.MaxBytes)
+		saved, err := hasArtifactMerge(recovery)
+		if err != nil {
+			return err
+		}
 		meta.BaseReference, err = commitartifact.SettledHead(ctx, stage)
-		if errors.Is(err, commitartifact.ErrConflict) {
+		if saved || errors.Is(err, commitartifact.ErrConflict) {
 			plan := adapter.PublicationPlan(req.Sync.Machine.Name, req.Sync.Config.Retention)
-			meta.BaseReference, err = commitartifact.FinishStagedMerge(ctx, stage, commitartifact.MergeFinishPolicy{
+			meta.BaseReference, err = recoverArtifactMerge(ctx, stage, recovery, commitartifact.MergeFinishPolicy{
 				Message: plan.SnapshotMessage, AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
 				Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, MaxTreeBytes: req.Store.MaxBytes,
 				Validate: backupgit.ValidateTree, Audit: engine.CheckPublishContext,

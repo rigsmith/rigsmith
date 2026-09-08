@@ -250,7 +250,7 @@ lease; archive builders, seed/commit stores, private capture trees and queue
 transactions receive independent operation contexts. This avoids borrowing one
 store's capability to access another and prevents a capture-store/staging lock
 inversion. Manual sync cannot run between execution phases; this exclusion does
-not yet establish manual-sync event coverage. Publication can now finish an audited, already-staged canonical merge while preserving the index and unstaged files; it does not resolve unmerged index entries or recover a merge before fresh capture.
+not yet establish manual-sync event coverage. Capture and publication can finish audited staged merges or resume supported unresolved conflicts through [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md).
 
 RunOne persists each successful reference, resumes only unfinished phases, and
 acknowledges only its sealed batch after fresh remote confirmation. A retry after
@@ -332,4 +332,4 @@ JSONL files, edited transcript/memory history, structural conflicts and invalid 
 and remain blocked. Existing blocked batches require explicit Unblock; recovery
 does not clear queue state on its own. See the [retained publication contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-metadata-recovery).
 
-Already-staged canonical merges can be completed before retrying committed work; see the [completion contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#already-staged-canonical-merge-completion). The retained artifact is verified before any HEAD change. Secret rejection leaves the batch committed and blocked, and transport failure after completion reuses the same retained batch. Unresolved canonical conflicts and fresh-capture integration remain planned.
+Already-staged canonical merges can be completed before retrying committed work; see the [completion contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#already-staged-canonical-merge-completion). The retained artifact is verified before any HEAD change. Secret rejection leaves the batch committed and blocked, and transport failure after completion reuses the same retained batch. Supported unresolved canonical conflicts now use [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md) before capture and publication.

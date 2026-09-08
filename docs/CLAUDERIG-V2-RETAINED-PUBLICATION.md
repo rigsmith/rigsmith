@@ -145,7 +145,8 @@ event timestamp and four push/confirmation attempts. The committed store's byte
 limit also bounds materialized publication trees. A returned `Publication` is
 only evidence for persisting the pushed phase; this adapter does not update queue
 state. QueueAdapter now supplies worker phase wiring. Config-history, retention,
-local-only completion and unresolved canonical merge recovery remain separate work. Composition can supply
+local-only completion remains separate; supported canonical conflicts use
+[sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md). Composition can supply
 `NewConfiguredGitTransport` to reuse existing Git/`gh` authentication; broad
 credential discovery is deferred. Synchronous behavior is unchanged.
 
@@ -268,7 +269,7 @@ declined resolutions, delete/edit refusal, malformed/unsafe stage records,
 cancellation and blob bounds. Claude fixtures exercise metadata union through
 actual publication, preserved device provenance, unchanged canonical files/index/
 config, unknown-field refusal and secret rejection after resolution. Unsupported machine state, rename-aware recovery,
-unresolved canonical merge repair and operational unblock/status commands remain future work.
+supported canonical merge repair now uses [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md); operational unblock/status commands remain future work.
 
 
 ## Bounded retained append recovery
@@ -409,9 +410,9 @@ uses this audited completion before retaining a seed or copying staging. It
 uses the capture-store byte limit and the sealed batch event time. If later seed
 retention or source capture fails, the completed canonical merge remains for
 retry; no capture is acknowledged until its archive is sealed. Already-sealed
-capture reuse skips recovery. Unresolved canonical conflicts and other operations
-(including standalone autostash residue and active bisects) remain blocked.
-Unresolved-conflict recovery is the next step.
+capture reuse skips recovery. Supported unresolved canonical conflicts use
+[sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md). Unsupported conflicts and other
+operations (including standalone autostash residue and active bisects) remain blocked.
 
 Completion uses the exact index as the chosen resolution, including any other
 staged changes. It does not run `git add`, infer resolutions from worktree files,

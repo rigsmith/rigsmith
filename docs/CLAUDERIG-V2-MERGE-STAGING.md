@@ -3,8 +3,8 @@
 Milestone 6b.4b.2b adds `commitartifact.MergeStageStore.Stage`, an internal shared
 application path for the private merge planner. It stages the resolved tree and
 updates only affected worktree files. It leaves HEAD and merge metadata in place
-for the existing `FinishStagedMerge` completion step. Queue-service integration
-and queued hooks are still disabled; there is no end-user changeset.
+for the existing `FinishStagedMerge` completion step. The `Complete` API and [queue integration](CLAUDERIG-V2-MERGE-RECOVERY.md)
+now bridge staging through commit and cleanup. Queued hooks remain disabled.
 
 ## Ownership and accepted state
 
@@ -80,9 +80,8 @@ from that state.
 
 Successful staging returns the resolved tree identity. The caller next completes
 the merge with `FinishStagedMerge` and retains durable phase state. Calling Stage
-again after merge completion is refused. Bridging those phases, choosing intent
-lifetimes, queue acknowledgements and recovery of interrupted completion belong
-to milestone 6b.4b.2c; this PR does not activate that integration.
+again after merge completion is refused. Call `Complete` for the [sealed completion/replay protocol](CLAUDERIG-V2-MERGE-RECOVERY.md)
+used by queue services; it returns the exact completed commit instead.
 
 The intent store's `MaxBytes` bounds the complete archive. Planner tree, bundle,
 conflict and companion limits remain in force; intent metadata is limited to
