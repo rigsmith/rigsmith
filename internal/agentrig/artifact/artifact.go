@@ -61,6 +61,22 @@ func (s Store) path(key string) (string, error) {
 	return filepath.Join(s.Dir, key+".capture"), nil
 }
 
+// Exists reports whether the exact artifact path is present, including corrupt
+// files and nonregular entries. It does not verify or confirm durability; callers
+// must still use Build/Verify before accepting any saved artifact. Work folders
+// left by a failed build do not count as an artifact.
+func (s Store) Exists(key string) (bool, error) {
+	path, err := s.path(key)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // Metadata retains the adapter's immutable seed reference for later publication.
 // BaseReference is credential-free (for Git, the source staging HEAD or empty).
 type Metadata struct {

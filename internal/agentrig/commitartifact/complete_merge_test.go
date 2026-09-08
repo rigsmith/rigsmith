@@ -10,6 +10,52 @@ import (
 	"testing"
 )
 
+func TestMergeStageIntentPresence(t *testing.T) {
+	r, original, _ := unresolvedMergeFixture(t, "sha1")
+	store := MergeStageStore{Dir: filepath.Join(t.TempDir(), "intent")}
+	p := stagePolicy(t)
+	failing := p
+	failing.Resolve = func(context.Context, string, []byte, []byte, []byte, RelatedFiles) ([]byte, error) {
+		return nil, errors.New("unsupported synthetic repair")
+	}
+	if _, err := store.Stage(t.Context(), r.dir, failing); err == nil {
+		t.Fatal("expected planning failure")
+	}
+	if _, err := os.Stat(store.Dir); err != nil {
+		t.Fatal("expected leftover work directory", err)
+	}
+	if exists, err := store.HasIntent(t.Context(), r.dir, p); err != nil || exists {
+		t.Fatal("work directory counted as intent", exists, err)
+	}
+	if _, err := store.Stage(t.Context(), r.dir, p); err != nil {
+		t.Fatal(err)
+	}
+	other := p
+	other.PolicyID = "different-operation"
+	if exists, err := store.HasIntent(t.Context(), r.dir, other); err != nil || exists {
+		t.Fatal("unrelated artifact counted as intent", exists, err)
+	}
+	paths, err := filepath.Glob(filepath.Join(store.Dir, "*.capture"))
+	if err != nil || len(paths) != 1 {
+		t.Fatal(paths, err)
+	}
+	if err := os.WriteFile(paths[0], []byte("damaged checkpoint"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := store.HasIntent(t.Context(), r.dir, p); err != nil || !exists {
+		t.Fatal("corrupt intent treated as absent", exists, err)
+	}
+	if _, err := store.Complete(t.Context(), r.dir, p); err == nil {
+		t.Fatal("accepted corrupt intent")
+	}
+	if head := mustRun(t, r, "", "rev-parse", "HEAD"); head != original {
+		t.Fatal("corrupt checkpoint advanced HEAD")
+	}
+	if data, err := os.ReadFile(paths[0]); err != nil || string(data) != "damaged checkpoint" {
+		t.Fatal("replaced corrupt checkpoint", err)
+	}
+}
+
 func TestMergeStageCompleteAndReplay(t *testing.T) {
 	for _, format := range []string{"sha1", "sha256"} {
 		t.Run(format, func(t *testing.T) {

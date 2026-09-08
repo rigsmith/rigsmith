@@ -43,7 +43,10 @@ Those keys bind immutable batch membership and producer/configuration identity;
 mutable retry counts do not select a new checkpoint. The saved intent also binds
 the canonical Git directory, merge policy and commit identity.
 
-Services consult an existing checkpoint even when Git already reports settled
+Services probe the exact expected sealed artifact, not just its directory.
+Empty work directories from failed planning allow later manual resolution; a
+present corrupt or nonregular artifact is still a checkpoint and must be refused
+by verification. Services consult that checkpoint even when Git reports settled
 HEAD. This prevents a restart from silently accepting a different completed merge.
 Without a checkpoint, already-staged manual resolutions retain the existing
 completion path. Supported unresolved conflicts invoke the native Claude merge

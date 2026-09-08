@@ -70,24 +70,11 @@ func (s MergeStageStore) Complete(ctx context.Context, dir string, p MergeStageP
 }
 
 func (s MergeStageStore) stage(ctx context.Context, dir string, p MergeStagePolicy, complete bool) (result string, err error) {
-	key, err := requestKey(Request{PolicyID: p.PolicyID, Message: p.Message, AuthorName: p.AuthorName,
-		AuthorEmail: p.AuthorEmail, Time: p.Time, Prepare: p.Validate, Audit: p.Audit})
-	if err != nil || !filepath.IsAbs(dir) || !filepath.IsAbs(s.Dir) || p.Resolve == nil || p.MaxTreeBytes < 0 || p.MaxBundleBytes < 0 {
-		return "", ErrInvalid
+	binding, key, err := s.identity(ctx, dir, p)
+	if err != nil {
+		return "", err
 	}
 	source := gitRepo{dir: dir}
-	if _, err := source.planDestination(ctx, s.Dir); err != nil {
-		return "", err
-	}
-	binding, err := source.run(ctx, nil, "rev-parse", "--absolute-git-dir")
-	if err != nil {
-		return "", err
-	}
-	binding, err = filepath.EvalSymlinks(strings.TrimSpace(binding))
-	if err != nil {
-		return "", err
-	}
-	key = artifact.Key([]byte("merge-stage-v1\x00" + binding + "\x00" + key))
 	store := artifact.Store{Dir: s.Dir, MaxBytes: s.MaxBytes}
 	ref, err := store.Build(ctx, key, func(ctx context.Context, root string) error {
 		return buildMergeStage(ctx, source, root, binding, p)
@@ -605,4 +592,53 @@ func mergeStageIndexLock(path, ref string) (func() error, error) {
 		}
 		return err
 	}, nil
+}
+
+// HasIntent checks the expected artifact path, not leftover build directories.
+// Present corrupt/nonregular artifacts still count; Complete must verify and
+// reflush them before accepting saved work. This read never confirms durability.
+func (s MergeStageStore) HasIntent(ctx context.Context, dir string, p MergeStagePolicy) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if !filepath.IsAbs(s.Dir) {
+		return false, ErrInvalid
+	}
+	info, err := os.Lstat(s.Dir)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, ErrInvalid
+	}
+	_, key, err := s.identity(ctx, dir, p)
+	if err != nil {
+		return false, err
+	}
+	return (artifact.Store{Dir: s.Dir, MaxBytes: s.MaxBytes}).Exists(key)
+}
+
+func (s MergeStageStore) identity(ctx context.Context, dir string, p MergeStagePolicy) (binding, key string, err error) {
+	key, err = requestKey(Request{PolicyID: p.PolicyID, Message: p.Message, AuthorName: p.AuthorName,
+		AuthorEmail: p.AuthorEmail, Time: p.Time, Prepare: p.Validate, Audit: p.Audit})
+	if err != nil || !filepath.IsAbs(dir) || !filepath.IsAbs(s.Dir) || p.Resolve == nil || p.MaxTreeBytes < 0 || p.MaxBundleBytes < 0 {
+		return "", "", ErrInvalid
+	}
+	source := gitRepo{dir: dir}
+	if _, err := source.planDestination(ctx, s.Dir); err != nil {
+		return "", "", err
+	}
+	binding, err = source.run(ctx, nil, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", "", err
+	}
+	binding, err = filepath.EvalSymlinks(strings.TrimSpace(binding))
+	if err != nil {
+		return "", "", err
+	}
+	key = artifact.Key([]byte("merge-stage-v1\x00" + binding + "\x00" + key))
+	return binding, key, nil
 }

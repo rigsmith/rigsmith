@@ -92,7 +92,12 @@ func (s Service) publishArtifact(ctx, staging context.Context, input ArtifactPub
 		return fail, queue.ErrBinding
 	}
 	recovery := artifactMergeStore(commits, commitKey, input.Commit.Commits.MaxBytes)
-	saved, err := hasArtifactMerge(recovery)
+	finish := commitartifact.MergeFinishPolicy{
+		Message: plan.SnapshotMessage, AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
+		Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, MaxTreeBytes: input.Commit.Commits.MaxBytes,
+		Validate: backupgit.ValidateTree, Audit: engine.CheckPublishContext,
+	}
+	saved, err := recovery.HasIntent(ctx, stage, artifactMergePolicy(finish))
 	if err != nil {
 		return fail, err
 	}
@@ -113,11 +118,7 @@ func (s Service) publishArtifact(ctx, staging context.Context, input ArtifactPub
 		if info.CaptureRef != req.Work.CaptureRef {
 			return fail, queue.ErrBinding
 		}
-		head, err = recoverArtifactMerge(ctx, stage, recovery, commitartifact.MergeFinishPolicy{
-			Message: plan.SnapshotMessage, AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
-			Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, MaxTreeBytes: input.Commit.Commits.MaxBytes,
-			Validate: backupgit.ValidateTree, Audit: engine.CheckPublishContext,
-		})
+		head, err = recoverArtifactMerge(ctx, stage, recovery, finish)
 	}
 	if err != nil {
 		return fail, err

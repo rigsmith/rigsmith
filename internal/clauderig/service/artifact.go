@@ -176,18 +176,19 @@ func (s Service) captureArtifact(operation, staging context.Context, req Artifac
 		}
 		// Consult saved repair state even after Git has removed MERGE_HEAD.
 		recovery := artifactMergeStore(store, key, req.Store.MaxBytes)
-		saved, err := hasArtifactMerge(recovery)
+		plan := adapter.PublicationPlan(req.Sync.Machine.Name, req.Sync.Config.Retention)
+		finish := commitartifact.MergeFinishPolicy{
+			Message: plan.SnapshotMessage, AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
+			Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, MaxTreeBytes: req.Store.MaxBytes,
+			Validate: backupgit.ValidateTree, Audit: engine.CheckPublishContext,
+		}
+		saved, err := recovery.HasIntent(ctx, stage, artifactMergePolicy(finish))
 		if err != nil {
 			return err
 		}
 		meta.BaseReference, err = commitartifact.SettledHead(ctx, stage)
 		if saved || errors.Is(err, commitartifact.ErrConflict) {
-			plan := adapter.PublicationPlan(req.Sync.Machine.Name, req.Sync.Config.Retention)
-			meta.BaseReference, err = recoverArtifactMerge(ctx, stage, recovery, commitartifact.MergeFinishPolicy{
-				Message: plan.SnapshotMessage, AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
-				Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, MaxTreeBytes: req.Store.MaxBytes,
-				Validate: backupgit.ValidateTree, Audit: engine.CheckPublishContext,
-			})
+			meta.BaseReference, err = recoverArtifactMerge(ctx, stage, recovery, finish)
 		}
 		if err != nil {
 			return fmt.Errorf("queued capture requires settled staging: %w", err)

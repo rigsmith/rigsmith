@@ -18,6 +18,40 @@ import (
 const queuedMergePath = "cli/projects/-p/append.jsonl"
 const queuedMergeBytes = "{\"uuid\":\"base\"}\n{\"uuid\":\"ours\"}\n{\"uuid\":\"theirs\"}\n"
 
+func TestUnsealedArtifactMergeAllowsManualResolution(t *testing.T) {
+	for _, phase := range []string{"capture", "publication"} {
+		for _, committed := range []bool{false, true} {
+			t.Run(phase+map[bool]string{false: "-staged", true: "-committed"}[committed], func(t *testing.T) {
+				input, _, _, _ := stagedPublicationFixture(t, "unresolved")
+				req := input.Commit.Capture
+				if phase == "capture" {
+					req.Store = artifact.Store{Dir: filepath.Join(t.TempDir(), "captures")}
+					req.Work.Phase, req.Work.CaptureRef, req.Work.CommitRef = queue.Queued, "", ""
+				}
+				run := func() error {
+					if phase == "capture" {
+						_, err := (service.Service{}).CaptureArtifact(t.Context(), req)
+						return err
+					}
+					_, err := (service.Service{}).PublishArtifact(t.Context(), input)
+					return err
+				}
+				if err := run(); !errors.Is(err, commitartifact.ErrConflict) {
+					t.Fatal("expected initial repair refusal", err)
+				}
+				stage := req.Sync.StagingDir
+				git(t, stage, "add", "cli/plugins/data/saved.json")
+				if committed {
+					git(t, stage, "commit", "-m", "manual recovery")
+				}
+				if err := run(); err != nil {
+					t.Fatal("empty repair directory blocked manual resolution", err)
+				}
+			})
+		}
+	}
+}
+
 func unresolvedQueueFixture(t *testing.T) (service.ArtifactPublishRequest, *artifactRemote, string, string) {
 	t.Helper()
 	input, remote := publicationFixture(t, true, false)
