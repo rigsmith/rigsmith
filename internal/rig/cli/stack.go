@@ -494,8 +494,8 @@ func newStackPullCmd() *cobra.Command {
 // work it merged past, so measuring against it calls a prefix clean the moment
 // anything has been pulled since the work was done.
 func stackImportedTree(ctx context.Context, repo *gitrepo.Repo, name string) (string, bool) {
-	marker, err := repo.LastCommitMatching(ctx, `^stack: (import|pull|push) `+regexp.QuoteMeta(name)+` @`)
-	if err != nil || marker == "" {
+	marker := stackImportCommit(ctx, repo, name)
+	if marker == "" {
 		return "", false
 	}
 	tree, err := repo.RevParse(ctx, marker+"^2:"+name)
@@ -581,6 +581,25 @@ func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty
 // answered "not an ancestor of HEAD", which measured that way would have made
 // every topic look stale and refused every `propose --from`.
 func stackImportCommit(ctx context.Context, repo *gitrepo.Repo, name string) string {
+	// By shape first. rig gives the merges it makes a marker subject, but a
+	// pull that conflicts is finished by the user under whatever subject they
+	// choose, and a baseline read from subjects stops at the sync before —
+	// which is where the cursor no longer is. What a subject cannot change is
+	// the merge's second parent: josh's :prefix filter yields a commit whose
+	// tree holds the prefix directory and nothing else, and no commit made in
+	// the stackspace looks like that, since each carries the manifest at the
+	// root. Only the first-parent line is walked: that is where pulls land,
+	// and upstream's own merges, which sit behind second parents and would
+	// pass the same test, stay out of it.
+	if merges, err := repo.FirstParentMerges(ctx, "HEAD"); err == nil {
+		for _, c := range merges {
+			if names, err := repo.TopLevelNames(ctx, c+"^2"); err == nil && len(names) == 1 && names[0] == name {
+				return c
+			}
+		}
+	}
+	// The subject is the fallback, for a history rewritten into something
+	// the shape no longer describes.
 	marker, err := repo.LastCommitMatching(ctx, `^stack: (import|pull|push) `+regexp.QuoteMeta(name)+` @`)
 	if err != nil {
 		return ""
@@ -1056,10 +1075,14 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 //
 // Ancestry alone cannot say that: repinning a prefix to an older release also
 // finds the target already in HEAD, and there the answer is to replace the
-// directory. The two are told apart by the last import marker's upstream
-// side, which is where the prefix last stood: a target at or past it was
-// merged in, one behind it is a move backwards. No marker, or a marker with
-// no upstream side, answers no, and the replace guard decides as before.
+// directory. The two are told apart by the last sync's upstream side, which
+// is where the prefix last stood: a target at or past it was merged in, one
+// behind it is a move backwards. The last sync is the newest merge that took
+// a filtered commit of the prefix in, whatever its subject — a resolved pull
+// committed under the user's own words counts, or the baseline would stay at
+// the sync before it and let a repin back to that one through as though it
+// were a merge already made. No such merge, or one with no upstream side,
+// answers no, and the replace guard decides as before.
 func stackTargetTaken(ctx context.Context, repo *gitrepo.Repo, name, target string) bool {
 	if ok, err := repo.IsAncestor(ctx, target, "HEAD"); err != nil || !ok {
 		return false

@@ -1376,3 +1376,74 @@ func TestStackTargetTaken(t *testing.T) {
 		})
 	}
 }
+
+// The baseline behind stackTargetTaken, stackImportedTree and the topic checks
+// is the last sync, and a resolved pull committed under the user's own words
+// has to be it. Read from subjects, the baseline stays at the sync before — and
+// a repin back to exactly that one is then in the history AND at the baseline,
+// which is what "already merged" looks like, so it goes through as a merge
+// already made while the tree stays where the resolution left it.
+func TestStackImportCommitBySyncShape(t *testing.T) {
+	ctx := context.Background()
+	repo, root, f0, f2 := resolvedPullStackspace(t, "resolved the tweed merge")
+	git := func(args ...string) string { return strings.TrimSpace(mustGitStack(t, root, args...)) }
+	f1, merge := git("rev-parse", f2+"^"), git("rev-parse", "HEAD")
+
+	if got := stackImportCommit(ctx, repo, "tweed"); got != merge {
+		t.Fatalf("last sync = %s, want the resolved merge %s (subject %q)", short(got), short(merge), git("log", "-1", "--format=%s", got))
+	}
+	if tree, ok := stackImportedTree(ctx, repo, "tweed"); !ok || tree != git("rev-parse", f2+":tweed") {
+		t.Fatalf("imported tree = %s, want v2's", short(tree))
+	}
+	// v1 is in the history and is exactly where the last MARKER stood.
+	if stackTargetTaken(ctx, repo, "tweed", f1) {
+		t.Fatal("a repin back to the sync before the resolved merge passed as a merge already made")
+	}
+	if stackTargetTaken(ctx, repo, "tweed", f0) {
+		t.Fatal("a repin further back passed as a merge already made")
+	}
+	if !stackTargetTaken(ctx, repo, "tweed", f2) {
+		t.Fatal("the resolved merge itself was not recognised")
+	}
+
+	// Work on top moves HEAD off the merge and changes none of the above.
+	git("commit", "-q", "--allow-empty", "-m", "tweed: after")
+	if got := stackImportCommit(ctx, repo, "tweed"); got != merge {
+		t.Fatalf("last sync after a later commit = %s, want %s", short(got), short(merge))
+	}
+	if stackTargetTaken(ctx, repo, "tweed", f1) || !stackTargetTaken(ctx, repo, "tweed", f2) {
+		t.Fatal("a later commit changed which targets count as taken")
+	}
+}
+
+// A history with no merge of the prefix left in it — squashed past rig's own
+// commits, say — has only the subject to go by, and keeps it.
+func TestStackImportCommitFallsBackToSubject(t *testing.T) {
+	ctx := context.Background()
+	root := inTempStackspace(t, "")
+	git := func(args ...string) string { return strings.TrimSpace(mustGitStack(t, root, args...)) }
+	git("config", "user.email", "t@t")
+	git("config", "user.name", "t")
+	if err := os.MkdirAll(filepath.Join(root, "tweed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"README.md", "tweed/a.cs"} {
+		if err := os.WriteFile(filepath.Join(root, f), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", "-A")
+	git("commit", "-qm", "stack: import tweed @ 0123abcd")
+	marker := git("rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "tweed: later")
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stackImportCommit(ctx, repo, "tweed"); got != marker {
+		t.Fatalf("import commit = %s, want the marker %s", short(got), short(marker))
+	}
+	if tree, ok := stackImportedTree(ctx, repo, "tweed"); !ok || tree != git("rev-parse", marker+":tweed") {
+		t.Fatalf("imported tree = %s, want the marker's own", short(tree))
+	}
+}

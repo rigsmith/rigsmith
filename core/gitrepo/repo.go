@@ -699,6 +699,17 @@ func (r *Repo) MergeBase(ctx context.Context, a, b string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// FirstParentMerges lists the merge commits on rev's first-parent line, newest
+// first — the merges made on a branch itself, as opposed to the ones it took
+// in with somebody else's history.
+func (r *Repo) FirstParentMerges(ctx context.Context, rev string) ([]string, error) {
+	out, err := runGit(ctx, r.Dir, "rev-list", "--first-parent", "--merges", rev)
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(out), nil
+}
+
 // TopLevelNames lists the entries directly under a revision's root tree.
 func (r *Repo) TopLevelNames(ctx context.Context, rev string) ([]string, error) {
 	// -z: a name with a space in it is one entry, and nothing gets quoted.

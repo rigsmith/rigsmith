@@ -382,6 +382,89 @@ func TestStackFlow(t *testing.T) {
 	if out, err := runVerbOut(ctx, newStackPullCmd(), "libbar"); err != nil || !strings.Contains(out, "nothing to pull") {
 		t.Fatalf("pull after recording: %v\n%s", err, out)
 	}
+
+	// ---- resolved under the user's own words, with work on top ----------
+	//
+	// The same again, twice harder: the resolution keeps a subject of the
+	// user's, so the re-run has only the merge's shape to recognise it by,
+	// and a commit lands on top before the re-run, so the cursor cannot be
+	// amended in and gets a commit of its own. Everything that reads the
+	// baseline afterwards has to read THIS merge: status still answers, and
+	// a repin back to the previous upstream commit is a move backwards over
+	// the resolution — refused by the replace guard, not recorded as a merge
+	// already made because it sits where the last marker stood.
+	v2 := strings.TrimSpace(mustGitStack(t, srv.path("org/libbar"), "rev-parse", "main"))
+	if werr := os.WriteFile(filepath.Join(rebuilt, "libbar", "src", "libbar.txt"), []byte("libbar mine again\n"), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	mustGitStack(t, rebuilt, "commit", "-qam", "libbar: mine again")
+	srv.commit(t, "org/libbar", "src/libbar.txt", "libbar v3\n", "upstream: v3")
+	if perr = runVerb(ctx, newStackPullCmd(), "libbar"); perr == nil || !strings.Contains(perr.Error(), "merge conflicts under libbar/") {
+		t.Fatalf("expected the pull to conflict inside libbar/: %v", perr)
+	}
+	if werr := os.WriteFile(filepath.Join(rebuilt, "libbar", "src", "libbar.txt"), []byte("libbar v3, resolved\n"), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	mustGitStack(t, rebuilt, "add", "-A")
+	mustGitStack(t, rebuilt, "commit", "-qm", "libbar: took v3, kept my header")
+	if werr := os.WriteFile(filepath.Join(rebuilt, "libbar", "src", "after.txt"), []byte("after\n"), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	mustGitStack(t, rebuilt, "add", "-A")
+	mustGitStack(t, rebuilt, "commit", "-qm", "libbar: after the merge")
+	out, perr = runVerbOut(ctx, newStackPullCmd(), "libbar")
+	if perr != nil || !strings.Contains(out, "recorded the resolved merge") {
+		t.Fatalf("re-run after a resolution in the user's words, with work on top: %v\n%s", perr, out)
+	}
+	if subject := strings.TrimSpace(mustGitStack(t, rebuilt, "log", "-1", "--format=%s")); !strings.HasPrefix(subject, "stack: cursor libbar @") {
+		t.Fatalf("with work on top, the cursor should get a commit of its own; HEAD is %q", subject)
+	}
+	if got := strings.TrimSpace(mustGitStack(t, rebuilt, "show", "HEAD:libbar/src/libbar.txt")); got != "libbar v3, resolved" {
+		t.Fatalf("the re-run changed the resolution to %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(rebuilt, "libbar", "src", "after.txt")); err != nil {
+		t.Fatal("the re-run lost the commit made after the resolution")
+	}
+	if dirty := strings.TrimSpace(mustGitStack(t, rebuilt, "status", "--porcelain")); dirty != "" {
+		t.Fatalf("the re-run left the worktree dirty:\n%s", dirty)
+	}
+	v3 := strings.TrimSpace(mustGitStack(t, srv.path("org/libbar"), "rev-parse", "main"))
+	if m, _, err = loadStackManifest(rebuilt); err != nil {
+		t.Fatal(err)
+	} else if m.cursor("libbar") != v3 {
+		t.Fatalf("libbar cursor = %s, want upstream tip %s", short(m.cursor("libbar")), short(v3))
+	}
+	if out, err := runVerbOut(ctx, newStackStatusCmd()); err != nil || !strings.Contains(out, "libbar") {
+		t.Fatalf("status after the standalone cursor commit: %v\n%s", err, out)
+	}
+
+	// Pin libbar back to v2: in the history, and exactly where the last
+	// MARKER's upstream side is, since the resolved merge carries no marker.
+	manifest = filepath.Join(rebuilt, "rig.stack.jsonc")
+	if keep, rerr = os.ReadFile(manifest); rerr != nil {
+		t.Fatal(rerr)
+	}
+	pinned := strings.Replace(string(keep), `"branch": "main"`, `"upstreamCommit": "`+v2+`"`, 1)
+	if pinned == string(keep) {
+		t.Fatalf("could not pin libbar in the manifest:\n%s", keep)
+	}
+	if werr := os.WriteFile(manifest, []byte(pinned), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	mustGitStack(t, rebuilt, "commit", "-qam", "stack: pin libbar back to v2")
+	head = strings.TrimSpace(mustGitStack(t, rebuilt, "rev-parse", "HEAD"))
+	out, perr = runVerbOut(ctx, newStackPullCmd(), "libbar")
+	if perr == nil || !strings.Contains(perr.Error(), "holds changes of its own") || strings.Contains(out, "recorded") {
+		t.Fatalf("a repin back past the resolved merge should be refused as a move backwards over the resolution: %v\n%s", perr, out)
+	}
+	if now := strings.TrimSpace(mustGitStack(t, rebuilt, "rev-parse", "HEAD")); now != head {
+		t.Fatal("the refused repin committed something")
+	}
+	if m, _, err = loadStackManifest(rebuilt); err != nil {
+		t.Fatal(err)
+	} else if m.cursor("libbar") != v3 {
+		t.Fatalf("the refused repin moved the cursor to %s", short(m.cursor("libbar")))
+	}
 }
 
 // ---- harness ----------------------------------------------------------
