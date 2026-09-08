@@ -28,7 +28,7 @@ hooks and the separate Codex adapter. The queue work is split into concrete step
 | Retained chunked-transcript recovery | Merged: [#342](https://github.com/rigsmith/rigsmith/pull/342): verify immutable parts, recover bounded append conflicts, preserve chunking. |
 | Ordinary file conflict policy | Merged: [#343](https://github.com/rigsmith/rigsmith/pull/343): choose the newer proven Git snapshot; equal/unknown origins remain blocked. Both conflict sides are scanned; malformed profile roots are excluded. |
 | Canonical staging merge recovery: staged resolutions | Merged: [#344](https://github.com/rigsmith/rigsmith/pull/344). Audit and finish an already-staged merge before retrying a committed batch; preserve the index and unstaged files. |
-| Canonical staging merge recovery: staged completion before capture | In progress. Audit and finish an already-staged merge before retaining fresh capture ancestry. |
+| Canonical staging merge recovery: staged completion before capture | In review: [#346](https://github.com/rigsmith/rigsmith/pull/346). Audit and finish an already-staged merge before retaining fresh capture ancestry. |
 | Canonical staging merge recovery: unresolved conflicts | Next. Recover supported unresolved merges safely without losing pending edits. |
 | Manual-sync queue coverage | Planned. Acknowledge only the exact generations included in manual sync. |
 | Worker startup/restart, parent death and draining | Planned. |
@@ -59,7 +59,7 @@ Merged in [#341](https://github.com/rigsmith/rigsmith/pull/341): retained append
 It keeps both machines' additions when neither changed the shared history and
 blocks conflicting UUIDs. [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded recovery for canonical chunked
 transcripts, including the default chunking threshold. [#343](https://github.com/rigsmith/rigsmith/pull/343) adds ordinary-file snapshot ordering.
-Staged canonical merge completion merged in [#344](https://github.com/rigsmith/rigsmith/pull/344); staged completion before fresh capture is in progress, followed by unresolved conflict recovery. Queued hooks stay disabled.
+Staged canonical merge completion merged in [#344](https://github.com/rigsmith/rigsmith/pull/344); staged completion before fresh capture is in review in [#346](https://github.com/rigsmith/rigsmith/pull/346), followed by unresolved conflict recovery. Queued hooks stay disabled.
 
 ## Ideas
 
