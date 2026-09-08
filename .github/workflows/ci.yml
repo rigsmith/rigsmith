@@ -59,11 +59,11 @@ jobs:
         run: |
           go list ./... | grep -Ev '^github.com/rigsmith/rigsmith/internal/(clauderig/service|agentrig/commitartifact)$' | xargs go test -count=1
 
-      - name: Test shared commit artifacts
-        run: go test ./internal/agentrig/commitartifact -count=1 -timeout=10m -skip '^TestMergeStage'
-
       - name: Test recoverable merge staging
         run: go test ./internal/agentrig/commitartifact -count=1 -timeout=10m -run '^TestMergeStage'
+
+      - name: Test shared commit artifacts
+        run: go test ./internal/agentrig/commitartifact -count=1 -timeout=10m -skip '^TestMergeStage'
 
       - name: Test Claude service workflows
         env:

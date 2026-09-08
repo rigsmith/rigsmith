@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -24,6 +25,31 @@ func stagePolicy(t *testing.T) MergeStagePolicy {
 }
 
 func TestMergeStagePreservesPendingEditsAndCompletes(t *testing.T) {
+	// All inputs here are synthetic. Keep raw Git diagnostics in the test
+	// harness only, so platform failures do not require exposing queue inputs.
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	name := "git"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", filepath.Join(bin, name), "testdata/gitdiagnostic.go")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build diagnostic helper: %v\n%s", err, out)
+	}
+	logPath := filepath.Join(bin, "diagnostics")
+	t.Setenv("RIG_TEST_REAL_GIT", realGit)
+	t.Setenv("RIG_TEST_GIT_DIAGNOSTICS", logPath)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Cleanup(func() {
+		if t.Failed() {
+			data, _ := os.ReadFile(logPath)
+			t.Logf("synthetic Git diagnostics:\n%s", data)
+		}
+	})
 	for _, format := range []string{"sha1", "sha256"} {
 		t.Run(format, func(t *testing.T) {
 			r, original, incoming := unresolvedMergeFixture(t, format)
