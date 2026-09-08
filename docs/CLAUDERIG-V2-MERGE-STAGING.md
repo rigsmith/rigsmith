@@ -33,7 +33,12 @@ in the same way as Unix; the index retains them, and live mode checking is limit
 to platforms that expose those bits.
 Isolated Git commands enable `core.longpaths` on Windows so nested staging
 repositories can store SHA-256 packs beyond the default Git path limit. This is
-a per-command setting; it does not modify the user's Git configuration.
+a per-command setting; it does not modify the user's Git configuration. Windows
+merge planning, intent construction and replay use disposable directories under
+the system temporary directory so the intent store's nesting does not become
+Git's process working directory. The configured Windows temporary directory must
+itself allow a short working path. Verified bundles and sealed intents remain
+in their requested destinations; temporary disk use may be on a different volume.
 
 ## Durable intent and application
 

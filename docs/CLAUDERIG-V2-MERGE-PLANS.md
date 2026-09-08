@@ -71,6 +71,11 @@ combined. Companion reads/additions retain their separate bounded contract.
 `MaxTreeBytes` bounds each materialized tree; `MaxBundleBytes` bounds streamed
 bundle output. Zero uses the existing archive default for either byte limit.
 These bounds do not provide a total temporary-disk quota for imported Git history.
+On Windows, disposable planning repositories use the system temporary directory
+to avoid the process working-directory limit under deeply nested destinations.
+The verified output bundle still goes to the requested destination. Scratch
+folders are removed on ordinary return; abrupt exits may leave them for later
+capacity cleanup.
 
 Applying a plan requires fresh provenance checks and explicit handling of edited
 conflict files, modes, untracked collisions, index flags and interrupted writes.

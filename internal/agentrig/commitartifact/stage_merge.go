@@ -82,7 +82,7 @@ func (s MergeStageStore) stage(ctx context.Context, dir string, p MergeStagePoli
 	if err != nil {
 		return "", err
 	}
-	work, err := os.MkdirTemp(s.Dir, ".stage-*")
+	work, err := canonical.mergeWorkDir(ctx, s.Dir, ".stage-*")
 	if err != nil {
 		return "", err
 	}
@@ -269,7 +269,7 @@ func buildMergeStage(ctx context.Context, canonical gitRepo, root, binding strin
 	if !objectID(auto) {
 		return ErrConflict
 	}
-	work, err := os.MkdirTemp(filepath.Dir(root), ".stage-build-*")
+	work, err := canonical.mergeWorkDir(ctx, filepath.Dir(root), ".stage-build-*")
 	if err != nil {
 		return err
 	}
