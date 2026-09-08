@@ -1,5 +1,20 @@
 # github.com/rigsmith/rigsmith
 
+## 1.17.0
+### 🚀 Enhancements
+
+- **rig:** `rig stack propose` now names the packages your branch gets from the stackspace instead of a feed, so you find out before a bare checkout fails to restore.
+- **rig:** New `rig stack pack` builds a member's packages from inside the stackspace, where cross-member references resolve from source — a bare checkout of a proposed branch cannot.
+
+### 🩹 Fixes
+
+- **rig:** `rig stack` now reaches private upstreams and forks with your `gh` login, for pushes as well as fetches; re-imports a member you had removed; fails with a clear error instead of quietly recording an import that fetched nothing; and says in `status` and `pull` when a member's directory is missing instead of calling it up to date.
+- **rig:** `rig stack pull` now names the manifest when it is the only uncommitted file, and says to commit it and pull again.
+- **rig:** `rig stack pull` now accepts a conflicted pull you resolved and committed by hand: the re-run records the cursor instead of refusing that the prefix "holds changes of its own".
+- **rig:** `rig stack pull` and the import no longer read FETCH_HEAD: each fetch lands on a ref named for that call alone, so two rig processes in one stackspace can no longer merge each other's fetch while recording their own as the cursor.
+- **clauderig:** Keep restored memory links inside the selected restore folder and report unexpected link-creation failures.
+- **clauderig:** The sync pull fast-forwards onto the commit it fetched, named by sha, rather than onto whatever FETCH_HEAD holds by the time the merge runs.
+
 ## 1.16.0
 ### 🚀 Enhancements
 
