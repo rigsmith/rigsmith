@@ -27,7 +27,8 @@ type QueueInputs struct {
 // QueueAdapter connects RunOne to Claude's sealed artifact services. Resolve is
 // called once per claimed batch, with its binding and saved provenance ID. It
 // must return current inputs, not derive new destinations from old queue work.
-// Publication may finish an audited, already-staged canonical merge. This
+// Fresh capture and publication may finish an audited, already-staged canonical
+// merge. A completed merge remains if a later capture step fails. This
 // adapter does not install hooks, run a daemon or acknowledge manual sync coverage. Classified temporary failures use bounded
 // backoff; other failures block for deliberate recovery.
 type QueueAdapter struct {

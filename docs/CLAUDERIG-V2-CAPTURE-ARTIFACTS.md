@@ -4,7 +4,8 @@ This is the capture/sealing portion of milestone 6b.2. The shared execution driv
 and Claude Capture/Publish split merged in #310. `Service.CaptureArtifact` now
 prepares a durable, immutable input for commit/publication.
 [Retained commits](CLAUDERIG-V2-RETAINED-COMMITS.md) now implements the next
-commit/sealing step. Capture itself does not commit or push, expose a worker
+commit/sealing step. Capture can finish an audited, already-staged canonical merge
+before retaining its seed. It does not push, expose a worker
 command, acknowledge a queue batch, or enable hooks. Installed sync behavior and
 backup formats stay unchanged. The initial internal capture foundation had no
 end-user changeset; subsequent v2 queue behavior has release changesets while
@@ -20,8 +21,9 @@ the capture is sealed, its complete seed ancestry is retained in a private
 bundle and its immutable artifact reference is recorded in `SeedReference`. See
 [retained commits](CLAUDERIG-V2-RETAINED-COMMITS.md) for the dependency contract.
 Retained publication and native conflict recovery are implemented; staged
-canonical merge completion merged in #344. Unresolved canonical recovery and
-repair before fresh capture remain pending.
+canonical merge completion merged in #344, with refusal guard fixes in #345.
+Fresh capture now invokes that completion before retaining ancestry. Unresolved
+canonical conflict recovery remains pending.
 
 A build runs in a private workspace, then streams regular files and directories
 into one archive. Source symlinks, devices and Git metadata are not allowed in the
@@ -81,12 +83,18 @@ device registry with an old event identity; it retains the seeded registry.
 
 The artifact builder takes staging ownership with the original context, verifies
 the binding again, and calls the shared `SettledHead` guard before retaining a
-seed or copying canonical staging. The guard refuses merges, standalone
-MERGE_AUTOSTASH residue, active bisects, cherry-picks, reverts, rebases, sequencers and unmerged
-index entries. It does not repair these states. Only a settled checkout is copied,
+seed or copying canonical staging. An already-staged two-parent merge can be
+completed with `FinishStagedMerge`: validate and secret-scan both parent tips and
+the exact staged tree before recording the merge and forgetting its metadata.
+Unresolved conflicts, standalone MERGE_AUTOSTASH residue, active bisects,
+cherry-picks, reverts, rebases and sequencers remain blocked. Only a settled checkout is copied,
 excluding Git metadata. It records HEAD and a durable seed-bundle
 reference in the archive header. Seed retention must succeed before capture can
-be acknowledged. The canonical checkout, index and refs are not changed.
+be acknowledged. Completion preserves the canonical index and worktree bytes;
+only the audited merge commit and completed-operation metadata change. A later
+seed-retention or capture failure does not undo that merge. Retry retains the
+completed HEAD without creating another merge. Reusing an already-sealed capture
+skips this work and does not repair a newer canonical operation.
 
 This exclusion is cooperative: staging writers must honor the same lease.
 The guard and copy are not an atomic snapshot against arbitrary external Git
@@ -134,7 +142,7 @@ up their own workspace. Unknown versions and corrupted captures fail closed.
 The [commit adapter](CLAUDERIG-V2-RETAINED-COMMITS.md) now seals retained Git
 bundles, and captures retain seeds before acknowledgement. Queue execution now
 connects capture, commit and confirmed publication, with owned child cleanup.
-Unresolved canonical recovery, repair before fresh capture, exact manual-sync
+Unresolved canonical recovery, exact manual-sync
 coverage and worker lifecycle remain activation gates. Local-only
 completion, artifact/receipt cleanup, status and capacity remedies also remain
 rollout gates. A mutable extracted working copy or recorded seed SHA alone does
@@ -144,5 +152,7 @@ Validation uses synthetic sources: byte/mtime/chunk round trips, immutable reuse
 metadata, corruption, traversal/link refusal, build failure/cancellation/capacity,
 source deletion, secret refusal/scrubbing, retention protection, seed dependency
 persistence before capture acknowledgement, scoped attribution,
-binding changes and unchanged canonical staging. The unchanged six-scenario Claude
+binding changes, audited merge completion before capture, seed survival after
+canonical history disappears, source-failure retry, and queue blocking/offline
+replay. Index and worktree bytes remain unchanged. The unchanged six-scenario Claude
 compatibility baseline continues to guard existing sync behavior.

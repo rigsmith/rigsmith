@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -19,8 +20,10 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
+	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
@@ -120,7 +123,8 @@ func CaptureProvenance(identity Identity) (string, error) {
 }
 
 // CaptureArtifact implements the capture/sealing portion of a Claude queue
-// adapter. It never publishes or changes the shared staging checkout. Retrying
+// adapter. It can audit and finish an already-staged canonical merge before
+// retaining its seed, preserving index and worktree bytes. It never pushes. Retrying
 // the same binding and event membership reuses a verified artifact without
 // reading sources. An absent/corrupt artifact is never silently substituted when
 // the caller already holds a capture reference: use Store.Verify in that case.
@@ -170,9 +174,17 @@ func (s Service) captureArtifact(operation, staging context.Context, req Artifac
 		if current != binding {
 			return queue.ErrBinding
 		}
-		// Inspect unfinished operations before retaining a seed or copying
-		// staging bytes. This is a refusal guard, not automatic merge repair.
+		// Finish only an audited resolution already in the index before pinning
+		// the seed. Unresolved conflicts and other operations remain blocked.
 		meta.BaseReference, err = commitartifact.SettledHead(ctx, stage)
+		if errors.Is(err, commitartifact.ErrConflict) {
+			plan := adapter.PublicationPlan(req.Sync.Machine.Name, req.Sync.Config.Retention)
+			meta.BaseReference, err = commitartifact.FinishStagedMerge(ctx, stage, commitartifact.MergeFinishPolicy{
+				Message: plan.SnapshotMessage, AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
+				Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, MaxTreeBytes: req.Store.MaxBytes,
+				Validate: backupgit.ValidateTree, Audit: engine.CheckPublishContext,
+			})
+		}
 		if err != nil {
 			return fmt.Errorf("queued capture requires settled staging: %w", err)
 		}

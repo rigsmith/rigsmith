@@ -10,7 +10,7 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 **Current position:** shared infrastructure, queue execution, retry policy and
 retained metadata/native append recovery are merged into `codex/v2` through
 [#341](https://github.com/rigsmith/rigsmith/pull/341). [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded
-chunked-transcript recovery. Ordinary-file snapshot ordering merged in [#343](https://github.com/rigsmith/rigsmith/pull/343). Completion of already-staged canonical merges is included in [#344](https://github.com/rigsmith/rigsmith/pull/344). Follow-up [#345](https://github.com/rigsmith/rigsmith/pull/345) is in review: it strengthens the fresh-capture state guard (including active bisects) and corrects a Windows chunk fixture. Unresolved merge recovery,
+chunked-transcript recovery. Ordinary-file snapshot ordering merged in [#343](https://github.com/rigsmith/rigsmith/pull/343). Completion of already-staged canonical merges is included in [#344](https://github.com/rigsmith/rigsmith/pull/344). Merged [#345](https://github.com/rigsmith/rigsmith/pull/345) strengthens the fresh-capture state guard (including active bisects) and corrects a Windows chunk fixture. Unresolved merge recovery,
 manual-sync coverage and worker lifecycle/capacity remain before queued Claude
 hooks and the separate Codex adapter. The queue work is split into concrete steps below.
 
@@ -28,7 +28,8 @@ hooks and the separate Codex adapter. The queue work is split into concrete step
 | Retained chunked-transcript recovery | Merged: [#342](https://github.com/rigsmith/rigsmith/pull/342): verify immutable parts, recover bounded append conflicts, preserve chunking. |
 | Ordinary file conflict policy | Merged: [#343](https://github.com/rigsmith/rigsmith/pull/343): choose the newer proven Git snapshot; equal/unknown origins remain blocked. Both conflict sides are scanned; malformed profile roots are excluded. |
 | Canonical staging merge recovery: staged resolutions | Merged: [#344](https://github.com/rigsmith/rigsmith/pull/344). Audit and finish an already-staged merge before retrying a committed batch; preserve the index and unstaged files. |
-| Canonical staging merge recovery: unresolved conflicts and capture | Next. Recover supported unresolved merges safely and allow fresh queued capture afterward. |
+| Canonical staging merge recovery: staged completion before capture | In review: [#346](https://github.com/rigsmith/rigsmith/pull/346). Audit and finish an already-staged merge before retaining fresh capture ancestry. |
+| Canonical staging merge recovery: unresolved conflicts | Next. Recover supported unresolved merges safely without losing pending edits. |
 | Manual-sync queue coverage | Planned. Acknowledge only the exact generations included in manual sync. |
 | Worker startup/restart, parent death and draining | Planned. |
 | Capacity remedies and artifact/receipt cleanup | Planned before queued hooks. |
@@ -58,7 +59,7 @@ Merged in [#341](https://github.com/rigsmith/rigsmith/pull/341): retained append
 It keeps both machines' additions when neither changed the shared history and
 blocks conflicting UUIDs. [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded recovery for canonical chunked
 transcripts, including the default chunking threshold. [#343](https://github.com/rigsmith/rigsmith/pull/343) adds ordinary-file snapshot ordering.
-Staged canonical merge completion merged in [#344](https://github.com/rigsmith/rigsmith/pull/344); unresolved recovery and capture integration are next. Queued hooks stay disabled.
+Staged canonical merge completion merged in [#344](https://github.com/rigsmith/rigsmith/pull/344); staged completion before fresh capture is in review in [#346](https://github.com/rigsmith/rigsmith/pull/346), followed by unresolved conflict recovery. Queued hooks stay disabled.
 
 ## Ideas
 
