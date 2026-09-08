@@ -171,6 +171,10 @@ func TestFinishStagedMergeRefusesUnsafeState(t *testing.T) {
 			}
 			before := readMergeTestFile(t, r.dir, ".git/index")
 			merge := readMergeTestFile(t, r.dir, ".git/MERGE_HEAD")
+			var bisect []byte
+			if kind == "bisect" {
+				bisect = readMergeTestFile(t, r.dir, ".git/BISECT_START")
+			}
 			audits := 0
 			p.Audit = func(context.Context, string) error {
 				audits++
@@ -197,6 +201,9 @@ func TestFinishStagedMergeRefusesUnsafeState(t *testing.T) {
 			}
 			if mustRun(t, r, "", "rev-parse", "HEAD") != original || !bytes.Equal(before, readMergeTestFile(t, r.dir, ".git/index")) || !bytes.Equal(merge, readMergeTestFile(t, r.dir, ".git/MERGE_HEAD")) {
 				t.Fatal("failed repair changed canonical state")
+			}
+			if kind == "bisect" && !bytes.Equal(bisect, readMergeTestFile(t, r.dir, ".git/BISECT_START")) {
+				t.Fatal("failed repair changed bisect state")
 			}
 		})
 	}

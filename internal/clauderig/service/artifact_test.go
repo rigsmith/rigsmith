@@ -371,7 +371,7 @@ func TestCaptureArtifactRejectsUnsettledStagingBeforeRetainingSeed(t *testing.T)
 			}
 			stage := req.Sync.StagingDir
 			head := git(t, stage, "rev-parse", "HEAD")
-			paths := []string{".git/index", ".git/config", "pending.txt"}
+			paths := []string{".git/HEAD", ".git/index", ".git/config", "pending.txt"}
 			if marker == "unmerged-index" {
 				// Populate all three conflict stages without an operation marker,
 				// so only the unmerged-index guard can reject this capture.
@@ -420,6 +420,9 @@ func TestCaptureArtifactRejectsUnsettledStagingBeforeRetainingSeed(t *testing.T)
 			ref, err := svc.CaptureArtifact(t.Context(), req)
 			if !errors.Is(err, commitartifact.ErrConflict) || ref != "" {
 				t.Fatalf("captured unfinished operation: %s %v", ref, err)
+			}
+			if !strings.Contains(err.Error(), "queued capture requires settled staging") {
+				t.Fatalf("missing capture diagnostic context: %v", err)
 			}
 			for _, store := range []artifact.Store{req.Store, commitartifact.SeedStore(req.Store)} {
 				sealed, err := filepath.Glob(filepath.Join(store.Dir, "*.capture"))

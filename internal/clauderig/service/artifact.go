@@ -174,7 +174,7 @@ func (s Service) captureArtifact(operation, staging context.Context, req Artifac
 		// staging bytes. This is a refusal guard, not automatic merge repair.
 		meta.BaseReference, err = commitartifact.SettledHead(ctx, stage)
 		if err != nil {
-			return err
+			return fmt.Errorf("queued capture requires settled staging: %w", err)
 		}
 		if meta.BaseReference != "" {
 			// Persist ancestry before the capture can refer to it. Canonical
