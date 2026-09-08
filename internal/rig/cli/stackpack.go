@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -111,31 +112,64 @@ func stackPackTargets(m *stackManifest, args []string) ([]string, error) {
 // situation the command exists to replace. Better to say so than to hand back
 // artifacts that are wrong in a way nothing downstream can detect.
 //
-// A scan that failed is not an answer either way, and is reported as itself
-// rather than as a missing overlay.
+// The overlay is asked for directly rather than through stackCheckOverlay,
+// which drops an adapter that answers Skipped. That is right for a report — an
+// ecosystem with no overlay support has nothing to say about a file it does not
+// write — and wrong for a gate, where "cannot redirect" has to refuse rather
+// than pass silently. node and cargo answer Skipped unconditionally ("not
+// implemented").
+//
+// That branch is defensive today rather than load-bearing: a link exists only
+// for a dependency the adapter marked ViaRegistry, and node and cargo do not
+// mark any, so nothing crossing in those ecosystems reaches this scan at all.
+// Whether they should is a question about those adapters, and a real gap —
+// `wire` and `doctor` cannot see such references either. The branch is here so
+// that the day an adapter reports links without being able to redirect them,
+// this refuses instead of packing against the registry.
 func stackPackRequireOverlay(ctx context.Context, root string, m *stackManifest) error {
-	reports, _, _, failed := stackCheckOverlay(ctx, root, m)
+	byEco, _, _, failed := stackRedirects(ctx, root, m.names(), m.publishing())
 	if len(failed) > 0 {
 		ids := make([]string, 0, len(failed))
 		for id := range failed {
 			ids = append(ids, id)
 		}
 		sort.Strings(ids)
-		return fmt.Errorf("could not check the build overlay (%s) — packing without knowing it is in effect would produce packages that resolve siblings from a registry", strings.Join(ids, ", "))
+		return fmt.Errorf("could not scan for cross-member references (%s) — packing without knowing whether any cross would risk producing packages that resolve their siblings from a registry", strings.Join(ids, ", "))
 	}
-	for _, rep := range reports {
-		// Only a report with links matters: an ecosystem where nothing crosses
-		// needs no overlay, and its "left over" finding is about tidiness, not
-		// about whether this build will resolve correctly.
-		if len(rep.Links) == 0 {
-			continue
+	writable := m.ownedNames()
+	for _, eco := range ecosystem.Default().All() {
+		links := byEco[eco.Info().ID]
+		if len(links) == 0 {
+			continue // nothing crosses here, so no overlay is needed
 		}
-		if len(rep.Resp.Problems) > 0 {
+		// Built here rather than through localOverlayRequest, which sets
+		// Write: true — that helper is how `wire` writes the file. A gate that
+		// wrote the overlay would always find it in effect, and would quietly do
+		// `wire`'s job as a side effect of asking a question.
+		resp, err := eco.LocalOverlay(ctx, plugin.LocalOverlayRequest{
+			Root: root, Redirects: redirectsOf(links), Writable: writable,
+		})
+		switch {
+		case err != nil:
+			return fmt.Errorf("could not check the %s build overlay: %w", eco.Info().ID, err)
+		case resp.Skipped:
+			return fmt.Errorf("%d %s reference(s) cross between members and %s cannot redirect them (%s)\n"+
+				"packing here would resolve them from a registry, exactly as a bare checkout would — there is nothing this command can do for those packages",
+				len(links), eco.Info().ID, eco.Info().ID, stackPackReason(resp.Reason))
+		case len(resp.Problems) > 0:
 			return fmt.Errorf("the %s build overlay is not in effect, so these packages would resolve their siblings from a registry — which is the thing packing here avoids\n%s",
-				rep.Eco, rep.Resp.Problems[0].Message)
+				eco.Info().ID, resp.Problems[0].Message)
 		}
 	}
 	return nil
+}
+
+// stackPackReason is an adapter's explanation, or a stand-in when it gave none.
+func stackPackReason(reason string) string {
+	if strings.TrimSpace(reason) == "" {
+		return "no reason given"
+	}
+	return reason
 }
 
 // stackPack builds each member's packages into dir.
@@ -166,9 +200,15 @@ func stackPack(ctx context.Context, out io.Writer, root string, names []string, 
 				return fmt.Errorf("packing %s (%s): %w", p.pkg.Name, name, err)
 			}
 			switch {
+			// Skipped first: an adapter can answer Skipped before it ever looks
+			// at DryRun (gomod does, when there is no GoReleaser config), and
+			// reporting that as "would pack" promises a build the real run then
+			// declines to do.
+			case resp.Skipped:
+				fmt.Fprintf(out, "%s: skipped %s%s\n", name, p.pkg.Name, stackPackWhy(resp.Message))
 			case dryRun:
 				fmt.Fprintf(out, "%s: would pack %s\n", name, p.pkg.Name)
-			case resp.Skipped || !resp.Built:
+			case !resp.Built:
 				fmt.Fprintf(out, "%s: skipped %s%s\n", name, p.pkg.Name, stackPackWhy(resp.Message))
 			default:
 				packed++
@@ -193,17 +233,18 @@ func stackPackWhy(msg string) string {
 	return " — " + msg
 }
 
-// stackPackDirState lists the output directory, for diffing against it after a
-// build. An unreadable directory answers empty, which makes the listing after
-// the build empty too — the pack still happened and is still reported.
+// stackPackDirState lists the output directory recursively, for diffing against
+// it after a build. An unreadable directory answers empty, which makes the
+// listing after the build empty too — the pack still happened and is still
+// reported.
+//
+// Recursive because adapters nest: cargo writes its .crate to
+// OutputDir/package/, and GoReleaser lays out per-target directories. A flat
+// scan reports those builds as producing nothing.
 func stackPackDirState(dir string) map[string]bool {
 	seen := map[string]bool{}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return seen
-	}
-	for _, e := range entries {
-		seen[e.Name()] = true
+	for _, f := range stackPackWalk(dir) {
+		seen[f] = true
 	}
 	return seen
 }
@@ -218,23 +259,44 @@ func stackPackDirState(dir string) map[string]bool {
 // Printing a path that does not exist is worse than printing nothing.
 func stackPackNewFiles(dir string, before map[string]bool) []string {
 	var out []string
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	for _, e := range entries {
-		if !e.IsDir() && !before[e.Name()] {
-			out = append(out, e.Name())
+	for _, f := range stackPackWalk(dir) {
+		if !before[f] {
+			out = append(out, f)
 		}
 	}
 	sort.Strings(out)
 	return out
 }
 
+// stackPackWalk lists every file under dir, as slash-separated paths relative
+// to it. Errors answer with whatever was reached: this feeds a listing, and a
+// partial one is better than none.
+func stackPackWalk(dir string) []string {
+	var out []string
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil //nolint:nilerr // an unreadable subtree is not worth failing a build over
+		}
+		rel, relErr := filepath.Rel(dir, path)
+		if relErr != nil {
+			return nil
+		}
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	return out
+}
+
 // stackPackPackage pairs a discovered package with the ecosystem that found it.
+//
+// info is carried alongside the adapter rather than read back off it, so the
+// reconciliation below depends on the two fields it actually uses instead of on
+// the whole Ecosystem interface — which is the difference between a test that
+// states the rule and one that implements eight methods to reach it.
 type stackPackPackage struct {
-	eco plugin.Ecosystem
-	pkg plugin.Package
+	eco  plugin.Ecosystem
+	info plugin.EcosystemInfo
+	pkg  plugin.Package
 }
 
 // stackPackPackages finds the publishable packages under one member.
@@ -244,14 +306,18 @@ type stackPackPackage struct {
 // files above the member — Directory.Build.props, a workspace manifest — and
 // scanning the subtree alone would miss the version they carry.
 //
+// Every adapter is asked, overlay adapters included, and the base package an
+// overlay claims for the same directory is dropped afterwards — the same
+// reconciliation the release workspace does. Skipping overlay adapters instead
+// would keep the base and drop the owner, which is backwards: Overlays means
+// the desktop adapter owns that unit's artifacts, so an Electron app would be
+// npm-packed and a Tauri app cargo-packaged instead of producing installers.
+//
 // Private packages are dropped. They are versioned but never published, so
 // packing one produces something with nowhere to go.
 func stackPackPackages(ctx context.Context, root, name string) ([]stackPackPackage, error) {
-	var out []stackPackPackage
+	var found []stackPackPackage
 	for _, eco := range ecosystem.Default().All() {
-		if len(eco.Info().Overlays) > 0 {
-			continue // re-emits the base language's projects; asking both double-counts
-		}
 		ok, err := eco.Detect(ctx, root)
 		if err != nil {
 			return nil, fmt.Errorf("scanning for %s projects: %w", eco.Info().ID, err)
@@ -267,11 +333,36 @@ func stackPackPackages(ctx context.Context, root, name string) ([]stackPackPacka
 			if pkg.Private || !stackPackUnder(name, pkg.Dir) {
 				continue
 			}
-			out = append(out, stackPackPackage{eco: eco, pkg: pkg})
+			found = append(found, stackPackPackage{eco: eco, info: eco.Info(), pkg: pkg})
 		}
 	}
+	out := stackPackReconcileOverlays(found)
 	sort.Slice(out, func(i, j int) bool { return out[i].pkg.Name < out[j].pkg.Name })
 	return out, nil
+}
+
+// stackPackReconcileOverlays drops each base package an overlay adapter claimed
+// for the same directory, so the unit is packed once — by the adapter that owns
+// its artifacts.
+func stackPackReconcileOverlays(found []stackPackPackage) []stackPackPackage {
+	type claim struct{ baseID, dir string }
+	claimed := map[claim]bool{}
+	for _, f := range found {
+		for _, baseID := range f.info.Overlays {
+			claimed[claim{baseID: baseID, dir: f.pkg.Dir}] = true
+		}
+	}
+	if len(claimed) == 0 {
+		return found
+	}
+	kept := make([]stackPackPackage, 0, len(found))
+	for _, f := range found {
+		if claimed[claim{baseID: f.info.ID, dir: f.pkg.Dir}] {
+			continue
+		}
+		kept = append(kept, f)
+	}
+	return kept
 }
 
 // stackPackUnder reports whether a package directory belongs to the member.

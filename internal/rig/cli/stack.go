@@ -42,6 +42,7 @@ func newStackCmd() *cobra.Command {
 			"  rig stack propose [repo] [branch]   a branch on your fork, prefixed stack/ (asks)\n" +
 			"  rig stack push [repo]               fast-forward a repo you own, history intact\n" +
 			"  rig stack wire                      write the build overlay for the members\n" +
+			"  rig stack pack [repo]               build a member's packages here, where the overlay applies\n" +
 			"  rig stack doctor                    engine + manifest checks (--fix installs josh)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {

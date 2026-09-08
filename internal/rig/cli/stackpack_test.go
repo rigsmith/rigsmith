@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"github.com/rigsmith/rigsmith/core/plugin"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,5 +118,43 @@ func TestStackPackSaysWhenThereIsNothingToPack(t *testing.T) {
 	}
 	if !strings.Contains(b.String(), "nothing publishable") {
 		t.Fatalf("output = %q, want it to say there was nothing to pack", b.String())
+	}
+}
+
+// Overlays means the desktop adapter owns that unit's artifacts and the base
+// package for the same directory is dropped. Keeping the base and skipping the
+// owner — which is what a naive copy of the link-scan's guard does — npm-packs
+// an Electron app instead of building its installers.
+func TestStackPackReconcileOverlays(t *testing.T) {
+	base := stackPackPackage{info: plugin.EcosystemInfo{ID: "node"}, pkg: plugin.Package{Name: "app", Dir: "app"}}
+	owner := stackPackPackage{info: plugin.EcosystemInfo{ID: "electron", Overlays: []string{"node"}}, pkg: plugin.Package{Name: "app", Dir: "app"}}
+	other := stackPackPackage{info: plugin.EcosystemInfo{ID: "node"}, pkg: plugin.Package{Name: "lib", Dir: "lib"}}
+
+	got := stackPackReconcileOverlays([]stackPackPackage{base, owner, other})
+	if len(got) != 2 {
+		t.Fatalf("kept %d packages, want the overlay owner and the unclaimed one", len(got))
+	}
+	for _, g := range got {
+		if g.pkg.Dir == "app" && g.info.ID != "electron" {
+			t.Errorf("kept the base package for app/, want the overlay that owns it")
+		}
+	}
+}
+
+// The nested case: cargo writes its .crate under OutputDir/package/, so a flat
+// scan reports a successful build as having produced nothing.
+func TestStackPackNewFilesFindsNestedOutput(t *testing.T) {
+	dir := t.TempDir()
+	before := stackPackDirState(dir)
+	nested := filepath.Join(dir, "package")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "sugiyama-0.1.0.crate"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := stackPackNewFiles(dir, before)
+	if len(got) != 1 || got[0] != "package/sugiyama-0.1.0.crate" {
+		t.Fatalf("new files = %v, want the nested crate", got)
 	}
 }
