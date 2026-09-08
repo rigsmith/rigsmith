@@ -10,11 +10,31 @@ permissions:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: ${{ matrix.group == 'all' && format('test ({0})', matrix.os) || format('test ({0}, {1})', matrix.os, matrix.group) }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
+        group: [all]
+        # Windows groups previously took 37 minutes in sequence. Keep their
+        # commands below shared with Unix, but run each on its own runner.
+        include:
+          - os: windows-latest
+            group: other
+          - os: windows-latest
+            group: completion
+          - os: windows-latest
+            group: staging
+          - os: windows-latest
+            group: artifacts
+          - os: windows-latest
+            group: service
+          - os: windows-latest
+            group: publication
+          - os: windows-latest
+            group: queue
+          - os: windows-latest
+            group: compatibility
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -53,6 +73,7 @@ jobs:
       # Keep the ten-minute limit, with exhaustive, disjoint groups and separate
       # progress/timing for shared artifacts, merge completion/staging and services.
       - name: Test other packages
+        if: matrix.group == 'all' || matrix.group == 'other'
         shell: bash
         env:
           CLAUDERIG_E2E: '1' # synthetic fixtures only; real-data scan has its own gate
@@ -60,33 +81,53 @@ jobs:
           go list ./... | grep -Ev '^github.com/rigsmith/rigsmith/internal/(clauderig/service|agentrig/commitartifact)$' | xargs go test -count=1
 
       - name: Test merge completion and long paths
+        if: matrix.group == 'all' || matrix.group == 'completion'
         run: go test ./internal/agentrig/commitartifact -count=1 -timeout=10m -run '^TestMergeStage(Complete|Intent|Long|Windows)'
 
       - name: Test recoverable merge staging
+        if: matrix.group == 'all' || matrix.group == 'staging'
         run: go test ./internal/agentrig/commitartifact -count=1 -timeout=10m -run '^TestMergeStage' -skip '^TestMergeStage(Complete|Intent|Long|Windows)'
 
       - name: Test shared commit artifacts
+        if: matrix.group == 'all' || matrix.group == 'artifacts'
         run: go test ./internal/agentrig/commitartifact -count=1 -timeout=10m -skip '^TestMergeStage'
 
       - name: Test Claude service workflows
+        if: matrix.group == 'all' || matrix.group == 'service'
         env:
           CLAUDERIG_E2E: '1'
         run: go test ./internal/clauderig/service -count=1 -timeout=10m -skip '^Test(PublishArtifact|QueueAdapter)'
 
       - name: Test retained publication
+        if: matrix.group == 'all' || matrix.group == 'publication'
         env:
           CLAUDERIG_E2E: '1'
         run: go test ./internal/clauderig/service -count=1 -timeout=10m -run '^TestPublishArtifact'
 
       - name: Test queue execution
+        if: matrix.group == 'all' || matrix.group == 'queue'
         env:
           CLAUDERIG_E2E: '1'
         run: go test ./internal/clauderig/service -count=1 -timeout=10m -run '^TestQueueAdapter'
 
       - name: ClaudeRig baseline compatibility
+        if: matrix.group == 'all' || matrix.group == 'compatibility'
         env:
           CLAUDERIG_COMPAT: '1'
         run: go test ./internal/clauderig/compatibility -count=1 -v -timeout=10m
+
+  test-result:
+    # Preserve the existing required check name. The shared matrix contains all
+    # Windows groups plus Unix, so this gate conservatively requires all of them.
+    name: test (windows-latest)
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every test group to pass
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+        run: test "$TEST_RESULT" = success
 
   secret-scan:
     name: gitleaks
