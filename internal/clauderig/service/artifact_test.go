@@ -381,7 +381,7 @@ func TestCaptureArtifactRejectsUnsettledStagingBeforeRetainingSeed(t *testing.T)
 					blob := git(t, stage, "hash-object", "-w", "conflicted.txt")
 					fmt.Fprintf(&entries, "100644 %s %d\tconflicted.txt\n", blob, i+1)
 				}
-				cmd := exec.Command("git", "update-index", "--index-info")
+				cmd := exec.CommandContext(t.Context(), "git", "update-index", "--index-info")
 				cmd.Dir = stage
 				cmd.Stdin = strings.NewReader(entries.String())
 				if out, err := cmd.CombinedOutput(); err != nil {
