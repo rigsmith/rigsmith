@@ -578,6 +578,11 @@ lease after verifying the retained batch. The shared primitive audits the exact
 staged tree and both parent tips, records that tree without staging worktree
 files, then forgets merge metadata. Exact parents and the staged tree allow a
 retry to finish cleanup after an interrupted ref update. The index and unstaged
-files are preserved. Unresolved merge recovery and fresh queued capture
-integration remain separate; the synchronous repair path is unchanged. See the
+files are preserved. Fresh queued capture also uses this completion before seed
+retention. Supported unresolved merges now use `MergeStageStore.Complete` to seal
+the exact repair before canonical writes and resume it across file/index writes,
+HEAD update and metadata cleanup. Capture and publication consult their saved
+batch checkpoints even when Git reports settled HEAD; empty failed-build folders
+do not count as checkpoints. The synchronous repair path is unchanged, and queued
+hooks remain disabled. See [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md) and the
 [completion contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#already-staged-canonical-merge-completion).

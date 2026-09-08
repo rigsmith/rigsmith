@@ -70,7 +70,7 @@ func PlanUnresolvedMerge(ctx context.Context, dir, dest string, p MergePlanPolic
 			result = MergePlan{}
 		}
 	}()
-	work, err := os.MkdirTemp(dest, ".work-*")
+	work, err := source.mergeWorkDir(ctx, dest, ".work-*")
 	if err != nil {
 		return result, err
 	}

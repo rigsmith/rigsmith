@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -455,5 +456,99 @@ func TestMergeStageLongGitPaths(t *testing.T) {
 	packs, err := filepath.Glob(filepath.Join(dir, "objects", "pack", "*.pack"))
 	if err != nil || len(packs) != 1 || len(packs[0]) <= 260 {
 		t.Fatalf("expected a pack path exceeding MAX_PATH: %v, %v", packs, err)
+	}
+}
+
+// The intent itself may be beyond MAX_PATH; private Git working directories
+// must not inherit that depth on Windows. Exercise creation and sealed replay,
+// including a refused first attempt that must clean up disposable work.
+func TestMergeStageLongIntentPath(t *testing.T) {
+	r, original, incoming := unresolvedMergeFixture(t, "sha256")
+	dir := t.TempDir()
+	for len(dir) < 300 {
+		dir = filepath.Join(dir, strings.Repeat("nested", 3))
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	store := MergeStageStore{Dir: filepath.Join(dir, "intent")}
+	scratch := t.TempDir()
+	t.Setenv("TMP", scratch)
+	t.Setenv("TEMP", scratch)
+	t.Setenv("TMPDIR", scratch)
+	p := stagePolicy(t)
+	failing := p
+	failing.Resolve = func(context.Context, string, []byte, []byte, []byte, RelatedFiles) ([]byte, error) {
+		return nil, ErrConflict
+	}
+	if _, err := store.Stage(t.Context(), r.dir, failing); !errors.Is(err, ErrConflict) {
+		t.Fatal("expected unsupported repair", err)
+	}
+	assertEmpty := func() {
+		t.Helper()
+		entries, err := os.ReadDir(scratch)
+		if err != nil || len(entries) != 0 {
+			t.Fatal("left disposable work", entries, err)
+		}
+	}
+	assertEmpty()
+	head, err := store.Complete(t.Context(), r.dir, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEmpty()
+	if got := mustRun(t, r, "", "show", "-s", "--format=%P", head); got != original+" "+incoming {
+		t.Fatal("wrong merge parents", got)
+	}
+	if got := string(readMergeTestFile(t, r.dir, "state")); got != "both\r\n\x00raw bytes\n" {
+		t.Fatalf("changed merge bytes %q", got)
+	}
+	p.Resolve = failing.Resolve
+	if again, err := store.Complete(t.Context(), r.dir, p); err != nil || again != head {
+		t.Fatal("sealed replay", again, err)
+	}
+	assertEmpty()
+	paths, err := filepath.Glob(filepath.Join(store.Dir, "*.capture"))
+	if err != nil || len(paths) != 1 {
+		t.Fatal("missing durable intent", paths, err)
+	}
+}
+
+func TestMergeStageWindowsTemporaryRoot(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows relocates disposable merge repositories")
+	}
+	for _, subdir := range []string{"", ".git"} {
+		t.Run(subdir, func(t *testing.T) {
+			r, original, _ := unresolvedMergeFixture(t, "sha1")
+			temp := filepath.Join(r.dir, subdir)
+			t.Setenv("TMP", temp)
+			t.Setenv("TEMP", temp)
+			before, err := os.ReadDir(temp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := stagePolicy(t)
+			p.Resolve = func(context.Context, string, []byte, []byte, []byte, RelatedFiles) ([]byte, error) {
+				t.Fatal("resolved before rejecting protected temporary root")
+				return nil, nil
+			}
+			store := MergeStageStore{Dir: filepath.Join(t.TempDir(), "intent")}
+			if _, err := store.Complete(t.Context(), r.dir, p); !errors.Is(err, ErrInvalid) {
+				t.Fatal("accepted protected temporary root", err)
+			}
+			after, err := os.ReadDir(temp)
+			if err != nil || len(before) != len(after) {
+				t.Fatal("wrote scratch under protected root", after, err)
+			}
+			for i := range before {
+				if before[i].Name() != after[i].Name() {
+					t.Fatal("changed protected entry")
+				}
+			}
+			if head := mustRun(t, r, "", "rev-parse", "HEAD"); head != original {
+				t.Fatal("changed canonical HEAD")
+			}
+		})
 	}
 }

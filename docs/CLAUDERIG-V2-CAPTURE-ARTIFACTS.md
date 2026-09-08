@@ -86,7 +86,8 @@ the binding again, and calls the shared `SettledHead` guard before retaining a
 seed or copying canonical staging. An already-staged two-parent merge can be
 completed with `FinishStagedMerge`: validate and secret-scan both parent tips and
 the exact staged tree before recording the merge and forgetting its metadata.
-Unresolved conflicts, standalone MERGE_AUTOSTASH residue, active bisects,
+Supported unresolved conflicts use [sealed merge recovery](CLAUDERIG-V2-MERGE-RECOVERY.md).
+Unsupported conflicts, standalone MERGE_AUTOSTASH residue, active bisects,
 cherry-picks, reverts, rebases and sequencers remain blocked. Only a settled checkout is copied,
 excluding Git metadata. It records HEAD and a durable seed-bundle
 reference in the archive header. Seed retention must succeed before capture can

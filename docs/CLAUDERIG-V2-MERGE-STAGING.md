@@ -3,8 +3,8 @@
 Milestone 6b.4b.2b adds `commitartifact.MergeStageStore.Stage`, an internal shared
 application path for the private merge planner. It stages the resolved tree and
 updates only affected worktree files. It leaves HEAD and merge metadata in place
-for the existing `FinishStagedMerge` completion step. Queue-service integration
-and queued hooks are still disabled; there is no end-user changeset.
+for the existing `FinishStagedMerge` completion step. The `Complete` API and [queue integration](CLAUDERIG-V2-MERGE-RECOVERY.md)
+now bridge staging through commit and cleanup. Queued hooks remain disabled.
 
 ## Ownership and accepted state
 
@@ -33,7 +33,12 @@ in the same way as Unix; the index retains them, and live mode checking is limit
 to platforms that expose those bits.
 Isolated Git commands enable `core.longpaths` on Windows so nested staging
 repositories can store SHA-256 packs beyond the default Git path limit. This is
-a per-command setting; it does not modify the user's Git configuration.
+a per-command setting; it does not modify the user's Git configuration. Windows
+merge planning, intent construction and replay use disposable directories under
+the system temporary directory so the intent store's nesting does not become
+Git's process working directory. The configured Windows temporary directory must
+itself allow a short working path. Verified bundles and sealed intents remain
+in their requested destinations; temporary disk use may be on a different volume.
 
 ## Durable intent and application
 
@@ -80,9 +85,8 @@ from that state.
 
 Successful staging returns the resolved tree identity. The caller next completes
 the merge with `FinishStagedMerge` and retains durable phase state. Calling Stage
-again after merge completion is refused. Bridging those phases, choosing intent
-lifetimes, queue acknowledgements and recovery of interrupted completion belong
-to milestone 6b.4b.2c; this PR does not activate that integration.
+again after merge completion is refused. Call `Complete` for the [sealed completion/replay protocol](CLAUDERIG-V2-MERGE-RECOVERY.md)
+used by queue services; it returns the exact completed commit instead.
 
 The intent store's `MaxBytes` bounds the complete archive. Planner tree, bundle,
 conflict and companion limits remain in force; intent metadata is limited to

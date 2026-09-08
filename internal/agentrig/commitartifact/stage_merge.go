@@ -57,32 +57,32 @@ type mergeStageIntent struct {
 // unchanged: FinishStagedMerge is the separate audited completion step. A retry
 // after that completion is deliberately refused; callers retain phase state.
 func (s MergeStageStore) Stage(ctx context.Context, dir string, p MergeStagePolicy) (tree string, err error) {
-	key, err := requestKey(Request{PolicyID: p.PolicyID, Message: p.Message, AuthorName: p.AuthorName,
-		AuthorEmail: p.AuthorEmail, Time: p.Time, Prepare: p.Validate, Audit: p.Audit})
-	if err != nil || !filepath.IsAbs(dir) || !filepath.IsAbs(s.Dir) || p.Resolve == nil || p.MaxTreeBytes < 0 || p.MaxBundleBytes < 0 {
-		return "", ErrInvalid
-	}
-	source := gitRepo{dir: dir}
-	if _, err := source.planDestination(ctx, s.Dir); err != nil {
-		return "", err
-	}
-	binding, err := source.run(ctx, nil, "rev-parse", "--absolute-git-dir")
+	return s.stage(ctx, dir, p, false)
+}
+
+// Complete stages and finishes exactly the merge saved in this store. The sealed
+// intent remains the restart checkpoint across file writes, HEAD update and Git
+// metadata cleanup. Retry requires the saved index and affected files; a different
+// HEAD, merge or later affected edit is refused. Callers retain the staging lease
+// and the intent until their own durable queue phase records completion.
+func (s MergeStageStore) Complete(ctx context.Context, dir string, p MergeStagePolicy) (head string, err error) {
+	return s.stage(ctx, dir, p, true)
+}
+
+func (s MergeStageStore) stage(ctx context.Context, dir string, p MergeStagePolicy, complete bool) (result string, err error) {
+	binding, key, err := s.identity(ctx, dir, p)
 	if err != nil {
 		return "", err
 	}
-	binding, err = filepath.EvalSymlinks(strings.TrimSpace(binding))
-	if err != nil {
-		return "", err
-	}
-	key = artifact.Key([]byte("merge-stage-v1\x00" + binding + "\x00" + key))
+	canonical := gitRepo{dir: dir}
 	store := artifact.Store{Dir: s.Dir, MaxBytes: s.MaxBytes}
 	ref, err := store.Build(ctx, key, func(ctx context.Context, root string) error {
-		return buildMergeStage(ctx, source, root, binding, p)
+		return buildMergeStage(ctx, canonical, root, binding, p)
 	})
 	if err != nil {
 		return "", err
 	}
-	work, err := os.MkdirTemp(s.Dir, ".stage-*")
+	work, err := canonical.mergeWorkDir(ctx, s.Dir, ".stage-*")
 	if err != nil {
 		return "", err
 	}
@@ -173,7 +173,7 @@ func (s MergeStageStore) Stage(ctx context.Context, dir string, p MergeStagePoli
 			return "", err
 		}
 	}
-	indexPath, err := source.operationPath(ctx, "index")
+	indexPath, err := canonical.operationPath(ctx, "index")
 	if err != nil {
 		return "", err
 	}
@@ -184,7 +184,16 @@ func (s MergeStageStore) Stage(ctx context.Context, dir string, p MergeStagePoli
 		return "", err
 	}
 	defer func() { err = errors.Join(err, release()) }()
-	indexed, err := checkMergeStage(ctx, source, intent, before, after)
+	if complete {
+		head, err := canonical.run(ctx, nil, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(head) == intent.Commit {
+			return s.finish(ctx, canonical, intent, after, p.MergeFinishPolicy)
+		}
+	}
+	indexed, err := checkMergeStage(ctx, canonical, intent, before, after)
 	if err != nil {
 		return "", err
 	}
@@ -192,7 +201,7 @@ func (s MergeStageStore) Stage(ctx context.Context, dir string, p MergeStagePoli
 		return "", err
 	}
 	// Import objects before the index can name them. No canonical refs are created.
-	if _, err := source.run(ctx, nil, "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--",
+	if _, err := canonical.run(ctx, nil, "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--",
 		filepath.Join(sealed, "candidate.bundle"), "refs/rig/merge-plan"); err != nil {
 		return "", err
 	}
@@ -200,7 +209,7 @@ func (s MergeStageStore) Stage(ctx context.Context, dir string, p MergeStagePoli
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		if _, err := checkMergeStage(ctx, source, intent, before, after); err != nil {
+		if _, err := checkMergeStage(ctx, canonical, intent, before, after); err != nil {
 			return "", err
 		}
 		if err := checkStageFiles(ctx, dir, []mergeStageFile{file}, indexed, false); err != nil {
@@ -220,7 +229,7 @@ func (s MergeStageStore) Stage(ctx context.Context, dir string, p MergeStagePoli
 			}
 		}
 	}
-	if _, err := checkMergeStage(ctx, source, intent, before, after); err != nil {
+	if _, err := checkMergeStage(ctx, canonical, intent, before, after); err != nil {
 		return "", err
 	}
 	if err := checkStageFiles(ctx, dir, intent.Files, true, false); err != nil {
@@ -234,22 +243,25 @@ func (s MergeStageStore) Stage(ctx context.Context, dir string, p MergeStagePoli
 			return "", err
 		}
 	}
-	if _, err := checkMergeStage(ctx, source, intent, before, after); err != nil {
+	if _, err := checkMergeStage(ctx, canonical, intent, before, after); err != nil {
 		return "", err
+	}
+	if complete {
+		return s.finish(ctx, canonical, intent, after, p.MergeFinishPolicy)
 	}
 	return intent.Tree, nil
 }
 
-func buildMergeStage(ctx context.Context, source gitRepo, root, binding string, p MergeStagePolicy) error {
-	state, err := source.unresolvedPlanState(ctx)
+func buildMergeStage(ctx context.Context, canonical gitRepo, root, binding string, p MergeStagePolicy) error {
+	state, err := canonical.unresolvedPlanState(ctx)
 	if err != nil {
 		return err
 	}
-	plan, err := PlanUnresolvedMerge(ctx, source.dir, filepath.Join(root, "plan"), p.MergePlanPolicy)
+	plan, err := PlanUnresolvedMerge(ctx, canonical.dir, filepath.Join(root, "plan"), p.MergePlanPolicy)
 	if err != nil {
 		return err
 	}
-	auto, err := source.run(ctx, nil, "rev-parse", "--verify", "AUTO_MERGE^{tree}")
+	auto, err := canonical.run(ctx, nil, "rev-parse", "--verify", "AUTO_MERGE^{tree}")
 	if err != nil {
 		return fmt.Errorf("%w: AUTO_MERGE unavailable", ErrConflict)
 	}
@@ -257,7 +269,7 @@ func buildMergeStage(ctx context.Context, source gitRepo, root, binding string, 
 	if !objectID(auto) {
 		return ErrConflict
 	}
-	work, err := os.MkdirTemp(filepath.Dir(root), ".stage-build-*")
+	work, err := canonical.mergeWorkDir(ctx, filepath.Dir(root), ".stage-build-*")
 	if err != nil {
 		return err
 	}
@@ -269,7 +281,7 @@ func buildMergeStage(ctx context.Context, source gitRepo, root, binding string, 
 	if err := repo.importRef(ctx, plan.BundlePath, "refs/rig/merge-plan", "refs/rig/merge-plan", plan.Commit); err != nil {
 		return err
 	}
-	beforeTree, err := mergeStageTree(ctx, source, auto, p.MaxTreeBytes)
+	beforeTree, err := mergeStageTree(ctx, canonical, auto, p.MaxTreeBytes)
 	if err != nil {
 		return err
 	}
@@ -283,7 +295,7 @@ func buildMergeStage(ctx context.Context, source gitRepo, root, binding string, 
 	if err := os.WriteFile(indexCopy, state.index, 0600); err != nil {
 		return err
 	}
-	indexed := source
+	indexed := canonical
 	indexed.identity = []string{"GIT_INDEX_FILE=" + indexCopy}
 	flags, err := indexed.run(ctx, nil, "ls-files", "-v", "-z")
 	if err != nil {
@@ -365,7 +377,7 @@ func buildMergeStage(ctx context.Context, source gitRepo, root, binding string, 
 	if len(intent.Files) > 1024 {
 		return artifact.ErrTooLarge
 	}
-	if err := checkStageFiles(ctx, source.dir, intent.Files, false, true); err != nil {
+	if err := checkStageFiles(ctx, canonical.dir, intent.Files, false, true); err != nil {
 		return err
 	}
 	for _, side := range []string{"before", "after"} {
@@ -389,7 +401,7 @@ func buildMergeStage(ctx context.Context, source gitRepo, root, binding string, 
 		}
 		r := repo
 		if side == "before" {
-			r = source
+			r = canonical
 		}
 		if err := r.materializeBlobs(ctx, dest, files); err != nil {
 			return err
@@ -403,7 +415,7 @@ func buildMergeStage(ctx context.Context, source gitRepo, root, binding string, 
 		return err
 	}
 	intent.IndexAfter = stageDigest(afterIndex)
-	current, err := source.unresolvedPlanState(ctx)
+	current, err := canonical.unresolvedPlanState(ctx)
 	if err != nil {
 		return err
 	}
@@ -580,4 +592,53 @@ func mergeStageIndexLock(path, ref string) (func() error, error) {
 		}
 		return err
 	}, nil
+}
+
+// HasIntent checks the expected artifact path, not leftover build directories.
+// Present corrupt/nonregular artifacts still count; Complete must verify and
+// reflush them before accepting saved work. This read never confirms durability.
+func (s MergeStageStore) HasIntent(ctx context.Context, dir string, p MergeStagePolicy) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if !filepath.IsAbs(s.Dir) {
+		return false, ErrInvalid
+	}
+	info, err := os.Lstat(s.Dir)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, ErrInvalid
+	}
+	_, key, err := s.identity(ctx, dir, p)
+	if err != nil {
+		return false, err
+	}
+	return (artifact.Store{Dir: s.Dir, MaxBytes: s.MaxBytes}).Exists(key)
+}
+
+func (s MergeStageStore) identity(ctx context.Context, dir string, p MergeStagePolicy) (binding, key string, err error) {
+	key, err = requestKey(Request{PolicyID: p.PolicyID, Message: p.Message, AuthorName: p.AuthorName,
+		AuthorEmail: p.AuthorEmail, Time: p.Time, Prepare: p.Validate, Audit: p.Audit})
+	if err != nil || !filepath.IsAbs(dir) || !filepath.IsAbs(s.Dir) || p.Resolve == nil || p.MaxTreeBytes < 0 || p.MaxBundleBytes < 0 {
+		return "", "", ErrInvalid
+	}
+	canonical := gitRepo{dir: dir}
+	if _, err := canonical.planDestination(ctx, s.Dir); err != nil {
+		return "", "", err
+	}
+	binding, err = canonical.run(ctx, nil, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", "", err
+	}
+	binding, err = filepath.EvalSymlinks(strings.TrimSpace(binding))
+	if err != nil {
+		return "", "", err
+	}
+	key = artifact.Key([]byte("merge-stage-v1\x00" + binding + "\x00" + key))
+	return binding, key, nil
 }

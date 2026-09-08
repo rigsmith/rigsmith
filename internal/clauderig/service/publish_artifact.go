@@ -45,7 +45,8 @@ type ArtifactPublishRequest struct {
 // and memory conflicts preserve both tails. Canonical chunked transcripts use
 // verified immutable parts and remain chunked. Eligible ordinary files select
 // the newer proven snapshot origin; ties and unknown origins remain blocked.
-// Unresolved canonical conflicts and local-only completion remain separate work.
+// Supported unresolved canonical conflicts use sealed restart recovery before
+// publication. Other operations and later affected edits remain blocked.
 func (s Service) PublishArtifact(ctx context.Context, input ArtifactPublishRequest) (commitartifact.Publication, error) {
 	return s.publishArtifact(ctx, ctx, input)
 }
@@ -90,8 +91,18 @@ func (s Service) publishArtifact(ctx, staging context.Context, input ArtifactPub
 	if binding != req.Binding {
 		return fail, queue.ErrBinding
 	}
+	recovery := artifactMergeStore(commits, commitKey, input.Commit.Commits.MaxBytes)
+	finish := commitartifact.MergeFinishPolicy{
+		Message: plan.SnapshotMessage, AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
+		Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, MaxTreeBytes: input.Commit.Commits.MaxBytes,
+		Validate: backupgit.ValidateTree, Audit: engine.CheckPublishContext,
+	}
+	saved, err := recovery.HasIntent(ctx, stage, artifactMergePolicy(finish))
+	if err != nil {
+		return fail, err
+	}
 	head, err := commitartifact.SettledHead(ctx, stage)
-	if errors.Is(err, commitartifact.ErrConflict) {
+	if saved || errors.Is(err, commitartifact.ErrConflict) {
 		// Verify the retained batch before making any canonical change. Publish
 		// opens it again under its private store contract for actual publication.
 		work, openErr := os.MkdirTemp(commits, ".merge-binding-*")
@@ -107,11 +118,7 @@ func (s Service) publishArtifact(ctx, staging context.Context, input ArtifactPub
 		if info.CaptureRef != req.Work.CaptureRef {
 			return fail, queue.ErrBinding
 		}
-		head, err = commitartifact.FinishStagedMerge(ctx, stage, commitartifact.MergeFinishPolicy{
-			Message: plan.SnapshotMessage, AuthorName: "clauderig", AuthorEmail: "clauderig@localhost",
-			Time: req.Work.Events[len(req.Work.Events)-1].EnqueuedAt, MaxTreeBytes: input.Commit.Commits.MaxBytes,
-			Validate: backupgit.ValidateTree, Audit: engine.CheckPublishContext,
-		})
+		head, err = recoverArtifactMerge(ctx, stage, recovery, finish)
 	}
 	if err != nil {
 		return fail, err

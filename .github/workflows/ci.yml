@@ -51,7 +51,7 @@ jobs:
 
       # Git-heavy fixtures exceed Go's cumulative per-package timeout on Windows.
       # Keep the ten-minute limit, with exhaustive, disjoint groups and separate
-      # progress/timing for shared artifacts, merge staging and Claude services.
+      # progress/timing for shared artifacts, merge completion/staging and services.
       - name: Test other packages
         shell: bash
         env:
@@ -59,8 +59,11 @@ jobs:
         run: |
           go list ./... | grep -Ev '^github.com/rigsmith/rigsmith/internal/(clauderig/service|agentrig/commitartifact)$' | xargs go test -count=1
 
+      - name: Test merge completion and long paths
+        run: go test ./internal/agentrig/commitartifact -count=1 -timeout=10m -run '^TestMergeStage(Complete|Intent|Long|Windows)'
+
       - name: Test recoverable merge staging
-        run: go test ./internal/agentrig/commitartifact -count=1 -timeout=10m -run '^TestMergeStage'
+        run: go test ./internal/agentrig/commitartifact -count=1 -timeout=10m -run '^TestMergeStage' -skip '^TestMergeStage(Complete|Intent|Long|Windows)'
 
       - name: Test shared commit artifacts
         run: go test ./internal/agentrig/commitartifact -count=1 -timeout=10m -skip '^TestMergeStage'
