@@ -148,8 +148,10 @@ func newStackInitCmd() *cobra.Command {
 			// worktree would be swallowed into the import.
 			if dirty, err := repo.Dirty(ctx); err != nil {
 				return err
-			} else if dirty && !stackOnlyManifestDirty(ctx, repo, src) {
-				return fmt.Errorf("stackspace has uncommitted changes — commit or stash before importing")
+			} else if dirty {
+				if _, only := stackOnlyManifestDirty(ctx, repo, src); !only {
+					return fmt.Errorf("stackspace has uncommitted changes — commit or stash before importing")
+				}
 			}
 			// A merge into an unborn HEAD fast-forwards instead of creating a
 			// merge commit, which leaves the cursor amended onto the upstream
@@ -233,31 +235,33 @@ func newStackInitCmd() *cobra.Command {
 }
 
 // stackOnlyManifestDirty reports whether a dedicated manifest file is the only
-// uncommitted thing. Filling in the scaffolded rig.stack.jsonc and running init
-// again is the documented first run, so that one file must not trip the dirty
-// guard — the import commits it anyway.
-func stackOnlyManifestDirty(ctx context.Context, repo *gitrepo.Repo, src *cfgfind.Source) bool {
+// uncommitted thing, and names it relative to the stackspace root when so.
+// Filling in the scaffolded rig.stack.jsonc and running init again is the
+// documented first run, so that one file must not trip init's dirty guard —
+// the import commits it anyway. pull keeps its guard, and uses the name to say
+// which file is in the way.
+func stackOnlyManifestDirty(ctx context.Context, repo *gitrepo.Repo, src *cfgfind.Source) (string, bool) {
 	// Only a dedicated manifest earns the exemption. An inline `stack` block
 	// shares .rig.json with every other rig setting, so waving that file
 	// through would commit whatever else the user happened to be editing.
 	if src == nil || src.File == "" || src.Path == "" {
-		return false
+		return "", false
 	}
 	paths, err := repo.DirtyPaths(ctx)
 	if err != nil || len(paths) == 0 {
-		return false
+		return "", false
 	}
 	manifest, err := filepath.Rel(repo.Dir, src.File)
 	if err != nil {
-		return false
+		return "", false
 	}
 	manifest = filepath.ToSlash(manifest)
 	for _, p := range paths {
 		if filepath.ToSlash(p) != manifest {
-			return false
+			return "", false
 		}
 	}
-	return true
+	return manifest, true
 }
 
 func newStackStatusCmd() *cobra.Command {
@@ -405,6 +409,18 @@ func newStackPullCmd() *cobra.Command {
 			if dirty, err := repo.Dirty(ctx); err != nil {
 				return err
 			} else if dirty {
+				// The manifest is what a pull reads, and a pin that stopped
+				// resolving — upstream renamed or deleted the branch — is fixed
+				// by editing it. That edit is then the thing tripping this guard,
+				// which read cold says the fix was wrong. Name the file and the
+				// step between it and the pull.
+				if manifest, ok := stackOnlyManifestDirty(ctx, repo, src); ok {
+					// -a rather than a pathspec: the guard has just established
+					// that the manifest is the only thing dirty, and a pathspec
+					// would be relative to wherever inside the stackspace the
+					// user is standing.
+					return fmt.Errorf("stackspace has uncommitted changes — only %s; commit it (`git commit -am \"stack: manifest\"`), then pull again", manifest)
+				}
 				return fmt.Errorf("stackspace has uncommitted changes — commit or stash before pulling")
 			}
 			names := m.names()
@@ -496,8 +512,8 @@ func newStackPullCmd() *cobra.Command {
 // work it merged past, so measuring against it calls a prefix clean the moment
 // anything has been pulled since the work was done.
 func stackImportedTree(ctx context.Context, repo *gitrepo.Repo, name string) (string, bool) {
-	marker, err := repo.LastCommitMatching(ctx, `^stack: (import|pull|push) `+regexp.QuoteMeta(name)+` @`)
-	if err != nil || marker == "" {
+	marker := stackImportCommit(ctx, repo, name)
+	if marker == "" {
 		return "", false
 	}
 	tree, err := repo.RevParse(ctx, marker+"^2:"+name)
@@ -583,11 +599,44 @@ func stackUnsentWork(ctx context.Context, repo *gitrepo.Repo, name string, dirty
 // answered "not an ancestor of HEAD", which measured that way would have made
 // every topic look stale and refused every `propose --from`.
 func stackImportCommit(ctx context.Context, repo *gitrepo.Repo, name string) string {
-	marker, err := repo.LastCommitMatching(ctx, `^stack: (import|pull|push) `+regexp.QuoteMeta(name)+` @`)
+	// One walk down HEAD's first-parent line — where pulls land — taking the
+	// first commit that is a sync of this prefix, by either of the two things
+	// a sync can be recognised by.
+	//
+	// By shape: a merge whose second parent is a filtered commit of the
+	// prefix, a tree holding the prefix directory and nothing else, which is
+	// what josh's :prefix filter yields and no commit made in the stackspace
+	// looks like, since each carries the manifest at the root. rig gives the
+	// merges it makes a marker subject, but a pull that conflicts is finished
+	// by the user under whatever subject they choose, and a baseline read
+	// from subjects alone stopped at the sync before — which is where the
+	// cursor no longer was. Upstream's own merges would pass the same test,
+	// but they sit behind second parents and the first-parent walk never
+	// reaches them.
+	//
+	// By subject: a sync that made no merge — a repin backwards, a removed
+	// member restored — is a plain commit, and its marker subject is the only
+	// thing that says what it was.
+	marker := regexp.MustCompile(`^stack: (import|pull|push) ` + regexp.QuoteMeta(name) + ` @`)
+	if commits, err := repo.FirstParentCommits(ctx, "HEAD"); err == nil {
+		for _, c := range commits {
+			if len(c.Parents) > 1 {
+				if names, err := repo.TopLevelNames(ctx, c.Parents[1]); err == nil && len(names) == 1 && names[0] == name {
+					return c.Hash
+				}
+			}
+			if marker.MatchString(c.Subject) {
+				return c.Hash
+			}
+		}
+	}
+	// Anywhere else in the history is the fallback: a marker merged in from a
+	// side branch sits off the first-parent line.
+	found, err := repo.LastCommitMatching(ctx, marker.String())
 	if err != nil {
 		return ""
 	}
-	return marker
+	return found
 }
 
 // stackTopicTouches reports whether a topic changes a member at all, by
@@ -993,6 +1042,15 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// send them first — cannot help when the work has already been sent.
 	nowHead, nowHeadErr := repo.Head(ctx)
 	merged := preHeadErr == nil && nowHeadErr == nil && nowHead != preHead
+	// A merge that did nothing NOW may have been done before: a pull that
+	// conflicted inside the prefix stops with the merge open and the cursor
+	// where it was, the user resolves and commits, and this run is the re-run
+	// the conflict message asked for. The target is then already in HEAD's
+	// history, and the prefix differs from upstream because the resolution
+	// kept something — which is a finished merge, not a directory to replace.
+	// Judged by history rather than by tree, since a resolution that keeps
+	// nothing of its own is the only one a tree comparison would pass.
+	taken := !merged && stackTargetTaken(ctx, repo, name, fetched)
 	if haveErr != nil {
 		// The prefix is not in HEAD at all — removed by `rig stack rm`, or an
 		// import that never produced one. Taking such a member back is the case
@@ -1005,7 +1063,7 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 		if err := repo.ReplacePath(ctx, fetched, name); err != nil {
 			return fmt.Errorf("restoring %s from %s: %w", name, short(fetch), err)
 		}
-	} else if want != have && !merged {
+	} else if want != have && !merged && !taken {
 		// Replacing the directory discards whatever is under it, so only do it
 		// when there is nothing of the user's to discard. Their own commits would
 		// survive in the history but be stranded there, which is a quiet way to
@@ -1067,18 +1125,33 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// git refuses outright when the result would be empty. That refusal is the
 	// `--amend --no-edit: would make it empty` dead end: nothing was wrong with
 	// the import, only with what it tried to fold itself into.
+	//
+	// When the merge was finished by hand, HEAD is that merge only if nothing
+	// has been committed since; the cursor is amended into it then, as it
+	// would have been, and otherwise recorded in a commit of its own rather
+	// than folded into whatever the user committed last. That commit is not
+	// an import marker — it has no upstream side for the baseline to be read
+	// from — so its subject must not read as one.
 	commit := func() error {
-		if merged {
+		switch {
+		case merged, taken && stackHeadTook(ctx, repo, fetched):
 			_, err := repo.CommitAmendNoEdit(ctx)
 			return err
+		case taken:
+			_, err := repo.Commit(ctx, fmt.Sprintf("stack: cursor %s @ %s", name, short(tip)))
+			return err
+		default:
+			_, err := repo.Commit(ctx, msg)
+			return err
 		}
-		_, err := repo.Commit(ctx, msg)
-		return err
 	}
 	if err := commit(); err != nil {
 		restore()
 		delete(m.LastSync, name)
 		return err
+	}
+	if taken {
+		verb = "recorded the resolved merge to"
 	}
 	if opts.fork != nil {
 		// Rebuilt from the branch this member was last proposed to, so its
@@ -1100,6 +1173,48 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 		fmt.Fprintf(out, "%s: %s upstream %s\n", name, verb, short(tip))
 	}
 	return nil
+}
+
+// stackTargetTaken reports whether the filtered upstream commit a pull is
+// bringing in is already in the stackspace's history by way of a merge that
+// went FORWARD from where the prefix was last synced — a pull that conflicted
+// and was resolved and committed by hand, whose re-run is what records it.
+//
+// Ancestry alone cannot say that: repinning a prefix to an older release also
+// finds the target already in HEAD, and there the answer is to replace the
+// directory. The two are told apart by the last sync's upstream side, which
+// is where the prefix last stood: a target at or past it was merged in, one
+// behind it is a move backwards. The last sync is the newest merge that took
+// a filtered commit of the prefix in, whatever its subject — a resolved pull
+// committed under the user's own words counts, or the baseline would stay at
+// the sync before it and let a repin back to that one through as though it
+// were a merge already made. No such merge, or one with no upstream side,
+// answers no, and the replace guard decides as before.
+func stackTargetTaken(ctx context.Context, repo *gitrepo.Repo, name, target string) bool {
+	if ok, err := repo.IsAncestor(ctx, target, "HEAD"); err != nil || !ok {
+		return false
+	}
+	marker := stackImportCommit(ctx, repo, name)
+	if marker == "" {
+		return false
+	}
+	last, err := repo.RevParse(ctx, marker+"^2")
+	if err != nil {
+		return false
+	}
+	ok, err := repo.IsAncestor(ctx, last, target)
+	return err == nil && ok
+}
+
+// stackHeadTook reports whether HEAD is itself the merge that brought target
+// in — the commit a resolved pull is amended into, as an unconflicted one is.
+func stackHeadTook(ctx context.Context, repo *gitrepo.Repo, target string) bool {
+	side, err := repo.RevParse(ctx, "HEAD^2")
+	if err != nil {
+		return false
+	}
+	want, err := repo.RevParse(ctx, target)
+	return err == nil && side == want
 }
 
 // stackPrefixPresent reports whether HEAD has a directory for the prefix.

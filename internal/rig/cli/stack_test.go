@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1235,4 +1236,234 @@ func TestStackPublishesAs(t *testing.T) {
 			t.Fatal("accepted an empty republished id")
 		}
 	})
+}
+
+// pull's dirty guard runs before any engine or upstream is consulted, so the
+// wording can be checked without josh or a network: only the manifest and the
+// stackspace's git state are in play.
+func TestStackPullDirtyGuardNamesTheManifest(t *testing.T) {
+	ctx := context.Background()
+	dir := inTempStackspace(t, stackTestManifest)
+	mustGitStack(t, dir, "config", "user.email", "t@t")
+	mustGitStack(t, dir, "config", "user.name", "t")
+	mustGitStack(t, dir, "add", "-A")
+	mustGitStack(t, dir, "commit", "-qm", "stack: stackspace manifest")
+
+	// The state after fixing an upstreamBranch that upstream renamed: the
+	// manifest edited, nothing else touched.
+	edited := strings.Replace(stackTestManifest, `"branch":   "main"`, `"branch":   "release-2.5"`, 1)
+	writeStackManifest(t, dir, edited)
+
+	err := runVerb(ctx, newStackPullCmd())
+	if err == nil {
+		t.Fatal("expected pull to refuse a dirty manifest")
+	}
+	for _, want := range []string{"uncommitted changes", "only rig.stack.jsonc", "commit it", "then pull again"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("pull's refusal should say %q:\n%v", want, err)
+		}
+	}
+
+	// Anything else dirty alongside it gets the generic refusal: pointing at
+	// the manifest alone would have the user commit one file and trip on the
+	// other.
+	if werr := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("mine\n"), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	err = runVerb(ctx, newStackPullCmd())
+	if err == nil {
+		t.Fatal("expected pull to refuse a dirty worktree")
+	}
+	if !strings.Contains(err.Error(), "commit or stash before pulling") || strings.Contains(err.Error(), "rig.stack.jsonc") {
+		t.Errorf("pull with other edits should give the generic refusal:\n%v", err)
+	}
+}
+
+// resolvedPullStackspace builds the history a conflicted pull leaves once the
+// user has resolved and committed it: an import marker whose upstream side is
+// F1, local work on the prefix, and a merge of F2 (F1's child) resolved by
+// hand with msg. It returns the repo, the root, and the filtered upstream
+// commits F0 (F1's parent, never the cursor) and F2.
+func resolvedPullStackspace(ctx context.Context, t *testing.T, msg string) (*gitrepo.Repo, string, string, string) {
+	t.Helper()
+	root := t.TempDir()
+	git := func(args ...string) string { return strings.TrimSpace(mustGitStack(t, root, args...)) }
+	write := func(rel, body string) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	git("config", "user.email", "t@t")
+	git("config", "user.name", "t")
+	write("README.md", "stackspace\n")
+	git("add", "-A")
+	git("commit", "-qm", "stack: stackspace manifest")
+
+	// The filtered upstream history: tweed/ only, unrelated to the stackspace.
+	git("checkout", "-q", "--orphan", "up")
+	git("rm", "-rqf", "--cached", ".")
+	os.Remove(filepath.Join(root, "README.md"))
+	write("tweed/src/a.cs", "v0\n")
+	git("add", "-A")
+	git("commit", "-qm", "upstream v0")
+	f0 := git("rev-parse", "HEAD")
+	write("tweed/src/a.cs", "v1\n")
+	git("add", "-A")
+	git("commit", "-qm", "upstream v1")
+	f1 := git("rev-parse", "HEAD")
+	write("tweed/src/a.cs", "v2\n")
+	git("add", "-A")
+	git("commit", "-qm", "upstream v2")
+	f2 := git("rev-parse", "HEAD")
+
+	// Import F1, then local work on the prefix.
+	git("checkout", "-q", "main")
+	git("merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", "stack: import tweed @ "+f1[:8], f1)
+	write("tweed/src/a.cs", "mine\n")
+	git("add", "-A")
+	git("commit", "-qm", "tweed: my change")
+
+	// Pull F2: conflicts, resolved by hand to something that is neither side.
+	if err := gitCmd(root, "merge", "--no-edit", "-m", msg, f2).Run(); err == nil {
+		t.Fatal("expected the merge of v2 over local work to conflict")
+	}
+	write("tweed/src/a.cs", "resolved\n")
+	git("add", "-A")
+	git("commit", "-qm", msg)
+
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo, root, f0, f2
+}
+
+func TestStackTargetTaken(t *testing.T) {
+	ctx := context.Background()
+	for _, msg := range []string{"stack: pull tweed @ f2", "resolved the tweed merge"} {
+		t.Run("a resolved merge committed as "+strconv.Quote(msg), func(t *testing.T) {
+			repo, root, f0, f2 := resolvedPullStackspace(ctx, t, msg)
+			// The re-run the conflict message asked for: the target is in
+			// HEAD's history and past where the prefix last stood.
+			if !stackTargetTaken(ctx, repo, "tweed", f2) {
+				t.Fatal("the resolved merge was not recognised as taking v2 in")
+			}
+			if !stackHeadTook(ctx, repo, f2) {
+				t.Fatal("HEAD is the merge that took v2 in, and should be amended")
+			}
+			// Work committed after it does not undo that, but HEAD is no
+			// longer the merge, so the cursor gets a commit of its own.
+			if err := os.WriteFile(filepath.Join(root, "tweed", "src", "a.cs"), []byte("v1\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			mustGitStack(t, root, "commit", "-qam", "tweed: back to the import's tree")
+			if !stackTargetTaken(ctx, repo, "tweed", f2) {
+				t.Fatal("a later commit should not hide the merge that took v2 in")
+			}
+			if stackHeadTook(ctx, repo, f2) {
+				t.Fatal("HEAD is not the merge any more, and must not be amended")
+			}
+			// Moving back to v0 is a repin backwards: v0 is in the history
+			// too, but behind the last sync, so the replace guard must decide.
+			if stackTargetTaken(ctx, repo, "tweed", f0) {
+				t.Fatal("a target behind the last sync must not count as taken")
+			}
+		})
+	}
+}
+
+// The baseline behind stackTargetTaken, stackImportedTree and the topic checks
+// is the last sync, and a resolved pull committed under the user's own words
+// has to be it. Read from subjects, the baseline stays at the sync before — and
+// a repin back to exactly that one is then in the history AND at the baseline,
+// which is what "already merged" looks like, so it goes through as a merge
+// already made while the tree stays where the resolution left it.
+func TestStackImportCommitBySyncShape(t *testing.T) {
+	ctx := context.Background()
+	repo, root, f0, f2 := resolvedPullStackspace(ctx, t, "resolved the tweed merge")
+	git := func(args ...string) string { return strings.TrimSpace(mustGitStack(t, root, args...)) }
+	f1, merge := git("rev-parse", f2+"^"), git("rev-parse", "HEAD")
+
+	if got := stackImportCommit(ctx, repo, "tweed"); got != merge {
+		t.Fatalf("last sync = %s, want the resolved merge %s (subject %q)", short(got), short(merge), git("log", "-1", "--format=%s", got))
+	}
+	if tree, ok := stackImportedTree(ctx, repo, "tweed"); !ok || tree != git("rev-parse", f2+":tweed") {
+		t.Fatalf("imported tree = %s, want v2's", short(tree))
+	}
+	// v1 is in the history and is exactly where the last MARKER stood.
+	if stackTargetTaken(ctx, repo, "tweed", f1) {
+		t.Fatal("a repin back to the sync before the resolved merge passed as a merge already made")
+	}
+	if stackTargetTaken(ctx, repo, "tweed", f0) {
+		t.Fatal("a repin further back passed as a merge already made")
+	}
+	if !stackTargetTaken(ctx, repo, "tweed", f2) {
+		t.Fatal("the resolved merge itself was not recognised")
+	}
+
+	// Work on top moves HEAD off the merge and changes none of the above.
+	git("commit", "-q", "--allow-empty", "-m", "tweed: after")
+	if got := stackImportCommit(ctx, repo, "tweed"); got != merge {
+		t.Fatalf("last sync after a later commit = %s, want %s", short(got), short(merge))
+	}
+	if stackTargetTaken(ctx, repo, "tweed", f1) || !stackTargetTaken(ctx, repo, "tweed", f2) {
+		t.Fatal("a later commit changed which targets count as taken")
+	}
+
+	// A sync that made no merge — a repin backwards is recorded as a plain
+	// commit under a marker subject — is newer than the resolved merge and
+	// has only its subject to be known by. It wins, with its own tree as the
+	// baseline, or the next pull forward would find its target in the
+	// history already and skip the directory replace the repin undid.
+	if err := os.WriteFile(filepath.Join(root, "tweed", "src", "a.cs"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("commit", "-qam", "stack: pull tweed @ "+f1[:8])
+	repin := git("rev-parse", "HEAD")
+	if got := stackImportCommit(ctx, repo, "tweed"); got != repin {
+		t.Fatalf("last sync after a repin recorded without a merge = %s, want %s", short(got), short(repin))
+	}
+	if tree, ok := stackImportedTree(ctx, repo, "tweed"); !ok || tree != git("rev-parse", repin+":tweed") {
+		t.Fatalf("imported tree after the repin = %s, want the repin's own", short(tree))
+	}
+	if stackTargetTaken(ctx, repo, "tweed", f2) {
+		t.Fatal("after a repin backwards, the newer target must go through the replace guard again")
+	}
+}
+
+// A history with no merge of the prefix left in it — squashed past rig's own
+// commits, say — has only the subject to go by, and keeps it.
+func TestStackImportCommitFallsBackToSubject(t *testing.T) {
+	ctx := context.Background()
+	root := inTempStackspace(t, "")
+	git := func(args ...string) string { return strings.TrimSpace(mustGitStack(t, root, args...)) }
+	git("config", "user.email", "t@t")
+	git("config", "user.name", "t")
+	if err := os.MkdirAll(filepath.Join(root, "tweed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"README.md", "tweed/a.cs"} {
+		if err := os.WriteFile(filepath.Join(root, f), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", "-A")
+	git("commit", "-qm", "stack: import tweed @ 0123abcd")
+	marker := git("rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "tweed: later")
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stackImportCommit(ctx, repo, "tweed"); got != marker {
+		t.Fatalf("import commit = %s, want the marker %s", short(got), short(marker))
+	}
+	if tree, ok := stackImportedTree(ctx, repo, "tweed"); !ok || tree != git("rev-parse", marker+":tweed") {
+		t.Fatalf("imported tree = %s, want the marker's own", short(tree))
+	}
 }

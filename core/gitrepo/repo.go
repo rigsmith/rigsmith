@@ -714,6 +714,35 @@ func (r *Repo) MergeBase(ctx context.Context, a, b string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// Commit is one entry of a history walk: the commit, its parents in order
+// (a merge has more than one), and its subject line.
+type Commit struct {
+	Hash    string
+	Parents []string
+	Subject string
+}
+
+// FirstParentCommits walks rev's first-parent line, newest first — the
+// commits made on a branch itself, as opposed to the ones it took in with
+// somebody else's history, which sit behind second parents.
+func (r *Repo) FirstParentCommits(ctx context.Context, rev string) ([]Commit, error) {
+	out, err := runGit(ctx, r.Dir, "log", "--first-parent", "--format=%H %P%x00%s%x00", rev)
+	if err != nil {
+		return nil, err
+	}
+	// Records alternate: "hash parents…", then the subject, per commit.
+	var commits []Commit
+	parts := strings.Split(out, "\x00")
+	for i := 0; i+1 < len(parts); i += 2 {
+		f := strings.Fields(parts[i])
+		if len(f) == 0 {
+			continue
+		}
+		commits = append(commits, Commit{Hash: f[0], Parents: f[1:], Subject: parts[i+1]})
+	}
+	return commits, nil
+}
+
 // TopLevelNames lists the entries directly under a revision's root tree.
 func (r *Repo) TopLevelNames(ctx context.Context, rev string) ([]string, error) {
 	// -z: a name with a space in it is one entry, and nothing gets quoted.
