@@ -32,6 +32,7 @@ rig stack pull some-lib              # take that movement
 rig stack propose some-lib read-timeout -m "Fix the read timeout"   # ALL of some-lib's changes → stack/read-timeout
 rig stack propose some-lib read-timeout --from read-timeout         # ...or one topic's tree (stack-pr-read-timeout); root it on the import, or it carries its parent's fixes too
 rig stack push my-app                # a repo you own: its own branch, history intact
+rig stack pack some-lib              # its packages, built here — a bare checkout of a proposed branch cannot
 rig stack propose some-lib read-timeout --dry-run   # the commit and fork branch that would go; touches no remote
 rig stack push my-app --dry-run      # the target, branch and commits that would go; touches no remote
 rig stack seed ../rigstack-acme      # portable seed; the menu suggests a path outside enclosing repos

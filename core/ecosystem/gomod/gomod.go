@@ -234,6 +234,18 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		env = req.BaseEnv()
 		note = ""
 	}
+	// Say where to write, rather than assuming the caller was handed goreleaser's
+	// own dist directory. The release pipeline passes exactly that, so this
+	// changes nothing for it; a caller that asked for somewhere else — `rig stack
+	// pack --out` — previously had goreleaser write to <repo>/dist while the
+	// collection below read the empty directory it asked for, and reported a
+	// successful build as producing nothing.
+	//
+	// Appended before the dry-run message is built, so intent still matches
+	// execution exactly.
+	if req.OutputDir != "" {
+		args = append(args, "--dist", req.OutputDir)
+	}
 	if req.DryRun {
 		return plugin.ArtifactsResponse{Message: "dry-run: would run goreleaser " + strings.Join(args, " ") + note}, nil
 	}
@@ -243,8 +255,8 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	if _, _, err := runCmd(ctx, req.RepoRoot, env, "goreleaser", args...); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("goreleaser: %w", err)
 	}
-	// goreleaser writes to its configured dist dir (default <repo>/dist); the
-	// release pipeline passes that as OutputDir, so collect from there.
+	// --dist above pointed goreleaser at OutputDir, so that is where the assets
+	// are.
 	arts, err := collectDist(req.OutputDir)
 	if err != nil {
 		return plugin.ArtifactsResponse{}, err

@@ -56,6 +56,7 @@ rig stack status / pull [repo]              # what upstream did, where each topi
 rig stack propose some-lib read-timeout        # ALL of some-lib's changes → stack/read-timeout, PR-ready
 rig stack propose some-lib read-timeout --from read-timeout   # ...or one topic's tree — root it on the import, or it carries its parent's fixes too
 rig stack push my-app                       # → your own repo, fast-forwarded, history intact
+rig stack pack some-lib                     # its packages, built here where siblings resolve from source
 rig stack propose some-lib read-timeout --dry-run   # what would go to your fork, touching nothing
 rig stack push my-app --dry-run             # what would go — target, branch, commits — touching no remote
 ```

@@ -123,6 +123,7 @@ rig stack pull [repo]                  # take upstream's new commits (all repos 
 rig stack send <repo> <new-branch>     # ALL that repo's changes → a branch on the fork
 rig stack propose <repo> <b> --from <topic>  # ...or one topic branch (needs trackBranch)
 rig stack init                         # scaffold the manifest; run again to import
+rig stack pack <repo>                  # build that member's packages HERE (overlay in effect)
 rig stack doctor --fix                 # install the josh engine if missing
 ```
 
@@ -132,6 +133,10 @@ git top level, or directories that match its `repos` keys. If so:
 - **Commit across projects freely.** That is the point — one commit may touch
   `pty-core/` and `term-control/` together. Do not split it "so each repo gets
   its own commit"; `send` does that split for you, correctly.
+- **Never `dotnet pack` / `npm pack` a member by hand, and never from a checkout
+  of a proposed branch.** Cross-member references resolve through the build
+  overlay, which only exists here; a bare checkout's restore fails, sometimes
+  with no message at all. Use `rig stack pack <repo>`.
 - **Never `git push` from the workspace**, and never add a remote to it. It
   holds several rewritten upstream histories fused together. Work leaves through
   `rig stack propose` (a fork you contribute to) or `rig stack push` (a repo of
