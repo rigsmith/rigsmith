@@ -253,7 +253,7 @@ func (r gitRepo) unresolvedPlanState(ctx context.Context) (s mergePlanState, err
 }
 
 // Resolve destination parents before writing, including linked-worktree Git
-// metadata outside the checkout. Cooperative ownership excludes parent swaps.
+// metadata and all registered checkouts. Cooperative ownership excludes parent swaps.
 func (r gitRepo) planDestination(ctx context.Context, dest string) (string, error) {
 	parent, err := filepath.EvalSymlinks(filepath.Dir(dest))
 	if err != nil {
@@ -261,6 +261,20 @@ func (r gitRepo) planDestination(ctx context.Context, dest string) (string, erro
 	}
 	dest = filepath.Join(parent, filepath.Base(dest))
 	roots := []string{r.dir}
+	// Use the isolated, bounded Git runner and NUL records so unusual checkout
+	// names cannot escape the guard through porcelain quoting or line breaks.
+	worktrees, err := r.run(ctx, nil, "worktree", "list", "--porcelain", "-z")
+	if err != nil {
+		return "", err
+	}
+	for _, field := range strings.Split(worktrees, "\x00") {
+		if root, ok := strings.CutPrefix(field, "worktree "); ok {
+			if !filepath.IsAbs(root) {
+				return "", ErrInvalid
+			}
+			roots = append(roots, root)
+		}
+	}
 	for _, args := range [][]string{{"rev-parse", "--absolute-git-dir"}, {"rev-parse", "--git-common-dir"}} {
 		root, err := r.run(ctx, nil, args...)
 		if err != nil {

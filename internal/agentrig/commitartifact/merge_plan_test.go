@@ -252,15 +252,20 @@ func TestPlanUnresolvedMergeRefusesUnsafeDestinations(t *testing.T) {
 func TestPlanUnresolvedMergeLinkedWorktree(t *testing.T) {
 	r, original, _ := unresolvedMergeFixture(t, "sha1")
 	linked := filepath.Join(t.TempDir(), "linked")
+	sibling := filepath.Join(t.TempDir(), "sibling checkout")
+	mustRun(t, r, "", "worktree", "add", "--detach", sibling, original)
 	mustRun(t, r, "", "worktree", "add", "--detach", linked, original)
 	worktree := r
 	worktree.dir = linked
 	if _, err := worktree.run(t.Context(), nil, "merge", "--no-commit", "incoming"); !gitExited(err, 1) {
 		t.Fatal("expected linked conflict", err)
 	}
-	for _, dest := range []string{filepath.Join(r.dir, ".git", "plan"), filepath.Join(linked, "plan")} {
+	for _, dest := range []string{filepath.Join(r.dir, ".git", "plan"), filepath.Join(r.dir, "plan"), filepath.Join(linked, "plan"), filepath.Join(sibling, "plan")} {
 		if _, err := PlanUnresolvedMerge(t.Context(), linked, dest, mergePlanPolicy(t)); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("accepted canonical destination %s: %v", dest, err)
+		}
+		if _, err := os.Stat(dest); !os.IsNotExist(err) {
+			t.Fatal("wrote output into a registered worktree", dest, err)
 		}
 	}
 	if _, err := PlanUnresolvedMerge(t.Context(), linked, filepath.Join(t.TempDir(), "plan"), mergePlanPolicy(t)); err != nil {

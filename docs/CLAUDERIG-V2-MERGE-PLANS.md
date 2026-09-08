@@ -12,7 +12,8 @@ There is no end-user changeset for this internal planning foundation.
 directory, and vendor-supplied content resolution, validation and audit callbacks.
 The caller holds the cooperative staging lease throughout. The output directory's
 parent must exist; the output must not exist or overlap the checkout, its Git
-directory, or its shared Git directory (including linked worktrees). Destination
+directory, its shared Git directory, or any other registered checkout. An
+unavailable registered checkout fails closed. Destination
 parent symlinks are resolved before this check. Arbitrary concurrent filesystem
 writers and parent swaps outside the lease contract are not supported.
 
