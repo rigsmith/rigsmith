@@ -1,13 +1,17 @@
 package gitrepo
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // HTTPAuth is an HTTP Basic credential for a single git invocation, scoped to
@@ -29,6 +33,11 @@ type HTTPAuth struct {
 // env returns the GIT_CONFIG_* pairs that add the Authorization header for this
 // invocation, appended after any the caller's environment already carries so a
 // user who sets GIT_CONFIG_COUNT for their own reasons does not lose it.
+//
+// Env is the same thing for a caller outside this package, which needs it to
+// hand the credential to a child process that runs git itself.
+func (a *HTTPAuth) Env() []string { return a.env() }
+
 func (a *HTTPAuth) env() []string {
 	if a == nil || a.Password == "" {
 		return nil
@@ -49,13 +58,29 @@ func (a *HTTPAuth) env() []string {
 	}
 }
 
-// CredentialFor asks git's own credential helpers for the stored credential for
-// remoteURL, returning nil when none is configured.
+// ghLookup is how the GitHub CLI is asked for a credential. A variable so tests
+// can take gh out of the picture: several of them assert what git's own helper
+// answered, and on a machine that is logged into gh the real binary would answer
+// first and they would be testing nothing.
+var ghLookup = ghCredential
+
+// CredentialFor resolves the credential for remoteURL, asking the GitHub CLI
+// first and git's own credential helpers second, and returning nil when neither
+// has one.
 //
-// Going through `git credential fill` rather than reading a token from the
-// environment means whatever the user already set up — the macOS keychain, the
-// GitHub CLI's helper, Git Credential Manager — is what answers, and no new
-// secret has to be stored anywhere for rig's benefit.
+// gh goes first because the two can disagree and only one of them is
+// maintained. `gh auth login` keeps its token current and scoped; a helper's
+// stored entry is whatever was written the last time something authenticated —
+// on a machine where that is an older token, it still authenticates, and it
+// still cannot read a private repo. josh answers a request it cannot authorise
+// with an empty history rather than a refusal, so preferring the stale
+// credential does not fail the fetch: it imports nothing and calls it success.
+// Asking gh first is what keeps the good token from losing to the old one.
+//
+// Falling back to `git credential fill` means whatever the user already set up —
+// the macOS keychain, Git Credential Manager — still answers when gh is absent
+// or knows nothing about the host, and no new secret has to be stored anywhere
+// for rig's benefit.
 //
 // Terminal prompting is disabled: this is a speculative lookup on a path that
 // works anonymously for a public remote, so a missing credential is an answer
@@ -68,11 +93,59 @@ func CredentialFor(ctx context.Context, remoteURL string) (*HTTPAuth, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, nil // ssh and friends carry their own credentials
 	}
-	// Describe the remote to git the way git would describe it to itself. A
-	// hand-split host keeps any userinfo attached, and helpers do not match
-	// "alice@example.com" against credentials stored for "example.com"; omitting
-	// the username and path loses entries scoped to either, which is how
-	// credential.useHttpPath is configured to work.
+	query := credentialQuery(u)
+
+	// Memoized for the life of the process. A stack operation asks for the same
+	// host several times — ls-remote to resolve the tip, then the fetch — and
+	// each miss is two subprocesses, one of which may unlock a keyring. rig
+	// commands are short-lived, so a credential rotated mid-run is not a case
+	// worth invalidating for.
+	if v, ok := credCache.Load(query); ok {
+		return v.(*HTTPAuth).clone(), nil
+	}
+	a := resolveCredential(ctx, query)
+	credCache.Store(query, a)
+	// A copy per caller: callers set URLPrefix to scope the header to their own
+	// remote, and handing out the cached pointer would let one caller's scope
+	// follow the credential into the next one's request.
+	return a.clone(), nil
+}
+
+// credCache maps a credential-helper query to what answered it, or to a typed
+// nil when nothing did — a miss is worth remembering too, since the lookup that
+// found nothing costs the same as the one that found something.
+var credCache sync.Map
+
+func (a *HTTPAuth) clone() *HTTPAuth {
+	if a == nil {
+		return nil
+	}
+	c := *a
+	return &c
+}
+
+// resetCredentialCache drops what has been resolved so far. For tests, which
+// change the configured helper between cases and would otherwise be answered
+// with the previous case's credential.
+func resetCredentialCache() { credCache = sync.Map{} }
+
+func resolveCredential(ctx context.Context, query string) *HTTPAuth {
+	if a := ghLookup(ctx, query); a != nil {
+		return a
+	}
+	out, err := runGitStdin(ctx, "", query, []string{"GIT_TERMINAL_PROMPT=0"}, "credential", "fill")
+	if err != nil {
+		return nil // no helper, or none of them knows this remote
+	}
+	return parseCredential(out)
+}
+
+// credentialQuery describes the remote to a credential helper the way git would
+// describe it. A hand-split host keeps any userinfo attached, and helpers do not
+// match "alice@example.com" against credentials stored for "example.com";
+// omitting the username and path loses entries scoped to either, which is how
+// credential.useHttpPath is configured to work.
+func credentialQuery(u *url.URL) string {
 	var q strings.Builder
 	fmt.Fprintf(&q, "protocol=%s\nhost=%s\n", u.Scheme, u.Host)
 	if user := u.User.Username(); user != "" {
@@ -82,11 +155,38 @@ func CredentialFor(ctx context.Context, remoteURL string) (*HTTPAuth, error) {
 		fmt.Fprintf(&q, "path=%s\n", p)
 	}
 	q.WriteString("\n")
+	return q.String()
+}
 
-	out, err := runGitStdin(ctx, "", q.String(), []string{"GIT_TERMINAL_PROMPT=0"}, "credential", "fill")
-	if err != nil {
-		return nil, nil // no helper, or none of them knows this remote
+// ghCredential asks the GitHub CLI for the credential it holds for this host,
+// over the same helper protocol `gh auth setup-git` wires into git — so a user
+// who never ran that command still gets the token their `gh auth status` says
+// they have.
+//
+// Every failure is the same answer: gh not installed, not logged in, or logged
+// in to some other forge. It exits 0 with no output for a host it does not know,
+// which parseCredential reports as nothing found.
+func ghCredential(ctx context.Context, query string) *HTTPAuth {
+	if _, err := exec.LookPath("gh"); err != nil {
+		return nil
 	}
+	// Bounded: this runs on the way to a fetch that has its own deadline, and a
+	// gh that hangs on a locked keyring would otherwise hang the pull with it.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "auth", "git-credential", "get")
+	cmd.Stdin = strings.NewReader(query)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return nil
+	}
+	return parseCredential(out.String())
+}
+
+// parseCredential reads a credential helper's reply. nil when there is no
+// password in it, which is how both callers say "nothing found".
+func parseCredential(out string) *HTTPAuth {
 	a := &HTTPAuth{}
 	for _, line := range strings.Split(out, "\n") {
 		// Only the line ending is noise. A value's own leading or trailing
@@ -104,7 +204,7 @@ func CredentialFor(ctx context.Context, remoteURL string) (*HTTPAuth, error) {
 		}
 	}
 	if a.Password == "" {
-		return nil, nil
+		return nil
 	}
-	return a, nil
+	return a
 }

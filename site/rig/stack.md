@@ -870,13 +870,27 @@ filter for `init` and `pull`, and `josh-filter` runs the inverse locally for
 `push`. `propose` needs neither.
 
 Private upstreams work, and need no setup. Because the engine is what talks to
-upstream, it is the engine that has to authenticate: rig asks git for the
-credential you already have for that host — the keychain, the GitHub CLI's
-helper, whatever `git credential fill` answers with — and hands it over for that
+upstream, it is the engine that has to authenticate: rig asks the GitHub CLI
+first, then git's own credential helpers — the keychain, Git Credential Manager,
+whatever `git credential fill` answers with — and hands the result over for that
 one fetch. Nothing new is stored, and rig asks for nothing of its own: terminal
 prompting is off for the lookup, so a host nothing has a credential for is
 simply answered "no". An askpass program you configured yourself can still
 appear, exactly as it would for a direct `git fetch` of the same host.
+
+`gh` goes first because the two can disagree and only one of them is maintained.
+A helper's stored entry is whatever was written the last time something
+authenticated; where that is an older token it still authenticates, and it still
+cannot read a private repo.
+
+The credential reaches every step that talks to the forge, not just the one
+through the engine: `ls-remote` resolves the tip before the engine starts, and
+the engine's own `git fetch` of upstream is a separate process that authenticates
+for itself. Miss either and the import fails — and it fails *quietly*, because
+the engine answers a fetch it could not authorise with an empty history rather
+than a refusal. An import whose fetch carries no tree is now refused outright
+rather than recorded as a successful import of nothing. If you see that error,
+`gh auth status` is the first thing to check.
 
 rig owns the binaries so you do not have to. `rig stack doctor --fix` fetches
 verified builds for your platform — built and published by

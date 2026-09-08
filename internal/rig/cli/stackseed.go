@@ -416,7 +416,7 @@ func stackImportFromFork(ctx context.Context, repo *gitrepo.Repo, m *stackManife
 		// different answers: the first means the work has moved on, the
 		// second must not quietly become "rebuild without it".
 		ref := "refs/heads/" + branch
-		found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(m.Repos[name].Fork), ref)
+		found, err := repo.LsRemoteRefs(ctx, stackRemoteURL(m.Repos[name].Fork), stackAuthFor(ctx, m.Repos[name].Fork), ref)
 		if err != nil {
 			return "", false, err
 		}

@@ -28,9 +28,31 @@ func (r *Repo) FetchMergeUnrelated(ctx context.Context, remote, branch, msg stri
 }
 
 func (r *Repo) fetchMerge(ctx context.Context, remote, branch string, allowUnrelated bool, msg string, auth *HTTPAuth) (conflicted bool, err error) {
-	if _, err := runGitStdin(ctx, r.Dir, "", auth.env(), "fetch", remote, branch); err != nil {
+	if err := r.FetchRef(ctx, remote, branch, auth); err != nil {
 		return false, err
 	}
+	return r.mergeFetchHead(ctx, allowUnrelated, msg)
+}
+
+// FetchRef fetches remote/branch and stops there, leaving FETCH_HEAD for the
+// caller to look at before deciding whether to merge it.
+//
+// Splitting the two is what lets an import reject a fetch that arrived with
+// nothing in it: once the merge has run, that failure is already a commit, and
+// unwinding it means a reset the caller has to get exactly right.
+func (r *Repo) FetchRef(ctx context.Context, remote, branch string, auth *HTTPAuth) error {
+	_, err := runGitStdin(ctx, r.Dir, "", auth.env(), "fetch", remote, branch)
+	return err
+}
+
+// MergeFetchHeadUnrelated merges what FetchRef left in FETCH_HEAD, for histories
+// that share no common ancestor. Same contract as FetchMergeUnrelated, minus the
+// fetch the caller has already done.
+func (r *Repo) MergeFetchHeadUnrelated(ctx context.Context, msg string) (conflicted bool, err error) {
+	return r.mergeFetchHead(ctx, true, msg)
+}
+
+func (r *Repo) mergeFetchHead(ctx context.Context, allowUnrelated bool, msg string) (conflicted bool, err error) {
 	args := []string{"merge", "--no-edit"}
 	if allowUnrelated {
 		// --no-ff too: an import must land as a merge commit, and a repo
