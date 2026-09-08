@@ -127,6 +127,14 @@ URL). These also appear on the script `ctx` (`ctx.version`, `ctx.lastVersion`,
   (it's config, not a secret) — ideal for paths reused across steps.
   `${env.NAME}` inside it expands from the release environment, exactly as it
   does in a step's command, so a value never reaches the shell unexpanded.
+  Commands run from the repository root, so a relative path in a literal is
+  relative to that root — for the shell. A tool that resolves paths its own
+  way sees something else: NuGet resolves `-p:RestoreSources` and
+  `-p:RestoreAdditionalProjectSources` against the *project file*, so
+  `-p:RestoreAdditionalProjectSources=${vars.out}` points under the project's
+  own directory and fails with NU1301 the first time restore actually opens
+  the source. Hand such a tool an absolute path — `$PWD/${vars.out}` — the
+  portable shell sets `PWD` to the repository root.
 - **Captured** — `{ "command": "…" }`. The command's trimmed stdout becomes the
   value and is **masked** from logs. Add `"lazy": true` to defer it until first
   use (fresh, time-limited secrets like an OTP). A capture that differs by
