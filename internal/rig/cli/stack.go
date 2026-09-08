@@ -293,6 +293,12 @@ func newStackStatusCmd() *cobra.Command {
 					state = "upstream unreachable — " + stackFirstLine(err)
 				case m.cursor(name) == "":
 					state = "not imported — run `rig stack init`"
+				case !stackPrefixPresent(ctx, repo, name):
+					// A cursor with no directory under it: an import that
+					// recorded a revision it never brought in, or a removal
+					// that left the manifest entry. "up to date" would be
+					// what the cursor says, and the tree says otherwise.
+					state = fmt.Sprintf("cursor at %s but no %s/ directory — `rig stack setup` reconstitutes it", short(m.cursor(name)), name)
 				case tip != m.cursor(name):
 					state = fmt.Sprintf("upstream moved (%s) — `rig stack pull %s`", short(tip), name)
 				case pin.pinned():
@@ -418,6 +424,14 @@ func newStackPullCmd() *cobra.Command {
 					return fmt.Errorf("pulling %s: %w", name, err)
 				}
 				if tip == m.cursor(name) {
+					// The cursor is the only thing a pull consults, and one
+					// left over a missing directory would be reported as
+					// current forever. init is the verb that rebuilds a
+					// prefix at its cursor, so say so rather than "nothing".
+					if !stackPrefixPresent(ctx, repo, name) {
+						fmt.Fprintf(cmd.OutOrStdout(), "%s: cursor at %s but no %s/ directory — `rig stack setup` reconstitutes it\n", name, short(tip), name)
+						continue
+					}
 					fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to pull\n", name)
 					continue
 				}
@@ -869,7 +883,7 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 		tip = base
 	}
 	host, path := stackSplitHost(source)
-	// Two scopings of the same credential, because two different processes
+	// Two scopes of the same credential, because two different processes
 	// authenticate with it. This one is for the engine's own fetch of upstream,
 	// so it is scoped to the forge; the one below is for our fetch from the
 	// engine, scoped to the loopback proxy.
@@ -1428,7 +1442,7 @@ func newStackSendCmd() *cobra.Command {
 			// plain push is refused as non-fast-forward — which would make it
 			// impossible to update an open PR. Replace under a lease instead, so
 			// the push still fails if someone else moved the branch meanwhile.
-			if err := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), commit, "refs/heads/"+branch); err != nil {
+			if err := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), commit, "refs/heads/"+branch, stackAuthFor(ctx, r.Fork)); err != nil {
 				return err
 			}
 			// Kept under a local ref as well: this commit's tree is what the
@@ -1452,7 +1466,7 @@ func newStackSendCmd() *cobra.Command {
 				if ierr != nil {
 					return ierr
 				}
-				if ierr := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), intCommit, "refs/heads/"+r.TrackBranch); ierr != nil {
+				if ierr := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), intCommit, "refs/heads/"+r.TrackBranch, stackAuthFor(ctx, r.Fork)); ierr != nil {
 					return fmt.Errorf("the proposal reached %s:%s, but %s could not be updated: %w\na rebuild would be missing what this pull request left out — push it before seeding", r.Fork, branch, r.TrackBranch, ierr)
 				}
 				// Recorded like the proposal ref, so status and seed can tell
@@ -1676,7 +1690,7 @@ func newStackPushCmd() *cobra.Command {
 			// No force and no lease: a push that is not a fast-forward means the
 			// filtered history is not a continuation of upstream's, and overwriting
 			// is never the right answer to that.
-			if err := repo.PushRef(ctx, upstreamURL, head, "refs/heads/"+branch); err != nil {
+			if err := repo.PushRef(ctx, upstreamURL, head, "refs/heads/"+branch, stackAuthForURL(ctx, upstreamURL)); err != nil {
 				return fmt.Errorf("pushing %s to %s:%s: %w", name, r.Upstream, branch, err)
 			}
 
