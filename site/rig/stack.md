@@ -909,6 +909,15 @@ particular can fail without logging why.
 the packages the bare checkout produces, which is the thing being avoided —
 and nothing downstream can tell the difference.
 
+The build runs with the **stackspace** as its repository root — that is what
+makes the overlay apply, and what lets a member's projects see the
+`Directory.Build.props` and workspace manifests that sit above them. An adapter
+that looks for its own config at the repository root therefore looks at the
+stackspace root: a Go member's `.goreleaser.yaml` under `<member>/` is not
+found, and such a member reports `skipped` rather than building. Go modules
+ship via git tag and have no overlay to benefit from, so this costs nothing
+today — but it is why `pack` is about the ecosystems that redirect.
+
 What it lists is what appeared in the output directory, not what the build
 predicted: a project that computes its version at build time (MinVer and
 friends) is discovered with no version at all, so a predicted file name would
