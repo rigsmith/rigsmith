@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,8 +88,19 @@ func TestStageUnresolvedMergeWithClaudePolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := git(t, root, "show", ":"+path); got != strings.TrimSpace(base+ours+theirs) {
-				t.Fatalf("lost staged append %q", got)
+			show := exec.CommandContext(t.Context(), "git", "show", ":"+path)
+			show.Dir = root
+			staged, err := show.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			merged, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []byte(base + ours + theirs)
+			if !bytes.Equal(staged, want) || !bytes.Equal(merged, want) {
+				t.Fatalf("lost append bytes: staged=%q worktree=%q", staged, merged)
 			}
 			if got := git(t, root, "write-tree"); got != tree {
 				t.Fatal("wrong staged tree")
