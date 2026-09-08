@@ -105,37 +105,69 @@ func TestCaptureArtifactFinishesStagedMergeBeforeRetainingSeed(t *testing.T) {
 	}
 }
 
-func TestCaptureArtifactRetriesAfterStagedMergeAndSourceFailure(t *testing.T) {
-	req, _, original, _ := stagedCaptureFixture(t, "resolved")
-	source := filepath.Join(req.Sync.Machine.Home, ".claude", "projects", "-workspace-acme", "s.jsonl")
-	data, err := os.ReadFile(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(source); err != nil {
-		t.Fatal(err)
-	}
-	ref, err := (service.Service{}).CaptureArtifact(t.Context(), req)
-	if !errors.Is(err, service.ErrCaptureSourceUnavailable) || ref != "" {
-		t.Fatalf("captured missing source: %s %v", ref, err)
-	}
-	head, err := commitartifact.SettledHead(t.Context(), req.Sync.StagingDir)
-	if err != nil || head == original || head == "" {
-		t.Fatalf("lost completed merge: %s %v", head, err)
-	}
-	if sealed, err := filepath.Glob(filepath.Join(req.Store.Dir, "*.capture")); err != nil || len(sealed) != 0 {
-		t.Fatalf("sealed incomplete capture: %v %v", sealed, err)
-	}
-	if err := os.WriteFile(source, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	ref, err = (service.Service{}).CaptureArtifact(t.Context(), req)
-	if err != nil || git(t, req.Sync.StagingDir, "rev-parse", "HEAD") != head {
-		t.Fatalf("retry replaced recovered merge: %s %v", ref, err)
-	}
-	meta, err := req.Store.Metadata(t.Context(), ref)
-	if err != nil || meta.BaseReference != head {
-		t.Fatalf("wrong retry ancestry: %+v %v", meta, err)
+func TestCaptureArtifactRetriesAfterStagedMergeFailure(t *testing.T) {
+	for _, kind := range []string{"source", "seed-store"} {
+		t.Run(kind, func(t *testing.T) {
+			req, _, original, incoming := stagedCaptureFixture(t, "resolved")
+			source := filepath.Join(req.Sync.Machine.Home, ".claude", "projects", "-workspace-acme", "s.jsonl")
+			data, err := os.ReadFile(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seedDir := commitartifact.SeedStore(req.Store).Dir
+			if kind == "source" {
+				if err := os.Remove(source); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.MkdirAll(req.Store.Dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(seedDir, []byte("blocked seed store"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ref, err := (service.Service{}).CaptureArtifact(t.Context(), req)
+			if err == nil || ref != "" {
+				t.Fatalf("captured despite %s failure: %s %v", kind, ref, err)
+			}
+			if kind == "source" && !errors.Is(err, service.ErrCaptureSourceUnavailable) {
+				t.Fatal(err)
+			}
+			head, err := commitartifact.SettledHead(t.Context(), req.Sync.StagingDir)
+			if err != nil || head == original || head == "" {
+				t.Fatalf("lost completed merge: %s %v", head, err)
+			}
+			if parents := git(t, req.Sync.StagingDir, "show", "-s", "--format=%P", head); parents != original+" "+incoming {
+				t.Fatal("lost merge parents", parents)
+			}
+			if sealed, err := filepath.Glob(filepath.Join(req.Store.Dir, "*.capture")); err != nil || len(sealed) != 0 {
+				t.Fatalf("sealed incomplete capture: %v %v", sealed, err)
+			}
+			if kind == "source" {
+				if err := os.WriteFile(source, data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if got, err := os.ReadFile(seedDir); err != nil || string(got) != "blocked seed store" {
+					t.Fatalf("changed blocked seed store: %s %v", got, err)
+				}
+				if err := os.Remove(seedDir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ref, err = (service.Service{}).CaptureArtifact(t.Context(), req)
+			if err != nil || git(t, req.Sync.StagingDir, "rev-parse", "HEAD") != head {
+				t.Fatalf("retry replaced recovered merge: %s %v", ref, err)
+			}
+			meta, err := req.Store.Metadata(t.Context(), ref)
+			if err != nil || meta.BaseReference != head || meta.SeedReference == "" {
+				t.Fatalf("wrong retry ancestry: %+v %v", meta, err)
+			}
+			if err := commitartifact.SeedStore(req.Store).Verify(t.Context(), meta.SeedReference); err != nil {
+				t.Fatal("retry seed not retained", err)
+			}
+		})
 	}
 }
 
