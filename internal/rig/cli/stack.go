@@ -928,7 +928,8 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// replace guard.
 	preHead, preHeadErr := repo.Head(ctx)
 
-	if err := repo.FetchRef(ctx, proxy.url(path, fetch, stackPrefixFilter(name)), "HEAD", auth); err != nil {
+	fetched, err := repo.FetchRef(ctx, proxy.url(path, fetch, stackPrefixFilter(name)), "HEAD", auth)
+	if err != nil {
 		if tail := proxy.tail(15); tail != "" {
 			return fmt.Errorf("%w\n--- josh-proxy log:\n%s", err, tail)
 		}
@@ -950,14 +951,14 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// exist and every later pull short-circuits on the cursor.
 	//
 	// Before the merge, so a rejected import leaves no commit to unwind.
-	want, wantErr := repo.RevParse(ctx, "FETCH_HEAD:"+name)
+	want, wantErr := repo.RevParse(ctx, fetched+":"+name)
 	if wantErr != nil {
 		return fmt.Errorf("%s: fetched %s from %s and it carried no %s/ tree\n"+
 			"if that upstream is private, the credential in use cannot read it — check `gh auth status`, then run this again",
 			name, short(fetch), source, name)
 	}
 
-	conflicted, err := repo.MergeFetchHeadUnrelated(ctx, msg)
+	conflicted, err := repo.MergeUnrelated(ctx, fetched, msg)
 	if err != nil {
 		return err
 	}
@@ -1001,7 +1002,7 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 		//
 		// Unconditional, unlike the branch below: there is no directory here, so
 		// there is nothing of the user's to discard by writing one.
-		if err := repo.ReplacePath(ctx, "FETCH_HEAD", name); err != nil {
+		if err := repo.ReplacePath(ctx, fetched, name); err != nil {
 			return fmt.Errorf("restoring %s from %s: %w", name, short(fetch), err)
 		}
 	} else if want != have && !merged {
@@ -1014,7 +1015,7 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 				"send them first, or revert them, and run this again",
 				name, short(tip), m.pin(name).describe())
 		}
-		if err := repo.ReplacePath(ctx, "FETCH_HEAD", name); err != nil {
+		if err := repo.ReplacePath(ctx, fetched, name); err != nil {
 			return fmt.Errorf("moving %s to %s: %w", name, m.pin(name).describe(), err)
 		}
 		verb = "moved"
