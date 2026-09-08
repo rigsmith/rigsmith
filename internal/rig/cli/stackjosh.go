@@ -329,6 +329,35 @@ func startJoshProxy(ctx context.Context, bin, host string, auth *gitrepo.HTTPAut
 	return nil, err
 }
 
+// joshProxyCommand is the engine's command line and environment: everything
+// about how it is started that does not involve actually starting it.
+//
+// The engine fetches upstream by spawning its own git, which inherits this
+// environment and nothing else. The Authorization header the client sends
+// gets josh as far as authorising the request; the fetch behind it is a
+// plain `git fetch` that authenticates on its own, so without the credential
+// here it falls back to whatever credential helper the machine happens to
+// have — and on a machine where gh holds the only credential, there is none.
+//
+// What that failure looks like from the client is the reason this matters:
+// josh answers with an empty history rather than an error, so the import
+// succeeds and imports nothing.
+//
+// Scoped to the upstream host, and in the environment rather than argv for
+// the same reason as everywhere else: a process listing is readable by
+// anyone on the machine, an environment is not.
+func joshProxyCommand(ctx context.Context, bin, host, local string, port int, auth *gitrepo.HTTPAuth) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, bin,
+		"--local", local,
+		"--remote", stackRemoteScheme(host)+stackHostForURL(host),
+		"--port="+strconv.Itoa(port),
+		"--no-background")
+	if env := auth.Env(); len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	return cmd
+}
+
 func startJoshProxyOnce(ctx context.Context, bin, host string, auth *gitrepo.HTTPAuth) (*joshProxy, error) {
 	port, err := freePort(ctx)
 	if err != nil {
@@ -347,28 +376,7 @@ func startJoshProxyOnce(ctx context.Context, bin, host string, auth *gitrepo.HTT
 	if err := os.MkdirAll(local, 0o700); err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, bin,
-		"--local", local,
-		"--remote", stackRemoteScheme(host)+stackHostForURL(host),
-		"--port="+strconv.Itoa(port),
-		"--no-background")
-	// The engine fetches upstream by spawning its own git, which inherits this
-	// environment and nothing else. The Authorization header the client sends
-	// gets josh as far as authorising the request; the fetch behind it is a
-	// plain `git fetch` that authenticates on its own, so without this it falls
-	// back to whatever credential helper the machine happens to have — and on a
-	// machine where gh holds the only credential, there is none.
-	//
-	// What that failure looks like from the client is the reason this matters:
-	// josh answers with an empty history rather than an error, so the import
-	// succeeds and imports nothing.
-	//
-	// Scoped to the upstream host, and in the environment rather than argv for
-	// the same reason as everywhere else: a process listing is readable by
-	// anyone on the machine, an environment is not.
-	if env := auth.Env(); len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
+	cmd := joshProxyCommand(ctx, bin, host, local, port, auth)
 	// Keep the engine's output: when a filter or fetch fails, its log is the
 	// only place that says why, and discarding it leaves the caller guessing.
 	logFile, err := os.CreateTemp("", "josh-proxy-*.log")

@@ -415,9 +415,11 @@ func (r *Repo) LogRange(ctx context.Context, base, head string) ([]LogEntry, err
 	return entries, nil
 }
 
-// PushRef pushes an arbitrary commit to a remote ref.
-func (r *Repo) PushRef(ctx context.Context, remote, commit, ref string) error {
-	_, err := runGit(ctx, r.Dir, "push", remote, commit+":"+ref)
+// PushRef pushes an arbitrary commit to a remote ref. auth, when not nil, is
+// the credential for remote — the write half of what CredentialFor resolves
+// for reads, since a fork that needs a token to read needs it to push too.
+func (r *Repo) PushRef(ctx context.Context, remote, commit, ref string, auth *HTTPAuth) error {
+	_, err := runGitStdin(ctx, r.Dir, "", auth.env(), "push", remote, commit+":"+ref)
 	return err
 }
 
@@ -427,13 +429,13 @@ func (r *Repo) PushRef(ctx context.Context, remote, commit, ref string) error {
 // re-synthesized commit replacing the one they pushed before — where a plain
 // push would be refused as non-fast-forward but a bare --force would be willing
 // to discard another person's work.
-func (r *Repo) PushRefForce(ctx context.Context, remote, commit, ref string) error {
+func (r *Repo) PushRefForce(ctx context.Context, remote, commit, ref string, auth *HTTPAuth) error {
 	// The lease needs the ref's current value: pushing to a URL leaves no
 	// remote-tracking ref for git to infer one from, so a bare
 	// --force-with-lease=<ref> would have nothing to compare and refuse the
 	// push. A ref that does not exist yet needs no lease at all — an ordinary
 	// push already fails if someone creates it first.
-	expected, err := r.lsRemoteOpt(ctx, remote, ref, nil)
+	expected, err := r.lsRemoteOpt(ctx, remote, ref, auth)
 	if err != nil {
 		return err
 	}
@@ -442,7 +444,7 @@ func (r *Repo) PushRefForce(ctx context.Context, remote, commit, ref string) err
 		args = append(args, "--force-with-lease="+ref+":"+expected)
 	}
 	args = append(args, remote, commit+":"+ref)
-	_, err = runGit(ctx, r.Dir, args...)
+	_, err = runGitStdin(ctx, r.Dir, "", auth.env(), args...)
 	return err
 }
 

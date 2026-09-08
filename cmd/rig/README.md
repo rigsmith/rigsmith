@@ -19,7 +19,8 @@ rig build --quiet        # suppress the → command echo
 
 Beyond the dev loop it manages parallel worktrees, and **stackspaces** —
 your app and the libraries you have forked, fused into one history, so a change
-can span them in a single commit while each still leaves as itself:
+can span them in a single commit while each still leaves as itself. Private
+repos need no setup beyond `gh auth login`:
 
 ```sh
 rig stack setup                      # a fresh clone: engine, members, overlay, status

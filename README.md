@@ -49,7 +49,7 @@ rig coverage --min 80 / kill / doctor / cd  # the dev-loop verbs (see cli/README
 rig copy ../snapshot [--git]                 # detached copy of the tree (skips node_modules/.git; --git keeps history)
 rig worktree new feat/x                     # sibling checkout for working on a branch alongside
 
-# your app and its forked libraries fused into one history, each still leaving as itself:
+# your app and its forked libraries fused into one history, each still leaving as itself (private repos: just `gh auth login`):
 rig stack setup                             # a fresh clone of a stackspace: engine, members, overlay
 rig stack init                              # scaffold rig.stack.jsonc; run again to import
 rig stack status / pull [repo]              # what upstream did, where each topic's PR is, and taking it

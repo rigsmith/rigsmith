@@ -167,14 +167,17 @@ func credentialQuery(u *url.URL) string {
 // in to some other forge. It exits 0 with no output for a host it does not know,
 // which parseCredential reports as nothing found.
 func ghCredential(ctx context.Context, query string) *HTTPAuth {
-	if _, err := exec.LookPath("gh"); err != nil {
+	// Resolved once and run by the path found, so what answered LookPath is
+	// what runs — not whatever a second lookup finds.
+	gh, err := exec.LookPath("gh")
+	if err != nil {
 		return nil
 	}
 	// Bounded: this runs on the way to a fetch that has its own deadline, and a
 	// gh that hangs on a locked keyring would otherwise hang the pull with it.
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "auth", "git-credential", "get")
+	cmd := exec.CommandContext(ctx, gh, "auth", "git-credential", "get")
 	cmd.Stdin = strings.NewReader(query)
 	var out bytes.Buffer
 	cmd.Stdout = &out

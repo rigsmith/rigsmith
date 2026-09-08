@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // seedEmpty creates a bare repo whose tip carries no files at all. From the
@@ -165,5 +167,52 @@ func TestStackReimportsARemovedMember(t *testing.T) {
 	}
 	if got := strings.TrimSpace(mustGitStack(t, ws, "log", "-1", "--format=%s", "--", "rig.stack.jsonc")); got == "take libfoo back" {
 		t.Error("the re-import amended the commit before it instead of making its own")
+	}
+}
+
+// A cursor with no directory under it is what the old empty-import bug left
+// behind, and what a stackspace carrying one still has. status and pull only
+// ever consulted the cursor, so both called such a member current. Neither
+// needs the engine to notice: the tip comes from ls-remote, the directory from
+// HEAD, and the hint names the verb that rebuilds it.
+func TestStackStatusAndPullNameAMissingPrefix(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "org/libfoo", "libfoo")
+	srv.bare(t, "me/libfoo")
+	tip := strings.TrimSpace(mustGitStack(t, srv.path("org/libfoo"), "rev-parse", "main"))
+
+	ws := filepath.Join(work, "stackspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "init", "-q", "-b", "main")
+	mustGitStack(t, ws, "config", "user.email", "t@t")
+	mustGitStack(t, ws, "config", "user.name", "t")
+	writeStackManifest(t, ws, fmt.Sprintf(`{
+  "repos": {
+    "libfoo": { "upstream": %q, "fork": %q, "upstreamBranch": "main" }
+  },
+  "lastSync": { "libfoo": %q }
+}`, srv.spec("org/libfoo"), srv.spec("me/libfoo"), tip))
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "manifest with a cursor and no tree")
+
+	chdir(t, ws)
+	ctx := context.Background()
+	for _, verb := range []struct {
+		name string
+		cmd  func() *cobra.Command
+	}{{"status", newStackStatusCmd}, {"pull", newStackPullCmd}} {
+		out, err := runVerbOut(ctx, verb.cmd())
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", verb.name, err, out)
+		}
+		if !strings.Contains(out, "no libfoo/ directory") || !strings.Contains(out, "rig stack setup") {
+			t.Errorf("%s should say the directory is missing and what rebuilds it, got:\n%s", verb.name, out)
+		}
+		if strings.Contains(out, "up to date") || strings.Contains(out, "nothing to pull") {
+			t.Errorf("%s called a member with no directory current:\n%s", verb.name, out)
+		}
 	}
 }
