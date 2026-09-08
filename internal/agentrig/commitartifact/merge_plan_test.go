@@ -284,3 +284,23 @@ func TestPlanUnresolvedMergeLinkedWorktree(t *testing.T) {
 		}
 	})
 }
+
+func TestMergePlanPathsOverlap(t *testing.T) {
+	root := filepath.VolumeName(t.TempDir()) + string(filepath.Separator)
+	for _, tc := range []struct {
+		name, a, b string
+		want       bool
+	}{
+		{"volume root", root, filepath.Join(root, "checkout", "plan"), true},
+		{"same path", filepath.Join(root, "checkout"), filepath.Join(root, "checkout"), true},
+		{"descendant", filepath.Join(root, "checkout"), filepath.Join(root, "checkout", "plan"), true},
+		{"sibling prefix", filepath.Join(root, "checkout"), filepath.Join(root, "checkout-plan"), false},
+		{"case alias", filepath.Join(root, "Checkout"), filepath.Join(root, "checkout", "plan"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if mergePlanPathsOverlap(tc.a, tc.b) != tc.want || mergePlanPathsOverlap(tc.b, tc.a) != tc.want {
+				t.Fatalf("incorrect overlap for %q and %q", tc.a, tc.b)
+			}
+		})
+	}
+}

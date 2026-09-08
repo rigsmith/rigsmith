@@ -291,12 +291,20 @@ func (r gitRepo) planDestination(ctx context.Context, dest string) (string, erro
 		if err != nil {
 			return "", err
 		}
-		// Fold on every host to reject ambiguous case aliases conservatively.
-		a, b := strings.ToLower(filepath.Clean(root)), strings.ToLower(filepath.Clean(dest))
-		sep := string(filepath.Separator)
-		if a == b || strings.HasPrefix(b, a+sep) || strings.HasPrefix(a, b+sep) {
+		if mergePlanPathsOverlap(root, dest) {
 			return "", ErrInvalid
 		}
 	}
 	return dest, nil
+}
+
+// Compare path components so volume roots and sibling prefixes remain distinct.
+func mergePlanPathsOverlap(a, b string) bool {
+	// Fold on every host to reject ambiguous case aliases conservatively.
+	a, b = strings.ToLower(filepath.Clean(a)), strings.ToLower(filepath.Clean(b))
+	within := func(root, path string) bool {
+		rel, err := filepath.Rel(root, path)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	}
+	return within(a, b) || within(b, a)
 }
