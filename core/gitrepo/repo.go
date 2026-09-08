@@ -541,11 +541,15 @@ func (r *Repo) lsRemoteOpt(ctx context.Context, remote, ref string, auth *HTTPAu
 // Pull fast-forwards the current branch from remote/branch. It is ff-only so a
 // non-interactive (hook) pull never creates a merge commit or leaves conflicts;
 // a non-ff divergence surfaces as an error for the caller to resolve.
+//
+// The fetched commit is named by sha, never as FETCH_HEAD: see FetchRef for
+// why a merge of FETCH_HEAD can fast-forward onto another process's fetch.
 func (r *Repo) Pull(ctx context.Context, remote, branch string) error {
-	if _, err := runGit(ctx, r.Dir, "fetch", remote, branch); err != nil {
+	fetched, err := r.FetchRef(ctx, remote, branch, nil)
+	if err != nil {
 		return err
 	}
-	_, err := runGit(ctx, r.Dir, "merge", "--ff-only", "FETCH_HEAD")
+	_, err = runGit(ctx, r.Dir, "merge", "--ff-only", fetched)
 	return err
 }
 
