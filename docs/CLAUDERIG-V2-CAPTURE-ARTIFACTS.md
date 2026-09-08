@@ -88,6 +88,11 @@ excluding Git metadata. It records HEAD and a durable seed-bundle
 reference in the archive header. Seed retention must succeed before capture can
 be acknowledged. The canonical checkout, index and refs are not changed.
 
+This exclusion is cooperative: staging writers must honor the same lease.
+The guard and copy are not an atomic snapshot against arbitrary external Git
+commands or filesystem writes that bypass it. Rechecking HEAD before sealing
+would not provide that guarantee either.
+
 Allowed source files are copied into private frozen roots before Claude's engine
 runs. These temporary inputs may contain raw transcript/config credentials, so
 the containing workspace uses private permissions and stays outside every source
