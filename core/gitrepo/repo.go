@@ -470,6 +470,19 @@ func (r *Repo) LsRemote(ctx context.Context, remote, ref string, auth *HTTPAuth)
 	return sha, nil
 }
 
+// PathInIndex reports whether the index holds anything under path.
+//
+// Not the same question as whether HEAD holds it: after ReplacePath the index
+// carries a directory HEAD has never seen, and after a removal it is HEAD that
+// still has one. What the next commit will contain is the index.
+func (r *Repo) PathInIndex(ctx context.Context, path string) (bool, error) {
+	out, err := runGit(ctx, r.Dir, "ls-files", "-z", "--", path)
+	if err != nil {
+		return false, err
+	}
+	return strings.Trim(out, "\x00") != "", nil
+}
+
 // ReplacePath makes dir's contents match what commit holds at that path,
 // deleting anything present here and absent there. Both the index and the
 // worktree are updated, so the result is ready to commit.

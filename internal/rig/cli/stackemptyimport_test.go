@@ -91,3 +91,79 @@ func TestStackImportRefusesAnEmptyFetch(t *testing.T) {
 		t.Errorf("history moved on a failed import: %s -> %s", head, now)
 	}
 }
+
+// A member that was imported, removed, and is being taken back. Its filtered
+// history is already an ancestor of this one, so the merge has nothing to do —
+// and for a long time nothing else restored the directory either: `init`
+// reported the import, wrote the cursor, and left no tree. Where the cursor was
+// absent it failed instead inside `git commit --amend --no-edit: would make it
+// empty`, amending a commit the import had no business touching.
+func TestStackReimportsARemovedMember(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") == "" {
+		t.Skip("set RIG_STACK_E2E=1 to run the stack end-to-end flow")
+	}
+	proxy, err := stackJoshProxyBin(stackJoshVersion)
+	if err != nil || stackJoshInstalled(proxy) != nil {
+		t.Skip("no josh-proxy installed; run `rig stack doctor --fix` first")
+	}
+
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "org/libfoo", "libfoo")
+	srv.bare(t, "me/libfoo")
+
+	ws := filepath.Join(work, "stackspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "init", "-q", "-b", "main")
+	mustGitStack(t, ws, "config", "user.email", "t@t")
+	mustGitStack(t, ws, "config", "user.name", "t")
+	manifest := fmt.Sprintf(`{
+  "repos": {
+    "libfoo": { "upstream": %q, "fork": %q, "upstreamBranch": "main" }
+  }
+}`, srv.spec("org/libfoo"), srv.spec("me/libfoo"))
+	writeStackManifest(t, ws, manifest)
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "manifest")
+
+	chdir(t, ws)
+	ctx := context.Background()
+
+	if err := runVerb(ctx, newStackInitCmd()); err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+	seeded := filepath.Join(ws, "libfoo", "src", "libfoo.txt")
+	if _, err := os.Stat(seeded); err != nil {
+		t.Fatalf("first import produced no tree: %v", err)
+	}
+
+	if err := runVerb(ctx, newStackRemoveCmd(), "libfoo", "--force"); err != nil {
+		t.Fatalf("rm: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(ws, "libfoo")); err == nil {
+		t.Fatal("rm left the directory behind; the test is not exercising a removal")
+	}
+
+	// rm takes the member out of the manifest too, so put it back — this is the
+	// user editing the manifest to take the project on again.
+	writeStackManifest(t, ws, manifest)
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "take libfoo back")
+
+	if err := runVerb(ctx, newStackInitCmd()); err != nil {
+		t.Fatalf("re-import: %v", err)
+	}
+	if _, err := os.Stat(seeded); err != nil {
+		t.Fatalf("re-import restored no tree: %v", err)
+	}
+	// And it has to be a commit of its own: the merge made none to fold into,
+	// so amending would have rewritten "take libfoo back".
+	if subject := strings.TrimSpace(mustGitStack(t, ws, "log", "-1", "--format=%s")); !strings.Contains(subject, "libfoo") {
+		t.Errorf("the re-import did not make its own commit; HEAD is %q", subject)
+	}
+	if got := strings.TrimSpace(mustGitStack(t, ws, "log", "-1", "--format=%s", "--", "rig.stack.jsonc")); got == "take libfoo back" {
+		t.Error("the re-import amended the commit before it instead of making its own")
+	}
+}

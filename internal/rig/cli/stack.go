@@ -978,7 +978,19 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// send them first — cannot help when the work has already been sent.
 	nowHead, nowHeadErr := repo.Head(ctx)
 	merged := preHeadErr == nil && nowHeadErr == nil && nowHead != preHead
-	if haveErr == nil && want != have && !merged {
+	if haveErr != nil {
+		// The prefix is not in HEAD at all — removed by `rig stack rm`, or an
+		// import that never produced one. Taking such a member back is the case
+		// the merge cannot serve: its filtered history is already an ancestor
+		// (it was imported once), so the merge is a no-op and nothing restores
+		// the directory the removal deleted.
+		//
+		// Unconditional, unlike the branch below: there is no directory here, so
+		// there is nothing of the user's to discard by writing one.
+		if err := repo.ReplacePath(ctx, "FETCH_HEAD", name); err != nil {
+			return fmt.Errorf("restoring %s from %s: %w", name, short(fetch), err)
+		}
+	} else if want != have && !merged {
 		// Replacing the directory discards whatever is under it, so only do it
 		// when there is nothing of the user's to discard. Their own commits would
 		// survive in the history but be stranded there, which is a quiet way to
@@ -992,16 +1004,6 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 			return fmt.Errorf("moving %s to %s: %w", name, m.pin(name).describe(), err)
 		}
 		verb = "moved"
-	}
-
-	// The cursor claims this directory holds that revision, so it cannot be
-	// written while the directory is not here. The guard above catches an empty
-	// fetch; this catches every other way the merge can leave nothing behind. It
-	// is the one that has to hold: a cursor over a missing prefix makes `status`
-	// report the member up to date and every later pull short-circuit on it, and
-	// nothing after that ever looks at the tree again.
-	if _, err := repo.RevParse(ctx, "HEAD:"+name); err != nil {
-		return fmt.Errorf("%s: merging %s left no %s/ directory, so there is nothing for a cursor to point at", name, short(fetch), name)
 	}
 
 	// The cursor is written to disk before it can be committed, so keep the
@@ -1022,10 +1024,43 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 		delete(m.LastSync, name)
 		return err
 	}
+	// The cursor claims this directory holds that revision, so it cannot be
+	// written while the directory is not going to be there. Against the index
+	// rather than HEAD: a replace above has just written a tree HEAD has never
+	// seen, and the index is what the commit below will carry.
+	//
+	// The guard after the fetch catches an empty upstream; this catches every
+	// other way the prefix can end up absent. It is the one that has to hold — a
+	// cursor over a missing directory makes `status` report the member up to
+	// date and every later pull short-circuit on it, and nothing after that ever
+	// looks at the tree again.
+	if present, err := repo.PathInIndex(ctx, name); err != nil || !present {
+		restore()
+		delete(m.LastSync, name)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("%s: importing %s left no %s/ directory, so there is nothing for a cursor to point at", name, short(fetch), name)
+	}
 	// Amend the cursor edit into the merge commit, so one commit carries both
 	// the history and the fact that it was synced — the reviewable unit a
 	// cron-driven pull PR is built from.
-	if _, err := repo.CommitAmendNoEdit(ctx); err != nil {
+	//
+	// Only when there is a merge commit to amend. Where the merge did nothing —
+	// a repin backwards, or a removed member whose filtered history is already
+	// an ancestor — amending would rewrite whatever the user committed last, and
+	// git refuses outright when the result would be empty. That refusal is the
+	// `--amend --no-edit: would make it empty` dead end: nothing was wrong with
+	// the import, only with what it tried to fold itself into.
+	commit := func() error {
+		if merged {
+			_, err := repo.CommitAmendNoEdit(ctx)
+			return err
+		}
+		_, err := repo.Commit(ctx, msg)
+		return err
+	}
+	if err := commit(); err != nil {
 		restore()
 		delete(m.LastSync, name)
 		return err
