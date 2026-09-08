@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,25 +43,50 @@ func (r *Repo) fetchMerge(ctx context.Context, remote, branch string, allowUnrel
 // with nothing in it: once the merge has run, that failure is already a commit,
 // and unwinding it means a reset the caller has to get exactly right.
 //
-// The commit comes back as a sha rather than as FETCH_HEAD because FETCH_HEAD is
-// one mutable file per repository. A second fetch — another rig process working
-// in the same stackspace — overwrites it, and a caller that fetches, inspects,
-// and then merges "FETCH_HEAD" can merge the other fetch's commit while
-// recording its own as the cursor. Resolving once, here, means everything after
-// this point names something that cannot move.
+// The commit comes back as a sha, and it is never read from FETCH_HEAD.
+// FETCH_HEAD is one mutable file per repository: a second fetch — another rig
+// process working in the same stackspace — overwrites it, and even the two git
+// invocations "fetch, then rev-parse FETCH_HEAD" leave a window in which what
+// is read back is the other fetch's commit. So the fetch lands on a ref named
+// for this call alone, the sha is read from that ref, and the ref is dropped.
+// Everything after this point names something that cannot move.
 func (r *Repo) FetchRef(ctx context.Context, remote, branch string, auth *HTTPAuth) (string, error) {
-	if _, err := runGitStdin(ctx, r.Dir, "", auth.env(), "fetch", remote, branch); err != nil {
+	ref := privateFetchRef()
+	// Best effort, and on its own context: a caller's cancellation after the
+	// fetch has landed must not skip the delete, or the ref would keep the
+	// fetched objects reachable for as long as it sat there. A ref left behind
+	// by a crash is still inert — nothing lists refs/rig/ — and the next call
+	// names a fresh one.
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_, _ = runGit(cleanup, r.Dir, "update-ref", "-d", ref)
+	}()
+	// The error names the fetch as asked for — "git fetch origin main" — not
+	// the refspec: the ref is this call's alone, and the message outlives it
+	// in journals and on screen.
+	shown := []string{"fetch", remote, branch}
+	if _, err := runGitShown(ctx, r.Dir, "", auth.env(), shown, "fetch", remote, "+"+branch+":"+ref); err != nil {
 		return "", err
 	}
-	out, err := runGit(ctx, r.Dir, "rev-parse", "FETCH_HEAD")
+	out, err := runGit(ctx, r.Dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("fetch of %s %s left no commit: %w", remote, branch, err)
 	}
 	sha := strings.TrimSpace(out)
 	if sha == "" {
-		return "", fmt.Errorf("fetch of %s %s left no FETCH_HEAD", remote, branch)
+		return "", fmt.Errorf("fetch of %s %s left no commit", remote, branch)
 	}
 	return sha, nil
+}
+
+var fetchRefSeq atomic.Uint64
+
+// privateFetchRef names a ref no other fetch writes: this process, this
+// moment, this call. Under refs/rig/ so nothing — no push refspec, no
+// for-each-ref over heads or tags — picks it up.
+func privateFetchRef() string {
+	return fmt.Sprintf("refs/rig/fetch/%d-%d-%d", os.Getpid(), time.Now().UnixNano(), fetchRefSeq.Add(1))
 }
 
 // MergeUnrelated merges ref into the current branch for histories that share no
@@ -131,7 +157,7 @@ func (r *Repo) MergeRefUncommitted(ctx context.Context, ref string) (conflicted 
 // FetchMergeUncommitted fetches before starting a merge that the caller must
 // validate and commit. Existing auto-committing helpers retain their behavior.
 // The commit is resolved before the merge for the reason FetchRef gives: naming
-// FETCH_HEAD across two git invocations merges whatever the last fetch in this
+// FETCH_HEAD in a later git invocation merges whatever the last fetch in this
 // repository left, which need not be this one's.
 func (r *Repo) FetchMergeUncommitted(ctx context.Context, remote, branch string) (bool, error) {
 	fetched, err := r.FetchRef(ctx, remote, branch, nil)

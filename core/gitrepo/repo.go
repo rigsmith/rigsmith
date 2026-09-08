@@ -541,11 +541,15 @@ func (r *Repo) lsRemoteOpt(ctx context.Context, remote, ref string, auth *HTTPAu
 // Pull fast-forwards the current branch from remote/branch. It is ff-only so a
 // non-interactive (hook) pull never creates a merge commit or leaves conflicts;
 // a non-ff divergence surfaces as an error for the caller to resolve.
+//
+// The fetched commit is named by sha, never as FETCH_HEAD: see FetchRef for
+// why a merge of FETCH_HEAD can fast-forward onto another process's fetch.
 func (r *Repo) Pull(ctx context.Context, remote, branch string) error {
-	if _, err := runGit(ctx, r.Dir, "fetch", remote, branch); err != nil {
+	fetched, err := r.FetchRef(ctx, remote, branch, nil)
+	if err != nil {
 		return err
 	}
-	_, err := runGit(ctx, r.Dir, "merge", "--ff-only", "FETCH_HEAD")
+	_, err = runGit(ctx, r.Dir, "merge", "--ff-only", fetched)
 	return err
 }
 
@@ -606,6 +610,15 @@ func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 // belong in env, never in args: the error below quotes every argument, and argv
 // is readable by any process on the machine.
 func runGitStdin(ctx context.Context, dir, stdin string, env []string, args ...string) (string, error) {
+	return runGitShown(ctx, dir, stdin, env, args, args...)
+}
+
+// runGitShown is runGitStdin whose error names `shown` rather than the
+// arguments actually run. For a command whose real argv carries something the
+// caller never chose and no one should read back — a private ref named for one
+// call, say — the error stays the one the caller asked for: "git fetch origin
+// main", not the refspec behind it. It ends up in journals and messages.
+func runGitShown(ctx context.Context, dir, stdin string, env []string, shown []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	if stdin != "" {
@@ -618,7 +631,7 @@ func runGitStdin(ctx context.Context, dir, stdin string, env []string, args ...s
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(shown, " "), err, strings.TrimSpace(errb.String()))
 	}
 	return out.String(), nil
 }
